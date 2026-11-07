@@ -14,10 +14,11 @@ import {
 	type SubmissionId,
 } from "@earendil-works/pi-durable";
 import { type Context, type Ctx, defineFacet, forbidden, type MessageData, type Ref, safeFileName } from "@p2/app/v1";
-import { durableContext, FILE_CHUNK, Files, UPLOADS } from "@p2/app/v1/node";
+import { DOWNLOADS, displayName, durableContext, FILE_CHUNK, Files, findDownload, UPLOADS } from "@p2/app/v1/node";
 import { harnessOf, mainConversation } from "@p2/app/v1/worker";
 import { Conversation } from "../chat/contract.ts";
 import { Attachments, FilesMirror } from "../files/contract.ts";
+import { offeredBy } from "../send-file/contract.ts";
 import { mirrorLock } from "../sessions/lock-worker.ts";
 import { Subagents } from "../subagents/contract.worker.ts";
 import { DISCORD_BATCH, DiscordIngress } from "./contract.ts";
@@ -86,12 +87,21 @@ export default defineFacet((host) => {
 					// Gone: withdrawn while queued (a stop).
 					if (!submission) return { state: "stopped" as const };
 					const record = await submission.status(context);
-					if (record.type !== "input") return { state: "unanswered" as const, reason: "Not an input." };
+					if (record.type !== "input") return { state: "unanswered" as const, reason: "Not an input.", files: [] };
 					if (record.status === "queued" || record.status === "placed") return { state: "pending" as const };
+					if (record.status === "unanswered" && record.reason === "aborted") return { state: "stopped" as const };
+					// The turn's span: from its input (its message's time) to its answer, or until now without one.
+					const input =
+						record.entry === undefined
+							? undefined
+							: await entryOf(durable, record.conversationId, record.entry, context);
+					const start = input?.model?.[0]?.timestamp ?? 0;
 					if (record.status === "unanswered")
-						return record.reason === "aborted"
-							? { state: "stopped" as const }
-							: { state: "unanswered" as const, reason: record.reason || "The turn ended without an answer." };
+						return {
+							state: "unanswered" as const,
+							reason: record.reason || "The turn ended without an answer.",
+							files: await offered(files, record.conversationId, start, Date.now(), ctx),
+						};
 					const answer = await entryOf(durable, record.conversationId, record.answer, context);
 					const message = answer?.model?.[0] as AssistantMessage | undefined;
 					if (message?.stopReason === "aborted") return { state: "stopped" as const };
@@ -99,15 +109,22 @@ export default defineFacet((host) => {
 						.flatMap((part) => (part.type === "text" ? [part.text] : []))
 						.join("")
 						.trim();
-					return text
-						? { state: "answered" as const, text }
+					const sent = await offered(files, record.conversationId, start, message?.timestamp ?? Date.now(), ctx);
+					return text || sent.length
+						? { state: "answered" as const, text, files: sent }
 						: {
 								state: "unanswered" as const,
 								reason:
 									message?.stopReason === "error"
 										? (message.errorMessage ?? "The model failed.")
 										: "The answer has no text.",
+								files: sent,
 							};
+				},
+				read: async ({ id, offset, length }, ctx) => {
+					const found = await findDownload(files, id, ctx);
+					if (!found) throw new Error("No such file");
+					return files.read({ id: found.file.id, offset, length }, ctx);
 				},
 				command: async ({ conversation, command }, ctx) => {
 					const durable = harness().durable;
@@ -207,6 +224,32 @@ async function download(
 		console.error(`p2 discord: could not download ${file.name}:`, error instanceof Error ? error.message : error);
 		return undefined;
 	}
+}
+
+/**
+ * The files conversation `conversation` offered (`send_file`, also from scripts) between `start` and `end` (ms since
+ * the epoch): a turn's, oldest first.
+ */
+async function offered(
+	files: Ref<typeof Files>,
+	conversation: number,
+	start: number,
+	end: number,
+	ctx: Ctx,
+): Promise<{ id: string; name: string; size: number }[]> {
+	const found: { id: string; name: string; size: number }[] = [];
+	let after: string | undefined;
+	do {
+		const page = await files.byRef(
+			{ space: DOWNLOADS, ref: offeredBy(conversation), ...(after ? { after } : {}) },
+			ctx,
+		);
+		for (const file of page.items)
+			if (file.key && file.created >= start && file.created <= end)
+				found.push({ id: file.key, name: displayName(file), size: file.size });
+		after = page.next;
+	} while (after !== undefined);
+	return found;
 }
 
 async function entryOf(

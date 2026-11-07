@@ -35,11 +35,20 @@ function statusText(status: BotStatus): string {
 	return `${status.guilds.length} server${status.guilds.length === 1 ? "" : "s"}`;
 }
 
-/** The bot's Discord avatar, when it has one. */
+/** The bot's Discord avatar, when it has one (through p2's route: the page loads only its own images). */
 function Avatar({ bot }: { bot: BotView }) {
-	return bot.status.state === "connected" && bot.status.avatarUrl ? (
-		<img className="discord-avatar" src={bot.status.avatarUrl} alt="" />
-	) : null;
+	const [failed, setFailed] = useState<string>();
+	const url = bot.status.state === "connected" ? bot.status.avatarUrl : undefined;
+	if (!url || failed === url) return null;
+	return (
+		<img
+			className="discord-avatar"
+			// The avatar's URL in the query: a new avatar is a new image for the browser's cache.
+			src={`/discord/avatar?bot=${encodeURIComponent(bot.id)}&v=${encodeURIComponent(url)}`}
+			alt=""
+			onError={() => setFailed(url)}
+		/>
+	);
 }
 
 /** More › Discord: the bots, and Add bot. */

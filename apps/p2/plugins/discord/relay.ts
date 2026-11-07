@@ -2,7 +2,7 @@
 // by the link's bot, delivers the messages since the link's cursor (a thread's: to its forked subagent) as one input; a
 // pending reply is posted once its turn ended. Plain logic over ports, so tests run it with fake bots and sessions.
 import type { SessionLock } from "@p2/app/v1";
-import { type Binding, COMMANDS, type Command, type Pending, type Wake } from "./contract.ts";
+import { type Binding, COMMANDS, type Command, type OfferedFile, type Pending, type Wake } from "./contract.ts";
 
 /** A Discord message as the relay reads it. */
 export type DiscordMessage = {
@@ -35,16 +35,26 @@ export type DiscordPort = {
 	channel(id: string): Promise<DiscordChannel>;
 	/** The first `limit` messages after `after` (oldest first; `"0"`: from the channel's start). */
 	messages(channelId: string, query: { after: string; limit: number }): Promise<DiscordMessage[]>;
-	/** Posts `text` (at most 2000 characters), as a reply to `messageId` when given. */
-	reply(channelId: string, messageId: string | undefined, text: string): Promise<void>;
+	/**
+	 * Posts `text` (at most 2000 characters; may be empty with files) with `files` attached (at most 10, together within
+	 * `uploadLimit`), as a reply to `messageId` when given.
+	 */
+	reply(
+		channelId: string,
+		messageId: string | undefined,
+		text: string,
+		files?: readonly { name: string; data: Uint8Array }[],
+	): Promise<void>;
+	/** The bytes one message's attachments may have in `channelId` (its server's limit). */
+	uploadLimit(channelId: string): Promise<number>;
 	typing(channelId: string): Promise<void>;
 };
 
 export type TurnState =
 	| { state: "pending" }
-	| { state: "answered"; text: string }
+	| { state: "answered"; text: string; files: OfferedFile[] }
 	| { state: "stopped" }
-	| { state: "unanswered"; reason: string };
+	| { state: "unanswered"; reason: string; files: OfferedFile[] };
 
 /** What the relay needs of a session (its worker's `DiscordIngress`, the catalog). */
 export type SessionPort = {
@@ -67,6 +77,8 @@ export type SessionPort = {
 	): Promise<{ conversation: number; submissionId: number }>;
 	turn(session: string, submissionId: number): Promise<TurnState>;
 	thread(session: string, name: string, before: number): Promise<{ conversation: number }>;
+	/** `length` bytes (at most 4 MiB) of offered file `id` from `offset`. */
+	read(session: string, id: string, offset: number, length: number): Promise<Uint8Array>;
 	/** Runs channel command `command` on `conversation` (default: the main one): the reply's text. */
 	command(session: string, input: { conversation?: number; command: Command }): Promise<{ text: string }>;
 };
@@ -361,19 +373,18 @@ export class Relay {
 		} catch (error) {
 			console.error("p2 discord: reading a turn failed:", error instanceof Error ? error.message : error);
 			if (now - pending.since < PENDING_TIMEOUT_MS) return;
-			turn = { state: "unanswered", reason: "the session did not answer in time." };
+			turn = { state: "unanswered", reason: "the session did not answer in time.", files: [] };
 		}
 		if (turn.state === "pending") {
 			if (now - pending.since < PENDING_TIMEOUT_MS) return;
-			turn = { state: "unanswered", reason: "the session did not answer in time." };
+			turn = { state: "unanswered", reason: "the session did not answer in time.", files: [] };
 		}
-		// A stopped turn posts nothing: the stop command answered already.
-		const text =
-			turn.state === "answered" ? turn.text : turn.state === "stopped" ? "" : `(No answer: ${turn.reason})`;
 		try {
-			if (text && !port) throw new Error("its bot is not connected");
-			for (const [index, chunk] of chunkText(text).entries())
-				await port?.reply(pending.replyChannelId, index === 0 ? pending.messageId : undefined, chunk);
+			// A stopped turn posts nothing: the stop command answered already.
+			if (turn.state !== "stopped") {
+				if (!port) throw new Error("its bot is not connected");
+				await this.#reply(port, pending, turn);
+			}
 		} catch (error) {
 			// A channel that went away: the reply is dropped, as Discord has nowhere to show it.
 			console.error("p2 discord: posting a reply failed:", error instanceof Error ? error.message : error);
@@ -381,6 +392,63 @@ export class Relay {
 		await this.#state.change((draft) => {
 			delete draft.pending[pending.messageId];
 		});
+	}
+
+	/**
+	 * Posts a finished turn's reply: its text split at 2000 characters, the first part replying to the waking message,
+	 * and the files the turn offered attached (at most 10 a message, together within the server's limit; larger ones
+	 * named only), the first ones on the last text part.
+	 */
+	async #reply(
+		port: DiscordPort,
+		pending: Pending,
+		turn: Extract<TurnState, { state: "answered" | "unanswered" }>,
+	): Promise<void> {
+		let text = turn.state === "answered" ? turn.text : `(No answer: ${turn.reason})`;
+		const limit = turn.files.length ? await port.uploadLimit(pending.replyChannelId) : 0;
+		const tooLarge = turn.files.filter((file) => file.size > limit);
+		if (tooLarge.length)
+			text += `${text ? "\n\n" : ""}Too large for Discord: ${tooLarge.map((file) => `${file.name} (${megabytes(file.size)})`).join(", ")}`;
+		const groups = attachmentGroups(
+			turn.files.filter((file) => file.size <= limit),
+			limit,
+		);
+		const posts: { text: string; files: OfferedFile[] }[] = chunkText(text).map((chunk) => ({
+			text: chunk,
+			files: [],
+		}));
+		for (const [index, group] of groups.entries()) {
+			const last = posts.at(-1);
+			if (index === 0 && last) last.files = group;
+			else posts.push({ text: "", files: group });
+		}
+		for (const [index, post] of posts.entries()) {
+			const files: { name: string; data: Uint8Array }[] = [];
+			for (const file of post.files) {
+				try {
+					files.push({ name: file.name, data: await this.#readFile(pending.session, file) });
+				} catch (error) {
+					console.error(
+						`p2 discord: reading ${file.name} failed:`,
+						error instanceof Error ? error.message : error,
+					);
+				}
+			}
+			if (!post.text && !files.length) continue;
+			await port.reply(pending.replyChannelId, index === 0 ? pending.messageId : undefined, post.text, files);
+		}
+	}
+
+	/** Offered file `file` of `session`, whole. */
+	async #readFile(session: string, file: OfferedFile): Promise<Uint8Array> {
+		const parts: Uint8Array[] = [];
+		for (let offset = 0; offset < file.size; ) {
+			const part = await this.#sessions.read(session, file.id, offset, Math.min(READ_CHUNK, file.size - offset));
+			if (!part.length) break;
+			parts.push(part);
+			offset += part.length;
+		}
+		return Buffer.concat(parts);
 	}
 
 	/** "Pi is typing" in every channel with a pending reply whose session works. */
@@ -430,6 +498,32 @@ export function commandOf(text: string, botId: string): Command | undefined {
 		.toLowerCase()
 		.replace(/^\//, "");
 	return COMMANDS.find((command) => command === rest);
+}
+
+/** Bytes one read of an offered file asks for. */
+const READ_CHUNK = 4 * 1024 * 1024;
+/** Attachments one Discord message carries at most. */
+export const MAX_ATTACHMENTS_PER_MESSAGE = 10;
+
+/** `files` (each within `limit`) in order, in groups of at most 10 whose sizes add up to at most `limit`. */
+export function attachmentGroups<T extends { size: number }>(files: readonly T[], limit: number): T[][] {
+	const groups: T[][] = [];
+	let bytes = 0;
+	for (const file of files) {
+		const last = groups.at(-1);
+		if (last && last.length < MAX_ATTACHMENTS_PER_MESSAGE && bytes + file.size <= limit) {
+			last.push(file);
+			bytes += file.size;
+		} else {
+			groups.push([file]);
+			bytes = file.size;
+		}
+	}
+	return groups;
+}
+
+function megabytes(size: number): string {
+	return `${(size / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
 /** Whether the author of a message may wake Pi in its binding. */

@@ -6,6 +6,7 @@ import {
 	Client,
 	Events,
 	GatewayIntentBits,
+	GuildPremiumTier,
 	type Message,
 	Partials,
 	type TextBasedChannel,
@@ -140,14 +141,30 @@ export class Bot implements DiscordPort {
 			.map((message) => messageOf(message, botId));
 	}
 
-	async reply(channelId: string, messageId: string | undefined, text: string): Promise<void> {
+	async reply(
+		channelId: string,
+		messageId: string | undefined,
+		text: string,
+		files: readonly { name: string; data: Uint8Array }[] = [],
+	): Promise<void> {
 		const channel = await this.#text(channelId);
 		if (!("send" in channel)) throw new Error("The channel takes no messages");
+		// discord.js uploads attachments as a multipart request.
 		await channel.send({
-			content: text,
+			...(text ? { content: text } : {}),
+			...(files.length
+				? { files: files.map((file) => ({ attachment: Buffer.from(file.data), name: file.name })) }
+				: {}),
 			...(messageId ? { reply: { messageReference: messageId, failIfNotExists: false } } : {}),
 			allowedMentions: { parse: [] },
 		});
+	}
+
+	async uploadLimit(channelId: string): Promise<number> {
+		const channel = await this.#text(channelId);
+		const tier = "guild" in channel ? channel.guild.premiumTier : GuildPremiumTier.None;
+		// Discord's per-message upload limit by the server's boost level.
+		return (tier === GuildPremiumTier.Tier3 ? 100 : tier === GuildPremiumTier.Tier2 ? 50 : 10) * 1024 * 1024;
 	}
 
 	async typing(channelId: string): Promise<void> {

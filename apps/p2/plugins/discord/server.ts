@@ -19,7 +19,7 @@ import {
 	sleep,
 } from "@p2/app/v1";
 import { optionalText, stripJsonComments } from "@p2/app/v1/node";
-import { Server, serverOf } from "@p2/app/v1/server";
+import { Routes, Server, serverOf } from "@p2/app/v1/server";
 import { EnvService } from "../envs/contract.ts";
 import { isSandbox } from "../envs/schema.ts";
 import { Catalog, SessionLocks, SessionMoves } from "../sessions/contract.ts";
@@ -91,6 +91,8 @@ export default defineFacet((host) => {
 			turn: (session, submissionId) => ingress(session, (worker, ctx) => worker.turn({ submissionId }, ctx)),
 			thread: (session, name, before) => ingress(session, (worker, ctx) => worker.thread({ name, before }, ctx)),
 			command: (session, input) => ingress(session, (worker, ctx) => worker.command(input, ctx)),
+			read: (session, id, offset, length) =>
+				ingress(session, (worker, ctx) => worker.read({ id, offset, length }, ctx)),
 		};
 		const relay = new Relay((bot) => fleet.value.connected(bot), sessions, {
 			// The state's drafts are the same JSON as the relay's plain records.
@@ -129,6 +131,39 @@ export default defineFacet((host) => {
 			seen = next;
 			if (live && changed.size && Object.keys(state.value.pending).length)
 				await relay.checkPending(changed).catch((error: unknown) => console.error("p2 discord:", errorText(error)));
+		});
+		// The bots' avatars for the owner's sheets: the page's CSP allows only its own images, so they come through here.
+		const avatars = new Map<string, Promise<{ type: string; bytes: Buffer }>>();
+		self.contribute(Routes, {
+			"GET /discord/avatar": async (request, response, { principal }) => {
+				const bot = new URL(request.url ?? "/", "http://localhost").searchParams.get("bot") ?? "";
+				const status = fleet.value.views().find((view) => view.id === bot)?.status;
+				const url = status?.state === "connected" ? status.avatarUrl : undefined;
+				if (!isOwner(principal) || !url) {
+					response.writeHead(404);
+					response.end();
+					return;
+				}
+				try {
+					let avatar = avatars.get(url);
+					if (!avatar) {
+						avatar = fetchAvatar(url);
+						avatars.set(url, avatar);
+						avatar.catch(() => avatars.delete(url));
+					}
+					const { type, bytes } = await avatar;
+					response.writeHead(200, {
+						"Content-Type": type,
+						"Content-Length": bytes.length,
+						"Cache-Control": "private, max-age=86400",
+						"Cross-Origin-Resource-Policy": "same-origin",
+					});
+					response.end(bytes);
+				} catch {
+					response.writeHead(502);
+					response.end();
+				}
+			},
 		});
 		const connected = (bot: string) => {
 			const found = fleet.value.connected(bot);
@@ -229,6 +264,15 @@ export default defineFacet((host) => {
 		};
 	});
 });
+
+/** A Discord avatar (an image of Discord's CDN, a trust boundary: only images pass). */
+async function fetchAvatar(url: string): Promise<{ type: string; bytes: Buffer }> {
+	if (!url.startsWith("https://cdn.discordapp.com/")) throw new Error("Not a Discord avatar");
+	const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+	const type = response.headers.get("content-type") ?? "";
+	if (!response.ok || !/^image\/(png|jpeg|gif|webp)$/.test(type)) throw new Error("No avatar");
+	return { type, bytes: Buffer.from(await response.arrayBuffer()) };
+}
 
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 

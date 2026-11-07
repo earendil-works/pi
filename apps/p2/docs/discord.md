@@ -62,6 +62,12 @@ A session has at most one link and a channel at most one session (its threads fo
 - **Reply:** when the input's turn ends (checked on every status change of the session and every 16 s), the answer's
   text is posted as a reply to the waking message, split at 2000 characters. A turn without an answer posts why. While
   a reply is pending and the session works, the channel shows "Pi is typing". A turn not done after 6 hours is given up.
+- **Files:** what the agent offers with `send_file` during a Discord-started turn (the main agent's, or a thread
+  subagent's; also from scripts) is attached to the reply: `send_file` downloads carry their conversation as `ref`, and
+  the worker's `turn` lists those made between the input and the answer. Read through the session's Files
+  (`DiscordIngress.read`) and uploaded with the reply (multipart): at most 10 a message, together within the server's
+  per-message limit (10 MiB; 50 MiB and 100 MiB on boosted servers). Larger files are named in the reply only. A turn
+  with files and no text posts the files alone.
 - **Commands:** a mention of the bot by someone allowed to wake Pi whose remaining text is exactly `stop`, `status`
   or `compact` (any case, an optional leading slash: `@Pi /stop`) is a command, run at once (not behind a delivery
   under way) on the main conversation, or in a thread on its subagent. `stop` is the web's Stop: queued inputs are
@@ -97,6 +103,8 @@ In a locked session the lock replaces the "a turn the owner started" check, for 
 ## State
 
 - `<data>/discord.json`: the bots' tokens (above).
+- The bots' avatars reach the sheets through `GET /discord/avatar?bot=<id>` (owner only, fetched from Discord's CDN by
+  the server and kept per avatar): the page's CSP loads only its own images.
 - Server state `p2.discord-bindings` (persisted; version 2 adds the bot): links by channel (bot, session, who may wake
   Pi, cursor, threads with their subagent conversation and cursor) and pending replies by waking message (bot,
   session, reply channel, submission).

@@ -3,8 +3,10 @@
 // `DiscordIngress` with the fake provider (a batch with an attachment downloaded into the session's uploads, its turn's
 // answer, a thread's subagent forked from the main conversation).
 import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import type { UserMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
@@ -53,7 +55,11 @@ class FakeDiscord implements DiscordPort {
 	readonly botId = BOT;
 	readonly channels = new Map<string, DiscordChannel>();
 	readonly history = new Map<string, DiscordMessage[]>();
-	readonly posted: { channel: string; replyTo: string | undefined; text: string }[] = [];
+	readonly posted: { channel: string; replyTo: string | undefined; text: string; files?: string[] }[] = [];
+	/** Bytes attached to posts, by file name. */
+	readonly uploaded = new Map<string, Uint8Array>();
+	/** The server's per-message upload limit. */
+	limit = 10 * 1024 * 1024;
 	readonly typed: string[] = [];
 	add(channel: DiscordChannel): void {
 		this.channels.set(channel.id, channel);
@@ -75,9 +81,20 @@ class FakeDiscord implements DiscordPort {
 		const all = this.history.get(channelId) ?? [];
 		return all.filter((entry) => BigInt(entry.id) > BigInt(query.after)).slice(0, Math.min(query.limit, 100));
 	}
-	async reply(channel: string, replyTo: string | undefined, text: string): Promise<void> {
+	async reply(
+		channel: string,
+		replyTo: string | undefined,
+		text: string,
+		files: readonly { name: string; data: Uint8Array }[] = [],
+	): Promise<void> {
 		assert(text.length <= 2000);
-		this.posted.push({ channel, replyTo, text });
+		assert(text || files.length, "never an empty message");
+		assert(files.length <= 10 && files.reduce((sum, file) => sum + file.data.length, 0) <= this.limit);
+		for (const file of files) this.uploaded.set(file.name, file.data);
+		this.posted.push({ channel, replyTo, text, ...(files.length ? { files: files.map((file) => file.name) } : {}) });
+	}
+	async uploadLimit(): Promise<number> {
+		return this.limit;
 	}
 	async typing(channel: string): Promise<void> {
 		this.typed.push(channel);
@@ -90,6 +107,13 @@ class FakeSessions implements SessionPort {
 	readonly delivered: Parameters<SessionPort["deliver"]>[1][] = [];
 	readonly turns = new Map<number, TurnState>();
 	readonly threads: { name: string; before: number }[] = [];
+	/** The offered files' bytes by ID; reads count. */
+	readonly bytes = new Map<string, Uint8Array>();
+	reads = 0;
+	async read(_session: string, id: string, offset: number, length: number): Promise<Uint8Array> {
+		this.reads++;
+		return (this.bytes.get(id) ?? new Uint8Array()).subarray(offset, offset + length);
+	}
 	/** How long placing an input and forking a thread take (ms): a slow worker. */
 	slow = 0;
 	async usable(): Promise<string | undefined> {
@@ -110,7 +134,7 @@ class FakeSessions implements SessionPort {
 		return { conversation: input.conversation ?? 1, submissionId };
 	}
 	async turn(_session: string, submissionId: number): Promise<TurnState> {
-		return this.turns.get(submissionId) ?? { state: "unanswered", reason: "gone" };
+		return this.turns.get(submissionId) ?? { state: "unanswered", reason: "gone", files: [] };
 	}
 	/** Conversations with a turn under way, and the commands run. */
 	readonly running = new Set<number>();
@@ -219,7 +243,7 @@ describe("discord relay", () => {
 		await relay.checkPending();
 		assert.equal(discord.posted.length, 0, "still pending");
 		const answer = `${"word ".repeat(500)}\n${"more ".repeat(300)}`;
-		sessions.turns.set(1, { state: "answered", text: answer });
+		sessions.turns.set(1, { state: "answered", text: answer, files: [] });
 		await Promise.all([relay.checkPending(), relay.checkPending(new Set(["s1"]))]);
 		assert(discord.posted.length >= 2, "split");
 		assert.equal(discord.posted[0]?.replyTo, trigger.id, "the first part replies to the message that woke Pi");
@@ -241,7 +265,7 @@ describe("discord relay", () => {
 	it("says why when a turn ends without an answer, or never ends", async () => {
 		const { discord, sessions, relay, state } = setup();
 		await relay.onMessage("bot-a", discord.say("c1", message(`<@${BOT}> one`)));
-		sessions.turns.set(1, { state: "unanswered", reason: "The model failed." });
+		sessions.turns.set(1, { state: "unanswered", reason: "The model failed.", files: [] });
 		await relay.checkPending();
 		assert.equal(discord.posted.at(-1)?.text, "(No answer: The model failed.)");
 		const trigger = discord.say("c1", message(`<@${BOT}> two`));
@@ -285,7 +309,7 @@ describe("discord relay", () => {
 		await relay.onMessage("bot-a", second);
 		assert.equal(sessions.threads.length, 1, "one subagent per thread");
 		assert.equal(sessions.delivered[1]?.conversation, 41);
-		sessions.turns.set(1, { state: "answered", text: "Plan." });
+		sessions.turns.set(1, { state: "answered", text: "Plan.", files: [] });
 		await relay.checkPending();
 		assert.deepEqual(discord.posted[0], { channel: "t1", replyTo: first.id, text: "Plan." });
 	});
@@ -298,7 +322,7 @@ describe("discord relay", () => {
 		const trigger = discord.say("c1", message(`<@${BOT}> hello again`));
 		await relay.onMessage("bot-a", trigger);
 		assert.equal(state().pending[trigger.id]?.botId, "bot-a");
-		sessions.turns.set(1, { state: "answered", text: "Hi." });
+		sessions.turns.set(1, { state: "answered", text: "Hi.", files: [] });
 		offline.add("bot-a");
 		await relay.checkPending();
 		assert.equal(discord.posted.length, 0);
@@ -466,6 +490,56 @@ describe("discord relay", () => {
 		assert.equal(sessions.commands.length, 0);
 	});
 
+	it("attaches the files a turn offered to its reply: within the server's limit, 10 a message, larger ones named", async () => {
+		const { discord, sessions, relay } = setup();
+		discord.limit = 1024;
+		const file = (id: string, size: number) => {
+			sessions.bytes.set(id, new Uint8Array(size).fill(id.length));
+			return { id, name: `${id}.bin`, size };
+		};
+		const trigger = discord.say("c1", message(`<@${BOT}> build it`));
+		await relay.onMessage("bot-a", trigger);
+		const small = Array.from({ length: 11 }, (_, index) => file(`f${index}`, 10));
+		const pair = [file("half-a", 600), file("half-b", 600)];
+		sessions.turns.set(1, {
+			state: "answered",
+			text: "Built.",
+			files: [...small, file("huge", 2048), ...pair],
+		});
+		await relay.checkPending();
+		assert.deepEqual(
+			discord.posted.map((post) => ({ replyTo: post.replyTo, text: post.text, files: post.files })),
+			[
+				// The answer, its text naming what Discord cannot take, with the first 10 files.
+				{
+					replyTo: trigger.id,
+					text: "Built.\n\nToo large for Discord: huge.bin (0.0 MiB)",
+					files: small.slice(0, 10).map((each) => each.name),
+				},
+				// Then at most 10 a message, their sizes within the limit together.
+				{ replyTo: undefined, text: "", files: ["f10.bin", "half-a.bin"] },
+				{ replyTo: undefined, text: "", files: ["half-b.bin"] },
+			],
+		);
+		assert.deepEqual(
+			Buffer.from(discord.uploaded.get("half-a.bin") ?? []),
+			Buffer.from(sessions.bytes.get("half-a") ?? []),
+		);
+		assert.equal(discord.uploaded.has("huge.bin"), false);
+	});
+
+	it("a turn with files and no text, in a thread, posts them as the reply there", async () => {
+		const known = { conversation: 41, name: "Release plan", cursor: "1" };
+		const { discord, sessions, relay } = setup(binding({ cursor: "1", threads: { t1: known } }));
+		const trigger = discord.say("t1", message(`<@${BOT}> send the log`));
+		await relay.onMessage("bot-a", trigger);
+		sessions.bytes.set("log", new TextEncoder().encode("log line\n"));
+		sessions.turns.set(1, { state: "answered", text: "", files: [{ id: "log", name: "build.log", size: 9 }] });
+		await relay.checkPending();
+		assert.deepEqual(discord.posted, [{ channel: "t1", replyTo: trigger.id, text: "", files: ["build.log"] }]);
+		assert.equal(new TextDecoder().decode(discord.uploaded.get("build.log")), "log line\n");
+	});
+
 	it("pages through everything since the cursor up to the mention", async () => {
 		const { discord, sessions, relay, state } = setup(binding({ cursor: "1" }));
 		const said = Array.from({ length: 199 }, (_, index) => discord.say("c1", message(`line ${index}`)));
@@ -542,8 +616,8 @@ describe("discord relay", () => {
 		await relay.onMessage("bot-a", newest);
 		assert.equal(sessions.delivered.length, 2);
 		// Answers go back to where each mention was.
-		sessions.turns.set(1, { state: "answered", text: "Second answer." });
-		sessions.turns.set(2, { state: "answered", text: "Plan." });
+		sessions.turns.set(1, { state: "answered", text: "Second answer.", files: [] });
+		sessions.turns.set(2, { state: "answered", text: "Plan.", files: [] });
 		await relay.checkPending();
 		assert.deepEqual(discord.posted, [
 			{ channel: "c1", replyTo: newest.id, text: "Second answer." },
@@ -651,6 +725,45 @@ describe("discord ingress (fake provider)", () => {
 		const mirror = await holdIn(fixture.browser(), FileSummaries, {}, "owner");
 		const spaces = await mirror.of({ session }, BACKGROUND_CONTEXT);
 		assert.equal(spaces.uploads?.newest[0]?.source, "discord");
+	});
+
+	it("a turn's answer lists the files its conversation offered during it, readable through the ingress", async () => {
+		await writeFile(join(fixture.workspace, "created.txt"), "made for Discord\n");
+		const ingress = fixture.server.host.hold(DiscordIngress, { session }, BACKGROUND_CONTEXT);
+		const input = (requestId: string, text: string, conversation?: number) => ({
+			...(conversation === undefined ? {} : { conversation }),
+			requestId,
+			author: { id: "u1", name: "Ada" },
+			text,
+			context: { channel: "general", guild: "Guild", messages: 1 },
+			files: [],
+			lock: null,
+		});
+		const sent = await ingress.deliver(input("discord:800", "send-file"), BACKGROUND_CONTEXT);
+		const turn = await ended(ingress, sent.submissionId);
+		assert(turn.state === "answered", JSON.stringify(turn));
+		assert.deepEqual(
+			turn.files.map((file) => ({ name: file.name, size: file.size })),
+			[{ name: "created.txt", size: 17 }],
+		);
+		const [offered] = turn.files;
+		assert(offered);
+		const bytes = await ingress.read({ id: offered.id, offset: 0, length: 1024 }, BACKGROUND_CONTEXT);
+		assert.equal(new TextDecoder().decode(bytes), "made for Discord\n");
+		// The next turn offers nothing: an earlier turn's files are not its.
+		const plain = await ingress.deliver(input("discord:801", "nothing to send"), BACKGROUND_CONTEXT);
+		const next = await ended(ingress, plain.submissionId);
+		assert(next.state === "answered" && next.files.length === 0, JSON.stringify(next));
+		// A thread's subagent: its own turn's files only.
+		const { conversation } = await ingress.thread({ name: "files", before: Date.now() }, BACKGROUND_CONTEXT);
+		const inThread = await ingress.deliver(input("discord:802", "send-file", conversation), BACKGROUND_CONTEXT);
+		const threadTurn = await ended(ingress, inThread.submissionId);
+		assert(threadTurn.state === "answered", JSON.stringify(threadTurn));
+		assert.deepEqual(
+			threadTurn.files.map((file) => file.name),
+			["created.txt"],
+		);
+		assert.notEqual(threadTurn.files[0]?.id, offered.id);
 	});
 
 	it("stop aborts the running turn and withdraws the queued inputs, as the web's Stop", async () => {

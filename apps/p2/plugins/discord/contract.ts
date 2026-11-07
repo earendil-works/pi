@@ -1,7 +1,7 @@
 // Pi on Discord (browser-safe contracts): the owner's bots run on the p2 server; a session linked to a channel through
 // one of them gets, at a mention by someone allowed to wake Pi, the messages since the link's cursor as one input, and
 // its answer goes back as a reply. A thread of a linked channel gets a subagent forked from the main conversation.
-import { arr, bool, int, nul, num, obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
+import { arr, bool, bytes, int, nul, num, obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
 import {
 	literal,
 	local,
@@ -156,6 +156,10 @@ export const COMMANDS = ["stop", "status", "compact"] as const;
 export type Command = (typeof COMMANDS)[number];
 const CommandSchema = union(COMMANDS.map((command) => literal(command)));
 
+/** A file the agent offered in a turn (`send_file`): the session's download, to attach to the Discord reply. */
+export const OfferedFileSchema = obj({ id: str(), name: str(), size: num() });
+export type OfferedFile = Static<typeof OfferedFileSchema>;
+
 /** A Discord attachment to download into the session's uploads (at most 25 MiB; larger ones are links). */
 export const DiscordFileSchema = obj({ url: str(), name: str(), size: num(), key: str(), ref: str() });
 
@@ -185,16 +189,21 @@ export const DiscordIngress = remote("p2.discord-ingress", {
 				),
 				/**
 				 * The submission's turn: still pending, answered (the answer's text), stopped (aborted, or withdrawn while
-				 * queued), or ended without an answer.
+				 * queued), or ended without an answer; with the files its conversation offered during it.
 				 */
 				turn: method(
 					obj({ submissionId: num() }),
 					union([
 						obj({ state: literal("pending") }),
-						obj({ state: literal("answered"), text: str() }),
+						obj({ state: literal("answered"), text: str(), files: arr(OfferedFileSchema) }),
 						obj({ state: literal("stopped") }),
-						obj({ state: literal("unanswered"), reason: str() }),
+						obj({ state: literal("unanswered"), reason: str(), files: arr(OfferedFileSchema) }),
 					]),
+				),
+				/** `length` bytes (at most 4 MiB) of offered file `id` from `offset` (fewer at its end). */
+				read: method(
+					obj({ id: str(), offset: int({ minimum: 0 }), length: int({ minimum: 1, maximum: 4 * 1024 * 1024 }) }),
+					bytes(),
 				),
 				/**
 				 * Runs a channel command on `conversation` (default: the main conversation): `stop` as the web's Stop
