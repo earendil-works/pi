@@ -71,9 +71,12 @@ A session has at most one link and a channel at most one session (its threads fo
 - **Commands:** a mention of the bot by someone allowed to wake Pi whose remaining text is exactly `stop`, `status`
   or `compact` (any case, an optional leading slash: `@Pi /stop`) is a command, run at once (not behind a delivery
   under way) on the main conversation, or in a thread on its subagent. `stop` is the web's Stop: queued inputs are
-  withdrawn, the run is aborted; it answers "Stopped." (with how many queued messages were withdrawn) or "Nothing is
-  running.", and the stopped turns post nothing. `status` answers the model, whether it works, the queued inputs and
-  the context's use; `compact` starts a compaction and says so. Commands never go into a batch and are not caught up
+  withdrawn, the run is aborted; it also aborts running compactions (tasks of their own, which Stop leaves running:
+  the web's Escape path), read from Durable since a compaction just started may not be in the view yet. It answers
+  "Stopped." (with how many queued messages were withdrawn), "Stopped compaction.", both, or "Nothing is running.", and
+  the stopped turns post nothing. `status` answers the model, whether it works (and compacts), the queued inputs, the
+  context's use, and the cost so far (the cost sheet's data: the target conversation's responses) with the last
+  turn's (the responses since its newest input); `compact` starts a compaction and says so. Commands never go into a batch and are not caught up
   on after downtime (a missed `stop` is stale). They are left out of batches rather than moving the cursor past them,
   which would drop the undelivered messages before them. A mention of the bot's own role counts as a mention of the
   bot.

@@ -11,7 +11,7 @@ import { after, before, describe, it } from "node:test";
 import type { UserMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, type SessionLock } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { Chat, ChatCosts } from "../../plugins/chat/contract.ts";
 import type { Binding } from "../../plugins/discord/contract.ts";
 import { DISCORD_BATCH, DiscordIngress } from "../../plugins/discord/contract.ts";
 import {
@@ -791,6 +791,55 @@ describe("discord ingress (fake provider)", () => {
 		assert.equal((await ingress.command({ command: "stop" }, BACKGROUND_CONTEXT)).text, "Nothing is running.");
 		assert.match((await ingress.command({ command: "status" }, BACKGROUND_CONTEXT)).text, /Working: no\nQueued: 0/);
 		assert.equal((await ingress.command({ command: "compact" }, BACKGROUND_CONTEXT)).text, "Compacting the context.");
+	});
+
+	it("stop also aborts a running compaction (a task of its own), and says so", async () => {
+		const ingress = fixture.server.host.hold(DiscordIngress, { session }, BACKGROUND_CONTEXT);
+		const status = async () => (await ingress.command({ command: "status" }, BACKGROUND_CONTEXT)).text;
+		// Something to compact: more than compaction keeps verbatim (20k tokens), in turns the fake echoes quickly enough.
+		await poll(async () => !(await status()).includes("Compacting: yes"));
+		for (const index of [0, 1, 2]) {
+			const turn = await ingress.deliver(
+				{
+					requestId: `discord:90${index}`,
+					author: { id: "u1", name: "Ada" },
+					text: `part ${index}: ${"lorem ipsum dolor ".repeat(700)}`,
+					context: { channel: "general", guild: "Guild", messages: 1 },
+					files: [],
+					lock: null,
+				},
+				BACKGROUND_CONTEXT,
+			);
+			await ended(ingress, turn.submissionId);
+		}
+		assert.equal((await ingress.command({ command: "compact" }, BACKGROUND_CONTEXT)).text, "Compacting the context.");
+		// The fake summary streams for a moment: the stop right after reaches it running (as the web's Escape test).
+		assert.equal((await ingress.command({ command: "stop" }, BACKGROUND_CONTEXT)).text, "Stopped compaction.");
+		assert.doesNotMatch(await status(), /Compacting/);
+		assert.equal((await ingress.command({ command: "stop" }, BACKGROUND_CONTEXT)).text, "Nothing is running.");
+	});
+
+	it("status reports the cost so far from the cost sheet's data, and the last turn's", async () => {
+		const ingress = fixture.server.host.hold(DiscordIngress, { session }, BACKGROUND_CONTEXT);
+		const turn = await ingress.deliver(
+			{
+				requestId: "discord:950",
+				author: { id: "u1", name: "Ada" },
+				text: "what does it cost",
+				context: { channel: "general", guild: "Guild", messages: 1 },
+				files: [],
+				lock: null,
+			},
+			BACKGROUND_CONTEXT,
+		);
+		await ended(ingress, turn.submissionId);
+		const sheet = await holdIn(fixture.browser(), ChatCosts, { session, conversation: 1 }, "viewer");
+		const costs = await sheet.costs(BACKGROUND_CONTEXT);
+		assert(costs.length > 0);
+		const total = costs.reduce((sum, entry) => sum + entry.cost, 0);
+		const dollars = (value: number) => `$${value.toFixed(value >= 0.01 || value === 0 ? 4 : 6)}`;
+		const text = (await ingress.command({ command: "status" }, BACKGROUND_CONTEXT)).text;
+		assert(text.includes(`\nCost: ${dollars(total)} so far, last turn $`), text);
 	});
 
 	it("forks a thread's subagent from the main conversation's last answer before the thread", async () => {

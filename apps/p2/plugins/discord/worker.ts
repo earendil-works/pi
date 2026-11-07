@@ -10,6 +10,7 @@ import {
 	type EntryRecord,
 	type Harness,
 	InboxDoc,
+	LiveDoc,
 	ROOT_CONVERSATION_ID,
 	type SubmissionId,
 } from "@earendil-works/pi-durable";
@@ -131,20 +132,33 @@ export default defineFacet((host) => {
 					const context = durableContext(ctx);
 					const target = conversation ?? (await mainConversation(durable, context));
 					const chat = await ctx.get(Conversation, { conversation: target });
-					const live = chat.view.value?.docs["pi.live"] as { run?: unknown } | undefined;
+					// From Durable itself: the conversation's view may not have caught up with a compaction just started.
+					const live = await durable.snapshot(LiveDoc, target as ConversationId, context);
 					const inbox = await durable.snapshot(InboxDoc, target as ConversationId, context);
 					const queued = (inbox?.items ?? []).filter((item) => item.mode !== "write").length;
 					const working = Boolean(live?.run);
+					const compacting = live?.compactions?.length ?? 0;
 					if (command === "stop") {
-						if (!working && !queued) return { text: "Nothing is running." };
-						// The web's Stop: queued inputs withdrawn first, then the run aborted.
-						const { restored } = await chat.stop(ctx);
-						const withdrawn = restored.length;
-						return {
-							text: withdrawn
-								? `Stopped; ${withdrawn} queued message${withdrawn === 1 ? "" : "s"} withdrawn.`
-								: "Stopped.",
-						};
+						if (!working && !queued && !compacting) return { text: "Nothing is running." };
+						const replies: string[] = [];
+						if (working || queued) {
+							// The web's Stop: queued inputs withdrawn first, then the run aborted.
+							const withdrawn = (await chat.stop(ctx)).restored.length;
+							replies.push(
+								withdrawn
+									? `Stopped; ${withdrawn} queued message${withdrawn === 1 ? "" : "s"} withdrawn.`
+									: "Stopped.",
+							);
+						}
+						// A compaction is a task of its own, which Stop leaves running: aborted as the web's Escape does.
+						let aborted = 0;
+						for (const { taskId } of live?.compactions ?? [])
+							if ((await durable.abortTask(taskId, context)) === "marked") {
+								await durable.waitForTask(taskId, context);
+								aborted++;
+							}
+						if (aborted) replies.push("Stopped compaction.");
+						return { text: replies.join(" ") || "Nothing is running." };
 					}
 					if (command === "compact") {
 						await chat.compact({}, ctx);
@@ -152,6 +166,14 @@ export default defineFacet((host) => {
 					}
 					const model = chat.model.value;
 					const tokens = chat.stats.value?.contextTokens;
+					// The cost sheet's data: each response of the active range with its cost.
+					const costs = await chat.costs(ctx);
+					const total = costs.reduce((sum, entry) => sum + entry.cost, 0);
+					const since = await lastInputTime(durable, target as ConversationId, context);
+					const lastTurn =
+						since === undefined
+							? undefined
+							: costs.filter((entry) => entry.timestamp >= since).reduce((sum, entry) => sum + entry.cost, 0);
 					const usage =
 						tokens === undefined
 							? "unknown"
@@ -162,8 +184,10 @@ export default defineFacet((host) => {
 						text: [
 							`Model: ${model ? `${model.name} (${model.provider}/${model.modelId})` : "none"}`,
 							`Working: ${working ? "yes" : "no"}`,
+							...(compacting ? ["Compacting: yes"] : []),
 							`Queued: ${queued}`,
 							`Context: ${usage}`,
+							`Cost: ${dollars(total)} so far${lastTurn === undefined ? "" : `, last turn ${dollars(lastTurn)}`}`,
 						].join("\n"),
 					};
 				},
@@ -250,6 +274,23 @@ async function offered(
 		after = page.next;
 	} while (after !== undefined);
 	return found;
+}
+
+/** When the newest input of `conversation` was sent (its user message's time): where its last turn began. */
+async function lastInputTime(
+	durable: Harness,
+	conversation: ConversationId,
+	context: Context,
+): Promise<number | undefined> {
+	const handle = await durable.conversation(conversation, context);
+	// Newest first; a turn's tail fits one page.
+	const page = await handle?.entries({}, 200, undefined, context);
+	return page?.items.find((entry) => entry.model?.[0]?.role === "user")?.model?.[0]?.timestamp;
+}
+
+/** A cost in dollars, as the cost sheet writes it. */
+function dollars(value: number): string {
+	return `$${value.toFixed(value >= 0.01 || value === 0 ? 4 : 6)}`;
 }
 
 async function entryOf(
