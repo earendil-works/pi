@@ -31,6 +31,7 @@ This repository is the NLT-owned runtime and SDK foundation for the NeuroLift Te
 - Do not claim tests, builds, scans, or deployments ran unless they actually ran.
 - Keep diffs scoped. Do not remove functionality without approval.
 - No secrets, credentials, tokens, or private data in source control.
+- Sign every comment made using the account owner's account with `templates/agent-comment.md` so coding-agent authorship is explicit. Applies to any coding agent (Cline, Kilo, OpenCode, Codex, Claude Code, or similar).
 
 ## Repository commands
 Use the actual scripts declared by the root package.json. Do not invent or substitute commands. Before code changes, inspect relevant package scripts and test conventions.

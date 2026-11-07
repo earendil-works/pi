@@ -32,6 +32,7 @@
       "local_manifest": "nltotoi.json",
       "review_standard": "REVIEW.md",
       "validator": ".nltotoi/scripts/validate-governance.sh",
+      "agent_comment_template": "templates/agent-comment.md",
       "governance_layers": [
         "development",
         "asfdk_foundation",

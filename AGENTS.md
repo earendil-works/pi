@@ -134,6 +134,10 @@ Keep each PR focused on one independently reviewable concern. Repository contrib
 - Update `docs/active-threads.md` as work changes.
 - Write significant-session handoffs under `docs/agent-log/handoffs/`.
 
+## Agent comment attribution
+
+Any comment a coding agent makes using the account owner's account (PR comments, issue comments, inline code comments, etc.) must carry an agent comment signature from `templates/agent-comment.md`. This applies to any coding agent — Cline, Kilo, OpenCode, Codex, Claude Code, or similar — acting on the account owner's behalf. It makes agent authorship explicit and preserves the principle that capability does not equal authority — agent output is proposed intent, not authorization.
+
 ## Decision and escalation rules
 
 For non-sensitive blockers, use the repository's Agent Escalation issue template and pause the affected work pending a maintainer decision. For vulnerabilities or sensitive incident details, use the private reporting route in `SECURITY.md`; never disclose them in a public issue. Escalate to Joshua W. Dorsey, Sr. when scope is unclear, architecture or authority boundaries change, external services/providers are selected, security/privacy controls are affected, deployment is proposed, or an action is irreversible. Stop at the decision boundary; do not guess.

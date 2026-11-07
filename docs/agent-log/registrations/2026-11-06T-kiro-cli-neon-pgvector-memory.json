@@ -1,0 +1,23 @@
+{
+  "agent_registration": {
+    "agent_name": "Kiro CLI",
+    "platform": "kiro-cli chat (local, Windows)",
+    "session_id": "kiro-cli-chat-2026-11-06-neon-pgvector-memory",
+    "entry_date": "2026-11-06",
+    "entry_point": "Owner approved the Neon + pgvector memory spec (NLTPI-MEM-003) and directed implementation (2026-11-06).",
+    "acknowledged_otoi": true,
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.1",
+    "working_repo": "NeuroLift-Technologies/nlt-pi",
+    "working_branch": "feat/mvp-neon-pgvector-memory",
+    "capabilities_self_reported": [
+      "Read and edit repository files locally",
+      "Run shell commands via PowerShell",
+      "TypeScript implementation and vitest/node:test authoring (offline)"
+    ],
+    "known_limitations": [
+      "No live Vercel, Neon, or sandbox access in this session; real pgvector search, embed script execution, and end-to-end memory flow remain unverified until a live turn with the owner.",
+      "Cannot run the full root npm run check or pre-commit hook in this environment; owner or CI must verify before merge."
+    ],
+    "preferred_handoff_format": "JSON"
+  }
+}

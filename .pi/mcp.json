@@ -1,17 +1,1 @@
-{
-  "mcpServers": {
-    "vercel": {
-      "command": "npx",
-      "args": ["vercel-mcp"],
-      "env": {
-        "VERCEL_API_KEY": "${VERCEL_API_KEY}"
-      },
-      "description": "Connects to the Vercel API for deployments, DNS, domains, and project management."
-    },
-    "rivet": {
-      "command": "npx",
-      "args": ["-y", "@rivetjs/mcp"],
-      "description": "Rivet MCP server for offline docs search, components, and compiler diagnostics."
-    }
-  }
-}
+{"mcpServers":{"vercel":{"command":"npx","args":["vercel-mcp"],"env":{"VERCEL_API_KEY":"${VERCEL_API_KEY}"},"description":"Connects to the Vercel API for deployments, DNS, domains, and project management."},"rivet":{"command":"npx","args":["-y","@rivetjs/mcp"],"description":"Rivet MCP server for offline docs search, components, and compiler diagnostics."},"neon":{"command":"npx","args":["-y","@neondatabase/mcp-server-neon"],"env":{"NEON_API_KEY":"${NEON_API_KEY}"},"description":"Neon Postgres MCP server for database management."}}}

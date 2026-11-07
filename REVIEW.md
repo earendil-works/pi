@@ -13,6 +13,8 @@
 - **Local contract:** NLT-PI-DEV-OTOI-1.0.1
 - **Organizational baseline:** ORG-DEV-OTOI-1.0.4
 
+> Coding agents making review comments must sign them with the agent comment signature from `templates/agent-comment.md`. Applies to any coding agent (Cline, Kilo, OpenCode, Codex, Claude Code, or similar).
+
 ## Pre-review checklist
 - [ ] Read the public governance baseline and NLT-Pi local OTOI.
 - [ ] Read relevant architecture and package documentation.

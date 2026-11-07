@@ -44,7 +44,7 @@ import {
   type AgentSandboxOptions,
   type SandboxClient,
 } from "../sandbox/lifecycle.ts";
-import { createSandboxToolOperations, type SandboxOperationsOptions } from "../sandbox/operations.ts";
+import { createSandboxToolOperations, type SandboxOperationsOptions, type SandboxLike } from "../sandbox/operations.ts";
 import type { Memory } from "../memory/store.ts";
 import type { AccessStore } from "../access/store.ts";
 import type { AccessRequestRecord } from "../access/tool.ts";
@@ -79,9 +79,18 @@ export interface AgentRunnerDeps {
   /**
    * Recalls approved memories for the turn. Called after the gate passes and before the model runs.
    * Returns memories safe to inject (each already passed the recall checks). Returns [] when memory
-   * is off or unavailable. Never writes to Mem0.
+   * is off or unavailable. Never writes to the memory store.
+   *
+   * Use `recall` for stores that don't need the sandbox (e.g. tests with a fake store).
+   * Use `recallFactory` when the store needs the locked sandbox handle for embedding (Neon+pgvector).
+   * If both are provided, `recallFactory` takes precedence.
    */
   recall?: (prompt: string) => Promise<Memory[]>;
+  /**
+   * Like `recall`, but receives the locked SandboxLike handle so the store can embed the query
+   * in-process. Called after the sandbox lock is acquired. Returns [] on any failure.
+   */
+  recallFactory?: (sandbox: SandboxLike) => (prompt: string) => Promise<Memory[]>;
   /**
    * TOI/OTOI standing-terms policy for this turn. Provides whether learned
    * memory is allowed (from TOI `privacy.retention`) and host-written
@@ -281,14 +290,15 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
   if (input.signal?.aborted) return { status: "aborted", reason: "The turn was cancelled by the caller" };
 
   // 1b. Memory recall — runs after the gate, so a blocked prompt is never sent as a search query.
-  // Recalled memories are untrusted background, never instructions, and never reach Mem0 from the turn.
+  // Recalled memories are untrusted background, never instructions, and never reach the store from the turn.
   // Learned memory is gated by TOI `privacy.retention`: when the TOI says off, recall is skipped.
+  // recallFactory (Neon+pgvector) is wired inside the sandbox callback below; deps.recall is the
+  // simpler path for stores that don't need the sandbox handle (tests, future alternatives).
   let recalled: Memory[] = [];
-  if (deps.recall && deps.memoryPolicy?.allowed !== false) {
+  if (deps.recall && !deps.recallFactory && deps.memoryPolicy?.allowed !== false) {
     try {
       recalled = await deps.recall(input.prompt);
     } catch {
-      // Mem0 or the checks are unavailable: the turn runs without recall.
       recalled = [];
     }
   }
@@ -345,6 +355,16 @@ export async function runAgentTurn(deps: AgentRunnerDeps, input: AgentTurnInput)
           await sandbox.fs.mkdir(root, { recursive: true });
         }
         const ops = createSandboxToolOperations(sandbox, { ...deps.operations, root });
+
+        // 1b (sandbox path). recallFactory gets the locked sandbox handle for in-process embedding.
+        // Runs after the crisis gate (already passed above) and before the model. Fails open (empty).
+        if (deps.recallFactory && deps.memoryPolicy?.allowed !== false) {
+          try {
+            recalled = await deps.recallFactory(sandbox)(input.prompt);
+          } catch {
+            recalled = [];
+          }
+        }
 
         // The credential is read now, inside the request, and goes only to the model runtime.
         const token = await raceSetup(withinDeadline(deps.gatewayToken(), input.deadlineAt), input.signal, turnSignal);

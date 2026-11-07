@@ -75,6 +75,7 @@ Complete this block when an AI agent materially contributes to the PR. Use actua
 - **Verification performed by the agent:** [Commands/tests actually run; distinguish from CI.]
 - **Known limitations / unverified items:**
 - **Agent attestation:** I have accurately represented my contribution, capabilities, and verification. This attestation records provenance; it does not constitute authorization or human approval.
+- **Agent comment signature:** Any comments made on this PR or related issues by a coding agent must carry the agent comment signature from `templates/agent-comment.md`. Applies to any coding agent (Cline, Kilo, OpenCode, Codex, Claude Code, or similar).
 
 ## Human decisions required
 [List any decisions still pending. If none, say none.]

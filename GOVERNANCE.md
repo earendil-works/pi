@@ -10,6 +10,7 @@ The public templates are minimum requirements, not a complete implementation and
 - **Capability does not equal authority.** Every capability is scoped by explicit permission and applicable enforcement.
 - **Escalate, do not guess.** Unclear scope, authority, security, or architecture decisions are returned to the human decision-maker.
 - **Transparency and provenance.** Agent contributions, decisions, tests, limitations, and handoffs must be accurately recorded.
+- **Agent comment attribution.** Any comment a coding agent makes using the account owner's account must carry an explicit agent signature (`templates/agent-comment.md`) so coding-agent authorship is distinguishable from human authorship. Applies to any coding agent (Cline, Kilo, OpenCode, Codex, Claude Code, or similar).
 - **Least privilege and safe failure.** Unknown or unresolved authorization must not be treated as permission.
 
 ## Public baseline

@@ -1,0 +1,69 @@
+{
+  "handoff_record": {
+    "session_id": "kiro-cli-chat-2026-11-06-neon-pgvector-memory",
+    "agent_name": "Kiro CLI",
+    "date": "2026-11-06",
+    "otoi_version": "NLT-PI-DEV-OTOI-1.0.1",
+    "repo": "NeuroLift-Technologies/nlt-pi",
+    "branch": "feat/mvp-neon-pgvector-memory",
+    "work_completed": [
+      "Wrote and owner-approved spec: docs/superpowers/specs/2026-11-06-neon-pgvector-memory-design.md",
+      "Wrote intent record: docs/agent-log/intent/2026-11-06-neon-pgvector-memory.md",
+      "Wrote agent registration: docs/agent-log/registrations/2026-11-06T-kiro-cli-neon-pgvector-memory.json",
+      "src/memory/sandbox-embed.ts — EmbedRunner over SandboxLike. Writes text via fs API (no shell injection), runs embed.py via bash redirect, validates 384-dim finite float output, returns null on any failure.",
+      "src/memory/neon-store.ts — MemoryStore backed by Neon. Schema (memories table, vector/pg_trgm extensions, hnsw+gin indexes) created on first use. pgvector cosine search when embed succeeds, pg_trgm fallback otherwise. All statements parameterised and owner-scoped.",
+      "src/memory/embed-route.ts — handleEmbedRequest: owner-only POST /api/embed. Acquires sandbox lock with 1ms stale age (0-wait semantics), runs embed, UPDATEs embedding column. 503 { busy } if lock held.",
+      "api/embed.ts — Vercel handler wiring embed-route to real sandbox and Neon.",
+      "api/memories.ts — replaced createMem0Store with createNeonMemoryStore. Removed all Mem0 imports. Background embed trigger fires fire-and-forget to /api/embed after save. TOI upload route updated to use Neon store.",
+      "api/agent.ts — replaced Mem0 recall lambda with recallFactory (receives locked sandbox handle). makeRecallFactory wires createNeonMemoryStore + createEmbedRunner for in-turn semantic recall.",
+      "src/agent/runner.ts — added recallFactory dep (receives SandboxLike, returns recall fn). recallFactory called inside withAgentSandbox callback after ops setup. recall (non-sandbox path) skipped when recallFactory present. Deduped SandboxLike import.",
+      "src/memory/store.ts — removed createMem0Store (Mem0 adapter). fakeMemoryStore and MemoryStore interface unchanged.",
+      "mvp/vercel.json — added api/embed.ts maxDuration: 30.",
+      "test/sandbox-embed.test.ts — 9 tests: valid vector, text via fs not shell args, non-zero exit, malformed JSON, wrong dim, non-finite, sandbox throws, empty text, fs write error.",
+      "test/neon-memory-store.test.ts — 10 tests: schema once, list/get/remove owner scoping, save+triggerEmbed, vector search, trigram fallback, dedup+cap, parameterisation invariant.",
+      "test/embed-route.test.ts — 8 tests: 404/401/405, bad id, skipped, busy, embedFailed, success+owner-scoped UPDATE, log safety.",
+      "docs/active-threads.md — updated NLTPI-MEM-003 status to implementation in progress; updated NLTPI-MEM-001 to superseded."
+    ],
+    "work_in_progress": [],
+    "blockers": [
+      "node_modules not installed in this environment — typecheck (tsc --noEmit) and vitest could not be run. Owner or CI must verify before merge.",
+      "Real sandbox, pgvector search, and embed.py execution not verified offline (unchanged from all prior sessions)."
+    ],
+    "decisions_made": [
+      "Owner (2026-11-06): Neon + pgvector replaces Mem0.",
+      "Owner (2026-11-06): BAAI/bge-small-en-v1.5 ONNX int8, pre-installed manually into sandbox.",
+      "Owner (2026-11-06): sandbox option B — model pre-installed once, never auto-downloaded.",
+      "Owner (2026-11-06): Mem0 env vars kept in Vercel (inert), removed from code."
+    ],
+    "decisions_pending": [
+      "Owner: run npm ci + tsc --noEmit + vitest --run from a clean worktree before merge.",
+      "Owner: one-time model install into sandbox (see spec §9) before setting NLT_MEMORY_ENABLED=1.",
+      "Owner: run CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm; in the Neon project once.",
+      "Owner: live check after enabling — save a memory, send a related prompt, confirm recall in agent context.",
+      "Owner: decide what to do with src/memory/client.ts (Mem0 HTTP client) — it is no longer imported anywhere; safe to delete."
+    ],
+    "files_modified": [
+      "docs/superpowers/specs/2026-11-06-neon-pgvector-memory-design.md",
+      "docs/agent-log/intent/2026-11-06-neon-pgvector-memory.md",
+      "docs/agent-log/registrations/2026-11-06T-kiro-cli-neon-pgvector-memory.json",
+      "docs/agent-log/handoffs/2026-11-06-neon-pgvector-memory.json",
+      "docs/active-threads.md",
+      "mvp/src/memory/sandbox-embed.ts",
+      "mvp/src/memory/neon-store.ts",
+      "mvp/src/memory/embed-route.ts",
+      "mvp/src/memory/store.ts",
+      "mvp/src/agent/runner.ts",
+      "mvp/api/embed.ts",
+      "mvp/api/memories.ts",
+      "mvp/api/agent.ts",
+      "mvp/vercel.json",
+      "mvp/test/sandbox-embed.test.ts",
+      "mvp/test/neon-memory-store.test.ts",
+      "mvp/test/embed-route.test.ts"
+    ],
+    "tests_run": "Could not run — node_modules not installed in this environment.",
+    "tests_passing": null,
+    "pr_url": null,
+    "next_action": "Owner runs: npm ci && cd mvp && npx tsc --noEmit -p tsconfig.typecheck.json && npx vitest --run. Fix any type errors, then open PR. Then: one-time sandbox model install + Neon extension setup + set NLT_MEMORY_ENABLED=1 for a live check."
+  }
+}

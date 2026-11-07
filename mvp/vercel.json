@@ -4,6 +4,9 @@
   "functions": {
     "api/agent.ts": {
       "maxDuration": 300
+    },
+    "api/embed.ts": {
+      "maxDuration": 30
     }
   }
 }

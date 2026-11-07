@@ -4,6 +4,15 @@
 
 ## Active
 
+### NLTPI-MEM-003 — Neon + pgvector memory layer
+**Status:** approved by owner (2026-11-06, Kiro CLI session); implementation in progress  
+**Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
+**Summary:** Replaces Mem0 (blocked on free-plan training-data concern) with a self-hosted memory store: short approved facts in Neon Postgres, semantic recall via pgvector cosine similarity, embeddings from `BAAI/bge-small-en-v1.5` ONNX int8 (384-dim, MIT, ~33 MB) running inside the persistent Vercel Sandbox. No new provider, no new API key, no new env vars. The model is pre-installed manually by the owner into `/vercel/sandbox/models/bge-small/` once and reused. Two embedding paths: background embed at save time (fires `/api/embed` without awaiting; skipped if sandbox is busy), in-turn embed at recall time (sandbox already locked). pg_trgm fallback for rows without embeddings. `MemoryStore` interface unchanged; all existing tests pass without modification.  
+**Spec:** `docs/superpowers/specs/2026-11-06-neon-pgvector-memory-design.md`  
+**Next (owner):** approve spec or request changes. Then intent record + implementation.
+
+
+
 ### NLTPI-GOV-003 — Kilo Code agent configuration (`.kilo/`)
 **Status:** in review (PR open); unverified against a real Kilo client  
 **Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
@@ -118,14 +127,14 @@
 **Planned next phase:** Mem0 as the agent's memory layer, with its own design. `@mem0/pi-agent-plugin` 0.3.2 has been reviewed: it fits Pi, but its auto-capture, model-callable delete and machine-based scoping need locking down before use in the hosted runner (`noExtensions: true` today).
 
 ### NLTPI-MVP-007 — Sandbox access requests (owner approves new sites)
-**Status:** design only (nlt-pi#39, `ccr-50842984-network-access`); revised once after the owner's review; awaiting the owner's re-review. No code.  
+**Status:** implemented and merged (nlt-pi#41); off by default (`NLT_ACCESS_REQUESTS` unset). Owner approved the spec on 2026-11-06 (confirmed in Kiro CLI session, same day).  
 **Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
 **Summary:** The sandbox can reach only npm, PyPI and GitHub (`EGRESS_PRESETS`). The owner wants the agent to ask before reaching any other site. Spec: `docs/superpowers/specs/2026-11-06-sandbox-access-requests-design.md`. The agent gets a tool `request_network_access(host, reason)`, which records a request and ends the turn. The chat page shows a card (Allow for this turn, Always allow, Deny). A "this turn" approval is bound to one conversation, one task and a one-time nonce, and is consumed in one atomic statement. An "always allow" host is stored per owner in Neon and can be removed. Off unless `NLT_ACCESS_REQUESTS=1`; `NLT_AGENT_EGRESS_ALL=1` is unchanged.  
 **Registration:** `docs/agent-log/registrations/2026-11-06T040112Z-claude-code-01UNjnjkGsveT9DW8pC9UXhf.json`  
 **Intent record:** `docs/agent-log/intent/2026-11-06-sandbox-access-requests.md`  
 **Handoff:** `docs/agent-log/handoffs/2026-11-06-sandbox-access-requests-design.json`  
 **Not verified:** that the real sandbox accepts a host added to its network policy mid-session; this needs one live turn after the feature is built and enabled.  
-**Next (owner):** approve the revised spec or ask for changes. Then an implementation plan and its execution method.
+**Next (owner):** set `NLT_ACCESS_REQUESTS=1` in the Vercel production environment and redeploy. Then run the live check: ask the agent to fetch from a site outside the presets and confirm the card appears, the approval flow works, and the sandbox reaches the site.
 
 ### NLTPI-MVP-008 — Multi-agent orchestration: System 2 plus System 1 reflexes
 **Status:** design only (branch `docs/multi-agent-system1-system2-design`); the owner approved the written spec on 2026-11-06; a same-day review changed sections 3, 3a, 4 and 8 and the owner should re-confirm 3a. An implementation plan exists locally but is not committed (`.gitignore` excludes `plans/`). No code.  
@@ -194,7 +203,7 @@
 
 
 ### NLTPI-MEM-001 — Mem0 memory layer (phase 1)
-**Status:** built; merged into `feat/mvp-mem0-memory-layer` branch with phase 2. **`NLT_MEMORY_ENABLED` kept disabled (owner decision, 2026-11-06)** pending probe results.  
+**Status:** superseded by NLTPI-MEM-003 (Neon + pgvector). Code remains on `feat/mvp-mem0-memory-layer` branch. `NLT_MEMORY_ENABLED` stays disabled. The branch will be rebased against the new implementation once MEM-003 is approved and built.  
 **Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
 **Summary:** Implements owner-approved learned memories in Mem0, recalled by the agent behind ASFDK checks. Routes: `GET/POST/DELETE /api/memories`, off unless `NLT_MEMORY_ENABLED=1`, 401 without owner session, `Cache-Control: no-store`. Every write passes `validateInputLength`, `sanitizeInput`, `detectInjectionPatterns` from `@neurolift-technologies/asfdk` (fail closed). Recall runs after the crisis gate: search Mem0, filter hits through the same checks, inject as delimited untrusted background. No Mem0 client or credentials reach the model; no code reachable from `runAgentTurn` can write to Mem0. Page: "Remember this" button on user messages, Memories panel (list/delete), data notice.  
 **Branch:** `feat/mvp-mem0-memory-layer`  

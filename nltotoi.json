@@ -66,6 +66,7 @@
     ".github/ISSUE_TEMPLATE/governance-proposal.md",
     "PULL_REQUEST_TEMPLATE.md",
     "scripts/governance-validator.test.mjs",
+    "templates/agent-comment.md",
     ".github/workflows/validate-nlt-governance.yml"
   ],
   "metadata": {
