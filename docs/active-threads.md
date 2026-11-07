@@ -127,6 +127,14 @@
 **Not verified:** that the real sandbox accepts a host added to its network policy mid-session; this needs one live turn after the feature is built and enabled.  
 **Next (owner):** approve the revised spec or ask for changes. Then an implementation plan and its execution method.
 
+### NLTPI-MVP-008 — Multi-agent orchestration: System 2 plus System 1 reflexes
+**Status:** design only (branch `docs/multi-agent-system1-system2-design`); the owner approved the written spec on 2026-11-06; a same-day review changed sections 3, 3a, 4 and 8 and the owner should re-confirm 3a. An implementation plan exists locally but is not committed (`.gitignore` excludes `plans/`). No code.  
+**Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
+**Summary:** The owner wants to talk to one model (System 2) that delegates to fast specialists (System 1) whose output is machine-readable, not text. Spec: `docs/superpowers/specs/2026-11-06-multi-agent-system1-system2-design.md`. A `delegate(reflex, input)` tool calls an owner-allow-listed reflex of kind classifier, retriever, analyser or generator; the server validates its output against a schema and returns an untrusted-data block with confidence and an escalation flag. Reflexes never write: `generator` roles return proposals that System 2 applies with `apply_proposal`, through the same policy-reviewed operations. Caps: 3 delegations per turn, 60 seconds each. Off unless `NLT_SUBAGENTS=1`. Version one uses `scout` (read-only sandbox operations, no model), `coder` (the one working hosted free model) and `reviewer` (deterministic checks first, then that model); encoder, local-model, smolagents and WebLLM reflexes are later phases with their own approvals.  
+**Intent record:** `docs/agent-log/intent/2026-11-06-multi-agent-system1-system2.md`  
+**Not verified:** that the Pi SDK, with extensions disabled, supports the custom tools as the spec assumes; System 2 quality on the one usable hosted free model; encoder size against the function limit; WebGPU on the owner's phone.  
+**Next (owner):** confirm the open items in section 12 of the spec (revised 3a; reflex names, caps and agent ids; where the plan lives), then review the plan and choose its execution method.
+
 ### NLTPI-MVP-003 — Provider-agnostic model routing for the governed turn
 **Status:** gateway chosen (Vercel AI Gateway) and wired (nlt-pi#21, #26, #27); not yet run against the real gateway  
 **Owner:** Joshua W. Dorsey, Sr. / delegated coding agents  
