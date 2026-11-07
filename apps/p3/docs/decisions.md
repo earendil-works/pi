@@ -49,3 +49,8 @@ and its working rules are in `handoff.md`.
   addressable thing, the main area renders the view registered for that kind, group kinds and views are registries (web
   and terminal). Access policies are out of scope for now but must fit later (session resources). Sketch: session
   cbe4592b's artifact `p2-sidebar-groups`.
+  Addendum (owner, 2026-11-07, relayed by cbe4592b): go radical. The layout itself is plugin-defined (sidebar +
+  transcript + panel is one layout among others, shipped as the default "so as not to rattle cages"); the data model of
+  addressable things, groupings and views is the point and must allow free composition, also where the terminal cannot
+  show all of it; access control (which resources a project or session may use, who may see or do what) must attach to
+  the same model later, not be designed separately.
