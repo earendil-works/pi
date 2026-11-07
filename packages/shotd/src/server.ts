@@ -1,15 +1,12 @@
 #!/usr/bin/env node
 // shotd MCP server (stdio JSON-RPC). Tools: shot, zoom, dom_metrics, baseline_save, baseline_diff, close_context.
 import { readFileSync, writeFileSync } from "node:fs";
-import { chdir, cwd } from "node:process";
+import { join } from "node:path";
 import { BrowserManager, type CaptureOptions } from "./browser.ts";
-import { encodeArchive, isValidWebP, resizeForModel } from "./image.ts";
+import { cropForZoom, diffImages, encodeArchive, isValidWebP, resizeForModel } from "./image.ts";
 import { ShotStore } from "./store.ts";
 
 const root = process.env.SHOTD_DIR ?? join(process.cwd(), ".shotd");
-function join(...parts: string[]): string {
-	return parts.join("/").replace(/\/+/g, "/");
-}
 
 const store = new ShotStore(root);
 const browser = new BrowserManager();
@@ -93,6 +90,11 @@ const TOOLS = [
 			required: ["name", "shotId"],
 		},
 	},
+	{
+		name: "close_context",
+		description: "Release the agent's browser context.",
+		inputSchema: { type: "object", properties: { agentId: { type: "string" } }, required: ["agentId"] },
+	},
 ];
 
 async function handleTool(name: string, args: Record<string, unknown>): Promise<unknown> {
@@ -129,7 +131,67 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
 			maxLongEdge,
 		};
 	}
-	throw new Error(`shotd: tool ${name} not implemented in this build (shot only)`);
+	if (name === "zoom") {
+		const shotId = String(args.shotId ?? "");
+		const region = args.region as { x: number; y: number; width: number; height: number };
+		if (!shotId || !region) throw new Error("shotd zoom requires shotId and region");
+		const maxLongEdge = typeof args.maxLongEdge === "number" ? args.maxLongEdge : 1568;
+		// Locate stored shot by id (scan shots dir).
+		const { readdirSync, existsSync: exists } = await import("node:fs");
+		const { join: pjoin } = await import("node:path");
+		const dir = pjoin(store.root, "shots");
+		const candidates = readdirSync(dir).filter((f) => f.startsWith(shotId.slice(0, 8)));
+		if (candidates.length === 0) throw new Error(`shotd zoom: shot ${shotId} not found`);
+		const file = pjoin(dir, candidates[0]!);
+		const buf = readFileSync(file);
+		const zoomed = await cropForZoom(buf, region, { maxLongEdge });
+		const zoomRecord = store.save(zoomed, { width: region.width, height: region.height, format: "webp" });
+		return { zoomId: zoomRecord.id, path: zoomRecord.path, bytes: zoomRecord.bytes, region, maxLongEdge };
+	}
+	if (name === "dom_metrics") {
+		const url = String(args.url ?? "about:blank");
+		const selectors = (args.selectors as string[] | undefined) ?? [];
+		return { metrics: await browser.domMetrics(url, selectors) };
+	}
+	if (name === "baseline_save") {
+		const bname = String(args.name ?? "default");
+		const shotId = String(args.shotId ?? "");
+		const { readdirSync } = await import("node:fs");
+		const { join: pjoin } = await import("node:path");
+		const dir = pjoin(store.root, "shots");
+		const candidates = readdirSync(dir).filter((f) => f.startsWith(shotId.slice(0, 8)));
+		if (candidates.length === 0) throw new Error(`baseline_save: shot ${shotId} not found`);
+		const buf = readFileSync(pjoin(dir, candidates[0]!));
+		const path = store.saveBaseline(bname, buf);
+		return { name: bname, path };
+	}
+	if (name === "baseline_diff") {
+		const bname = String(args.name ?? "default");
+		const shotId = String(args.shotId ?? "");
+		const threshold = typeof args.threshold === "number" ? args.threshold : 0.001;
+		const baseline = store.readBaseline(bname);
+		if (!baseline) throw new Error(`baseline_diff: no baseline ${bname}`);
+		const { readdirSync } = await import("node:fs");
+		const { join: pjoin } = await import("node:path");
+		const dir = pjoin(store.root, "shots");
+		const candidates = readdirSync(dir).filter((f) => f.startsWith(shotId.slice(0, 8)));
+		if (candidates.length === 0) throw new Error(`baseline_diff: shot ${shotId} not found`);
+		const current = readFileSync(pjoin(dir, candidates[0]!));
+		const diffPath = pjoin(store.root, "shots", `${shotId.slice(0, 8)}-diff.png`);
+		const result = await diffImages(baseline, current, { threshold, diffPath });
+		return {
+			passed: result.passed,
+			percentChanged: result.percentChanged,
+			changedPixels: result.changedPixels,
+			diffPath: result.diffPath ?? diffPath,
+			threshold,
+		};
+	}
+	if (name === "close_context") {
+		await browser.closeContext(String(args.agentId ?? "default"));
+		return { ok: true };
+	}
+	throw new Error(`shotd: unknown tool ${name}`);
 }
 
 async function main(): Promise<void> {

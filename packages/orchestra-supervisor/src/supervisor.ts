@@ -75,10 +75,23 @@ export class Supervisor {
 			res.writeHead(status, { "content-type": "application/json" });
 			res.end(JSON.stringify(obj));
 		};
+		const checkAuth = (agentId: string | undefined): boolean => {
+			const authHeader = req.headers["authorization"] ?? req.headers["x-orchestra-token"];
+			const bearer =
+				typeof authHeader === "string"
+					? authHeader.startsWith("Bearer ")
+						? authHeader.slice(7)
+						: authHeader
+					: null;
+			if (!bearer) return false;
+			if (!agentId) return false;
+			return this.store.verifyToken(agentId, bearer);
+		};
 		try {
 			if (method === "GET" && url === "/health") return json(200, { ok: true, ts: Date.now() });
 			if (method === "POST" && url === "/can-edit") {
 				const b = readJson(req, body) as { agentId: string; filePath: string };
+				if (!checkAuth(b.agentId)) return json(401, { error: "unauthorized" });
 				// Reads are always allowed.
 				const isWrite = !b.filePath.startsWith("read:");
 				const path = isWrite ? b.filePath : b.filePath.slice(5);
@@ -102,6 +115,7 @@ export class Supervisor {
 					body: string;
 				};
 				if (!b.fromAgentId) return json(400, { error: "fromAgentId required" });
+				if (!checkAuth(b.fromAgentId)) return json(401, { error: "unauthorized" });
 				const message = this.store.sendMessage({
 					fromAgentId: b.fromAgentId,
 					toAgentId: b.toAgentId,
@@ -116,12 +130,14 @@ export class Supervisor {
 			}
 			if (method === "POST" && url === "/inbox") {
 				const b = readJson(req, body) as { agentId: string };
+				if (!checkAuth(b.agentId)) return json(401, { error: "unauthorized" });
 				const items = this.store.inbox(b.agentId);
 				for (const it of items) this.store.markDelivered(it.message.id, b.agentId);
 				return json(200, { items });
 			}
 			if (method === "POST" && url === "/ack") {
 				const b = readJson(req, body) as { messageId: string; agentId: string };
+				if (!checkAuth(b.agentId)) return json(401, { error: "unauthorized" });
 				this.store.ack(b.messageId, b.agentId);
 				return json(200, { ok: true });
 			}
@@ -134,6 +150,8 @@ export class Supervisor {
 					ownsGlobs?: string[];
 					model?: string;
 				};
+				// Parent spawning needs parent auth; root spawn (human/CLI) has no parent and is allowed.
+				if (b.parentAgentId && !checkAuth(b.parentAgentId)) return json(401, { error: "unauthorized" });
 				const created = this.spawnAgent({
 					name: b.name,
 					role: b.role,
@@ -143,7 +161,7 @@ export class Supervisor {
 					parentAgentId: b.parentAgentId,
 				});
 				if ("error" in created) return json(400, { error: created.error });
-				return json(200, { agentId: created.agent.id, name: created.agent.name });
+				return json(200, { agentId: created.agent.id, name: created.agent.name, token: created.agent.token });
 			}
 			return json(404, { error: `no route ${method} ${url}` });
 		} catch (e) {

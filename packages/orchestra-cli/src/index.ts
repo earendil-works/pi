@@ -30,6 +30,30 @@ export function renderStatus(store: Store, opts: { runId?: string; elapsedMs?: n
 	return lines.join("\n");
 }
 
+export function renderReport(store: Store): string {
+	const runs = store.db.prepare(`SELECT * FROM runs ORDER BY created_at DESC LIMIT 5`).all() as Record<
+		string,
+		unknown
+	>[];
+	const lines: string[] = ["ORCHESTRA REPORT"];
+	if (runs.length === 0) lines.push("  (no runs yet)");
+	for (const r of runs) {
+		const reprompts = store.db.prepare(`SELECT COUNT(*) AS n FROM reprompts`).get() as { n: number } | undefined;
+		lines.push(
+			`  run ${String(r.run_id)} goal=${String(r.goal).slice(0, 80)} finished=${r.finished_at == null ? "no" : "yes"} reprompts=${String(r.reprompt_rounds ?? 0)}`,
+		);
+		lines.push(`    gap types: ${String(r.gap_types ?? "[]")}`);
+		lines.push(
+			`    spend: ${String(r.spend_per_agent ?? "{}")} thinking: ${String(r.thinking_per_agent ?? "{}")} timeToDone: ${r.time_to_done_ms ?? "—"}`,
+		);
+		void reprompts;
+	}
+	lines.push(
+		`  agents: ${store.listAgents().length} tasks: ${store.listTasks().length} escalations: ${store.listEscalations().filter((e) => e.state === "open").length} open`,
+	);
+	return lines.join("\n");
+}
+
 export function formatElapsed(ms: number): string {
 	const s = Math.floor(ms / 1000);
 	const hh = Math.floor(s / 3600);

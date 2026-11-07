@@ -128,4 +128,39 @@ CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
 CREATE INDEX IF NOT EXISTS idx_events_agent ON events(agent_id, ts);
 `,
 	},
+	{
+		version: 2,
+		sql: `
+ALTER TABLE agents ADD COLUMN token TEXT DEFAULT '';
+ALTER TABLE agents ADD COLUMN thinking_level TEXT DEFAULT 'medium';
+CREATE TABLE IF NOT EXISTS prompts (
+  id TEXT PRIMARY KEY,
+  agent_id TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  text TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS runs (
+  run_id TEXT PRIMARY KEY,
+  goal TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  finished_at INTEGER,
+  reprompt_rounds INTEGER NOT NULL DEFAULT 0,
+  gap_types TEXT NOT NULL DEFAULT '[]',
+  spend_per_agent TEXT NOT NULL DEFAULT '{}',
+  thinking_per_agent TEXT NOT NULL DEFAULT '{}',
+  time_to_done_ms INTEGER
+);
+CREATE TABLE IF NOT EXISTS reprompts (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  round INTEGER NOT NULL,
+  text TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_prompts_agent ON prompts(agent_id, version);
+`,
+	},
 ];

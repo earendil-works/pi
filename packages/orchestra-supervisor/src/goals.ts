@@ -35,6 +35,46 @@ export function runCmdCheck(check: CheckRecord, cwd: string): CheckOutcome {
 	return { checkId: check.id, passed, signature: failureSignature(check.id, output), output };
 }
 
+// Lazy shotd wiring: imports shotd only when a screenshot/dom check runs (off-by-default, zero cost when off).
+export async function makeScreenshotDiffRunner(shotdRoot: string): Promise<(c: CheckRecord) => Promise<CheckOutcome>> {
+	const { BrowserManager } = await import("@earendil-works/pi-shotd/browser");
+	const { ShotStore } = await import("@earendil-works/pi-shotd/store");
+	const { encodeArchive } = await import("@earendil-works/pi-shotd/image");
+	const { diffImages } = await import("@earendil-works/pi-shotd/image");
+	const store = new ShotStore(shotdRoot);
+	const browser = new BrowserManager();
+	return async (c) => {
+		const cfg = c.config as { baselineName?: string; url?: string; threshold?: number };
+		const baseline = store.readBaseline(String(cfg.baselineName ?? "default"));
+		if (!baseline) {
+			const output = `no baseline ${String(cfg.baselineName ?? "default")}`;
+			return { checkId: c.id, passed: false, signature: failureSignature(c.id, output), output };
+		}
+		const shot = await browser.capture({ url: String(cfg.url ?? "about:blank") });
+		const encoded = await encodeArchive(shot.png, {});
+		const result = await diffImages(baseline, encoded.buf, { threshold: cfg.threshold ?? 0.001 });
+		const output = `diff ${(result.percentChanged * 100).toFixed(4)}% changed (${result.changedPixels}/${result.totalPixels}) threshold ${(cfg.threshold ?? 0.001 * 100).toFixed(2)}%`;
+		return { checkId: c.id, passed: result.passed, signature: failureSignature(c.id, output), output };
+	};
+}
+
+export async function makeDomAssertRunner(): Promise<(c: CheckRecord) => Promise<CheckOutcome> & unknown> {
+	const { BrowserManager } = await import("@earendil-works/pi-shotd/browser");
+	const browser = new BrowserManager();
+	const handler = async (c: CheckRecord): Promise<CheckOutcome> => {
+		const cfg = c.config as { url?: string; selectors?: string[]; expectWidth?: number };
+		const metrics = await browser.domMetrics(String(cfg.url ?? "about:blank"), cfg.selectors ?? []);
+		const first = metrics[0];
+		const passed = !!(
+			first?.found &&
+			(cfg.expectWidth === undefined || Math.abs((first.rect?.width ?? 0) - cfg.expectWidth) < 1)
+		);
+		const output = JSON.stringify(metrics).slice(0, 2000);
+		return { checkId: c.id, passed, signature: failureSignature(c.id, output), output };
+	};
+	return handler as unknown as (c: CheckRecord) => Promise<CheckOutcome> & unknown;
+}
+
 export class GoalEngine {
 	readonly store: Store;
 	constructor(store: Store) {
@@ -42,6 +82,43 @@ export class GoalEngine {
 	}
 
 	/** Run all required checks for task in worktree cwd. Records check_runs. Returns outcomes. */
+	async runChecksAsync(
+		taskId: string,
+		cwd: string,
+		opts: {
+			screenshotDiff?: (c: CheckRecord) => Promise<CheckOutcome> | CheckOutcome;
+			domAssert?: (c: CheckRecord) => Promise<CheckOutcome> | CheckOutcome;
+		} = {},
+	): Promise<CheckOutcome[]> {
+		const task = this.store.getTask(taskId);
+		if (!task) return [];
+		const checks = this.store.listChecks(taskId).filter((c) => c.required);
+		const outcomes: CheckOutcome[] = [];
+		for (const check of checks) {
+			const attempt = task.attempts + 1;
+			let outcome: CheckOutcome;
+			if (check.kind === "cmd") outcome = runCmdCheck(check, cwd);
+			else if (check.kind === "screenshot_diff" && opts.screenshotDiff) outcome = await opts.screenshotDiff(check);
+			else if (check.kind === "dom_assert" && opts.domAssert) outcome = await opts.domAssert(check);
+			else
+				outcome = {
+					checkId: check.id,
+					passed: false,
+					signature: failureSignature(check.id, "no runner"),
+					output: "no runner for check kind",
+				};
+			this.store.addCheckRun({
+				checkId: check.id,
+				attempt,
+				passed: outcome.passed,
+				signature: outcome.signature,
+				outputPath: null,
+			});
+			outcomes.push(outcome);
+		}
+		return outcomes;
+	}
+
 	runChecks(
 		taskId: string,
 		cwd: string,

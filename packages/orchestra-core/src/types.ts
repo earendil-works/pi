@@ -33,6 +33,29 @@ export interface AgentRecord {
 	sessionFile: string | null;
 	lastEventAt: number | null;
 	createdAt: number;
+	thinkingLevel: string;
+	token: string;
+}
+
+export interface PromptRecord {
+	id: string;
+	agentId: string;
+	version: number;
+	text: string;
+	reason: string;
+	createdAt: number;
+}
+
+export interface RunRecord {
+	runId: string;
+	goal: string;
+	createdAt: number;
+	finishedAt: number | null;
+	repromptRounds: number;
+	gapTypes: string[];
+	spendPerAgent: Record<string, number>;
+	thinkingPerAgent: Record<string, string>;
+	timeToDoneMs: number | null;
 }
 
 export interface TaskRecord {

@@ -14,5 +14,5 @@
 	},
 	"engines": { "node": ">=22.19.0" },
 	"devDependencies": { "@types/node": "22.19.19", "vitest": "4.1.12" },
-	"dependencies": { "@earendil-works/pi-agent-core": "1.5.0", "@earendil-works/pi-orchestra-core": "1.5.0" }
+	"dependencies": { "@earendil-works/pi-agent-core": "1.5.0", "@earendil-works/pi-orchestra-core": "1.5.0", "@earendil-works/pi-shotd": "1.5.0" }
 }

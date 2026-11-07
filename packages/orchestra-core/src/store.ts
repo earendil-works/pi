@@ -1,4 +1,5 @@
 // Sole-writer SQLite store (node:sqlite). All reads/writes go through this.
+import { randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { MIGRATIONS } from "./schema.ts";
 import type {
@@ -37,6 +38,8 @@ function rowToAgent(r: Record<string, unknown>): AgentRecord {
 		sessionFile: r.session_file == null ? null : String(r.session_file),
 		lastEventAt: r.last_event_at == null ? null : Number(r.last_event_at),
 		createdAt: Number(r.created_at),
+		thinkingLevel: r.thinking_level == null ? "medium" : String(r.thinking_level),
+		token: r.token == null ? "" : String(r.token),
 	};
 }
 
@@ -93,13 +96,16 @@ export class Store {
 		branch?: string | null;
 		port?: number | null;
 		sessionFile?: string | null;
+		thinkingLevel?: string;
+		token?: string;
 	}): AgentRecord {
 		const now = Date.now();
 		const id = input.id ?? ulid(now);
+		const token = input.token ?? randomBytes(32).toString("hex");
 		this.db
 			.prepare(
-				`INSERT INTO agents(id,name,role,parent_id,depth,task_id,state,worktree_path,branch,port,model,session_file,created_at)
-         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+				`INSERT INTO agents(id,name,role,parent_id,depth,task_id,state,worktree_path,branch,port,model,session_file,created_at,token,thinking_level)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			)
 			.run(
 				id,
@@ -115,8 +121,87 @@ export class Store {
 				input.model ?? null,
 				input.sessionFile ?? null,
 				now,
+				token,
+				input.thinkingLevel ?? "medium",
 			);
 		return this.getAgent(id)!;
+	}
+
+	verifyToken(agentId: string, token: string | null | undefined): boolean {
+		if (!token) return false;
+		const agent = this.getAgent(agentId);
+		if (!agent || !agent.token) return false;
+		const a = Buffer.from(agent.token);
+		const b = Buffer.from(token);
+		if (a.length !== b.length) return false;
+		return a.equals(b);
+	}
+	setThinkingLevel(agentId: string, level: string): void {
+		this.db.prepare(`UPDATE agents SET thinking_level=? WHERE id=?`).run(level, agentId);
+	}
+	addPrompt(input: { agentId: string; text: string; reason: string }): import("./types.ts").PromptRecord {
+		const rows = this.db.prepare(`SELECT MAX(version) AS v FROM prompts WHERE agent_id=?`).get(input.agentId) as
+			| { v: number | null }
+			| undefined;
+		const version = (rows?.v ?? 0) + 1;
+		const id = ulid();
+		this.db
+			.prepare(`INSERT INTO prompts(id,agent_id,version,text,reason,created_at) VALUES(?,?,?,?,?,?)`)
+			.run(id, input.agentId, version, input.text, input.reason, Date.now());
+		return { id, agentId: input.agentId, version, text: input.text, reason: input.reason, createdAt: Date.now() };
+	}
+	listPrompts(agentId: string): import("./types.ts").PromptRecord[] {
+		const rows = this.db.prepare(`SELECT * FROM prompts WHERE agent_id=? ORDER BY version`).all(agentId) as Record<
+			string,
+			unknown
+		>[];
+		return rows.map((r) => ({
+			id: String(r.id),
+			agentId: String(r.agent_id),
+			version: Number(r.version),
+			text: String(r.text),
+			reason: String(r.reason),
+			createdAt: Number(r.created_at),
+		}));
+	}
+	createRun(input: { runId: string; goal: string }): void {
+		this.db
+			.prepare(`INSERT OR REPLACE INTO runs(run_id,goal,created_at) VALUES(?,?,?)`)
+			.run(input.runId, input.goal, Date.now());
+	}
+	finishRun(input: {
+		runId: string;
+		repromptRounds: number;
+		gapTypes: string[];
+		spendPerAgent: Record<string, number>;
+		thinkingPerAgent: Record<string, string>;
+	}): void {
+		this.db
+			.prepare(
+				`UPDATE runs SET finished_at=?, reprompt_rounds=?, gap_types=?, spend_per_agent=?, thinking_per_agent=? WHERE run_id=?`,
+			)
+			.run(
+				Date.now(),
+				input.repromptRounds,
+				JSON.stringify(input.gapTypes),
+				JSON.stringify(input.spendPerAgent),
+				JSON.stringify(input.thinkingPerAgent),
+				input.runId,
+			);
+	}
+	addReprompt(input: { taskId: string; agentId: string; round: number; text: string }): string {
+		const id = ulid();
+		this.db
+			.prepare(`INSERT INTO reprompts(id,task_id,agent_id,round,text,created_at) VALUES(?,?,?,?,?,?)`)
+			.run(id, input.taskId, input.agentId, input.round, input.text, Date.now());
+		return id;
+	}
+	listReprompts(taskId: string): { id: string; round: number; text: string }[] {
+		const rows = this.db.prepare(`SELECT * FROM reprompts WHERE task_id=? ORDER BY round`).all(taskId) as Record<
+			string,
+			unknown
+		>[];
+		return rows.map((r) => ({ id: String(r.id), round: Number(r.round), text: String(r.text) }));
 	}
 
 	getAgent(id: string): AgentRecord | undefined {

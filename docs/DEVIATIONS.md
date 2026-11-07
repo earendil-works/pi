@@ -17,3 +17,13 @@
 
 ## S1–S10 notes
 - Filled as stages complete. See `docs/ORCHESTRATION.md` for how to run.
+
+## v2 (2026-11-07)
+
+| # | Change | Detail |
+|---|---|---|
+| D11 | HTTP auth | Per-agent Bearer token (migration v2). 127.0.0.1 only. Missing/wrong/cross-agent → 401. Tests in product.test.ts. |
+| D12 | CDP session routing | `sessionId` top-level (flatten), not in params. Fixes real Chrome capture. |
+| D13 | Faux at load | Faux provider registered in extension factory, not session_start, so `--model` resolves. |
+| D14 | Async goal checks | `runChecksAsync` for screenshot_diff/dom_assert; sync `runChecks` kept. Lazy shotd import (off by default). |
+| D15 | Supervisor product | /supervisor extension, planner prompts (versioned), watchdog gates, comms detectors, dynamic thinking rubric, report/watch, cells-based layout. Off by default. |

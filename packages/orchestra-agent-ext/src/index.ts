@@ -2,6 +2,7 @@
 // Loaded with `pi --extension <dist/index.js>` at spawn time (never as a core edit).
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { registerFauxProvider } from "./faux-provider.ts";
 
 function env(key: string): string | undefined {
 	const v = process.env[key];
@@ -14,16 +15,19 @@ function supervisorBase(): string | undefined {
 
 async function postJson<T>(path: string, body: unknown): Promise<T> {
 	const base = supervisorBase()!;
-	const res = await fetch(`${base}${path}`, {
-		method: "POST",
-		headers: { "content-type": "application/json" },
-		body: JSON.stringify(body),
-	});
+	const token = env("ORCHESTRA_TOKEN");
+	const headers: Record<string, string> = { "content-type": "application/json" };
+	if (token) headers["authorization"] = `Bearer ${token}`;
+	const res = await fetch(`${base}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
 	if (!res.ok) throw new Error(`supervisor ${path} ${res.status}: ${(await res.text()).slice(0, 300)}`);
 	return (await res.json()) as T;
 }
 
 export default function (pi: ExtensionAPI): void {
+	// Opt-in faux provider for RPC E2E (registered only when env set; import is tiny).
+	if (env("ORCHESTRA_FAUX") === "1" || env("ORCHESTRA_FAUX_SCRIPT") !== undefined) {
+		registerFauxProvider(pi as never);
+	}
 	const agentId = env("ORCHESTRA_AGENT_ID") ?? "unknown";
 	const agentName = env("ORCHESTRA_AGENT_NAME") ?? "agent";
 	const role = env("ORCHESTRA_AGENT_ROLE") ?? "builder";

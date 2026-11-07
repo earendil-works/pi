@@ -6,7 +6,7 @@
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"bin": { "shotd": "dist/server.js" },
-	"exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }, "./package.json": "./package.json" },
+	"exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }, "./browser": { "types": "./dist/browser.d.ts", "import": "./dist/browser.js" }, "./store": { "types": "./dist/store.d.ts", "import": "./dist/store.js" }, "./image": { "types": "./dist/image.d.ts", "import": "./dist/image.js" }, "./package.json": "./package.json" },
 	"files": ["dist"],
 	"scripts": {
 		"clean": "node ../../scripts/package-files.mjs clean dist",
