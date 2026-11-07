@@ -45,7 +45,9 @@ A session has at most one link and a channel at most one session (its threads fo
   written `@Pi`, under a header naming the channel and the count. At most the newest 200 go into the input; the header
   says how many earlier ones were left out. It is
   one input of the session's main conversation by a guest author `Name · Discord` (entry kind `discord.batch`), queued
-  as a follow-up when the session is busy. The cursor moves to the mention.
+  as a follow-up when the session is busy. The cursor moves to the mention. Deliveries run one at a time per channel
+  and per thread (a queue each): a second mention right after the first waits for it and starts at the cursor it
+  left, so no message is in two batches and a new thread forks one subagent.
 - **Catch-up:** when a bot connects (p2 starting, a new token, a new gateway session after an outage), it reads each of
   its links and their known threads after the cursor. The newest mention there by someone allowed to wake Pi is the
   trigger: one batch per channel or thread with every message from the cursor up to it (earlier missed mentions are

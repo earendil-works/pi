@@ -89,6 +89,11 @@ export class Relay {
 	readonly #discord: (bot: string) => DiscordPort | undefined;
 	/** Pending replies being checked: two checks at once would post one reply twice. */
 	readonly #checking = new Set<string>();
+	/**
+	 * Each channel's and thread's delivery under way, the next one chained after it: two mentions in quick succession
+	 * would otherwise both read from the same cursor and deliver overlapping batches.
+	 */
+	readonly #lanes = new Map<string, Promise<void>>();
 	readonly #sessions: SessionPort;
 	readonly #state: StatePort;
 
@@ -129,9 +134,23 @@ export class Relay {
 
 	/**
 	 * Delivers the batch ending at `trigger` to the binding's session (a thread's subagent for a message in a thread),
-	 * then advances the cursor and records the pending reply. A session that cannot take it gets a notice instead.
+	 * then advances the cursor and records the pending reply. A session that cannot take it gets a notice instead. One
+	 * delivery at a time per channel or thread: a later one starts from the cursor the earlier one left.
 	 */
 	async deliver(channelId: string, trigger: DiscordMessage, thread: DiscordChannel | undefined): Promise<void> {
+		const target = thread?.id ?? channelId;
+		const run = (this.#lanes.get(target) ?? Promise.resolve()).then(() => this.#deliver(channelId, trigger, thread));
+		// The lane goes on whether this delivery failed or not; the caller still learns it failed.
+		const lane = run.catch(() => {});
+		this.#lanes.set(target, lane);
+		try {
+			await run;
+		} finally {
+			if (this.#lanes.get(target) === lane) this.#lanes.delete(target);
+		}
+	}
+
+	async #deliver(channelId: string, trigger: DiscordMessage, thread: DiscordChannel | undefined): Promise<void> {
 		const binding = this.#state.value().bindings[channelId];
 		if (!binding) return;
 		const port = this.#port(binding.botId);

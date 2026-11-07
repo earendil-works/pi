@@ -90,6 +90,8 @@ class FakeSessions implements SessionPort {
 	readonly delivered: Parameters<SessionPort["deliver"]>[1][] = [];
 	readonly turns = new Map<number, TurnState>();
 	readonly threads: { name: string; before: number }[] = [];
+	/** How long placing an input and forking a thread take (ms): a slow worker. */
+	slow = 0;
 	async usable(): Promise<string | undefined> {
 		return this.refusal;
 	}
@@ -100,6 +102,7 @@ class FakeSessions implements SessionPort {
 		return true;
 	}
 	async deliver(_session: string, input: Parameters<SessionPort["deliver"]>[1]) {
+		await new Promise((resolve) => setTimeout(resolve, this.slow));
 		this.delivered.push(input);
 		const submissionId = this.delivered.length;
 		this.turns.set(submissionId, { state: "pending" });
@@ -109,6 +112,7 @@ class FakeSessions implements SessionPort {
 		return this.turns.get(submissionId) ?? { state: "unanswered", reason: "gone" };
 	}
 	async thread(_session: string, name: string, before: number) {
+		await new Promise((resolve) => setTimeout(resolve, this.slow));
 		this.threads.push({ name, before });
 		return { conversation: 40 + this.threads.length };
 	}
@@ -286,6 +290,38 @@ describe("discord relay", () => {
 		offline.delete("bot-a");
 		await relay.checkPending();
 		assert.deepEqual(discord.posted, [{ channel: "c1", replyTo: trigger.id, text: "Hi." }]);
+	});
+
+	it("delivers one batch at a time per channel and thread: near-simultaneous mentions never overlap", async () => {
+		const { discord, sessions, relay, state } = setup(binding({ cursor: "1" }));
+		sessions.slow = 20;
+		discord.say("c1", message("one"));
+		const first = discord.say("c1", message(`<@${BOT}> first`));
+		discord.say("c1", message("two"));
+		const second = discord.say("c1", message(`<@${BOT}> second`));
+		// A new thread: its two mentions must not fork two subagents either.
+		const a = discord.say("t1", message(`<@${BOT}> a`));
+		const b = discord.say("t1", message(`<@${BOT}> b`));
+		await Promise.all([
+			relay.onMessage("bot-a", first),
+			relay.onMessage("bot-a", second),
+			relay.onMessage("bot-a", a),
+			relay.onMessage("bot-a", b),
+		]);
+		const batches = (thread: boolean) =>
+			sessions.delivered
+				.filter((input) => (input.context.thread !== undefined) === thread)
+				.map((input) => input.text.split("\n").slice(1));
+		// The second starts at the cursor the first left: no message is in both.
+		assert.deepEqual(batches(false), [
+			["Ada: one", "Ada: @Pi first"],
+			["Ada: two", "Ada: @Pi second"],
+		]);
+		assert.deepEqual(batches(true), [["Ada: @Pi a"], ["Ada: @Pi b"]]);
+		assert.equal(sessions.threads.length, 1, "one subagent for the thread");
+		assert.equal(state().bindings.c1?.cursor, second.id);
+		assert.equal(state().bindings.c1?.threads.t1?.cursor, b.id);
+		assert.deepEqual(Object.keys(state().pending).sort(), [first.id, second.id, a.id, b.id].sort());
 	});
 
 	it("pages through everything since the cursor up to the mention", async () => {
