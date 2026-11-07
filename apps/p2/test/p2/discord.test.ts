@@ -76,8 +76,11 @@ class FakeDiscord implements DiscordPort {
 	}
 	/** History requests, as Discord gets them. */
 	readonly requests: { channel: string; after: string }[] = [];
+	/** Typing and history reads in order, as `typing:<channel>` and `messages:<channel>`. */
+	readonly events: string[] = [];
 	async messages(channelId: string, query: { after: string; limit: number }): Promise<DiscordMessage[]> {
 		this.requests.push({ channel: channelId, after: query.after });
+		this.events.push(`messages:${channelId}`);
 		const all = this.history.get(channelId) ?? [];
 		return all.filter((entry) => BigInt(entry.id) > BigInt(query.after)).slice(0, Math.min(query.limit, 100));
 	}
@@ -98,6 +101,7 @@ class FakeDiscord implements DiscordPort {
 	}
 	async typing(channel: string): Promise<void> {
 		this.typed.push(channel);
+		this.events.push(`typing:${channel}`);
 	}
 }
 
@@ -121,9 +125,6 @@ class FakeSessions implements SessionPort {
 	}
 	lock(): SessionLock {
 		return NO_LOCK;
-	}
-	working(): boolean {
-		return true;
 	}
 	async deliver(_session: string, input: Parameters<SessionPort["deliver"]>[1]) {
 		await new Promise((resolve) => setTimeout(resolve, this.slow));
@@ -540,6 +541,53 @@ describe("discord relay", () => {
 		assert.equal(new TextDecoder().decode(discord.uploaded.get("build.log")), "log line\n");
 	});
 
+	it("typing: at once, before the history is read; refreshed through a slow delivery and while the reply is pending; never after", async () => {
+		const { discord, sessions, relay, state } = setup(binding({ cursor: "1" }));
+		sessions.slow = 60;
+		const trigger = discord.say("c1", message(`<@${BOT}> think hard`));
+		const delivering = relay.onMessage("bot-a", trigger);
+		// Sent before any page of history (and before the session is asked anything).
+		assert.deepEqual(discord.events, ["typing:c1"]);
+		// The 8 s tick during the delivery (the worker is slow) refreshes it.
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.equal(sessions.delivered.length, 0, "still delivering");
+		await relay.typing();
+		assert.deepEqual(discord.events, ["typing:c1", "messages:c1", "typing:c1"]);
+		await delivering;
+		// Pending, queued or not (no tasks needed): still typing.
+		await relay.typing();
+		assert.equal(discord.typed.length, 3);
+		// The reply is posted: no more typing.
+		sessions.turns.set(1, { state: "answered", text: "Done.", files: [] });
+		await relay.checkPending();
+		assert.deepEqual(Object.keys(state().pending), []);
+		await relay.typing();
+		assert.equal(discord.typed.length, 3);
+		assert.equal(discord.posted.length, 1);
+	});
+
+	it("typing ends with a stopped turn and with a failed delivery; a command never types", async () => {
+		const { discord, sessions, relay } = setup(binding({ cursor: "1" }));
+		await relay.onMessage("bot-a", discord.say("c1", message(`<@${BOT}> long task`)));
+		await relay.onMessage("bot-a", discord.say("c1", message(`<@${BOT}> stop`)));
+		await relay.checkPending();
+		const typed = discord.typed.length;
+		await relay.typing();
+		assert.equal(discord.typed.length, typed, "the stopped turn's typing is over");
+		// A delivery the session refuses to take: typing while trying, none after.
+		sessions.deliver = async () => {
+			throw new Error("worker down");
+		};
+		await relay.onMessage("bot-a", discord.say("c1", message(`<@${BOT}> again`)));
+		assert.match(discord.posted.at(-1)?.text ?? "", /Could not reach Pi: worker down/);
+		const after = discord.typed.length;
+		await relay.typing();
+		assert.equal(discord.typed.length, after);
+		// The command's own message typed nothing: typing came from the two deliveries only.
+		assert.equal(discord.typed.filter((channel) => channel === "c1").length, after);
+		assert.equal(after, 2);
+	});
+
 	it("pages through everything since the cursor up to the mention", async () => {
 		const { discord, sessions, relay, state } = setup(binding({ cursor: "1" }));
 		const said = Array.from({ length: 199 }, (_, index) => discord.say("c1", message(`line ${index}`)));
@@ -792,7 +840,6 @@ describe("discord ingress (fake provider)", () => {
 		const port: SessionPort = {
 			usable: async () => undefined,
 			lock: () => null,
-			working: () => true,
 			deliver: (_session, input) => ingress.deliver({ ...input, text: "send-file" }, BACKGROUND_CONTEXT),
 			turn: (_session, submissionId) => ingress.turn({ submissionId }, BACKGROUND_CONTEXT),
 			read: (_session, id, offset, length) => ingress.read({ id, offset, length }, BACKGROUND_CONTEXT),

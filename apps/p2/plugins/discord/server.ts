@@ -45,7 +45,10 @@ const State = defineState("p2.discord-bindings", {
 	checkpointWhen: () => true,
 });
 
-/** How often "typing" is sent while a reply is pending, and every how many of those pending turns are checked anyway. */
+/**
+ * How often "typing" is refreshed while a delivery is under way or a reply pending (Discord shows it about 10 s), and
+ * every how many of those pending turns are checked anyway.
+ */
 const TYPING_MS = 8_000;
 const CHECK_EVERY = 2;
 
@@ -87,7 +90,6 @@ export default defineFacet((host) => {
 		const sessions: SessionPort = {
 			usable,
 			lock: (session) => locks.locks.value[session] ?? null,
-			working: (session) => (statuses.statuses.value[session]?.tasks ?? 0) > 0,
 			deliver: (session, input) => ingress(session, (worker, ctx) => worker.deliver(input, ctx)),
 			turn: (session, submissionId) => ingress(session, (worker, ctx) => worker.turn({ submissionId }, ctx)),
 			thread: (session, name, before) => ingress(session, (worker, ctx) => worker.thread({ name, before }, ctx)),
@@ -115,9 +117,9 @@ export default defineFacet((host) => {
 		self.onLive(async (ctx) => {
 			for (let tick = 1; !signalOf(ctx).aborted; tick++) {
 				await sleep(TYPING_MS, ctx);
-				if (!Object.keys(state.value.pending).length) continue;
 				await relay.typing();
-				if (tick % CHECK_EVERY === 0) await relay.checkPending().catch(() => {});
+				if (tick % CHECK_EVERY === 0 && Object.keys(state.value.pending).length)
+					await relay.checkPending().catch(() => {});
 			}
 		});
 		// A session's status changed: its turn may have ended.

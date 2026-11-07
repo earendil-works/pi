@@ -70,7 +70,10 @@ A session has at most one link and a channel at most one session (its threads fo
   listed, images inline). Larger ones are listed as links.
 - **Reply:** when the input's turn ends (checked on every status change of the session and every 16 s), the answer's
   text is posted as a reply to the waking message, split at 2000 characters. A turn without an answer posts why. While
-  a reply is pending and the session works, the channel shows "Pi is typing". A turn not done after 6 hours is given up.
+  a reply is pending (queued or not) the channel shows "Pi is typing": sent the moment a mention is recognized, before the
+  wait for an earlier delivery and the history's pages, refreshed every 8 s (Discord shows it about 10 s) through the
+  delivery and while the reply is pending, and over once the reply is posted, the turn stopped or failed, or the
+  delivery failed. Commands never type. A turn not done after 6 hours is given up.
 - **Files:** what the agent offers with `send_file` during a Discord-started turn (the main agent's, or a thread
   subagent's; also from scripts) is attached to the reply: `send_file` downloads carry their conversation as `ref`, and
   the worker's `turn` lists those made between the input and the answer. Read through the session's Files

@@ -61,8 +61,6 @@ export type SessionPort = {
 	/** Whether the session exists, is not archived and works in a sandbox; why not otherwise. */
 	usable(session: string): Promise<string | undefined>;
 	lock(session: string): SessionLock | null;
-	/** Whether the session's worker has live tasks (a turn under way). */
-	working(session: string): boolean;
 	deliver(
 		session: string,
 		input: {
@@ -113,6 +111,8 @@ export class Relay {
 	 * would otherwise both read from the same cursor and deliver overlapping batches.
 	 */
 	readonly #lanes = new Map<string, Promise<void>>();
+	/** Channels and threads with deliveries under way (how many), and their bots: "typing" from the first moment. */
+	readonly #delivering = new Map<string, { bot: string; count: number }>();
 	readonly #sessions: SessionPort;
 	readonly #state: StatePort;
 
@@ -200,6 +200,9 @@ export class Relay {
 	 */
 	async deliver(channelId: string, trigger: DiscordMessage, thread: DiscordChannel | undefined): Promise<void> {
 		const target = thread?.id ?? channelId;
+		// "Typing" at once, before the wait for an earlier delivery and the history's pages: `typing()` refreshes it
+		// until the delivery ends, then the pending reply keeps it on.
+		const stopTyping = this.#typingWhile(channelId, target, trigger);
 		const run = (this.#lanes.get(target) ?? Promise.resolve()).then(() => this.#deliver(channelId, trigger, thread));
 		// The lane goes on whether this delivery failed or not; the caller still learns it failed.
 		const lane = run.catch(() => {});
@@ -208,7 +211,26 @@ export class Relay {
 			await run;
 		} finally {
 			if (this.#lanes.get(target) === lane) this.#lanes.delete(target);
+			stopTyping();
 		}
+	}
+
+	/** Shows "typing" in `target` while a delivery of `trigger` is under way (none for one delivered already): its end. */
+	#typingWhile(channelId: string, target: string, trigger: DiscordMessage): () => void {
+		const binding = this.#state.value().bindings[channelId];
+		const cursor = target === channelId ? binding?.cursor : binding?.threads[target]?.cursor;
+		if (!binding || (cursor && BigInt(trigger.id) <= BigInt(cursor))) return () => {};
+		const bot = binding.botId;
+		const active = this.#delivering.get(target) ?? { bot, count: 0 };
+		active.count++;
+		this.#delivering.set(target, active);
+		void this.#discord(bot)
+			?.typing(target)
+			.catch(() => {});
+		return () => {
+			active.count--;
+			if (active.count === 0 && this.#delivering.get(target) === active) this.#delivering.delete(target);
+		};
 	}
 
 	async #deliver(channelId: string, trigger: DiscordMessage, thread: DiscordChannel | undefined): Promise<void> {
@@ -310,7 +332,6 @@ export class Relay {
 				since: Date.now(),
 			};
 		});
-		await port.typing(where).catch(() => {});
 	}
 
 	/**
@@ -451,11 +472,15 @@ export class Relay {
 		return Buffer.concat(parts);
 	}
 
-	/** "Pi is typing" in every channel with a pending reply whose session works. */
+	/**
+	 * Refreshes "Pi is typing" (Discord shows it about 10 s; call it every 8 s) where a delivery is under way or a reply
+	 * is pending, queued or not: it ends with the delivery's failure, or when the reply is posted, stopped or failed.
+	 */
 	async typing(): Promise<void> {
 		const channels = new Map<string, string>();
+		for (const [target, { bot }] of this.#delivering) channels.set(target, bot);
 		for (const pending of Object.values(this.#state.value().pending))
-			if (this.#sessions.working(pending.session)) channels.set(pending.replyChannelId, pending.botId);
+			channels.set(pending.replyChannelId, pending.botId);
 		for (const [channel, bot] of channels)
 			await this.#discord(bot)
 				?.typing(channel)
