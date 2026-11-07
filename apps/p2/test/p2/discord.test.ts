@@ -781,6 +781,46 @@ describe("discord ingress (fake provider)", () => {
 		assert.notEqual(threadTurn.files[0]?.id, offered.id);
 	});
 
+	it("end to end: a mention, a turn that calls send_file, and the reply in Discord carries the file", async () => {
+		// The fake model's scripted `send-file` turn sends created.txt.
+		await writeFile(join(fixture.workspace, "created.txt"), "# Rules\nBe brief.\n");
+		const ingress = fixture.server.host.hold(DiscordIngress, { session }, BACKGROUND_CONTEXT);
+		const discord = new FakeDiscord();
+		discord.add({ id: "c1", name: "general", guildId: "g1", guildName: "Guild", lastMessageId: null });
+		// The session's worker for real; only the batch's text is the fake model's send_file prompt (it acts on exact
+		// prompts, not on a batch).
+		const port: SessionPort = {
+			usable: async () => undefined,
+			lock: () => null,
+			working: () => true,
+			deliver: (_session, input) => ingress.deliver({ ...input, text: "send-file" }, BACKGROUND_CONTEXT),
+			turn: (_session, submissionId) => ingress.turn({ submissionId }, BACKGROUND_CONTEXT),
+			read: (_session, id, offset, length) => ingress.read({ id, offset, length }, BACKGROUND_CONTEXT),
+			thread: (_session, name, before) => ingress.thread({ name, before }, BACKGROUND_CONTEXT),
+			command: (_session, input) => ingress.command(input, BACKGROUND_CONTEXT),
+		};
+		let state: RelayState = { bindings: { c1: { ...binding({ cursor: "1" }), session } }, pending: {} };
+		const relay = new Relay(() => discord, port, {
+			value: () => state,
+			change: async (update) => {
+				const draft = structuredClone(state);
+				update(draft);
+				state = draft;
+			},
+		});
+		const trigger = discord.say("c1", message(`<@${BOT}> send me the rules file`));
+		await relay.onMessage("bot-a", trigger);
+		await poll(async () => {
+			await relay.checkPending();
+			return discord.posted.length > 0;
+		});
+		const [reply] = discord.posted;
+		assert.equal(reply?.replyTo, trigger.id);
+		assert.deepEqual(reply?.files, ["created.txt"]);
+		assert.equal(new TextDecoder().decode(discord.uploaded.get("created.txt")), "# Rules\nBe brief.\n");
+		assert.deepEqual(state.pending, {});
+	});
+
 	it("the owner's Discord view: updateLink needs a linked session; pages of version 2 still bind", async () => {
 		const owner = fixture.browser();
 		const discord = await holdIn(owner, Discord, {}, "owner");
@@ -809,9 +849,9 @@ describe("discord ingress (fake provider)", () => {
 		const main = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
 		const said = sections(await until(main.view, (view) => Boolean(sections(view).discord))).discord ?? "";
 		assert.match(said, /^<discord>\nYour input comes from the Discord channel #general \(Guild\)/);
-		assert.match(said, /Only your final answer of each turn is posted there/);
-		assert.match(said, /files you offer with send_file during the turn are attached/);
-		assert.match(said, /not your thinking, tool calls or their output/);
+		assert.match(said, /your final answer of each turn is posted there as the reply/);
+		assert.match(said, /files you offer with send_file during the turn attached/);
+		assert.match(said, /Nothing else is posted \(not intermediate text, thinking or tool output\)/);
 		// A thread's subagent: the same, for its thread.
 		const { conversation } = await ingress.thread({ name: "Release", before: Date.now() }, BACKGROUND_CONTEXT);
 		await ended(

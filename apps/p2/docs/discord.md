@@ -36,10 +36,10 @@ The Session sheet's **Discord** row shows the session's channel, or "Not linked"
   contract version 3; version 2 pages still bind) and they apply at once: who may wake Pi is read at each message, the
   lock is mirrored into the running session. **Unlink** stops listening and lifts the lock; the session stays in its
   sandbox.
-- **The agent knows:** a linked session's main agent and its threads' subagents get a `discord` prompt section: their
-  input comes from the channel (or thread), only the final answer of each turn is posted there as the reply, files
-  offered with `send_file` during the turn are attached, and nothing else (thinking, tool calls and their output,
-  earlier text) reaches Discord, so the final answer must stand alone. The worker keeps the link in the session
+- **The agent knows:** a linked session's main agent and its threads' subagents get a two-sentence `discord` prompt
+  section: their input comes from the channel (or thread), their final answer of each turn is posted there as the
+  reply with the files offered with `send_file` during the turn attached, and nothing else is posted (intermediate
+  text, thinking, tool output), so the final answer must stand alone. Its text changes only with the link. The worker keeps the link in the session
   document `p2.discord-link` (written at each delivery, cleared at unlink through `DiscordIngress.unlinked`); other
   subagents do not get the section.
 

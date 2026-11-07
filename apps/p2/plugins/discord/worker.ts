@@ -63,15 +63,15 @@ export const DiscordLinkDoc = defineDoc<{
 	checkpointWhen: () => true,
 });
 
-/** What an agent answering Discord must know: where its answer goes, and that nothing else is posted. */
+/**
+ * What an agent answering Discord must know, in two sentences: stable for a link (it changes only with the channel or
+ * thread), so the prompt's cached prefix stays.
+ */
 export function discordPrompt(where: string): string {
 	return [
-		`Your input comes from ${where}: each one is the messages since the last delivery, one per line as \`Name: text\`,`,
-		"under a header; whoever mentioned the bot expects the answer.",
-		"Only your final answer of each turn is posted there, as a reply to that message; files you offer with send_file",
-		"during the turn are attached to it. Nothing else reaches Discord: not your thinking, tool calls or their output,",
-		"nor text you write before the final answer. So make the final answer complete on its own and written for the",
-		"channel's readers: concise, Markdown as Discord renders it.",
+		`Your input comes from ${where}; your final answer of each turn is posted there as the reply, with the files you`,
+		"offer with send_file during the turn attached. Nothing else is posted (not intermediate text, thinking or tool",
+		"output), so make the final answer complete on its own.",
 	].join(" ");
 }
 
