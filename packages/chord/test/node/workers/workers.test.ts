@@ -72,7 +72,9 @@ describe('the worker base (decision "Workers start from the base code the server
 			].join("\n"),
 		);
 		const { server, workers, output } = await fleet({ entry: join(dir, "entry.ts") });
-		expect(workers.inputs).toEqual(expect.arrayContaining([join(dir, "entry.ts"), join(dir, "label.ts"), ENTRY]));
+		expect([...workers.inputs.keys()]).toEqual(
+			expect.arrayContaining([join(dir, "entry.ts"), join(dir, "label.ts"), ENTRY]),
+		);
 		// Half way through an edit: the source on disk no longer even parses.
 		await writeFile(join(dir, "label.ts"), "export const label = ;\n");
 		const notes = await server.get(Notes, { id: "S1" }, context);

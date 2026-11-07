@@ -22,7 +22,8 @@ import {
 import { sendPageTelemetry, TelemetryRecorder, type TelemetrySender } from "../telemetry-ingest/index.ts";
 import { pageEnvironment } from "./environment.ts";
 import { followLanguage } from "./language.ts";
-import { type PageBootstrap, PageScripts, syncStylesheets } from "./scripts.ts";
+import { type PageBootstrap, PageScripts } from "./scripts.ts";
+import { PageStyles } from "./styles.ts";
 import { followThemes } from "./themes.ts";
 
 /** What `startPage` takes. */
@@ -57,6 +58,9 @@ export async function startPage<P extends Principal>(options: PageOptions<P>): P
 	const bootstrap = (globalThis as { readonly chordPage?: PageBootstrap }).chordPage;
 	if (bootstrap === undefined) throw new Error("startPage: the page has no Chord bootstrap (PageAssets.bootstrap)");
 	const scripts = new PageScripts(bootstrap);
+	// From here on `PageStyles` follows the stylesheets' loads itself.
+	document.removeEventListener("load", bootstrap.watching, true);
+	document.removeEventListener("error", bootstrap.watching, true);
 	const core: PluginFacet<P>[] = [
 		{ name: "chord.themes", facet: themesFacet<P>() },
 		{ name: "chord.translations", facet: translationsFacet<P>() },
@@ -88,7 +92,7 @@ export async function startPage<P extends Principal>(options: PageOptions<P>): P
 		outdated: () => location.reload(),
 		...(options.canRetry === undefined ? {} : { canRetry: options.canRetry }),
 		...(options.onConnection === undefined ? {} : { onConnection: options.onConnection }),
-		applied: (set) => syncStylesheets(set, PREFIX),
+		styles: new PageStyles(bootstrap.styles, bootstrap.links, onError),
 		environment: pageEnvironment(),
 		...(telemetry === undefined ? {} : { telemetry }),
 		onError,

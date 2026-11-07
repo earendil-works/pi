@@ -15,6 +15,7 @@ import type { Host, RouteHandle } from "../../host/index.ts";
 import type { JsonValue } from "../../json.ts";
 import { Batch, type BatchError, Source } from "../../state/internal.ts";
 import type { Watchable } from "../../watch.ts";
+import type { BaseInputs } from "../plugins/base-inputs.ts";
 import type { Plugins, RolloutHost, RolloutStep } from "../plugins/plugins.ts";
 import type { PluginScript } from "../plugins/runtime.ts";
 import { buildWorkerBase, type WorkerBase } from "./base.ts";
@@ -90,8 +91,8 @@ export type WorkersError =
 export interface Workers<K extends KindShape> {
 	/** Per address key its `WorkerState`; no entry when stopped or never started. A JSON watchable. */
 	readonly state: Watchable<Readonly<Record<string, WorkerState>>>;
-	/** The files its worker base was built from: the app's base code for its workers. */
-	readonly inputs: readonly string[];
+	/** The files its worker base was built from, with their bytes' hashes: the app's base code for its workers. */
+	readonly inputs: BaseInputs;
 	/** Suspends `address` while it has holders (`RouteHandle.suspend`), then stops its worker. */
 	stop(address: Address<K>, context: Context): Promise<void>;
 	/** Clears `address`'s failure and suspension: it starts again now if held (`RouteHandle.retry`). */
@@ -252,7 +253,7 @@ class WorkersComponent implements Workers<HostKind> {
 		this.#closeWith(context);
 	}
 
-	get inputs(): readonly string[] {
+	get inputs(): BaseInputs {
 		return this.#base.inputs;
 	}
 

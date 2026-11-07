@@ -832,7 +832,7 @@ await watch.stop();
 ```text
 4. the page loads:
    /_chord/web/base.<hash>.css
-   /_chord/web/plugin/@todo~lists.<hash>.css
+   /_chord/web/plugin/@todo~lists.<hash>.<hash>.css
    /_chord/web/plugins.<hash>.js
    /_chord/web/base.<hash>.js
    watch.value: 1 done

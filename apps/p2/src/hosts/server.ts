@@ -1,6 +1,6 @@
 // Server host: HTTP + WebSocket accept, routes `session:` hosts to session workers, loads the server facets.
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -44,7 +44,7 @@ import {
 } from "./bundles.ts";
 import { devControl } from "./dev.ts";
 import { readDevCommand, sendDevCommand, serveDevChannel } from "./dev-channel.ts";
-import { contentHash, LoadedModules, loadedModuleHashes, loadedPluginFiles } from "./dev-modules.ts";
+import { LoadedModules, loadedModuleHashes, loadedPluginFiles } from "./dev-modules.ts";
 import { createP2Plugins, listPlugins, PLUGINS_DIRECTORY, SERVER_PACKAGES, selectPlugins } from "./plugins.ts";
 import {
 	contentSecurityPolicy,
@@ -217,12 +217,13 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		BACKGROUND_CONTEXT,
 	);
 	// Every session worker runs the worker base Chord bundled just now (not the files on disk): in dev mode its source
-	// files are a restart baseline, compared by content like the server's own modules.
+	// files are a restart baseline, compared by content like the server's own modules, with the bytes the build read
+	// (a read now could see an edit made since).
 	devModules?.set(
 		"worker-base",
-		workers.workers.inputs
-			.filter((file) => !file.startsWith(PLUGINS_DIRECTORY))
-			.map((file) => ({ file, hash: contentHash(readFileSync(file)) })),
+		[...workers.workers.inputs]
+			.filter(([file]) => !file.startsWith(PLUGINS_DIRECTORY))
+			.map(([file, hash]) => ({ file, hash })),
 	);
 	// Capture before plugin resources open (e.g. provider SDK startup), not only after the logs facet activates.
 	const stopLogs = captureProcessLogs("server");

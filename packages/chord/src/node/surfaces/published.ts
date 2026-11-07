@@ -143,8 +143,13 @@ export class PublishedScripts<P extends Principal> {
 			// are, never parsed back.
 			const stem = `${this.#prefix}plugin/${name.replace("/", "~")}.${digest}`;
 			files.set(`${stem}.js`, { mime: JAVASCRIPT, bytes: new TextEncoder().encode(text) });
-			if (css !== undefined) files.set(`${stem}.css`, { mime: CSS, bytes: new TextEncoder().encode(css) });
-			entries.push({ name, digest, url: `${stem}.js`, ...(css === undefined ? {} : { css: `${stem}.css` }) });
+			if (css === undefined) entries.push({ name, digest, url: `${stem}.js` });
+			else {
+				// Named by its own content too: a change of only the CSS keeps the script's digest.
+				const style = `${stem}.${createHash("sha256").update(css).digest("hex").slice(0, 16)}.css`;
+				files.set(style, { mime: CSS, bytes: new TextEncoder().encode(css) });
+				entries.push({ name, digest, url: `${stem}.js`, css: style });
+			}
 			combined.push(text.replace(SOURCE_MAP, ""));
 			for (const asset of assets) {
 				files.set(`${this.#prefix}assets/${asset.name}`, { mime: mimeOf(asset.name), bytes: asset.bytes });

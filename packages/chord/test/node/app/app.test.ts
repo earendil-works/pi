@@ -4,9 +4,12 @@
 // inputs among them), and export and import per address (documents, tables and files round-trip; an existing address
 // refused).
 
-import { chmod, mkdir, readdir, stat, symlink, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { chmod, mkdir, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import { hostKind, local, remote, str, unknown } from "../../../src/contracts/index.ts";
@@ -287,7 +290,58 @@ describe("applying changes one after another", () => {
 });
 
 describe("base code", () => {
-	it("marks base for a change of `base`'s files and directories and of a file a worker kind's base was built from", async () => {
+	it("compares the server's own code from its entry, the start script and what it imports, with no `base` given", async () => {
+		const dir = await tempDir();
+		await writeFile(join(dir, "helper.ts"), 'export const label = "v1";\n');
+		// The server marks `base` for an edit of a module the start script imports, and clears at the revert.
+		const helper = JSON.stringify(join(dir, "helper.ts"));
+		const stdout = await runStart(
+			dir,
+			['import { label } from "./helper.ts";'],
+			[
+				"console.log(label, started.plugins.state.value.base);",
+				`await writeFile(${helper}, 'export const label = "v2";\\n');`,
+				"await until(true);",
+				`await writeFile(${helper}, 'export const label = "v1";\\n');`,
+				"await until(false);",
+				'console.log("marked and cleared");',
+			],
+		);
+		expect(stdout).toEqual(["v1 false", "marked and cleared"]);
+	}, 60_000);
+
+	it("starts with an entry whose inactive optional import is missing: the import is left out, the rest compared", async () => {
+		const dir = await tempDir();
+		await writeFile(join(dir, "helper.ts"), 'export const label = "v1";\n');
+		const stdout = await runStart(
+			dir,
+			[
+				'import { label } from "./helper.ts";',
+				'if (process.env.CHORD_TEST_OPTIONAL === "yes") await import("./optional-feature-not-installed.mjs");',
+				'if (process.env.CHORD_TEST_OPTIONAL === "yes") await import("optional-package-not-installed");',
+			],
+			[
+				'console.log("started", label, errors.length);',
+				`await writeFile(${JSON.stringify(join(dir, "helper.ts"))}, 'export const label = "v2";\\n');`,
+				"await until(true);",
+				'console.log("marked");',
+			],
+		);
+		expect(stdout).toEqual(["started v1 0", "marked"]);
+	}, 60_000);
+
+	it("starts when the scan of its entry fails (a lazy import of a file it cannot parse): reported, not compared", async () => {
+		const dir = await tempDir();
+		await writeFile(join(dir, "broken.mjs"), "export const = ;\n");
+		const stdout = await runStart(
+			dir,
+			['if (process.env.CHORD_TEST_NEVER === "yes") await import("./broken.mjs");'],
+			['console.log("started", errors.map(({ kind }) => kind).join(" "));'],
+		);
+		expect(stdout).toEqual(["started server_scan"]);
+	}, 60_000);
+
+	it("marks base for a change of `base`'s files and directories and of a file a worker kind's base was built from, not for a rewrite with the same bytes", async () => {
 		const dir = await tempDir();
 		await mkdir(join(dir, "api"));
 		await writeFile(join(dir, "api", "v1.ts"), "export {};");
@@ -305,6 +359,9 @@ describe("base code", () => {
 		for (const changed of changes) {
 			const { app } = await testApp({ base: [join(dir, "api"), join(dir, "start.ts")], workers: [worker] });
 			try {
+				expect(app.plugins.state.value.base).toBe(false);
+				await writeFile(changed, await readFile(changed));
+				await new Promise((resolve) => setTimeout(resolve, 200));
 				expect(app.plugins.state.value.base).toBe(false);
 				await writeFile(changed, "export const changed = 1;");
 				await vi.waitFor(() => expect(app.plugins.state.value.base).toBe(true), { timeout: 5_000 });
@@ -490,3 +547,38 @@ describe("export and import per address", () => {
 		await other.app.close(context);
 	}, 60_000);
 });
+
+/**
+ * Runs a start script in `dir` (a child Node process, the script its entry: what the kit scans): `head` at its top, a
+ * server started with an empty plugins root (`started`, its reports in `errors`, `until(base)` waiting for the mark),
+ * then `body`; what it printed, by line.
+ */
+async function runStart(dir: string, head: readonly string[], body: readonly string[]): Promise<string[]> {
+	await mkdir(join(dir, "plugins"));
+	const app = fileURLToPath(new URL("../../../src/node/app/index.ts", import.meta.url));
+	const ctx = fileURLToPath(new URL("../../../src/context/index.ts", import.meta.url));
+	await writeFile(
+		join(dir, "start.ts"),
+		[
+			`import { writeFile } from "node:fs/promises";`,
+			`import { BACKGROUND_CONTEXT as context } from ${JSON.stringify(ctx)};`,
+			`import { startServer } from ${JSON.stringify(app)};`,
+			...head,
+			"const errors: { kind: string }[] = [];",
+			"const until = async (value: boolean) => { while (started.plugins.state.value.base !== value) await new Promise((resolve) => setTimeout(resolve, 20)); };",
+			"const started = await startServer({",
+			`\tname: "chord-test", dataDir: ${JSON.stringify(join(dir, "data"))}, root: ${JSON.stringify(join(dir, "plugins"))},`,
+			'\tapi: { name: "@test/app", versions: ["v1"], modules: { "@test/app/v1": {} } }, kinds: { server: { platform: "node" } },',
+			'\tprincipal: { server: { kind: "server" }, owner: { kind: "owner" } }, onError: (error) => errors.push(error),',
+			"}, context);",
+			...body,
+			"await started.close(context);",
+		].join("\n"),
+	);
+	const { stdout } = await promisify(execFile)(
+		process.execPath,
+		["--conditions=source", "--experimental-strip-types", "--no-warnings", join(dir, "start.ts")],
+		{ timeout: 30_000 },
+	);
+	return stdout.trim().split("\n");
+}

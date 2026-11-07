@@ -40,7 +40,7 @@ const app = await startServer<P>({
 	tui: { entry: "./src/tui/main.ts" },
 	base: ["./src/app/", "./start.ts"],             // base code besides worker entries and the base bundles' inputs
 	timeouts: { closeTimeout: 30_000, readyTimeout: 60_000 },   // every host's (server and workers; the defaults)
-	onError: (error) => log(error),                 // AppError: { kind: "host" | "http" | "workers" | "plugins", error }
+	onError: (error) => log(error),                 // AppError: { kind: "host" | "http" | "workers" | "plugins" | "server_scan", error }
 }, ctx);
 console.log(`Open ${app.ownerLink()}`);
 app.host; app.http; app.workers.get("project"); app.plugins.state; app.dataDir; app.ownerTokenFile;
@@ -255,10 +255,24 @@ archive leaves nothing. The next hold starts the worker on the imported store an
 
 Roots: the app's `root` (required: a plugin of it failing stops `startServer`) and `<dataDir>/plugins/` (the user's:
 installs go there). `app.plugins.state` is the plugins component's marks for the app's "apply changes" button; its
-`base` turns true when base code changes (the app restarts its hosts): `base`'s files and directories, each worker
-kind's `entry`, and every file the web and terminal base bundles were built from (esbuild's metafile), never files under
-`node_modules` (an npm upgrade is a restart anyway). `applyChanges` builds the dirty plugins (and installed ones) and
-rolls out to the server, then each worker kind; nothing is applied by itself.
+`base` ("restart needed") is true exactly while base code differs from what runs. Recorded at start: the server's own
+code, a best-effort static scan of its entry (`process.argv[1]`, the start script): esbuild bundles it with the server's
+conditions only to record the files it reads, nothing written or run (30-110 ms for the examples). It sees the literal
+imports of the start script's static graph, including lazy literal `import()`s Node may never run (conservative: such a
+file's edit asks for a restart); a computed `import(x)` and modules a custom loader provides are not seen; an import
+that does not resolve (an inactive optional import of a missing file or package, a loader's scheme) is left out; it
+resolves as Node does (the conditions, `main`, no `tsconfig.json` `paths`). Any other failure of the scan (a file
+esbuild cannot parse) is reported (`server_scan`) and the server starts without that record. An entry under
+`node_modules` is installed code (an npm-installed app, a test runner) and, as every file under `node_modules`, never
+compared. `base`'s files and directories are hashed too; an edit between Node loading a file and that record is a window
+this cannot see. Each base bundle records the bytes its esbuild loader read (the web's, the terminal's, each worker
+kind's, the entry and everything it imports). The mark is computed, not latched: true while a recorded file's bytes
+differ or it is gone, or a source file (`.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.json`, `.css`)
+is new in one of `base`'s directories, and false again once the files are back to the recorded bytes (a formatter
+rewriting a file unchanged, a branch switched and back, an `npm run build` leave no mark). Compared once when the kit
+starts watching and at every change; files under `node_modules` are never compared (an npm upgrade is a restart anyway).
+`applyChanges` builds the dirty plugins (and installed ones) and rolls out to the server, then each worker kind; nothing
+is applied by itself.
 
 ## Internals
 
@@ -274,7 +288,10 @@ queries and changes), `blobs.ts` (blob files), `folder-views.ts` (live listings)
 With `web` the kit builds the page's base bundle from `web.entry`, publishes the `web` kind's plugin scripts and serves
 the page through `web.page` at `web.paths` (`["/"]`), signed in unless `web.public` (`webSurface`,
 `@earendil-works/chord/surfaces`); with `tui` the terminal's base bundle and the `tui` kind's scripts for launchers
-(`tuiSurface`). Plugin assets are served under `/_chord/web/assets/` (the plugins component's `publicPath`).
+(`tuiSurface`). Both base bundles resolve packages with the server process's conditions (`--conditions`/`-C` of its
+flags and `NODE_OPTIONS`: a server started with `--conditions=source` serves pages built from Chord's source, never
+`dist/`), or with `web.conditions`/`tui.conditions`. Plugin assets are served under `/_chord/web/assets/` (the plugins
+component's `publicPath`).
 `applyChanges` rolls out to the server, the workers, then the surfaces (`web`, `tui`: the new set published, clients
 not waited for). `app.web` and `app.tui` give the base bundles' hashes. The server also serves the `Themes` registry and
 `ThemeChoice` (each principal's dark and light pick, kept in its store). Without `web` and `tui` an app has no client

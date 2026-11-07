@@ -158,20 +158,26 @@ reconnect&#39;s snapshot) is taken as applied and the plugin&#39;s old code is p
 <p><strong>Fix</strong>, in <code>#apply</code>:</p>
 <ol>
 <li>For each plugin whose stylesheet differs from the one it has, insert the new <code>&lt;link&gt;</code> right after the plugin&#39;s
-current one (a plugin new to the page: at its place in the set&#39;s order) and wait for its <code>load</code> or <code>error</code>, at most
-10 s, ended early by the client&#39;s stop. CSS-module class names are fixed per plugin and file
-(<code>chord_&lt;hash of plugin and path&gt;_&lt;file&gt;_&lt;class&gt;</code>), so old and new sheets of one plugin apply together without
-harm, the new one later and winning.</li>
+current one (a plugin new to the page: at its place in the set&#39;s order) <strong>inactive</strong> (<code>media=&quot;not all&quot;</code>: fetched,
+not applied), and wait for its <code>load</code> or <code>error</code>, at most 10 s, ended early by the client&#39;s stop (which removes the
+unadopted links).</li>
 <li>Reload the host with the new scripts, as today.</li>
-<li>For each plugin, keep the stylesheet that belongs to the code it now runs: the new one when its new script loaded;
-the old one, and the new link removed, when its script failed and it kept its old code (the reload report&#39;s
-<code>failed</code>). Remove every other plugin link no longer in the set.</li>
+<li>For each plugin, keep the stylesheet that belongs to the code it now runs: the new one is switched on when its new
+script was adopted; when its script failed and it kept its old code (the reload report&#39;s <code>failed</code>), the prepared
+sheet is removed without ever applying and the old one stays. Once the page has drawn a frame of the new code, the
+old sheets of adopted plugins and the links of plugins no longer in the set are removed.</li>
 <li>Record per plugin the digest of the script it actually runs, so a later set with the failed plugin&#39;s new script is
 tried again, not skipped as applied.</li>
 </ol>
-<p>A stylesheet that fails to load is reported; the plugin&#39;s new code is applied anyway (its part may lack its new
-classes until the next apply); a stalled one costs at most 10 s of the update. What stays: a part whose UI comes from
-an object that restarts disappears and comes back with its new sheet already loaded.</p>
+<p>A stylesheet that fails or stalls is reported (<code>stylesheet_failed</code>, <code>error</code> or <code>timeout</code>) and fetched again by the next
+update at the same URL; the plugin&#39;s new code is applied anyway (its part may lack its new classes until then); one
+that loads after its timeout is applied then. Stylesheet URLs carry a hash of the CSS, so a CSS-only edit is a new
+file.</p>
+<p><strong>Limitation (accepted for now, owner to confirm):</strong> UI contributed by an object that restarts stays on its old
+version until the successor is live (design §21: such an object keeps its contribution until then). Its old sheet is
+retired after the drawn frame anyway, so during that restart the old part can show unstyled (a second in the test).
+UI contributed directly by a plugin&#39;s facet, the rule for p3&#39;s UI, is not affected. A kernel signal &quot;this plugin&#39;s
+restarts finished&quot; would close it (option B, not built).</p>
 </section>
 
 <section class="chapter" id="conditions"><header class="opener"><div class="numeral">II</div><h2>Base Bundles Resolve as the Server Does</h2><p class="lede">Where the page&#39;s Chord comes from.</p></header>
@@ -195,9 +201,13 @@ needed&quot; until a restart. And an edit made between a base build and the watc
 <ul>
 <li><strong>Each base artifact records what it read.</strong> The page&#39;s, the terminal&#39;s and each worker kind&#39;s base bundle hash the
 exact bytes their loader hands to esbuild (in the one <code>onLoad</code> that returns the contents, the workers&#39; existing
-module-location loader included, never a second reader). The server&#39;s own code (what Node loaded: the start script,
-the kit, the app&#39;s <code>base</code> files) is hashed when the kit starts; an edit between Node loading a file and that hash is
-the one window this cannot see (stated in the README).</li>
+module-location loader included, never a second reader). The server&#39;s own code is recorded by a best-effort scan at
+start: esbuild bundles the start script (<code>process.argv[1]</code>) with the server&#39;s conditions, writing and running
+nothing, only to record the files of its static import graph (the start script, the API, Chord&#39;s server modules);
+an import it cannot resolve is left out, any other failure is reported (<code>server_scan</code>) and the server starts. It
+sees literal imports, lazy ones Node may never run included (their edit conservatively asks for a restart), not
+computed <code>import(x)</code> or loader-provided modules; installed packages are left out. The app&#39;s <code>base</code> files are hashed
+at start as well.</li>
 <li><strong>The mark is computed, not latched.</strong> <code>base</code> is true while, for any running artifact, a recorded file&#39;s current
 bytes differ or the file is gone, or a base directory has a source file (<code>.ts</code>, <code>.tsx</code>, <code>.mts</code>, <code>.cts</code>, <code>.js</code>, <code>.jsx</code>,
 <code>.mjs</code>, <code>.cjs</code>, <code>.json</code>, <code>.css</code>) that was not there at start. A file two artifacts read with different bytes stays

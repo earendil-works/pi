@@ -22,8 +22,12 @@ from `@earendil-works/chord`.
   every close; reports `connecting`, `connected`, `waiting`. The environment (clock, timers, online, wakes) is given.
 - **A client** (`client.ts`): `startClient` makes a client host (no address), loads the initial scripts with the app's
   core facets, keeps its parent link with the loop (the link's close shared by the loop and the host), and follows the
-  scripts object: a new set fetches the changed scripts (`fetchScript`) and reloads the host in place (failures reported,
-  kept old); the first frame or a reconnect's snapshot showing what the client runs reloads nothing; a set with another
+  scripts object: a new set fetches the changed scripts (`fetchScript`), has a page's `styles` (`ClientStyles`) fetch
+  the new stylesheets without applying them (`prepare`; a stop removes what it prepared), reloads the host in place
+  (failures reported, kept old), then has them settled (`settle`: a plugin whose new code was adopted gets its new
+  stylesheet applied, one that kept its old code keeps its old stylesheet); it records per plugin the script it runs (a
+  failed one's old script), so a set showing what the client runs reloads nothing, and a reconnect re-applies the newest
+  set when a plugin kept its old code (the scripts object shows an unchanged set no second time); a set with another
   `base` calls `outdated`. Before each reconnect it asks the server's base (`serverBase`): another one also calls
   `outdated` (a new link protocol comes with a new base bundle, Chord being in it), and the loop stops.
 - **Themes** (`themes.ts`, `theme-choice.ts`, `active-theme.ts`): `Theme` (`{ id, name, mode, colors, web?, tui? }`; the
