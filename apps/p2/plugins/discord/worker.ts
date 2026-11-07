@@ -9,6 +9,7 @@ import {
 	type EntryId,
 	type EntryRecord,
 	type Harness,
+	InboxDoc,
 	ROOT_CONVERSATION_ID,
 	type SubmissionId,
 } from "@earendil-works/pi-durable";
@@ -82,14 +83,18 @@ export default defineFacet((host) => {
 					const durable = harness().durable;
 					const context = durableContext(ctx);
 					const submission = await durable.submission(submissionId as SubmissionId, context);
-					if (!submission) return { state: "unanswered" as const, reason: "The input is gone." };
+					// Gone: withdrawn while queued (a stop).
+					if (!submission) return { state: "stopped" as const };
 					const record = await submission.status(context);
 					if (record.type !== "input") return { state: "unanswered" as const, reason: "Not an input." };
 					if (record.status === "queued" || record.status === "placed") return { state: "pending" as const };
 					if (record.status === "unanswered")
-						return { state: "unanswered" as const, reason: record.reason || "The turn ended without an answer." };
+						return record.reason === "aborted"
+							? { state: "stopped" as const }
+							: { state: "unanswered" as const, reason: record.reason || "The turn ended without an answer." };
 					const answer = await entryOf(durable, record.conversationId, record.answer, context);
 					const message = answer?.model?.[0] as AssistantMessage | undefined;
+					if (message?.stopReason === "aborted") return { state: "stopped" as const };
 					const text = (message?.content ?? [])
 						.flatMap((part) => (part.type === "text" ? [part.text] : []))
 						.join("")
@@ -103,6 +108,47 @@ export default defineFacet((host) => {
 										? (message.errorMessage ?? "The model failed.")
 										: "The answer has no text.",
 							};
+				},
+				command: async ({ conversation, command }, ctx) => {
+					const durable = harness().durable;
+					const context = durableContext(ctx);
+					const target = conversation ?? (await mainConversation(durable, context));
+					const chat = await ctx.get(Conversation, { conversation: target });
+					const live = chat.view.value?.docs["pi.live"] as { run?: unknown } | undefined;
+					const inbox = await durable.snapshot(InboxDoc, target as ConversationId, context);
+					const queued = (inbox?.items ?? []).filter((item) => item.mode !== "write").length;
+					const working = Boolean(live?.run);
+					if (command === "stop") {
+						if (!working && !queued) return { text: "Nothing is running." };
+						// The web's Stop: queued inputs withdrawn first, then the run aborted.
+						const { restored } = await chat.stop(ctx);
+						const withdrawn = restored.length;
+						return {
+							text: withdrawn
+								? `Stopped; ${withdrawn} queued message${withdrawn === 1 ? "" : "s"} withdrawn.`
+								: "Stopped.",
+						};
+					}
+					if (command === "compact") {
+						await chat.compact({}, ctx);
+						return { text: "Compacting the context." };
+					}
+					const model = chat.model.value;
+					const tokens = chat.stats.value?.contextTokens;
+					const usage =
+						tokens === undefined
+							? "unknown"
+							: model?.contextWindow
+								? `${tokens.toLocaleString("en-US")} of ${model.contextWindow.toLocaleString("en-US")} tokens (${Math.round((tokens / model.contextWindow) * 100)}%)`
+								: `${tokens.toLocaleString("en-US")} tokens`;
+					return {
+						text: [
+							`Model: ${model ? `${model.name} (${model.provider}/${model.modelId})` : "none"}`,
+							`Working: ${working ? "yes" : "no"}`,
+							`Queued: ${queued}`,
+							`Context: ${usage}`,
+						].join("\n"),
+					};
 				},
 				thread: async ({ name, before }, ctx) => {
 					const conversation = await forkThread(harness().durable, name, before, durableContext(ctx));

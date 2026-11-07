@@ -90,6 +90,7 @@ export default defineFacet((host) => {
 			deliver: (session, input) => ingress(session, (worker, ctx) => worker.deliver(input, ctx)),
 			turn: (session, submissionId) => ingress(session, (worker, ctx) => worker.turn({ submissionId }, ctx)),
 			thread: (session, name, before) => ingress(session, (worker, ctx) => worker.thread({ name, before }, ctx)),
+			command: (session, input) => ingress(session, (worker, ctx) => worker.command(input, ctx)),
 		};
 		const relay = new Relay((bot) => fleet.value.connected(bot), sessions, {
 			// The state's drafts are the same JSON as the relay's plain records.

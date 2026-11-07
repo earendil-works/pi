@@ -119,7 +119,13 @@ export class Bot implements DiscordPort {
 			guildId: channel.guildId,
 			guildName: channel.guild.name,
 			...(channel.isThread()
-				? { thread: { parentId: channel.parentId ?? "", createdAt: channel.createdTimestamp ?? Date.now() } }
+				? {
+						thread: {
+							parentId: channel.parentId ?? "",
+							createdAt: channel.createdTimestamp ?? Date.now(),
+							createdId: channel.id,
+						},
+					}
 				: {}),
 			lastMessageId: channel.lastMessageId,
 		};
@@ -202,8 +208,13 @@ function refusal(message: string): string | undefined {
 	return undefined;
 }
 
-/** A discord.js message as the relay reads it. */
+/**
+ * A discord.js message as the relay reads it. A mention of the bot's own role (Discord offers it beside the bot's
+ * user when typing `@name`) counts as a mention of the bot, written as one.
+ */
 function messageOf(message: Message, botId: string): DiscordMessage {
+	const role = message.guild?.members.me?.roles.botRole?.id;
+	const byRole = role !== undefined && message.mentions.roles.has(role);
 	return {
 		id: message.id,
 		channelId: message.channelId,
@@ -213,8 +224,8 @@ function messageOf(message: Message, botId: string): DiscordMessage {
 			bot: message.author.bot,
 		},
 		roles: message.member ? [...message.member.roles.cache.keys()] : [],
-		text: message.content,
-		mentionsBot: botId !== "" && message.mentions.users.has(botId),
+		text: byRole ? message.content.replaceAll(`<@&${role}>`, `<@${botId}>`) : message.content,
+		mentionsBot: botId !== "" && (byRole || message.mentions.users.has(botId)),
 		attachments: [...message.attachments.values()].map((attachment) => ({
 			name: attachment.name,
 			url: attachment.url,

@@ -151,6 +151,11 @@ export const Discord = remote("p2.discord", {
 	},
 });
 
+/** Channel commands: a mention of the bot whose remaining text is exactly one of these (an optional leading slash). */
+export const COMMANDS = ["stop", "status", "compact"] as const;
+export type Command = (typeof COMMANDS)[number];
+const CommandSchema = union(COMMANDS.map((command) => literal(command)));
+
 /** A Discord attachment to download into the session's uploads (at most 25 MiB; larger ones are links). */
 export const DiscordFileSchema = obj({ url: str(), name: str(), size: num(), key: str(), ref: str() });
 
@@ -178,14 +183,26 @@ export const DiscordIngress = remote("p2.discord-ingress", {
 					}),
 					obj({ conversation: int(), submissionId: num() }),
 				),
-				/** The submission's turn: still pending, answered (the answer's text), or ended without one. */
+				/**
+				 * The submission's turn: still pending, answered (the answer's text), stopped (aborted, or withdrawn while
+				 * queued), or ended without an answer.
+				 */
 				turn: method(
 					obj({ submissionId: num() }),
 					union([
 						obj({ state: literal("pending") }),
 						obj({ state: literal("answered"), text: str() }),
+						obj({ state: literal("stopped") }),
 						obj({ state: literal("unanswered"), reason: str() }),
 					]),
+				),
+				/**
+				 * Runs a channel command on `conversation` (default: the main conversation): `stop` as the web's Stop
+				 * (queued inputs withdrawn, the run aborted), `status`, `compact`. The reply's text.
+				 */
+				command: method(
+					obj({ conversation: opt(int({ minimum: 1 })), command: CommandSchema }),
+					obj({ text: str() }),
 				),
 				/**
 				 * A subagent for a Discord thread: forked from the main conversation at its last finished answer before

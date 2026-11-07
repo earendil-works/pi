@@ -62,10 +62,22 @@ A session has at most one link and a channel at most one session (its threads fo
 - **Reply:** when the input's turn ends (checked on every status change of the session and every 16 s), the answer's
   text is posted as a reply to the waking message, split at 2000 characters. A turn without an answer posts why. While
   a reply is pending and the session works, the channel shows "Pi is typing". A turn not done after 6 hours is given up.
-- **Threads:** a thread of a bound channel gets its own subagent at its first mention: `discord-<thread name>`, forked
+- **Commands:** a mention of the bot by someone allowed to wake Pi whose remaining text is exactly `stop`, `status`
+  or `compact` (any case, an optional leading slash: `@Pi /stop`) is a command, run at once (not behind a delivery
+  under way) on the main conversation, or in a thread on its subagent. `stop` is the web's Stop: queued inputs are
+  withdrawn, the run is aborted; it answers "Stopped." (with how many queued messages were withdrawn) or "Nothing is
+  running.", and the stopped turns post nothing. `status` answers the model, whether it works, the queued inputs and
+  the context's use; `compact` starts a compaction and says so. Commands never go into a batch and are not caught up
+  on after downtime (a missed `stop` is stale). They are left out of batches rather than moving the cursor past them,
+  which would drop the undelivered messages before them. A mention of the bot's own role counts as a mention of the
+  bot.
+- **Threads:** a thread of a linked channel gets its own subagent at its first mention: `discord-<thread name>`, forked
   from the main conversation at its last finished answer before the thread was created (a fresh conversation with the
   main agent's configuration when there is none). It lists in the sidebar like other subagents, follows the session's
-  location and has no reporter: its batches (with the thread's own cursor) go to it, its answers back to the thread.
+  location and has no reporter: its batches go to it, its answers back to the thread. Its first batch holds what it
+  never saw: the channel's messages after the channel's cursor up to the thread's creation (under "[#channel, before
+  the thread]"), then the thread's messages up to the mention ("[The thread]"); the channel's cursor stays, so the main
+  agent still gets those channel messages. After that the thread has its own cursor.
 - **Refusals:** a session that is gone, archived or no longer in a sandbox gets nothing; the channel gets a notice.
 
 ## The session lock

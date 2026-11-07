@@ -2,7 +2,7 @@
 // by the link's bot, delivers the messages since the link's cursor (a thread's: to its forked subagent) as one input; a
 // pending reply is posted once its turn ended. Plain logic over ports, so tests run it with fake bots and sessions.
 import type { SessionLock } from "@p2/app/v1";
-import type { Binding, Pending, Wake } from "./contract.ts";
+import { type Binding, COMMANDS, type Command, type Pending, type Wake } from "./contract.ts";
 
 /** A Discord message as the relay reads it. */
 export type DiscordMessage = {
@@ -21,7 +21,11 @@ export type DiscordChannel = {
 	name: string;
 	guildId: string;
 	guildName: string;
-	thread?: { parentId: string; createdAt: number };
+	/**
+	 * A thread's parent channel, when it was created, and a snowflake of its creation (its ID): the parent's messages up
+	 * to it came before the thread.
+	 */
+	thread?: { parentId: string; createdAt: number; createdId: string };
 	lastMessageId: string | null;
 };
 
@@ -39,6 +43,7 @@ export type DiscordPort = {
 export type TurnState =
 	| { state: "pending" }
 	| { state: "answered"; text: string }
+	| { state: "stopped" }
 	| { state: "unanswered"; reason: string };
 
 /** What the relay needs of a session (its worker's `DiscordIngress`, the catalog). */
@@ -62,6 +67,8 @@ export type SessionPort = {
 	): Promise<{ conversation: number; submissionId: number }>;
 	turn(session: string, submissionId: number): Promise<TurnState>;
 	thread(session: string, name: string, before: number): Promise<{ conversation: number }>;
+	/** Runs channel command `command` on `conversation` (default: the main one): the reply's text. */
+	command(session: string, input: { conversation?: number; command: Command }): Promise<{ text: string }>;
 };
 
 /** The relay's persisted state: bindings by channel, pending replies by the Discord message that woke Pi. */
@@ -129,7 +136,49 @@ export class Relay {
 		}
 		// Another bot in the channel may be mentioned too: only the link's own bot listens.
 		if (binding.botId !== bot || !mayWake(binding.wake, message.author.id, message.roles)) return;
-		await this.deliver(binding.channelId, message, thread);
+		// A command runs now, never behind the delivery under way (a stop must reach the running turn).
+		const command = commandOf(message.text, port.botId);
+		if (command) await this.#command(binding, thread, message, command);
+		else await this.deliver(binding.channelId, message, thread);
+	}
+
+	/** Runs channel command `command` of `message` on the channel's main conversation or the thread's subagent. */
+	async #command(
+		binding: Binding,
+		thread: DiscordChannel | undefined,
+		message: DiscordMessage,
+		command: Command,
+	): Promise<void> {
+		const port = this.#port(binding.botId);
+		const where = thread?.id ?? binding.channelId;
+		const refusal = await this.#sessions.usable(binding.session);
+		if (refusal) return port.reply(where, message.id, `Pi is not listening here right now: ${refusal}`);
+		const conversation = thread ? binding.threads[thread.id]?.conversation : undefined;
+		if (thread && conversation === undefined)
+			return port.reply(
+				where,
+				message.id,
+				command === "stop" ? "Nothing is running." : "This thread has no agent yet: mention the bot to start one.",
+			);
+		let text: string;
+		try {
+			({ text } = await this.#sessions.command(binding.session, {
+				...(conversation === undefined ? {} : { conversation }),
+				command,
+			}));
+		} catch (error) {
+			text = `Could not reach Pi: ${error instanceof Error ? error.message : String(error)}`;
+		}
+		await port.reply(where, message.id, text);
+	}
+
+	/** Whether `message` is a channel command of `binding` (never delivered to the agent, nor caught up on). */
+	#isCommand(binding: Binding, message: DiscordMessage, botId: string): boolean {
+		return (
+			message.mentionsBot &&
+			mayWake(binding.wake, message.author.id, message.roles) &&
+			commandOf(message.text, botId) !== undefined
+		);
 	}
 
 	/**
@@ -179,27 +228,35 @@ export class Relay {
 		}
 		// Delivered already (a catch-up, then the same mention replayed by a resumed gateway).
 		if (cursor !== null && BigInt(trigger.id) <= BigInt(cursor)) return;
-		// Everything since the cursor, page by page; only the newest BATCH_CAP go into the input.
-		const messages: DiscordMessage[] = [];
-		let total = 0;
-		for await (const message of history(port, where, cursor, trigger.id)) {
-			if (message.author.bot) continue;
-			total++;
-			messages.push(message);
-			if (messages.length > BATCH_CAP) messages.shift();
-		}
-		if (!messages.some((message) => message.id === trigger.id)) {
-			total++;
-			messages.push(trigger);
-			if (messages.length > BATCH_CAP) messages.shift();
-		}
-		const count = `${total} message${total === 1 ? "" : "s"}`;
-		const omitted = total - messages.length;
-		const left = omitted ? `; the ${omitted} earliest are left out, the newest ${messages.length} follow` : "";
-		const header = thread
-			? `[Discord thread "${thread.name}" in #${binding.channelName} (${binding.guildName}): ${count}${left}]`
-			: `[Discord #${binding.channelName} (${binding.guildName}): ${count} since the last delivery${left}]`;
-		const batch = batchOf(messages, port.botId, header);
+		// Everything since the cursor, page by page; only the newest BATCH_CAP go into the input. A thread's first
+		// batch starts with what its channel said after the channel's cursor until the thread was made: its subagent
+		// is forked from before that and never saw it (the channel's cursor stays: the main agent gets it too).
+		const window = new BatchWindow(BATCH_CAP);
+		const before = thread?.thread && cursor === null ? thread.thread.createdId : undefined;
+		if (before !== undefined)
+			for await (const message of history(port, channelId, binding.cursor, before))
+				if (!message.author.bot && !this.#isCommand(binding, message, port.botId)) window.add("channel", message);
+		for await (const message of history(port, where, cursor, trigger.id))
+			if (!message.author.bot && !this.#isCommand(binding, message, port.botId)) window.add("here", message);
+		if (!window.has(trigger.id)) window.add("here", trigger);
+		const plural = (count: number) => `${count} message${count === 1 ? "" : "s"}`;
+		const left = window.omitted
+			? `; the ${window.omitted} earliest are left out, the newest ${window.kept} follow`
+			: "";
+		const channelName = `#${binding.channelName}`;
+		const header = !thread
+			? `[Discord ${channelName} (${binding.guildName}): ${plural(window.total)} since the last delivery${left}]`
+			: before === undefined
+				? `[Discord thread "${thread.name}" in ${channelName} (${binding.guildName}): ${plural(window.total)} since the last delivery${left}]`
+				: `[Discord thread "${thread.name}" in ${channelName} (${binding.guildName}), its first delivery: ${window.count("channel") ? `${plural(window.count("channel"))} of ${channelName} before the thread, then ` : ""}${plural(window.count("here"))} of the thread${left}]`;
+		const batch = batchOf(
+			window.sections({
+				channel: `[${channelName}, before the thread]`,
+				here: before !== undefined && window.count("channel") ? "[The thread]" : undefined,
+			}),
+			port.botId,
+			header,
+		);
 		let delivered: { conversation: number; submissionId: number };
 		try {
 			delivered = await this.#sessions.deliver(binding.session, {
@@ -210,7 +267,7 @@ export class Relay {
 				context: {
 					channel: binding.channelName,
 					guild: binding.guildName,
-					messages: total,
+					messages: window.total,
 					...(thread ? { thread: thread.name } : {}),
 				},
 				files: batch.files,
@@ -260,11 +317,13 @@ export class Relay {
 			for (const place of places) {
 				try {
 					let newest: DiscordMessage | undefined;
+					// A missed command is stale: it neither runs nor triggers a delivery.
 					for await (const message of history(port, place.id, place.cursor))
 						if (
 							!message.author.bot &&
 							message.mentionsBot &&
-							mayWake(binding.wake, message.author.id, message.roles)
+							mayWake(binding.wake, message.author.id, message.roles) &&
+							!this.#isCommand(binding, message, port.botId)
 						)
 							newest = message;
 					if (!newest) continue;
@@ -308,11 +367,13 @@ export class Relay {
 			if (now - pending.since < PENDING_TIMEOUT_MS) return;
 			turn = { state: "unanswered", reason: "the session did not answer in time." };
 		}
-		const text = turn.state === "answered" ? turn.text : `(No answer: ${turn.reason})`;
+		// A stopped turn posts nothing: the stop command answered already.
+		const text =
+			turn.state === "answered" ? turn.text : turn.state === "stopped" ? "" : `(No answer: ${turn.reason})`;
 		try {
-			if (!port) throw new Error("its bot is not connected");
+			if (text && !port) throw new Error("its bot is not connected");
 			for (const [index, chunk] of chunkText(text).entries())
-				await port.reply(pending.replyChannelId, index === 0 ? pending.messageId : undefined, chunk);
+				await port?.reply(pending.replyChannelId, index === 0 ? pending.messageId : undefined, chunk);
 		} catch (error) {
 			// A channel that went away: the reply is dropped, as Discord has nowhere to show it.
 			console.error("p2 discord: posting a reply failed:", error instanceof Error ? error.message : error);
@@ -357,22 +418,92 @@ async function* history(
 	}
 }
 
+/**
+ * The channel command `text` is, if it is one: with the bot's mentions removed, exactly a command (any case, an
+ * optional leading slash).
+ */
+export function commandOf(text: string, botId: string): Command | undefined {
+	const rest = text
+		.replaceAll(`<@${botId}>`, "")
+		.replaceAll(`<@!${botId}>`, "")
+		.trim()
+		.toLowerCase()
+		.replace(/^\//, "");
+	return COMMANDS.find((command) => command === rest);
+}
+
 /** Whether the author of a message may wake Pi in its binding. */
 export function mayWake(wake: Wake, author: string, roles: readonly string[]): boolean {
 	return wake.anyone || wake.users.includes(author) || roles.some((role) => wake.roles.includes(role));
 }
 
+/** Where a batch's message comes from: the place mentioned in, or (a thread's first batch) its parent channel. */
+type Part = "channel" | "here";
+
+/** The newest `cap` messages of a batch in order, by part, and how many there were in all. */
+class BatchWindow {
+	readonly #cap: number;
+	readonly #entries: { part: Part; message: DiscordMessage }[] = [];
+	readonly #counts: Record<Part, number> = { channel: 0, here: 0 };
+
+	constructor(cap: number) {
+		this.#cap = cap;
+	}
+
+	add(part: Part, message: DiscordMessage): void {
+		this.#counts[part]++;
+		this.#entries.push({ part, message });
+		if (this.#entries.length > this.#cap) this.#entries.shift();
+	}
+
+	has(id: string): boolean {
+		return this.#entries.some((entry) => entry.message.id === id);
+	}
+
+	/** Messages of `part`, kept or not. */
+	count(part: Part): number {
+		return this.#counts[part];
+	}
+
+	get total(): number {
+		return this.#counts.channel + this.#counts.here;
+	}
+
+	get kept(): number {
+		return this.#entries.length;
+	}
+
+	get omitted(): number {
+		return this.total - this.kept;
+	}
+
+	/** The kept messages in runs of one part, each titled as `titles` says (none: untitled). */
+	sections(titles: Record<Part, string | undefined>): { title?: string; messages: DiscordMessage[] }[] {
+		const sections: { part: Part; messages: DiscordMessage[] }[] = [];
+		for (const { part, message } of this.#entries) {
+			const last = sections.at(-1);
+			if (last?.part === part) last.messages.push(message);
+			else sections.push({ part, messages: [message] });
+		}
+		return sections.map(({ part, messages }) => {
+			const title = titles[part];
+			return title === undefined ? { messages } : { title, messages };
+		});
+	}
+}
+
 /**
- * A batch's text: one `Name: text` line (or paragraph) per message, oldest first, the bot's mention written `@Pi`, and
- * attachments too large to download listed as links. The attachments to download, keyed by message and position.
+ * A batch's text: under the header, each section's title (if any), then one `Name: text` line (or paragraph) per
+ * message, oldest first, the bot's mention written `@Pi`, and attachments too large to download listed as links. The
+ * attachments to download, keyed by message and position.
  */
 export function batchOf(
-	messages: readonly DiscordMessage[],
+	sections: readonly { title?: string; messages: readonly DiscordMessage[] }[],
 	botId: string,
 	header: string,
 ): { text: string; files: { url: string; name: string; size: number; key: string; ref: string }[] } {
 	const files: { url: string; name: string; size: number; key: string; ref: string }[] = [];
-	const lines = messages.map((message) => {
+	const line = (message: DiscordMessage) => {
 		const text = message.text.replaceAll(`<@${botId}>`, "@Pi").replaceAll(`<@!${botId}>`, "@Pi").trim();
 		const links: string[] = [];
 		message.attachments.forEach((attachment, index) => {
@@ -387,7 +518,11 @@ export function batchOf(
 			else links.push(`[attachment ${attachment.name} (${attachment.size} bytes): ${attachment.url}]`);
 		});
 		return `${message.author.name}: ${[text, ...links].filter(Boolean).join("\n")}`;
-	});
+	};
+	const lines = sections.flatMap(({ title, messages }) => [
+		...(title === undefined ? [] : [title]),
+		...messages.map(line),
+	]);
 	return { text: [header, ...lines].join("\n"), files };
 }
 

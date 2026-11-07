@@ -104,12 +104,28 @@ class FakeSessions implements SessionPort {
 	async deliver(_session: string, input: Parameters<SessionPort["deliver"]>[1]) {
 		await new Promise((resolve) => setTimeout(resolve, this.slow));
 		this.delivered.push(input);
+		this.running.add(input.conversation ?? 1);
 		const submissionId = this.delivered.length;
 		this.turns.set(submissionId, { state: "pending" });
 		return { conversation: input.conversation ?? 1, submissionId };
 	}
 	async turn(_session: string, submissionId: number): Promise<TurnState> {
 		return this.turns.get(submissionId) ?? { state: "unanswered", reason: "gone" };
+	}
+	/** Conversations with a turn under way, and the commands run. */
+	readonly running = new Set<number>();
+	readonly commands: { conversation?: number; command: string }[] = [];
+	/** The fake's `stop`: the conversation's pending turns end stopped. */
+	async command(_session: string, input: { conversation?: number; command: string }) {
+		this.commands.push(input);
+		const conversation = input.conversation ?? 1;
+		if (input.command !== "stop") return { text: `${input.command} of ${conversation}` };
+		if (!this.running.delete(conversation)) return { text: "Nothing is running." };
+		this.delivered.forEach((delivered, index) => {
+			if ((delivered.conversation ?? 1) === conversation && this.turns.get(index + 1)?.state === "pending")
+				this.turns.set(index + 1, { state: "stopped" });
+		});
+		return { text: "Stopped." };
 	}
 	async thread(_session: string, name: string, before: number) {
 		await new Promise((resolve) => setTimeout(resolve, this.slow));
@@ -142,7 +158,7 @@ function setup(initial: Binding = binding()) {
 		name: "Release plan",
 		guildId: "g1",
 		guildName: "Guild",
-		thread: { parentId: "c1", createdAt: 5_000 },
+		thread: { parentId: "c1", createdAt: 5_000, createdId: "0" },
 		lastMessageId: null,
 	});
 	const sessions = new FakeSessions();
@@ -259,7 +275,7 @@ describe("discord relay", () => {
 		assert.equal(sessions.delivered[0]?.conversation, 41);
 		assert.equal(sessions.delivered[0]?.context.thread, "Release plan");
 		assert.deepEqual(sessions.delivered[0]?.text.split("\n"), [
-			'[Discord thread "Release plan" in #general (Guild): 2 messages]',
+			'[Discord thread "Release plan" in #general (Guild), its first delivery: 2 messages of the thread]',
 			"Ada: thread opener",
 			"Ada: @Pi plan it",
 		]);
@@ -302,6 +318,7 @@ describe("discord relay", () => {
 		// A new thread: its two mentions must not fork two subagents either.
 		const a = discord.say("t1", message(`<@${BOT}> a`));
 		const b = discord.say("t1", message(`<@${BOT}> b`));
+		sessions.running.clear();
 		await Promise.all([
 			relay.onMessage("bot-a", first),
 			relay.onMessage("bot-a", second),
@@ -322,6 +339,131 @@ describe("discord relay", () => {
 		assert.equal(state().bindings.c1?.cursor, second.id);
 		assert.equal(state().bindings.c1?.threads.t1?.cursor, b.id);
 		assert.deepEqual(Object.keys(state().pending).sort(), [first.id, second.id, a.id, b.id].sort());
+	});
+
+	it("a thread's first batch: the channel's undelivered messages up to the thread, then the thread's; then its own cursor", async () => {
+		const { discord, sessions, relay, state } = setup(binding({ cursor: "1" }));
+		discord.say("c1", message("before the thread"));
+		const starter = discord.say(
+			"c1",
+			message("shall we plan the release?", { author: { id: "u3", name: "Bo", bot: false } }),
+		);
+		// The thread is made from that message (its ID); the channel goes on meanwhile.
+		const thread = discord.channels.get("t1");
+		assert(thread?.thread);
+		thread.thread.createdId = starter.id;
+		discord.say("c1", message("unrelated, after the thread"));
+		discord.say("t1", message("in the thread"));
+		const first = discord.say("t1", message(`<@${BOT}> plan it`));
+		await relay.onMessage("bot-a", first);
+		assert.deepEqual(sessions.delivered[0]?.text.split("\n"), [
+			'[Discord thread "Release plan" in #general (Guild), its first delivery: 2 messages of #general before the thread, then 2 messages of the thread]',
+			"[#general, before the thread]",
+			"Ada: before the thread",
+			"Bo: shall we plan the release?",
+			"[The thread]",
+			"Ada: in the thread",
+			"Ada: @Pi plan it",
+		]);
+		assert.equal(sessions.delivered[0]?.context.messages, 4);
+		assert.equal(state().bindings.c1?.cursor, "1", "the channel's cursor stays: the main agent still gets these");
+		assert.equal(state().bindings.c1?.threads.t1?.cursor, first.id);
+		// Then only the thread, since its own cursor.
+		discord.say("t1", message("more detail"));
+		const second = discord.say("t1", message(`<@${BOT}> and now?`));
+		await relay.onMessage("bot-a", second);
+		assert.deepEqual(sessions.delivered[1]?.text.split("\n"), [
+			'[Discord thread "Release plan" in #general (Guild): 2 messages since the last delivery]',
+			"Ada: more detail",
+			"Ada: @Pi and now?",
+		]);
+		// The main agent's next batch has every channel message since its cursor, the thread's start included.
+		const main = discord.say("c1", message(`<@${BOT}> back here`));
+		await relay.onMessage("bot-a", main);
+		assert.deepEqual(sessions.delivered[2]?.text.split("\n").slice(1), [
+			"Ada: before the thread",
+			"Bo: shall we plan the release?",
+			"Ada: unrelated, after the thread",
+			"Ada: @Pi back here",
+		]);
+	});
+
+	it("stop while a turn runs: answered at once, even behind a delivery; the stopped turn posts nothing", async () => {
+		const { discord, sessions, relay, state } = setup(binding({ cursor: "1" }));
+		const first = discord.say("c1", message(`<@${BOT}> long task`));
+		await relay.onMessage("bot-a", first);
+		// A second mention is being delivered (a slow worker) when the stop comes: the stop does not wait for it.
+		sessions.slow = 50;
+		const second = discord.say("c1", message(`<@${BOT}> and another`));
+		const stop = discord.say(
+			"c1",
+			message(`<@${BOT}> /STOP`, { author: { id: "u3", name: "Bo", bot: false }, roles: ["r1"] }),
+		);
+		const delivering = relay.onMessage("bot-a", second);
+		await relay.onMessage("bot-a", stop);
+		assert.deepEqual(discord.posted, [{ channel: "c1", replyTo: stop.id, text: "Stopped." }], "before the delivery");
+		assert.equal(sessions.delivered.length, 1);
+		await delivering;
+		assert.deepEqual(sessions.commands, [{ command: "stop" }]);
+		assert.equal(sessions.turns.get(1)?.state, "stopped");
+		await relay.checkPending(new Set(["s1"]));
+		assert.deepEqual(Object.keys(state().pending), [second.id], "the stopped turn's reply is gone, unposted");
+		assert.equal(discord.posted.length, 1);
+		// The command is never delivered: the next batch has the messages around it, not it.
+		const after = discord.say("c1", message(`<@${BOT}> next`));
+		await relay.onMessage("bot-a", after);
+		assert.deepEqual(sessions.delivered.at(-1)?.text.split("\n").slice(1), ["Ada: @Pi next"]);
+		assert.deepEqual(sessions.delivered[1]?.text.split("\n").slice(1), ["Ada: @Pi and another"]);
+	});
+
+	it("stop with nothing running says so; status and compact go to the main conversation; strangers' commands are ignored", async () => {
+		const { discord, sessions, relay } = setup();
+		await relay.onMessage("bot-a", discord.say("c1", message(`<@${BOT}> stop`)));
+		await relay.onMessage("bot-a", discord.say("c1", message(`<@${BOT}>   Status `)));
+		await relay.onMessage("bot-a", discord.say("c1", message(`<@${BOT}> compact`)));
+		await relay.onMessage(
+			"bot-a",
+			discord.say("c1", message(`<@${BOT}> stop`, { author: { id: "u9", name: "Eve", bot: false } })),
+		);
+		assert.deepEqual(
+			discord.posted.map((post) => post.text),
+			["Nothing is running.", "status of 1", "compact of 1"],
+		);
+		assert.equal(sessions.delivered.length, 0, "commands are not inputs");
+		// Not a command: more than the word.
+		await relay.onMessage("bot-a", discord.say("c1", message(`<@${BOT}> stop the build please`)));
+		assert.equal(sessions.delivered.length, 1);
+	});
+
+	it("a command in a thread reaches the thread's subagent; a thread without one has nothing to stop", async () => {
+		const known = { conversation: 41, name: "Release plan", cursor: "1" };
+		const { discord, sessions, relay } = setup(binding({ cursor: "1", threads: { t1: known } }));
+		discord.add({
+			id: "t2",
+			name: "New",
+			guildId: "g1",
+			guildName: "Guild",
+			thread: { parentId: "c1", createdAt: 6_000, createdId: "0" },
+			lastMessageId: null,
+		});
+		await relay.onMessage("bot-a", discord.say("t1", message(`<@${BOT}> do it`)));
+		const stop = discord.say("t1", message(`<@${BOT}> stop`));
+		await relay.onMessage("bot-a", stop);
+		assert.deepEqual(sessions.commands, [{ conversation: 41, command: "stop" }]);
+		assert.deepEqual(discord.posted, [{ channel: "t1", replyTo: stop.id, text: "Stopped." }]);
+		assert.equal(sessions.turns.get(1)?.state, "stopped");
+		const elsewhere = discord.say("t2", message(`<@${BOT}> stop`));
+		await relay.onMessage("bot-a", elsewhere);
+		assert.deepEqual(discord.posted.at(-1), { channel: "t2", replyTo: elsewhere.id, text: "Nothing is running." });
+		assert.equal(sessions.threads.length, 0, "a command forks no subagent");
+	});
+
+	it("a command missed while down is neither run nor a catch-up trigger", async () => {
+		const { discord, sessions, relay } = setup(binding({ cursor: "1" }));
+		discord.say("c1", message(`<@${BOT}> stop`));
+		await relay.catchUp("bot-a");
+		assert.equal(sessions.delivered.length, 0);
+		assert.equal(sessions.commands.length, 0);
 	});
 
 	it("pages through everything since the cursor up to the mention", async () => {
@@ -413,13 +555,17 @@ describe("discord relay", () => {
 		const big = 26 * 1024 * 1024;
 		const batch = batchOf(
 			[
-				message("see files", {
-					id: "7",
-					attachments: [
-						{ name: "a.png", url: "https://cdn/a.png", size: 10 },
-						{ name: "huge.zip", url: "https://cdn/huge.zip", size: big },
+				{
+					messages: [
+						message("see files", {
+							id: "7",
+							attachments: [
+								{ name: "a.png", url: "https://cdn/a.png", size: 10 },
+								{ name: "huge.zip", url: "https://cdn/huge.zip", size: big },
+							],
+						}),
 					],
-				}),
+				},
 			],
 			BOT,
 			"[h]",
@@ -505,6 +651,33 @@ describe("discord ingress (fake provider)", () => {
 		const mirror = await holdIn(fixture.browser(), FileSummaries, {}, "owner");
 		const spaces = await mirror.of({ session }, BACKGROUND_CONTEXT);
 		assert.equal(spaces.uploads?.newest[0]?.source, "discord");
+	});
+
+	it("stop aborts the running turn and withdraws the queued inputs, as the web's Stop", async () => {
+		const ingress = fixture.server.host.hold(DiscordIngress, { session }, BACKGROUND_CONTEXT);
+		const input = (requestId: string, text: string) => ({
+			requestId,
+			author: { id: "u1", name: "Ada" },
+			text,
+			context: { channel: "general", guild: "Guild", messages: 1 },
+			files: [],
+			lock: null,
+		});
+		// A turn that runs a few seconds (its bash tool sleeps), and one queued behind it.
+		const running = await ingress.deliver(input("discord:700", "slow-tool"), BACKGROUND_CONTEXT);
+		const queued = await ingress.deliver(input("discord:701", "queued behind"), BACKGROUND_CONTEXT);
+		await poll(async () =>
+			(await ingress.command({ command: "status" }, BACKGROUND_CONTEXT)).text.includes("Working: yes"),
+		);
+		const status = (await ingress.command({ command: "status" }, BACKGROUND_CONTEXT)).text;
+		assert.match(status, /^Model: .+\nWorking: yes\nQueued: 1\nContext: /);
+		const stopped = await ingress.command({ command: "stop" }, BACKGROUND_CONTEXT);
+		assert.equal(stopped.text, "Stopped; 1 queued message withdrawn.");
+		assert.deepEqual(await ended(ingress, running.submissionId), { state: "stopped" });
+		assert.deepEqual(await ended(ingress, queued.submissionId), { state: "stopped" });
+		assert.equal((await ingress.command({ command: "stop" }, BACKGROUND_CONTEXT)).text, "Nothing is running.");
+		assert.match((await ingress.command({ command: "status" }, BACKGROUND_CONTEXT)).text, /Working: no\nQueued: 0/);
+		assert.equal((await ingress.command({ command: "compact" }, BACKGROUND_CONTEXT)).text, "Compacting the context.");
 	});
 
 	it("forks a thread's subagent from the main conversation's last answer before the thread", async () => {
