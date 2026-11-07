@@ -2,7 +2,7 @@
 title: p3 step 0a: three reload bugs
 cover: Step 0a / Reload Bugs
 kicker: A spec · p3 step 0a (Chord) · 2026-11-06
-subtitle: Three fixes in Chord so that applying a page plugin never shows it unstyled and "restart needed" means base code really changed
+subtitle: Three fixes in Chord so that applying a page plugin keeps it styled (UI contributed by a restarting object aside) and "restart needed" means base code really changed
 stats:
   - 3 | bug fixes, all in Chord
   - 0 | decisions: each fix makes the code do what design §21 says
