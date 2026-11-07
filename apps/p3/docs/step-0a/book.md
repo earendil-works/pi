@@ -34,7 +34,7 @@ the bar says "restart needed" although nothing p3 runs has changed, and says it 
    server's resolution conditions: an app installed from npm (no flags) gets Chord's `dist/` on the server and in the
    page alike; a server started with `--conditions=source` (this monorepo) gets the source in both. Today the page
    always takes `dist/`, whatever the server runs.
-3. **"Restart needed" compares content.** Each base build records the bytes it read; the mark is true exactly while a
+3. **"Restart needed" compares content.** Each base build records a SHA-256 hash of the bytes it read per file; the mark is true exactly while a
    file differs from what a running base was built from, checked once when watching starts and again on every event.
 :::
 
@@ -106,7 +106,7 @@ needed" until a restart. And an edit made between a base build and the watcher's
 - **The mark is computed, not latched.** `base` is true while, for any running artifact, a recorded file's current
   bytes differ or the file is gone, or a base directory has a source file (`.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`,
   `.mjs`, `.cjs`, `.json`, `.css`) that was not there at start. A file two artifacts read with different bytes stays
-  marked as long as either differs. Back to the recorded bytes, the mark clears.
+  marked as long as either differs. Back to bytes with the recorded hash, the mark clears.
 - **Checked when watching starts and on every event.** After the watches are installed, every recorded file and base
   directory is compared once (an edit between the build and the watch is found there). Each event re-reads its path;
   reads of one path are serialized, the latest wins. A base directory removed and recreated is watched again.
