@@ -291,6 +291,27 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			expect(result.calls.every((call) => call.durationMs >= 0)).toBe(true);
 		});
 
+		it("lets a script declare its own tools and console bindings", async () => {
+			// `tools` and `console` reach a script as globals, so a top-level `const` shadows them
+			// for that script instead of failing the wrapper before it runs.
+			const sandbox = createSandbox([echo]);
+			const shadowed = await sandbox.execute(`
+				const tools = "shadowed";
+				const console = { log: () => {} };
+				console.log("ignored");
+				return tools;
+			`);
+			expect(shadowed).toMatchObject({ ok: true, value: "shadowed" });
+			expect(shadowed.output).toEqual([]);
+
+			// The next script on the same sandbox still sees the real globals.
+			const globals = await sandbox.execute(`
+				const echoed = await tools.echo("hi");
+				return [echoed, typeof console.log];
+			`);
+			expect(globals).toMatchObject({ ok: true, value: ["hi", "function"] });
+		});
+
 		it("runs concurrent calls and lists tool names", async () => {
 			const sandbox = createSandbox([
 				echo,
