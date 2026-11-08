@@ -31,6 +31,16 @@ export function openActivity(row: string, step?: string): void {
 	showInSidePanel({ activity: { row, ...(step ? { step } : {}) } });
 }
 
+/**
+ * A tap on a block's wheel or step: opens it in the panel, or closes the panel when it still shows this block with the
+ * same step, so a second tap on the same thing undoes the first.
+ */
+export function toggleActivity(row: string, step?: string): void {
+	const { route } = getNavigation();
+	if (!route.workspace && route.activity?.row === row && route.activity.step === step) closeActivity();
+	else openActivity(row, step);
+}
+
 /** Closes only the activity panel, returning to the screen beneath it. */
 function closeActivity(): void {
 	void getNavigation().close((route) => ({ ...route, activity: undefined }));

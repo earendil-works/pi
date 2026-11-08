@@ -190,6 +190,9 @@ describe("a block's steps and active thought", { skip: !browserTests }, () => {
 	});
 	const show = async (view: ConversationView, detail: 1 | 2 | 3 | 4 = 3, width = 1440) => {
 		await browser.metrics(width, 900);
+		// A new history entry: opening the same URL again keeps its route, and with it a panel an earlier test left open,
+		// which the test's first tap on the same block would close.
+		await browser.open("about:blank");
 		await browser.open(`http://127.0.0.1:${fixture.server.port}`);
 		await browser.wait("document.querySelector('.app')");
 		await browser.loadFixture("codemode-card.ts");
@@ -227,6 +230,18 @@ describe("a block's steps and active thought", { skip: !browserTests }, () => {
 		await browser.wait("document.querySelectorAll('[data-testid=step] > button[aria-expanded=true]').length===2");
 		await browser.evaluate("history.back()");
 		await browser.wait(`!${panel}`);
+	});
+
+	it("closes the panel when the same block is tapped again, but not when another block is", async () => {
+		await show(mixedTurn());
+		await browser.wait("document.querySelectorAll('.row [data-testid=activity]').length===2");
+		await browser.click("[data-testid=activity]");
+		await browser.wait(`${panel} && document.querySelectorAll('[data-testid=step]').length===2`);
+		await browser.evaluate("document.querySelectorAll('.row [data-testid=activity]')[1].click()");
+		await browser.wait("document.querySelectorAll('[data-testid=step]').length===1");
+		await browser.evaluate("document.querySelectorAll('.row [data-testid=activity]')[1].click()");
+		await browser.wait(`!${panel} && !history.state.route.activity`);
+		assert.equal(await browser.evaluate("document.querySelectorAll('.activity-block.selected').length"), 0);
 	});
 
 	it("shows when steps started, once per minute", async () => {

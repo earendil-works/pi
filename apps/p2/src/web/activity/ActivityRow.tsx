@@ -5,7 +5,7 @@ import { type MouseEvent, type ReactNode, useContext } from "react";
 import { useRoute } from "../../runtime/web.tsx";
 import { ToolActivityContext } from "../chat-context.ts";
 import { Ticker } from "../elanor-extra/ticker.tsx";
-import { openActivity, StepList, useElapsed } from "./ActivitySheet.tsx";
+import { StepList, toggleActivity, useElapsed } from "./ActivitySheet.tsx";
 import { CheckIcon, ChevronIcon, CommentIcon, SparkIcon } from "./icons.tsx";
 import { KindIcon, LabelText } from "./Label.tsx";
 import { live, plain, plainText, type Step, sentence, summary, thoughtPreview, type WheelEntry } from "./model.ts";
@@ -55,7 +55,7 @@ export function ActivityRow({
 	if (rows && steps.length)
 		return (
 			<div className="activity-rows" data-testid="activity" data-state={working ? "working" : "done"}>
-				<StepList entries={entries} onStep={(id) => openActivity(rowKey, id)} />
+				<StepList entries={entries} onStep={(id) => toggleActivity(rowKey, id)} />
 			</div>
 		);
 	const thought = entries.some((entry) => entry.kind === "thought");
@@ -65,8 +65,9 @@ export function ActivityRow({
 		? ["Thought", calls.charAt(0).toLowerCase() + calls.slice(1)].filter(Boolean).join(", ")
 		: calls || summary(steps, tools);
 	const idOf = (entry: WheelEntry) => (entry.kind === "call" ? entry.step.id : entry.id);
-	/** Opens this block's panel, expanding the step selected on the wheel. */
-	const show = (step?: string) => openActivity(rowKey, entries.some((each) => idOf(each) === step) ? step : undefined);
+	/** Opens this block's panel, expanding the step selected on the wheel; the same tap again closes it. */
+	const show = (step?: string) =>
+		toggleActivity(rowKey, entries.some((each) => idOf(each) === step) ? step : undefined);
 	/** A tap beside the wheel; the wheel's own tap (its button) is `onActivate`. */
 	const tap = (event: MouseEvent) => {
 		if (!(event.target instanceof Element && event.target.closest(".activity-ticker"))) show();
