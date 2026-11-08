@@ -59,3 +59,21 @@ and its working rules are in `handoff.md`.
   who may send in a session uses every resource in its selection, whoever started the run (as decided earlier: `origin`
   is out, illusory against prompt injection). The stress test's "authority per run" gap (`model-stress/report.md`, both
   reviews) is dropped; defining a session's resources (projects, lock-down, what is brought in) is the mechanism.
+- **Resource model direction (owner, 2026-11-08, voice walkthrough; to be specified and reviewed against p2's
+  features, then explained):** users (including a reserved instance user for company resources); resources, each owned
+  by one user, with its own login or none, never changing whose login it uses (Cristina's own Radius login is her own
+  resource); users create resources only for themselves, admins for the instance user; plugins create their built-in
+  resources (tools, prompt sections: one Durable extension = one resource) for the instance user when installed.
+  Groupings are plugin-defined and only show things (any number per session, computed like folders/recent or curated
+  like projects); a grouping "with resources" keeps its own resource list in its own plugin and tells core how to read
+  it; a session has exactly one resource source: its own list, its owner's defaults (the rule "everything I own plus
+  every instance resource I may use", so new tools appear by themselves) or one grouping with resources (one field on
+  the session: the invariant is structural). Everyone who may send in a session uses its whole list (no per-run
+  authority). One replaceable policy plugin (a registry with one provider; built-in default: the single user may do
+  everything) guards create, bring, add-member and similar typed operations through one guarded step in core; plugins
+  never know about ACL, SAML or Radius; the UI only renders server views (e.g. a per-user list of creatable kinds
+  computed with the policy). Workers follow their session's list live; the harness lets in only extensions whose
+  resource is on it (and belongs to the contributing plugin); resource plugins' per-session server views check the list.
+  Configured resources cover fine-grained cases (conversation access to one session with chosen actions, expiring list
+  entries). Rendering: renderers per contract and form (row, card, detail, ...) from any plugin, detail views assembled
+  from panels several plugins contribute. No stringly-typed APIs.
