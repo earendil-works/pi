@@ -1,12 +1,13 @@
 // A transcript block's activity in the right-hand panel, or p2's sheet on phones. Steps expand in place; choosing
 // another block in the transcript replaces the panel's selection. Opening and closing it participate in Back.
+import type { ImageContent } from "@earendil-works/pi-ai";
 import { type ReactNode, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { getNavigation, Sheet, useRoute, useScrollMemory } from "../../runtime/web.tsx";
 import { ToolActivityContext, WorkingDirectory } from "../chat-context.ts";
 import { CloseIcon } from "../icons.tsx";
 import type { Route } from "../navigation.ts";
-import { DetailProse, StepDetail } from "./Detail.tsx";
+import { DetailProse, imageUrl, StepDetail } from "./Detail.tsx";
 import { ChevronIcon, CommentIcon, SparkIcon } from "./icons.tsx";
 import { KindIcon } from "./Label.tsx";
 import {
@@ -198,7 +199,35 @@ function ActivityPanel({
 
 const WORDS = { thought: "Thought", text: "Note" } as const;
 
-/** A block's steps; in the panel their details expand beneath their headers. */
+/** Thumbnails a collapsed row shows at most: the newest, the rest counted. */
+const THUMBNAILS = { phone: 2, wide: 4 } as const;
+
+/**
+ * A step's images as small thumbnails in its row (what a read loaded, a script's `image()`), so the reader sees them
+ * without expanding it: the last four, two below 700px, "+N" for the earlier ones. Decoration only: the row's name
+ * stays its words. Both counts are rendered and CSS shows the one for the width (activity.css), so the transcript's
+ * rows at detail 4 follow the same breakpoint as the panel.
+ */
+function StepThumbnails({ images }: { images: readonly ImageContent[] }) {
+	if (!images.length) return null;
+	return (
+		<span className="step-thumbs" data-testid="step-thumbs" aria-hidden="true">
+			{(["phone", "wide"] as const).map((width) =>
+				images.length > THUMBNAILS[width] ? (
+					<span key={width} className="step-thumbs-more" data-width={width}>
+						+{images.length - THUMBNAILS[width]}
+					</span>
+				) : null,
+			)}
+			{images.slice(-THUMBNAILS.wide).map((image, index) => (
+				// biome-ignore lint/suspicious/noArrayIndexKey: a result's images never move.
+				<img key={index} className="step-thumb" src={imageUrl(image)} alt="" decoding="async" />
+			))}
+		</span>
+	);
+}
+
+/** A block's steps, each with its images as thumbnails; in the panel their details expand beneath their headers. */
 export function StepList({
 	entries,
 	onStep,
@@ -247,6 +276,7 @@ export function StepList({
 								</span>
 								{argument && <span className="step-argument">{argument}</span>}
 							</span>
+							{step && <StepThumbnails images={step.tool.images} />}
 							<span className="step-state" data-state={step?.status ?? "done"}>
 								{step ? stepState(step, tools) : entry.kind !== "call" && entry.live ? "● thinking" : ""}
 							</span>

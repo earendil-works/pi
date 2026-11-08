@@ -1,7 +1,9 @@
 // How the `codemode` tool shows in the chat: "Ran a script · N calls", and its detail: the whole script
-// (highlighted), its calls as a timeline (each opens its own detail; nested.ts reads them) and what it printed.
+// (highlighted), its calls as a timeline (each opens its own detail; nested.ts reads them), the images it showed
+// (`image()`) and what it printed.
 import {
 	CodeBlock,
+	DetailImages,
 	failureOf,
 	firstLine,
 	InputOutput,
@@ -27,6 +29,7 @@ function ScriptDetail({ step }: { step: Step }) {
 			output={
 				<>
 					<NestedCalls step={step} />
+					{tool.images.length > 0 && <DetailImages images={tool.images} />}
 					{tool.output.trim() && <OutputBlock output={tool.output} failed={step.status === "error"} />}
 					<Interrupted step={step} />
 				</>

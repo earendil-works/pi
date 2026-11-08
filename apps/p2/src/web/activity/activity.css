@@ -345,6 +345,43 @@
 	font-family: var(--mono);
 	font-size: var(--fs-code);
 }
+/* A step's images in its row: a fixed size, so the row keeps its height whatever an image's shape. */
+.step-thumbs {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: var(--s1);
+}
+.step-thumb {
+	display: block;
+	width: 44px;
+	height: 34px;
+	object-fit: cover;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+}
+.step-thumbs-more {
+	padding-right: var(--s1);
+	color: var(--muted);
+	font-size: var(--fs-xs);
+	font-variant-numeric: tabular-nums;
+}
+/* Phones: the last two thumbnails and their count, so the step's words keep room; four from 700px (THUMBNAILS). */
+.step-thumb:nth-last-of-type(n + 3),
+.step-thumbs-more[data-width="wide"] {
+	display: none;
+}
+@media (min-width: 700px) {
+	.step-thumb:nth-last-of-type(n + 3) {
+		display: block;
+	}
+	.step-thumbs-more[data-width="phone"] {
+		display: none;
+	}
+	.step-thumbs-more[data-width="wide"] {
+		display: inline;
+	}
+}
 .step-state {
 	flex: none;
 	color: var(--muted);

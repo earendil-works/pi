@@ -299,6 +299,104 @@ describe("a block's steps and active thought", { skip: !browserTests }, () => {
 		);
 	});
 
+	it("shows a step's images as thumbnails in its collapsed row: the last four (two on phones), +N, outside its name", async () => {
+		const svg = (fill: string) =>
+			Buffer.from(
+				`<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"><rect width="160" height="90" fill="${fill}"/></svg>`,
+			).toString("base64");
+		const image = (fill: string) => ({ type: "image" as const, data: svg(fill), mimeType: "image/svg+xml" });
+		const fills = ["red", "orange", "gold", "green", "blue", "purple"];
+		const entries: ConversationView["entries"][number][] = [];
+		respond(
+			entries,
+			[
+				call("shot", "read", { path: "shot.png" }),
+				call("text", "read", { path: "src/a.ts" }),
+				call("script", "codemode", { code: "// Screenshots of each page\nimage(shot);" }),
+			],
+			"toolUse",
+			{
+				shot: { content: [{ type: "text", text: "Read image file [image/svg+xml]." }, image("teal")] },
+				text: { content: [{ type: "text", text: "1\tconst a = 1;" }] },
+				script: { content: [{ type: "text", text: "done" }, ...fills.map(image)] },
+			},
+		);
+		respond(entries, [{ type: "text", text: "Done." }], "stop");
+		const view = { conversation, entries, docs: {} };
+		await show(view);
+		await browser.click("[data-testid=activity]");
+		await browser.wait("document.querySelectorAll('[data-testid=step]').length===3");
+		// What a row shows: its visible thumbnails and count.
+		const thumbs = (id: string) =>
+			browser.evaluate<{
+				more: string | null;
+				fills: string[];
+				sizes: string[];
+				hidden: string | null;
+				alts: string[];
+			}>(
+				`(t=>{if(!t)return null;const shown=[...t.querySelectorAll('img')].filter(i=>i.checkVisibility());
+					return {more:[...t.querySelectorAll('.step-thumbs-more')].find(e=>e.checkVisibility())?.textContent??null,
+					fills:shown.map(i=>/fill="(\\w+)"/.exec(atob(i.src.split(',')[1]))[1]),
+					sizes:shown.map(i=>i.getBoundingClientRect().width+'x'+i.getBoundingClientRect().height),
+					hidden:t.getAttribute('aria-hidden'),alts:shown.map(i=>i.alt)}})(document.querySelector('${step(id)} > button [data-testid=step-thumbs]'))`,
+			);
+		assert.deepEqual(await thumbs("shot"), {
+			more: null,
+			fills: ["teal"],
+			sizes: ["44x34"],
+			hidden: "true",
+			alts: [""],
+		});
+		assert.equal(await thumbs("text"), null);
+		assert.deepEqual(await thumbs("script"), {
+			more: "+2",
+			fills: ["gold", "green", "blue", "purple"],
+			sizes: ["44x34", "44x34", "44x34", "44x34"],
+			hidden: "true",
+			alts: ["", "", "", ""],
+		});
+		// The thumbnails fit the row: a row with images is as tall as one without.
+		const heights = await browser.evaluate<number[]>(
+			`["shot","text","script"].map(id=>document.querySelector('[data-testid=activity-sheet] [data-step-id="'+id+'"] > button').getBoundingClientRect().height)`,
+		);
+		assert.equal(new Set(heights).size, 1);
+		// A tap expands the row as before; its detail shows every image at full width, a script's too.
+		await browser.click(`${step("script")} > button`);
+		await browser.wait(`document.querySelectorAll('${step("script")} .activity-detail .detail-image').length===6`);
+		await browser.click(`${step("shot")} > button`);
+		await browser.wait(`document.querySelectorAll('${step("shot")} .activity-detail .detail-image').length===1`);
+		await browser.evaluate("history.back()");
+		await browser.wait(`!${panel}`);
+		// At detail 4 the calls are rows in the transcript, with the same thumbnails.
+		await show(view, 4);
+		await browser.wait("document.querySelectorAll('.activity-rows [data-testid=step-thumbs]').length===2");
+		assert.equal(
+			await browser.evaluate(
+				"[...document.querySelectorAll('.activity-rows [data-step-id=script] .step-thumbs-more')].find(e=>e.checkVisibility()).textContent",
+			),
+			"+2",
+		);
+		// Below 700px (the phone sheet) the last two, the rest counted.
+		await show(view, 3, 390);
+		await browser.click("[data-testid=activity]");
+		await browser.wait(`${mobileSheet} && document.querySelectorAll('[data-testid=step]').length===3`);
+		assert.deepEqual(await thumbs("script"), {
+			more: "+4",
+			fills: ["blue", "purple"],
+			sizes: ["44x34", "44x34"],
+			hidden: "true",
+			alts: ["", ""],
+		});
+		assert.deepEqual(await thumbs("shot"), {
+			more: null,
+			fills: ["teal"],
+			sizes: ["44x34"],
+			hidden: "true",
+			alts: [""],
+		});
+	});
+
 	it("shows the latest thought above the current step, clamps it, and streams output without closing expanded details", async () => {
 		await show(running("building\n"), 2);
 		await browser.wait("document.querySelector('[data-testid=activity-thought]')");

@@ -60,6 +60,22 @@ export function OutputBlock({ output, failed }: { output: string; failed?: boole
 	);
 }
 
+/** Data URLs by image: a result's images keep their identity while unchanged (transcript.ts). */
+const imageUrls = new WeakMap<ImageContent, string>();
+
+/**
+ * An image's data URL, made once per image: a screenshot's base64 is large, and a new string on every render would be
+ * compared and set again by React.
+ */
+export function imageUrl(image: ImageContent): string {
+	let url = imageUrls.get(image);
+	if (url === undefined) {
+		url = `data:${image.mimeType};base64,${image.data}`;
+		imageUrls.set(image, url);
+	}
+	return url;
+}
+
 /** Images a tool returned (a screenshot it read), each at the sheet's width. */
 export const DetailImages = ({ images }: { images: readonly ImageContent[] }) => (
 	<div className="detail-images">
@@ -68,7 +84,7 @@ export const DetailImages = ({ images }: { images: readonly ImageContent[] }) =>
 				// biome-ignore lint/suspicious/noArrayIndexKey: a result's images never move.
 				key={index}
 				className="detail-image"
-				src={`data:${image.mimeType};base64,${image.data}`}
+				src={imageUrl(image)}
 				alt=""
 			/>
 		))}
