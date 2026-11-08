@@ -68,7 +68,7 @@ describe("detail in the browser", { skip: !browserTests }, () => {
 		await browser.wait(
 			"document.querySelector('[data-testid=activity-sheet] .detail-prose')?.textContent.includes('Running codemode.')",
 		);
-		await browser.evaluate("history.back()");
+		// Inline expansion did not create another history entry.
 		await browser.evaluate("history.back()");
 		await browser.wait("!document.querySelector('[data-testid=activity-sheet]')");
 		// 2: the text in the transcript, the call and the thinking on the wheel after it.

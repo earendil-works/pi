@@ -168,10 +168,13 @@ export default defineFacet((host) => {
 - **The wheel** (the activity row): one row per run of consecutive calls. While the agent works it faces the newest
   call in the present tense (`running`, else `describe`'s label); when the run ends it rolls to a summary built from
   each tool's `summary` phrase, counted ("Counted words in 2 texts"; a failed call is red on the wheel, and the
-  sheet's list says how it failed).
-- **The step list** (a tap on the wheel opens the run's sheet): one row per call with the tool's name, its
-  `argument`, and its state (✓ and its time; ✗ and the `failure` word; ● running).
-- **The detail** (a step opens it): the sheet's title is `describe`'s label; the body is the tool's `Detail`.
+  activity list says how it failed). While active, the latest thought appears above a non-thinking step, clamped
+  to three lines; it is not repeated when thinking is the current step.
+- **The step list** (a tap on the wheel opens that block's right-hand panel, or a sheet on phones): one row per
+  call with the tool's name, its `argument`, and its state (✓ and its time; ✗ and the `failure` word; ● running).
+  The panel has no tab or conversation-wide list: select another block in the transcript to switch it.
+- **The detail** (a step expands it inline): the body is the tool's `Detail`. Several steps can remain expanded;
+  expanding one does not navigate away from the list or add a history entry. Back closes the panel.
 - **Results**: what `hasResult` places, drawn by `Result`, after the turn's answer or in place.
 - **A script's calls**: when another tool calls this one (a code mode script), its entry in the caller's timeline
   uses `describe`, its detail `CallInput` and `CallDetail`.
@@ -189,7 +192,7 @@ Every field is optional (`src/web/activity/model.ts`); each one left out falls b
 | `summary` | how many of this tool's calls a run had | the phrase, singular and plural ("ran a command", "ran 3 commands") | always: it is the wheel's summary | "used `name`", "used `name` N times"; tools sharing one function count together (write and edit: "edited 2 files") |
 | `hasResult` | the `ToolView` | `"after"`, `"inline"` or `false` | the call made something for the person (a file, a link, an artifact) | nothing shown besides the call |
 | `Result` | `{ tool, inline }` | a component | with `hasResult` | — |
-| `Detail` | `{ step, onGroup }` | a component | the generic detail does not say enough (a diff, a terminal, a link) | Input: the arguments as JSON; Output: the output (and images) |
+| `Detail` | `{ step }` | a component | the generic detail does not say enough (a diff, a terminal, a link) | Input: the arguments as JSON; Output: the output (and images) |
 | `nestedCalls` | the `ToolView` | the calls this call made (`NestedCall[]`) | the tool runs other tools and keeps their final list in its `details` (code mode) | `tool.calls`: Durable's live nested slots, then the last list seen |
 | `repeated` | a count of identical calls in a row, how many failed | the entry's description ("20 runs, 1 failed") | a tool with nested calls | the repeated tool's own summary ("Ran 20 commands · 1 failed") |
 | `CallInput` | `{ call: NestedCall }` | a component | other tools call this one and its input reads better than JSON (a command line) | the arguments as JSON |
@@ -207,7 +210,7 @@ A `Detail` is built from the detail parts (`src/web/activity/Detail.tsx`): `Inpu
 sections), `DetailSection`, `CommandBlock`, `OutputBlock`, `CodeBlock`, `DiffBlock`, `LinesBlock`, `FilePath`,
 `DetailImages`, `DetailProse`, `DetailNote`, `DetailLink`, `Interrupted` (a call a restart cut short), and
 `NestedCalls` (a call's own calls as a timeline: the newest eight, the rest behind "Show all N tool calls";
-`onGroup` opens one). A detail shows everything at once and follows a running call live.
+each call expands its own detail inline). A detail shows everything at once and follows a running call live.
 
 #### Results: after the answer or in place
 

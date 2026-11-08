@@ -1,15 +1,14 @@
-// A run of tool calls in the chat: one row with a large tap target. A wheel of the run's calls (Elanor's Ticker): while
-// the agent works the newest call faces the reader, breathing; a failed call is red. When the run ends the wheel rolls
-// to the summary. The reader can roll it back through the calls; a tap opens them in a sheet (ActivitySheet), on the
-// call the wheel shows when the reader rolled it there.
+// A block's compact activity wheel in the transcript. While active, its latest thought stays above the current
+// non-thinking step, abbreviated to three lines. The wheel opens this block's steps in the right-hand panel.
 
 import { type MouseEvent, type ReactNode, useContext } from "react";
+import { useRoute } from "../../runtime/web.tsx";
 import { ToolActivityContext } from "../chat-context.ts";
 import { Ticker } from "../elanor-extra/ticker.tsx";
 import { openActivity, StepList, useElapsed } from "./ActivitySheet.tsx";
 import { CheckIcon, ChevronIcon, CommentIcon, SparkIcon } from "./icons.tsx";
 import { KindIcon, LabelText } from "./Label.tsx";
-import { live, plain, plainText, type Step, sentence, summary, type WheelEntry } from "./model.ts";
+import { live, plain, plainText, type Step, sentence, summary, thoughtPreview, type WheelEntry } from "./model.ts";
 import "./activity.css";
 
 /** A step on the wheel: what it shows, its plain words for screen readers, and whether it failed. */
@@ -32,26 +31,31 @@ export function ActivityRow({
 	entries = steps.map((step) => ({ kind: "call", step })),
 	rows = false,
 	working,
+	thought: latestThought,
 	startedAt,
 	endedAt,
 }: {
-	/** The row's key: the sheet's route layer names it. */
+	/** The row's key: the panel's route names it. */
 	rowKey: string;
 	/** At detail 4 (settings.json): the calls as rows, one each, each opening its detail; no wheel. */
 	rows?: boolean;
 	steps: readonly Step[];
-	/** Everything on the wheel in order, with settings.json's `wheel: "all"`: thinking and texts among the calls. */
+	/** Everything on the wheel in order: thinking and, at detail 1, texts among the calls. */
 	entries?: readonly WheelEntry[];
 	working: boolean;
+	thought?: string;
 	startedAt?: number;
 	endedAt?: number;
 }) {
 	const tools = useContext(ToolActivityContext);
-	// Each call its own row, opening its detail alone; a wheel only while the agent works with no call yet.
+	const route = useRoute();
+	const selected = !route.workspace && route.activity?.row === rowKey;
+	const preview = thoughtPreview(entries, working, latestThought);
+	// At detail 4 each call opens the same panel with that step expanded; a wheel only before the first call.
 	if (rows && steps.length)
 		return (
 			<div className="activity-rows" data-testid="activity" data-state={working ? "working" : "done"}>
-				<StepList entries={entries} onStep={(id) => openActivity(rowKey, id, true)} follow={false} />
+				<StepList entries={entries} onStep={(id) => openActivity(rowKey, id)} />
 			</div>
 		);
 	const thought = entries.some((entry) => entry.kind === "thought");
@@ -61,7 +65,7 @@ export function ActivityRow({
 		? ["Thought", calls.charAt(0).toLowerCase() + calls.slice(1)].filter(Boolean).join(", ")
 		: calls || summary(steps, tools);
 	const idOf = (entry: WheelEntry) => (entry.kind === "call" ? entry.step.id : entry.id);
-	/** Opens the steps: the list, or one's detail over it when the reader rolled the wheel to it. */
+	/** Opens this block's panel, expanding the step selected on the wheel. */
 	const show = (step?: string) => openActivity(rowKey, entries.some((each) => idOf(each) === step) ? step : undefined);
 	/** A tap beside the wheel; the wheel's own tap (its button) is `onActivate`. */
 	const tap = (event: MouseEvent) => {
@@ -125,31 +129,40 @@ export function ActivityRow({
 			),
 		});
 	return (
-		// The row: the wheel is the button (a tap opens the calls, a drag rolls it); the rest of the row opens them
-		// too, for a pointer.
-		// biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: the wheel inside is the keyboard's control.
-		<div
-			className="activity activity-turn"
-			data-testid="activity"
-			data-state={working ? "working" : "done"}
-			onClick={tap}
-		>
-			<Ticker.Root
-				className="activity-ticker"
-				active={working}
-				onActivate={show}
-				aria-label={`${faces.at(-1)?.label ?? "Working"}. Show the steps`}
+		<div className={`activity-block${selected ? " selected" : ""}`}>
+			{preview && (
+				<div className="activity-thought" data-testid="activity-thought">
+					<SparkIcon />
+					<div className="activity-thought-text">{preview}</div>
+				</div>
+			)}
+			{/* The row: the wheel is the button (a tap opens the calls, a drag rolls it); the rest of the row opens them
+		    too, for a pointer. */}
+			{/* biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: the wheel inside is the keyboard's control. */}
+			<div
+				className="activity activity-turn"
+				data-testid="activity"
+				data-state={working ? "working" : "done"}
+				onClick={tap}
 			>
-				{faces.map((face) => (
-					<Ticker.Item key={face.key} label={face.label} negative={face.failed}>
-						{face.content}
-					</Ticker.Item>
-				))}
-			</Ticker.Root>
-			<Elapsed startedAt={startedAt} endedAt={endedAt} working={working} />
-			<span className="activity-chevron" aria-hidden="true">
-				<ChevronIcon />
-			</span>
+				<Ticker.Root
+					className="activity-ticker"
+					active={working}
+					onActivate={show}
+					aria-label={`${faces.at(-1)?.label ?? "Working"}. Show the steps`}
+					aria-expanded={selected}
+				>
+					{faces.map((face) => (
+						<Ticker.Item key={face.key} label={face.label} negative={face.failed}>
+							{face.content}
+						</Ticker.Item>
+					))}
+				</Ticker.Root>
+				<Elapsed startedAt={startedAt} endedAt={endedAt} working={working} />
+				<span className="activity-chevron" aria-hidden="true">
+					<ChevronIcon />
+				</span>
+			</div>
 		</div>
 	);
 }

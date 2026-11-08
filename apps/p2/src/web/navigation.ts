@@ -19,6 +19,8 @@ export type Route = {
 	conversation: number;
 	layers: Layer[];
 	workspace?: WorkspaceLocation;
+	/** The transcript block shown in the right-hand activity panel; no workspace tab. */
+	activity?: { row: string; step?: string };
 	terminal?: string;
 	startTerminal?: boolean;
 };

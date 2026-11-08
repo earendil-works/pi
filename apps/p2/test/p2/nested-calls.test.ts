@@ -136,7 +136,7 @@ test(
 			await browser.wait("document.querySelector('[data-testid=activity][data-state=working]')");
 			await browser.click("[data-testid=activity]");
 			await browser.wait("document.querySelector('[data-testid=step] button')");
-			await browser.click("[data-testid=step] button");
+			// The running script is already expanded in the selected block's panel.
 			await browser.click("[data-testid=calls-more]");
 			await browser.wait("document.querySelectorAll('[data-testid=call]').length===10");
 			// The first failed, the ninth was interrupted by a restart (a failure too), the tenth runs.

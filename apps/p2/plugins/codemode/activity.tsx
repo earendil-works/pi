@@ -19,14 +19,14 @@ import { repeatedRuns, scriptCalls } from "./nested.ts";
 const comment = (tool: ToolView) => firstLine(stringOf(tool.args.code)).replace(/^\/\/\s*/, "");
 const calls = (count: number) => `${count} ${count === 1 ? "call" : "calls"}`;
 
-function ScriptDetail({ step, onGroup }: { step: Step; onGroup: (index: number) => void }) {
+function ScriptDetail({ step }: { step: Step }) {
 	const { tool } = step;
 	return (
 		<InputOutput
 			input={<CodeBlock code={stringOf(tool.args.code)} language="js" />}
 			output={
 				<>
-					<NestedCalls step={step} onGroup={onGroup} />
+					<NestedCalls step={step} />
 					{tool.output.trim() && <OutputBlock output={tool.output} failed={step.status === "error"} />}
 					<Interrupted step={step} />
 				</>

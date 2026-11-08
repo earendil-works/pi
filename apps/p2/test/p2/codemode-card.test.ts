@@ -244,7 +244,7 @@ test(
 				await browser.evaluate<string>("document.querySelector('[data-testid=step]').textContent"),
 				/^codemoderead every file● running/,
 			);
-			await browser.click("[data-testid=step] button");
+			// The running step is expanded when the panel opens.
 			// The newest eight calls, the rest behind "Show all", as the transcript's card had them.
 			await browser.wait("document.querySelectorAll('[data-testid=call]').length===8");
 			assert.equal(
@@ -255,8 +255,10 @@ test(
 			await browser.click("[data-testid=calls-more]");
 			await browser.wait("document.querySelectorAll('[data-testid=call]').length===10");
 			assert.equal(
-				await browser.evaluate("document.querySelector('.sheet-head h2').textContent"),
-				"Ran a script · 10 calls, 1 failed",
+				await browser.evaluate(
+					"document.querySelector('[data-testid=step] > button').getAttribute('aria-expanded')",
+				),
+				"true",
 			);
 			// The script: highlighted JS, whole (8 lines need no Show all).
 			assert.equal(
@@ -275,6 +277,16 @@ test(
 			assert.match(
 				await browser.evaluate<string>(`${call(9)}.textContent`),
 				/Running npm test.*running tests|npm test.*running tests/,
+			);
+			// Nested calls expand beneath their own rows without replacing the script or its siblings.
+			await browser.evaluate(`${call(9)}.querySelector('button').click()`);
+			await browser.wait(
+				"document.querySelector('.nested-detail pre.detail-output')?.textContent==='building\\nrunning tests'",
+			);
+			assert.equal(await browser.evaluate("document.querySelectorAll('[data-testid=call]').length"), 10);
+			assert.equal(
+				await browser.evaluate("document.querySelector('[data-testid=detail-input] .hljs-keyword')!==null"),
+				true,
 			);
 			// Settled: the result's calls; a cancelled one is interrupted, a failure.
 			await show(settled());

@@ -58,8 +58,17 @@ export function TranscriptFixture({
 		{ value: tools },
 		createElement(
 			"div",
-			{ className: "scroller transcript", ref: follow.scroller },
-			createElement(Messages, { transcript, rows, list: follow.list, range: follow.range }),
+			{ className: "app", style: { height: "100dvh" } },
+			createElement(
+				"main",
+				{ className: "main" },
+				createElement(
+					"div",
+					{ className: "scroller transcript", ref: follow.scroller },
+					createElement(Messages, { transcript, rows, list: follow.list, range: follow.range }),
+				),
+			),
+			createElement("div", { id: "activity-dock", className: "activity-dock" }),
 		),
 	);
 }

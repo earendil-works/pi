@@ -1,6 +1,6 @@
 // A turn's activity: what the agent did between a person's message and its answer. Derived from the transcript's
 // items: `chatItems` keeps each response's thinking and text in the transcript, in their order, and turns each run of
-// consecutive tool calls into an activity item (a wheel in the chat, its steps in a sheet). A turn's last text is its
+// consecutive tool calls into an activity item (a wheel in the chat, expandable steps in the right-hand panel). A turn's last text is its
 // answer, followed by the results meant for the person (artifacts, sent files, opened ports). A result its tool shows
 // in place (an inline artifact) comes right after its call instead, splitting the run of calls around it. How much of
 // that shows in the transcript, and how much goes on the wheels, is settings.json's `detail` (`Detail`).
@@ -26,6 +26,12 @@ export type Words = { kind: "thought" | "text"; id: string; text: string; live: 
 /** What a wheel rolls through, in order: its tool calls, and at detail 1 and 2 thinking (and texts) among them. */
 export type WheelEntry = { kind: "call"; step: Step } | Words;
 
+/** The latest thought above a working wheel's non-thinking step; never repeat the thought currently on the wheel. */
+export function thoughtPreview(entries: readonly WheelEntry[], working: boolean, thought?: string): string | undefined {
+	if (!working || entries.at(-1)?.kind === "thought") return;
+	return entries.findLast((entry): entry is Words => entry.kind === "thought")?.text ?? thought;
+}
+
 /** The items the chat shows: the transcript's people, markers and failures, and each turn's parts in order. */
 export type ChatItem =
 	| Exclude<Item, { type: "assistant" } | { type: "tool" }>
@@ -36,6 +42,8 @@ export type ChatItem =
 			steps: Step[];
 			/** At detail 1 and 2: everything on the wheel in order, thinking (and texts) among the calls. */
 			entries?: WheelEntry[];
+			/** The active turn's latest thought, including one before a note that split the wheels. */
+			thought?: string;
 			/** At detail 4: the calls as rows, one each, not a wheel. */
 			rows?: true;
 			/** The agent is still at it: the row is a ticker, not a summary. */
@@ -241,6 +249,7 @@ function runItems(
 	// answer arrives in the transcript once, when the agent stopped (the row fades in, as new rows do).
 	const answer = last?.type === "text" && !(detail === 1 && working) ? last : undefined;
 	if (answer) parts.pop();
+	const thought = parts.findLast((part) => part.type === "thought");
 	// What goes on the wheels with the calls (detail 1: thinking and texts; 2: thinking), merged into them.
 	if (detail <= 2) parts = wheels(parts, responses, after, detail === 1 ? ["thought", "text"] : ["thought"]);
 	const final = parts.at(-1);
@@ -251,6 +260,7 @@ function runItems(
 			? {
 					...activityOf(part, responses, working && !answer && part === final),
 					...(part.entries ? { entries: part.entries } : {}),
+					...(detail <= 2 && working && !answer && part === final && thought ? { thought: thought.text } : {}),
 					...(detail === 4 ? { rows: true as const } : {}),
 				}
 			: part.type === "thought" && detail === 4
@@ -260,7 +270,13 @@ function runItems(
 	// Working on a response that shows nothing yet (the first, or the next after a result in place): the activity row,
 	// waiting.
 	if (working && !answer && (!final || final.type === "results"))
-		items.push({ type: "activity", key: `activity:${final ? final.key : after}`, steps: [], working: true });
+		items.push({
+			type: "activity",
+			key: `activity:${final ? final.key : after}`,
+			steps: [],
+			working: true,
+			...(detail <= 2 && thought ? { thought: thought.text } : {}),
+		});
 	if (response && (answer || notice))
 		items.push({
 			type: "answer",
@@ -556,8 +572,8 @@ export type ToolActivity = {
 	 * inline: the run of calls splits around it). `false` or absent: nothing.
 	 */
 	hasResult?: (tool: ToolView) => ResultPlacement | false;
-	/** The call's detail in the sheet; `onGroup` opens one of its own calls (`tool.calls`, grouped by `groupCalls`). */
-	Detail?: ComponentType<{ step: Step; onGroup: (index: number) => void }>;
+	/** The call's inline detail; `NestedCalls` expands the calls it made in place. */
+	Detail?: ComponentType<{ step: Step }>;
 	/**
 	 * The calls this call made to other tools (a script's), when its tool keeps their final list in its result's
 	 * `details`: read from there once settled. `tool.calls` holds the ones Durable shows (live, or the last seen); return

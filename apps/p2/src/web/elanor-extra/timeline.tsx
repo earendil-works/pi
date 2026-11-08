@@ -55,6 +55,10 @@ export interface TimelineItemProps extends Omit<ComponentPropsWithRef<"li">, "ti
 	code?: boolean | undefined;
 	/** Makes the step a button with a trailing chevron, for steps that open more detail. */
 	onClick?: (() => void) | undefined;
+	/** Whether the inline detail is open, exposed on the step's button. */
+	expanded?: boolean;
+	/** An inline detail beneath the step, outside its button. */
+	children?: ReactNode;
 }
 
 /** One step: a marker on the rail beside its title, and an optional description. Renders an `li`. */
@@ -66,6 +70,8 @@ function TimelineItem({
 	description,
 	code = false,
 	onClick,
+	expanded,
+	children,
 	className,
 	ref,
 	...props
@@ -112,14 +118,21 @@ function TimelineItem({
 		</>
 	);
 	return (
-		<li {...props} ref={itemRef} className={classes("el-timeline-item", className)} data-status={status}>
+		<li
+			{...props}
+			ref={itemRef}
+			className={classes("el-timeline-item", className)}
+			data-status={status}
+			data-expanded={expanded}
+		>
 			{onClick ? (
-				<button type="button" className="el-timeline-step" onClick={() => onClick()}>
+				<button type="button" className="el-timeline-step" onClick={() => onClick()} aria-expanded={expanded}>
 					{content}
 				</button>
 			) : (
 				<div className="el-timeline-step">{content}</div>
 			)}
+			{children}
 		</li>
 	);
 }

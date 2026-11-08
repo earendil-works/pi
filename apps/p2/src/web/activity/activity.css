@@ -1,4 +1,4 @@
-/* A run's activity row, its sheet's list of calls, step labels, details and results (src/web/activity). The ticker
+/* A run's activity row, its panel (a sheet on phones), step labels, details and results (src/web/activity). The ticker
  * and a script's timeline of calls are Elanor's (built in p2 for now: ../elanor-extra); the sheet is p2's own
  * (.sheet in style.css). */
 
@@ -9,7 +9,8 @@
  */
 .activity,
 .results,
-.activity-sheet {
+.activity-sheet,
+.activity-panel {
 	--semantic-typography-ui-primary:
 		var(--semantic-typography-ui-primary-font-weight) var(--semantic-typography-ui-primary-font-size) /
 		var(--semantic-typography-ui-primary-line-height) var(--sans);
@@ -210,15 +211,89 @@
 	color: var(--semantic-color-text-secondary);
 }
 
-/* Wider than a settings sheet on large screens: a call's input and output are code, read best unwrapped. */
-.sheet.activity-sheet {
-	max-width: 720px;
+/* A block is selected in the transcript, never represented by an extra workspace tab. */
+.activity-block {
+	margin-inline: calc(-1 * var(--semantic-dimension-space-padding-medium));
+	padding-inline: var(--semantic-dimension-space-padding-medium);
+	border-radius: var(--radius);
 }
-
-/* The sheet's first page: the run's calls, one 44px row each, separated by thin lines; the body's padding is the
- * rows' own, so the lines run from edge to edge. */
-.activity-sheet .sheet-body:has(> .step-list) {
-	padding: 0 0 var(--s3);
+.activity-block.selected {
+	background: var(--hover);
+}
+.activity-thought {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--s3);
+	padding: var(--s3) 0 0;
+	color: var(--muted);
+	font-size: var(--fs-sm);
+	line-height: 1.65;
+}
+.activity-thought > svg {
+	flex: none;
+	width: 18px;
+	height: 18px;
+	margin-top: var(--s1);
+}
+.activity-thought-text {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 3;
+	overflow: hidden;
+	white-space: pre-wrap;
+}
+.activity-dock:empty {
+	display: none;
+}
+.activity-panel {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	height: 100%;
+	background: var(--bg);
+	border-left: 1px solid var(--line);
+}
+.activity-panel .activity-panel-head {
+	flex: none;
+	padding-left: var(--x);
+}
+.activity-panel .activity-panel-head h2 {
+	flex: none;
+}
+.activity-panel-meta {
+	flex: 1;
+	text-align: right;
+	color: var(--muted);
+	font-size: var(--fs-xs);
+	font-variant-numeric: tabular-nums;
+}
+.activity-panel-body {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	padding-bottom: var(--s3);
+}
+.activity-sheet .sheet-body {
+	display: flex;
+	padding: 0;
+	overflow: hidden;
+}
+@media (min-width: 700px) {
+	.activity-dock {
+		position: fixed;
+		inset: 0 0 0 auto;
+		width: min(460px, 60vw);
+		z-index: 20;
+	}
+}
+@media (min-width: 1280px) {
+	.activity-dock {
+		position: static;
+		flex: 0 0 460px;
+		width: 460px;
+		min-width: 0;
+		z-index: auto;
+	}
 }
 .step-list {
 	margin: 0;
@@ -285,6 +360,16 @@
 	flex-direction: column;
 	gap: var(--s4);
 	min-width: 0;
+	padding: var(--s4) var(--x) var(--s5);
+}
+.nested-detail {
+	padding-inline: var(--s3);
+}
+.el-timeline-item[data-expanded="true"] > .el-timeline-step {
+	background: var(--hover);
+}
+.el-timeline-item[data-expanded="true"] .el-timeline-chevron {
+	transform: rotate(90deg);
 }
 
 /* Thinking and a text in a wheel's list (detail 1 and 2): their words, not code. */
@@ -298,4 +383,20 @@
 }
 .activity-rows .step-row {
 	padding-inline: 0;
+}
+/* In the panel, the main argument sits beneath its tool name so long commands stay useful. */
+.activity-panel-body .step-words {
+	display: flex;
+	flex-direction: column;
+}
+.activity-panel-body .step-argument {
+	margin-left: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.step-row[aria-expanded="true"] {
+	background: var(--hover);
+}
+.step-row[aria-expanded="true"] .step-chevron {
+	transform: rotate(90deg);
 }

@@ -15,6 +15,7 @@ import {
 	summary,
 	type ToolActivity,
 	type ToolActivityTable,
+	thoughtPreview,
 } from "../../src/web/activity/model.ts";
 import type { Item, NestedCall, ToolView } from "../../src/web/transcript.ts";
 
@@ -585,4 +586,50 @@ test("at detail 1, a rebuilt run keeps its wheel when it shows the same", () => 
 	const again = [...made.slice(0, -1), { ...(made.at(-1) as Extract<Item, { type: "assistant" }>) }];
 	const second = chatItemsWith(again, false, true, TOOLS, 1);
 	assert.equal(second[1], first[1]);
+});
+
+test("an active wheel previews its latest thought, but not while that thought is the current step", () => {
+	const content: AssistantMessage["content"] = [
+		{ type: "thinking", thinking: "First plan." },
+		{ type: "toolCall", id: "a", name: "bash", arguments: { command: "check" } },
+		{ type: "thinking", thinking: "Wait for the deployment." },
+		{ type: "toolCall", id: "b", name: "bash", arguments: { command: "watch" } },
+	];
+	const preview = (parts: AssistantMessage["content"], working: boolean) => {
+		const items = chatItemsWith(
+			[user("preview", "Go"), response("preview-response", 2, parts)],
+			working,
+			true,
+			TOOLS,
+		);
+		const activity = items.findLast((item) => item.type === "activity");
+		assert.ok(activity?.type === "activity");
+		return thoughtPreview(activity.entries ?? [], activity.working, activity.thought);
+	};
+	assert.equal(preview(content, true), "Wait for the deployment.");
+	assert.equal(preview(content.slice(0, -1), true), undefined);
+	assert.equal(preview(content, false), undefined);
+	assert.equal(preview([content[3]!], true), undefined);
+	assert.equal(thoughtPreview([], true), undefined);
+});
+
+test("the latest thought survives a note splitting wheels, but never leaks into another turn", () => {
+	const made = turn().slice(0, 3);
+	const shown = chatItemsWith(made, true, true, TOOLS);
+	const active = shown.findLast((item) => item.type === "activity");
+	assert.ok(active?.type === "activity");
+	assert.equal(thoughtPreview(active.entries ?? [], active.working, active.thought), "Run them first.");
+	const next = chatItemsWith(
+		[
+			...made,
+			user("next-preview", "Next"),
+			response("next-response", 5, [{ type: "toolCall", id: "next", name: "bash", arguments: {} }]),
+		],
+		true,
+		true,
+		TOOLS,
+	);
+	const current = next.findLast((item) => item.type === "activity");
+	assert.ok(current?.type === "activity");
+	assert.equal(thoughtPreview(current.entries ?? [], current.working, current.thought), undefined);
 });

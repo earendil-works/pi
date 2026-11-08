@@ -13,7 +13,14 @@ import {
 } from "react";
 import { ActivityRow } from "./activity/ActivityRow.tsx";
 import { ActivityLayer } from "./activity/ActivitySheet.tsx";
-import { type ChatItem, chatItems, DEFAULT_DETAIL, type Detail, type ToolActivityTable } from "./activity/model.ts";
+import {
+	type ChatItem,
+	chatItems,
+	DEFAULT_DETAIL,
+	type Detail,
+	type ToolActivityTable,
+	thoughtPreview,
+} from "./activity/model.ts";
 import { Results } from "./activity/Results.tsx";
 import { CopyButton } from "./Code.tsx";
 import { BranchFrom, OpenConversation, OpenPeerConversation, ReplyTo, RevealEntry } from "./chat-context.ts";
@@ -269,11 +276,17 @@ function rowFeatures(row: TranscriptRow, width: number): RowFeatures {
 				text: item.text.length,
 				fixed: imagesHeight(item.images, width),
 			};
-		case "activity":
-			// One line, the wheel, however many calls the run made; at detail 4 a row per call.
+		case "activity": {
+			const preview = thoughtPreview(item.entries ?? [], item.working, item.thought);
+			// A working wheel may also carry up to three lines of its latest thought.
 			return item.rows
 				? { kind: `activity:rows:${item.steps.length}:${spacing}`, text: 0, fixed: 0 }
-				: { kind: `activity:${spacing}`, text: 0, fixed: 0 };
+				: {
+						kind: `activity:${preview ? "thought:" : ""}${spacing}`,
+						text: Math.min(preview?.length ?? 0, 300),
+						fixed: 0,
+					};
+		}
 		case "thought":
 			// One line until opened; at detail 4 in full.
 			return item.full
@@ -592,6 +605,7 @@ const ItemView = memo(function ItemView({ item }: { item: ChatItem }) {
 					{...(item.entries ? { entries: item.entries } : {})}
 					{...(item.rows ? { rows: true } : {})}
 					working={item.working}
+					{...(item.thought ? { thought: item.thought } : {})}
 					{...(item.startedAt ? { startedAt: item.startedAt } : {})}
 					{...(item.endedAt ? { endedAt: item.endedAt } : {})}
 				/>
