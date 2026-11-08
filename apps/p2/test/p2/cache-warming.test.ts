@@ -138,12 +138,15 @@ test("warms up to an hour while streaming and 30 minutes while idle; mode stream
 
 test("does not warm what is not worth it or cannot be repeated", async (t) => {
 	const { state, warmers, start, advance } = setup(t);
-	// A failed or aborted response, a model without a cache lifetime for the retention, mode off: nothing starts.
+	// A failed or aborted response, a model without a cache lifetime for the retention: nothing starts.
 	start(600_000, "error");
 	start(600_000, "aborted");
 	start(600_000, "toolUse", { cacheRetention: "none" });
-	state.mode = "off";
+	assert.equal(state.alive, 0);
+	// Mode off (which also uninstalls the hook) stops a run at its next refresh.
 	start(600_000);
+	state.mode = "off";
+	await advance(270_000);
 	assert.equal(state.alive, 0);
 	state.mode = "idle";
 

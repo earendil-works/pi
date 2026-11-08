@@ -1274,31 +1274,16 @@ translated phone drawer and intercept chat taps.
   reload during a script, SIGKILL and graceful restarts mid-call (finished calls do not rerun; the interrupted unsafe
   `bash` call returns an error the script catches); the removal mid-script (prompt error, turn ends, the script's thread goes); `codemode-plugin.test.ts` the
   sandbox across reload/removal.
-- **Cache warming** (`plugins/cache-warming`): pi-coding-agent's cache warmer for every conversation of a session.
-  The worker facet registers a hook-only Durable extension (`cache-warming`). Durable's `afterResponse` gets only the
-  message; the request comes from the core: the Harness's `Models` proxy (`openHarness()`) wraps `streamSimple` and
-  remembers each request by the message its `result()` resolved with, in a `WeakMap`. `HarnessParts.requestOf(message)`
-  takes it (get and delete) as a `ModelRequest`: the model, the messages after `beforeRequest` (Durable's frozen entry
-  messages) and the options Durable and the identity wrapper set, without the attempt's `signal`, `telemetry` and
-  `onPayload`. Read-only: never mutate, copy or freeze it. Resending it skips Durable's `beforeProviderRequest` hooks
-  (no p2 extension has one). `completeSimple` (compaction summaries, the refreshes themselves) goes through the inner
-  `Models`' own `streamSimple` and is never remembered; a polled deferred response has no entry.
-  `test/p2/harness-requests.test.ts` pins that the hook's message is the object `result()` resolved with (if Durable
-  ever copied it, warming would stop, not warm the wrong request). The hook starts that conversation's run, replacing
-  the previous one. Before the entry expires (90% of `model.promptCache[retention]`: 270 s for the 5-minute tier) the
-  run sends the request again with `getCacheWarmingRequestOptions` (one output token, no retries,
-  `disableContinuation`) and adds the spend to the conversation's `pi.usage` (`UsageDoc`, added as Durable adds it).
-  The policy is pi-ai's, shared with pi-coding-agent: up to an hour after the request while the run streams, 30
-  minutes once idle, a refresh only when its expected savings reach $0.05 (`evaluateCacheWarming`). Each refresh reads
-  the conversation's phase: nothing while `pi.live.generation` exists (a request in flight, backing off or polled: its
-  response replaces the run), streaming while `pi.live.run` exists, else idle for top-level conversations
-  (`isTopLevel`; a settled subagent or one-shot agent is not warmed), and nothing once the next request would start
-  differently (another model, or a context that no longer starts with the sent messages by role and timestamp: a
-  reset, compaction or edit). Timers live in the plugin's local `CacheWarmingRuntime` native, closed by a reload or
-  stop; nothing is durable, the next response starts again. While a run is armed the worker's liveness counts it
-  (`cacheWarming`), so the idle stop (`P2_IDLE_MS`) waits. Setting `cacheWarming` (`"idle"` default, `"streaming"`,
-  `"off"`, switched live through `ExtensionSwitches`). No status UI and no decision hook yet (pi's `/session` line,
-  `cache_warming_decision`). `test/p2/cache-warming.test.ts`.
+- **Cache warming** (`plugins/cache-warming`, policy in pi-ai's `cache-warming.ts`, as pi-coding-agent's): a hook-only
+  Durable extension; each `afterResponse` starts the conversation's run, replacing the last one. The request comes from
+  the core: the Harness's `Models` proxy remembers each `streamSimple` request by the message `result()` resolved with
+  (`WeakMap`); `HarnessParts.requestOf(message)` takes it once as a read-only `ModelRequest` (Durable's frozen entry
+  messages; never mutate, copy or freeze it; resending skips `beforeProviderRequest`). `completeSimple` (compaction,
+  the refreshes) is not remembered. Each refresh: no phase while `pi.live.generation` exists, streaming while
+  `pi.live.run` exists, idle only for top-level conversations, none once the model or the context's start changed;
+  usage goes to `pi.usage`. Timers live in the plugin's native (a reload ends them); liveness kind `cacheWarming`.
+  Setting `cacheWarming` (`"idle"`, `"streaming"`, `"off"`). Tests: `cache-warming.test.ts`,
+  `harness-requests.test.ts` (pins that the hook's message is the object `result()` resolved with).
 - **MCP servers** (`plugins/mcp`, plan `docs/mcp-durable.md`, WP6-8): the server's `McpManager` (local,
   host lifetime) owns every MCP process and connection; workers never spawn one or hold a credential. `<P2_DATA_DIR>/mcp.json`
   is the owner's `mcpServers` (pi-mcp's `validateMcpServerConfig`, plus p2's `shared` and `runOn`; invalid entries are

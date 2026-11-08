@@ -65,7 +65,8 @@ export class ConversationWarmers {
 		this.stop(conversationId);
 		// A failed or aborted response ended its run.
 		if (message.stopReason === "error" || message.stopReason === "aborted") return;
-		if (this.#host.mode() === "off" || !isCacheWarmingReplayable(request.model, request.options)) return;
+		// Mode "off" uninstalls the hook; a run already armed stops at its next refresh.
+		if (!isCacheWarmingReplayable(request.model, request.options)) return;
 		const ttlMs = getPromptCacheTtlMs(request.model, request.options);
 		const delayMs = ttlMs === undefined ? undefined : getCacheWarmingDelayMs(ttlMs);
 		if (delayMs === undefined) return;

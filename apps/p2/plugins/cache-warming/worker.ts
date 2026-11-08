@@ -88,28 +88,11 @@ function startsWith(current: readonly Message[], sent: readonly Message[]): bool
 
 /** Adds `usage` to `totals[key]` in a `pi.usage` draft, as Durable's own usage recording does. */
 function addUsage(totals: UsageState["models"], key: string, usage: Usage): void {
-	const { cost } = usage;
 	// Own keys only, as Durable looks them up.
 	const total = Object.hasOwn(totals, key) ? totals[key] : undefined;
 	if (total === undefined) {
-		// Drafts take strict JSON: optional counters only when the provider reported them.
-		totals[key] = {
-			input: usage.input,
-			output: usage.output,
-			cacheRead: usage.cacheRead,
-			cacheWrite: usage.cacheWrite,
-			...(usage.cacheWrite1h === undefined ? {} : { cacheWrite1h: usage.cacheWrite1h }),
-			...(usage.reasoning === undefined ? {} : { reasoning: usage.reasoning }),
-			totalTokens: usage.totalTokens,
-			cost: {
-				input: cost.input,
-				output: cost.output,
-				cacheRead: cost.cacheRead,
-				cacheWrite: cost.cacheWrite,
-				total: cost.total,
-				...(cost.totalFromProvider === undefined ? {} : { totalFromProvider: cost.totalFromProvider }),
-			},
-		};
+		// Providers may leave optional counters `undefined`; drafts take strict JSON, which the round trip leaves.
+		totals[key] = JSON.parse(JSON.stringify(usage)) as UsageState["models"][string];
 		return;
 	}
 	total.input += usage.input;
@@ -119,9 +102,9 @@ function addUsage(totals: UsageState["models"], key: string, usage: Usage): void
 	total.totalTokens += usage.totalTokens;
 	if (usage.cacheWrite1h !== undefined) total.cacheWrite1h = (total.cacheWrite1h ?? 0) + usage.cacheWrite1h;
 	if (usage.reasoning !== undefined) total.reasoning = (total.reasoning ?? 0) + usage.reasoning;
-	total.cost.input += cost.input;
-	total.cost.output += cost.output;
-	total.cost.cacheRead += cost.cacheRead;
-	total.cost.cacheWrite += cost.cacheWrite;
-	total.cost.total += cost.total;
+	total.cost.input += usage.cost.input;
+	total.cost.output += usage.cost.output;
+	total.cost.cacheRead += usage.cost.cacheRead;
+	total.cost.cacheWrite += usage.cost.cacheWrite;
+	total.cost.total += usage.cost.total;
 }
