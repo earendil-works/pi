@@ -19,6 +19,7 @@ import type {
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import type { ConversationId, ConversationView, LiveState, UsageState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
+import type { ModelRequest } from "@p2/app/v1/worker";
 import { type CacheWarmingMode, ConversationWarmers } from "../../plugins/cache-warming/warmer.ts";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
@@ -42,7 +43,7 @@ const REQUEST = {
 	model: MODEL,
 	messages: [{ role: "user" as const, content: "hello", timestamp: 1 }],
 	options: { sessionId: "provider-session", reasoning: "high" as const },
-};
+} satisfies ModelRequest;
 
 /** Warmers on mocked timers; `phase` is what the host reports, `sent` the refreshes the fake models received. */
 function setup(t: { after(fn: () => void): void }, mode: CacheWarmingMode = "idle") {
@@ -83,11 +84,7 @@ function setup(t: { after(fn: () => void): void }, mode: CacheWarmingMode = "idl
 	) => {
 		const message = fauxAssistantMessage([]);
 		const usage = { ...message.usage, input: 2, cacheRead: promptTokens - 1002, cacheWrite: 1000 };
-		warmers.start(
-			CONVERSATION,
-			{ message: { ...message, stopReason, usage }, request: { ...REQUEST, options } },
-			models,
-		);
+		warmers.start(CONVERSATION, { ...message, stopReason, usage }, { ...REQUEST, options }, models);
 	};
 	/** Advances the clock by `ms` and lets the refreshes it fired finish (they arm the next timer when done). */
 	const advance = async (ms: number) => {

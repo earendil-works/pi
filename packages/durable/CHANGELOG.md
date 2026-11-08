@@ -2,13 +2,8 @@
 
 ## [Unreleased]
 
-### Breaking Changes
-
-- `GenerationHooks.afterResponse` takes a `GenerationResponse` (`{ message, request }`) instead of the bare message. `request` is the provider request the attempt sent (`GenerationRequest`: the model, the messages after `beforeRequest`, the options without the attempt's signal, telemetry and payload callback), so a hook can send it again, e.g. to keep its prompt cache entry warm; it is `undefined` for a polled deferred response. Migration: `afterResponse: (message) => ...` becomes `afterResponse: ({ message }) => ...`.
-
 ### Added
 
-- `recordUsage(tx, conversationId, bucket, key, usage)` is exported, so an extension can add spend it caused outside a generation (such as cache warming) to a conversation's `pi.usage`.
 - `Tx.submission(id)` reads a committed submission record by ID, so a tool can find the entries of its run's inputs (`pi.live.run.inputs`) without scanning the transcript.
 - Per-conversation compaction settings: `configure({ compaction })` stores a `CompactionSettings` (the shape of `HarnessSettings.compaction`, `modelOverrides` included) in `pi.agent`, inherited by children and forks. Each field resolves from the conversation's model override, then the harness's, then the conversation's own fields, then the harness-wide policy; a conversation's `enabled: false` also beats the harness's model overrides, so it turns off threshold, background and overflow compaction before a compaction task is created ([#11771](https://github.com/earendil-works/pi/issues/11771))
 

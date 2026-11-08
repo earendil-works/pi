@@ -96,8 +96,6 @@ export type {
 	EnvTarget,
 	Extension,
 	GenerationHooks,
-	GenerationRequest,
-	GenerationResponse,
 	HarnessInspection,
 	HarnessOptions,
 	HarnessSettings,
@@ -136,7 +134,7 @@ export type {
 	Wake,
 	Wrap,
 } from "./harness/types.ts";
-export { recordUsage, UsageDoc, type UsageState } from "./harness/usage.ts";
+export { UsageDoc, type UsageState } from "./harness/usage.ts";
 export type { ConversationView, ConversationWindow } from "./harness/view.ts";
 export { createSession } from "./session/session.ts";
 export { MemoryStorage } from "./storage/memory.ts";

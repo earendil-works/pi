@@ -56,7 +56,6 @@ import type {
 	ContextView,
 	ConversationStreamOptions,
 	GenerationHooks,
-	GenerationRequest,
 	ModelRef,
 	PromptInput,
 	RunEndTask,
@@ -154,8 +153,6 @@ type Request = {
 	readonly messages?: readonly Message[];
 	/** Set when the message came from polling, so a still deferred result polls strictly later. */
 	readonly pollAt?: number;
-	/** The provider request the attempt sent; absent for a polled deferred response. */
-	readonly sent?: GenerationRequest;
 };
 
 const DEFAULT_POLL_AFTER_MS = 5000;
@@ -296,20 +293,16 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 				const replaced = await hook({ messages }, runtime, context);
 				if (replaced !== undefined) messages = replaced.messages;
 			});
-			const sentOptions: SimpleStreamOptions = {
-				...streamOptions,
-				sessionId: await ensureProviderSessionId(runtime, context),
-				...(thinkingLevel === "off" ? {} : { reasoning: thinkingLevel }),
-			};
 			const options: SimpleStreamOptions = {
-				...sentOptions,
+				...streamOptions,
 				signal: runtime.signal,
 				telemetry: context.telemetry,
+				sessionId: await ensureProviderSessionId(runtime, context),
+				...(thinkingLevel === "off" ? {} : { reasoning: thinkingLevel }),
 				onPayload: (payload) => providerPayload(runtime, model, payload, context),
 			};
 			const message = await streamResponse(runtime, model, messages, options, attempt, context);
-			const sent = { model, messages, options: sentOptions };
-			const request = { attempt, compacted, model: ref, thinkingLevel, cutoff, messages: view.messages, sent };
+			const request = { attempt, compacted, model: ref, thinkingLevel, cutoff, messages: view.messages };
 			await classify(runtime, request, message, context);
 		},
 		/** After the backoff's sleep; a run before `until` (an early wake, or a record of an earlier version) sleeps again. */
@@ -803,8 +796,7 @@ async function classify(
 		}, context);
 		return;
 	}
-	const response = { message, request: request.sent };
-	await runtime.hooks.each("afterResponse", (hook) => hook(response, runtime, context));
+	await runtime.hooks.each("afterResponse", (hook) => hook(message, runtime, context));
 	const calls = message.content.filter((content): content is ToolCall => content.type === "toolCall");
 	if (message.stopReason === "toolUse" && calls.length > 0) {
 		return startToolRound(runtime, request, message, calls, context);

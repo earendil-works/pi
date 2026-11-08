@@ -13,7 +13,8 @@ import {
 	isCacheWarmingReplayable,
 	type Models,
 } from "@earendil-works/pi-ai";
-import type { ConversationId, GenerationRequest, GenerationResponse } from "@earendil-works/pi-durable";
+import type { ConversationId } from "@earendil-works/pi-durable";
+import type { ModelRequest } from "@p2/app/v1/worker";
 
 /** The `cacheWarming` setting: "idle" also warms after a run settled, "streaming" only while it runs. */
 export type CacheWarmingMode = "off" | "streaming" | "idle";
@@ -25,7 +26,7 @@ export type WarmerHost = {
 	 * "streaming" while the conversation's run is under way, "idle" after it, or `undefined` when warming the
 	 * conversation is pointless: its next request will not start with `request`, or nobody is expected to continue it.
 	 */
-	phase(conversationId: ConversationId, request: GenerationRequest): Promise<CacheWarmingPhase | undefined>;
+	phase(conversationId: ConversationId, request: ModelRequest): Promise<CacheWarmingPhase | undefined>;
 	/** Adds a refresh's spend to the conversation's usage. */
 	record(conversationId: ConversationId, message: AssistantMessage): Promise<void>;
 	/** Counts the conversations being warmed; a count keeps the worker process alive. */
@@ -33,7 +34,7 @@ export type WarmerHost = {
 };
 
 type Run = {
-	readonly request: GenerationRequest;
+	readonly request: ModelRequest;
 	readonly models: Models;
 	/** Prompt size of the request, as the provider reported it. */
 	readonly promptTokens: number;
@@ -56,11 +57,14 @@ export class ConversationWarmers {
 		this.#host = host;
 	}
 
-	/** Warm the cache entry `response`'s request wrote, replacing the conversation's run; `models` sends the refreshes. */
-	start(conversationId: ConversationId, { message, request }: GenerationResponse, models: Models): void {
+	/**
+	 * Warm the cache entry `request` wrote, replacing the conversation's run: `message` is its response, `models` sends
+	 * the refreshes.
+	 */
+	start(conversationId: ConversationId, message: AssistantMessage, request: ModelRequest, models: Models): void {
 		this.stop(conversationId);
-		// A polled deferred response sent no request; a failed or aborted one ended its run.
-		if (request === undefined || message.stopReason === "error" || message.stopReason === "aborted") return;
+		// A failed or aborted response ended its run.
+		if (message.stopReason === "error" || message.stopReason === "aborted") return;
 		if (this.#host.mode() === "off" || !isCacheWarmingReplayable(request.model, request.options)) return;
 		const ttlMs = getPromptCacheTtlMs(request.model, request.options);
 		const delayMs = ttlMs === undefined ? undefined : getCacheWarmingDelayMs(ttlMs);

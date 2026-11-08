@@ -1,13 +1,18 @@
 // Cache warming in the session worker: a Durable extension whose `afterResponse` hook starts warming each
 // conversation's last request (`./warmer.ts`), bound to the Harness, the settings and the worker's liveness.
-import type { Message } from "@earendil-works/pi-ai";
-import { defineExtension, GenerationTask, hook, LiveDoc, recordUsage } from "@earendil-works/pi-durable";
-import { BACKGROUND_CONTEXT, defineFacet } from "@p2/app/v1";
+import type { Message, Usage } from "@earendil-works/pi-ai";
+import { defineExtension, GenerationTask, hook, LiveDoc, UsageDoc, type UsageState } from "@earendil-works/pi-durable";
+import { BACKGROUND_CONTEXT, defineFacet, local } from "@p2/app/v1";
 import { ExtensionSwitches } from "@p2/app/v1/node";
 import { Extensions, harnessOf, isTopLevel, workerOf } from "@p2/app/v1/worker";
 import { WorkerModels } from "../models/contract.ts";
-import { CacheWarmingRuntime } from "./contract.ts";
 import { ConversationWarmers } from "./warmer.ts";
+
+/**
+ * Keeps the prompt cache entries of the session's conversations warm (`./warmer.ts`): one per worker, started with
+ * it; a reload or a stop closes its timers and in-flight refreshes, and the next real request starts warming again.
+ */
+const CacheWarmingRuntime = local("p2.cache-warming-runtime", { version: 1, params: {}, members: {} });
 
 export default defineFacet((host) => {
 	host.serve(CacheWarmingRuntime, (_params, self) => {
@@ -23,7 +28,10 @@ export default defineFacet((host) => {
 				new ConversationWarmers({
 					mode: () => settings.settings.value.cacheWarming ?? "idle",
 					phase: async (conversationId, request) => {
-						const running = (await durable().snapshot(LiveDoc, conversationId, context))?.run !== undefined;
+						const live = await durable().snapshot(LiveDoc, conversationId, context);
+						// A request is in flight, backing off or being polled: its response replaces the run.
+						if (live?.generation !== undefined) return undefined;
+						const running = live?.run !== undefined;
 						// After its run, a subagent's or one-shot agent's work is usually done; the main conversation and its
 						// `/tree` branches wait for the person or for agents' reports.
 						if (!running && !(await isTopLevel(durable(), conversationId, context))) return undefined;
@@ -38,10 +46,10 @@ export default defineFacet((host) => {
 						return running ? "streaming" : "idle";
 					},
 					record: async (conversationId, { provider, model, usage }) => {
-						await durable().commit(
-							(tx) => recordUsage(tx, conversationId, "models", `${provider}/${model}`, usage),
-							context,
-						);
+						await durable().commit(async (tx) => {
+							const { models } = await tx.doc(UsageDoc, conversationId);
+							addUsage(models, `${provider}/${model}`, usage);
+						}, context);
 					},
 					keepAlive: (delta) => worker().liveness.add("cacheWarming", delta),
 				}),
@@ -51,7 +59,10 @@ export default defineFacet((host) => {
 			name: "cache-warming",
 			hooks: [
 				hook(GenerationTask, {
-					afterResponse: (response, api) => warmers.value.start(api.conversationId, response, api.models),
+					afterResponse: (message, api) => {
+						const request = harness().requestOf(message);
+						if (request !== undefined) warmers.value.start(api.conversationId, message, request, api.models);
+					},
 				}),
 			],
 		});
@@ -73,4 +84,44 @@ function startsWith(current: readonly Message[], sent: readonly Message[]): bool
 			(message, index) => current[index]!.role === message.role && current[index]!.timestamp === message.timestamp,
 		)
 	);
+}
+
+/** Adds `usage` to `totals[key]` in a `pi.usage` draft, as Durable's own usage recording does. */
+function addUsage(totals: UsageState["models"], key: string, usage: Usage): void {
+	const { cost } = usage;
+	// Own keys only, as Durable looks them up.
+	const total = Object.hasOwn(totals, key) ? totals[key] : undefined;
+	if (total === undefined) {
+		// Drafts take strict JSON: optional counters only when the provider reported them.
+		totals[key] = {
+			input: usage.input,
+			output: usage.output,
+			cacheRead: usage.cacheRead,
+			cacheWrite: usage.cacheWrite,
+			...(usage.cacheWrite1h === undefined ? {} : { cacheWrite1h: usage.cacheWrite1h }),
+			...(usage.reasoning === undefined ? {} : { reasoning: usage.reasoning }),
+			totalTokens: usage.totalTokens,
+			cost: {
+				input: cost.input,
+				output: cost.output,
+				cacheRead: cost.cacheRead,
+				cacheWrite: cost.cacheWrite,
+				total: cost.total,
+				...(cost.totalFromProvider === undefined ? {} : { totalFromProvider: cost.totalFromProvider }),
+			},
+		};
+		return;
+	}
+	total.input += usage.input;
+	total.output += usage.output;
+	total.cacheRead += usage.cacheRead;
+	total.cacheWrite += usage.cacheWrite;
+	total.totalTokens += usage.totalTokens;
+	if (usage.cacheWrite1h !== undefined) total.cacheWrite1h = (total.cacheWrite1h ?? 0) + usage.cacheWrite1h;
+	if (usage.reasoning !== undefined) total.reasoning = (total.reasoning ?? 0) + usage.reasoning;
+	total.cost.input += cost.input;
+	total.cost.output += cost.output;
+	total.cost.cacheRead += cost.cacheRead;
+	total.cost.cacheWrite += cost.cacheWrite;
+	total.cost.total += cost.total;
 }
