@@ -73,6 +73,7 @@ describe("artifacts (fake provider)", () => {
 		assert.match(csp, /sandbox allow-scripts allow-modals allow-pointer-lock/);
 		assert.ok(!csp.includes("allow-same-origin"));
 		assert.match(csp, /frame-src 'none'.*object-src 'none'.*base-uri 'none'.*form-action 'none'/);
+		assert.match(csp, /; frame-ancestors 'self'$/);
 		assert.equal(preview.headers["cross-origin-resource-policy"], "same-origin");
 		const head = await http(fixture.server.port, url(), { method: "HEAD" });
 		assert.equal(head.status, 200);
@@ -206,7 +207,7 @@ describe("artifacts (fake provider)", () => {
 			if (type === "svg") assert.equal(response.body, "<svg xmlns='http://www.w3.org/2000/svg'/>");
 			else {
 				assert.equal(response.headers["content-type"], "text/plain; charset=utf-8");
-				assert.match(String(response.headers["content-security-policy"]), /; sandbox$/);
+				assert.match(String(response.headers["content-security-policy"]), /; sandbox; frame-ancestors 'self'$/);
 				assert.ok(!response.body.includes("p2-artifact-diagnostic"));
 			}
 		}

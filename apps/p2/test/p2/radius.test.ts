@@ -8,6 +8,7 @@ import type { Duplex } from "node:stream";
 import { type TestContext, test } from "node:test";
 import { BACKGROUND_CONTEXT, statusOf, whenLive } from "@p2/app/v1";
 import { WebSocket, WebSocketServer } from "ws";
+import { Chat } from "../../plugins/chat/contract.ts";
 import { Devices } from "../../plugins/devices/contract.ts";
 import { ProviderLogin } from "../../plugins/login/contract.ts";
 import { RadiusBrain, type RadiusStatus, readRadiusConfig, writeRadiusConfig } from "../../plugins/radius/brain.ts";
@@ -104,6 +105,31 @@ test(
 		assert.equal((await http(f.server.port, "/probe")).status, 200);
 	},
 );
+
+test("Radius-relayed artifact previews may sit below the Radius shell's frame", { timeout: 30_000 }, async (t) => {
+	const f = await fixture(t);
+	const owner = clientHost(f.server.port);
+	t.after(() => owner.close(BACKGROUND_CONTEXT));
+	const session = (await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: f.directory }, BACKGROUND_CONTEXT))
+		.id;
+	const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+	await chat.send({ text: "artifact", requestId: "artifact" }, BACKGROUND_CONTEXT);
+	await until(chat.view, (view) =>
+		(view?.entries ?? []).some((entry) =>
+			(entry.model ?? []).some((message) => message.role === "toolResult" && message.toolName === "artifact"),
+		),
+	);
+	chat.release();
+	// The relayed app is framed by the shell, and `frame-ancestors` checks every ancestor: `'self'` alone showed
+	// Chrome's blocked-frame page instead of every inline preview.
+	const id = f.open(`/artifact?${new URLSearchParams({ session, name: "demo", version: "1" })}`);
+	const response = await f.radius.response(id);
+	assert.equal(response.status, 200);
+	const csp = (response.headers as [string, string][]).find(
+		([key]) => key.toLowerCase() === "content-security-policy",
+	);
+	assert.match(String(csp?.[1]), /; frame-ancestors 'self' https:\/\/radius\.earendil\.com$/);
+});
 
 test("Radius admits people sessions are shared with by email, across organizations", { timeout: 30_000 }, async (t) => {
 	const f = await fixture(t);
