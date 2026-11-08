@@ -15,8 +15,8 @@ request before a context handoff. Read this file first, in full, then the readin
   with the explainer skill, get two reviews, bring it to the owner.
 - **Specs are "nice Radius artifacts using our beautiful explainer"** (owner): Markdown in `apps/p3/docs/<step>/book.md`,
   built with the explainer skill (`/home/badlogic/.pi/p2/skills/explainer/SKILL.md`, read it first; build:
-  `node /home/badlogic/.pi/p2/skills/explainer/build.mjs <book.md> -o <index.html>`), published privately:
-  `mcporter call radius.artifacts_create title="..." visibility=private content_type=text/html content=@<index.html> --no-oauth --output json`
+  `node /home/badlogic/.pi/p2/skills/explainer/build.mjs <book.md> -o <index.html>`), published with organization visibility:
+  `mcporter call radius.artifacts_create title="..." visibility=organization content_type=text/html content=@<index.html> --no-oauth --output json`
   (new version: `radius.artifacts_versions_publish slug=<id> content_type=text/html content=@<file>`). mcporter is in
   the Node bin dir below. Inline SVG diagrams in specs; sequence diagrams as SVG, never ASCII art.
 
@@ -32,7 +32,7 @@ request before a context handoff. Read this file first, in full, then the readin
   GPT-6.1 Sol (`openai-codex/gpt-6-astra`, `openai-codex/gpt-6.1-sol`) when the owner asks. Subagents never commit. Build subagents work in the shared checkout on main (no worktrees, owner).
 - Never a file write and a dependent git command or subagent message in one parallel batch.
 - NEVER call history_handoff unless the owner explicitly asks.
-- Radius artifacts private. Never print credentials.
+- Radius artifacts get organization visibility (owner, 2026-11-08); never public without asking. Never print credentials.
 - Cross-session messages (`conversations send`) only work in turns the owner started.
 - Voice mode (when the system prompt has a voice section): short spoken sentences, no markdown, hand long work to a
   doer subagent.
