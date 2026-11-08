@@ -1176,8 +1176,10 @@ translated phone drawer and intercept chat taps.
   and serves the preview with a CSP sandbox (no same-origin privilege, forms, child frames or objects). Only
   previews receive the diagnostics bridge; `download=1` returns the original source. HEAD describes the same
   representation as GET. The chat-content slot supplies the shared transcript card contexts and explicit-click
-  file/artifact viewers; a top-bar counter opens a picker of every version, newest first. The viewer/picker lives in
-  named `Route.layers` (Back and sessionStorage restoration); picking an artifact pushes a viewer above its list.
+  file/artifact viewers; a top-bar counter toggles a list of every version, newest first, in the side panel
+  (`SidePanel`, `Route.panel` "artifacts": docked on the right from 700px like a run's activity, which it replaces and
+  which replaces it; a sheet on phones). The viewer is a named `Route.layers` entry (Back and sessionStorage
+  restoration); picking an artifact pushes a viewer above the list.
   HTML/SVG use a sandboxed iframe, Markdown/text render safely,
   sent files use the conservative file preview. Nothing opens from a server update. `test/p2/artifacts.test.ts`
   covers fake-provider publication, versions, independent index, reload/restart, CSP, HEAD, guest isolation and
@@ -1431,8 +1433,9 @@ translated phone drawer and intercept chat taps.
   reshaped by owner decisions after it). The agent's responses between two people's messages (or markers, failures,
   gaps) are one turn (`chatItems` in `model.ts`). Its thinking blocks and texts stay in the transcript in their order
   ("Thought ›" opens in place; text as prose); each run of consecutive tool calls between them is one **activity row**;
-  the turn's last text is its **answer** (Copy, Branch and Reply; a stop, an error or the length limit below it),
-  followed by its **results** (artifact and sent-file cards, an inline artifact below its card, an opened port's links).
+  the turn's last text is its **answer** (Copy, Branch, Reply and the time it began; a stop, an error or the length
+  limit below it), followed by its **results** (artifact and sent-file cards, an inline artifact below its card, an
+  opened port's links).
   The activity row is a wheel of the run's calls: while the agent works the newest call faces the reader in the present
   tense ("Running npm test") and breathes, a failed one is red, and the run's time counts (until the next response
   begins); when it ends the wheel rolls to a summary ("Read 3 files, ran 2 commands · 6 steps") and the total time. The
@@ -1440,11 +1443,12 @@ translated phone drawer and intercept chat taps.
   runtime's `Sheet`: grip, 52px header with "N steps · 18s" and Close, swipe down to close; a centred dialog from
   700px) as a route layer (`openActivity`, layer `{ kind: "sheet", name: "activity", locator }` with the row's key):
   one 44px row per call (icon, tool name and main argument, ✓ with its time, ✗ with an exit code, ● running,
-  chevron); a row opens the call's detail one layer up (Input, Output: the command and its output as a terminal, a
-  read's numbered lines or image, an edit's diff, a subagent's message and answer with Open, a history tool's entries
-  that reveal their messages), with Back in the header, and a script's call one more. Back (the browser's, Android's,
-  the header's) leads down a layer at a time and finally closes the sheet, like every other sheet; the wheel rolled to
-  a call opens the list and that call's detail over it. The transcript renders the sheet (`ActivityLayer` in
+  under it the clock time it started where the minute changes from the row before, chevron); a row opens the call's
+  detail one layer up (Input, Output: the command and its output as a terminal, a read's numbered lines or image, an
+  edit's diff, a subagent's message and answer with Open, a history tool's entries that reveal their messages), with
+  Back in the header, and a script's call one more. Back (the browser's, Android's, the header's) leads down a layer
+  at a time and finally closes the sheet, like every other sheet; the wheel rolled to a call opens the list and that
+  call's detail over it. The transcript renders the sheet (`ActivityLayer` in
   `Messages`), so it follows a running run live. The last run is live while the transcript says the agent works
   (`working`), or, before the live view arrived (the copy kept on the device), while its entries say it is not over.
   Before the first response a waiting wheel ("Working…") stands for the run. The wheel and a script's timeline are
@@ -1501,9 +1505,11 @@ translated phone drawer and intercept chat taps.
   colours; kinds differ only by icon and word. A subagent's header (at least 44px, with a chevron) opens its
   conversation in this session, another session's header that session (owner only); both are navigation steps, so
   Back returns. A guest's has no target. The body is never a link. The owner's messages keep the bubble; inputs
-  without an author (a main agent's task in a subagent's conversation) too. Not done: "Answered: …" under an answered
-  subagent question (no data links a `team` question to the main agent's later `subagent send`). Test:
-  `ui-incoming.test.ts`.
+  without an author (a main agent's task in a subagent's conversation) too. A sent one has its time, Edit and Copy
+  below it (owner decision: timestamps quiet, in the action rows; `src/web/Time.tsx`, absolute: the clock today, the
+  date before it on other days, the full moment as tooltip; no "n minutes ago", which would need a ticking clock).
+  Not done: "Answered: …" under an answered subagent question (no data links a `team` question to the main agent's
+  later `subagent send`). Test: `ui-incoming.test.ts`.
 - **Earlier history while a turn is one row:** a page of a turn's tool calls can add next to no height (they are all
   one activity row), so the transcript loads earlier pages by itself while following the answer at the bottom and
   less than a viewport of history is above it, not only on a scroll up (`#loadEarlier` in `use-chat-scroll.ts`), and

@@ -44,6 +44,8 @@ export type ToolView = {
 	calls?: readonly NestedCall[];
 	/** The result's recorded execution time. */
 	durationMs?: number;
+	/** When the call started, in ms: its result's time less its duration; absent until it has a result. */
+	at?: number;
 };
 /** One call a running tool made to another tool, as a status row. */
 export type NestedCall = {
@@ -138,6 +140,7 @@ function resultTool(result: ToolResultMessage, name = result.toolName): ToolView
 		details: result.details as JsonValue | undefined,
 		images: result.content.filter((part) => part.type === "image"),
 		...(typeof result.durationMs === "number" ? { durationMs: result.durationMs } : {}),
+		at: result.timestamp - (result.durationMs ?? 0),
 	};
 }
 

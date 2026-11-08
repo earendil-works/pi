@@ -617,7 +617,8 @@ textarea.input {
 	font-family: var(--mono);
 	font-size: var(--fs-xs);
 }
-.artifact-button:hover {
+.artifact-button:hover,
+.artifact-button.on {
 	color: var(--text);
 }
 /* Centred over the chat column: on wide screens it does not stretch across the whole main area. */
@@ -746,10 +747,17 @@ textarea.input {
 		animation: none;
 	}
 }
+/* A person's message: the bubble with Reply beside it, its actions (time, Edit, Copy) below at its right edge. */
 .user {
 	display: flex;
-	justify-content: flex-end;
+	flex-direction: column;
+	align-items: flex-end;
 	padding-left: 12%;
+}
+.user-line {
+	display: flex;
+	justify-content: flex-end;
+	max-width: 100%;
 }
 .bubble {
 	max-width: 100%;
@@ -795,7 +803,19 @@ textarea.input {
 }
 .message-actions {
 	display: flex;
+	align-items: center;
 	margin: calc(-1 * var(--s2)) 0 0 calc(-1 * var(--s2));
+}
+.user .message-actions {
+	margin: 0 calc(-1 * var(--s2)) 0 0;
+}
+/* When a message was sent or an answer began: as quiet as the actions beside it. */
+.message-time {
+	padding: 0 var(--s2);
+	color: var(--muted);
+	font-size: var(--fs-xs);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
 }
 /* Replies: a button beside a person's message (on hover; a coarse pointer uses a long press instead), the
    quoted line above a reply, and a brief highlight of the message a quoted line leads to. */
@@ -819,7 +839,8 @@ textarea.input {
 .user .reply-button:focus-visible {
 	opacity: 1;
 }
-/* Editing a person's message (`/tree`): beside it on hover, always shown where there is no hover. */
+/* Editing someone else's message (`/tree`): in its header on hover, always shown where there is no hover. The owner's
+   messages have Edit in their actions below the bubble. */
 .edit-button {
 	display: inline-flex;
 	flex: none;
@@ -834,7 +855,6 @@ textarea.input {
 .edit-button:hover {
 	color: var(--text);
 }
-.user:hover .edit-button,
 .edit-button:focus-visible {
 	opacity: 1;
 }
@@ -2939,6 +2959,55 @@ button.diff-number:hover {
 }
 .sheet-body > .muted.small {
 	margin-top: var(--s3);
+}
+/* The side panel (SidePanel.tsx): docked on the right from 700px, over the chat until 1280px and beside it from
+   there; a sheet on phones. Its header and body look like a sheet's. */
+.side-dock:empty {
+	display: none;
+}
+@media (min-width: 700px) {
+	.side-dock {
+		position: fixed;
+		inset: 0 0 0 auto;
+		width: min(460px, 60vw);
+		z-index: 20;
+	}
+}
+@media (min-width: 1280px) {
+	.side-dock {
+		position: static;
+		flex: 0 0 460px;
+		width: 460px;
+		min-width: 0;
+		z-index: auto;
+	}
+}
+.side-panel {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	height: 100%;
+	background: var(--bg);
+	border-left: 1px solid var(--line);
+}
+.side-panel-head {
+	flex: none;
+}
+.side-panel-head h2 {
+	flex: none;
+}
+.side-panel-meta {
+	flex: 1;
+	text-align: right;
+	color: var(--muted);
+	font-size: var(--fs-xs);
+	font-variant-numeric: tabular-nums;
+}
+.side-panel-body {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	padding: var(--s3) var(--x) var(--s5);
 }
 .sheet-sticky {
 	position: sticky;

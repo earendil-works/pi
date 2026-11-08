@@ -9,7 +9,6 @@
  */
 .activity,
 .results,
-.activity-sheet,
 .activity-panel {
 	--semantic-typography-ui-primary:
 		var(--semantic-typography-ui-primary-font-weight) var(--semantic-typography-ui-primary-font-size) /
@@ -242,58 +241,18 @@
 	overflow: hidden;
 	white-space: pre-wrap;
 }
-.activity-dock:empty {
-	display: none;
-}
-.activity-panel {
-	display: flex;
-	flex-direction: column;
-	min-width: 0;
-	height: 100%;
-	background: var(--bg);
-	border-left: 1px solid var(--line);
-}
-.activity-panel .activity-panel-head {
-	flex: none;
-	padding-left: var(--x);
-}
-.activity-panel .activity-panel-head h2 {
-	flex: none;
-}
-.activity-panel-meta {
-	flex: 1;
-	text-align: right;
-	color: var(--muted);
-	font-size: var(--fs-xs);
-	font-variant-numeric: tabular-nums;
-}
+/* The panel's own scroller follows the running step: the side panel's body (sheet or dock) does not scroll. */
 .activity-panel-body {
 	flex: 1;
 	min-height: 0;
 	overflow: auto;
 	padding-bottom: var(--s3);
 }
-.activity-sheet .sheet-body {
+.activity-panel .sheet-body,
+.activity-panel .side-panel-body {
 	display: flex;
 	padding: 0;
 	overflow: hidden;
-}
-@media (min-width: 700px) {
-	.activity-dock {
-		position: fixed;
-		inset: 0 0 0 auto;
-		width: min(460px, 60vw);
-		z-index: 20;
-	}
-}
-@media (min-width: 1280px) {
-	.activity-dock {
-		position: static;
-		flex: 0 0 460px;
-		width: 460px;
-		min-width: 0;
-		z-index: auto;
-	}
 }
 .step-list {
 	margin: 0;
@@ -382,11 +341,16 @@
 		display: inline;
 	}
 }
-.step-state {
+/* The step's state, and under it when it started (only where the minute changes). */
+.step-end {
+	display: flex;
 	flex: none;
+	flex-direction: column;
+	align-items: flex-end;
 	color: var(--muted);
 	font-size: var(--fs-xs);
 	font-variant-numeric: tabular-nums;
+	line-height: 1.3;
 }
 .step-state[data-state="error"] {
 	color: var(--bad);

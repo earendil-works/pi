@@ -1,12 +1,13 @@
-// A transcript block's activity in the right-hand panel, or p2's sheet on phones. Steps expand in place; choosing
-// another block in the transcript replaces the panel's selection. Opening and closing it participate in Back.
+// A transcript block's activity in the side panel (SidePanel.tsx: docked on the right, p2's sheet on phones). Steps
+// expand in place; choosing another block in the transcript replaces the panel's selection. Opening and closing it
+// participate in Back.
 import type { ImageContent } from "@earendil-works/pi-ai";
-import { type ReactNode, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import { createPortal } from "react-dom";
-import { getNavigation, Sheet, useRoute, useScrollMemory } from "../../runtime/web.tsx";
+import { type ReactNode, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { getNavigation, useRoute, useScrollMemory } from "../../runtime/web.tsx";
 import { ToolActivityContext, WorkingDirectory } from "../chat-context.ts";
-import { CloseIcon } from "../icons.tsx";
 import type { Route } from "../navigation.ts";
+import { SidePanel, showInSidePanel, useSidePanelShown } from "../SidePanel.tsx";
+import { clockTime, Time } from "../Time.tsx";
 import { DetailProse, imageUrl, StepDetail } from "./Detail.tsx";
 import { ChevronIcon, CommentIcon, SparkIcon } from "./icons.tsx";
 import { KindIcon } from "./Label.tsx";
@@ -27,11 +28,7 @@ type Place = NonNullable<Route["activity"]>;
 
 /** Opens a block in the panel, optionally expanding the step selected on its wheel. */
 export function openActivity(row: string, step?: string): void {
-	const nav = getNavigation();
-	const next = { ...nav.route, workspace: undefined, activity: { row, ...(step ? { step } : {}) } };
-	// Switching blocks is a selection, not a growing stack of panels to close.
-	if (nav.route.activity && !nav.route.workspace) void nav.replace(next);
-	else void nav.push(next);
+	showInSidePanel({ activity: { row, ...(step ? { step } : {}) } });
 }
 
 /** Closes only the activity panel, returning to the screen beneath it. */
@@ -53,18 +50,11 @@ export function useElapsed(startedAt: number | undefined, endedAt: number | unde
 	return start === undefined || end === undefined ? undefined : elapsed(end - start);
 }
 
-const wideSnapshot = () => window.matchMedia("(min-width: 700px)").matches;
-const subscribeWidth = (changed: () => void) => {
-	const media = window.matchMedia("(min-width: 700px)");
-	media.addEventListener("change", changed);
-	return () => media.removeEventListener("change", changed);
-};
-
 /** Keeps the selected block live even when its virtualized transcript row is offscreen. */
 export function ActivityLayer({ rows }: { rows: readonly { item: ChatItem }[] }) {
 	const route = useRoute();
 	const place = route.activity;
-	const wide = useSyncExternalStore(subscribeWidth, wideSnapshot);
+	const shown = useSidePanelShown();
 	const [expanded, setExpanded] = useState<ReadonlyMap<string, ReadonlySet<string>>>(new Map());
 	const item =
 		place &&
@@ -77,32 +67,26 @@ export function ActivityLayer({ rows }: { rows: readonly { item: ChatItem }[] })
 								row.item.entries?.some((entry) => entry.kind !== "call" && entry.id === place.step)),
 					)?.item
 				: undefined));
-	if (!place || item?.type !== "activity" || route.workspace || (!wide && route.layers.length)) return null;
-	const panel = (
+	if (!place || item?.type !== "activity" || !shown) return null;
+	return (
 		<ActivityPanel
 			key={item.key}
 			activity={item}
 			place={place}
-			wide={wide}
 			expanded={expanded.get(item.key)}
 			onExpanded={(steps) => setExpanded((before) => new Map(before).set(item.key, steps))}
 		/>
 	);
-	if (!wide) return panel;
-	const dock = document.getElementById("activity-dock");
-	return dock ? createPortal(panel, dock) : null;
 }
 
 function ActivityPanel({
 	activity,
 	place,
-	wide,
 	expanded,
 	onExpanded,
 }: {
 	activity: Activity;
 	place: Place;
-	wide: boolean;
 	expanded: ReadonlySet<string> | undefined;
 	onExpanded: (steps: ReadonlySet<string>) => void;
 }) {
@@ -117,16 +101,6 @@ function ActivityPanel({
 	const time = useElapsed(activity.startedAt, activity.endedAt, activity.working);
 	const count = `${entries.length} ${entries.length === 1 ? "step" : "steps"}`;
 	useScrollMemory(body);
-	useEffect(() => {
-		if (!wide) return;
-		const key = (event: KeyboardEvent) => {
-			if (event.key !== "Escape" || event.defaultPrevented || getNavigation().route.layers.length) return;
-			event.preventDefault();
-			closeActivity();
-		};
-		window.addEventListener("keydown", key);
-		return () => window.removeEventListener("keydown", key);
-	}, [wide]);
 	useLayoutEffect(() => {
 		const element = body.current;
 		if (!element) return;
@@ -149,51 +123,38 @@ function ActivityPanel({
 	useEffect(() => {
 		if (place.step && !open.has(place.step)) onExpanded(new Set(open).add(place.step));
 	}, [place.step]);
-	const content = (
-		<div
-			className="activity-panel-body"
-			ref={body}
-			onScroll={() => {
-				const element = body.current;
-				if (element) following.current = element.scrollHeight - element.clientHeight - element.scrollTop < 24;
-			}}
-		>
-			<StepList
-				entries={entries}
-				expanded={open}
-				onStep={(id) => {
-					following.current = false;
-					const next = new Set(open);
-					if (next.has(id)) next.delete(id);
-					else next.add(id);
-					onExpanded(next);
-				}}
-			/>
-			{!entries.length && <p className="empty-note">Working…</p>}
-		</div>
-	);
-	if (!wide)
-		return (
-			<Sheet
-				title={[count, time].filter(Boolean).join(" · ")}
-				onClose={closeActivity}
-				className="activity-sheet"
-				testId="activity-sheet"
-			>
-				{content}
-			</Sheet>
-		);
+	const meta = [count, time].filter(Boolean).join(" · ");
 	return (
-		<aside className="activity-panel" aria-label="Activity" data-testid="activity-sheet">
-			<header className="activity-panel-head sheet-head">
-				<h2>Activity</h2>
-				<span className="activity-panel-meta">{[count, time].filter(Boolean).join(" · ")}</span>
-				<button type="button" className="icon-button" onClick={closeActivity} aria-label="Close">
-					<CloseIcon />
-				</button>
-			</header>
-			{content}
-		</aside>
+		<SidePanel
+			title="Activity"
+			sheetTitle={meta}
+			meta={meta}
+			onClose={closeActivity}
+			className="activity-panel"
+			testId="activity-sheet"
+		>
+			<div
+				className="activity-panel-body"
+				ref={body}
+				onScroll={() => {
+					const element = body.current;
+					if (element) following.current = element.scrollHeight - element.clientHeight - element.scrollTop < 24;
+				}}
+			>
+				<StepList
+					entries={entries}
+					expanded={open}
+					onStep={(id) => {
+						following.current = false;
+						const next = new Set(open);
+						if (next.has(id)) next.delete(id);
+						else next.add(id);
+						onExpanded(next);
+					}}
+				/>
+				{!entries.length && <p className="empty-note">Working…</p>}
+			</div>
+		</SidePanel>
 	);
 }
 
@@ -227,7 +188,11 @@ function StepThumbnails({ images }: { images: readonly ImageContent[] }) {
 	);
 }
 
-/** A block's steps, each with its images as thumbnails; in the panel their details expand beneath their headers. */
+/**
+ * A block's steps, each with its images as thumbnails and, under its state, when it started: only where the clock
+ * shows another minute than the step before it, so a run within a minute names its time once. In the panel their
+ * details expand beneath their headers.
+ */
 export function StepList({
 	entries,
 	onStep,
@@ -239,10 +204,15 @@ export function StepList({
 }) {
 	const tools = useContext(ToolActivityContext);
 	const cwd = useContext(WorkingDirectory)?.replace(/\/+$/, "");
+	let shownTime: string | undefined;
 	return (
 		<ul className="step-list" data-testid="timeline">
 			{entries.map((entry) => {
 				const step = entry.kind === "call" ? entry.step : undefined;
+				const at = step?.tool.at;
+				const label = at === undefined ? undefined : clockTime(at);
+				const time = label === shownTime ? undefined : at;
+				if (label) shownTime = label;
 				const id = entry.kind === "call" ? entry.step.id : entry.id;
 				const open = expanded?.has(id) ?? false;
 				const argument = step
@@ -277,8 +247,11 @@ export function StepList({
 								{argument && <span className="step-argument">{argument}</span>}
 							</span>
 							{step && <StepThumbnails images={step.tool.images} />}
-							<span className="step-state" data-state={step?.status ?? "done"}>
-								{step ? stepState(step, tools) : entry.kind !== "call" && entry.live ? "● thinking" : ""}
+							<span className="step-end">
+								<span className="step-state" data-state={step?.status ?? "done"}>
+									{step ? stepState(step, tools) : entry.kind !== "call" && entry.live ? "● thinking" : ""}
+								</span>
+								{time !== undefined && <Time at={time} className="step-time" />}
 							</span>
 							<span className="step-chevron" aria-hidden="true">
 								<ChevronIcon size={16} />
