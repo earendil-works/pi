@@ -54,3 +54,8 @@ and its working rules are in `handoff.md`.
   addressable things, groupings and views is the point and must allow free composition, also where the terminal cannot
   show all of it; access control (which resources a project or session may use, who may see or do what) must attach to
   the same model later, not be designed separately.
+- **No per-run authority; what is brought into a session is the control (owner, 2026-11-08: "there is no point in trying
+  to prevent prompt injections. that's why one should be able to define what is brought into a session"):** everyone
+  who may send in a session uses every resource in its selection, whoever started the run (as decided earlier: `origin`
+  is out, illusory against prompt injection). The stress test's "authority per run" gap (`model-stress/report.md`, both
+  reviews) is dropped; defining a session's resources (projects, lock-down, what is brought in) is the mechanism.
