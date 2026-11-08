@@ -1,7 +1,7 @@
 ---
 title: p3: what a session may use
 cover: One List / Many Groupings
-kicker: A spec for review · p3 resource model · 2026-11-08
+kicker: A spec, reviewed · p3 resource model · 2026-11-08
 subtitle: Users, resources, one resource source per session, groupings that only show, one policy, and workers that follow their list, with the typed APIs every plugin uses
 stats:
   - 1 | resource source per session, one field in the catalog
@@ -14,8 +14,9 @@ note: |
   `/tmp/p3-model-sol.md`) minus their extras, and from the stress test (`model-stress/report.md`) with its reviews.
   Chord APIs are real (`remote`, `local`, `keyed`, `defineTable`, `defineRegistry`, `self.writable`, `self.derive`,
   `ParamsOf`, `CurrentVariants`); every p3 name is a proposal. Written for the reviewers first: appendix B is their
-  brief. Not decided beyond the direction, not built.
-colophon: p3 resource model · spec for review, first edition · 2026-11-08 · from the owner's walkthrough and the Astra and Sol designs
+  brief. Second edition: the review by Astra and Sol is folded in (appendix C); four points wait for the owner
+  (epilogue). Not built.
+colophon: p3 resource model · spec, second edition after review · 2026-11-08 · from the owner's walkthrough and the Astra and Sol designs
 ---
 
 # Before we begin {.preface}
@@ -55,8 +56,8 @@ precedence rules and login modes. This spec separates the questions. **Groupings
 8. **One policy decides, through typed requests, at core's guarded steps.** Plugins never import ACL, SAML or Radius;
    UIs never check anything, they render server views such as a user's creatable kinds.
 9. **Workers follow their list.** The harness admits an extension only while its resource is on the list and belongs to
-   the plugin that contributed it; resource plugins' per-session server views check the list at every call. Anything
-   unknown fails closed.
+   the plugin that contributed it, and checks again at every tool call; resource plugins' per-session server views
+   check the list at every call too. Anything unknown, offline or expired fails closed.
 10. **Presentation is open.** Creators per resource kind, renderers per contract and form, panels from several plugins
     for one detail view; layouts are plugins.
 :::
@@ -132,6 +133,21 @@ export function operation<C extends RemoteContract, M extends MethodName<C>>(con
 Where the erased `ObjectAddress` appears, the code that reads it calls `match(kind, address)` and gets typed params or
 nothing. That is the only place a contract name is compared as a string: in `match`, inside core.
 
+**Tokens are compared by declaration, never by `===`** (review, Sol 1). Chord bundles a copy of another plugin's
+contract into each facet that imports it, and a reload makes another copy, so the policy plugin's `McpKind` and the MCP
+plugin's `McpKind` are different JavaScript objects. Core resolves every token through its current registrations and
+compares the contract's name and a compatible version; code asks through typed helpers:
+
+```ts
+/** Whether `kind` names the same declared resource kind as `token` (contract name, compatible version). */
+export function isKind<C extends RemoteContract>(kind: ResourceKind, token: ResourceKind<C>): kind is ResourceKind<C>;
+/** The same for grouping kinds and operations; `Request.call.match(op)` uses `isOperation` inside. */
+export function isGroupingKind<C extends RemoteContract>(kind: GroupingKind, token: GroupingKind<C>): kind is GroupingKind<C>;
+export function isOperation<C extends RemoteContract, M extends MethodName<C>>(op: Operation, token: Operation<C, M>): op is Operation<C, M>;
+```
+
+A test builds the policy plugin and the MCP plugin separately and reloads only one of them.
+
 :::note | The rule for reviewers
 Strings are allowed as identities written once in a contract file (`remote("mcp.server")`, `builtin("coding-tools")`,
 `form("p3.row")`), as erased addresses in storage, wire messages and registry tables, and as persisted user data
@@ -199,8 +215,13 @@ export const McpServer = remote("mcp.server", {
 export const McpKind = resourceKind(McpServer, (p) => userId(p.owner));
 
 // plugins/mcp/server.ts: the server facet tells core the kind exists (and that this plugin serves it)
-self.contribute(ResourceKinds, [McpKind]);
+self.contribute(ResourceKinds, [register(McpKind)]);
 ```
+
+`register(kind, { use? })` may give the kind a **use baseline**, the answer to `use` without a policy (review, Sol 8,
+Astra S4). Most kinds leave it out (allow). Kinds that run code on the server machine set it to *the session's owner
+administers*: `register(EnvKind, { use: localMachineAdminOnly })` for `LocalMachine`, and the reload built-in the same
+way. The effective list passes that baseline to the policy instead of an unconditional allow.
 
 The worker facet, the page facet and the server facet all import `McpKind` from the same file; they cannot drift. The
 `ResourceKinds` registry (server) tells core which plugin serves which kind: that is the plugin recorded in each index
@@ -221,11 +242,14 @@ host.serve(McpServers, (_params, principal, self) => {
 		variant: "user",
 		members: {
 			servers: store.serversOf(principal.id),
-			create: async (config, ctx) => {
-				const created = resource(McpKind, { owner: principal.id, id: newId() });
-				// The guarded step: the owner rule, then the policy; refuses before anything is written.
+			create: async ({ id, owner, config }, ctx) => {
+				// `id` is the caller's (stable across retries); `owner` is the user or INSTANCE (an admin's company server).
+				const created = resource(McpKind, { owner, id });
+				// The guarded step: the owner rule, then the policy; the index row stays incomplete until `complete`.
 				await resources.create({ actor: principal.id, resource: pack(created), label: config.name }, ctx);
+				await guard(access, principal.id, CreateMcp, {}, { id, owner, config }, transportBaseline(config, principal), ctx);
 				await store.insert(created.params, config, ctx);
+				await resources.complete({ resource: pack(created) }, ctx);
 				return pack(created);
 			},
 		},
@@ -243,8 +267,10 @@ export const Resources = local("p3.resources", {
 	members: {
 		/** Every session's effective list, by session id; a worker's server view pins its own with at(session). */
 		lists: keyed(SessionList),
-		/** The guarded step for a new resource: owner rule, policy, then the index row. */
+		/** The guarded step for a new resource: owner rule, policy, then an incomplete index row. Repeatable for the same actor and address. */
 		create: method(obj({ actor: str(), resource: ObjectAddress, label: str() })),
+		/** The plugin wrote its own row: the resource becomes usable. */
+		complete: method(obj({ resource: ObjectAddress })),
 		/** A resource's object is gone: out of the index, out of every list. */
 		forget: method(obj({ resource: ObjectAddress })),
 	},
@@ -258,14 +284,17 @@ What `create` does, in order:
    instance user and the actor administers. Nobody creates a resource that uses another person's login.
 3. **The policy:** `{ kind: "create-resource", actor, resourceKind, owner }` with baseline allow. A SAML rule "only
    engineering may create MCP servers" denies here.
-4. Write the index row with the kind's plugin.
+4. Write the index row with the kind's plugin, marked **incomplete**: no effective list includes it. A repeated
+   `create` for the same address and actor succeeds without a second row; the same address from another actor is
+   refused.
+5. The plugin writes its own row and calls `complete`; only then is the resource usable. Core reconciles incomplete
+   rows a crash left behind (review, Sol 14, Astra S5).
 
-:::review | Review: order of the two rows
-The index row is written before the plugin's own row. A crash between them leaves an index row without an object: its
-renderer shows it missing, and the owner can remove it. The reverse order would leave an object no list can name.
-Sol's design wants creation idempotent on retry; the reviewers should say whether the plugin should pass a stable id
-and core accept a repeated `create` for the same address and actor.
-:::
+**Who the actor is.** Local calls act as the server (Chord §4), so every trusted local step takes the checked user
+explicitly, from the public method's link-stamped principal, never from browser data (review, Sol 2, Astra M1). A
+sign-in that provisions resources for a new user (Radius, chapter IX) calls the plugin's trusted local create
+(`McpStore.createFor({ actor, owner, id, config })`) with the user its verified sign-in just produced; it never
+impersonates the user on a remote call.
 
 ## Built-ins: created by installing
 
@@ -282,7 +311,7 @@ export const Builtin = remote("p3.builtin", {
 	hostAddress: () => Server(),
 	variants: { user: { state: { info: BuiltinInfo } } },     // label, description, plugin
 });
-export const BuiltinKind = resourceKind(Builtin, () => INSTANCE);
+export const BuiltinKind = resourceKind(Builtin, () => INSTANCE);   // a built-in carries no login
 
 /** A built-in resource of a plugin: its id is written once, here, in the plugin's contract file. */
 export function builtin(id: string): Resource<typeof Builtin>;
@@ -340,6 +369,7 @@ export const ListEntry = obj({
 	resource: ObjectAddress,
 	broughtBy: str(),           // the user who brought it, stamped by core, never caller data
 	until: nullable(int()),     // an expiry in ms since the epoch; null: until removed
+	revision: int(),            // the resource's withdrawal revision when it was brought, stamped by core
 });
 ```
 
@@ -349,11 +379,15 @@ entry, not on the resource: "Colin's MCP server in project pi until Friday" says
 ## The three sources
 
 - **Defaults** is not stored. It is the rule *every resource the session's owner owns, plus every instance resource the
-  policy lets the owner use*. That rule is why Mario never configures anything and why a third-party plugin's new tool
-  appears in his next turn: installing the plugin adds an instance resource, and the rule includes it.
+  policy lets the owner use, minus the owner's exclusions*. That rule is why Mario never configures anything and why a
+  third-party plugin's new tool appears in his next turn: installing the plugin adds an instance resource, and the
+  rule includes it. **Exclusions** (review, both) are a per-user set of resource addresses core keeps; it is how
+  someone turns code mode or cache warming off everywhere without locking every session down. Plugin settings that are
+  not about authority (warming mode, voice choice, model cycling) stay plugin settings.
 - **Own** is a list core keeps per session (`p3.resources.session-lists`, rows of session id plus entry). "Lock down
-  this session" switches a session from defaults to own, starting from a copy of its current effective list, then the
-  user removes what it should not have.
+  this session" (`lockDown`) switches a session from defaults to own, starting from a snapshot of its current effective
+  list, then the user removes what it should not have. The snapshot is a same-session operation: it never lets anyone
+  bring those resources anywhere else (review, Astra M2, M3).
 - **Grouping** names a grouping with resources. Its plugin keeps the list; core reads it through the plugin's
   registration (chapter V).
 
@@ -380,8 +414,10 @@ function effective(row: SessionRow, facts: Facts): SessionList {
 		entries: entries.flatMap((entry) => {
 			const indexed = facts.index.get(addressKey(entry.resource));
 			if (indexed === undefined || indexed.unavailable) return [];          // unknown: never usable
+			if (indexed.incomplete) return [];                                   // its plugin has not written it yet
+			if (entry.revision < indexed.revision) return [];                   // withdrawn by its owner since
 			if (entry.until !== null && entry.until <= facts.now) return [];     // expired
-			const use = facts.policy.decide({ kind: "use", session: row, resource: indexed }, ALLOW);
+			const use = facts.policy.decide({ kind: "use", session: row, resource: indexed }, indexed.useBaseline(row));
 			if (use.kind === "deny") return [];
 			return [{ resource: entry.resource, plugin: indexed.plugin, owner: indexed.owner, until: entry.until }];
 		}),
@@ -406,15 +442,19 @@ export const MyResources = remote("p3.resources.mine", {
 	variants: {
 		user: {
 			state: {
-				owned: arr(IndexRow),      // my resources, any kind
-				usable: arr(IndexRow),     // instance resources the policy lets me use
-				creatable: arr(str()),     // kinds I may create: contract names (erased: wire state)
+				owned: arr(IndexRow),            // my resources, any kind
+				excluded: arr(ObjectAddress),    // my exclusions from defaults
+				creatable: arr(Creatable),       // { owner: me | INSTANCE (admins), kinds: contract names } (erased: wire state)
 			},
 			methods: {
+				/** What I may bring into this list, with the longest `until` the policy allows: a picker's candidates. */
+				candidates: method(obj({ into: ListRef }), arr(Candidate)),
 				bring: method(obj({ resource: ObjectAddress, into: ListRef, until: nullable(int()) })),
 				remove: method(obj({ resource: ObjectAddress, from: ListRef })),
-				withdraw: method(obj({ resource: ObjectAddress })),   // the owner takes it out of every list
+				withdraw: method(obj({ resource: ObjectAddress })),   // the owner takes it out of every explicit list
+				exclude: method(obj({ resource: ObjectAddress, excluded: bool() })),
 				setSource: method(obj({ session: str(), source: ResourceSource })),
+				lockDown: method(obj({ session: str() })),           // defaults or grouping to own, from a checked snapshot
 			},
 		},
 	},
@@ -430,22 +470,38 @@ export const ListRef = union([
 **Bringing needs both sides** (owner, walkthrough): the resource side, *you own it, or it is an instance resource and
 you administer*, and the list side, *the list's own rule lets you add to it* (a session's own list: its owner; a
 grouping's: whatever its plugin says, for a project its members). Then the policy sees
-`{ kind: "bring", actor, resource, into }` and may narrow or widen.
+`{ kind: "bring", actor, resource, into, until }` and may narrow (a maximum lending time) or widen (project maintainers
+may bring the company key). Being allowed to *use* an instance resource is not being allowed to hand it to a project's
+whole audience (review, both; the first draft's widening is dropped).
 
-:::review | Review: instance resources in lists
-The walkthrough said "for instance resources, admins can bring them; a policy plugin may widen that". Locking down a
-session copies instance resources from its defaults into its own list, which a non-admin must be able to do. This spec
-lets the resource side pass also for an instance resource the actor may already use (the policy's `use` answer), so the
-copy never widens anything. Reviewers: is that the right baseline, or should lock-down be a separate operation?
+:::review | Decision for the owner: built-ins in project lists
+With that baseline a non-admin cannot bring a built-in tool (bash, the file tools) into a project, and a project's list
+holds only what was brought, so a project session has no tools unless an admin brings them (review, Astra N3, Sol
+trace 2). Proposal: built-ins carry no login, so their resource side passes for anyone the policy lets use them, and a
+new grouping's list starts with every built-in its creator may use; instance resources with a login (the company key,
+the build machine) stay admin-only. Not decided.
 :::
 
-**Taking out:** the resource's owner can always withdraw it from every list (`withdraw`: core asks each list keeper to
-remove it); a list's maintainers can remove anything from their list (`remove`, the list side's rule), never touching
-the resource itself. Neither needs the policy's permission to take something away.
+**Taking out:** the resource's owner can always withdraw it (`withdraw`), and a list's maintainers can remove anything
+from their list (`remove`, the list side's rule), never touching the resource itself. Neither needs the policy's
+permission. Withdrawal is **durable** (review, both): core raises the resource's `revision` in the index first, so
+every entry brought before it stops counting at once, in every list, also in a grouping whose plugin is not loaded and
+returns later with its old rows; then core asks each loaded keeper to delete the entry, and retries absent ones when they
+return. A new bring stamps the current revision. Withdrawal covers explicit lists; the owner's own defaults sessions
+stop using a resource through `exclude`.
 
-**Changing the source** (`setSource`): into a grouping, the grouping's rule for adding sessions must pass; to `own`,
-core copies the current effective list first; to `defaults`, only the session's owner. The policy sees
-`{ kind: "set-source", actor, session, source }`.
+**Changing the source** (`setSource`) always needs the session side, *you may change this session* (its owner by
+baseline), and the destination side: into a grouping, its `mayJoin`; to `defaults`, the session's owner only. The
+policy sees `{ kind: "set-source", actor, session, source }`. **`lockDown`** builds the own list from a snapshot: from
+defaults, the same session's current entries; from a grouping, only entries the actor may bring into the session's own
+list under the resource side (their `until` kept, never extended), the others listed for the user before confirming.
+Cristina locking down a project session therefore cannot keep Colin's server after Colin or the project withdraws it
+(review, both).
+
+**Copies.** Clone and fork re-run these rules for the new session before its worker starts: an own list is copied
+entry by entry as brings into the copy (deadlines kept), a grouping source is kept only if the actor may join it, and a
+copy of a Discord-fed session becomes an own list of the authorized entries, never defaults. Content (transcript, files,
+artifacts) is copied as before; copying content is not consent to use someone's resource.
 
 # Where Things Appear {#groupings lede="Groupings as plugins: computed and curated ones, the few that carry resources, members and who sees a session."}
 
@@ -531,22 +587,49 @@ host.serve(ProjectStore, (_params, self) => {
 			remove: (p, resource, ctx) => removeEntry(lists, p, resource, ctx),
 		},
 	})]);
-	return { /* create, rename, addMember: through core's guarded steps (chapter VI) */ };
+	return {
+		/** Called by the Project view's addMember with the checked actor: core asks `add-member`, then this commits. */
+		addMember: async ({ actor, project, member }, ctx) => {
+			await access.addMember({ actor, to: addressOf(Project, project), member, baseline: isMaintainer(actor, project) }, ctx);
+			await commitMember(members, project, member, ctx);    // Members recomputes; policy and views follow
+		},
+		// create (core's create-grouping, same shape), rename
+	};
 });
 ```
 
 A project's sessions are a query, not a list it keeps: catalog rows whose source is this project. That is why the
 session points up and not the project down: two projects listing the same session would give it two sources.
 
+:::review | Decision for the owner: showing sessions a project does not equip
+Both reviewers want a project to also *show* sessions that use another source (a session of pi linked to a Discord
+channel now uses the channel's list and disappears from pi; p2 keeps both). The fix keeps one source: a project may
+keep plain display references, drawn as "shown here, uses #support's resources", granting nothing. Not decided; the
+walkthrough dropped "links" as confusing.
+:::
+
+**Roles stay live** (review, Sol 10). Chord picks a view's variant once, when it is made, so `maintainer | member`
+variants would not follow a promotion. The project view has one user variant whose methods check the current facts
+and whose state carries the actions the user may take now; members who leave stop getting state at the next push.
+
 ## Members and who sees a session
 
 Members are users or groupings (a project can have the mirrored SAML group "engineering" as a member). Core's `Members`
 object expands them through every registration's `members`, cutting cycles, and serves `has(grouping, user)` and the
-groupings a user is in. The policy reads the same object.
+groupings a user is in. The policy reads the same object. Mirrored groups are named by a stable directory identity
+(`SamlGroup { issuer, id }`, the display name separate), are read-only through `add-member`, and a directory that is
+unavailable or stale yields no members, never everyone (review, Astra S7).
 
 **A user sees a session when** they own it, it is shared with them (the session's own people list, kept by the
 sessions plugin; guests stay reserved), or they are a member of its source grouping. The sessions plugin's catalog view
 for a user filters rows by exactly these three facts; no other grouping is asked.
+
+Seeing is not every operation (review, Astra M11). The sessions plugin keeps live facts per session and user,
+`mayView`, `maySend` (owner, shared with send, members of the source grouping) and `isOwner`, and its methods use them
+as baselines for typed operations: `operation(Chat, "send")`, `operation(Chat, "shell")`, `operation(Chat, "reset")`,
+`operation(Chat, "configure")`, `operation(SessionTree, "navigate")`, lifecycle methods. HTTP and socket routes
+(uploads, downloads, artifacts, voice, terminals) authenticate, then apply the same decision before entering
+server-local authority. Logs, devices, port-host control and instance integrations stay admin operations.
 
 ## A Discord channel
 
@@ -555,6 +638,12 @@ session sets the session's source to the channel; the channel's list starts near
 link sheet adds what the channel may use. Who may change the channel's list is the Discord plugin's rule (the link's
 creator, and admins: the bot is an instance resource). The people in the channel are not users; they are attributed
 authors of inputs, and like every sender they drive the whole list.
+
+Linking and unlinking are source transitions (review, Astra S2): linking prepares the channel's list, validates the
+location and commits the source before ingress starts; the previous source is kept only as transition data. Unlinking
+stops ingress first, then restores the previous source if the actor may still set it, else leaves an own list of the
+authorized entries and says why. Channel methods are bound to that bot and channel; cursors and bindings are never
+copied to a clone.
 
 # Who May {#policy lede="One replaceable policy answers typed requests; core asks it at its guarded steps; views carry the answers to the page."}
 
@@ -566,11 +655,11 @@ registry, decides; core asks it at the moment an action happens, on the server.*
 // plugins/policy/contract.ts: core
 export type Decision = { readonly kind: "allow" } | { readonly kind: "deny"; readonly reason: MessageData };
 
-/** Everything core asks. Kinds and operations are tokens, compared by identity, never by name. */
+/** Everything core asks. Kinds and operations are tokens, compared with isKind / isOperation (chapter I), never by name. */
 export type Request =
 	| { readonly kind: "create-resource"; readonly actor: UserId; readonly resourceKind: ResourceKind; readonly owner: UserId }
 	| { readonly kind: "create-grouping"; readonly actor: UserId; readonly groupingKind: GroupingKind }
-	| { readonly kind: "bring"; readonly actor: UserId; readonly resource: Indexed; readonly into: ListRef }
+	| { readonly kind: "bring"; readonly actor: UserId; readonly resource: Indexed; readonly into: ListRef; readonly until: number | null }
 	| { readonly kind: "set-source"; readonly actor: UserId; readonly session: SessionRow; readonly source: ResourceSource }
 	| { readonly kind: "add-member"; readonly actor: UserId; readonly member: MemberRef; readonly to: ObjectAddress }
 	| { readonly kind: "use"; readonly session: SessionRow; readonly resource: Indexed }
@@ -584,18 +673,20 @@ export type Policy = {
 	decide(request: Request, baseline: Decision): Decision;
 };
 
-/** One provider (the built-in default when no policy plugin is installed); a value that changes is a writable. */
+/** Exactly one provider; a value that changes is a writable. Zero or two providers compose to deny-all. */
 export const Policies = defineRegistry<Policy, Policy>("p3.policy", { version: 1 });
 ```
 
-**The default policy is `(_request, baseline) => baseline`.** Baselines come from facts the owning code has: the owner
-rule, the grouping's own `mayBring`, the session owner for `setSource`, the users plugin's admin flag for
-`administer`, allow for `use`. On one laptop nobody ever sees it.
+**The default policy is `(_request, baseline) => baseline`**, shipped as its own plugin (`default-policy`) and
+installed explicitly, never a fallback for an empty registry (review, Astra N2). Baselines come from facts the owning
+code has: the owner rule, the grouping's own `mayBring`, the session owner for `setSource`, the users plugin's admin
+flag for `administer`, the kind's use baseline for `use` (allow unless the kind says otherwise). On one laptop nobody
+ever sees it.
 
 **Hard rules come before the policy and cannot be overridden:** nobody creates a resource owned by another person;
-workers never change lists or create resources; an unknown kind is refused. A missing policy contribution (zero, or a
-policy plugin that failed) is not the default: the registry's compose yields deny-all until it is fixed, so removing an
-organization's policy never opens everything.
+workers never change lists or create resources; an unknown kind is refused. A missing policy (zero providers, two, or
+one that failed) composes to deny-all until it is fixed, so removing an organization's policy never opens everything
+and never reinstalls the default by itself.
 
 ## Asking: core's guarded steps
 
@@ -607,16 +698,23 @@ typed by its contract:
 // plugins/drives/contract.ts
 export const ShareDriveLink = operation(Drive, "shareLink");
 
-// plugins/drives/server.ts: inside the method
+// plugins/drives/server.ts: inside the method; the actor is the link-stamped caller, passed explicitly
 shareLink: async (args, ctx) => {
-	await guard(access, ShareDriveLink, params, args, ownerBaseline(principal, params), ctx);   // throws forbidden on deny
+	await guard(access, principal.id, ShareDriveLink, params, args, ownerBaseline(principal, params), ctx);   // throws forbidden
 	return links.create(params, args, ctx);
 },
 ```
 
 `access` is core's local `Access` object (`self.get(Access, {})`); `guard` sends it the erased request
-(`{ operation: { contract, method }, target, args }`), and core hands the policy the typed `call` request, whose `match`
-checks the operation by identity and gives back typed target and args. Plugins never see which policy is installed.
+(`{ actor, operation: { contract, method }, target, args, baseline }`), and core hands the policy the typed `call`
+request, whose `match` checks the operation with `isOperation` and gives back typed target and args. The actor travels
+as data because a local call acts as the server (review, both). `Access` has one typed method per core request
+(`createGrouping`, `addMember`, ...) for plugins that own those writes, so a project's create still meets the rules for
+`create-grouping`, not an unrelated `call`. Plugins never see which policy is installed.
+
+Configuration changes are guarded like creation (review, Astra S4): `ConfigureMcp = operation(McpServer, "configure")`
+checks the new configuration, so an HTTP server cannot later become a server-machine stdio one; env mutations and a
+port's public visibility use typed operations the same way.
 
 ## The answers reach the page as view state
 
@@ -625,11 +723,17 @@ UIs never check. Core's `MyResources` view for a user carries `creatable`, compu
 ```ts
 // core, the user variant of MyResources
 const creatable = self.derive([kinds, policy, members.ofUser.at(me)], ([registered, current]) =>
-	registered
-		.filter((kind) => current.decide({ kind: "create-resource", actor: me, resourceKind: kind, owner: me }, ALLOW).kind === "allow")
-		.map((kind) => kind.contract.name),
+	ownersFor(me).map((owner) => ({                      // me, and INSTANCE when I administer (review, Sol 2)
+		owner,
+		kinds: registered
+			.filter((kind) => current.decide({ kind: "create-resource", actor: me, resourceKind: kind, owner }, ALLOW).kind === "allow")
+			.map((kind) => kind.contract.name),
+	})),
 );
 ```
+
+The policy value is in-process, so the derive's output is plain data while its input changes as a writable ("derives
+JSON only").
 
 The add-resource picker shows the creators whose kind is in that list (chapter X). When an admin changes a rule, the
 chain below runs without a reload and without anything polling:
@@ -774,7 +878,40 @@ Three properties matter:
   deferred tools still get `tool_search` as in p2's `durableRegistry`; code mode is itself a built-in resource.
 
 `any-of-kind` exists for extensions whose tools follow configured resources: the conversations tool is present when any
-`ConversationAccess` is on the list (chapter VIII), the drives tools when any drive is.
+`ConversationAccess` is on the list (chapter VIII), the drives tools when any drive is. One extension may have several
+grants (the conversations tool: the `Peers` built-in or any access); the composer installs it **once** when any of its
+grants holds, keyed by plugin and extension name, and reports two different extensions under one name (review, Astra
+M8).
+
+## Admission at every call, not only every phase
+
+Filtering the next phase's registry is not enough (review, Astra M5): a code-mode script captured its tools when it
+started, a phase pins its registry, and a worker that lost its server link still holds its last list (Chord keeps a
+reference's last values, §7). So the harness also wraps the dispatch of every admitted extension's tools, nested
+code-mode calls included, with one check:
+
+```ts
+/** Refuses a tool call unless the grant behind it holds now: link live, list ready, entry present, not expired. */
+function admitCall(grants: readonly ExtensionGrant[], plugin: string, resources: Held<typeof SessionResources>): Decision {
+	if (resources.state.value.kind !== "live") return deny(messages.message("resourcesOffline"));
+	const list = resources.list.value;
+	if (list.kind !== "ready") return deny(list.reason);
+	const now = Date.now();
+	return grants.some((g) => holds(g, plugin, list.entries, now)) ? ALLOW : deny(messages.message("notOnList"));
+}
+```
+
+It is one mechanism in the harness, not a check per tool, and it is about resources, not about who started the run.
+Calls admitted earlier may finish.
+
+## Doors that are not tools
+
+Some p2 behaviour reaches resources without a Durable tool (review, both): the composer's `!cmd` runs a shell through
+`Chat.shell`; cache warming keeps timers that call a provider directly; prompt templates expand through a method; voice
+rooms, terminal sockets and workspace transfers are channels. Each owner checks the same list at its own door with
+`admit`: the session shell requires the `Bash` built-in and the location's env; a warmer re-admits its provider and
+its built-in before every refresh and stops when either leaves; expansion loads only admitted prompt resources;
+channels re-check on use, not only when a panel mounted.
 
 ## Server views check every call
 
@@ -790,6 +927,10 @@ export function resourcesOf<C extends RemoteContract>(self: RemoteSelf, principa
 /** Throws forbidden unless `resource` is on the list now and not expired (checked against the current time). */
 export function admit<C extends RemoteContract>(on: Watchable<readonly OnList<C>[]>, resource: ObjectAddress): Resource<C>;
 ```
+
+`admit` also refuses while the list is unavailable and for a worker that is not the session's current one (p2's
+generation fencing in `plugins/mcp/server.ts` and `plugins/conversations/server.ts` stays).
+
 
 :::sequence animate | Colin withdraws his MCP server from project pi while session S1 is mid-script.
 actor colin "Colin's page" "MyResources" blue
@@ -825,7 +966,13 @@ Shown in chapter III and VII: `coding-tools` declares `FileTools` and `Bash` wit
 server facet, grants them in its worker facet. Bash and the file tools run at a conversation's location, so they work
 only when a machine is on the list too (below). Every p2 plugin that contributes an extension today (agent, artifacts,
 cache-warming, codemode, conversations, dev-tools, discord, history, locations, mcp, ports, powershell, prompt,
-send-file, sessions, subagents, terminals, voice) becomes one or more built-ins this way; the review checks each.
+send-file, sessions, subagents, terminals, voice) becomes one or more built-ins this way. Not everything is: the
+review's mapping (appendix C) keeps catalog updates, indexing, status, drafts, tree, file mirrors and input delivery as
+session infrastructure that runs whatever the list holds; only agent-facing operations need grants. The prompt plugin
+splits (review, both): its setup-free framing is a built-in, while a user's global instructions, skills and templates
+are a resource kind the prompt plugin serves (`Instructions { owner, id }`), so a project gets Colin's instructions only
+if Colin brings them; project files follow the location. Voice keeps its style section as a built-in and makes the
+speech service a resource.
 
 `Builtins` also takes instance resources of a plugin's own kind, for things a plugin brings with it:
 
@@ -847,7 +994,7 @@ the tool.
 
 ```ts
 // plugins/conversations/contract.ts
-/** The tool reaching the sessions that share this session's resource source (a normal session: its owner's). */
+/** The tool reaching the sessions that share this session's resource source (see sameSource below). */
 export const Peers = builtin("conversations.peers");
 
 /** Access to one session with chosen actions: a resource its creator owns. */
@@ -873,23 +1020,47 @@ host.serve(SessionConversations, (_params, principal, self) => {
 	const peers = resourcesOf(self, principal, BuiltinKind);           // filtered to Peers below
 	const grants = resourcesOf(self, principal, AccessKind);
 	const accesses = self.get(AccessStore, {});
-	const targets = self.derive([peers, grants, accesses.configs, catalog.rows], targetsOf);   // { session, title, actions }[]
+	const targets = self.derive([peers, grants, accesses.configs, catalog.rows], targetsOf);   // display only
+	/** The grant behind one call: Peers for a same-source target, else an access entry naming target and action, admitted now. */
+	const authorize = (to: string, action: Action) => {
+		if (peersOn(peers.value) && sameSource(catalog.row(principal.session), catalog.row(to))) return;
+		const entry = grants.value.find((on) => accesses.config(on.resource).target === to
+			&& accesses.config(on.resource).actions.includes(action));
+		if (entry === undefined) throw forbidden(messages.message("noAccess", to, action));
+		admit(grants, pack(entry.resource));                                       // its own `until`, against now
+		requireTargetPermission(entry.resource, to, action);                        // the access owner may still do it
+	};
 	return {
 		variant: "worker",
 		members: {
 			targets,
-			send: async ({ to, message }, ctx) => {
-				requireAction(targets.value, to, "send");                  // and the entry's `until`, against now
-				return broker.send({ from: principal.session, to, message }, ctx);
+			send: async ({ to, message, requestId }, ctx) => {
+				authorize(to, "send");
+				return broker.send({ from: principal.session, to, message, requestId }, ctx);
 			},
 			answer: async ({ to }, ctx) => {
-				requireAction(targets.value, to, "answer");
+				authorize(to, "answer");
 				return broker.answer({ to }, ctx);
 			},
 		},
 	};
 });
+
+/** Peers: defaults sessions of the same owner, sessions of the same grouping; an own list peers with nobody. */
+function sameSource(a: SessionRow, b: SessionRow): boolean {
+	if (a.id === b.id) return false;
+	switch (a.source.kind) {
+		case "defaults": return b.source.kind === "defaults" && a.owner === b.owner;
+		case "grouping": return b.source.kind === "grouping" && sameAddress(a.source.grouping, b.source.grouping);
+		case "own": return false;
+	}
+}
 ```
+
+Each call finds the grant that authorizes exactly that target and action, and checks that entry's own deadline and
+that its owner may still send in the target (review, both): an hour of `answer` and five minutes of `send` to the same
+session expire separately, and Bob un-sharing X with Alice ends Alice's access resource's effect. p2's broker checks
+(archived sessions, current worker, request-id dedup, startup retry) stay.
 
 Creating it starts where the owner wants, on the Discord session ("add a resource to you"): the picker opens the
 conversations creator, which asks for the target, the actions and how long. The conversations plugin's `create` asks
@@ -928,9 +1099,12 @@ host.serve(SessionModels, (_params, principal, self) => {
 	const pushed = self.state(Pushed);
 	self.onLive(async (ctx) => {
 		for (;;) {
-			const list = await Promise.all(mine.value.map((on) => store.pushFor(on, ctx)));   // auth refreshed if near expiry
-			await pushed.change((draft) => { draft.providers = list; }, ctx);
-			await untilChangeOr(mine, earliestExpiry(list) - REFRESH_MARGIN, ctx);
+			// Capture what this push is based on before awaiting, so a change during the refresh is never missed.
+			const seen = { list: mine.value, revision: store.revision.value };     // credential + configuration revision
+			const list = await Promise.all(seen.list.map((on) => store.pushFor(on, ctx)));   // auth refreshed if near expiry
+			if (seen.list === mine.value && seen.revision === store.revision.value)
+				await pushed.change((draft) => { draft.providers = list; }, ctx);   // a stale refresh never republishes
+			await untilChanged(seen, [mine, store.revision], earliestExpiry(list) - REFRESH_MARGIN, ctx);
 		}
 	});
 	return { variant: "worker", members: { providers: self.derive([pushed], ([p]) => p.providers) } };
@@ -946,7 +1120,11 @@ self.on(models.providers, ({ value }) => contributed.set(value.map((p) => create
 `currentAuth` refuses (no auth, the request fails visibly) when the list is unavailable, the provider left it, its
 entry expired or the pushed auth expired. A reference keeps its last values when its link fails (Chord §7), so a
 cached token alone is never permission. Refresh tokens never reach the worker. Charlotta's provider uses Charlotta's
-credential whoever sends: there is no login choice.
+credential whoever sends: there is no login choice. A logout, a rotated key or an edited provider changes the store's
+revision and is pushed at once, also for keys that never expire (review, both). Provider options, headers and model
+metadata travel with the push, as p2's worker uses them today. Bedrock and Vertex with ambient AWS or ADC credentials
+get a server-side stream under the same kind and list admission, or are marked unsupported; they are never pushed as
+empty auth.
 
 ## MCP servers: methods the server runs
 
@@ -966,8 +1144,9 @@ export const CreateMcp = operation(McpServers, "create");
 ```
 
 - **Creating** asks core's `create-resource` like every kind; a `server-stdio` transport runs code on the server
-  machine, so the MCP plugin also calls `guard(access, CreateMcp, {}, config, baseline)` with the baseline *the actor
-  administers* for that transport. A company policy can widen or narrow it, matching on the typed `config.transport`.
+  machine, so the MCP plugin also calls `guard(access, actor, CreateMcp, {}, config, baseline)` with the baseline *the
+  actor administers* for that transport, and `ConfigureMcp` the same on every change. A company policy can widen or
+  narrow it, matching on the typed `config.transport`.
 - **Suggestions:** the worker reads `.pi/mcp.json` at its conversations' locations and reports them to its
   `SessionMcp` view; the session shows "this checkout suggests ...". Enabling one creates an MCP resource owned by the
   enabling user, bound to that env, directory and the entry's digest, and brings it into the session's source list.
@@ -983,26 +1162,34 @@ host.serve(McpInSession, (_params, self) => {
 	const grants = self.writable<readonly ExtensionGrant[]>([]);
 	self.contribute(Extensions, grants);
 	self.on(session.servers, ({ value }) => grants.set(value.map((server) =>
-		grant(server.resource, mcpExtension(server, (tool, args, context) =>
-			chord((ctx) => session.call({ server: pack(server.resource), tool, args }, ctx), context))))));
+		grant(server.resource, mcpExtension(server, (tool, args, api, context) =>
+			chord((ctx) => session.call({ server: pack(server.resource), conversation: api.conversationId, tool, args }, ctx), context))))));
 	return {};
 });
 
 // plugins/mcp/server.ts: the worker variant of SessionMcp
-call: async ({ server, tool, args }, ctx) => {
-	const on = admit(mine, server);                 // on the list now, not expired
-	return supervisor.call({ resource: on, session: principal.session, tool, args }, ctx);
+call: async ({ server, conversation, tool, args }, ctx) => {
+	const on = admit(mine, server);                                  // on the list now, not expired
+	const at = locations.of(principal.session, conversation);        // the server's record, never a cwd from the message
+	requirePlacement(on, at);                                        // a checkout server: this env, directory and digest
+	return supervisor.call({ resource: on, session: principal.session, at, tool, args }, ctx);
 },
 ```
 
-The supervisor keys processes by resource and placement (a checkout server per env and directory), never by session
-or by who sends, and closes one when no admitted session needs it. Credentials and OAuth refresh stay in the server's
-MCP store, as in p2 today.
+The call names its conversation (review, both): a subagent working on another machine must not reach a checkout server
+enabled for the main conversation's directory, and the server resolves the location from its own record. The
+supervisor keys processes by resource, placement and, by default, session, as p2 does (stdio and HTTP not shared unless
+configured): the configuration's typed `lifetime: "session" | "shared"` keeps that choice, which has nothing to do with
+logins (review, both). Credentials and OAuth refresh stay in the server's MCP store, as in p2 today.
 
 ## Machines
 
-An `Env { owner, id }` is a resource; the machine p3 runs on is the instance resource `LocalMachine`. A conversation's
-location is `{ env: ObjectAddress, cwd }` and must name an env on the list; the worker's env adapter contributes the
+An `Env { owner, id }` is a resource; the machine p3 runs on is the instance resource `LocalMachine`, whose use
+baseline is *the session's owner administers*. A conversation's location is `null` or `{ env: ObjectAddress, cwd }`;
+null is a session with no machine (the Discord session that only reads answers), whose harness gets no execution
+environment (Durable allows `undefined`), never the server machine as a fallback; coding tools refuse there, and
+attachments stay in session storage until a location exists (review, Sol 3). A non-null location must name an env on
+the list; the worker's env adapter contributes the
 connection to the harness's environments registry. Moving a session to an env not on its list is refused; an env that
 leaves the list leaves the location unavailable (tools refuse, the session shows "relocate"), never a silent fallback
 to the server machine. Terminals, the workspace view and file browsing check the same env through their own server
@@ -1019,8 +1206,8 @@ export const Drive = remote("drives.drive", {
 	params: { owner: str(), id: str() },
 	hostAddress: () => Server(),
 	variants: {
-		owner: { state: { folder: FolderView }, methods: { upload: method(UploadArgs), remove: method(PathArgs), shareLink: method(PathArgs, str()) } },
-		reader: { state: { folder: FolderView } },
+		// one user variant: methods check the current facts, `actions` says what this user may do now
+		user: { state: { folder: FolderView, actions: DriveActions }, methods: { upload: method(UploadArgs), remove: method(PathArgs), shareLink: method(PathArgs, str()) } },
 	},
 });
 export const DriveKind = resourceKind(Drive, (p) => userId(p.owner));
@@ -1029,8 +1216,10 @@ export const DriveKind = resourceKind(Drive, (p) => userId(p.owner));
 self.contribute(Extensions, [grantForKind(DriveKind, driveTools)]);
 ```
 
-The bytes are the kit's `Files` (one space per drive). People: the owner gets `owner`; a user who sees a list
-containing the drive (a project's members) gets `reader`, the one-hop read Sol's design describes. A drive backed by a
+The bytes are the kit's `Files` (one space per drive). People: the owner may manage it; a user who sees a list
+containing the drive (a project's members) may read it, the one-hop read Sol's design describes, checked live against
+the list and its expiry; every tool call admits the exact drive it names. An admin manages the company drive through
+the same view with `owner: INSTANCE`. A drive backed by a
 real Google Drive is the same kind with a Google login in its configuration: a second login, a second drive.
 
 # Sign-in and Directories {#directories lede="SAML and Radius touch three places: sign-in plugins create users, sync plugins mirror groups as groupings, the policy names those groupings."}
@@ -1062,8 +1251,9 @@ creator as a kind. "Only engineering may create MCP servers" is `{ members: Saml
 "create-resource", resourceKind: "mcp.server" } }`.
 
 **Radius resources are ordinary resources.** Signing in with Radius can create the user's Radius MCP server and Radius
-model provider: the Radius plugin calls the MCP and models plugins' `create` methods as that user, inside the sign-in,
-so "users create resources only for themselves" holds. Whether one Radius sign-in can serve the relay connection, the
+model provider: the Radius plugin calls the MCP and models plugins' trusted local creates (`createFor({ actor, owner,
+id, config })`) with the user its verified sign-in produced and stable ids, so "users create resources only for
+themselves" holds and nobody is impersonated on a remote call. Whether one Radius sign-in can serve the relay connection, the
 model gateway and the MCP server is the open question to Armin and Vegard; in p2 these are three logins. The relay
 (the brain's outbound connection) is an instance integration an admin sets up, not a session resource.
 
@@ -1078,7 +1268,8 @@ export function creator<C extends RemoteContract>(kind: ResourceKind<C>, entry: 
 	readonly label: MessageData;
 	readonly description: MessageData;
 	readonly icon: Icon;
-	readonly Sheet: ComponentType<{ done(created: Resource<C>): void; cancel(): void }>;
+	/** `owner`: the user, or INSTANCE when an admin creates a company resource; `into`: where the picker will bring it. */
+	readonly Sheet: ComponentType<{ owner: UserId; into: ListRef | null; done(created: Resource<C>): void; cancel(): void }>;
 }): CreatorEntry;
 export const Creators = defineRegistry<readonly CreatorEntry[], readonly CreatorEntry[]>("p3.creators", { version: 1 });
 
@@ -1090,13 +1281,15 @@ self.contribute(Creators, [creator(McpKind, { label: t.message("mcpServer"), des
 // plugins/resources/web.tsx: the picker any list's "Add resource" opens
 function AddResource({ into }: { into: ListRef }) {
 	const mine = useHold(MyResources, {});
-	const creatable = useWatch(mine.creatable) ?? [];
-	const creators = useRegistry(Creators).filter((c) => creatable.includes(c.kind.contract.name));
+	const [owner, setOwner] = useState<UserId>(me);                         // INSTANCE offered to admins only
+	const kinds = (useWatch(mine.creatable) ?? []).find((c) => c.owner === owner)?.kinds ?? [];
+	const creators = useRegistry(Creators).filter((c) => kinds.includes(c.kind.contract.name));
+	const [until, setUntil] = useState<number | null>(null);               // the picker owns the duration
 	const [open, setOpen] = useState<CreatorEntry | undefined>();
 	return open ? (
-		<open.Sheet cancel={() => setOpen(undefined)} done={(created) => bringNew(mine, created, into)} />
+		<open.Sheet owner={owner} into={into} cancel={() => setOpen(undefined)} done={(created) => bringNew(mine, created, into, until)} />
 	) : (
-		<Picker existing={<Existing mine={mine} into={into} />} creators={creators} onPick={setOpen} />
+		<Picker candidates={mine.candidates({ into })} creators={creators} until={until} onUntil={setUntil} onPick={setOpen} />
 	);
 }
 ```
@@ -1162,15 +1355,17 @@ every defaults session's list gains it, the worker's harness admits the grant at
 
 **Colin, Cristina, Charlotta.** Colin creates project pi (`create-grouping`), adds Cristina and Charlotta
 (`add-member`). Each brings their own resource (`bring`: owner side, project's `mayBring`). Cristina creates S1 in pi:
-`source: { grouping: Project{pi} }`. S1's list is exactly the three; Charlotta's message uses Colin's Linear login,
-Cristina's GPU account and Charlotta's key. Colin withdraws Linear mid-script: chapter VII's sequence.
+`source: { grouping: Project{pi} }`. S1's list is the three plus the built-ins the project brought (decision 1 in the
+epilogue; without them S1 has MCP and a model but no bash); Charlotta's message uses Colin's Linear login, Cristina's
+GPU account and Charlotta's key. Colin withdraws Linear mid-script: chapter VII's sequence; the raised revision keeps it
+out even if the projects plugin is reloading.
 
 **Discord, locked down for an hour.** The Discord channel is S2's source with a list holding a model provider. Mario
 opens S2, "Add resource", picks "Access to a session", chooses X, `answer` only, one hour. The conversations plugin
 checks Mario may send in X, core creates the resource (owner Mario), the picker brings it into the channel's list with
-`until`. S2's worker gets the conversations tool with one target and one action. At the deadline the entry leaves the
-effective list; a call a second later is refused by `requireAction` against the current time, whatever the worker
-still shows.
+`until`. S2's location is `null`: no machine, no bash, no server-machine fallback. Its worker gets the conversations
+tool with one target and one action. At the deadline the entry leaves the effective list; a call a second later is
+refused by `authorize`, which admits that entry against the current time, whatever the worker still shows.
 
 **SAML: only engineering creates MCP servers.** The rule exists; Colin (engineering) sees the MCP creator, Cristina
 (research) does not: her `creatable` lacks `mcp.server`. Colin brings his server into pi; Cristina's sessions in pi use
@@ -1182,44 +1377,44 @@ Discord session does not get it: its source is the channel's list.
 **Drives.** The company drive is an instance `Drive`; Mario's own drive is his. Both in pi's list: the agent's drive
 tools see two drives; members open both read-only from the project's resources; Mario manages his own.
 
-# Open Questions {.epilogue lede="What this spec leaves open, for the reviewers and then the owner."}
+# Open Questions {.epilogue lede="What is left after the review: four decisions for the owner, and what stays on other tracks."}
 
-1. **Excluding from defaults.** p2 has a code mode switch; here code mode is a built-in on the defaults. Someone who
-   wants it off in every session needs an exclusion on their defaults rule (proposal: a per-user `excluded` list core
-   keeps, the rule minus it), or must lock sessions down one by one.
-2. **One source per session.** Both designs call it their weakest point: a session cannot draw from two projects. The
-   owner accepted it in the walkthrough; reviewers should name any p2 feature it breaks.
-3. **Peers.** `conversations.peers` reaches sessions sharing the session's source. p2 reaches every session; in a
-   project, reaching the session owner's private sessions would expose them to every member.
-4. **Instance resources when bringing** (the review note in chapter IV).
-5. **MCP stdio next to the code.** p2 runs non-shared stdio servers at the location by default; decision 8 leaves
-   that only to checkout suggestions (stress test, gap 13).
-6. **Execution on the server machine and SSH keys in workers.** The stress test's gap 1 (local location, server
-   stdio, credential commands, project plugins) and how workers reach envs without private keys stay their own track;
-   this model only makes them admin-only by baseline.
-7. **Ambient cloud credentials.** Bedrock and Vertex resolve AWS profiles and ADC files; pushing an empty `AuthResult`
-   does not work. Those providers need a server-side stream or are unsupported.
-8. **One Radius sign-in** for relay, gateway and MCP: pending Armin and Vegard.
-9. **Creation order and retries** (the review note in chapter III).
-10. **Copies.** Clone and fork copy the source field and an own list; a grouping source stays; a Discord channel source
-    becomes defaults for the copy. To be confirmed per plugin.
+The review (Astra and Sol, 2026-11-08, appendix C) confirmed the model for all 39 p2 plugins and the six scenarios,
+and found boundary gaps, now fixed in the chapters above. Four points need the owner:
+
+1. **Built-ins in project lists** (chapter IV): may anyone who may use a built-in bring it into a list, and does a new
+   grouping's list start with them? Without it, project sessions have no tools unless an admin brings them.
+2. **Projects showing sessions they do not equip** (chapter V): plain display references, granting nothing.
+3. **Exclusions from defaults** (chapter IV): a per-user set, so code mode or cache warming can be off everywhere
+   while new tools still appear. Both reviewers recommend it.
+4. **MCP process lifetime** (chapter VIII): keep p2's per-session processes by default, with a typed `lifetime`
+   configuration, or share every process per resource and placement.
+
+Accepted changes from p2, stated so nobody finds them during the build: one source per session (a Discord link
+replaces a project source; a project no longer equips a session linked elsewhere); peers narrow from every session to
+the same source; MCP stdio servers configured to run at the location become checkout resources (decision 8, no
+`runOn`); guest sharing stays reserved.
+
+On other tracks: execution on the server machine and SSH keys in workers (the stress test's gap 1; this model makes
+`LocalMachine`, server stdio and reload admin-only by baseline, which is not OS isolation); ambient cloud credentials
+(server-side stream or unsupported); one Radius sign-in for relay, gateway and MCP (pending Armin and Vegard).
 
 # API Surface {.appendix}
 
 | Piece | Where | What |
 | --- | --- | --- |
 | `UserId`, `INSTANCE`, `Users`, `P3Principal` | users plugin | people, the instance user, `signIn` |
-| `resourceKind`, `ResourceKind`, `resource`, `Resource`, `ObjectAddress`, `pack`, `match` | resources plugin | typed resources, erased addresses |
-| `ResourceKinds` (server registry) | resources plugin | which plugin serves which kind |
+| `resourceKind`, `ResourceKind`, `resource`, `Resource`, `ObjectAddress`, `pack`, `addressOf`, `match`, `isKind`, `isGroupingKind`, `isOperation` | resources plugin | typed resources, erased addresses, declaration identity |
+| `ResourceKinds` (server registry), `register(kind, { use })` | resources plugin | which plugin serves which kind, its use baseline |
 | `Builtin`, `BuiltinKind`, `builtin`, `describe`, `Builtins` (server registry) | resources plugin | instance resources a plugin brings |
-| `Resources` (server, local) | resources plugin | `lists` (effective, keyed by session), `create`, `forget` |
-| `MyResources` (server, remote, user) | resources plugin | `owned`, `usable`, `creatable`; `bring`, `remove`, `withdraw`, `setSource` |
+| `Resources` (server, local) | resources plugin | `lists` (effective, keyed by session), `create`, `complete`, `forget` |
+| `MyResources` (server, remote, user) | resources plugin | `owned`, `excluded`, `creatable`; `candidates`, `bring`, `remove`, `withdraw`, `exclude`, `setSource`, `lockDown` |
 | `ResourceSource`, `ListEntry`, `ListRef`, `SessionList` | resources plugin | the one field, entries, list names, what workers follow |
 | `groupingKind`, `registerGrouping`, `GroupingKinds` (server registry), `MemberRef`, `Members` | resources plugin | groupings with members and lists |
 | `SessionResources` (server, remote, worker) | resources plugin | a worker's list and the declared built-ins |
 | `resourcesOf`, `admit` | resources plugin | per-session server views: typed list, admission |
 | `Request`, `Decision`, `Policy`, `Policies` (server registry), `Access`, `guard`, `operation` | policy plugin | one policy, typed requests, plugin operations |
-| `ExtensionGrant`, `grant`, `grantForKind`, `Extensions` (worker registry) | harness plugin | extensions under resources |
+| `ExtensionGrant`, `grant`, `grantForKind`, `Extensions` (worker registry), `admitCall` | harness plugin | extensions under resources, admission per call |
 | `creator`, `Creators` (web registry) | resources plugin | creators and pickers |
 | `form`, `Row`, `Card`, `Detail`, `renderer`, `Renderers`, `Present`, `panel`, `Panels`, `Navigation` (web registries) | presentation plugin | drawing anything |
 
@@ -1239,3 +1434,33 @@ and worker facets contribute under this spec's APIs; which p2 behaviour it loses
 Then trace the scenarios of chapter XI against the code above, and the open questions. Rate each finding
 must-fix, should-fix or note. Read the p2 sources you cite; cite `file:line`. Do not repeat the stress test's findings
 the owner already decided (no per-run authority; no login modes) unless this spec contradicts its own text.
+
+# What the Review Changed {.appendix}
+
+Astra (`/tmp/resource-model-review-astra.md`) and Sol (`/tmp/resource-model-review-sol.md`) reviewed the first edition
+against every p2 plugin. Both accepted the decided points (one source, no per-run authority, no login modes). Their
+must-fix findings and where they are fixed:
+
+| Finding | Who | Fixed in |
+| --- | --- | --- |
+| A local call acts as the server: `guard` and provisioning lost the actor | both | III (who the actor is), VI (`guard` with actor), IX |
+| Tokens compared with `===` break across separately bundled facets and reloads | Sol | I (`isKind`, `isOperation`) |
+| Admins could not create company resources; `creatable` only for `owner: me` | Sol | III (`create({ id, owner })`), VI, X (Sheet `owner`) |
+| Lock-down and copies could keep someone else's resource | both | IV (`lockDown` snapshot, copies as brings) |
+| "May use an instance resource" widened into "may bring it anywhere" | both | IV (admin baseline; built-ins: decision 1) |
+| Withdrawal depended on loaded keepers; reloads resurrected entries; defaults re-included | both | IV (revision in index and entries; `exclude`) |
+| Phase filtering missed captured tools, nested calls and an offline worker | Astra | VII (admission at every call) |
+| Shell commands, warmers, prompt expansion and channels bypass extension grants | both | VII (doors that are not tools) |
+| `LocalMachine` was claimed admin-only but used with an unconditional allow | both | III (`register(kind, { use })`), VIII |
+| A model-only session has no location, yet every tool resolved one | Sol | VIII (location `null`, no fallback) |
+| Conversation access lost per-action expiry and target revocation; peers compared bare tags | both | VIII (`authorize`, `sameSource`) |
+| The same extension granted twice installed twice | Astra | VII (installed once per plugin and name) |
+| MCP calls lacked the calling conversation's location | both | VIII (`conversation` on `call`) |
+| Model pushes missed credential changes and could republish stale auth | both | VIII (revision-captured loop) |
+| Seeing a session is not every operation on it | Astra | V (`mayView`, `maySend`, typed operations, routes) |
+| One prompt built-in cannot carry a user's private instructions | both | VIII (`Instructions` kind; voice service a resource) |
+
+Should-fix findings folded in: guarded configuration changes (VI), stable creation ids and incomplete rows (III), live
+roles instead of factory-time variants (V), Discord link and unlink as source transitions (V), mirrored group identity
+and freshness (V), the default policy as an explicit plugin (VI), per-session MCP processes (VIII, decision 4),
+destination-aware pickers with the duration (IV, X). Left to the owner: decisions 1 to 4 in the epilogue.

@@ -109,7 +109,7 @@ table{max-width:100%}
 </head>
 <body><div class="book">
 <section class="cover">
-  <div class="kicker">A spec for review · p3 resource model · 2026-11-08</div>
+  <div class="kicker">A spec, reviewed · p3 resource model · 2026-11-08</div>
   <h1>One List<br>Many Groupings</h1>
   <p class="subtitle">Users, resources, one resource source per session, groupings that only show, one policy, and workers that follow their list, with the typed APIs every plugin uses</p>
   <div class="cover-stats"><div class="stat"><b>1</b><span>resource source per session, one field in the catalog</span></div><div class="stat"><b>1</b><span>policy, behind one registry, asked at one guarded step</span></div><div class="stat"><b>0</b><span>action strings: requests and operations are typed values</span></div><div class="stat"><b>39</b><span>p2 plugins the review maps onto it</span></div></div>
@@ -118,7 +118,8 @@ in <code>apps/p3/docs/decisions.md</code>), built from the two independent desig
 <code>/tmp/p3-model-sol.md</code>) minus their extras, and from the stress test (<code>model-stress/report.md</code>) with its reviews.
 Chord APIs are real (<code>remote</code>, <code>local</code>, <code>keyed</code>, <code>defineTable</code>, <code>defineRegistry</code>, <code>self.writable</code>, <code>self.derive</code>,
 <code>ParamsOf</code>, <code>CurrentVariants</code>); every p3 name is a proposal. Written for the reviewers first: appendix B is their
-brief. Not decided beyond the direction, not built.</p>
+brief. Second edition: the review by Astra and Sol is folded in (appendix C); four points wait for the owner
+(epilogue). Not built.</p>
 </div>
 </section><div class="inner">
 <nav class="toc"><h2>Contents</h2><ol>
@@ -137,6 +138,7 @@ brief. Not decided beyond the direction, not built.</p>
 <li><a href="#open-questions">Open Questions</a></li>
 <li><a href="#api-surface">Appendix A: API Surface</a></li>
 <li><a href="#the-review-brief">Appendix B: The Review Brief</a></li>
+<li><a href="#what-the-review-changed">Appendix C: What the Review Changed</a></li>
 </ol></nav>
 
 <section class="preface" id="before-we-begin">
@@ -172,8 +174,8 @@ change it.</li>
 <li><strong>One policy decides, through typed requests, at core&#39;s guarded steps.</strong> Plugins never import ACL, SAML or Radius;
 UIs never check anything, they render server views such as a user&#39;s creatable kinds.</li>
 <li><strong>Workers follow their list.</strong> The harness admits an extension only while its resource is on the list and belongs to
-the plugin that contributed it; resource plugins&#39; per-session server views check the list at every call. Anything
-unknown fails closed.</li>
+the plugin that contributed it, and checks again at every tool call; resource plugins&#39; per-session server views
+check the list at every call too. Anything unknown, offline or expired fails closed.</li>
 <li><strong>Presentation is open.</strong> Creators per resource kind, renderers per contract and form, panels from several plugins
 for one detail view; layouts are plugins.</li>
 </ol>
@@ -237,6 +239,16 @@ three tokens of the same kind, all built from Chord contracts:</p>
 <span class="tk-c">// MethodName&lt;C&gt; and ArgsOf&lt;C, M&gt; are small type helpers over Chord's CurrentVariants&lt;C&gt; (contracts/contract.ts).</span></code></pre>
 <p>Where the erased <code>ObjectAddress</code> appears, the code that reads it calls <code>match(kind, address)</code> and gets typed params or
 nothing. That is the only place a contract name is compared as a string: in <code>match</code>, inside core.</p>
+<p><strong>Tokens are compared by declaration, never by <code>===</code></strong> (review, Sol 1). Chord bundles a copy of another plugin&#39;s
+contract into each facet that imports it, and a reload makes another copy, so the policy plugin&#39;s <code>McpKind</code> and the MCP
+plugin&#39;s <code>McpKind</code> are different JavaScript objects. Core resolves every token through its current registrations and
+compares the contract&#39;s name and a compatible version; code asks through typed helpers:</p>
+<pre><code><span class="tk-c">/** Whether `kind` names the same declared resource kind as `token` (contract name, compatible version). */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">isKind</span>&lt;C <span class="tk-k">extends</span> <span class="tk-t">RemoteContract</span>&gt;(kind: <span class="tk-t">ResourceKind</span>, token: <span class="tk-t">ResourceKind</span>&lt;C&gt;): kind is <span class="tk-t">ResourceKind</span>&lt;C&gt;;
+<span class="tk-c">/** The same for grouping kinds and operations; `Request.call.match(op)` uses `isOperation` inside. */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">isGroupingKind</span>&lt;C <span class="tk-k">extends</span> <span class="tk-t">RemoteContract</span>&gt;(kind: <span class="tk-t">GroupingKind</span>, token: <span class="tk-t">GroupingKind</span>&lt;C&gt;): kind is <span class="tk-t">GroupingKind</span>&lt;C&gt;;
+<span class="tk-k">export</span> <span class="tk-k">function</span> isOperation&lt;C <span class="tk-k">extends</span> <span class="tk-t">RemoteContract</span>, M <span class="tk-k">extends</span> <span class="tk-t">MethodName</span>&lt;C&gt;&gt;(op: <span class="tk-t">Operation</span>, token: <span class="tk-t">Operation</span>&lt;C, M&gt;): op is <span class="tk-t">Operation</span>&lt;C, M&gt;;</code></pre>
+<p>A test builds the policy plugin and the MCP plugin separately and reloads only one of them.</p>
 <div class="note"><b class="tag">The rule for reviewers</b><p>Strings are allowed as identities written once in a contract file (<code>remote(&quot;mcp.server&quot;)</code>, <code>builtin(&quot;coding-tools&quot;)</code>,
 <code>form(&quot;p3.row&quot;)</code>), as erased addresses in storage, wire messages and registry tables, and as persisted user data
 (an admin&#39;s rule naming a kind). Anything else that switches behaviour on a string literal is a finding.</p>
@@ -296,7 +308,11 @@ serves its kind and a label for generic lists.</p>
 <span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">McpKind</span> = <span class="tk-f">resourceKind</span>(<span class="tk-t">McpServer</span>, (p) =&gt; <span class="tk-f">userId</span>(p.owner));
 
 <span class="tk-c">// plugins/mcp/server.ts: the server facet tells core the kind exists (and that this plugin serves it)</span>
-self.<span class="tk-f">contribute</span>(<span class="tk-t">ResourceKinds</span>, [<span class="tk-t">McpKind</span>]);</code></pre>
+self.<span class="tk-f">contribute</span>(<span class="tk-t">ResourceKinds</span>, [<span class="tk-f">register</span>(<span class="tk-t">McpKind</span>)]);</code></pre>
+<p><code>register(kind, { use? })</code> may give the kind a <strong>use baseline</strong>, the answer to <code>use</code> without a policy (review, Sol 8,
+Astra S4). Most kinds leave it out (allow). Kinds that run code on the server machine set it to <em>the session&#39;s owner
+administers</em>: <code>register(EnvKind, { use: localMachineAdminOnly })</code> for <code>LocalMachine</code>, and the reload built-in the same
+way. The effective list passes that baseline to the policy instead of an unconditional allow.</p>
 <p>The worker facet, the page facet and the server facet all import <code>McpKind</code> from the same file; they cannot drift. The
 <code>ResourceKinds</code> registry (server) tells core which plugin serves which kind: that is the plugin recorded in each index
 row and checked on the worker (chapter VII).</p>
@@ -312,11 +328,14 @@ host.<span class="tk-f">serve</span>(<span class="tk-t">McpServers</span>, (_par
 		variant: <span class="tk-s">"user"</span>,
 		members: {
 			servers: store.<span class="tk-f">serversOf</span>(principal.id),
-			create: <span class="tk-k">async</span> (config, ctx) =&gt; {
-				<span class="tk-k">const</span> created = <span class="tk-f">resource</span>(<span class="tk-t">McpKind</span>, { owner: principal.id, id: <span class="tk-f">newId</span>() });
-				<span class="tk-c">// The guarded step: the owner rule, then the policy; refuses before anything is written.</span>
+			create: <span class="tk-k">async</span> ({ id, owner, config }, ctx) =&gt; {
+				<span class="tk-c">// `id` is the caller's (stable across retries); `owner` is the user or INSTANCE (an admin's company server).</span>
+				<span class="tk-k">const</span> created = <span class="tk-f">resource</span>(<span class="tk-t">McpKind</span>, { owner, id });
+				<span class="tk-c">// The guarded step: the owner rule, then the policy; the index row stays incomplete until `complete`.</span>
 				<span class="tk-k">await</span> resources.<span class="tk-f">create</span>({ actor: principal.id, resource: <span class="tk-f">pack</span>(created), label: config.name }, ctx);
+				<span class="tk-k">await</span> <span class="tk-f">guard</span>(access, principal.id, <span class="tk-t">CreateMcp</span>, {}, { id, owner, config }, <span class="tk-f">transportBaseline</span>(config, principal), ctx);
 				<span class="tk-k">await</span> store.<span class="tk-f">insert</span>(created.params, config, ctx);
+				<span class="tk-k">await</span> resources.<span class="tk-f">complete</span>({ resource: <span class="tk-f">pack</span>(created) }, ctx);
 				<span class="tk-k">return</span> <span class="tk-f">pack</span>(created);
 			},
 		},
@@ -330,8 +349,10 @@ principal, as Sol&#39;s design requires for local calls that act for someone):</
 	members: {
 		<span class="tk-c">/** Every session's effective list, by session id; a worker's server view pins its own with at(session). */</span>
 		lists: <span class="tk-f">keyed</span>(<span class="tk-t">SessionList</span>),
-		<span class="tk-c">/** The guarded step for a new resource: owner rule, policy, then the index row. */</span>
+		<span class="tk-c">/** The guarded step for a new resource: owner rule, policy, then an incomplete index row. Repeatable for the same actor and address. */</span>
 		create: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ actor: <span class="tk-f">str</span>(), resource: <span class="tk-t">ObjectAddress</span>, label: <span class="tk-f">str</span>() })),
+		<span class="tk-c">/** The plugin wrote its own row: the resource becomes usable. */</span>
+		complete: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ resource: <span class="tk-t">ObjectAddress</span> })),
 		<span class="tk-c">/** A resource's object is gone: out of the index, out of every list. */</span>
 		forget: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ resource: <span class="tk-t">ObjectAddress</span> })),
 	},
@@ -343,13 +364,17 @@ principal, as Sol&#39;s design requires for local calls that act for someone):</
 instance user and the actor administers. Nobody creates a resource that uses another person&#39;s login.</li>
 <li><strong>The policy:</strong> <code>{ kind: &quot;create-resource&quot;, actor, resourceKind, owner }</code> with baseline allow. A SAML rule &quot;only
 engineering may create MCP servers&quot; denies here.</li>
-<li>Write the index row with the kind&#39;s plugin.</li>
+<li>Write the index row with the kind&#39;s plugin, marked <strong>incomplete</strong>: no effective list includes it. A repeated
+<code>create</code> for the same address and actor succeeds without a second row; the same address from another actor is
+refused.</li>
+<li>The plugin writes its own row and calls <code>complete</code>; only then is the resource usable. Core reconciles incomplete
+rows a crash left behind (review, Sol 14, Astra S5).</li>
 </ol>
-<div class="note review"><b class="tag">Review: order of the two rows</b><p>The index row is written before the plugin&#39;s own row. A crash between them leaves an index row without an object: its
-renderer shows it missing, and the owner can remove it. The reverse order would leave an object no list can name.
-Sol&#39;s design wants creation idempotent on retry; the reviewers should say whether the plugin should pass a stable id
-and core accept a repeated <code>create</code> for the same address and actor.</p>
-</div>
+<p><strong>Who the actor is.</strong> Local calls act as the server (Chord §4), so every trusted local step takes the checked user
+explicitly, from the public method&#39;s link-stamped principal, never from browser data (review, Sol 2, Astra M1). A
+sign-in that provisions resources for a new user (Radius, chapter IX) calls the plugin&#39;s trusted local create
+(<code>McpStore.createFor({ actor, owner, id, config })</code>) with the user its verified sign-in just produced; it never
+impersonates the user on a remote call.</p>
 <h3 id="built-ins-created-by-installing">Built-ins: created by installing</h3>
 <p>Tools that need no setup (read, write, edit, bash, a third-party plugin&#39;s plain tools, a prompt section) are
 resources too, or a session could not be locked down to &quot;only the conversation tool&quot;. Asking each user to create them
@@ -362,7 +387,7 @@ installed.</strong> Installing a plugin is an admin act; the built-ins are part 
 	hostAddress: () =&gt; <span class="tk-t">Server</span>(),
 	variants: { user: { state: { info: <span class="tk-t">BuiltinInfo</span> } } },     <span class="tk-c">// label, description, plugin</span>
 });
-<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">BuiltinKind</span> = <span class="tk-f">resourceKind</span>(<span class="tk-t">Builtin</span>, () =&gt; INSTANCE);
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">BuiltinKind</span> = <span class="tk-f">resourceKind</span>(<span class="tk-t">Builtin</span>, () =&gt; INSTANCE);   <span class="tk-c">// a built-in carries no login</span>
 
 <span class="tk-c">/** A built-in resource of a plugin: its id is written once, here, in the plugin's contract file. */</span>
 <span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">builtin</span>(id: string): <span class="tk-t">Resource</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">Builtin</span>&gt;;
@@ -409,17 +434,22 @@ a session into another grouping with resources replaces the field; the old group
 	resource: <span class="tk-t">ObjectAddress</span>,
 	broughtBy: <span class="tk-f">str</span>(),           <span class="tk-c">// the user who brought it, stamped by core, never caller data</span>
 	until: <span class="tk-f">nullable</span>(<span class="tk-f">int</span>()),     <span class="tk-c">// an expiry in ms since the epoch; null: until removed</span>
+	revision: <span class="tk-f">int</span>(),            <span class="tk-c">// the resource's withdrawal revision when it was brought, stamped by core</span>
 });</code></pre>
 <p>There is no login field and no mode: the resource&#39;s owner decides which login it uses, forever. An expiry sits on the
 entry, not on the resource: &quot;Colin&#39;s MCP server in project pi until Friday&quot; says nothing about the server.</p>
 <h3 id="the-three-sources">The three sources</h3>
 <ul>
 <li><strong>Defaults</strong> is not stored. It is the rule <em>every resource the session&#39;s owner owns, plus every instance resource the
-policy lets the owner use</em>. That rule is why Mario never configures anything and why a third-party plugin&#39;s new tool
-appears in his next turn: installing the plugin adds an instance resource, and the rule includes it.</li>
+policy lets the owner use, minus the owner&#39;s exclusions</em>. That rule is why Mario never configures anything and why a
+third-party plugin&#39;s new tool appears in his next turn: installing the plugin adds an instance resource, and the
+rule includes it. <strong>Exclusions</strong> (review, both) are a per-user set of resource addresses core keeps; it is how
+someone turns code mode or cache warming off everywhere without locking every session down. Plugin settings that are
+not about authority (warming mode, voice choice, model cycling) stay plugin settings.</li>
 <li><strong>Own</strong> is a list core keeps per session (<code>p3.resources.session-lists</code>, rows of session id plus entry). &quot;Lock down
-this session&quot; switches a session from defaults to own, starting from a copy of its current effective list, then the
-user removes what it should not have.</li>
+this session&quot; (<code>lockDown</code>) switches a session from defaults to own, starting from a snapshot of its current effective
+list, then the user removes what it should not have. The snapshot is a same-session operation: it never lets anyone
+bring those resources anywhere else (review, Astra M2, M3).</li>
 <li><strong>Grouping</strong> names a grouping with resources. Its plugin keeps the list; core reads it through the plugin&#39;s
 registration (chapter V).</li>
 </ul>
@@ -443,8 +473,10 @@ registration (chapter V).</li>
 		entries: entries.<span class="tk-f">flatMap</span>((entry) =&gt; {
 			<span class="tk-k">const</span> indexed = facts.index.<span class="tk-f">get</span>(<span class="tk-f">addressKey</span>(entry.resource));
 			<span class="tk-k">if</span> (indexed === <span class="tk-k">undefined</span> || indexed.unavailable) <span class="tk-k">return</span> [];          <span class="tk-c">// unknown: never usable</span>
+			<span class="tk-k">if</span> (indexed.incomplete) <span class="tk-k">return</span> [];                                   <span class="tk-c">// its plugin has not written it yet</span>
+			<span class="tk-k">if</span> (entry.revision &lt; indexed.revision) <span class="tk-k">return</span> [];                   <span class="tk-c">// withdrawn by its owner since</span>
 			<span class="tk-k">if</span> (entry.until !== <span class="tk-k">null</span> &amp;&amp; entry.until &lt;= facts.now) <span class="tk-k">return</span> [];     <span class="tk-c">// expired</span>
-			<span class="tk-k">const</span> use = facts.policy.<span class="tk-f">decide</span>({ kind: <span class="tk-s">"use"</span>, session: row, resource: indexed }, ALLOW);
+			<span class="tk-k">const</span> use = facts.policy.<span class="tk-f">decide</span>({ kind: <span class="tk-s">"use"</span>, session: row, resource: indexed }, indexed.<span class="tk-f">useBaseline</span>(row));
 			<span class="tk-k">if</span> (use.kind === <span class="tk-s">"deny"</span>) <span class="tk-k">return</span> [];
 			<span class="tk-k">return</span> [{ resource: entry.resource, plugin: indexed.plugin, owner: indexed.owner, until: entry.until }];
 		}),
@@ -463,15 +495,19 @@ time itself, so a late timer never extends access.</p>
 	variants: {
 		user: {
 			state: {
-				owned: <span class="tk-f">arr</span>(<span class="tk-t">IndexRow</span>),      <span class="tk-c">// my resources, any kind</span>
-				usable: <span class="tk-f">arr</span>(<span class="tk-t">IndexRow</span>),     <span class="tk-c">// instance resources the policy lets me use</span>
-				creatable: <span class="tk-f">arr</span>(<span class="tk-f">str</span>()),     <span class="tk-c">// kinds I may create: contract names (erased: wire state)</span>
+				owned: <span class="tk-f">arr</span>(<span class="tk-t">IndexRow</span>),            <span class="tk-c">// my resources, any kind</span>
+				excluded: <span class="tk-f">arr</span>(<span class="tk-t">ObjectAddress</span>),    <span class="tk-c">// my exclusions from defaults</span>
+				creatable: <span class="tk-f">arr</span>(<span class="tk-t">Creatable</span>),       <span class="tk-c">// { owner: me | INSTANCE (admins), kinds: contract names } (erased: wire state)</span>
 			},
 			methods: {
+				<span class="tk-c">/** What I may bring into this list, with the longest `until` the policy allows: a picker's candidates. */</span>
+				candidates: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ into: <span class="tk-t">ListRef</span> }), <span class="tk-f">arr</span>(<span class="tk-t">Candidate</span>)),
 				bring: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ resource: <span class="tk-t">ObjectAddress</span>, into: <span class="tk-t">ListRef</span>, until: <span class="tk-f">nullable</span>(<span class="tk-f">int</span>()) })),
 				remove: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ resource: <span class="tk-t">ObjectAddress</span>, <span class="tk-k">from</span>: <span class="tk-t">ListRef</span> })),
-				withdraw: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ resource: <span class="tk-t">ObjectAddress</span> })),   <span class="tk-c">// the owner takes it out of every list</span>
+				withdraw: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ resource: <span class="tk-t">ObjectAddress</span> })),   <span class="tk-c">// the owner takes it out of every explicit list</span>
+				exclude: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ resource: <span class="tk-t">ObjectAddress</span>, excluded: <span class="tk-f">bool</span>() })),
 				setSource: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ session: <span class="tk-f">str</span>(), source: <span class="tk-t">ResourceSource</span> })),
+				lockDown: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ session: <span class="tk-f">str</span>() })),           <span class="tk-c">// defaults or grouping to own, from a checked snapshot</span>
 			},
 		},
 	},
@@ -485,18 +521,33 @@ time itself, so a late timer never extends access.</p>
 <p><strong>Bringing needs both sides</strong> (owner, walkthrough): the resource side, <em>you own it, or it is an instance resource and
 you administer</em>, and the list side, <em>the list&#39;s own rule lets you add to it</em> (a session&#39;s own list: its owner; a
 grouping&#39;s: whatever its plugin says, for a project its members). Then the policy sees
-<code>{ kind: &quot;bring&quot;, actor, resource, into }</code> and may narrow or widen.</p>
-<div class="note review"><b class="tag">Review: instance resources in lists</b><p>The walkthrough said &quot;for instance resources, admins can bring them; a policy plugin may widen that&quot;. Locking down a
-session copies instance resources from its defaults into its own list, which a non-admin must be able to do. This spec
-lets the resource side pass also for an instance resource the actor may already use (the policy&#39;s <code>use</code> answer), so the
-copy never widens anything. Reviewers: is that the right baseline, or should lock-down be a separate operation?</p>
+<code>{ kind: &quot;bring&quot;, actor, resource, into, until }</code> and may narrow (a maximum lending time) or widen (project maintainers
+may bring the company key). Being allowed to <em>use</em> an instance resource is not being allowed to hand it to a project&#39;s
+whole audience (review, both; the first draft&#39;s widening is dropped).</p>
+<div class="note review"><b class="tag">Decision for the owner: built-ins in project lists</b><p>With that baseline a non-admin cannot bring a built-in tool (bash, the file tools) into a project, and a project&#39;s list
+holds only what was brought, so a project session has no tools unless an admin brings them (review, Astra N3, Sol
+trace 2). Proposal: built-ins carry no login, so their resource side passes for anyone the policy lets use them, and a
+new grouping&#39;s list starts with every built-in its creator may use; instance resources with a login (the company key,
+the build machine) stay admin-only. Not decided.</p>
 </div>
-<p><strong>Taking out:</strong> the resource&#39;s owner can always withdraw it from every list (<code>withdraw</code>: core asks each list keeper to
-remove it); a list&#39;s maintainers can remove anything from their list (<code>remove</code>, the list side&#39;s rule), never touching
-the resource itself. Neither needs the policy&#39;s permission to take something away.</p>
-<p><strong>Changing the source</strong> (<code>setSource</code>): into a grouping, the grouping&#39;s rule for adding sessions must pass; to <code>own</code>,
-core copies the current effective list first; to <code>defaults</code>, only the session&#39;s owner. The policy sees
-<code>{ kind: &quot;set-source&quot;, actor, session, source }</code>.</p>
+<p><strong>Taking out:</strong> the resource&#39;s owner can always withdraw it (<code>withdraw</code>), and a list&#39;s maintainers can remove anything
+from their list (<code>remove</code>, the list side&#39;s rule), never touching the resource itself. Neither needs the policy&#39;s
+permission. Withdrawal is <strong>durable</strong> (review, both): core raises the resource&#39;s <code>revision</code> in the index first, so
+every entry brought before it stops counting at once, in every list, also in a grouping whose plugin is not loaded and
+returns later with its old rows; then core asks each loaded keeper to delete the entry, and retries absent ones when they
+return. A new bring stamps the current revision. Withdrawal covers explicit lists; the owner&#39;s own defaults sessions
+stop using a resource through <code>exclude</code>.</p>
+<p><strong>Changing the source</strong> (<code>setSource</code>) always needs the session side, <em>you may change this session</em> (its owner by
+baseline), and the destination side: into a grouping, its <code>mayJoin</code>; to <code>defaults</code>, the session&#39;s owner only. The
+policy sees <code>{ kind: &quot;set-source&quot;, actor, session, source }</code>. <strong><code>lockDown</code></strong> builds the own list from a snapshot: from
+defaults, the same session&#39;s current entries; from a grouping, only entries the actor may bring into the session&#39;s own
+list under the resource side (their <code>until</code> kept, never extended), the others listed for the user before confirming.
+Cristina locking down a project session therefore cannot keep Colin&#39;s server after Colin or the project withdraws it
+(review, both).</p>
+<p><strong>Copies.</strong> Clone and fork re-run these rules for the new session before its worker starts: an own list is copied
+entry by entry as brings into the copy (deadlines kept), a grouping source is kept only if the actor may join it, and a
+copy of a Discord-fed session becomes an own list of the authorized entries, never defaults. Content (transcript, files,
+artifacts) is copied as before; copying content is not consent to use someone&#39;s resource.</p>
 </section>
 
 <section class="chapter" id="groupings"><header class="opener"><div class="numeral">V</div><h2>Where Things Appear</h2><p class="lede">Groupings as plugins: computed and curated ones, the few that carry resources, members and who sees a session.</p></header>
@@ -573,23 +624,51 @@ host.<span class="tk-f">serve</span>(<span class="tk-t">ProjectStore</span>, (_p
 			remove: (p, resource, ctx) =&gt; <span class="tk-f">removeEntry</span>(lists, p, resource, ctx),
 		},
 	})]);
-	<span class="tk-k">return</span> { <span class="tk-c">/* create, rename, addMember: through core's guarded steps (chapter VI) */</span> };
+	<span class="tk-k">return</span> {
+		<span class="tk-c">/** Called by the Project view's addMember with the checked actor: core asks `add-member`, then this commits. */</span>
+		addMember: <span class="tk-k">async</span> ({ actor, project, member }, ctx) =&gt; {
+			<span class="tk-k">await</span> access.<span class="tk-f">addMember</span>({ actor, to: <span class="tk-f">addressOf</span>(<span class="tk-t">Project</span>, project), member, baseline: <span class="tk-f">isMaintainer</span>(actor, project) }, ctx);
+			<span class="tk-k">await</span> <span class="tk-f">commitMember</span>(members, project, member, ctx);    <span class="tk-c">// Members recomputes; policy and views follow</span>
+		},
+		<span class="tk-c">// create (core's create-grouping, same shape), rename</span>
+	};
 });</code></pre>
 <p>A project&#39;s sessions are a query, not a list it keeps: catalog rows whose source is this project. That is why the
 session points up and not the project down: two projects listing the same session would give it two sources.</p>
+<div class="note review"><b class="tag">Decision for the owner: showing sessions a project does not equip</b><p>Both reviewers want a project to also <em>show</em> sessions that use another source (a session of pi linked to a Discord
+channel now uses the channel&#39;s list and disappears from pi; p2 keeps both). The fix keeps one source: a project may
+keep plain display references, drawn as &quot;shown here, uses #support&#39;s resources&quot;, granting nothing. Not decided; the
+walkthrough dropped &quot;links&quot; as confusing.</p>
+</div>
+<p><strong>Roles stay live</strong> (review, Sol 10). Chord picks a view&#39;s variant once, when it is made, so <code>maintainer | member</code>
+variants would not follow a promotion. The project view has one user variant whose methods check the current facts
+and whose state carries the actions the user may take now; members who leave stop getting state at the next push.</p>
 <h3 id="members-and-who-sees-a-session">Members and who sees a session</h3>
 <p>Members are users or groupings (a project can have the mirrored SAML group &quot;engineering&quot; as a member). Core&#39;s <code>Members</code>
 object expands them through every registration&#39;s <code>members</code>, cutting cycles, and serves <code>has(grouping, user)</code> and the
-groupings a user is in. The policy reads the same object.</p>
+groupings a user is in. The policy reads the same object. Mirrored groups are named by a stable directory identity
+(<code>SamlGroup { issuer, id }</code>, the display name separate), are read-only through <code>add-member</code>, and a directory that is
+unavailable or stale yields no members, never everyone (review, Astra S7).</p>
 <p><strong>A user sees a session when</strong> they own it, it is shared with them (the session&#39;s own people list, kept by the
 sessions plugin; guests stay reserved), or they are a member of its source grouping. The sessions plugin&#39;s catalog view
 for a user filters rows by exactly these three facts; no other grouping is asked.</p>
+<p>Seeing is not every operation (review, Astra M11). The sessions plugin keeps live facts per session and user,
+<code>mayView</code>, <code>maySend</code> (owner, shared with send, members of the source grouping) and <code>isOwner</code>, and its methods use them
+as baselines for typed operations: <code>operation(Chat, &quot;send&quot;)</code>, <code>operation(Chat, &quot;shell&quot;)</code>, <code>operation(Chat, &quot;reset&quot;)</code>,
+<code>operation(Chat, &quot;configure&quot;)</code>, <code>operation(SessionTree, &quot;navigate&quot;)</code>, lifecycle methods. HTTP and socket routes
+(uploads, downloads, artifacts, voice, terminals) authenticate, then apply the same decision before entering
+server-local authority. Logs, devices, port-host control and instance integrations stay admin operations.</p>
 <h3 id="a-discord-channel">A Discord channel</h3>
 <p>The Discord plugin&#39;s grouping <code>DiscordChannel { bot, channel }</code> is a grouping with resources. Linking a channel to a
 session sets the session&#39;s source to the channel; the channel&#39;s list starts nearly empty (a model provider) and the
 link sheet adds what the channel may use. Who may change the channel&#39;s list is the Discord plugin&#39;s rule (the link&#39;s
 creator, and admins: the bot is an instance resource). The people in the channel are not users; they are attributed
 authors of inputs, and like every sender they drive the whole list.</p>
+<p>Linking and unlinking are source transitions (review, Astra S2): linking prepares the channel&#39;s list, validates the
+location and commits the source before ingress starts; the previous source is kept only as transition data. Unlinking
+stops ingress first, then restores the previous source if the actor may still set it, else leaves an own list of the
+authorized entries and says why. Channel methods are bound to that bot and channel; cursors and bindings are never
+copied to a clone.</p>
 </section>
 
 <section class="chapter" id="policy"><header class="opener"><div class="numeral">VI</div><h2>Who May</h2><p class="lede">One replaceable policy answers typed requests; core asks it at its guarded steps; views carry the answers to the page.</p></header>
@@ -599,11 +678,11 @@ registry, decides; core asks it at the moment an action happens, on the server.<
 <pre><code><span class="tk-c">// plugins/policy/contract.ts: core</span>
 <span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Decision</span> = { <span class="tk-k">readonly</span> kind: <span class="tk-s">"allow"</span> } | { <span class="tk-k">readonly</span> kind: <span class="tk-s">"deny"</span>; <span class="tk-k">readonly</span> reason: <span class="tk-t">MessageData</span> };
 
-<span class="tk-c">/** Everything core asks. Kinds and operations are tokens, compared by identity, never by name. */</span>
+<span class="tk-c">/** Everything core asks. Kinds and operations are tokens, compared with isKind / isOperation (chapter I), never by name. */</span>
 <span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Request</span> =
 	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"create-resource"</span>; <span class="tk-k">readonly</span> actor: <span class="tk-t">UserId</span>; <span class="tk-k">readonly</span> resourceKind: <span class="tk-t">ResourceKind</span>; <span class="tk-k">readonly</span> owner: <span class="tk-t">UserId</span> }
 	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"create-grouping"</span>; <span class="tk-k">readonly</span> actor: <span class="tk-t">UserId</span>; <span class="tk-k">readonly</span> groupingKind: <span class="tk-t">GroupingKind</span> }
-	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"bring"</span>; <span class="tk-k">readonly</span> actor: <span class="tk-t">UserId</span>; <span class="tk-k">readonly</span> resource: <span class="tk-t">Indexed</span>; <span class="tk-k">readonly</span> into: <span class="tk-t">ListRef</span> }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"bring"</span>; <span class="tk-k">readonly</span> actor: <span class="tk-t">UserId</span>; <span class="tk-k">readonly</span> resource: <span class="tk-t">Indexed</span>; <span class="tk-k">readonly</span> into: <span class="tk-t">ListRef</span>; <span class="tk-k">readonly</span> until: number | <span class="tk-k">null</span> }
 	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"set-source"</span>; <span class="tk-k">readonly</span> actor: <span class="tk-t">UserId</span>; <span class="tk-k">readonly</span> session: <span class="tk-t">SessionRow</span>; <span class="tk-k">readonly</span> source: <span class="tk-t">ResourceSource</span> }
 	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"add-member"</span>; <span class="tk-k">readonly</span> actor: <span class="tk-t">UserId</span>; <span class="tk-k">readonly</span> member: <span class="tk-t">MemberRef</span>; <span class="tk-k">readonly</span> to: <span class="tk-t">ObjectAddress</span> }
 	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"use"</span>; <span class="tk-k">readonly</span> session: <span class="tk-t">SessionRow</span>; <span class="tk-k">readonly</span> resource: <span class="tk-t">Indexed</span> }
@@ -617,15 +696,17 @@ registry, decides; core asks it at the moment an action happens, on the server.<
 	<span class="tk-f">decide</span>(request: <span class="tk-t">Request</span>, baseline: <span class="tk-t">Decision</span>): <span class="tk-t">Decision</span>;
 };
 
-<span class="tk-c">/** One provider (the built-in default when no policy plugin is installed); a value that changes is a writable. */</span>
+<span class="tk-c">/** Exactly one provider; a value that changes is a writable. Zero or two providers compose to deny-all. */</span>
 <span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Policies</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">Policy</span>, <span class="tk-t">Policy</span>&gt;(<span class="tk-s">"p3.policy"</span>, { version: <span class="tk-n">1</span> });</code></pre>
-<p><strong>The default policy is <code>(_request, baseline) =&gt; baseline</code>.</strong> Baselines come from facts the owning code has: the owner
-rule, the grouping&#39;s own <code>mayBring</code>, the session owner for <code>setSource</code>, the users plugin&#39;s admin flag for
-<code>administer</code>, allow for <code>use</code>. On one laptop nobody ever sees it.</p>
+<p><strong>The default policy is <code>(_request, baseline) =&gt; baseline</code></strong>, shipped as its own plugin (<code>default-policy</code>) and
+installed explicitly, never a fallback for an empty registry (review, Astra N2). Baselines come from facts the owning
+code has: the owner rule, the grouping&#39;s own <code>mayBring</code>, the session owner for <code>setSource</code>, the users plugin&#39;s admin
+flag for <code>administer</code>, the kind&#39;s use baseline for <code>use</code> (allow unless the kind says otherwise). On one laptop nobody
+ever sees it.</p>
 <p><strong>Hard rules come before the policy and cannot be overridden:</strong> nobody creates a resource owned by another person;
-workers never change lists or create resources; an unknown kind is refused. A missing policy contribution (zero, or a
-policy plugin that failed) is not the default: the registry&#39;s compose yields deny-all until it is fixed, so removing an
-organization&#39;s policy never opens everything.</p>
+workers never change lists or create resources; an unknown kind is refused. A missing policy (zero providers, two, or
+one that failed) composes to deny-all until it is fixed, so removing an organization&#39;s policy never opens everything
+and never reinstalls the default by itself.</p>
 <h3 id="asking-core-39-s-guarded-steps">Asking: core&#39;s guarded steps</h3>
 <p>Core&#39;s own operations (create a resource, bring, remove, set a source, add a member, administer) are core methods that
 build the typed request and ask. A plugin&#39;s own operation that a company might want to restrict asks through one helper,
@@ -633,22 +714,33 @@ typed by its contract:</p>
 <pre><code><span class="tk-c">// plugins/drives/contract.ts</span>
 <span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ShareDriveLink</span> = <span class="tk-f">operation</span>(<span class="tk-t">Drive</span>, <span class="tk-s">"shareLink"</span>);
 
-<span class="tk-c">// plugins/drives/server.ts: inside the method</span>
+<span class="tk-c">// plugins/drives/server.ts: inside the method; the actor is the link-stamped caller, passed explicitly</span>
 shareLink: <span class="tk-k">async</span> (args, ctx) =&gt; {
-	<span class="tk-k">await</span> <span class="tk-f">guard</span>(access, <span class="tk-t">ShareDriveLink</span>, params, args, <span class="tk-f">ownerBaseline</span>(principal, params), ctx);   <span class="tk-c">// throws forbidden on deny</span>
+	<span class="tk-k">await</span> <span class="tk-f">guard</span>(access, principal.id, <span class="tk-t">ShareDriveLink</span>, params, args, <span class="tk-f">ownerBaseline</span>(principal, params), ctx);   <span class="tk-c">// throws forbidden</span>
 	<span class="tk-k">return</span> links.<span class="tk-f">create</span>(params, args, ctx);
 },</code></pre>
 <p><code>access</code> is core&#39;s local <code>Access</code> object (<code>self.get(Access, {})</code>); <code>guard</code> sends it the erased request
-(<code>{ operation: { contract, method }, target, args }</code>), and core hands the policy the typed <code>call</code> request, whose <code>match</code>
-checks the operation by identity and gives back typed target and args. Plugins never see which policy is installed.</p>
+(<code>{ actor, operation: { contract, method }, target, args, baseline }</code>), and core hands the policy the typed <code>call</code>
+request, whose <code>match</code> checks the operation with <code>isOperation</code> and gives back typed target and args. The actor travels
+as data because a local call acts as the server (review, both). <code>Access</code> has one typed method per core request
+(<code>createGrouping</code>, <code>addMember</code>, ...) for plugins that own those writes, so a project&#39;s create still meets the rules for
+<code>create-grouping</code>, not an unrelated <code>call</code>. Plugins never see which policy is installed.</p>
+<p>Configuration changes are guarded like creation (review, Astra S4): <code>ConfigureMcp = operation(McpServer, &quot;configure&quot;)</code>
+checks the new configuration, so an HTTP server cannot later become a server-machine stdio one; env mutations and a
+port&#39;s public visibility use typed operations the same way.</p>
 <h3 id="the-answers-reach-the-page-as-view-state">The answers reach the page as view state</h3>
 <p>UIs never check. Core&#39;s <code>MyResources</code> view for a user carries <code>creatable</code>, computed on the server:</p>
 <pre><code><span class="tk-c">// core, the user variant of MyResources</span>
 <span class="tk-k">const</span> creatable = self.<span class="tk-f">derive</span>([kinds, policy, members.ofUser.<span class="tk-f">at</span>(me)], ([registered, current]) =&gt;
-	registered
-		.<span class="tk-f">filter</span>((kind) =&gt; current.<span class="tk-f">decide</span>({ kind: <span class="tk-s">"create-resource"</span>, actor: me, resourceKind: kind, owner: me }, ALLOW).kind === <span class="tk-s">"allow"</span>)
-		.<span class="tk-f">map</span>((kind) =&gt; kind.contract.name),
+	<span class="tk-f">ownersFor</span>(me).<span class="tk-f">map</span>((owner) =&gt; ({                      <span class="tk-c">// me, and INSTANCE when I administer (review, Sol 2)</span>
+		owner,
+		kinds: registered
+			.<span class="tk-f">filter</span>((kind) =&gt; current.<span class="tk-f">decide</span>({ kind: <span class="tk-s">"create-resource"</span>, actor: me, resourceKind: kind, owner }, ALLOW).kind === <span class="tk-s">"allow"</span>)
+			.<span class="tk-f">map</span>((kind) =&gt; kind.contract.name),
+	})),
 );</code></pre>
+<p>The policy value is in-process, so the derive&#39;s output is plain data while its input changes as a writable (&quot;derives
+JSON only&quot;).</p>
 <p>The add-resource picker shows the creators whose kind is in that list (chapter X). When an admin changes a rule, the
 chain below runs without a reload and without anything polling:</p>
 <figure class="fig anim"><svg viewBox="0 0 720 366" width="100%" role="img" aria-label="An admin lets research create MCP servers; Cristina's picker gains the MCP creator." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="84.8" y1="52" x2="84.8" y2="358" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="84.8" y="27" font-size="11" fill="#2a2723" text-anchor="middle">admin's page</text><text x="84.8" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">settings sheet</text><line x1="222.4" y1="52" x2="222.4" y2="358" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="160.6" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="222.4" y="27" font-size="11" fill="#2a2723" text-anchor="middle">rules plugin</text><text x="222.4" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">server: the policy</text><line x1="360" y1="52" x2="360" y2="358" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="298.2" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="27" font-size="11" fill="#2a2723" text-anchor="middle">core resources</text><text x="360" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">server</text><line x1="497.6" y1="52" x2="497.6" y2="358" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="435.8" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="497.6" y="27" font-size="11" fill="#2a2723" text-anchor="middle">MyResources</text><text x="497.6" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">Cristina's view</text><line x1="635.2" y1="52" x2="635.2" y2="358" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="573.4" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="635.2" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Cristina's page</text><text x="635.2" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">add-resource picker</text><g class="step edge" style="--i:1"><line x1="84.8" y1="78" x2="219.4" y2="78" stroke="#7b7468" marker-end="url(#f1m)"/><text x="153.6" y="72" font-size="10" fill="#2a2723" text-anchor="middle">addRule { members: research, may: create mcp.server }</text></g><g class="step edge" style="--i:2"><path d="M222.4 104 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f1a)"/><text x="264.4" y="114" font-size="10" fill="#b4472f" text-anchor="start">commit the rules document</text></g><g class="step edge" style="--i:3"><path d="M222.4 144 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f1a)"/><text x="264.4" y="154" font-size="10" fill="#b4472f" text-anchor="start">policy.set(new Policy): the registry recomposes</text></g><g class="step edge" style="--i:4"><line x1="222.4" y1="190" x2="357" y2="190" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f1m)"/><text x="291.2" y="184" font-size="10" fill="#2a2723" text-anchor="middle">Policies value changed</text></g><g class="step edge" style="--i:5"><path d="M360 216 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><text x="402" y="226" font-size="10" fill="#2a2723" text-anchor="start">derive creatable for each live user view</text></g><g class="step edge" style="--i:6"><line x1="360" y1="262" x2="494.6" y2="262" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f1m)"/><text x="428.8" y="256" font-size="10" fill="#2a2723" text-anchor="middle">creatable gains &quot;mcp.server&quot;</text></g><g class="step edge" style="--i:7"><line x1="497.6" y1="294" x2="632.2" y2="294" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f1m)"/><text x="566.4" y="288" font-size="10" fill="#2a2723" text-anchor="middle">state pushed over the link</text></g><g class="step edge" style="--i:8"><path d="M635.2 320 h-34 v14 h32" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><text x="593.2" y="330" font-size="10" fill="#2a2723" text-anchor="end">picker re-renders: &quot;MCP server&quot; appears</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 1.</span> An admin lets research create MCP servers; Cristina&#39;s picker gains the MCP creator.</figcaption></figure>
@@ -757,7 +849,32 @@ is reported once (<code>extension_unregistered</code>, naming plugin and id), so
 deferred tools still get <code>tool_search</code> as in p2&#39;s <code>durableRegistry</code>; code mode is itself a built-in resource.</li>
 </ul>
 <p><code>any-of-kind</code> exists for extensions whose tools follow configured resources: the conversations tool is present when any
-<code>ConversationAccess</code> is on the list (chapter VIII), the drives tools when any drive is.</p>
+<code>ConversationAccess</code> is on the list (chapter VIII), the drives tools when any drive is. One extension may have several
+grants (the conversations tool: the <code>Peers</code> built-in or any access); the composer installs it <strong>once</strong> when any of its
+grants holds, keyed by plugin and extension name, and reports two different extensions under one name (review, Astra
+M8).</p>
+<h3 id="admission-at-every-call-not-only-every-phase">Admission at every call, not only every phase</h3>
+<p>Filtering the next phase&#39;s registry is not enough (review, Astra M5): a code-mode script captured its tools when it
+started, a phase pins its registry, and a worker that lost its server link still holds its last list (Chord keeps a
+reference&#39;s last values, §7). So the harness also wraps the dispatch of every admitted extension&#39;s tools, nested
+code-mode calls included, with one check:</p>
+<pre><code><span class="tk-c">/** Refuses a tool call unless the grant behind it holds now: link live, list ready, entry present, not expired. */</span>
+<span class="tk-k">function</span> <span class="tk-f">admitCall</span>(grants: <span class="tk-k">readonly</span> <span class="tk-t">ExtensionGrant</span>[], plugin: string, resources: <span class="tk-t">Held</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">SessionResources</span>&gt;): <span class="tk-t">Decision</span> {
+	<span class="tk-k">if</span> (resources.state.value.kind !== <span class="tk-s">"live"</span>) <span class="tk-k">return</span> <span class="tk-f">deny</span>(messages.<span class="tk-f">message</span>(<span class="tk-s">"resourcesOffline"</span>));
+	<span class="tk-k">const</span> list = resources.list.value;
+	<span class="tk-k">if</span> (list.kind !== <span class="tk-s">"ready"</span>) <span class="tk-k">return</span> <span class="tk-f">deny</span>(list.reason);
+	<span class="tk-k">const</span> now = <span class="tk-t">Date</span>.<span class="tk-f">now</span>();
+	<span class="tk-k">return</span> grants.<span class="tk-f">some</span>((g) =&gt; <span class="tk-f">holds</span>(g, plugin, list.entries, now)) ? ALLOW : <span class="tk-f">deny</span>(messages.<span class="tk-f">message</span>(<span class="tk-s">"notOnList"</span>));
+}</code></pre>
+<p>It is one mechanism in the harness, not a check per tool, and it is about resources, not about who started the run.
+Calls admitted earlier may finish.</p>
+<h3 id="doors-that-are-not-tools">Doors that are not tools</h3>
+<p>Some p2 behaviour reaches resources without a Durable tool (review, both): the composer&#39;s <code>!cmd</code> runs a shell through
+<code>Chat.shell</code>; cache warming keeps timers that call a provider directly; prompt templates expand through a method; voice
+rooms, terminal sockets and workspace transfers are channels. Each owner checks the same list at its own door with
+<code>admit</code>: the session shell requires the <code>Bash</code> built-in and the location&#39;s env; a warmer re-admits its provider and
+its built-in before every refresh and stops when either leaves; expansion loads only admitted prompt resources;
+channels re-check on use, not only when a panel mounted.</p>
 <h3 id="server-views-check-every-call">Server views check every call</h3>
 <p>Resource plugins serve per-session server views that read the same effective list, so a call through a resource that
 left the list a moment ago is refused even if the worker has not updated yet:</p>
@@ -768,6 +885,8 @@ left the list a moment ago is refused even if the worker has not updated yet:</p
 
 <span class="tk-c">/** Throws forbidden unless `resource` is on the list now and not expired (checked against the current time). */</span>
 <span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">admit</span>&lt;C <span class="tk-k">extends</span> <span class="tk-t">RemoteContract</span>&gt;(on: <span class="tk-t">Watchable</span>&lt;<span class="tk-k">readonly</span> <span class="tk-t">OnList</span>&lt;C&gt;[]&gt;, resource: <span class="tk-t">ObjectAddress</span>): <span class="tk-t">Resource</span>&lt;C&gt;;</code></pre>
+<p><code>admit</code> also refuses while the list is unavailable and for a worker that is not the session&#39;s current one (p2&#39;s
+generation fencing in <code>plugins/mcp/server.ts</code> and <code>plugins/conversations/server.ts</code> stays).</p>
 <figure class="fig anim"><svg viewBox="0 0 720 422" width="100%" role="img" aria-label="Colin withdraws his MCP server from project pi while session S1 is mid-script." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f2m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f2a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f2b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="84.8" y1="52" x2="84.8" y2="414" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="84.8" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Colin's page</text><text x="84.8" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">MyResources</text><line x1="222.4" y1="52" x2="222.4" y2="414" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="160.6" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="222.4" y="27" font-size="11" fill="#2a2723" text-anchor="middle">core resources</text><text x="222.4" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">server</text><line x1="360" y1="52" x2="360" y2="414" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="298.2" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="27" font-size="11" fill="#2a2723" text-anchor="middle">projects plugin</text><text x="360" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">server: the list</text><line x1="497.6" y1="52" x2="497.6" y2="414" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="435.8" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="497.6" y="27" font-size="11" fill="#2a2723" text-anchor="middle">SessionMcp</text><text x="497.6" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">server, S1's view</text><line x1="635.2" y1="52" x2="635.2" y2="414" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="573.4" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="635.2" y="27" font-size="11" fill="#2a2723" text-anchor="middle">S1's worker</text><text x="635.2" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">harness</text><g class="step edge" style="--i:1"><line x1="84.8" y1="78" x2="219.4" y2="78" stroke="#7b7468" marker-end="url(#f2m)"/><text x="153.6" y="72" font-size="10" fill="#2a2723" text-anchor="middle">withdraw { resource: mcp.server colin/linear }</text></g><g class="step edge" style="--i:2"><line x1="222.4" y1="110" x2="357" y2="110" stroke="#7b7468" marker-end="url(#f2m)"/><text x="291.2" y="104" font-size="10" fill="#2a2723" text-anchor="middle">registration.remove(pi, linear)</text></g><g class="step edge" style="--i:3"><path d="M360 136 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f2a)"/><text x="402" y="146" font-size="10" fill="#b4472f" text-anchor="start">commit pi's list</text></g><g class="step edge" style="--i:4"><line x1="360" y1="182" x2="225.4" y2="182" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="291.2" y="176" font-size="10" fill="#2a2723" text-anchor="middle">lists.at(pi) changed</text></g><g class="step edge" style="--i:5"><path d="M222.4 208 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f2a)"/><text x="264.4" y="218" font-size="10" fill="#b4472f" text-anchor="start">recompute S1: linear gone</text></g><g class="step edge" style="--i:6"><line x1="222.4" y1="254" x2="632.2" y2="254" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="428.8" y="248" font-size="10" fill="#2a2723" text-anchor="middle">SessionResources.list without linear</text></g><g class="step edge" style="--i:7"><line x1="222.4" y1="286" x2="494.6" y2="286" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="360" y="280" font-size="10" fill="#2a2723" text-anchor="middle">resourcesOf: linear gone, tools state shrinks</text></g><g class="step edge" style="--i:8"><path d="M635.2 312 h-34 v14 h32" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><text x="593.2" y="322" font-size="10" fill="#2a2723" text-anchor="end">next phase: no linear extension</text></g><g class="step edge" style="--i:9"><line x1="635.2" y1="358" x2="500.6" y2="358" stroke="#7b7468" marker-end="url(#f2m)"/><text x="566.4" y="352" font-size="10" fill="#2a2723" text-anchor="middle">(a call already sent) call linear.search</text></g><g class="step edge" style="--i:10"><line x1="497.6" y1="390" x2="632.2" y2="390" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="566.4" y="384" font-size="10" fill="#2a2723" text-anchor="middle">refused: linear is not on this session's list</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 2.</span> Colin withdraws his MCP server from project pi while session S1 is mid-script.</figcaption></figure>
 <p>A call admitted before the commit may finish; nothing is replayed (p2 already marks MCP calls not replay-safe). Output
 already in the transcript stays.</p>
@@ -783,7 +902,13 @@ the server runs.</p>
 server facet, grants them in its worker facet. Bash and the file tools run at a conversation&#39;s location, so they work
 only when a machine is on the list too (below). Every p2 plugin that contributes an extension today (agent, artifacts,
 cache-warming, codemode, conversations, dev-tools, discord, history, locations, mcp, ports, powershell, prompt,
-send-file, sessions, subagents, terminals, voice) becomes one or more built-ins this way; the review checks each.</p>
+send-file, sessions, subagents, terminals, voice) becomes one or more built-ins this way. Not everything is: the
+review&#39;s mapping (appendix C) keeps catalog updates, indexing, status, drafts, tree, file mirrors and input delivery as
+session infrastructure that runs whatever the list holds; only agent-facing operations need grants. The prompt plugin
+splits (review, both): its setup-free framing is a built-in, while a user&#39;s global instructions, skills and templates
+are a resource kind the prompt plugin serves (<code>Instructions { owner, id }</code>), so a project gets Colin&#39;s instructions only
+if Colin brings them; project files follow the location. Voice keeps its style section as a built-in and makes the
+speech service a resource.</p>
 <p><code>Builtins</code> also takes instance resources of a plugin&#39;s own kind, for things a plugin brings with it:</p>
 <pre><code><span class="tk-c">// plugins/envs/contract.ts</span>
 <span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">LocalMachine</span> = <span class="tk-f">resource</span>(<span class="tk-t">EnvKind</span>, { owner: INSTANCE, id: <span class="tk-s">"local"</span> });
@@ -796,7 +921,7 @@ self.<span class="tk-f">contribute</span>(<span class="tk-t">Builtins</span>, [<
 has actions (<code>list</code>, <code>send</code>, <code>answer</code> in p2&#39;s <code>plugins/conversations/worker.ts</code>); the resource is the permission, not
 the tool.</p>
 <pre><code><span class="tk-c">// plugins/conversations/contract.ts</span>
-<span class="tk-c">/** The tool reaching the sessions that share this session's resource source (a normal session: its owner's). */</span>
+<span class="tk-c">/** The tool reaching the sessions that share this session's resource source (see sameSource below). */</span>
 <span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Peers</span> = <span class="tk-f">builtin</span>(<span class="tk-s">"conversations.peers"</span>);
 
 <span class="tk-c">/** Access to one session with chosen actions: a resource its creator owns. */</span>
@@ -818,22 +943,45 @@ self.<span class="tk-f">contribute</span>(<span class="tk-t">Extensions</span>, 
 	<span class="tk-k">const</span> peers = <span class="tk-f">resourcesOf</span>(self, principal, <span class="tk-t">BuiltinKind</span>);           <span class="tk-c">// filtered to Peers below</span>
 	<span class="tk-k">const</span> grants = <span class="tk-f">resourcesOf</span>(self, principal, <span class="tk-t">AccessKind</span>);
 	<span class="tk-k">const</span> accesses = self.<span class="tk-f">get</span>(<span class="tk-t">AccessStore</span>, {});
-	<span class="tk-k">const</span> targets = self.<span class="tk-f">derive</span>([peers, grants, accesses.configs, catalog.rows], targetsOf);   <span class="tk-c">// { session, title, actions }[]</span>
+	<span class="tk-k">const</span> targets = self.<span class="tk-f">derive</span>([peers, grants, accesses.configs, catalog.rows], targetsOf);   <span class="tk-c">// display only</span>
+	<span class="tk-c">/** The grant behind one call: Peers for a same-source target, else an access entry naming target and action, admitted now. */</span>
+	<span class="tk-k">const</span> authorize = (to: string, action: <span class="tk-t">Action</span>) =&gt; {
+		<span class="tk-k">if</span> (<span class="tk-f">peersOn</span>(peers.value) &amp;&amp; <span class="tk-f">sameSource</span>(catalog.<span class="tk-f">row</span>(principal.session), catalog.<span class="tk-f">row</span>(to))) <span class="tk-k">return</span>;
+		<span class="tk-k">const</span> entry = grants.value.<span class="tk-f">find</span>((on) =&gt; accesses.<span class="tk-f">config</span>(on.resource).target === to
+			&amp;&amp; accesses.<span class="tk-f">config</span>(on.resource).actions.<span class="tk-f">includes</span>(action));
+		<span class="tk-k">if</span> (entry === <span class="tk-k">undefined</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(messages.<span class="tk-f">message</span>(<span class="tk-s">"noAccess"</span>, to, action));
+		<span class="tk-f">admit</span>(grants, <span class="tk-f">pack</span>(entry.resource));                                       <span class="tk-c">// its own `until`, against now</span>
+		<span class="tk-f">requireTargetPermission</span>(entry.resource, to, action);                        <span class="tk-c">// the access owner may still do it</span>
+	};
 	<span class="tk-k">return</span> {
 		variant: <span class="tk-s">"worker"</span>,
 		members: {
 			targets,
-			send: <span class="tk-k">async</span> ({ to, message }, ctx) =&gt; {
-				<span class="tk-f">requireAction</span>(targets.value, to, <span class="tk-s">"send"</span>);                  <span class="tk-c">// and the entry's `until`, against now</span>
-				<span class="tk-k">return</span> broker.<span class="tk-f">send</span>({ <span class="tk-k">from</span>: principal.session, to, message }, ctx);
+			send: <span class="tk-k">async</span> ({ to, message, requestId }, ctx) =&gt; {
+				<span class="tk-f">authorize</span>(to, <span class="tk-s">"send"</span>);
+				<span class="tk-k">return</span> broker.<span class="tk-f">send</span>({ <span class="tk-k">from</span>: principal.session, to, message, requestId }, ctx);
 			},
 			answer: <span class="tk-k">async</span> ({ to }, ctx) =&gt; {
-				<span class="tk-f">requireAction</span>(targets.value, to, <span class="tk-s">"answer"</span>);
+				<span class="tk-f">authorize</span>(to, <span class="tk-s">"answer"</span>);
 				<span class="tk-k">return</span> broker.<span class="tk-f">answer</span>({ to }, ctx);
 			},
 		},
 	};
-});</code></pre>
+});
+
+<span class="tk-c">/** Peers: defaults sessions of the same owner, sessions of the same grouping; an own list peers with nobody. */</span>
+<span class="tk-k">function</span> <span class="tk-f">sameSource</span>(a: <span class="tk-t">SessionRow</span>, b: <span class="tk-t">SessionRow</span>): boolean {
+	<span class="tk-k">if</span> (a.id === b.id) <span class="tk-k">return</span> <span class="tk-k">false</span>;
+	<span class="tk-k">switch</span> (a.source.kind) {
+		<span class="tk-k">case</span> <span class="tk-s">"defaults"</span>: <span class="tk-k">return</span> b.source.kind === <span class="tk-s">"defaults"</span> &amp;&amp; a.owner === b.owner;
+		<span class="tk-k">case</span> <span class="tk-s">"grouping"</span>: <span class="tk-k">return</span> b.source.kind === <span class="tk-s">"grouping"</span> &amp;&amp; <span class="tk-f">sameAddress</span>(a.source.grouping, b.source.grouping);
+		<span class="tk-k">case</span> <span class="tk-s">"own"</span>: <span class="tk-k">return</span> <span class="tk-k">false</span>;
+	}
+}</code></pre>
+<p>Each call finds the grant that authorizes exactly that target and action, and checks that entry&#39;s own deadline and
+that its owner may still send in the target (review, both): an hour of <code>answer</code> and five minutes of <code>send</code> to the same
+session expire separately, and Bob un-sharing X with Alice ends Alice&#39;s access resource&#39;s effect. p2&#39;s broker checks
+(archived sessions, current worker, request-id dedup, startup retry) stay.</p>
 <p>Creating it starts where the owner wants, on the Discord session (&quot;add a resource to you&quot;): the picker opens the
 conversations creator, which asks for the target, the actions and how long. The conversations plugin&#39;s <code>create</code> asks
 <code>guard(access, CreateAccess, ...)</code> with the baseline <em>the actor may send in the target</em> (the sessions plugin&#39;s fact),
@@ -867,9 +1015,12 @@ host.<span class="tk-f">serve</span>(<span class="tk-t">SessionModels</span>, (_
 	<span class="tk-k">const</span> pushed = self.<span class="tk-f">state</span>(<span class="tk-t">Pushed</span>);
 	self.<span class="tk-f">onLive</span>(<span class="tk-k">async</span> (ctx) =&gt; {
 		<span class="tk-k">for</span> (;;) {
-			<span class="tk-k">const</span> list = <span class="tk-k">await</span> <span class="tk-t">Promise</span>.<span class="tk-f">all</span>(mine.value.<span class="tk-f">map</span>((on) =&gt; store.<span class="tk-f">pushFor</span>(on, ctx)));   <span class="tk-c">// auth refreshed if near expiry</span>
-			<span class="tk-k">await</span> pushed.<span class="tk-f">change</span>((draft) =&gt; { draft.providers = list; }, ctx);
-			<span class="tk-k">await</span> <span class="tk-f">untilChangeOr</span>(mine, <span class="tk-f">earliestExpiry</span>(list) - REFRESH_MARGIN, ctx);
+			<span class="tk-c">// Capture what this push is based on before awaiting, so a change during the refresh is never missed.</span>
+			<span class="tk-k">const</span> seen = { list: mine.value, revision: store.revision.value };     <span class="tk-c">// credential + configuration revision</span>
+			<span class="tk-k">const</span> list = <span class="tk-k">await</span> <span class="tk-t">Promise</span>.<span class="tk-f">all</span>(seen.list.<span class="tk-f">map</span>((on) =&gt; store.<span class="tk-f">pushFor</span>(on, ctx)));   <span class="tk-c">// auth refreshed if near expiry</span>
+			<span class="tk-k">if</span> (seen.list === mine.value &amp;&amp; seen.revision === store.revision.value)
+				<span class="tk-k">await</span> pushed.<span class="tk-f">change</span>((draft) =&gt; { draft.providers = list; }, ctx);   <span class="tk-c">// a stale refresh never republishes</span>
+			<span class="tk-k">await</span> <span class="tk-f">untilChanged</span>(seen, [mine, store.revision], <span class="tk-f">earliestExpiry</span>(list) - REFRESH_MARGIN, ctx);
 		}
 	});
 	<span class="tk-k">return</span> { variant: <span class="tk-s">"worker"</span>, members: { providers: self.<span class="tk-f">derive</span>([pushed], ([p]) =&gt; p.providers) } };
@@ -883,7 +1034,11 @@ self.<span class="tk-f">on</span>(models.providers, ({ value }) =&gt; contribute
 <p><code>currentAuth</code> refuses (no auth, the request fails visibly) when the list is unavailable, the provider left it, its
 entry expired or the pushed auth expired. A reference keeps its last values when its link fails (Chord §7), so a
 cached token alone is never permission. Refresh tokens never reach the worker. Charlotta&#39;s provider uses Charlotta&#39;s
-credential whoever sends: there is no login choice.</p>
+credential whoever sends: there is no login choice. A logout, a rotated key or an edited provider changes the store&#39;s
+revision and is pushed at once, also for keys that never expire (review, both). Provider options, headers and model
+metadata travel with the push, as p2&#39;s worker uses them today. Bedrock and Vertex with ambient AWS or ADC credentials
+get a server-side stream under the same kind and list admission, or are marked unsupported; they are never pushed as
+empty auth.</p>
 <h3 id="mcp-servers-methods-the-server-runs">MCP servers: methods the server runs</h3>
 <p>Decided earlier (decision 8): a checkout&#39;s <code>.pi/mcp.json</code> is a suggestion, enabled per checkout and run in that env;
 server-configured stdio servers run on the server machine; HTTP servers have no location; there is no <code>runOn</code>. In this
@@ -898,8 +1053,9 @@ model each is one resource with its transport in its configuration:</p>
 <span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">CreateMcp</span> = <span class="tk-f">operation</span>(<span class="tk-t">McpServers</span>, <span class="tk-s">"create"</span>);</code></pre>
 <ul>
 <li><strong>Creating</strong> asks core&#39;s <code>create-resource</code> like every kind; a <code>server-stdio</code> transport runs code on the server
-machine, so the MCP plugin also calls <code>guard(access, CreateMcp, {}, config, baseline)</code> with the baseline <em>the actor
-administers</em> for that transport. A company policy can widen or narrow it, matching on the typed <code>config.transport</code>.</li>
+machine, so the MCP plugin also calls <code>guard(access, actor, CreateMcp, {}, config, baseline)</code> with the baseline <em>the
+actor administers</em> for that transport, and <code>ConfigureMcp</code> the same on every change. A company policy can widen or
+narrow it, matching on the typed <code>config.transport</code>.</li>
 <li><strong>Suggestions:</strong> the worker reads <code>.pi/mcp.json</code> at its conversations&#39; locations and reports them to its
 <code>SessionMcp</code> view; the session shows &quot;this checkout suggests ...&quot;. Enabling one creates an MCP resource owned by the
 enabling user, bound to that env, directory and the entry&#39;s digest, and brings it into the session&#39;s source list.
@@ -914,22 +1070,30 @@ host.<span class="tk-f">serve</span>(<span class="tk-t">McpInSession</span>, (_p
 	<span class="tk-k">const</span> grants = self.<span class="tk-f">writable</span>&lt;<span class="tk-k">readonly</span> <span class="tk-t">ExtensionGrant</span>[]&gt;([]);
 	self.<span class="tk-f">contribute</span>(<span class="tk-t">Extensions</span>, grants);
 	self.<span class="tk-f">on</span>(session.servers, ({ value }) =&gt; grants.<span class="tk-f">set</span>(value.<span class="tk-f">map</span>((server) =&gt;
-		<span class="tk-f">grant</span>(server.resource, <span class="tk-f">mcpExtension</span>(server, (tool, args, context) =&gt;
-			<span class="tk-f">chord</span>((ctx) =&gt; session.<span class="tk-f">call</span>({ server: <span class="tk-f">pack</span>(server.resource), tool, args }, ctx), context))))));
+		<span class="tk-f">grant</span>(server.resource, <span class="tk-f">mcpExtension</span>(server, (tool, args, api, context) =&gt;
+			<span class="tk-f">chord</span>((ctx) =&gt; session.<span class="tk-f">call</span>({ server: <span class="tk-f">pack</span>(server.resource), conversation: api.conversationId, tool, args }, ctx), context))))));
 	<span class="tk-k">return</span> {};
 });
 
 <span class="tk-c">// plugins/mcp/server.ts: the worker variant of SessionMcp</span>
-call: <span class="tk-k">async</span> ({ server, tool, args }, ctx) =&gt; {
-	<span class="tk-k">const</span> on = <span class="tk-f">admit</span>(mine, server);                 <span class="tk-c">// on the list now, not expired</span>
-	<span class="tk-k">return</span> supervisor.<span class="tk-f">call</span>({ resource: on, session: principal.session, tool, args }, ctx);
+call: <span class="tk-k">async</span> ({ server, conversation, tool, args }, ctx) =&gt; {
+	<span class="tk-k">const</span> on = <span class="tk-f">admit</span>(mine, server);                                  <span class="tk-c">// on the list now, not expired</span>
+	<span class="tk-k">const</span> at = locations.<span class="tk-k">of</span>(principal.session, conversation);        <span class="tk-c">// the server's record, never a cwd from the message</span>
+	<span class="tk-f">requirePlacement</span>(on, at);                                        <span class="tk-c">// a checkout server: this env, directory and digest</span>
+	<span class="tk-k">return</span> supervisor.<span class="tk-f">call</span>({ resource: on, session: principal.session, at, tool, args }, ctx);
 },</code></pre>
-<p>The supervisor keys processes by resource and placement (a checkout server per env and directory), never by session
-or by who sends, and closes one when no admitted session needs it. Credentials and OAuth refresh stay in the server&#39;s
-MCP store, as in p2 today.</p>
+<p>The call names its conversation (review, both): a subagent working on another machine must not reach a checkout server
+enabled for the main conversation&#39;s directory, and the server resolves the location from its own record. The
+supervisor keys processes by resource, placement and, by default, session, as p2 does (stdio and HTTP not shared unless
+configured): the configuration&#39;s typed <code>lifetime: &quot;session&quot; | &quot;shared&quot;</code> keeps that choice, which has nothing to do with
+logins (review, both). Credentials and OAuth refresh stay in the server&#39;s MCP store, as in p2 today.</p>
 <h3 id="machines">Machines</h3>
-<p>An <code>Env { owner, id }</code> is a resource; the machine p3 runs on is the instance resource <code>LocalMachine</code>. A conversation&#39;s
-location is <code>{ env: ObjectAddress, cwd }</code> and must name an env on the list; the worker&#39;s env adapter contributes the
+<p>An <code>Env { owner, id }</code> is a resource; the machine p3 runs on is the instance resource <code>LocalMachine</code>, whose use
+baseline is <em>the session&#39;s owner administers</em>. A conversation&#39;s location is <code>null</code> or <code>{ env: ObjectAddress, cwd }</code>;
+null is a session with no machine (the Discord session that only reads answers), whose harness gets no execution
+environment (Durable allows <code>undefined</code>), never the server machine as a fallback; coding tools refuse there, and
+attachments stay in session storage until a location exists (review, Sol 3). A non-null location must name an env on
+the list; the worker&#39;s env adapter contributes the
 connection to the harness&#39;s environments registry. Moving a session to an env not on its list is refused; an env that
 leaves the list leaves the location unavailable (tools refuse, the session shows &quot;relocate&quot;), never a silent fallback
 to the server machine. Terminals, the workspace view and file browsing check the same env through their own server
@@ -942,16 +1106,18 @@ views.</p>
 	params: { owner: <span class="tk-f">str</span>(), id: <span class="tk-f">str</span>() },
 	hostAddress: () =&gt; <span class="tk-t">Server</span>(),
 	variants: {
-		owner: { state: { folder: <span class="tk-t">FolderView</span> }, methods: { upload: <span class="tk-f">method</span>(<span class="tk-t">UploadArgs</span>), remove: <span class="tk-f">method</span>(<span class="tk-t">PathArgs</span>), shareLink: <span class="tk-f">method</span>(<span class="tk-t">PathArgs</span>, <span class="tk-f">str</span>()) } },
-		reader: { state: { folder: <span class="tk-t">FolderView</span> } },
+		<span class="tk-c">// one user variant: methods check the current facts, `actions` says what this user may do now</span>
+		user: { state: { folder: <span class="tk-t">FolderView</span>, actions: <span class="tk-t">DriveActions</span> }, methods: { upload: <span class="tk-f">method</span>(<span class="tk-t">UploadArgs</span>), remove: <span class="tk-f">method</span>(<span class="tk-t">PathArgs</span>), shareLink: <span class="tk-f">method</span>(<span class="tk-t">PathArgs</span>, <span class="tk-f">str</span>()) } },
 	},
 });
 <span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">DriveKind</span> = <span class="tk-f">resourceKind</span>(<span class="tk-t">Drive</span>, (p) =&gt; <span class="tk-f">userId</span>(p.owner));
 
 <span class="tk-c">// plugins/drives/worker.ts: one set of tools, `drive` names a drive on the list</span>
 self.<span class="tk-f">contribute</span>(<span class="tk-t">Extensions</span>, [<span class="tk-f">grantForKind</span>(<span class="tk-t">DriveKind</span>, driveTools)]);</code></pre>
-<p>The bytes are the kit&#39;s <code>Files</code> (one space per drive). People: the owner gets <code>owner</code>; a user who sees a list
-containing the drive (a project&#39;s members) gets <code>reader</code>, the one-hop read Sol&#39;s design describes. A drive backed by a
+<p>The bytes are the kit&#39;s <code>Files</code> (one space per drive). People: the owner may manage it; a user who sees a list
+containing the drive (a project&#39;s members) may read it, the one-hop read Sol&#39;s design describes, checked live against
+the list and its expiry; every tool call admits the exact drive it names. An admin manages the company drive through
+the same view with <code>owner: INSTANCE</code>. A drive backed by a
 real Google Drive is the same kind with a Google login in its configuration: a second login, a second drive.</p>
 </section>
 
@@ -975,8 +1141,8 @@ section like any other grouping and can be members of projects.</p>
 <p><strong>3. The policy names them.</strong> The rules plugin&#39;s settings sheet offers every grouping as &quot;members of ...&quot; and every
 creator as a kind. &quot;Only engineering may create MCP servers&quot; is <code>{ members: SamlGroup{engineering}, may: { kind: &quot;create-resource&quot;, resourceKind: &quot;mcp.server&quot; } }</code>.</p>
 <p><strong>Radius resources are ordinary resources.</strong> Signing in with Radius can create the user&#39;s Radius MCP server and Radius
-model provider: the Radius plugin calls the MCP and models plugins&#39; <code>create</code> methods as that user, inside the sign-in,
-so &quot;users create resources only for themselves&quot; holds. Whether one Radius sign-in can serve the relay connection, the
+model provider: the Radius plugin calls the MCP and models plugins&#39; trusted local creates (<code>createFor({ actor, owner, id, config })</code>) with the user its verified sign-in produced and stable ids, so &quot;users create resources only for
+themselves&quot; holds and nobody is impersonated on a remote call. Whether one Radius sign-in can serve the relay connection, the
 model gateway and the MCP server is the open question to Armin and Vegard; in p2 these are three logins. The relay
 (the brain&#39;s outbound connection) is an instance integration an admin sets up, not a session resource.</p>
 </section>
@@ -989,7 +1155,8 @@ model gateway and the MCP server is the open question to Armin and Vegard; in p2
 	<span class="tk-k">readonly</span> label: <span class="tk-t">MessageData</span>;
 	<span class="tk-k">readonly</span> description: <span class="tk-t">MessageData</span>;
 	<span class="tk-k">readonly</span> icon: <span class="tk-t">Icon</span>;
-	<span class="tk-k">readonly</span> <span class="tk-t">Sheet</span>: <span class="tk-t">ComponentType</span>&lt;{ <span class="tk-f">done</span>(created: <span class="tk-t">Resource</span>&lt;C&gt;): <span class="tk-k">void</span>; <span class="tk-f">cancel</span>(): <span class="tk-k">void</span> }&gt;;
+	<span class="tk-c">/** `owner`: the user, or INSTANCE when an admin creates a company resource; `into`: where the picker will bring it. */</span>
+	<span class="tk-k">readonly</span> <span class="tk-t">Sheet</span>: <span class="tk-t">ComponentType</span>&lt;{ owner: <span class="tk-t">UserId</span>; into: <span class="tk-t">ListRef</span> | <span class="tk-k">null</span>; <span class="tk-f">done</span>(created: <span class="tk-t">Resource</span>&lt;C&gt;): <span class="tk-k">void</span>; <span class="tk-f">cancel</span>(): <span class="tk-k">void</span> }&gt;;
 }): <span class="tk-t">CreatorEntry</span>;
 <span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Creators</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-k">readonly</span> <span class="tk-t">CreatorEntry</span>[], <span class="tk-k">readonly</span> <span class="tk-t">CreatorEntry</span>[]&gt;(<span class="tk-s">"p3.creators"</span>, { version: <span class="tk-n">1</span> });
 
@@ -998,13 +1165,15 @@ self.<span class="tk-f">contribute</span>(<span class="tk-t">Creators</span>, [<
 <pre><code><span class="tk-c">// plugins/resources/web.tsx: the picker any list's "Add resource" opens</span>
 <span class="tk-k">function</span> <span class="tk-t">AddResource</span>({ into }: { into: <span class="tk-t">ListRef</span> }) {
 	<span class="tk-k">const</span> mine = <span class="tk-f">useHold</span>(<span class="tk-t">MyResources</span>, {});
-	<span class="tk-k">const</span> creatable = <span class="tk-f">useWatch</span>(mine.creatable) ?? [];
-	<span class="tk-k">const</span> creators = <span class="tk-f">useRegistry</span>(<span class="tk-t">Creators</span>).<span class="tk-f">filter</span>((c) =&gt; creatable.<span class="tk-f">includes</span>(c.kind.contract.name));
+	<span class="tk-k">const</span> [owner, setOwner] = <span class="tk-f">useState</span>&lt;<span class="tk-t">UserId</span>&gt;(me);                         <span class="tk-c">// INSTANCE offered to admins only</span>
+	<span class="tk-k">const</span> kinds = (<span class="tk-f">useWatch</span>(mine.creatable) ?? []).<span class="tk-f">find</span>((c) =&gt; c.owner === owner)?.kinds ?? [];
+	<span class="tk-k">const</span> creators = <span class="tk-f">useRegistry</span>(<span class="tk-t">Creators</span>).<span class="tk-f">filter</span>((c) =&gt; kinds.<span class="tk-f">includes</span>(c.kind.contract.name));
+	<span class="tk-k">const</span> [until, setUntil] = <span class="tk-f">useState</span>&lt;number | <span class="tk-k">null</span>&gt;(<span class="tk-k">null</span>);               <span class="tk-c">// the picker owns the duration</span>
 	<span class="tk-k">const</span> [open, setOpen] = <span class="tk-f">useState</span>&lt;<span class="tk-t">CreatorEntry</span> | <span class="tk-k">undefined</span>&gt;();
 	<span class="tk-k">return</span> open ? (
-		&lt;open.<span class="tk-t">Sheet</span> cancel={() =&gt; <span class="tk-f">setOpen</span>(<span class="tk-k">undefined</span>)} done={(created) =&gt; <span class="tk-f">bringNew</span>(mine, created, into)} /&gt;
+		&lt;open.<span class="tk-t">Sheet</span> owner={owner} into={into} cancel={() =&gt; <span class="tk-f">setOpen</span>(<span class="tk-k">undefined</span>)} done={(created) =&gt; <span class="tk-f">bringNew</span>(mine, created, into, until)} /&gt;
 	) : (
-		&lt;<span class="tk-t">Picker</span> existing={&lt;<span class="tk-t">Existing</span> mine={mine} into={into} /&gt;} creators={creators} onPick={setOpen} /&gt;
+		&lt;<span class="tk-t">Picker</span> candidates={mine.<span class="tk-f">candidates</span>({ into })} creators={creators} until={until} onUntil={setUntil} onPick={setOpen} /&gt;
 	);
 }</code></pre>
 <p>The picker knows no groups and no rules; it reads one list from the server. The policy settings screen reads the same
@@ -1054,14 +1223,16 @@ third-party plugin with a <code>weather</code> tool: its server facet describes 
 every defaults session&#39;s list gains it, the worker&#39;s harness admits the grant at its next phase. He never saw a list.</p>
 <p><strong>Colin, Cristina, Charlotta.</strong> Colin creates project pi (<code>create-grouping</code>), adds Cristina and Charlotta
 (<code>add-member</code>). Each brings their own resource (<code>bring</code>: owner side, project&#39;s <code>mayBring</code>). Cristina creates S1 in pi:
-<code>source: { grouping: Project{pi} }</code>. S1&#39;s list is exactly the three; Charlotta&#39;s message uses Colin&#39;s Linear login,
-Cristina&#39;s GPU account and Charlotta&#39;s key. Colin withdraws Linear mid-script: chapter VII&#39;s sequence.</p>
+<code>source: { grouping: Project{pi} }</code>. S1&#39;s list is the three plus the built-ins the project brought (decision 1 in the
+epilogue; without them S1 has MCP and a model but no bash); Charlotta&#39;s message uses Colin&#39;s Linear login, Cristina&#39;s
+GPU account and Charlotta&#39;s key. Colin withdraws Linear mid-script: chapter VII&#39;s sequence; the raised revision keeps it
+out even if the projects plugin is reloading.</p>
 <p><strong>Discord, locked down for an hour.</strong> The Discord channel is S2&#39;s source with a list holding a model provider. Mario
 opens S2, &quot;Add resource&quot;, picks &quot;Access to a session&quot;, chooses X, <code>answer</code> only, one hour. The conversations plugin
 checks Mario may send in X, core creates the resource (owner Mario), the picker brings it into the channel&#39;s list with
-<code>until</code>. S2&#39;s worker gets the conversations tool with one target and one action. At the deadline the entry leaves the
-effective list; a call a second later is refused by <code>requireAction</code> against the current time, whatever the worker
-still shows.</p>
+<code>until</code>. S2&#39;s location is <code>null</code>: no machine, no bash, no server-machine fallback. Its worker gets the conversations
+tool with one target and one action. At the deadline the entry leaves the effective list; a call a second later is
+refused by <code>authorize</code>, which admits that entry against the current time, whatever the worker still shows.</p>
 <p><strong>SAML: only engineering creates MCP servers.</strong> The rule exists; Colin (engineering) sees the MCP creator, Cristina
 (research) does not: her <code>creatable</code> lacks <code>mcp.server</code>. Colin brings his server into pi; Cristina&#39;s sessions in pi use
 it. An admin adds research to the rule: the sequence in chapter VI, and her picker shows the creator without a reload.</p>
@@ -1071,28 +1242,25 @@ Discord session does not get it: its source is the channel&#39;s list.</p>
 tools see two drives; members open both read-only from the project&#39;s resources; Mario manages his own.</p>
 </section>
 
-<section class="chapter epilogue" id="open-questions"><header class="opener"><div class="numeral">∴</div><h2>Open Questions</h2><p class="lede">What this spec leaves open, for the reviewers and then the owner.</p></header>
+<section class="chapter epilogue" id="open-questions"><header class="opener"><div class="numeral">∴</div><h2>Open Questions</h2><p class="lede">What is left after the review: four decisions for the owner, and what stays on other tracks.</p></header>
+<p class="dropcap">The review (Astra and Sol, 2026-11-08, appendix C) confirmed the model for all 39 p2 plugins and the six scenarios,
+and found boundary gaps, now fixed in the chapters above. Four points need the owner:</p>
 <ol>
-<li><strong>Excluding from defaults.</strong> p2 has a code mode switch; here code mode is a built-in on the defaults. Someone who
-wants it off in every session needs an exclusion on their defaults rule (proposal: a per-user <code>excluded</code> list core
-keeps, the rule minus it), or must lock sessions down one by one.</li>
-<li><strong>One source per session.</strong> Both designs call it their weakest point: a session cannot draw from two projects. The
-owner accepted it in the walkthrough; reviewers should name any p2 feature it breaks.</li>
-<li><strong>Peers.</strong> <code>conversations.peers</code> reaches sessions sharing the session&#39;s source. p2 reaches every session; in a
-project, reaching the session owner&#39;s private sessions would expose them to every member.</li>
-<li><strong>Instance resources when bringing</strong> (the review note in chapter IV).</li>
-<li><strong>MCP stdio next to the code.</strong> p2 runs non-shared stdio servers at the location by default; decision 8 leaves
-that only to checkout suggestions (stress test, gap 13).</li>
-<li><strong>Execution on the server machine and SSH keys in workers.</strong> The stress test&#39;s gap 1 (local location, server
-stdio, credential commands, project plugins) and how workers reach envs without private keys stay their own track;
-this model only makes them admin-only by baseline.</li>
-<li><strong>Ambient cloud credentials.</strong> Bedrock and Vertex resolve AWS profiles and ADC files; pushing an empty <code>AuthResult</code>
-does not work. Those providers need a server-side stream or are unsupported.</li>
-<li><strong>One Radius sign-in</strong> for relay, gateway and MCP: pending Armin and Vegard.</li>
-<li><strong>Creation order and retries</strong> (the review note in chapter III).</li>
-<li><strong>Copies.</strong> Clone and fork copy the source field and an own list; a grouping source stays; a Discord channel source
-becomes defaults for the copy. To be confirmed per plugin.</li>
+<li><strong>Built-ins in project lists</strong> (chapter IV): may anyone who may use a built-in bring it into a list, and does a new
+grouping&#39;s list start with them? Without it, project sessions have no tools unless an admin brings them.</li>
+<li><strong>Projects showing sessions they do not equip</strong> (chapter V): plain display references, granting nothing.</li>
+<li><strong>Exclusions from defaults</strong> (chapter IV): a per-user set, so code mode or cache warming can be off everywhere
+while new tools still appear. Both reviewers recommend it.</li>
+<li><strong>MCP process lifetime</strong> (chapter VIII): keep p2&#39;s per-session processes by default, with a typed <code>lifetime</code>
+configuration, or share every process per resource and placement.</li>
 </ol>
+<p>Accepted changes from p2, stated so nobody finds them during the build: one source per session (a Discord link
+replaces a project source; a project no longer equips a session linked elsewhere); peers narrow from every session to
+the same source; MCP stdio servers configured to run at the location become checkout resources (decision 8, no
+<code>runOn</code>); guest sharing stays reserved.</p>
+<p>On other tracks: execution on the server machine and SSH keys in workers (the stress test&#39;s gap 1; this model makes
+<code>LocalMachine</code>, server stdio and reload admin-only by baseline, which is not OS isolation); ambient cloud credentials
+(server-side stream or unsupported); one Radius sign-in for relay, gateway and MCP (pending Armin and Vegard).</p>
 </section>
 
 <section class="chapter appendix" id="api-surface"><header class="opener"><div class="numeral">A</div><h2>API Surface</h2></header>
@@ -1110,14 +1278,14 @@ becomes defaults for the copy. To be confirmed per plugin.</li>
 <td>people, the instance user, <code>signIn</code></td>
 </tr>
 <tr>
-<td><code>resourceKind</code>, <code>ResourceKind</code>, <code>resource</code>, <code>Resource</code>, <code>ObjectAddress</code>, <code>pack</code>, <code>match</code></td>
+<td><code>resourceKind</code>, <code>ResourceKind</code>, <code>resource</code>, <code>Resource</code>, <code>ObjectAddress</code>, <code>pack</code>, <code>addressOf</code>, <code>match</code>, <code>isKind</code>, <code>isGroupingKind</code>, <code>isOperation</code></td>
 <td>resources plugin</td>
-<td>typed resources, erased addresses</td>
+<td>typed resources, erased addresses, declaration identity</td>
 </tr>
 <tr>
-<td><code>ResourceKinds</code> (server registry)</td>
+<td><code>ResourceKinds</code> (server registry), <code>register(kind, { use })</code></td>
 <td>resources plugin</td>
-<td>which plugin serves which kind</td>
+<td>which plugin serves which kind, its use baseline</td>
 </tr>
 <tr>
 <td><code>Builtin</code>, <code>BuiltinKind</code>, <code>builtin</code>, <code>describe</code>, <code>Builtins</code> (server registry)</td>
@@ -1127,12 +1295,12 @@ becomes defaults for the copy. To be confirmed per plugin.</li>
 <tr>
 <td><code>Resources</code> (server, local)</td>
 <td>resources plugin</td>
-<td><code>lists</code> (effective, keyed by session), <code>create</code>, <code>forget</code></td>
+<td><code>lists</code> (effective, keyed by session), <code>create</code>, <code>complete</code>, <code>forget</code></td>
 </tr>
 <tr>
 <td><code>MyResources</code> (server, remote, user)</td>
 <td>resources plugin</td>
-<td><code>owned</code>, <code>usable</code>, <code>creatable</code>; <code>bring</code>, <code>remove</code>, <code>withdraw</code>, <code>setSource</code></td>
+<td><code>owned</code>, <code>excluded</code>, <code>creatable</code>; <code>candidates</code>, <code>bring</code>, <code>remove</code>, <code>withdraw</code>, <code>exclude</code>, <code>setSource</code>, <code>lockDown</code></td>
 </tr>
 <tr>
 <td><code>ResourceSource</code>, <code>ListEntry</code>, <code>ListRef</code>, <code>SessionList</code></td>
@@ -1160,9 +1328,9 @@ becomes defaults for the copy. To be confirmed per plugin.</li>
 <td>one policy, typed requests, plugin operations</td>
 </tr>
 <tr>
-<td><code>ExtensionGrant</code>, <code>grant</code>, <code>grantForKind</code>, <code>Extensions</code> (worker registry)</td>
+<td><code>ExtensionGrant</code>, <code>grant</code>, <code>grantForKind</code>, <code>Extensions</code> (worker registry), <code>admitCall</code></td>
 <td>harness plugin</td>
-<td>extensions under resources</td>
+<td>extensions under resources, admission per call</td>
 </tr>
 <tr>
 <td><code>creator</code>, <code>Creators</code> (web registry)</td>
@@ -1192,7 +1360,106 @@ must-fix, should-fix or note. Read the p2 sources you cite; cite <code>file:line
 the owner already decided (no per-run authority; no login modes) unless this spec contradicts its own text.</p>
 </section>
 
-<p class="colophon">p3 resource model · spec for review, first edition · 2026-11-08 · from the owner&#39;s walkthrough and the Astra and Sol designs</p>
+<section class="chapter appendix" id="what-the-review-changed"><header class="opener"><div class="numeral">C</div><h2>What the Review Changed</h2></header>
+<p>Astra (<code>/tmp/resource-model-review-astra.md</code>) and Sol (<code>/tmp/resource-model-review-sol.md</code>) reviewed the first edition
+against every p2 plugin. Both accepted the decided points (one source, no per-run authority, no login modes). Their
+must-fix findings and where they are fixed:</p>
+<table>
+<thead>
+<tr>
+<th>Finding</th>
+<th>Who</th>
+<th>Fixed in</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>A local call acts as the server: <code>guard</code> and provisioning lost the actor</td>
+<td>both</td>
+<td>III (who the actor is), VI (<code>guard</code> with actor), IX</td>
+</tr>
+<tr>
+<td>Tokens compared with <code>===</code> break across separately bundled facets and reloads</td>
+<td>Sol</td>
+<td>I (<code>isKind</code>, <code>isOperation</code>)</td>
+</tr>
+<tr>
+<td>Admins could not create company resources; <code>creatable</code> only for <code>owner: me</code></td>
+<td>Sol</td>
+<td>III (<code>create({ id, owner })</code>), VI, X (Sheet <code>owner</code>)</td>
+</tr>
+<tr>
+<td>Lock-down and copies could keep someone else&#39;s resource</td>
+<td>both</td>
+<td>IV (<code>lockDown</code> snapshot, copies as brings)</td>
+</tr>
+<tr>
+<td>&quot;May use an instance resource&quot; widened into &quot;may bring it anywhere&quot;</td>
+<td>both</td>
+<td>IV (admin baseline; built-ins: decision 1)</td>
+</tr>
+<tr>
+<td>Withdrawal depended on loaded keepers; reloads resurrected entries; defaults re-included</td>
+<td>both</td>
+<td>IV (revision in index and entries; <code>exclude</code>)</td>
+</tr>
+<tr>
+<td>Phase filtering missed captured tools, nested calls and an offline worker</td>
+<td>Astra</td>
+<td>VII (admission at every call)</td>
+</tr>
+<tr>
+<td>Shell commands, warmers, prompt expansion and channels bypass extension grants</td>
+<td>both</td>
+<td>VII (doors that are not tools)</td>
+</tr>
+<tr>
+<td><code>LocalMachine</code> was claimed admin-only but used with an unconditional allow</td>
+<td>both</td>
+<td>III (<code>register(kind, { use })</code>), VIII</td>
+</tr>
+<tr>
+<td>A model-only session has no location, yet every tool resolved one</td>
+<td>Sol</td>
+<td>VIII (location <code>null</code>, no fallback)</td>
+</tr>
+<tr>
+<td>Conversation access lost per-action expiry and target revocation; peers compared bare tags</td>
+<td>both</td>
+<td>VIII (<code>authorize</code>, <code>sameSource</code>)</td>
+</tr>
+<tr>
+<td>The same extension granted twice installed twice</td>
+<td>Astra</td>
+<td>VII (installed once per plugin and name)</td>
+</tr>
+<tr>
+<td>MCP calls lacked the calling conversation&#39;s location</td>
+<td>both</td>
+<td>VIII (<code>conversation</code> on <code>call</code>)</td>
+</tr>
+<tr>
+<td>Model pushes missed credential changes and could republish stale auth</td>
+<td>both</td>
+<td>VIII (revision-captured loop)</td>
+</tr>
+<tr>
+<td>Seeing a session is not every operation on it</td>
+<td>Astra</td>
+<td>V (<code>mayView</code>, <code>maySend</code>, typed operations, routes)</td>
+</tr>
+<tr>
+<td>One prompt built-in cannot carry a user&#39;s private instructions</td>
+<td>both</td>
+<td>VIII (<code>Instructions</code> kind; voice service a resource)</td>
+</tr>
+</tbody></table>
+<p>Should-fix findings folded in: guarded configuration changes (VI), stable creation ids and incomplete rows (III), live
+roles instead of factory-time variants (V), Discord link and unlink as source transitions (V), mirrored group identity
+and freshness (V), the default policy as an explicit plugin (VI), per-session MCP processes (VIII, decision 4),
+destination-aware pickers with the duration (IV, X). Left to the owner: decisions 1 to 4 in the epilogue.</p>
+</section>
+
+<p class="colophon">p3 resource model · spec, second edition after review · 2026-11-08 · from the owner&#39;s walkthrough and the Astra and Sol designs</p>
 </div></div>
 <script>(function activate(root) {
 	const replay = (f) => {
