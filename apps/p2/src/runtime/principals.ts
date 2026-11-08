@@ -2,7 +2,10 @@
 
 /** The person running this p2 (one today). */
 export type OwnerPrincipal =
-	/** A browser on this machine (loopback), with or without the loopback owner cookie. */
+	/**
+	 * A local owner session on loopback: a client that proved to run as the server's user, or a browser that redeemed an
+	 * owner link on loopback. Its local-only powers (minting owner links, loopback provider sign-ins) rest on that proof.
+	 */
 	| { readonly kind: "owner"; readonly access: "local" }
 	/** Through Radius, authenticated by the relay. */
 	| { readonly kind: "owner"; readonly access: "relay" }
@@ -34,9 +37,13 @@ export type P2Principal = OwnerPrincipal | GuestPrincipal | WorkerPrincipal | Se
 
 /**
  * What revokes principals (`host.revoke`, the same on every host): one associated device's owner, every remote owner
- * (relay and devices: "sign out all devices"), or one guest (all revisions of its grant).
+ * (relay and devices), every local owner session ("sign out all devices" revokes both), or one guest (all revisions of
+ * its grant).
  */
-export type Revocation = { readonly device: string } | { readonly owners: "remote" } | { readonly guest: string };
+export type Revocation =
+	| { readonly device: string }
+	| { readonly owners: "remote" | "local" }
+	| { readonly guest: string };
 
 /** The revocations that end `principal`'s objects and links. */
 export function revokedBy(principal: P2Principal): Revocation[] {
@@ -46,7 +53,7 @@ export function revokedBy(principal: P2Principal): Revocation[] {
 				? [{ device: principal.device }, { owners: "remote" }]
 				: principal.access === "relay"
 					? [{ owners: "remote" }]
-					: [];
+					: [{ owners: "local" }];
 		case "guest":
 			return [{ guest: principal.id }];
 		default:

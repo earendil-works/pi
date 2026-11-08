@@ -30,6 +30,7 @@ describe("workspace and terminal structural parity", { skip: !browserTests }, ()
 			).create({ cwd: fixture.workspace, title: "Workspace parity" }, BACKGROUND_CONTEXT)
 		).id;
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 	});
 	after(async () => {
 		await browser?.close();

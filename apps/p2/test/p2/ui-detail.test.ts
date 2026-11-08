@@ -36,6 +36,7 @@ describe("detail in the browser", { skip: !browserTests }, () => {
 		await until(chat.view, (view) => !live(view)?.run && JSON.stringify(view).includes("Echo: codemode"), 30_000);
 		chat.release();
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 	});
 	after(async () => {
 		await browser?.close();

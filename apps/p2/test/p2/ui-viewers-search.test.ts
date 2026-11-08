@@ -25,6 +25,7 @@ describe("search, viewers, artifacts and cost parity", { skip: !browserTests }, 
 			).create({ cwd: fixture.workspace, title: "Viewer fixture" }, BACKGROUND_CONTEXT)
 		).id;
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 	});
 	after(async () => {
 		await browser?.close();

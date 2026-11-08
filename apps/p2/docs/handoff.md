@@ -61,7 +61,7 @@ npm run dev                  # dev mode: apply plugin changes, including web fac
 npm start                    # without the dev supervisor
 P2_FAKE=1 npm start          # fake model, no provider needed
 npm run owner-link [url]     # one-time owner sign-in link for another device (run on the machine itself)
-npm run tui [url]            # TUI (Node >= 26.5.1); on loopback it signs in as owner automatically
+npm run tui [url]            # TUI (Node >= 26.5.1); on loopback it signs in with the data directory's owner key
 npm run reload [plugins] [--restart]
 npm run check                # Biome + tsc
 npm test                     # full suite; TUI tests need Node 26, browser tests need CHROMIUM_BIN
@@ -70,8 +70,10 @@ npm test                     # full suite; TUI tests need Node 26, browser tests
 Environment variables: `docs/p2-notes.md` (Running). Configuration in the data dir: `models.json`, `settings.json`
 (incl. `codemode`, default on in p2), `envs.json`, `projects.json`, `mcp.json`, `auth.json`, `radius.json`, `forwards.json`.
 
-**Sign-in.** Requests from the device itself are the owner. Other devices get owner rights with a link from `npm
-run owner-link` (single use, 10 minutes, long-lived signed cookie). Guests join through share links. Requests other
+**Sign-in.** Loopback alone is nobody (shared machines). A browser on the host signs in once per profile with the
+token the server prints at startup (pasted into the sign-in page); the TUI and scripts sign in with the data directory's owner key (README, Signing
+in on this machine). Other devices get owner rights with a link from `npm run owner-link` (single use, 10 minutes,
+long-lived signed cookie). Guests join through share links. Requests other
 websites make never carry owner rights. Sign out per device or all devices in the Devices sheet.
 
 **Dev mode.** A file watcher only marks plugins dirty; reloads are explicit (button, `npm run reload`, the

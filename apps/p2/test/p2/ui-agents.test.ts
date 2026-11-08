@@ -56,6 +56,7 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 		assert.equal(agent.name, "Check ok");
 		await until(chat.view, (value) => !live(value)?.run && JSON.stringify(value).includes('\\"ok\\":true'), 30_000);
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		await browser.metrics(1280, 900);
 	});
 	after(async () => {

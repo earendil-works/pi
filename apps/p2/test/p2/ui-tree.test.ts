@@ -35,6 +35,7 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		await send(1, "first");
 		await send(1, "second");
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 	});
 	after(async () => {
 		await browser?.close();

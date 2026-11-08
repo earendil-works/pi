@@ -202,15 +202,16 @@ test("a refused reconnect: the stored cookie kind decides the notice, which cook
 	assert.equal(await resumeAfterEnded("guest", url, both(), async () => "  "), undefined, "Enter quits");
 });
 
-test("loopback stays the device owner: a stored guest cookie never downgrades it", async (t) => {
+test("loopback stays the local owner: a stored guest cookie never downgrades it", async (t) => {
 	const fixture = await startFixture();
 	t.after(() => fixture.close());
 	const url = new URL(`http://127.0.0.1:${fixture.server.port}`);
 	const config: TuiConfig = { connections: { [url.origin]: { guest: { cookie: "p2_guest_1=x.y", session: "s" } } } };
-	const admission = await authenticateTui({ url }, config, async () => {
+	const admission = await authenticateTui({ url, dataDir: fixture.dataDir }, config, async () => {
 		throw new Error("Unexpected prompt");
 	});
-	assert.deepEqual(admission, { role: "owner" });
+	assert.equal(admission.role, "owner");
+	assert.equal(admission.local, true);
 });
 
 test(

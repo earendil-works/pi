@@ -1,7 +1,8 @@
 // Requests another site or another local port makes (Fetch Metadata `cross-site`/`same-site`; SameSite cookies do
 // not separate ports) never authenticate by any credential, except top-level navigations to app pages, which load
-// the app (even without a cookie, as a link from another local port should). Requests without Fetch Metadata (the
-// TUI, scripts) are unaffected; Radius-relayed ones are covered in radius.test.ts.
+// the app for the owner's cookie (SameSite=Lax sends it on those). Without a cookie such a navigation gets the sign-in
+// page, which loads itself once more from p2's origin (a client may have dropped the cookie). Requests without Fetch
+// Metadata (the TUI, scripts) are unaffected; Radius-relayed ones are covered in radius.test.ts.
 
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
@@ -12,7 +13,7 @@ import { WebSocket } from "ws";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, http, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdIn, http, poll, startFixture, until } from "./helpers.ts";
 
 const NO_CORS = { "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Dest": "script" };
 const NAVIGATE = { "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document" };
@@ -52,8 +53,7 @@ describe("foreign browser requests", () => {
 				await holdIn(owner, Sessions, {}, "owner")
 			).create({ cwd: fixture.workspace, title: "Mine" }, BACKGROUND_CONTEXT)
 		).id;
-		device = cookieOf((await http(port, "/")).headers, `p2_device_${port}`);
-		assert.ok(device, "the loopback owner cookie");
+		device = fixture.owner.cookie;
 		const sharing = owner.hold(Sharing, { session }, BACKGROUND_CONTEXT);
 		await sharing.link({ mode: "full" }, BACKGROUND_CONTEXT);
 		const link = (await until(sharing.links, (links) => Boolean(links?.length)))![0]!;
@@ -72,7 +72,7 @@ describe("foreign browser requests", () => {
 		for (const site of ["same-site", "cross-site"]) {
 			const foreign = { ...NO_CORS, "Sec-Fetch-Site": site };
 			assert.equal((await check({ ...foreign, Cookie: device })).status, 401, `${site}: the owner cookie`);
-			assert.equal((await check(foreign)).status, 401, `${site}: the loopback fallback`);
+			assert.equal((await check(foreign)).status, 401, `${site}: no credential`);
 			assert.equal(
 				(await http(port, "/owner-token", { headers: { ...foreign, Cookie: device } })).status,
 				403,
@@ -89,19 +89,23 @@ describe("foreign browser requests", () => {
 		}
 		// The page's own requests, and clients without Fetch Metadata (the TUI, scripts), are unaffected.
 		assert.equal((await check({ "Sec-Fetch-Site": "same-origin", Cookie: device })).status, 200);
-		assert.equal((await check({})).status, 200);
-		assert.equal(await upgrade(port, {}), 101);
+		assert.equal((await check({ Cookie: device })).status, 200);
+		assert.equal(await upgrade(port, { Cookie: device }), 101);
 		assert.equal(await upgrade(port, { Cookie: guest }), 101);
+		// Loopback without a credential is nobody.
+		assert.equal((await check({})).status, 401);
+		assert.equal(await upgrade(port, {}), 403);
 	});
 
-	it("loads app pages on a foreign top-level navigation, with or without a cookie", async () => {
+	it("loads app pages on a foreign top-level navigation with the owner's cookie, else signs in", async () => {
 		for (const site of ["same-site", "cross-site"]) {
 			const navigate = { ...NAVIGATE, "Sec-Fetch-Site": site };
-			for (const cookie of [device, ""]) {
-				const page = await http(port, "/", { headers: cookie ? { ...navigate, Cookie: cookie } : navigate });
-				assert.notEqual(page.status, 401, `${site} navigation${cookie ? " with the cookie" : ""} opens the app`);
-				assert.ok(cookieOf(page.headers, `p2_device_${port}`), "and gives the owner's browser its cookie");
-			}
+			const page = await http(port, "/", { headers: { ...navigate, Cookie: device } });
+			assert.notEqual(page.status, 401, `${site} navigation with the cookie opens the app`);
+			assert.ok(cookieOf(page.headers, `p2_owner_${port}`), "and renews the owner's local session");
+			const signIn = await http(port, `/s/${session}`, { headers: navigate });
+			assert.equal(signIn.status, 401, `${site} navigation without a cookie signs in`);
+			assert.match(signIn.body, /if\(!location\.hash\)location\.replace\(location\.href\);/, "after one reload");
 			// Navigations elsewhere than app pages stay unauthenticated.
 			assert.equal((await http(port, "/owner-token", { headers: { ...navigate, Cookie: device } })).status, 403);
 			assert.equal((await http(port, "/owner/check", { headers: { ...navigate, Cookie: device } })).status, 401);
@@ -111,9 +115,15 @@ describe("foreign browser requests", () => {
 	it("loads the app when Chrome on Android launches the installed app (navigate, Dest empty, no cookie)", async () => {
 		// As logged on the phone: a WebAPK launch of start_url `/` is cross-site, `navigate` with `Sec-Fetch-Dest: empty`.
 		const launch = { "Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "empty" };
-		const page = await http(port, "/", { headers: launch });
+		const page = await http(port, "/", { headers: { ...launch, Cookie: device } });
 		assert.notEqual(page.status, 401, "the launch opens the app");
-		assert.ok(cookieOf(page.headers, `p2_device_${port}`), "and gives the owner's browser its cookie");
+		// Without its cookie the launch gets the sign-in page, which loads itself once more from p2's own origin.
+		const cookieless = await http(port, "/", { headers: launch });
+		assert.equal(cookieless.status, 401);
+		assert.match(cookieless.body, /location\.replace\(location\.href\)/);
+		const again = await http(port, "/", { headers: { "Sec-Fetch-Site": "same-origin", ...NAVIGATE } });
+		assert.equal(again.status, 401);
+		assert.doesNotMatch(again.body, /location\.replace\(location\.href\)/, "the same-origin load does not loop");
 		// Only a navigation: another site's fetch (Dest empty, mode cors or no-cors) still gets nobody.
 		for (const mode of ["cors", "no-cors"]) {
 			const fetched = { "Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": mode, "Sec-Fetch-Dest": "empty" };
@@ -151,6 +161,7 @@ describe("foreign browser requests", () => {
 			await new Promise((resolve) => foreign.once("listening", resolve));
 			const foreignOrigin = `http://127.0.0.1:${(foreign.address() as AddressInfo).port}`;
 			const owner = await Browser.start();
+			await owner.signIn(fixture.owner);
 			const fresh = await Browser.start();
 			const ownerUi = `document.querySelector('.composer textarea') && !document.querySelector('nav[aria-label="Shared session"]') && !document.querySelector('.offline')`;
 			try {
@@ -172,7 +183,7 @@ describe("foreign browser requests", () => {
 					if (message.method === "Network.requestWillBeSent" && params.request) entry.url = params.request.url;
 					if (message.method === "Network.requestWillBeSentExtraInfo")
 						entry.cookie = Object.entries(params.headers ?? {}).some(
-							([name, value]) => name.toLowerCase() === "cookie" && value.includes(`p2_device_${port}=`),
+							([name, value]) => name.toLowerCase() === "cookie" && value.includes(`p2_owner_${port}=`),
 						);
 					if (message.method === "Network.responseReceivedExtraInfo") entry.status = params.statusCode;
 					seen.set(params.requestId, entry);
@@ -204,14 +215,15 @@ describe("foreign browser requests", () => {
 						assert.ok(entry.status !== undefined && entry.status >= 400, `${path} answered ${entry.status}`);
 				}
 
-				// Its link opens the app for the owner, and for a browser without any p2 cookie (no sign-in page).
+				// Its link opens the app for the owner; a browser without any p2 cookie gets the sign-in page.
 				await owner.click("#open");
 				await owner.wait(`location.origin === ${JSON.stringify(p2)}`);
 				await owner.wait(ownerUi);
 				await fresh.open(`${foreignOrigin}/`);
 				await fresh.click("#open");
-				await fresh.wait(`location.origin === ${JSON.stringify(p2)}`);
-				await fresh.wait(ownerUi);
+				// (The sign-in page reloads itself once from p2's origin: evaluating may hit the navigation.)
+				const signInShown = `location.origin === ${JSON.stringify(p2)} && Boolean(document.querySelector("#sign-in"))`;
+				await poll(() => fresh.evaluate<boolean>(signInShown).catch(() => false), 30_000, "the sign-in page");
 			} finally {
 				await owner.close();
 				await fresh.close();

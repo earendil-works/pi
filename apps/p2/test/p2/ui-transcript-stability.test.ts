@@ -150,6 +150,7 @@ describe("transcript stability", { skip: !browserTests }, () => {
 			.hold(Models, {}, BACKGROUND_CONTEXT)
 			.setDefault({ provider: "faux", modelId: "faux-1", thinkingLevel: "off" }, BACKGROUND_CONTEXT);
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		await browser.call("Page.addScriptToEvaluateOnNewDocument", { source: RENDER_PROBE });
 		await browser.metrics(390, 844);
 	});

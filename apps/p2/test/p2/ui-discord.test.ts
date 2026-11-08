@@ -41,6 +41,7 @@ test(
 			).create({ cwd: fixture.workspace, title: "Listener" }, BACKGROUND_CONTEXT)
 		).id;
 		const browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		t.after(() => browser.close());
 		await browser.metrics(390, 844);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
@@ -106,6 +107,7 @@ test(
 		const fixture = await startFixture({ web: true });
 		t.after(() => fixture.close());
 		const browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		t.after(() => browser.close());
 		await browser.metrics(390, 844);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}`);

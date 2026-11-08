@@ -16,6 +16,7 @@ describe("the app without its server", { skip: !browserTests }, () => {
 	before(async () => {
 		fixture = await startFixture({ web: true });
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 	});
 	after(async () => {
 		await browser?.close();

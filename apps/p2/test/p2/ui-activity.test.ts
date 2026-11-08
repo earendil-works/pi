@@ -40,6 +40,7 @@ describe("activity panel in the app", { skip: !browserTests }, () => {
 		await until(chat.view, (view) => !live(view)?.run && JSON.stringify(view).includes("Echo: bash"), 30_000);
 		chat.release();
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 	});
 	after(async () => {
 		await browser?.close();
@@ -183,6 +184,7 @@ describe("a block's steps and active thought", { skip: !browserTests }, () => {
 	before(async () => {
 		fixture = await startFixture({ web: true });
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 	});
 	after(async () => {
 		await browser?.close();

@@ -89,6 +89,7 @@ describe("inline artifacts in Chromium", { skip: !browserTests }, () => {
 		fixture = await startFixture({ web: true });
 		sessions = await holdIn(fixture.browser(), Sessions, {}, "owner");
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 	});
 	after(async () => {
 		await browser?.close();

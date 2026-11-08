@@ -34,6 +34,7 @@ describe("sandbox UI", { skip: !browserTests }, () => {
 		);
 		envs.release();
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		await browser.metrics(1280, 900);
 	});
 	after(async () => {

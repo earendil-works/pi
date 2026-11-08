@@ -106,8 +106,9 @@ function DevicesSheet() {
 					{confirmAll ? (
 						<>
 							<p className="muted small">
-								This signs out every associated device, including this one, and invalidates outstanding owner
-								links. Already-running agent work is not stopped.
+								This signs out every device and every browser on the host, including this one, and invalidates
+								outstanding owner links. TUIs on the host sign in again by themselves. Already-running agent
+								work is not stopped.
 							</p>
 							<button
 								type="button"

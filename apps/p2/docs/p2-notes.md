@@ -57,13 +57,16 @@ P2_FAKE=1 npm start          # http://127.0.0.1:8788, data in ~/.pi/p2
 - **Data report** (`scripts/data-report.ts`, read-only, beside a live server): per session its title, location,
   conversations with their entry counts and newest entry IDs, subagents, share modes, artifacts, uploads and
   downloads, plus environment and forward names; never secrets. `--compare before.json` lists differences (exit 1).
-  `scripts/verify-sessions.ts [url]` checks a running p2 against it as the loopback owner: the session list, and the
+  `scripts/verify-sessions.ts [url]` checks a running p2 against it as the local owner (signed in with the data
+  directory's owner key: `--data`, P2_DATA_DIR or ~/.pi/p2): the session list, and the
   newest entry of every conversation through `Chat` for the 10 newest sessions and all with subagents or shares
   (stopping workers it started). `test/fixtures/v1-data` is a data directory p2 wrote on Chord v1 (generated at
   aee97d3a9; the generator went with v1); `v1-data.test.ts` opens a copy and checks both tools and the contracts.
 - One server per data directory (process lock). To try p2 next to a real setup without touching it, set
   `P2_DATA_DIR` to a temporary directory.
-- Localhost is the device owner. Through an HTTPS tunnel host listed in `P2_ALLOWED_HOSTS` (comma-separated),
+- Loopback alone is nobody: the local owner holds a local session cookie, from a sign-in link opened on the host or
+  a local sign-in with the data directory's owner key (TUI, owner-link, scripts; **Loopback owner** under Devices).
+  Through an HTTPS tunnel host listed in `P2_ALLOWED_HOSTS` (comma-separated),
   the Devices plugin's owner cookie admits an associated remote owner; a share cookie admits only that session's
   guest. Open `/owner` to sign in with a one-time token (see README). Other Host/Origin headers and forwarded
   localhost requests get 403. Radius independently authenticates its owner; proxies never do. Associated cookies
@@ -160,20 +163,21 @@ failure results.
 ## TUI
 
 ```sh
-npm run tui                         # device owner on http://127.0.0.1:$PORT, default 8788
+npm run tui                         # local owner on http://127.0.0.1:$PORT, default 8788
 npm run tui -- https://pi.example    # prompts for an owner link unless its saved cookie is valid
 npm run owner-link -- https://pi.example   # on the server machine, print a private fragment link
 # Paste that link at the TUI prompt, or supply --owner-link '<link>' / P2_TUI_OWNER_LINK.
 ```
 
-Direct HTTP loopback uses the core device-owner path without prompting or sending a cached remote cookie.
-Its owner-only `GET /__p2_dev` preflight also works before a Devices protocol upgrade; a proxy marker refuses the
-path and causes a link prompt. The default is always `http://127.0.0.1:$PORT` (8788 unset), not `P2_PUBLIC_URL`.
+On direct HTTP loopback the launcher first tries a valid saved owner cookie, then signs in as the local owner with
+the owner key of `P2_DATA_DIR` (default `~/.pi/p2`; `src/runtime/local-owner.ts`) and saves nothing. Without a
+readable key, against a server with another data directory, or behind a proxy marker, it prints why and prompts for a
+link. When every owner is signed out while it runs, a local sign-in signs in again with the new key. The default is always `http://127.0.0.1:$PORT` (8788 unset), not `P2_PUBLIC_URL`.
 Remote URLs require HTTPS. `--owner-link <link>` (or `P2_TUI_OWNER_LINK`) redeems only a same-origin `/owner#<token>`
 link through POST and saves the returned cookie. Without a valid saved cookie, the TUI prompts for that link. A share link works too: `--join <https://host/join/token>` (or pasting it at
 the prompt) asks for a display name and redeems it with `POST /join`; the guest cookie is saved per origin beside any
 owner cookie and reused after a `HEAD /__p2_tui` check. If the server stops admitting it (link reset, guest removed,
-session archived) the TUI exits with a notice and forgets it. Loopback stays the device owner unless `--join` is given.
+session archived) the TUI exits with a notice and forgets it. Loopback stays the local owner unless `--join` is given.
 Basic-auth options/environment/passwords are removed. Prefer the prompt to command-line credentials, which can
 appear in shell history/process listings. Only the cookie is saved per origin in `~/.pi/p2-tui/config.json`
 (0600, directory 0700); the consumed invitation is never saved. Local configuration stores only cookies;
@@ -793,7 +797,7 @@ translated phone drawer and intercept chat taps.
     move goes to the target's root (with a notice when the subfolder is missing there). Then `/cd`'s flow (its
     confirmation, `Sessions.relocate`). Tests: `projects.test.ts`, `tui-projects.test.ts`.
 - **Principals** (`src/runtime/principals.ts`, typed: `P2Principal`, with Chord's API typed by it in
-  `src/runtime/chord.ts`): `owner` (trusted loopback `access: "local"`, authenticated Radius `access: "relay"`, or a
+  `src/runtime/chord.ts`): `owner` (a local owner session on loopback `access: "local"`, authenticated Radius `access: "relay"`, or a
   signed owner cookie `access: "device"` with a device ID), `guest`, `worker` (stamped by the server's `session:` route
   with the spawn generation), `server` (the server's own requests as a worker sees them, from the worker's `connect`)
   and `host` (every host's own code, `createHost({ self })`). Object keys: `owner:local`, `owner:relay`,
@@ -1125,8 +1129,10 @@ translated phone drawer and intercept chat taps.
   observer (`WorkerModels`). `startServer({ resources: { createModels } })` injects a fixture provider (tests).
   Edit `settings.json` as a file; valid changes hot-reload and in-flight requests keep their configuration.
   Set the default model and thinking level with **Make default for new sessions** in the model picker; there is no Settings editor UI.
-- **Devices** (`plugins/devices`): `npm run owner-link [base-url]` calls the direct device-only loopback token path,
-  then prints a private `/owner#<token>` link. Base defaults to `P2_PUBLIC_URL` or `http://127.0.0.1:$PORT`; invitation
+- **Devices** (`plugins/devices`): `npm run owner-link [base-url]` signs in as the local owner, calls the local-owner
+  `GET /owner-token` (same-origin or no Fetch Metadata only), then prints a private `/owner#<token>` link. At startup the
+  server prints a one-time token for this machine, to paste into the sign-in page (added to the log redactor; only
+  the terminal shows it). Base defaults to `P2_PUBLIC_URL` or `http://127.0.0.1:$PORT`; invitation
   lifetime is ten minutes, single-use. The nonced sign-in page is also the stranger landing page; it immediately
   scrubs the fragment, POSTs it, then redirects to `/`. HTTP/proxy URLs never carry the token. Signed per-device
   cookies are HttpOnly, SameSite=Lax, Secure on a remote origin, with a 30-day browser/server expiry. The private
@@ -1134,18 +1140,26 @@ translated phone drawer and intercept chat taps.
   and revokes live remote-owner objects/links through `Server.revokeOwners`. First signed-cookie startup rotates
   the old exposed raw-key cookie once (`owner-cookie-version`); no legacy raw-cookie compatibility. The web host
   exposes no filesystem paths; it serves only app pages, `public/` files and bundle files. Headless `owner-token.txt`
-  is replaced each startup. Cookie owners are remote (`access: "device"`
-  plus device ID), even when redeemed locally, so they cannot mint invitations. Device bootstrap privileges remain
-  inherent to the machine. Compatible reloads keep invitations; restarts invalidate them but keep cookies/revocations.
+  is replaced each startup. Cookies redeemed on a remote origin are remote owners (`access: "device"` plus device ID)
+  and cannot mint invitations; redeemed on loopback they are local sessions. Compatible reloads keep invitations; restarts invalidate them but keep cookies/revocations.
   Tests use only temporary directories and port 0, with no real provider requests (`devices`, `proxy-marker`, `tui`,
   and the fragment-link browser regression in `ui-parity.test.ts`).
-- **Loopback owner cookie** (Pi Mobile's, `src/runtime/loopback-cookie.ts`): the local owner's browser gets
-  `p2_device_<port>` (HttpOnly, SameSite=Strict, secret in private `<data>/device-cookie`) when it loads an app page
-  (`/`, `/s/…`) on loopback. Cookieless loopback requests stay the device owner (TUI, owner-link, first page load),
-  except on a share's join page: only an owner by cookie or relay skips the form, so a fresh profile/incognito tab
-  opening `http://127.0.0.1:<port>/join/<token>` joins as a guest. A guest cookie wins over the cookieless fallback
-  for every request (pages, WebSocket, files); the loopback owner cookie wins over a guest cookie (the owner's
-  browser stays owner). Checked only on loopback. `loopback-join.test.ts` (HTTP and Chromium with fresh profiles).
+- **Loopback owner** (`plugins/devices`, `src/runtime/local-owner.ts`): loopback alone proves nothing on a shared
+  machine, so the local owner (`access: "local"`) is a signed session cookie, the devices cookie with a `local.` kind
+  (`p2_owner_<port>=local.<id>.<expiry>.<sig>`, HttpOnly, SameSite=Lax, never Secure, accepted only on loopback). A
+  browser gets it by redeeming an owner link on loopback (the startup token pasted into the sign-in page, `npm run owner-link`); clients on the host
+  get it by local sign-in: `POST /owner/local/challenge` (one-time, one minute, in memory), then `POST
+  /owner/local/claim` with HMAC-SHA256(owner-key, `p2-local-owner:<port>:<challenge>`), so the key never leaves the
+  client and a process squatting on the port learns nothing usable at the real one. Each app page load renews the
+  session (same id, 30 more days; `PageCookies`). Sign-out of one local session revokes its id but leaves live local
+  links (one shared principal); sign-out of all devices rotates the key and revokes `{ owners: "local" }` too.
+  Lax, not Strict: a link from another site (or Chrome launching an installed app) must arrive signed in; the server
+  drops every cookie principal of another site's requests except top-level navigations to app pages (Fetch Metadata).
+  A foreign navigation without a cookie gets the sign-in page, which loads itself once more from p2's origin (that
+  load is same-origin, so it cannot loop). Only an owner by cookie or relay skips a share's join form, so a fresh
+  profile opening `http://127.0.0.1:<port>/join/<token>` joins as a guest; an owner cookie wins over a guest cookie.
+  Browsers send cookies to every port of `127.0.0.1` (README: remaining risk). The old `<data>/device-cookie` is
+  unused. Tests: `devices.test.ts`, `loopback-join.test.ts`, `foreign-requests.test.ts`, `tui.test.ts`.
 - **Provider login** (`plugins/login`): `LoginService` (server local) runs its own `Logins` (provider-owned
   api-key and OAuth flows), which keeps the flow's `login` state (status, the pending prompt, notices; never
   credentials or answers); the service follows it, so `start`, `answer`, `dismiss` and `cancel` (which waits for the
@@ -1335,7 +1349,7 @@ translated phone drawer and intercept chat taps.
 - **MCP sign-in** (`plugins/mcp/sign-in.ts`, `routes.ts`, `probe.ts`, `pages.ts`, `credentials.ts`; as built:
   `docs/mcp-durable.md` section 4.7): HTTP servers without an `Authorization` header use OAuth with pi-mcp's auth
   provider (stored tokens, refreshed, never a browser) and credentials in `<P2_DATA_DIR>/mcp-auth.json` (0600, keyed like
-  pi's). Owners sign in at `GET /mcp/sign-in/<server>` (the web MCP sheet opens it in a new tab): the device owner's
+  pi's). Owners sign in at `GET /mcp/sign-in/<server>` (the web MCP sheet opens it in a new tab): the local owner's
   browser returns to a loopback callback on the p2 host; for a relayed or public owner a probe page first fetches a
   nonce URL from a 127.0.0.1 listener of p2 (CORS for that origin only), and returns to loopback when it answers, else to
   `GET /mcp/callback` on the origin p2 is reached through. Pasting the final redirect URL (web sheet, TUI `/mcp paste`)

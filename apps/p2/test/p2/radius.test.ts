@@ -23,9 +23,10 @@ import {
 import { radiusStatusText } from "../../plugins/radius/server.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
+import { Terminals } from "../../plugins/terminals/contract.ts";
 import { radiusTransport } from "../../src/hosts/tui-radius.ts";
 import { Access } from "../../src/runtime/access.ts";
-import { clientHost, expectChord, holdIn, http, poll, until } from "./helpers.ts";
+import { clientHost, expectChord, holdIn, http, localOwner, poll, until } from "./helpers.ts";
 import { radiusFixture as fixture, OWNER, PUBLIC_ORIGIN } from "./radius-fixture.ts";
 
 test(
@@ -102,13 +103,39 @@ test(
 			(await http(f.server.port, "/probe", { headers: { ...marked, [RELAY_SECRET_HEADER]: "forged" } })).status,
 			403,
 		);
-		assert.equal((await http(f.server.port, "/probe")).status, 200);
+		// Radius needs no local credential, and loopback alone is nobody.
+		assert.equal((await http(f.server.port, "/probe")).status, 403);
+		// A plugin's own WebSocket upgrade (a terminal's byte channel) admits the relayed owner too.
+		const session = await (await holdIn(browser, Sessions, {}, "owner")).create(
+			{ cwd: f.directory },
+			BACKGROUND_CONTEXT,
+		);
+		const view = browser.hold(Terminals, { session: session.id, view: randomUUID() }, BACKGROUND_CONTEXT);
+		const { token } = await view.channel({}, BACKGROUND_CONTEXT);
+		const channel = (headers: Record<string, string>) =>
+			new Promise<number>((resolve) => {
+				const socket = new WebSocket(`ws://127.0.0.1:${f.server.port}/terminal?${new URLSearchParams({ token })}`, {
+					headers,
+				});
+				socket.on("open", () => {
+					socket.terminate();
+					resolve(101);
+				});
+				socket.on("unexpected-response", (_request, response) => {
+					response.resume();
+					resolve(response.statusCode ?? 0);
+				});
+				socket.on("error", () => {});
+			});
+		assert.equal(await channel({}), 403, "not without Radius or a local credential");
+		assert.equal(await channel(marked), 101);
+		view.release();
 	},
 );
 
 test("Radius-relayed artifact previews may sit below the Radius shell's frame", { timeout: 30_000 }, async (t) => {
 	const f = await fixture(t);
-	const owner = clientHost(f.server.port);
+	const owner = clientHost(await localOwner(f.server));
 	t.after(() => owner.close(BACKGROUND_CONTEXT));
 	const session = (await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: f.directory }, BACKGROUND_CONTEXT))
 		.id;
@@ -137,7 +164,7 @@ test("Radius admits people sessions are shared with by email, across organizatio
 	assert.equal((await f.radius.response(f.open("/probe"))).status, 200);
 	const config = await readRadiusConfig(f.directory);
 	assert(config);
-	const owner = clientHost(f.server.port);
+	const owner = clientHost(await localOwner(f.server));
 	t.after(() => owner.close(BACKGROUND_CONTEXT));
 	const sessions = await holdIn(owner, Sessions, {}, "owner");
 	const first = await sessions.create({ cwd: f.directory, title: "First" }, BACKGROUND_CONTEXT);

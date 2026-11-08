@@ -89,6 +89,7 @@ describe("unread answers", () => {
 			const target = await sessions.create({ cwd: fixture.workspace, title: "Answers here" }, BACKGROUND_CONTEXT);
 			const elsewhere = await sessions.create({ cwd: fixture.workspace, title: "Looking here" }, BACKGROUND_CONTEXT);
 			const browser = await Browser.start();
+			await browser.signIn(fixture.owner);
 			try {
 				await browser.metrics(1280, 900);
 				await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${elsewhere.id}`);

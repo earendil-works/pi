@@ -422,11 +422,12 @@ test(
 		const client = await startTuiClient({
 			terminal,
 			url,
+			credentials: { cookie: fixture.owner.cookie },
 			pollMs: 60000,
 			colorQueryMs: 10,
 			actions: launcherActions({
 				url,
-				credentials: {},
+				credentials: { cookie: fixture.owner.cookie },
 				role: "owner",
 				clipboard: async (text) => {
 					copies.push(text);

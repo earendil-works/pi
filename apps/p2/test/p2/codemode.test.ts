@@ -17,7 +17,7 @@ import type { Host, RefIn } from "../../src/runtime/chord.ts";
 import { Hosts } from "../../src/runtime/server.ts";
 import { buildTranscript } from "../../src/web/transcript.ts";
 import { wholeView } from "../fixtures/whole-view.ts";
-import { clientHost, type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { clientHost, type Fixture, holdIn, localOwner, startFixture, until } from "./helpers.ts";
 
 const codemodeResults = (view: ConversationView | null | undefined): ToolResultMessage[] =>
 	(view?.entries ?? []).flatMap((entry) =>
@@ -170,7 +170,7 @@ describe("code mode (fake provider)", () => {
 			web: false,
 			plugins: fixture.server.plugins,
 		});
-		const client = clientHost(restarted.port);
+		const client = clientHost(await localOwner(restarted));
 		try {
 			const again = await holdIn(client, Chat, { session, conversation: 1 }, "participant");
 			const view = await until(

@@ -315,8 +315,7 @@ describe("a subagent spawned with its own cwd (fake provider)", () => {
 		assert.deepEqual(await list(1), ["worktree"]);
 
 		// An upload in the subagent's view lands in its directory.
-		const upload = await http(
-			fixture.server.port,
+		const upload = await fixture.http(
 			`/workspace-upload?${new URLSearchParams({ session, conversation: String(agent.conversationId), path: "", name: "up.txt" })}`,
 			{ method: "POST", headers: { Origin: `http://127.0.0.1:${fixture.server.port}` }, body: "uploaded" },
 		);

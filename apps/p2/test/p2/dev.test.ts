@@ -14,7 +14,19 @@ import { SessionStatus } from "../../plugins/status/contract.ts";
 import type { Host } from "../../src/runtime/chord.ts";
 import type { DevCommand, DevStatus } from "../../src/runtime/dev-protocol.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { clientHost, holdIn, http, poll, until, webBundle } from "./helpers.ts";
+import { clientHost, holdIn, http, type LocalOwner, localOwner, poll, until, webBundle } from "./helpers.ts";
+
+/** Local owner sessions of a dev server by port (each restart listens on a new one), signed in on first use. */
+function localOwners(dataDir: string): (port: number) => Promise<LocalOwner> {
+	const owners = new Map<number, Promise<LocalOwner>>();
+	return (port) => {
+		const known = owners.get(port);
+		if (known) return known;
+		const owner = localOwner({ port, dataDir });
+		owners.set(port, owner);
+		return owner;
+	};
+}
 
 /** A test plugin's probe on session workers (`name`) and its twin on the server (`name-server`): one type, one place. */
 function probes(name: string) {
@@ -154,13 +166,20 @@ test(
 		try {
 			await poll(() => ports().length === 1, 30_000, "initial server");
 			const port = ports()[0]!;
-			const devState = async () => JSON.parse((await http(ports().at(-1)!, "/__p2_dev")).body) as DevStatus;
-			const button = (command: DevCommand) =>
-				http(ports().at(-1)!, "/__p2_dev", {
+			const ownerOf = localOwners(join(directory, "data"));
+			const local = async (at: number) => ({ Cookie: (await ownerOf(at)).cookie });
+			const devState = async () => {
+				const at = ports().at(-1)!;
+				return JSON.parse((await http(at, "/__p2_dev", { headers: await local(at) })).body) as DevStatus;
+			};
+			const button = async (command: DevCommand) => {
+				const at = ports().at(-1)!;
+				return http(at, "/__p2_dev", {
 					method: "POST",
-					headers: { Origin: `http://127.0.0.1:${ports().at(-1)!}`, "Content-Type": "application/json" },
+					headers: { ...(await local(at)), Origin: `http://127.0.0.1:${at}`, "Content-Type": "application/json" },
 					body: JSON.stringify(command),
 				});
+			};
 			const cli = (args: string[] = []): Promise<{ code: number; output: string }> =>
 				new Promise((resolve, reject) => {
 					const command = spawn("npm", ["run", "reload", "--", ...args], {
@@ -190,7 +209,7 @@ test(
 			await poll(async () => (await devState()).restartFiles.includes("src/runtime/principals.ts"));
 			await writeFile(loadedRuntime, loadedContent);
 			await poll(async () => !(await devState()).restartNeeded);
-			browser = clientHost(port);
+			browser = clientHost(await ownerOf(port));
 			const sessions = await holdIn(browser, Sessions, {}, "owner");
 			const first = await sessions.create({ cwd: directory }, BACKGROUND_CONTEXT);
 			const second = await sessions.create({ cwd: directory }, BACKGROUND_CONTEXT);
@@ -274,7 +293,7 @@ test(
 			assert.equal(await workerProbe.label(BACKGROUND_CONTEXT), "after-refusal");
 			assert.equal(await serverProbe.label(BACKGROUND_CONTEXT), "after-refusal");
 			// A broken web facet refuses the whole reload too: no backend change commits and the old bundle stays served.
-			const servedBundle = await webBundle(port);
+			const servedBundle = await webBundle(port, await local(port));
 			await writeFile(join(probeDirectory, "nested/label.ts"), 'export const label = "after-web-refusal";');
 			await writeFile(join(probeDirectory, "web.tsx"), `${webFacet}\nthis is broken TypeScript !!!`);
 			await poll(async () => (await devState()).dirty.includes("dev-probe"));
@@ -283,15 +302,17 @@ test(
 			assert.match(webRefusal.output, /Reload refused/);
 			assert.equal(await serverProbe.label(BACKGROUND_CONTEXT), "after-refusal");
 			assert.equal(await workerProbe.label(BACKGROUND_CONTEXT), "after-refusal");
-			assert.deepEqual(await webBundle(port), servedBundle);
-			assert.equal((await http(port, servedBundle.script)).status, 200);
+			assert.deepEqual(await webBundle(port, await local(port)), servedBundle);
+			assert.equal((await http(port, servedBundle.script, { headers: await local(port) })).status, 200);
 			await writeFile(join(probeDirectory, "nested/label.ts"), 'export const label = "after-refusal";');
 			await writeFile(join(probeDirectory, "web.tsx"), webFacet);
 			assert.equal((await cli(["dev-probe"])).code, 0);
 			assert.equal(ports().length, 1, "plugin saves never recycle the server");
 
 			// A remote owner (proxy + cookie).
-			const invitation = JSON.parse((await http(port, "/owner-token")).body) as { token: string };
+			const invitation = JSON.parse((await http(port, "/owner-token", { headers: await local(port) })).body) as {
+				token: string;
+			};
 			const associated = await http(port, "/owner/claim", {
 				method: "POST",
 				headers: {
@@ -308,7 +329,13 @@ test(
 			const original = (await webBundle(port, headers)).script;
 			assert.equal((await http(port, "/__p2_dev", { headers: { Host: "dev.p2.test" } })).status, 403);
 			assert.equal(
-				(await http(port, "/__p2_dev", { method: "POST", body: JSON.stringify({ action: "reload" }) })).status,
+				(
+					await http(port, "/__p2_dev", {
+						method: "POST",
+						headers: await local(port),
+						body: JSON.stringify({ action: "reload" }),
+					})
+				).status,
 				403,
 				"Button API requires same-origin POST",
 			);
@@ -334,6 +361,7 @@ test(
 			// pages, and an open page polls the manifest and reloads onto the new one.
 			if (browserTests) {
 				page = await Browser.start();
+				await page.signIn(await ownerOf(port));
 				await page.open(`http://127.0.0.1:${port}/`);
 				await page.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
 				await page.evaluate(`window.beforeReload = true`);
@@ -472,7 +500,7 @@ test(
 			assert(!log.includes("Unknown p2 plugin: dev-removable"));
 			await chat.send({ text: "slow restart-stream-sentinel", requestId: "restart-stream" }, BACKGROUND_CONTEXT);
 			await until(status.statuses, (value) => value?.[first.id]?.busy.includes(1) === true);
-			await appendFile(join(project, "src/runtime/loopback-cookie.ts"), "\n// restart runtime\n");
+			await appendFile(join(project, "src/runtime/local-owner.ts"), "\n// restart runtime\n");
 			await poll(async () => (await devState()).restartNeeded);
 			await delay(700);
 			assert.equal(ports().length, 1, "Runtime saves never restart automatically");
@@ -484,7 +512,7 @@ test(
 			await poll(async () => (await devState()).message === "Restarted server");
 			assert.equal((await devState()).restartNeeded, false, JSON.stringify((await devState()).restartFiles));
 			await browser.close(BACKGROUND_CONTEXT);
-			browser = clientHost(ports()[1]!);
+			browser = clientHost(await ownerOf(ports()[1]!));
 			const restored = await holdIn(browser, SessionStatus, {}, "reader");
 			// Check running state before making any worker hold: this must not spawn the unseen session on demand.
 			await until(restored.statuses, (value) => Boolean(value?.[first.id]?.running && value?.[second.id]?.running));
@@ -524,7 +552,7 @@ test(
 			await poll(() => ports().length === 4, 30_000);
 			await poll(async () => (await devState()).message === "Restarted server");
 			// Startup refusal reaches the CLI through the supervisor's socket, which survives a failed child.
-			const runtimeFile = join(project, "src/runtime/loopback-cookie.ts");
+			const runtimeFile = join(project, "src/runtime/local-owner.ts");
 			const validRuntime = await readFile(runtimeFile, "utf8");
 			await writeFile(runtimeFile, `${validRuntime}\nthis is broken runtime code !!!\n`);
 			await poll(async () => (await devState()).restartNeeded);
@@ -616,7 +644,8 @@ test("a forced dev restart reaps locked workers before resuming their stores", {
 	let oldWorkerPid: number | undefined;
 	try {
 		await poll(() => ports().length === 1, 30_000, "initial server");
-		browser = clientHost(ports()[0]!);
+		const ownerOf = localOwners(dataDir);
+		browser = clientHost(await ownerOf(ports()[0]!));
 		const sessions = await holdIn(browser, Sessions, {}, "owner");
 		const session = await sessions.create({ cwd: directory }, BACKGROUND_CONTEXT);
 		const probe = browser.hold(Probe, { session: session.id }, BACKGROUND_CONTEXT);
@@ -649,7 +678,7 @@ test("a forced dev restart reaps locked workers before resuming their stores", {
 		child.kill("SIGUSR2");
 		await poll(() => ports().length === 2, 30_000, "replacement server");
 		await browser.close(BACKGROUND_CONTEXT);
-		browser = clientHost(ports()[1]!);
+		browser = clientHost(await ownerOf(ports()[1]!));
 		const replacement = browser.hold(Probe, { session: session.id }, BACKGROUND_CONTEXT);
 		assert.notEqual(await replacement.pid(BACKGROUND_CONTEXT), oldPid);
 		await poll(

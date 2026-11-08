@@ -1,4 +1,4 @@
-// The server serves the web UI (one content-named esbuild bundle) and the chord2 WebSocket to the localhost owner only.
+// The server serves the web UI (one content-named esbuild bundle) and the chord2 WebSocket to the local owner only.
 import assert from "node:assert/strict";
 import { createServer, type IncomingHttpHeaders, request } from "node:http";
 import { after, before, describe, it } from "node:test";
@@ -33,19 +33,21 @@ describe("web host", () => {
 	after(async () => {
 		await fixture?.close();
 	});
+	/** The local owner's cookie (its browser's), with `headers`. */
+	const owner = (headers: Record<string, string> = {}) => ({ Cookie: fixture.owner.cookie, ...headers });
 
 	it("serves the app page naming the current bundle, whose files never change", async () => {
 		const port = fixture.server.port;
-		const bundle = await webBundle(port);
-		assert.equal((await get(port, "/__p2_web")).headers["cache-control"], "no-store");
+		const bundle = await webBundle(port, owner());
+		assert.equal((await get(port, "/__p2_web", owner())).headers["cache-control"], "no-store");
 		for (const path of ["/", "/s/0b9f3a52-6a39-4d43-9d55-1a0f4ea4f1a2"]) {
-			const page = await get(port, path);
+			const page = await get(port, path, owner());
 			assert.equal(page.status, 200);
 			assert(page.body.includes(`data-web-version="${bundle.version}"`), page.body);
 			assert(page.body.includes(`<script type="module" src="${bundle.script}"></script>`), page.body);
 			assert(page.body.includes(`<link rel="stylesheet" href="${bundle.style}" />`), page.body);
 		}
-		const script = await get(port, bundle.script);
+		const script = await get(port, bundle.script, owner());
 		assert.equal(script.status, 200);
 		assert.match(String(script.headers["content-type"]), /^text\/javascript/);
 		assert.equal(script.headers["cache-control"], "private, max-age=31536000, immutable");
@@ -53,7 +55,7 @@ describe("web host", () => {
 
 	it("sends a CSP refusing every framer, and the loopback owner only to its own origin's requests", async () => {
 		const port = fixture.server.port;
-		const page = await get(port, "/");
+		const page = await get(port, "/", owner());
 		assert.equal(page.status, 200);
 		const csp = String(page.headers["content-security-policy"]);
 		assert.match(csp, /frame-ancestors 'none'$/);
@@ -63,33 +65,41 @@ describe("web host", () => {
 		// The page's own inline script (the theme) carries the nonce.
 		for (const script of page.body.matchAll(/<script(?![^>]*\ssrc=)[^>]*>/g))
 			assert.match(script[0], new RegExp(`nonce="${nonce}"`), script[0]);
-		// Another site's page, link, frame or fetch, or another local port (same-site), is not the device owner.
+		// Another site's page, link, frame or fetch, or another local port (same-site), is not the owner, cookie or not.
 		for (const headers of [
 			{ "Sec-Fetch-Site": "cross-site", "Sec-Fetch-Dest": "document" },
 			{ "Sec-Fetch-Site": "cross-site", "Sec-Fetch-Dest": "iframe" },
 			{ "Sec-Fetch-Site": "same-site", "Sec-Fetch-Dest": "iframe" },
 			{ "Sec-Fetch-Site": "same-site", "Sec-Fetch-Dest": "empty" },
 		]) {
-			for (const path of ["/", (await webBundle(port)).script, "/__p2_web", "/__p2_tui", "/__p2_dev"]) {
-				const response = await get(port, path, headers);
+			for (const path of ["/", (await webBundle(port, owner())).script, "/__p2_web", "/__p2_tui", "/__p2_dev"]) {
+				const response = await get(port, path, owner(headers));
 				assert.ok(response.status === 401 || response.status === 403, `${path} ${JSON.stringify(headers)}`);
 				assert.match(String(response.headers["content-security-policy"]), /frame-ancestors 'none'$/);
 			}
 		}
 		// File routes check the same principal: no owner download or workspace read for another site.
 		for (const path of ["/download?session=x&id=y", "/workspace-file?session=x&conversation=1&path=a"])
-			assert.notEqual((await get(port, path, { "Sec-Fetch-Site": "cross-site" })).status, 200, path);
+			assert.notEqual((await get(port, path, owner({ "Sec-Fetch-Site": "cross-site" }))).status, 200, path);
 		// The owner's own requests: typed or bookmarked (none), its pages and modules (same-origin).
-		assert.equal((await get(port, "/", { "Sec-Fetch-Site": "none", "Sec-Fetch-Dest": "document" })).status, 200);
+		assert.equal(
+			(await get(port, "/", owner({ "Sec-Fetch-Site": "none", "Sec-Fetch-Dest": "document" }))).status,
+			200,
+		);
 		assert.equal(
 			(
-				await get(port, (await webBundle(port)).script, {
-					"Sec-Fetch-Site": "same-origin",
-					"Sec-Fetch-Dest": "script",
-				})
+				await get(
+					port,
+					(
+						await webBundle(port, owner())
+					).script,
+					owner({ "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Dest": "script" }),
+				)
 			).status,
 			200,
 		);
+		// Without the cookie, loopback is nobody.
+		assert.equal((await get(port, "/", { "Sec-Fetch-Site": "none", "Sec-Fetch-Dest": "document" })).status, 401);
 	});
 
 	it("serves the installable app's files without signing in, not to another site, and nothing else", async () => {
@@ -133,9 +143,10 @@ describe("web host", () => {
 				socket.once("error", () => resolve("refused"));
 			});
 		const origin = `http://127.0.0.1:${fixture.server.port}`;
-		assert.equal(await outcome({ Origin: origin, "Sec-Fetch-Site": "cross-site" }), "refused");
-		assert.equal(await outcome({ Origin: origin, "Sec-Fetch-Site": "same-site" }), "refused");
-		assert.equal(await outcome({ Origin: origin, "Sec-Fetch-Site": "same-origin" }), "open");
+		assert.equal(await outcome(owner({ Origin: origin, "Sec-Fetch-Site": "cross-site" })), "refused");
+		assert.equal(await outcome(owner({ Origin: origin, "Sec-Fetch-Site": "same-site" })), "refused");
+		assert.equal(await outcome(owner({ Origin: origin, "Sec-Fetch-Site": "same-origin" })), "open");
+		assert.equal(await outcome({ Origin: origin, "Sec-Fetch-Site": "same-origin" }), "refused", "no credential");
 	});
 
 	it(
@@ -149,6 +160,7 @@ describe("web host", () => {
 			await new Promise<void>((resolve) => framer.listen(0, "127.0.0.1", resolve));
 			const framerPort = (framer.address() as { port: number }).port;
 			const browser = await Browser.start();
+			await browser.signIn(fixture.owner);
 			try {
 				await browser.call("Page.addScriptToEvaluateOnNewDocument", {
 					source:

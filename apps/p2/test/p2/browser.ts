@@ -134,6 +134,17 @@ export class Browser {
 	wait(expression: string): Promise<void> {
 		return poll(() => this.evaluate<boolean>(`Boolean(${expression})`), 30_000, expression);
 	}
+	/** Gives this profile the local owner's session cookie, as the owner's sign-in link would. */
+	async signIn(owner: { readonly port: number; readonly cookie: string }): Promise<void> {
+		const [name, value] = owner.cookie.split("=", 2) as [string, string];
+		await this.call("Network.setCookie", {
+			name,
+			value,
+			url: `http://127.0.0.1:${owner.port}/`,
+			httpOnly: true,
+			sameSite: "Lax",
+		});
+	}
 	async metrics(width: number, height: number): Promise<void> {
 		await this.call("Emulation.setDeviceMetricsOverride", {
 			width,

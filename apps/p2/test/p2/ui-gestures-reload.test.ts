@@ -41,6 +41,7 @@ describe("phone gestures across a live plugin reload", { skip: !browserTests }, 
 		await until(chat.view, (view) => !live(view)?.run && JSON.stringify(view).includes("Echo: steps"), 30_000);
 		chat.release();
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		await browser.metrics(390, 844);
 		await browser.call("Emulation.setTouchEmulationEnabled", { enabled: true });
 	});

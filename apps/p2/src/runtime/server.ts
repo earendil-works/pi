@@ -52,7 +52,7 @@ export const Server = local("p2.server", {
 	params: {},
 	members: {
 		info: ServerInfoSchema,
-		/** Ends remote owners' live links and objects (one device, or every remote owner). */
+		/** Ends owners' live links and objects: one device's, or every owner's (remote and local sessions). */
 		revokeOwners: method(obj({ device: opt(str()) })),
 		revokeGuests: method(obj({ id: str() })),
 	},
@@ -177,6 +177,13 @@ export type RouteHandler = (
 ) => void | Promise<void>;
 export const Routes = keyedRegistry<RouteHandler>("p2.routes");
 
+/**
+ * `Set-Cookie` values for an owner's app page load (`/`, `/s/…`), or undefined. Example: the devices plugin renews a
+ * local owner session, so a browser in use stays signed in.
+ */
+export type PageCookie = (request: IncomingMessage, access: RequestAccess) => string | undefined;
+export const PageCookies = keyedRegistry<PageCookie>("p2.page-cookies");
+
 /** Authorized WebSocket upgrades by exact path. Plugins own their byte channels, not the server host. */
 export type UpgradeHandler = (
 	request: IncomingMessage,
@@ -204,7 +211,7 @@ export function findRoute(
 }
 
 /**
- * Authenticates requests from tunnel hosts (loopback is the device owner): the first principal returned wins.
+ * Authenticates requests (loopback and tunnel hosts): an owner returned wins, else the first principal returned.
  * Example: the sharing plugin maps a guest cookie to its current grant.
  */
 export type Authenticator = (
@@ -275,6 +282,7 @@ export function serveServerRegistries(facet: FacetHost): void {
 	for (const registry of [
 		RequestResolvers,
 		Routes,
+		PageCookies,
 		Upgrades,
 		Authenticators,
 		ShareUrls,
@@ -297,7 +305,10 @@ export function serverCore(host: Host, info: ServerInfo, parts: ServerParts): Fa
 			info: constant(info),
 			revokeOwners: async ({ device }, ctx) => {
 				if (device !== undefined) host.revoke({ device }, ctx);
-				else host.revoke({ owners: "remote" }, ctx);
+				else {
+					host.revoke({ owners: "remote" }, ctx);
+					host.revoke({ owners: "local" }, ctx);
+				}
 				return null;
 			},
 			revokeGuests: async ({ id }, ctx) => {

@@ -35,6 +35,7 @@ async function withTerminal(run: (page: Browser, origin: string) => Promise<void
 		).id;
 		const origin = `http://127.0.0.1:${fixture.server.port}`;
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		const page = browser;
 		await page.metrics(390, 844);
 		await page.call("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });

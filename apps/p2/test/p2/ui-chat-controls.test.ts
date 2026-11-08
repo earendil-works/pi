@@ -22,6 +22,7 @@ describe("chat control parity", { skip: !browserTests }, () => {
 			).create({ cwd: fixture.workspace, title: "Control parity" }, BACKGROUND_CONTEXT)
 		).id;
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 	});
 	after(async () => {
 		await browser?.close();
@@ -41,6 +42,7 @@ describe("chat control parity", { skip: !browserTests }, () => {
 		await browser.wait(`document.querySelector('[role=dialog][aria-label=Model]')`);
 		await browser.click("[role=dialog] button[aria-label=Close]");
 		const second = await Browser.start();
+		await second.signIn(fixture.owner);
 		try {
 			await second.open(`http://127.0.0.1:${fixture.server.port}/s/${id}`);
 			await browser.wait(`document.querySelector('.session-stats .client-count')?.textContent.trim()==='2'`);

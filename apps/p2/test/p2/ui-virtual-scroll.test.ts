@@ -119,6 +119,7 @@ describe("virtual transcript", { skip: !browserTests }, () => {
 			BACKGROUND_CONTEXT,
 		);
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		await browser.call("Page.addScriptToEvaluateOnNewDocument", {
 			// Page errors by phase, including the browser's "ResizeObserver loop" reports.
 			source: `window.__errors = []; addEventListener('error', (e) => window.__errors.push((window.__phase ?? 'load') + ': ' + String(e.message) + ' ' + (e.error?.stack ?? ''))); addEventListener('unhandledrejection', (e) => window.__errors.push(String(e.reason?.stack ?? e.reason)));`,
@@ -316,6 +317,7 @@ describe("virtual transcript feedback", { skip: !browserTests }, () => {
 		// that distance of a row, each render would flip it: the list must settle instead of rendering every frame.
 		const fixture = await startFixture({ web: true });
 		const browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		try {
 			await browser.metrics(390, 844);
 			await browser.open(`http://127.0.0.1:${fixture.server.port}`);

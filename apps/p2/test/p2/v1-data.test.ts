@@ -22,7 +22,7 @@ import { type DataReport, dataReport } from "../../scripts/data-report.ts";
 import { migrateData } from "../../scripts/migrate-data.ts";
 import { verifySessions } from "../../scripts/verify-sessions.ts";
 import { startServer } from "../../src/hosts/server.ts";
-import { clientHost, holdIn, http, until } from "./helpers.ts";
+import { clientHost, holdIn, http, localOwner, until } from "./helpers.ts";
 
 const fixture = new URL("../fixtures/v1-data/", import.meta.url);
 const expected = JSON.parse(readFileSync(new URL("report.json", fixture), "utf8")) as DataReport;
@@ -61,7 +61,7 @@ test("a v1 data directory opens with everything in it", { timeout: 120_000 }, as
 	const server = await startServer({ dataDir, port: 0, fake: true, web: false });
 	try {
 		const url = `http://127.0.0.1:${server.port}`;
-		assert.deepEqual(await verifySessions(url, expected), []);
+		assert.deepEqual(await verifySessions(url, expected, dataDir), []);
 		const alpha = byTitle("Alpha");
 		const beta = byTitle("Beta");
 		// A report that differs is told apart.
@@ -80,11 +80,13 @@ test("a v1 data directory opens with everything in it", { timeout: 120_000 }, as
 				},
 			},
 		};
-		assert.deepEqual(await verifySessions(url, off), [
+		assert.deepEqual(await verifySessions(url, off, dataDir), [
 			`${beta}: title "Renamed" -> "Beta"`,
 			`${alpha}/1: newest entry ${root1.newest + 1} -> ${root1.newest}`,
 		]);
-		const owner = clientHost(server.port);
+		const local = await localOwner(server);
+		const headers = { Cookie: local.cookie };
+		const owner = clientHost(local);
 		t.after(() => owner.close(BACKGROUND_CONTEXT));
 
 		const children = await holdIn(owner, Subagents, {}, "reader");
@@ -110,10 +112,13 @@ test("a v1 data directory opens with everything in it", { timeout: 120_000 }, as
 		const artifact = await http(
 			server.port,
 			`/artifact?${new URLSearchParams({ session: alpha, name: "demo", version: "1" })}`,
+			{ headers },
 		);
 		assert.equal(artifact.status, 200);
 		const [download] = readdirSync(join(dataDir, "pre-files-backup", "downloads", alpha));
-		const sent = await http(server.port, `/download?${new URLSearchParams({ session: alpha, id: download ?? "" })}`);
+		const sent = await http(server.port, `/download?${new URLSearchParams({ session: alpha, id: download ?? "" })}`, {
+			headers,
+		});
 		assert.equal(sent.status, 200);
 		assert.equal(sent.body, "sent by send_file\n");
 

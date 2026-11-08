@@ -351,6 +351,7 @@ test(
 		const client = await startTuiClient({
 			terminal,
 			url: new URL(`http://127.0.0.1:${fixture.server.port}`),
+			credentials: { cookie: fixture.owner.cookie },
 			pollMs: 25,
 			onFailure: (message) => failures.push(message),
 		});

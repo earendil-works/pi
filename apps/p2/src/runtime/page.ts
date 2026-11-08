@@ -53,8 +53,17 @@ export function page({
 	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>${escapeHtml(title)}</title><style>${STYLE}</style>${nonce ? `<script nonce="${nonce}">${THEME}</script>` : ""}</head><body><main><header>${LOGO}<h1>${escapeHtml(heading)}</h1></header>${body}</main>${script && nonce ? `<script nonce="${nonce}">${script}</script>` : ""}</body></html>`;
 }
 
-/** Public, credential-free landing page. An invitation is only ever submitted in a same-origin POST. */
-export function signIn(request: IncomingMessage, response: ServerResponse, status = 200): void {
+/**
+ * Public, credential-free landing page. An invitation is only ever submitted in a same-origin POST. `reload`: load the
+ * page once more from this origin first (a navigation from another site may have arrived without the owner's cookie);
+ * that load is same-origin, so it never reloads again.
+ */
+export function signIn(
+	request: IncomingMessage,
+	response: ServerResponse,
+	status = 200,
+	options: { readonly reload?: boolean } = {},
+): void {
 	const nonce = randomBytes(18).toString("base64url");
 	response.writeHead(status, {
 		"Content-Type": "text/html; charset=utf-8",
@@ -67,10 +76,10 @@ export function signIn(request: IncomingMessage, response: ServerResponse, statu
 					title: "Pi · Sign in",
 					heading: "Sign in to Pi",
 					nonce,
-					body: `<p>Run <span class="mono">npm run owner-link</span> on the host and open its link on this device. You can also paste a one-time token from Devices.</p>
-<form id="sign-in"><label for="token">One-time token</label><input id="token" class="mono" type="password" autocomplete="off" spellcheck="false" required><button id="submit" type="submit">Sign in</button></form>
+					body: `<p>Paste the sign-in token the server printed when it started, or run <span class="mono">npm run owner-link</span> on the host and open its link on this device. You can also paste a one-time token from Devices.</p>
+<form id="sign-in"><label for="token">One-time token</label><input id="token" class="mono" type="password" autocomplete="off" spellcheck="false" required autofocus><button id="submit" type="submit">Sign in</button></form>
 <p id="status" role="status"></p><p class="small">This grants full owner access, including shell commands. Tokens expire after ten minutes and work once.</p>`,
-					script: `const input=document.getElementById("token"),button=document.getElementById("submit"),status=document.getElementById("status");
+					script: `${options.reload ? "if(!location.hash)location.replace(location.href);" : ""}const input=document.getElementById("token"),button=document.getElementById("submit"),status=document.getElementById("status");
 async function claim(token){button.disabled=true;status.className="";status.textContent="Signing in…";try{
  const r=await fetch("/owner/claim",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token})});
  if(!r.ok)throw new Error("Invalid, expired or already-used link. Generate a fresh owner link on the host.");input.value="";location.replace("/");

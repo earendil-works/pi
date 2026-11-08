@@ -68,6 +68,7 @@ describe("incoming messages", { skip: !browserTests }, () => {
 	before(async () => {
 		fixture = await startFixture({ web: true });
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		await browser.metrics(390, 844);
 	});
 	after(async () => {

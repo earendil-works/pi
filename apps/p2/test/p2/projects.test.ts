@@ -95,7 +95,7 @@ test("the observed projects.json keeps its last valid state and says why a save 
 });
 
 test("Projects is owner-only, follows projects.json and names this device by its hostname", async (t) => {
-	const fixture = await startFixture({ plugins: ["projects"] });
+	const fixture = await startFixture({ plugins: ["devices", "projects"] });
 	t.after(() => fixture.close());
 	const projects = fixture.browser().hold(Projects, {}, BACKGROUND_CONTEXT);
 	await whenLive(projects);

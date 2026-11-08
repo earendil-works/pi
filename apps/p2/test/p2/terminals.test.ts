@@ -14,7 +14,7 @@ import { encodeFrame, type TerminalEvent } from "../../plugins/terminals/protoco
 import terminalsServer from "../../plugins/terminals/server.ts";
 import { startServer } from "../../src/hosts/server.ts";
 import { Server } from "../../src/runtime/server.ts";
-import { APP, clientHost, expectChord, holdIn, poll, testHost } from "./helpers.ts";
+import { APP, clientHost, expectChord, holdIn, type LocalOwner, localOwner, poll, testHost } from "./helpers.ts";
 
 let noDaemon: string | undefined;
 try {
@@ -58,8 +58,10 @@ test("terminals objects deny guests before acquiring a detached-host resource", 
 	await expectChord(whenLive(view), "forbidden");
 });
 
-async function byteChannel(port: number, token: string) {
-	const socket = new WebSocket(`ws://127.0.0.1:${port}/terminal?${new URLSearchParams({ token })}`);
+async function byteChannel(owner: LocalOwner, token: string) {
+	const socket = new WebSocket(`ws://127.0.0.1:${owner.port}/terminal?${new URLSearchParams({ token })}`, {
+		headers: { Cookie: owner.cookie },
+	});
 	const events: TerminalEvent[] = [];
 	const output: Buffer[] = [];
 	socket.on("message", (data, binary) => {
@@ -92,26 +94,31 @@ async function refused(port: number, query: string, headers: Record<string, stri
 test("terminal byte channels need an owner and a live one-use chord2 grant", { timeout: 30_000 }, async () => {
 	const directory = await mkdtemp(join(tmpdir(), "p2-terminal-auth-"));
 	const server = await startServer({ dataDir: directory, port: 0, fake: true, web: false });
-	const client = clientHost(server.port);
+	const owner = await localOwner(server);
+	const client = clientHost(owner);
 	try {
 		const sessions = await holdIn(client, Sessions, {}, "owner");
 		const session = await sessions.create({ cwd: directory }, BACKGROUND_CONTEXT);
 		const view = client.hold(Terminals, { session: session.id, view: randomUUID() }, BACKGROUND_CONTEXT);
 		await whenLive(view);
-		assert.equal(await refused(server.port, ""), 403);
+		assert.equal(await refused(server.port, "", { Cookie: owner.cookie }), 403);
 		const { token } = await view.channel({}, BACKGROUND_CONTEXT);
+		assert.equal(await refused(server.port, `?${new URLSearchParams({ token })}`), 403, "loopback alone is no owner");
 		assert.equal(
-			await refused(server.port, `?${new URLSearchParams({ token })}`, { Origin: "https://untrusted.invalid" }),
+			await refused(server.port, `?${new URLSearchParams({ token })}`, {
+				Cookie: owner.cookie,
+				Origin: "https://untrusted.invalid",
+			}),
 			403,
 		);
-		const bytes = await byteChannel(server.port, token);
+		const bytes = await byteChannel(owner, token);
 		await view.list({}, BACKGROUND_CONTEXT);
 		await poll(() => bytes.events.some((event) => event.type === "list"));
 		assert.deepEqual(
 			bytes.events.find((event) => event.type === "list"),
 			{ type: "list", terminals: [] },
 		);
-		assert.equal(await refused(server.port, `?${new URLSearchParams({ token })}`), 403);
+		assert.equal(await refused(server.port, `?${new URLSearchParams({ token })}`, { Cookie: owner.cookie }), 403);
 		// Control JSON cannot be smuggled onto the dedicated byte channel.
 		const closed = new Promise<void>((resolve) => bytes.socket.once("close", () => resolve()));
 		bytes.socket.send(JSON.stringify({ type: "open", cwd: "/", sessionId: session.id, cols: 40, rows: 10 }));
@@ -135,14 +142,15 @@ test(
 		const shell = process.env.SHELL;
 		process.env.SHELL = "/bin/sh";
 		let server = await startServer({ dataDir: directory, port: 0, fake: true, web: false });
-		let client = clientHost(server.port);
+		let owner = await localOwner(server);
+		let client = clientHost(owner);
 		let bytes: Awaited<ReturnType<typeof byteChannel>> | undefined;
 		try {
 			const sessions = await holdIn(client, Sessions, {}, "owner");
 			const session = await sessions.create({ cwd: directory }, BACKGROUND_CONTEXT);
 			const other = await sessions.create({ cwd: directory }, BACKGROUND_CONTEXT);
 			let view = client.hold(Terminals, { session: session.id, view: randomUUID() }, BACKGROUND_CONTEXT);
-			bytes = await byteChannel(server.port, (await view.channel({}, BACKGROUND_CONTEXT)).token);
+			bytes = await byteChannel(owner, (await view.channel({}, BACKGROUND_CONTEXT)).token);
 			await view.theme({ foreground: 0xeeeeee, background: 0x111111, scheme: "dark" }, BACKGROUND_CONTEXT);
 			await view.open({ cols: 80, rows: 10, conversation: 1 }, BACKGROUND_CONTEXT);
 			await poll(() => bytes!.events.some((event) => event.type === "attached"));
@@ -160,9 +168,10 @@ test(
 			await client.close(BACKGROUND_CONTEXT);
 			await server.close();
 			server = await startServer({ dataDir: directory, port: 0, fake: true, web: false });
-			client = clientHost(server.port);
+			owner = await localOwner(server);
+			client = clientHost(owner);
 			view = client.hold(Terminals, { session: session.id, view: randomUUID() }, BACKGROUND_CONTEXT);
-			bytes = await byteChannel(server.port, (await view.channel({}, BACKGROUND_CONTEXT)).token);
+			bytes = await byteChannel(owner, (await view.channel({}, BACKGROUND_CONTEXT)).token);
 			await view.attach({ terminalId: id }, BACKGROUND_CONTEXT);
 			await poll(() => bytes!.text().includes("before-restart"));
 			bytes.socket.send(Buffer.from("stty size; echo after-re''start\n"));

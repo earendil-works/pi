@@ -604,7 +604,7 @@ session the worker last reported (`navigation`).
 | `editor.external` | K `app.editor.external` (Ctrl+G) | — | Asks `editorText` → `{text}` (null when there is no editable editor), writes a 0600 temp file, lends the terminal (worker IO suspended, modes undone, terminal stopped), runs the command by argv, restores, and sends `editorResult` `{text}` through the grant, so it is dropped after navigation or a swap. The command is launcher-only: `prefs.json` `externalEditor`, pi's `externalEditor`, `$VISUAL`, `$EDITOR`, then `nano`/`notepad`; split into argv without a shell (quotes group). |
 | `suspend` | K `app.suspend` (Ctrl+Z) | — | Lends the terminal and raises SIGTSTP (keep-alive, SIGINT ignored while stopped); on SIGCONT restores modes and the worker redraws. Not on Windows. |
 | `devCommand` | C, owner | `{action: "reload"}` (nothing else) | `POST /__p2_dev` with the launcher's sign-in and exact Origin; returns `{message}` from the server. The server decides whether it is a dev server. |
-| `signOut` | C, owner | `{all: boolean}` | `POST /owner/logout` or `/owner/logout-all`. Denied for guests, and `all: false` on loopback (the device owner has no cookie). The server then revokes the connection, so the launcher shows "Signed out on this device." and the owner-link prompt (P0a), forgetting the cookie. |
+| `signOut` | C, owner | `{all: boolean}` | `POST /owner/logout` or `/owner/logout-all`. Denied for guests, and `all: false` on loopback (a local sign-in comes back from the owner key at once). The server then revokes the connection, so the launcher shows "Signed out on this device." and the owner-link prompt (P0a), forgetting the cookie. |
 
 Worker side: the chat surface answers `copyText`, `editorText` and `editorResult` (`registerLauncherAnswers`,
 `P2/plugins/chat/tui-commands.ts`) and registers `/copy` (`p2.chat.copy`). `copy.selection` (kind `gesture`,
@@ -647,8 +647,8 @@ The worker cannot open the terminals byte channel (a separate authenticated upgr
   or the session was archived: delete the stored cookie and prompt for a new link.
 - **Revocation while running.** If `Access` becomes gone or forbidden, show a launcher-drawn notice ("Access to this
   session ended") and exit or prompt. No guest preferences or presence are sent before admission succeeds.
-- **Loopback.** Direct loopback is always the device owner (`P2/src/hosts/tui-config.ts:60-62`), so guest admission
-  applies to remote origins and proxied local origins.
+- **Loopback.** Direct loopback signs in as the local owner with the data directory's owner key
+  (`P2/src/hosts/tui-config.ts`), so guest admission applies to remote origins and proxied local origins.
 - **Presence.** After admission the worker holds `GuestPresence` and shows "Guest · name · view/full" in the header.
 
 **As implemented (P0a).**
@@ -662,11 +662,9 @@ The worker cannot open the terminals byte channel (a separate authenticated upgr
   identity (the server's rule). Server error text is reduced to one plain line. The invitation is never stored.
 - **Storage.** `config.json` keeps a guest beside the owner cookie per origin: `{cookie?, guest?: {cookie, session}}`.
 - **Start.** Remote origins: a valid owner cookie (`/owner/check`), else a valid guest cookie (`HEAD /__p2_tui`;
-  401/403 forgets it and prompts again), else the prompt. Loopback is the device owner; a stored guest cookie never
-  downgrades it. **Deviation:** an explicit `--join` on loopback joins as a guest for that run (useful for trying a
-  guest view locally). Note that on loopback the server itself treats a cookie-less request as the device owner, so a
-  revoked loopback guest silently becomes the owner on reconnect; revocation detection therefore applies to remote
-  origins.
+  401/403 forgets it and prompts again), else the prompt. Loopback is the local owner (by the data directory's owner key); a stored guest cookie
+  never downgrades it. **Deviation:** an explicit `--join` on loopback joins as a guest for that run (useful for trying
+  a guest view locally).
 - **Revocation while running** (`P2/src/hosts/tui-client.ts`, `P2/src/hosts/tui.ts`). A WebSocket upgrade refused
   with 401/403, or a 401/403 from the bundle poll, is confirmed by the launcher's own `HEAD /__p2_tui` (the web page
   asks the same question with `HEAD /`). The client closes and, on the restored terminal, the launcher prints the web
@@ -1476,8 +1474,8 @@ contract), so no plugin gains a dependency.
 - **Launcher results** (`P2/src/tui/grant-notice.ts`): `ok` shows the action's notice and `denied` (declined) shows
   nothing. `failed` says the launcher showed its own message, since the worker never learns it. `busy` and
   `cancelled` are named. `/dev-reload` shows the server's `{message}` (e.g. "No dirty plugins"). `/devices` sign-out
-  of "this device" on loopback is refused by the launcher (`denied`, "Not signed out"), because the device owner has
-  no cookie.
+  of "this device" on loopback is refused by the launcher (`denied`, "Not signed out"), because a local sign-in comes
+  back from the owner key at once.
 - `ListOverlay` footers wrap (at most three lines each), and `TextViewer` passes the width to its lines, so Markdown
   wraps.
 

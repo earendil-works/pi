@@ -673,7 +673,7 @@ export function launcherActions(options: LauncherActionOptions): Record<string, 
 			consent: (payload) => {
 				const all = record(payload)?.all;
 				if (options.role !== "owner" || typeof all !== "boolean") return undefined;
-				// Loopback is the device owner by address; it has no cookie to end.
+				// A loopback launcher signs in again with the data directory's owner key: one sign-out ends nothing.
 				if (!all && (loopback || !options.credentials.cookie)) return undefined;
 				return {
 					action: all ? "Sign out ALL owner devices, this one included" : "Sign out this device",
