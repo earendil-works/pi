@@ -18,7 +18,8 @@ import { formats } from "@earendil-works/pi-schema/formats";
 import type { JsonValue } from "@p2/app/v1";
 import { record, SUBAGENT_TASK_ENTRY } from "@p2/app/v1";
 import { defineP2Tool, isTopLevel, originOf, type P2Tool } from "@p2/app/v1/worker";
-import { resolveChoice, Subagents } from "../subagents/contract.worker.ts";
+import { InheritedLocation, resolveChoice, Subagents } from "../subagents/contract.worker.ts";
+import { ownLocation } from "../subagents/tools.ts";
 
 export const AGENT_TOOL = "agent";
 const ATTEMPTS = 3;
@@ -85,6 +86,8 @@ export function createAgentExtension(models: Models, access: () => ReadonlyMap<s
 			const listedOn = (await isTopLevel(api, api.conversationId, context))
 				? ROOT_CONVERSATION_ID
 				: api.conversationId;
+			// The agent works where its caller does: a caller with its own location (a subagent's) passes it on.
+			const inherited = await ownLocation(api, api.conversationId, context);
 			const conversationId = await api.commit(async (tx) => {
 				const run = await tx.doc(AgentRun, api.taskId);
 				if (run.conversationId === undefined) {
@@ -97,6 +100,10 @@ export function createAgentExtension(models: Models, access: () => ReadonlyMap<s
 						modelTools: { add: choice.loaded },
 						instructions: `You are a one-shot subagent working for a script. Do the requested work. Your final answer is parsed by the script: it must be only a JSON value matching this JSON Schema, without prose or code fences:\n${JSON.stringify(args.schema)}`,
 					});
+					if (inherited) {
+						(await tx.doc(InheritedLocation, child.id)).location = inherited;
+						await configure(tx, child.id, { cwd: inherited.cwd });
+					}
 					run.conversationId = child.id;
 					const registry = await tx.doc(Subagents, listedOn);
 					registry.oneShots ??= {};

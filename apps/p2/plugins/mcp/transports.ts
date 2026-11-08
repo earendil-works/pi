@@ -37,7 +37,7 @@ export type AuthProviders = (server: OAuthServer) => AuthProvider;
 export function transportsFor(connect: Connect, envs: EnvConnections, auth: AuthProviders): Transports {
 	switch (connect.kind) {
 		case "remote": {
-			const lease = envs.acquire(connect.environment, connect.config);
+			const lease = envs.acquire(connect.environment, connect.config, connect.revision);
 			return { open: () => remoteTransport(connect, lease.connection), release: () => lease.release() };
 		}
 		case "host":

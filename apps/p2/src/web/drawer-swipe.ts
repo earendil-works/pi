@@ -15,7 +15,7 @@
 // own drags), horizontal scrollers that can still scroll in the drag's direction (a code block scrolled away from its
 // start), drags extending a text selection, and the workspace panel (full screen above the drawer on phones).
 import { type RefObject, useEffect, useRef } from "react";
-import { getNavigation, setDrawer } from "../runtime/web.tsx";
+import { getNavigation, modalShown, setDrawer } from "../runtime/web.tsx";
 import { FLING, SETTLE_EASING, settleDuration, trackDrags } from "./drag-gesture.ts";
 
 const wide = () => window.matchMedia("(min-width: 900px)").matches;
@@ -113,7 +113,8 @@ export function useDrawerSwipe(): {
 				if (wide() || !drawer.current || !main.current) return undefined;
 				const layers = getNavigation().route.layers;
 				const open = layers.at(-1)?.kind === "drawer";
-				if (!open && layers.length > 0) return undefined;
+				// Not under a sheet or viewer on screen; a layer that shows nothing (a reload's leftover) does not count.
+				if (!open && layers.length > 0 && modalShown()) return undefined;
 				const roots = open ? elements() : [main.current];
 				const root = roots.find((element) => element.contains(target));
 				if (!root || target.closest(OWN_DRAG)) return undefined;

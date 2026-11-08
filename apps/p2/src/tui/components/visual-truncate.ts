@@ -63,7 +63,7 @@ export interface VisualLinePreviewOptions {
 }
 
 /**
- * Collapsed tool output limited to a number of visual lines, like bash output. Limiting logical
+ * Collapsed tool output limited to a number of visual lines, like a shell command's output. Limiting logical
  * lines instead lets a single long line (such as minified JSON) wrap across the whole screen.
  * Caches its lines per width, since it renders on every frame for every result in the transcript.
  */

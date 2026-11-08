@@ -16,10 +16,22 @@ export {
 } from "./app.ts";
 export { ARCHIVE_FORMAT, type ArchiveManifest } from "./archive.ts";
 export { type EphemeralUser, ephemeralLoginFacet } from "./ephemeral.ts";
-export { type FileInfo, Files, type FilesCaps } from "./files.ts";
+export {
+	type FileInfo,
+	Files,
+	type FilesCaps,
+	FilesFolder,
+	type FileWrite,
+	type FolderEntry,
+	type FolderInfo,
+	type FolderListing,
+	filesFacet,
+	type SpaceSummary,
+} from "./files.ts";
+export { copyFiles } from "./files-copy.ts";
 export { AppInfo, WorkerInfo } from "./info.ts";
 export { inviteFacet } from "./invite.ts";
-export { OWNER, type OwnerPrincipal } from "./owner.ts";
+export { privateDirectory, privateStore } from "./layout.ts";
 export { SESSION_COOKIE, type SessionInfo, type SessionKind, Sessions } from "./sessions.ts";
 export { defineUsers } from "./users.ts";
 export { startWorker, type WorkerOptions } from "./worker.ts";

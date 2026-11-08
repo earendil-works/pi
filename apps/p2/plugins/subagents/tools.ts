@@ -31,6 +31,7 @@ import { answerOrigin, defineP2Tool, mainConversation, originOf, type P2Tool } f
 import { AGENT_MESSAGE_ENTRY, type AgentMessage, SUBAGENT_TASK_ENTRY, SubagentLocationsSchema } from "./contract.ts";
 import {
 	CODEMODE_TOOL,
+	InheritedLocation,
 	resolveChoice,
 	resolveTools,
 	Subagents,
@@ -285,7 +286,10 @@ export function spawnEnvironments(
 	};
 }
 
-/** A conversation's own location (a subagent spawned with a cwd), or undefined: it follows the session. */
+/**
+ * A conversation's own location (a subagent spawned with a cwd, or a one-shot agent started by a conversation with
+ * one), or undefined: it follows the session.
+ */
 export async function ownLocation(
 	read: DocumentReader,
 	conversationId: ConversationId,
@@ -293,7 +297,8 @@ export async function ownLocation(
 ): Promise<Location | undefined> {
 	if (conversationId === ROOT_CONVERSATION_ID) return undefined;
 	const registry = await read.snapshot(Subagents, ROOT_CONVERSATION_ID, context);
-	return Object.values(registry?.agents ?? {}).find((agent) => agent.conversationId === conversationId)?.location;
+	const own = Object.values(registry?.agents ?? {}).find((agent) => agent.conversationId === conversationId)?.location;
+	return own ?? (await read.snapshot(InheritedLocation, conversationId, context))?.location;
 }
 
 /** Where the conversation calling a tool works (the session's, or its own), for a spawned subagent's own location. */
@@ -302,6 +307,8 @@ export type Locate = (conversationId: ConversationId, read: DocumentReader, cont
 /** What the subagent tool needs to place subagents: locating conversations and resolving directories. */
 export type SubagentLocator = {
 	readonly locate: Locate;
+	/** The sandbox a conversation working at `location` is confined to (its environment's configured type), if any. */
+	readonly sandbox: (location: Location) => Promise<string | undefined>;
 	/** `target` as an existing directory's location, relative to `from` (see `resolveDirectory`), or why not. */
 	readonly directory: (
 		target: LocationInput,
@@ -321,6 +328,10 @@ export async function placeTarget(
 	context: Context,
 ): Promise<Location | string> {
 	const env = args.env === undefined ? caller.env : args.env;
+	// A caller in a sandbox places its subagents in the same sandbox only.
+	const sandbox = await locator.sandbox(caller);
+	if (sandbox !== undefined && env !== sandbox)
+		return `You work in sandbox ${sandbox}; your subagents can only work inside it.`;
 	const resolved = await locator.directory({ env, path: args.cwd ?? "" }, caller, context);
 	if (!("error" in resolved)) return resolved;
 	const where = `${env === caller.env ? "" : `${env ?? "local"}:`}${args.cwd ?? "~"}`;
@@ -525,9 +536,20 @@ export function createSubagentExtension(
 					const caller = await locator.locate(api.conversationId, api, context);
 					if (args.env !== undefined && args.env !== caller.env && origin !== "owner")
 						return reply("Another environment needs a turn the owner started.", {}, true);
-					const placed = await placeTarget(locator, caller, args, context);
+					// A subagent in a sandbox: a cwd alone means a path in that sandbox (it cannot be placed elsewhere).
+					const kept =
+						agent?.location && args.env === undefined ? await locator.sandbox(agent.location) : undefined;
+					const target = kept === undefined ? args : { ...args, env: kept };
+					const placed = await placeTarget(locator, caller, target, context);
 					if (typeof placed === "string") return reply(placed, {}, true);
 					location = placed;
+				}
+				// A subagent working in a sandbox stays there, whoever configures it (only the owner's Relocate leaves one).
+				const sandbox = agent?.location === undefined ? undefined : await locator.sandbox(agent.location);
+				if (sandbox !== undefined && location !== undefined) {
+					const next = location ?? (await locator.locate(ROOT_CONVERSATION_ID, api, context));
+					if (next.env !== sandbox)
+						return reply(`${name} works in sandbox ${sandbox} and cannot leave it.`, {}, true);
 				}
 			} else if (agent) {
 				// A send: what it was given that its caller can no longer give is taken away (the caller's tools changed).

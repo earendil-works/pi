@@ -1,6 +1,7 @@
 import { contribute, defineFacet } from "@p2/app/v1";
 import { closeLayers, openLayer, Slots, useOwner, useSheet } from "@p2/app/v1/web";
 import { EnvsPanel } from "./EnvsPanel.tsx";
+import "./style.css";
 
 function EnvsButton() {
 	const sheet = useSheet("envs");

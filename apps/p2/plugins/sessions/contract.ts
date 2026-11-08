@@ -9,7 +9,9 @@ import {
 	method,
 	param,
 	propertiesOf,
+	record,
 	remote,
+	SessionLockSchema,
 	serverHost,
 	sessionHost,
 	ThinkingLevelSchema,
@@ -60,6 +62,13 @@ export type Session = Static<typeof SessionSchema>;
 
 /** Cleanup completed before an archive call returns (e.g. session-owned port forwards). */
 export const SessionArchived = keyedRegistry<(session: string, ctx: Ctx) => Promise<void>>("p2.session-archived");
+
+/**
+ * What a copy of a session takes over from its source (`/clone`, `/fork`; e.g. its project), called once the copy's row
+ * exists and before its copying starts.
+ */
+export const SessionCopied =
+	keyedRegistry<(source: string, copy: string, ctx: Ctx) => Promise<void>>("p2.session-copied");
 
 /** Pi Mobile's MAX_SESSION_TITLE. */
 export const MAX_TITLE = 120;
@@ -355,10 +364,12 @@ export const SessionMoves = local("p2.session-moves", {
 
 /**
  * Moving history between session workers for `Sessions.fork` (the server only): the active context before an entry as
- * entry drafts, and seeding a new session's main conversation with them before anyone sends to it.
+ * entry drafts, the session's files copied into the fork's directory, and seeding a new session's main conversation
+ * with them before anyone sends to it.
  */
 export const SessionTransfer = remote("p2.session-transfer", {
-	version: 2,
+	// 3: `copyFiles`.
+	version: 3,
 	params: { session: param.str() },
 	hostAddress: sessionHost,
 	variants: {
@@ -371,7 +382,41 @@ export const SessionTransfer = remote("p2.session-transfer", {
 				),
 				/** Appends `entries` to the main conversation in one commit; refused when it has history already. */
 				seed: method(obj({ entries: arr(unknown()) })),
+				/**
+				 * Copies this session's files (the kit's `Files`: index and blobs) into the directory of the new session
+				 * `to`, which must not exist yet (its worker waits while a fork copies).
+				 */
+				copyFiles: method(obj({ to: str() })),
 			},
 		},
+	},
+});
+
+const LockOrNone = union([SessionLockSchema, nul()]);
+
+/** Every session's lock (server, host-internal, persisted): set by the owner, followed by MCP placement and workers. */
+export const SessionLocks = local("p2.session-locks", {
+	version: 1,
+	params: {},
+	members: {
+		locks: record(SessionLockSchema),
+		set: method(obj({ session: str(), lock: LockOrNone })),
+	},
+});
+
+/**
+ * A session's lock as the owner and the session's worker see it: the owner reads and sets every session's; a worker
+ * reads its own session's (its principal names it).
+ */
+export const SessionLock = remote("p2.session-lock", {
+	version: 1,
+	params: {},
+	hostAddress: serverHost,
+	variants: {
+		owner: {
+			state: { locks: record(SessionLockSchema) },
+			methods: { set: method(obj({ session: str(), lock: LockOrNone })) },
+		},
+		worker: { state: { lock: LockOrNone } },
 	},
 });

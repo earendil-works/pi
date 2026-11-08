@@ -1,5 +1,5 @@
 // The web surface (slice 11 §1-§3): a kit app (`start.ts`, the board) with a page. The server builds the page's base
-// bundle from the app's web entry (`web/main.ts`: `startPage`, React) at start, serves the plugins' web facets as
+// bundle from the app's web entry (`web/main.ts`: `startPage`, React) right after it listens, serves the plugins' web facets as
 // scripts that register themselves (one combined file at load), and the page through the app's template. A plugin
 // edit applies in place: the page holds `WebScripts`, fetches the one changed script and reloads its host, keeping
 // what is on screen. A browser is not needed here: a headless page in Node runs the same client code.
@@ -17,8 +17,10 @@ import { boardDirectories, startBoard } from "./start.ts";
 
 const { base, dataDir, root } = await boardDirectories();
 
-// 1. Start the board: the base bundle is built now (named by its content), the plugins' web facets built and published.
+// 1. Start the board: it listens at once; the base bundle is built right after (named by its content), the plugins' web
+//    facets built and published. A page request waits for that build; `basesBuilt` settles once it ended.
 const app = await startBoard(dataDir, root, context);
+await app.basesBuilt;
 const link = new URL(app.ownerLink());
 console.log("1. owner link:", `${link.origin}${link.pathname}#…`, "| base bundle:", app.web?.base);
 

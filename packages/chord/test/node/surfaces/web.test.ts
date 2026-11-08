@@ -69,7 +69,7 @@ describe("the base bundle and the page", () => {
 		expect(answer.status).toBe(200);
 		const html = answer.body.toString();
 		const nonce = /script-src [^;]*'nonce-([^']+)'/.exec(String(answer.headers["content-security-policy"]))![1]!;
-		expect(html).toContain(`<script nonce="${nonce}">globalThis.chordPage={base:"${app.web!.base}"`);
+		expect(html).toContain(`<script nonce="${nonce}">globalThis.chordPage={"base":"${app.web!.base}"`);
 		expect(String(answer.headers["content-security-policy"])).toContain("style-src 'self'");
 		// Scripts from the surface's files and the nonce only, not any same-origin response (Opus L8).
 		expect(String(answer.headers["content-security-policy"])).toContain(
@@ -78,7 +78,7 @@ describe("the base bundle and the page", () => {
 		const urls = urlsOf(html);
 		expect(urls).toEqual([
 			`/_chord/web/base.${app.web!.base}.css`,
-			expect.stringMatching(/^\/_chord\/web\/plugin\/@test~notes\.[0-9a-f]+\.css$/),
+			expect.stringMatching(/^\/_chord\/web\/plugin\/@test~notes\.[0-9a-f]+\.[0-9a-f]{16}\.css$/),
 			expect.stringMatching(/^\/_chord\/web\/plugins\.[0-9a-f]{16}\.js$/),
 			`/_chord/web/base.${app.web!.base}.js`,
 		]);
@@ -147,7 +147,9 @@ describe("plugin scripts", () => {
 				name: "@test/notes",
 				digest: expect.stringMatching(/^[0-9a-f]+$/),
 				url: `/_chord/web/plugin/@test~notes.${set.plugins[0]!.digest}.js`,
-				css: `/_chord/web/plugin/@test~notes.${set.plugins[0]!.digest}.css`,
+				css: expect.stringMatching(
+					new RegExp(`^/_chord/web/plugin/@test~notes\\.${set.plugins[0]!.digest}\\.[0-9a-f]{16}\\.css$`),
+				),
 			},
 		]);
 		const script = (await send(port, "GET", set.plugins[0]!.url, { headers })).body.toString();

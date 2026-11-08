@@ -10,10 +10,16 @@
 
 - `recordUsage(tx, conversationId, bucket, key, usage)` is exported, so an extension can add spend it caused outside a generation (such as cache warming) to a conversation's `pi.usage`.
 - `Tx.submission(id)` reads a committed submission record by ID, so a tool can find the entries of its run's inputs (`pi.live.run.inputs`) without scanning the transcript.
+- Per-conversation compaction settings: `configure({ compaction })` stores a `CompactionSettings` (the shape of `HarnessSettings.compaction`, `modelOverrides` included) in `pi.agent`, inherited by children and forks. Each field resolves from the conversation's model override, then the harness's, then the conversation's own fields, then the harness-wide policy; a conversation's `enabled: false` also beats the harness's model overrides, so it turns off threshold, background and overflow compaction before a compaction task is created ([#11771](https://github.com/earendil-works/pi/issues/11771))
 
 ### Changed
 
 - `SqliteStorage.commit()` costs a few SQL statements per call instead of about eight per batch: it reads the check state of all batches up front, checks them in memory, and writes the accepted batches per table in multi-row statements (rows as one JSON array parameter; rows with much text bound column by column), so a group commit over a remote SQLite takes a few round trips, not hundreds. A stored document record that cannot be parsed now rejects the call as a storage failure instead of refusing the batch.
+
+### Fixed
+
+- Fixed `tool_search` not finding a deferred tool by property names and descriptions behind a local `$ref` in its parameters, as in MCP input schemas that put their models in `$defs`. Referenced definitions are read once, so recursive schemas do not loop, and definitions nothing references stay out of the search text ([#11803](https://github.com/earendil-works/pi/issues/11803))
+- Fixed every code mode run failing with `URI malformed` when any callable tool had a `$ref` with a malformed percent escape (`#/$defs/%E0`) in its schema, even scripts that do not call that tool. The parameter now renders as `unknown` in the tool's declaration ([#11803](https://github.com/earendil-works/pi/issues/11803))
 
 ## [1.5.0] - 2026-11-02
 

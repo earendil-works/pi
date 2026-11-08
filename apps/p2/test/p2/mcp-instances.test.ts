@@ -58,6 +58,23 @@ function supervisor(t: { after(fn: () => unknown): void }, env: Record<string, s
 	return { instances, placement, pids, id: [...placement.instances.keys()][0]! };
 }
 
+test("a locked session's lease gets only the servers its owner picked", () => {
+	const config = parseOwnerConfig(JSON.stringify({ mcpServers: { a: { command: "a" }, b: { command: "b" } } }));
+	const lease = (session: string) => ({
+		session,
+		location: { env: null, cwd: "/w" },
+		project: { kind: "none" as const },
+		generation: 1,
+		incarnation: "i",
+	});
+	const lock = { mcp: ["b"], projectMcp: false, instructions: false, capabilities: [] };
+	const placement = place(config, [lease("s1"), lease("s2")], {}, { s1: [null], s2: [null] }, { s2: lock });
+	const servers = (session: string) =>
+		[...(placement.leases.find((entry) => entry.lease.session === session)?.servers.keys() ?? [])].sort();
+	assert.deepEqual(servers("s1"), ["a", "b"]);
+	assert.deepEqual(servers("s2"), ["b"]);
+});
+
 /** Resolves with the instances once `predicate` holds for them. */
 function when(instances: Instances, predicate: (list: Instance[]) => boolean): Promise<Instance[]> {
 	return new Promise((resolve, reject) => {

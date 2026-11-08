@@ -7,9 +7,9 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { McpStdioServerConfig } from "@earendil-works/pi-mcp";
-import { type Location, locationText } from "@p2/app/v1";
-import { envRevision } from "@p2/app/v1/node";
+import { type Location, locationText, type SessionLock } from "@p2/app/v1";
 import type { EnvConfig } from "../envs/config.ts";
+import { connectionRevision } from "../envs/connection-revision.ts";
 import type { OwnerConfig, OwnerServer } from "./config.ts";
 import type { RunsOn } from "./contract.ts";
 import type { Lease } from "./leases.ts";
@@ -22,6 +22,8 @@ export type RemoteConnect = {
 	/** The environment's name in envs.json, and its configuration there. */
 	readonly environment: string;
 	readonly config: EnvConfig;
+	/** The connection's revision: the configuration's, a sandbox's with its host's (`connectionRevision`). */
+	readonly revision: string;
 	readonly command: string;
 	readonly args: readonly string[];
 	readonly env: Readonly<Record<string, string>>;
@@ -92,13 +94,15 @@ export type WorkEnvironments = Readonly<Record<string, readonly (string | null)[
 /**
  * The instances `config`'s servers and the leases' projects need, on the environments of `envs`. A lease at a location
  * on an environment its session does not work on (`work`) gets no servers: a worker can only lease where its
- * conversations can already run commands.
+ * conversations can already run commands. A locked session's lease (`locks`) gets only the servers its owner picked,
+ * and its project's servers only when picked too.
  */
 export function place(
 	config: OwnerConfig,
 	leases: readonly Lease[],
 	envs: Readonly<Record<string, EnvConfig>>,
 	work: WorkEnvironments,
+	locks: Readonly<Record<string, SessionLock>> = {},
 ): Placement {
 	const instances = new Map<string, InstanceSpec>();
 	const kept = new Set<string>();
@@ -118,9 +122,11 @@ export function place(
 			instances.set(spec.id, spec);
 			servers.set(spec.server, spec.id);
 		};
+		const lock = Object.hasOwn(locks, lease.session) ? locks[lease.session] : undefined;
 		for (const server of config.servers)
-			if (project.enabled.get(server.name) ?? server.enabled) use(ownerSpec(server, lease, envs));
-		for (const server of project.servers) use(projectSpec(server, lease, envs));
+			if ((project.enabled.get(server.name) ?? server.enabled) && (!lock || lock.mcp.includes(server.name)))
+				use(ownerSpec(server, lease, envs));
+		if (!lock || lock.projectMcp) for (const server of project.servers) use(projectSpec(server, lease, envs));
 		return { lease, servers, errors: project.errors.map((error) => `${where}: ${error}`) };
 	});
 	return { instances, leases: placed, kept };
@@ -227,10 +233,11 @@ function stdioSpec(
 		};
 	}
 	const envConfig = Object.hasOwn(envs, runsOn.env) ? envs[runsOn.env] : undefined;
-	// An edited environment is another connection: its instances start again on it.
-	const key = ["stdio", source, server, owner, runsOn, envConfig === undefined ? null : envRevision(envConfig), hash];
+	// An edited environment (or a sandbox's edited host) is another connection: its instances start again on it.
+	const revision = envConfig === undefined ? null : connectionRevision(envs, envConfig);
+	const key = ["stdio", source, server, owner, runsOn, revision, hash];
 	const spec = { id: idOf(key), server, source, location, runsOn, timeoutMs };
-	if (envConfig === undefined)
+	if (envConfig === undefined || revision === null)
 		return { ...spec, connect: { kind: "unplaced", reason: `environment "${runsOn.env}" is not in envs.json` } };
 	return {
 		...spec,
@@ -238,6 +245,7 @@ function stdioSpec(
 			kind: "remote",
 			environment: runsOn.env,
 			config: envConfig,
+			revision,
 			command,
 			args,
 			env,

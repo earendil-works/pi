@@ -17,6 +17,7 @@ import {
 	workerOf,
 } from "@p2/app/v1/worker";
 import { MAX_TITLE, Sessions, SessionTransfer } from "./contract.ts";
+import { serveLockMirror } from "./lock-worker.ts";
 
 /** Contributes the `rename_session` tool: the agent keeps the session's title naming its overall task. */
 const SessionTools = local("p2.session-tools", { version: 1, params: {}, members: {} });
@@ -70,10 +71,12 @@ const renameSession = (root: () => WorkerParts["root"]) =>
 	});
 
 export default defineFacet((host) => {
+	serveLockMirror(host);
 	// `Sessions.fork`: the server reads a conversation's active context here and seeds the new session's worker.
 	host.serve(SessionTransfer, (_params, principal, self) => {
 		if (principal.kind !== "server") throw forbidden("server only");
 		const harness = harnessOf(self);
+		const worker = workerOf(self);
 		return {
 			variant: "server",
 			members: {
@@ -102,6 +105,10 @@ export default defineFacet((host) => {
 						};
 					});
 					return { entries };
+				},
+				copyFiles: async ({ to }, ctx) => {
+					await worker().copyFilesTo(to, ctx);
+					return null;
 				},
 				seed: async ({ entries }, ctx) => {
 					const durable = harness().durable;

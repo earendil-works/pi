@@ -8,6 +8,7 @@
 		"dev": "node --import ./src/source.ts scripts/dev.mjs",
 		"reload": "node --import ./src/source.ts scripts/reload.mjs",
 		"owner-link": "node --import ./src/source.ts scripts/owner-link.ts",
+		"migrate-data": "node --import ./src/source.ts scripts/migrate-data.ts",
 		"radius:login": "node --import ./src/source.ts plugins/radius/login.ts",
 		"check": "node ../../scripts/biome-check.mjs && tsc --noEmit",
 		"format": "node ../../scripts/biome-check.mjs --write",
@@ -19,13 +20,19 @@
 	},
 	"dependencies": {
 		"@earendil-works/chord": "1.5.0",
+		"@earendil-works/design-tokens": "0.1.0",
+		"@earendil-works/elanor-fonts": "0.1.0",
+		"@earendil-works/elanor-icons-react": "0.1.0",
+		"@earendil-works/elanor-react": "0.1.0",
 		"@earendil-works/pi-ai": "1.5.0",
 		"@earendil-works/pi-codemode": "1.5.0",
 		"@earendil-works/pi-durable": "1.5.0",
 		"@earendil-works/pi-env": "1.5.0",
 		"@earendil-works/pi-mcp": "1.5.0",
 		"@earendil-works/pi-schema": "1.5.0",
+		"@earendil-works/pi-tui": "1.5.0",
 		"diff": "8.0.4",
+		"discord.js": "14.28.1",
 		"esbuild": "0.28.2",
 		"grok-mermaid": "0.2.3",
 		"lowlight": "3.3.0",
@@ -35,8 +42,7 @@
 		"react-dom": "19.3.0",
 		"undici": "8.12.3",
 		"ws": "8.21.0",
-		"yaml": "2.9.1",
-		"@earendil-works/pi-tui": "1.5.0"
+		"yaml": "2.9.1"
 	},
 	"devDependencies": {
 		"@types/node": "22.19.19",

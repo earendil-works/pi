@@ -1,6 +1,7 @@
 // Locals, registries and natives a session worker host provides to plugins (Chord v2), and the worker's core facet.
 import { existsSync } from "node:fs";
-import { defineRegistry, local, type Native, type RegistryValue } from "@earendil-works/chord";
+import { defineRegistry, local, type Native, type RegistryValue, type Store } from "@earendil-works/chord";
+import { copyFiles } from "@earendil-works/chord/app/files";
 import type { Context } from "@earendil-works/chord/context";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
@@ -17,7 +18,6 @@ import {
 } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { Connection, LocalExecutionEnv, localDaemon, RemoteExecutionEnv } from "@earendil-works/pi-env";
 import {
 	type Ctx,
@@ -30,8 +30,10 @@ import {
 	serveKeyed,
 } from "./chord.ts";
 import { durableContext, durableRegistry, ExtensionSwitches, Extensions } from "./durable.ts";
+import { hostFiles, sessionDirectory } from "./host-dirs.ts";
 import { isRooted, type Location, type LocationInput, sameLocation } from "./location.ts";
 import { topLevelConversations } from "./main-conversation.ts";
+import { durableStorage } from "./session-store.ts";
 import { type SessionInit, WorkerBoundary } from "./session-worker.ts";
 
 export { ExtensionSwitches, Extensions } from "./durable.ts";
@@ -174,8 +176,13 @@ export type Machine = { at: (cwd: string) => ExecutionEnv; close: () => void };
 export type HarnessEnvironmentEntry = {
 	/** The machine of the remote environment `env`. Connecting may wait for its first operation. */
 	open: (env: string) => Promise<Machine>;
-	/** The SSH host environment `env`'s tools run on, for the prompt's `cwd` section. */
-	readonly host?: (env: string) => Promise<string | undefined>;
+	/** Where environment `env`'s tools run, for the prompt's `cwd` section, e.g. `the SSH host gpu-box`. */
+	readonly describe?: (env: string) => Promise<string | undefined>;
+	/**
+	 * Whether environment `env` is a sandbox, decided by its configuration's type (never its name): conversations
+	 * working there cannot leave it. Cheap: read on every confinement check.
+	 */
+	readonly sandbox: (env: string) => boolean;
 };
 export const HarnessEnvironments = keyedRegistry<HarnessEnvironmentEntry>("p2.harness-environments");
 
@@ -282,6 +289,11 @@ export type WorkerParts = {
 	 * section passes its Durable context), or a method acting as the worker (`withoutAbortSignal(ctx)`).
 	 */
 	readonly root: <T>(fn: (ctx: Ctx) => Promise<T>, context: Context) => Promise<T>;
+	/**
+	 * Copies this session's files (the kit's `Files`: its index and blobs) into the directory of the new session
+	 * `session`, which must not exist yet: a fork, whose worker waits while it copies. The session goes on meanwhile.
+	 */
+	readonly copyFilesTo: (session: string, context: Context) => Promise<void>;
 };
 
 /**
@@ -371,15 +383,19 @@ export function workerCore(
 	init: WorkerInit,
 	liveness: Liveness,
 	location: SessionLocation,
+	store: Store,
 	root: WorkerParts["root"],
 ): Facet {
 	return defineFacet((host, self) => {
 		serveWorkerRegistries(host);
 		host.serve(WorkerProcess, { compose: (table) => table[0]?.value });
-		self.contribute(WorkerProcess, { init, liveness, location, root });
+		const own = sessionDirectory(init.dataDir, init.values.session.id);
+		const copyFilesTo = (session: string, context: Context) =>
+			copyFiles({ store, files: hostFiles(own) }, sessionDirectory(init.dataDir, session), context);
+		self.contribute(WorkerProcess, { init, liveness, location, root, copyFilesTo });
 		host.serve(HarnessNative, { compose: (table) => table[0]?.value });
 		host.serve(HarnessHost, (_params, self) => {
-			self.contribute(HarnessNative, openHarness(self, init, location));
+			self.contribute(HarnessNative, openHarness(self, init, location, store));
 			return {};
 		});
 		host.serve(WorkerBoundary, (_params, principal, self) => {
@@ -463,7 +479,24 @@ export type ExecutionEnvironments = {
 	locate(id: ConversationId, context: Context, read?: DocumentReader): Promise<Location>;
 	/** The environment at `location`: one per directory, on one connection per machine, opened at its first use. */
 	at(location: Location): Promise<ExecutionEnv>;
+	/** `env` itself when it is a sandbox (see `HarnessEnvironmentEntry.sandbox`), else undefined; this device never is. */
+	sandbox(env: string | null): Promise<string | undefined>;
 };
+
+/**
+ * The sandbox conversation `id` is confined to: the environment it works in, when that is a sandbox. Decided from its
+ * current location at each call, so it holds per conversation (a subagent placed in a sandbox is confined, its main
+ * agent elsewhere is not) and follows moves.
+ */
+export async function conversationConfinement(
+	environments: ExecutionEnvironments,
+	id: ConversationId,
+	context: Context,
+	read?: DocumentReader,
+): Promise<{ sandbox: string } | undefined> {
+	const sandbox = await environments.sandbox((await environments.locate(id, context, read)).env);
+	return sandbox === undefined ? undefined : { sandbox };
+}
 
 /** Where conversation `id` works and its environment there. */
 export async function conversationEnvironment(
@@ -486,6 +519,7 @@ export async function conversationEnvironment(
 class Execution implements ExecutionEnvironments {
 	#session: Location;
 	readonly #open: (env: string | null, signal: AbortSignal) => Promise<Machine>;
+	readonly #sandbox: (env: string, signal: AbortSignal) => Promise<boolean>;
 	readonly #own: (
 		read: DocumentReader | undefined,
 		id: ConversationId,
@@ -500,11 +534,17 @@ class Execution implements ExecutionEnvironments {
 	constructor(
 		session: Location,
 		open: (env: string | null, signal: AbortSignal) => Promise<Machine>,
+		sandbox: (env: string, signal: AbortSignal) => Promise<boolean>,
 		own: (read: DocumentReader | undefined, id: ConversationId, context: Context) => Promise<Location | undefined>,
 	) {
 		this.#session = session;
 		this.#open = open;
+		this.#sandbox = sandbox;
 		this.#own = own;
+	}
+	async sandbox(env: string | null): Promise<string | undefined> {
+		if (env === null) return undefined;
+		return (await this.#sandbox(env, this.#closing.signal)) ? env : undefined;
 	}
 	get session(): Location {
 		return this.#session;
@@ -612,8 +652,8 @@ async function followSession(
  * with the root conversation created from the session's model and cwd. Scheduling starts with `resume()` once the
  * worker's plugins are loaded (the worker entry). Returns the contribution: the natives, read at each use.
  */
-function openHarness(self: Self, init: WorkerInit, location: SessionLocation): HarnessParts {
-	const { dataDir, values } = init;
+function openHarness(self: Self, init: WorkerInit, location: SessionLocation, store: Store): HarnessParts {
+	const { values } = init;
 	const session = values.session;
 	const config = self.registry(HarnessConfig);
 	const environments = self.registry(HarnessEnvironments);
@@ -645,12 +685,15 @@ function openHarness(self: Self, init: WorkerInit, location: SessionLocation): H
 		const remote = await whenPresent(environments, "remote", signal);
 		return remote.open(env);
 	};
+	/** Whether a remote environment is a sandbox, once the plugin providing them is there. */
+	const sandbox = async (env: string, signal: AbortSignal): Promise<boolean> =>
+		(await whenPresent(environments, "remote", signal)).sandbox(env);
 	const place = async (harness: DurableHarness, at: Location, context: Context) =>
 		(await placements.value.get("subagents")?.place(harness, at, values, context)) ?? { followers: [], own: [] };
 	let reader: DocumentReader | undefined;
 	const execution: Native<Execution> = self.open(
 		async () => {
-			const created = new Execution(location.value, open, async (read, id, context) => {
+			const created = new Execution(location.value, open, sandbox, async (read, id, context) => {
 				const documents = read ?? reader;
 				if (!documents) throw new Error("The session's Harness is not open");
 				return placements.value.get("subagents")?.own(documents, id, context);
@@ -670,7 +713,8 @@ function openHarness(self: Self, init: WorkerInit, location: SessionLocation): H
 		async (ctx) => {
 			// Generation needs model access: open once the models plugin has contributed it.
 			await whenPresent(config, "default", ctx.abortSignal ?? new AbortController().signal);
-			const storage = await openNodeSqliteStorage(`${dataDir}/sessions/${session.id}.sqlite`);
+			// Durable's records in the session's store, beside the kit's `Files`.
+			const storage = await durableStorage(store, ctx);
 			const harness = await DurableHarness.open(
 				storage,
 				{

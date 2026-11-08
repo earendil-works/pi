@@ -205,6 +205,11 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
 - **`rebuild` of tables** (key and column-type changes): `evolveTable` has no edit for them; build one only when a
   real case needs it. (Slice 6a's second spec review; out of slice 7b's scope, `slice-7b.md` §12.)
 
+- **Content-compared plugin marks:** a plugin's `dirty` mark stays latched until the plugin is applied (a rewrite with
+  the same bytes, or a change and its revert, dirties it); compare a plugin's files with the bytes its last applied
+  build read (`BuiltFacet.inputs` already holds their hashes), as `base` now does. (p3 step 0a,
+  `apps/p3/docs/step-0a/book.md`.)
+
 ### Later: live queries (when a case needs it)
 
 - **Incremental maintenance of a live query's result** (decision "Live queries over an object's own tables"): an

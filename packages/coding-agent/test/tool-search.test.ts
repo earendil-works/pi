@@ -195,6 +195,61 @@ describe("Bm25Ranker", () => {
 	});
 });
 
+// #11803
+describe("schema references in the search text", () => {
+	function searchText(parameters: Record<string, unknown>): string {
+		const entry = tool("mcp__ledger__inspect", "Inspect records");
+		return createToolSearchDocument({ ...entry, parameters: Type.Unsafe(parameters) }).text;
+	}
+
+	it("reads names and descriptions behind local references", () => {
+		const text = searchText({
+			type: "object",
+			properties: { options: { $ref: "#/$defs/options" } },
+			$defs: {
+				options: { type: "object", properties: { mode: { type: "string", description: "reconciliation" } } },
+			},
+		});
+		expect(text).toBe("Inspect records options mode reconciliation");
+	});
+
+	it("follows escaped pointer segments", () => {
+		const text = searchText({
+			type: "object",
+			properties: { range: { $ref: "#/$defs/date~1range" } },
+			$defs: { "date/range": { description: "fiscal period" } },
+		});
+		expect(text).toBe("Inspect records range fiscal period");
+	});
+
+	it("reads recursive and shared definitions once", () => {
+		const text = searchText({
+			type: "object",
+			properties: { root: { $ref: "#/$defs/node" }, other: { $ref: "#/$defs/node" }, self: { $ref: "#" } },
+			$defs: {
+				node: {
+					description: "tree node",
+					properties: { children: { type: "array", items: { $ref: "#/$defs/node" } } },
+				},
+			},
+		});
+		expect(text).toBe("Inspect records root tree node children other self");
+	});
+
+	it("leaves out unreferenced definitions and remote or missing references", () => {
+		const text = searchText({
+			type: "object",
+			properties: {
+				remote: { $ref: "https://example.com/schema.json#/$defs/x" },
+				missing: { $ref: "#/$defs/missing" },
+				malformed: { $ref: "#/$defs/%E0%A4%A" },
+			},
+			$defs: { unused: { description: "reconciliation" } },
+		});
+		expect(text).toBe("Inspect records remote missing malformed");
+	});
+});
+
 describe("codemode description catalog", () => {
 	const plain = tool("read_notes", "Read notes.");
 	const github = ["a", "b", "c"].map((suffix) => tool(`mcp__github__${suffix}`, `GitHub ${suffix}.`));

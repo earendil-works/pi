@@ -8,6 +8,7 @@
  * like any other tool change and survives `/tree`, resume, and fork on that branch.
  */
 
+import { resolveSchemaRef } from "@earendil-works/pi-codemode/declarations";
 import { type Static, Type } from "typebox";
 import type {
 	ExtensionAPI,
@@ -95,20 +96,31 @@ function isObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Schema descriptions and property names, recursively. */
-function schemaText(schema: unknown, parts: string[]): void {
+/**
+ * Schema descriptions and property names, recursively, following local `$ref`s into `root`. `seen` holds the
+ * subschemas already reached through a reference, so recursive and shared definitions are read once, and
+ * definitions no property references are not read.
+ */
+function schemaText(schema: unknown, root: unknown, parts: string[], seen: Set<unknown>): void {
 	if (!isObject(schema)) return;
+	if (typeof schema.$ref === "string") {
+		const target = resolveSchemaRef(schema.$ref, root);
+		if (isObject(target) && !seen.has(target)) {
+			seen.add(target);
+			schemaText(target, root, parts, seen);
+		}
+	}
 	if (typeof schema.description === "string") parts.push(schema.description);
 	if (isObject(schema.properties)) {
 		for (const [name, property] of Object.entries(schema.properties)) {
 			parts.push(name);
-			schemaText(property, parts);
+			schemaText(property, root, parts, seen);
 		}
 	}
-	schemaText(schema.items, parts);
+	schemaText(schema.items, root, parts, seen);
 	for (const key of ["anyOf", "oneOf", "allOf"]) {
 		const variants = schema[key];
-		if (Array.isArray(variants)) for (const variant of variants) schemaText(variant, parts);
+		if (Array.isArray(variants)) for (const variant of variants) schemaText(variant, root, parts, seen);
 	}
 }
 
@@ -121,7 +133,7 @@ export function createToolSearchDocument(
 	namespace?: ToolNamespace,
 ): ToolSearchDocument {
 	const parts = [tool.description];
-	schemaText(tool.parameters, parts);
+	schemaText(tool.parameters, tool.parameters, parts, new Set([tool.parameters]));
 	const namespaceText = namespace
 		? [namespace.name, namespace.description ?? "", namespace.instructions ?? ""].join(" ")
 		: "";

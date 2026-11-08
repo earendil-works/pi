@@ -291,7 +291,11 @@ async function writePromptToTempFile(agentName: string, prompt: string): Promise
 
 function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	const currentScript = process.argv[1];
-	const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
+	// Bun-compiled binaries report their embedded entry as argv[1]: "/$bunfs/root/..." on
+	// POSIX and "B:/~BUN/root/..." on Windows. fs.existsSync() resolves these inside Bun.
+	const isBunVirtualScript =
+		currentScript !== undefined &&
+		(currentScript.startsWith("/$bunfs/root/") || /^[A-Za-z]:[\\/]~BUN[\\/]root[\\/]/.test(currentScript));
 	if (currentScript && !isBunVirtualScript && fs.existsSync(currentScript)) {
 		return { command: process.execPath, args: [currentScript, ...args] };
 	}

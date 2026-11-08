@@ -303,7 +303,7 @@ async function until(check: () => boolean): Promise<void> {
 
 /** An asset's URL with its content hash masked, so the output is the same at every run. */
 function hashless(asset: string): string {
-	return asset.replace(/\.[0-9a-f]{8,}\./, ".<hash>.");
+	return asset.replaceAll(/\.[0-9a-f]{8,}(?=\.)/g, ".<hash>");
 }
 
 /** The terminal's last frame as text (its colours stripped). */

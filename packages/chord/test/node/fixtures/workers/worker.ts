@@ -1,9 +1,9 @@
 // Fixture worker (slice 10): `workerMain` with a host at its address, the shipped plugins, and a core facet serving
 // `Control` (crash, fatal, block, busy, local calls) and `Busy` (the app's keep-alive counts). Its start data picks a
 // behaviour for the tests: exit or throw before connecting, never connect, a slow or endless load, slow closers that
-// log their order to a file.
+// log their order to a file, a closer importing a lazy module.
 
-import { appendFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { BACKGROUND_CONTEXT } from "../../../../src/context/index.ts";
 import { int, local, map, method } from "../../../../src/contracts/index.ts";
@@ -107,6 +107,14 @@ workerMain(
 		onClose(async () => {
 			if (behaviour.closeMs !== undefined) await sleep(behaviour.closeMs);
 			if (behaviour.log !== undefined) appendFileSync(behaviour.log, "store\n");
+		});
+		onClose(async () => {
+			if (behaviour.lazyOnClose === undefined) return;
+			const imported = await import("./lazy-close.ts").then(
+				({ closed }) => closed,
+				(error: { readonly code?: string }) => `${error.code}`,
+			);
+			writeFileSync(behaviour.lazyOnClose, imported);
 		});
 		if (behaviour.connect === false) await sleep(1e9, undefined, { signal: ctx.abortSignal });
 		worker.connect(parent, { principal: { kind: "server" }, trusted: true }, ctx);

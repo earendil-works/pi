@@ -3,7 +3,6 @@
 // (pi-env); the daemon killed the programs it ran, and their instances reconnect.
 
 import type { Connection } from "@earendil-works/pi-env";
-import { envRevision } from "@p2/app/v1/node";
 import type { EnvConfig } from "../envs/config.ts";
 
 /** A connection to environment `name` configured as `config`, which starts at its first request. */
@@ -21,9 +20,12 @@ export class EnvConnections {
 		this.#connect = connect;
 	}
 
-	/** The connection to `name` as configured now (opened for its first user); release it once done. */
-	acquire(name: string, config: EnvConfig): EnvLease {
-		const key = JSON.stringify([name, envRevision(config)]);
+	/**
+	 * The connection to `name` as configured now (`revision`: its connection revision; opened for its first user);
+	 * release it once done.
+	 */
+	acquire(name: string, config: EnvConfig, revision: string): EnvLease {
+		const key = JSON.stringify([name, revision]);
 		let entry = this.#open.get(key);
 		if (entry === undefined) {
 			entry = { connection: this.#connect(name, config), users: 0 };

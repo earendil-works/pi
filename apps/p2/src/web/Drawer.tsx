@@ -3,7 +3,9 @@ import type { SearchResults } from "../../plugins/search/contract.ts";
 import type { Session } from "../../plugins/sessions/contract.ts";
 import type { Child } from "../../plugins/subagents/contract.ts";
 import { type Grant, grantMode } from "../runtime/access.ts";
-import { shortPath } from "../runtime/web.tsx";
+import { locationLabel } from "./path-label.ts";
+
+export { locationLabel } from "./path-label.ts";
 export type SessionSummary = Session & {
 	subagents: Child[];
 	/** `unread`: a finished answer the owner has not read on any device (see `SessionReads`). */
@@ -17,6 +19,7 @@ import {
 	BranchIcon,
 	ChevronIcon,
 	FolderIcon,
+	LockIcon,
 	MoonIcon,
 	PencilIcon,
 	PinIcon,
@@ -33,11 +36,6 @@ function SessionDot({ worker }: { worker: SessionSummary["worker"] }) {
 	if (worker.busy?.length) return <span className="live-dot" title="Working" />;
 	if (worker.unread) return <span className="unread-dot" title="New answer" />;
 	return null;
-}
-
-/** Where a session's tools run: `gpu:/home/me/proj` on a remote env, the shortened path locally. */
-export function locationLabel(env: string | null | undefined, cwd: string): string {
-	return env ? `${env}:${cwd}` : shortPath(cwd);
 }
 
 function ago(time: number): string {
@@ -294,6 +292,7 @@ export const Drawer = memo(function Drawer({
 	onEnvs,
 	onOwnerLink,
 	guest,
+	sandboxes,
 }: {
 	onSearch?: (query: string, archived: boolean) => Promise<SearchResults>;
 	/** Restores an archived session and opens it (at `conversationId`, a message hit's). */
@@ -316,6 +315,8 @@ export const Drawer = memo(function Drawer({
 	onEnvs: () => void;
 	onOwnerLink: () => void;
 	guest?: Grant;
+	/** Environments that are sandboxes (the owner's view): their groups show a lock. */
+	sandboxes?: ReadonlySet<string>;
 }) {
 	const [query, setQuery] = useState("");
 	const [archived, setArchived] = useState(false);
@@ -340,11 +341,11 @@ export const Drawer = memo(function Drawer({
 	const visible = sessions.filter(
 		(session) => Boolean(session.archivedAt) === archived && (!ids || ids.has(session.id)),
 	);
-	// Grouped by where tools run: the same path on two hosts is two groups.
+	// Group by full locations, not shortened labels: two home directories may both read as ~/project.
 	const groups = new Map<string, SessionSummary[]>();
 	const latest = new Map<string, number>();
 	for (const session of visible) {
-		const key = locationLabel(session.env, session.cwd);
+		const key = JSON.stringify([session.env ?? null, session.cwd]);
 		const group = groups.get(key);
 		if (group) group.push(session);
 		else groups.set(key, [session]);
@@ -425,15 +426,21 @@ export const Drawer = memo(function Drawer({
 				/>
 			</label>
 			<div className="session-scroll">
-				{ordered.map(([location, list]) => {
+				{ordered.map(([key, list]) => {
 					// A group holds at least one session; its first names the folder's location.
-					const first = list[0];
+					const first = list[0]!;
+					const location = locationLabel(first.env, first.cwd);
 					return (
-						<section key={location} className="group">
-							<h3 title={first ? `${first.env ? `${first.env}:` : ""}${first.cwd}` : location}>
+						<section key={key} className="group">
+							<h3 className="group-head" title={`${first.env ? `${first.env}:` : ""}${first.cwd}`}>
 								<FolderIcon />
+								{first.env && sandboxes?.has(first.env) && (
+									<span className="group-lock" title="Sandbox">
+										<LockIcon size={12} />
+									</span>
+								)}
 								<span className="group-label">{location}</span>
-								{onNewIn && !archived && first && (
+								{onNewIn && !archived && (
 									<button
 										type="button"
 										className="group-new"

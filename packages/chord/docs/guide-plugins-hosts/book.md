@@ -805,7 +805,11 @@ const app = await startServer<NotesPrincipal>({
 	root: "./plugins",                              // the app's own plugins: a required root
 	api: { name: "@notes/app", versions: ["v1"], modules: { "@notes/app/v1": v1, "@notes/app/v1/server": v1server } },
 	kinds: { server: { platform: "node" }, worker: { platform: "node" } },
-	principal: { server: { kind: "server" }, worker: (address) => ({ kind: "worker", project: address.key }) },
+	principal: {
+		server: { kind: "server" },
+		worker: (address) => ({ kind: "worker", project: address.key }),
+		owner: { kind: "owner" },                   // whom the owner link, the token file and pairing sign in
+	},
 	workers: [{
 		kind: Project,                              // one worker per project
 		entry: "./worker.ts",
@@ -830,8 +834,8 @@ directory and store, the host at the project's address, the link to the server f
 
 Plugins still import only the app's API; the API re-exports the kit's objects it offers:
 
-- `AppInfo` on the server (data directory, app name, API version) and `WorkerInfo` on workers (the address and the
-  start data `start(address)` made): the **start-data objects**. Process values reach plugins only through them.
+- `AppInfo` on the server (data directory, app name, API version, owner) and `WorkerInfo` on workers (the address and
+  the start data `start(address)` made): the **start-data objects**. Process values reach plugins only through them.
 - `Files`, one per host: `put` for small files, `begin`, `append` and `finish` for large ones, ranged `read`, `remove`
   and a watchable `list`, stored in the host's directory with caps per host.
 - `Sessions` on the server: `issue`, `revoke`, `list`.
@@ -846,7 +850,8 @@ HTTP **denies by default**: a request without a principal gets 401 before any pl
 `public: true`. Someone gets a principal through a **session**: a random token, kept in the store only as a hash, sent
 as a signed cookie by a browser or as `Authorization: Bearer` by a command-line client.
 
-The first session is the owner's. At each start the kit makes a one-time **owner link**,
+The first session is the owner's, the principal the app names in `principal.owner` (a variant of its own, as here, or
+one of its users). At each start the kit makes a one-time **owner link**,
 `http://127.0.0.1:8788/_chord/owner#<token>`, valid ten minutes; the start script prints it. The token is in the
 fragment, which browsers never send, so it never reaches a log: the page posts it, the kit consumes it and sets the
 owner's cookie. A command-line client on the same machine reads `<dataDir>/owner-token` (mode 0600). One on another

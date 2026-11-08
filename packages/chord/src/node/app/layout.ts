@@ -1,6 +1,7 @@
 // The app kit's data directory (slice 13 §4, decision "The app kit, point 4: storage"): one fixed layout, made private
 // at every start. `server/` holds the server's store and files, `workers/<kind>/<address>/` each worker's store and
-// files, `plugins/` the user's plugins root, `logs/` the logs, `owner-token` the owner's token for command-line
+// files, `plugins/` the user's plugins root, `logs/` the logs, `cache/` what only saves time (`workers/<kind>/`, each
+// worker kind's base, written again at every start; `node/`, the workers' compile cache), `owner-token` the owner's token for command-line
 // clients. Directories are 0700 and stores 0600, also when they existed looser before (other local users must not
 // read the sessions in a store, nor replace it).
 
@@ -18,6 +19,10 @@ export type AppLayout = {
 	readonly workers: string;
 	readonly plugins: string;
 	readonly logs: string;
+	/** Each worker kind's base, in `<kind>/` (`WorkersOptions.baseDir`): written again at every start. */
+	readonly workerBases: string;
+	/** Node's compile cache for the workers (`NODE_COMPILE_CACHE`). */
+	readonly compileCache: string;
 	readonly ownerToken: string;
 	readonly cookieSecret: string;
 };
@@ -57,10 +62,13 @@ export async function createLayout(dataDir: string): Promise<AppLayout> {
 		workers: join(dataDir, "workers"),
 		plugins: join(dataDir, "plugins"),
 		logs: join(dataDir, "logs"),
+		workerBases: join(dataDir, "cache", "workers"),
+		compileCache: join(dataDir, "cache", "node"),
 		ownerToken: join(dataDir, "owner-token"),
 		cookieSecret: join(dataDir, "server", "cookie-secret"),
 	};
-	for (const dir of [layout.server, layout.workers, layout.plugins, layout.logs]) await privateDirectory(dir);
+	const dirs = [layout.server, layout.workers, layout.plugins, layout.logs, join(dataDir, "cache")];
+	for (const dir of [...dirs, layout.workerBases, layout.compileCache]) await privateDirectory(dir);
 	return layout;
 }
 

@@ -87,10 +87,10 @@ function callApi(taskId: number): ToolExecutionApi {
 	return api as unknown as ToolExecutionApi;
 }
 
-function terminal(backend: TerminalBackend, reach: "codemode" | "tool_search" = "codemode") {
+function terminal(backend: TerminalBackend, reach: "codemode" | "tool_search" = "codemode", sandbox?: string) {
 	const extension = createTerminalExtension(reach, backend, async (api) => {
 		assert.equal(api.conversationId, 7);
-		return { cwd: "/work/sub", env: "gpu" };
+		return { here: { cwd: "/work/sub", env: "gpu" }, ...(sandbox === undefined ? {} : { sandbox }) };
 	});
 	return extension.tools![0]!;
 }
@@ -232,4 +232,35 @@ test("results: the screen of full-screen programs, skipped output, timeouts, win
 		output: [{ type: "text", text: "can't find window: 9" }],
 		isError: true,
 	});
+});
+
+test("a caller in a sandbox sees and drives only the session's terminals in it", async () => {
+	const { backend, calls } = recorder();
+	const confined = terminal(backend, "codemode", "gpu");
+	const call = (command: string, args: string[], taskId: number) =>
+		confined.execute({ command, args }, callApi(taskId), BACKGROUND_CONTEXT);
+	const listed = await call("list-windows", [], 1);
+	assert.deepEqual(
+		(listed.structuredOutput as { windows: { window: number }[] }).windows.map((window) => window.window),
+		[2],
+	);
+	// Window 1 runs on this device (env null), outside the sandbox.
+	for (const [command, args] of [
+		["send-keys", ["-t", "1", "rm -rf ~"]],
+		["read", ["-t", "1"]],
+		["capture-pane", ["-t", "1"]],
+		["kill-window", ["-t", "1"]],
+	] as const) {
+		const result = await call(command, [...args], 2);
+		assert.equal(result.isError, true, command);
+		assert.match((result.output?.[0] as { text: string }).text, /outside sandbox gpu/);
+	}
+	assert(!calls.some(([name]) => ["send", "read", "capture", "close"].includes(name)), JSON.stringify(calls));
+	// A rerun after the conversation was moved into the sandbox: the window its first run remembered is refused too.
+	const api = callApi(9);
+	await terminal(backend).execute({ command: "send-keys", args: ["-t", "1", "ls"] }, api, BACKGROUND_CONTEXT);
+	const sends = calls.filter(([name]) => name === "send").length;
+	const rerun = await confined.execute({ command: "send-keys", args: ["-t", "1", "ls"] }, api, BACKGROUND_CONTEXT);
+	assert.equal(rerun.isError, true);
+	assert.equal(calls.filter(([name]) => name === "send").length, sends);
 });

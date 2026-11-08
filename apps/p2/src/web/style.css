@@ -15,7 +15,7 @@
 	--bg: #fbfaf8;
 	--text: #1d1b19;
 	--muted: #77716a;
-	--faint: #a8a29b;
+	--faint: #938d86; /* 3:1 on --bg: placeholders and tertiary labels stay legible */
 	--line: #e7e4df;
 	--hover: #f1eee9;
 	--user: #f0ede8;
@@ -42,7 +42,6 @@
 	--row: 44px;
 	--control: 40px;
 	--control-sm: 32px;
-	--tool-icon: 16px;
 	--radius: 4px;
 
 	--fs-xs: 11px;
@@ -57,7 +56,8 @@
 
 	--safe-top: env(safe-area-inset-top, 0px);
 	--safe-bottom: env(safe-area-inset-bottom, 0px);
-	--chat-width: 760px;
+	/* The transcript and the composer under it: centred, at most Elanor's width for running text. */
+	--chat-width: var(--semantic-dimension-size-max-width-text);
 	--chat-size: 100%;
 
 	font-family: var(--sans);
@@ -69,6 +69,8 @@
 	color: var(--text);
 	-webkit-font-smoothing: antialiased;
 	-webkit-tap-highlight-color: transparent;
+	/* Checkboxes, radios and ranges in the interface's ink, not the browser's blue. */
+	accent-color: var(--text);
 }
 :root[data-theme="dark"] {
 	color-scheme: dark;
@@ -93,14 +95,16 @@
 }
 @media (min-width: 700px) {
 	:root {
-		--chat-width: 1120px;
 		--chat-size: calc(100% - 56px);
 	}
 }
 
 /* Base */
+/* One scrollbar look everywhere (code blocks, tables, sheets, logs), not the platform's thick default. */
 * {
 	box-sizing: border-box;
+	scrollbar-width: thin;
+	scrollbar-color: var(--scrollbar) transparent;
 }
 html,
 body,
@@ -110,38 +114,41 @@ body,
 	overflow: hidden;
 	overscroll-behavior: none;
 }
-button,
-input,
-textarea,
-select {
-	font: inherit;
-	color: inherit;
-}
-button {
-	cursor: pointer;
-	background: none;
-	border: 0;
-	padding: 0;
-	text-align: inherit;
-}
-button:disabled {
-	cursor: default;
-	opacity: 0.45;
+/* Element resets in a layer below Elanor's (elanor.css): its components style their own elements. */
+@layer p2-reset {
+	button,
+	input,
+	textarea,
+	select {
+		font: inherit;
+		color: inherit;
+	}
+	button {
+		cursor: pointer;
+		background: none;
+		border: 0;
+		padding: 0;
+		text-align: inherit;
+	}
+	button:disabled {
+		cursor: default;
+		opacity: 0.45;
+	}
+	h1,
+	h2,
+	h3,
+	p,
+	figure {
+		margin: 0;
+	}
+	a {
+		color: inherit;
+		text-underline-offset: 3px;
+	}
 }
 :focus-visible {
 	outline: 1px solid var(--text);
 	outline-offset: 2px;
-}
-h1,
-h2,
-h3,
-p,
-figure {
-	margin: 0;
-}
-a {
-	color: inherit;
-	text-underline-offset: 3px;
 }
 .muted {
 	color: var(--muted);
@@ -221,19 +228,35 @@ a {
 	text-align: left;
 	text-decoration: none;
 }
-.row-button:hover,
-.model-row:hover,
-.artifact-row:hover,
-.login-action:hover,
-.hit:hover,
-.session-main:hover,
-.subagent-row:hover {
+/* Hover only where a pointer hovers (touch browsers keep :hover after a tap, leaving the row lit); a press lights
+   it everywhere. */
+.row-button:active,
+.model-row:active,
+.artifact-row:active,
+.login-action:active,
+.hit:active,
+.session-main:active,
+.subagent-row:active,
+.workspace-row:active {
 	background: var(--hover);
 }
-.model-row.selected,
+@media (hover: hover) {
+	.row-button:hover,
+	.model-row:hover,
+	.artifact-row:hover,
+	.login-action:hover,
+	.hit:hover,
+	.session-main:hover,
+	.subagent-row:hover {
+		background: var(--hover);
+	}
+}
+/* The open session or conversation is a filled row, never a side edge; the chosen model shows its check. */
+.session-header:has(> .session-main.active),
 .session-main.active,
 .subagent-row.active {
-	box-shadow: inset 2px 0 var(--text);
+	background: var(--hover);
+	color: var(--text);
 }
 .row-button > span,
 .model-row > span,
@@ -340,9 +363,11 @@ textarea.input {
 	text-decoration: none;
 	white-space: nowrap;
 }
-.button:hover,
-.login-continue:hover {
-	background: var(--hover);
+@media (hover: hover) {
+	.button:hover,
+	.login-continue:hover {
+		background: var(--hover);
+	}
 }
 .button.primary {
 	border-color: var(--text);
@@ -373,13 +398,11 @@ textarea.input {
 /* In vertical stacks a text action hugs its label instead of stretching. */
 .stack > .text-action,
 .messages > .text-action,
-.login-flow > .text-action,
-.provider-detail > .text-action {
+.login-flow > .text-action {
 	align-self: flex-start;
 }
 .text-action,
 .footer-action,
-.tool-link,
 .title-cwd,
 .crumb,
 .cwd-pick span {
@@ -391,7 +414,6 @@ textarea.input {
 @media (hover: hover) {
 	.text-action:hover,
 	.footer-action:hover,
-	.tool-link:hover,
 	.title-cwd:hover,
 	.crumb:hover,
 	.cwd-pick:hover span {
@@ -598,12 +620,14 @@ textarea.input {
 .artifact-button:hover {
 	color: var(--text);
 }
+/* Centred over the chat column: on wide screens it does not stretch across the whole main area. */
 .toast {
 	position: absolute;
 	top: calc(var(--bar) + var(--safe-top) + var(--s2));
-	right: var(--x);
-	left: var(--x);
+	left: 50%;
 	z-index: 8;
+	width: calc(100% - 2 * var(--x));
+	max-width: var(--chat-width);
 	padding: var(--s2) var(--s3);
 	border: 1px solid var(--line);
 	border-radius: var(--radius);
@@ -611,6 +635,7 @@ textarea.input {
 	color: var(--bad);
 	font-size: var(--fs-sm);
 	text-align: left;
+	translate: -50% 0;
 	animation: rise 0.2s ease-out;
 }
 .banner {
@@ -640,13 +665,6 @@ textarea.input {
 .row-space {
 	overflow-anchor: none;
 }
-.scroller,
-.composer textarea,
-.sheet-body,
-.session-scroll {
-	scrollbar-width: thin;
-	scrollbar-color: var(--scrollbar) transparent;
-}
 .scroller::-webkit-scrollbar,
 .composer textarea::-webkit-scrollbar {
 	width: 4px;
@@ -668,14 +686,24 @@ textarea.input {
 }
 /* The transcript is a virtual list (use-chat-scroll.ts): `.rows` holds a spacer for the rows above, the rows near the
    viewport, and a spacer for the rows below. Each row carries its spacing to the row before it as padding, so its
-   measured height is everything it adds; a row is a flex column like the list it replaces (its margins stay inside). */
+   measured height is everything it adds; a row is a flex column like the list it replaces (its margins stay inside).
+   The rhythm (.pi/skills/p2-ui.md): a turn starts --s5 below what came before; its parts (thinking, words, wheels, the
+   answer, results) follow --s2 apart. One-line rows (a thought, a wheel, an incoming message's header) are --row tall,
+   so one turning into another never changes the height. */
 .rows {
 	display: flow-root;
 }
 .row {
 	display: flex;
 	flex-direction: column;
-	padding-top: var(--s4);
+	padding-top: var(--s5);
+}
+.row[data-gap="step"] {
+	padding-top: var(--s2);
+}
+/* A turn's first part is at least one row tall, as the working wheel it replaces: the turn never shrinks. */
+.row[data-lead] > * {
+	min-height: var(--row);
 }
 /* A transcript appearing (opening a conversation) fades in rather than snapping in (`.messages`). */
 @keyframes transcript-appear {
@@ -700,9 +728,7 @@ textarea.input {
 		animation: none;
 	}
 }
-/* A tool call ending one response and one starting the next stack like parallel calls. */
-.row.first,
-.row.joined {
+.row.first {
 	padding-top: 0;
 }
 .messages {
@@ -724,11 +750,6 @@ textarea.input {
 	display: flex;
 	justify-content: flex-end;
 	padding-left: 12%;
-}
-.guest-message {
-	justify-content: flex-start;
-	padding-right: 12%;
-	padding-left: 0;
 }
 .bubble {
 	max-width: 100%;
@@ -772,17 +793,6 @@ textarea.input {
 	gap: var(--s3);
 	min-width: 0;
 }
-.streaming > .md > :last-child::after {
-	content: "";
-	display: inline-block;
-	width: 6px;
-	height: 6px;
-	margin-left: var(--s1);
-	border-radius: 50%;
-	background: var(--muted);
-	vertical-align: middle;
-	animation: pulse 1s ease-in-out infinite;
-}
 .message-actions {
 	display: flex;
 	margin: calc(-1 * var(--s2)) 0 0 calc(-1 * var(--s2));
@@ -801,9 +811,6 @@ textarea.input {
 }
 .reply-button:hover {
 	color: var(--text);
-}
-.guest-message .reply-button {
-	order: 1;
 }
 .user .reply-button {
 	opacity: 0;
@@ -855,18 +862,22 @@ textarea.input {
 	display: inline-flex;
 	color: var(--muted);
 }
+/* The quoted line names what a reply answers by its icon, not a side line. */
 .reply-quote {
 	display: block;
 	max-width: 100%;
 	margin-bottom: var(--s1);
-	padding-left: var(--s2);
 	overflow: hidden;
-	border-left: 2px solid var(--line);
 	color: var(--muted);
 	font-size: var(--fs-xs);
 	text-align: left;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+.reply-quote svg {
+	margin-right: var(--s1);
+	color: var(--faint);
+	vertical-align: -1px;
 }
 .reply-quote:hover {
 	color: var(--text);
@@ -905,148 +916,6 @@ textarea.input {
 	cursor: pointer;
 	list-style: none;
 }
-.working {
-	position: sticky;
-	bottom: 0;
-	z-index: 2;
-	display: flex;
-	align-self: flex-start;
-	align-items: center;
-	gap: var(--s1);
-	min-height: 20px;
-}
-.working span {
-	width: 4px;
-	height: 4px;
-	border-radius: 50%;
-	background: var(--muted);
-	animation: pulse 1.2s infinite ease-in-out;
-}
-.working span:nth-child(2) {
-	animation-delay: 0.15s;
-}
-.working span:nth-child(3) {
-	animation-delay: 0.3s;
-}
-
-/* Markdown */
-.md {
-	overflow-wrap: anywhere;
-}
-.md > * + * {
-	margin-top: 0.7em;
-}
-.marker > .md {
-	margin-top: var(--s2);
-}
-.md p,
-.md li {
-	line-height: 1.6;
-}
-.md ul,
-.md ol {
-	padding-left: 1.3em;
-}
-/* Browser margins off without outweighing the spacing between blocks (zero specificity). */
-:where(.md ul, .md ol, .md h3, .md h4, .md h5, .md h6) {
-	margin: 0;
-}
-/* Room for the widest marker: "10." needs more than "9." (Markdown sets --digits for two or more). */
-.md ol {
-	padding-left: calc(0.7em + var(--digits, 1) * 0.6em);
-}
-/* A short list inside a long one sets no --digits: it must not inherit the outer width. */
-.md li ol {
-	--digits: 1;
-}
-.md li + li {
-	margin-top: 0.25em;
-}
-/* Blocks inside an item (nested lists, code, quotes) sit as close as the next item would, whether the item's text
-   starts with markup or not; a loose item's paragraphs are as far apart as top-level ones. */
-.md li > :is(ul, ol, blockquote, div, hr) {
-	margin-top: 0.25em;
-}
-.md li > p + p {
-	margin-top: 0.7em;
-}
-/* Task items show their checkbox instead of a bullet (in a loose item it sits in the first paragraph). */
-.md li.task {
-	list-style: none;
-}
-.md li.task > input,
-.md li.task > p:first-child > input {
-	margin: 0 0.4em 0 -1.2em;
-	vertical-align: -0.1em;
-}
-.md h3,
-.md h4,
-.md h5,
-.md h6 {
-	font-size: 1em;
-	font-weight: var(--fw-strong);
-}
-.md > * + :is(h3, h4, h5, h6) {
-	margin-top: 1.1em;
-}
-.md code {
-	padding: 0.1em 0.35em;
-	border-radius: var(--radius);
-	background: var(--hover);
-	font-family: var(--mono);
-	font-size: 0.86em;
-}
-.md blockquote {
-	margin: 0;
-	padding-left: var(--s3);
-	border-left: 1px solid var(--line);
-	color: var(--muted);
-}
-.md hr {
-	border: 0;
-	border-top: 1px solid var(--line);
-}
-.md .table-wrap {
-	overflow-x: auto;
-	border: 1px solid var(--line);
-	border-radius: var(--radius);
-}
-.md table {
-	width: 100%;
-	border-collapse: collapse;
-	font-size: 0.92em;
-}
-/* Headers stay on one line; long cells wrap at words instead of making the table scroll far. */
-.md th {
-	white-space: nowrap;
-}
-.md td {
-	overflow-wrap: normal;
-}
-.md th,
-.md td {
-	padding: var(--s1) var(--s2);
-	border-right: 1px solid var(--line);
-	border-bottom: 1px solid var(--line);
-	text-align: left;
-}
-.md th {
-	background: var(--code);
-	font-weight: var(--fw-strong);
-}
-.md th:last-child,
-.md td:last-child {
-	border-right: 0;
-}
-.md tbody tr:last-child td {
-	border-bottom: 0;
-}
-.md .align-center {
-	text-align: center;
-}
-.md .align-right {
-	text-align: right;
-}
 .code-block {
 	overflow: hidden;
 	border: 1px solid var(--line);
@@ -1070,11 +939,6 @@ textarea.input {
 	font-size: var(--fs-sm);
 	line-height: 1.5;
 	tab-size: 3;
-}
-.md .code-block code {
-	padding: 0;
-	background: none;
-	font-size: inherit;
 }
 
 /* highlight.js tokens */
@@ -1162,15 +1026,12 @@ textarea.input {
 	color: #c9a4f5;
 }
 
-/* Thinking and tool calls share one compact row style. */
-.thinking button,
-.tool-head,
-.report-head {
+/* A thinking block in place: one compact row ("Thought ›") that opens to its text, muted and indented under it. */
+.thinking button {
 	display: flex;
 	align-items: center;
 	gap: var(--s2);
-	width: 100%;
-	min-height: var(--control-sm);
+	min-height: var(--row);
 	color: var(--muted);
 	font-size: var(--fs-sm);
 	text-align: left;
@@ -1185,8 +1046,7 @@ textarea.input {
 }
 .thinking-body {
 	margin-top: var(--s1);
-	padding-left: var(--s3);
-	border-left: 1px solid var(--line);
+	padding-left: calc(15px + var(--s2));
 	color: var(--muted);
 	font-size: var(--fs-sm);
 	overflow-wrap: anywhere;
@@ -1201,183 +1061,7 @@ textarea.input {
 .chev.open {
 	transform: rotate(90deg);
 }
-.tool {
-	min-width: 0;
-}
-/* Consecutive calls stack without a gap, within a response and across response boundaries. */
-.tool + .tool {
-	margin-top: calc(-1 * var(--s3));
-}
-.tool-header {
-	display: flex;
-	align-items: center;
-}
-.tool-head {
-	flex: 1;
-	min-width: 0;
-}
-.tool-icon {
-	display: grid;
-	flex: none;
-	place-items: center;
-	width: var(--tool-icon);
-	color: var(--muted);
-}
-.tool-name {
-	flex: none;
-	color: var(--text);
-	font-weight: var(--fw-strong);
-}
-.tool-summary {
-	flex: 1;
-	min-width: 0;
-	overflow: hidden;
-	font-family: var(--mono);
-	font-size: var(--fs-code);
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-.tool-state {
-	display: grid;
-	flex: none;
-	place-items: center;
-	color: var(--muted);
-	font-size: var(--fs-xs);
-}
-.tool-expand {
-	display: grid;
-	flex: none;
-	place-items: center;
-	width: var(--control-sm);
-	min-height: var(--control-sm);
-}
-.tool-body {
-	max-height: 60vh;
-	margin: var(--s1) 0 var(--s2);
-	overflow: auto;
-	border-top: 1px solid var(--line);
-	border-bottom: 1px solid var(--line);
-	background: var(--code);
-}
-.tool-body pre:not(.diff) {
-	margin: 0;
-	padding: var(--s2) var(--s3);
-	font-family: var(--mono);
-	font-size: var(--fs-code);
-	line-height: 1.5;
-	overflow-wrap: anywhere;
-	tab-size: 3;
-	white-space: pre-wrap;
-}
-.tool-body pre + pre {
-	border-top: 1px dashed var(--line);
-}
-.tool-command {
-	color: var(--text);
-}
-.tool-sub {
-	display: flex;
-	flex-direction: column;
-	gap: var(--s2);
-	padding: var(--s2) var(--s3);
-	font-size: var(--fs-sm);
-}
-.tool-link {
-	display: inline-block;
-	padding: var(--s1) 0 var(--s1) calc(var(--tool-icon) + var(--s2));
-	color: var(--muted);
-	font-size: var(--fs-sm);
-}
-.tool-body pre.tool-error {
-	color: var(--bad);
-}
-/* Code mode scripts: the first lines until "Show all"; highlighted exactly like write's content. */
-.script.clip pre {
-	max-height: calc(6 * 1.5 * var(--fs-code) + var(--s2));
-	overflow: hidden;
-}
-/* A failed script is still source: only its output takes the card's error color. */
-.tool.error .script pre {
-	color: var(--text);
-}
-.script + pre {
-	border-top: 1px dashed var(--line);
-}
-.tool-link.script-more {
-	padding-left: var(--s3);
-}
-/* Calls a tool made to other tools: compact status rows aligned with the card's summary. */
-.nested-calls {
-	margin: 0 0 var(--s1);
-	padding: 0;
-	list-style: none;
-}
-.nested-call {
-	display: grid;
-	grid-template-columns: var(--tool-icon) auto minmax(0, 1fr) auto;
-	column-gap: var(--s2);
-	align-items: center;
-	min-height: 24px;
-	padding-left: calc(var(--tool-icon) + var(--s2) + var(--depth, 0) * var(--s3));
-	color: var(--muted);
-	font-size: var(--fs-sm);
-}
-.nested-state {
-	display: grid;
-	place-items: center;
-}
-.nested-call.error .nested-state,
-.nested-call.interrupted .nested-state {
-	color: var(--bad);
-}
-.nested-name {
-	color: var(--text);
-}
-/* A one-shot agent's row opens its transcript. */
-.nested-open {
-	color: var(--text);
-	text-align: left;
-	text-decoration: underline dotted;
-	text-underline-offset: 3px;
-}
-.nested-open:hover {
-	text-decoration-style: solid;
-}
-.nested-summary,
-.nested-detail {
-	min-width: 0;
-	overflow: hidden;
-	font-family: var(--mono);
-	font-size: var(--fs-code);
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-.nested-time {
-	color: var(--faint);
-	font-size: var(--fs-xs);
-	font-variant-numeric: tabular-nums;
-}
-.nested-detail {
-	grid-column: 2 / -1;
-	padding-bottom: var(--s1);
-}
-.nested-error {
-	display: -webkit-box;
-	-webkit-box-orient: vertical;
-	-webkit-line-clamp: 2;
-	line-clamp: 2;
-	color: var(--bad);
-	overflow-wrap: anywhere;
-	white-space: pre-wrap;
-}
 /* Artifact and file cards: the body opens the viewer; the bordered end downloads. */
-.file-tool {
-	padding: var(--s1) 0;
-}
-.tool + .file-tool,
-.file-tool + .tool {
-	margin-top: 0;
-}
 .file-card {
 	display: flex;
 	align-items: stretch;
@@ -1395,8 +1079,10 @@ textarea.input {
 	padding: var(--s2) var(--s3);
 	text-align: left;
 }
-.file-card-main:hover {
-	background: var(--hover);
+@media (hover: hover) {
+	.file-card-main:hover {
+		background: var(--hover);
+	}
 }
 .file-card-icon {
 	display: grid;
@@ -1433,9 +1119,11 @@ textarea.input {
 	border-left: 1px solid var(--line);
 	color: var(--muted);
 }
-.file-card-download:hover {
-	background: var(--hover);
-	color: var(--text);
+@media (hover: hover) {
+	.file-card-download:hover {
+		background: var(--hover);
+		color: var(--text);
+	}
 }
 /* An artifact rendered at its tool call site (`inline: true`): below the card, at most about 70vh high. */
 .inline-artifact {
@@ -1587,8 +1275,6 @@ audio.file-media {
 		min-height: 0;
 		overflow-y: auto;
 		padding-bottom: var(--s4);
-		scrollbar-width: thin;
-		scrollbar-color: var(--scrollbar) transparent;
 	}
 	/* Drag the left edge to resize the docked panel. touch-action: none, or the browser
 	   turns a finger drag into a pan and stops delivering pointer moves. */
@@ -1637,16 +1323,18 @@ audio.file-media {
 .workspace-location {
 	min-width: 0;
 	overflow: hidden;
-	color: var(--faint);
+	color: var(--muted);
 	font-family: var(--mono);
 	font-size: var(--fs-xs);
 	text-align: right;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
-/* Icon tabs: 10px side padding puts the first 20px glyph on the inset; counts sit beside their icon. */
+/* Icon tabs: 10px side padding puts the first 20px glyph on the inset; counts sit beside their icon. The tabs fill
+   the bar's height, so the selected one's underline sits on the bar's bottom line. */
 .workspace-tabs {
 	display: flex;
+	align-self: stretch;
 	min-width: 0;
 }
 .workspace-tabs button {
@@ -1654,7 +1342,6 @@ audio.file-media {
 	flex: none;
 	align-items: center;
 	gap: var(--s1);
-	height: var(--control);
 	padding: 0 10px;
 	color: var(--muted);
 	font-family: var(--mono);
@@ -1673,8 +1360,6 @@ audio.file-media {
 	min-height: 0;
 	overflow-y: auto;
 	padding-bottom: var(--s4);
-	scrollbar-width: thin;
-	scrollbar-color: var(--scrollbar) transparent;
 }
 .workspace-crumbs {
 	display: flex;
@@ -1706,13 +1391,15 @@ audio.file-media {
 	font-size: var(--fs-code);
 	text-align: left;
 }
-.workspace-row:hover {
-	background: var(--hover);
+@media (hover: hover) {
+	.workspace-row:hover {
+		background: var(--hover);
+	}
 }
-/* The file open beside the list. */
+/* The file open beside the list: filled, as the open session in the sidebar. */
 .workspace-row[aria-current="true"] {
-	box-shadow: inset 2px 0 var(--text);
 	background: var(--hover);
+	color: var(--text);
 }
 .workspace-row svg {
 	flex: none;
@@ -1730,7 +1417,7 @@ audio.file-media {
 }
 .workspace-row small {
 	flex: none;
-	color: var(--faint);
+	color: var(--muted);
 	font-size: var(--fs-xs);
 }
 .workspace-status {
@@ -1840,8 +1527,8 @@ audio.file-media {
 }
 .terminal-tabs > button:not(.icon-button) {
 	flex: none;
+	align-self: stretch;
 	max-width: 14em;
-	height: var(--control-sm);
 	padding: 0 var(--s2);
 	overflow: hidden;
 	color: var(--muted);
@@ -1858,11 +1545,11 @@ audio.file-media {
 }
 /* Opened by the agent (the terminal tool). */
 .terminal-agent {
-	margin-right: 0.4em;
-	padding: 0 0.3em;
+	margin-right: var(--s1);
+	padding: 0 var(--s1);
 	border: 1px solid var(--line);
-	border-radius: 3px;
-	font-size: 0.85em;
+	border-radius: var(--radius);
+	font-size: var(--fs-xs);
 }
 .terminal-tabs > .icon-button[aria-pressed="true"] {
 	color: var(--text);
@@ -2045,7 +1732,7 @@ audio.file-media {
 }
 .workspace-hint {
 	padding: var(--s1) var(--x) 0;
-	color: var(--faint);
+	color: var(--muted);
 	font-size: var(--fs-xs);
 }
 .workspace-markdown {
@@ -2069,7 +1756,8 @@ button.diff-number:hover {
 	gap: var(--s2);
 	margin: var(--s1) var(--s2) var(--s1) calc(var(--gutter, 3ch) + var(--s2) * 2);
 	padding: var(--s1) var(--s2);
-	border-left: 2px solid var(--muted);
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
 	background: var(--bg);
 	color: var(--text);
 	font-family: var(--sans);
@@ -2097,7 +1785,7 @@ button.diff-number:hover {
 	white-space: pre-wrap;
 }
 .line-comment.current {
-	border-left-color: var(--text);
+	border-color: var(--muted);
 	background: var(--hover);
 }
 .comment-nav {
@@ -2116,7 +1804,7 @@ button.diff-number:hover {
 }
 .line-comment.outdated {
 	flex-wrap: wrap;
-	border-left-color: var(--faint);
+	border-style: dashed;
 }
 .line-comment-outdated {
 	flex: 1 0 100%;
@@ -2330,23 +2018,92 @@ button.diff-number:hover {
 .workspace-toggle.on {
 	color: var(--text);
 }
-.report {
-	padding-left: var(--s3);
-	border-left: 1px solid var(--line);
+/* Someone else's message (Chat.tsx Incoming): a header line, the body indented under the name. One shape for every
+   kind: no coloured edges, no per-kind colours; kinds differ by icon and word. */
+.incoming {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
 }
-.report-head strong {
+.incoming-head {
+	display: flex;
+	align-items: center;
+	margin: 0 calc(-1 * var(--s2));
+}
+.incoming-from {
+	display: flex;
+	flex: 1;
+	align-items: center;
+	gap: var(--s2);
+	min-width: 0;
+	min-height: var(--row);
+	padding: 0 var(--s2);
+	border-radius: var(--radius);
+	color: var(--muted);
+	font-size: var(--fs-sm);
+	text-align: left;
+}
+@media (hover: hover) {
+	button.incoming-from:hover {
+		background: var(--hover);
+	}
+}
+.incoming-icon {
+	display: grid;
+	flex: none;
+	place-items: center;
+	width: 18px;
+}
+.incoming-icon svg {
+	width: 16px;
+	height: 16px;
+}
+.incoming-line {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.incoming-name {
 	color: var(--text);
+	font-weight: var(--fw-strong);
 }
-.report-body {
-	margin-top: var(--s1);
+.incoming-chevron {
+	display: grid;
+	flex: none;
+	place-items: center;
+	color: var(--faint);
+}
+.incoming .edit-button,
+.incoming .reply-button {
+	align-self: center;
+}
+.incoming:hover .edit-button,
+.incoming:hover .reply-button {
+	opacity: 1;
+}
+.incoming-content {
+	min-width: 0;
+	padding-left: calc(18px + var(--s2));
 	font-size: var(--fs-md);
 	overflow-wrap: anywhere;
 }
-.report-body.clamp {
-	display: -webkit-box;
+/* About eight lines, then "Show more". */
+.incoming-body.clamped {
+	max-height: 12em;
 	overflow: hidden;
-	-webkit-line-clamp: 4;
-	-webkit-box-orient: vertical;
+}
+.incoming-plain {
+	white-space: pre-wrap;
+}
+.incoming-more {
+	min-height: var(--control-sm);
+	color: var(--muted);
+	font-size: var(--fs-sm);
+}
+.incoming-more:hover {
+	color: var(--text);
 }
 .images {
 	display: flex;
@@ -2585,6 +2342,12 @@ button.diff-number:hover {
 .composer-bar > :last-child {
 	place-items: center end;
 }
+/* Send (or Stop) takes taps up to the composer's right edge: a thumb aiming at the glyph often lands right of it. */
+.composer-bar > .round:last-child {
+	width: calc(var(--control) + var(--x));
+	margin-right: calc(-1 * var(--x));
+	padding-right: var(--x);
+}
 .spacer {
 	flex: 1;
 }
@@ -2624,12 +2387,12 @@ button.diff-number:hover {
 }
 .to-bottom {
 	position: absolute;
-	top: -40px;
+	top: calc(-1 * (var(--control) + var(--s2)));
 	left: 50%;
 	display: grid;
 	place-items: center;
-	width: var(--control-sm);
-	height: var(--control-sm);
+	width: var(--control);
+	height: var(--control);
 	border: 1px solid var(--line);
 	border-radius: var(--radius);
 	background: var(--bg);
@@ -2822,7 +2585,8 @@ button.diff-number:hover {
 	overflow-y: auto;
 	padding: 0 var(--x) var(--s4);
 }
-.group h3 {
+/* A folder's heading names its path (mono, as typed); other headings (Messages) are section labels. */
+.group > .group-head {
 	overflow: hidden;
 	font-family: var(--mono);
 	text-overflow: ellipsis;
@@ -2854,11 +2618,10 @@ button.diff-number:hover {
 	padding-top: var(--s1);
 	padding-bottom: var(--s1);
 }
+/* Block, not flex: text in a flex container is clipped without an ellipsis. */
 .session-title {
-	display: flex;
+	display: block;
 	flex: 1;
-	align-items: center;
-	gap: var(--s1);
 	min-width: 0;
 	overflow: hidden;
 	font-size: var(--fs-md);
@@ -2866,15 +2629,16 @@ button.diff-number:hover {
 	white-space: nowrap;
 }
 .session-title svg {
-	flex: none;
+	margin-right: var(--s1);
 	color: var(--muted);
+	vertical-align: -1px;
 }
 .session-meta {
 	display: flex;
 	flex: none;
 	align-items: center;
 	gap: var(--s1);
-	color: var(--faint);
+	color: var(--muted);
 	font-size: var(--fs-xs);
 }
 /* A lifecycle operation of the session (a move, a copy, an archive) running, or failed with Dismiss. */
@@ -2887,7 +2651,7 @@ button.diff-number:hover {
 	font-size: var(--fs-xs);
 }
 .session-operation.failed {
-	color: var(--error);
+	color: var(--bad);
 }
 .session-operation > span {
 	overflow: hidden;
@@ -3082,18 +2846,20 @@ button.diff-number:hover {
 	border: 1px solid var(--line);
 	border-radius: var(--radius);
 	background: var(--bg);
-	box-shadow: 0 6px 24px rgb(0 0 0 / 0.18);
 }
 .foot-menu-list[hidden] {
 	display: none;
 }
 .foot-menu-list .foot-button {
 	width: 100%;
+	height: var(--row);
 	padding: 0 var(--x);
 	text-align: left;
 }
-.foot-menu-list .foot-button:hover {
-	background: var(--hover);
+@media (hover: hover) {
+	.foot-menu-list .foot-button:hover {
+		background: var(--hover);
+	}
 }
 
 /* Sheets: bottom sheet on phones, centred dialog on wide screens. Above the workspace
@@ -3152,6 +2918,21 @@ button.diff-number:hover {
 	font-size: var(--fs-lg);
 	font-weight: var(--fw-strong);
 }
+/* A page inside a sheet (a call's detail): Back before the title, which ellipsizes. */
+.sheet-head.has-back {
+	justify-content: flex-start;
+	padding-left: var(--bar-pad);
+}
+.sheet-head.has-back h2 {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.sheet-head .back svg {
+	transform: rotate(180deg);
+}
 .sheet-body {
 	overflow-y: auto;
 	padding: var(--s3) var(--x) var(--s5);
@@ -3180,6 +2961,7 @@ button.diff-number:hover {
 	}
 	.sheet {
 		border: 1px solid var(--line);
+		border-radius: var(--radius);
 		animation: pop 0.2s ease-out;
 	}
 	/* Dialogs on wide screens: no grip, no swipe. */
@@ -3517,7 +3299,6 @@ button.diff-number:hover {
 	grid-column: 2;
 	min-width: 0;
 	overflow-x: auto;
-	scrollbar-width: thin;
 }
 /* Top and middle gridlines of each chart; track borders draw the baselines. */
 .cost-bars {
@@ -3574,7 +3355,6 @@ button.diff-number:hover {
 .cost-table-wrap {
 	overflow-x: auto;
 	margin: 0 calc(-1 * var(--x));
-	scrollbar-width: thin;
 }
 .cost-table {
 	width: 100%;
@@ -3773,17 +3553,52 @@ button.history-edge:disabled {
 	margin: var(--s2) 0 0;
 }
 
-/* History tool cards (plugins/history): the entries found or read, each revealing itself in the transcript. */
-.history-hits {
-	margin: 0;
-	padding: 0;
-	list-style: none;
-	display: flex;
-	flex-direction: column;
-	gap: var(--s1);
-	font-size: var(--fs-sm);
+/* The lock of a sandboxed location: in the top bar's location line and on sidebar groups. */
+.title-lock {
+	display: inline-flex;
+	margin-right: 3px;
+	vertical-align: -1px;
 }
-.history-snippet {
-	color: var(--muted);
-	overflow-wrap: anywhere;
+.group-lock {
+	display: inline-flex;
+}
+
+/* Touch targets: on a coarse pointer every list row and small control is at least one --row (44px) tall. The
+   transcript's own rows keep their rhythm (.row, TranscriptRow.gap in Chat.tsx). */
+@media (pointer: coarse) {
+	.session-main,
+	.subagent-row,
+	.workspace-row,
+	.foot-button,
+	.text-action,
+	.segments button,
+	.detail-more,
+	.queued > div,
+	.file-completion > [role="option"] {
+		min-height: var(--row);
+	}
+	.foot-button {
+		height: var(--row);
+	}
+	.file-completion > [role="option"] {
+		align-items: center;
+	}
+	.queue-remove,
+	.branch-rename,
+	.comment-nav .icon-button,
+	.line-comment .icon-button {
+		width: var(--row);
+		height: var(--row);
+	}
+	/* The glyph stays where it was: the larger box grows into the label's padding and past the row's end. */
+	.group-new {
+		width: var(--row);
+		height: var(--row);
+		margin: calc((var(--control-sm) - var(--row)) / 2 - var(--s1)) calc((var(--control-sm) - var(--row)) / 2)
+			calc((var(--control-sm) - var(--row)) / 2 - var(--s1)) 0;
+	}
+	.terminal-keys button {
+		height: var(--control);
+		min-width: var(--control);
+	}
 }

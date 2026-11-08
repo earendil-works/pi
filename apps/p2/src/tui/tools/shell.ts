@@ -1,5 +1,6 @@
-// Copied from coding-agent core/tools/renderers/bash.ts. Durable's shell result carries no `details` (the spill path
-// is a diagnostic), so the truncation footer is not shown; the recorded duration comes from the result.
+// A shell command's card, for plugins whose tools run commands (`createShellRenderers(prompt)`), copied from
+// coding-agent core/tools/renderers/bash.ts. Durable's shell result carries no `details` (the spill path is a
+// diagnostic), so the truncation footer is not shown; the recorded duration comes from the result.
 import { Container, Spacer, Text } from "@earendil-works/pi-tui";
 import { VisualLinePreview } from "../components/visual-truncate.ts";
 import { keyHint, safeText } from "../render-context.ts";
@@ -7,7 +8,7 @@ import type { Theme } from "../theme/theme.ts";
 import { getTextOutput, invalidArgText, num, str } from "./render-utils.ts";
 import type { ToolArgs, ToolRenderContext, ToolRenderers, ToolRenderResultOptions, ToolResultView } from "./types.ts";
 
-const BASH_PREVIEW_LINES = 5;
+const SHELL_PREVIEW_LINES = 5;
 
 function formatDuration(ms: number): string {
 	const seconds = ms / 1000;
@@ -50,7 +51,7 @@ function rebuildShellResult(
 			component.addChild(
 				new VisualLinePreview({
 					text: styledOutput,
-					maxVisualLines: BASH_PREVIEW_LINES,
+					maxVisualLines: SHELL_PREVIEW_LINES,
 					keep: "end",
 					formatHint: (hidden) =>
 						theme.fg("muted", `... (${hidden} earlier lines,`) +
@@ -70,7 +71,10 @@ function rebuildShellResult(
 	}
 }
 
-/** Shared by bash and powershell, which differ only in the prompt they display. */
+/**
+ * The card of a tool that runs `args.command` (and an optional `args.timeout` in seconds): `$ command`, the output's
+ * last lines, how long it took. Shells differ only in the prompt they display (`prompt`).
+ */
 export function createShellRenderers(prompt: string): ToolRenderers {
 	return {
 		renderCall(args, theme, context) {

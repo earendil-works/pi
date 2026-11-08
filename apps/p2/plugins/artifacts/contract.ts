@@ -34,3 +34,23 @@ export const ArtifactContent = remote("p2.artifact-content", {
 		},
 	},
 });
+
+/**
+ * An artifact's whole source for the server's `/artifact` route (the session's worker, the server only: the route
+ * authorizes the viewer, the worker owns the bytes). At most 2 MiB of UTF-8.
+ */
+export const ArtifactSource = remote("p2.artifact-source", {
+	version: 1,
+	params: { session: param.str() },
+	hostAddress: sessionHost,
+	variants: {
+		server: {
+			methods: {
+				read: method(
+					obj({ name: str({ maxLength: 64 }), version: int({ minimum: 1 }) }),
+					obj({ info: ArtifactInfoSchema, content: str() }),
+				),
+			},
+		},
+	},
+});

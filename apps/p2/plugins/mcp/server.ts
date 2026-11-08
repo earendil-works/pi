@@ -28,6 +28,7 @@ import {
 	PluginError,
 	type Ref,
 	type Self,
+	type SessionLock,
 	sameLocation,
 	signalOf,
 	unsafe,
@@ -38,7 +39,7 @@ import {
 import { Hosts, Server, type WorkerState } from "@p2/app/v1/server";
 import type { EnvConfig } from "../envs/config.ts";
 import { EnvManagers, EnvService } from "../envs/contract.ts";
-import { Catalog, type Session } from "../sessions/contract.ts";
+import { Catalog, type Session, SessionLocks } from "../sessions/contract.ts";
 import { type Child, ChildStore } from "../subagents/contract.ts";
 import { type OwnerConfig, OwnerConfigFile, type OwnerConfigState, type OwnerServer } from "./config.ts";
 import { type Instance, InstanceSchema, Mcp, McpManager, type ProjectFile } from "./contract.ts";
@@ -132,6 +133,7 @@ function managerFactory(connector: EnvConnector): Factory<typeof McpManager> {
 		const work = deriveTyped(self, [catalog.sessions, store.children], ([sessions, children]) =>
 			workEnvironments(sessions, children),
 		);
+		const locks = self.get(SessionLocks, {});
 		const leased = self.state(Leased);
 		const memento = self.state(Memento);
 		const placed = placements();
@@ -163,7 +165,7 @@ function managerFactory(connector: EnvConnector): Factory<typeof McpManager> {
 				// What the leases use now starts at once (after a restart with the tools listed before), so the supervisor's
 				// first list already shows it; derives compute only after the natives opened, so placed from the sources.
 				const at = workEnvironments(catalog.sessions.value, store.children.value);
-				opened.reconcile(placed(file.value.state, leased.value.leases, envs.configs.value, at));
+				opened.reconcile(placed(file.value.state, leased.value.leases, envs.configs.value, at, locks.locks.value));
 				return opened;
 			},
 			(opened) => opened.close(),
@@ -189,30 +191,34 @@ function managerFactory(connector: EnvConnector): Factory<typeof McpManager> {
 			() => ({ instances: instances.value.list(), signIns: signIns.value.list() }),
 		);
 		keepMemento(self, memento, configured, listed);
-		const placement = () => placed(configured.value, leased.value.leases, envs.configs.value, work.value);
+		const placement = () =>
+			placed(configured.value, leased.value.leases, envs.configs.value, work.value, locks.locks.value);
 		// The current configuration, leases, environments and places of work, then every change of them, start and close
 		// instances; methods that change leases reconcile at once too, so a call right after `setLocations` finds its
 		// instance.
 		const inputs = deriveTyped(
 			self,
-			[configured, leased, envs.configs, work],
-			([config, { leases }, configs, at]) => ({
+			[configured, leased, envs.configs, work, locks.locks],
+			([config, { leases }, configs, at, locked]) => ({
 				config,
 				leases,
 				envs: configs,
 				work: at,
+				locks: locked,
 			}),
 		);
 		self.on(inputs, async ({ value }) =>
-			instances.value.reconcile(placed(value.config, value.leases, value.envs, value.work)),
+			instances.value.reconcile(placed(value.config, value.leases, value.envs, value.work, value.locks)),
 		);
 		const leases = deriveTyped(self, [inputs], ([value]) =>
-			placed(value.config, value.leases, value.envs, value.work).leases.map(({ lease, servers, errors }) => ({
-				session: lease.session,
-				location: lease.location,
-				instances: [...new Set(servers.values())],
-				errors: [...errors],
-			})),
+			placed(value.config, value.leases, value.envs, value.work, value.locks).leases.map(
+				({ lease, servers, errors }) => ({
+					session: lease.session,
+					location: lease.location,
+					instances: [...new Set(servers.values())],
+					errors: [...errors],
+				}),
+			),
 		);
 		return {
 			instances: deriveTyped(self, [listed], ([value]) => value.instances),
@@ -278,14 +284,15 @@ function placements(): (
 	leases: readonly Lease[],
 	envs: Readonly<Record<string, EnvConfig>>,
 	work: WorkEnvironments,
+	locks: Readonly<Record<string, SessionLock>>,
 ) => Placement {
 	let last:
 		| { config: OwnerConfig; leases: readonly Lease[]; envs: object; work: string; placement: Placement }
 		| undefined;
-	return (config, leases, envs, work) => {
-		const at = JSON.stringify(work);
+	return (config, leases, envs, work, locks) => {
+		const at = JSON.stringify([work, locks]);
 		if (last?.config !== config || last.leases !== leases || last.envs !== envs || last.work !== at)
-			last = { config, leases, envs, work: at, placement: place(config, leases, envs, work) };
+			last = { config, leases, envs, work: at, placement: place(config, leases, envs, work, locks) };
 		return last.placement;
 	};
 }

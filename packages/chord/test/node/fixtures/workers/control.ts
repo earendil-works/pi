@@ -40,6 +40,8 @@ export type WorkerBehaviour = {
 	readonly log?: string;
 	/** How long the second closer takes. */
 	readonly closeMs?: number;
+	/** A file a closer writes after its first import of a lazy module (`lazy-close.ts`), or the import's error code. */
+	readonly lazyOnClose?: string;
 	/** After its load: close its IPC channel and block, alive (the server must reap it). */
 	readonly disconnectAndBlock?: boolean;
 	/** 300 ms after its load: this many sequential local calls, then `local calls sent <n>` on stdout. */

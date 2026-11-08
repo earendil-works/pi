@@ -2,11 +2,11 @@ import { randomBytes } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { fileURLToPath } from "node:url";
-import { Connection, detectPlatform, openTerminal, type RemoteTerminal, sshConnection } from "@earendil-works/pi-env";
+import { Connection, detectPlatform, openTerminal, type RemoteTerminal } from "@earendil-works/pi-env";
 import { takeProcessLock } from "../../src/runtime/process-lock.ts";
 import { localSystem, requireTerminalSupport, terminalDaemon } from "./daemon.ts";
 import { terminalHostAddress, terminalHostVersion } from "./detached.ts";
-import { envRevision, loadEnvs, sshOptions } from "./envs.ts";
+import { connectionRevision, envConnection, loadEnvs, sandboxHost, sshOptions } from "./envs.ts";
 import {
 	BLINK,
 	BOLD,
@@ -81,6 +81,8 @@ try {
 const address = await terminalHostAddress(directory);
 // We hold the lock: a socket file left behind is a killed host's.
 if (!address.startsWith("\0") && !address.startsWith("\\\\")) await rm(address, { force: true });
+/** The envs plugin's sandbox launcher (this host is a separate program, not a facet: no `pluginFile`). */
+const sandboxLauncher = fileURLToPath(new URL("../envs/sandbox/", import.meta.url));
 const version = await terminalHostVersion(fileURLToPath(new URL("../../", import.meta.url)));
 const ghostty = await Ghostty.load(await readFile(new URL("vendor/ghostty/ghostty-vt.wasm", import.meta.url)));
 
@@ -198,16 +200,23 @@ async function connection(env: string | null): Promise<{ connection: Connection;
 		}
 		return { connection: await entry.connection, shellEnv: {} };
 	}
-	const config = (await loadEnvs(directory))[env];
+	const configs = await loadEnvs(directory);
+	const config = configs[env];
 	if (!config) throw new Error(`Unknown environment ${env}`);
-	const revision = envRevision(config);
+	const revision = connectionRevision(configs, config);
 	let entry = connections.get(env);
 	if (!entry || entry.revision !== revision) {
-		const target = sshOptions(directory, env, config);
 		const started = (async () => {
+			// A sandbox runs its host's daemon in its VM (both Linux on the host's architecture).
+			const target =
+				config.type === "ssh" ? sshOptions(directory, env, config) : await sandboxHost(directory, env, config.host);
 			const remote = await detectPlatform(target);
 			const binary = await terminalDaemon(remote.platform, remote.arch, false);
-			const daemon = sshConnection({ ...target, binary, onLog: (text) => log(`pi-env ${env}: ${text}`) }).connection;
+			const daemon = envConnection(directory, env, config, {
+				launcher: sandboxLauncher,
+				binary,
+				onLog: (text) => log(`pi-env ${env}: ${text}`),
+			}).connection;
 			try {
 				await requireTerminalSupport(daemon);
 				return daemon;
@@ -224,7 +233,10 @@ async function connection(env: string | null): Promise<{ connection: Connection;
 	}
 	return {
 		connection: await entry.connection,
-		shellEnv: { ...(config.shellEnv ?? {}), ...(config.shellPath ? { SHELL: config.shellPath } : {}) },
+		shellEnv:
+			config.type === "ssh"
+				? { ...(config.shellEnv ?? {}), ...(config.shellPath ? { SHELL: config.shellPath } : {}) }
+				: {},
 	};
 }
 

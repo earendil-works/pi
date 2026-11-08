@@ -10,6 +10,7 @@ import type { Principal } from "../../data/index.ts";
 import type { Host, LoadReport, PluginFacet, ReloadReport } from "../../host/index.ts";
 import { Batch, type BatchError } from "../../state/internal.ts";
 import type { Watchable } from "../../watch.ts";
+import type { BaseInputs } from "./base-inputs.ts";
 import { type AppApi, type BuiltFacet, buildFacet } from "./build.ts";
 import { type Discovery, discoverPlugins, type Plugin, type PluginRoot, sameFiles } from "./discover.ts";
 import type { HostPackages } from "./evaluate.ts";
@@ -35,7 +36,11 @@ export type PluginsOptions = {
 	 * keep external: `{ server: { platform: "node", hostPackages: ["@earendil-works/chord", "@app/core"] }, … }`.
 	 */
 	readonly kinds: Readonly<Record<string, KindDefinition>>;
-	/** The app's base code: a change sets `base` (the app restarts its hosts; Chord restarts nothing). */
+	/**
+	 * The server's own base code, files and directories, hashed when the component is created: `base` is set while one
+	 * differs from it or a source file is new in one of the directories (the app restarts its hosts; Chord restarts
+	 * nothing).
+	 */
 	readonly base?: readonly string[];
 	/** Where the app serves browser builds' assets: the URL prefix their imports evaluate to. */
 	readonly publicPath?: string;
@@ -134,10 +139,11 @@ export interface Plugins {
 	/** Installs plugin `name`'s dependencies (`installDependencies`): its install mark clears, and it is dirty. */
 	installDependencies(name: string, context: Context): Promise<void>;
 	/**
-	 * Adds `files` to the app's base code (beside `base`): a change of one sets `base`. For files the app learns after
-	 * creating the component, a base bundle's inputs; files under `node_modules` are never watched.
+	 * Adds a running base artifact's record (a base bundle's `inputs`, beside `base`): `base` is set while one of its
+	 * files differs from the bytes it read or is gone; each is compared once now (settles once those comparisons did).
+	 * Files under `node_modules` are never watched.
 	 */
-	watchBase(files: readonly string[]): void;
+	watchBase(inputs: BaseInputs): Promise<void>;
 	/**
 	 * Installs new plugins from git or npm into `root`, one of the roots (`installPlugin`), and marks `set`: the next
 	 * build discovers and builds them. Returns their names.
@@ -293,8 +299,8 @@ class PluginsComponent implements Plugins {
 		return { steps: done, stopped: undefined };
 	}
 
-	watchBase(files: readonly string[]): void {
-		this.#watcher.baseFiles(files);
+	watchBase(inputs: BaseInputs): Promise<void> {
+		return this.#watcher.recordBase(inputs);
 	}
 
 	async installDependencies(name: string, context: Context): Promise<void> {

@@ -30,7 +30,11 @@ export function startNotes(dataDir: string, context: Context): Promise<App<Notes
 			listen: { host: "127.0.0.1", port: 0 },
 			api: API,
 			kinds: KINDS,
-			principal: { server: { kind: "server" }, worker: (address) => ({ kind: "worker", project: address.key }) },
+			principal: {
+				server: { kind: "server" },
+				worker: (address) => ({ kind: "worker", project: address.key }),
+				owner: { kind: "owner" },
+			},
 			workers: [
 				{
 					kind: v1.Project,

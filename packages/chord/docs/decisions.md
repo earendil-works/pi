@@ -2629,6 +2629,39 @@ validation and copies the v2 kernel added around Delta.
   takes the method's `ctx` (without its cancellation); a session's worker owns its data and pushes what the server's
   index shows (title, branches, working state) to the server inside the method that changed it, never pulling from
   the server. p2 is rewritten by these rules (audit `/tmp/p2-optimistic-audit.md`).
+- **Files v2 (owner, 2026-11-05; p2's per-host stores brief):** the kit's `Files` is replaced (`chord.app.files`
+  version 2; the version 1 index, one document holding the whole map, is not migrated: nothing outside tests and
+  examples used it). One object per host, bytes in the host's `files/blobs/`, index in four tables of the host's
+  store (`files`: one row per version; `folders`; `blobs` with a reference count; `paths`, high-water marks) plus two persisted documents
+  (`summary` per space, `usage`). Spaces and paths, folders as index entries, moves in the index only, immutable
+  blobs with versions, `copy` sharing a blob, chunked writes as before, idempotency keys, fixed indexed metadata and
+  free `meta`, a summary per space, `copyFiles` and `filesFacet` exported. Decided in the build: (1) a version's id
+  is the id plugins keep (`FileInfo.id`); paths and version numbers are found through the index. (2) A version
+  number is never used twice for a path (owner's review, 2026-11-05: transcripts and links name an artifact by name
+  and version, so a reused number would show an old card new bytes): a `paths` table keeps each path's highest version
+  ever, through removals of versions, the path and its space; a new version is one past it. A move carries its
+  versions' numbers: the path left keeps its mark, the path moved to takes the higher of the two. (3) Changes of one `Files` object take turns (an in-memory queue
+  per attempt): a version number, a key's uniqueness per space and a blob's count are decided by reads before the
+  one transaction, never by a unique index (`key` is `""` when absent, and index columns cannot be `opt`). (4) A
+  folder listing shows the folder's folders first, then its files' newest versions, each by path; its cursor names
+  the part it continues. (5) Live listings are a second local type, `FilesFolder({ space, folder })`, following
+  (`self.follow`) what `Files` hands it: `self.query` is fixed per attempt and only for the declaring object, and
+  folders are dynamic. `Files` reads every watched folder of a changed space once, inside the changing method (one
+  read per watched folder and change). (6) The summary keeps the newest 20 versions by `created` (ties by id),
+  changed in the same commit as the change (the newest after a removal read before the commit, excluding what it
+  removes). (7) The total cap counts the blobs on disk (the `usage` document), so a copy costs nothing. (8) Blob
+  files a crash left without their commit are swept when the object goes live (one index read per blob file, under
+  the change queue). (9) `copyFiles` imports the part of the source store's export that is `Files`' own into a new
+  store and hard-links each blob (a copy where links are refused) while the export holds the source's commit queue,
+  so no removal can delete a blob the copied index names; it refuses an existing target. (10) `meta: null` is stored
+  as absent; space names are `[a-z0-9][a-z0-9._-]{0,63}`, paths at most 1,024 characters without empty, `.` or `..`
+  segments. (11) `cancel(upload)` drops an upload a writer gave up (a server route whose client went away), so it
+  holds neither a slot of the cap nor bytes for the hour until it expires. (12) `@earendil-works/chord/app/files`
+  exports `Files`, `FilesFolder`, `filesFacet`, `copyFiles` and the kit's private directories and stores without the
+  rest of the kit, for an app's worker process that must load neither esbuild nor the server's components (p2's). (13) A
+  write takes an optional `created` for imports (owner, 2026-11-05, after p2's migration dry run: every migrated file
+  had the migration's time, so newest-first orders meant nothing): the version keeps the time it was made elsewhere;
+  the summary's newest versions are kept in `created` order, not write order.
 - **Workers start from the base code the server booted with (owner, 2026-11-04: "let's do this for armin"; Armin's
   incident report, Radius artifact 01m6m3xek8fveayqgstayg8w92):** the problem: a worker loads its entry module and the
   base code it imports from disk when it is forked, while the server keeps what it loaded at boot. An edit of the
@@ -2641,6 +2674,36 @@ validation and copies the v2 kernel added around Delta.
   workers only through a server restart, which the kit's `base` mark flags. Plugins are unaffected (workers get the
   server's built scripts). What the bundle keeps external (Node builtins, packages that cannot be bundled, such as
   native addons) is settled by the build. p2 adopts it through its own `createWorkers`.
+- **The kit's owner is a principal the app chooses (owner, 2026-11-06: "ok"; p3's principals are `user`, `guest`,
+  `worker`, `server`, with no `owner` kind):** the kit hardwired the owner as `{ kind: "owner" }` (the owner link,
+  the owner token file and device pairing issue sessions for it; pairing's confirm and approve, invites and a
+  pairing's starter check `kind === "owner"`; `AppOptions` required the variant in the app's principal type). Rule:
+  `startServer`'s `principal` option takes `owner: P` beside `server` and `worker`; every place above issues sessions
+  for that principal and recognizes it by canonical JSON (compared once per principal object, as the principal key);
+  the type requirement and the kit's `OWNER`/`OwnerPrincipal` exports go; `principal.worker` is required only with
+  worker kinds (a type error otherwise; added in the build for p3's first step, which has none). The owner is strict
+  JSON and never the server's principal (refused at start); the kit serves it as start data (`AppInfo.owner`), so
+  invites read it there. Changing `owner` between starts replaces the owner token file and revokes its old session;
+  other sessions issued for the old value stay what they were (the app revokes them if it wants). The kit stays
+  (owner: keep it and change it where it does not fit, rather than wiring p3 from the components: the kit keeps p3's
+  base code, which only a restart changes, small).
+- **A reloaded UI part shows its loading state (owner, 2026-11-06: "not worth it imo. a short loading state is
+  absolutely fine. this just adds more bugs and footguns"; p3 step 0a, rejected proposal `apps/p3/docs/step-0a/`
+  version 2, reviews `/tmp/p3-step0a-astra.md`, `/tmp/p3-step0a-sol.md`):** after a web or terminal plugin's reload
+  its components remount and make new references, which show `loading` (no values) for one round trip until bound;
+  the rest of the page, and every reference of a server or worker reload, stay live (design §21). Rejected: a
+  per-host table sharing references between UI components (`useHold`, `useRegistry`, `TuiScope`), released when no
+  component and no call uses them. It covered only a same-update replacement of facet-contributed components; it
+  needed the host address in its key, a lease state machine for ended references, counting of parked and queued
+  calls, a borrowed reference type without `release`, and changed presence counts (one entry for several components;
+  a never-settling call keeping it). The three bug fixes of step 0a stay (stylesheets loaded before the plugin reloads,
+  base bundles built with the server's resolution conditions, the restart mark by content).
+- **A restarting page object's old UI may show unstyled (owner, 2026-11-06: "A"; step 0a):** a page applies a plugin's
+  new stylesheet when its new code is adopted and retires the old one a drawn frame after the reload. UI a plugin's
+  facet contributes is replaced in that update and always styled. UI contributed by an object in the page stays on its
+  old version until the restarted object's successor is live (design §21); classes the edit renamed or removed are
+  unstyled until then. Accepted and documented; apps contribute UI from facets and let objects supply data. Rejected
+  for now: a kernel signal "this plugin's restarts on this host finished" to retire old sheets later.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a

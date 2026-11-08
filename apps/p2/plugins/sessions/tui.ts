@@ -1,6 +1,8 @@
 // The sessions screen: pi's `/resume` session selector (coding-agent interactive/components/session-selector.ts) on
 // p2's data, with the adaptations of p2-tui-port.md section 1.17:
-// - one line per session (title, env:cwd in the "all" scope, age); Tab switches the current env:cwd / all sessions;
+// - one line per session (activity marker, title, env:cwd in the "all" scope, age); Tab switches the current env:cwd /
+//   all sessions; the marker is the web drawer's dot: working, a failed worker, else an unread answer (owner); the
+//   chat showing a session's main conversation reads it through its latest answer, as the web does;
 // - local fuzzy filtering over title, env:cwd and ID; message hits come from `Search` (owner), in a separate
 //   "Messages" group of literal matches; pi's phrases and `re:` are unsupported (the hint says so);
 // - sorts: threaded (sessions with their subagent conversations nested, `Subagents`), recent, relevance;
@@ -8,7 +10,11 @@
 // - rename and pin (owner). Selecting a subagent opens its conversation: the (session, conversation) identity.
 // `+ New session` asks for a working directory, Tab choosing the environment; `/new [env:]path` creates one directly;
 // `/cd [env:]path` relocates the viewed session (the web's Relocate); `/name`, `/session` live here and in the status
-// plugin.
+// plugin. With projects (`projects.json`, owner) and an empty search, the list is grouped: each project's row (its
+// places probed in the background; Enter creates a session in the project at the first reachable place, or the one
+// picked with left/right) with its sessions below it, then "Other" ("+ New session" and the sessions of no project).
+// The grouped list shows every session; Tab's scope (current folder / all) applies to the flat lists. `/move` moves the
+// viewed session within its project (tui-move.ts).
 
 import {
 	type Component,
@@ -39,6 +45,9 @@ import {
 	TuiSlots,
 	type TuiSurface,
 } from "@p2/app/v1/tui";
+import { type Project, type ProjectPlace, Projects, placeLabel } from "../projects/contract.ts";
+import { SessionReads } from "../search/contract.ts";
+import { SessionStatus, type Status } from "../status/contract.ts";
 import { MAX_TITLE, type Operation, type Session, Sessions } from "./contract.ts";
 import {
 	completeLocation,
@@ -50,14 +59,17 @@ import {
 	ownerEnvs,
 	parseLocation,
 } from "./tui-location.ts";
+import { completeMove, runMove } from "./tui-move.ts";
+import { PLACE_MARK, PlaceProbes, placeProblem } from "./tui-projects.ts";
 
 type SortMode = "threaded" | "recent" | "relevance";
 const SORTS: SortMode[] = ["threaded", "recent", "relevance"];
 type Row =
-	| { kind: "new" }
+	| { kind: "project"; project: Project }
+	| { kind: "new"; prefix: string }
 	| { kind: "session"; session: Session; prefix: string }
-	| { kind: "child"; session: Session; child: SessionChild; prefix: string }
-	| { kind: "heading"; text: string }
+	| { kind: "child"; session: Session; child: SessionChild; prefix: string; indent: string }
+	| { kind: "heading"; text: string; error?: boolean }
 	| { kind: "message"; hit: SessionHit };
 
 /** pi's `formatSessionDate`. */
@@ -107,6 +119,14 @@ export class SessionsSurface implements TuiSurface {
 	private shownRows: () => Session[];
 	private editing: OptimisticAdd<RowGuess>;
 	private children: Readonly<Record<string, SessionChild[]>> = {};
+	/** Each session's worker status (`SessionStatus`): its busy conversations and a failure. */
+	private statuses: Readonly<Record<string, Status>> = {};
+	/** Each session's latest root answer and how far the owner read it (`SessionReads`, owner only). */
+	private answers: Readonly<Record<string, number>> = {};
+	private reads: Readonly<Record<string, number>> = {};
+	private marks: Held<typeof SessionReads> | undefined;
+	/** The last `markRead` sent (`session:through`): runtime changes come often, the call goes once per answer. */
+	private marked = "";
 	private hits: SessionHit[] = [];
 	private sources: TuiSessionSource[] = [];
 	private stopSources: (() => void)[] = [];
@@ -128,10 +148,28 @@ export class SessionsSurface implements TuiSurface {
 	private selectedIndex = 0;
 	private visible: Row[] = [];
 	private service: Held<typeof Sessions>;
+	/** The owner's projects (`projects.json`), why its last read failed, and this device's name in their rows. */
+	private projectList: readonly Project[] = [];
+	private label = "this device";
+	private projectsFailure: string | null = null;
+	/** The sessions' projects by session ID (`Projects.sessions`): a name may outlive its project in projects.json. */
+	private memberships: Readonly<Record<string, string>> = {};
+	private projectsRef: Held<typeof Projects> | undefined;
+	private readonly probes: PlaceProbes;
+	/**
+	 * The place picked with left/right per project name until the selector is shown again; without one, Enter takes the
+	 * first reachable place.
+	 */
+	private readonly picked = new Map<string, number>();
+	/** Counts Enters on project rows: only the latest one, still on the selector, creates a session. */
+	private openAttempt = 0;
+	/** Whether the selector was shown at the last change: showing it probes every place again. */
+	private shown = false;
 
 	constructor(runtime: TuiRuntime) {
 		this.runtime = runtime;
 		this.scope = new TuiScope(runtime);
+		this.probes = new PlaceProbes(runtime.ctx, () => this.rebuild());
 		[this.shownRows, this.editing] = this.scope.optimistic(() => this.received, applyRow);
 		this.service = this.scope.watch(Sessions, {}, (ref, follow) => {
 			this.owner = ref.variant === "owner";
@@ -143,6 +181,18 @@ export class SessionsSurface implements TuiSurface {
 				this.rebuild();
 			});
 			if (ref.variant === "owner") {
+				// Unread answers are the owner's (any device); guests see none.
+				this.marks = this.scope.watch(SessionReads, {}, (reads, followReads) => {
+					followReads(reads.answers, (answers) => {
+						this.answers = answers;
+						this.markShownRead();
+					});
+					followReads(reads.reads, (value) => {
+						this.reads = value;
+						this.markShownRead();
+					});
+				});
+				this.followProjects();
 				follow(ref.operations, (operations) => this.followOperations(operations));
 				follow(ref.defaultCwd, (value) => {
 					this.defaultCwd = value ?? "~";
@@ -153,6 +203,13 @@ export class SessionsSurface implements TuiSurface {
 					this.rebuild();
 				});
 			}
+		});
+		// Owners and guests are readers (a guest's view holds its granted sessions, without error texts).
+		this.scope.watch(SessionStatus, {}, (ref, follow) => {
+			if (ref.variant === "reader")
+				follow(ref.statuses, (statuses) => {
+					this.statuses = statuses;
+				});
 		});
 		// Optional sources (subagents, message search) from the plugins that have them.
 		this.stopRegistry = followRegistry(runtime.host, TuiSessionSources, (table) => {
@@ -170,9 +227,16 @@ export class SessionsSurface implements TuiSurface {
 			this.rebuild();
 		});
 		this.prompt.onSubmit = () => this.submitPrompt();
-		// "Current folder" follows the viewed session.
+		// "Current folder" follows the viewed session; showing the selector probes the projects' places again.
 		let viewed = runtime.session;
 		const changed = (): void => {
+			this.markShownRead();
+			const shown = runtime.screen === "sessions";
+			if (shown && !this.shown) {
+				this.picked.clear();
+				this.probes.restart(this.projects.flatMap((project) => project.places));
+			}
+			this.shown = shown;
 			if (runtime.session === viewed) return;
 			viewed = runtime.session;
 			this.rebuild();
@@ -184,6 +248,58 @@ export class SessionsSurface implements TuiSurface {
 
 	private get ctx(): TuiContext {
 		return this.runtime.ctx;
+	}
+
+	/** The chat showing a session's main conversation reads it through its latest answer (the web's rule, owner). */
+	private markShownRead(): void {
+		const { screen, session, conversation } = this.runtime;
+		const marks = liveIn(this.marks, "owner");
+		if (!marks || screen !== "chat" || !session || conversation !== this.runtime.mainOf(session)) return;
+		const latest = this.answers[session] ?? 0;
+		const key = `${session}:${latest}`;
+		if (latest <= (this.reads[session] ?? 0) || key === this.marked) return;
+		this.marked = key;
+		void marks.markRead({ session, through: latest }, BACKGROUND_CONTEXT).catch(() => {});
+	}
+
+	/** Follows the owner's projects (once): new places are probed at once while the selector is shown. */
+	private followProjects(): void {
+		if (this.projectsRef) return;
+		this.projectsRef = this.scope.watch(Projects, {}, (ref, follow) => {
+			if (ref.variant !== "owner") return;
+			follow(ref.projects, (projects) => {
+				this.projectList = projects;
+				if (this.shown) this.probes.probe(projects.flatMap((project) => project.places));
+				this.rebuild();
+			});
+			follow(ref.failure, (failure) => {
+				this.projectsFailure = failure;
+				this.rebuild();
+			});
+			follow(ref.local, (label) => {
+				this.label = label;
+				this.rebuild();
+			});
+			follow(ref.sessions, (sessions) => {
+				this.memberships = sessions;
+				this.rebuild();
+			});
+		});
+	}
+
+	/** The owner's projects, in projects.json's order (`/move` reads them too). */
+	get projects(): readonly Project[] {
+		return this.projectList;
+	}
+
+	/** This device's name in place labels: the server's hostname. */
+	get localLabel(): string {
+		return this.label;
+	}
+
+	/** The project session `id` belongs to, by name (perhaps no longer in projects.json). */
+	projectOf(id: string): string | undefined {
+		return this.memberships[id];
 	}
 
 	/**
@@ -261,35 +377,38 @@ export class SessionsSurface implements TuiSurface {
 	private inScope(session: Session): boolean {
 		if ((session.archivedAt !== null) !== this.archived) return false;
 		if (this.pinnedOnly && !session.pinned) return false;
-		if (this.scopeAll) return true;
+		if (this.scopeAll || this.grouped) return true;
 		const current = this.current;
 		const env = current ? (current.env ?? null) : this.defaultEnv;
 		const cwd = current ? current.cwd : this.defaultCwd;
 		return (session.env ?? null) === env && session.cwd === cwd;
 	}
 
+	/**
+	 * Whether the list is grouped by project: the owner's active sessions without a search, with projects. It shows every
+	 * session, so Tab's scope does not apply.
+	 */
+	private get grouped(): boolean {
+		return this.owner && !this.archived && this.projects.length > 0 && !this.search.getValue().trim();
+	}
+
 	/** Recomputes the rows shown (pi's `filterSessions`). */
 	private rebuild(): void {
 		const query = this.search.getValue().trim();
 		const candidates = this.rows.filter((session) => this.inScope(session));
-		const rows: Row[] = this.owner && !this.archived && !query ? [{ kind: "new" }] : [];
+		const rows: Row[] = [];
 		const byRecent = (a: Session, b: Session) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt;
-		let sessions: Session[];
-		if (query) {
-			const matched = fuzzyFilter(
-				candidates,
-				query,
-				(session) => `${session.title} ${where(session)} ${session.id}`,
-			);
-			sessions = this.sort === "relevance" ? matched : matched.toSorted(byRecent);
-		} else sessions = candidates.toSorted(byRecent);
-		for (const session of sessions) {
-			rows.push({ kind: "session", session, prefix: "" });
-			// Threaded: a session's named subagent conversations below it (one-shot agents and archived ones are not listed).
-			if (this.sort !== "threaded" || query) continue;
-			const kids = this.children[session.id] ?? [];
-			for (const [index, child] of kids.entries())
-				rows.push({ kind: "child", session, child, prefix: index === kids.length - 1 ? "└─ " : "├─ " });
+		const creating = this.owner && !this.archived && !query;
+		if (creating && this.projectsFailure) rows.push({ kind: "heading", text: this.projectsFailure, error: true });
+		if (this.grouped) this.groupRows(rows, candidates.toSorted(byRecent));
+		else if (creating) {
+			rows.push({ kind: "new", prefix: "" });
+			this.sessionRows(rows, candidates.toSorted(byRecent), "");
+		} else {
+			const matched = query
+				? fuzzyFilter(candidates, query, (session) => `${session.title} ${where(session)} ${session.id}`)
+				: candidates;
+			this.sessionRows(rows, query && this.sort === "relevance" ? matched : matched.toSorted(byRecent), "");
 		}
 		if (query && this.hits.length && this.hitsQuery === query) {
 			rows.push({ kind: "heading", text: "Messages (literal matches)" });
@@ -299,6 +418,43 @@ export class SessionsSurface implements TuiSurface {
 		this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, rows.length - 1));
 		if (this.visible[this.selectedIndex]?.kind === "heading") this.selectedIndex++;
 		this.runtime.tui.requestRender();
+	}
+
+	/**
+	 * The grouped list (empty search, owner): each project's row with its sessions below it, in projects.json's order,
+	 * then "Other": "+ New session" and the sessions of no project, or of one projects.json no longer has.
+	 */
+	private groupRows(rows: Row[], sessions: readonly Session[]): void {
+		for (const project of this.projects) {
+			rows.push({ kind: "project", project });
+			this.sessionRows(
+				rows,
+				sessions.filter((session) => this.projectOf(session.id) === project.name),
+				"  ",
+			);
+		}
+		rows.push({ kind: "heading", text: "Other" });
+		rows.push({ kind: "new", prefix: "  " });
+		const grouped = new Set(this.projects.map((project) => project.name));
+		this.sessionRows(
+			rows,
+			sessions.filter((session) => !grouped.has(this.projectOf(session.id) ?? "")),
+			"  ",
+		);
+	}
+
+	/**
+	 * Session rows indented by `indent`; in the threaded sort without a search, each with its named subagent
+	 * conversations below it (one-shot agents and archived ones are not listed).
+	 */
+	private sessionRows(rows: Row[], sessions: readonly Session[], indent: string): void {
+		const threaded = this.sort === "threaded" && !this.search.getValue().trim();
+		for (const session of sessions) {
+			rows.push({ kind: "session", session, prefix: indent });
+			const kids = threaded ? (this.children[session.id] ?? []) : [];
+			for (const [index, child] of kids.entries())
+				rows.push({ kind: "child", session, child, prefix: index === kids.length - 1 ? "└─ " : "├─ ", indent });
+		}
 	}
 
 	/** Message hits for the query, debounced (Search is literal and bounded, section 1.17). */
@@ -391,18 +547,24 @@ export class SessionsSurface implements TuiSurface {
 
 	/**
 	 * Creates a session and opens it at once: this TUI chooses its ID, and the conversation shows loading until the
-	 * session's worker runs. A refused creation comes back to the selector with the error.
+	 * session's worker runs. From a project row it belongs to `project`, recorded first (`Projects.assign`) so its row
+	 * never shows under "Other". A refused creation comes back to the selector with the error.
 	 */
-	private create(location: Location): void {
+	private create(location: Location, project?: string): void {
 		const catalog = this.catalog;
 		if (!catalog) return;
+		const projects = this.projectsRef && liveIn(this.projectsRef, "owner");
 		const id = crypto.randomUUID();
 		if (this.mode === "create") this.closePrompt();
 		this.runtime.navigate("chat", id);
-		catalog.create({ id, cwd: location.path, env: location.env }, BACKGROUND_CONTEXT).catch((error: unknown) => {
-			if (this.runtime.session === id) this.runtime.navigate("sessions", undefined);
-			this.runtime.fail(error);
-		});
+		const assigned =
+			project && projects ? projects.assign({ session: id, project }, BACKGROUND_CONTEXT) : Promise.resolve(null);
+		void assigned
+			.then(() => catalog.create({ id, cwd: location.path, env: location.env }, BACKGROUND_CONTEXT))
+			.catch((error: unknown) => {
+				if (this.runtime.session === id) this.runtime.navigate("sessions", undefined);
+				this.runtime.fail(error);
+			});
 	}
 
 	/**
@@ -504,9 +666,51 @@ export class SessionsSurface implements TuiSurface {
 		this.runtime.tui.requestRender();
 	}
 
+	/** The place Enter on `project`'s row uses: the one picked with left/right, else the first reachable one. */
+	private target(project: Project): ProjectPlace | undefined {
+		const picked = this.picked.get(project.name);
+		const place = picked === undefined ? undefined : project.places[picked];
+		return place ?? project.places.find((each) => this.probes.state(each).kind === "reachable");
+	}
+
+	/** Left/right on a project row: the previous or next place becomes Enter's. */
+	private pickPlace(project: Project, delta: number): void {
+		const target = this.target(project);
+		const index = target ? project.places.indexOf(target) : delta > 0 ? -1 : 0;
+		const count = project.places.length;
+		this.picked.set(project.name, (index + delta + count) % count);
+	}
+
+	/**
+	 * Enter on a project row: a session at the picked place, else at the first reachable place in preference order,
+	 * waiting for the probes still running; the reasons when none is reachable. A later Enter, or leaving the selector,
+	 * abandons the wait.
+	 */
+	private async openProject(project: Project): Promise<void> {
+		const attempt = ++this.openAttempt;
+		const picked = this.picked.get(project.name);
+		const chosen = picked === undefined ? undefined : project.places[picked];
+		const failures: string[] = [];
+		this.setStatus(`Checking ${lineText(project.name)}'s places…`);
+		for (const place of chosen ? [chosen] : project.places) {
+			const state = await this.probes.result(place);
+			if (attempt !== this.openAttempt || this.runtime.screen !== "sessions") return;
+			if (state.kind === "reachable") {
+				this.status = undefined;
+				this.create({ env: place.env, path: state.path }, project.name);
+				return;
+			}
+			const problem = placeProblem(placeLabel(place, this.localLabel), state);
+			if (problem) failures.push(problem);
+		}
+		this.setStatus(`No reachable place: ${lineText(failures.join(" · "))}`, true);
+	}
+
 	private open(row: Row | undefined): void {
 		if (!row) return;
-		if (row.kind === "new") this.command("new");
+		if (row.kind === "project")
+			void this.openProject(row.project).catch((error: unknown) => this.runtime.fail(error));
+		else if (row.kind === "new") this.command("new");
 		else if (row.kind === "session") this.runtime.navigate("chat", row.session.id, row.session.main);
 		else if (row.kind === "child") this.runtime.navigate("chat", row.session.id, row.child.conversationId);
 		else if (row.kind === "message") this.runtime.navigate("chat", row.hit.session, row.hit.conversationId);
@@ -547,6 +751,13 @@ export class SessionsSurface implements TuiSurface {
 			this.runtime.tui.requestRender();
 			return;
 		}
+		// Left/right pick a project row's place: those rows show only while the search is empty, whose cursor stays put.
+		const row = this.selected();
+		const pick = keys.matches(data, "tui.editor.cursorLeft")
+			? -1
+			: keys.matches(data, "tui.editor.cursorRight")
+				? 1
+				: 0;
 		if (keys.matches(data, "tui.select.up")) this.move(-1);
 		else if (keys.matches(data, "tui.select.down")) this.move(1);
 		else if (keys.matches(data, "tui.select.pageUp")) this.move(-10);
@@ -559,12 +770,17 @@ export class SessionsSurface implements TuiSurface {
 				this.queueSearch();
 				this.rebuild();
 			} else if (this.runtime.session) this.runtime.navigate("chat");
-		} else if (keys.matches(data, "tui.input.tab")) {
+		} else if (row?.kind === "project" && pick) this.pickPlace(row.project, pick);
+		else if (keys.matches(data, "tui.input.tab")) {
+			if (this.grouped) return;
 			this.scopeAll = !this.scopeAll;
 			this.selectedIndex = 0;
 			this.rebuild();
 		} else {
+			const grouped = this.grouped;
 			this.search.handleInput(data);
+			// A search typed in the grouped list (which shows every session) searches every session; Tab narrows it.
+			if (grouped && !this.grouped) this.scopeAll = true;
 			this.selectedIndex = 0;
 			this.queueSearch();
 			this.rebuild();
@@ -574,17 +790,23 @@ export class SessionsSurface implements TuiSurface {
 
 	private header(width: number): string[] {
 		const theme = this.runtime.theme.current;
+		// The grouped list has no scope: every session shows.
+		const grouped = this.grouped;
 		const title = this.archived
 			? "Archived Sessions"
+			: grouped
+				? "Resume Session"
+				: this.scopeAll
+					? "Resume Session (All)"
+					: "Resume Session (Current Folder)";
+		const scope = grouped
+			? ""
 			: this.scopeAll
-				? "Resume Session (All)"
-				: "Resume Session (Current Folder)";
-		const scope = this.scopeAll
-			? `${theme.fg("muted", "○ Current Folder | ")}${theme.fg("accent", "◉ All")}`
-			: `${theme.fg("accent", "◉ Current Folder")}${theme.fg("muted", " | ○ All")}`;
+				? `${theme.fg("muted", "○ Current Folder | ")}${theme.fg("accent", "◉ All")}  `
+				: `${theme.fg("accent", "◉ Current Folder")}${theme.fg("muted", " | ○ All")}  `;
 		const sortLabel = this.sort === "threaded" ? "Threaded" : this.sort === "recent" ? "Recent" : "Relevance";
 		const right = truncateToWidth(
-			`${scope}  ${theme.fg("muted", "Pinned: ")}${theme.fg("accent", this.pinnedOnly ? "Only" : "All")}  ${theme.fg("muted", "Sort: ")}${theme.fg("accent", sortLabel)}`,
+			`${scope}${theme.fg("muted", "Pinned: ")}${theme.fg("accent", this.pinnedOnly ? "Only" : "All")}  ${theme.fg("muted", "Sort: ")}${theme.fg("accent", sortLabel)}`,
 			width,
 			"",
 		);
@@ -604,8 +826,17 @@ export class SessionsSurface implements TuiSurface {
 		else if (this.status) hints = [theme.fg(this.status.error ? "error" : "accent", this.status.text), ""];
 		else {
 			const hint = (id: string, label: string) => (ctx.keyText(id) ? keyHint(ctx, id, label) : "");
+			const place =
+				this.selected()?.kind === "project" && ctx.keyText("tui.editor.cursorLeft")
+					? theme.fg("dim", `${ctx.keyText("tui.editor.cursorLeft")}/${ctx.keyText("tui.editor.cursorRight")}`) +
+						theme.fg("muted", " place")
+					: "";
 			hints = [
-				[hint("tui.input.tab", "scope"), theme.fg("muted", "literal message search; no regex or phrases")]
+				[
+					grouped ? "" : hint("tui.input.tab", "scope"),
+					place,
+					theme.fg("muted", "literal message search; no regex or phrases"),
+				]
 					.filter(Boolean)
 					.join(sep),
 				[
@@ -628,14 +859,40 @@ export class SessionsSurface implements TuiSurface {
 		return [line, ...hints.map((text) => truncateToWidth(text, width, "…"))];
 	}
 
+	/**
+	 * A row's activity marker, two columns wide on every row so titles do not shift: working (accent dot), a failed
+	 * worker (error), an unread answer (muted ring), else blank. A subagent row is working when its conversation is.
+	 */
+	private marker(row: Row): string {
+		const theme = this.runtime.theme.current;
+		if (row.kind !== "session" && row.kind !== "child") return "  ";
+		const id = row.session.id;
+		const status = this.statuses[id];
+		const busy = status?.busy ?? [];
+		if (row.kind === "child") return busy.includes(row.child.conversationId) ? theme.fg("accent", "● ") : "  ";
+		if (busy.length) return theme.fg("accent", "● ");
+		if (status?.error) return theme.fg("error", "! ");
+		if ((this.answers[id] ?? 0) > (this.reads[id] ?? 0)) return theme.fg("muted", "◦ ");
+		return "  ";
+	}
+
 	private rowLine(row: Row, selected: boolean, width: number): string {
 		const theme = this.runtime.theme.current;
 		const cursor = selected ? theme.fg("accent", "› ") : "  ";
 		let left: string;
 		let right = "";
 		if (row.kind === "new") left = theme.fg("accent", "+ New session");
-		else if (row.kind === "heading") return theme.fg("muted", `  ${row.text}`);
-		else if (row.kind === "message") {
+		else if (row.kind === "heading")
+			return truncateToWidth(theme.fg(row.error ? "error" : "muted", `  ${lineText(row.text)}`), width);
+		else if (row.kind === "project") {
+			const target = this.target(row.project);
+			const places = row.project.places.map((place) => {
+				const label = lineText(placeLabel(place, this.localLabel));
+				const mark = PLACE_MARK[this.probes.state(place).kind];
+				return `${place === target ? theme.fg("accent", label) : label} ${theme.fg(mark.color, mark.text)}`;
+			});
+			left = `${lineText(row.project.name)}   ${places.join("   ")}`;
+		} else if (row.kind === "message") {
 			left = `${lineText(row.hit.title || "Untitled")}${theme.fg("muted", ` — ${lineText(row.hit.text)}`)}`;
 			right = row.hit.role;
 		} else if (row.kind === "child") {
@@ -653,13 +910,20 @@ export class SessionsSurface implements TuiSurface {
 						: session.pinned
 							? "warning"
 							: undefined;
-			left = color ? theme.fg(color, text) : text;
-			right = `${this.operationText(session.id)}${this.scopeAll ? `${lineText(where(session))} ` : ""}${this.showIds ? `${session.id} ` : ""}${age(session.updatedAt)}`;
+			// A project projects.json no longer has: the session waits under "Other", dimmed, with the old name.
+			const project = this.projectOf(session.id);
+			const gone = project !== undefined && !this.projects.some((each) => each.name === project);
+			const shown = gone ? theme.fg("dim", `${text} (${lineText(project)})`) : color ? theme.fg(color, text) : text;
+			left = shown;
+			right = `${this.operationText(session.id)}${this.scopeAll || this.grouped ? `${lineText(where(session))} ` : ""}${this.showIds ? `${session.id} ` : ""}${age(session.updatedAt)}`;
 		}
-		const available = Math.max(10, width - 2 - visibleWidth(right) - 2);
+		// A group's rows are indented before their activity marker; a project row is its group's heading, without one.
+		const indent = row.kind === "session" || row.kind === "new" ? row.prefix : row.kind === "child" ? row.indent : "";
+		const lead = cursor + indent + (row.kind === "project" ? "" : this.marker(row));
+		const available = Math.max(10, width - visibleWidth(lead) - visibleWidth(right) - 2);
 		let styled = truncateToWidth(left, available, "…");
 		if (selected) styled = theme.bold(styled);
-		const leftPart = cursor + styled;
+		const leftPart = lead + styled;
 		const line =
 			leftPart +
 			" ".repeat(Math.max(1, width - visibleWidth(leftPart) - visibleWidth(right))) +
@@ -696,8 +960,18 @@ export class SessionsSurface implements TuiSurface {
 			Math.min(this.selectedIndex - Math.floor(maxVisible / 2), this.visible.length - maxVisible),
 		);
 		const end = Math.min(start + maxVisible, this.visible.length);
-		for (let index = start; index < end; index++)
-			lines.push(this.rowLine(this.visible[index]!, index === this.selectedIndex, width));
+		for (let index = start; index < end; index++) {
+			const row = this.visible[index]!;
+			lines.push(this.rowLine(row, index === this.selectedIndex, width));
+			if (index === this.selectedIndex && row.kind === "project") {
+				// The selected project's unusable places, with why: a mark alone does not say.
+				const problems = row.project.places.flatMap(
+					(place) => placeProblem(placeLabel(place, this.localLabel), this.probes.state(place)) ?? [],
+				);
+				if (problems.length)
+					lines.push(truncateToWidth(theme.fg("muted", `    ${lineText(problems.join(" · "))}`), width, "…"));
+			}
+		}
 		if (start > 0 || end < this.visible.length)
 			lines.push(theme.fg("muted", `  (${this.selectedIndex + 1}/${this.visible.length})`));
 		return lines;
@@ -835,6 +1109,7 @@ async function changeDirectory(ctx: TuiContext, argument: string): Promise<void>
 		{ width: "100%", anchor: "bottom-center" },
 	);
 }
+
 /** The selector's own keys: more specific than app.exit/app.clear so Ctrl+D archives here, as pi's Ctrl+D deletes. */
 const SELECTOR = "sessions && selector && !overlay && !creating";
 const selectorCommand = (title: string, run: (surface: SessionsSurface) => void, keys?: string): TuiCommand => ({
@@ -899,6 +1174,25 @@ const SESSION_COMMANDS: Record<string, TuiCommand> = {
 			tabOnly: true,
 		},
 		run: (ctx, args) => changeDirectory(ctx, args?.trim() ?? ""),
+	},
+	"p2.session.move": {
+		title: "Move the session to its project on another machine",
+		category: "Session",
+		when: "chat && owner && !overlay",
+		slash: {
+			name: "move",
+			argumentHint: "[env]",
+			complete: (prefix, ctx) => {
+				const surface = surfaceOf(ctx);
+				return surface ? completeMove(ctx, surface, prefix) : null;
+			},
+			tabOnly: true,
+		},
+		run: async (ctx, args) => {
+			const surface = surfaceOf(ctx);
+			if (surface)
+				await runMove(ctx, surface, args?.trim() ?? "", (session, location) => relocate(ctx, session, location));
+		},
 	},
 	"p2.session.name": {
 		title: "Name the session",

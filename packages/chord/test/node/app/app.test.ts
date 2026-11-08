@@ -1,32 +1,55 @@
 // Tests of `startServer` (slice 13 §1, §4, §5): the layout and the start-data object, start and close, a server without
-// workers, two worker kinds, `applyChanges`, a required root failing, a worker entry that does not build, the base
-// marks (a worker base's inputs among them), and export and import per address (documents, tables and files
-// round-trip; an existing address refused).
+// workers (and without `principal.worker`), an owner refused (not strict JSON, the server's principal), two worker
+// kinds, `applyChanges`, a required root failing, a worker entry that does not build, the base marks (a worker base's
+// inputs among them), and export and import per address (documents, tables and files round-trip; an existing address
+// refused).
 
-import { chmod, mkdir, readdir, stat, symlink, writeFile } from "node:fs/promises";
+import { execFile, execFileSync } from "node:child_process";
+import { closeSync, constants, openSync, writeSync } from "node:fs";
+import { chmod, mkdir, readdir, readFile, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
-import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
+import { BACKGROUND_CONTEXT as context, withAbortSignal } from "../../../src/context/index.ts";
 import { hostKind, local, remote, str, unknown } from "../../../src/contracts/index.ts";
 import { addressParam, HostData } from "../../../src/node/app/data.ts";
-import { AppInfo } from "../../../src/node/app/index.ts";
+import { AppInfo, type AppOptions } from "../../../src/node/app/index.ts";
 import { changesOf, flushed, rejection } from "../../support.ts";
 import { send } from "../http/support.ts";
 import { gitRepository, writePlugin } from "../plugins/support.ts";
-import { ECHO_SERVER, NOTES_PLUGIN, Notes, Project, tempDir, testApp, WORKER_ENTRY } from "./support.ts";
+import {
+	ECHO_SERVER,
+	NOTES_PLUGIN,
+	Notes,
+	Project,
+	startTestApp,
+	tempDir,
+	testApp,
+	type UserPrincipal,
+	userOwnerApp,
+	WORKER_ENTRY,
+} from "./support.ts";
+
+const ada: UserPrincipal = { kind: "user", id: "u1" };
 
 const Echo = local("test.echo", { version: 1, params: {}, members: { text: str() } });
 
 describe("starting and closing", () => {
 	it("lays out the data directory, serves AppInfo and the server's plugins, and closes everything", async () => {
 		const { app, dataDir, port } = await testApp({ plugins: { echo: { "server.ts": ECHO_SERVER } } });
-		expect((await readdir(dataDir)).sort()).toEqual(["logs", "owner-token", "plugins", "server", "workers"]);
+		expect((await readdir(dataDir)).sort()).toEqual(["cache", "logs", "owner-token", "plugins", "server", "workers"]);
 		expect((await readdir(join(dataDir, "server"))).filter((name) => !name.startsWith("."))).toEqual(
 			expect.arrayContaining(["cookie-secret", "store.sqlite"]),
 		);
 		const info = await app.host.get(AppInfo, {}, context);
-		expect([info.dataDir.value, info.name.value, info.version.value]).toEqual([dataDir, "chord-test", "v1"]);
+		expect([info.dataDir.value, info.name.value, info.version.value, info.owner.value]).toEqual([
+			dataDir,
+			"chord-test",
+			"v1",
+			{ kind: "owner" },
+		]);
 		expect((await app.host.get(Echo, {}, context)).text.value).toBe("echo");
 		expect(app.ownerLink()).toMatch(new RegExp(`^http://127\\.0\\.0\\.1:${port}/_chord/owner#[A-Za-z0-9_-]{43}$`));
 		expect(app.workers.size).toBe(0);
@@ -66,11 +89,16 @@ describe("starting and closing", () => {
 			"workers",
 			"plugins",
 			"logs",
+			"cache",
+			"cache/workers",
+			"cache/node",
 			"server/store.sqlite",
 			"server/cookie-secret",
 			"owner-token",
 		];
-		expect(await Promise.all(paths.map(mode))).toEqual([0o700, 0o700, 0o700, 0o700, 0o700, 0o600, 0o600, 0o600]);
+		expect(await Promise.all(paths.map(mode))).toEqual([
+			0o700, 0o700, 0o700, 0o700, 0o700, 0o700, 0o700, 0o700, 0o600, 0o600, 0o600,
+		]);
 		await app.close(context);
 		await chmod(join(dataDir, "server", "store.sqlite"), 0o644);
 		await chmod(join(dataDir, "owner-token"), 0o644);
@@ -111,15 +139,25 @@ describe("starting and closing", () => {
 		expect(await rejection(testApp({ root, dataDir }))).toMatchObject({ name: "PluginError" });
 	});
 
-	it("rejects when a worker kind's entry does not build, with everything closed", async () => {
-		const base = await tempDir();
-		await writeFile(join(base, "worker.ts"), "export const broken = ;");
-		const worker = { kind: Project, entry: join(base, "worker.ts"), start: () => null, authorize: () => true };
-		const dataDir = join(base, "data");
-		expect(String(await rejection(testApp({ dataDir, workers: [worker] })))).toContain('Unexpected ";"');
-		// Closed: the data directory's lock is free again.
-		const { app } = await testApp({ dataDir });
+	it("starts without worker kinds and without `principal.worker`; worker kinds need it (a type error)", async () => {
+		const { app } = await startTestApp<UserPrincipal>({ server: { kind: "server" }, owner: ada }, {});
+		expect(app.workers.size).toBe(0);
 		await app.close(context);
+		// Type-checked only: the `@ts-expect-error` below is the test.
+		const worker = { kind: Project, entry: WORKER_ENTRY, start: () => null, authorize: () => true };
+		const principal: { server: UserPrincipal; owner: UserPrincipal } = { server: { kind: "server" }, owner: ada };
+		void ((options: AppOptions<UserPrincipal>) => {
+			// @ts-expect-error worker kinds without `principal.worker`
+			const refused: AppOptions<UserPrincipal> = { ...options, principal, workers: [worker] };
+			return refused;
+		});
+	});
+
+	it("refuses an owner that is not strict JSON or is the server's principal, before it opens anything", async () => {
+		const notJson = await rejection(userOwnerApp({ kind: "user", id: "u1", name: undefined }));
+		expect(String(notJson)).toContain("principal.owner must be strict JSON");
+		const server = await rejection(userOwnerApp({ kind: "server" }));
+		expect(String(server)).toContain("principal.owner must not be the server's principal");
 	});
 });
 
@@ -247,7 +285,160 @@ describe("applying changes one after another", () => {
 });
 
 describe("base code", () => {
-	it("marks base for a change of `base`'s files and directories and of a file a worker kind's base was built from", async () => {
+	it("compares the server's own code from its entry, the start script and what it imports, with no `base` given", async () => {
+		const dir = await tempDir();
+		await writeFile(join(dir, "helper.ts"), 'export const label = "v1";\n');
+		// The server marks `base` for an edit of a module the start script imports, and clears at the revert.
+		const helper = JSON.stringify(join(dir, "helper.ts"));
+		const stdout = await runStart(
+			dir,
+			['import { label } from "./helper.ts";'],
+			[
+				"await started.baseWatched;",
+				"console.log(label, started.plugins.state.value.base);",
+				`await writeFile(${helper}, 'export const label = "v2";\\n');`,
+				"await until(true);",
+				`await writeFile(${helper}, 'export const label = "v1";\\n');`,
+				"await until(false);",
+				'console.log("marked and cleared");',
+			],
+		);
+		expect(stdout).toEqual(["v1 false", "marked and cleared"]);
+	}, 60_000);
+
+	it("starts with an entry whose inactive optional import is missing: the import is left out, the rest compared", async () => {
+		const dir = await tempDir();
+		await writeFile(join(dir, "helper.ts"), 'export const label = "v1";\n');
+		const stdout = await runStart(
+			dir,
+			[
+				'import { label } from "./helper.ts";',
+				'if (process.env.CHORD_TEST_OPTIONAL === "yes") await import("./optional-feature-not-installed.mjs");',
+				'if (process.env.CHORD_TEST_OPTIONAL === "yes") await import("optional-package-not-installed");',
+			],
+			[
+				"await started.baseWatched;",
+				'console.log("started", label, errors.length);',
+				`await writeFile(${JSON.stringify(join(dir, "helper.ts"))}, 'export const label = "v2";\\n');`,
+				"await until(true);",
+				'console.log("marked");',
+			],
+		);
+		expect(stdout).toEqual(["started v1 0", "marked"]);
+	}, 60_000);
+
+	it("starts when the scan of its entry fails (a lazy import of a file it cannot parse): reported, not compared", async () => {
+		const dir = await tempDir();
+		await writeFile(join(dir, "broken.mjs"), "export const = ;\n");
+		const stdout = await runStart(
+			dir,
+			['if (process.env.CHORD_TEST_NEVER === "yes") await import("./broken.mjs");'],
+			[
+				'console.log("started", errors.length);',
+				"await started.baseWatched;",
+				'console.log("scanned", errors.map(({ kind }) => kind).join(" "));',
+			],
+		);
+		expect(stdout).toEqual(["started 0", "scanned server_scan"]);
+	}, 60_000);
+
+	it.skipIf(process.platform !== "linux")(
+		"answers before the scan of its own code finished: the scan runs after the start",
+		async () => {
+			const dir = await tempDir();
+			// A file only the scan reads (Node never runs the import): a pipe, so the scan waits until it is written.
+			execFileSync("mkfifo", [join(dir, "held.mjs")]);
+			const stdout = await runStart(
+				dir,
+				['if (process.env.CHORD_TEST_NEVER === "yes") await import("./held.mjs");'],
+				[
+					'const owner = await fetch(new URL(started.ownerLink()).origin + "/_chord/owner");',
+					'console.log("answered", owner.status);',
+					// The pipe is fed from now on: each read of it (the scan's, the watcher's first comparison) gets the file.
+					`let feeding = true; void (async () => { while (feeding) { try { const fd = openSync(${JSON.stringify(join(dir, "held.mjs"))}, constants.O_WRONLY | constants.O_NONBLOCK); writeSync(fd, "export {};"); closeSync(fd); } catch {} await new Promise((resolve) => setTimeout(resolve, 10)); } })();`,
+					"await started.baseWatched;",
+					"feeding = false;",
+					'console.log("scanned");',
+				],
+			);
+			expect(stdout).toEqual(["answered 200", "scanned"]);
+		},
+		60_000,
+	);
+
+	it.skipIf(process.platform !== "linux")(
+		"closes without waiting for a scan of its own code stalled on a read",
+		async () => {
+			const dir = await tempDir();
+			execFileSync("mkfifo", [join(dir, "held.mjs")]);
+			const stdout = await runStart(
+				dir,
+				['if (process.env.CHORD_TEST_NEVER === "yes") await import("./held.mjs");'],
+				[
+					// Once the scan reads the pipe (a non-blocking open for writing succeeds; kept open, it ends nothing yet).
+					`let fd = -1; for (;;) { try { fd = openSync(${JSON.stringify(join(dir, "held.mjs"))}, constants.O_WRONLY | constants.O_NONBLOCK); break; } catch { await new Promise((resolve) => setTimeout(resolve, 10)); } }`,
+					"const origin = new URL(started.ownerLink()).origin;",
+					"const at = performance.now();",
+					"await started.close(context);",
+					'console.log("closed", performance.now() - at < 2000);',
+					// Closed: HTTP answers no more while the scan is still stalled.
+					'console.log("http", await fetch(origin + "/_chord/owner").then(() => "answered", () => "refused"));',
+					// The scan's read ends only when the pipe is written (the process can exit then); its result is dropped.
+					'writeSync(fd, "export {};");',
+					"closeSync(fd);",
+					"await started.baseWatched;",
+					'console.log("errors", errors.length, "base", started.plugins.state.value.base);',
+				],
+			);
+			expect(stdout).toEqual(["closed true", "http refused", "errors 0 base false"]);
+		},
+		60_000,
+	);
+
+	it("marks a file of its own code edited right after the start, before the scan read it (Node loaded the old)", async () => {
+		const dir = await tempDir();
+		await writeFile(join(dir, "helper.ts"), 'export const label = "v1";\n');
+		const stdout = await runStart(
+			dir,
+			['import { label } from "./helper.ts";'],
+			[
+				`await writeFile(${JSON.stringify(join(dir, "helper.ts"))}, 'export const label = "v2";\\n');`,
+				"await started.baseWatched;",
+				"console.log(label, started.plugins.state.value.base);",
+			],
+		);
+		expect(stdout).toEqual(["v1 true"]);
+	}, 60_000);
+
+	it("does not mark a file of its own code stamped in the future: compared by its bytes (Astra)", async () => {
+		const dir = await tempDir();
+		await writeFile(join(dir, "helper.ts"), 'export const label = "v1";\n');
+		const tomorrow = new Date(Date.now() + 24 * 60 * 60_000);
+		await utimes(join(dir, "helper.ts"), tomorrow, tomorrow);
+		const stdout = await runStart(
+			dir,
+			['import { label } from "./helper.ts";'],
+			["await started.baseWatched;", "console.log(label, started.plugins.state.value.base);"],
+		);
+		expect(stdout).toEqual(["v1 false"]);
+	}, 60_000);
+
+	it("settles baseWatched only once the base bundles' records were compared (an edit right after the start)", async () => {
+		const dir = await tempDir();
+		await writeFile(join(dir, "worker.ts"), 'export const label = "v1";\n');
+		const worker = { kind: Project, entry: join(dir, "worker.ts"), start: () => null, authorize: () => true };
+		// In this process the entry is the test runner's, under node_modules: no scan, only the worker base's record.
+		const { app } = await testApp({ workers: [worker] });
+		try {
+			await writeFile(join(dir, "worker.ts"), 'export const label = "v2";\n');
+			await app.baseWatched;
+			expect(app.plugins.state.value.base).toBe(true);
+		} finally {
+			await app.close(context);
+		}
+	});
+
+	it("marks base for a change of `base`'s files and directories and of a file a worker kind's base was built from, not for a rewrite with the same bytes", async () => {
 		const dir = await tempDir();
 		await mkdir(join(dir, "api"));
 		await writeFile(join(dir, "api", "v1.ts"), "export {};");
@@ -266,11 +457,242 @@ describe("base code", () => {
 			const { app } = await testApp({ base: [join(dir, "api"), join(dir, "start.ts")], workers: [worker] });
 			try {
 				expect(app.plugins.state.value.base).toBe(false);
+				await writeFile(changed, await readFile(changed));
+				await new Promise((resolve) => setTimeout(resolve, 200));
+				expect(app.plugins.state.value.base).toBe(false);
 				await writeFile(changed, "export const changed = 1;");
 				await vi.waitFor(() => expect(app.plugins.state.value.base).toBe(true), { timeout: 5_000 });
 			} finally {
 				await app.close(context);
 			}
+		}
+	});
+});
+
+describe("bases built after the listen", () => {
+	/** A pipe at `path` read by a base build: fed from now on (each read gets `text`) until `stop` is called. */
+	function feed(path: string, text: string): { stop(): void } {
+		let feeding = true;
+		void (async () => {
+			while (feeding) {
+				try {
+					// Succeeds only while a reader waits (a build, the watcher's first comparison).
+					const fd = openSync(path, constants.O_WRONLY | constants.O_NONBLOCK);
+					writeSync(fd, text);
+					closeSync(fd);
+				} catch {}
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+		})();
+		return {
+			stop: () => {
+				feeding = false;
+			},
+		};
+	}
+
+	/** Whether `promise` is still pending after 300 ms. */
+	async function pending(promise: Promise<unknown>): Promise<boolean> {
+		const later = Symbol("pending");
+		return (await Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve(later), 300))])) === later;
+	}
+
+	it.skipIf(process.platform !== "linux")(
+		"answers its owner page before the web base is built; a page request waits for its base",
+		async () => {
+			const dir = await tempDir();
+			// The entry imports a pipe: its build waits until the pipe is written.
+			execFileSync("mkfifo", [join(dir, "held.ts")]);
+			await writeFile(join(dir, "main.ts"), 'import "./held.ts";\nglobalThis.started = true;\n');
+			const page = (_request: unknown, assets: { readonly script: string }) => `<p>${assets.script}</p>`;
+			const { app, port } = await testApp({
+				unbuilt: true,
+				kinds: { server: { platform: "node" }, web: { platform: "browser" } },
+				web: { entry: join(dir, "main.ts"), page, public: true },
+			});
+			try {
+				expect((await send(port, "GET", "/_chord/owner")).status).toBe(200);
+				expect(app.web).toEqual({ base: undefined });
+				const answer = send(port, "GET", "/");
+				expect(await pending(answer)).toBe(true);
+				expect(await pending(app.basesBuilt)).toBe(true);
+				const fed = feed(join(dir, "held.ts"), "export {};");
+				try {
+					const { status, body } = await answer;
+					expect([status, body.toString()]).toEqual([200, `<p>/_chord/web/base.${app.web!.base}.js</p>`]);
+					await app.baseWatched;
+				} finally {
+					fed.stop();
+				}
+			} finally {
+				await app.close(context);
+			}
+		},
+		30_000,
+	);
+
+	it.skipIf(process.platform !== "linux")(
+		"answers before a worker kind's base is built; a worker start waits for its base",
+		async () => {
+			const dir = await tempDir();
+			execFileSync("mkfifo", [join(dir, "held.ts")]);
+			await writeFile(join(dir, "worker.ts"), `import "./held.ts";\nimport ${JSON.stringify(WORKER_ENTRY)};\n`);
+			const starts: string[] = [];
+			const worker = {
+				kind: Project,
+				entry: join(dir, "worker.ts"),
+				execArgv: ["--conditions=source", "--experimental-strip-types", "--no-warnings"],
+				start: (address: { readonly key: string }) => {
+					starts.push(address.key);
+					return { project: address.key };
+				},
+				authorize: () => true,
+			};
+			const { app, port } = await testApp({ unbuilt: true, plugins: { notes: NOTES_PLUGIN }, workers: [worker] });
+			try {
+				expect((await send(port, "GET", "/_chord/owner")).status).toBe(200);
+				const notes = app.host.get(Notes, { id: "p1" }, context);
+				expect(await pending(notes)).toBe(true);
+				// The app's start data is asked for only once the base is built.
+				expect(starts).toEqual([]);
+				const fed = feed(join(dir, "held.ts"), "export {};");
+				try {
+					(await notes).release();
+					expect(starts).toEqual(["project|p1"]);
+					await app.baseWatched;
+				} finally {
+					fed.stop();
+				}
+			} finally {
+				await app.close(context);
+			}
+		},
+		30_000,
+	);
+
+	it.skipIf(process.platform !== "linux")(
+		"a closed start's late worker-base build never touches the next start's directory: its worker still lazy-imports",
+		async () => {
+			const dir = await tempDir();
+			execFileSync("mkfifo", [join(dir, "held.mjs")]);
+			await writeFile(join(dir, "old.mjs"), 'import "./held.mjs";\n');
+			// The next start's worker: the fixture worker, plus a lazy import once the test asks for it (file `go`).
+			const lazily = [
+				`import ${JSON.stringify(WORKER_ENTRY)};`,
+				'import { existsSync, writeFileSync } from "node:fs";',
+				"const poll = setInterval(async () => {",
+				`\tif (!existsSync(${JSON.stringify(join(dir, "go"))})) return;`,
+				"\tclearInterval(poll);",
+				'\tconst label = await import("./lazy.mjs").then(({ label }) => label, (error) => "ERROR " + error.code);',
+				`\twriteFileSync(${JSON.stringify(join(dir, "result"))}, label);`,
+				"}, 10);",
+			].join("\n");
+			await writeFile(join(dir, "new.mjs"), lazily);
+			await writeFile(join(dir, "lazy.mjs"), 'export const label = "lazy";\n');
+			const worker = (entry: string) => ({
+				kind: Project,
+				entry,
+				execArgv: ["--conditions=source", "--experimental-strip-types", "--no-warnings"],
+				start: (address: { readonly key: string }) => ({ project: address.key }),
+				authorize: () => true,
+			});
+			const plugins = { notes: NOTES_PLUGIN };
+			const old = await testApp({ unbuilt: true, plugins, workers: [worker(join(dir, "old.mjs"))] });
+			// The old start's build reads the pipe (an open for writing succeeds now); it is held until the pipe is written.
+			let fd = -1;
+			while (fd < 0) {
+				try {
+					fd = openSync(join(dir, "held.mjs"), constants.O_WRONLY | constants.O_NONBLOCK);
+				} catch {
+					await new Promise((resolve) => setTimeout(resolve, 10));
+				}
+			}
+			await old.app.close(context);
+			const next = await testApp({
+				dataDir: old.dataDir,
+				root: old.root,
+				plugins,
+				workers: [worker(join(dir, "new.mjs"))],
+			});
+			try {
+				// A worker of the next start runs from `cache/workers/project/`.
+				(await next.app.host.get(Notes, { id: "p1" }, context)).release();
+				writeSync(fd, "export {};");
+				closeSync(fd);
+				fd = -1;
+				await old.app.basesBuilt;
+				await writeFile(join(dir, "go"), "");
+				await vi.waitFor(async () => expect(await readFile(join(dir, "result"), "utf8")).toBe("lazy"), {
+					timeout: 5_000,
+				});
+			} finally {
+				if (fd >= 0) closeSync(fd);
+				await next.app.close(context);
+			}
+		},
+		30_000,
+	);
+
+	it.skipIf(process.platform !== "linux")(
+		"an aborted Apply waiting at the web step for the initial build stops there; the build goes on (Sol)",
+		async () => {
+			const dir = await tempDir();
+			execFileSync("mkfifo", [join(dir, "held.ts")]);
+			await writeFile(join(dir, "main.ts"), 'import "./held.ts";\nglobalThis.started = true;\n');
+			const { app, port } = await testApp({
+				unbuilt: true,
+				kinds: { server: { platform: "node" }, web: { platform: "browser" } },
+				web: { entry: join(dir, "main.ts"), page: () => "<p>page</p>", public: true },
+			});
+			try {
+				const controller = new AbortController();
+				const applied = app.applyChanges(withAbortSignal(controller.signal, context));
+				expect(await pending(applied)).toBe(true);
+				controller.abort(new Error("cancel Apply"));
+				const result = await applied;
+				expect([result.stopped?.step, (result.stopped?.error as Error).message]).toEqual(["web", "cancel Apply"]);
+				const fed = feed(join(dir, "held.ts"), "export {};");
+				try {
+					expect((await send(port, "GET", "/")).status).toBe(200);
+					await app.baseWatched;
+				} finally {
+					fed.stop();
+				}
+			} finally {
+				await app.close(context);
+			}
+		},
+		30_000,
+	);
+
+	it("reports a base that fails after the listen and runs on: the page answers 503, the kind's workers fail their start", async () => {
+		const dir = await tempDir();
+		await writeFile(join(dir, "main.ts"), "export const broken = ;\n");
+		await writeFile(join(dir, "worker.ts"), "export const broken = ;\n");
+		const worker = { kind: Project, entry: join(dir, "worker.ts"), start: () => null, authorize: () => true };
+		const page = () => "<p>page</p>";
+		const { app, port, errors } = await testApp({
+			kinds: { server: { platform: "node" }, worker: { platform: "node" }, web: { platform: "browser" } },
+			web: { entry: join(dir, "main.ts"), page, public: true },
+			workers: [worker],
+		});
+		try {
+			const reported = errors as { kind: string; base?: string; error?: Error }[];
+			expect(reported.map(({ kind, base }) => `${kind} ${base}`).sort()).toEqual([
+				"base_build project",
+				"base_build web",
+			]);
+			expect(reported.every(({ error }) => /Unexpected ";"/.test(String(error?.message)))).toBe(true);
+			expect(app.web).toEqual({ base: undefined });
+			expect((await send(port, "GET", "/")).status).toBe(503);
+			expect((await send(port, "GET", "/_chord/web/base")).status).toBe(503);
+			expect((await send(port, "GET", "/_chord/owner")).status).toBe(200);
+			const notes = app.host.hold(Notes, { id: "p1" }, context);
+			await vi.waitFor(() => expect(notes.state.value.kind).toBe("failed"));
+			expect(notes.state.value).toMatchObject({ cause: { error: { message: "worker failed to start" } } });
+			notes.release();
+		} finally {
+			await app.close(context);
 		}
 	});
 });
@@ -450,3 +872,39 @@ describe("export and import per address", () => {
 		await other.app.close(context);
 	}, 60_000);
 });
+
+/**
+ * Runs a start script in `dir` (a child Node process, the script its entry: what the kit scans): `head` at its top, a
+ * server started with an empty plugins root (`started`, its reports in `errors`, `until(base)` waiting for the mark),
+ * then `body`; what it printed, by line.
+ */
+async function runStart(dir: string, head: readonly string[], body: readonly string[]): Promise<string[]> {
+	await mkdir(join(dir, "plugins"));
+	const app = fileURLToPath(new URL("../../../src/node/app/index.ts", import.meta.url));
+	const ctx = fileURLToPath(new URL("../../../src/context/index.ts", import.meta.url));
+	await writeFile(
+		join(dir, "start.ts"),
+		[
+			`import { closeSync, constants, openSync, writeSync } from "node:fs";`,
+			`import { writeFile } from "node:fs/promises";`,
+			`import { BACKGROUND_CONTEXT as context } from ${JSON.stringify(ctx)};`,
+			`import { startServer } from ${JSON.stringify(app)};`,
+			...head,
+			"const errors: { kind: string }[] = [];",
+			"const until = async (value: boolean) => { while (started.plugins.state.value.base !== value) await new Promise((resolve) => setTimeout(resolve, 20)); };",
+			"const started = await startServer({",
+			`\tname: "chord-test", dataDir: ${JSON.stringify(join(dir, "data"))}, root: ${JSON.stringify(join(dir, "plugins"))},`,
+			'\tapi: { name: "@test/app", versions: ["v1"], modules: { "@test/app/v1": {} } }, kinds: { server: { platform: "node" } },',
+			'\tprincipal: { server: { kind: "server" }, owner: { kind: "owner" } }, onError: (error) => errors.push(error),',
+			"}, context);",
+			...body,
+			"await started.close(context);",
+		].join("\n"),
+	);
+	const { stdout } = await promisify(execFile)(
+		process.execPath,
+		["--conditions=source", "--experimental-strip-types", "--no-warnings", join(dir, "start.ts")],
+		{ timeout: 30_000 },
+	);
+	return stdout.trim().split("\n");
+}

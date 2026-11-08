@@ -94,11 +94,17 @@ const ResultSchema = obj({
 });
 type Result = Static<typeof ResultSchema>;
 
-/** The extension offering the `terminal` tool, reached as `reach` says. */
+/** Where the calling conversation works, and the sandbox it is confined to, if any. */
+export type TerminalCaller = (api: ToolExecutionApi, context: Context) => Promise<{ here: Location; sandbox?: string }>;
+
+/**
+ * The extension offering the `terminal` tool, reached as `reach` says. A caller confined to a sandbox reaches only the
+ * session's terminals in that sandbox: the others run outside it.
+ */
 export function createTerminalExtension(
 	reach: TerminalReach,
 	backend: TerminalBackend,
-	locate: (api: ToolExecutionApi, context: Context) => Promise<Location>,
+	caller: TerminalCaller,
 ): Extension {
 	return defineExtension({
 		name: TERMINAL_EXTENSION,
@@ -125,7 +131,7 @@ export function createTerminalExtension(
 						throw error;
 					}
 					try {
-						const { result, terminalId } = await run(command, backend, locate, api, context);
+						const { result, terminalId } = await run(command, backend, await caller(api, context), api, context);
 						return {
 							output: [{ type: "text", text: describe(result) }],
 							structuredOutput: result,
@@ -154,61 +160,73 @@ function failure(text: string): ToolExecutionResult {
 async function run(
 	command: TerminalCommand,
 	backend: TerminalBackend,
-	locate: (api: ToolExecutionApi, context: Context) => Promise<Location>,
+	{ here, sandbox }: { here: Location; sandbox?: string },
 	api: ToolExecutionApi,
 	context: Context,
 ): Promise<{ result: Result; terminalId?: string }> {
 	const key = String(api.taskId);
+	// Checked on reruns too (remembered terminals included): the conversation may have been moved into a sandbox since.
+	const reachable = <T extends { env: string | null }>(terminal: T): T => {
+		if (sandbox !== undefined && terminal.env !== sandbox)
+			throw new Error(`That window runs outside sandbox ${sandbox}, where you work; it is not yours to use.`);
+		return terminal;
+	};
 	const read = async (args: Parameters<TerminalBackend["read"]>[0]) => {
 		const value = await backend.read(args, context);
 		return { result: readResult(value), terminalId: value.terminal.id };
 	};
 	switch (command.command) {
 		case "new-window": {
-			const here = await locate(api, context);
 			const directory = command.directory;
 			const location =
 				directory === undefined
 					? here
 					: { env: here.env, cwd: isRooted(directory) ? directory : joinPath(here.cwd, directory) };
-			const opened = await backend.open(
-				{
-					key,
-					location,
-					...(command.name ? { name: command.name } : {}),
-					...(command.shellCommand ? { command: command.shellCommand } : {}),
-				},
-				context,
+			// A rerun gets the window its first run opened, which may be outside a sandbox entered since.
+			const opened = reachable(
+				await backend.open(
+					{
+						key,
+						location,
+						...(command.name ? { name: command.name } : {}),
+						...(command.shellCommand ? { command: command.shellCommand } : {}),
+					},
+					context,
+				),
 			);
 			const wait = waitOf(command, { kind: "quiet" }, DEFAULT_TIMEOUT_S);
 			return read({ target: opened.id, from: 0, ...(wait ? { wait } : {}) });
 		}
 		case "list-windows": {
-			const windows = await backend.list(context);
+			const windows = (await backend.list(context)).filter(
+				({ terminal }) => sandbox === undefined || terminal.env === sandbox,
+			);
 			return { result: { windows: windows.map(({ terminal, foreground }) => windowOf(terminal, foreground)) } };
 		}
 		case "send-keys": {
-			const start = await readStart(command.target, backend, api, context);
+			const start = await readStart(command.target, backend, reachable, api, context);
 			await backend.send({ key, target: start.id, keys: command.keys, literal: command.literal }, context);
 			const wait = waitOf(command, { kind: "quiet" }, SEND_TIMEOUT_S);
 			return read({ target: start.id, from: start.offset, ...(wait ? { wait } : {}) });
 		}
 		case "read": {
-			const start = await readStart(command.target, backend, api, context);
+			const start = await readStart(command.target, backend, reachable, api, context);
 			const wait = waitOf(command, { kind: "none" }, DEFAULT_TIMEOUT_S);
 			return read({ target: start.id, from: start.offset, ...(wait ? { wait } : {}) });
 		}
 		case "capture-pane": {
-			const { target, scrollback, escapes } = command;
+			const { scrollback, escapes } = command;
+			// Captured by the checked window's id: its number could be another window's by now.
+			const target = reachable((await backend.cursor(command.target, context)).terminal).id;
 			const { terminal, text } = await backend.capture({ target, scrollback, escapes }, context);
 			return { result: { ...stateOf(terminal), ...cut(text, 0) }, terminalId: terminal.id };
 		}
 		case "kill-window": {
 			// A rerun closes the window the first attempt found, never another that took its number since.
-			const known = await api.memo<{ id: string; window: number }>("window", context);
-			const target = known ?? (await backend.cursor(command.target, context)).terminal;
+			const known = await api.memo<{ id: string; window: number; env: string | null }>("window", context);
+			const target = reachable(known ?? (await backend.cursor(command.target, context)).terminal);
 			const window = "window" in target ? target.window : target.index;
-			await api.memo("window", { id: target.id, window }, context);
+			await api.memo("window", { id: target.id, window, env: target.env }, context);
 			await backend.close({ key, target: target.id }, context);
 			return { result: { window, killed: true } };
 		}
@@ -219,13 +237,15 @@ async function run(
 async function readStart(
 	target: string,
 	backend: TerminalBackend,
+	reachable: <T extends { env: string | null }>(terminal: T) => T,
 	api: ToolExecutionApi,
 	context: Context,
 ): Promise<{ id: string; offset: number }> {
-	const known = await api.memo<{ id: string; offset: number }>("start", context);
-	if (known) return known;
+	const known = await api.memo<{ id: string; offset: number; env: string | null }>("start", context);
+	if (known) return reachable(known);
 	const { terminal, offset } = await backend.cursor(target, context);
-	return api.memo("start", { id: terminal.id, offset }, context);
+	reachable(terminal);
+	return api.memo("start", { id: terminal.id, offset, env: terminal.env }, context);
 }
 
 /** The wait a command asks for, or its default; none for `-w none`. */

@@ -44,12 +44,14 @@ import {
 	OperationSchema,
 	type Session,
 	SessionArchived,
+	SessionCopied,
 	SessionMoves,
 	SessionOperations,
 	Sessions,
 	SessionTransfer,
 } from "./contract.ts";
-import { copySessionDirectories, copySessionStore, removeSessionCopy, removeSessionDirectories } from "./copy.ts";
+import { copySessionDirectory, removeSessionCopy } from "./copy.ts";
+import { serveLocks } from "./locks.ts";
 
 /** A row as `Sessions` v4 and `Catalog` v3 consumers read it: a null branch label is the session title. */
 function sessionV4(row: Session) {
@@ -236,7 +238,9 @@ function failureText(error: JobError): string {
 const ROW_WAIT_MS = 10_000;
 
 export default defineFacet((host) => {
+	serveLocks(host);
 	serveKeyed(host, SessionArchived);
+	serveKeyed(host, SessionCopied);
 	host.serve(
 		Catalog,
 		(_params, self) => {
@@ -299,6 +303,7 @@ export default defineFacet((host) => {
 		const children = self.get(ChildStore, {});
 		const archivedStarts = self.get(ArchivedStarts, {});
 		const archived = self.registry(SessionArchived);
+		const copied = self.registry(SessionCopied);
 		const failed = self.state(Failed);
 		/** Copies whose row is being made: their worker waits like one whose files are being copied. */
 		const preparing = self.writable<readonly string[]>([]);
@@ -388,8 +393,7 @@ export default defineFacet((host) => {
 						},
 						async () => {
 							await removeSessionCopy(dataDir, copy);
-							await copySessionStore(dataDir, id, copy);
-							await copySessionDirectories(dataDir, id, copy);
+							await copySessionDirectory(dataDir, id, copy);
 						},
 						"cloning",
 					);
@@ -425,8 +429,9 @@ export default defineFacet((host) => {
 				const dataDir = server.info.value.dataDir;
 				try {
 					if (ctx.state.value.copying) {
-						await removeSessionDirectories(dataDir, copy);
-						await copySessionDirectories(dataDir, id, copy);
+						await removeSessionCopy(dataDir, copy);
+						// The source's files, copied by its worker (its store is open there; it goes on meanwhile).
+						await (await ctx.get(SessionTransfer, { session: id })).copyFiles({ to: copy }, ctx);
 						await ctx.state.change((progress) => {
 							progress.copying = false;
 						}, ctx);
@@ -542,6 +547,7 @@ export default defineFacet((host) => {
 			preparing.set([...preparing.value, copy]);
 			try {
 				const row = await copyOf(source, copy, mark, ctx);
+				for (const take of copied.value.values()) await take(source.id, copy, ctx);
 				await start();
 				return row;
 			} catch (error) {

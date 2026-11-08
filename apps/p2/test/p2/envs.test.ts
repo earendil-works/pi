@@ -282,7 +282,7 @@ test(
 		assert(trusted.ok, trusted.ok ? "" : trusted.error);
 		assert.equal(trusted.home, home);
 		// The folder picker warms every environment's connection first (Pi Mobile's `envs` with `warm`).
-		assert.equal(await envs.warm(BACKGROUND_CONTEXT), undefined);
+		assert.equal(await envs.warm(BACKGROUND_CONTEXT), null);
 		assert.equal((await envs.listDirectory({ env: "box", path: "~" }, BACKGROUND_CONTEXT)).path, home);
 		const uploadedKey = await envs.uploadKey(
 			{ name: "copy", key: readFileSync(key.identityFile, "utf8") },
@@ -411,9 +411,10 @@ test(
 		await chat.send({ text: "slow-tool", requestId: "ssh-busy-edit" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => JSON.stringify(view).includes("tool-running"));
 		await until(status.statuses, (statuses) => (statuses?.[session.id]?.tasks ?? 0) > 0);
-		const saved = (await envs.list(BACKGROUND_CONTEXT))[0]!;
+		const saved = (await envs.list(BACKGROUND_CONTEXT))[0]!.config;
+		assert.equal(saved.type, "ssh");
 		await envs.save(
-			{ name: "box", config: { ...saved.config, shellEnv: { P2_TEST_ENV_REVISION: "edited" } } },
+			{ name: "box", config: { ...saved, shellEnv: { P2_TEST_ENV_REVISION: "edited" } } },
 			BACKGROUND_CONTEXT,
 		);
 		await until(chat.view, (view) => results(view, "bash").some((text) => text.includes("tool-finished")), 60000);
@@ -529,5 +530,15 @@ test(
 		await envs.forgetHostKey({ name: "box" }, BACKGROUND_CONTEXT);
 		const forgotten = await envs.test({ name: "box" }, BACKGROUND_CONTEXT);
 		assert(!forgotten.ok && forgotten.hostKey?.state === "unknown");
+		// The sheet lists what blocks deleting (archived sessions too); the owner may delete anyway.
+		const blocking = await until(envs.envs, (entries) =>
+			Boolean(entries?.find((entry) => entry.name === "box")?.users?.length),
+		);
+		assert.deepEqual(
+			blocking?.find((entry) => entry.name === "box")?.users?.map((user) => [user.id, user.archived]),
+			[[session.id, true]],
+		);
+		await envs.delete({ name: "box", force: true }, BACKGROUND_CONTEXT);
+		await until(envs.envs, (entries) => entries !== undefined && !entries.some((entry) => entry.name === "box"));
 	},
 );

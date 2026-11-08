@@ -15,11 +15,11 @@ import { Drafts } from "../../plugins/drafts/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
 import modelsTui from "../../plugins/models/tui.ts";
 import { portsRenderers } from "../../plugins/ports/tui.ts";
-import { Search } from "../../plugins/search/contract.ts";
+import { Search, SessionReads } from "../../plugins/search/contract.ts";
 import searchTui from "../../plugins/search/tui.ts";
 import { type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import sessionsTui from "../../plugins/sessions/tui.ts";
-import { SessionMetrics } from "../../plugins/status/contract.ts";
+import { SessionMetrics, SessionStatus } from "../../plugins/status/contract.ts";
 import statusTui from "../../plugins/status/tui.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
 import subagentsTui from "../../plugins/subagents/tui.ts";
@@ -234,6 +234,28 @@ function stubs(calls: Calls, sessions: Session[], options: { view?: Conversation
 			}),
 		],
 		[
+			// s1 works in its root and in its subagent's conversation; s3's worker failed; s2 has an unread answer.
+			SessionStatus,
+			(_input, _principal, self) => ({
+				variant: "reader",
+				statuses: self.state({
+					s1: { running: true, tasks: 2, busy: [1, 2] },
+					s3: { running: false, tasks: 0, busy: [], error: "spawn failed" },
+				}),
+			}),
+		],
+		[
+			SessionReads,
+			(_input, _principal, self) => ({
+				variant: "owner",
+				answers: self.state({ s2: 5 }),
+				reads: self.state({ s2: 3 }),
+				markRead: (args: unknown) => {
+					record("markRead", args);
+				},
+			}),
+		],
+		[
 			SessionMetrics,
 			(_input, _principal, self) => ({
 				variant: "reader",
@@ -407,8 +429,14 @@ test("session selector: scopes, threaded subagents, message hits, archive and re
 	let shown = await screen();
 	assert.match(shown, /Alpha work[\s\S]*└─ helper[\s\S]*Beta work/);
 	assert(!shown.includes("Elsewhere") && !shown.includes("Old archived"));
+	// Activity markers: working (the session, and the subagent whose conversation is busy), unread, a failed worker.
+	await poll(async () => /^ {2}◦ Beta work/m.test(await screen()));
+	shown = await screen();
+	assert.match(shown, /^ {2}● Alpha work/m);
+	assert.match(shown, /^ {2}● └─ helper/m);
 	send("\t");
 	await poll(async () => (await screen()).includes("Elsewhere"));
+	assert.match(await screen(), /^ {2}! Elsewhere/m);
 	// Literal message hits from Search, below the sessions.
 	typed(send, "needle");
 	await poll(async () => (await screen()).includes("Messages (literal matches)"));
@@ -424,7 +452,7 @@ test("session selector: scopes, threaded subagents, message hits, archive and re
 	await poll(() => (calls.archive?.length ?? 0) === 1);
 	assert.deepEqual(calls.archive?.[0], { id: "s1" });
 	// A list row (the footer names the viewed session too).
-	const listed = async (title: string) => new RegExp(`^(?: {2}|› )${title}`, "m").test(await screen());
+	const listed = async (title: string) => new RegExp(`^(?: {2}|› )[●!◦ ] ${title}`, "m").test(await screen());
 	await poll(async () => !(await listed("Alpha work")));
 	send(CTRL_A);
 	await poll(async () => (await screen()).includes("Archived Sessions"));
@@ -456,6 +484,21 @@ test("session selector: scopes, threaded subagents, message hits, archive and re
 	send(ENTER);
 	await poll(() => runtime.screen === "chat");
 	assert.equal(runtime.identity, "s1#2");
+});
+
+test("the chat showing a session's main conversation reads it through its latest answer, once", async (t) => {
+	const rows = [session("s1"), session("s2", { title: "Beta work" })];
+	const { screen, calls, runtime } = await setup(t, { sessions: rows, screen: "sessions" });
+	// The selector marks nothing; s2's unread answer shows as its marker.
+	await poll(async () => /^ {2}◦ Beta work/m.test(await screen()));
+	assert.equal(calls.markRead?.length ?? 0, 0);
+	runtime.navigate("chat", "s2");
+	await poll(() => (calls.markRead?.length ?? 0) === 1);
+	assert.deepEqual(calls.markRead?.[0], { session: "s2", through: 5 });
+	// Further changes while the stub's reads stay behind send no second call for the same answer.
+	runtime.navigate("chat");
+	await new Promise((resolve) => setTimeout(resolve, 100));
+	assert.equal(calls.markRead?.length, 1);
 });
 
 test("/new, /name and /session", async (t) => {

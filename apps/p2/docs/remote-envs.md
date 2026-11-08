@@ -1,6 +1,6 @@
 # Remote environments
 
-`plugins/envs` manages SSH environments. Tools and workspace files live on the remote host; the worker,
+`plugins/envs` manages SSH environments and sandboxes (Gondolin VMs on an SSH environment, see Sandboxes). Tools and workspace files live on the remote host; the worker,
 Durable history, provider credentials and model calls stay on this device. Remote sessions never fall back
 to local execution when configuration, trust or a connection is unavailable.
 
@@ -22,8 +22,10 @@ to local execution when configuration, trust or a connection is unavailable.
 Session groups and the top bar display `gpu:/path`. The catalog stores the raw cwd and a separate `env` field.
 Every conversation works at a location `{ env, cwd }`: the main conversation at the session's; a subagent spawned
 without a cwd follows it; a subagent spawned with a cwd keeps its own, on the environment of the conversation that
-spawned it (its sidebar row, bar, workspace header and terminal tabs show `env:/path`). Deleting an environment is
-refused while any session or subagent location, including archived ones, references it. Editing a valid
+spawned it (its sidebar row, bar, workspace header and terminal tabs show `env:/path`). Deleting an environment
+lists the sessions using it (working there or with a subagent there, archived ones included) and asks for a
+confirmation while there are any: their history stays, and their tools refuse to run until they move to another
+location (they never fall back to this device). An SSH environment with sandboxes on it is deleted only after them. Editing a valid
 configuration stops the idle workers using it; busy workers finish on their captured environment and stop when idle.
 Opening the session again loads the new revision without replaying a prompt.
 
@@ -33,6 +35,81 @@ it, reloads prompt resources and workspace watches there, and closes the old con
 own location still works on that machine. Open chats stay connected. Subagents spawned with their own cwd stay
 where they are, on their machine, and keep running their tools there. Terminals already running stay on the machine
 they were started on; new ones open where the viewed conversation works.
+
+## Sandboxes
+
+A sandbox is a Gondolin VM (earendil-works/gondolin: QEMU with KVM, host-side network policy) on an SSH environment,
+its host. In the Envs sheet it is listed under its host, and the host's **Save and test** reports whether it can run
+sandboxes, or why not. A host needs Linux, a `/dev/kvm` its SSH user may use, Node >= 22 and QEMU >= 7.2, found on the
+PATH of SSH commands or in `~/.local/bin` (e.g. a QEMU built from source with `--prefix=$HOME/.local` where the
+distribution's is too old, as Ubuntu 22.04's 6.2). Only the owner creates, edits,
+starts, stops and deletes sandboxes, in the Envs sheet; plugins pick an existing one (env listings carry `type`).
+
+```json
+"box1": {
+  "type": "gondolin",
+  "host": "slayer",
+  "image": "alpine-base:latest",
+  "mounts": [{ "host": "~/sbx/box1", "guest": "/workspace" }, { "host": "~/datasets", "guest": "/data", "readonly": true }],
+  "allowHosts": ["registry.npmjs.org", "*.github.com"],
+  "cpus": 2,
+  "memoryMb": 2048,
+  "diskGb": 32
+}
+```
+
+- **What the VM sees:** its own disk and the listed host folders; nothing else of the host. A writable folder must not
+  contain or be inside `~/.pi` (p2's launcher and daemons run from there on the host). `/opt/pi-env` (the daemon) and
+  `/.p2-vfs` (Gondolin's own mount point) are reserved in the VM.
+- **Disk:** each sandbox has its own disk, `~/.pi/p2/sandbox/disks/<key>.qcow2` on the host: a qcow2 layer over the
+  guest image it was created from, so it takes only the space written. It holds the whole root file system, home and
+  caches included (only `/tmp` is in memory), so what is installed in the VM stays across restarts, crashes and host
+  reboots. Its size is `diskGb` (default 32; it only grows): the supervisor grows the file before boot and the file
+  system once mounted (`resize2fs`; not Gondolin's `rootfs.size`, which resizes while the guest may still be mounting).
+  At its first boot the disk gets an ext4 journal (the guest image has none), so a VM that ends without unmounting is
+  recovered at the next mount; a stop writes what the guest holds in memory first (`sync`; Gondolin's close kills QEMU).
+  **Reset disk** (Envs sheet, `sandboxResetDisk`) stops the VM and removes the disk; the next start begins from the
+  guest image again (and from a newer one if Gondolin's changed meanwhile). Deleting the sandbox removes its disk.
+- **Network:** HTTP(S) to `allowHosts` only (Gondolin's patterns: `*` alone is any host, `*` inside a pattern any
+  substring); everything else is refused with 403 before the host resolves the name, so names do not leak to DNS. An
+  empty or missing list allows no host. Allowed names that resolve to private addresses are refused too. Other
+  protocols are not routed.
+- **Lifecycle:** one long-lived VM per sandbox, shared by every session working in it. It starts at the first
+  connection (or **Start**, **Save and start**, **Test**) and runs until **Stop**, deleting the sandbox (which stops it
+  and removes its disk and run directory) or moving it to another host (which stops it first), the VM dying (the supervisor notices within seconds; the next connection starts
+  a new one) or a host reboot. Other configuration changes apply at its next start: the sheet says so while the
+  running VM is older, and offers **Save and restart**.
+- **Connection:** the worker connects to the host over SSH as for the host itself, deploys pi-env's daemon there
+  (the same Linux binary runs in the VM) and p2's launcher (`plugins/envs/sandbox/`, under the host's
+  `~/.pi/p2/sandbox/<content hash>/`, checked by hash at every deployment; versions of other p2 installations stay
+  until unused for 30 days). It runs `p2-sandbox.sh start` (which may take minutes the first time: `npm ci` of Gondolin
+  from the shipped lockfile, guest image download, boot) and then `p2-sandbox.sh daemon <key> <config> <daemon> --
+  serve --token …`. The launcher starts the sandbox's supervisor if needed (`p2-sandbox.mjs serve`, one process holding
+  the VM; socket and log under `~/.pi/p2/sandbox/run/<key>/`, `<key>` being the sandbox's name prefixed by a hash of this
+  p2 installation's machine and data directory), copies the daemon into the VM and passes its stdin and stdout through.
+  Tools, the workspace, terminals, uploads and `send_file` then work as on any remote environment. Hosts must be
+  Linux. Connections to a sandbox are keyed by its configuration and its host's: editing either opens new ones.
+- **Secrets:** per sandbox, in `<data>/sandbox-secrets.json` (0600, `plugins/envs/secrets.ts`; Envs sheet → the
+  sandbox → Secrets, presets for GitHub, Radius, npm and any header). Each has a name (the VM's environment variable),
+  the hosts it is sent to (which must be allowed hosts) and a value. The VM sees only Gondolin placeholders; its HTTP
+  proxy replaces them with the value in requests to those hosts. Presets add aliases (`GH_TOKEN` for GitHub) and a git
+  credential helper (`GIT_CONFIG_*`, nothing written in the VM). Values reach the launcher only on `start`'s stdin and
+  the supervisor in its environment, never a command line; the configuration names each secret with a version, so a
+  change makes the running VM out of date (**Save and restart**). `daemon` refuses to start a supervisor for a
+  configuration with secrets: `start` runs first. Values are redacted from logs. Verified in a real VM
+  (`P2_TEST_GONDOLIN=1`, `test/p2/sandboxes.test.ts`): processes pi-env starts see the placeholder, alias and helper
+  variables, never the value; requests to the secret's host carry the value.
+- **Confinement:** a conversation whose environment is a sandbox cannot leave it. `location_envs` shows only the
+  sandbox; `location_dirs` and `location_move` take paths inside it; `subagent` spawn/configure place subagents only
+  in it; one-shot agents (`tools.agent`) inherit their caller's location (the `p2.inherited-location` document), so a
+  subagent's sandbox holds for the agents its scripts start. `AgentLocations.move` refuses to move a sandboxed session
+  out too, and `subagent` configure keeps a subagent working in a sandbox there whoever configures it. Only the
+  owner's Relocate moves a session out (the web UI asks first, also for a move to another sandbox). Confinement is decided per
+  conversation from its current location and the environment's configured `type`, never its name:
+  `conversationConfinement(harness.environments, id, ctx)` (`@p2/app/v1/worker`), backed by
+  `HarnessEnvironmentEntry.sandbox`. The `terminal` tool lists and drives only the session's terminals in the
+  caller's sandbox. Tools that run on the p2 machine or reach unconfined places (MCP, ports, conversations, …) are a
+  session tool policy's job, not the location's.
 
 ## Data and execution
 
@@ -83,7 +160,9 @@ run commands on those hosts. Sharing is not filesystem isolation.
 ## Tests
 
 From `apps/p2`: `npm run check`; `npm test`; focused:
-`node --import ./src/source.ts --test test/p2/envs.test.ts`.
+`node --import ./src/source.ts --test test/p2/envs.test.ts` and `test/p2/sandboxes.test.ts` (configuration,
+launcher arguments, confinement; with `P2_TEST_GONDOLIN=1` also a real VM through the launcher and a session in a
+sandbox over a loopback sshd, which need `/dev/kvm`, QEMU >= 7.2, Node >= 22, sshd and pi-env's packaged Linux daemon).
 
 The tests use fake providers, temporary data/workspaces and server port 0. A disposable loopback sshd has its own
 host key, authorized client key and remote HOME. The SSH case skips if sshd or a local pi-env daemon build is absent;

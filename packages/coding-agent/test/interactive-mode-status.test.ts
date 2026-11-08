@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import * as path from "node:path";
 import { type AutocompleteProvider, CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { type Component, Container, type Focusable, type TUI } from "../../tui/src/tui.ts";
+import { type Component, Container, type Focusable, type OverlayHandle, type TUI } from "../../tui/src/tui.ts";
 import { TuiMainScreen } from "../../tui/src/tui-main-screen.ts";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import type { AutocompleteProviderFactory } from "../src/core/extensions/types.ts";
@@ -154,6 +154,7 @@ describe("InteractiveMode.setToolsExpanded", () => {
 			builtInHeader: header,
 			loadedResourcesContainer: { children: [loadedResourcesChild] },
 			chatContainer: { children: [chatChild] },
+			pendingMessagesContainer: { children: [] },
 			ui: { requestRender: vi.fn() },
 			showStatus: vi.fn(),
 		};
@@ -165,6 +166,80 @@ describe("InteractiveMode.setToolsExpanded", () => {
 		expect(loadedResourcesChild.setExpanded).toHaveBeenCalledWith(true);
 		expect(chatChild.setExpanded).toHaveBeenCalledWith(true);
 		expect(fakeThis.showStatus).toHaveBeenCalledWith("Tool output: expanded");
+	});
+});
+
+// Regression tests for https://github.com/earendil-works/pi/issues/11875
+describe("InteractiveMode pending user bash output", () => {
+	function createPendingBashComponent() {
+		return { render: () => [], invalidate: () => {}, setExpanded: vi.fn() };
+	}
+
+	function createContext(pendingBashComponents: ReturnType<typeof createPendingBashComponent>[]) {
+		const pendingMessagesContainer = new Container();
+		for (const component of pendingBashComponents) pendingMessagesContainer.addChild(component);
+		const fakeThis: any = {
+			isInitialized: true,
+			toolOutputExpanded: false,
+			loadedResourcesContainer: new Container(),
+			chatContainer: new Container(),
+			pendingMessagesContainer,
+			pendingBashComponents,
+			compactionQueuedMessages: [],
+			session: { getSteeringMessages: () => ["steer"], getFollowUpMessages: () => [] },
+			footer: { invalidate: vi.fn() },
+			programStatus: { handleEvent: vi.fn() },
+			ui: { requestRender: vi.fn() },
+			showStatus: vi.fn(),
+			checkShutdownRequested: vi.fn(async () => {}),
+			getAppKeyDisplay: () => "alt+up",
+		};
+		for (const name of [
+			"setToolsExpanded",
+			"updatePendingMessagesDisplay",
+			"getAllQueuedMessages",
+			"flushPendingBashComponents",
+			"handleEvent",
+		]) {
+			fakeThis[name] = (InteractiveMode as any).prototype[name].bind(fakeThis);
+		}
+		return fakeThis;
+	}
+
+	beforeAll(() => {
+		initTheme("dark");
+	});
+
+	test("ctrl+o expands user bash output in the pending area", () => {
+		const component = createPendingBashComponent();
+		const fakeThis = createContext([component]);
+
+		fakeThis.setToolsExpanded(true);
+
+		expect(component.setExpanded).toHaveBeenCalledWith(true);
+	});
+
+	test("queued message updates keep user bash output in the pending area", () => {
+		const component = createPendingBashComponent();
+		const fakeThis = createContext([component]);
+
+		fakeThis.updatePendingMessagesDisplay();
+		fakeThis.setToolsExpanded(true);
+
+		expect(fakeThis.pendingMessagesContainer.children).toContain(component);
+		expect(renderAll(fakeThis.pendingMessagesContainer)).toContain("Steering: steer");
+		expect(component.setExpanded).toHaveBeenCalledWith(true);
+	});
+
+	test("settling the agent run moves user bash output to the chat", async () => {
+		const component = createPendingBashComponent();
+		const fakeThis = createContext([component]);
+
+		await fakeThis.handleEvent({ type: "agent_settled", aborted: false });
+
+		expect(fakeThis.pendingMessagesContainer.children).not.toContain(component);
+		expect(fakeThis.chatContainer.children).toEqual([component]);
+		expect(fakeThis.pendingBashComponents).toEqual([]);
 	});
 });
 
@@ -237,6 +312,7 @@ describe("InteractiveMode.showExtensionCustom", () => {
 	// Inline custom components go through the extension dialog stack.
 	const extensionDialogState = () => ({
 		extensionDialogs: [],
+		extensionOverlays: new Map(),
 		programStatus: { setBlocked: vi.fn() },
 		pushExtensionDialog: (InteractiveMode as any).prototype.pushExtensionDialog,
 		removeExtensionDialog: (InteractiveMode as any).prototype.removeExtensionDialog,
@@ -389,6 +465,79 @@ describe("InteractiveMode.showExtensionCustom", () => {
 			}
 		},
 	);
+
+	// Regression: reset hid only the topmost overlay, so lower extension overlays stayed and kept input.
+	test("resetExtensionUI removes every extension overlay but keeps pi's own overlays", async () => {
+		const terminal = new VirtualTerminal(80, 24);
+		const ui: TUI = new TuiMainScreen(terminal);
+		const editorContainer = new Container();
+		const editor = new TestFocusableComponent("EDITOR");
+		const internal = new TestFocusableComponent("INTERNAL");
+		const lower = Object.assign(new TestFocusableComponent("LOWER"), { dispose: vi.fn() });
+		const hidden = Object.assign(new TestFocusableComponent("HIDDEN"), { dispose: vi.fn() });
+		const upper = Object.assign(new TestFocusableComponent("UPPER"), { dispose: vi.fn() });
+		const fakeThis = {
+			editor,
+			editorContainer,
+			keybindings: {},
+			ui,
+			disposeActiveSelector: vi.fn(),
+			...extensionDialogState(),
+			// The rest of resetExtensionUI is not under test here.
+			clearExtensionTerminalInputListeners: vi.fn(),
+			setExtensionFooter: vi.fn(),
+			setExtensionHeader: vi.fn(),
+			clearExtensionWidgets: vi.fn(),
+			footerDataProvider: { clearExtensionStatuses: vi.fn() },
+			footer: { invalidate: vi.fn() },
+			setCustomEditorComponent: vi.fn(),
+			setupAutocompleteProvider: vi.fn(),
+			defaultEditor: {},
+			updateTerminalTitle: vi.fn(),
+			setWorkingIndicator: vi.fn(),
+			setHiddenThinkingLabel: vi.fn(),
+		};
+		const showOverlay = (component: Component, onHandle?: (handle: OverlayHandle) => void): Promise<unknown> =>
+			(InteractiveMode as any).prototype.showExtensionCustom.call(fakeThis, () => component, {
+				overlay: true,
+				onHandle,
+			}) as Promise<unknown>;
+
+		editorContainer.addChild(editor);
+		ui.addChild(editorContainer);
+		ui.setFocus(editor);
+		ui.start();
+		try {
+			// A pi-internal overlay (for example the header easter egg) opened below the extension overlays.
+			ui.showOverlay(internal);
+			void showOverlay(lower);
+			void showOverlay(hidden, (handle) => handle.setHidden(true));
+			void showOverlay(upper);
+			await flushTui(ui, terminal);
+			expect(upper.focused).toBe(true);
+
+			(InteractiveMode as any).prototype.resetExtensionUI.call(fakeThis);
+			await flushTui(ui, terminal);
+
+			const viewport = terminal.getViewport().join("\n");
+			expect(viewport).toContain("INTERNAL");
+			expect(viewport).not.toContain("LOWER");
+			expect(viewport).not.toContain("UPPER");
+			expect(lower.dispose).toHaveBeenCalledOnce();
+			expect(hidden.dispose).toHaveBeenCalledOnce();
+			expect(upper.dispose).toHaveBeenCalledOnce();
+			terminal.sendInput("x");
+			await flushTui(ui, terminal);
+			expect(internal.inputs).toEqual(["x"]);
+			expect(lower.inputs).toEqual([]);
+
+			ui.hideOverlay();
+			expect(ui.hasOverlay()).toBe(false);
+			expect(editor.focused).toBe(true);
+		} finally {
+			ui.stop();
+		}
+	});
 });
 
 describe("InteractiveMode.createExtensionUIContext addAutocompleteProvider", () => {

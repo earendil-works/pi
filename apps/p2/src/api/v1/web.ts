@@ -3,6 +3,7 @@
 export * from "../../runtime/web.tsx";
 export * from "../../web/AppLayout.tsx";
 export * from "../../web/ArtifactPicker.tsx";
+export * from "../../web/activity/api.ts";
 export * from "../../web/Chat.tsx";
 export * from "../../web/Code.tsx";
 export * from "../../web/CostPanel.tsx";

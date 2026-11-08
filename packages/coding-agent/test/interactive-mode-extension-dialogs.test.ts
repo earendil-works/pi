@@ -12,11 +12,10 @@ type DialogContext = {
 		setFocus: (component: Component) => void;
 		requestRender: () => void;
 		showOverlay: (component: Component) => { hide: () => void; setHidden: (hidden: boolean) => void };
-		hideOverlay: () => void;
 	};
 	overlays: Component[];
 	nextBlockingOverlayId: number;
-	blockingOverlaySources: Set<string>;
+	extensionOverlays: Map<unknown, () => void>;
 	programStatus: { setBlocked: ReturnType<typeof vi.fn> };
 	disposeActiveSelector: () => void;
 	toggleToolOutputExpansion: () => void;
@@ -66,13 +65,10 @@ function createContext(): DialogContext & DialogMethods {
 					setHidden: vi.fn(),
 				};
 			},
-			hideOverlay: () => {
-				context.overlays.pop();
-			},
 		},
 		overlays: [],
 		nextBlockingOverlayId: 0,
-		blockingOverlaySources: new Set(),
+		extensionOverlays: new Map(),
 		programStatus: { setBlocked: vi.fn() },
 		disposeActiveSelector: vi.fn(),
 		toggleToolOutputExpansion: vi.fn(),
@@ -292,7 +288,8 @@ describe("InteractiveMode extension dialogs", () => {
 
 		context.resetExtensionUI();
 		expect(context.programStatus.setBlocked).toHaveBeenLastCalledWith("extension-overlay:0", undefined);
-		expect(context.blockingOverlaySources.size).toBe(0);
+		expect(context.extensionOverlays.size).toBe(0);
+		expect(context.overlays).toHaveLength(0);
 	});
 
 	// Regression for #11431: replacing the editor while a dialog was open hid the dialog and left it unanswerable.

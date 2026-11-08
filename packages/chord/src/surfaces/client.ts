@@ -1,9 +1,10 @@
 // A client host with its plugins (slice 11 §2, §4, decisions "Slice 11, P4" to "P6"): what a page and a terminal's
 // sandbox both run. A client host (no address) loads the plugin scripts it started with beside the app's core facets,
 // keeps its link to the server with the connection loop, and holds the kind's scripts object: a new set fetches the
-// changed scripts and reloads the host in place (a failed plugin keeps its old facet; a failed fetch is tried again);
-// a new base bundle means this client's code is outdated, which the app answers by starting over (a page reloads). The
-// surface specifics (how a socket opens, how a script is fetched, what is outdated) are given.
+// changed scripts and reloads the host in place (a failed plugin keeps its old facet; a failed fetch is tried again),
+// a page's new stylesheets loaded before the reload and each plugin left with the one of the code it runs; a new base
+// bundle means this client's code is outdated, which the app answers by starting over (a page reloads). The surface
+// specifics (how a socket opens, how a script is fetched, what is outdated, the stylesheets) are given.
 
 import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import { BACKGROUND_CONTEXT, type Context, withAbortSignal } from "../context/index.ts";
@@ -16,11 +17,21 @@ import { LoadedFacets, type SetEntry } from "./loaded.ts";
 import { type ClientModules, evaluateRegistered, type RegisteredScript } from "./registered.ts";
 import type { ScriptEntry, ScriptSet, ScriptsContract } from "./scripts.ts";
 
-/** What a client reports: its host's errors, plugins left out at a load or kept old at a reload, a failed update. */
+/**
+ * What a client reports: its host's errors, plugins left out at a load or kept old at a reload, a failed update, a
+ * plugin's stylesheet that did not load (`error`) or not within 10 s (`timeout`; this does not itself prevent the
+ * plugin's new code).
+ */
 export type ClientError =
 	| { readonly kind: "host"; readonly error: HostError }
 	| { readonly kind: "plugins"; readonly failed: readonly PluginFailure[] }
 	| { readonly kind: "update_failed"; readonly error: unknown }
+	| {
+			readonly kind: "stylesheet_failed";
+			readonly plugin: string;
+			readonly url: string;
+			readonly reason: "error" | "timeout";
+	  }
 	/** A message rendered by a fallback, a contributed message that threw, a foreign message (each once). */
 	| { readonly kind: "messages"; readonly report: MessagesReport };
 
@@ -50,8 +61,8 @@ export type ClientOptions<P extends Principal> = {
 	/** Asked before each reconnect; `false` stops the loop (a guest's ended share). */
 	readonly canRetry?: () => Promise<boolean>;
 	readonly onConnection?: (state: ConnectionState) => void;
-	/** A new set was applied (its scripts loaded or kept old): the page swaps the plugins' stylesheets. */
-	readonly applied?: (set: ScriptSet) => void;
+	/** The plugins' stylesheets (a page's; a terminal has none). */
+	readonly styles?: ClientStyles;
 	readonly environment: LoopEnvironment;
 	/**
 	 * Makes the host's telemetry adapter (none: NOOP); `incarnation` names the host's run (it is read at the adapter's
@@ -59,6 +70,25 @@ export type ClientOptions<P extends Principal> = {
 	 */
 	readonly telemetry?: (incarnation: () => string) => TelemetryContext;
 	readonly onError: (error: ClientError) => void;
+};
+
+/**
+ * A page's plugin stylesheets around each update: `prepare` before the host reloads, `settle` after it (or alone when
+ * no script changed).
+ */
+export type ClientStyles = {
+	/**
+	 * Fetches, without applying them, the stylesheets of `set` that differ from those of the code each plugin runs or
+	 * did not load; resolves once each loaded, failed or waited 10 s, or when `signal` aborts (the client stops: what it
+	 * prepared is removed, `settle` never follows).
+	 */
+	prepare(set: ScriptSet, signal: AbortSignal): Promise<void>;
+	/**
+	 * Applies each prepared stylesheet whose plugin runs its new code now and retires the one it replaces; a plugin that
+	 * `kept` names (its new script failed: it kept its old code) keeps its old one, its prepared one dropped unapplied;
+	 * the stylesheets of plugins no longer in `set` go.
+	 */
+	settle(set: ScriptSet, kept: ReadonlySet<string>): void;
 };
 
 /** A running client: its host, once its plugins are loaded, and its stop. */
@@ -75,8 +105,10 @@ export async function startClient<P extends Principal>(options: ClientOptions<P>
 	const entries = options.initial.map((script) => entryOf(script, options.modules));
 	const { loaded, report } = await LoadedFacets.load(host, options.core, entries, context);
 	if (report.failed.length > 0) options.onError({ kind: "plugins", failed: report.failed });
-	const loop = connect(host, options);
-	const updates = new Updates(host, loaded, options);
+	const updates = new Updates(host, loaded, new Set(report.failed.map(({ plugin }) => plugin)), options);
+	const loop = connect(host, options, (state) => {
+		if (state === "connected") updates.reconnected(context);
+	});
 	await updates.follow(context);
 	return {
 		host,
@@ -88,8 +120,15 @@ export async function startClient<P extends Principal>(options: ClientOptions<P>
 	};
 }
 
-/** Keeps `host`'s parent link to the server, asking `serverBase` and `canRetry` before every reconnect. */
-function connect<P extends Principal>(host: Host<P>, options: ClientOptions<P>): { stop(): void } {
+/**
+ * Keeps `host`'s parent link to the server, asking `serverBase` and `canRetry` before every reconnect; `onState` hears
+ * each state after the app's `onConnection`.
+ */
+function connect<P extends Principal>(
+	host: Host<P>,
+	options: ClientOptions<P>,
+	onState: (state: ConnectionState) => void,
+): { stop(): void } {
 	return keepConnected({
 		open: (events) => {
 			// The loop and the host both follow the link's close; a link has one close listener.
@@ -98,7 +137,10 @@ function connect<P extends Principal>(host: Host<P>, options: ClientOptions<P>):
 			host.connect(link, { principal: { kind: "server" } as unknown as P }, BACKGROUND_CONTEXT);
 			return link;
 		},
-		onState: (state) => options.onConnection?.(state),
+		onState: (state) => {
+			options.onConnection?.(state);
+			onState(state);
+		},
 		canRetry: async () => {
 			const base = await options.serverBase();
 			if (base !== undefined && base !== options.base) {
@@ -166,15 +208,19 @@ const UPDATE_RETRY_MAX_MS = 30_000;
 
 /**
  * The client's plugin updates: it holds the scripts object and applies each new set in order (fetching the changed
- * scripts, reloading the host with the complete set); a new base calls `outdated` instead. An update that failed (a
- * script that did not load) is tried again after a growing pause (1 s doubling to 30 s) until it applies or a newer set
- * replaces it: the scripts object shows nothing new until the next rollout or reconnect.
+ * scripts, loading their stylesheets, reloading the host with the complete set, settling the stylesheets); a new base
+ * calls `outdated` instead. An update that failed (a script that did not load) is tried again after a growing pause (1 s
+ * doubling to 30 s) until it applies or a newer set replaces it: the scripts object shows nothing new until the next
+ * rollout or reconnect.
  */
 class Updates<P extends Principal> {
 	readonly #host: Host<P>;
 	readonly #loaded: LoadedFacets;
 	readonly #options: ClientOptions<P>;
-	/** The scripts this client has, by plugin: its initial ones, then what each applied set fetched. */
+	/**
+	 * The script each plugin runs, by plugin: a plugin whose new script failed keeps its old one here, so a later set
+	 * with that script (a reconnect's snapshot) tries it again.
+	 */
 	readonly #scripts = new Map<string, RegisteredScript>();
 	readonly #abort = new AbortController();
 	#release: (() => void) | undefined;
@@ -186,11 +232,11 @@ class Updates<P extends Principal> {
 	#retry: { cancel: () => void } | undefined;
 	#pause = 0;
 
-	constructor(host: Host<P>, loaded: LoadedFacets, options: ClientOptions<P>) {
+	constructor(host: Host<P>, loaded: LoadedFacets, left: ReadonlySet<string>, options: ClientOptions<P>) {
 		this.#host = host;
 		this.#loaded = loaded;
 		this.#options = options;
-		for (const script of options.initial) this.#scripts.set(script.plugin, script);
+		for (const script of options.initial) if (!left.has(script.plugin)) this.#scripts.set(script.plugin, script);
 	}
 
 	/** Holds the scripts object and applies every set it shows, the first included (a reconnect's snapshot too). */
@@ -207,6 +253,15 @@ class Updates<P extends Principal> {
 			this.#pause = 0;
 			await this.#queue(set, ctx);
 		});
+	}
+
+	/**
+	 * The link is back: the newest set is applied again when this client does not run all of it (a plugin kept its old
+	 * code), since the scripts object shows an unchanged set no second time.
+	 */
+	reconnected(context: Context): void {
+		const set = this.#latest;
+		if (set !== undefined && !this.#runsAll(set)) void this.#queue(set, context);
 	}
 
 	/** Stops following: the watch ends, the hold is released, a pending retry is dropped. */
@@ -239,8 +294,9 @@ class Updates<P extends Principal> {
 	}
 
 	/**
-	 * Applies `set`: a new base calls `outdated`; else the changed scripts fetched and the host reloaded with all.
-	 * `false` when it failed (reported `update_failed`): it is tried again.
+	 * Applies `set`: a new base calls `outdated`; else the changed scripts fetched, their new stylesheets loaded, the
+	 * host reloaded with all and the stylesheets settled. `false` when it failed (reported `update_failed`): it is tried
+	 * again.
 	 */
 	async #apply(set: ScriptSet, context: Context): Promise<boolean> {
 		const options = this.#options;
@@ -248,31 +304,53 @@ class Updates<P extends Principal> {
 			options.outdated();
 			return true;
 		}
-		// The first frame (and a reconnect's snapshot) usually shows what this client runs already: nothing to reload.
-		const known = this.#scripts;
-		if (
-			set.plugins.length === known.size &&
-			set.plugins.every((entry) => known.get(entry.name)?.digest === entry.digest)
-		) {
-			options.applied?.(set);
-			return true;
-		}
+		// The first frame usually shows what this client runs already: nothing to reload.
+		const changed = !this.#runsAll(set);
 		try {
 			const scripts: RegisteredScript[] = [];
-			for (const entry of set.plugins) {
-				const known = this.#scripts.get(entry.name);
-				scripts.push(known?.digest === entry.digest ? known : await options.fetchScript(entry));
+			if (changed) {
+				for (const entry of set.plugins) {
+					const known = this.#scripts.get(entry.name);
+					scripts.push(known?.digest === entry.digest ? known : await options.fetchScript(entry));
+				}
 			}
-			const entries = scripts.map((script) => entryOf(script, options.modules));
-			const report = await this.#loaded.reload(this.#host, entries, context);
-			this.#scripts.clear();
-			for (const script of scripts) this.#scripts.set(script.plugin, script);
-			if (report.failed.length > 0) options.onError({ kind: "plugins", failed: report.failed });
-			options.applied?.(set);
+			await options.styles?.prepare(set, this.#abort.signal);
+			if (this.#abort.signal.aborted) return true;
+			const kept = changed ? await this.#reload(scripts, context) : new Set<string>();
+			options.styles?.settle(set, kept);
 			return true;
 		} catch (error) {
 			options.onError({ kind: "update_failed", error });
 			return false;
 		}
+	}
+
+	/** Whether this client runs every script of `set` and nothing else. */
+	#runsAll(set: ScriptSet): boolean {
+		const running = this.#scripts;
+		return (
+			set.plugins.length === running.size &&
+			set.plugins.every((entry) => running.get(entry.name)?.digest === entry.digest)
+		);
+	}
+
+	/**
+	 * Reloads the host with `scripts`, the complete set, and records the script each plugin runs now; the plugins that
+	 * kept their old code (or, added, were left out).
+	 */
+	async #reload(scripts: readonly RegisteredScript[], context: Context): Promise<ReadonlySet<string>> {
+		const options = this.#options;
+		const entries = scripts.map((script) => entryOf(script, options.modules));
+		const report = await this.#loaded.reload(this.#host, entries, context);
+		const kept = new Set(report.failed.map(({ plugin }) => plugin));
+		const running = new Map<string, RegisteredScript>();
+		for (const script of scripts) {
+			const runs = kept.has(script.plugin) ? this.#scripts.get(script.plugin) : script;
+			if (runs !== undefined) running.set(script.plugin, runs);
+		}
+		this.#scripts.clear();
+		for (const [plugin, script] of running) this.#scripts.set(plugin, script);
+		if (report.failed.length > 0) options.onError({ kind: "plugins", failed: report.failed });
+		return kept;
 	}
 }

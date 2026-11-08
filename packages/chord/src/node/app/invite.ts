@@ -1,13 +1,16 @@
-// The invite plugin (slice 13 §3, decision "The app kit, point 2"): the owner makes an invite link for a principal of
-// the app it chooses (`POST /_chord/invites`, owner only: `{ principal, label }` → `{ path }`); the invitee opens it,
-// its page posts the token (the URL's fragment, never logged) to `POST /_chord/invite`, which consumes it (single use,
-// 7 days) and answers with a browser session for that principal (§2's sessions). Invites wait in memory: a restart
-// drops the ones not used. An exported facet, as `defineUsers` (see there why).
+// The invite plugin (slice 13 §3, decision "The app kit, point 2"): the owner (`AppInfo.owner`, the principal the app
+// names) makes an invite link for a principal of the app it chooses (`POST /_chord/invites`, owner only: `{ principal,
+// label }` → `{ path }`); the invitee opens it, its page posts the token (the URL's fragment, never logged) to `POST
+// /_chord/invite`, which consumes it (single use, 7 days) and answers with a browser session for that principal (§2's
+// sessions). Invites wait in memory: a restart drops the ones not used. An exported facet, as `defineUsers` (see there
+// why).
 
 import type { Principal } from "../../data/index.ts";
+import { samePrincipal } from "../../data/principal.ts";
 import { defineFacet, type Facet } from "../../host/index.ts";
 import type { JsonValue } from "../../json.ts";
 import { Http } from "../http/index.ts";
+import { AppInfo } from "./info.ts";
 import { fragmentPage } from "./owner.ts";
 import { hashToken, newToken } from "./secrets.ts";
 import { Sessions } from "./sessions.ts";
@@ -21,7 +24,7 @@ const INVITE_PATH = "/_chord/invite";
 /** An invite waiting: the principal it signs in, its label, its expiry. */
 type Invite = { readonly principal: JsonValue; readonly label: string; readonly expires: number };
 
-/** The invite plugin's server facet. */
+/** The invite plugin's server facet; the owner (`AppInfo.owner`) makes the invites. */
 export function inviteFacet<P extends Principal>(): Facet<P> {
 	// By their token's hash: what the map holds is no credential.
 	const invites = new Map<string, Invite>();
@@ -29,7 +32,9 @@ export function inviteFacet<P extends Principal>(): Facet<P> {
 		self.contribute(Http, {
 			routes: {
 				"POST /_chord/invites": async (request, ctx) => {
-					if (ctx.principal?.kind !== "owner") return { kind: "error", status: 403 };
+					// `AppInfo.owner` is the app's `principal.owner`, a principal of its type.
+					const owner = (await ctx.get(AppInfo, {})).owner.value as Principal;
+					if (!samePrincipal(ctx.principal, owner, ctx)) return { kind: "error", status: 403 };
 					// A trust boundary: the owner's request, checked for its shape.
 					const body = (await request.json()) as {
 						readonly principal?: JsonValue;

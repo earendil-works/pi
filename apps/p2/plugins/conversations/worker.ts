@@ -64,6 +64,7 @@ const conversationsExtension = (worker: () => WorkerParts) => {
 				),
 				replay: "safe",
 				origin: "owner",
+				locked: "conversations",
 				scope: "main",
 				execute: async (args, api, context) => {
 					const details = { action: args.action, ...(args.to === undefined ? {} : { to: args.to }) };

@@ -55,6 +55,9 @@
 			"@earendil-works/chord/app": [
 				"../../../packages/chord/src/node/app/index.ts"
 			],
+			"@earendil-works/chord/app/files": [
+				"../../../packages/chord/src/node/app/files-entry.ts"
+			],
 			"@earendil-works/chord/web": [
 				"../../../packages/chord/src/web/index.ts"
 			],

@@ -14,8 +14,6 @@
 	background: var(--bg);
 	color: var(--text);
 	font-size: var(--fs-sm);
-	scrollbar-width: thin;
-	scrollbar-color: var(--scrollbar) transparent;
 }
 .owner-pending {
 	display: flex;

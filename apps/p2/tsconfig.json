@@ -25,6 +25,7 @@
 			"@earendil-works/chord/plugins": ["../../packages/chord/src/node/plugins/index.ts"],
 			"@earendil-works/chord/plugins/runtime": ["../../packages/chord/src/node/plugins/runtime.ts"],
 			"@earendil-works/chord/app": ["../../packages/chord/src/node/app/index.ts"],
+			"@earendil-works/chord/app/files": ["../../packages/chord/src/node/app/files-entry.ts"],
 			"@earendil-works/chord/web": ["../../packages/chord/src/web/index.ts"],
 			"@earendil-works/chord/surfaces": ["../../packages/chord/src/node/surfaces/index.ts"],
 			"@earendil-works/chord/react": ["../../packages/chord/src/react/index.ts"],

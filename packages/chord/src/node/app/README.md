@@ -5,7 +5,8 @@ over `http`, `workers` and `plugins` so an app is its API, its built-in plugins 
 server, `startWorker` in a worker's entry; the kit makes the data directory, the stores, the hosts, HTTP with deny by
 default, sessions and the owner's sign-in, device pairing, each host's files, export and import per address, and the
 plugin roots with "apply changes". Node-only. Exported as `@earendil-works/chord/app`. Examples 53 (`53-app/`, a whole
-small app), 54 (sessions and pairing) and 55 (export and import) run one app.
+small app), 54 (sessions and pairing) and 55 (export and import) run one app; 65 (`65-files.ts`) shows `Files` on a
+host of its own.
 
 ## For apps (`index.ts`)
 
@@ -18,7 +19,11 @@ const app = await startServer<P>({
 	listen: { host: "127.0.0.1", port: 8788 },      // 127.0.0.1 and a free port by default
 	api: { name: "@acme/app", versions: ["v3"], modules: { "@acme/app/v3": v3, "@acme/app/v3/server": v3server } },
 	kinds: { server: { platform: "node" }, worker: { platform: "node" } },
-	principal: { server: { kind: "server" }, worker: (address) => ({ kind: "worker", key: address.key }) },
+	principal: {
+		server: { kind: "server" },
+		worker: (address) => ({ kind: "worker", key: address.key }),   // only with worker kinds
+		owner: { kind: "user", id: "ada" },        // whom the owner's sign-in and pairing sign in
+	},
 	workers: [{
 		kind: Project,                              // a host kind of the app, any params
 		entry: "./worker.ts", execArgv: [...], env: {...},
@@ -35,10 +40,12 @@ const app = await startServer<P>({
 	tui: { entry: "./src/tui/main.ts" },
 	base: ["./src/app/", "./start.ts"],             // base code besides worker entries and the base bundles' inputs
 	timeouts: { closeTimeout: 30_000, readyTimeout: 60_000 },   // every host's (server and workers; the defaults)
-	onError: (error) => log(error),                 // AppError: { kind: "host" | "http" | "workers" | "plugins", error }
+	onError: (error) => log(error),                 // AppError: { kind: "host" | "http" | "workers" | "plugins" | "base_build" | "server_scan", error }
 }, ctx);
 console.log(`Open ${app.ownerLink()}`);
 app.host; app.http; app.workers.get("project"); app.plugins.state; app.dataDir; app.ownerTokenFile;
+await app.basesBuilt;                                       // the bases built after the listen (failures reported)
+await app.baseWatched;                                      // base code recorded and watched (after the start)
 await app.plugins.install({ git: url, ref: "v1" }, ctx);   // into <dataDir>/plugins/
 await app.applyChanges(ctx);                                // build the dirty plugins, roll out: server, then workers
 await app.exportData(Project({ id }), "p.tar", ctx);
@@ -49,19 +56,29 @@ await app.close(ctx);                                       // http, workers, ho
 startWorker<P>({ api, kinds, busy, onError });
 ```
 
-- **The principal type** `P` is the app's; the kit needs `principal.server` and `principal.worker(address)` and adds
-  one variant, its owner: `{ kind: "owner" }` must be one of `P` (a type error otherwise, on `AppOptions`).
+- **The principal type** `P` is the app's. The kit needs `principal.server`, `principal.owner` (any value of `P`: one of
+  the app's users or a variant of its own) and, with worker kinds, `principal.worker(address)` (worker kinds without it
+  are a type error on `AppOptions`, also a `workers` list typed as an array, not a tuple, that is empty). The owner must
+  be strict JSON (sessions keep it as JSON) and not the server's principal: `startServer` refuses either. The owner
+  link, the owner token file and device pairing sign in as `principal.owner`; pairing's confirm and approval, its caps'
+  exemption and invites recognize it by canonical JSON (`samePrincipal`: the default principal key, computed once per
+  principal object). Changing `principal.owner` between starts replaces the owner token file and revokes its session;
+  other sessions issued for the previous owner stay its own (the app revokes them through `Sessions` if it wants).
 - **The API's modules** are named by convention: `<api>/<version>` for every kind and `<api>/<version>/<kind>` for a
   kind's own; a kind's `packages` (React for a web kind) are host packages besides. The modules are this process's
   instances; the worker's entry passes the same `api` and `kinds`.
 - **`startServer`**, in order: the data directory, by its real path (refused when it is the home directory, a file
   system's root, or another user's: the kit would make it private), its lock (one server per data directory, also
-  through a symbolic link: a second is refused after a second's wait), the layout made private (below), the cookie secret, the server's store, the host (address `Server()`,
-  `principal.server`), `createHttp` (the links endpoint at `/chord`), the plugins component with the two roots, one
-  workers component per worker kind (none without worker kinds), the server's plugins loaded with the kit's core
-  facets (`chord.http`, `chord.app.info`, `chord.app.sessions`, `chord.app.owner`, `chord.app.pairing`,
-  `chord.app.files`, `chord.themes`, `chord.themes.choice`, `chord.translations`, `chord.locale.choice`), the owner token file, the listening port, the owner link. A plugin of the required root failing
-  rejects with the plugins component's `PluginError`, everything closed. `close` is idempotent.
+  through a symbolic link: a second is refused after a second's wait), the layout made private (below), the cookie
+  secret, the server's store, the host (address `Server()`, `principal.server`), `createHttp` (the links endpoint at
+  `/chord`), the plugins component with the two roots, one workers component per worker kind (none without worker
+  kinds), the server's plugins loaded with the kit's core facets (`chord.http`, `chord.app.info`, `chord.app.sessions`,
+  `chord.app.owner`, `chord.app.pairing`, `chord.app.files`, `chord.themes`, `chord.themes.choice`,
+  `chord.translations`, `chord.locale.choice`), the owner token file, the listening port, the owner link. Then, off the
+  start's path: the bases built (the web and terminal base bundles, each worker kind's worker base; `app.basesBuilt`;
+  see "Startup cost"), and the base code recorded and watched (`app.baseWatched`): each base's record once built, then
+  the scan of the server's own code. A plugin of the required root failing rejects with the plugins component's
+  `PluginError`, everything closed. `close` is idempotent.
 - **`startWorker`** is `workerMain` plus: the worker's directory `workers/<kind>/<key>/` and its store there, the host
   at the address acting as `principal.worker(address)`, connected to the server first (trusted, as the server's
   principal), its plugins loaded with the worker's core facets (`chord.app.worker-info`, `chord.app.files`,
@@ -72,9 +89,9 @@ startWorker<P>({ api, kinds, busy, onError });
 ## Start data
 
 The kit's start-data objects serve process values to plugins: `AppInfo` (`chord.app.info`, on the server: `dataDir`,
-`name`, `version`, the newest API version) and `WorkerInfo` (`chord.app.worker-info`, on workers: `address`, `start`,
-the start data the app's `start(address)` made). Plugins `self.get(AppInfo, {})` through the app's API, which
-re-exports them; nothing else of the process reaches a plugin.
+`name`, `version`, the newest API version, `owner`, the app's `principal.owner`) and `WorkerInfo`
+(`chord.app.worker-info`, on workers: `address`, `start`, the start data the app's `start(address)` made). Plugins
+`self.get(AppInfo, {})` through the app's API, which re-exports them; nothing else of the process reaches a plugin.
 
 ## Base code
 
@@ -112,8 +129,9 @@ and reads `AppInfo`.
   The token stays in the fragment: browsers never send it, so it never reaches a log. No owner by loopback alone.
 - **The owner token file** `<dataDir>/owner-token`: a device session of the owner for command-line clients on the same
   machine, mode 0600, written in one step (a temporary file made exclusively with mode 0600, then linked or renamed into
-  place). Kept while its token authenticates as the owner (its session exists, the secret matches, not expired; its
-  mode set to 0600 again); replaced at the next start otherwise.
+  place). Kept while its token authenticates as the owner (its session exists, the secret matches, not expired, its
+  principal is `principal.owner`; its mode set to 0600 again); replaced at the next start otherwise, its session revoked
+  when it names another principal (the owner changed).
 - **Device pairing** for clients elsewhere: `POST /_chord/pair` (public, `{ label? }`) returns `{ code, poll }`; the
   owner opens `/_chord/pair/<code>` signed in (owner only, a confirm page naming the device) and approves; the
   client's `POST /_chord/pair/poll { poll }` answers `{ status: "waiting" }` until then, `{ status: "approved", token }`
@@ -126,13 +144,13 @@ and reads `AppInfo`.
 
 ## Optional plugins
 
-`defineUsers(profile)` (accounts by id with the app's profile schema: `Users` with `list`, `get`, `update`,
-`remove`), `inviteFacet()` (the owner's `POST /_chord/invites { principal, label }` makes a 7-day single-use link,
-whose page signs the invitee in as that principal) and `ephemeralLoginFacet<P>()` (a public `POST /_chord/login {
+`defineUsers(profile)` (accounts by id with the app's profile schema: `Users` with `list`, `get`, `update`, `remove`),
+`inviteFacet()` (the owner, `AppInfo.owner`, makes a 7-day single-use link with `POST /_chord/invites { principal, label
+}`, whose page signs the invitee in as that principal) and `ephemeralLoginFacet<P>()` (a public `POST /_chord/login {
 name }` signing in as `{ kind: "user", id: <fresh>, name }`, a type error unless `P` allows it). They are exported
-facets, not plugin directories: each takes the app's settings as arguments (a profile schema, the principal type),
-and a plugin directory could not import the kit (plugins import only the app's API). The app re-exports one through
-its API and adds a one-line plugin to its root:
+facets, not plugin directories: each takes the app's settings as arguments (a profile schema, the principal type), and a
+plugin directory could not import the kit (plugins import only the app's API). The app re-exports one through its API
+and adds a one-line plugin to its root:
 
 ```ts
 // app/v3/server.ts
@@ -148,10 +166,12 @@ export default users.facet;
 <dataDir>/                 mode 0700, like every directory below
   server/store.sqlite      the server's store, mode 0600 (and its journal files)
   server/cookie-secret     mode 0600
-  server/files/            the server's files, mode 0600
+  server/files/            the server's files: blobs/<id> (mode 0600), .uploads/ (uploads under way)
   workers/<kind>/<key>/    a worker's store.sqlite and files/
   plugins/                 the user's plugins root
   logs/
+  cache/workers/<kind>/    the worker kind's base (files 0600), written again at every start, removed at close
+  cache/node/              Node's compile cache for the workers
   owner-token              mode 0600
 ```
 
@@ -162,19 +182,63 @@ read a store (it holds the sessions) nor replace it.
 A worker's key is percent-encoded as one directory name (`/`, `\`, `.` and capital letters included, so keys differing
 only in case stay apart on a case-insensitive file system), or `sha256-<hex>` past 160 characters.
 
-`Files` (`chord.app.files`, local, one per host: the server's and each worker's) keeps a host's files in its `files/`
-and their index (id, name, mime, size, created) in its store: `put({ name, mime, bytes })` (at most 4 MiB),
-chunked transfers (design §23): `begin({ name, mime })`, `append({ upload, offset, bytes })` (at most 4 MiB a chunk,
-about 1 MiB usual; `offset` must be the bytes stored so far, else `invalid` with the stored `{ offset }`),
-`uploaded(upload)` (where a writer resumes after a drop), `finish(upload)`; `read({ id, offset, length })` (at most 4
-MiB), `remove(id)`, `list`. Appends may be sent without waiting for the previous one: each is accepted at the offset
-the accepted ones reached and written at its position (one file handle per upload); `uploaded`, `finish` and expiry
-wait for the writes in flight, and a failed write ends its upload. Each upload under way holds a file handle, so at
-most `limits.uploads` (64) are under way per `Files` object: past it `begin` is refused `unavailable` (`busy`) until
-one finishes or an idle one expires. Caps per host (`files` option): a file over `maxFile` or a write past `maxTotal` (uploads
-under way count) is refused `too_large`. An upload unwritten for an hour expires; uploads end with the object, and
-those a previous run left are dropped when the object goes live. `Files` is `local`: a client uploads through the
-plugin's own remote methods, which call it.
+`Files` (`chord.app.files`, local, one per host: the server's and each worker's; decision "Files v2") keeps a host's
+files: their bytes in its `files/` (`blobs/<id>`, uploads under way in `.uploads/`), their index in its store (tables
+`chord.app.files:files`, `:folders`, `:blobs`, `:paths` and the documents `summary` and `usage`; `files-index.ts`). Plugins never
+see a path on disk.
+
+- **Spaces and paths:** every file lives in a space (`shared`, what a user sees as the host's drive; `artifacts`,
+  `uploads`, `discord`, …: lower case, digits, `.`, `_`, `-`, at most 64) at a path (`docs/report.md`: non-empty
+  segments, no `.` or `..`, at most 1,024 characters). Spaces are organizational (collisions, listing, removal per
+  space), not a security boundary. Folders are index entries: a write makes its folders, `mkdir({ space, path })`
+  makes one; a file where a folder is (or the other way round) is refused `invalid` with `{ conflict: path }`.
+  `move({ space, from, to })` renames a file (every version) or a folder (everything under it) in the index only.
+- **Versions and blobs:** bytes never change. A write to a path adds a version (a new blob), one past the highest
+  the path ever had: a number is never used twice for a path, also after its versions, the path or its space were
+  removed (table `paths`; a move carries its versions' numbers, the target taking the higher mark). The path names the
+  newest, older versions stay listed and readable until removed. A version's id
+  names it (`FileInfo.id`). `copy({ id, space, path })` adds a version sharing the blob (its metadata but its key);
+  a blob is deleted from disk when no version references it (`remove(id)`, `removePath({ space, path })` for a file
+  or a folder with everything under it, `removeSpace(space)`). Blobs a crash left without their commit are swept
+  when the object goes live.
+- **Writes:** `put({ space, path, mime, source, ref?, key?, meta?, created?, bytes })` (at most 4 MiB; `created`
+  only for imports: the time the file was made where it comes from, so newest-first orders stay true) and chunked transfers
+  (design §23): `begin` (the same fields without `bytes`: `{ kind: "upload", upload }`), `append({ upload, offset,
+  bytes })` (at most 4 MiB a chunk, about 1 MiB usual; `offset` must be the bytes stored so far, else `invalid` with
+  the stored `{ offset }`), `uploaded(upload)` (where a writer resumes after a drop), `finish(upload)` (the version),
+  `cancel(upload)` (a writer that gives up).
+  Appends may be sent without waiting for the previous one: each is accepted at the offset the accepted ones reached
+  and written at its position (one file handle per upload); `uploaded`, `finish` and expiry wait for the writes in
+  flight, and a failed write ends its upload. At most `limits.uploads` (64) uploads are under way per object: past it
+  `begin` is refused `unavailable` (`busy`). An upload unwritten for an hour expires; uploads end with the object,
+  and those a previous run left are dropped when the object goes live.
+- **Keys:** a write with a `key` the space has already stores nothing and answers the version written with it
+  (`begin` answers `{ kind: "exists", file }`, or the upload under way with that key), so a retried delivery
+  (Discord's `discord:<message>:<n>`) is stored once. Removing the version frees its key.
+- **Metadata:** fixed, indexed fields: `space`, `path`, `version`, `source` (`owner`, `guest:<id>`, `agent`,
+  `discord`, …: what the writer sets), `ref` (a producer's reference, e.g. a message id), `key`, `mime`, `size`,
+  `created`; and `meta`, free JSON, stored and returned, never queried. Queries: `file(id)`, `get({ space, path,
+  version? })`, `byKey({ space, key })`, `byRef({ space, ref })` (paged, oldest first), `versions({ space, path })`
+  (paged, newest first), `list({ space, folder })` (paged: the folder's folders, then its files' newest versions,
+  each by path; `""` is the root). Pages take `after` (the previous page's `next`) and `limit` (100, at most 1,000).
+  A plugin needing other queries keeps its own table keyed by version id.
+- **Live listings:** `FilesFolder({ space, folder })` (local) shows a folder's first 500 entries and whether more
+  follow; `Files` reads each watched folder of a space again after each change of that space, inside the method that
+  changed it (one read per watched folder and change: for the folders on someone's screen).
+- **Summary:** `summary` is a keyed member, one document per space: `{ files, versions, bytes, newest }` (paths,
+  versions, every version's bytes, the newest 20 versions), changed in the commit of each change. An app's worker
+  pushes it to its server's index, so lists show without starting the worker (`files.summary.at(space)` in a
+  factory, `files.summary.get/watch(space, ctx)` elsewhere).
+- **Caps** per host (`files` option): a file over `maxFile` or a write past `maxTotal` (the blobs on disk, uploads
+  under way included; a copy adds nothing) is refused `too_large`. Reads by range: `read({ id, offset, length })`, at
+  most 4 MiB a call.
+- **For apps with hosts of their own** (`@earendil-works/chord/app/files`, without the rest of the kit):
+  `filesFacet(dir, caps, uploads)` serves `Files` and `FilesFolder` over the files directory `dir`; `startServer` and `startWorker` load it on theirs. `copyFiles({ store, files }, target,
+  ctx)` copies a host's files (the part of its store's export that is `Files`' own, imported as `target/store.sqlite`,
+  and its blobs, hard-linked or copied into `target/files/blobs/`) into a new host directory, where the source store
+  is open, while the source goes on (p2's fork).
+
+`Files` is `local`: a client uploads through the plugin's own remote methods, which call it.
 
 ## Export and import
 
@@ -198,17 +262,79 @@ archive leaves nothing. The next hold starts the worker on the imported store an
 ## Plugins
 
 Roots: the app's `root` (required: a plugin of it failing stops `startServer`) and `<dataDir>/plugins/` (the user's:
-installs go there). `app.plugins.state` is the plugins component's marks for the app's "apply changes" button; its
-`base` turns true when base code changes (the app restarts its hosts): `base`'s files and directories, each worker
-kind's `entry`, and every file the web and terminal base bundles were built from (esbuild's metafile), never files under
-`node_modules` (an npm upgrade is a restart anyway). `applyChanges` builds the dirty plugins (and installed ones) and
-rolls out to the server, then each worker kind; nothing is applied by itself.
+installs go there). `app.plugins.state` is the plugins component's marks for the app's "apply changes" button.
+
+Its `base` ("restart needed") compares base code with what runs by content, with one latched exception. By content:
+true while a recorded file's bytes differ from the bytes the running code was built from, or it is gone, or a source
+file (`.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.json`, `.css`) is new in one of `base`'s
+directories, and false again once the files are back to those bytes (a formatter rewriting a file unchanged, a branch
+switched and back, an `npm run build` leave no mark). The exception, per timestamp: a scanned file of the server's own
+code whose mtime or ctime (either one) falls after the process started (`performance.timeOrigin`) and not later than
+the scan's time plus 5 s is recorded as differing whatever its bytes, and marks `base` until the next restart, even
+when its bytes are restored. Node may have loaded other bytes than the scan read, and the bytes Node loaded are
+unknown. It is conservative: an edit made after the process started but before Node read the file, a rewrite with the
+same bytes, and a change of metadata only (ctime) mark too. A timestamp outside that range is ignored (stamped in the
+future: a skewed clock, an unpacked archive), which does not exempt the file when its other timestamp is in range; a
+file neither of whose timestamps is in range is compared by content alone. What remains unseen: an edit in that window
+whose timestamp does not show it, on a file system with coarse timestamps (1 s, 2 s on FAT) or a clock behind the process's
+(a network file system); for `base`'s files and directories, hashed at start, an edit between Node loading a file and
+that hash.
+
+What is recorded: the app's `base` files and directories, hashed at start; each base's bytes as its esbuild loader read
+them (the web's, the terminal's, each worker kind's: the entry and everything it imports), once it is built; and the
+server's own code, a best-effort static scan of its entry (`process.argv[1]`, the start script) after the bases are
+built: esbuild bundles it with the server's conditions only to record the files it reads, nothing written or run
+(about 150 ms). The scan sees the literal imports of the start script's static graph, including lazy literal
+`import()`s Node may never run (conservative: such a file's edit asks for a restart); a computed `import(x)` and modules
+a custom loader provides are not seen; an import that does not resolve (an inactive optional import of a missing file
+or package, a loader's scheme) is left out; it resolves as Node does (the conditions, `main`, no `tsconfig.json`
+`paths`). Any other failure of the scan (a file esbuild cannot parse) is reported (`server_scan`) and the server runs
+without that record. An entry under `node_modules` is installed code (an npm-installed app, a test runner) and, as every
+file under `node_modules`, never compared (an npm upgrade is a restart anyway). Each record is compared once when the
+kit starts watching it and at every change. Only the automatic records, the bases' and the scan's, are added after the
+start (the app's `base` files and directories are hashed during it): the server answers meanwhile, and until
+`app.baseWatched` settles (every record compared once) `base` is not known (`false` may mean "not compared yet"); the
+close does not wait for it.
+
+`applyChanges` builds the dirty plugins (and installed ones) and rolls out to the server, then each worker kind, then
+the clients; nothing is applied by itself. A surface whose base has not been built yet is built first by its step (an
+aborted Apply stops waiting there: the rollout stops at that step, the build goes on); one whose base failed fails its
+step.
+
+## Startup cost
+
+A start costs Node's loading of the server's modules (Chord's source, type stripping included, before the start script
+runs; about 390 ms for a minimal server on a desktop), `startServer` itself, and esbuild builds. `startServer` does not
+wait for the builds: it resolves once the server listens (about 30 ms for a minimal server, about 40 ms for example
+53's). Nothing built is kept between starts. Right after the listen the kit builds, at once and from the files as they
+are then, the web base bundle, the terminal base bundle and each worker kind's worker base (`app.basesBuilt` settles
+once every build ended). A request that needs a base waits for its build: the page, the surface's files and its `base`
+hash, a terminal launcher's start, a worker start. A base that fails to build is reported (`AppError`
+`{ kind: "base_build", base: "web" | "tui" | <worker kind>, error }`) and fails only what needs it: the page and the
+surface's files answer 503, the kind's workers fail their start (`worker failed to start`); the server keeps running,
+and the next start builds again. The scan of the server's own code runs after the builds (it would compete with the
+builds the first requests wait for).
+
+Example 53 (one worker kind): `startServer` about 40 ms, the owner page answered about 50 ms after the start began, the
+first worker request about 320 ms after (the worker base's build, about 170 ms, then the fork); with the builds on the
+start's path it was about 560 ms. Example 56 (a web page): the owner page about 45 ms, the first page about 195 ms
+(waiting for the web base). Each worker kind's base is written to `<dataDir>/cache/workers/<kind>/` at its first fork,
+emptied and written again at every start and removed at close, only while the start holds the data directory's lock (a
+build that ends after its start closed writes nothing; a later start owns the directory then), and workers are forked with
+`NODE_COMPILE_CACHE=<dataDir>/cache/node` (unless the worker kind's `env` sets it): the same path at every start, so
+Node's compile cache knows the files (example 53's first worker answers about 18 ms sooner than from a new temporary
+directory). The server's own process loads its modules before the kit runs, so the kit cannot cache them: an app's
+supervisor or start command should set `NODE_COMPILE_CACHE` (for example to `<dataDir>/cache/node`) for the server (a
+minimal server's module loading then takes about 110 ms instead of 390 ms once the cache is warm). Measured on a
+desktop (slayer, Linux x64, Node 24.4.1, warm file system).
 
 ## Internals
 
 `app.ts` (`startServer`, the `App`), `worker.ts` (`startWorker`), `layout.ts` (the layout, private directories and
 stores), `secrets.ts` (tokens, hashes, files of mode 0600), `sessions.ts`, `owner.ts` (owner link and token file),
-`pairing.ts`, `files.ts` and `uploads.ts` (chunked uploads), `info.ts` (start-data objects), `archive.ts` and `tar.ts`
+`pairing.ts`, `files.ts` (`Files`, `FilesFolder`, the facet), `files-index.ts` (the index's tables, documents,
+queries and changes), `blobs.ts` (blob files), `folder-views.ts` (live listings), `uploads.ts` (chunked uploads),
+`files-copy.ts` (`copyFiles`), `info.ts` (start-data objects), `archive.ts` and `tar.ts`
 (export and import), `ephemeral-sessions.ts`, and the optional plugins `users.ts`, `invite.ts`, `ephemeral.ts`.
 
 ## Web and terminal (slice 11)
@@ -216,8 +342,12 @@ stores), `secrets.ts` (tokens, hashes, files of mode 0600), `sessions.ts`, `owne
 With `web` the kit builds the page's base bundle from `web.entry`, publishes the `web` kind's plugin scripts and serves
 the page through `web.page` at `web.paths` (`["/"]`), signed in unless `web.public` (`webSurface`,
 `@earendil-works/chord/surfaces`); with `tui` the terminal's base bundle and the `tui` kind's scripts for launchers
-(`tuiSurface`). Plugin assets are served under `/_chord/web/assets/` (the plugins component's `publicPath`).
+(`tuiSurface`). Both base bundles resolve packages with the server process's conditions (`--conditions`/`-C` of its
+flags and `NODE_OPTIONS`: a server started with `--conditions=source` serves pages built from Chord's source, never
+`dist/`), or with `web.conditions`/`tui.conditions`. Plugin assets are served under `/_chord/web/assets/` (the plugins
+component's `publicPath`).
 `applyChanges` rolls out to the server, the workers, then the surfaces (`web`, `tui`: the new set published, clients
-not waited for). `app.web` and `app.tui` give the base bundles' hashes. The server also serves the `Themes` registry and
+not waited for). Both base bundles are built right after the listen (see "Startup cost"); `app.web` and `app.tui` give
+their hashes once built (`undefined` before, and when the build failed). The server also serves the `Themes` registry and
 `ThemeChoice` (each principal's dark and light pick, kept in its store). Without `web` and `tui` an app has no client
 surface (API only).

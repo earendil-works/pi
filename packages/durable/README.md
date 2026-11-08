@@ -637,6 +637,19 @@ settings: {
 
 The fixed token counts rarely suit a 32k and a 1M context window alike; `modelOverrides` lets one harness serve both. The conversation's current model picks the entry, at the threshold check, after a context overflow, and when a compaction selects what to summarize.
 
+One conversation can have its own compaction settings, of the same shape, stored in its agent like `maxTurns`:
+
+```typescript
+await root.configure({ compaction: { enabled: false } }, context); // no automatic compaction here, on any model
+await research.configure(
+	{ compaction: { keepRecentTokens: 60000, modelOverrides: { "local/small-32k": { keepRecentTokens: 12000 } } } },
+	context,
+);
+await root.configure({ compaction: null }, context); // back to the settings
+```
+
+Each field comes from the first layer that sets it: the conversation's `modelOverrides` entry, the settings' `modelOverrides` entry, the conversation's own fields, then the settings. So a model-specific value beats a general one, and the conversation beats the harness at the same level: above, `research` keeps 60000 tokens on a model without an override anywhere and 12000 on `local/small-32k`; without its own entry it would get the settings' 8000 there. The exception is `enabled: false` on the conversation, which also beats the settings' model overrides. A change replaces the stored settings as a whole; `configure()` throws a `RangeError` for a token count that is not an integer 0 or more. Children and forks inherit it like the rest of the agent.
+
 When a provider rejects a request because the context is too long, generation compacts and retries once. A summary that would cut before the start of the current context settles as `stale` when it is placed, so when several are in flight, the furthest cut stays in effect. Summarization spend counts in `pi.usage`. A `beforeCompact` hook on `CompactionTask` can decline or supply its own summary.
 
 When a compaction that a generation waits for at the blocking threshold fails, the generation fails too, without sending a request: its inputs settle `unanswered` with `model_error` and detail `Compaction failed: <error>`. One that finds nothing to compact or is declined lets the request go ahead.

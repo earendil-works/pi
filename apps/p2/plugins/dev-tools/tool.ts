@@ -31,6 +31,7 @@ export function createReloadExtension(
 				// Do not replay a code upgrade after a crash; the caller can explicitly request another reload.
 				replay: "unsafe",
 				origin: "owner",
+				locked: "never",
 				scope: "main",
 				execute: async (args, _api, context) => {
 					const reply = (message: string, ok: boolean) => ({

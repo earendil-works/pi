@@ -1,0 +1,4 @@
+{
+	"info": { "name": "demo", "title": "Demo artifact", "type": "html", "version": 2 },
+	"content": "<!doctype html><title>Demo</title><h1>Artifact demo</h1>"
+}

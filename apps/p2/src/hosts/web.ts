@@ -86,7 +86,7 @@ function page(nonce: string, manifest: WebManifest): string {
 			try {
 				theme = localStorage.getItem("pi-theme");
 			} catch {}
-			document.documentElement.dataset.theme =
+			document.documentElement.dataset.theme = document.documentElement.dataset.colorScheme =
 				theme === "light" || theme === "dark"
 					? theme
 					: matchMedia("(prefers-color-scheme: dark)").matches

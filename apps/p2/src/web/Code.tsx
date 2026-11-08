@@ -233,6 +233,11 @@ export function CopyButton({ text, label, primary }: { text: string; label?: str
 	);
 }
 
+/** Code highlighted for a fence info string or a file name, as React elements (plain text when not known). */
+export function highlightCode(code: string, hint: string | undefined): ReactNode {
+	return highlight(code, languageOf(hint));
+}
+
 export function CodeBlock({ code, language, tool }: { code: string; language?: string; tool?: boolean }) {
 	const resolved = languageOf(language);
 	const content = useMemo(() => highlight(code, resolved), [code, resolved]);

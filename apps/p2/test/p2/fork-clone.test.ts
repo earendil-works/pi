@@ -108,6 +108,9 @@ describe("clone and fork (fake provider)", () => {
 		const forkView = await until(forked.view, (next) => text(next).includes("Echo: first"));
 		assert.doesNotMatch(text(forkView), /Echo: second|second/);
 		assert.equal(inputs(forkView).length, 2, "the inputs before the chosen one");
+		// The source's files were copied by its worker: the artifact cards of the forked history resolve under the fork.
+		const card = new URLSearchParams({ session: fork.id, name: "demo", version: "1" });
+		assert.equal((await http(fixture.server.port, `/artifact?${card}&download=1`)).status, 200);
 		// The fork works on its own.
 		await forked.send({ text: "forked on", requestId: "f1" }, BACKGROUND_CONTEXT);
 		await until(forked.view, (next) => text(next).includes("Echo: forked on"));

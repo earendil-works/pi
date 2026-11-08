@@ -3,23 +3,18 @@
 // workers component per worker kind, the plugins component over the app's required root and the user's root, loads
 // the server's plugins with the kit's own facets (the start-data object, sessions, the owner link, pairing, files),
 // and gives the app the controls it needs: the owner link, `applyChanges`, installs, export and import per address.
+// After the listen, off the start's path, it builds the bases (the surfaces' base bundles, each worker kind's worker
+// base) and records the base code the `base` mark compares.
 
 import { statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import { type Context, withAbortSignal } from "../../context/index.ts";
 import { type Address, type HostKind, hostKind, type KindShape } from "../../contracts/index.ts";
 import type { Principal } from "../../data/index.ts";
-import { canonicalJson } from "../../data/principal.ts";
-import {
-	createHost,
-	type Facet,
-	type Host,
-	type HostError,
-	type PluginFacet,
-	type PrincipalAttributes,
-} from "../../host/index.ts";
-import type { JsonValue } from "../../json.ts";
+import { principalKey, samePrincipal } from "../../data/principal.ts";
+import { createHost, type Host, type HostError, type PluginFacet, type PrincipalAttributes } from "../../host/index.ts";
+import { isJsonValue, type JsonValue } from "../../json.ts";
 import { openNodeSqliteDatabase } from "../../sqlite/node.ts";
 import { openStore, type Store, sqliteBackend } from "../../store/index.ts";
 import { localeChoiceFacet, themeChoiceFacet, themesFacet, translationsFacet } from "../../surfaces/index.ts";
@@ -27,6 +22,7 @@ import { type TelemetryIngestTarget, telemetryIngestFacet } from "../../telemetr
 import type { Watchable } from "../../watch.ts";
 import { createHttp, type HttpComponent, type HttpError, type ListenAddress } from "../http/index.ts";
 import {
+	type BaseInputs,
 	createPlugins,
 	type HostPackages,
 	type InstallOptions,
@@ -35,16 +31,33 @@ import {
 	type PluginsError,
 	type PluginsState,
 	type RolloutResult,
-	type RolloutStep,
 } from "../plugins/index.ts";
-import { tuiSurface, WEB_PREFIX, type WebSurfaceOptions, webSurface } from "../surfaces/index.ts";
-import { createWorkers, type ProcessLock, processLock, type Workers, type WorkersError } from "../workers/index.ts";
+import {
+	processConditions,
+	type SurfaceBuilt,
+	type TuiSurface,
+	type TuiSurfaceOptions,
+	tuiSurface,
+	WEB_PREFIX,
+	type WebSurface,
+	type WebSurfaceOptions,
+	webSurface,
+} from "../surfaces/index.ts";
+import {
+	createWorkers,
+	nodeBaseInputs,
+	type ProcessLock,
+	processLock,
+	type Workers,
+	type WorkersBuilt,
+	type WorkersError,
+} from "../workers/index.ts";
 import { ARCHIVE_FORMAT, type ArchiveManifest, packData, unpackData } from "./archive.ts";
 import { addressParam, HostData } from "./data.ts";
 import { type FilesCaps, filesFacet } from "./files.ts";
 import { appInfoFacet } from "./info.ts";
 import { type AppLayout, createLayout, defaultDataDir, openDataDir, privateStore, workerDirectory } from "./layout.ts";
-import { OWNER_PATH, OwnerLink, type OwnerPrincipal, ownerFacet, ownerTokenFile } from "./owner.ts";
+import { OWNER_PATH, OwnerLink, ownerFacet, ownerTokenFile } from "./owner.ts";
 import { Pairings, pairingFacet } from "./pairing.ts";
 import { secretFile } from "./secrets.ts";
 import { createSessions } from "./sessions.ts";
@@ -89,14 +102,24 @@ export type AppWorkerKind<P extends Principal> = {
 	readonly idleMs?: () => number;
 };
 
-/** What the kit reports: from its host, its HTTP component, its workers or its plugins. */
+/**
+ * What the kit reports: from its host, its HTTP component, its workers or its plugins, a base that did not build after
+ * the start (`base_build`: `base` is `web`, `tui` or the worker kind's name; the server runs on, the page answers 503,
+ * the kind's workers fail their start), or a failed scan of the server's own code (`server_scan`: the server runs on,
+ * that code is not compared).
+ */
 export type AppError =
 	| { readonly kind: "host"; readonly error: HostError }
 	| { readonly kind: "http"; readonly error: HttpError }
 	| { readonly kind: "workers"; readonly error: WorkersError }
-	| { readonly kind: "plugins"; readonly error: PluginsError };
+	| { readonly kind: "plugins"; readonly error: PluginsError }
+	| { readonly kind: "base_build"; readonly base: string; readonly error: unknown }
+	| { readonly kind: "server_scan"; readonly error: unknown };
 
-/** What `startServer` takes. `{ kind: "owner" }` must be one of the app's principals (the kit's owner). */
+/**
+ * What `startServer` takes. Worker kinds need `principal.worker`: a type error without it, also for a `workers` list
+ * typed as an array (not a tuple) that is empty.
+ */
 export type AppOptions<P extends Principal> = {
 	/** The app's name: its default data directory is `~/.<name>`, its archives carry it. */
 	readonly name: string;
@@ -109,8 +132,12 @@ export type AppOptions<P extends Principal> = {
 	readonly api: AppApi;
 	/** The app's facet kinds: `server` and each worker kind's facet kind among them. */
 	readonly kinds: Readonly<Record<string, AppKind>>;
-	/** The server's principal and each worker's (stamped on its link). */
-	readonly principal: { readonly server: P; readonly worker: (address: Address) => P };
+	/**
+	 * The server's principal, each worker's (stamped on its link; only with worker kinds) and the owner's: whom the owner
+	 * link, the owner token file and device pairing sign in, and who approves pairings and makes invites (`AppInfo.owner`).
+	 * The owner must be strict JSON and not the server's principal (refused at start).
+	 */
+	readonly principal: { readonly server: P; readonly worker?: (address: Address) => P; readonly owner: P };
 	/** The worker kinds; none: a server with clients only. */
 	readonly workers?: readonly AppWorkerKind<P>[];
 	/** The caps of each host's files (the server's and every worker's). */
@@ -121,11 +148,15 @@ export type AppOptions<P extends Principal> = {
 	readonly install?: InstallOptions;
 	/**
 	 * The web surface (slice 11): the app's web entry (the base bundle's), its page template, the paths serving the
-	 * page (`["/"]`), whether the page is public; the `web` facet kind. None: no web surface.
+	 * page (`["/"]`), whether the page is public, the conditions its packages resolve with (the server process's by
+	 * default); the `web` facet kind. None: no web surface.
 	 */
 	readonly web?: AppWeb;
-	/** The terminal surface (slice 11): the app's terminal entry; the `tui` facet kind. None: no terminal clients. */
-	readonly tui?: { readonly entry: string };
+	/**
+	 * The terminal surface (slice 11): the app's terminal entry and the conditions its packages resolve with (the server
+	 * process's by default); the `tui` facet kind. None: no terminal clients.
+	 */
+	readonly tui?: Pick<TuiSurfaceOptions, "entry" | "conditions">;
 	/**
 	 * The app's telemetry store (§29; decision "The server is the one place telemetry is stored"): the server's host,
 	 * its HTTP requests and the kit's ingest record to it (`createSqliteTelemetry`'s store). With one, every worker
@@ -139,9 +170,10 @@ export type AppOptions<P extends Principal> = {
 	 */
 	readonly principalAttributes?: PrincipalAttributes<P>;
 	/**
-	 * The app's base code beside what the kit knows (files or directories: its API modules, its start script): a change
-	 * sets `plugins.state.base`. The kit adds every file its base bundles were built from: the web's, the terminal's and
-	 * each worker kind's.
+	 * The app's base code beside what the kit knows (files or directories: its API modules, its start script), hashed at
+	 * start: `plugins.state.base` is true while a file differs from what the server or a base bundle read (or a source
+	 * file is new in one of the directories). The kit adds every file its base bundles were built from, with the bytes
+	 * they read: the web's, the terminal's and each worker kind's.
 	 */
 	readonly base?: readonly string[];
 	/**
@@ -150,7 +182,7 @@ export type AppOptions<P extends Principal> = {
 	 */
 	readonly timeouts?: AppTimeouts;
 	readonly onError: (error: AppError) => void;
-} & (OwnerPrincipal extends P ? unknown : { readonly "the app's principal type must have { kind: 'owner' }": never });
+} & ({ readonly workers?: readonly [] } | { readonly principal: { readonly worker: (address: Address) => P } });
 
 /**
  * The bounds of what public endpoints, clients and imports may cost: live ephemeral sessions (1,000; past it the
@@ -178,7 +210,7 @@ export type AppTimeouts = {
 };
 
 /** The kit's web surface options (`webSurface`'s, its kind `web` and plugins the kit's). */
-export type AppWeb = Pick<WebSurfaceOptions, "entry" | "page" | "paths" | "public">;
+export type AppWeb = Pick<WebSurfaceOptions, "entry" | "page" | "paths" | "public" | "conditions">;
 
 /** The plugins of a running app, for its "apply changes" control and its installs. */
 export type AppPlugins = {
@@ -197,16 +229,31 @@ export interface App<P extends Principal> {
 	/** The workers components, by host kind name. */
 	readonly workers: ReadonlyMap<string, Workers<HostKind>>;
 	readonly plugins: AppPlugins;
-	/** The web surface's base bundle hash, when the app has one. */
-	readonly web: { readonly base: string } | undefined;
-	/** The terminal surface's base bundle hash, when the app has one. */
-	readonly tui: { readonly base: string } | undefined;
+	/**
+	 * The web surface, when the app has one: its base bundle's hash once built (`basesBuilt`); `undefined` before, and
+	 * when its build failed.
+	 */
+	readonly web: { readonly base: string | undefined } | undefined;
+	/** The terminal surface, when the app has one: its base bundle's hash, as `web`'s. */
+	readonly tui: { readonly base: string | undefined } | undefined;
 	/** The data directory. */
 	readonly dataDir: string;
 	/** The owner link of this start (single use, 10 minutes): `http://127.0.0.1:<port>/_chord/owner#<token>`. */
 	ownerLink(): string;
 	/** The owner token file's path (a device session of the owner, mode 0600). */
 	readonly ownerTokenFile: string;
+	/**
+	 * Settles once every base (the web and terminal base bundles, each worker kind's worker base) was built after the
+	 * start, or failed (reported, `base_build`). Never rejects.
+	 */
+	readonly basesBuilt: Promise<void>;
+	/**
+	 * Settles once the base code is recorded, watched and compared once, after the start: the bases' records (after
+	 * `basesBuilt`) and the scan of the server's own code. Until then `plugins.state.base` is not known (`false` may
+	 * mean "not compared yet"); a file of the server's own code changed since the process started marks it until a
+	 * restart (Node may have loaded other bytes than the scan read).
+	 */
+	readonly baseWatched: Promise<void>;
 	/**
 	 * Builds the dirty plugins and rolls them out: the server, every worker kind, then the clients; never by itself. Calls
 	 * run one after another (a later one builds after the earlier one rolled out).
@@ -245,8 +292,11 @@ export type KitStart = {
 /**
  * Starts the app's server (§1): resolves once its plugins are loaded and it listens. A failing plugin of the app's
  * root (or a problem discovery reports there) rejects with the plugins component's `PluginError`, everything closed.
+ * The bases are built right after the listen, from the files as they are then (`basesBuilt`): a page request waits
+ * for its surface's, a worker start for its kind's.
  */
 export async function startServer<P extends Principal>(options: AppOptions<P>, context: Context): Promise<App<P>> {
+	checkOwner(options.principal.owner, options.principal.server, context);
 	const { layout, cookieSecret, store, lock } = await openServer(
 		resolve(options.dataDir ?? defaultDataDir(options.name)),
 		context,
@@ -273,9 +323,6 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 		},
 		context,
 	);
-	// Base code by kind: directories are watched as trees, files one by one (`watchBase`).
-	const base = (options.base ?? []).map((path) => resolve(path));
-	const baseDirs = base.filter((path) => statSync(path, { throwIfNoEntry: false })?.isDirectory() === true);
 	const plugins = createPlugins(
 		{
 			roots: [{ path: resolve(options.root ?? "plugins"), required: true }, layout.plugins],
@@ -287,7 +334,8 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 				]),
 			),
 			install: options.install,
-			base: baseDirs,
+			// The server's own base code, hashed now; each base bundle's record is added once built (`watchBase`).
+			base: (options.base ?? []).map((path) => resolve(path)),
 			publicPath: `${WEB_PREFIX}assets/`,
 			onError: (error) => onError({ kind: "plugins", error }),
 		},
@@ -297,18 +345,20 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 	// The address key of each worker by its principal's key: the principal its link stamps on its telemetry batches.
 	const workerHosts = new Map<string, string>();
 	const link = new OwnerLink();
+	const { owner } = options.principal;
 	const core: PluginFacet<P>[] = [
 		{ name: "chord.http", facet: http.facet },
 		{
 			name: "chord.app.info",
-			facet: appInfoFacet({ dataDir: layout.dataDir, name: options.name, version: api.versions[0] ?? "" }),
+			facet: appInfoFacet({ dataDir: layout.dataDir, name: options.name, version: api.versions[0] ?? "", owner }),
 		},
 		{ name: "chord.app.sessions", facet: sessions.facet },
-		{ name: "chord.app.owner", facet: ownerFacet(link) },
+		{ name: "chord.app.owner", facet: ownerFacet(link, owner) },
 		{
 			name: "chord.app.pairing",
 			facet: pairingFacet(
 				new Pairings({ maxPending: limits.pendingPairings, perAddress: limits.pairingsPerAddress }),
+				owner,
 			),
 		},
 		{ name: "chord.app.files", facet: filesFacet(join(layout.server, "files"), options.files, limits.uploads) },
@@ -320,31 +370,36 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 	if (telemetry !== undefined) {
 		const facet = telemetryIngestFacet<P>({
 			target: telemetry,
-			workerHost: (principal) => workerHosts.get(canonicalJson(principal as unknown as JsonValue, context)),
+			workerHost: (principal) => workerHosts.get(principalKey(principal, context)),
 			principalAttributes: (principal) => host.principalAttributes(principal, context),
 		});
 		core.push({ name: "chord.telemetry", facet });
 	}
 	const surfaces: Surface<P>[] = [];
 	const app = new RunningApp(host, http, workers, plugins, surfaces, { store, lock }, layout, options);
+	// What runs after the start reports nothing once the app closes (a build or scan finishing late).
+	const report = (error: AppError): void => {
+		if (!app.closing()) onError(error);
+	};
 	try {
-		// Each worker kind's base bundled now: one that does not build fails the start, everything closed.
 		for (const kind of options.workers ?? []) {
-			workers.set(
-				kind.kind.kind,
-				await workersOf(host, kind, options, layout.dataDir, plugins, workerHosts, context),
-			);
+			workers.set(kind.kind.kind, workersOf(host, kind, options, layout, plugins, workerHosts, context));
 		}
-		for (const surface of await surfacesOf(host, options, plugins, context)) {
+		for (const surface of surfacesOf(host, options, plugins)) {
 			surfaces.push(surface);
-			core.push({ name: `chord.${surface.name}`, facet: surface.facet });
+			core.push({ name: `chord.${surface.name}`, facet: surface.surface.facet });
 		}
-		const files = base.filter((path) => !baseDirs.includes(path));
-		const bundled = [...surfaces, ...workers.values()].flatMap(({ inputs }) => inputs);
-		plugins.watchBase([...files, ...bundled]);
 		await plugins.load(host, { kind: "server", core, modules: modulesOf(api, options.kinds.server) }, context);
-		await ownerTokenFile(layout.ownerToken, host, context);
-		app.started(link.renew(), await http.listening(context));
+		await ownerTokenFile(layout.ownerToken, owner, host, context);
+		const listening = await http.listening(context);
+		const bases = [
+			...surfaces.map(({ name, surface }) => ({ name, build: () => surface.build() })),
+			...[...workers].map(([name, each]) => ({ name, build: () => each.build() })),
+		];
+		const compared: Promise<void>[] = [];
+		const built = buildBases(bases, plugins, compared, report, () => app.closing());
+		const watching = watchBaseCode(plugins, built, compared, report, () => app.closing());
+		app.started(link.renew(), listening, built, watching);
 	} catch (error) {
 		await app.close(context);
 		throw error;
@@ -352,29 +407,121 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 	return app;
 }
 
-/** A client surface of the app: its name (`web`, `tui`), its facet, its rollout step, its base bundle's hash. */
-type Surface<P extends Principal> = {
-	readonly name: "web" | "tui";
-	readonly facet: Facet<P>;
-	step(name: string): RolloutStep;
-	readonly base: string;
-	/** The files its base bundle was built from. */
-	readonly inputs: readonly string[];
-};
+/**
+ * Refuses an owner the kit could not recognize or that would act as the server (a declaration policy the types cannot
+ * express): sessions keep the owner as JSON, so a field `undefined` (or anything else not strict JSON) would never
+ * match it again; the server's principal reaches every worker's kit objects.
+ */
+function checkOwner<P extends Principal>(owner: P, server: P, context: Context): void {
+	if (!isJsonValue(owner)) {
+		throw new Error(
+			"startServer: principal.owner must be strict JSON (no undefined fields, functions or class instances)",
+		);
+	}
+	if (samePrincipal(owner, server, context)) {
+		throw new Error("startServer: principal.owner must not be the server's principal");
+	}
+}
 
-/** The app's client surfaces, built (their base bundles) in order: the web's, the terminal's. */
-async function surfacesOf<P extends Principal>(
-	host: Host<P>,
-	options: AppOptions<P>,
+/** A base the kit builds after the listen: its name in reports, its build. */
+type Base = { readonly name: string; build(): Promise<SurfaceBuilt | WorkersBuilt> };
+
+/**
+ * Builds every base right after the listen, at once, from the files as they are now (owner decision "A": nothing is
+ * kept between starts; the server answers meanwhile, each request needing a base waits for it). A built base's record
+ * is added to what `plugins` compares (its first comparisons pushed to `compared`); a failed one is reported
+ * (`base_build`) and the server runs on. Settles once every build ended; what ends after the close is dropped.
+ */
+async function buildBases(
+	bases: readonly Base[],
 	plugins: Plugins,
-	context: Context,
-): Promise<Surface<P>[]> {
+	compared: Promise<void>[],
+	report: (error: AppError) => void,
+	closed: () => boolean,
+): Promise<void> {
+	await Promise.all(
+		bases.map(async ({ name, build }) => {
+			const built = await build();
+			if (closed()) return;
+			if (built.kind === "failed") report({ kind: "base_build", base: name, error: built.error });
+			else compared.push(plugins.watchBase(built.inputs));
+		}),
+	);
+}
+
+/**
+ * Adds the server's own code to what `plugins` compares, once the bases are built (`built`; the scan's reads would
+ * contend with the builds the first requests wait for): the static graph of its entry (the start script;
+ * `nodeBaseInputs`; a file changed since the process started is recorded as differing, `editedSinceStart`). Best
+ * effort: a failed scan is reported (`server_scan`) and that code not compared. An entry under `node_modules` is
+ * installed code (an npm-installed app, a test runner), never compared. Settles once every record's first comparison
+ * did (the bases' in `compared` too: `base` knows them all). A close meanwhile ends it at its next step; a scan stalled
+ * on a read keeps it pending until the read ends (the close does not wait for it; its result is dropped).
+ */
+async function watchBaseCode(
+	plugins: Plugins,
+	built: Promise<void>,
+	compared: Promise<void>[],
+	report: (error: AppError) => void,
+	closed: () => boolean,
+): Promise<void> {
+	await built;
+	if (closed()) return;
+	const entry = process.argv[1];
+	if (entry !== undefined && !entry.split(sep).includes("node_modules")) {
+		const conditions = processConditions(process.execArgv, process.env.NODE_OPTIONS);
+		const scanned = await nodeBaseInputs(entry, conditions).then(
+			(inputs) => inputs,
+			(error: unknown) => report({ kind: "server_scan", error }),
+		);
+		if (closed()) return;
+		if (scanned !== undefined) compared.push(plugins.watchBase(editedSinceStart(scanned)));
+	}
+	await Promise.all(compared);
+}
+
+/** What the scan records for a file changed since the process started: a hash no bytes have. */
+const EDITED_SINCE_START = "changed since the server started";
+
+/** How far in the future a file's timestamp may be and still count as an edit since the start: clock skew. */
+const FUTURE_SLACK_MS = 5_000;
+
+/**
+ * The scan's record `inputs` with every file changed since this process started (its mtime or ctime after
+ * `performance.timeOrigin`) recorded as differing: Node may have loaded other bytes than the scan read, so its first
+ * comparison marks `base` (until a restart: the bytes Node loaded are unknown). Conservative: an edit Node loaded
+ * anyway (made during the module loading, before the file was read) or a change of metadata only (ctime) marks too.
+ * Per timestamp: one later than now (plus `FUTURE_SLACK_MS`) is no edit since the start (a file stamped in the future,
+ * by a skewed clock or an archive, would mark every start until that time); a file neither of whose timestamps is in
+ * range keeps its hash, compared by content alone.
+ */
+function editedSinceStart(inputs: BaseInputs): BaseInputs {
+	const started = performance.timeOrigin;
+	const latest = Date.now() + FUTURE_SLACK_MS;
+	return new Map(
+		[...inputs].map(([path, hash]) => {
+			try {
+				const { mtimeMs, ctimeMs } = statSync(path);
+				const edited = [mtimeMs, ctimeMs].some((time) => time > started && time <= latest);
+				return [path, edited ? EDITED_SINCE_START : hash];
+			} catch {
+				// Gone: its first comparison finds it so.
+				return [path, hash];
+			}
+		}),
+	);
+}
+
+/** A client surface of the app and its name (`web`, `tui`). */
+type Surface<P extends Principal> = { readonly name: "web" | "tui"; readonly surface: WebSurface<P> | TuiSurface<P> };
+
+/** The app's client surfaces, in order: the web's, the terminal's (their base bundles built after the listen). */
+function surfacesOf<P extends Principal>(host: Host<P>, options: AppOptions<P>, plugins: Plugins): Surface<P>[] {
 	const surfaces: Surface<P>[] = [];
 	if (options.web !== undefined)
-		surfaces.push({ name: "web", ...(await webSurface(host, { ...options.web, plugins }, context)) });
-	if (options.tui !== undefined) {
-		surfaces.push({ name: "tui", ...(await tuiSurface(host, { entry: options.tui.entry, plugins }, context)) });
-	}
+		surfaces.push({ name: "web", surface: webSurface(host, { ...options.web, plugins }) });
+	if (options.tui !== undefined)
+		surfaces.push({ name: "tui", surface: tuiSurface(host, { ...options.tui, plugins }) });
 	return surfaces;
 }
 
@@ -419,21 +566,23 @@ function modulesOf(api: AppApi, kind: AppKind | undefined): HostPackages {
 }
 
 /**
- * The workers component of one worker kind, its base bundled: started with the kit's part of the start data beside the
- * app's.
+ * The workers component of one worker kind (its base built after the listen, into the kind's directory under
+ * `cache/workers/`): started with the kit's part of the start data beside the app's.
  */
 function workersOf<P extends Principal>(
 	host: Host<P>,
 	kind: AppWorkerKind<P>,
 	options: AppOptions<P>,
-	dataDir: string,
+	layout: AppLayout,
 	plugins: Plugins,
 	workerHosts: Map<string, string>,
 	context: Context,
-): Promise<Workers<HostKind>> {
+): Workers<HostKind> {
+	const { dataDir } = layout;
 	const facet = kind.facet ?? "worker";
-	const serverKey = canonicalJson(options.principal.server as unknown as JsonValue, context);
-	const isServer = (principal: P): boolean => canonicalJson(principal as unknown as JsonValue, context) === serverKey;
+	// `AppOptions` admits worker kinds only with `principal.worker`.
+	const worker = options.principal.worker as (address: Address) => P;
+	const { server } = options.principal;
 	return createWorkers(
 		host,
 		// A host kind of the app: any params; its addresses come back from its route as the kit hands them on.
@@ -443,18 +592,21 @@ function workersOf<P extends Principal>(
 			entry: kind.entry,
 			...(kind.execArgv === undefined ? {} : { execArgv: kind.execArgv }),
 			...(kind.env === undefined ? {} : { env: kind.env }),
+			baseDir: join(layout.workerBases, kind.kind.kind),
+			compileCache: layout.compileCache,
 			// The server reaches its workers' kit objects (`HostData`) whatever the app admits.
-			authorize: (principal, address) => isServer(principal) || kind.authorize(principal, address),
-			principal: options.principal.worker,
+			authorize: (principal, address) =>
+				samePrincipal(principal, server, context) || kind.authorize(principal, address),
+			principal: worker,
 			start: async (address, ctx) => {
-				// Principals are JSON (they cross links).
-				const principal = options.principal.worker(address) as unknown as JsonValue;
-				workerHosts.set(canonicalJson(principal, ctx), address.key);
+				const principal = worker(address);
+				workerHosts.set(principalKey(principal, ctx), address.key);
 				const kit: KitStart = {
 					dir: workerDirectory(dataDir, address),
 					facet,
-					principal,
-					server: options.principal.server as unknown as JsonValue,
+					// Principals are JSON (they cross links).
+					principal: principal as unknown as JsonValue,
+					server: server as unknown as JsonValue,
 					files: { ...options.files },
 					telemetry: options.telemetry !== undefined,
 					...(options.limits?.uploads === undefined ? {} : { uploads: options.limits.uploads }),
@@ -500,6 +652,10 @@ class RunningApp<P extends Principal> implements App<P> {
 	readonly #lock: ProcessLock;
 	readonly #options: AppOptions<P>;
 	#link = "";
+	/** The bases' builds after the start (`buildBases`). */
+	#building: Promise<void> = Promise.resolve();
+	/** The recording of the base code after the start (`watchBaseCode`). */
+	#scanning: Promise<void> = Promise.resolve();
 	#closing: Promise<void> | undefined;
 	/** The latest `applyChanges`, settled to nothing: the next one starts after it. */
 	#applying: Promise<void> = Promise.resolve();
@@ -531,21 +687,42 @@ class RunningApp<P extends Principal> implements App<P> {
 		};
 	}
 
-	/** The start finished: the owner link's token and the address it names (the one listened on). */
-	started(token: string, listening: ListenAddress): void {
+	/**
+	 * The start finished: the owner link's token and the address it names (the one listened on), the bases' builds and
+	 * the recording of the base code under way (`basesBuilt`, `baseWatched`).
+	 */
+	started(token: string, listening: ListenAddress, building: Promise<void>, scanning: Promise<void>): void {
 		this.#link = `http://${linkHost(listening.host)}:${listening.port}${OWNER_PATH}#${token}`;
+		this.#building = building;
+		this.#scanning = scanning;
 	}
 
 	ownerLink(): string {
 		return this.#link;
 	}
 
-	get web(): { readonly base: string } | undefined {
-		return this.#surfaces.find(({ name }) => name === "web");
+	get basesBuilt(): Promise<void> {
+		return this.#building;
 	}
 
-	get tui(): { readonly base: string } | undefined {
-		return this.#surfaces.find(({ name }) => name === "tui");
+	get baseWatched(): Promise<void> {
+		return this.#scanning;
+	}
+
+	get web(): { readonly base: string | undefined } | undefined {
+		return this.#surfaceBase("web");
+	}
+
+	get tui(): { readonly base: string | undefined } | undefined {
+		return this.#surfaceBase("tui");
+	}
+
+	/** The surface `name`'s base hash once built, when the app has that surface. */
+	#surfaceBase(name: "web" | "tui"): { readonly base: string | undefined } | undefined {
+		const found = this.#surfaces.find((each) => each.name === name);
+		if (found === undefined) return undefined;
+		const { built } = found.surface;
+		return { base: built?.kind === "built" ? built.base : undefined };
 	}
 
 	applyChanges(context: Context): Promise<RolloutResult> {
@@ -566,7 +743,7 @@ class RunningApp<P extends Principal> implements App<P> {
 		const steps = [
 			plugins.step("server", this.host),
 			...[...this.workers].map(([name, each]) => each.step(name)),
-			...this.#surfaces.map((surface) => surface.step(surface.name)),
+			...this.#surfaces.map(({ name, surface }) => surface.step(name)),
 		];
 		return plugins.rollout(steps, built, context);
 	}
@@ -655,9 +832,15 @@ class RunningApp<P extends Principal> implements App<P> {
 		};
 	}
 
+	/** Whether the app is closing or closed: what runs after the start stops there. */
+	closing(): boolean {
+		return this.#closing !== undefined;
+	}
+
 	/**
-	 * The close, in order: HTTP first (it drains requests the host's close would seal), workers, host, store, the
-	 * plugins' watcher, then the data directory's lock.
+	 * The close, in order: HTTP (it drains requests the host's close would seal), workers, host, store, the plugins'
+	 * watcher, then the data directory's lock. The bases' builds and the recording of the base code are not waited for:
+	 * what they finish after the close is dropped.
 	 */
 	async #close(context: Context): Promise<void> {
 		await this.http.close(context);

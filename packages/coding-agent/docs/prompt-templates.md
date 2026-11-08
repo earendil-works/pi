@@ -46,7 +46,7 @@ Templates support these substitutions:
 | `${@:N}` | Arguments starting at position `N` |
 | `${@:N:L}` | `L` arguments starting at position `N` |
 
-Arguments follow shell-like quoting, so `/review "API compatibility"` supplies one argument containing a space.
+Arguments follow shell-like quoting, so `/review "API compatibility"` supplies one argument containing a space. A quote only starts quoting at the beginning of an argument, so apostrophes inside words such as `doesn't` stay as text, and a quote with no closing match is kept as text. Inside a quoted argument, a backslash before the same quote character keeps it as text, so `/review "the \"fast\" path"` supplies `the "fast" path`; other backslashes are kept as typed.
 
 <a id="choose-where-it-loads"></a>
 

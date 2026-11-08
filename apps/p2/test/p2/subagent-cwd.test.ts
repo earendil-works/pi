@@ -13,7 +13,6 @@ import {
 	createRegistry,
 	Harness,
 } from "@earendil-works/pi-durable";
-import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
@@ -21,6 +20,7 @@ import { SessionStatus } from "../../plugins/status/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
 import { startServer } from "../../src/hosts/server.ts";
 import type { Host } from "../../src/runtime/chord.ts";
+import { openSessionStorage } from "../../src/runtime/session-store.ts";
 import { holdIn, startFixture, until } from "./helpers.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -83,14 +83,19 @@ test(
 		// What a session moved before subagents tracked their own cwd looks like: the child still holds a path of the machine
 		// the session used to run on, which exists nowhere here.
 		await fixture.server.close();
-		const storage = await openNodeSqliteStorage(join(fixture.dataDir, "sessions", `${session}.sqlite`));
-		const harness = await Harness.open(storage, { models: createModels(), registry: createRegistry() }, context);
+		const stored = await openSessionStorage(fixture.dataDir, session, context);
+		const harness = await Harness.open(
+			stored.storage,
+			{ models: createModels(), registry: createRegistry() },
+			context,
+		);
 		try {
 			await harness.commit(async (tx) => {
 				await configure(tx, children.get("old") as ConversationId, { cwd: "/data/data/elsewhere/pi-private" });
 			}, context);
 		} finally {
 			await harness.close(context);
+			await stored.close();
 		}
 
 		restarted = await startServer({ dataDir: fixture.dataDir, port: fixture.server.port, fake: true, web: false });

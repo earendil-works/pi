@@ -471,6 +471,10 @@ function ownerStubs(calls: Calls) {
 				uploadKey: () => ({ publicKey: "", identityFile: "" }),
 				publicKey: () => null,
 				listDirectory: () => ({ path: "/", parent: null, directories: [], truncated: false }),
+				sandboxStatus: () => ({ state: "stopped" as const }),
+				sandboxStart: () => ({ state: "stopped" as const }),
+				sandboxStop: () => ({ state: "stopped" as const }),
+				sandboxResetDisk: () => ({ state: "stopped" as const }),
 			}),
 		],
 		[
