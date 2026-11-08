@@ -1,9 +1,14 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import type { ToolNamespace } from "../src/core/extensions/types.ts";
+import type { ToolInfo, ToolNamespace } from "../src/core/extensions/types.ts";
 import { createCodemodeDescription } from "../src/extensions/codemode/tool.ts";
-import { Bm25Ranker, createToolSearchDocument, tokenize } from "../src/extensions/tool-search/tool.ts";
+import {
+	Bm25Ranker,
+	createToolSearchDocument,
+	createToolSearchToolDefinition,
+	tokenize,
+} from "../src/extensions/tool-search/tool.ts";
 
 function tool(name: string, description: string, properties: Record<string, unknown> = {}): AgentTool {
 	return {
@@ -308,5 +313,80 @@ describe("codemode description catalog", () => {
 		const description = createCodemodeDescription(all, { namespaces, inlineBudget: 0 });
 		expect(description).toContain("## mcp__docs (tools not listed)");
 		expect(description).not.toContain("codemode tool declaration:");
+	});
+});
+
+describe("tool_search results", () => {
+	function search(all: ToolInfo[], initiallyActive: string[], query: string) {
+		let active = initiallyActive;
+		const definition = createToolSearchToolDefinition({
+			tools: {
+				getAllTools: () => all,
+				getActiveTools: () => active,
+				setActiveTools: (names) => {
+					active = names;
+				},
+			},
+		});
+		return {
+			result: definition.execute("call", { query }, undefined, undefined, undefined as never),
+			active: () => active,
+		};
+	}
+
+	function info(name: string, description: string, exposure: ToolInfo["exposure"], namespace?: string): ToolInfo {
+		const { parameters } = tool(name, description);
+		return {
+			name,
+			description,
+			parameters,
+			exposure,
+			namespace: namespace === undefined ? undefined : { name: namespace },
+			sourceInfo: { path: name, source: "test", scope: "temporary", origin: "top-level" },
+		};
+	}
+
+	const all = [
+		info("tool_search", "Search for tools", "model-only"),
+		info("grep", "Search file contents for a pattern", "direct"),
+		info("mcp__common__tavily_search", "Search the web with Tavily", "direct", "mcp__common"),
+		info("mcp__docs__fetch", "Fetch a documentation page", "deferred", "mcp__docs"),
+		info("weather_now", "Current weather for a city", "deferred"),
+	];
+
+	// #11921: a direct MCP tool is already declared; searching for it must not say it does not exist.
+	it("reports matching tools that are already active instead of finding nothing", async () => {
+		const { result, active } = search(all, ["tool_search", "mcp__common__tavily_search"], "tavily");
+		const { content, details } = await result;
+		expect(content).toEqual([
+			{
+				type: "text",
+				text: "Already available, no need to load:\n- mcp__common__tavily_search: Search the web with Tavily",
+			},
+		]);
+		expect(details).toEqual({ loaded: [] });
+		expect(active()).toEqual(["tool_search", "mcp__common__tavily_search"]);
+	});
+
+	it("reports deferred tools loaded earlier and leaves built-in tools out", async () => {
+		const loadedEarlier = search(all, ["tool_search", "grep", "weather_now"], "weather");
+		expect((await loadedEarlier.result).content).toEqual([
+			{ type: "text", text: "Already available, no need to load:\n- weather_now: Current weather for a city" },
+		]);
+		const builtIn = search(all, ["tool_search", "grep"], "file contents pattern");
+		expect((await builtIn.result).content).toEqual([{ type: "text", text: "No matching tools found." }]);
+	});
+
+	it("loads matching deferred tools and finds nothing when no tool matches", async () => {
+		const loaded = search(all, ["tool_search", "mcp__common__tavily_search"], "documentation page");
+		expect((await loaded.result).content).toEqual([
+			{
+				type: "text",
+				text: "Loaded 1 tool. They are available from your next call:\n- mcp__docs__fetch: Fetch a documentation page",
+			},
+		]);
+		expect(loaded.active()).toEqual(["tool_search", "mcp__common__tavily_search", "mcp__docs__fetch"]);
+		const none = search(all, ["tool_search"], "translate");
+		expect((await none.result).content).toEqual([{ type: "text", text: "No matching tools found." }]);
 	});
 });
