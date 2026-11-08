@@ -1176,8 +1176,10 @@ translated phone drawer and intercept chat taps.
   and serves the preview with a CSP sandbox (no same-origin privilege, forms, child frames or objects). Only
   previews receive the diagnostics bridge; `download=1` returns the original source. HEAD describes the same
   representation as GET. The chat-content slot supplies the shared transcript card contexts and explicit-click
-  file/artifact viewers; a top-bar counter opens a picker of every version, newest first. The viewer/picker lives in
-  named `Route.layers` (Back and sessionStorage restoration); picking an artifact pushes a viewer above its list.
+  file/artifact viewers; a top-bar counter toggles a list of every version, newest first, in the side panel
+  (`SidePanel`, `Route.panel` "artifacts": docked on the right from 700px like a run's activity, which it replaces and
+  which replaces it; a sheet on phones). The viewer is a named `Route.layers` entry (Back and sessionStorage
+  restoration); picking an artifact pushes a viewer above the list.
   HTML/SVG use a sandboxed iframe, Markdown/text render safely,
   sent files use the conservative file preview. Nothing opens from a server update. `test/p2/artifacts.test.ts`
   covers fake-provider publication, versions, independent index, reload/restart, CSP, HEAD, guest isolation and

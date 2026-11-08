@@ -1,5 +1,8 @@
+// A conversation's artifacts, every version newest first, in the side panel (docked on the right, a sheet on phones).
 import type { ArtifactInfo } from "../runtime/schemas.ts";
-import { Sheet } from "../runtime/web.tsx";
+import { SidePanel } from "./SidePanel.tsx";
+
+/** Lists `artifacts` in the side panel; a row opens that version. */
 export function ArtifactPicker({
 	artifacts,
 	onOpen,
@@ -10,7 +13,7 @@ export function ArtifactPicker({
 	onClose: () => void;
 }) {
 	return (
-		<Sheet title="Artifacts" onClose={onClose}>
+		<SidePanel title="Artifacts" onClose={onClose} testId="artifact-panel">
 			{artifacts.length ? (
 				<div className="artifact-list">
 					{artifacts.map((artifact) => (
@@ -33,6 +36,6 @@ export function ArtifactPicker({
 			) : (
 				<p className="empty-note">No artifacts in this conversation.</p>
 			)}
-		</Sheet>
+		</SidePanel>
 	);
 }

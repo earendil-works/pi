@@ -68,7 +68,7 @@ export function TranscriptFixture({
 					createElement(Messages, { transcript, rows, list: follow.list, range: follow.range }),
 				),
 			),
-			createElement("div", { id: "activity-dock", className: "activity-dock" }),
+			createElement("div", { id: "side-dock", className: "side-dock" }),
 		),
 	);
 }

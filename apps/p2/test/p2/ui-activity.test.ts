@@ -77,7 +77,7 @@ describe("activity panel in the app", { skip: !browserTests }, () => {
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session}`);
 		await browser.wait("document.querySelector('[data-testid=activity]') && !document.querySelector('.offline')");
 		await browser.click("[data-testid=activity]");
-		await browser.wait("document.querySelector('#activity-dock .activity-panel')");
+		await browser.wait("document.querySelector('#side-dock .activity-panel')");
 		const box = await browser.evaluate<{ right: number; left: number; chatRight: number }>(`(() => {
 			const r=${panel}.getBoundingClientRect(), main=document.querySelector('.main').getBoundingClientRect();
 			return {right:r.right,left:r.left,chatRight:main.right};
@@ -92,7 +92,7 @@ describe("activity panel in the app", { skip: !browserTests }, () => {
 		await browser.click('button[aria-label="Workspace files and changes"]');
 		await browser.wait(`document.querySelector('.workspace') && !${panel}`);
 		await browser.evaluate("history.back()");
-		await browser.wait("document.querySelector('#activity-dock [data-testid=detail-command]')");
+		await browser.wait("document.querySelector('#side-dock [data-testid=detail-command]')");
 		await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape" });
 		await browser.wait(`!${panel} && !history.state.route.activity`);
 	});
@@ -483,7 +483,7 @@ describe("a block's steps and active thought", { skip: !browserTests }, () => {
 		await browser.metrics(390, 844);
 		await browser.wait(`${mobileSheet}?.querySelector('[data-testid=detail-command]')`);
 		await browser.metrics(1440, 900);
-		await browser.wait("document.querySelector('#activity-dock [data-testid=detail-command]')");
+		await browser.wait("document.querySelector('#side-dock [data-testid=detail-command]')");
 		assert.equal(await browser.evaluate("document.querySelector('.sheet-layer')"), null);
 	});
 
