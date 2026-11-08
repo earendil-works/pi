@@ -46,6 +46,7 @@ import { canonicalJson } from "./json.ts";
 import { follow, followRegistry, type HeldIn, type HeldRef, knownRegistry, liveIn, UI_LINGER } from "./refs.ts";
 import { Slots } from "./web-core.ts";
 
+export { shortPath } from "../web/path-label.ts";
 export { Slots, ToolActivities, webCoreFacet } from "./web-core.ts";
 
 export const HostContext = createContext<Host | undefined>(undefined);
@@ -481,8 +482,3 @@ export async function forgetOwner(): Promise<void> {
 
 /** A failure's message as the UI shows it (a ChordError's message, a thrown string). */
 export const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
-
-/** A home directory shown as `~` (Termux and Linux homes). */
-export function shortPath(path: string): string {
-	return path.replace(/^\/data\/data\/com\.termux\/files\/home/, "~").replace(/^\/home\/[^/]+/, "~");
-}
