@@ -1274,6 +1274,16 @@ translated phone drawer and intercept chat taps.
   reload during a script, SIGKILL and graceful restarts mid-call (finished calls do not rerun; the interrupted unsafe
   `bash` call returns an error the script catches); the removal mid-script (prompt error, turn ends, the script's thread goes); `codemode-plugin.test.ts` the
   sandbox across reload/removal.
+- **Cache warming** (`plugins/cache-warming`, policy in pi-ai's `cache-warming.ts`, as pi-coding-agent's): a hook-only
+  Durable extension; each `afterResponse` starts the conversation's run, replacing the last one. The request comes from
+  the core: the Harness's `Models` proxy remembers each `streamSimple` request by the message `result()` resolved with
+  (`WeakMap`); `HarnessParts.requestOf(message)` takes it once as a read-only `ModelRequest` (Durable's frozen entry
+  messages; never mutate, copy or freeze it; resending skips `beforeProviderRequest`). `completeSimple` (compaction,
+  the refreshes) is not remembered. Each refresh: no phase while `pi.live.generation` exists, streaming while
+  `pi.live.run` exists, idle only for top-level conversations, none once the model or the context's start changed;
+  usage goes to `pi.usage`. Timers live in the plugin's native (a reload ends them); liveness kind `cacheWarming`.
+  Setting `cacheWarming` (`"idle"`, `"streaming"`, `"off"`). Tests: `cache-warming.test.ts`,
+  `harness-requests.test.ts` (pins that the hook's message is the object `result()` resolved with).
 - **MCP servers** (`plugins/mcp`, plan `docs/mcp-durable.md`, WP6-8): the server's `McpManager` (local,
   host lifetime) owns every MCP process and connection; workers never spawn one or hold a credential. `<P2_DATA_DIR>/mcp.json`
   is the owner's `mcpServers` (pi-mcp's `validateMcpServerConfig`, plus p2's `shared` and `runOn`; invalid entries are
