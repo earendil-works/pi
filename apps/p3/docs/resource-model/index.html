@@ -112,7 +112,7 @@ table{max-width:100%}
   <div class="kicker">The spec · p3 resource model · third edition · 2026-11-08</div>
   <h1>One List<br>Many Groupings</h1>
   <p class="subtitle">Resources, the one list each session uses, groupings that only show, one policy, workers that follow their list, and the screens on top, with every piece in code</p>
-  <div class="cover-stats"><div class="stat"><b>1</b><span>function to define a resource, defineResource</span></div><div class="stat"><b>2</b><span>ways one comes to exist, brought by a plugin or created by a person</span></div><div class="stat"><b>1</b><span>field decides what a session may use</span></div><div class="stat"><b>0</b><span>resource objects, resource kinds or grants</span></div></div>
+  <div class="cover-stats"><div class="stat"><b>1</b><span>function to define a resource, defineResource</span></div><div class="stat"><b>2</b><span>ways one comes to exist, brought by a plugin or created by a person</span></div><div class="stat"><b>1</b><span>field decides what a session may use</span></div><div class="stat"><b>0</b><span>resource objects, resource kinds or grants</span></div><div class="stat"><b>1</b><span>way to become a user: a sign-in plugin calls Identities.signIn</span></div></div>
   <div class="cover-note"><p>The third edition, rewritten after the owner&#39;s code review of 2026-11-08 cut the abstractions of the second (resource
 kinds, built-ins, grants, resource objects). The model is the owner&#39;s decision &quot;Resource model direction&quot;
 (<code>apps/p3/docs/decisions.md</code>); the review by Astra and Sol of the second edition (appendix C) still applies, its fixes
@@ -123,7 +123,7 @@ carried over. Chord APIs are real and checked against the source (<code>self.tx(
 <nav class="toc"><h2>Contents</h2><ol>
 <li><a href="#before-we-begin">Before we begin</a></li>
 <li><a href="#resources">I. What a Resource Is</a></li>
-<li><a href="#users">II. People</a></li>
+<li><a href="#users">II. Users</a></li>
 <li><a href="#lists">III. One List</a></li>
 <li><a href="#groupings">IV. Where Things Appear</a></li>
 <li><a href="#policy">V. Who May</a></li>
@@ -266,7 +266,7 @@ create: <span class="tk-k">async</span> ({ owner, config }, ctx) =&gt; {
 		<span class="tk-k">const</span> createdIndex = self.<span class="tk-f">state</span>(<span class="tk-t">CreatedIndex</span>);         <span class="tk-c">// in memory: the table's rows as a map, filled at activation</span>
 		<span class="tk-k">const</span> brought = self.<span class="tk-f">registry</span>(<span class="tk-t">InstanceResources</span>);
 		<span class="tk-k">const</span> policy = self.<span class="tk-f">registry</span>(<span class="tk-t">Policies</span>);
-		<span class="tk-k">const</span> users = self.<span class="tk-f">get</span>(<span class="tk-t">Users</span>, {});
+		<span class="tk-k">const</span> identities = self.<span class="tk-f">get</span>(<span class="tk-t">Identities</span>, {});         <span class="tk-c">// users, admins (chapter II)</span>
 		<span class="tk-k">const</span> ownLists = self.<span class="tk-f">state</span>(<span class="tk-t">OwnLists</span>);                 <span class="tk-c">// persisted, keyed by session id</span>
 		<span class="tk-k">const</span> exclusions = self.<span class="tk-f">state</span>(<span class="tk-t">Exclusions</span>);             <span class="tk-c">// persisted: user id -&gt; refs</span>
 
@@ -279,7 +279,7 @@ create: <span class="tk-k">async</span> ({ owner, config }, ctx) =&gt; {
 			exclusions,
 			create: <span class="tk-k">async</span> ({ actor, owner, definition, label }, ctx) =&gt; {
 				<span class="tk-c">// 1. You create only for yourself; admins also for the company. No policy changes this.</span>
-				<span class="tk-k">if</span> (owner !== actor &amp;&amp; !(owner === INSTANCE &amp;&amp; <span class="tk-f">isAdmin</span>(users.users.value, actor)))
+				<span class="tk-k">if</span> (owner !== actor &amp;&amp; !(owner === INSTANCE &amp;&amp; <span class="tk-f">isAdmin</span>(identities.users.value, actor)))
 					<span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(messages.<span class="tk-f">message</span>(<span class="tk-s">"notYourResource"</span>));
 				<span class="tk-c">// 2. The policy, e.g. "only engineering creates MCP servers".</span>
 				<span class="tk-k">const</span> decision = policy.value.<span class="tk-f">decide</span>({ kind: <span class="tk-s">"create-resource"</span>, actor, definition, owner }, ALLOW);
@@ -300,30 +300,206 @@ create: <span class="tk-k">async</span> ({ owner, config }, ctx) =&gt; {
 object, <code>ctx</code> to the call; one commit, cancelled if the caller goes away.</p>
 </section>
 
-<section class="chapter" id="users"><header class="opener"><div class="numeral">II</div><h2>People</h2><p class="lede">Users, the instance user, and the one way a person becomes a user.</p></header>
-<pre><code><span class="tk-c">// plugins/users/contract.ts</span>
+<section class="chapter" id="users"><header class="opener"><div class="numeral">II</div><h2>Users</h2><p class="lede">Who a user is, how a person becomes one, admins, the instance user, sign-in plugins, per-user data, and what happens when someone leaves.</p></header>
+<p class="dropcap">A user is a person with an account on this p3 instance. Everything in the model hangs off users: a resource&#39;s owner is
+a user, a session&#39;s owner is a user, a project&#39;s members are users (or groupings of users), the policy decides per
+user. Users are kept small on purpose: an id the principal carries, a profile, the identities a person signs in with,
+and an admin flag. Everything else about a person (their recent sessions, their exclusions, their picks) is data of the
+plugin that needs it, keyed by the user id.</p>
+<p>p3 builds on the app kit&#39;s users and sessions rather than beside them (design §23): the kit&#39;s <code>defineUsers(profile)</code>
+keeps profiles by id, the kit&#39;s <code>Sessions</code> issues and revokes sign-in sessions, the kit&#39;s <code>Authenticators</code> registry
+turns a request into a principal. p3&#39;s users plugin adds what the kit leaves to the app: how an external identity maps
+to a user, who is an admin, and the instance user.</p>
+<h3 id="the-principal-and-the-ids">The principal and the ids</h3>
+<pre><code><span class="tk-c">// plugins/users/contract.ts: shared by every facet</span>
 <span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">UserId</span> = string &amp; { <span class="tk-k">readonly</span> <span class="tk-s">"~user"</span>: <span class="tk-k">true</span> };
-<span class="tk-c">/** Owns company resources and everything plugins bring. Nobody signs in as it. */</span>
+
+<span class="tk-c">/** The instance user: owns company resources and everything plugins bring. Never signs in, never in the user list. */</span>
 <span class="tk-k">export</span> <span class="tk-k">const</span> INSTANCE: <span class="tk-t">UserId</span>;
 
+<span class="tk-c">/** p3's principals (decision 2026-11-06); links stamp them, a caller's data never sets one. */</span>
 <span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">P3Principal</span> =
 	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"server"</span> }
 	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"worker"</span>; <span class="tk-k">readonly</span> session: string }
 	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"user"</span>; <span class="tk-k">readonly</span> id: <span class="tk-t">UserId</span> }
-	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"guest"</span> };                     <span class="tk-c">// reserved until sharing is designed</span>
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"guest"</span> };                      <span class="tk-c">// reserved until sharing is designed</span>
 
-<span class="tk-c">// plugins/users/contract.server.ts</span>
-<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Users</span> = <span class="tk-f">local</span>(<span class="tk-s">"p3.users"</span>, {
+<span class="tk-c">/** What every user's profile holds (the kit's users plugin stores it by id). */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Profile</span> = <span class="tk-f">obj</span>({ name: <span class="tk-f">str</span>(), email: <span class="tk-f">nullable</span>(<span class="tk-f">str</span>()), avatar: <span class="tk-f">nullable</span>(<span class="tk-f">str</span>()) });</code></pre>
+<p>A principal names the user and nothing else: no name, no groups, no admin flag (design §4: objects persist a
+projection, never the principal). A changed name or admin flag never needs a new session.</p>
+<h3 id="the-server-side-identities-admins-the-user-list">The server side: identities, admins, the user list</h3>
+<pre><code><span class="tk-c">// plugins/users/contract.server.ts: server-only declarations other plugins use</span>
+<span class="tk-c">/** The kit's users plugin, instantiated with p3's profile (the API re-exports it; design §23). */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> users = <span class="tk-f">defineUsers</span>(<span class="tk-t">Profile</span>);           <span class="tk-c">// users.Users: list, get, update, remove</span>
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Identities</span> = <span class="tk-f">local</span>(<span class="tk-s">"p3.users.identities"</span>, {
 	version: <span class="tk-n">1</span>,
 	params: {},
 	members: {
-		users: <span class="tk-f">arr</span>(<span class="tk-t">UserRow</span>),                          <span class="tk-c">// { id, name, admin, signIns: [{ issuer, subject }] }</span>
-		<span class="tk-c">/** The user an external identity signs in as, created at its first sign-in; never keyed by email. */</span>
-		signIn: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ issuer: <span class="tk-f">str</span>(), subject: <span class="tk-f">str</span>(), name: <span class="tk-f">str</span>() }), <span class="tk-f">str</span>()),
+		<span class="tk-c">/** Every user with their admin flag; the kit's profile list joined with p3's facts. */</span>
+		users: <span class="tk-f">arr</span>(<span class="tk-f">obj</span>({ id: <span class="tk-f">str</span>(), profile: <span class="tk-t">Profile</span>, admin: <span class="tk-f">bool</span>(), disabled: <span class="tk-f">bool</span>() })),
+		<span class="tk-c">/** The user an external identity signs in as; creates the user at its first sign-in. Never returns INSTANCE. */</span>
+		signIn: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ issuer: <span class="tk-f">str</span>(), subject: <span class="tk-f">str</span>(), profile: <span class="tk-t">Profile</span> }), <span class="tk-f">str</span>()),
+		<span class="tk-c">/** Adds another identity to an existing user (a second sign-in method). */</span>
+		link: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ actor: <span class="tk-f">str</span>(), user: <span class="tk-f">str</span>(), issuer: <span class="tk-f">str</span>(), subject: <span class="tk-f">str</span>() })),
+		<span class="tk-c">/** Makes a user an admin or not; asks the policy for `administer`. */</span>
+		setAdmin: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ actor: <span class="tk-f">str</span>(), user: <span class="tk-f">str</span>(), admin: <span class="tk-f">bool</span>() })),
+		<span class="tk-c">/** Disables a user: their sessions end, their resources stop counting (below). */</span>
+		disable: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ actor: <span class="tk-f">str</span>(), user: <span class="tk-f">str</span>() })),
 	},
 });</code></pre>
-<p>Sign-in plugins create users; nothing else does. The kit&#39;s owner link signs in as the first user, an admin. A SAML or
-Radius plugin maps <code>(issuer, subject)</code> from its verified sign-in (chapter XII).</p>
+<pre><code><span class="tk-c">// plugins/users/server.ts</span>
+<span class="tk-k">const</span> <span class="tk-t">IdentityRows</span> = <span class="tk-f">defineTable</span>(<span class="tk-s">"users.identities"</span>, {
+	version: <span class="tk-n">1</span>,
+	columns: { issuer: <span class="tk-f">str</span>(), subject: <span class="tk-f">str</span>(), user: <span class="tk-f">str</span>() },
+	key: [<span class="tk-s">"issuer"</span>, <span class="tk-s">"subject"</span>],
+});
+<span class="tk-k">const</span> <span class="tk-t">Facts</span> = <span class="tk-f">defineState</span>(<span class="tk-s">"users.facts"</span>, {
+	schema: <span class="tk-f">obj</span>({ admins: <span class="tk-f">arr</span>(<span class="tk-f">str</span>()), disabled: <span class="tk-f">arr</span>(<span class="tk-f">str</span>()) }),
+	version: <span class="tk-n">1</span>,
+	initial: () =&gt; ({ admins: [], disabled: [] }),
+	persist: <span class="tk-k">true</span>,
+	checkpointWhen: () =&gt; <span class="tk-k">true</span>,
+});
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((host) =&gt; {
+	host.<span class="tk-f">serve</span>(<span class="tk-t">Identities</span>, (_params, self) =&gt; {
+		<span class="tk-k">const</span> identities = self.<span class="tk-f">table</span>(<span class="tk-t">IdentityRows</span>);
+		<span class="tk-k">const</span> facts = self.<span class="tk-f">state</span>(<span class="tk-t">Facts</span>);
+		<span class="tk-k">const</span> profiles = self.<span class="tk-f">get</span>(users.<span class="tk-t">Users</span>, {});      <span class="tk-c">// the kit's profiles by id</span>
+		<span class="tk-k">const</span> policy = self.<span class="tk-f">registry</span>(<span class="tk-t">Policies</span>);
+		<span class="tk-k">const</span> sessions = self.<span class="tk-f">get</span>(<span class="tk-t">Sessions</span>, {});         <span class="tk-c">// the kit's sign-in sessions</span>
+
+		<span class="tk-k">const</span> list = self.<span class="tk-f">derive</span>([profiles.list, facts], ([all, f]) =&gt;
+			all.<span class="tk-f">map</span>((u) =&gt; ({ id: u.id, profile: u.profile, admin: f.admins.<span class="tk-f">includes</span>(u.id), disabled: f.disabled.<span class="tk-f">includes</span>(u.id) })));
+
+		<span class="tk-k">const</span> administers = (actor: string) =&gt;
+			policy.value.<span class="tk-f">decide</span>({ kind: <span class="tk-s">"administer"</span>, actor: <span class="tk-f">userId</span>(actor) }, <span class="tk-f">allowIf</span>(facts.value.admins.<span class="tk-f">includes</span>(actor))).kind === <span class="tk-s">"allow"</span>;
+
+		<span class="tk-k">return</span> {
+			users: list,
+			signIn: <span class="tk-k">async</span> ({ issuer, subject, profile }, ctx) =&gt; {
+				<span class="tk-k">let</span> id = <span class="tk-s">""</span>;
+				<span class="tk-k">await</span> self.<span class="tk-f">tx</span>(<span class="tk-k">async</span> (tx) =&gt; {
+					<span class="tk-k">const</span> found = <span class="tk-k">await</span> tx.<span class="tk-f">get</span>(identities, { issuer, subject });
+					<span class="tk-k">if</span> (found !== <span class="tk-k">undefined</span>) { id = found.user; <span class="tk-k">return</span>; }
+					id = <span class="tk-f">newUserId</span>();
+					tx.<span class="tk-f">put</span>(identities, { issuer, subject, user: id });
+					<span class="tk-k">const</span> f = <span class="tk-k">await</span> tx.<span class="tk-f">draft</span>(facts);
+					<span class="tk-k">if</span> (profiles.list.value.length === <span class="tk-n">0</span>) f.admins.<span class="tk-f">push</span>(id);   <span class="tk-c">// the first user administers</span>
+				}, ctx);
+				<span class="tk-k">if</span> (facts.value.disabled.<span class="tk-f">includes</span>(id)) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(messages.<span class="tk-f">message</span>(<span class="tk-s">"userDisabled"</span>));
+				<span class="tk-k">await</span> profiles.<span class="tk-f">update</span>({ id, profile }, ctx);                    <span class="tk-c">// name and email follow the identity provider</span>
+				<span class="tk-k">return</span> id;
+			},
+			link: <span class="tk-k">async</span> ({ actor, user, issuer, subject }, ctx) =&gt; {
+				<span class="tk-k">if</span> (actor !== user &amp;&amp; !<span class="tk-f">administers</span>(actor)) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(messages.<span class="tk-f">message</span>(<span class="tk-s">"notYou"</span>));
+				<span class="tk-k">await</span> self.<span class="tk-f">tx</span>(<span class="tk-k">async</span> (tx) =&gt; tx.<span class="tk-f">put</span>(identities, { issuer, subject, user }), ctx);
+			},
+			setAdmin: <span class="tk-k">async</span> ({ actor, user, admin }, ctx) =&gt; {
+				<span class="tk-k">if</span> (!<span class="tk-f">administers</span>(actor)) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(messages.<span class="tk-f">message</span>(<span class="tk-s">"adminsOnly"</span>));
+				<span class="tk-k">await</span> facts.<span class="tk-f">change</span>((f) =&gt; { f.admins = admin ? [...<span class="tk-k">new</span> <span class="tk-t">Set</span>([...f.admins, user])] : f.admins.<span class="tk-f">filter</span>((a) =&gt; a !== user); }, ctx);
+			},
+			disable: <span class="tk-k">async</span> ({ actor, user }, ctx) =&gt; {
+				<span class="tk-k">if</span> (!<span class="tk-f">administers</span>(actor)) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(messages.<span class="tk-f">message</span>(<span class="tk-s">"adminsOnly"</span>));
+				<span class="tk-k">await</span> facts.<span class="tk-f">change</span>((f) =&gt; { f.disabled.<span class="tk-f">push</span>(user); }, ctx);
+				<span class="tk-k">for</span> (<span class="tk-k">const</span> s <span class="tk-k">of</span> sessions.list.value) <span class="tk-k">if</span> (<span class="tk-f">isUser</span>(s.principal, user)) <span class="tk-k">await</span> sessions.<span class="tk-f">revoke</span>(s.id, ctx);
+			},
+		};
+	});
+});</code></pre>
+<h3 id="signing-in">Signing in</h3>
+<p>Every way in is a plugin that verifies something, calls <code>Identities.signIn</code>, and issues a kit session for the
+principal it got back. Nothing else creates users.</p>
+<ul>
+<li><strong>The owner link</strong> (single user, the laptop): the kit prints a one-time link at start. p3 sets the kit&#39;s owner
+principal to the first user (<code>signIn({ issuer: &quot;p3.owner&quot;, subject: &quot;owner&quot;, ... })</code> at first start), so the link,
+the owner token file and device pairing sign in as that user (Chord decision &quot;The kit&#39;s owner is a principal the app
+chooses&quot;).</li>
+<li><strong>SAML</strong> (a company): a route verifies the assertion (signature, audience, time) and signs in by issuer and subject:</li>
+</ul>
+<pre><code><span class="tk-c">// plugins/saml/server.ts</span>
+self.<span class="tk-f">contribute</span>(<span class="tk-t">Http</span>, { routes: { <span class="tk-s">"POST /saml/acs"</span>: <span class="tk-k">async</span> (request, ctx) =&gt; {
+	<span class="tk-k">const</span> assertion = <span class="tk-k">await</span> <span class="tk-f">verify</span>(<span class="tk-k">await</span> request.<span class="tk-f">body</span>(), idp.value, ctx);
+	<span class="tk-k">const</span> id = <span class="tk-k">await</span> identities.<span class="tk-f">signIn</span>({ issuer: assertion.issuer, subject: assertion.subject,
+		profile: { name: assertion.name, email: assertion.email, avatar: <span class="tk-k">null</span> } }, ctx);
+	<span class="tk-k">await</span> directory.<span class="tk-f">mirror</span>({ user: id, groups: assertion.groups }, ctx);          <span class="tk-c">// groupings for the policy (chapter XII)</span>
+	<span class="tk-k">const</span> session = <span class="tk-k">await</span> sessions.<span class="tk-f">issue</span>({ principal: { kind: <span class="tk-s">"user"</span>, id }, label: assertion.email ?? assertion.name, kind: <span class="tk-s">"browser"</span>, secure: <span class="tk-k">true</span> }, ctx);
+	<span class="tk-k">return</span> { kind: <span class="tk-s">"redirect"</span>, to: <span class="tk-s">"/"</span>, headers: { <span class="tk-s">"set-cookie"</span>: session.cookie } };
+} } });</code></pre>
+<ul>
+<li><strong>Radius</strong>: the same with a Radius account&#39;s issuer and subject; it may also create the user&#39;s Radius MCP server and
+model provider through those plugins&#39; trusted local creates, with this user as actor.</li>
+</ul>
+<p>Emails are never identities: two providers may report the same address for different people, and a person may change
+theirs. Linking a second identity to an existing user is explicit (<code>link</code>), by the user themselves or an admin.</p>
+<h3 id="admins-and-the-instance-user">Admins and the instance user</h3>
+<ul>
+<li><strong>Admins</strong> are a flag the users plugin keeps; the first user is one. The flag is the baseline of the policy&#39;s
+<code>administer</code> request, so a company policy can say &quot;members of the SAML group admins administer&quot; instead. Admins
+create company resources (owner <code>INSTANCE</code>), install plugins, edit rules, disable users.</li>
+<li><strong>The instance user</strong> is a reserved id, never in the user list, never returned by <code>signIn</code>, shown as &quot;the company&quot;.
+It owns what plugins bring and what admins create for everyone. Nobody acts as it: an admin creating the company
+key is the actor, the instance the owner.</li>
+</ul>
+<h3 id="what-the-page-sees">What the page sees</h3>
+<pre><code><span class="tk-c">// plugins/users/contract.ts</span>
+<span class="tk-c">/** Myself: my profile, whether I administer, my sign-in sessions (devices) with a sign-out each. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Me</span> = <span class="tk-f">remote</span>(<span class="tk-s">"p3.users.me"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: {
+		user: {
+			state: { me: <span class="tk-f">obj</span>({ id: <span class="tk-f">str</span>(), profile: <span class="tk-t">Profile</span>, admin: <span class="tk-f">bool</span>() }), sessions: <span class="tk-f">arr</span>(<span class="tk-t">SessionSummary</span>) },
+			methods: { rename: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ name: <span class="tk-f">str</span>() })), signOut: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ session: <span class="tk-f">str</span>() })) },
+		},
+	},
+});
+
+<span class="tk-c">/** The people of this instance, for pickers (add a member, share a session); names only, no emails for non-admins. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">People</span> = <span class="tk-f">remote</span>(<span class="tk-s">"p3.users.people"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: { user: { state: { people: <span class="tk-f">arr</span>(<span class="tk-f">obj</span>({ id: <span class="tk-f">str</span>(), name: <span class="tk-f">str</span>(), avatar: <span class="tk-f">nullable</span>(<span class="tk-f">str</span>()) })) } } },
+});
+
+<span class="tk-c">/** Admins: every user with flags and identities, and the methods behind the users screen. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">UserAdmin</span> = <span class="tk-f">remote</span>(<span class="tk-s">"p3.users.admin"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: {
+		admin: { state: { users: <span class="tk-f">arr</span>(<span class="tk-t">AdminUserRow</span>) }, methods: { setAdmin: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ user: <span class="tk-f">str</span>(), admin: <span class="tk-f">bool</span>() })), disable: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ user: <span class="tk-f">str</span>() })) } },
+	},
+});</code></pre>
+<p><code>UserAdmin</code> is served only to principals that administer (the factory asks the policy and refuses others); its methods
+pass the link-stamped principal as <code>actor</code> to <code>Identities</code>. A user who loses admin while a page holds the view gets
+refused calls; the view is made again on the next connection.</p>
+<h3 id="per-user-data-lives-with-its-plugin">Per-user data lives with its plugin</h3>
+<p>The users plugin does not grow a settings bag. Each plugin keys its own data by user id and serves it through a
+per-user view: recent sessions in the recent plugin, exclusions from defaults in the resources plugin (<code>MyResources</code>),
+model defaults in the models plugin, the theme and language in the kit&#39;s preferences. A user&#39;s data is found by
+asking the plugin that owns it, never through the users plugin.</p>
+<h3 id="when-someone-leaves">When someone leaves</h3>
+<p><code>disable</code> is the admin&#39;s act; the effects follow from facts other plugins already read:</p>
+<ol>
+<li><strong>Sign-in ends:</strong> the kit&#39;s sessions for that user are revoked; <code>signIn</code> refuses the user&#39;s identities.</li>
+<li><strong>Their resources stop counting:</strong> the resources plugin&#39;s <code>usable</code> drops entries whose owner is disabled, so
+Colin&#39;s Linear server leaves project pi&#39;s effective list the moment Colin is disabled. The rows stay, so an admin
+can re-enable without anyone re-bringing anything.</li>
+<li><strong>Their sessions stay</strong> visible to the people who could see them (shared with, members of the source grouping);
+who owns them from then on is an admin&#39;s choice (reassign or archive), not automatic.</li>
+<li><strong>Live objects:</strong> ending a disabled user&#39;s live views at once needs the kit to pass Chord&#39;s <code>revokedBy</code> to the
+server host (design §4, <code>{ user: id }</code>); today the kit revokes sessions only, so open views end on the next
+reconnect. A small kit change, recorded as carry-over.</li>
+</ol>
+<div class="note review"><b class="tag">Decision for the owner: a departed user&#39;s resources</b><p>Dropping a disabled user&#39;s resources from every list is the safe default: their logins are theirs. A company that wants
+Colin&#39;s MCP server to keep running after he leaves moves it to the company by re-creating it as an instance resource
+(a second resource, the company&#39;s login), never by re-assigning his.</p>
+</div>
 </section>
 
 <section class="chapter" id="lists"><header class="opener"><div class="numeral">III</div><h2>One List</h2><p class="lede">The session&#39;s one resource source, the entries, how core computes a session&#39;s list, and bringing, withdrawing and locking down.</p></header>
@@ -427,6 +603,7 @@ host.<span class="tk-f">serve</span>(<span class="tk-t">SessionList</span>, ({ s
 <span class="tk-k">function</span> <span class="tk-f">usable</span>(entry: <span class="tk-t">ListEntry</span>, row: <span class="tk-t">SessionRow</span>, index: <span class="tk-t">Index</span>, policy: <span class="tk-t">Policy</span>, now: number) {
 	<span class="tk-k">const</span> indexed = index[<span class="tk-f">keyOf</span>(entry.resource)];
 	<span class="tk-k">if</span> (indexed === <span class="tk-k">undefined</span>) <span class="tk-k">return</span> [];                                   <span class="tk-c">// its plugin is gone, or it was deleted</span>
+	<span class="tk-k">if</span> (<span class="tk-f">disabled</span>(indexed.owner)) <span class="tk-k">return</span> [];                                  <span class="tk-c">// its owner left (chapter II)</span>
 	<span class="tk-k">if</span> (entry.revision &lt; indexed.revision) <span class="tk-k">return</span> [];                       <span class="tk-c">// withdrawn by its owner since</span>
 	<span class="tk-k">if</span> (entry.until !== <span class="tk-k">null</span> &amp;&amp; entry.until &lt;= now) <span class="tk-k">return</span> [];              <span class="tk-c">// expired</span>
 	<span class="tk-k">const</span> use = policy.<span class="tk-f">decide</span>({ kind: <span class="tk-s">"use"</span>, session: row, resource: entry.resource, owner: indexed.owner }, <span class="tk-f">useBaseline</span>(entry.resource, row));
@@ -1190,7 +1367,8 @@ one extension keyed per drive on the list.</li>
 
 <section class="chapter" id="directories"><header class="opener"><div class="numeral">XII</div><h2>Sign-in and Directories</h2><p class="lede">SAML and Radius touch three places, each already in the model.</p></header>
 <ol>
-<li><strong>Sign-in creates users:</strong> <code>Users.signIn({ issuer, subject, name })</code> from a verified assertion; never email.</li>
+<li><strong>Sign-in creates users:</strong> <code>Identities.signIn({ issuer, subject, profile })</code> from a verified assertion; never email
+(chapter II).</li>
 <li><strong>Sync mirrors groups as groupings:</strong> <code>SamlGroup</code> registers only <code>members</code>, updated at sign-in or by SCIM; a stale
 directory yields no members, never everyone.</li>
 <li><strong>The policy names them:</strong> &quot;members of engineering may create MCP servers&quot; is one rule.</li>
@@ -1253,6 +1431,10 @@ sign-in.</p>
 <tr>
 <td><code>plugins/resources/web.tsx</code></td>
 <td><code>ResourceRowView</code>, <code>ResourceDetail</code>, <code>SessionResourcesPanel</code>, <code>AddResource</code>, My resources</td>
+</tr>
+<tr>
+<td><code>plugins/users/contract.ts</code>, <code>contract.server.ts</code></td>
+<td><code>UserId</code>, <code>INSTANCE</code>, <code>P3Principal</code>, <code>Profile</code>, <code>Me</code>, <code>People</code>, <code>UserAdmin</code>; <code>users</code> (the kit&#39;s <code>defineUsers</code>), <code>Identities</code></td>
 </tr>
 <tr>
 <td><code>plugins/policy/contract.server.ts</code></td>

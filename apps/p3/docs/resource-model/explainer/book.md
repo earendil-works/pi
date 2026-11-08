@@ -167,6 +167,30 @@ Every person is a user. One more user exists from the start: the **instance user
 company rather than to a person (the company's Claude key, the build machine, the Discord bot) and everything the
 installed plugins bring. Nobody signs in as it; admins act for it.
 
+## Users
+
+A user is an id the principal carries (`{ kind: "user", id }`), a profile (name, email, avatar, kept by the kit's
+users plugin), the identities the person signs in with, and an admin flag. Everything else about a person lives with
+the plugin that needs it, keyed by the id: recent sessions, exclusions from defaults, model defaults.
+
+Nobody creates users by hand. Every way in is a plugin that verifies something and asks the users plugin who that is:
+
+```ts
+// plugins/saml/server.ts: verify, map the identity to a user, issue a kit session
+const assertion = await verify(await request.body(), idp.value, ctx);
+const id = await identities.signIn({ issuer: assertion.issuer, subject: assertion.subject, profile }, ctx);   // created at first sign-in
+const session = await sessions.issue({ principal: { kind: "user", id }, label: profile.name, kind: "browser", secure: true }, ctx);
+```
+
+- **Identities, not emails:** a user is found by issuer and subject; a second sign-in method is linked explicitly.
+- **The first user is an admin** (on the laptop: the owner link signs in as that user). Who else administers is the
+  policy's answer, so "members of the SAML group admins" works without touching the users plugin.
+- **The instance user** never signs in and is never in the user list; pickers show it as "the company".
+- **When someone leaves,** an admin disables them: their sign-in sessions end, and their resources drop out of every
+  list at once, because their logins are theirs. Their sessions stay for the people who could see them.
+
+## Resources
+
 A **resource** is anything a session can use: a tool, a model provider, an MCP server, a machine, a drive, access to
 one other session. The model needs four facts about it, so a resource is one row in the resources plugin's table:
 

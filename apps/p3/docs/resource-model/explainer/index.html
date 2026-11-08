@@ -256,6 +256,24 @@ nothing needs precedence. Moving a session into another project replaces the fie
 <p class="dropcap">Every person is a user. One more user exists from the start: the <strong>instance user</strong>. It owns what belongs to the
 company rather than to a person (the company&#39;s Claude key, the build machine, the Discord bot) and everything the
 installed plugins bring. Nobody signs in as it; admins act for it.</p>
+<h3 id="users">Users</h3>
+<p>A user is an id the principal carries (<code>{ kind: &quot;user&quot;, id }</code>), a profile (name, email, avatar, kept by the kit&#39;s
+users plugin), the identities the person signs in with, and an admin flag. Everything else about a person lives with
+the plugin that needs it, keyed by the id: recent sessions, exclusions from defaults, model defaults.</p>
+<p>Nobody creates users by hand. Every way in is a plugin that verifies something and asks the users plugin who that is:</p>
+<pre><code><span class="tk-c">// plugins/saml/server.ts: verify, map the identity to a user, issue a kit session</span>
+<span class="tk-k">const</span> assertion = <span class="tk-k">await</span> <span class="tk-f">verify</span>(<span class="tk-k">await</span> request.<span class="tk-f">body</span>(), idp.value, ctx);
+<span class="tk-k">const</span> id = <span class="tk-k">await</span> identities.<span class="tk-f">signIn</span>({ issuer: assertion.issuer, subject: assertion.subject, profile }, ctx);   <span class="tk-c">// created at first sign-in</span>
+<span class="tk-k">const</span> session = <span class="tk-k">await</span> sessions.<span class="tk-f">issue</span>({ principal: { kind: <span class="tk-s">"user"</span>, id }, label: profile.name, kind: <span class="tk-s">"browser"</span>, secure: <span class="tk-k">true</span> }, ctx);</code></pre>
+<ul>
+<li><strong>Identities, not emails:</strong> a user is found by issuer and subject; a second sign-in method is linked explicitly.</li>
+<li><strong>The first user is an admin</strong> (on the laptop: the owner link signs in as that user). Who else administers is the
+policy&#39;s answer, so &quot;members of the SAML group admins&quot; works without touching the users plugin.</li>
+<li><strong>The instance user</strong> never signs in and is never in the user list; pickers show it as &quot;the company&quot;.</li>
+<li><strong>When someone leaves,</strong> an admin disables them: their sign-in sessions end, and their resources drop out of every
+list at once, because their logins are theirs. Their sessions stay for the people who could see them.</li>
+</ul>
+<h3 id="resources">Resources</h3>
 <p>A <strong>resource</strong> is anything a session can use: a tool, a model provider, an MCP server, a machine, a drive, access to
 one other session. The model needs four facts about it, so a resource is one row in the resources plugin&#39;s table:</p>
 <table>

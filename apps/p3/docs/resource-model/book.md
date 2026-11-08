@@ -8,6 +8,7 @@ stats:
   - 2 | ways one comes to exist, brought by a plugin or created by a person
   - 1 | field decides what a session may use
   - 0 | resource objects, resource kinds or grants
+  - 1 | way to become a user: a sign-in plugin calls Identities.signIn
 note: |
   The third edition, rewritten after the owner's code review of 2026-11-08 cut the abstractions of the second (resource
   kinds, built-ins, grants, resource objects). The model is the owner's decision "Resource model direction"
@@ -169,7 +170,7 @@ export default defineFacet((host) => {
 		const createdIndex = self.state(CreatedIndex);         // in memory: the table's rows as a map, filled at activation
 		const brought = self.registry(InstanceResources);
 		const policy = self.registry(Policies);
-		const users = self.get(Users, {});
+		const identities = self.get(Identities, {});         // users, admins (chapter II)
 		const ownLists = self.state(OwnLists);                 // persisted, keyed by session id
 		const exclusions = self.state(Exclusions);             // persisted: user id -> refs
 
@@ -182,7 +183,7 @@ export default defineFacet((host) => {
 			exclusions,
 			create: async ({ actor, owner, definition, label }, ctx) => {
 				// 1. You create only for yourself; admins also for the company. No policy changes this.
-				if (owner !== actor && !(owner === INSTANCE && isAdmin(users.users.value, actor)))
+				if (owner !== actor && !(owner === INSTANCE && isAdmin(identities.users.value, actor)))
 					throw forbidden(messages.message("notYourResource"));
 				// 2. The policy, e.g. "only engineering creates MCP servers".
 				const decision = policy.value.decide({ kind: "create-resource", actor, definition, owner }, ALLOW);
@@ -204,34 +205,234 @@ export default defineFacet((host) => {
 `self.tx(fn, ctx)` is the object's transaction for this call: its handles (`created`, `createdIndex`) belong to the
 object, `ctx` to the call; one commit, cancelled if the caller goes away.
 
-# People {#users lede="Users, the instance user, and the one way a person becomes a user."}
+# Users {#users lede="Who a user is, how a person becomes one, admins, the instance user, sign-in plugins, per-user data, and what happens when someone leaves."}
+
+A user is a person with an account on this p3 instance. Everything in the model hangs off users: a resource's owner is
+a user, a session's owner is a user, a project's members are users (or groupings of users), the policy decides per
+user. Users are kept small on purpose: an id the principal carries, a profile, the identities a person signs in with,
+and an admin flag. Everything else about a person (their recent sessions, their exclusions, their picks) is data of the
+plugin that needs it, keyed by the user id.
+
+p3 builds on the app kit's users and sessions rather than beside them (design §23): the kit's `defineUsers(profile)`
+keeps profiles by id, the kit's `Sessions` issues and revokes sign-in sessions, the kit's `Authenticators` registry
+turns a request into a principal. p3's users plugin adds what the kit leaves to the app: how an external identity maps
+to a user, who is an admin, and the instance user.
+
+## The principal and the ids
 
 ```ts
-// plugins/users/contract.ts
+// plugins/users/contract.ts: shared by every facet
 export type UserId = string & { readonly "~user": true };
-/** Owns company resources and everything plugins bring. Nobody signs in as it. */
+
+/** The instance user: owns company resources and everything plugins bring. Never signs in, never in the user list. */
 export const INSTANCE: UserId;
 
+/** p3's principals (decision 2026-11-06); links stamp them, a caller's data never sets one. */
 export type P3Principal =
 	| { readonly kind: "server" }
 	| { readonly kind: "worker"; readonly session: string }
 	| { readonly kind: "user"; readonly id: UserId }
-	| { readonly kind: "guest" };                     // reserved until sharing is designed
+	| { readonly kind: "guest" };                      // reserved until sharing is designed
 
-// plugins/users/contract.server.ts
-export const Users = local("p3.users", {
+/** What every user's profile holds (the kit's users plugin stores it by id). */
+export const Profile = obj({ name: str(), email: nullable(str()), avatar: nullable(str()) });
+```
+
+A principal names the user and nothing else: no name, no groups, no admin flag (design §4: objects persist a
+projection, never the principal). A changed name or admin flag never needs a new session.
+
+## The server side: identities, admins, the user list
+
+```ts
+// plugins/users/contract.server.ts: server-only declarations other plugins use
+/** The kit's users plugin, instantiated with p3's profile (the API re-exports it; design §23). */
+export const users = defineUsers(Profile);           // users.Users: list, get, update, remove
+
+export const Identities = local("p3.users.identities", {
 	version: 1,
 	params: {},
 	members: {
-		users: arr(UserRow),                          // { id, name, admin, signIns: [{ issuer, subject }] }
-		/** The user an external identity signs in as, created at its first sign-in; never keyed by email. */
-		signIn: method(obj({ issuer: str(), subject: str(), name: str() }), str()),
+		/** Every user with their admin flag; the kit's profile list joined with p3's facts. */
+		users: arr(obj({ id: str(), profile: Profile, admin: bool(), disabled: bool() })),
+		/** The user an external identity signs in as; creates the user at its first sign-in. Never returns INSTANCE. */
+		signIn: method(obj({ issuer: str(), subject: str(), profile: Profile }), str()),
+		/** Adds another identity to an existing user (a second sign-in method). */
+		link: method(obj({ actor: str(), user: str(), issuer: str(), subject: str() })),
+		/** Makes a user an admin or not; asks the policy for `administer`. */
+		setAdmin: method(obj({ actor: str(), user: str(), admin: bool() })),
+		/** Disables a user: their sessions end, their resources stop counting (below). */
+		disable: method(obj({ actor: str(), user: str() })),
 	},
 });
 ```
 
-Sign-in plugins create users; nothing else does. The kit's owner link signs in as the first user, an admin. A SAML or
-Radius plugin maps `(issuer, subject)` from its verified sign-in (chapter XII).
+```ts
+// plugins/users/server.ts
+const IdentityRows = defineTable("users.identities", {
+	version: 1,
+	columns: { issuer: str(), subject: str(), user: str() },
+	key: ["issuer", "subject"],
+});
+const Facts = defineState("users.facts", {
+	schema: obj({ admins: arr(str()), disabled: arr(str()) }),
+	version: 1,
+	initial: () => ({ admins: [], disabled: [] }),
+	persist: true,
+	checkpointWhen: () => true,
+});
+
+export default defineFacet((host) => {
+	host.serve(Identities, (_params, self) => {
+		const identities = self.table(IdentityRows);
+		const facts = self.state(Facts);
+		const profiles = self.get(users.Users, {});      // the kit's profiles by id
+		const policy = self.registry(Policies);
+		const sessions = self.get(Sessions, {});         // the kit's sign-in sessions
+
+		const list = self.derive([profiles.list, facts], ([all, f]) =>
+			all.map((u) => ({ id: u.id, profile: u.profile, admin: f.admins.includes(u.id), disabled: f.disabled.includes(u.id) })));
+
+		const administers = (actor: string) =>
+			policy.value.decide({ kind: "administer", actor: userId(actor) }, allowIf(facts.value.admins.includes(actor))).kind === "allow";
+
+		return {
+			users: list,
+			signIn: async ({ issuer, subject, profile }, ctx) => {
+				let id = "";
+				await self.tx(async (tx) => {
+					const found = await tx.get(identities, { issuer, subject });
+					if (found !== undefined) { id = found.user; return; }
+					id = newUserId();
+					tx.put(identities, { issuer, subject, user: id });
+					const f = await tx.draft(facts);
+					if (profiles.list.value.length === 0) f.admins.push(id);   // the first user administers
+				}, ctx);
+				if (facts.value.disabled.includes(id)) throw forbidden(messages.message("userDisabled"));
+				await profiles.update({ id, profile }, ctx);                    // name and email follow the identity provider
+				return id;
+			},
+			link: async ({ actor, user, issuer, subject }, ctx) => {
+				if (actor !== user && !administers(actor)) throw forbidden(messages.message("notYou"));
+				await self.tx(async (tx) => tx.put(identities, { issuer, subject, user }), ctx);
+			},
+			setAdmin: async ({ actor, user, admin }, ctx) => {
+				if (!administers(actor)) throw forbidden(messages.message("adminsOnly"));
+				await facts.change((f) => { f.admins = admin ? [...new Set([...f.admins, user])] : f.admins.filter((a) => a !== user); }, ctx);
+			},
+			disable: async ({ actor, user }, ctx) => {
+				if (!administers(actor)) throw forbidden(messages.message("adminsOnly"));
+				await facts.change((f) => { f.disabled.push(user); }, ctx);
+				for (const s of sessions.list.value) if (isUser(s.principal, user)) await sessions.revoke(s.id, ctx);
+			},
+		};
+	});
+});
+```
+
+## Signing in
+
+Every way in is a plugin that verifies something, calls `Identities.signIn`, and issues a kit session for the
+principal it got back. Nothing else creates users.
+
+- **The owner link** (single user, the laptop): the kit prints a one-time link at start. p3 sets the kit's owner
+  principal to the first user (`signIn({ issuer: "p3.owner", subject: "owner", ... })` at first start), so the link,
+  the owner token file and device pairing sign in as that user (Chord decision "The kit's owner is a principal the app
+  chooses").
+- **SAML** (a company): a route verifies the assertion (signature, audience, time) and signs in by issuer and subject:
+
+```ts
+// plugins/saml/server.ts
+self.contribute(Http, { routes: { "POST /saml/acs": async (request, ctx) => {
+	const assertion = await verify(await request.body(), idp.value, ctx);
+	const id = await identities.signIn({ issuer: assertion.issuer, subject: assertion.subject,
+		profile: { name: assertion.name, email: assertion.email, avatar: null } }, ctx);
+	await directory.mirror({ user: id, groups: assertion.groups }, ctx);          // groupings for the policy (chapter XII)
+	const session = await sessions.issue({ principal: { kind: "user", id }, label: assertion.email ?? assertion.name, kind: "browser", secure: true }, ctx);
+	return { kind: "redirect", to: "/", headers: { "set-cookie": session.cookie } };
+} } });
+```
+
+- **Radius**: the same with a Radius account's issuer and subject; it may also create the user's Radius MCP server and
+  model provider through those plugins' trusted local creates, with this user as actor.
+
+Emails are never identities: two providers may report the same address for different people, and a person may change
+theirs. Linking a second identity to an existing user is explicit (`link`), by the user themselves or an admin.
+
+## Admins and the instance user
+
+- **Admins** are a flag the users plugin keeps; the first user is one. The flag is the baseline of the policy's
+  `administer` request, so a company policy can say "members of the SAML group admins administer" instead. Admins
+  create company resources (owner `INSTANCE`), install plugins, edit rules, disable users.
+- **The instance user** is a reserved id, never in the user list, never returned by `signIn`, shown as "the company".
+  It owns what plugins bring and what admins create for everyone. Nobody acts as it: an admin creating the company
+  key is the actor, the instance the owner.
+
+## What the page sees
+
+```ts
+// plugins/users/contract.ts
+/** Myself: my profile, whether I administer, my sign-in sessions (devices) with a sign-out each. */
+export const Me = remote("p3.users.me", {
+	version: 1,
+	params: {},
+	hostAddress: () => Server(),
+	variants: {
+		user: {
+			state: { me: obj({ id: str(), profile: Profile, admin: bool() }), sessions: arr(SessionSummary) },
+			methods: { rename: method(obj({ name: str() })), signOut: method(obj({ session: str() })) },
+		},
+	},
+});
+
+/** The people of this instance, for pickers (add a member, share a session); names only, no emails for non-admins. */
+export const People = remote("p3.users.people", {
+	version: 1,
+	params: {},
+	hostAddress: () => Server(),
+	variants: { user: { state: { people: arr(obj({ id: str(), name: str(), avatar: nullable(str()) })) } } },
+});
+
+/** Admins: every user with flags and identities, and the methods behind the users screen. */
+export const UserAdmin = remote("p3.users.admin", {
+	version: 1,
+	params: {},
+	hostAddress: () => Server(),
+	variants: {
+		admin: { state: { users: arr(AdminUserRow) }, methods: { setAdmin: method(obj({ user: str(), admin: bool() })), disable: method(obj({ user: str() })) } },
+	},
+});
+```
+
+`UserAdmin` is served only to principals that administer (the factory asks the policy and refuses others); its methods
+pass the link-stamped principal as `actor` to `Identities`. A user who loses admin while a page holds the view gets
+refused calls; the view is made again on the next connection.
+
+## Per-user data lives with its plugin
+
+The users plugin does not grow a settings bag. Each plugin keys its own data by user id and serves it through a
+per-user view: recent sessions in the recent plugin, exclusions from defaults in the resources plugin (`MyResources`),
+model defaults in the models plugin, the theme and language in the kit's preferences. A user's data is found by
+asking the plugin that owns it, never through the users plugin.
+
+## When someone leaves
+
+`disable` is the admin's act; the effects follow from facts other plugins already read:
+
+1. **Sign-in ends:** the kit's sessions for that user are revoked; `signIn` refuses the user's identities.
+2. **Their resources stop counting:** the resources plugin's `usable` drops entries whose owner is disabled, so
+   Colin's Linear server leaves project pi's effective list the moment Colin is disabled. The rows stay, so an admin
+   can re-enable without anyone re-bringing anything.
+3. **Their sessions stay** visible to the people who could see them (shared with, members of the source grouping);
+   who owns them from then on is an admin's choice (reassign or archive), not automatic.
+4. **Live objects:** ending a disabled user's live views at once needs the kit to pass Chord's `revokedBy` to the
+   server host (design §4, `{ user: id }`); today the kit revokes sessions only, so open views end on the next
+   reconnect. A small kit change, recorded as carry-over.
+
+:::review | Decision for the owner: a departed user's resources
+Dropping a disabled user's resources from every list is the safe default: their logins are theirs. A company that wants
+Colin's MCP server to keep running after he leaves moves it to the company by re-creating it as an instance resource
+(a second resource, the company's login), never by re-assigning his.
+:::
 
 # One List {#lists lede="The session's one resource source, the entries, how core computes a session's list, and bringing, withdrawing and locking down."}
 
@@ -351,6 +552,7 @@ function defaultsOf(owner: string, index: Index, excluded: readonly ResourceRef[
 function usable(entry: ListEntry, row: SessionRow, index: Index, policy: Policy, now: number) {
 	const indexed = index[keyOf(entry.resource)];
 	if (indexed === undefined) return [];                                   // its plugin is gone, or it was deleted
+	if (disabled(indexed.owner)) return [];                                  // its owner left (chapter II)
 	if (entry.revision < indexed.revision) return [];                       // withdrawn by its owner since
 	if (entry.until !== null && entry.until <= now) return [];              // expired
 	const use = policy.decide({ kind: "use", session: row, resource: entry.resource, owner: indexed.owner }, useBaseline(entry.resource, row));
@@ -1202,7 +1404,8 @@ data it shows is whatever its own views allow.
 
 # Sign-in and Directories {#directories lede="SAML and Radius touch three places, each already in the model."}
 
-1. **Sign-in creates users:** `Users.signIn({ issuer, subject, name })` from a verified assertion; never email.
+1. **Sign-in creates users:** `Identities.signIn({ issuer, subject, profile })` from a verified assertion; never email
+   (chapter II).
 2. **Sync mirrors groups as groupings:** `SamlGroup` registers only `members`, updated at sign-in or by SCIM; a stale
    directory yields no members, never everyone.
 3. **The policy names them:** "members of engineering may create MCP servers" is one rule.
@@ -1243,6 +1446,7 @@ sign-in.
 | `plugins/resources/contract.web.ts` | `Creators`, `ResourceRows`, `ResourcePanels` |
 | `plugins/resources/server.ts` | the index, `create`, own lists, `SessionList`, the user and worker views |
 | `plugins/resources/web.tsx` | `ResourceRowView`, `ResourceDetail`, `SessionResourcesPanel`, `AddResource`, My resources |
+| `plugins/users/contract.ts`, `contract.server.ts` | `UserId`, `INSTANCE`, `P3Principal`, `Profile`, `Me`, `People`, `UserAdmin`; `users` (the kit's `defineUsers`), `Identities` |
 | `plugins/policy/contract.server.ts` | `Request`, `Decision`, `Policy`, `Policies`, `Access`, `guard` |
 | `plugins/harness/contract.worker.ts` | `HarnessExtension`, `Extensions` |
 | `plugins/sessions/contract.server.ts` | `SessionRow` (with `source`), `SessionCatalog` |
