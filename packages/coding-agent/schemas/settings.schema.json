@@ -685,7 +685,7 @@
         }
       ],
       "description": "Cache-warming profile. \"idle\" also warms between agent runs. Global only because each refresh costs money.",
-      "default": "streaming"
+      "default": "idle"
     },
     "websocketConnectTimeoutMs": {
       "anyOf": [
