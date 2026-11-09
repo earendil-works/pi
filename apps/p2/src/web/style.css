@@ -1298,7 +1298,7 @@ audio.file-media {
 @media (min-width: 900px) {
 	.workspace {
 		left: auto;
-		width: min(520px, 100%);
+		width: min(var(--workspace-width, 520px), 100%);
 		border-left: 1px solid var(--line);
 	}
 }
@@ -1334,37 +1334,44 @@ audio.file-media {
 		overflow-y: auto;
 		padding-bottom: var(--s4);
 	}
-	/* Drag the left edge to resize the docked panel. touch-action: none, or the browser
-	   turns a finger drag into a pan and stops delivering pointer moves. */
-	.workspace-resize {
-		position: absolute;
-		top: 0;
-		bottom: 0;
-		left: -3px;
-		z-index: 2;
-		width: 6px;
-		cursor: col-resize;
-		touch-action: none;
-		user-select: none;
+}
+/* Drag the left edge to resize a right-hand panel (the workspace, the side panel; drag-size.ts). touch-action: none,
+   or the browser turns a finger drag into a pan and stops delivering pointer moves. */
+.workspace-resize,
+.side-panel-resize {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: -3px;
+	z-index: 2;
+	width: 6px;
+	cursor: col-resize;
+	touch-action: none;
+	user-select: none;
+}
+.workspace-resize:hover,
+.workspace-resize:active,
+.side-panel-resize:hover,
+.side-panel-resize:active {
+	background: var(--line);
+}
+/* Fingers get a wider target; the visible line stays thin. */
+@media (pointer: coarse) {
+	.workspace-resize,
+	.side-panel-resize {
+		left: -12px;
+		width: 24px;
+		background: linear-gradient(var(--line), var(--line)) center / 2px 100% no-repeat transparent;
 	}
 	.workspace-resize:hover,
-	.workspace-resize:active {
-		background: var(--line);
-	}
-	/* Fingers get a wider target; the visible line stays thin. */
-	@media (pointer: coarse) {
-		.workspace-resize {
-			left: -12px;
-			width: 24px;
-			background: linear-gradient(var(--line), var(--line)) center / 2px 100% no-repeat transparent;
-		}
-		.workspace-resize:hover,
-		.workspace-resize:active {
-			background: linear-gradient(var(--muted), var(--muted)) center / 2px 100% no-repeat transparent;
-		}
+	.workspace-resize:active,
+	.side-panel-resize:hover,
+	.side-panel-resize:active {
+		background: linear-gradient(var(--muted), var(--muted)) center / 2px 100% no-repeat transparent;
 	}
 }
-@media (max-width: 1279px) {
+/* Full screen on phones: nothing to resize. */
+@media (max-width: 899px) {
 	.workspace-resize {
 		display: none;
 	}
@@ -3005,24 +3012,32 @@ button.diff-number:hover {
 .side-dock:empty {
 	display: none;
 }
+/* The dock takes the panel's width (`--side-panel-width`, dragged at its left edge). */
 @media (min-width: 700px) {
 	.side-dock {
 		position: fixed;
 		inset: 0 0 0 auto;
-		width: min(460px, 60vw);
 		z-index: 20;
+	}
+	.side-panel {
+		width: var(--side-panel-width, min(460px, 60vw));
+		max-width: 85vw;
 	}
 }
 @media (min-width: 1280px) {
 	.side-dock {
 		position: static;
-		flex: 0 0 460px;
-		width: 460px;
+		flex: none;
 		min-width: 0;
 		z-index: auto;
 	}
+	.side-panel {
+		width: var(--side-panel-width, 460px);
+		max-width: 70vw;
+	}
 }
 .side-panel {
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	min-width: 0;

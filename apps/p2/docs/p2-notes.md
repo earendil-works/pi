@@ -1022,7 +1022,8 @@ translated phone drawer and intercept chat taps.
   editors persist in localStorage per conversation; Send/Send all use ordinary attributed Chat input. Integration
   tests cover fake-provider prompts, a temp git repo, bounds, reload/watch lifetime, HTTP streaming/ranges, upload
   cleanup/concurrency and guest revocation; `ui-workspace.test.ts` the browser panel. The web panel docks at 1200 px,
-  remembers its resizable list width, and shows a file beside the list when both chat and file can retain 480 px.
+  remembers its resizable list width (dragged at its left edge from 900 px, as an overlay too), and shows a file beside
+  the list when both chat and file can retain 480 px.
   Read/write/edit cards supply one-step Open in workspace links. Files/commits push; views/search replace; tabs reset
   the trailing workspace run. List/file scroll positions survive Back and reload.
 - **Remote environments** (`plugins/envs`, [guide](remote-envs.md)): owner-only `Envs` lists environments with their
@@ -1196,8 +1197,10 @@ translated phone drawer and intercept chat taps.
   representation as GET. The chat-content slot supplies the shared transcript card contexts and explicit-click
   file/artifact viewers; a top-bar counter toggles a list of every version, newest first, in the side panel
   (`SidePanel`, `Route.panel` "artifacts": docked on the right from 700px like a run's activity, which it replaces and
-  which replaces it; a sheet on phones). The viewer is a named `Route.layers` entry (Back and sessionStorage
-  restoration); picking an artifact pushes a viewer above the list.
+  which replaces it; a sheet on phones). Dragging a docked side panel's left edge resizes it; every side panel shares
+  that width, kept per browser (`p2-side-panel-width`; `useDragSize` in `src/web/drag-size.ts`, which the sidebar,
+  workspace and terminal use too). The viewer is a named `Route.layers` entry (Back and sessionStorage restoration);
+  picking an artifact pushes a viewer above the list.
   HTML/SVG use a sandboxed iframe, Markdown/text render safely,
   sent files use the conservative file preview. Nothing opens from a server update. `test/p2/artifacts.test.ts`
   covers fake-provider publication, versions, independent index, reload/restart, CSP, HEAD, guest isolation and

@@ -122,6 +122,22 @@ describe("search, viewers, artifacts and cost parity", { skip: !browserTests }, 
 		await browser.wait(docked);
 		assert.equal(await browser.evaluate<number>(`document.querySelectorAll('.sheet-layer').length`), 0);
 		assert.equal(await browser.evaluate<string>(`document.querySelector('${button}').ariaPressed`), "true");
+		// Its left edge drags to resize it; the width is kept for every side panel.
+		await browser.evaluate("localStorage.removeItem('p2-side-panel-width')");
+		const width = () =>
+			browser.evaluate<number>("document.querySelector('#side-dock .side-panel').getBoundingClientRect().width");
+		assert.equal(await width(), 460);
+		const point = await browser.evaluate<{ x: number; y: number }>(
+			`(()=>{const r=document.querySelector('.side-panel-resize').getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`,
+		);
+		await browser.call("Input.dispatchMouseEvent", { type: "mousePressed", ...point, button: "left", clickCount: 1 });
+		const to = { x: point.x - 100, y: point.y };
+		await browser.call("Input.dispatchMouseEvent", { type: "mouseMoved", ...to, button: "left", buttons: 1 });
+		await browser.call("Input.dispatchMouseEvent", { type: "mouseReleased", ...to, button: "left", clickCount: 1 });
+		// The pointer sets the edge: about 100px wider, as grabbed within the 6px handle.
+		await browser.wait(`Math.abs(Number(localStorage.getItem('p2-side-panel-width'))-560)<=3`);
+		const dragged = await width();
+		assert.equal(String(dragged), await browser.evaluate<string>("localStorage.getItem('p2-side-panel-width')"));
 		// A version opens its viewer above the list; Back returns to the list, still docked.
 		await browser.click("#side-dock .artifact-row");
 		await browser.wait(`document.querySelector('.viewer-panel iframe') && ${docked}`);
@@ -136,10 +152,12 @@ describe("search, viewers, artifacts and cost parity", { skip: !browserTests }, 
 		await browser.wait(
 			"document.querySelector('#side-dock .activity-panel') && !document.querySelector('[data-testid=artifact-panel]')",
 		);
+		assert.equal(await width(), dragged);
 		await browser.click(button);
 		await browser.wait(`${docked} && !document.querySelector('.activity-panel')`);
 		await browser.evaluate("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))");
 		await browser.wait("!document.querySelector('#side-dock [data-testid=artifact-panel]')");
+		await browser.evaluate("localStorage.removeItem('p2-side-panel-width')");
 	});
 	it("opens a sent-file card as a conservative viewer and explicitly downloads the same snapshot", async () => {
 		const chat = await holdIn(fixture.browser(), Chat, { session: id, conversation: 1 }, "participant");

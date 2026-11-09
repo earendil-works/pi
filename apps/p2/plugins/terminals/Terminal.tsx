@@ -11,8 +11,9 @@ import {
 	PlusIcon,
 	type ReconnectLink,
 	type SocketEvents,
+	useDragSize,
 } from "@p2/app/v1/web";
-import { type CSSProperties, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Terminals } from "./contract.ts";
 import {
 	BOLD,
@@ -1530,44 +1531,17 @@ export function TerminalView({
 /** The terminal below the chat; its top edge drags to resize it. */
 export function TerminalPanel(props: Omit<Parameters<typeof TerminalView>[0], "placement">) {
 	const panel = useRef<HTMLElement>(null);
-	const [height, setHeight] = useState(() => Number(localStorage.getItem("p2-terminal-height")) || undefined);
-	// Like the workspace's width: the handle captures the pointer, and only the CSS variable changes while dragging.
+	const height = useDragSize("p2-terminal-height", "--terminal-height");
 	const startResize = (event: React.PointerEvent<HTMLButtonElement>) => {
 		const element = panel.current;
 		const parent = element?.parentElement;
-		if (!element || !parent || (event.pointerType === "mouse" && event.button !== 0)) return;
-		event.preventDefault();
-		const handle = event.currentTarget;
-		const pointer = event.pointerId;
-		handle.setPointerCapture(pointer);
+		if (!element || !parent) return;
 		const bottom = element.getBoundingClientRect().bottom;
 		const limit = parent.getBoundingClientRect().height * 0.85;
-		let last = height;
-		const move = (moved: PointerEvent) => {
-			if (moved.pointerId !== pointer) return;
-			last = Math.round(Math.min(Math.max(bottom - moved.clientY, 120), limit));
-			element.style.setProperty("--terminal-height", `${last}px`);
-		};
-		const end = (ended: PointerEvent) => {
-			if (ended.pointerId !== pointer) return;
-			handle.removeEventListener("pointermove", move);
-			handle.removeEventListener("pointerup", end);
-			handle.removeEventListener("pointercancel", end);
-			if (!last) return;
-			setHeight(last);
-			localStorage.setItem("p2-terminal-height", String(last));
-		};
-		handle.addEventListener("pointermove", move);
-		handle.addEventListener("pointerup", end);
-		handle.addEventListener("pointercancel", end);
+		height.drag(event, element, (moved) => Math.min(Math.max(bottom - moved.clientY, 120), limit));
 	};
 	return (
-		<section
-			className="terminal-panel"
-			aria-label="Terminal"
-			ref={panel}
-			style={height ? ({ "--terminal-height": `${height}px` } as CSSProperties) : undefined}
-		>
+		<section className="terminal-panel" aria-label="Terminal" ref={panel} style={height.style}>
 			<button
 				type="button"
 				className="terminal-resize"

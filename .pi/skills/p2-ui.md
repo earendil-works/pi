@@ -16,6 +16,7 @@ Paths are relative to `apps/p2`. Read `docs/handoff.md` and the matching part of
 - **Side panel:** `SidePanel` from `src/web/SidePanel.tsx`: docked on the right from 700px (`#side-dock`, beside the
   chat from 1280px), p2's `Sheet` on phones. Not modal; one thing at a time: a run's activity (`Route.activity`) or a
   plugin's panel (`Route.panel`, `openPanel(name)`/`closePanel()`); render it only while `useSidePanelShown()`.
+  Docked, its left edge resizes it. Any panel size the reader drags uses `useDragSize` (`src/web/drag-size.ts`).
 - **Layers and routes:** a sheet or viewer is a route layer: `openLayer({ kind: "sheet", name, locator })`,
   `closeLayers()`, `useSheet(name)` (the top layer when it is yours, with its `locator`). Locators are small serialized
   values (JSON of ids), never component state; read them back as untrusted (`try`/shape check). Layer model and Back

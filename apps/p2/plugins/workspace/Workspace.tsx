@@ -14,13 +14,13 @@ import {
 	SearchIcon,
 	Slot,
 	TerminalIcon,
+	useDragSize,
 	useScrollMemory,
 	type WorkspaceFileRoute,
 	type WorkspaceRoute,
 	type WorkspaceTab,
 } from "@p2/app/v1/web";
 import {
-	type CSSProperties,
 	type Dispatch,
 	type ReactNode,
 	type SetStateAction,
@@ -610,7 +610,6 @@ export function WorkspacePanel({
 		);
 	}, [load, query, submitted, searchKey, version, showsSearch]);
 
-	// Docked width, dragged from the left edge and remembered; phones ignore it (full screen).
 	const panel = useRef<HTMLElement>(null);
 	// Each list, file and commit keeps its scroll position for Back. Keyed by the panel's
 	// location only: a sheet opened beside the docked panel leaves it where it was.
@@ -631,7 +630,8 @@ export function WorkspacePanel({
 		shownFilter.current = filterText;
 		scroller.current?.scrollTo({ top: 0 });
 	}, [filterText]);
-	const [width, setWidth] = useState(() => Number(localStorage.getItem("pi-workspace-width")) || undefined);
+	// Its width, dragged from the left edge and remembered; phones ignore it (full screen).
+	const width = useDragSize("pi-workspace-width", "--workspace-width");
 	// Room to split: the chat and the panel share what the sidebar leaves; the list keeps its width, and the chat and
 	// the file column split the rest equally (flex in style.css). Their sum doesn't change when the split toggles.
 	const column = useRef<HTMLDivElement>(null);
@@ -652,34 +652,11 @@ export function WorkspacePanel({
 			docked.removeEventListener("change", measure);
 		};
 	}, []);
-	// The handle captures its pointer, so a finger or mouse keeps resizing off the handle.
-	// During the drag only the CSS variable changes; React renders the panel once at the end.
 	const startResize = (event: React.PointerEvent<HTMLButtonElement>) => {
 		const element = panel.current;
-		if (!element || (event.pointerType === "mouse" && event.button !== 0)) return;
-		event.preventDefault();
-		const handle = event.currentTarget;
-		const pointer = event.pointerId;
-		handle.setPointerCapture(pointer);
+		if (!element) return;
 		const right = element.getBoundingClientRect().right;
-		let last = width;
-		const move = (moved: PointerEvent) => {
-			if (moved.pointerId !== pointer) return;
-			last = Math.round(Math.min(Math.max(right - moved.clientX, 320), window.innerWidth * 0.7));
-			element.style.setProperty("--workspace-width", `${last}px`);
-		};
-		const end = (ended: PointerEvent) => {
-			if (ended.pointerId !== pointer) return;
-			handle.removeEventListener("pointermove", move);
-			handle.removeEventListener("pointerup", end);
-			handle.removeEventListener("pointercancel", end);
-			if (!last) return;
-			setWidth(last);
-			localStorage.setItem("pi-workspace-width", String(last));
-		};
-		handle.addEventListener("pointermove", move);
-		handle.addEventListener("pointerup", end);
-		handle.addEventListener("pointercancel", end);
+		width.drag(event, element, (moved) => Math.min(Math.max(right - moved.clientX, 320), window.innerWidth * 0.7));
 	};
 
 	const rootName = cwd.replace(/\/+$/, "").split("/").pop() || "/";
@@ -1223,12 +1200,7 @@ export function WorkspacePanel({
 	}
 
 	return (
-		<aside
-			className={`workspace ${split ? "split" : ""}`}
-			aria-label="Workspace"
-			ref={panel}
-			style={width ? ({ "--workspace-width": `${width}px` } as CSSProperties) : undefined}
-		>
+		<aside className={`workspace ${split ? "split" : ""}`} aria-label="Workspace" ref={panel} style={width.style}>
 			{/* The column stays the second child either way, so toggling the split never remounts the list. */}
 			{split && (
 				<section className="workspace-preview" aria-label="Open file">

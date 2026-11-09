@@ -4,6 +4,7 @@
 import { type ReactNode, useEffect, useRef, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { getNavigation, Sheet, useRoute, useScrollMemory } from "../runtime/web.tsx";
+import { useDragSize } from "./drag-size.ts";
 import { CloseIcon } from "./icons.tsx";
 import type { Route } from "./navigation.ts";
 
@@ -55,8 +56,9 @@ export function closePanel(): void {
 
 /**
  * The side panel's frame: a header with `title`, `meta` at its right and Close, then `children` in a scrolling body.
- * Escape closes it while no sheet or viewer is above it. On phones it is p2's Sheet, titled `sheetTitle` (default
- * `title`): the sheet's header has room for one heading.
+ * Docked, dragging its left edge resizes it (one width for every side panel, kept per browser). Escape closes it while
+ * no sheet or viewer is above it. On phones it is p2's Sheet, titled `sheetTitle` (default `title`): the sheet's header
+ * has room for one heading.
  */
 export function SidePanel({
 	title,
@@ -113,8 +115,10 @@ function DockedPanel({
 	testId: string | undefined;
 	children: ReactNode;
 }) {
+	const panel = useRef<HTMLElement>(null);
 	const body = useRef<HTMLDivElement>(null);
 	useScrollMemory(body);
+	const width = useDragSize("p2-side-panel-width", "--side-panel-width");
 	useEffect(() => {
 		const key = (event: KeyboardEvent) => {
 			// A sheet or viewer above the panel takes Escape first.
@@ -126,7 +130,27 @@ function DockedPanel({
 		return () => window.removeEventListener("keydown", key);
 	}, [onClose]);
 	return (
-		<aside className={`side-panel ${className ?? ""}`} aria-label={title} data-testid={testId}>
+		<aside
+			className={`side-panel ${className ?? ""}`}
+			aria-label={title}
+			data-testid={testId}
+			ref={panel}
+			style={width.style}
+		>
+			<button
+				type="button"
+				className="side-panel-resize"
+				aria-label="Drag to resize panel"
+				tabIndex={-1}
+				onPointerDown={(event) => {
+					const element = panel.current;
+					if (!element) return;
+					const right = element.getBoundingClientRect().right;
+					width.drag(event, element, (moved) =>
+						Math.min(Math.max(right - moved.clientX, 320), window.innerWidth * 0.7),
+					);
+				}}
+			/>
 			<header className="side-panel-head sheet-head">
 				<h2>{title}</h2>
 				{meta && <span className="side-panel-meta">{meta}</span>}
