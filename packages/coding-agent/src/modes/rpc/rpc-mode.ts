@@ -312,6 +312,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		setToolsExpanded(_expanded: boolean) {
 			// Tool expansion not supported in RPC mode - no TUI
 		},
+		getRexSettings: () => runtimeHost.session.settingsManager.getRexSettings(),
 	});
 
 	runtimeHost.setRebindSession(async () => {

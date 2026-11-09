@@ -279,6 +279,30 @@
       "$ref": "#/$defs/KeybindingValue",
       "description": "Resume a session"
     },
+    "app.pane.minimize": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Minimize the current job or side-chat view"
+    },
+    "app.jobs.stop": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Stop the selected background job"
+    },
+    "app.jobs.restart": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Restart the selected background job"
+    },
+    "app.jobs.rename": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Rename the selected background job"
+    },
+    "app.jobs.editCommand": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Edit the command and restart the selected job"
+    },
+    "app.jobs.delete": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Delete the selected finished job and its logs"
+    },
     "app.tree.foldOrUp": {
       "$ref": "#/$defs/KeybindingValue",
       "description": "Fold tree branch or move up"

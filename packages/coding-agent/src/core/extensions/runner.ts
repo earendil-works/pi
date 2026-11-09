@@ -18,6 +18,7 @@ import type { KeybindingsConfig } from "../keybindings.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { ScopedModel } from "../model-resolver.ts";
 import type { SessionManager } from "../session-manager.ts";
+import { SETTINGS_DEFAULTS } from "../settings-defaults.ts";
 import {
 	type BuildSystemPromptOptions,
 	buildSystemPrompt,
@@ -359,6 +360,7 @@ const noOpUIContext: ExtensionUIContext = {
 	setTheme: (_theme: string | Theme) => ({ success: false, error: "UI not available" }),
 	getToolsExpanded: () => false,
 	setToolsExpanded: () => {},
+	getRexSettings: () => SETTINGS_DEFAULTS.rex,
 };
 
 export class ExtensionRunner {

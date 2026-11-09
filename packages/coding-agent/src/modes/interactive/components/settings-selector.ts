@@ -21,6 +21,7 @@ import {
 	type FullscreenExitOutput,
 	type MermaidRenderingMode,
 	type QuietStartup,
+	type RexViewSettings,
 	type SessionShareDestination,
 	type TuiMode,
 	type WarningSettings,
@@ -82,6 +83,7 @@ export interface SettingsConfig {
 	terminalTheme: TerminalTheme;
 	availableThemes: string[];
 	iconPreset: IconPreset;
+	rex: RexViewSettings;
 	hideThinkingBlock: boolean;
 	mermaidRenderingMode: MermaidRenderingMode;
 	showCacheMissNotices: boolean;
@@ -123,6 +125,9 @@ export interface SettingsCallbacks {
 	onThemeChange: (theme: string) => void;
 	onThemePreview?: (theme: string) => void;
 	onIconPresetChange: (preset: IconPreset) => void;
+	onRexEnabledChange: (enabled: boolean) => void;
+	onRexModeChange: (mode: RexViewSettings["mode"]) => void;
+	onMinimizedRexJobsChange: (enabled: boolean) => void;
 	onHideThinkingBlockChange: (hidden: boolean) => void;
 	onMermaidRenderingModeChange: (mode: MermaidRenderingMode) => void;
 	onShowCacheMissNoticesChange: (shown: boolean) => void;
@@ -775,6 +780,30 @@ export class SettingsSelectorComponent extends Container {
 				currentValue: config.iconPreset,
 				values: ["unicode", "nerd"],
 			},
+			{
+				id: "rex-enabled",
+				label: "Rex views",
+				description:
+					"Use Rex for /jobs and /btw inside Rex; off uses pi overlays. Explicit flags override this preference. Existing views stay open.",
+				currentValue: config.rex.enabled ? "on" : "off",
+				values: ["on", "off"],
+			},
+			{
+				id: "rex-mode",
+				label: "Rex mode",
+				description:
+					"Default placement for new manually opened Rex views: floating windows or regular splits beside pi",
+				currentValue: config.rex.mode,
+				values: ["floating", "split"],
+			},
+			{
+				id: "minimized-rex-jobs",
+				label: "Minimized Rex jobs",
+				description:
+					"Open newly submitted background jobs in minimized floating panes when Rex views are on; off creates no automatic view",
+				currentValue: config.rex.minimizedJobs ? "on" : "off",
+				values: ["on", "off"],
+			},
 		];
 
 		// Only show image toggle if terminal supports it
@@ -1005,6 +1034,15 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "icon-preset":
 						callbacks.onIconPresetChange(newValue as IconPreset);
+						break;
+					case "rex-enabled":
+						callbacks.onRexEnabledChange(newValue === "on");
+						break;
+					case "rex-mode":
+						callbacks.onRexModeChange(newValue as RexViewSettings["mode"]);
+						break;
+					case "minimized-rex-jobs":
+						callbacks.onMinimizedRexJobsChange(newValue === "on");
 						break;
 				}
 			},

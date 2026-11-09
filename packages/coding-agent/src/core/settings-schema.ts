@@ -168,6 +168,29 @@ const CodemodeSettingsSchema = Type.Object({
 	),
 });
 
+const RexSettingsSchema = Type.Object({
+	enabled: Type.Optional(
+		Type.Boolean({
+			description:
+				"Use Rex for shared views when running inside Rex; explicit command flags override this preference.",
+			default: SETTINGS_DEFAULTS.rex.enabled,
+		}),
+	),
+	mode: Type.Optional(
+		Type.Union([Type.Literal("floating"), Type.Literal("split")], {
+			description: "Default Rex placement for manually opened views.",
+			default: SETTINGS_DEFAULTS.rex.mode,
+		}),
+	),
+	minimizedJobs: Type.Optional(
+		Type.Boolean({
+			description:
+				"Automatically open each submitted background job in a minimized floating Rex pane. Off creates no automatic view.",
+			default: SETTINGS_DEFAULTS.rex.minimizedJobs,
+		}),
+	),
+});
+
 const PackageSourceSchema = Type.Union(
 	[
 		Type.String({ description: "Load all resources from the package." }),
@@ -250,6 +273,7 @@ export const SettingsSchema = Type.Object(
 				default: SETTINGS_DEFAULTS.iconPreset,
 			}),
 		),
+		rex: Type.Optional(RexSettingsSchema),
 		compaction: Type.Optional(CompactionSettingsSchema),
 		branchSummary: Type.Optional(BranchSummarySettingsSchema),
 		retry: Type.Optional(RetrySettingsSchema),
@@ -494,6 +518,7 @@ export type PackageSource = Static<typeof PackageSourceSchema>;
 export type FullscreenExitOutput = NonNullable<SettingsInput["fullscreenExitOutput"]>;
 export type TuiMode = NonNullable<SettingsInput["tuiMode"]>;
 export type CacheWarmingMode = NonNullable<SettingsInput["cacheWarming"]>;
+export type RexViewSettings = Readonly<Required<Static<typeof RexSettingsSchema>>>;
 export interface Settings extends Omit<SettingsInput, "queueMode" | "retry" | "skills" | "websockets"> {
 	retry?: RetrySettings;
 	skills?: string[];

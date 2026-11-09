@@ -221,6 +221,9 @@ export {
 } from "./core/extensions/index.ts";
 // Footer data provider (git branch + extension statuses - data not otherwise available to extensions)
 export type { ReadonlyFooterDataProvider } from "./core/footer-data-provider.ts";
+export { JobManager, type StartJobOptions } from "./core/jobs/manager.ts";
+export type { JobInfo, JobProgress, JobRuntime } from "./core/jobs/state.ts";
+export { createJobsToolDefinition } from "./core/jobs/tool.ts";
 export type { RegisteredMcpServer } from "./core/mcp-servers.ts";
 export { convertToLlm } from "./core/messages.ts";
 export { ModelRegistry } from "./core/model-registry.ts";
@@ -249,6 +252,7 @@ export type {
 	ResolvedResource,
 } from "./core/package-manager.ts";
 export { DefaultPackageManager } from "./core/package-manager.ts";
+export { openPane, type PaneControls, type PaneHandle, type PaneOptions, type PaneView } from "./core/panes/host.ts";
 export type { ResourceCollision, ResourceDiagnostic, ResourceLoader } from "./core/resource-loader.ts";
 export { DefaultResourceLoader, loadProjectContextFiles } from "./core/resource-loader.ts";
 // SDK for programmatic usage
@@ -321,10 +325,12 @@ export {
 	type PackageSource,
 	type QuietStartup,
 	type RetrySettings,
+	type RexViewSettings,
 	SettingsManager,
 	type SettingsManagerCreateOptions,
 	type TuiMode,
 } from "./core/settings-manager.ts";
+export { createSideSession } from "./core/side-session.ts";
 // Skills
 export {
 	formatSkillsForPrompt,
@@ -411,11 +417,14 @@ export {
 	type VirtualModelDefinition,
 	type VirtualModelStateData,
 } from "./core/virtual-models.ts";
+export { createBtwExtension } from "./extensions/btw/index.ts";
 // Built-in extensions. The CLI loads them; SDK sessions add them to their extension factories.
 export { type CodemodeExtensionOptions, createCodemodeExtension } from "./extensions/codemode/index.ts";
 export type { CodemodeStoreEntryData, CodemodeToolDetails } from "./extensions/codemode/tool.ts";
+export { createJobsExtension } from "./extensions/jobs/index.ts";
 export type { LoadedMcpConfig, McpExposure, McpServerConfig, McpServerEntry } from "./extensions/mcp/config.ts";
 export { createMcpExtension, type McpExtensionOptions, type McpTransportFactory } from "./extensions/mcp/index.ts";
+export { createRexExtension, createRexToolDefinition } from "./extensions/rex/index.ts";
 export { createToolSearchExtension } from "./extensions/tool-search/index.ts";
 // Main entry point
 export { type MainOptions, main } from "./main.ts";

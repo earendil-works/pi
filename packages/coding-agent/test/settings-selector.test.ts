@@ -1,6 +1,7 @@
 import { setKeybindings } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
+import { SETTINGS_DEFAULTS } from "../src/core/settings-defaults.ts";
 import {
 	type SettingsCallbacks,
 	type SettingsConfig,
@@ -40,6 +41,7 @@ describe("SettingsSelectorComponent", () => {
 			modelThinkingLevels: {},
 			availableThemes: [],
 			iconPreset: "unicode",
+			rex: SETTINGS_DEFAULTS.rex,
 		} as unknown as SettingsConfig;
 		const callbacks = {
 			onFullscreenExitOutputChange: onExitOutputChange,
@@ -76,6 +78,7 @@ describe("SettingsSelectorComponent", () => {
 			modelThinkingLevels: {},
 			availableThemes: [],
 			iconPreset: "unicode",
+			rex: SETTINGS_DEFAULTS.rex,
 		} as unknown as SettingsConfig;
 		const callbacks = {
 			onSessionShareDestinationChange,
@@ -98,6 +101,7 @@ describe("SettingsSelectorComponent", () => {
 			availableThemes: ["system", "dark", "light"],
 			iconPreset: "unicode",
 			warnings: {},
+			rex: SETTINGS_DEFAULTS.rex,
 		} as unknown as SettingsConfig;
 		const callbacks = { onThemePreview: vi.fn(), onCancel: () => {} } as unknown as SettingsCallbacks;
 		const list = new SettingsSelectorComponent(config, callbacks).getSettingsList();
@@ -126,6 +130,7 @@ describe("SettingsSelectorComponent", () => {
 			availableThemes: ["dark", "light", "other"],
 			iconPreset: "unicode",
 			warnings: {},
+			rex: SETTINGS_DEFAULTS.rex,
 		} as unknown as SettingsConfig;
 		const callbacks = { onThemePreview: vi.fn(), onCancel: () => {} } as unknown as SettingsCallbacks;
 		const list = new SettingsSelectorComponent(config, callbacks).getSettingsList();
@@ -154,6 +159,7 @@ describe("SettingsSelectorComponent", () => {
 			thinkingLevel: "high",
 			modelThinkingLevels: { [modelKey]: "medium" },
 			iconPreset: "unicode",
+			rex: SETTINGS_DEFAULTS.rex,
 		} as unknown as SettingsConfig;
 		const callbacks = { onCancel: () => {} } as unknown as SettingsCallbacks;
 		const list = new SettingsSelectorComponent(config, callbacks).getSettingsList();

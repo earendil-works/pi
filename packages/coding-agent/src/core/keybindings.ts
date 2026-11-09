@@ -80,6 +80,12 @@ const APP_KEYBINDINGS = {
 	"app.session.tree": { defaultKeys: [], description: "Open session tree" },
 	"app.session.fork": { defaultKeys: [], description: "Fork current session" },
 	"app.session.resume": { defaultKeys: [], description: "Resume a session" },
+	"app.pane.minimize": { defaultKeys: "alt+m", description: "Minimize the current job or side-chat view" },
+	"app.jobs.stop": { defaultKeys: "ctrl+s", description: "Stop the selected background job" },
+	"app.jobs.restart": { defaultKeys: "ctrl+r", description: "Restart the selected background job" },
+	"app.jobs.rename": { defaultKeys: "ctrl+n", description: "Rename the selected background job" },
+	"app.jobs.editCommand": { defaultKeys: "ctrl+e", description: "Edit the command and restart the selected job" },
+	"app.jobs.delete": { defaultKeys: "ctrl+d", description: "Delete the selected finished job and its logs" },
 	"app.tree.foldOrUp": {
 		defaultKeys: process.platform === "darwin" ? ["alt+left", "ctrl+left"] : ["ctrl+left", "alt+left"],
 		description: "Fold tree branch or move up",

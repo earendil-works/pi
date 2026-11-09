@@ -2819,6 +2819,7 @@ export class InteractiveMode {
 			},
 			getToolsExpanded: () => this.toolOutputExpanded,
 			setToolsExpanded: (expanded) => this.setToolsExpanded(expanded),
+			getRexSettings: () => this.settingsManager.getRexSettings(),
 		};
 	}
 
@@ -5112,6 +5113,7 @@ export class InteractiveMode {
 					terminalTheme: this.themeController.getTerminalTheme(),
 					availableThemes: getAvailableThemes(),
 					iconPreset: this.settingsManager.getIconPreset(),
+					rex: this.settingsManager.getRexSettings(),
 					hideThinkingBlock: this.hideThinkingBlock,
 					mermaidRenderingMode: this.settingsManager.getMermaidRenderingMode(),
 					collapseChangelog: this.settingsManager.getCollapseChangelog(),
@@ -5219,6 +5221,9 @@ export class InteractiveMode {
 						this.ui.invalidate();
 						this.ui.requestRender();
 					},
+					onRexEnabledChange: (enabled) => this.settingsManager.setRexEnabled(enabled),
+					onRexModeChange: (mode) => this.settingsManager.setRexMode(mode),
+					onMinimizedRexJobsChange: (enabled) => this.settingsManager.setMinimizedRexJobs(enabled),
 					onHideThinkingBlockChange: (hidden) => {
 						this.hideThinkingBlock = hidden;
 						this.settingsManager.setHideThinkingBlock(hidden);

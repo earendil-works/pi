@@ -1,9 +1,9 @@
 export type IconPreset = "unicode" | "nerd";
-export type IconName = "code" | "quote" | "copy";
+export type IconName = "code" | "quote" | "copy" | "chat";
 
 const ICONS: Record<IconPreset, Record<IconName, string>> = {
-	unicode: { code: "</>", quote: "❯", copy: "⧉" },
-	nerd: { code: "\uf44f", quote: "\uf10e", copy: "\u{f09a8}" },
+	unicode: { code: "</>", quote: "❯", copy: "⧉", chat: "?" },
+	nerd: { code: "\uf44f", quote: "\uf10e", copy: "\u{f09a8}", chat: "\uf075" },
 };
 
 // Extensions loaded through jiti must see the same preset as the main interactive runtime.

@@ -7,6 +7,7 @@
 - Removed `readFile` from `GrepOperations`. Local grep obtains context during the search instead of rereading matched files. To search a remote system, override grep's `execute()`; see [Remote Execution](docs/extensions.md#remote-execution) ([#9276](https://github.com/earendil-works/pi/issues/9276))
 - `SettingsSelectorComponent` callers must now provide `SettingsConfig.iconPreset` and `SettingsCallbacks.onIconPresetChange` for the shared icon preference
 - `grep` now defaults to one context line before and three after, pages of 20 files with 20 matches per file, and 200 matches for single-file scopes. `find` now defaults to 200 paths ordered by modification time. Source builds require Rust and a C compiler for the shared search addon; published packages include prebuilds.
+- Custom UI contexts must implement `getRexSettings()`. Settings selector callers must supply `SettingsConfig.rex` and the Rex callbacks; `PaneHandle` now reports its resolved `placement`.
 
 ### Added
 
@@ -16,6 +17,11 @@
 - `pi auth login <provider>` logs in to a provider from the shell without starting a session, for example `pi auth login radius`. It signs in with an account in the browser and exits; `--api-key` saves an API key instead, and `--no-browser` uses device code or copy-code sign-in instead. Logging in to Radius also configures the Radius MCP server. `pi auth logout <provider>` removes the stored credentials, like `/logout`
 - `ctx.ui.custom()` overlays now honor the `blocked` option: pi reports blocked program status (OSC 7501) from when the overlay is shown until it calls `done()`, also while it is hidden with `setHidden()`. Closing one overlay keeps other open questions blocked ([#11816](https://github.com/earendil-works/pi/issues/11816))
 - Added an `iconPreset` setting (`unicode` or `nerd`) and an Icons entry in `/settings`. The shared `icon()` API is available to interactive components and extensions. The copy picker uses Nerd Font glyphs `U+F44F` for code, `U+F10E` for quotes, and `U+F09A8` for the whole response when enabled
+- Added persistent background jobs through explicit `bash async:true`, with a `jobs` management tool, complete retained logs, execution timeouts, reported progress, completion notices, and `/jobs` live controls. Jobs survive pi exit; closing a view does not stop them.
+- Added a reusable Rex/TUI pane host with automatic in-Rex selection, explicit backend/placement flags, minimized floating views, and overlay fallback. The general `rex` tool exposes installed CLI capabilities and management guidance.
+- Added `/btw` temporary side conversations seeded from the main branch, with follow-ups and built-in read-only tools only. Side turns stay out of saved main history and are discarded on close.
+- Added Rex views, floating/split mode, and Minimized Rex jobs controls in `/settings`, backed by session-scoped preferences. Background submissions and restarts now open distinct minimized floating Rex panes by default without taking focus; disabling the feature creates no automatic view.
+- Added the shared chat icon to `/btw` headers, using Nerd Font `U+F075` with the Nerd preset.
 
 ### Changed
 

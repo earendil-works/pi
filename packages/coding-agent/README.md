@@ -107,6 +107,46 @@ Read [CONTRIBUTING.md](https://github.com/earendil-works/pi/blob/main/CONTRIBUTI
 - The [SSH extension example](examples/extensions/ssh.ts) disables and guards local `grep`/`find` in SSH mode. Use its remote `bash` tool for content and filename searches.
 - The [Gondolin example](examples/extensions/gondolin/index.ts) keeps its guest backend: one guest path, JavaScript line-based grep, and Node glob file discovery in traversal order. It does not expose native PCRE2, multiline search, line ranges, multi-scope paths, pagination, or `.gitignore` options. Find returns basenames for file roots and root-relative paths for directory searches. Its `hidden: false` prunes hidden entries; Node glob dotfile rules still apply, so dotfile names require explicit dot patterns. Use guest bash for unsupported searches.
 
+## Background jobs
+
+Ask the agent to start persistent work with `bash` using `async: true` and an optional `name`. Bash remains synchronous unless requested otherwise. A launch acknowledgment is not completion: the `jobs` tool lists, inspects, reads logs, stops, renames, restarts, and deletes jobs.
+
+Jobs have independent supervisors and survive pi exit/restart. Their private records and complete combined stdout/stderr logs live under the agent directory's `jobs/` folder, until explicitly deleted. Commands and output are retained; avoid putting secrets in them. Environment variables are inherited by the worker but are not copied into its metadata. Restart creates a new job ID with the current environment and keeps the old job's records. Stop a job before deleting it.
+
+Use `/jobs` for the current project's list or `/jobs <full-id>` for live output and controls. Enter opens details; Escape returns to the list, then closes the view. Default controls: Ctrl+S stop, Ctrl+R restart, Ctrl+N rename, Ctrl+E replace the command and restart, Ctrl+D delete, and Alt+M minimize. Bindings are configurable through `app.jobs.*` and `app.pane.minimize`. PageUp/PageDown scroll the bounded log tail; its full file remains available. These are log/control views, not interactive job terminals.
+
+A job can report real progress by atomically publishing JSON such as `{"percent":42,"message":"Indexing"}` to the path in `PI_JOB_PROGRESS_FILE` (temporary file, then rename; maximum 16 KiB). `PI_JOB_ID` identifies it. Without a valid report, views show activity and elapsed time, not an invented percentage. `timeout` on async bash bounds the job's execution, not just its launch.
+
+Local async bash does not replace custom remote execution adapters or PowerShell. Those backends reject async mode instead of silently launching the command locally.
+
+## Rex and shared views
+
+`/jobs` and `/btw` use [Rex](https://www.superlogical.com/rex/docs/automate/cli) when pi inherits a Rex session and block, otherwise a pi overlay. `/settings` controls their defaults:
+
+| Setting | JSON key | Default | Behavior |
+| --- | --- | --- | --- |
+| Rex views | `rex.enabled` | on | Use Rex for new shared views; off uses pi overlays. This does not disable the agent's general `rex` tool. |
+| Rex mode | `rex.mode` | `floating` | Open manual views as floating windows or regular side-by-side `split` panes. |
+| Minimized Rex jobs | `rex.minimizedJobs` | on | Give each newly submitted background job its own minimized floating pane, without moving focus. Off creates no automatic view. |
+
+Automatic job views cover async bash and restarts through the `jobs` tool or job controls. They always use floating panes, independently of the manual-view mode. They require Rex views to be enabled and an inherited Rex context; missing/unavailable Rex never opens an automatic fallback overlay or changes job execution. Foreground bash is unchanged. Job labels include their short ID and name.
+
+Choose explicitly with `--tui` or `--rex`, choose Rex placement with `--split` or `--floating`, and start minimized floating views with `--minimized`. Flags override the stored defaults; `--minimized` implies floating placement unless a conflicting `--split` is supplied. A manually requested unavailable Rex backend falls back to the overlay. Existing views are not moved or closed by settings changes. Run the same command again to restore an existing view. Closing a job view does not stop the job.
+
+The agent's `rex` tool exposes the installed CLI, including sessions, windows, splits, floating layers, minimization, captures, input, and connected apps. It passes an argument array directly, without shell interpolation. Its prompt guidance directs the agent to read the installed Rex guide and discover version-specific APIs before use. A timed-out CLI mutation may still have succeeded; inspect state before retrying.
+
+The SDK exports `JobManager`, `createJobsToolDefinition`, `createJobsExtension`, `createRexExtension`, `createBtwExtension`, `createSideSession`, and the reusable `openPane` host with `PaneView`/`PaneHandle` types. CLI built-ins load by default; SDK hosts opt into extension factories through their resource loader. Existing selectors and other overlays are unchanged. Sub-agent presentation is not included.
+
+Custom UI hosts implement `getRexSettings()` using their active session's settings manager; it returns the read-only `RexViewSettings`. `PaneHandle.placement` reports `floating`/`split` for Rex and `undefined` for TUI views. Rex-only `openPane` callers can combine `backend: "rex"` with `fallback: "none"` when a background presentation must not open an overlay.
+
+## Temporary side conversations
+
+Use `/btw [question]` for a fresh, in-memory conversation seeded from the current main branch. An unfinished main tool round is omitted rather than supplied with fabricated results. The side agent uses the selected model and thinking level, but only the built-in `read`, `grep`, `find`, and `ls` tools—not bash, writes, jobs, Rex, or extension tools.
+
+Follow-ups stay in that view, including questions queued while it answers. Escape cancels an active answer; when idle, Escape or `/close` discards the side conversation. `/btw` restores an existing side view. Side turns do not become main-history entries or saved pi sessions; closing the view aborts its work and clears its conversation. Rex terminal capture/scrollback is controlled by Rex, not by pi's session storage.
+
+The header uses the shared chat icon: Nerd Font `U+F075` when Icons is `nerd`, with a plain question-mark fallback for the Unicode preset.
+
 ## License
 
 MIT

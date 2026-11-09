@@ -120,6 +120,35 @@
       "description": "Interactive UI icons. The nerd preset requires a Nerd Font selected in the terminal.",
       "default": "unicode"
     },
+    "rex": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Use Rex for shared views when running inside Rex; explicit command flags override this preference.",
+          "default": true
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "floating"
+            },
+            {
+              "type": "string",
+              "const": "split"
+            }
+          ],
+          "description": "Default Rex placement for manually opened views.",
+          "default": "floating"
+        },
+        "minimizedJobs": {
+          "type": "boolean",
+          "description": "Automatically open each submitted background job in a minimized floating Rex pane. Off creates no automatic view.",
+          "default": true
+        }
+      }
+    },
     "compaction": {
       "type": "object",
       "properties": {

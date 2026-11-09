@@ -21,6 +21,7 @@ import { AuthStorage } from "../../src/core/auth-storage.ts";
 import type { ExtensionRunner, ExtensionUIContext } from "../../src/core/extensions/index.ts";
 import { convertToLlm } from "../../src/core/messages.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
+import { SETTINGS_DEFAULTS } from "../../src/core/settings-defaults.ts";
 import type { Settings } from "../../src/core/settings-manager.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
 import type { InlineExtension, ResourceLoader } from "../../src/index.ts";
@@ -104,6 +105,7 @@ export function createTestUiContext(overrides: Partial<ExtensionUIContext> = {})
 		setTheme: () => ({ success: false, error: "Theme switching not available in tests" }),
 		getToolsExpanded: () => false,
 		setToolsExpanded: () => {},
+		getRexSettings: () => SETTINGS_DEFAULTS.rex,
 		...overrides,
 	};
 }

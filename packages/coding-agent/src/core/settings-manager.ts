@@ -19,6 +19,7 @@ import type {
 	MermaidRenderingMode,
 	PackageSource,
 	QuietStartup,
+	RexViewSettings,
 	SessionShareDestination,
 	Settings,
 	ThinkingBudgetsSettings,
@@ -43,6 +44,7 @@ export type {
 	ProviderRetrySettings,
 	QuietStartup,
 	RetrySettings,
+	RexViewSettings,
 	SessionShareDestination,
 	Settings,
 	TerminalSettings,
@@ -779,6 +781,38 @@ export class SettingsManager {
 	setIconPreset(preset: IconPreset): void {
 		this.globalSettings.iconPreset = preset;
 		this.markModified("iconPreset");
+		this.save();
+	}
+
+	/** Resolve view preferences at the unvalidated settings-file boundary. */
+	getRexSettings(): RexViewSettings {
+		const rex = this.settings.rex;
+		return {
+			enabled: typeof rex?.enabled === "boolean" ? rex.enabled : SETTINGS_DEFAULTS.rex.enabled,
+			mode: rex?.mode === "split" ? "split" : SETTINGS_DEFAULTS.rex.mode,
+			minimizedJobs:
+				typeof rex?.minimizedJobs === "boolean" ? rex.minimizedJobs : SETTINGS_DEFAULTS.rex.minimizedJobs,
+		};
+	}
+
+	setRexEnabled(enabled: boolean): void {
+		this.globalSettings.rex ??= {};
+		this.globalSettings.rex.enabled = enabled;
+		this.markModified("rex", "enabled");
+		this.save();
+	}
+
+	setRexMode(mode: RexViewSettings["mode"]): void {
+		this.globalSettings.rex ??= {};
+		this.globalSettings.rex.mode = mode;
+		this.markModified("rex", "mode");
+		this.save();
+	}
+
+	setMinimizedRexJobs(enabled: boolean): void {
+		this.globalSettings.rex ??= {};
+		this.globalSettings.rex.minimizedJobs = enabled;
+		this.markModified("rex", "minimizedJobs");
 		this.save();
 	}
 

@@ -13,6 +13,7 @@ import {
 	untrackDetachedChildPid,
 } from "../../utils/shell.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import { JobManager } from "../jobs/manager.ts";
 import { OutputAccumulator } from "./output-accumulator.ts";
 import { BASH_UPDATE_THROTTLE_MS, createShellRenderers } from "./renderers/bash.ts";
 import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -39,11 +40,23 @@ function resolveTimeoutMs(timeout: number | undefined): number | undefined {
 const bashSchema = Type.Object({
 	command: Type.String({ description: "Shell command to execute" }),
 	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
+	async: Type.Optional(
+		Type.Boolean({
+			description: "Run local bash as a persistent background job and return its ID immediately (default: false)",
+		}),
+	),
+	name: Type.Optional(
+		Type.String({ minLength: 1, maxLength: 128, description: "Display name for an asynchronous job" }),
+	),
 });
 
 export const bashToolSystemPromptContribution = {
-	snippet: "Execute bash commands (ls, grep, find, etc.)",
-	guidelines: ["You can inspect PI_* environment variables for current model and session details."],
+	snippet: "Execute shell commands synchronously or as persistent background jobs",
+	guidelines: [
+		"You can inspect PI_* environment variables for current model and session details.",
+		"Use bash with async:true for background work. Jobs survive pi exit; use the jobs tool when available to inspect logs, stop, rename, restart, or delete them. Do not use shell '&' as a substitute.",
+		"Jobs can report real progress by writing JSON with percent (0–100) and optional message to PI_JOB_PROGRESS_FILE. Without a report, progress is indeterminate.",
+	],
 } as const;
 
 export type BashToolInput = Static<typeof bashSchema>;
@@ -52,7 +65,7 @@ export type BashToolInput = Static<typeof bashSchema>;
  * Result for programmatic callers such as codemode scripts. A non-zero exit code is an error result for the model, but scripts still resolve to this value.
  * `output` is not limited like the model-facing output: callers decide how much of it reaches the model.
  */
-const bashOutputSchema = Type.Object({
+const synchronousBashOutputSchema = Type.Object({
 	output: Type.String({ description: "Combined stdout and stderr, possibly truncated" }),
 	truncated: Type.Boolean(),
 	full_output_path: Type.Optional(Type.String({ description: "Full output, when truncated" })),
@@ -60,11 +73,22 @@ const bashOutputSchema = Type.Object({
 	wall_time_seconds: Type.Number(),
 });
 
+const bashOutputSchema = Type.Union([
+	synchronousBashOutputSchema,
+	Type.Object({
+		job_id: Type.String({ description: "Persistent background job ID" }),
+		status: Type.String({ description: "Observed job state, not a synthetic command exit code" }),
+		full_output_path: Type.String({ description: "Durable combined stdout/stderr log" }),
+	}),
+]);
+
 export type BashToolOutput = Static<typeof bashOutputSchema>;
 
 export interface BashToolDetails {
 	truncation?: TruncationResult;
 	fullOutputPath?: string;
+	jobId?: string;
+	jobState?: string;
 }
 
 /**
@@ -280,7 +304,7 @@ export function createShellToolDefinition(
 	return {
 		name: config.name,
 		label: config.label,
-		description: `Execute a ${config.shellName} command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
+		description: `Execute a ${config.shellName} command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first); full output is retained when truncated. Optionally provide a timeout in seconds. Local bash also accepts async:true to start a persistent background job, with an optional name; use jobs to manage it.`,
 		promptSnippet: config.promptSnippet,
 		promptGuidelines: exposeSessionEnvironment && config.promptGuidelines ? [...config.promptGuidelines] : undefined,
 		parameters: bashSchema,
@@ -288,7 +312,7 @@ export function createShellToolDefinition(
 		constrainedSampling: { type: "json_schema", strict: "prefer" },
 		async execute(
 			_toolCallId,
-			{ command, timeout }: { command: string; timeout?: number },
+			{ command, timeout, async: background, name }: BashToolInput,
 			signal?: AbortSignal,
 			onUpdate?,
 			ctx?: ExtensionContext,
@@ -301,6 +325,33 @@ export function createShellToolDefinition(
 				exposeSessionEnvironment,
 				ctx,
 			);
+			if (background) {
+				if (config.name !== "bash" || options?.operations) {
+					throw new Error(
+						"Persistent background execution requires the local bash backend; custom and PowerShell operations do not support async:true",
+					);
+				}
+				resolveTimeoutMs(timeout);
+				const job = await new JobManager().start(spawnContext.command, spawnContext.cwd, {
+					name,
+					timeout,
+					signal,
+					env: spawnContext.env,
+					shell: getShellConfig(options?.shellPath),
+					sessionId: ctx?.sessionManager.getSessionId(),
+				});
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Job ${job.id} (${job.name})\nState: ${job.runtime.state}\nFull output: ${job.logPath}\nUse jobs to inspect or control it.`,
+						},
+					],
+					details: { jobId: job.id, jobState: job.runtime.state },
+					structuredContent: { job_id: job.id, status: job.runtime.state, full_output_path: job.logPath },
+					isError: job.runtime.state === "failed",
+				};
+			}
 			const output = new OutputAccumulator({ tempFilePrefix: config.tempFilePrefix });
 			let acceptingOutput = true;
 			let updateTimer: NodeJS.Timeout | undefined;

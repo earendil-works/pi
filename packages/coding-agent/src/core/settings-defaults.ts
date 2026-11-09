@@ -7,6 +7,11 @@ export const SETTINGS_DEFAULTS = {
 	steeringMode: "one-at-a-time",
 	followUpMode: "one-at-a-time",
 	iconPreset: "unicode",
+	rex: {
+		enabled: true,
+		mode: "floating",
+		minimizedJobs: true,
+	},
 	compaction: {
 		enabled: true,
 		reserveTokens: 16384,

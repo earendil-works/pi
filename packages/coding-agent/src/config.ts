@@ -429,6 +429,24 @@ export function getPackageDir(): string {
 	return findNodePackageDir(__dirname);
 }
 
+/** Resolve a lightweight worker/viewer entry in source, npm, and standalone installs. */
+export function getInternalInvocation(kind: "job-worker" | "pane-client"): { executable: string; args: string[] } {
+	if (isBunBinary) return { executable: process.execPath, args: [`--internal-${kind}`] };
+	const root = getPackageDir();
+	const folder = kind === "job-worker" ? "jobs" : "panes";
+	if (isBundledNode) return { executable: process.execPath, args: [join(root, "dist", "bundle", `${kind}.js`)] };
+	if (__filename.endsWith(".ts")) {
+		const entry = join(root, "src", "core", folder, "entry.ts");
+		return {
+			executable: process.execPath,
+			args: isBunRuntime
+				? ["--tsconfig-override", resolve(root, "../..", "tsconfig.json"), entry]
+				: ["--import", join(root, "src", "experimental", "source-resolver.ts"), entry],
+		};
+	}
+	return { executable: process.execPath, args: [join(root, "dist", "core", folder, "entry.js")] };
+}
+
 /** Resolve the native search addon in source checkouts, npm installs, and standalone releases. */
 export function getNativeSearchPath(): string {
 	let platform = `${process.platform}-${process.arch}`;
