@@ -140,6 +140,22 @@ test("/settings collects changes and proposes one patch; the theme preview never
 	assert.deepEqual(grants[0], ["savePrefs", { patch: { settings: { hideThinkingBlock: false }, theme: "light" } }]);
 });
 
+test("/settings filters its rows as you type, like pi's settings", async (t) => {
+	const { runtime, grants, screen, send } = await runtimeWith(t, [quietToolsTui]);
+	runtime.ctx.commands.runSlash("/settings");
+	await poll(async () => (await screen()).includes("Hide thinking"));
+	send("tool calls");
+	await poll(async () => /→ Tool calls +quiet/.test(stripTerminalSequences(await screen())));
+	assert(!(await screen()).includes("Hide thinking"), "rows that do not match are hidden");
+	send("\r");
+	send("\x1b");
+	await poll(() => grants.length === 1);
+	assert.deepEqual(grants[0], [
+		"savePrefs",
+		{ patch: { settings: { plugins: { "quiet-tools": { toolCalls: "full" } } } } },
+	]);
+});
+
 test("/settings lists plugin rows (TuiSettingFields) and saves them under plugins.<plugin>", async (t) => {
 	const { runtime, grants, screen, send } = await runtimeWith(t, [quietToolsTui]);
 	runtime.ctx.commands.runSlash("/settings");

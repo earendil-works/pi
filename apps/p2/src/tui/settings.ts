@@ -339,6 +339,7 @@ export function openSettings(ctx: TuiContext, pluginFields: ReadonlyMap<string, 
 			if (typed !== undefined) set(field.path, typed);
 		},
 		finish,
+		{ enableSearch: true },
 	);
 	const framed = box(ctx, "Settings", list, () =>
 		changed
