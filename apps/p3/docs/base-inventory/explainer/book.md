@@ -160,7 +160,12 @@ contributes an extension and maybe a filter, and decides for itself which sessio
 Discord, automations, the orchestrator and triage all start sessions. They call one service:
 
 ```ts
-// plugins/discord/server.ts: a plugin creates a session (full types: chapter VII)
+// plugins/discord/contract.ts: who made the session, a typed origin defined once
+export const ChannelOrigin = defineSessionOrigin("discord.channel", obj({ guild: str(), channel: str() }));
+
+// plugins/discord/server.ts, inside the Discord plugin's server object (full types: chapter VII)
+const sessions = self.get(SessionService, {});          // the sessions plugin's server service
+const BOT_ACTOR = INSTANCE;                              // the user this automated work acts for (users plugin)
 const { id } = await sessions.create({
 	actor: BOT_ACTOR,
 	key: `discord:${guild}:${channel}`,                 // idempotent: racing first messages make one session
@@ -180,6 +185,7 @@ Every operation (`create`, `configure`, `open`, `archive`, `restore`, `fork`, `r
 export const ChannelBinding = defineSessionMetadata("discord.channel", obj({ guild: str(), channel: str(), reach: arr(str()) }));
 
 // plugins/discord/server.ts: written by session id, no worker started
+const metadata = self.get(SessionMetadataStore, {});    // the sessions plugin's metadata store
 await writeMetadata(metadata, ChannelBinding, id, { guild, channel, reach: [] }, ctx);
 
 // plugins/discord/worker.ts: read from the session's current metadata, followed from the server

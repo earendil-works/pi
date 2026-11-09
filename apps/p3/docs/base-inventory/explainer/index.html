@@ -292,7 +292,12 @@ contributes an extension and maybe a filter, and decides for itself which sessio
 
 <section class="chapter" id="sessions"><header class="opener"><div class="numeral">III</div><h2>Sessions and Their Data</h2><p class="lede">A service plugins call, a metadata store on the server, and one format for backups and exports.</p></header>
 <p class="dropcap">Discord, automations, the orchestrator and triage all start sessions. They call one service:</p>
-<pre><code><span class="tk-c">// plugins/discord/server.ts: a plugin creates a session (full types: chapter VII)</span>
+<pre><code><span class="tk-c">// plugins/discord/contract.ts: who made the session, a typed origin defined once</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ChannelOrigin</span> = <span class="tk-f">defineSessionOrigin</span>(<span class="tk-s">"discord.channel"</span>, <span class="tk-f">obj</span>({ guild: <span class="tk-f">str</span>(), channel: <span class="tk-f">str</span>() }));
+
+<span class="tk-c">// plugins/discord/server.ts, inside the Discord plugin's server object (full types: chapter VII)</span>
+<span class="tk-k">const</span> sessions = self.<span class="tk-f">get</span>(<span class="tk-t">SessionService</span>, {});          <span class="tk-c">// the sessions plugin's server service</span>
+<span class="tk-k">const</span> BOT_ACTOR = INSTANCE;                              <span class="tk-c">// the user this automated work acts for (users plugin)</span>
 <span class="tk-k">const</span> { id } = <span class="tk-k">await</span> sessions.<span class="tk-f">create</span>({
 	actor: BOT_ACTOR,
 	key: <span class="tk-s">`discord:${guild}:${channel}`</span>,                 <span class="tk-c">// idempotent: racing first messages make one session</span>
@@ -307,6 +312,7 @@ contributes an extension and maybe a filter, and decides for itself which sessio
 <span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ChannelBinding</span> = <span class="tk-f">defineSessionMetadata</span>(<span class="tk-s">"discord.channel"</span>, <span class="tk-f">obj</span>({ guild: <span class="tk-f">str</span>(), channel: <span class="tk-f">str</span>(), reach: <span class="tk-f">arr</span>(<span class="tk-f">str</span>()) }));
 
 <span class="tk-c">// plugins/discord/server.ts: written by session id, no worker started</span>
+<span class="tk-k">const</span> metadata = self.<span class="tk-f">get</span>(<span class="tk-t">SessionMetadataStore</span>, {});    <span class="tk-c">// the sessions plugin's metadata store</span>
 <span class="tk-k">await</span> <span class="tk-f">writeMetadata</span>(metadata, <span class="tk-t">ChannelBinding</span>, id, { guild, channel, reach: [] }, ctx);
 
 <span class="tk-c">// plugins/discord/worker.ts: read from the session's current metadata, followed from the server</span>
