@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+import { ModelsError } from "@earendil-works/pi-ai";
 import lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR, PACKAGE_NAME, VERSION } from "../src/config.ts";
@@ -528,6 +529,46 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain("Model catalogs refreshed");
 		expect(errorSpy).not.toHaveBeenCalled();
 		expect(process.exitCode).toBeUndefined();
+	});
+
+	it("warns about a stale provider login during update --models and keeps the refresh successful", async () => {
+		const errors = new Map<string, Error>([
+			["radius", new ModelsError("oauth", "OAuth refresh failed for radius", { cause: new Error("invalid_grant") })],
+		]);
+		const refresh = vi.fn(async () => ({ aborted: false, errors }));
+		vi.spyOn(ModelRuntime, "create").mockResolvedValue({ refresh } as unknown as ModelRuntime);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly(["update", "--models"])).resolves.toBeUndefined();
+
+		const warnings = warnSpy.mock.calls.map(([message]) => String(message)).join("\n");
+		expect(warnings).toContain("skipped model catalog for radius: OAuth refresh failed for radius: invalid_grant");
+		expect(warnings).toContain("pi auth login radius");
+		expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain("Model catalogs refreshed");
+		expect(errorSpy).not.toHaveBeenCalled();
+		expect(process.exitCode).toBeUndefined();
+	});
+
+	it("fails update --models when a catalog refresh fails for a reason other than a stale login", async () => {
+		const errors = new Map<string, Error>([
+			["radius", new ModelsError("oauth", "OAuth refresh failed for radius")],
+			["openrouter", new Error("OpenRouter model list request failed: 500")],
+		]);
+		const refresh = vi.fn(async () => ({ aborted: false, errors }));
+		vi.spyOn(ModelRuntime, "create").mockResolvedValue({ refresh } as unknown as ModelRuntime);
+		vi.spyOn(console, "warn").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly(["update", "--models"])).resolves.toBeUndefined();
+
+		const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
+		expect(stderr).toContain(
+			"Could not refresh model catalogs: openrouter: OpenRouter model list request failed: 500",
+		);
+		expect(stderr).not.toContain("radius");
+		expect(process.exitCode).toBe(1);
 	});
 
 	it("rejects update --models combined with another update target", async () => {

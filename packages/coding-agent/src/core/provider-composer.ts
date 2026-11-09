@@ -620,6 +620,9 @@ export function composeModelProvider(
 		auth: { ...(apiKey ? { apiKey } : {}), ...(oauth ? { oauth } : {}) },
 		getModels: () => getAllModels().filter((model) => isModelType(model, "chat")),
 		getAllModels,
+		// Extension hooks read context.credential, so they need the default credential refresh.
+		refreshModelsAuth:
+			extension?.refreshModels || extension?.oauth?.modifyModels ? undefined : base?.refreshModelsAuth,
 		refreshModels:
 			base?.refreshModels || extension?.refreshModels || extension?.oauth?.modifyModels
 				? async (context) => {
