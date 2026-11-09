@@ -728,6 +728,130 @@ describe("task runtime", () => {
 });
 
 describe("task scheduling", () => {
+	// #11892
+	it("finalizes a holder whose last child is published while a finalize pass plans other holders", async () => {
+		const storage = new ControlledStorage();
+		const gate = deferred();
+		const holder = (name: string, child: ReturnType<typeof gated>) =>
+			oneStep(name, async (task, runtime, ctx) => {
+				await runtime.commit(async (tx) => {
+					await tx.createTask(child, null, { ownership: { kind: "task", taskId: task.id } });
+				}, ctx);
+				// The child is still live: the outcome is held as `completing` until a reconcile pass finalizes it.
+				await runtime.commit(() => completed(null), ctx);
+			});
+		const HeldChild = gated("test.held-child", gate.promise);
+		const OtherChild = gated("test.other-child", gate.promise);
+		const Held = holder("test.held", HeldChild);
+		const Other = holder("test.other", OtherChild);
+		const { harness, root } = await openRoot([HeldChild, OtherChild, Held, Other], { storage });
+		const other = await start(root, Other);
+		const held = await start(root, Held);
+		harness.resume();
+		const status = async (id: TaskId) => (await harness.getTask(id, context))?.state.status;
+		await eventually(async () => (await status(other)) === "completing" && (await status(held)) === "completing");
+		await flush();
+		// Both children end together. The other child's publication asks for a finalize pass over its holder alone; the
+		// held child's terminal record is published from that pass's decision region, after the pass took its checks.
+		const heldChildEnded = (writes: readonly StorageWrite[]) =>
+			writes.some(
+				(write) =>
+					write.type === "task" &&
+					write.value.kind === "test.held-child" &&
+					write.value.state.status === "terminal",
+			);
+		let publication: (() => void) | undefined;
+		let released = false;
+		(storage as { publishing?: (publish: () => void, context: Context) => void }).publishing = (publish) => {
+			if (!released && publication === undefined && heldChildEnded(storage.commits.at(-1)!)) publication = publish;
+			else publish();
+		};
+		const session = harness as unknown as SessionImpl;
+		const touch = session.touch.bind(session);
+		session.touch = (key) => {
+			if (publication !== undefined && key === `task:${other}`) {
+				queueMicrotask(publication);
+				publication = undefined;
+				released = true;
+			}
+			return touch(key);
+		};
+		gate.resolve();
+		await eventually(() => released);
+		await eventually(async () => (await status(held)) === "terminal");
+		expect(await status(other)).toBe("terminal");
+		await harness.close(context);
+	});
+
+	// #11892
+	it("runs a waiter whose last dependency is published while a reservation pass plans", async () => {
+		const storage = new ControlledStorage();
+		const gate = deferred();
+		let on: TaskId[] = [];
+		const Child = gated("test.held-child", gate.promise);
+		const Parent = oneStep("test.held-parent", async (task, runtime, ctx) => {
+			await runtime.commit(async (tx) => {
+				on = [task.id, await tx.createTask(Child, null, { ownership: { kind: "task", taskId: task.id } })];
+			}, ctx);
+			// The child is still live: the outcome is held as `completing` until a reconcile pass finalizes it.
+			await runtime.commit(() => completed(null), ctx);
+		});
+		const Waiter = defineTask<null, { phase: "wait" } | { phase: "resume" }, null>({
+			name: "test.waiter",
+			version: 1,
+			initial: () => ({ phase: "wait" }),
+			phases: {
+				wait: async (_task, runtime, ctx) => {
+					const checkpoint = { phase: "resume" } as const;
+					await runtime.commit(() => ({ status: "waiting", checkpoint, on, policy: "allSettled" }), ctx);
+				},
+				resume: (_task, runtime, ctx) => runtime.commit(() => completed(null), ctx),
+			},
+			abort: (_task, runtime, ctx) => runtime.commit(() => abortedWith("test"), ctx),
+		});
+		const { harness, root } = await openRoot([Parent, Child, Waiter], { storage });
+		const parent = await start(root, Parent);
+		harness.resume();
+		await eventually(async () => (await harness.getTask(parent, context))?.state.status === "completing");
+		const waiter = await root.commit(
+			(tx) => tx.createTask(Waiter, null, { ownership: { kind: "conversation" } }),
+			context,
+		);
+		await eventually(async () => (await harness.getTask(waiter, context))?.state.status === "waiting");
+		await flush();
+		// The waiter waits on the parent and its child. The child's publication makes the waiter a candidate and asks for
+		// the reconcile pass that finalizes the parent, admitted before the reservation pass. The parent's terminal record
+		// is held until that pass, which still sees the parent live, has decided to drop the waiter; it is published before
+		// the pass applies that decision.
+		const parentEnded = () =>
+			storage.commits.some((batch) =>
+				batch.some(
+					(write) => write.type === "task" && write.value.id === parent && write.value.state.status === "terminal",
+				),
+			);
+		let held: (() => void) | undefined;
+		let released = false;
+		(storage as { publishing?: (publish: () => void, context: Context) => void }).publishing = (publish) => {
+			if (!released && held === undefined && parentEnded()) held = publish;
+			else publish();
+		};
+		const session = harness as unknown as SessionImpl;
+		const touch = session.touch.bind(session);
+		session.touch = (key) => {
+			if (held !== undefined && key === `task:${waiter}`) {
+				const publish = held;
+				held = undefined;
+				released = true;
+				queueMicrotask(publish);
+			}
+			return touch(key);
+		};
+		gate.resolve();
+		await eventually(() => released);
+		await eventually(async () => (await harness.getTask(waiter, context))?.state.status === "terminal");
+		await harness.close(context);
+	});
+
 	it("fails the Harness on a failed reservation commit; reopening runs the task", async () => {
 		let runs = 0;
 		const Once = oneStep("test.once", async (_task, runtime, ctx) => {
