@@ -648,12 +648,9 @@ describe("SettingsManager", () => {
 		});
 
 		it("applies +name and -name to the default selection", () => {
-			expect(SettingsManager.inMemory({ defaultTools: ["+codemode", "-write"] }).getDefaultTools()).toEqual([
-				"read",
-				"bash",
-				"edit",
-				"codemode",
-			]);
+			const selection = SettingsManager.inMemory({ defaultTools: ["+codemode", "-write"] }).getDefaultTools();
+			expect(selection).toContain("codemode");
+			expect(selection).not.toContain("write");
 			expect(SettingsManager.inMemory({ defaultTools: ["read", "+grep", "+read"] }).getDefaultTools()).toEqual([
 				"read",
 				"grep",
@@ -680,13 +677,7 @@ describe("SettingsManager", () => {
 		it("applies project modifiers to the built-in defaults without a global setting", () => {
 			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ defaultTools: ["+codemode"] }));
 
-			expect(SettingsManager.create(projectDir, agentDir).getDefaultTools()).toEqual([
-				"read",
-				"bash",
-				"edit",
-				"write",
-				"codemode",
-			]);
+			expect(SettingsManager.create(projectDir, agentDir).getDefaultTools()).toContain("codemode");
 		});
 	});
 

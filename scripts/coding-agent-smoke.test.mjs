@@ -40,6 +40,9 @@ function createFixture(t, { importUndeclared = false } = {}) {
 export function createAgentSession() {}
 export class SessionManager { static inMemory() {} }
 export class ModelRuntime { static create() {} }
+// SDK policy fixtures omit the addon; real package smokes exercise native search.
+export function createGrepTool() { return { execute: async () => ({ content: [{ type: "text", text: "source.ts:2: needle" }] }) }; }
+export function createFindTool() { return { execute: async () => ({ content: [{ type: "text", text: "source.ts" }] }) }; }
 `,
 			"dist/index.d.ts": "export {};\n",
 			"dist/cli.js": 'console.log("1.0.0");\n',

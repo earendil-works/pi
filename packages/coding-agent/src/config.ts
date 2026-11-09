@@ -429,6 +429,17 @@ export function getPackageDir(): string {
 	return findNodePackageDir(__dirname);
 }
 
+/** Resolve the native search addon in source checkouts, npm installs, and standalone releases. */
+export function getNativeSearchPath(): string {
+	let platform = `${process.platform}-${process.arch}`;
+	if (process.platform === "linux") {
+		// Node exposes this field at the diagnostic-report boundary, but its typings only declare object.
+		const report = process.report.getReport() as { header: { glibcVersionRuntime?: string } };
+		if (!report.header.glibcVersionRuntime) platform += "-musl";
+	}
+	return join(getPackageDir(), "native", "search", "prebuilds", platform, "pi-search.node");
+}
+
 /**
  * Get path to built-in themes directory (shipped with package)
  * - For Bun binary: theme/ next to executable

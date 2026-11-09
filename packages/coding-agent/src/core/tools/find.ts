@@ -1,11 +1,11 @@
-import { createInterface } from "node:readline";
-import { spawn } from "child_process";
-import path from "path";
+import path from "node:path";
 import { type Static, Type } from "typebox";
-import { ensureTool } from "../../utils/tools-manager.ts";
-import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
-import { pathExists, resolveToCwd } from "./path-utils.ts";
+import { raceWithAbortSignal } from "../../utils/abort.ts";
+import { createSearchJob } from "../../utils/native-search.ts";
+import type { ToolDefinition } from "../extensions/types.ts";
+import { resolveToCwd } from "./path-utils.ts";
 import { findRenderers } from "./renderers/find.ts";
+import { recursiveBasenameGlob, resolveSearchScope } from "./search-scope.ts";
 import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
 
@@ -23,309 +23,146 @@ export function relativizeFindResultPath(
 }
 
 const findSchema = Type.Object({
-	pattern: Type.String({
-		description: "Glob pattern to match files, e.g. '*.ts', '**/*.json', or 'src/**/*.spec.ts'",
-	}),
-	path: Type.Optional(Type.String({ description: "Directory to search in (default: current directory)" })),
-	limit: Type.Optional(Type.Number({ description: "Maximum number of results (default: 1000)" })),
+	pattern: Type.Optional(
+		Type.String({
+			description: "Glob filter, e.g. '*.ts' or 'src/**/*.spec.ts'. Omitted: all paths in the supplied scopes.",
+		}),
+	),
+	path: Type.Optional(
+		Type.String({
+			description:
+				"Directory, file, or glob. Separate multiple scopes with semicolons; prefix exclusions with !. Defaults to cwd.",
+		}),
+	),
+	limit: Type.Optional(Type.Number({ description: "Maximum returned paths (default: 200), newest modified first" })),
+	hidden: Type.Optional(Type.Boolean({ description: "Include hidden files (default: true)" })),
+	gitignore: Type.Optional(
+		Type.Boolean({ description: "Respect ignore files during directory scans (default: true)" }),
+	),
 });
 
 export const findToolSystemPromptContribution = {
-	snippet: "Find files by glob pattern (respects .gitignore)",
-	guidelines: [],
+	snippet: "Find paths by glob across files and directories (respects .gitignore)",
+	guidelines: ["Prefer find over shell commands for locating files by name or glob."],
 } as const;
 
 export type FindToolInput = Static<typeof findSchema>;
 
-const DEFAULT_LIMIT = 1000;
-
 export interface FindToolDetails {
 	truncation?: TruncationResult;
 	resultLimitReached?: number;
+	missingPaths?: string[];
 }
 
-/**
- * Pluggable operations for the find tool.
- * Override these to delegate file search to remote systems (for example SSH).
- */
+/** Pluggable file discovery for extensions that delegate searches to remote systems. */
 export interface FindOperations {
-	/** Check if path exists */
 	exists: (absolutePath: string) => Promise<boolean> | boolean;
-	/** Find files matching glob pattern. Returns relative or absolute paths. */
-	glob: (pattern: string, cwd: string, options: { ignore: string[]; limit: number }) => Promise<string[]> | string[];
+	glob: (
+		pattern: string,
+		cwd: string,
+		options: { ignore: string[]; limit: number; hidden?: boolean; gitignore?: boolean; signal?: AbortSignal },
+	) => Promise<string[]> | string[];
 }
-
-const defaultFindOperations: FindOperations = {
-	exists: pathExists,
-	// This is a placeholder. Actual fd execution happens in execute() when no custom glob is provided.
-	glob: () => [],
-};
 
 export interface FindToolOptions {
-	/** Custom operations for find. Default: local filesystem plus fd */
+	/** Custom remote operations; the built-in local backend uses the Rust addon. */
 	operations?: FindOperations;
 }
 
+/** Find paths through the shared native traversal, or an explicitly supplied remote adapter. */
 export function createFindToolDefinition(
 	cwd: string,
 	options?: FindToolOptions,
 ): ToolDefinition<typeof findSchema, FindToolDetails | undefined> {
-	const customOps = options?.operations;
 	return {
 		name: "find",
 		label: "find",
-		description: `Search for files by glob pattern. Returns matching file paths relative to the search directory. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} results or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
+		description: `Find paths by glob using native Rust traversal. Accepts files, directories, multiple semicolon-delimited scopes, and !exclusions. Bare '*.ts' searches recursively; 'src/*.ts' matches direct children. Respects .gitignore and includes hidden files by default. Returns the newest 200 paths by default, capped at ${DEFAULT_MAX_BYTES / 1024}KB.`,
 		promptSnippet: findToolSystemPromptContribution.snippet,
+		promptGuidelines: [...findToolSystemPromptContribution.guidelines],
 		parameters: findSchema,
-		async execute(
-			_toolCallId,
-			{ pattern, path: searchDir, limit }: { pattern: string; path?: string; limit?: number },
-			signal?: AbortSignal,
-			_onUpdate?,
-			ctx?: ExtensionContext,
-		) {
-			return new Promise((resolve, reject) => {
-				if (signal?.aborted) {
-					reject(new Error("Operation aborted"));
-					return;
+		async execute(_toolCallId, args, signal, _onUpdate, ctx) {
+			signal?.throwIfAborted();
+			const effectiveCwd = ctx?.cwd || cwd;
+			const limit = Math.max(1, Math.min(0xfffffffe, Math.floor(args.limit ?? 200)));
+			const pattern = args.pattern ?? "**/*";
+			if (!pattern.trim()) throw new Error("Glob pattern must not be empty");
+			let results: string[];
+			let resultLimitReached: boolean;
+			let missingPaths: string[] = [];
+			if (options?.operations) {
+				const searchPath = resolveToCwd(args.path || ".", effectiveCwd);
+				if (!(await raceWithAbortSignal(Promise.resolve(options.operations.exists(searchPath)), signal)))
+					throw new Error(`Path not found: ${searchPath}`);
+				signal?.throwIfAborted();
+				const paths = await raceWithAbortSignal(
+					Promise.resolve(
+						options.operations.glob(pattern, searchPath, {
+							ignore: ["**/node_modules/**", "**/.git/**"],
+							limit: limit + 1,
+							hidden: args.hidden ?? true,
+							gitignore: args.gitignore ?? true,
+							signal,
+						}),
+					),
+					signal,
+				);
+				signal?.throwIfAborted();
+				resultLimitReached = paths.length > limit;
+				results = paths.slice(0, limit).map((file) => relativizeFindResultPath(file, searchPath));
+			} else {
+				const scope = await resolveSearchScope(effectiveCwd, args.path, "find");
+				missingPaths = scope.missingPaths;
+				const { job, dispose } = createSearchJob(signal);
+				try {
+					const result = await job.glob({
+						targets: scope.targets,
+						exclusions: scope.exclusions,
+						pattern: recursiveBasenameGlob(pattern),
+						hidden: args.hidden ?? true,
+						gitignore: args.gitignore ?? true,
+						limit,
+					});
+					signal?.throwIfAborted();
+					results = result.paths.map((file) =>
+						relativizeFindResultPath(file, scope.singleFile ? path.dirname(scope.basePath) : scope.basePath),
+					);
+					resultLimitReached = result.limitReached;
+				} finally {
+					dispose();
 				}
-
-				let settled = false;
-				let stopChild: (() => void) | undefined;
-				const settle = (fn: () => void) => {
-					if (settled) return;
-					settled = true;
-					signal?.removeEventListener("abort", onAbort);
-					stopChild = undefined;
-					fn();
-				};
-				const onAbort = () => {
-					stopChild?.();
-					settle(() => reject(new Error("Operation aborted")));
-				};
-				signal?.addEventListener("abort", onAbort, { once: true });
-
-				(async () => {
-					try {
-						const searchPath = resolveToCwd(searchDir || ".", ctx?.cwd || cwd);
-						// fd treats --max-results 0 as unlimited, so a limit below 1 means 1.
-						const effectiveLimit = Math.max(1, Math.floor(limit ?? DEFAULT_LIMIT));
-						const ops = customOps ?? defaultFindOperations;
-
-						// If custom operations provide glob(), use that instead of fd.
-						if (customOps?.glob) {
-							if (!(await ops.exists(searchPath))) {
-								settle(() => reject(new Error(`Path not found: ${searchPath}`)));
-								return;
-							}
-							if (signal?.aborted) {
-								settle(() => reject(new Error("Operation aborted")));
-								return;
-							}
-							// One result past the limit tells "exactly N matches" apart from "more than N".
-							const results = await ops.glob(pattern, searchPath, {
-								ignore: ["**/node_modules/**", "**/.git/**"],
-								limit: effectiveLimit + 1,
-							});
-							if (signal?.aborted) {
-								settle(() => reject(new Error("Operation aborted")));
-								return;
-							}
-							if (results.length === 0) {
-								settle(() =>
-									resolve({
-										content: [{ type: "text", text: "No files found matching pattern" }],
-										details: undefined,
-									}),
-								);
-								return;
-							}
-
-							const resultLimitReached = results.length > effectiveLimit;
-							// Relativize paths against the search root for stable output.
-							const relativized = results
-								.slice(0, effectiveLimit)
-								.map((p) => relativizeFindResultPath(p, searchPath));
-							const rawOutput = relativized.join("\n");
-							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
-							let resultOutput = truncation.content;
-							const details: FindToolDetails = {};
-							const notices: string[] = [];
-							if (resultLimitReached) {
-								notices.push(`${effectiveLimit} results limit reached`);
-								details.resultLimitReached = effectiveLimit;
-							}
-							if (truncation.truncated) {
-								notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
-								details.truncation = truncation;
-							}
-							if (notices.length > 0) {
-								resultOutput += `\n\n[${notices.join(". ")}]`;
-							}
-							settle(() =>
-								resolve({
-									content: [{ type: "text", text: resultOutput }],
-									details: Object.keys(details).length > 0 ? details : undefined,
-								}),
-							);
-							return;
-						}
-
-						// Default implementation uses fd.
-						const fdPath = await ensureTool("fd");
-						if (signal?.aborted) {
-							settle(() => reject(new Error("Operation aborted")));
-							return;
-						}
-						if (!fdPath) {
-							settle(() => reject(new Error("fd is not available and could not be downloaded")));
-							return;
-						}
-
-						const args: string[] = ["--glob", "--color=never", "--hidden"];
-
-						// fd normally ignores .gitignore outside git repos, so keep --no-require-git
-						// there. Inside repos, use fd's default git-aware behavior so parent
-						// .gitignore rules stop at nested repo boundaries:
-						// https://github.com/earendil-works/pi/issues/5960
-						let insideGitRepo = false;
-						for (let current = searchPath; ; ) {
-							if (await pathExists(path.join(current, ".git"))) {
-								insideGitRepo = true;
-								break;
-							}
-							const parent = path.dirname(current);
-							if (parent === current) break;
-							current = parent;
-						}
-						if (!insideGitRepo) args.push("--no-require-git");
-						// One result past the limit tells "exactly N matches" apart from "more than N" (#7121).
-						args.push("--max-results", String(effectiveLimit + 1));
-
-						// fd --glob matches against the basename unless --full-path is set; in --full-path
-						// mode it matches against the absolute candidate path, so a path-containing
-						// pattern like 'src/**/*.spec.ts' needs a leading '**/' to match anything.
-						let effectivePattern = pattern;
-						if (pattern.includes("/")) {
-							args.push("--full-path");
-							if (!pattern.startsWith("/") && !pattern.startsWith("**/") && pattern !== "**") {
-								effectivePattern = `**/${pattern}`;
-							}
-							// fd matches full paths using native separators on Windows.
-							if (process.platform === "win32")
-								effectivePattern = effectivePattern.replaceAll("/", String.raw`[/\\]`);
-						}
-						args.push("--", effectivePattern, searchPath);
-
-						const child = spawn(fdPath, args, { stdio: ["ignore", "pipe", "pipe"] });
-						const rl = createInterface({ input: child.stdout });
-						let stderr = "";
-						// Results within the limit, stored only up to the first one past the byte cap:
-						// truncateHead drops the rest anyway, so they are counted but not kept.
-						const storedResults: string[] = [];
-						let resultCount = 0;
-						// Byte size of all results within the limit, each counted with a trailing newline.
-						let outputBytes = 0;
-						let resultLimitReached = false;
-
-						stopChild = () => {
-							if (!child.killed) {
-								child.kill();
-							}
-						};
-
-						const cleanup = () => {
-							rl.close();
-						};
-
-						child.stderr?.on("data", (chunk) => {
-							stderr += chunk.toString();
-						});
-
-						rl.on("line", (rawLine) => {
-							const line = rawLine.replace(/\r$/, "").trim();
-							if (!line) return;
-							if (resultCount === effectiveLimit) {
-								resultLimitReached = true;
-								return;
-							}
-							const result = relativizeFindResultPath(line, searchPath);
-							resultCount++;
-							if (outputBytes - 1 <= DEFAULT_MAX_BYTES) storedResults.push(result);
-							outputBytes += Buffer.byteLength(result, "utf-8") + 1;
-						});
-
-						child.on("error", (error) => {
-							cleanup();
-							settle(() => reject(new Error(`Failed to run fd: ${error.message}`)));
-						});
-
-						child.on("close", (code) => {
-							cleanup();
-							if (signal?.aborted) {
-								settle(() => reject(new Error("Operation aborted")));
-								return;
-							}
-							if (code !== 0 && resultCount === 0) {
-								const errorMsg = stderr.trim() || `fd exited with code ${code}`;
-								settle(() => reject(new Error(errorMsg)));
-								return;
-							}
-							if (resultCount === 0) {
-								settle(() =>
-									resolve({
-										content: [{ type: "text", text: "No files found matching pattern" }],
-										details: undefined,
-									}),
-								);
-								return;
-							}
-
-							// Stored results extend past the byte cap when more exist, so truncateHead decides
-							// truncation as for the full output; only the totals need the unstored rest.
-							const truncation = {
-								...truncateHead(storedResults.join("\n"), { maxLines: Number.MAX_SAFE_INTEGER }),
-								totalLines: resultCount,
-								totalBytes: outputBytes - 1,
-							};
-							let resultOutput = truncation.content;
-							const details: FindToolDetails = {};
-							const notices: string[] = [];
-							if (resultLimitReached) {
-								notices.push(
-									`${effectiveLimit} results limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,
-								);
-								details.resultLimitReached = effectiveLimit;
-							}
-							if (truncation.truncated) {
-								notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
-								details.truncation = truncation;
-							}
-							if (notices.length > 0) {
-								resultOutput += `\n\n[${notices.join(". ")}]`;
-							}
-							settle(() =>
-								resolve({
-									content: [{ type: "text", text: resultOutput }],
-									details: Object.keys(details).length > 0 ? details : undefined,
-								}),
-							);
-						});
-					} catch (e) {
-						if (signal?.aborted) {
-							settle(() => reject(new Error("Operation aborted")));
-							return;
-						}
-						const error = e instanceof Error ? e : new Error(String(e));
-						settle(() => reject(error));
-					}
-				})();
-			});
+			}
+			const truncation = truncateHead(results.join("\n"), { maxLines: Number.MAX_SAFE_INTEGER });
+			const details: FindToolDetails = {};
+			const notices: string[] = [];
+			if (resultLimitReached) {
+				details.resultLimitReached = limit;
+				notices.push(
+					options?.operations
+						? `${limit} results limit reached`
+						: `${limit} results limit reached. Use limit=${limit * 2} for more, or refine pattern`,
+				);
+			}
+			if (truncation.truncated) {
+				details.truncation = truncation;
+				notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
+			}
+			if (missingPaths.length) {
+				details.missingPaths = missingPaths;
+				notices.push(`Skipped missing paths: ${missingPaths.join("; ")}`);
+			}
+			let output = truncation.content || "No files found matching pattern";
+			if (notices.length) output += `\n\n[${notices.join(". ")}]`;
+			return {
+				content: [{ type: "text", text: output }],
+				details: Object.keys(details).length ? details : undefined,
+			};
 		},
 		...findRenderers,
 	};
 }
 
+/** Create the agent-facing wrapper for native glob discovery. */
 export function createFindTool(cwd: string, options?: FindToolOptions): TypeBoxAgentTool<typeof findSchema> {
 	return wrapToolDefinition(createFindToolDefinition(cwd, options));
 }

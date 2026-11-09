@@ -1,0 +1,100 @@
+name: Native search
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Source ref to build
+        required: false
+        type: string
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, target: x86_64-unknown-linux-gnu, name: linux-x64 }
+          - { runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, name: linux-arm64 }
+          - { runner: ubuntu-22.04, target: x86_64-unknown-linux-musl, name: linux-x64-musl, musl: true }
+          - { runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, name: linux-arm64-musl, musl: true }
+          - { runner: macos-latest, target: aarch64-apple-darwin, name: darwin-arm64 }
+          - { runner: macos-15-intel, target: x86_64-apple-darwin, name: darwin-x64 }
+          - { runner: windows-latest, target: x86_64-pc-windows-msvc, name: win32-x64 }
+          - { runner: windows-11-arm, target: aarch64-pc-windows-msvc, name: win32-arm64 }
+          - { runner: ubuntu-22.04, target: aarch64-linux-android, name: android-arm64, android: aarch64-linux-android24 }
+          - { runner: ubuntu-22.04, target: x86_64-linux-android, name: android-x64, android: x86_64-linux-android24 }
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+
+      - name: Setup Bun
+        if: ${{ !matrix.android && !matrix.musl }}
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
+
+      - name: Setup Rust target
+        run: rustup update stable && rustup target add ${{ matrix.target }}
+
+      - name: Install musl compiler
+        if: matrix.musl
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Configure musl compiler
+        if: matrix.musl
+        run: |
+          echo 'CC=musl-gcc' >> "$GITHUB_ENV"
+          echo 'CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc' >> "$GITHUB_ENV"
+          echo 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc' >> "$GITHUB_ENV"
+
+      - name: Configure Android NDK
+        if: matrix.android
+        env:
+          NDK_VERSION: 27.2.12479018
+        run: |
+          if [ ! -d "$ANDROID_HOME/ndk/$NDK_VERSION" ]; then
+            { yes || true; } | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION"
+          fi
+          echo "CC=$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.android }}-clang" >> "$GITHUB_ENV"
+          echo "AR=$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.android }}-clang" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER=$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.android }}-clang" >> "$GITHUB_ENV"
+
+      - name: Build addon
+        run: node packages/coding-agent/native/search/build.mjs ${{ matrix.target }}
+
+      - name: Smoke-test Node and Bun
+        if: ${{ !matrix.android && !matrix.musl }}
+        run: |
+          node scripts/smoke-test-native-search.mjs packages/coding-agent/native/search/prebuilds/${{ matrix.name }}/pi-search.node
+          bun scripts/smoke-test-native-search.mjs packages/coding-agent/native/search/prebuilds/${{ matrix.name }}/pi-search.node
+
+      - name: Smoke-test Alpine Node and Bun
+        if: matrix.musl
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/workspace" -w /workspace node:22-alpine node scripts/smoke-test-native-search.mjs packages/coding-agent/native/search/prebuilds/${{ matrix.name }}/pi-search.node
+          docker run --rm -v "$GITHUB_WORKSPACE:/workspace" -w /workspace oven/bun:1.4.4-alpine bun scripts/smoke-test-native-search.mjs packages/coding-agent/native/search/prebuilds/${{ matrix.name }}/pi-search.node
+
+      - name: Upload addon
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pi-search-${{ matrix.name }}
+          path: packages/coding-agent/native/search/prebuilds
+          if-no-files-found: error

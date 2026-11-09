@@ -87,6 +87,7 @@ fi
 
 shopt -s nullglob
 model_data_files=("${model_data_dir}/.manifest.json" "${model_data_dir}"/*.json)
+native_search_files=(packages/coding-agent/native/search/prebuilds/*/pi-search.node packages/coding-agent/native/search/prebuilds/*/pi-search.sha256)
 shopt -u nullglob
 if [[ ${#model_data_files[@]} -eq 1 ]]; then
     echo "Generated model data is missing from ${model_data_dir}" >&2
@@ -105,6 +106,9 @@ trap 'rm -f "$temporary_archive" "$temporary_index" "$manifest"; rm -rf "$valida
 # deterministic for the same commit and generated model data.
 GIT_INDEX_FILE="$temporary_index" git read-tree "$commit"
 GIT_INDEX_FILE="$temporary_index" git add -f -- "${model_data_files[@]}"
+if [[ ${#native_search_files[@]} -gt 0 ]]; then
+    GIT_INDEX_FILE="$temporary_index" git add -f -- "${native_search_files[@]}"
+fi
 archive_tree="$(GIT_INDEX_FILE="$temporary_index" git write-tree)"
 archive_mtime="$(git show -s --format=%ct "$commit")"
 
@@ -132,6 +136,9 @@ required_paths=(
     "packages/tui/native/win32/prebuilds/win32-arm64/win32-platform.node"
     "packages/tui/native/win32/prebuilds/win32-x64/win32-platform.node"
     "packages/coding-agent/package.json"
+    "packages/coding-agent/native/search/Cargo.toml"
+    "packages/coding-agent/native/search/Cargo.lock"
+    "packages/coding-agent/native/search/src/lib.rs"
     "packages/coding-agent/src/utils/image-resize-worker.ts"
     "packages/coding-agent/src/core/export-html/template.css"
 )

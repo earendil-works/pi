@@ -39,6 +39,8 @@ out.html
 packages/coding-agent/binaries/
 packages/env/bin/
 packages/env/daemon/target/
+packages/coding-agent/native/search/target/
+packages/coding-agent/native/search/prebuilds/
 todo.md
 plans/
 .pi/hf-sessions/

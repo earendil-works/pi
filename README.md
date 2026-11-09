@@ -110,6 +110,8 @@ npm run check         # Lint, format, and type check
 ./pi-test.sh         # Run pi from sources (can be run from any directory)
 ```
 
+Building `grep` and `find` from source requires Rust and a C compiler. Run `npm run build:native:search` before the first `./pi-test.sh`, or let `npm run build` build the shared Node-API addon. Release packages include prebuilds; normal installations need neither Rust nor install-time scripts.
+
 ### Using local packages outside the monorepo
 
 Build every public package into one coherent local artifact set:

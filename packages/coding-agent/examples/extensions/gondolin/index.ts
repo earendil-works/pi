@@ -36,16 +36,59 @@ import {
 	type FindOperations,
 	formatSize,
 	type GrepToolDetails,
-	type GrepToolInput,
 	type LsOperations,
 	type ReadOperations,
 	truncateHead,
 	truncateLine,
 	type WriteOperations,
 } from "@earendil-works/pi-coding-agent";
+import { type Static, Type } from "typebox";
 
 const GUEST_WORKSPACE = "/workspace";
 const DEFAULT_GREP_LIMIT = 100;
+
+const gondolinGrepSchema = Type.Object(
+	{
+		pattern: Type.String({
+			description: "JavaScript regex applied to each guest file line, or literal text with literal:true",
+		}),
+		path: Type.Optional(
+			Type.String({
+				description: "One guest file or directory (default: /workspace); no scopes, ranges, or path globs",
+			}),
+		),
+		glob: Type.Optional(
+			Type.String({ description: "Positive Node glob file filter, matched recursively; no negation" }),
+		),
+		ignoreCase: Type.Optional(Type.Boolean({ description: "Case-insensitive matching (default: false)" })),
+		literal: Type.Optional(Type.Boolean({ description: "Treat pattern as literal text (default: false)" })),
+		context: Type.Optional(Type.Number({ description: "Lines before and after each match (default: 0)" })),
+		limit: Type.Optional(Type.Number({ description: "Maximum matching lines (default: 100); no file pagination" })),
+	},
+	{ additionalProperties: false },
+);
+
+type GondolinGrepInput = Static<typeof gondolinGrepSchema>;
+
+const gondolinFindSchema = Type.Object(
+	{
+		pattern: Type.Optional(
+			Type.String({
+				description: "Node glob file filter (default: **/*); dotfile names require explicit dot patterns",
+			}),
+		),
+		path: Type.Optional(
+			Type.String({ description: "One guest file or directory (default: /workspace); no scopes or path globs" }),
+		),
+		limit: Type.Optional(Type.Number({ description: "Maximum files in guest traversal order (default: 200)" })),
+		hidden: Type.Optional(
+			Type.Boolean({
+				description: "Include hidden entries in traversal (default: true); glob dotfile rules still apply",
+			}),
+		),
+	},
+	{ additionalProperties: false },
+);
 
 type TextToolResult<TDetails> = {
 	content: Array<{ type: "text"; text: string }>;
@@ -138,8 +181,9 @@ async function walkGuestFiles(
 	vm: VM,
 	root: string,
 	visit: (guestPath: string, relativePath: string) => Promise<boolean>,
-	signal?: AbortSignal,
+	options: { signal?: AbortSignal; hidden?: boolean } = {},
 ): Promise<boolean> {
+	const { signal } = options;
 	if (signal?.aborted) throw new Error("Operation aborted");
 	const stat = await vm.fs.stat(root, { signal });
 	if (!stat.isDirectory()) return visit(root, path.posix.basename(root));
@@ -149,6 +193,7 @@ async function walkGuestFiles(
 		const entries = await vm.fs.listDir(dir, { signal });
 		for (const entry of entries) {
 			if (entry === ".git" || entry === "node_modules") continue;
+			if (options.hidden === false && entry.startsWith(".")) continue;
 			const guestPath = path.posix.join(dir, entry);
 			const relativePath = relativeDir ? path.posix.join(relativeDir, entry) : entry;
 			let entryStat: Awaited<ReturnType<VM["fs"]["stat"]>>;
@@ -193,11 +238,16 @@ function createGondolinFindOps(vm: VM, localCwd: string): FindOperations {
 		glob: async (pattern, cwd, options) => {
 			const root = toGuestPath(localCwd, cwd);
 			const results: string[] = [];
-			await walkGuestFiles(vm, root, async (guestPath, relativePath) => {
-				if (results.length >= options.limit) return false;
-				if (matchesToolGlob(relativePath, pattern)) results.push(guestPath);
-				return results.length < options.limit;
-			});
+			await walkGuestFiles(
+				vm,
+				root,
+				async (_guestPath, relativePath) => {
+					if (results.length >= options.limit) return false;
+					if (matchesToolGlob(relativePath, pattern)) results.push(relativePath);
+					return results.length < options.limit;
+				},
+				{ hidden: options.hidden, signal: options.signal },
+			);
 			return results;
 		},
 	};
@@ -239,7 +289,7 @@ function appendGrepBlock(params: {
 async function executeGondolinGrep(
 	vm: VM,
 	localCwd: string,
-	params: GrepToolInput,
+	params: GondolinGrepInput,
 	signal?: AbortSignal,
 ): Promise<TextToolResult<GrepToolDetails>> {
 	const root = toGuestPath(localCwd, params.path ?? ".");
@@ -282,7 +332,7 @@ async function executeGondolinGrep(
 			}
 			return true;
 		},
-		signal,
+		{ signal },
 	);
 
 	if (matchCount === 0) return { content: [{ type: "text", text: "No matches found" }], details: undefined };
@@ -497,6 +547,11 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerTool({
 		...localFind,
+		description:
+			"Find guest files with Node glob matching under one file or directory. Returns guest traversal order, not newest-first. Skips .git and node_modules; does not read .gitignore. Dotfile names require explicit dot patterns.",
+		parameters: gondolinFindSchema,
+		promptSnippet: "Find guest files by Node glob under one guest path",
+		promptGuidelines: ["Use find for guest filenames; it accepts one path, not native multi-scope syntax."],
 		async execute(id, params, signal, onUpdate, ctx) {
 			const activeVm = await ensureVm(ctx);
 			const tool = createFindTool(GUEST_WORKSPACE, {
@@ -508,6 +563,13 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerTool({
 		...localGrep,
+		description:
+			"Search guest file contents line by line with JavaScript regex or literal text. Accepts one file or directory and an optional positive Node glob. Defaults to no context and 100 matching lines. No PCRE2, multiline matching, file line ranges, multi-scope paths, or pagination. Skips .git and node_modules; does not read .gitignore.",
+		parameters: gondolinGrepSchema,
+		promptSnippet: "Search guest file lines with JavaScript regex under one guest path",
+		promptGuidelines: [
+			"Use grep for single-line guest searches; use guest bash for search features not supported by its schema.",
+		],
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const activeVm = await ensureVm(ctx);
 			return executeGondolinGrep(activeVm, localCwd, params, signal);

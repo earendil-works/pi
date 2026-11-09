@@ -157,6 +157,8 @@ for platform in "${PLATFORMS[@]}"; do
     native_path="native/${native_platform%-*}/prebuilds"
     mkdir -p "$OUTPUT_DIR/$platform/$native_path"
     cp -R "../tui/$native_path/$native_platform" "$OUTPUT_DIR/$platform/$native_path/"
+    mkdir -p "$OUTPUT_DIR/$platform/native/search/prebuilds/$native_platform"
+    cp "native/search/prebuilds/$native_platform/pi-search.node" "$OUTPUT_DIR/$platform/native/search/prebuilds/$native_platform/"
 done
 
 # Create archives

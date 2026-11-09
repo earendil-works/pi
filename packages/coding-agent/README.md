@@ -76,10 +76,13 @@ Clone the repository, install its dependencies, and run Pi from source:
 git clone https://github.com/earendil-works/pi
 cd pi
 npm install --ignore-scripts
+npm run build:native:search
 ./pi-test.sh
 ```
 
 `pi-test.sh` can be called from any directory and preserves the caller's working directory.
+
+Source builds of `grep` and `find` require Rust and a C compiler. `npm run build` also builds their shared Node-API addon; published packages include native prebuilds and need no Rust toolchain or install-time scripts.
 
 Before submitting changes, run:
 
@@ -89,6 +92,20 @@ npm run check
 ```
 
 Read [CONTRIBUTING.md](https://github.com/earendil-works/pi/blob/main/CONTRIBUTING.md) before opening an issue or pull request. It defines the contribution gate, issue quality bar, and required checks. Read [AGENTS.md](https://github.com/earendil-works/pi/blob/main/AGENTS.md) for repository-specific implementation, testing, dependency, and release rules.
+
+## Native search
+
+`grep` searches file contents; `find` searches paths with globs. Both are enabled by default and use an in-process Rust addon, not `rg`/`fd` subprocesses. The default system prompt directs the model to prefer these tools over shell searches. Explicit tool selections and resumed sessions' recorded tool selections still take precedence.
+
+- Both accept semicolon-delimited scopes and `!` exclusions, such as `src;test;!*.generated.ts`. Directory exclusions also apply to explicitly selected directory roots and their excluded ancestors. Explicitly named files remain searchable even when ignored or excluded from directory walks. Set `gitignore: false` to include ignored entries.
+- `grep` supports lookaround/backreferences through automatic PCRE2 fallback, `\n` multiline patterns, and file line selectors such as `src/app.ts:50-100`. It returns 20 files per page, with up to 20 matches per file; use `skip: 20` for the next file page. A single-file search returns up to 200 matches. `limit` overrides the total match budget. Context defaults to one line before and three after; `context: 0` disables it. Long lines show the first match's window and original character column.
+- PCRE2 uses JIT when supported, with each JIT stack capped at 10 MiB. Multiline searches validate UTF-8 subjects once and reuse compiled match state for JIT or interpreter calls. Malformed subjects and restarts inside a multibyte character retain the existing matcher's checked path.
+- Grep's `glob` filter also accepts negation: `glob: "!*.test.ts"` excludes matching files, and `glob: "!generated"` prunes matching directory subtrees. These filters are relative to each search root.
+- `find` keeps its optional `pattern` filter and also accepts globs directly in `path`. Bare `*.ts` searches recursively; `src/*.ts` matches direct children. Shallow scopes and positive filters bound traversal to their matching depth; missing fixed directory prefixes are reported without scanning broader ancestors. Results are newest-modified first, with a default limit of 200. `hidden: false` excludes dotfiles. Directory discovery lists symlinks, including dangling links, without traversing them; explicitly selected dangling link paths are also accepted. Grep does not follow symlinks discovered during a directory scan.
+- Both retain the 50 KiB output cap and support cancellation. Grep includes its notices within that cap. Native scans have a 30-second deadline. Directory traversal failures fail the search; missing scopes and individual grep files that cannot be searched are reported with notices rather than presented as complete coverage.
+- Grep input buffering is limited to 64 MiB, with a separately bounded pending-context window for streaming searches. Ordinary short-line searches stream larger files, but multiline searches buffer the full decoded file and very long lines require buffering. Multiline matching preserves the complete subject for lookbehind. Both paths retain BOM-marked UTF-8/UTF-16 decoding, including final replacement characters at buffer boundaries. Exceeding the budget fails an explicitly selected file; directory scans skip the file with a notice. Line selectors limit matches and context, not multiline input buffering.
+- The [SSH extension example](examples/extensions/ssh.ts) disables and guards local `grep`/`find` in SSH mode. Use its remote `bash` tool for content and filename searches.
+- The [Gondolin example](examples/extensions/gondolin/index.ts) keeps its guest backend: one guest path, JavaScript line-based grep, and Node glob file discovery in traversal order. It does not expose native PCRE2, multiline search, line ranges, multi-scope paths, pagination, or `.gitignore` options. Find returns basenames for file roots and root-relative paths for directory searches. Its `hidden: false` prunes hidden entries; Node glob dotfile rules still apply, so dotfile names require explicit dot patterns. Use guest bash for unsupported searches.
 
 ## License
 

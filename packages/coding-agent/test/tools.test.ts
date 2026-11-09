@@ -960,6 +960,7 @@ describe("Coding Agent Tools", () => {
 				pattern: "match",
 				path: testFile,
 				limit: 150,
+				context: 0,
 			});
 
 			const output = getTextOutput(result);
@@ -1021,7 +1022,7 @@ describe("Coding Agent Tools", () => {
 			const testFile = join(testDir, "mixed-cr.txt");
 			writeFileSync(testFile, "one\rtwo needle\r\nnext\r\n");
 
-			const plain = await grepTool.execute("test-call-cr-plain", { pattern: "needle", path: testFile });
+			const plain = await grepTool.execute("test-call-cr-plain", { pattern: "needle", path: testFile, context: 0 });
 			expect(getTextOutput(plain)).toBe("mixed-cr.txt:1: one\rtwo needle");
 
 			const withContext = await grepTool.execute("test-call-cr-context", {
@@ -1205,11 +1206,15 @@ describe("Coding Agent Tools", () => {
 		});
 
 		it("should report full output totals past the byte cap", async () => {
-			// 300 names of 200 bytes join to about 60KB; equal lengths make the kept prefix independent of fd's order.
+			// 300 names of 200 bytes exceed the byte cap independently of their modification-time order.
 			const names = Array.from({ length: 300 }, (_, i) => `${String(i).padStart(3, "0")}${"x".repeat(193)}.txt`);
 			for (const name of names) writeFileSync(join(testDir, name), "");
 
-			const result = await findTool.execute("test-call-find-byte-cap", { pattern: "*.txt", path: testDir });
+			const result = await findTool.execute("test-call-find-byte-cap", {
+				pattern: "*.txt",
+				path: testDir,
+				limit: 1000,
+			});
 			const expected = truncateHead(names.join("\n"), { maxLines: Number.MAX_SAFE_INTEGER });
 			expect(result.details?.truncation).toEqual({ ...expected, content: result.details?.truncation?.content });
 			expect(result.details?.truncation?.content.split("\n")).toHaveLength(expected.outputLines);

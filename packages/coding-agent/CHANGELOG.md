@@ -4,8 +4,9 @@
 
 ### Breaking Changes
 
-- Removed `readFile` from `GrepOperations`. The grep tool now takes context lines from ripgrep and no longer reads matched files itself. To search a remote system, override grep's `execute()`; see [Remote Execution](docs/extensions.md#remote-execution) ([#9276](https://github.com/earendil-works/pi/issues/9276))
+- Removed `readFile` from `GrepOperations`. Local grep obtains context during the search instead of rereading matched files. To search a remote system, override grep's `execute()`; see [Remote Execution](docs/extensions.md#remote-execution) ([#9276](https://github.com/earendil-works/pi/issues/9276))
 - `SettingsSelectorComponent` callers must now provide `SettingsConfig.iconPreset` and `SettingsCallbacks.onIconPresetChange` for the shared icon preference
+- `grep` now defaults to one context line before and three after, pages of 20 files with 20 matches per file, and 200 matches for single-file scopes. `find` now defaults to 200 paths ordered by modification time. Source builds require Rust and a C compiler for the shared search addon; published packages include prebuilds.
 
 ### Added
 
@@ -23,6 +24,8 @@
 - Consecutive cache warms now show as one `Cache warmed: $<total>` line with the cumulative cost instead of one line per warm
 - The OpenAI Codex provider is shown as "OpenAI Codex" again instead of "OpenAI Codex (legacy)" in `/login` and the model selector
 - `/copy` and the last-response copy shortcut now open an inline picker with previews for code blocks, quotes, and the whole response. Individual blocks copy without outer code fences or quote markers; the whole response keeps its original Markdown. Active text selections and copying from `/tree` are unchanged
+- Replaced the built-in `grep` and `find` subprocess backends with one in-process Rust Node-API addon. Searches accept multiple paths/globs and exclusions; grep adds automatic PCRE2 fallback, multiline patterns, file line ranges, matching-file pagination, and match-centred long-line snippets. The existing tool names and remote-operation extension points remain available.
+- Enabled `grep` and `find` by default alongside `read`, `bash`, `edit`, and `write`. Their system-prompt guidance prefers the dedicated tools over shell searches and is omitted when the corresponding tool is disabled or hidden. Explicit tool selections and resumed sessions' recorded tool selections remain unchanged.
 
 ### Fixed
 
@@ -45,6 +48,26 @@
 - Fixed `tool_search` and `searchTools()` not finding a tool by property names and descriptions behind a local `$ref`, as in MCP input schemas that put their models in `$defs`. Referenced definitions are read once, so recursive schemas do not loop, and definitions nothing references stay out of the search text ([#11803](https://github.com/earendil-works/pi/issues/11803))
 - Fixed the codemode `resolves to` summary of a tool leaving out field names behind a local `$ref`, for example `structuredContent?` instead of `structuredContent?: { results }` for MCP output schemas that put their models in `$defs` ([#11803](https://github.com/earendil-works/pi/issues/11803))
 - Fixed every codemode script failing with `URI malformed` when any callable tool, such as an MCP tool, had a `$ref` with a malformed percent escape (`#/$defs/%E0`) in its schema, even scripts that do not call that tool. The parameter now renders as `unknown` in the tool's declaration ([#11803](https://github.com/earendil-works/pi/issues/11803))
+- Fixed adjacent multiline grep matches bypassing match limits and disappearing from line-range searches, including context selection around excluded matches.
+- Bounded native grep input buffers to 64 MiB with explicit errors or skipped-file notices. Whitespace-only patterns remain searchable, and invalid UTF-8 before a match no longer moves its display window away from the match.
+- Fixed overlapping search roots dropping files before their root-relative glob filters were applied. Directory traversal errors now fail grep/find instead of silently reporting no matches.
+- Fixed native find omitting symlinks, including dangling links, and search results/glob scopes corrupting literal POSIX backslashes. Custom find operations now reject cancellation without waiting for the adapter to finish.
+- Fixed the SSH extension example searching local files through default-enabled grep/find: both tools are disabled and execution-guarded in SSH mode; remote searches use bash.
+- Fixed native search builds copying missing or stale artifacts when Cargo output-directory overrides are configured. Rebuilt addons are published atomically to avoid macOS code-signature cache failures.
+- Fixed line-range grep searches dropping valid before-context after excluded matches, including across streaming buffer rolls. Snippet offsets now use decoded display size and the same line subject as matching, preserving visible matches for invalid UTF-8 and input-boundary assertions.
+- Fixed multiline PCRE2 lookbehind missing later matches after earlier spans. Multiline matching now retains the complete bounded, decoded subject, including BOM-marked UTF-8/UTF-16 input.
+- Restored negated grep globs, including directory pruning, and applied path exclusions to explicit directory roots without changing explicit-file bypass. Find now accepts explicitly selected dangling links while preserving searches through working directory symlinks.
+- Fixed grep/find glob scopes searching sibling directories when an existing path prefix contains literal glob characters, and glob roots bypassing directory exclusions. Rooted exclusion globs also preserve literal directory prefixes.
+- Fixed multiline grep dropping later PCRE2 lookbehind matches after zero-width matches on multibyte UTF-8 characters, and losing final UTF-16 replacement bytes at decoder buffer boundaries.
+- Enabled PCRE2 JIT when available to avoid repeated UTF-8 suffix validation in multiline searches with late line ranges.
+- Bounded shallow glob traversal without changing brace or character-class matching, and stopped missing fixed directory prefixes from widening searches. Excluded directory ancestors now also apply to independently selected nested roots.
+- Fixed explicit find scopes rejecting dangling links whose targets contain a non-directory component, and valid wildcard scopes failing when a literal wildcard-named file exists.
+- Kept grep's final text, including bounded path-bearing notices, within the 50 KiB output budget.
+- Fixed Gondolin find ignoring hidden-directory filtering. Its guest search declarations now describe the existing single-root Node glob and JavaScript regex backends rather than advertising unsupported native search features.
+- Fixed PCRE2 JIT stack-limit errors on nested recursive patterns by increasing the bounded maximum stack to 10 MiB.
+- Fixed interpreter-only multiline PCRE2 searches timing out on frequent matches before a late line range. Valid UTF-8 subjects are validated once; malformed input retains the existing checked matcher.
+- Fixed ordinary streaming grep losing final UTF-16 replacement characters at decoder buffer boundaries without buffering the whole file.
+- Fixed Gondolin find reporting no files for an explicitly selected guest file.
 
 ## [1.5.0] - 2026-11-02
 

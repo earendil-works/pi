@@ -14,8 +14,8 @@ import type { FindToolDetails } from "../find.ts";
 import { getTextOutput, invalidArgText, shortenPath, str } from "../render-utils.ts";
 import { DEFAULT_MAX_BYTES, formatSize } from "../truncate.ts";
 
-function formatFindCall(args: { pattern: string; path?: string; limit?: number } | undefined, theme: Theme): string {
-	const pattern = str(args?.pattern);
+function formatFindCall(args: { pattern?: string; path?: string; limit?: number } | undefined, theme: Theme): string {
+	const pattern = str(args?.pattern ?? "**/*");
 	const rawPath = str(args?.path);
 	const path = rawPath !== null ? shortenPath(rawPath || ".") : null;
 	const limit = args?.limit;

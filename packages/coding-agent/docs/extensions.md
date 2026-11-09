@@ -2420,7 +2420,7 @@ The `create*ToolDefinition()` factories, such as `createReadToolDefinition()`, r
 
 **Operations interfaces:** `ReadOperations`, `WriteOperations`, `EditOperations`, `BashOperations`, `PowerShellOperations`, `LsOperations`, `GrepOperations`, `FindOperations`
 
-`GrepOperations` only covers the directory check: grep always runs the local `rg`. To search a remote system, override grep's `execute()` instead, as the [Gondolin example](../examples/extensions/gondolin/index.ts) does.
+`GrepOperations` only covers directory classification: grep always uses the local native Rust addon. To search a remote system, override grep's `execute()` instead, as the [Gondolin example](../examples/extensions/gondolin/index.ts) does. `FindOperations` still delegates single-root file discovery through `exists()` and `glob()`; `glob()` also receives optional `hidden`, `gitignore`, and `signal` fields. Multiple local scopes, exclusions, and grep line selectors are implemented by the built-in native backend.
 
 For `user_bash`, extensions can reuse Pi's local shell backend via `createLocalBashOperations()` (or `createLocalPowerShellOperations()`) instead of reimplementing local process spawning, shell resolution, and process-tree termination.
 

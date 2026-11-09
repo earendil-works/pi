@@ -10,6 +10,7 @@ export function smokeTestCodingAgent(directory, runtime = process.execPath) {
 	const manifest = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
 	const home = mkdtempSync(join(tmpdir(), "pi-coding-agent-smoke-home-"));
 	const entry = join(directory, "coding-agent-smoke.mjs");
+	const searchRoot = mkdtempSync(join(tmpdir(), "pi-coding-agent-smoke-search-"));
 	const env = {
 		PATH: process.env.PATH,
 		HOME: home,
@@ -26,11 +27,17 @@ export function smokeTestCodingAgent(directory, runtime = process.execPath) {
 		if (process.env[name]) env[name] = process.env[name];
 	}
 	try {
+		writeFileSync(join(searchRoot, "source.ts"), "before\nneedle\nafter\n");
 		writeFileSync(entry, `import assert from "node:assert/strict";
-import { createAgentSession, SessionManager, ModelRuntime } from "${codingAgentName}";
+import { createAgentSession, SessionManager, ModelRuntime, createGrepTool, createFindTool } from "${codingAgentName}";
 assert.equal(typeof createAgentSession, "function");
 assert.equal(typeof SessionManager.inMemory, "function");
 assert.equal(typeof ModelRuntime.create, "function");
+process.env.PATH = "";
+const grep = await createGrepTool(${JSON.stringify(searchRoot)}).execute("native-grep", { pattern: "need(?=le)", context: 0 });
+assert.equal(grep.content[0].text, "source.ts:2: needle");
+const find = await createFindTool(${JSON.stringify(searchRoot)}).execute("native-find", { pattern: "*.ts" });
+assert.equal(find.content[0].text, "source.ts");
 `);
 		execFileSync(runtime, [entry], { cwd: directory, env, stdio: ["inherit", "pipe", "pipe"], timeout: 30_000 });
 		for (const cli of new Set([manifest.bin.pi, "dist/cli.js"])) {
@@ -46,6 +53,7 @@ assert.equal(typeof ModelRuntime.create, "function");
 	} finally {
 		rmSync(entry, { force: true });
 		rmSync(home, { recursive: true, force: true });
+		rmSync(searchRoot, { recursive: true, force: true });
 	}
 	console.log(`Coding-agent policy smoke tests passed (${runtime}).`);
 }

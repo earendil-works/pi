@@ -281,7 +281,7 @@ export function printHelp(extensionFlags?: ExtensionFlag[]): void {
 					})
 					.join("\n")}\n`
 			: "";
-	console.log(`${chalk.bold(APP_NAME)} - AI coding assistant with read, bash, edit, write tools
+	console.log(`${chalk.bold(APP_NAME)} - AI coding assistant with read, bash, edit, write, grep, find tools
 
 ${chalk.bold("Usage:")}
   ${APP_NAME} [options] [--] [@files...] [messages...]
@@ -473,8 +473,8 @@ ${chalk.bold("Built-in Tool Names:")}
   powershell - Execute PowerShell commands on Windows
   edit       - Edit files with find/replace
   write      - Write files (creates/overwrites)
-  grep       - Search file contents (read-only, off by default)
-  find       - Find files by glob pattern (read-only, off by default)
+  grep       - Search file contents (read-only)
+  find       - Find files by glob pattern (read-only)
   ls         - List directory contents (read-only, off by default)
 `);
 }

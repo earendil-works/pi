@@ -23,7 +23,7 @@
  *     "provider": "anthropic",
  *     "model": "claude-sonnet-4-5",
  *     "thinkingLevel": "high",
- *     "tools": ["read", "bash", "edit", "write"],
+ *     "tools": ["read", "bash", "edit", "write", "grep", "find"],
  *     "instructions": "You are in IMPLEMENTATION MODE. Your job is to make focused, correct changes.\n\nRules:\n- Keep scope tight. Do exactly what was asked, no more.\n- Read files before editing to understand current state.\n- Make surgical edits. Prefer edit over write for existing files.\n- Explain your reasoning briefly before each change.\n- Run tests or type checks after changes if the project has them (npm test, npm run check, etc.).\n- If you encounter unexpected complexity, STOP and explain the issue rather than hacking around it.\n\nIf no plan exists:\n- Ask clarifying questions before starting.\n- Propose what you'll do and get confirmation for non-trivial changes.\n\nAfter completing changes:\n- Summarize what was done.\n- Note any follow-up work or tests that should be added."
  *   }
  * }
@@ -280,7 +280,7 @@ export default function presetExtension(pi: ExtensionAPI) {
 				pi.setThinkingLevel(originalState.thinkingLevel);
 				pi.setActiveTools(originalState.tools);
 			} else {
-				pi.setActiveTools(["read", "bash", "edit", "write"]);
+				pi.setActiveTools(["read", "bash", "edit", "write", "grep", "find"]);
 			}
 			ctx.ui.notify("Preset cleared, defaults restored", "info");
 			updateStatus(ctx);
@@ -336,7 +336,7 @@ export default function presetExtension(pi: ExtensionAPI) {
 				pi.setThinkingLevel(originalState.thinkingLevel);
 				pi.setActiveTools(originalState.tools);
 			} else {
-				pi.setActiveTools(["read", "bash", "edit", "write"]);
+				pi.setActiveTools(["read", "bash", "edit", "write", "grep", "find"]);
 			}
 			ctx.ui.notify("Preset cleared, defaults restored", "info");
 			updateStatus(ctx);

@@ -15,7 +15,7 @@ import { getTextOutput, invalidArgText, shortenPath, str } from "../render-utils
 import { DEFAULT_MAX_BYTES, formatSize } from "../truncate.ts";
 
 function formatGrepCall(
-	args: { pattern: string; path?: string; glob?: string; limit?: number } | undefined,
+	args: { pattern: string; path?: string; glob?: string; limit?: number; skip?: number } | undefined,
 	theme: Theme,
 ): string {
 	const pattern = str(args?.pattern);
@@ -31,6 +31,7 @@ function formatGrepCall(
 		theme.fg("toolOutput", ` in ${path === null ? invalidArg : path}`);
 	if (glob) text += theme.fg("toolOutput", ` (${glob})`);
 	if (limit !== undefined) text += theme.fg("toolOutput", ` limit ${limit}`);
+	if (args?.skip !== undefined) text += theme.fg("toolOutput", ` skip ${args.skip}`);
 	return text;
 }
 function formatGrepResult(
@@ -58,9 +59,13 @@ function formatGrepResult(
 	const matchLimit = result.details?.matchLimitReached;
 	const truncation = result.details?.truncation;
 	const linesTruncated = result.details?.linesTruncated;
-	if (matchLimit || truncation?.truncated || linesTruncated) {
+	const fileLimit = result.details?.fileLimitReached;
+	const perFileLimit = result.details?.perFileLimitReached;
+	if (matchLimit || fileLimit || perFileLimit || truncation?.truncated || linesTruncated) {
 		const warnings: string[] = [];
 		if (matchLimit) warnings.push(`${matchLimit} matches limit`);
+		if (fileLimit) warnings.push(`${fileLimit} files per page`);
+		if (perFileLimit) warnings.push(`${perFileLimit} matches per file`);
 		if (truncation?.truncated) warnings.push(`${formatSize(truncation.maxBytes ?? DEFAULT_MAX_BYTES)} limit`);
 		if (linesTruncated) warnings.push("some lines truncated");
 		text += `\n${theme.fg("warning", `[Truncated: ${warnings.join(", ")}]`)}`;

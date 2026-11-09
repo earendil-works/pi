@@ -1,0 +1,29 @@
+[package]
+name = "pi-search"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+encoding_rs_io = "=0.1.8"
+globset = "=0.4.21"
+grep-matcher = "=0.1.9"
+grep-pcre2 = "=0.1.10"
+grep-regex = "=0.1.14"
+grep-searcher = "=0.1.17"
+ignore = "=0.4.33"
+napi = { version = "=3.16.1", default-features = false, features = ["napi8", "dyn-symbols"] }
+napi-derive = { version = "=3.7.0", default-features = false, features = ["strict"] }
+pcre2-sys = "=0.2.10"
+regex-syntax = { version = "=0.8.11", default-features = false, features = ["std"] }
+
+[build-dependencies]
+napi-build = "=2.6.0"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

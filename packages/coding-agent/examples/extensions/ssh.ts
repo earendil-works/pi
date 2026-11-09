@@ -3,6 +3,7 @@
  *
  * Demonstrates delegating tool operations to a remote machine via SSH.
  * When --ssh is provided, read/write/edit/bash run on the remote.
+ * Native grep/find are disabled in SSH mode; use bash for remote searches.
  *
  * Usage:
  *   pi -e ./ssh.ts --ssh user@host
@@ -19,6 +20,8 @@ import {
 	type BashOperations,
 	createBashTool,
 	createEditTool,
+	createFindToolDefinition,
+	createGrepToolDefinition,
 	createReadTool,
 	createWriteTool,
 	type EditOperations,
@@ -119,11 +122,37 @@ export default function (pi: ExtensionAPI) {
 	const localWrite = createWriteTool(localCwd);
 	const localEdit = createEditTool(localCwd);
 	const localBash = createBashTool(localCwd);
+	const localGrep = createGrepToolDefinition(localCwd);
+	const localFind = createFindToolDefinition(localCwd);
 
 	// Resolved lazily on session_start (CLI flags not available during factory)
 	let resolvedSsh: { remote: string; remoteCwd: string } | null = null;
 
 	const getSsh = () => resolvedSsh;
+
+	const ensureLocalSearch = () => {
+		if (pi.getFlag("ssh")) {
+			throw new Error("Local grep/find are disabled in SSH mode. Search the remote workspace with bash.");
+		}
+	};
+
+	pi.registerTool({
+		...localGrep,
+		defaultActive: false,
+		async execute(id, params, signal, onUpdate, ctx) {
+			ensureLocalSearch();
+			return localGrep.execute(id, params, signal, onUpdate, ctx);
+		},
+	});
+
+	pi.registerTool({
+		...localFind,
+		defaultActive: false,
+		async execute(id, params, signal, onUpdate, ctx) {
+			ensureLocalSearch();
+			return localFind.execute(id, params, signal, onUpdate, ctx);
+		},
+	});
 
 	pi.registerTool({
 		...localRead,
@@ -185,6 +214,7 @@ export default function (pi: ExtensionAPI) {
 		// Resolve SSH config now that CLI flags are available
 		const arg = pi.getFlag("ssh") as string | undefined;
 		if (arg) {
+			pi.setActiveTools(pi.getActiveTools().filter((name) => name !== "grep" && name !== "find"));
 			if (arg.includes(":")) {
 				const [remote, path] = arg.split(":");
 				resolvedSsh = { remote, remoteCwd: path };
@@ -214,7 +244,9 @@ export default function (pi: ExtensionAPI) {
 				`Current working directory: ${localCwd}`,
 				`Current working directory: ${ssh.remoteCwd} (via SSH: ${ssh.remote})`,
 			);
-			return { systemPrompt: modified };
+			return {
+				systemPrompt: `${modified}\n\nIn SSH mode, use bash for remote content and filename searches. Local grep and find are disabled.`,
+			};
 		}
 	});
 }

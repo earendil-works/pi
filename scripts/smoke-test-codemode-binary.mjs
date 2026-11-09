@@ -40,12 +40,13 @@ async function readRequest(request) {
 
 function toolResultContainsMarker(body) {
 	const payload = JSON.parse(body);
-	return (
-		Array.isArray(payload.messages) &&
-		payload.messages.some(
-			(message) => message?.role === "tool" && JSON.stringify(message.content).includes(WORKER_MARKER),
-		)
+	if (!Array.isArray(payload.messages)) return false;
+	const hasToolOutput = (id, expected) => payload.messages.some(
+		(message) => message?.role === "tool" && message.tool_call_id === id && JSON.stringify(message.content).includes(expected),
 	);
+	return hasToolOutput("call_codemode_smoke", WORKER_MARKER)
+		&& hasToolOutput("call_native_grep_smoke", "native-smoke.ts:2: needle")
+		&& hasToolOutput("call_native_find_smoke", "native-smoke.ts");
 }
 
 async function main() {
@@ -76,6 +77,24 @@ async function main() {
 							function: {
 								name: "codemode",
 								arguments: JSON.stringify({ code: `text("${WORKER_MARKER}")` }),
+							},
+						},
+						{
+							index: 1,
+							id: "call_native_grep_smoke",
+							type: "function",
+							function: {
+								name: "grep",
+								arguments: JSON.stringify({ pattern: "need(?=le)", path: "native-smoke.ts", context: 0 }),
+							},
+						},
+						{
+							index: 2,
+							id: "call_native_find_smoke",
+							type: "function",
+							function: {
+								name: "find",
+								arguments: JSON.stringify({ pattern: "*.ts", path: "." }),
 							},
 						},
 					],
@@ -112,13 +131,14 @@ async function main() {
 			}),
 		);
 
+		await writeFile(join(tempDir, "native-smoke.ts"), "before\nneedle\nafter\n");
 		const piArgs = [
 			"--provider",
 			"codemode-smoke",
 			"--model",
 			"codemode-smoke",
 			"--tools",
-			"codemode",
+			"+codemode",
 			"--print",
 			"--no-session",
 			"--offline",

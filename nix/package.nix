@@ -1,5 +1,6 @@
 {
   autoPatchelfHook,
+  cargo,
   fd,
   fetchurl,
   importNpmLock,
@@ -8,6 +9,8 @@
   makeWrapper,
   nodejs_22,
   ripgrep,
+  rustc,
+  rustPlatform,
   source,
   stdenv,
   wl-clipboard,
@@ -36,9 +39,16 @@ let
 
     npmDeps = importNpmLock { npmRoot = source; };
     npmRebuildFlags = [ "--ignore-scripts" ];
+    cargoRoot = "packages/coding-agent/native/search";
+    cargoDeps = rustPlatform.importCargoLock {
+      lockFile = source + "/packages/coding-agent/native/search/Cargo.lock";
+    };
 
     nativeBuildInputs = [
       nodejs
+      cargo
+      rustc
+      rustPlatform.cargoSetupHook
       importNpmLock.npmConfigHook
     ];
 
@@ -160,6 +170,8 @@ stdenv.mkDerivation {
        }"
     ${nodejs}/bin/node -e \
       "require('$out/lib/pi/node_modules/@silvia-odwyer/photon-node')"
+    ${nodejs}/bin/node ${source}/scripts/smoke-test-native-search.mjs \
+      "$out/lib/pi/node_modules/@earendil-works/pi-coding-agent/native/search/prebuilds/${if stdenv.hostPlatform.isDarwin then "darwin" else "linux"}-${if stdenv.hostPlatform.isAarch64 then "arm64" else "x64"}/pi-search.node"
     runHook postInstallCheck
   '';
 
