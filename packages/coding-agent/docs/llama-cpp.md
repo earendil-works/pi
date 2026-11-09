@@ -23,15 +23,11 @@ See [llama.app](https://llama.app) for other installation methods, including pac
 Start `llama serve` without `--model`, `-m`, or `-hf`. Passing a model starts single-model mode instead of router mode. See the [llama.cpp server guide](https://llama.app/docs/serve#serving-multiple-models-router-mode) for router configuration.
 
 ```bash
-llama serve \
-  --no-models-autoload \
-  -ngl all \
-  -c 32768
+llama serve
 ```
 
-Important options:
+Some options:
 
-- `--no-models-autoload` keeps loading explicit through `/llama`.
 - `-ngl all` offloads all layers to the GPU. Omit it to use automatic GPU offloading.
 - `-c 32768` sets the context size in tokens. Use `-c 0` for the model's full context window, which may require substantially more memory. Context is shared across parallel server slots.
 
