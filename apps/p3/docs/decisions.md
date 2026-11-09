@@ -88,3 +88,9 @@ and its working rules are in `handoff.md`.
   both. Export of one session = its store plus its entries in the metadata store; import writes both back and resolves
   references to instance things (environment, providers). Sessions stay self-contained as a unit; no tagging of
   arbitrary tables, no pending edits. Replaces the split proposed on PR #11951 (comment 6737930304).
+- **Backups, not session sync; one format (owner, 2026-11-09, voice):** no per-session sync and no synced read-only
+  copies elsewhere (a session without its instance, its environments, providers and plugins, is useless; the use case
+  is working with a session, never reading it remotely). Radius offers whole-instance backups (the server store and all
+  session stores together) and restore onto a new machine. The **sync format** of Chord's stores stays the one format
+  for both backups and exports (a single session's export: its store plus its session metadata entries): it encodes
+  every kind of data the core stores hold, plugin data included, and we bet on it.
