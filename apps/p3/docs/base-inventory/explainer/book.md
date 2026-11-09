@@ -1,7 +1,7 @@
 ---
 title: Pi Roam: what the base must enable
 cover: Everything / As a Plugin
-kicker: An explainer · Pi Roam base inventory · 2026-11-09
+kicker: An explainer · Pi Roam base inventory · second edition · 2026-11-09
 subtitle: The smallest set of base pieces with which chat assistants, orchestrators, triage apps, automations, stats, Discord and backups are all plugins
 stats:
   - 200+ | use cases from three independent inventories
@@ -14,7 +14,7 @@ note: |
   discussion on 2026-11-09. Sources: `apps/p3/docs/base-inventory/` (the three reports and `merged.md`),
   `apps/p3/docs/status-2026-11-09.md`, `apps/p3/docs/decisions.md`. Code is illustrative: names and shapes are
   proposals, Durable and Chord APIs are real. Nothing is built.
-colophon: Pi Roam base inventory · explainer, first edition · 2026-11-09
+colophon: Pi Roam base inventory · explainer, second edition (types and worked features) · 2026-11-09
 ---
 
 # Before we begin {.preface}
@@ -91,20 +91,13 @@ of about forty events; Durable already has the principled core. The harness keep
 restrictions possible as plugins.
 
 ```ts
-// plugins/harness/contract.worker.ts: the harness extensions object
-/** Durable extensions as they are: tools, prompt sections, hooks (chains), wraps, tasks; with a phase for ordering. */
-export const Extensions = defineRegistry<readonly HarnessExtension[], ExtensionTable>("harness.extensions", { version: 1 });
-export type HarnessExtension = { readonly extension: Extension; readonly phase?: "security" | "transform" | "observe" };
+// plugins/coding-tools/worker.ts: contributing tools is contributing a Durable extension (full types: chapter VII)
+self.contribute(HarnessExtensions, [{ extension: defineExtension({ name: "coding", tools: [read, write, edit, bash] }) }]);
 
-/** Filters cut what extensions offer before anything runs, per session and conversation. */
-export const Filters = defineRegistry<readonly HarnessFilter[], FilterTable>("harness.filters", { version: 1 });
-export type HarnessFilter = {
-	readonly tools?: (offered: readonly ToolRegistration[], scope: FilterScope) => readonly ToolRegistration[];
-	readonly sections?: (offered: readonly PromptSection[], scope: FilterScope) => readonly PromptSection[];
-	readonly environments?: (offered: readonly EnvironmentOffer[], scope: FilterScope) => readonly EnvironmentOffer[];
-	readonly models?: (offered: readonly ModelOffer[], scope: FilterScope) => readonly ModelOffer[];
-};
-export type FilterScope = { readonly session: string; readonly conversation: ConversationId; readonly metadata: SessionMetadataReader };
+// plugins/discord/worker.ts: a filter is told the session's metadata and the conversation
+self.contribute(HarnessFilters, {
+	tools: (tools, scope) => metadataOf(scope.metadata, ChannelBinding) === undefined ? tools : tools.filter(allowed),
+});
 ```
 
 :::flow wide animate | A tool call through the three shapes: filters decided it was offered; wraps sit around the chain; the chain's hooks run in phase order.
@@ -148,32 +141,30 @@ contributes an extension and maybe a filter, and decides for itself which sessio
 Discord, automations, the orchestrator and triage all start sessions. They call one service:
 
 ```ts
-// plugins/sessions/contract.server.ts: the session service (a required core plugin)
-export const SessionService = local("sessions.service", {
-	version: 1,
-	params: {},
-	members: {
-		/** Idempotent by `key`: two racing first messages from a Discord channel create one session. */
-		create: method(obj({ key: str(), origin: Origin, config: SessionConfig, location: nullable(Location), open: bool() }), SessionRef),
-		configure: method(obj({ session: str(), change: SessionConfigChange })),
-		archive: method(obj({ session: str() })),
-		restore: method(obj({ session: str() })),
-		fork: method(obj({ session: str(), at: opt(EntryRef) }), SessionRef),
-		remove: method(obj({ session: str() })),
-	},
-});
-/** Typed checks before each operation, so permission plugins gate them without the service knowing ACLs. */
-export const SessionAdmissions = defineRegistry<readonly SessionAdmission[], AdmissionTable>("sessions.admissions", { version: 1 });
+// plugins/discord/server.ts: a plugin creates a session (full types: chapter VII)
+const { id } = await sessions.create({
+	actor: BOT_ACTOR,
+	key: `discord:${guild}:${channel}`,                 // idempotent: racing first messages make one session
+	origin: { name: ChannelOrigin.name, value: { guild, channel } },
+	config: { title: `#${name}`, tools: ["conversations", "read"], location: null },
+	open: false,                                         // input held until the owner opens it
+}, ctx);
 ```
+
+Every operation (`create`, `configure`, `open`, `archive`, `restore`, `fork`, `remove`) first asks the
+`SessionAdmissions` registry; a permission plugin contributes a check there, and the service never knows ACLs.
 
 **Where session data lives** (decided today): two places, one rule.
 
 ```ts
 // plugins/discord/contract.ts: a plugin's metadata about a session, defined once like defineState
-export const ChannelBinding = defineSessionMetadata("discord.channel", obj({ guild: str(), channel: str(), open: bool() }));
+export const ChannelBinding = defineSessionMetadata("discord.channel", obj({ guild: str(), channel: str(), reach: arr(str()) }));
 
-// plugins/discord/server.ts: read and written by session id, no worker started
-await metadata.write(ChannelBinding, session, { guild, channel, open: false }, ctx);
+// plugins/discord/server.ts: written by session id, no worker started
+await writeMetadata(metadata, ChannelBinding, id, { guild, channel, reach: [] }, ctx);
+
+// plugins/discord/worker.ts: read from the session's current metadata, followed from the server
+const binding = metadataOf(self.registry(SessionMetadata).value, ChannelBinding);
 ```
 
 - **The session metadata store** on the server: anything about a session needed while its worker is off (title, pin,
@@ -232,6 +223,11 @@ at all for a chat assistant. The base only offers composition:
 - **commands, keybindings and composer extension points**;
 - the PWA manifest and service worker delegated to plugins.
 
+**How a page knows what it may offer.** Selector sheets (tools, model, location) never guess: the harness serves each
+conversation's composed offer, after every filter, as `ConversationOffer { session, conversation }` with the current
+choice ticked and one `choose` method that refuses anything not offered (chapter VII defines it, chapter VIII shows the
+model picker). When a filter changes, every open sheet updates in the same push.
+
 Web and terminal keep separate registries; the terminal is not reduced to the web's shapes, nor the reverse.
 
 # The Rest of the Base {#rest lede="Secrets, platform bindings, ingress, and the agent's typed surface."}
@@ -247,6 +243,522 @@ Web and terminal keep separate registries; the terminal is not reduced to the we
   describe, call), with model-readable descriptions and methods each plugin opts in.
 - **Already there:** Chord's hosts, objects, principals, registries, documents, tables, routines and jobs; the kit's
   files, HTTP routes, sockets and authenticators.
+
+The next chapter defines every type these pieces use; the one after builds four features with them.
+
+# The Types {#types lede="Every contract, registry and helper the pieces need, defined once, file by file, with where each value comes from."}
+
+This chapter defines every type the rest of the book uses. Names are proposals; Chord (`local`, `remote`, `keyed`,
+`defineRegistry`, `defineState`, `self.writable`), Durable (`Extension`, `ToolRegistration`, `PromptSection`,
+`ExecutionEnv`, `defineExtension`, `defineTool`, `hook`, `wrapTool`, `ToolTask`, `GenerationTask`) and pi-ai (`Model`,
+`Models`) are real. Each block says which file it lives in, so it is clear which facets can import it: a plugin's
+`contract.ts` is bundled into all its facets, `contract.server.ts` only into server facets, `contract.worker.ts` only
+into worker facets, `contract.web.ts` only into page facets.
+
+## Session metadata (sessions plugin)
+
+A metadata key is a token a plugin defines once, like `defineState`. The server stores one JSON value per key and
+session; the schema is checked on every write (the trust boundary), so reads are typed without a second check.
+
+```ts
+// plugins/sessions/contract.ts: shared by every facet
+/** A typed key of the session metadata store, owned by the plugin that defines it. */
+export type SessionMetadataKey<T extends JsonValue> = {
+	readonly name: string;                 // written once, e.g. "discord.channel"
+	readonly schema: Schema<T>;
+	readonly "~value"?: T;                 // type only
+};
+export function defineSessionMetadata<S extends Schema>(name: string, schema: S): SessionMetadataKey<Static<S>>;
+
+/** All metadata of one session as it crosses the wire: key name -> value (erased; read it with `metadataOf`). */
+export const MetadataSnapshot = map(unknown());
+export type MetadataSnapshot = Static<typeof MetadataSnapshot>;
+
+/** The value of `key` in `snapshot`, typed by the key; undefined when absent. Validated when it was written. */
+export function metadataOf<T extends JsonValue>(snapshot: MetadataSnapshot, key: SessionMetadataKey<T>): T | undefined;
+```
+
+```ts
+// plugins/sessions/contract.server.ts: server facets only
+/** The session metadata store (server, host lifetime). */
+export const SessionMetadataStore = local("sessions.metadata", {
+	version: 1,
+	params: {},
+	members: {
+		/** Every session's metadata, by session id; pinned with `at(session)` or watched with `watch(session, ctx)`. */
+		bySession: keyed(MetadataSnapshot),
+		/** Writes one key's value for one session; validates `value` with the key's registered schema. */
+		write: method(obj({ session: str(), key: str(), value: unknown() })),
+		/** Removes one key's value for one session. */
+		clear: method(obj({ session: str(), key: str() })),
+	},
+});
+/** Registry: each plugin registers its metadata keys, so the store can validate writes and export them. */
+export const SessionMetadataKeys = defineRegistry<readonly SessionMetadataKey<JsonValue>[], KeyIndex>("sessions.metadata-keys", { version: 1 });
+
+/** Typed helpers over the store for server code. */
+export function writeMetadata<T extends JsonValue>(store: Ref<typeof SessionMetadataStore>, key: SessionMetadataKey<T>, session: string, value: T, ctx: Ctx): Promise<void>;
+export function readMetadata<T extends JsonValue>(store: Ref<typeof SessionMetadataStore>, key: SessionMetadataKey<T>, session: string, ctx: Ctx): Promise<T | undefined>;
+```
+
+```ts
+// plugins/sessions/contract.ts: the worker's view of its own session's metadata
+/** Served on the server; a session worker holds it with params {} (its principal names the session). */
+export const SessionMetadataView = remote("sessions.metadata-view", {
+	version: 1,
+	params: {},
+	hostAddress: () => Server(),
+	variants: {
+		worker: {
+			state: { metadata: MetadataSnapshot },
+			methods: { write: method(obj({ key: str(), value: unknown() })) },   // one writer: the server's store
+		},
+	},
+});
+```
+
+**Where the worker's snapshot comes from:** the sessions plugin's worker facet holds `SessionMetadataView` in a
+host-lifetime object and contributes its `metadata` member to a worker registry, `SessionMetadata`, whose composed value
+is the current `MetadataSnapshot`. Any worker code reads it with `self.registry(SessionMetadata)` and `metadataOf`.
+That is the snapshot filters receive below; there is no separate reader type.
+
+```ts
+// plugins/sessions/contract.worker.ts
+/** The current metadata of this worker's session, followed from the server. */
+export const SessionMetadata = defineRegistry<Watchable<MetadataSnapshot>, MetadataSnapshot>("sessions.metadata-current", { version: 1 });
+```
+
+## The session service (sessions plugin)
+
+```ts
+// plugins/sessions/contract.ts
+/** Who made a session: a typed origin a plugin defines (Discord channel, automation, Home), erased on the wire. */
+export type SessionOrigin<T extends JsonValue> = { readonly name: string; readonly schema: Schema<T> };
+export function defineSessionOrigin<S extends Schema>(name: string, schema: S): SessionOrigin<Static<S>>;
+export const OriginData = obj({ name: str(), value: unknown() });
+
+/** What a session is configured with when created or reconfigured; every field optional on configure. */
+export const SessionConfig = obj({
+	title: str(),
+	model: opt(ModelRef),                                  // provider + id, from the offers (below)
+	thinkingLevel: opt(ThinkingLevel),
+	tools: opt(arr(str())),                                // tool names chosen from the offers; absent: all offered
+	location: nullable(obj({ environment: str(), cwd: str() })),   // null: no machine
+	instructions: opt(str()),
+});
+/** A change on configure: absent fields stay. */
+export const SessionConfigChange = obj({
+	title: opt(str()), model: opt(ModelRef), thinkingLevel: opt(ThinkingLevel), tools: opt(arr(str())),
+	location: opt(nullable(obj({ environment: str(), cwd: str() }))), instructions: opt(str()),
+});
+export const SessionRef = obj({ id: str() });
+```
+
+```ts
+// plugins/sessions/contract.server.ts
+export const SessionService = local("sessions.service", {
+	version: 1,
+	params: {},
+	members: {
+		/** Creates a session, or returns the one already created under `key` (idempotent). `open: false` holds input. */
+		create: method(obj({ actor: str(), key: str(), origin: OriginData, config: SessionConfig, open: bool() }), SessionRef),
+		configure: method(obj({ actor: str(), session: str(), change: SessionConfigChange })),
+		open: method(obj({ actor: str(), session: str() })),          // starts accepting input
+		archive: method(obj({ actor: str(), session: str() })),
+		restore: method(obj({ actor: str(), session: str() })),
+		fork: method(obj({ actor: str(), session: str(), at: opt(EntryId) }), SessionRef),
+		remove: method(obj({ actor: str(), session: str() })),
+	},
+});
+
+/** A check before an operation; every contribution must allow. `actor` is the user the calling plugin acts for. */
+export type Decision = { readonly kind: "allow" } | { readonly kind: "deny"; readonly reason: MessageData };
+export type SessionAdmission = {
+	readonly create?: (request: { actor: UserId; origin: Static<typeof OriginData>; config: Static<typeof SessionConfig> }) => Decision;
+	readonly configure?: (request: { actor: UserId; session: string; change: Static<typeof SessionConfigChange> }) => Decision;
+	readonly archive?: (request: { actor: UserId; session: string }) => Decision;
+	readonly fork?: (request: { actor: UserId; session: string }) => Decision;
+	readonly remove?: (request: { actor: UserId; session: string }) => Decision;
+};
+export const SessionAdmissions = defineRegistry<SessionAdmission, readonly SessionAdmission[]>("sessions.admissions", { version: 1 });
+```
+
+`actor` is data because a local call runs as the server (Chord §4): a plugin passes the link-stamped principal of its own
+user-facing method, or its own service identity for automated work. Pages call the sessions plugin's per-user remote view,
+which stamps the actor itself.
+
+## The harness (harness plugin, worker)
+
+```ts
+// plugins/harness/contract.worker.ts
+/** Where in the order an extension's hooks and wraps run. */
+export type Phase = "security" | "transform" | "observe";
+
+/** A Durable extension as plugins contribute it, with its phase (default "transform"). */
+export type HarnessExtension = { readonly extension: Extension; readonly phase?: Phase };
+export const HarnessExtensions = defineRegistry<
+	readonly HarnessExtension[] | Watchable<readonly HarnessExtension[]>, readonly HarnessExtension[]
+>("harness.extensions", { version: 1 });
+
+/** What a filter is told: the session's metadata and the conversation it filters for. */
+export type FilterScope = {
+	readonly metadata: MetadataSnapshot;                        // from SessionMetadata (above)
+	readonly conversation: {
+		readonly id: ConversationId;
+		readonly role: "main" | "subagent" | "one-shot";
+		readonly parent?: ConversationId;
+	};
+};
+
+/** Cuts what extensions and providers offer; synchronous and pure over its arguments; all filters apply in turn. */
+export type HarnessFilter = {
+	readonly tools?: (tools: readonly ToolRegistration[], scope: FilterScope) => readonly ToolRegistration[];
+	readonly sections?: (sections: readonly PromptSection[], scope: FilterScope) => readonly PromptSection[];
+	readonly models?: (models: readonly OfferedModel[], scope: FilterScope) => readonly OfferedModel[];
+	readonly environments?: (environments: readonly OfferedEnvironment[], scope: FilterScope) => readonly OfferedEnvironment[];
+};
+export const HarnessFilters = defineRegistry<HarnessFilter, readonly HarnessFilter[]>("harness.filters", { version: 1 });
+
+/** Model providers from plugins; the harness builds Durable's `models` from them. */
+export type ModelProviderContribution = { readonly id: string; readonly label: MessageData; readonly models: Models };
+export const ModelProviders = defineRegistry<
+	ModelProviderContribution | Watchable<ModelProviderContribution>, readonly ModelProviderContribution[]
+>("harness.model-providers", { version: 1 });
+export type OfferedModel = { readonly provider: string; readonly id: string; readonly label: string; readonly model: Model<Api> };
+
+/** Environment kinds from plugins; the harness builds Durable's `env` from them. */
+export type EnvironmentProvider = {
+	readonly kind: string;                                    // e.g. "envs.ssh", written once in the plugin's contract
+	readonly offers: Watchable<readonly OfferedEnvironment[]>;
+	resolve(id: string, cwd: string, context: Context): Promise<ExecutionEnv | undefined>;
+};
+export type OfferedEnvironment = { readonly id: string; readonly label: string; readonly kind: string; readonly capabilities: readonly ("shell" | "files" | "pty")[] };
+export const EnvironmentProviders = defineRegistry<EnvironmentProvider, readonly EnvironmentProvider[]>("harness.environments", { version: 1 });
+```
+
+How the harness composes, once per change of any registry or of the metadata:
+
+1. Install every `HarnessExtension` in Durable's registry, sorted by phase (security, transform, observe), and select all
+   of them in every conversation; a conversation's own choice narrows only `AgentState.tools`.
+2. For each conversation, run the filters over the installed tools and sections, the providers' models and the
+   providers' environments, in contributor order; the result is what the conversation is **offered**.
+3. Give Durable `models` that only resolve offered models and `env` that only resolves offered environments; a call to
+   a tool that is not offered is refused at dispatch (nested and code mode calls included).
+
+## What is offered, for the UI (harness plugin)
+
+The UI never guesses what exists: the harness serves the composed offer per conversation, so a page can show selector
+sheets (tools, model, location) and change the choice through one method that validates against the same offer.
+
+```ts
+// plugins/harness/contract.ts: shared with the page
+export const OfferedTool = obj({ name: str(), label: str(), description: str(), plugin: str(), chosen: bool() });
+export const OfferedModelInfo = obj({ provider: str(), id: str(), label: str(), chosen: bool() });
+export const OfferedEnvironmentInfo = obj({ id: str(), label: str(), kind: str(), chosen: bool() });
+
+/** One conversation's offer and choice; held by pages through the server, served by the session's worker. */
+export const ConversationOffer = remote("harness.offer", {
+	version: 1,
+	params: { session: str(), conversation: int() },
+	hostAddress: ({ session }) => Session({ id: session }),
+	variants: {
+		user: {
+			state: {
+				tools: arr(OfferedTool),
+				models: arr(OfferedModelInfo),
+				environments: arr(OfferedEnvironmentInfo),
+				cwd: nullable(str()),
+			},
+			methods: {
+				/** Changes the conversation's choice; refused when a name is not offered (a filter removed it). */
+				choose: method(obj({ tools: opt(arr(str())), model: opt(ModelRef), environment: opt(nullable(obj({ id: str(), cwd: str() }))) })),
+			},
+		},
+	},
+});
+```
+
+The state is a derive over the composed offer and the conversation's Durable agent state, so a filter change (Discord
+locking the channel down) updates every open selector sheet at once.
+
+## Questions (questions plugin, core)
+
+```ts
+// plugins/questions/contract.ts
+/** A kind of question, defined once by the plugin that asks it. */
+export type QuestionKind<P extends JsonValue, A extends JsonValue> = {
+	readonly name: string; readonly payload: Schema<P>; readonly answer: Schema<A>;
+};
+export function defineQuestion<P extends Schema, A extends Schema>(name: string, shape: { payload: P; answer: A }): QuestionKind<Static<P>, Static<A>>;
+
+/** An open question as the server index holds it (erased; render it with the kind's renderers). */
+export const OpenQuestion = obj({
+	id: str(),                       // "<session>/<taskId>/<signal key>"
+	session: str(), conversation: int(),
+	kind: str(), payload: unknown(), summary: str(),
+	asked: num(), until: nullable(num()),
+});
+
+/** Per user: the open questions of every session the user may see; `answer` validates with the kind's answer schema. */
+export const Questions = remote("questions.open", {
+	version: 1,
+	params: {},
+	hostAddress: () => Server(),
+	variants: { user: { state: { open: arr(OpenQuestion) }, methods: { answer: method(obj({ id: str(), answer: unknown() })) } } },
+});
+
+// plugins/questions/contract.worker.ts
+/**
+ * Inside a tool's execute: suspends the tool until the question is answered (or `until` passes), using Durable's
+ * suspendable work; on resume returns the typed answer, or "timeout".
+ */
+export function ask<P extends JsonValue, A extends JsonValue>(
+	api: ToolExecutionApi, kind: QuestionKind<P, A>, payload: P, options?: { until?: number; summary?: string },
+): Suspension | { readonly answered: A } | { readonly timeout: true };
+```
+
+The questions plugin's worker part watches the task graph for suspended tasks whose `request` names a question kind and
+pushes them to the server index; `Questions.answer` routes to the session's worker (starting it), which calls
+`Harness.signal(task, key, answer)`.
+
+## Page composition (presentation plugin, core)
+
+```ts
+// plugins/presentation/contract.web.ts
+/** A kind of thing pages can route to and render: a name written once and its typed params. */
+export type ThingKind<P extends Record<string, string | number>> = { readonly name: string; readonly "~params"?: P };
+export function defineThingKind<P extends Record<string, string | number>>(name: string): ThingKind<P>;
+export type ThingRef = { readonly kind: string; readonly params: Readonly<Record<string, string | number>> };
+export function thing<P extends Record<string, string | number>>(kind: ThingKind<P>, params: P): ThingRef;
+
+/** A place things are drawn, with the props its views get. */
+export type Form<Props> = { readonly name: string; readonly "~props"?: Props };
+export const Row: Form<{ readonly density: "compact" | "comfortable" }>;
+export const Card: Form<Record<never, never>>;
+export const Detail: Form<Record<never, never>>;
+
+export type View = { readonly kind: string; readonly form: string; readonly Component: ComponentType<{ readonly thing: ThingRef } & object> };
+export function view<P extends Record<string, string | number>, Props>(kind: ThingKind<P>, form: Form<Props>, Component: ComponentType<{ params: P } & Props>): View;
+export const Views = defineRegistry<readonly View[], ViewIndex>("presentation.views", { version: 1 });
+
+/** Renders `thing` in `form` with the registered view, else the generic fallback. */
+export function Present<Props>(props: { thing: ThingRef; form: Form<Props> } & Props): ReactElement;
+/** Moves the page's route to `thing` (deep-linkable). */
+export function useNavigate(): (thing: ThingRef) => void;
+
+export type Layout = { readonly name: string; readonly label: MessageData; readonly Root: ComponentType };
+export const Layouts = defineRegistry<readonly Layout[], LayoutIndex>("presentation.layouts", { version: 1 });
+```
+
+Question kinds are thing kinds too (`thing(QuestionThing, { id })`), so their renderers are ordinary views per form.
+
+# Building Features {#features lede="Four features end to end with the types above: a Discord channel session, an approval, usage stats, and a model picker."}
+
+Each feature is an ordinary plugin: a `contract.ts`, and the facets it needs. Nothing below touches the base.
+
+## A session per Discord channel, locked down
+
+What it does: the first message from a channel creates one session from a template, closed until the owner opens it;
+the session only offers the conversation tool and file reading, and the conversation tool may only reach sessions
+the owner marked for that channel.
+
+```ts
+// plugins/discord/contract.ts
+export const ChannelBinding = defineSessionMetadata("discord.channel", obj({
+	guild: str(), channel: str(),
+	reach: arr(str()),                          // session ids the conversation tool may reach
+}));
+export const ChannelOrigin = defineSessionOrigin("discord.channel", obj({ guild: str(), channel: str() }));
+const ALLOWED_TOOLS = ["conversations", "read"];   // tool names this policy keeps
+```
+
+```ts
+// plugins/discord/server.ts
+export default defineFacet((host, self) => {
+	self.contribute(SessionMetadataKeys, [ChannelBinding]);
+	host.serve(DiscordBridge, (_params, self) => {
+		const sessions = self.get(SessionService, {});
+		const metadata = self.get(SessionMetadataStore, {});
+		const bot = self.open((ctx) => connectBot(ctx), (b) => b.close());
+		self.onLive(async (ctx) => {
+			for await (const message of bot.value.messages(ctx)) {
+				// Idempotent by key: racing first messages from one channel create one session.
+				const { id } = await sessions.create({
+					actor: BOT_ACTOR,
+					key: `discord:${message.guild}:${message.channel}`,
+					origin: { name: ChannelOrigin.name, value: { guild: message.guild, channel: message.channel } },
+					config: { title: `#${message.channelName}`, tools: ALLOWED_TOOLS, location: null },
+					open: false,                                    // held until the owner opens it
+				}, ctx);
+				if ((await readMetadata(metadata, ChannelBinding, id, ctx)) === undefined)
+					await writeMetadata(metadata, ChannelBinding, id, { guild: message.guild, channel: message.channel, reach: [] }, ctx);
+				await deliver(id, message, ctx);                    // through the one input path; queued while closed
+			}
+		});
+		return {};
+	});
+});
+```
+
+```ts
+// plugins/discord/worker.ts
+export default defineFacet((host, self) => {
+	// A filter: sessions bound to a channel are offered only the allowed tools; other sessions are untouched.
+	self.contribute(HarnessFilters, {
+		tools: (tools, scope) => metadataOf(scope.metadata, ChannelBinding) === undefined
+			? tools
+			: tools.filter((tool) => ALLOWED_TOOLS.includes(tool.name)),
+	});
+	// A security hook: the conversation tool may only reach the sessions marked for this channel.
+	host.serve(DiscordPolicy, (_params, self) => {
+		const metadata = self.registry(SessionMetadata);
+		const extension = defineExtension({
+			name: "discord.policy",
+			hooks: [hook(ToolTask, {
+				beforeTool: (call) => {
+					const binding = metadataOf(metadata.value, ChannelBinding);
+					if (binding === undefined || call.name !== "conversations") return undefined;
+					const to = (call.arguments as { to?: string }).to;     // the conversations tool's typed args (its contract)
+					return to === undefined || binding.reach.includes(to) ? undefined : { block: "not reachable from this channel" };
+				},
+			})],
+		});
+		self.contribute(HarnessExtensions, [{ extension, phase: "security" }]);
+		return {};
+	});
+});
+```
+
+The owner opens the session from its detail view (`SessionService.open` through the sessions plugin's user view) and
+ticks reachable sessions in a sheet the Discord plugin contributes as a `Detail` panel, which writes `ChannelBinding`
+through the store. Every change reaches the filter and the hook through `SessionMetadata`: no restart, no reload.
+
+## An approval before bash
+
+What it does: before bash runs a command that matches a list, the session asks the owner; the worker may stop while
+waiting; the answer arrives from any device; denial returns an error to the agent.
+
+```ts
+// plugins/approvals/contract.ts
+export const ApproveCommand = defineQuestion("approvals.command", {
+	payload: obj({ command: str() }),
+	answer: union([obj({ kind: lit("allow") }), obj({ kind: lit("deny"), reason: opt(str()) })]),
+});
+```
+
+```ts
+// plugins/approvals/worker.ts
+export default defineFacet((host, self) => {
+	const extension = defineExtension({
+		name: "approvals.bash",
+		// A Durable wrap targets a tool by name; coding-tools exports BASH_TOOL in its contract.
+		wraps: [{ tool: BASH_TOOL, wrap: (bash) => ({
+			...bash,
+			execute: async (args, api, context) => {
+				if (!RISKY.some((pattern) => pattern.test(args.command))) return bash.execute(args, api, context);
+				const asked = ask(api, ApproveCommand, { command: args.command }, { summary: `Run: ${args.command}` });
+				if ("suspend" in asked) return asked;                       // the tool task suspends; no process needed
+				if ("timeout" in asked || asked.answered.kind === "deny")
+					return { output: [{ type: "text", text: "The owner did not approve this command." }], isError: true };
+				return bash.execute(args, api, context);
+			},
+		}) }],
+	});
+	self.contribute(HarnessExtensions, [{ extension, phase: "security" }]);
+});
+```
+
+```tsx
+// plugins/approvals/web.tsx: how the question looks, per form; any page that lists questions uses these
+self.contribute(Views, [
+	view(QuestionThing, Card, ({ params }) => <ApprovalCard id={params.id} />),       // in the transcript
+	view(QuestionThing, Row, ({ params }) => <ApprovalRow id={params.id} />),         // in an inbox plugin's list
+]);
+function ApprovalCard({ id }: { id: string }) {
+	const questions = useHold(Questions, {});
+	const open = useWatch(questions.open)?.find((q) => q.id === id);
+	if (open === undefined) return null;
+	return <Card title={open.summary}>
+		<Button onClick={(ctx) => questions.answer({ id, answer: { kind: "allow" } }, ctx)}>Allow</Button>
+		<Button onClick={(ctx) => questions.answer({ id, answer: { kind: "deny" } }, ctx)}>Deny</Button>
+	</Card>;
+}
+```
+
+## Usage statistics across sessions
+
+What it does: tokens and cost per user and day, without starting idle workers to show the page.
+
+```ts
+// plugins/stats/contract.ts
+export const DayUsage = obj({ day: str(), tokens: int(), costMicros: int(), turns: int() });
+export const StatsFeed = remote("stats.feed", {
+	version: 1, params: {}, hostAddress: () => Server(),
+	variants: { worker: { methods: { add: method(obj({ day: str(), tokens: int(), costMicros: int(), turns: int(), through: str() })) } } },
+});
+export const MyUsage = remote("stats.mine", {
+	version: 1, params: {}, hostAddress: () => Server(),
+	variants: { user: { state: { days: arr(DayUsage) } } },
+});
+```
+
+```ts
+// plugins/stats/worker.ts: an observe-phase hook; the response's usage, pushed as a delta
+host.serve(UsageReporter, (_params, self) => {
+	const feed = self.get(StatsFeed, {});
+	const extension = defineExtension({
+		name: "stats.usage",
+		hooks: [hook(GenerationTask, {
+			afterResponse: async (message, api, context) => {
+				await chord((ctx) => feed.add({
+					day: today(), tokens: message.usage.totalTokens, costMicros: Math.round(message.usage.cost.total * 1e6),
+					turns: 1, through: `${api.taskId}`,                  // the server ignores a delta it has seen
+				}, ctx), context);
+			},
+		})],
+	});
+	self.contribute(HarnessExtensions, [{ extension, phase: "observe" }]);
+	return {};
+});
+```
+
+```ts
+// plugins/stats/server.ts: one row per user and day, one transaction per delta
+const Days = defineTable("stats.days", { version: 1, columns: { user: str(), day: str(), tokens: int(), costMicros: int(), turns: int() }, key: ["user", "day"] });
+host.serve(StatsFeed, (_params, principal, self) => {
+	const store = self.get(StatsStore, {});
+	if (principal.kind !== "worker") throw forbidden("session workers only");
+	return { variant: "worker", members: { add: (delta, ctx) => store.add({ session: principal.session, ...delta }, ctx) } };
+});
+```
+
+The page holds `MyUsage` and draws a chart. A budget plugin would be the same hook in the security phase, refusing
+the next request through `beforeRequest` once the day's cost passes a limit the owner set in its settings.
+
+## A model picker sheet
+
+What it does: a sheet listing the models this conversation is offered (after every filter), the current one ticked;
+choosing one changes the conversation.
+
+```tsx
+// plugins/chat/web.tsx (or any plugin's)
+function ModelSheet({ session, conversation }: { session: string; conversation: number }) {
+	const offer = useHold(ConversationOffer, { session, conversation });
+	const models = useWatch(offer.models) ?? [];
+	return <Sheet title={t("model")}>
+		{models.map((m) => (
+			<SheetRow key={`${m.provider}/${m.id}`} checked={m.chosen}
+				onSelect={(ctx) => offer.choose({ model: { provider: m.provider, modelId: m.id } }, ctx)}>
+				{m.label}
+			</SheetRow>
+		))}
+	</Sheet>;
+}
+```
+
+The tool and location sheets read `offer.tools` and `offer.environments` the same way. When the Discord filter removes
+a tool, it disappears from the sheet in the same push; `choose` refuses a name that is no longer offered, so a stale
+sheet cannot add it back.
 
 # Three Tiers {#tiers lede="What is base code, what is a reloadable core plugin, and what is an ordinary plugin."}
 
