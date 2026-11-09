@@ -90,15 +90,34 @@ Everything the agent gets comes from the harness, and every restriction on it to
 of about forty events; Durable already has the principled core. The harness keeps Durable's model and adds what makes
 restrictions possible as plugins.
 
-```ts
-// plugins/coding-tools/worker.ts: contributing tools is contributing a Durable extension (full types: chapter VII)
-self.contribute(HarnessExtensions, [{ extension: defineExtension({ name: "coding", tools: [read, write, edit, bash] }) }]);
+Contributing tools is contributing a Durable extension, as in p2:
 
-// plugins/discord/worker.ts: a filter is told the session's metadata and the conversation
+```ts
+// plugins/coding-tools/worker.ts
+self.contribute(HarnessExtensions, [{ extension: defineExtension({ name: "coding", tools: [read, write, edit, bash] }) }]);
+```
+
+A filter is a function the harness calls when it computes what a conversation is offered. It gets the offered items
+and a **scope**: the session's current metadata (every key, followed live from the server's metadata store) and the
+conversation it computes for. A plugin finds its own data in the metadata through a key it defined once:
+
+```ts
+// plugins/discord/contract.ts: Discord's record in the session metadata store, "this session belongs to a channel"
+export const ChannelBinding = defineSessionMetadata("discord.channel", obj({ guild: str(), channel: str(), reach: arr(str()) }));
+
+// plugins/discord/worker.ts
+const ALLOWED = new Set(["conversations", "read"]);
 self.contribute(HarnessFilters, {
-	tools: (tools, scope) => metadataOf(scope.metadata, ChannelBinding) === undefined ? tools : tools.filter(allowed),
+	// scope: { metadata: the session's metadata, conversation: { id, role: "main" | "subagent" | "one-shot", parent? } }
+	tools: (tools, scope) => {
+		const binding = metadataOf(scope.metadata, ChannelBinding);   // typed by the key; undefined: not a Discord session
+		return binding === undefined ? tools : tools.filter((tool) => ALLOWED.has(tool.name));
+	},
 });
 ```
+
+Chapter VII defines every type used here (`HarnessExtensions`, `HarnessFilters`, `FilterScope`,
+`defineSessionMetadata`, `metadataOf`).
 
 :::flow wide animate | A tool call through the three shapes: filters decided it was offered; wraps sit around the chain; the chain's hooks run in phase order.
 row "Before anything runs" blue
