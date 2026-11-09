@@ -2,6 +2,7 @@ import type { Context } from "@earendil-works/chord/context";
 import { withAbortSignal, withoutAbortSignal } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
 import type { Models } from "@earendil-works/pi-ai";
+import { cleanupSessionResources } from "@earendil-works/pi-ai/session-resources";
 import {
 	type ClientIdentity,
 	mergeClientIdentity,
@@ -421,9 +422,19 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		return this.#tasks.membershipKeys(tx);
 	}
 
-	/** Signal and join task invocations after the close listeners and before Storage closes; writes no task outcome. */
+	/** Join task invocations before releasing provider resources, so none close while in use or outlive the Harness. */
 	protected override beforeClose(): Promise<void> {
-		return this.#tasks.join();
+		const joined = this.#tasks.join();
+		if (this.#tasks.providerSessionIds.size === 0) return joined;
+		return joined.then(() => {
+			for (const sessionId of this.#tasks.providerSessionIds) {
+				contained(
+					() => cleanupSessionResources(sessionId),
+					(error) => this.#report(error, { kind: "host_error", callback: "models" }),
+				);
+			}
+			this.#tasks.providerSessionIds.clear();
+		});
 	}
 
 	async #create(target: CreateTarget, options: CreateOptions, context: Context): Promise<Conversation> {
