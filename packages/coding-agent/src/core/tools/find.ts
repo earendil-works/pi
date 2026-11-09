@@ -218,12 +218,15 @@ export function createFindToolDefinition(
 						}
 						// fd before 10.5.1 never matches --full-path globs on Windows, and workarounds for that
 						// break on fd 10.5.1 (sharkdp/fd#2067). pi cannot rely on either fd version, so on
-						// Windows fd lists every entry and minimatch matches path patterns. Like fd's smart
-						// case, an all-lowercase pattern matches case-insensitively.
+						// Windows fd lists every entry and minimatch matches path patterns. The options keep
+						// fd's glob behavior: `*` matches dotfiles, `+(a|b)` is literal, and an all-lowercase
+						// pattern matches case-insensitively (smart case). A trailing '/**' becomes '/**/*'
+						// because minimatch's 'src/**' also matches 'src' itself and fd's does not.
 						const windowsPathMatcher =
 							process.platform === "win32" && isPathPattern
-								? new Minimatch(effectivePattern, {
+								? new Minimatch(effectivePattern.replace(/\/\*\*$/, "/**/*"), {
 										dot: true,
+										noext: true,
 										nocase: effectivePattern === effectivePattern.toLowerCase(),
 									})
 								: undefined;

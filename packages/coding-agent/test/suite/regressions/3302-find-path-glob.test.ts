@@ -62,6 +62,8 @@ describe("issue #3302 find returns no results for path-based glob patterns", () 
 		// Matches files (and possibly directories) under the subtree. Assert the two files are present.
 		expect(files).toContain("some/parent/child/file.ext");
 		expect(files).toContain("some/parent/child/test.spec.ts");
+		// Like fd's glob, 'dir/**' matches entries below 'dir', not 'dir' itself.
+		expect(files).not.toContain("some/parent/child/");
 	});
 
 	it("leading ** wildcard with path segments matches", async () => {
