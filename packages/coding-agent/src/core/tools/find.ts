@@ -1,10 +1,10 @@
 import { createInterface } from "node:readline";
 import { spawn } from "child_process";
+import { Minimatch } from "minimatch";
 import path from "path";
 import { type Static, Type } from "typebox";
 import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
-import { globToFullPathRegex } from "./find-glob-regex.ts";
 import { pathExists, resolveToCwd } from "./path-utils.ts";
 import { findRenderers } from "./renderers/find.ts";
 import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -200,8 +200,6 @@ export function createFindToolDefinition(
 							current = parent;
 						}
 						if (!insideGitRepo) args.push("--no-require-git");
-						// One result past the limit tells "exactly N matches" apart from "more than N" (#7121).
-						args.push("--max-results", String(effectiveLimit + 1));
 
 						// fd --glob matches against the basename unless --full-path is set; in --full-path
 						// mode it matches against the absolute candidate path, so a path-containing
@@ -209,24 +207,34 @@ export function createFindToolDefinition(
 						// On Windows `\` is a path separator, so native patterns like 'src\**\*.ts' are
 						// normalized to '/' (#9262). On POSIX `\` stays a glob escape character.
 						let effectivePattern = process.platform === "win32" ? pattern.replaceAll("\\", "/") : pattern;
-						if (!effectivePattern.includes("/")) {
-							args.push("--glob");
-						} else {
-							args.push("--full-path");
-							if (
-								!effectivePattern.startsWith("/") &&
-								!effectivePattern.startsWith("**/") &&
-								effectivePattern !== "**"
-							) {
-								effectivePattern = `**/${effectivePattern}`;
-							}
-							// fd's --full-path globs on Windows behave differently before and after fd 10.5.1,
-							// and pi cannot rely on either version, so Windows path patterns use an fd regex
-							// (fd's default pattern mode) instead.
-							if (process.platform === "win32") effectivePattern = globToFullPathRegex(effectivePattern);
-							else args.push("--glob");
+						const isPathPattern = effectivePattern.includes("/");
+						if (
+							isPathPattern &&
+							!effectivePattern.startsWith("/") &&
+							!effectivePattern.startsWith("**/") &&
+							effectivePattern !== "**"
+						) {
+							effectivePattern = `**/${effectivePattern}`;
 						}
-						args.push("--", effectivePattern, searchPath);
+						// fd before 10.5.1 never matches --full-path globs on Windows, and workarounds for that
+						// break on fd 10.5.1 (sharkdp/fd#2067). pi cannot rely on either fd version, so on
+						// Windows fd lists every entry and minimatch matches path patterns. Like fd's smart
+						// case, an all-lowercase pattern matches case-insensitively.
+						const windowsPathMatcher =
+							process.platform === "win32" && isPathPattern
+								? new Minimatch(effectivePattern, {
+										dot: true,
+										nocase: effectivePattern === effectivePattern.toLowerCase(),
+									})
+								: undefined;
+						if (windowsPathMatcher) {
+							args.push("--", "", searchPath);
+						} else {
+							// One result past the limit tells "exactly N matches" apart from "more than N" (#7121).
+							args.push("--glob", "--max-results", String(effectiveLimit + 1));
+							if (isPathPattern) args.push("--full-path");
+							args.push("--", effectivePattern, searchPath);
+						}
 
 						const child = spawn(fdPath, args, { stdio: ["ignore", "pipe", "pipe"] });
 						const rl = createInterface({ input: child.stdout });
@@ -256,8 +264,11 @@ export function createFindToolDefinition(
 						rl.on("line", (rawLine) => {
 							const line = rawLine.replace(/\r$/, "").trim();
 							if (!line) return;
+							if (windowsPathMatcher && !windowsPathMatcher.match(line)) return;
 							if (resultCount === effectiveLimit) {
 								resultLimitReached = true;
+								// Without --max-results, fd keeps listing after the limit.
+								if (windowsPathMatcher) stopChild?.();
 								return;
 							}
 							const result = relativizeFindResultPath(line, searchPath);
