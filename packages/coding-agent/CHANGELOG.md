@@ -13,7 +13,7 @@
 
 ### Breaking Changes
 
-- Removed `readFile` from `GrepOperations`. The grep tool now takes context lines from ripgrep and no longer reads matched files itself. To search a remote system, override grep's `execute()`; see [Remote Execution](docs/extensions.md#remote-execution) ([#9276](https://github.com/earendil-works/pi/issues/9276))
+- Custom `GrepOperations.readFile` callbacks are no longer called for context lines. The field remains accepted as optional and deprecated so existing integrations still compile. The grep tool now takes context lines from ripgrep and no longer reads matched files itself. To search a remote system, override grep's `execute()`; see [Remote Execution](docs/extensions.md#remote-execution) ([#9276](https://github.com/earendil-works/pi/issues/9276))
 - OpenAI-compatible models no longer send `"tools": []` when all tools are disabled in a session that has used tools; the field is omitted. This fixes 400 errors (`tools must not be an empty array`) from vLLM 0.20+, also behind LiteLLM. If your proxy requires `tools` once the history has tool calls, such as older LiteLLM versions in front of Anthropic, set `compat.requiresToolsWithToolHistory: true` for that model in `models.json` ([#11843](https://github.com/earendil-works/pi/issues/11843))
 
 ### Added

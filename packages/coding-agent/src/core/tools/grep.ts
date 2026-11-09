@@ -57,6 +57,10 @@ export interface GrepToolDetails {
 export interface GrepOperations {
 	/** Check if path is a directory. Throws if path does not exist. */
 	isDirectory: (absolutePath: string) => Promise<boolean> | boolean;
+	/**
+	 * @deprecated Ignored. Context lines come directly from ripgrep. Override the tool's execute() for remote search.
+	 */
+	readFile?: (absolutePath: string) => Promise<string> | string;
 }
 
 const defaultGrepOperations: GrepOperations = {
