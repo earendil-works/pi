@@ -107,6 +107,15 @@ describe("issue #3302 find returns no results for path-based glob patterns", () 
 		expect(await runFind("src/[!x]&b (1).ts")).toEqual(["src/a&b (1).ts"]);
 	});
 
+	it("path patterns stop at the result limit", async () => {
+		const def = createFindToolDefinition(tempRoot);
+		const ctx = {} as Parameters<typeof def.execute>[4];
+		const result = await def.execute("call-1", { pattern: "src/**/*.spec.ts", limit: 1 }, undefined, undefined, ctx);
+		expect(result.details?.resultLimitReached).toBe(1);
+		const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+		expect(text.split("\n")[0]).toMatch(/^src\/(direct|foo\/bar\/example)\.spec\.ts$/);
+	});
+
 	it.runIf(process.platform !== "win32")("POSIX backslash still escapes glob characters", async () => {
 		writeFileSync(join(tempRoot, "src", "*.ts"), "");
 		writeFileSync(join(tempRoot, "src", "other.ts"), "");
