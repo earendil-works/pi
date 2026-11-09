@@ -531,11 +531,44 @@ textarea.input {
 	pointer-events: auto;
 }
 @media (min-width: 900px) {
+	/* Positioned for its resize handle, under main's layers (top bar, toasts) where the handle overhangs. */
 	.drawer,
 	.drawer:dir(rtl) {
-		position: static;
-		flex: 0 0 300px;
+		position: relative;
+		z-index: 1;
+		flex: 0 0 var(--sidebar-width, 300px);
+		width: auto;
+		min-width: 0;
 		transform: none;
+	}
+	/* Drag the inline end to resize the docked sidebar (AppLayout.tsx). touch-action: none, or the browser turns a
+	   finger drag into a pan and stops delivering pointer moves. */
+	.sidebar-resize {
+		position: absolute;
+		inset-block: 0;
+		inset-inline-end: -3px;
+		width: 6px;
+		cursor: col-resize;
+		touch-action: none;
+		user-select: none;
+	}
+	.sidebar-resize:active {
+		background: var(--line);
+	}
+	@media (hover: hover) {
+		.sidebar-resize:hover {
+			background: var(--line);
+		}
+	}
+	/* Fingers get a wider target; the visible line stays thin. */
+	@media (pointer: coarse) {
+		.sidebar-resize {
+			inset-inline-end: -12px;
+			width: 24px;
+		}
+		.sidebar-resize:active {
+			background: linear-gradient(var(--line), var(--line)) center / 2px 100% no-repeat transparent;
+		}
 	}
 	.drawer-scrim,
 	.topbar .menu {
@@ -546,6 +579,11 @@ textarea.input {
 	}
 	.sidebar-collapsed .topbar .sidebar-open {
 		display: grid;
+	}
+}
+@media (max-width: 899px) {
+	.sidebar-resize {
+		display: none;
 	}
 }
 

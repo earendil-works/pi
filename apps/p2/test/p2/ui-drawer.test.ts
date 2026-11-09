@@ -121,6 +121,48 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		await browser.wait(`!document.querySelector('.app.drawer-open')`);
 	});
 
+	it("resizes the desktop sidebar from its edge within limits, remembers the width, and ignores it on phones", async () => {
+		await browser.metrics(1280, 900);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.wait(`document.querySelector('.sidebar-resize') && !document.querySelector('.offline')`);
+		await browser.evaluate("localStorage.removeItem('pi-sidebar-width')");
+		const width = () => browser.evaluate<number>(`document.querySelector('.drawer').getBoundingClientRect().width`);
+		const drag = async (x: number) => {
+			const point = await browser.evaluate<{ x: number; y: number }>(
+				`(()=>{const r=document.querySelector('.sidebar-resize').getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`,
+			);
+			await browser.call("Input.dispatchMouseEvent", {
+				type: "mousePressed",
+				...point,
+				button: "left",
+				clickCount: 1,
+			});
+			const to = { x, y: point.y };
+			await browser.call("Input.dispatchMouseEvent", { type: "mouseMoved", ...to, button: "left", buttons: 1 });
+			await browser.call("Input.dispatchMouseEvent", {
+				type: "mouseReleased",
+				...to,
+				button: "left",
+				clickCount: 1,
+			});
+		};
+		assert.equal(await width(), 300);
+		await drag(400);
+		await browser.wait(`localStorage.getItem('pi-sidebar-width')==='400'`);
+		assert.equal(await width(), 400);
+		await drag(0);
+		await browser.wait(`localStorage.getItem('pi-sidebar-width')==='220'`);
+		await drag(1200);
+		await browser.wait(`localStorage.getItem('pi-sidebar-width')==='560'`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.wait(`document.querySelector('.sidebar-resize') && !document.querySelector('.offline')`);
+		assert.equal(await width(), 560);
+		await browser.metrics(390, 844);
+		await browser.wait(`getComputedStyle(document.querySelector('.sidebar-resize')).display==='none'`);
+		assert.equal(await width(), 320);
+		await browser.evaluate("localStorage.removeItem('pi-sidebar-width')");
+	});
+
 	it("groups cwd identities, orders pinned sessions first, expands child rows in the header, and keeps child busy dots visible when collapsed", async () => {
 		const owner = fixture.browser();
 		const sessions = await holdIn(owner, Sessions, {}, "owner");
