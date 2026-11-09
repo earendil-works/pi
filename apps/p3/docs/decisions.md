@@ -94,3 +94,12 @@ and its working rules are in `handoff.md`.
   session stores together) and restore onto a new machine. The **sync format** of Chord's stores stays the one format
   for both backups and exports (a single session's export: its store plus its session metadata entries): it encodes
   every kind of data the core stores hold, plugin data included, and we bet on it.
+- **Session data on the server as host-keyed documents (owner, 2026-11-09, supersedes the typed metadata store of the
+  "Session metadata store" entry):** each plugin keeps its per-session server data in its own server object as Chord
+  documents or table rows keyed by the session's host address (`defineState(..., { keyed: Session })`, table columns
+  `host(Session)`; Chord decision "Documents and table rows can belong to a host"); its worker part follows its own
+  document through its own view (pinned with `at(Session({ id: principal.session }))`). Export of a session = its own
+  store + every server record and row belonging to its address, in the store archive format; import into a non-empty
+  store refuses, replaces explicitly, or copies under a new id; delete retires them. The rule stays: anything needed
+  while the worker is off lives on the server, the rest in the session's store, never both. No central metadata store,
+  no `metadataOf`, no export callbacks.

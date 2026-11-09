@@ -2704,6 +2704,23 @@ validation and copies the v2 kernel added around Delta.
   old version until the restarted object's successor is live (design §21); classes the edit renamed or removed are
   unstyled until then. Accepted and documented; apps contribute UI from facets and let objects supply data. Rejected
   for now: a kernel signal "this plugin's restarts on this host finished" to retire old sheets later.
+- **Documents and table rows can belong to a host (owner, 2026-11-09: "it looks like we have a plan"; p3 session data,
+  backups and exports):** data needed while a host is not running lives on another host (p3: facts about a session the
+  server needs while its worker is off) but must travel with that host on export, import and delete. (1) `defineState`'s
+  `keyed` takes `true` (string keys, as today) or a **host kind**: keys are then addresses of that kind
+  (`bindings.change(Session({ id }), fn, ctx)`, typed `KeyOf<K>`), stored with the address key in `key` and in a new
+  indexed `host` column of `chord_documents` (NULL for string keys, so a string can never pose as an address); store
+  schema migration to version 3. (2) Tables get a column type `host(Kind)` (at most one per table): the value is an
+  address (written and read as `Address`, stored as its key, indexed automatically); the table catalog records it. (3)
+  Two store operations: export the records and rows belonging to one address (a filtered archive in the existing format:
+  manifest, `document.create`/`document.revision` parts of records with that `host`, per table with a host column its
+  definition and `put` parts of its rows, `end`), and import such an archive into a store that already has data (fresh
+  ids and seqs; an existing record or row for the same address refuses unless the import is an explicit replace; a copy
+  under a new address rewrites only the host columns and keys). Delete retires those records and rows. (4) The kit's
+  per-address export, import and delete (`exportData`, `importData`, archive) include the server's records and rows
+  belonging to that address, next to the host's own store. Migration of imported content happens when the owning
+  object loads it, as for every document. Plugins must not put addresses inside JSON values they expect to be rewritten.
+  To be specified, reviewed and built (p3 status 2026-11-09).
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a
