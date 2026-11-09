@@ -239,6 +239,9 @@ export function createFindToolDefinition(
 							args.push("--", effectivePattern, searchPath);
 						}
 
+						// An abort during the .git lookup above already rejected the call, but there was no
+						// child to stop yet. Do not start fd.
+						if (signal?.aborted) return;
 						const child = spawn(fdPath, args, { stdio: ["ignore", "pipe", "pipe"] });
 						const rl = createInterface({ input: child.stdout });
 						let stderr = "";
