@@ -120,7 +120,15 @@ async function mcpHost(
 				Catalog,
 				(_params, _principal, self) => {
 					sessions = self.state<Session[]>([]);
-					return { sessions, get: UNUSED, create: UNUSED, activity: UNUSED, update: UNUSED };
+					return {
+						sessions,
+						get: UNUSED,
+						create: UNUSED,
+						activity: UNUSED,
+						update: UNUSED,
+						describe: UNUSED,
+						mirror: UNUSED,
+					};
 				},
 			],
 			[

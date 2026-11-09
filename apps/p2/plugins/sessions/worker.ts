@@ -1,31 +1,65 @@
+import type { Context } from "@earendil-works/chord/context";
 import {
 	type ConversationId,
 	defineExtension,
 	type EntryDraft,
 	type EntryId,
+	type EntryRecord,
+	type Harness,
 	ROOT_CONVERSATION_ID,
 } from "@earendil-works/pi-durable";
 import { obj, str } from "@earendil-works/pi-schema";
-import { defineFacet, expectVariant, forbidden, local } from "@p2/app/v1";
 import {
+	agentMessage,
+	type Ctx,
+	contribute,
+	defineFacet,
+	expectVariant,
+	forbidden,
+	local,
+	messageData,
+	peerMessage,
+	SHELL_ENTRY,
+	signalOf,
+} from "@p2/app/v1";
+import {
+	AUTO_TITLE_LENGTH,
+	editSessionInfo,
+	readSessionInfo,
+	SessionInfoDoc,
+	type SessionInfoEdit,
+	type SessionInfoState,
+	sessionInfoSeed,
+} from "@p2/app/v1/node";
+import {
+	CommitSignal,
 	defineP2Tool,
 	Extensions,
 	harnessOf,
 	isTopLevel,
 	type P2Tool,
-	type WorkerParts,
 	workerOf,
 } from "@p2/app/v1/worker";
-import { MAX_TITLE, Sessions, SessionTransfer } from "./contract.ts";
+import { MAX_TITLE, SessionInfo, Sessions, SessionTransfer } from "./contract.ts";
+
+/** The placeholder title of a session nobody titled yet. */
+const UNTITLED = "New session";
 
 /** Contributes the `rename_session` tool: the agent keeps the session's title naming its overall task. */
 const SessionTools = local("p2.session-tools", { version: 1, params: {}, members: {} });
 
 /**
- * The tool runs outside Chord calls (a Durable tool), so each call opens a short root of the worker's. Only top-level
- * conversations (the main conversation and its `/tree` branches) may rename the session.
+ * The tool commits to the session's own description (`p2.session-info`) in its own task's commit; the worker reports
+ * the change to the catalog. Only top-level conversations (the main conversation and its `/tree` branches) may rename
+ * the session.
  */
-const renameSession = (root: () => WorkerParts["root"]) =>
+const renameSession = (
+	edit: (
+		session: Pick<Harness, "commit">,
+		change: SessionInfoEdit,
+		context: Context,
+	) => Promise<{ readonly previous: string }>,
+) =>
 	defineExtension<P2Tool>({
 		name: "p2-session-title",
 		tools: [
@@ -41,7 +75,7 @@ const renameSession = (root: () => WorkerParts["root"]) =>
 				// Renaming to the same title again is harmless.
 				replay: "safe",
 				scope: "main",
-				execute: async (args, _api, context) => {
+				execute: async (args, api, context) => {
 					const reply = (text: string, isError = false) => ({
 						output: [{ type: "text" as const, text }],
 						isError,
@@ -49,12 +83,8 @@ const renameSession = (root: () => WorkerParts["root"]) =>
 					const title = args.title.replace(/\s+/g, " ").trim();
 					if (!title) return reply("The title is empty.", true);
 					try {
-						// A Durable tool is not a Chord call: it pushes the title in a short root of the worker's, under its
-						// own context.
-						const { previous } = await root()(
-							async (ctx) => expectVariant(await ctx.get(Sessions, {}), "worker").renameSelf({ title }, ctx),
-							context,
-						);
+						// The session's own description is the authority; the catalog follows the worker's report of it.
+						const { previous } = await edit(api, { title, titleEdited: true }, context);
 						return reply(
 							previous === title
 								? `Session title: ${JSON.stringify(title)}.`
@@ -123,9 +153,113 @@ export default defineFacet((host) => {
 		};
 	});
 	host.serve(SessionTools, (_params, self) => {
+		const harness = harnessOf(self);
 		const worker = workerOf(self);
-		const extension = renameSession(() => worker().root);
+		const extension = renameSession(async (session, change, context) => {
+			const seed = sessionInfoSeed(worker().init.values.session);
+			const before = (await readSessionInfo(harness().durable, context)) ?? seed;
+			await editSessionInfo(session, change, seed, context);
+			return { previous: before.title };
+		});
 		self.contribute(Extensions, { [extension.name]: extension });
 		return {};
 	});
+
+	// The server edits the session's description through its running worker. Not a `liveness.call`: the server edits
+	// under its own lifecycle steps, a relocation's included, whose fence refuses calls; an edit runs no work, so
+	// admitting it under the fence changes nothing a relocation checked.
+	host.serve(SessionInfo, (_params, principal, self) => {
+		if (principal.kind !== "server") throw forbidden("server only");
+		const harness = harnessOf(self);
+		const worker = workerOf(self);
+		return {
+			variant: "server",
+			members: {
+				edit: (change, ctx) =>
+					editSessionInfo(harness().durable, change, sessionInfoSeed(worker().init.values.session), ctx),
+			},
+		};
+	});
+
+	// The description is written at start when the session has none (from its catalog row), titled from the first user
+	// message while untitled, and reported to the catalog at start and after every change (`Sessions.describeSelf`).
+	contribute(host, "p2.session-info-report", (self) => {
+		const harness = harnessOf(self);
+		const worker = workerOf(self);
+		const changes = self.open(
+			async () =>
+				new CommitSignal(harness().durable, (publication) =>
+					publication.changes.some(
+						(change) =>
+							(change.type === "document" && change.record.kind === SessionInfoDoc.definition.kind) ||
+							(change.type === "entry" && change.value.conversationId === ROOT_CONVERSATION_ID),
+					),
+				),
+			(signal) => signal.close(),
+		);
+		self.onLive(async (ctx) => {
+			const signal = signalOf(ctx);
+			while (!signal.aborted) {
+				const seen = changes.value.version;
+				try {
+					await describe(harness().durable, sessionInfoSeed(worker().init.values.session), ctx);
+				} catch (error) {
+					if (signal.aborted) return;
+					console.error("p2 sessions: reporting the session's description failed:", error);
+				}
+				await changes.value.next(seen, signal).catch(() => {});
+			}
+		});
+	});
 });
+
+/**
+ * Writes the description when the session has none (its seed: the catalog row), gives an untitled session its first
+ * user message as title, and reports the description to the catalog (which ignores an unchanged report).
+ */
+async function describe(durable: Harness, seed: SessionInfoState, ctx: Ctx): Promise<void> {
+	let state = await readSessionInfo(durable, ctx);
+	// Only an untitled session takes its first user message as title: once titled, nothing changes it but a rename.
+	const untitled =
+		state === undefined
+			? !seed.titleEdited && seed.title === UNTITLED
+			: !state.titleEdited && state.title === UNTITLED;
+	const automatic = untitled ? await firstUserText(durable, ctx) : undefined;
+	if (state === undefined || automatic !== undefined)
+		state = await editSessionInfo(durable, automatic === undefined ? {} : { title: automatic }, seed, ctx);
+	await expectVariant(await ctx.get(Sessions, {}), "worker").describeSelf(state, ctx);
+}
+
+/** The automatic title: the main conversation's first user message, line breaks as spaces, at most 100 characters. */
+async function firstUserText(durable: Harness, context: Context): Promise<string | undefined> {
+	const root = await durable.conversation(ROOT_CONVERSATION_ID, context);
+	if (!root) return undefined;
+	const page = await root.entries({ order: "ascending" }, 20, undefined, context);
+	for (const entry of page.items) {
+		const text = userText(entry);
+		if (text !== undefined) return text.replace(/[\r\n]/g, " ").slice(0, AUTO_TITLE_LENGTH);
+	}
+	return undefined;
+}
+
+/** An input of the main conversation as search indexed it for the title: typed, a peer's or an agent's; not a shell command. */
+function userText(entry: EntryRecord): string | undefined {
+	if (entry.kind === SHELL_ENTRY) return undefined;
+	if (entry.model?.[0]?.role !== "user") return undefined;
+	if (entry.kind.startsWith("pi.") && entry.kind !== "pi.user") return undefined;
+	const typed =
+		messageData(entry.data)?.text ??
+		peerMessage(entry.kind, entry.data)?.text ??
+		agentMessage(entry.kind, entry.data)?.text;
+	const text =
+		typed ??
+		entry.model
+			.filter((message) => message.role === "user")
+			.map((message) =>
+				typeof message.content === "string"
+					? message.content
+					: message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n"),
+			)
+			.join("\n");
+	return text.trim() ? text : undefined;
+}

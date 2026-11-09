@@ -30,7 +30,6 @@ import {
 	defineFacet,
 	defineTypedState,
 	deriveTyped,
-	expectVariant,
 	type Factory,
 	forbidden,
 	INPUT_ENTRY,
@@ -41,6 +40,7 @@ import {
 	senderText,
 	serveKeyed,
 } from "@p2/app/v1";
+import { editSessionInfo, sessionInfoSeed } from "@p2/app/v1/node";
 import {
 	ContextTally,
 	ConversationConfigured,
@@ -55,7 +55,6 @@ import {
 import { DraftStore } from "../drafts/contract.ts";
 import { type Attachment, Attachments } from "../files/contract.ts";
 import { WorkerModels } from "../models/contract.ts";
-import { Sessions } from "../sessions/contract.ts";
 import { StatusReport } from "../status/contract.ts";
 import {
 	Chat,
@@ -475,11 +474,14 @@ export default defineFacet((host) => {
 							(change.model || change.thinkingLevel) &&
 							conversation === (await mainConversation(harness().durable, ctx))
 						) {
-							await expectVariant(await ctx.get(Sessions, {}), "worker").configureSelf(
+							// The session's own description is the authority; the catalog follows the worker's report of it.
+							await editSessionInfo(
+								harness().durable,
 								{
 									...(change.model ? { model: change.model } : {}),
 									...(change.thinkingLevel ? { thinkingLevel: change.thinkingLevel } : {}),
 								},
+								sessionInfoSeed(worker().init.values.session),
 								ctx,
 							);
 						}

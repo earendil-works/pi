@@ -191,7 +191,18 @@ async function signInHost(
 				EnvService,
 				{ configs: constant({}), tests: constant({}), failure: constant(null), test: UNUSED, reload: UNUSED },
 			],
-			[Catalog, { sessions: constant([SESSION]), get: UNUSED, create: UNUSED, activity: UNUSED, update: UNUSED }],
+			[
+				Catalog,
+				{
+					sessions: constant([SESSION]),
+					get: UNUSED,
+					create: UNUSED,
+					activity: UNUSED,
+					update: UNUSED,
+					describe: UNUSED,
+					mirror: UNUSED,
+				},
+			],
 			[ChildStore, { children: constant({}), report: UNUSED }],
 			[
 				Server,

@@ -4,6 +4,19 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Session } from "./contract.ts";
 
+/** A session's own description (`p2.session-info`), as the catalog mirrors it. */
+export type SessionDescription = {
+	title: string;
+	titleEdited: boolean;
+	cwd: string;
+	env: string | null;
+	pinned: boolean;
+	archivedAt: number | null;
+	model: Session["model"];
+	thinkingLevel: string;
+	createdAt: number;
+};
+
 /**
  * 3: `titleEdited` (Pi Mobile's): an explicit title (given at creation or renamed) is never replaced automatically.
  * 4: `main` and `branches`, the current main conversation and the `/tree` branches (`docs/tree.md`).
@@ -146,6 +159,54 @@ export class CatalogDb {
 				change.env === undefined ? (current.env ?? null) : change.env,
 				change.main ?? current.main,
 				JSON.stringify(change.branches ?? current.branches),
+				id,
+			);
+		return this.get(id);
+	}
+
+	/**
+	 * The row's description as the session's `p2.session-info` holds it: the seed of a session that has none yet (one
+	 * created before it, or a new session's first start).
+	 */
+	describe(id: string): SessionDescription {
+		const row = this.#db.prepare("SELECT * FROM sessions WHERE id=?").get(id);
+		if (!row) throw new Error("Session not found");
+		const session = this.#decode(row);
+		return {
+			title: session.title,
+			titleEdited: row.titleEdited === 1,
+			cwd: session.cwd,
+			env: session.env ?? null,
+			pinned: session.pinned,
+			archivedAt: session.archivedAt,
+			model: session.model,
+			thinkingLevel: session.thinkingLevel,
+			createdAt: session.createdAt,
+		};
+	}
+
+	/**
+	 * The row follows the session's own description (its worker's report): the session is the authority for these
+	 * fields. A new location counts as activity, as for `update`. Returns the row after it.
+	 */
+	mirror(id: string, description: SessionDescription): Session {
+		const current = this.get(id);
+		const moved = description.cwd !== current.cwd || description.env !== (current.env ?? null);
+		this.#db
+			.prepare(
+				"UPDATE sessions SET title=?,titleEdited=?,cwd=?,env=?,pinned=?,archivedAt=?,model=?,thinkingLevel=?,updatedAt=CASE WHEN ? THEN max(updatedAt,?) ELSE updatedAt END WHERE id=?",
+			)
+			.run(
+				description.title,
+				Number(description.titleEdited),
+				description.cwd,
+				description.env,
+				Number(description.pinned),
+				description.archivedAt,
+				JSON.stringify(description.model),
+				description.thinkingLevel,
+				Number(moved),
+				Date.now(),
 				id,
 			);
 		return this.get(id);

@@ -30,7 +30,8 @@ import {
 	WorkerBoundary,
 	withAbortSignal,
 } from "@p2/app/v1";
-import { Server, serverOf, WorkerInitValues } from "@p2/app/v1/server";
+import { editSessionInfo, type SessionInfoEdit, type SessionInfoState, withStoredSession } from "@p2/app/v1/node";
+import { Server, type SessionWorkerControl, serverOf, WorkerInitValues } from "@p2/app/v1/server";
 import { EnvManagers, EnvService } from "../envs/contract.ts";
 import { ModelConfig, ModelResources } from "../models/contract.ts";
 import { ChildStore } from "../subagents/contract.ts";
@@ -44,6 +45,7 @@ import {
 	OperationSchema,
 	type Session,
 	SessionArchived,
+	SessionInfo,
 	SessionMoves,
 	SessionOperations,
 	Sessions,
@@ -168,6 +170,24 @@ async function fenceWorker(
 				: `Background work is still running (for example a message waiting for a subagent's answer): wait for it or stop the subagent before ${doing}`;
 }
 
+/**
+ * Commits `change` to the session's own description: through its running worker, else to its store while the worker
+ * is held stopped (the caller holds it: a pause, a relocation's update step, an archived session's suspension).
+ * Resolves with the description after it; the caller mirrors it into the catalog.
+ */
+async function commitDescription(
+	catalog: Ref<typeof Catalog>,
+	workers: SessionWorkerControl,
+	dataDir: string,
+	id: string,
+	change: SessionInfoEdit,
+	ctx: Ctx,
+): Promise<SessionInfoState> {
+	if (workers.running().includes(id)) return (await ctx.get(SessionInfo, { session: id })).edit(change, ctx);
+	const seed = (await catalog.describe({ id }, ctx)) as SessionInfoState;
+	return withStoredSession(dataDir, id, (session) => editSessionInfo(session, change, seed, ctx), ctx);
+}
+
 /** Lifecycle jobs persist and run again after a crash: each run is idempotent (a copy starts over, a move repeats). */
 const RERUN = { resume: "rerun" } as const;
 
@@ -260,13 +280,21 @@ export default defineFacet((host) => {
 					sessions.set(db.value.all());
 					return session;
 				},
-				activity: async ({ id, timestamp, firstUserText }) => {
-					db.value.activity(id, timestamp, firstUserText);
+				// Activity moves `updatedAt` only: the automatic title is the session's own (its worker titles `p2.session-info`
+				// from the first user message, and the row follows its report).
+				activity: async ({ id, timestamp }) => {
+					db.value.activity(id, timestamp);
 					sessions.set(db.value.all());
 					return null;
 				},
 				update: async ({ id, ...change }) => {
 					const session = db.value.update(id, change);
+					sessions.set(db.value.all());
+					return session;
+				},
+				describe: async ({ id }) => db.value.describe(id),
+				mirror: async ({ id, description }) => {
+					const session = db.value.mirror(id, description);
 					sessions.set(db.value.all());
 					return session;
 				},
@@ -334,7 +362,17 @@ export default defineFacet((host) => {
 						return refusal;
 					},
 					update: async () => {
-						await catalog.update({ id, ...location }, ctx);
+						// The session's description first (its fenced worker, or its store while it is stopped); the catalog
+						// follows.
+						const description = await commitDescription(
+							catalog,
+							natives().workers,
+							server.info.value.dataDir,
+							id,
+							location,
+							ctx,
+						);
+						await catalog.mirror({ id, description }, ctx);
 					},
 					move: async () => {
 						await (await boundary()).relocate(location, ctx);
@@ -457,6 +495,17 @@ export default defineFacet((host) => {
 				// lingering conversation) wait for a restore rather than start a worker the archive refuses.
 				for (const close of archived.value.values()) await close(id, ctx);
 				await natives().workers.suspend(id);
+				// The suspended session's own description records it (its store, no worker runs it); the row was archived
+				// at once, so the mirror leaves it as it is.
+				const description = await commitDescription(
+					catalog,
+					natives().workers,
+					server.info.value.dataDir,
+					id,
+					{ archivedAt: (await catalog.get({ id }, ctx)).archivedAt ?? Date.now() },
+					ctx,
+				);
+				await catalog.mirror({ id, description }, ctx);
 				return null;
 			},
 			finish: async (outcome, tx) => {
@@ -576,6 +625,8 @@ export default defineFacet((host) => {
 				model: session.model,
 				thinkingLevel: session.thinkingLevel as SessionInit["thinkingLevel"],
 				...(indexing ? { resume: false } : {}),
+				// The seed of the session's own description, for a session that has none yet.
+				info: await catalog.describe({ id }, context),
 			};
 		};
 		return {
@@ -609,7 +660,20 @@ export default defineFacet((host) => {
 				return startCopy(source, copy, "fork", () => forks.start({ id, copy, entries }, ctx, { key: copy }), ctx);
 			},
 			archive: async ({ id }, ctx) => {
-				await catalog.update({ id, archived: true }, ctx);
+				// Archived at once. A running worker records it in the session's description first, so its next report
+				// agrees with the row; a stopped one's store is written by the job, after the worker is suspended.
+				const workers = natives().workers;
+				if (workers.running().includes(id)) {
+					const description = await commitDescription(
+						catalog,
+						workers,
+						server.info.value.dataDir,
+						id,
+						{ archivedAt: Date.now() },
+						ctx,
+					);
+					await catalog.mirror({ id, description }, ctx);
+				} else await catalog.update({ id, archived: true }, ctx);
 				await archives.start({ id }, ctx, { key: id });
 				return null;
 			},
@@ -617,10 +681,32 @@ export default defineFacet((host) => {
 				// After a running archive of it: its worker stop must not land after the restore.
 				const archiving = archives.running.value.find((run) => run.phase !== "blocked" && run.key === id);
 				if (archiving) await archives.outcome(archiving.id, ctx).catch(() => {});
-				await catalog.update({ id, archived: false }, ctx);
+				// The archived session's worker is suspended: its description is written to its store, then the row follows
+				// and its holders start it again.
+				const description = await commitDescription(
+					catalog,
+					natives().workers,
+					server.info.value.dataDir,
+					id,
+					{ archivedAt: null },
+					ctx,
+				);
+				await catalog.mirror({ id, description }, ctx);
 				// A start refused while archived left the worker failed or suspended: its holders start it again.
 				await natives().workers.resume(id);
 				return null;
+			},
+			edit: async ({ id, change }, ctx) => {
+				const workers = natives().workers;
+				let description: SessionInfoState | undefined;
+				const commit = async () => {
+					description = await commitDescription(catalog, workers, server.info.value.dataDir, id, change, ctx);
+				};
+				if (workers.running().includes(id)) await commit();
+				// A stopped session's store is written while its worker is held stopped; one that started meanwhile is
+				// fenced as for a clone, so nothing it runs is cut off.
+				else await workers.pause(id, () => fenceWorker(catalog, children, id, "editing", ctx), commit, "editing");
+				return catalog.mirror({ id, description: description! }, ctx);
 			},
 			dismiss: async ({ operation }, ctx) => {
 				await failed.change((draft) => {
@@ -662,6 +748,10 @@ export default defineFacet((host) => {
 								{ id, ...(model ? { model } : {}), ...(thinkingLevel ? { thinkingLevel } : {}) },
 								ctx,
 							);
+							return null;
+						},
+						describeSelf: async (description, ctx) => {
+							await catalog.mirror({ id, description }, ctx);
 							return null;
 						},
 						treeSelf: async ({ main, branches }, ctx) => {
@@ -742,11 +832,11 @@ export default defineFacet((host) => {
 						const clean = cleanTitle(title);
 						if (!clean || clean.length > MAX_TITLE)
 							throw new Error(`The title must be 1–${MAX_TITLE} characters`);
-						await catalog.update({ id, title: clean }, ctx);
+						await lifecycle.edit({ id, change: { title: clean, titleEdited: true } }, ctx);
 						return null;
 					},
 					pin: async ({ id, pinned }, ctx) => {
-						await catalog.update({ id, pinned }, ctx);
+						await lifecycle.edit({ id, change: { pinned } }, ctx);
 						return null;
 					},
 					archive: (args, ctx) => lifecycle.archive(args, ctx),

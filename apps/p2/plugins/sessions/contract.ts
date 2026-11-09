@@ -58,6 +58,22 @@ export const SessionSchema = obj({
 });
 export type Session = Static<typeof SessionSchema>;
 
+/**
+ * The session's own description as its worker reports it (`p2.session-info`, the authority): the catalog row follows.
+ * Reported when the worker starts and after every change of the document.
+ */
+export const SessionInfoSchema = obj({
+	title: str(),
+	titleEdited: bool(),
+	cwd: str(),
+	env: union([str(), nul()]),
+	pinned: bool(),
+	archivedAt: union([num(), nul()]),
+	model: ModelRefSchema,
+	thinkingLevel: str(),
+	createdAt: num(),
+});
+
 /** Cleanup completed before an archive call returns (e.g. session-owned port forwards). */
 export const SessionArchived = keyedRegistry<(session: string, ctx: Ctx) => Promise<void>>("p2.session-archived");
 
@@ -173,11 +189,8 @@ const CatalogV3 = evolve(CatalogV2, (e) =>
 		),
 );
 
-/**
- * The session catalog (server, SQLite): every session, archived ones included. Host-internal. 4: a branch's label may
- * be null (the session title). The provider still serves 2 and 3 (its `accepts`).
- */
-export const Catalog = evolve(CatalogV3, (e) =>
+/** 4: a branch's label may be null (the session title). */
+const CatalogV4 = evolve(CatalogV3, (e) =>
 	e
 		.state("sessions", arr(SessionSchema))
 		.result("get", SessionSchema)
@@ -187,6 +200,17 @@ export const Catalog = evolve(CatalogV3, (e) =>
 			obj({ ...UPDATE_FIELDS, main: opt(int({ minimum: 1 })), branches: opt(arr(BranchSchema)) }),
 			SessionSchema,
 		),
+);
+
+/**
+ * The session catalog (server, SQLite): every session, archived ones included. Host-internal. A mirror of the
+ * sessions' own descriptions (`p2.session-info`): 5: `describe`, a row as the description it seeds, and `mirror`, the
+ * row following a session's report. The provider still serves 2, 3 and 4 (its `accepts`).
+ */
+export const Catalog = evolve(CatalogV4, (e) =>
+	e
+		.addMethod("describe", Id, SessionInfoSchema)
+		.addMethod("mirror", obj({ id: str(), description: SessionInfoSchema }), SessionSchema),
 );
 
 /**
@@ -290,7 +314,7 @@ const SessionsV5 = evolve(SessionsV4, (e) =>
  * The worker's `treeSelf`: the session's main conversation or its branches changed (a `/tree` switch or fork, a branch
  * renamed), or the worker started; the catalog entry follows, so clients open the main one and list the branches.
  */
-export const Sessions = evolve(SessionsV5, (e) =>
+const SessionsV6 = evolve(SessionsV5, (e) =>
 	e
 		.args("create", CreateArgsSchema)
 		.args("clone", obj({ id: str(), copy: opt(SessionIdSchema) }))
@@ -307,6 +331,13 @@ export const Sessions = evolve(SessionsV5, (e) =>
 		.addMethod("owner", "dismissOperation", obj({ operation: str() }), nul()),
 );
 
+/**
+ * Sessions as a principal sees them. 7: the worker's `describeSelf`, its session's own description (`p2.session-info`):
+ * the session is the authority for its title, place, pin, archive, model and level, and the catalog row follows its
+ * report. The provider still serves 3 to 6 (its `accepts`).
+ */
+export const Sessions = evolve(SessionsV6, (e) => e.addMethod("worker", "describeSelf", SessionInfoSchema, nul()));
+
 const Location = obj({ id: str(), cwd: str({ minLength: 1 }), env: union([str(), nul()]) });
 
 /**
@@ -315,7 +346,8 @@ const Location = obj({ id: str(), cwd: str({ minLength: 1 }), env: union([str(),
  * relocation (`SessionMoves`): it waits for the job and answers why a busy worker refused (nothing recorded).
  */
 export const SessionOperations = local("p2.session-operations", {
-	version: 1,
+	// 2: `edit`.
+	version: 2,
 	params: {},
 	members: {
 		operations: arr(OperationSchema),
@@ -328,6 +360,17 @@ export const SessionOperations = local("p2.session-operations", {
 		),
 		archive: method(obj({ id: str() })),
 		restore: method(obj({ id: str() })),
+		/**
+		 * An owner's edit of the session's own description (rename, pin): through its running worker, else its store
+		 * while its worker is held stopped. Answers the catalog row after it.
+		 */
+		edit: method(
+			obj({
+				id: str(),
+				change: obj({ title: opt(str()), titleEdited: opt(bool()), pinned: opt(bool()) }),
+			}),
+			SessionSchema,
+		),
 		dismiss: method(obj({ operation: str() })),
 	},
 });
@@ -378,6 +421,37 @@ export const SessionTransfer = remote("p2.session-transfer", {
 				 * `to`, which must not exist yet (its worker waits while a fork copies).
 				 */
 				copyFiles: method(obj({ to: str() })),
+			},
+		},
+	},
+});
+
+/**
+ * The session's description, edited through its running worker (the server only): the owner's rename and pin, and a
+ * running session's move and archive, are committed to the session's `p2.session-info` first; the catalog follows
+ * the worker's report. A stopped session's description is written to its store by the server, its worker held back.
+ */
+export const SessionInfo = remote("p2.session-info", {
+	version: 1,
+	params: { session: param.str() },
+	hostAddress: sessionHost,
+	variants: {
+		server: {
+			methods: {
+				/** Applies the change in one commit; absent fields stay. Resolves with the description after it. */
+				edit: method(
+					obj({
+						title: opt(str()),
+						titleEdited: opt(bool()),
+						cwd: opt(str()),
+						env: opt(union([str(), nul()])),
+						pinned: opt(bool()),
+						archivedAt: opt(union([num(), nul()])),
+						model: opt(ModelRefSchema),
+						thinkingLevel: opt(ThinkingLevelSchema),
+					}),
+					SessionInfoSchema,
+				),
 			},
 		},
 	},
