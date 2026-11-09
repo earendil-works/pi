@@ -100,9 +100,10 @@ verifying an agent's files on their own before committing. Node 24: `~/node-v24.
   `tui*.ts` (launcher, sandbox, filter, grants), `dev*.ts` (dev supervisor).
 - **Runtime** (`src/runtime`): shared contracts and helpers (principals, worker and Harness, Durable registry,
   extension switches, input entries, settings, logs, fetch).
-- **Plugins**: chat, chat-mode, sessions, subagents, agent (one-shot agents), codemode, cache-warming, coding-tools, prompt,
-  models, login, search, status, drafts, files, send-file, artifacts, workspace, file-index, terminals, envs, mcp, ports,
-  radius, sharing, devices, proxy-marker, logs, dev-tools, powershell, web-shell, projects. Before writing one, read Chord's
+- **Plugins**: chat, chat-mode, sessions, familiar (the session above the others), subagents, agent (one-shot agents),
+  codemode, cache-warming, coding-tools, prompt, models, login, search, status, drafts, files, send-file, artifacts,
+  workspace, file-index, terminals, envs, mcp, ports, radius, sharing, devices, proxy-marker, logs, dev-tools,
+  powershell, web-shell, projects. Before writing one, read Chord's
   tutorial (`packages/chord/docs/tutorial/`) and plugin guide (`packages/chord/docs/plugin-authoring.md`), then an
   existing p2 plugin of the same shape.
 - **Locations:** every conversation works at `{ env, cwd }`: the main one at the session's, subagents spawned with a

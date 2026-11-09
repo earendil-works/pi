@@ -1,6 +1,7 @@
 // The session catalog and its views (server): the sidebar's rows, creating and renaming sessions, and the lifecycle
 // operations (relocate, clone, fork, archive), each a method that answers once its visible effect committed and a job
-// for its long part, shown in `Sessions.operations` while it runs and when it failed.
+// for its long part, shown in `Sessions.operations` while it runs and when it failed. Creating is `SessionOperations`'
+// too, so the owner's `Sessions.create` and the conversations tool share it.
 import { randomUUID } from "node:crypto";
 import { mkdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -300,6 +301,8 @@ export default defineFacet((host) => {
 		const natives = serverOf(self);
 		const envService = self.get(EnvService, {});
 		const envs = nativeOf(self, EnvManagers, "The SSH manager");
+		const models = self.get(ModelConfig, {});
+		const resources = nativeOf(self, ModelResources, "The model configuration");
 		const children = self.get(ChildStore, {});
 		const archivedStarts = self.get(ArchivedStarts, {});
 		const archived = self.registry(SessionArchived);
@@ -586,6 +589,37 @@ export default defineFacet((host) => {
 		};
 		return {
 			operations,
+			create: async ({ id, env, cwd, createDirectory, title, model, thinkingLevel }, ctx) => {
+				// A chosen ID already in the catalog is a retry of the same request (its answer was lost).
+				const existing = id === undefined ? undefined : catalog.sessions.value.find((row) => row.id === id);
+				if (existing) return existing;
+				if (env) cwd = await envs().manager.workingDirectory(env, cwd, createDirectory);
+				else {
+					cwd = expandHome(cwd);
+					if (!isAbsolute(cwd)) throw new Error("The working directory must be an absolute path");
+					if (createDirectory) await mkdir(cwd, { recursive: true });
+					if (!(await stat(cwd)).isDirectory()) throw new Error("Working directory is not a directory");
+				}
+				const fallback = models.summary.value.defaultModel;
+				const chosen = model ?? fallback;
+				if (!chosen) throw new Error("Select a model or configure P2_PROVIDER and P2_MODEL");
+				// As Pi Mobile and setDefault: a model the configuration does not know never reaches a worker.
+				if (!resources().resources.models.getModel(chosen.provider, chosen.modelId))
+					throw new Error("Unknown model");
+				const level = thinkingLevel ?? fallback?.thinkingLevel;
+				return catalog.create(
+					{
+						...(id === undefined ? {} : { id }),
+						cwd,
+						env: env ?? null,
+						title: cleanTitle(title ?? "").slice(0, 100) || "New session",
+						titleEdited: Boolean(cleanTitle(title ?? "")),
+						model: { provider: chosen.provider, modelId: chosen.modelId },
+						thinkingLevel: isThinkingLevel(level) ? level : "high",
+					},
+					ctx,
+				);
+			},
 			move: async ({ id, ...target }, ctx) => {
 				await liveSession(id, ctx);
 				const location = await destination(target);
@@ -687,10 +721,6 @@ export default defineFacet((host) => {
 				return { variant: "guest", members: { sessions: sessionsView } };
 			}
 			if (!isOwner(principal)) throw forbidden("sessions are owner-only");
-			const models = self.get(ModelConfig, {});
-			const resources = nativeOf(self, ModelResources, "The model configuration");
-			self.get(EnvService, {});
-			const envs = nativeOf(self, EnvManagers, "The SSH manager");
 			const lifecycle = self.get(SessionOperations, {});
 			const defaultCwd = deriveTyped(
 				self,
@@ -702,7 +732,6 @@ export default defineFacet((host) => {
 				[catalog.sessions],
 				([sessions]) => sessions.find((session) => session.archivedAt === null)?.env ?? null,
 			);
-			const defaultModel = deriveTyped(self, [models.summary], ([summary]) => summary.defaultModel);
 			return {
 				variant: "owner",
 				members: {
@@ -710,37 +739,7 @@ export default defineFacet((host) => {
 					defaultCwd,
 					defaultEnv,
 					operations: lifecycle.operations,
-					create: async ({ id, env, cwd, createDirectory, title, model, thinkingLevel }, ctx) => {
-						// A chosen ID already in the catalog is a retry of the same request (its answer was lost).
-						const existing = id === undefined ? undefined : catalog.sessions.value.find((row) => row.id === id);
-						if (existing) return existing;
-						if (env) cwd = await envs().manager.workingDirectory(env, cwd, createDirectory);
-						else {
-							cwd = expandHome(cwd);
-							if (!isAbsolute(cwd)) throw new Error("The working directory must be an absolute path");
-							if (createDirectory) await mkdir(cwd, { recursive: true });
-							if (!(await stat(cwd)).isDirectory()) throw new Error("Working directory is not a directory");
-						}
-						const fallback = defaultModel.value;
-						const chosen = model ?? fallback;
-						if (!chosen) throw new Error("Select a model or configure P2_PROVIDER and P2_MODEL");
-						// As Pi Mobile and setDefault: a model the configuration does not know never reaches a worker.
-						if (!resources().resources.models.getModel(chosen.provider, chosen.modelId))
-							throw new Error("Unknown model");
-						const level = thinkingLevel ?? fallback?.thinkingLevel;
-						return catalog.create(
-							{
-								...(id === undefined ? {} : { id }),
-								cwd,
-								env: env ?? null,
-								title: cleanTitle(title ?? "").slice(0, 100) || "New session",
-								titleEdited: Boolean(cleanTitle(title ?? "")),
-								model: { provider: chosen.provider, modelId: chosen.modelId },
-								thinkingLevel: isThinkingLevel(level) ? level : "high",
-							},
-							ctx,
-						);
-					},
+					create: (args, ctx) => lifecycle.create(args, ctx),
 					relocate: (target, ctx) => lifecycle.relocate(target, ctx),
 					clone: ({ id, copy }, ctx) => lifecycle.clone({ id, copy: copy ?? randomUUID() }, ctx),
 					fork: ({ copy, ...from }, ctx) => lifecycle.fork({ ...from, copy: copy ?? randomUUID() }, ctx),

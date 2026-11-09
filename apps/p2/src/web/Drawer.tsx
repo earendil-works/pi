@@ -32,7 +32,7 @@ import { PiLogo } from "./PiLogo.tsx";
 import { getTheme, setTheme, subscribeTheme, type ThemePreference } from "./theme.ts";
 
 /** Working (pulsing), else an unread answer (steady blue), else nothing. */
-function SessionDot({ worker }: { worker: SessionSummary["worker"] }) {
+export function SessionDot({ worker }: { worker: SessionSummary["worker"] }) {
 	if (worker.busy?.length) return <span className="live-dot" title="Working" />;
 	if (worker.unread) return <span className="unread-dot" title="New answer" />;
 	return null;
@@ -277,6 +277,7 @@ function SessionRow({
 export const Drawer = memo(function Drawer({
 	onSearch,
 	onRestore,
+	head,
 	footer,
 	sessions,
 	activeId,
@@ -297,6 +298,8 @@ export const Drawer = memo(function Drawer({
 	onSearch?: (query: string, archived: boolean) => Promise<SearchResults>;
 	/** Restores an archived session and opens it (at `conversationId`, a message hit's). */
 	onRestore: (id: string, conversationId?: number) => void;
+	/** Entries above the folders (plugins' `drawer-head` slots), shown while the list is neither searched nor archived. */
+	head?: ReactNode;
 	footer?: ReactNode;
 	sessions: SessionSummary[];
 	activeId?: string;
@@ -426,6 +429,7 @@ export const Drawer = memo(function Drawer({
 				/>
 			</label>
 			<div className="session-scroll">
+				{!archived && !query && head}
 				{ordered.map(([key, list]) => {
 					// A group holds at least one session; its first names the folder's location.
 					const first = list[0]!;

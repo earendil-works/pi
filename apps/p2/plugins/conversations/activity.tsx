@@ -1,5 +1,5 @@
-// How the `conversations` tool shows in the chat: whether it listed, messaged or read an answer of another
-// conversation; its detail the message sent and the answer read as Markdown.
+// How the `conversations` tool shows in the chat: whether it listed, messaged, read an answer of, started, stopped,
+// archived or restored another conversation; its detail the message sent and the answer read as Markdown.
 import {
 	DetailNote,
 	DetailProse,
@@ -35,18 +35,23 @@ function ConversationsDetail({ step }: { step: Step }) {
 	);
 }
 
+/** What each action did, as the step's label says it. */
+const VERBS = new Map([
+	["send", "Messaged a conversation"],
+	["answer", "Read an answer"],
+	["create", "Started a session"],
+	["stop", "Stopped a session"],
+	["archive", "Archived a session"],
+	["restore", "Restored a session"],
+]);
+
 export const conversationsActivity: ToolActivity = {
 	describe(step) {
 		const action = stringOf(step.tool.args.action);
 		return {
 			label: {
 				kind: "message",
-				verb:
-					action === "send"
-						? "Messaged a conversation"
-						: action === "answer"
-							? "Read an answer"
-							: "Listed conversations",
+				verb: VERBS.get(action) ?? "Listed conversations",
 			},
 			description: failureOf(step) ?? (plainText(sentence(stringOf(step.tool.args.message))) || undefined),
 		};

@@ -1,0 +1,8 @@
+/* The Familiar's entry above the drawer's folders: a session row with its icon, no folder heading. */
+.familiar-group {
+	padding-top: var(--s2);
+}
+.familiar-entry > svg {
+	flex: none;
+	color: var(--muted);
+}

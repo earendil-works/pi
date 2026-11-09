@@ -13,6 +13,7 @@ import {
 	rememberMains,
 	type SessionSummary,
 	Slot,
+	SlotList,
 	Slots,
 	toggleSidebar,
 	useComposerState,
@@ -36,6 +37,7 @@ import { Subagents } from "../subagents/contract.ts";
 import { SessionTree } from "../tree/contract.ts";
 import { BranchSheet } from "./BranchSheet.tsx";
 import { type Operation, type Session, Sessions } from "./contract.ts";
+import { type DrawerRows, DrawerRowsContext } from "./contract.web.tsx";
 import { SessionSheet } from "./SessionSheet.tsx";
 
 const subscribeVisibility = (listener: () => void) => {
@@ -99,6 +101,8 @@ function FooterMenu() {
 }
 
 const footer = <FooterMenu />;
+/** Entries above the folders, e.g. the Familiar's. */
+const head = <SlotList prefix="drawer-head" />;
 
 /** What a row says about a lifecycle operation (`Sessions.operations`), by kind: running, and failed. */
 const OPERATION_LABELS: Record<Operation["kind"], { running: string; failed: string }> = {
@@ -192,6 +196,17 @@ function Sidebar() {
 			}),
 		[list, statuses, children, answers, reads, operations, dismiss],
 	);
+	// Sessions a `drawer-head` entry shows are left out of the folders.
+	const [apart, setApart] = useState<Readonly<Record<string, readonly string[]>>>({});
+	const listApart = useCallback(
+		(key: string, ids: readonly string[]) => setApart((current) => ({ ...current, [key]: ids })),
+		[],
+	);
+	const rows = useMemo<DrawerRows>(() => ({ sessions, listApart }), [sessions, listApart]);
+	const folders = useMemo(() => {
+		const hidden = new Set(Object.values(apart).flat());
+		return hidden.size ? sessions.filter((session) => !hidden.has(session.id)) : sessions;
+	}, [sessions, apart]);
 	// The open session's main conversation, shown on a visible page, is read through its latest answer.
 	const visible = usePageVisible();
 	const viewed = list?.find((session) => session.id === route.session);
@@ -298,9 +313,9 @@ function Sidebar() {
 		[setLocation, onNew],
 	);
 	return (
-		<>
+		<DrawerRowsContext.Provider value={rows}>
 			<Drawer
-				sessions={sessions}
+				sessions={folders}
 				guest={guest}
 				sandboxes={sandboxes}
 				activeId={route.session}
@@ -314,6 +329,7 @@ function Sidebar() {
 				onCollapse={toggleSidebar}
 				onSearch={search ? onSearch : undefined}
 				onRestore={onRestore}
+				head={head}
 				footer={footer}
 				onProviders={() => openLayer({ kind: "sheet", name: "providers" }, { fromDrawer: true })}
 				onEnvs={() => openLayer({ kind: "sheet", name: "envs" }, { fromDrawer: true })}
@@ -358,7 +374,7 @@ function Sidebar() {
 					}}
 				/>
 			)}
-		</>
+		</DrawerRowsContext.Provider>
 	);
 }
 

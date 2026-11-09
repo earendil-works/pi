@@ -319,8 +319,8 @@ export const Sessions = evolve(SessionsV5, (e) =>
 const Location = obj({ id: str(), cwd: str({ minLength: 1 }), env: union([str(), nul()]) });
 
 /**
- * The sessions' lifecycle operations (server, host-internal; a host-lifetime object, so its job runs persist): each
- * method answers once its visible effect committed and runs the rest as a job (`operations`). `move` is the agent's
+ * The sessions' creation and lifecycle operations (server, host-internal; a host-lifetime object, so its job runs
+ * persist): each lifecycle method answers once its visible effect committed and runs the rest as a job (`operations`). `move` is the agent's
  * relocation (`SessionMoves`): it waits for the job and answers why a busy worker refused (nothing recorded).
  */
 export const SessionOperations = local("p2.session-operations", {
@@ -328,6 +328,12 @@ export const SessionOperations = local("p2.session-operations", {
 	params: {},
 	members: {
 		operations: arr(OperationSchema),
+		/**
+		 * A new session's row (`Sessions.create` for the owner, the conversations tool's `create`): the location checked
+		 * (`~` expanded, a directory, `createDirectory` makes it), the default model unless one is given. A chosen ID
+		 * already in the catalog is a retry of the same request: its row is the answer.
+		 */
+		create: method(CreateArgsSchema, SessionSchema),
 		move: method(Location, obj({ refused: union([str(), nul()]) })),
 		relocate: method(Location),
 		clone: method(obj({ id: str(), copy: SessionIdSchema }), SessionSchema),
