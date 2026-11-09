@@ -14,7 +14,7 @@ import { type BuiltFacet, discoverPlugins } from "../../../src/node/plugins/inde
 import { PluginWatcher } from "../../../src/node/plugins/watcher.ts";
 import { Batch } from "../../../src/state/internal.ts";
 import { changesOf, delivered } from "../../support.ts";
-import { KINDS, tempRoot, writeFiles, writePlugin } from "./support.ts";
+import { KINDS, settleFileEvents, tempRoot, writeFiles, writePlugin } from "./support.ts";
 
 /** A root with plugins `a` (worker), `b` (server) and the contracts fixture, a base directory, and a watcher of both. */
 async function watched() {
@@ -22,6 +22,7 @@ async function watched() {
 	const base = await realpath(await tempRoot());
 	await writePlugin(root, "a", "@test/a", { "worker.ts": "", "own.ts": "" });
 	await writePlugin(root, "b", "@test/b", { "server.ts": "" });
+	await settleFileEvents();
 	const failures: unknown[] = [];
 	const watcher = new PluginWatcher(
 		{ roots: [root], base: [base], kinds: KINDS, failed: (error) => failures.push(error) },
@@ -44,6 +45,7 @@ async function watched() {
 		used("@test/a", "worker", [join(root, "a", "worker.ts"), contract]),
 		used("@test/b", "server", [join(root, "b", "server.ts"), contract]),
 	]);
+	await settleFileEvents();
 	return { root, base, watcher, failures };
 }
 
@@ -245,12 +247,14 @@ describe("base code compared with what the running bases read (p3 step 0a)", () 
 			{ roots: [], base: [base], kinds: KINDS, failed: () => {} },
 			new Batch(() => {}, undefined),
 		);
+		await settleFileEvents();
 		return { base, watcher };
 	}
 
 	/** Waits until the watcher's `base` mark is `value`. */
 	async function baseIs(watcher: PluginWatcher, value: boolean): Promise<void> {
 		await vi.waitFor(() => expect(watcher.value).toMatchObject({ base: value }), { timeout: 5_000 });
+		await settleFileEvents();
 	}
 
 	/** Lets the watch events and the comparisons of the last writes run. */
@@ -314,6 +318,7 @@ describe("base code compared with what the running bases read (p3 step 0a)", () 
 			{ roots: [], base: [base], kinds: KINDS, failed: () => {} },
 			new Batch(() => {}, undefined),
 		);
+		await settleFileEvents();
 		await rename(base, join(parent, "moved"));
 		await baseIs(watcher, true);
 		await rename(join(parent, "moved"), base);

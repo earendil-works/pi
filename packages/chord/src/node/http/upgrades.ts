@@ -149,10 +149,13 @@ export class Upgrades {
 		for (const upgraded of this.#open) end(upgraded);
 	}
 
-	/** Keeps `upgraded` until its socket closes; an error (an oversized frame) terminates only that socket. */
+	/** Keeps `upgraded` until its socket closes, letting a protocol error finish its close handshake. */
 	#keep(upgraded: Upgraded): void {
 		const { socket } = upgraded;
-		socket.on("error", () => socket.terminate());
+		socket.on("error", () => {
+			// ws already sends the protocol close code (such as 1009); terminating now can discard that frame.
+			if (socket.readyState !== socket.CLOSING) socket.terminate();
+		});
 		this.#open.add(upgraded);
 		socket.once("close", () => this.#open.delete(upgraded));
 	}

@@ -3,7 +3,7 @@
 // plugin scripts registering themselves. A terminal plugin has no assets: a Node build refuses them (Opus L5).
 
 import { readFile } from "node:fs/promises";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import { TuiScripts } from "../../../src/index.ts";
 import type { TuiStart } from "../../../src/node/surfaces/index.ts";
@@ -44,6 +44,7 @@ describe("the terminal surface", () => {
 				"tui.ts": 'import icon from "./icon.svg?url";\nexport default { setup: () => icon };',
 				"icon.svg": "<svg/>",
 			});
+			await vi.waitFor(() => expect(app.plugins.state.value.set).toBe(true));
 			const built = await app.plugins.component.build(["@test/pictured"], context);
 			expect(built.facets.find(({ plugin }) => plugin === "@test/pictured")).toMatchObject({
 				kind: "failed",

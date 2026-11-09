@@ -16,6 +16,7 @@ import { BACKGROUND_CONTEXT as context, withAbortSignal } from "../../../src/con
 import { hostKind, local, remote, str, unknown } from "../../../src/contracts/index.ts";
 import { addressParam, HostData } from "../../../src/node/app/data.ts";
 import { AppInfo, type AppOptions } from "../../../src/node/app/index.ts";
+import { PluginWatcher } from "../../../src/node/plugins/watcher.ts";
 import { changesOf, flushed, rejection } from "../../support.ts";
 import { send } from "../http/support.ts";
 import { gitRepository, writePlugin } from "../plugins/support.ts";
@@ -427,14 +428,30 @@ describe("base code", () => {
 		const dir = await tempDir();
 		await writeFile(join(dir, "worker.ts"), 'export const label = "v1";\n');
 		const worker = { kind: Project, entry: join(dir, "worker.ts"), start: () => null, authorize: () => true };
-		// In this process the entry is the test runner's, under node_modules: no scan, only the worker base's record.
-		const { app } = await testApp({ workers: [worker] });
+		// Edit after the build but before its first comparison, not after baseWatched may already have settled.
+		const recordBase = PluginWatcher.prototype.recordBase;
+		let edits = 0;
+		const recording = vi.spyOn(PluginWatcher.prototype, "recordBase").mockImplementation(async function (
+			this: PluginWatcher,
+			inputs,
+		) {
+			if (inputs.has(worker.entry)) {
+				edits++;
+				await writeFile(worker.entry, 'export const label = "v2";\n');
+			}
+			return recordBase.call(this, inputs);
+		});
 		try {
-			await writeFile(join(dir, "worker.ts"), 'export const label = "v2";\n');
-			await app.baseWatched;
-			expect(app.plugins.state.value.base).toBe(true);
+			const { app } = await testApp({ workers: [worker] });
+			try {
+				await app.baseWatched;
+				expect(edits).toBe(1);
+				expect(app.plugins.state.value.base).toBe(true);
+			} finally {
+				await app.close(context);
+			}
 		} finally {
-			await app.close(context);
+			recording.mockRestore();
 		}
 	});
 

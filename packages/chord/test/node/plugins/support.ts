@@ -43,6 +43,11 @@ export async function tempRoot(fixtures: readonly string[] = []): Promise<string
 	return root;
 }
 
+/** Separates fixture writes and watch registration across macOS FSEvents' buffered batches. */
+export async function settleFileEvents(): Promise<void> {
+	if (process.platform === "darwin") await new Promise((resolve) => setTimeout(resolve, 250));
+}
+
 /** Writes `files` (relative path to text) into `dir`, creating directories. */
 export async function writeFiles(dir: string, files: Readonly<Record<string, string>>): Promise<void> {
 	for (const [path, text] of Object.entries(files)) {

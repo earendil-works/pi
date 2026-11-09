@@ -21,7 +21,7 @@ import {
 	WorkerInfo,
 } from "../../../src/node/app/index.ts";
 import { Http } from "../../../src/node/http/index.ts";
-import { writeFiles, writePlugin } from "../plugins/support.ts";
+import { settleFileEvents, writeFiles, writePlugin } from "../plugins/support.ts";
 
 /** The principals of these tests. */
 export type TestPrincipal =
@@ -108,6 +108,7 @@ export async function startTestApp<P extends Principal>(
 	await writeFiles(root, { ".keep": "" });
 	for (const [dir, files] of Object.entries(options.plugins ?? {}))
 		await writePlugin(root, dir, `@test/${dir}`, files);
+	await settleFileEvents();
 	const errors: unknown[] = [];
 	const app = await startServer<P>(
 		// The tests pass worker kinds (`withWorkers`, `workers`) only with `principal.worker`.
