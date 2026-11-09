@@ -31,6 +31,8 @@ import { MemoryStorage } from "../memory.ts";
 const FORMAT_VERSION = 1;
 const MAIN_FILE = "main.jsonl";
 const RECLAIM_SUFFIX = ".reclaim";
+/** Read-only opens retried after racing a writer's commits; each retry means another commit landed meanwhile. */
+const READ_ONLY_OPEN_ATTEMPTS = 5;
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 
 type StoredTask = TaskRecord<JsonValue, JsonValue, JsonValue>;
@@ -69,6 +71,8 @@ type ParsedLine<T> = {
 type ParsedFile<T> = {
 	readonly path: string;
 	readonly lines: readonly ParsedLine<T>[];
+	/** Bytes read, a torn final line included; 0 for a missing file. */
+	readonly size: number;
 };
 
 type EncodedCommit = {
@@ -79,12 +83,26 @@ type EncodedCommit = {
 export type JsonlStorageOptions = {
 	/** Flush every affected sidecar before appending the main marker. Defaults to false. */
 	readonly fsync?: boolean;
+	/**
+	 * Open without writing, for a viewer of a directory another process may be writing: recovery skips torn final lines
+	 * and unconfirmed sidecar tails in memory instead of truncating them, reclaims nothing, and creates no directory.
+	 * The storage holds the state committed at open and `commit()` rejects. Defaults to false.
+	 */
+	readonly readOnly?: boolean;
 };
 
 export class JsonlCorruptionError extends Error {
 	constructor(message: string, cause?: Error) {
 		super(message, cause === undefined ? undefined : { cause });
 		this.name = "JsonlCorruptionError";
+	}
+}
+
+/** `commit()` on a storage opened with `readOnly: true`. Nothing was written. */
+export class JsonlStorageReadOnlyError extends Error {
+	constructor() {
+		super("JSONL storage is open read-only");
+		this.name = "JsonlStorageReadOnlyError";
 	}
 }
 
@@ -246,10 +264,13 @@ export class JsonlStorage implements Storage {
 	private readonly directory: string;
 	private readonly mainPath: string;
 	private readonly fsync: boolean;
+	private readonly readOnly: boolean;
 	private readonly memory = new MemoryStorage();
 	private readonly currentOnlyDocuments = new Set<DocumentId>();
 	private readonly liveTaskSidecars = new Set<TaskId>();
 	private closed = false;
+	/** Bytes of `main.jsonl` recovery read (`mainChanged()`). */
+	private mainSize = 0;
 	private poisonError: JsonlStoragePoisonedError | undefined;
 	/** Settles once the batch being appended is; its batches are in memory already (`commit()`). */
 	private writing: Promise<void> | undefined;
@@ -259,9 +280,13 @@ export class JsonlStorage implements Storage {
 		this.directory = directory;
 		this.mainPath = mainPath;
 		this.fsync = options.fsync ?? false;
+		this.readOnly = options.readOnly ?? false;
 	}
 
-	/** Open or create a JSONL storage directory using the supplied filesystem. */
+	/**
+	 * Open or create a JSONL storage directory using the supplied filesystem. With `readOnly`, open an existing one
+	 * without writing; a recovery that fails while `main.jsonl` changes raced a writer's commit and is retried.
+	 */
 	static async open(
 		directory: string,
 		fs: FileSystem,
@@ -270,13 +295,28 @@ export class JsonlStorage implements Storage {
 	): Promise<JsonlStorage> {
 		const absolute = await fs.absolutePath(directory, context);
 		if (!absolute.ok) throw errorFromFile("path resolution", absolute.error);
-		const created = await fs.createDir(absolute.value, { recursive: true }, context);
-		if (!created.ok) throw errorFromFile("directory creation", created.error);
+		if (options.readOnly !== true) {
+			const created = await fs.createDir(absolute.value, { recursive: true }, context);
+			if (!created.ok) throw errorFromFile("directory creation", created.error);
+		}
 		const mainPathResult = await fs.joinPath([absolute.value, MAIN_FILE], context);
 		if (!mainPathResult.ok) throw errorFromFile("path join", mainPathResult.error);
-		const storage = new JsonlStorage(fs, absolute.value, mainPathResult.value, options);
-		await storage.recover(context);
-		return storage;
+		for (let attempt = 1; ; attempt++) {
+			const storage = new JsonlStorage(fs, absolute.value, mainPathResult.value, options);
+			try {
+				await storage.recover(context);
+				return storage;
+			} catch (error) {
+				if (
+					!storage.readOnly ||
+					attempt === READ_ONLY_OPEN_ATTEMPTS ||
+					!(error instanceof JsonlCorruptionError) ||
+					!(await storage.mainChanged(context))
+				) {
+					throw error;
+				}
+			}
+		}
 	}
 
 	/**
@@ -291,6 +331,7 @@ export class JsonlStorage implements Storage {
 		context: Context,
 	): Promise<CommitResult> {
 		this.assertUsable();
+		if (this.readOnly) throw new JsonlStorageReadOnlyError();
 		const seqs: Seq[] = [];
 		const encoded: EncodedCommit[] = [];
 		const reclamations = new Map<string, string>();
@@ -588,13 +629,17 @@ export class JsonlStorage implements Storage {
 		await this.fs.renameFile(temporaryPath.value, path.value, context);
 	}
 
+	/**
+	 * Load the confirmed state. A writable open also repairs the files: it truncates torn lines and unconfirmed sidecar
+	 * tails, removes leftover reclaim files, and reclaims sidecar records later commits made unnecessary. A read-only
+	 * open skips the same records in memory only.
+	 */
 	private async recover(context: Context): Promise<void> {
 		const fs = this.fs;
 		const directory = this.directory;
 		const memory = this.memory;
-		const main = await JsonlStorage.readLines(fs, this.mainPath, MAIN_FILE, context, (text, line) =>
-			parseMainMarker(text, line),
-		);
+		const main = await this.readLines(this.mainPath, MAIN_FILE, context, (text, line) => parseMainMarker(text, line));
+		this.mainSize = main.size;
 		let previousSeq = 0;
 		for (const marker of main.lines) {
 			if (marker.value.seq <= previousSeq) {
@@ -606,7 +651,7 @@ export class JsonlStorage implements Storage {
 		const listed = await fs.listDir(directory, context);
 		if (!listed.ok) throw errorFromFile("directory listing", listed.error);
 		for (const info of listed.value) {
-			if (info.kind === "file" && isReclaimFileName(info.name)) {
+			if (!this.readOnly && info.kind === "file" && isReclaimFileName(info.name)) {
 				await fs.remove(info.path, { force: true }, context);
 			}
 		}
@@ -619,7 +664,7 @@ export class JsonlStorage implements Storage {
 		for (const file of sidecarFiles) {
 			const pathResult = await fs.joinPath([directory, file], context);
 			if (!pathResult.ok) throw errorFromFile("path join", pathResult.error);
-			const parsed = await JsonlStorage.readLines(fs, pathResult.value, file, context, (text, line) =>
+			const parsed = await this.readLines(pathResult.value, file, context, (text, line) =>
 				parseSidecarRecord(text, file, line),
 			);
 			parsedFiles.set(file, parsed);
@@ -783,7 +828,7 @@ export class JsonlStorage implements Storage {
 					unconfirmedAt = line.start;
 				}
 			}
-			if (unconfirmedAt !== undefined) {
+			if (unconfirmedAt !== undefined && !this.readOnly) {
 				const truncated = await fs.truncateFile(parsed.path, unconfirmedAt, context);
 				if (!truncated.ok) throw errorFromFile(`tail truncation of ${file}`, truncated.error);
 			}
@@ -812,7 +857,7 @@ export class JsonlStorage implements Storage {
 				reclamations.set(file, retainedLines.map((line) => jsonLine(line.value)).join(""));
 			}
 		}
-		await this.reclaimSidecars(reclamations, context);
+		if (!this.readOnly) await this.reclaimSidecars(reclamations, context);
 
 		for (const id of currentOnlyDocuments) this.currentOnlyDocuments.add(id);
 		for (const [id, live] of finalTaskIsLive) {
@@ -839,24 +884,26 @@ export class JsonlStorage implements Storage {
 		return line.value;
 	}
 
-	private static async readLines<T>(
-		fs: FileSystem,
+	/** Parse the complete lines of `path`; a torn final line is truncated, or only skipped when read-only. */
+	private async readLines<T>(
 		path: string,
 		name: string,
 		context: Context,
 		parse: (text: string, line: number) => T,
 	): Promise<ParsedFile<T>> {
-		const read = await fs.readBinaryFile(path, context);
+		const read = await this.fs.readBinaryFile(path, context);
 		if (!read.ok) {
-			if (read.error.code === "not_found") return { path, lines: [] };
+			if (read.error.code === "not_found") return { path, lines: [], size: 0 };
 			throw errorFromFile(`read of ${name}`, read.error);
 		}
 		const bytes = read.value;
 		let completeSize = bytes.length;
 		if (completeSize > 0 && bytes[completeSize - 1] !== 0x0a) {
 			completeSize = bytes.lastIndexOf(0x0a) + 1;
-			const truncated = await fs.truncateFile(path, completeSize, context);
-			if (!truncated.ok) throw errorFromFile(`torn-line truncation of ${name}`, truncated.error);
+			if (!this.readOnly) {
+				const truncated = await this.fs.truncateFile(path, completeSize, context);
+				if (!truncated.ok) throw errorFromFile(`torn-line truncation of ${name}`, truncated.error);
+			}
 		}
 		const lines: ParsedLine<T>[] = [];
 		let start = 0;
@@ -876,7 +923,17 @@ export class JsonlStorage implements Storage {
 			start = end + 1;
 			lineNumber++;
 		}
-		return { path, lines };
+		return { path, lines, size: bytes.length };
+	}
+
+	/**
+	 * Whether `main.jsonl` changed size since recovery read it. A writer reclaims a sidecar only after appending the
+	 * marker that allows it, so sidecars read while `main.jsonl` stayed the same match its markers; a recovery that
+	 * failed while it changed may have read a sidecar a newer commit reclaimed.
+	 */
+	private async mainChanged(context: Context): Promise<boolean> {
+		const info = await this.fs.fileInfo(this.mainPath, context);
+		return info.ok && info.value.size !== this.mainSize;
 	}
 
 	private async resolveFile(file: string, context: Context): Promise<string> {

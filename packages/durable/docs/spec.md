@@ -842,7 +842,9 @@ writes rejects with `ReadOnlySession` before it reaches Storage, so the Session
 stays healthy; a commit that writes nothing succeeds. `resume()` throws
 `ReadOnlySession`, and every call that enables scheduling rejects with it.
 `wake()` is always inactive and `onWake` is never called. Reopening without
-`readOnly` recovers as usual: the viewer counted no restart.
+`readOnly` recovers as usual: the viewer counted no restart. The option does not
+reach the Storage, which is opened before the Harness: a backend whose open
+repairs files, such as JSONL (section 11.3), needs its own read-only open.
 
 `createConversation({ ownership, agent, init })` and
 `fork(at, { ownership, agent, init })` commit atomically: the conversation, its
@@ -6357,6 +6359,16 @@ Recovery:
 - A later committed latest base or retirement may prove an earlier physical
   record unnecessary.
 - Any uncertain append failure poisons the open backend.
+
+A read-only open (`readOnly: true`) is for a viewer of a directory another
+process writes. It creates no directory and writes nothing: torn final lines and
+unconfirmed sidecar tails are skipped in memory, leftover temporary replacements
+stay, and nothing is reclaimed. It holds the state committed at open, and
+`commit()` rejects. Recovery reads `main.jsonl` before the sidecars, and a
+writer reclaims a sidecar only after appending the marker that authorizes it, so
+sidecars read while `main.jsonl` keeps its size match its markers. A recovery
+that fails as corrupt while `main.jsonl` changed size raced a commit and is
+retried a few times; one that fails while it stayed the same is corruption.
 
 Reclamation starts only after the authorizing base/retirement commits. When no
 sidecar records remain, it removes the sidecar directly. Otherwise, it writes a
