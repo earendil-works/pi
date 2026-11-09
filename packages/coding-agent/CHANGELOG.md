@@ -51,6 +51,7 @@
 - Fixed resuming a session restoring an old thinking level after `/tree` navigated to before a `/thinking` change. Like the model, the live thinking level is now recorded on the new branch with the next prompt ([#11451](https://github.com/earendil-works/pi/issues/11451))
 - Fixed inline images in fullscreen mode showing only their first row in Orca, while regular mode showed them in full. Fullscreen now draws Kitty images after the rows they cover on every terminal, as it already did for WezTerm ([#11835](https://github.com/earendil-works/pi/issues/11835))
 - Fixed the edit tool rewriting the line endings of untouched lines in files with mixed CRLF/LF or lone CR line endings, and running out of memory on large files after the file was already written; the diff now covers only the changed lines and their surroundings and is computed before writing ([#8544](https://github.com/earendil-works/pi/issues/8544))
+- Fixed the Windows installer (`irm https://pi.dev/install.ps1 | iex`) aborting with `NativeCommandError` in Windows PowerShell 5.1 when npm or Node.js printed any warning, for example `npm warn Unknown user config` from an unknown `.npmrc` key. It failed before the action menu when migrating an npm installation, and during managed installs. An invalid `managed-install.json` also aborted the installer instead of being reported ([#11944](https://github.com/earendil-works/pi/issues/11944))
 
 ## [1.5.0] - 2026-11-02
 
