@@ -21,7 +21,13 @@ Each session records the working directory it was created in and never changes i
 | `--resume`, `/resume`, `--session`, `/import` | The session's working directory, which can differ from the current directory |
 | `--fork`, or a `--session` ID from another directory that you choose to fork | The current directory, in a new session |
 
-If a session's working directory no longer exists, interactive mode offers to run the session in the current directory instead. Pi does not store that choice, so it asks again the next time you open the session. Other modes exit with an error.
+If a session's working directory no longer exists, for example after the project folder was renamed, interactive mode asks how to open it:
+
+- **Continue** runs the session in the current directory. Pi does not store that choice, so it asks again the next time you open the session.
+- **Fork** copies the session into the current directory as a new session with a new ID, like `--fork`. The original stays unchanged. At startup the copy is stored like other new sessions for the current directory; from `/resume` or `/import` it is stored next to the current session, like `/new`.
+- **Cancel** leaves the current session open, or exits at startup.
+
+Other modes exit with an error.
 
 Use `/name` or `--name` to assign a recognizable session name. Run `/session` to verify the current session file, ID, message count, token usage, and cost.
 
