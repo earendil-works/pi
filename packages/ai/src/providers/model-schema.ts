@@ -11,11 +11,13 @@ import {
 	str,
 	union,
 } from "@earendil-works/pi-schema";
+import { MODEL_INPUT_MODALITIES } from "../model-modalities.ts";
 import { openObject as object } from "./schema-builders.ts";
+
+export { MODEL_INPUT_MODALITIES } from "../model-modalities.ts";
 
 export const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export const MODEL_THINKING_LEVELS = ["off", ...THINKING_LEVELS] as const;
-export const MODEL_INPUT_MODALITIES = ["text", "image"] as const;
 export const CACHE_RETENTIONS = ["none", "short", "long"] as const;
 export const MODEL_PROMPT_CACHE_RETENTIONS = ["short", "long"] as const;
 

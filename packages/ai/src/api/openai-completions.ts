@@ -40,6 +40,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { type ClientIdentity, getIdentityHeaders } from "../utils/identity.ts";
+import { MEDIA_UNSUPPORTED_BY_API, omittedMediaText } from "../utils/media.ts";
 import {
 	applyOpenRouterReportedCost,
 	isOpenRouterModel,
@@ -1268,14 +1269,19 @@ export function convertMessages(
 								type: "text",
 								text: sanitizeSurrogates(item.text),
 							} satisfies ChatCompletionContentPartText;
-						} else {
-							return {
-								type: "image_url",
-								image_url: {
-									url: `data:${item.mimeType};base64,${item.data}`,
-								},
-							} satisfies ChatCompletionContentPartImage;
 						}
+						if (item.type === "file") {
+							return {
+								type: "text",
+								text: omittedMediaText(item, MEDIA_UNSUPPORTED_BY_API),
+							} satisfies ChatCompletionContentPartText;
+						}
+						return {
+							type: "image_url",
+							image_url: {
+								url: `data:${item.mimeType};base64,${item.data}`,
+							},
+						} satisfies ChatCompletionContentPartImage;
 					});
 				if (content.length === 0) continue;
 				params.push({

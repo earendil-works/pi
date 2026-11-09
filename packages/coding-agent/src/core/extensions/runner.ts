@@ -167,7 +167,7 @@ function isUserBashEventResult(value: unknown): value is UserBashEventResult {
 
 /** The message that starts a run: the before_agent_start event without its prompt fields. */
 export type BeforeAgentStartTrigger =
-	| Pick<BeforeAgentStartUserEvent, "messageType" | "prompt" | "images">
+	| Pick<BeforeAgentStartUserEvent, "messageType" | "prompt" | "images" | "media">
 	| Pick<BeforeAgentStartCustomEvent, "messageType" | "message">;
 
 /** Combined result from all before_agent_start handlers. */

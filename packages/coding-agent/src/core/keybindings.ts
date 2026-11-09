@@ -72,6 +72,10 @@ const APP_KEYBINDINGS = {
 		defaultKeys: windowsKeybindings ? "alt+q" : "alt+up",
 		description: "Restore queued messages",
 	},
+	"app.attachment.removeLast": {
+		defaultKeys: "alt+backspace",
+		description: "Remove the last pending attachment",
+	},
 	"app.clipboard.pasteImage": {
 		defaultKeys: windowsKeybindings ? ["alt+v", "ctrl+v"] : "ctrl+v",
 		description: "Paste files on macOS, images, or text from clipboard",
@@ -245,6 +249,7 @@ const KEYBINDING_NAME_MIGRATIONS = {
 	followUp: "app.message.followUp",
 	dequeue: "app.message.dequeue",
 	pasteImage: "app.clipboard.pasteImage",
+	removeAttachment: "app.attachment.removeLast",
 	newSession: "app.session.new",
 	tree: "app.session.tree",
 	fork: "app.session.fork",

@@ -3,12 +3,12 @@
  * Handles TUI rendering and user interaction, delegating business logic to AgentSession.
  */
 
-import * as crypto from "node:crypto";
 import * as fs from "node:fs";
-import * as os from "node:os";
+import { readFile, stat } from "node:fs/promises";
 import * as path from "node:path";
+import { basename, resolve } from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
+import type { AuthEvent, AuthPrompt, FileContent, MediaTransferProgress } from "@earendil-works/pi-ai";
 import {
 	type AssistantMessage,
 	type ImageContent,
@@ -119,6 +119,7 @@ import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import { getSourcePackageKey, type SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
+import { resolveReadPath } from "../../core/tools/path-utils.ts";
 import { withBuiltInRenderers } from "../../core/tools/renderers/index.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
@@ -126,9 +127,11 @@ import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
 import { addMcpServerConfig } from "../../extensions/mcp/config.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
 import { copyToClipboard, readClipboardFilePaths, readClipboardText } from "../../utils/clipboard.ts";
-import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
+import { readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
 import { ensurePngTranscoder } from "../../utils/image-convert.ts";
+import { processImage } from "../../utils/image-process.ts";
+import { detectMediaMimeTypeFromFile, detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
 import { getCwdRelativePath, shortenHomePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
@@ -174,6 +177,7 @@ import {
 	BranchSummaryStatusIndicator,
 	CompactionStatusIndicator,
 	IdleStatus,
+	MediaStatusIndicator,
 	RetryStatusIndicator,
 	type StatusIndicator,
 	WorkingStatusIndicator,
@@ -426,6 +430,35 @@ function formatLoginProviderCompletionDescription(provider: LoginProviderComplet
 	return provider.name === provider.id ? authTypes : `${provider.name} · ${authTypes}`;
 }
 
+/** One line describing what a request waits for while its media is not ready to reference. */
+function formatMediaTransfer(progress: MediaTransferProgress): string {
+	if (progress.stage === "upload") {
+		const uploaded = progress.uploadedBytes ?? 0;
+		const total = progress.totalBytes ?? 0;
+		const percent = total > 0 ? Math.floor((uploaded / total) * 100) : 0;
+		return `Uploading ${progress.name} ${percent}% (${formatMegabytes(uploaded)} / ${formatMegabytes(total)}) · ${keyText("app.interrupt")} to cancel`;
+	}
+	const seconds = Math.round((progress.elapsedMs ?? 0) / 1000);
+	return `Processing ${progress.name}… ${seconds}s · ${keyText("app.interrupt")} to cancel`;
+}
+
+function formatMegabytes(bytes: number): string {
+	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatKilobytes(bytes: number): string {
+	return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+/** Whether a path is an existing regular file, used to accept a path before reading it. */
+async function isFile(filePath: string): Promise<boolean> {
+	try {
+		return (await stat(filePath)).isFile();
+	} catch {
+		return false;
+	}
+}
+
 /**
  * Options for InteractiveMode initialization.
  */
@@ -460,6 +493,19 @@ interface ExtensionChangelogUpdate {
 	markdown: string;
 }
 
+/** One message the user submitted, with whatever was attached to it. */
+interface UserInput {
+	text: string;
+	images?: ImageContent[];
+	media?: FileContent[];
+}
+
+/** An attachment of the message being composed. */
+interface PendingAttachment {
+	label: string;
+	block: ImageContent | FileContent;
+}
+
 export class InteractiveMode {
 	private runtimeHost: AgentSessionRuntime;
 	private renderer: TuiMainScreen | TuiAltScreen;
@@ -488,9 +534,14 @@ export class InteractiveMode {
 	private keybindings: KeybindingsManager;
 	private version: string;
 	private isInitialized = false;
-	private onInputCallback?: (text: string) => void;
-	private pendingUserInputs: string[] = [];
+	private onInputCallback?: (input: UserInput) => void;
+	private pendingUserInputs: UserInput[] = [];
+	/** Attachments for the message being composed: images inline, audio and video by path. */
+	private readonly attachments: PendingAttachment[] = [];
 	private activeStatusIndicator: StatusIndicator | undefined = undefined;
+	private attachmentsContainer: Container;
+	/** Media the current request is still uploading or waiting on, by file name. */
+	private readonly mediaTransfers = new Map<string, MediaTransferProgress>();
 	private activeWorkingIndicatorEmbedded = false;
 	private readonly idleStatus = new IdleStatus();
 	private workingMessage: string | undefined = undefined;
@@ -661,6 +712,7 @@ export class InteractiveMode {
 		this.documentContainer.addChild(this.chatContainer);
 		this.pendingMessagesContainer = new Container();
 		this.statusContainer = new Container();
+		this.attachmentsContainer = new Container();
 		this.widgetContainerAbove = new Container();
 		this.widgetContainerBelow = new Container();
 		this.keybindings = KeybindingsManager.create();
@@ -1003,6 +1055,7 @@ export class InteractiveMode {
 			document: this.documentContainer,
 			pendingMessages: this.pendingMessagesContainer,
 			status: this.statusContainer,
+			attachments: this.attachmentsContainer,
 			widgetsAbove: this.widgetContainerAbove,
 			editor: this.editorContainer,
 			widgetsBelow: this.widgetContainerBelow,
@@ -1017,6 +1070,7 @@ export class InteractiveMode {
 			this.documentContainer,
 			this.pendingMessagesContainer,
 			this.statusContainer,
+			this.attachmentsContainer,
 			this.widgetContainerAbove,
 			this.editorContainer,
 			this.widgetContainerBelow,
@@ -1287,7 +1341,10 @@ export class InteractiveMode {
 		while (true) {
 			const userInput = await this.getUserInput();
 			try {
-				await this.session.prompt(userInput);
+				await this.session.prompt(userInput.text, {
+					...(userInput.images ? { images: userInput.images } : {}),
+					...(userInput.media ? { media: userInput.media } : {}),
+				});
 			} catch (error: unknown) {
 				const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 				this.showError(errorMessage);
@@ -3231,6 +3288,7 @@ export class InteractiveMode {
 		);
 		this.defaultEditor.onAction("app.message.followUp", () => this.handleFollowUp());
 		this.defaultEditor.onAction("app.message.dequeue", () => this.handleDequeue());
+		this.defaultEditor.onAction("app.attachment.removeLast", () => this.removeLastAttachment());
 		this.defaultEditor.onAction("app.session.new", () => this.handleClearCommand());
 		this.defaultEditor.onAction("app.session.tree", () => this.showTreeSelector());
 		this.defaultEditor.onAction("app.session.fork", () => this.showUserMessageSelector());
@@ -3251,6 +3309,30 @@ export class InteractiveMode {
 		};
 	}
 
+	/**
+	 * Show what the request is waiting for: bytes leaving this machine, or the provider still
+	 * processing an upload. A file becomes `ready` once it can be referenced, and the indicator
+	 * stays until every file of the request is done.
+	 */
+	private handleMediaTransfer(progress: MediaTransferProgress): void {
+		if (progress.stage === "ready") {
+			this.mediaTransfers.delete(progress.name);
+			if (this.mediaTransfers.size === 0) {
+				this.clearStatusIndicator("media");
+				// The request still runs; hand the line back to the working spinner.
+				if (this.session.isStreaming) this.showWorkingStatusIndicator();
+			}
+			return;
+		}
+		this.mediaTransfers.set(progress.name, progress);
+		const message = formatMediaTransfer(progress);
+		if (this.activeStatusIndicator?.kind === "media") {
+			(this.activeStatusIndicator as MediaStatusIndicator).setProgress(message);
+			return;
+		}
+		this.showStatusIndicator(new MediaStatusIndicator(this.ui, message, this.workingIndicatorOptions));
+	}
+
 	private async handleRightClickPaste(): Promise<void> {
 		const target = this.renderer.getFocusedComponent();
 		const handleInput = target?.handleInput;
@@ -3265,6 +3347,116 @@ export class InteractiveMode {
 		}
 	}
 
+	/** `/attach <path>` attaches a file to the next message; without a path it lists what is attached. */
+	private async handleAttachCommand(argument: string): Promise<void> {
+		if (argument.length === 0) {
+			if (this.attachments.length === 0) {
+				this.showStatus("Nothing attached. Use /attach <path> to attach an image, audio, or video file.");
+				return;
+			}
+			for (const attachment of this.attachments) this.showStatus(`⧉ ${attachment.label}`);
+			return;
+		}
+		// The path is taken as the whole argument, or as its first word when the rest is prose.
+		const candidates = argument.startsWith('"')
+			? [argument.replace(/^"(.*)"$/, "$1")]
+			: [argument, argument.split(/\s+/)[0] ?? argument];
+		for (const candidate of candidates) {
+			const resolved = resolve(resolveReadPath(candidate, this.sessionManager.getCwd()));
+			if (!(await isFile(resolved))) continue;
+			const error = await this.attachPath(resolved);
+			if (error) this.showError(error);
+			else this.showStatus(`Attached ${this.attachments.at(-1)?.label ?? resolved}`);
+			return;
+		}
+		this.showError(`No such file: ${argument}`);
+	}
+
+	private removeLastAttachment(): void {
+		if (this.attachments.length === 0) return;
+		this.attachments.pop();
+		this.renderAttachments();
+	}
+
+	/** Take the pending attachments, leaving the chips empty. */
+	private takeAttachments(): { images?: ImageContent[]; media?: FileContent[] } {
+		if (this.attachments.length === 0) return {};
+		const images: ImageContent[] = [];
+		const media: FileContent[] = [];
+		for (const attachment of this.attachments.splice(0)) {
+			if (attachment.block.type === "image") images.push(attachment.block);
+			else media.push(attachment.block);
+		}
+		this.renderAttachments();
+		return { ...(images.length > 0 ? { images } : {}), ...(media.length > 0 ? { media } : {}) };
+	}
+
+	/** Show the pending attachments above the editor, one chip each. */
+	private renderAttachments(): void {
+		this.attachmentsContainer.clear();
+		if (this.attachments.length === 0) {
+			this.ui.requestRender();
+			return;
+		}
+		for (const attachment of this.attachments) {
+			this.attachmentsContainer.addChild(new TruncatedText(theme.fg("accent", `  ⧉ ${attachment.label}`), 1, 0));
+		}
+		const hint = this.getAppKeyDisplay("app.attachment.removeLast");
+		this.attachmentsContainer.addChild(new TruncatedText(theme.fg("dim", `  ${hint} to remove the last one`), 1, 0));
+		this.ui.requestRender();
+	}
+
+	/**
+	 * Attach a path as media, or as an image when its bytes are one. Returns an error message for
+	 * paths pi cannot attach, so `/attach` can report the reason instead of silently ignoring it.
+	 */
+	/**
+	 * Say so at attach time when the selected model cannot take this modality: the request replaces
+	 * it with a note, and the transcript a user reads would otherwise look like the model ignored it.
+	 */
+	private warnWhenModelRejects(modality: "image" | "audio" | "video"): void {
+		const model = this.session.model;
+		if (!model || model.input.includes(modality)) return;
+		this.showWarning(
+			`${model.provider}/${model.id} does not accept ${modality} input: the attachment will be omitted from the request.`,
+		);
+	}
+
+	private async attachPath(resolved: string): Promise<string | undefined> {
+		let stats: Awaited<ReturnType<typeof stat>>;
+		try {
+			stats = await stat(resolved);
+		} catch {
+			return `No such file: ${resolved}`;
+		}
+		if (!stats.isFile()) return `Not a file: ${resolved}`;
+
+		const imageMimeType = await detectSupportedImageMimeTypeFromFile(resolved);
+		if (imageMimeType) {
+			const processed = await processImage(await readFile(resolved), imageMimeType, {
+				resizeOptions: this.session.model?.inputLimits?.images?.resize,
+			});
+			if (!processed.ok) return processed.message;
+			this.warnWhenModelRejects("image");
+			this.attachments.push({
+				label: `${basename(resolved)} · ${processed.mimeType} · ${formatKilobytes(stats.size)}`,
+				block: { type: "image", data: processed.data, mimeType: processed.mimeType },
+			});
+			this.renderAttachments();
+			return undefined;
+		}
+
+		const mimeType = detectMediaMimeTypeFromFile(resolved);
+		if (!mimeType) return `Unsupported attachment type: ${basename(resolved)}`;
+		this.warnWhenModelRejects(mimeType.startsWith("audio/") ? "audio" : "video");
+		this.attachments.push({
+			label: `${basename(resolved)} · ${mimeType} · ${formatMegabytes(stats.size)}`,
+			block: { type: "file", path: resolved, mimeType, name: basename(resolved), sizeBytes: stats.size },
+		});
+		this.renderAttachments();
+		return undefined;
+	}
+
 	private async handleClipboardPaste(): Promise<void> {
 		try {
 			const filePaths = await readClipboardFilePaths();
@@ -3272,7 +3464,18 @@ export class InteractiveMode {
 				if (filePaths.some((filePath) => /\p{Cc}/u.test(filePath))) {
 					throw new Error("Clipboard file path contains control characters");
 				}
-				const paths = this.isBashMode ? filePaths.map(quoteIfNeeded).join(" ") : filePaths.join("\n");
+				// Media becomes an attachment: its bytes are far too large to pass as a path in text.
+				const attachable: string[] = [];
+				const plain: string[] = [];
+				for (const filePath of filePaths) {
+					const resolved = resolve(resolveReadPath(filePath, this.sessionManager.getCwd()));
+					if (this.isBashMode) plain.push(filePath);
+					else if ((await this.attachPath(resolved)) === undefined) attachable.push(resolved);
+					else plain.push(filePath);
+				}
+				if (attachable.length > 0 && plain.length === 0) return;
+				const paths = this.isBashMode ? filePaths.map(quoteIfNeeded).join(" ") : plain.join("\n");
+				if (!paths) return;
 				const cursor = this.editor.getCursor?.();
 				const currentLine = cursor ? (this.editor.getText().split("\n")[cursor.line] ?? "") : "";
 				const characterBeforeCursor = cursor && cursor.col > 0 ? currentLine[cursor.col - 1] : "";
@@ -3286,14 +3489,16 @@ export class InteractiveMode {
 
 			const image = await readClipboardImage();
 			if (image) {
-				const tmpDir = os.tmpdir();
-				const ext = extensionForImageMimeType(image.mimeType) ?? "png";
-				const fileName = `pi-clipboard-${crypto.randomUUID()}.${ext}`;
-				const filePath = path.join(tmpDir, fileName);
-				fs.writeFileSync(filePath, Buffer.from(image.bytes));
-
-				this.editor.insertTextAtCursor?.(filePath);
-				this.ui.requestRender();
+				const processed = await processImage(Buffer.from(image.bytes), image.mimeType);
+				if (!processed.ok) {
+					this.showError(processed.message);
+					return;
+				}
+				this.attachments.push({
+					label: `pasted image · ${processed.mimeType} · ${formatKilobytes(image.bytes.length)}`,
+					block: { type: "image", data: processed.data, mimeType: processed.mimeType },
+				});
+				this.renderAttachments();
 				return;
 			}
 
@@ -3315,7 +3520,7 @@ export class InteractiveMode {
 	private setupEditorSubmitHandler(): void {
 		this.defaultEditor.onSubmit = async (text: string) => {
 			text = text.trim();
-			if (!text) return;
+			if (!text && this.attachments.length === 0) return;
 
 			// Handle commands
 			if (text === "/settings") {
@@ -3422,6 +3627,17 @@ export class InteractiveMode {
 				await this.handleClearCommand();
 				return;
 			}
+			if (text === "/attach" || text.startsWith("/attach ")) {
+				this.editor.setText("");
+				await this.handleAttachCommand(text.slice("/attach".length).trim());
+				return;
+			}
+			if (text === "/detach") {
+				this.editor.setText("");
+				this.attachments.length = 0;
+				this.renderAttachments();
+				return;
+			}
 			if (text === "/compact" || text.startsWith("/compact ")) {
 				const customInstructions = text.startsWith("/compact ") ? text.slice(9).trim() : undefined;
 				this.editor.setText("");
@@ -3494,7 +3710,7 @@ export class InteractiveMode {
 			if (this.session.isStreaming) {
 				this.editor.addToHistory?.(text);
 				this.editor.setText("");
-				await this.session.prompt(text, { streamingBehavior: "steer" });
+				await this.session.prompt(text, { streamingBehavior: "steer", ...this.takeAttachments() });
 				this.updatePendingMessagesDisplay();
 				this.ui.requestRender();
 				return;
@@ -3504,10 +3720,11 @@ export class InteractiveMode {
 			// First, move any pending bash components to chat
 			this.flushPendingBashComponents();
 
+			const input: UserInput = { text, ...this.takeAttachments() };
 			if (this.onInputCallback) {
-				this.onInputCallback(text);
+				this.onInputCallback(input);
 			} else {
-				this.pendingUserInputs.push(text);
+				this.pendingUserInputs.push(input);
 			}
 			this.editor.addToHistory?.(text);
 		};
@@ -3771,6 +3988,8 @@ export class InteractiveMode {
 					this.ui.terminal.setProgress(false);
 				}
 				this.clearStatusIndicator("working");
+				this.mediaTransfers.clear();
+				this.clearStatusIndicator("media");
 				if (this.streamingComponent) {
 					this.chatContainer.removeChild(this.streamingComponent);
 					this.streamingComponent = undefined;
@@ -3860,6 +4079,12 @@ export class InteractiveMode {
 				break;
 			}
 
+			case "media_transfer": {
+				this.handleMediaTransfer(event.progress);
+				this.ui.requestRender();
+				break;
+			}
+
 			case "auto_retry_start": {
 				// Set up escape to abort retry
 				this.retryEscapeHandler = this.defaultEditor.onEscape;
@@ -3930,6 +4155,22 @@ export class InteractiveMode {
 				? [{ type: "text", text: message.content }]
 				: message.content.filter((c: { type: string }) => c.type === "text");
 		return textBlocks.map((c) => (c as { text: string }).text).join("");
+	}
+
+	/**
+	 * List what a user message carried besides text. Attachments are not sent as text, so without
+	 * this line a video or an image is invisible in the transcript.
+	 */
+	private addUserAttachmentLines(message: Message): void {
+		if (message.role !== "user" || typeof message.content === "string") return;
+		for (const block of message.content) {
+			if (block.type === "text") continue;
+			const label =
+				block.type === "image"
+					? `image · ${block.mimeType}`
+					: `⧉ ${block.name ?? block.path ?? block.mimeType} · ${block.mimeType}${block.sizeBytes === undefined ? "" : ` · ${formatMegabytes(block.sizeBytes)}`}`;
+			this.chatContainer.addChild(new TruncatedText(theme.fg("dim", `  ${label}`), 1, 0));
+		}
 	}
 
 	/** Show a managed-tool status update in the chat. */
@@ -4114,6 +4355,7 @@ export class InteractiveMode {
 						this.editor.addToHistory?.(textContent);
 					}
 				}
+				this.addUserAttachmentLines(message);
 				break;
 			}
 			case "assistant": {
@@ -4418,16 +4660,16 @@ export class InteractiveMode {
 		);
 	}
 
-	async getUserInput(): Promise<string> {
+	async getUserInput(): Promise<UserInput> {
 		const queuedInput = this.pendingUserInputs.shift();
 		if (queuedInput !== undefined) {
 			return queuedInput;
 		}
 
 		return new Promise((resolve) => {
-			this.onInputCallback = (text: string) => {
+			this.onInputCallback = (input: UserInput) => {
 				this.onInputCallback = undefined;
-				resolve(text);
+				resolve(input);
 			};
 		});
 	}
@@ -4668,7 +4910,7 @@ export class InteractiveMode {
 		if (this.session.isStreaming) {
 			this.editor.addToHistory?.(text);
 			this.editor.setText("");
-			await this.session.prompt(text, { streamingBehavior: "followUp" });
+			await this.session.prompt(text, { streamingBehavior: "followUp", ...this.takeAttachments() });
 			this.updatePendingMessagesDisplay();
 			this.ui.requestRender();
 		}

@@ -25,6 +25,7 @@ import {
 	type DeferredCancelOptions,
 	type DeferredFetchOptions,
 	type DeferredHandle,
+	type FetchFunction,
 	getOpenCodeSessionHeaders,
 	type ImageApi,
 	type ImageModel,
@@ -32,6 +33,7 @@ import {
 	type ImagesOptions,
 	type LoginOptions,
 	lazyStream,
+	type MediaTransferProgress,
 	type Message,
 	type Model,
 	type Models,
@@ -56,6 +58,7 @@ import {
 	type ProviderRequestOptions,
 	type SimpleStreamOptions,
 	type StreamOptions,
+	type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import * as builtinProviderCatalog from "@earendil-works/pi-ai/providers/all";
 import { personalizeOpenRouterCatalog } from "@earendil-works/pi-ai/providers/openrouter";
@@ -70,6 +73,7 @@ import {
 import { getAgentDir } from "../config.ts";
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
 import { AuthStorage as DefaultAuthStorage } from "./auth-storage.ts";
+import { type MediaTarget, resolveFileContent } from "./media-files.ts";
 import { ModelConfig } from "./model-config.ts";
 import { FileModelsStore, InMemoryCodingAgentModelsStore } from "./models-store.ts";
 import {
@@ -712,6 +716,32 @@ export class ModelRuntime implements Models {
 		};
 	}
 
+	/**
+	 * Upload media the transcript references but the request cannot carry inline, and return the
+	 * transcript to send. The persisted messages keep their local paths; only this copy gains the
+	 * provider reference, so a session can move between providers without carrying vendor state.
+	 */
+	private async resolveRequestMedia(
+		transcript: TranscriptContext,
+		model: MediaTarget,
+		options:
+			| {
+					apiKey?: string;
+					headers?: ProviderHeaders;
+					fetch?: FetchFunction;
+					signal?: AbortSignal;
+					onMediaProgress?: (progress: MediaTransferProgress) => void;
+			  }
+			| undefined,
+	): Promise<TranscriptContext> {
+		const messages = await resolveFileContent(transcript.messages, {
+			model,
+			...options,
+			onProgress: options?.onMediaProgress,
+		});
+		return messages === transcript.messages ? transcript : normalizeContext({ messages });
+	}
+
 	stream<TApi extends Api>(
 		model: Model<TApi>,
 		context: Context,
@@ -726,7 +756,12 @@ export class ModelRuntime implements Models {
 					model,
 					options as (StreamOptions & ModelsRequestTransforms) | undefined,
 				);
-				return prepared.provider.stream(prepared.model, transcript, prepared.options as ApiStreamOptions<TApi>);
+				const requestTranscript = await this.resolveRequestMedia(transcript, prepared.model, prepared.options);
+				return prepared.provider.stream(
+					prepared.model,
+					requestTranscript,
+					prepared.options as ApiStreamOptions<TApi>,
+				);
 			},
 			undefined,
 			options?.signal,
@@ -773,7 +808,12 @@ export class ModelRuntime implements Models {
 			async () => {
 				assertChatModel(model);
 				const prepared = await this.prepareRequest(model, options);
-				return prepared.provider.streamSimple(prepared.model, transcript, prepared.options as SimpleStreamOptions);
+				const requestTranscript = await this.resolveRequestMedia(transcript, prepared.model, prepared.options);
+				return prepared.provider.streamSimple(
+					prepared.model,
+					requestTranscript,
+					prepared.options as SimpleStreamOptions,
+				);
 			},
 			undefined,
 			options?.signal,

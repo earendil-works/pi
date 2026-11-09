@@ -41,6 +41,7 @@ import type {
 	ImageModel,
 	ImagesContext,
 	ImagesOptions,
+	MediaTransferProgress,
 	Model,
 	ModelCostRates,
 	ModelThinkingLevel,
@@ -120,6 +121,8 @@ export interface ModelsRefreshResult {
 export interface ModelsRequestTransforms {
 	/** Transform fully assembled model/auth/request headers before provider dispatch. */
 	transformHeaders?: (headers: ProviderHeaders) => ProviderHeaders | Promise<ProviderHeaders>;
+	/** Report media uploads and provider-side processing that must finish before the request is sent. */
+	onMediaProgress?: (progress: MediaTransferProgress) => void;
 }
 
 export type ModelsApiStreamOptions<TApi extends Api> = ApiStreamOptions<TApi> & ModelsRequestTransforms;

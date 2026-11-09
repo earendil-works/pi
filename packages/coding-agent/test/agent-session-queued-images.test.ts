@@ -1,5 +1,5 @@
 import { deflateSync } from "node:zlib";
-import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
+import type { FileContent, ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, type Harness } from "./test-harness.ts";
 
@@ -39,7 +39,7 @@ function createPng(width: number, height: number): string {
 	]).toString("base64");
 }
 
-function persistedUserContent(harness: Harness, text: string): (TextContent | ImageContent)[] {
+function persistedUserContent(harness: Harness, text: string): (TextContent | ImageContent | FileContent)[] {
 	for (const entry of harness.sessionManager.getEntries()) {
 		if (entry.type !== "message" || entry.message.role !== "user") continue;
 		const content = entry.message.content;

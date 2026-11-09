@@ -43,6 +43,7 @@ import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { type ClientIdentity, getIdentityHeaders } from "../utils/identity.ts";
 import { parseJsonWithRepair } from "../utils/json-parse.ts";
+import { MEDIA_UNSUPPORTED_BY_API, omittedMediaText } from "../utils/media.ts";
 import {
 	applyOpenRouterReportedCost,
 	isOpenRouterModel,
@@ -1675,9 +1676,11 @@ function convertMessages(
 							type: "text",
 							text: sanitizeSurrogates(item.text),
 						};
-					} else {
-						return convertImageBlock(item);
 					}
+					if (item.type === "file") {
+						return { type: "text", text: omittedMediaText(item, MEDIA_UNSUPPORTED_BY_API) };
+					}
+					return convertImageBlock(item);
 				});
 				const filteredBlocks = blocks.filter((b) => {
 					if (b.type === "text") {

@@ -4,7 +4,7 @@ import { theme } from "../theme/theme.ts";
 import { CountdownTimer } from "./countdown-timer.ts";
 import { keyText } from "./keybinding-hints.ts";
 
-export type StatusIndicatorKind = "working" | "retry" | "compaction" | "branchSummary";
+export type StatusIndicatorKind = "working" | "retry" | "compaction" | "branchSummary" | "media";
 
 export class StatusIndicator extends Loader {
 	readonly kind: StatusIndicatorKind;
@@ -32,6 +32,28 @@ export class StatusIndicator extends Loader {
 
 	dispose(): void {
 		this.stop();
+	}
+}
+
+/**
+ * The wait a request pays for media that must be uploaded and processed before it can be sent.
+ * Google reports no completion for a video, so the elapsed time is the only sign of progress.
+ */
+export class MediaStatusIndicator extends StatusIndicator {
+	constructor(ui: TUI, message: string, indicator?: WorkingIndicatorOptions) {
+		super(
+			"media",
+			ui,
+			(spinner) => theme.fg("accent", spinner),
+			(text) => theme.fg("muted", text),
+			message,
+			indicator,
+		);
+	}
+
+	/** Replace the line as the transfer moves from upload to processing. */
+	setProgress(message: string): void {
+		this.setMessage(message);
 	}
 }
 

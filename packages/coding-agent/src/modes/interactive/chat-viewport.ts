@@ -4,6 +4,8 @@ export interface ChatViewportOptions {
 	readonly document: Component;
 	readonly pendingMessages: Component;
 	readonly status: Component;
+	/** Attachment chips of the message being composed, directly above the editor. */
+	readonly attachments?: Component;
 	readonly editor: Component;
 	readonly footer: Component;
 	readonly widgetsAbove?: Component;
@@ -31,6 +33,7 @@ export function createChatViewport(options: ChatViewportOptions): ChatViewport {
 	const dock = new VStack([
 		{ component: options.pendingMessages, shrink: 1, minSize: 0 },
 		{ component: options.status, shrink: 1, minSize: 0 },
+		...(options.attachments === undefined ? [] : [{ component: options.attachments, shrink: 1, minSize: 0 }]),
 		...(options.widgetsAbove === undefined ? [] : [{ component: options.widgetsAbove, shrink: 1, minSize: 0 }]),
 		{ component: options.editor, shrink: 1, minSize: 3 },
 		...(options.widgetsBelow === undefined ? [] : [{ component: options.widgetsBelow, shrink: 1, minSize: 0 }]),

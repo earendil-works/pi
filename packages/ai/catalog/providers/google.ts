@@ -24,7 +24,9 @@ export default defineProvider({
 					...model,
 					reasoning: source.reasoning,
 					...(thinkingLevelMap ? { thinkingLevelMap } : {}),
-					input: source.imageInput ? ["text", "image"] : ["text"],
+					// Gemini takes audio and video by reference through the Files API, so the model
+					// declares every modality models.dev lists for it.
+					input: ["text", ...source.inputModalities.filter((modality) => modality !== "text")],
 					cost: modelsDevCost(source.cost),
 					contextWindow: source.contextWindow || 4096,
 					maxTokens: source.maxTokens || 4096,

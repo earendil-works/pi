@@ -1,4 +1,5 @@
-import type { ModelCost } from "../../src/types.ts";
+import { MODEL_INPUT_MODALITIES } from "../../src/model-modalities.ts";
+import type { ModelCost, ModelInputModality } from "../../src/types.ts";
 
 // models.dev v2 catalog. The schema is published as experimental, so everything
 // the catalog reads goes through `normalizeModelsDevModel()` below.
@@ -95,6 +96,8 @@ export interface ModelsDevModel {
 	/** Undefined when the model does not reason. */
 	reasoningOptions?: ModelsDevReasoningOption[];
 	imageInput: boolean;
+	/** Every modality the model accepts, restricted to the ones pi models. */
+	inputModalities: ModelInputModality[];
 	textInput: boolean;
 	textOutput: boolean;
 	contextWindow?: number;
@@ -192,6 +195,9 @@ export function normalizeModelsDevModel(model: ModelsDevV2Model): ModelsDevModel
 		reasoning: reasoning?.supported === true,
 		reasoningOptions: reasoning?.supported ? reasoningOptions(reasoning) : undefined,
 		imageInput: input.some((modality) => modality === "image" || modality.startsWith("image/")),
+		inputModalities: MODEL_INPUT_MODALITIES.filter((modality) =>
+			input.some((entry) => entry === modality || entry.startsWith(`${modality}/`)),
+		),
 		textInput: input.includes("text"),
 		textOutput: (model.modalities?.output ?? []).includes("text"),
 		contextWindow: model.limit?.context,

@@ -33,6 +33,7 @@ import type {
 } from "../types.ts";
 import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
+import { MEDIA_UNSUPPORTED_BY_API, omittedMediaText } from "../utils/media.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { ToolCallArgumentsStream } from "../utils/streaming-json.ts";
 import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
@@ -309,6 +310,12 @@ export function convertResponsesMessages<TApi extends Api>(
 						return {
 							type: "input_text",
 							text: sanitizeSurrogates(item.text),
+						} satisfies ResponseInputText;
+					}
+					if (item.type === "file") {
+						return {
+							type: "input_text",
+							text: omittedMediaText(item, MEDIA_UNSUPPORTED_BY_API),
 						} satisfies ResponseInputText;
 					}
 					return {

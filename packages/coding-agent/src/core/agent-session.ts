@@ -36,7 +36,9 @@ import { contentText, getCurrentSystemMessage, getCurrentTools, retryDelayMs } f
 import type {
 	AssistantMessage,
 	AuthResult,
+	FileContent,
 	ImageContent,
+	MediaTransferProgress,
 	Model,
 	ProviderHeaders,
 	SystemMessage,
@@ -248,6 +250,7 @@ export type AgentSessionEvent =
 			reason: "manual" | "threshold" | "overflow";
 	  }
 	| { type: "summarization_retry_finished" }
+	| { type: "media_transfer"; progress: MediaTransferProgress }
 	| { type: "bash_execution_update"; id?: string; delta: string };
 
 /** Listener function for agent session events */
@@ -331,6 +334,8 @@ export interface PromptOptions {
 	expandPromptTemplates?: boolean;
 	/** Image attachments */
 	images?: ImageContent[];
+	/** Media attachments referenced by path (audio, video), sent by provider reference. */
+	media?: FileContent[];
 	/** When streaming, how to queue the message: "steer" (interrupt) or "followUp" (wait). Required if streaming. */
 	streamingBehavior?: "steer" | "followUp";
 	/** Source of input for extension input event handlers. Defaults to "interactive". */
@@ -1094,6 +1099,14 @@ export class AgentSession {
 			event,
 			error: `${event} requested continuation without runnable model context`,
 		});
+	}
+
+	/**
+	 * Report a media upload or provider-side processing step of the current request, so a front end
+	 * can show the wait. The request itself is prepared inside the model runtime, hence this door.
+	 */
+	reportMediaTransfer(progress: MediaTransferProgress): void {
+		this._emit({ type: "media_transfer", progress });
 	}
 
 	/** Emit an event to all listeners */
@@ -2022,7 +2035,7 @@ export class AgentSession {
 				normalized.hints.length > 0 ? `${trigger.prompt}\n\n${normalized.hints.join("\n")}` : trigger.prompt;
 			messages.push({
 				role: "user",
-				content: [{ type: "text", text }, ...normalized.images],
+				content: [{ type: "text", text }, ...normalized.images, ...(trigger.media ?? [])],
 				timestamp: Date.now(),
 			});
 		}
@@ -2231,9 +2244,9 @@ export class AgentSession {
 				);
 			}
 			if (options.streamingBehavior === "followUp") {
-				await this._queueFollowUp(expandedText, currentImages);
+				await this._queueFollowUp(expandedText, currentImages, options.media);
 			} else {
-				await this._queueSteer(expandedText, currentImages);
+				await this._queueSteer(expandedText, currentImages, options.media);
 			}
 			preflightResult?.("queued");
 			return undefined;
@@ -2259,7 +2272,7 @@ export class AgentSession {
 			throw new Error(formatNoApiKeyFoundMessage(this.model.provider));
 		}
 
-		return { messageType: "user", prompt: expandedText, images: currentImages };
+		return { messageType: "user", prompt: expandedText, images: currentImages, media: options?.media };
 	}
 
 	/**
@@ -2327,6 +2340,7 @@ export class AgentSession {
 		images: ImageContent[] | undefined,
 		behavior: "steer" | "followUp",
 		source: InputSource,
+		media?: FileContent[],
 	): Promise<QueuedInputDisposition> {
 		if (text.startsWith("/")) {
 			this._throwIfExtensionCommand(text);
@@ -2344,9 +2358,9 @@ export class AgentSession {
 		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 
 		if (behavior === "steer") {
-			await this._queueSteer(expandedText, processedInput.images);
+			await this._queueSteer(expandedText, processedInput.images, media);
 		} else {
-			await this._queueFollowUp(expandedText, processedInput.images);
+			await this._queueFollowUp(expandedText, processedInput.images, media);
 		}
 		return "queued";
 	}
@@ -2363,9 +2377,9 @@ export class AgentSession {
 	async steer(
 		text: string,
 		images?: ImageContent[],
-		options?: { source?: InputSource },
+		options?: { source?: InputSource; media?: FileContent[] },
 	): Promise<QueuedInputDisposition> {
-		return this._queueUserInput(text, images, "steer", options?.source ?? "interactive");
+		return this._queueUserInput(text, images, "steer", options?.source ?? "interactive", options?.media);
 	}
 
 	/**
@@ -2379,21 +2393,22 @@ export class AgentSession {
 	async followUp(
 		text: string,
 		images?: ImageContent[],
-		options?: { source?: InputSource },
+		options?: { source?: InputSource; media?: FileContent[] },
 	): Promise<QueuedInputDisposition> {
-		return this._queueUserInput(text, images, "followUp", options?.source ?? "interactive");
+		return this._queueUserInput(text, images, "followUp", options?.source ?? "interactive", options?.media);
 	}
 
 	/**
 	 * Internal: Queue a steering message (already expanded, no extension command check).
 	 */
-	private async _queueSteer(text: string, images?: ImageContent[]): Promise<void> {
+	private async _queueSteer(text: string, images?: ImageContent[], media?: FileContent[]): Promise<void> {
 		this._steeringMessages.push(text);
 		this._emitQueueUpdate();
-		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
+		const content: (TextContent | ImageContent | FileContent)[] = [{ type: "text", text }];
 		if (images) {
 			content.push(...images);
 		}
+		if (media) content.push(...media);
 		const message: AgentMessage = { role: "user", content, timestamp: Date.now() };
 		if (images?.length) this._queuedMessagesWithImages.add(message);
 		this.agent.steer(message);
@@ -2402,13 +2417,14 @@ export class AgentSession {
 	/**
 	 * Internal: Queue a follow-up message (already expanded, no extension command check).
 	 */
-	private async _queueFollowUp(text: string, images?: ImageContent[]): Promise<void> {
+	private async _queueFollowUp(text: string, images?: ImageContent[], media?: FileContent[]): Promise<void> {
 		this._followUpMessages.push(text);
 		this._emitQueueUpdate();
-		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
+		const content: (TextContent | ImageContent | FileContent)[] = [{ type: "text", text }];
 		if (images) {
 			content.push(...images);
 		}
+		if (media) content.push(...media);
 		const message: AgentMessage = { role: "user", content, timestamp: Date.now() };
 		if (images?.length) this._queuedMessagesWithImages.add(message);
 		this.agent.followUp(message);

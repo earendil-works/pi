@@ -1,7 +1,15 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ModelsSimpleStreamOptions } from "@earendil-works/pi-ai";
-import { clampThinkingLevel, type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
+import {
+	clampThinkingLevel,
+	type FileContent,
+	type ImageContent,
+	type Message,
+	type Model,
+	streamSimple,
+	type TextContent,
+} from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AgentSession, markRuntimeStreamFunction } from "./agent-session.ts";
@@ -153,6 +161,16 @@ function getDefaultAgentDir(): string {
 	return getAgentDir();
 }
 
+const DISABLED_IMAGE_NOTE: TextContent = { type: "text", text: "Image reading is disabled." };
+
+/** Replace every image block with one note per run of images, keeping the array's block type. */
+function replaceImagesWithDisabledNote<T extends TextContent | ImageContent | FileContent>(content: T[]): T[] {
+	if (!content.some((block) => block.type === "image")) return content;
+	return content
+		.map((block) => (block.type === "image" ? (DISABLED_IMAGE_NOTE as T) : block))
+		.filter((block, index, blocks) => !(block === DISABLED_IMAGE_NOTE && blocks[index - 1] === DISABLED_IMAGE_NOTE));
+}
+
 /**
  * Create an AgentSession with the specified options.
  *
@@ -302,29 +320,11 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		}
 		// Filter out ImageContent from all messages, replacing with text placeholder
 		return converted.map((msg) => {
-			if (msg.role === "user" || msg.role === "toolResult") {
-				const content = msg.content;
-				if (Array.isArray(content)) {
-					const hasImages = content.some((c) => c.type === "image");
-					if (hasImages) {
-						const filteredContent = content
-							.map((c) =>
-								c.type === "image" ? { type: "text" as const, text: "Image reading is disabled." } : c,
-							)
-							.filter(
-								(c, i, arr) =>
-									// Dedupe consecutive "Image reading is disabled." texts
-									!(
-										c.type === "text" &&
-										c.text === "Image reading is disabled." &&
-										i > 0 &&
-										arr[i - 1].type === "text" &&
-										(arr[i - 1] as { type: "text"; text: string }).text === "Image reading is disabled."
-									),
-							);
-						return { ...msg, content: filteredContent };
-					}
-				}
+			if (msg.role === "user" && Array.isArray(msg.content)) {
+				return { ...msg, content: replaceImagesWithDisabledNote(msg.content) };
+			}
+			if (msg.role === "toolResult") {
+				return { ...msg, content: replaceImagesWithDisabledNote(msg.content) };
 			}
 			return msg;
 		});
@@ -354,6 +354,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				headerRunner?.hasHandlers("before_provider_headers")
 					? headerRunner.emitBeforeProviderHeaders(headers)
 					: headers,
+			// Media uploads happen inside the request, so this is where the wait becomes visible.
+			onMediaProgress: (progress) => session.reportMediaTransfer(progress),
 		};
 	};
 	// Warm only requests for the selected model. Requests a virtual selection routed, or that an

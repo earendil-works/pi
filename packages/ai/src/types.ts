@@ -449,6 +449,31 @@ export interface ImageContent {
 	mimeType: string; // e.g., "image/jpeg", "image/png"
 }
 
+/**
+ * Media the transcript references instead of carrying: audio and video are far too large to keep
+ * inline, so the transcript holds where the bytes are and the request holds where the provider put
+ * them. Providers that cannot be handed a reference render a placeholder instead.
+ *
+ * The block travels in two phases. A persisted message has `path` and no `uri`; the app resolves
+ * that path into a provider upload before a request and fills `uri` and `provider` in on the copy
+ * it sends. Nothing outside a request should treat a `uri` as durable: uploads expire.
+ */
+export interface FileContent {
+	type: "file";
+	/** Absolute path to the bytes on the machine running pi. */
+	path?: string;
+	/** Provider-issued reference to the uploaded bytes, e.g. a Gemini `files/abc123` URI. */
+	uri?: string;
+	/** Provider that issued `uri`. A reference is never sent to a different provider. */
+	provider?: ProviderId;
+	mimeType: string;
+	/** File name for display and provider-side labels. */
+	name?: string;
+	sizeBytes?: number;
+	/** Media duration, when known. Providers bill audio and video per second, so estimation needs it. */
+	durationMs?: number;
+}
+
 export interface ToolCall {
 	type: "toolCall";
 	id: string;
@@ -586,7 +611,7 @@ export interface SystemMessage {
 
 export interface UserMessage {
 	role: "user";
-	content: string | (TextContent | ImageContent)[];
+	content: string | (TextContent | ImageContent | FileContent)[];
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
@@ -621,6 +646,21 @@ export interface AssistantMessage {
 	 * for deferred results fetched later.
 	 */
 	durationMs?: number;
+}
+
+/**
+ * Progress of media a request must upload before it can be sent.
+ *
+ * `upload` counts bytes leaving this machine; `processing` counts time on the provider's side,
+ * which for video can run for minutes and has no completion notification.
+ */
+export interface MediaTransferProgress {
+	/** `ready` means the file carries a reference now; nothing is pending for it. */
+	stage: "upload" | "processing" | "ready";
+	name: string;
+	uploadedBytes?: number;
+	totalBytes?: number;
+	elapsedMs?: number;
 }
 
 /** A tool call that another tool made while it ran, for example from a codemode script. */

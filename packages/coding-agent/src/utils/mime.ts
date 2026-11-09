@@ -1,6 +1,40 @@
 import { open } from "node:fs/promises";
+import { extname } from "node:path";
 
 const IMAGE_TYPE_SNIFF_BYTES = 4100;
+
+/**
+ * Mime types of media a provider can take by reference, keyed by file extension. Bytes are not
+ * sniffed: video and audio containers are too varied to guess, and the extension is what the user's
+ * file has. Providers reject the ones they do not accept, with their own message.
+ */
+const MEDIA_MIME_TYPES: Record<string, string> = {
+	mp4: "video/mp4",
+	m4v: "video/mp4",
+	mov: "video/quicktime",
+	webm: "video/webm",
+	avi: "video/x-msvideo",
+	mkv: "video/x-matroska",
+	mpeg: "video/mpeg",
+	mpg: "video/mpeg",
+	"3gp": "video/3gpp",
+	wmv: "video/x-ms-wmv",
+	flv: "video/x-flv",
+	mp3: "audio/mpeg",
+	wav: "audio/wav",
+	m4a: "audio/mp4",
+	aac: "audio/aac",
+	ogg: "audio/ogg",
+	oga: "audio/ogg",
+	flac: "audio/flac",
+	aiff: "audio/aiff",
+	aif: "audio/aiff",
+};
+
+/** The media mime type a path implies from its extension, or undefined for anything else. */
+export function detectMediaMimeTypeFromFile(filePath: string): string | undefined {
+	return MEDIA_MIME_TYPES[extname(filePath).slice(1).toLowerCase()];
+}
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 export function detectSupportedImageMimeType(buffer: Uint8Array): string | null {

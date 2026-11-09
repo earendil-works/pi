@@ -24,11 +24,13 @@ import type {
 	AssistantMessageEventStream,
 	ClassifierApi,
 	ConstrainedSamplingConfig,
+	FileContent,
 	ImageApi,
 	ImageContent,
 	JsonValue,
 	Message,
 	Model,
+	ModelInputModality,
 	OAuthCredentials,
 	OAuthLoginCallbacks,
 	Provider,
@@ -965,6 +967,8 @@ export interface BeforeAgentStartUserEvent extends BeforeAgentStartEventBase {
 	prompt: string;
 	/** Images attached to the user prompt, if any. */
 	images?: ImageContent[];
+	/** Media the prompt references by path (audio, video); the request uploads it before sending. */
+	media?: FileContent[];
 }
 
 /** A run started by `pi.sendMessage(..., { triggerTurn: true })` while idle. */
@@ -2045,7 +2049,7 @@ interface ProviderModelConfigBase {
 	/** API endpoint URL override for this model. */
 	baseUrl?: string;
 	/** Supported input types. */
-	input: ("text" | "image")[];
+	input: ModelInputModality[];
 	/** Provider input limits and cache-safe image preprocessing metadata. */
 	inputLimits?: AnyModel["inputLimits"];
 	/** Per-million-token cost rates and optional request-wide input pricing tiers. */

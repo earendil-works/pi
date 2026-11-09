@@ -1,4 +1,13 @@
-import type { AssistantMessage, ImageContent, Message, TextContent, TranscriptContext, Usage } from "../types.ts";
+import type {
+	AssistantMessage,
+	FileContent,
+	ImageContent,
+	Message,
+	TextContent,
+	TranscriptContext,
+	Usage,
+} from "../types.ts";
+import { mediaModalityForMimeType } from "./media.ts";
 import { getSystemMessageText } from "./text.ts";
 
 export interface ContextUsageEstimate {
@@ -14,6 +23,9 @@ export interface ContextUsageEstimate {
 
 const CHARS_PER_TOKEN = 3.5;
 const ESTIMATED_IMAGE_CHARS = 4800;
+/** Providers that take audio by reference bill it per second of media, so duration drives the estimate. */
+const ESTIMATED_AUDIO_TOKENS_PER_SECOND = 32;
+const ESTIMATED_VIDEO_TOKENS_PER_SECOND = 258;
 
 export function calculateContextTokens(usage: Usage): number {
 	return usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
@@ -27,20 +39,37 @@ function safeJsonStringify(value: unknown): string {
 	}
 }
 
-function estimateTextAndImageContentChars(content: string | Array<TextContent | ImageContent>): number {
+function estimateContentChars(content: string | Array<TextContent | ImageContent | FileContent>): number {
 	if (typeof content === "string") return content.length;
 
 	let chars = 0;
-	for (const block of content) chars += block.type === "text" ? block.text.length : ESTIMATED_IMAGE_CHARS;
+	for (const block of content) {
+		if (block.type === "text") chars += block.text.length;
+		else if (block.type === "image") chars += ESTIMATED_IMAGE_CHARS;
+		else chars += estimateFileChars(block);
+	}
 	return chars;
+}
+
+/** A referenced file's cost follows media duration; without one it falls back to the image estimate. */
+function estimateFileChars(file: FileContent): number {
+	const seconds = (file.durationMs ?? 0) / 1000;
+	switch (mediaModalityForMimeType(file.mimeType)) {
+		case "audio":
+			return seconds * ESTIMATED_AUDIO_TOKENS_PER_SECOND * CHARS_PER_TOKEN;
+		case "video":
+			return seconds * ESTIMATED_VIDEO_TOKENS_PER_SECOND * CHARS_PER_TOKEN;
+		default:
+			return ESTIMATED_IMAGE_CHARS;
+	}
 }
 
 export function estimateTextTokens(text: string): number {
 	return Math.ceil(text.length / CHARS_PER_TOKEN);
 }
 
-export function estimateTextAndImageContentTokens(content: string | Array<TextContent | ImageContent>): number {
-	return Math.ceil(estimateTextAndImageContentChars(content) / CHARS_PER_TOKEN);
+export function estimateContentTokens(content: string | Array<TextContent | ImageContent | FileContent>): number {
+	return Math.ceil(estimateContentChars(content) / CHARS_PER_TOKEN);
 }
 
 export function estimateMessageTokens(message: Message): number {
@@ -53,8 +82,8 @@ export function estimateMessageTokens(message: Message): number {
 			estimateToolsTokens(message.toolsRemoved)
 		);
 	}
-	if (message.role === "user") return estimateTextAndImageContentTokens(message.content);
-	if (message.role === "toolResult") return estimateTextAndImageContentTokens(message.content);
+	if (message.role === "user") return estimateContentTokens(message.content);
+	if (message.role === "toolResult") return estimateContentTokens(message.content);
 
 	for (const block of message.content) {
 		if (block.type === "text") {

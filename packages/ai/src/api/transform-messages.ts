@@ -1,6 +1,7 @@
 import type {
 	Api,
 	AssistantMessage,
+	FileContent,
 	ImageContent,
 	Message,
 	Model,
@@ -8,6 +9,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { mediaModalityForMimeType, omittedMediaText } from "../utils/media.ts";
 
 const NON_VISION_USER_IMAGE_PLACEHOLDER = "(image omitted: model does not support images)";
 const NON_VISION_TOOL_IMAGE_PLACEHOLDER = "(tool image omitted: model does not support images)";
@@ -59,8 +61,51 @@ function replaceImagesWithPlaceholder(content: (TextContent | ImageContent)[], p
 	return result;
 }
 
-function downgradeUnsupportedImages<TApi extends Api>(messages: Message[], model: Model<TApi>): Message[] {
-	if (model.input.includes("image")) {
+/**
+ * Replace each run of media the model cannot take with one placeholder, so a session that attached
+ * a video on Gemini still replays on a text-only model instead of failing the request.
+ */
+function replaceUnsupportedMedia<TApi extends Api>(
+	content: (TextContent | ImageContent | FileContent)[],
+	model: Model<TApi>,
+): (TextContent | ImageContent | FileContent)[] {
+	const result: (TextContent | ImageContent | FileContent)[] = [];
+	let previousWasPlaceholder = false;
+
+	for (const block of content) {
+		const placeholder = unsupportedMediaPlaceholder(block, model);
+		if (placeholder === undefined) {
+			result.push(block);
+			previousWasPlaceholder = false;
+			continue;
+		}
+		if (!previousWasPlaceholder) result.push({ type: "text", text: placeholder });
+		previousWasPlaceholder = true;
+	}
+
+	return result;
+}
+
+/** The placeholder standing in for one block, or undefined when the model takes the block as is. */
+function unsupportedMediaPlaceholder<TApi extends Api>(
+	block: TextContent | ImageContent | FileContent,
+	model: Model<TApi>,
+): string | undefined {
+	if (block.type === "text") return undefined;
+	if (block.type === "image") {
+		return model.input.includes("image") ? undefined : NON_VISION_USER_IMAGE_PLACEHOLDER;
+	}
+	// Untyped callers (extensions, old session files) put blocks here that are not in the union.
+	if (block.type !== "file") return undefined;
+	const modality = mediaModalityForMimeType(block.mimeType);
+	if (modality === undefined) return omittedMediaText(block, `${model.id} cannot be handed files of this type`);
+	if (model.input.includes(modality)) return undefined;
+	return omittedMediaText(block, `model ${model.id} does not accept ${modality} input`);
+}
+
+function downgradeUnsupportedMedia<TApi extends Api>(messages: Message[], model: Model<TApi>): Message[] {
+	// Every modality supported makes the pass a copy of the transcript, so keep it a no-op.
+	if (model.input.includes("image") && model.input.includes("audio") && model.input.includes("video")) {
 		return messages;
 	}
 
@@ -68,11 +113,12 @@ function downgradeUnsupportedImages<TApi extends Api>(messages: Message[], model
 		if (msg.role === "user" && Array.isArray(msg.content)) {
 			return {
 				...msg,
-				content: replaceImagesWithPlaceholder(msg.content, NON_VISION_USER_IMAGE_PLACEHOLDER),
+				content: replaceUnsupportedMedia(msg.content, model),
 			};
 		}
 
 		if (msg.role === "toolResult") {
+			if (model.input.includes("image")) return msg;
 			return {
 				...msg,
 				content: replaceImagesWithPlaceholder(msg.content, NON_VISION_TOOL_IMAGE_PLACEHOLDER),
@@ -98,10 +144,10 @@ export function transformMessages<TApi extends Api>(
 	// Normalize null/undefined content from untyped callers (custom tools, hand-built
 	// histories, old session files) so downstream code can rely on the type contract.
 	const normalizedMessages = messages.map((msg) => (msg.content == null ? { ...msg, content: [] } : msg));
-	const imageAwareMessages = downgradeUnsupportedImages(normalizedMessages, model);
+	const mediaAwareMessages = downgradeUnsupportedMedia(normalizedMessages, model);
 
-	// First pass: transform messages (unsupported image downgrade, thinking blocks, tool call ID normalization)
-	const transformed = imageAwareMessages.map((msg) => {
+	// First pass: transform messages (unsupported media downgrade, thinking blocks, tool call ID normalization)
+	const transformed = mediaAwareMessages.map((msg) => {
 		// System and user messages pass through unchanged
 		if (msg.role === "system" || msg.role === "user") {
 			return msg;

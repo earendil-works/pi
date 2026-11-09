@@ -5,9 +5,11 @@ import type {
 	DeferredCancelOptions,
 	DeferredFetchOptions,
 	DeferredHandle,
+	FileContent,
 	ImageContent,
 	Message,
 	Model,
+	ModelInputModality,
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
@@ -19,6 +21,7 @@ import type {
 	Usage,
 } from "../types.ts";
 import { createAssistantMessageEventStream } from "../utils/event-stream.ts";
+import { fileContentName } from "../utils/media.ts";
 import { ToolCallArgumentsStream } from "../utils/streaming-json.ts";
 import { getSystemMessageText } from "../utils/text.ts";
 
@@ -43,7 +46,7 @@ export interface FauxModelDefinition {
 	id: string;
 	name?: string;
 	reasoning?: boolean;
-	input?: ("text" | "image")[];
+	input?: ModelInputModality[];
 	inputLimits?: Model<string>["inputLimits"];
 	cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
 	contextWindow?: number;
@@ -164,7 +167,7 @@ function randomId(prefix: string): string {
 	return `${prefix}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
 }
 
-function contentToText(content: string | Array<TextContent | ImageContent>): string {
+function contentToText(content: string | Array<TextContent | ImageContent | FileContent>): string {
 	if (typeof content === "string") {
 		return content;
 	}
@@ -172,6 +175,9 @@ function contentToText(content: string | Array<TextContent | ImageContent>): str
 		.map((block) => {
 			if (block.type === "text") {
 				return block.text;
+			}
+			if (block.type === "file") {
+				return `[file:${block.mimeType}:${fileContentName(block)}]`;
 			}
 			return `[image:${block.mimeType}:${block.data.length}]`;
 		})
@@ -489,7 +495,7 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 					id: DEFAULT_MODEL_ID,
 					name: DEFAULT_MODEL_NAME,
 					reasoning: false,
-					input: ["text", "image"] as ("text" | "image")[],
+					input: ["text", "image"] as ModelInputModality[],
 					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 					contextWindow: 128000,
 					maxTokens: 16384,

@@ -1,4 +1,11 @@
-import { type Api, type Context, contentText, type Model, type ModelsSimpleStreamOptions } from "@earendil-works/pi-ai";
+import {
+	type Api,
+	type Context,
+	contentText,
+	type Model,
+	type ModelInputModality,
+	type ModelsSimpleStreamOptions,
+} from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 type ModelFields = {
@@ -6,7 +13,7 @@ type ModelFields = {
 	name: string;
 	provider: string;
 	reasoning: boolean;
-	input: Array<"text" | "image">;
+	input: ModelInputModality[];
 	cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
 	contextWindow: number;
 	maxTokens: number;

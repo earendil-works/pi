@@ -12,6 +12,7 @@ import {
 } from "@google/genai";
 import { clampThinkingLevel } from "../models.ts";
 import type {
+	FileContent,
 	ImageContent,
 	Model,
 	StopReason,
@@ -21,6 +22,7 @@ import type {
 	Tool,
 	TranscriptContext,
 } from "../types.ts";
+import { mediaModalityForMimeType, omittedMediaText } from "../utils/media.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { collapseSystemMessages, withoutInitialSystemMessage } from "../utils/transcript.ts";
@@ -212,14 +214,16 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 				const parts: Part[] = msg.content.map((item) => {
 					if (item.type === "text") {
 						return { text: sanitizeSurrogates(item.text) };
-					} else {
-						return {
-							inlineData: {
-								mimeType: item.mimeType,
-								data: item.data,
-							},
-						};
 					}
+					if (item.type === "file") {
+						return filePart(model, item);
+					}
+					return {
+						inlineData: {
+							mimeType: item.mimeType,
+							data: item.data,
+						},
+					};
 				});
 				if (parts.length === 0) continue;
 				contents.push({
@@ -342,6 +346,19 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 	}
 
 	return contents;
+}
+
+/**
+ * Reference an uploaded file by URI, or say why no reference is sent. The block reaches `fileData`
+ * only when the app resolved it for this provider and the model's catalog entry accepts the
+ * modality; anything else becomes text so the model is never handed a silent gap.
+ */
+function filePart<T extends GoogleApiType>(model: Model<T>, file: FileContent): Part {
+	const modality = mediaModalityForMimeType(file.mimeType);
+	if (file.uri && file.provider === model.provider && modality && model.input.includes(modality)) {
+		return { fileData: { fileUri: file.uri, mimeType: file.mimeType } };
+	}
+	return { text: omittedMediaText(file, `not uploaded for ${model.id}`) };
 }
 
 const JSON_SCHEMA_META_DECLARATIONS = new Set([
