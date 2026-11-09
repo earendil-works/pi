@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `disableContinuation` forwarding in `streamProxy()` so proxied requests can opt out of server-side continuation state such as Anthropic message threads ([#11545](https://github.com/earendil-works/pi/pull/11545))
+
 ## [1.5.0] - 2026-11-02
 
 ### Breaking Changes
