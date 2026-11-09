@@ -1,5 +1,6 @@
-// Phones: a bottom sheet follows a downward drag on its top edge (grip and header) and closes on release past a
-// threshold or on a fling; a short pull settles back; a drag in its content stays a scroll (src/web/sheet-swipe.ts).
+// Phones: a bottom sheet follows a downward drag and closes on release past a threshold or on a fling; a short pull
+// settles back. From its top edge (grip and header) always; from its content when the content is at its top, else the
+// drag scrolls it first and the same finger pulls the sheet once it reached its top (src/web/sheet-swipe.ts).
 
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
@@ -38,7 +39,7 @@ describe("swiping a bottom sheet down", { skip: !browserTests }, () => {
 		await browser.call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
 	};
 
-	it("closes from its top edge only, and settles back after a short pull", async () => {
+	it("closes from its top edge or its content at the top, and settles back after a short pull", async () => {
 		const session = await (await holdIn(fixture.browser(), Sessions, {}, "owner")).create(
 			{
 				cwd: fixture.workspace,
@@ -64,10 +65,33 @@ describe("swiping a bottom sheet down", { skip: !browserTests }, () => {
 		};
 		await openSheet();
 
-		// A drag in the content is the content's: the sheet stays.
-		await drag(await browser.evaluate(point(".sheet-body")), 300, 10, 16);
+		// Content that scrolls: taller than the sheet, scrolled down a little.
+		const tall = `(() => { const body = document.querySelector('.sheet-body'); const filler = document.createElement('div'); filler.style.height = '2000px'; body.append(filler); body.scrollTop = 150; return true; })()`;
+		await browser.evaluate(tall);
+		// A drag up in the content scrolls it: the sheet stays.
+		const content = await browser.evaluate<{ x: number; y: number }>(point(".sheet-body"));
+		const below = { x: content.x, y: content.y + 300 };
+		await browser.call("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [below] });
+		for (let step = 1; step <= 10; step++) {
+			await browser.call("Input.dispatchTouchEvent", {
+				type: "touchMove",
+				touchPoints: [{ x: below.x, y: below.y - step * 20 }],
+			});
+			await browser.evaluate("new Promise((resolve) => setTimeout(resolve, 16))");
+		}
+		await browser.call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
 		await browser.evaluate("new Promise((resolve) => setTimeout(resolve, 500))");
-		assert.ok(await browser.evaluate<boolean>(open), "a drag in the content keeps the sheet");
+		assert.ok(await browser.evaluate<boolean>(open), "a drag up in the content keeps the sheet");
+		assert.ok((await browser.evaluate<number>("document.querySelector('.sheet-body').scrollTop")) > 150);
+		// A drag down in scrolled content scrolls it back to its top, and the same finger then pulls the sheet away.
+		await browser.evaluate("document.querySelector('.sheet-body').scrollTop = 150");
+		await drag(content, 650, 26, 16);
+		await browser.wait(`!${open}`);
+		// Opened again, its content at the top: a drag down in it closes it at once.
+		await openSheet();
+		await drag(await browser.evaluate(point(".sheet-body")), 400, 10, 16);
+		await browser.wait(`!${open}`);
+		await openSheet();
 
 		// A short, slow pull on the header follows the finger and settles back.
 		const header = await browser.evaluate<{ x: number; y: number }>(point(".sheet-head h2"));

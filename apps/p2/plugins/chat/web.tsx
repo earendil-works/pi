@@ -23,6 +23,7 @@ import {
 	CostPanel,
 	closeLayers,
 	conversationRoute,
+	type Detail,
 	DownIcon,
 	errorText,
 	type FileCompletion,
@@ -37,6 +38,7 @@ import {
 	keptSizes,
 	knownMain,
 	LockIcon,
+	lightTap,
 	loadKept,
 	locationLabel,
 	MenuIcon,
@@ -235,6 +237,35 @@ function useModelResources(owner: boolean, fail: (error: unknown) => void) {
 			);
 	};
 	return [resources, setDefault] as const;
+}
+
+/** Where this device remembers settings.json's `detail` (the owner's), for the moment before the settings arrive. */
+const DETAIL_KEY = "p2-detail";
+const detailOf = (value: unknown): Detail | undefined =>
+	value === 1 || value === 2 || value === 3 || value === 4 ? value : undefined;
+
+/**
+ * settings.json's `detail` (undefined: the default): from the owner's settings once they arrive, and until then (each
+ * chat holds them anew, a page loads) as this device last saw it, so a chat opens laid out as it will stay instead of
+ * regrouping its turns a moment later.
+ */
+function useDetail(resources: ResourceSnapshot | undefined): Detail | undefined {
+	// null: the settings arrived and name no level (the default).
+	const known = resources ? (detailOf(resources.settings.detail) ?? null) : undefined;
+	useEffect(() => {
+		if (known === undefined) return;
+		try {
+			localStorage.setItem(DETAIL_KEY, known === null ? "" : String(known));
+		} catch {
+			// Storage unavailable (private mode): only this page's later chats lose it.
+		}
+	}, [known]);
+	if (known !== undefined) return known ?? undefined;
+	try {
+		return detailOf(Number(localStorage.getItem(DETAIL_KEY)));
+	} catch {
+		return undefined;
+	}
 }
 
 /** The model and thinking chip that opens the model sheet. */
@@ -977,19 +1008,10 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	// How tools' calls show: contributed by the plugins that own them.
 	const tools = useRegistry(ToolActivities);
 	// How much of a turn the transcript shows (settings.json `detail`, the owner's; guests see the default).
-	const detail = resources?.settings.detail;
+	const detail = useDetail(resources);
 	const rows = useMemo(
-		() =>
-			shown
-				? transcriptRows(
-						shown.items,
-						tools,
-						shown.working,
-						known,
-						// Anything else: the default (`transcriptRows`' `DEFAULT_DETAIL`).
-						detail === 1 || detail === 2 || detail === 3 || detail === 4 ? detail : undefined,
-					)
-				: undefined,
+		// Anything else: the default (`transcriptRows`' `DEFAULT_DETAIL`).
+		() => (shown ? transcriptRows(shown.items, tools, shown.working, known, detail) : undefined),
 		[shown, tools, known, detail],
 	);
 	const follow = useChatScroll({
@@ -1020,6 +1042,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	const send = () => {
 		const text = draft.trim();
 		if ((!text && !files.length) || !canWrite) return;
+		lightTap();
 		setStopped(undefined);
 		const id = crypto.randomUUID();
 		outbox.add({
@@ -1535,6 +1558,7 @@ function NewSession() {
 			openLayer({ kind: "sheet", name: "model" });
 			return;
 		}
+		lightTap();
 		setStopped(undefined);
 		const id = crypto.randomUUID();
 		sessionStart.add(

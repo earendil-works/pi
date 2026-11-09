@@ -2955,6 +2955,8 @@ button.diff-number:hover {
 }
 .sheet-body {
 	overflow-y: auto;
+	/* At its top a drag down pulls the sheet (sheet-swipe.ts): no rubber band of the content as well. */
+	overscroll-behavior-y: none;
 	padding: var(--s3) var(--x) var(--s5);
 }
 .sheet-body > .muted.small {

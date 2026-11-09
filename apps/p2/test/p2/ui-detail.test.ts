@@ -13,10 +13,10 @@ import { Browser, browserTests } from "./browser.ts";
 import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
 
 const live = (view: ConversationView | null | undefined) => view?.docs["pi.live"] as LiveState | undefined;
-/** The kinds of the transcript's rows after the person's message: "text", "activity", "thought", "answer". */
+/** The kinds of the transcript's rows after the first message: "user", "text", "activity", "thought", "answer". */
 const ROWS = `[...document.querySelectorAll('.row')].slice(1).map((row) =>
 	row.querySelector('[data-testid=activity]') ? 'activity' : row.querySelector('[data-testid=thought]') ? 'thought'
-	: row.querySelector('.message-actions') ? 'answer' : 'text').join()`;
+	: row.querySelector('.user') ? 'user' : row.querySelector('.message-actions') ? 'answer' : 'text').join()`;
 
 describe("detail in the browser", { skip: !browserTests }, () => {
 	let fixture: Fixture, browser: Browser, session: string;
@@ -84,12 +84,68 @@ describe("detail in the browser", { skip: !browserTests }, () => {
 		writeFileSync(settings, JSON.stringify(base));
 	});
 
+	it("opens a chat laid out at the setting's level at once, also when switching chats", async () => {
+		const settings = join(fixture.dataDir, "settings.json");
+		const base = JSON.parse(readFileSync(settings, "utf8")) as Record<string, unknown>;
+		writeFileSync(settings, JSON.stringify({ ...base, detail: 1 }));
+		const other = (
+			await (
+				await holdIn(fixture.browser(), Sessions, {}, "owner")
+			).create({ cwd: fixture.workspace, title: "Other" }, BACKGROUND_CONTEXT)
+		).id;
+		await browser.metrics(1280, 900);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session}`);
+		await browser.wait(`!${ROWS}.split(',').some((kind) => kind === 'thought' || kind === 'text')`);
+		const row = (title: string) =>
+			`[...document.querySelectorAll('.drawer .session-title')].find((e) => e.textContent === ${JSON.stringify(title)})`;
+		// Away to another chat and back: from the moment its rows show, no thought or text row (detail 3's) ever does.
+		await browser.evaluate(`${row("Other")}.click()`);
+		await browser.wait(`location.pathname === '/s/${other}'`);
+		await browser.evaluate(`(() => {
+			window.__regrouped = false;
+			new MutationObserver(() => {
+				if (document.querySelector('.rows [data-testid=thought]')) window.__regrouped = true;
+			}).observe(document.body, { childList: true, subtree: true });
+		})()`);
+		await browser.evaluate(`${row("Detail")}.click()`);
+		await browser.wait("document.querySelector('.rows [data-testid=activity]')");
+		await browser.evaluate("new Promise((resolve) => setTimeout(resolve, 1500))");
+		assert.equal(await browser.evaluate<boolean>("window.__regrouped"), false);
+		writeFileSync(settings, JSON.stringify(base));
+		await browser.metrics(390, 844);
+	});
+
+	it("a tap on the wheel opens the step in front, the running one too; on the summary the list", async () => {
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session}`);
+		await browser.wait("document.querySelector('[data-testid=activity]')");
+		const chat = await holdIn(fixture.browser(), Chat, { session, conversation: 1 }, "participant");
+		// A command that runs a few seconds: the wheel's newest face is the running step.
+		await chat.send({ text: "slow-tool", requestId: "slow-tool" }, BACKGROUND_CONTEXT);
+		const working = "[...document.querySelectorAll('[data-testid=activity][data-state=working]')].at(-1)";
+		await browser.wait(`${working}?.textContent.includes('tool-running')`);
+		await browser.evaluate(`${working}.querySelector('.activity-ticker').click()`);
+		await browser.wait("document.querySelector('[data-testid=activity-sheet] [data-testid=detail-input]')");
+		const close = "document.querySelector('[data-testid=activity-sheet] button[aria-label=Close]').click()";
+		await browser.evaluate(close);
+		await browser.wait("!document.querySelector('[data-testid=activity-sheet]')");
+		await until(chat.view, (view) => !live(view)?.run && JSON.stringify(view).includes("Echo: slow-tool"), 30_000);
+		chat.release();
+		// Done: the summary in front opens the list.
+		const done = "[...document.querySelectorAll('[data-testid=activity][data-state=done]')].at(-1)";
+		await browser.wait(`${done}?.textContent.includes('step')`);
+		await browser.evaluate(`${done}.querySelector('.activity-ticker').click()`);
+		await browser.wait("document.querySelector('[data-testid=activity-sheet] [data-testid=timeline]')");
+		await browser.evaluate(close);
+		await browser.wait("!document.querySelector('[data-testid=activity-sheet]')");
+	});
+
 	it("at detail 1, keeps the agent's text on the wheel while it works and fades the answer in once it stopped", async () => {
 		const settings = join(fixture.dataDir, "settings.json");
 		const base = JSON.parse(readFileSync(settings, "utf8")) as Record<string, unknown>;
 		writeFileSync(settings, JSON.stringify({ ...base, detail: 1 }));
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session}`);
-		await browser.wait(`${ROWS} === 'activity,answer'`);
+		// Detail 1 applied: no thought or text rows, only wheels and answers.
+		await browser.wait(`!${ROWS}.split(',').some((kind) => kind === 'thought' || kind === 'text')`);
 		// Every row the transcript adds from now on: whether it is an answer, and whether it fades in.
 		await browser.evaluate(`(() => {
 			window.__added = [];
@@ -97,7 +153,7 @@ describe("detail in the browser", { skip: !browserTests }, () => {
 				for (const change of changes)
 					for (const node of change.addedNodes)
 						if (node.classList?.contains("row"))
-							window.__added.push({ answer: node.textContent.includes('Echo:'), arriving: node.classList.contains("arriving"), complete: Boolean(node.querySelector('.message-actions')) });
+							window.__added.push({ answer: node.textContent.includes('Echo: slow answer'), arriving: node.classList.contains("arriving"), complete: Boolean(node.querySelector('.message-actions')) });
 			}).observe(document.querySelector('.rows'), { childList: true });
 		})()`);
 		const chat = await holdIn(fixture.browser(), Chat, { session, conversation: 1 }, "participant");
