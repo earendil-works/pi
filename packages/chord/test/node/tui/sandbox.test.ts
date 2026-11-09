@@ -7,6 +7,9 @@
 // skipped without.
 
 import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
@@ -18,6 +21,28 @@ const RUN = fileURLToPath(new URL("../fixtures/tui/sandbox-run.ts", import.meta.
 const OS_LAYER = fileURLToPath(new URL("../fixtures/tui/os-layer.ts", import.meta.url));
 
 describe.skipIf(TUI_NODE === undefined)("the sandbox", () => {
+	it("starts with a symlinked temporary directory without expanding file permissions", async () => {
+		const root = await mkdtemp(join(tmpdir(), "chord-sandbox-path-"));
+		try {
+			const target = join(root, "target");
+			const linked = join(root, "linked");
+			await mkdir(target);
+			await symlink(target, linked, "junction");
+			const output = execFileSync(
+				TUI_NODE!,
+				["--no-warnings", RUN, 'globalThis.chordBridge.send({ kind: "exit", code: 0 });'],
+				{
+					env: { ...process.env, TMPDIR: linked, TMP: linked, TEMP: linked },
+					encoding: "utf8",
+					timeout: 30_000,
+				},
+			);
+			expect(output.trim()).toBe('{"kind":"exit"}');
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("as a process reaches no terminal, file, SQLite, network or environment, past any JavaScript (Opus E1, E2)", () => {
 		// On a pseudo-terminal, as a launcher runs: the child's descriptors are pipes all the same.
 		const command = [TUI_NODE!, "--no-warnings", OS_LAYER].map((arg) => `'${arg}'`).join(" ");

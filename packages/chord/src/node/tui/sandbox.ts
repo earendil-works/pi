@@ -17,7 +17,7 @@
 // memory outside its heap (no limit without a shell's `ulimit`; only the child dies). Needs Node 26.5.1 or later.
 
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BridgeStart, LauncherMessage, SandboxMessage } from "../../tui/bridge.ts";
@@ -157,7 +157,8 @@ export class Sandbox {
 	): Promise<Sandbox> {
 		requireSandboxNode();
 		if (Buffer.byteLength(source) > MAX_BUNDLE) throw new Error("terminal: the base bundle exceeds 8 MiB");
-		const directory = await mkdtemp(join(tmpdir(), "chord-tui-"));
+		// Node resolves its entry before reading it; a symlinked ancestor would need a broader file grant.
+		const directory = await realpath(await mkdtemp(join(tmpdir(), "chord-tui-")));
 		await writeFile(join(directory, BOOTSTRAP_FILE), BOOTSTRAP);
 		const sandbox = new Sandbox(directory, onMessage, onEnd);
 		sandbox.#write(startFrame(start, source));
