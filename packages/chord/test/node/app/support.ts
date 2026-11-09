@@ -139,7 +139,11 @@ export async function startTestApp<P extends Principal>(
 		context,
 	);
 	// The bases built after the listen: most tests get the app as its first requests see it.
-	if (options.unbuilt !== true) await app.basesBuilt;
+	if (options.unbuilt !== true) {
+		await app.basesBuilt;
+		// Retire startup events before a test makes its first distinct edit.
+		await settleFileEvents();
+	}
 	const port = Number(new URL(app.ownerLink()).port);
 	return { app, errors, dataDir, root, port };
 }
