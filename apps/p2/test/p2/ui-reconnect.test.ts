@@ -239,6 +239,11 @@ export default defineFacet((host) => host.serve(Delay, (_params, self) => {
 		await stop();
 		await browser.wait(`document.querySelector('.offline')`);
 		await delay(30_000);
+		// The sidebar keeps the rows as last seen while the server is down.
+		assert.match(
+			await browser.evaluate<string>("document.querySelector('.session-scroll')?.textContent ?? ''"),
+			/Reconnect fixture/,
+		);
 		await start();
 		await recovered("unsent outage draft");
 		assert.equal(await browser.evaluate<number>("window.reconnectOpens"), 2);
