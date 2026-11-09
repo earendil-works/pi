@@ -1,4 +1,4 @@
-import { type OpenRouterModel, openRouterCost } from "../../src/providers/openrouter-api.ts";
+import { type OpenRouterModel, openRouterCost, openRouterServiceTiers } from "../../src/providers/openrouter-api.ts";
 import type { ClassifierModel, ImageModel, Model, ThinkingLevel, ThinkingLevelMap } from "../../src/types.ts";
 import { getEffortThinkingLevelMap } from "../reasoning.ts";
 
@@ -70,6 +70,7 @@ export function buildOpenRouterCatalog(
 		const thinkingLevelMap = getOpenRouterThinkingLevelMap(model.reasoning);
 		// Includes the `~anthropic/claude-*-latest` aliases, which OpenRouter's Messages endpoint accepts.
 		const useAnthropicMessages = /^~?anthropic\//.test(model.id) && !model.id.endsWith(":batch");
+		const serviceTiers = openRouterServiceTiers(model.service_tiers);
 		chat.push({
 			type: "chat",
 			id: model.id,
@@ -79,6 +80,7 @@ export function buildOpenRouterCatalog(
 			provider: "openrouter",
 			reasoning: model.supported_parameters?.includes("reasoning") || false,
 			...(thinkingLevelMap && { thinkingLevelMap }),
+			...(serviceTiers?.length ? { serviceTiers } : {}),
 			input,
 			cost: openRouterCost(model.pricing),
 			contextWindow: model.top_provider?.context_length || model.context_length || 4096,

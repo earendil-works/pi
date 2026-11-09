@@ -846,6 +846,16 @@ export type AssistantMessageEvent =
 	  }
 	| { type: "error"; reason: Extract<StopReason, "aborted" | "error">; error: AssistantMessage };
 
+/**
+ * A non-default processing tier a provider sells for a model. `id` is the value the
+ * provider request carries; `name` is what a client shows in its speed picker.
+ */
+export interface ModelServiceTier {
+	id: string;
+	name: string;
+	description?: string;
+}
+
 /** Fields shared by every catalog entry, regardless of what you can do with it. */
 export interface BaseModel<TApi extends string> {
 	id: string;
@@ -878,6 +888,12 @@ export interface Model<TApi extends Api> extends BaseModel<TApi> {
 	promptCache?: ModelPromptCache;
 	contextWindow: number;
 	maxTokens: number;
+	/**
+	 * Non-default service tiers this model can be served at, cheapest first. Unset
+	 * when the provider sells no tier for it; a client that offers a choice sends
+	 * the picked tier's `id` in the request.
+	 */
+	serviceTiers?: ModelServiceTier[];
 	/** Default sampling parameters for this model. See {@link StreamOptions.samplingParams}; per-request keys override these. */
 	samplingParams?: SamplingParams;
 	/** Sampling parameter overrides selected by the effective pi thinking level. */

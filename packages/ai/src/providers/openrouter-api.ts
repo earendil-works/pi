@@ -1,4 +1,4 @@
-import type { ModelCost, ModelCostTier } from "../types.ts";
+import type { ModelCost, ModelCostTier, ModelServiceTier } from "../types.ts";
 
 /** OpenRouter's per-token prices, as decimal strings. */
 export interface OpenRouterPricing {
@@ -30,6 +30,26 @@ export interface OpenRouterModel {
 	context_length?: number | null;
 	top_provider?: { context_length?: number | null; max_completion_tokens?: number | null };
 	pricing?: OpenRouterPricing;
+	/** Non-default tiers the model sells, cheapest first, as `service_tier` request values. */
+	service_tiers?: string[] | null;
+}
+
+/**
+ * Convert OpenRouter's tier ids into pi service tiers, labelled for a speed picker.
+ * An absent or null list means the listing does not say, which keeps any tier the
+ * caller already knows; an explicit empty list means the model sells none.
+ */
+export function openRouterServiceTiers(
+	serviceTiers: readonly string[] | null | undefined,
+): ModelServiceTier[] | undefined {
+	if (serviceTiers === null || serviceTiers === undefined) return undefined;
+	return serviceTiers.map((id) => ({ id, name: openRouterServiceTierName(id) }));
+}
+
+/** OpenRouter's own tier vocabulary, with a title-cased fallback for a tier pi has not seen yet. */
+function openRouterServiceTierName(id: string): string {
+	const known: Record<string, string> = { flex: "Flex", priority: "Priority", ultrafast: "Ultrafast" };
+	return known[id] ?? id.charAt(0).toUpperCase() + id.slice(1);
 }
 
 /**
