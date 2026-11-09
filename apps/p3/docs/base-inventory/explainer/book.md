@@ -84,203 +84,26 @@ The three inventories overlapped heavily once deduplicated. The themes, each a f
 
 The rest of this book is the pieces they need, grouped by where they live.
 
-# The Harness {#harness lede="One object in the session worker, two registries, three shapes, ordered by phase."}
+# Sessions and Their Data {#sessions lede="Where everything about a session lives, and the service plugins call to create and change sessions."}
 
-Everything the agent gets comes from the harness, and every restriction on it too. The old coding agent had a flat bus
-of about forty events; Durable already has the principled core. The harness keeps Durable's model and adds what makes
-restrictions possible as plugins.
+Discord, automations, the orchestrator and triage all create sessions, and many plugins keep facts about a session
+that must be readable while its worker is off (a Discord channel binding, a title, an archive flag). This chapter
+defines both: the session metadata store, then the session service.
 
-Contributing tools is contributing a Durable extension, as in p2:
+Names are proposals; Chord (`local`, `remote`, `keyed`, `defineRegistry`, `defineState`, `self.writable`), Durable
+(`Extension`, `ToolRegistration`, `PromptSection`, `ExecutionEnv`, `defineExtension`, `hook`, `ToolTask`,
+`GenerationTask`) and pi-ai (`Model`, `Models`) are real. Every block names its file, so it is clear which facets can
+import it: a plugin's `contract.ts` is bundled into all its facets, `contract.server.ts` only into server facets,
+`contract.worker.ts` only into worker facets, `contract.web.ts` only into page facets.
 
-```ts
-// plugins/coding-tools/worker.ts
-self.contribute(HarnessExtensions, [{ extension: defineExtension({ name: "coding", tools: [read, write, edit, bash] }) }]);
-```
+## Session metadata
 
-A filter is a function the harness calls when it computes what a conversation is offered. It gets the offered items
-and a **scope**: the session's current metadata (every key, followed live from the server's metadata store) and the
-conversation it computes for. A plugin finds its own data in the metadata through a key it defined once:
+The rule (decided): anything about a session needed while its worker is off goes in the **session metadata store** on
+the server; anything only used while the worker runs (the transcript, Durable's state) goes in the session's own
+store; never both. A rename is one server write.
 
-```ts
-// plugins/discord/contract.ts: Discord's record in the session metadata store, "this session belongs to a channel"
-export const ChannelBinding = defineSessionMetadata("discord.channel", obj({ guild: str(), channel: str(), reach: arr(str()) }));
-
-// plugins/discord/worker.ts
-const ALLOWED = new Set(["conversations", "read"]);
-self.contribute(HarnessFilters, {
-	// scope: { metadata: the session's metadata, conversation: { id, role: "main" | "subagent" | "one-shot", parent? } }
-	tools: (tools, scope) => {
-		const binding = metadataOf(scope.metadata, ChannelBinding);   // typed by the key; undefined: not a Discord session
-		return binding === undefined ? tools : tools.filter((tool) => ALLOWED.has(tool.name));
-	},
-});
-```
-
-Chapter VII defines every type used here (`HarnessExtensions`, `HarnessFilters`, `FilterScope`,
-`defineSessionMetadata`, `metadataOf`).
-
-:::flow wide animate | A tool call through the three shapes: filters decided it was offered; wraps sit around the chain; the chain's hooks run in phase order.
-row "Before anything runs" blue
-box filter "Filters" "which tools, sections, environments, models a conversation is offered" blue
-row "Around the call" accent
-box wrap1 "security wraps" "outermost: see input first, output last" accent
-box wrap2 "transform wraps" "nested inside"
-row "The chain"
-box before "beforeTool hooks" "change arguments or block; first block wins"
-box exec "execute" "the tool itself"
-box after "afterTool hooks" "replace the result"
-arrow filter -> wrap1 "offered tool called"
-arrow wrap1 -> wrap2
-arrow wrap2 -> before
-arrow before -> exec
-arrow exec -> after
-:::
-
-The rules that make it work:
-
-- **Hooks and wraps always apply,** in every conversation, whatever it selected. Durable alone runs only the hooks of
-  extensions a conversation selects; the harness composes so that selection narrows tools and never switches off
-  another plugin's hooks. Subagents choose tools from their caller's tools, after the filters.
-- **Order comes from phases,** not from registration: security outermost, then transform, then observe; filters
-  commute; a chain's first block wins; rewritten arguments are validated again.
-- **Model providers and environments are contributions too.** Durable takes one `models` and one `env` function; the
-  harness composes them from plugins: several providers and a router, several environment kinds with capabilities.
-  An environment wrap sees requests, not effects: it is not confinement; a sandbox is.
-- **One input path.** Web, terminal, chat connectors, other sessions and automations all submit through one typed
-  path with source attribution; input hooks may transform, handle or refuse.
-- **Observation is public.** Entries, documents, the commit signal, the task graph, usage and wake state are readable
-  by plugins in the worker. Stats, search and memory observe there and push to their own server tables; no central
-  event log.
-
-The Discord policy, a tool settings sheet, an approval wrapper, a budget, redaction: each is one ordinary plugin that
-contributes an extension and maybe a filter, and decides for itself which sessions it applies to.
-
-# Sessions and Their Data {#sessions lede="A service plugins call, a metadata store on the server, and one format for backups and exports."}
-
-Discord, automations, the orchestrator and triage all start sessions. They call one service:
-
-```ts
-// plugins/discord/contract.ts: who made the session, a typed origin defined once
-export const ChannelOrigin = defineSessionOrigin("discord.channel", obj({ guild: str(), channel: str() }));
-
-// plugins/discord/server.ts, inside the Discord plugin's server object (full types: chapter VII)
-const sessions = self.get(SessionService, {});          // the sessions plugin's server service
-const BOT_ACTOR = INSTANCE;                              // the user this automated work acts for (users plugin)
-const { id } = await sessions.create({
-	actor: BOT_ACTOR,
-	key: `discord:${guild}:${channel}`,                 // idempotent: racing first messages make one session
-	origin: { name: ChannelOrigin.name, value: { guild, channel } },
-	config: { title: `#${name}`, tools: ["conversations", "read"], location: null },
-	open: false,                                         // input held until the owner opens it
-}, ctx);
-```
-
-Every operation (`create`, `configure`, `open`, `archive`, `restore`, `fork`, `remove`) first asks the
-`SessionAdmissions` registry; a permission plugin contributes a check there, and the service never knows ACLs.
-
-**Where session data lives** (decided today): two places, one rule.
-
-```ts
-// plugins/discord/contract.ts: a plugin's metadata about a session, defined once like defineState
-export const ChannelBinding = defineSessionMetadata("discord.channel", obj({ guild: str(), channel: str(), reach: arr(str()) }));
-
-// plugins/discord/server.ts: written by session id, no worker started
-const metadata = self.get(SessionMetadataStore, {});    // the sessions plugin's metadata store
-await writeMetadata(metadata, ChannelBinding, id, { guild, channel, reach: [] }, ctx);
-
-// plugins/discord/worker.ts: read from the session's current metadata, followed from the server
-const binding = metadataOf(self.registry(SessionMetadata).value, ChannelBinding);
-```
-
-- **The session metadata store** on the server: anything about a session needed while its worker is off (title, pin,
-  archive, location, a Discord binding, a plugin's labels). A rename is one server write.
-- **The session's own store:** anything only used while the worker runs (the transcript, Durable's state).
-- Never the same fact in both.
-
-**Backups and exports** use the stores' sync format. A backup is the whole instance: server store, every session store,
-files, the plugin manifest; restore runs before the server loads. An export is one session's store plus its metadata
-entries; importing resolves its references to this instance's environments and providers; credentials never travel.
-No live session sync: a session is useless without its instance.
-
-# Waiting Costs Nothing {#waiting lede="Suspended work, a wake index on the server, and questions answered from anywhere."}
-
-A session waiting for a person, a webhook or a time should not hold a process. p2 keeps a worker alive while any
-Durable task is live, so an approval left for a night holds a process all night. Three pieces fix that:
-
-1. **Suspendable work in Durable** (designed, `packages/durable/docs/suspendable/`): a task may suspend until a signal
-   or a deadline; it holds no code; a signal delivered through the harness wakes it; escape cancels it at once. Hooks
-   never suspend: `afterRun`, `afterTools` and `onYield` return child tasks the generation waits on.
-2. **The wake bridge:** the worker publishes Durable's wake state; the server keeps a durable index of next wake
-   times; a due wake starts the worker. Liveness comes from the wake state, not from counting tasks.
-3. **Questions:** a plugin defines a question kind (payload and answer schemas); a tool or a hook asks; the worker
-   pushes the open question to a server index; one server method answers.
-
-:::sequence animate | A permission plugin asks before bash runs; the worker stops; the answer arrives from the phone; the tool continues.
-actor worker "session worker" "harness" accent
-actor server "server" "questions index, wake"
-actor phone "Mario's phone" "inbox plugin" blue
-worker -> worker: approval wrap: bash "rm -rf build" needs a yes
-worker -> server: push open question (kind, summary)
-worker => worker: tool task suspended; nothing runs
-server --> worker: (worker idles out and stops)
-server --> phone: index changed: "1 needs you"
-phone -> server: answer { question, allow }
-server => worker: start worker, signal the task
-worker -> worker: resume: bash runs
-worker -> server: question settled
-:::
-
-Questions are state, so a late joiner (the same user on the phone, an hour later) sees them through the same views.
-They render through the UI registries, per form: a row in an inbox, a card in the transcript, a detail sheet, or a
-Discord message from the Discord plugin. The inbox, notifications and approval policies are plugins.
-
-# The Page {#page lede="A route by kind and id, layouts, views per form, panels, groupings, commands: the page draws what plugins register."}
-
-Every product above shows something different: a transcript, a Home with cards, a triage queue, a dashboard, nothing
-at all for a chat assistant. The base only offers composition:
-
-- a **route** addressed by `(kind, id)`, with `navigate` and deep links;
-- **layouts**, one active; the default sidebar, transcript and panel layout is just a plugin;
-- **views and renderers** per kind and form (row, card, detail), for sessions, machines, questions, tool calls,
-  transcript entries; a missing renderer falls back;
-- **panels** assembled from several plugins for one detail view;
-- **groupings** that only show (recent, folders, projects, Discord servers);
-- **commands, keybindings and composer extension points**;
-- the PWA manifest and service worker delegated to plugins.
-
-**How a page knows what it may offer.** Selector sheets (tools, model, location) never guess: the harness serves each
-conversation's composed offer, after every filter, as `ConversationOffer { session, conversation }` with the current
-choice ticked and one `choose` method that refuses anything not offered (chapter VII defines it, chapter VIII shows the
-model picker). When a filter changes, every open sheet updates in the same push.
-
-Web and terminal keep separate registries; the terminal is not reduced to the web's shapes, nor the reverse.
-
-# The Rest of the Base {#rest lede="Secrets, platform bindings, ingress, and the agent's typed surface."}
-
-- **Secrets and settings:** one owner for secrets, encrypted, backed up as an opaque blob; plugin-owned settings
-  with schemas, no global settings bag.
-- **Platform bindings:** what only the start script holds today, exposed as narrow objects: a plugin manager
-  (install, apply, roll back), reports from process start, keep-alive contributions, telemetry sinks, and the store
-  bindings the harness needs.
-- **Tunnel ingress and a public origin:** Radius or a tunnel plugin hands requests, sockets and Chord links to the
-  HTTP component with their provenance; webhooks get a URL that survives moving the instance to another machine.
-- **The agent's typed surface:** instead of a tool per setting, one generic surface over Chord contracts (list,
-  describe, call), with model-readable descriptions and methods each plugin opts in.
-- **Already there:** Chord's hosts, objects, principals, registries, documents, tables, routines and jobs; the kit's
-  files, HTTP routes, sockets and authenticators.
-
-The next chapter defines every type these pieces use; the one after builds four features with them.
-
-# The Types {#types lede="Every contract, registry and helper the pieces need, defined once, file by file, with where each value comes from."}
-
-This chapter defines every type the rest of the book uses. Names are proposals; Chord (`local`, `remote`, `keyed`,
-`defineRegistry`, `defineState`, `self.writable`), Durable (`Extension`, `ToolRegistration`, `PromptSection`,
-`ExecutionEnv`, `defineExtension`, `defineTool`, `hook`, `wrapTool`, `ToolTask`, `GenerationTask`) and pi-ai (`Model`,
-`Models`) are real. Each block says which file it lives in, so it is clear which facets can import it: a plugin's
-`contract.ts` is bundled into all its facets, `contract.server.ts` only into server facets, `contract.worker.ts` only
-into worker facets, `contract.web.ts` only into page facets.
-
-## Session metadata (sessions plugin)
+A plugin's metadata is a typed **key** it defines once, like `defineState`. The server stores one JSON value per key and
+session, and checks the key's schema on every write (the trust boundary), so reads are typed without a second check.
 
 A metadata key is a token a plugin defines once, like `defineState`. The server stores one JSON value per key and
 session; the schema is checked on every write (the trust boundary), so reads are typed without a second check.
@@ -353,7 +176,22 @@ That is the snapshot filters receive below; there is no separate reader type.
 export const SessionMetadata = defineRegistry<Watchable<MetadataSnapshot>, MetadataSnapshot>("sessions.metadata-current", { version: 1 });
 ```
 
-## The session service (sessions plugin)
+A short example, the Discord plugin's binding of a session to a channel, written on the server and read on the worker:
+
+```ts
+// plugins/discord/contract.ts: Discord's record, "this session belongs to that channel and may reach these sessions"
+export const ChannelBinding = defineSessionMetadata("discord.channel", obj({ guild: str(), channel: str(), reach: arr(str()) }));
+
+// plugins/discord/server.ts, inside the Discord plugin's server object: written by session id, no worker started
+const metadata = self.get(SessionMetadataStore, {});
+await writeMetadata(metadata, ChannelBinding, sessionId, { guild, channel, reach: [] }, ctx);
+
+// plugins/discord/worker.ts, inside a worker object: read from the session's current metadata
+const current = self.registry(SessionMetadata);                 // the snapshot, followed from the server
+const binding = metadataOf(current.value, ChannelBinding);     // typed; undefined: not a Discord session
+```
+
+## The session service
 
 ```ts
 // plugins/sessions/contract.ts
@@ -362,10 +200,14 @@ export type SessionOrigin<T extends JsonValue> = { readonly name: string; readon
 export function defineSessionOrigin<S extends Schema>(name: string, schema: S): SessionOrigin<Static<S>>;
 export const OriginData = obj({ name: str(), value: unknown() });
 
+/** A model by provider and id, and a thinking level: the schemas of Durable's `ModelRef` and pi-ai's levels. */
+export const ModelRef = obj({ provider: str(), modelId: str() });
+export const ThinkingLevel = oneOf("off", "minimal", "low", "medium", "high", "xhigh");
+
 /** What a session is configured with when created or reconfigured; every field optional on configure. */
 export const SessionConfig = obj({
 	title: str(),
-	model: opt(ModelRef),                                  // provider + id, from the offers (below)
+	model: opt(ModelRef),                                  // from what the harness offers (chapter IV)
 	thinkingLevel: opt(ThinkingLevel),
 	tools: opt(arr(str())),                                // tool names chosen from the offers; absent: all offered
 	location: nullable(obj({ environment: str(), cwd: str() })),   // null: no machine
@@ -412,7 +254,23 @@ export const SessionAdmissions = defineRegistry<SessionAdmission, readonly Sessi
 user-facing method, or its own service identity for automated work. Pages call the sessions plugin's per-user remote view,
 which stamps the actor itself.
 
-## The harness (harness plugin, worker)
+## Backups and exports
+
+Backups and exports use the stores' sync format. A **backup** is the whole instance: the server store (with the
+metadata store), every session store, files and the plugin manifest; restore runs before the server loads. An
+**export** is one session's store plus its metadata entries (the store knows every key through `SessionMetadataKeys`);
+importing resolves its references to this instance's environments and providers; credentials never travel. There is no
+live session sync: a session is useless without its instance.
+
+# The Harness {#harness lede="One object in the session worker: extensions, filters, model and environment providers, composed per conversation."}
+
+Everything the agent gets comes from the harness, and every restriction on it too. The old coding agent had a flat bus
+of about forty events; Durable already has the principled core. The harness keeps Durable's model and adds what makes
+restrictions possible as plugins.
+
+## The contracts
+
+The harness plugin defines these in its worker contract. Filters read the session metadata from the previous chapter.
 
 ```ts
 // plugins/harness/contract.worker.ts
@@ -470,7 +328,65 @@ How the harness composes, once per change of any registry or of the metadata:
 3. Give Durable `models` that only resolve offered models and `env` that only resolves offered environments; a call to
    a tool that is not offered is refused at dispatch (nested and code mode calls included).
 
-## What is offered, for the UI (harness plugin)
+## Using them
+
+Contributing tools is contributing a Durable extension, as in p2. A filter uses the key from the previous chapter:
+
+```ts
+// plugins/coding-tools/worker.ts
+self.contribute(HarnessExtensions, [{ extension: defineExtension({ name: "coding", tools: [read, write, edit, bash] }) }]);
+
+// plugins/discord/worker.ts: sessions bound to a channel are offered only two tools; other sessions are untouched
+const ALLOWED = new Set(["conversations", "read"]);
+self.contribute(HarnessFilters, {
+	tools: (tools, scope) => metadataOf(scope.metadata, ChannelBinding) === undefined
+		? tools
+		: tools.filter((tool) => ALLOWED.has(tool.name)),
+});
+```
+
+## A call through the three shapes
+
+:::flow wide animate | A tool call through the three shapes: filters decided it was offered; wraps sit around the chain; the chain's hooks run in phase order.
+row "Before anything runs" blue
+box filter "Filters" "which tools, sections, environments, models a conversation is offered" blue
+row "Around the call" accent
+box wrap1 "security wraps" "outermost: see input first, output last" accent
+box wrap2 "transform wraps" "nested inside"
+row "The chain"
+box before "beforeTool hooks" "change arguments or block; first block wins"
+box exec "execute" "the tool itself"
+box after "afterTool hooks" "replace the result"
+arrow filter -> wrap1 "offered tool called"
+arrow wrap1 -> wrap2
+arrow wrap2 -> before
+arrow before -> exec
+arrow exec -> after
+:::
+
+The rules that make it work:
+
+- **Hooks and wraps always apply,** in every conversation, whatever it selected. Durable alone runs only the hooks of
+  extensions a conversation selects; the harness composes so that selection narrows tools and never switches off
+  another plugin's hooks. Subagents choose tools from their caller's tools, after the filters.
+- **Order comes from phases,** not from registration: security outermost, then transform, then observe; filters
+  commute; a chain's first block wins; rewritten arguments are validated again.
+- **Model providers and environments are contributions too.** Durable takes one `models` and one `env` function; the
+  harness composes them from plugins: several providers and a router, several environment kinds with capabilities.
+  An environment wrap sees requests, not effects: it is not confinement; a sandbox is.
+- **One input path.** Web, terminal, chat connectors, other sessions and automations all submit through one typed
+  path with source attribution; input hooks may transform, handle or refuse.
+- **Observation is public.** Entries, documents, the commit signal, the task graph, usage and wake state are readable
+  by plugins in the worker. Stats, search and memory observe there and push to their own server tables; no central
+  event log.
+
+The Discord policy, a tool settings sheet, an approval wrapper, a budget, redaction: each is one ordinary plugin that
+contributes an extension and maybe a filter, and decides for itself which sessions it applies to.
+
+# What Is Offered {#offered lede="How a page knows which tools, models and machines a conversation may use, so it can show selector sheets."}
+
+The UI never guesses what exists. The harness serves each conversation's composed offer (after every filter of the
+previous chapter) with the current choice, and one method to change it that refuses anything not offered.
 
 The UI never guesses what exists: the harness serves the composed offer per conversation, so a page can show selector
 sheets (tools, model, location) and change the choice through one method that validates against the same offer.
@@ -506,7 +422,64 @@ export const ConversationOffer = remote("harness.offer", {
 The state is a derive over the composed offer and the conversation's Durable agent state, so a filter change (Discord
 locking the channel down) updates every open selector sheet at once.
 
-## Questions (questions plugin, core)
+A model picker sheet, using only that:
+
+What it does: a sheet listing the models this conversation is offered (after every filter), the current one ticked;
+choosing one changes the conversation.
+
+```tsx
+// plugins/chat/web.tsx (or any plugin's)
+function ModelSheet({ session, conversation }: { session: string; conversation: number }) {
+	const offer = useHold(ConversationOffer, { session, conversation });
+	const models = useWatch(offer.models) ?? [];
+	return <Sheet title={t("model")}>
+		{models.map((m) => (
+			<SheetRow key={`${m.provider}/${m.id}`} checked={m.chosen}
+				onSelect={(ctx) => offer.choose({ model: { provider: m.provider, modelId: m.id } }, ctx)}>
+				{m.label}
+			</SheetRow>
+		))}
+	</Sheet>;
+}
+```
+
+The tool and location sheets read `offer.tools` and `offer.environments` the same way. When the Discord filter removes
+a tool, it disappears from the sheet in the same push; `choose` refuses a name that is no longer offered, so a stale
+sheet cannot add it back.
+
+# Waiting Costs Nothing {#waiting lede="Suspended work, a wake index on the server, and questions answered from anywhere."}
+
+A session waiting for a person, a webhook or a time should not hold a process. p2 keeps a worker alive while any
+Durable task is live, so an approval left for a night holds a process all night. Three pieces fix that:
+
+1. **Suspendable work in Durable** (designed, `packages/durable/docs/suspendable/`): a task may suspend until a signal
+   or a deadline; it holds no code; a signal delivered through the harness wakes it; escape cancels it at once. Hooks
+   never suspend: `afterRun`, `afterTools` and `onYield` return child tasks the generation waits on.
+2. **The wake bridge:** the worker publishes Durable's wake state; the server keeps a durable index of next wake
+   times; a due wake starts the worker. Liveness comes from the wake state, not from counting tasks.
+3. **Questions:** a plugin defines a question kind (payload and answer schemas); a tool or a hook asks; the worker
+   pushes the open question to a server index; one server method answers.
+
+:::sequence animate | A permission plugin asks before bash runs; the worker stops; the answer arrives from the phone; the tool continues.
+actor worker "session worker" "harness" accent
+actor server "server" "questions index, wake"
+actor phone "Mario's phone" "inbox plugin" blue
+worker -> worker: approval wrap: bash "rm -rf build" needs a yes
+worker -> server: push open question (kind, summary)
+worker => worker: tool task suspended; nothing runs
+server --> worker: (worker idles out and stops)
+server --> phone: index changed: "1 needs you"
+phone -> server: answer { question, allow }
+server => worker: start worker, signal the task
+worker -> worker: resume: bash runs
+worker -> server: question settled
+:::
+
+Questions are state, so a late joiner (the same user on the phone, an hour later) sees them through the same views.
+They render through the UI registries, per form: a row in an inbox, a card in the transcript, a detail sheet, or a
+Discord message from the Discord plugin. The inbox, notifications and approval policies are plugins.
+
+## The question contracts
 
 ```ts
 // plugins/questions/contract.ts
@@ -546,7 +519,28 @@ The questions plugin's worker part watches the task graph for suspended tasks wh
 pushes them to the server index; `Questions.answer` routes to the session's worker (starting it), which calls
 `Harness.signal(task, key, answer)`.
 
-## Page composition (presentation plugin, core)
+
+# The Page {#page lede="A route by kind and id, layouts, views per form, panels, groupings, commands: the page draws what plugins register."}
+
+Every product above shows something different: a transcript, a Home with cards, a triage queue, a dashboard, nothing
+at all for a chat assistant. The base only offers composition:
+
+- a **route** addressed by `(kind, id)`, with `navigate` and deep links;
+- **layouts**, one active; the default sidebar, transcript and panel layout is just a plugin;
+- **views and renderers** per kind and form (row, card, detail), for sessions, machines, questions, tool calls,
+  transcript entries; a missing renderer falls back;
+- **panels** assembled from several plugins for one detail view;
+- **groupings** that only show (recent, folders, projects, Discord servers);
+- **commands, keybindings and composer extension points**;
+- the PWA manifest and service worker delegated to plugins.
+
+**How a page knows what it may offer.** Selector sheets (tools, model, location) never guess: the harness serves each
+conversation's composed offer, after every filter, as `ConversationOffer { session, conversation }` with the current
+choice ticked and one `choose` method that refuses anything not offered (chapter IV defines it and shows the model picker). When a filter changes, every open sheet updates in the same push.
+
+Web and terminal keep separate registries; the terminal is not reduced to the web's shapes, nor the reverse.
+
+## The page contracts
 
 ```ts
 // plugins/presentation/contract.web.ts
@@ -575,11 +569,30 @@ export type Layout = { readonly name: string; readonly label: MessageData; reado
 export const Layouts = defineRegistry<readonly Layout[], LayoutIndex>("presentation.layouts", { version: 1 });
 ```
 
-Question kinds are thing kinds too (`thing(QuestionThing, { id })`), so their renderers are ordinary views per form.
+Question kinds are thing kinds too, so their renderers are ordinary views per form:
 
-# Building Features {#features lede="Four features end to end with the types above: a Discord channel session, an approval, usage stats, and a model picker."}
+```ts
+// plugins/questions/contract.web.ts
+export const QuestionThing = defineThingKind<{ id: string }>("questions.question");   // id: OpenQuestion.id
+```
 
-Each feature is an ordinary plugin: a `contract.ts`, and the facets it needs. Nothing below touches the base.
+# The Rest of the Base {#rest lede="Secrets, platform bindings, ingress, and the agent's typed surface."}
+
+- **Secrets and settings:** one owner for secrets, encrypted, backed up as an opaque blob; plugin-owned settings
+  with schemas, no global settings bag.
+- **Platform bindings:** what only the start script holds today, exposed as narrow objects: a plugin manager
+  (install, apply, roll back), reports from process start, keep-alive contributions, telemetry sinks, and the store
+  bindings the harness needs.
+- **Tunnel ingress and a public origin:** Radius or a tunnel plugin hands requests, sockets and Chord links to the
+  HTTP component with their provenance; webhooks get a URL that survives moving the instance to another machine.
+- **The agent's typed surface:** instead of a tool per setting, one generic surface over Chord contracts (list,
+  describe, call), with model-readable descriptions and methods each plugin opts in.
+- **Already there:** Chord's hosts, objects, principals, registries, documents, tables, routines and jobs; the kit's
+  files, HTTP routes, sockets and authenticators.
+
+# Building Features {#features lede="Three features end to end, using only what the previous chapters defined: a Discord channel session, an approval, usage stats."}
+
+Each feature is an ordinary plugin: a `contract.ts` and the facets it needs. Nothing below touches the base.
 
 ## A session per Discord channel, locked down
 
@@ -595,6 +608,10 @@ export const ChannelBinding = defineSessionMetadata("discord.channel", obj({
 }));
 export const ChannelOrigin = defineSessionOrigin("discord.channel", obj({ guild: str(), channel: str() }));
 const ALLOWED_TOOLS = ["conversations", "read"];   // tool names this policy keeps
+
+// The plugin's own objects (host lifetime, empty params): one on the server, one in each session worker.
+export const DiscordBridge = local("discord.bridge", { version: 1, params: {}, members: {} });   // the bot connection
+export const DiscordPolicy = local("discord.policy", { version: 1, params: {}, members: {} });   // contributes the hook
 ```
 
 ```ts
@@ -604,7 +621,8 @@ export default defineFacet((host, self) => {
 	host.serve(DiscordBridge, (_params, self) => {
 		const sessions = self.get(SessionService, {});
 		const metadata = self.get(SessionMetadataStore, {});
-		const bot = self.open((ctx) => connectBot(ctx), (b) => b.close());
+		const bot = self.open((ctx) => connectBot(ctx), (b) => b.close());   // discord.js client, a native of this object
+		const BOT_ACTOR = INSTANCE;                         // the instance user (users plugin): automated work acts for it
 		self.onLive(async (ctx) => {
 			for await (const message of bot.value.messages(ctx)) {
 				// Idempotent by key: racing first messages from one channel create one session.
@@ -617,7 +635,7 @@ export default defineFacet((host, self) => {
 				}, ctx);
 				if ((await readMetadata(metadata, ChannelBinding, id, ctx)) === undefined)
 					await writeMetadata(metadata, ChannelBinding, id, { guild: message.guild, channel: message.channel, reach: [] }, ctx);
-				await deliver(id, message, ctx);                    // through the one input path; queued while closed
+				await deliver(id, message, ctx);                    // the plugin's helper: submits through the one input path
 			}
 		});
 		return {};
@@ -665,6 +683,8 @@ waiting; the answer arrives from any device; denial returns an error to the agen
 
 ```ts
 // plugins/approvals/contract.ts
+const RISKY = [/\brm\s+-rf\b/, /\bgit\s+push\b/];   // commands that need a yes; the plugin's own setting in practice
+
 export const ApproveCommand = defineQuestion("approvals.command", {
 	payload: obj({ command: str() }),
 	answer: union([obj({ kind: lit("allow") }), obj({ kind: lit("deny"), reason: opt(str()) })]),
@@ -735,6 +755,7 @@ host.serve(UsageReporter, (_params, self) => {
 		name: "stats.usage",
 		hooks: [hook(GenerationTask, {
 			afterResponse: async (message, api, context) => {
+				// chord(fn, context): runs a Chord call inside a Durable hook (design §24); today(): "YYYY-MM-DD"
 				await chord((ctx) => feed.add({
 					day: today(), tokens: message.usage.totalTokens, costMicros: Math.round(message.usage.cost.total * 1e6),
 					turns: 1, through: `${api.taskId}`,                  // the server ignores a delta it has seen
@@ -750,6 +771,7 @@ host.serve(UsageReporter, (_params, self) => {
 ```ts
 // plugins/stats/server.ts: one row per user and day, one transaction per delta
 const Days = defineTable("stats.days", { version: 1, columns: { user: str(), day: str(), tokens: int(), costMicros: int(), turns: int() }, key: ["user", "day"] });
+// StatsStore: the plugin's host-lifetime server object owning `Days`; `add` updates one row in one transaction.
 host.serve(StatsFeed, (_params, principal, self) => {
 	const store = self.get(StatsStore, {});
 	if (principal.kind !== "worker") throw forbidden("session workers only");
@@ -759,31 +781,6 @@ host.serve(StatsFeed, (_params, principal, self) => {
 
 The page holds `MyUsage` and draws a chart. A budget plugin would be the same hook in the security phase, refusing
 the next request through `beforeRequest` once the day's cost passes a limit the owner set in its settings.
-
-## A model picker sheet
-
-What it does: a sheet listing the models this conversation is offered (after every filter), the current one ticked;
-choosing one changes the conversation.
-
-```tsx
-// plugins/chat/web.tsx (or any plugin's)
-function ModelSheet({ session, conversation }: { session: string; conversation: number }) {
-	const offer = useHold(ConversationOffer, { session, conversation });
-	const models = useWatch(offer.models) ?? [];
-	return <Sheet title={t("model")}>
-		{models.map((m) => (
-			<SheetRow key={`${m.provider}/${m.id}`} checked={m.chosen}
-				onSelect={(ctx) => offer.choose({ model: { provider: m.provider, modelId: m.id } }, ctx)}>
-				{m.label}
-			</SheetRow>
-		))}
-	</Sheet>;
-}
-```
-
-The tool and location sheets read `offer.tools` and `offer.environments` the same way. When the Discord filter removes
-a tool, it disappears from the sheet in the same push; `choose` refuses a name that is no longer offered, so a stale
-sheet cannot add it back.
 
 # Three Tiers {#tiers lede="What is base code, what is a reloadable core plugin, and what is an ordinary plugin."}
 
