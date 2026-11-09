@@ -38,6 +38,28 @@ test("terminal modes: ?7 admitted, mouse only by policy, tracked, undone on clea
 	);
 });
 
+test("terminal modes: the kitty keyboard flags are pushed on the alternate screen and popped before leaving it", () => {
+	const PUSH = "\x1b[>7u";
+	const POP = "\x1b[<u";
+	const modes = new TerminalModes();
+	assert.equal(modes.keyboard(true), "", "the main screen has the launcher's own push");
+	modes.filter("\x1b[?1049h");
+	assert.equal(modes.keyboard(false), "", "nothing without the kitty protocol");
+	assert.equal(modes.keyboard(true), PUSH);
+	assert.equal(modes.keyboard(true), "", "once per alternate screen");
+	// The worker leaves the alternate screen: the pop comes first, on the screen that has the push.
+	assert.equal(modes.filter("a\x1b[?1049lb"), `a${POP}\x1b[?1049lb`);
+	assert.equal(modes.keyboard(true), "");
+	modes.filter("\x1b[?1049h");
+	assert.equal(modes.keyboard(true), PUSH);
+	// Suspend leaves the screen (pop), resume re-enters it and the next keyboard() pushes again.
+	assert(modes.suspendSequence().startsWith(POP));
+	assert(modes.resumeSequence().startsWith("\x1b[?1049h"));
+	assert.equal(modes.keyboard(true), PUSH);
+	assert(modes.cleanup().startsWith(POP));
+	assert(!modes.cleanup().includes(POP), "popped once");
+});
+
 test("trusted UI: only Enter or y confirms; data is shown with visible control characters", async () => {
 	const written: string[] = [];
 	const ui = new TrustedUi({ write: (data) => written.push(data), columns: 60, rows: 12 }, "https://server.test");
