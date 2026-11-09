@@ -2,10 +2,10 @@ import type { Api, ImageContent, Model, ModelImageResizeOptions, TextContent } f
 import { constants } from "fs";
 import { access as fsAccess, open as fsOpen, readFile as fsReadFile } from "fs/promises";
 import { type Static, Type } from "typebox";
-import { TextDecoder } from "util";
 import { processImage } from "../../utils/image-process.ts";
 import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import { decodeTextFile, TextFileDecoder } from "./file-encoding.ts";
 import { resolveReadPathAsync } from "./path-utils.ts";
 import { readRenderers } from "./renderers/read.ts";
 import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -127,7 +127,7 @@ function isStreamableRange(offset: number | undefined, limit: number | undefined
 
 /** Select lines from a whole file in memory: for operations without createReadStream and unusual ranges. */
 function selectLinesFromBuffer(buffer: Buffer, startLine: number, limit: number | undefined): SelectedLines {
-	const allLines = buffer.toString("utf-8").split("\n");
+	const allLines = decodeTextFile(buffer).split("\n");
 	const endLine = limit === undefined ? undefined : Math.min(startLine + limit, allLines.length);
 	const truncation = truncateHead(allLines.slice(startLine, endLine).join("\n"));
 	const firstLineBytes = truncation.firstLineExceedsLimit ? Buffer.byteLength(allLines[startLine], "utf-8") : 0;
@@ -145,8 +145,8 @@ async function selectLinesFromStream(
 	signal: AbortSignal | undefined,
 ): Promise<SelectedLines> {
 	const endLine = limit === undefined ? Number.POSITIVE_INFINITY : startLine + limit;
-	// Non-fatal UTF-8 that keeps a byte order mark decodes like Buffer.toString("utf-8").
-	const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
+	// UTF-16 by byte order mark, otherwise UTF-8 exactly like Buffer.toString("utf-8").
+	const decoder = new TextFileDecoder();
 	const storedLines: string[] = [];
 	let storedBytes = 0;
 	let storedPastCaps = false;
@@ -212,9 +212,9 @@ async function selectLinesFromStream(
 	for await (const chunk of chunks) {
 		// Leaving the loop closes the stream.
 		if (signal?.aborted) throw new Error("Operation aborted");
-		select(decoder.decode(chunk, { stream: true }));
+		select(decoder.write(chunk));
 	}
-	select(decoder.decode());
+	select(decoder.end());
 	if (line >= startLine && line < endLine) finishLine();
 	const truncation: TruncationResult = {
 		...truncateHead(storedLines.join("\n")),

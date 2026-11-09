@@ -6,20 +6,42 @@ import * as Diff from "diff";
 import { constants } from "fs";
 import { access, readFile } from "fs/promises";
 import { splitBom } from "../../utils/text.ts";
+import { decodeUtf16, getUtf16Encoding, type Utf16Encoding } from "./file-encoding.ts";
 import { resolveToCwd } from "./path-utils.ts";
 
+/** File text for editing, including its byte order mark, and the encoding to write it back in. */
+export interface FileForEdit {
+	encoding: "utf-8" | Utf16Encoding;
+	text: string;
+}
+
 /**
- * Decode a file for editing. Edits are written back as UTF-8, so a file that is not valid UTF-8 (UTF-16, or a
+ * Decode a file for editing. Edits are written back in the file's encoding: UTF-16 for a file that starts with a
+ * UTF-16 byte order mark, otherwise UTF-8. A file that is not valid UTF-8 (UTF-16 without a byte order mark, or a
  * legacy encoding such as Windows-1252 or GBK) is refused instead of having its other bytes replaced with U+FFFD.
  */
-export function decodeFileForEdit(buffer: Uint8Array, path: string): string {
-	try {
-		return UTF8_FOR_EDIT.decode(buffer);
-	} catch {
-		throw new Error(
-			`Could not edit file: ${path}. It is not valid UTF-8 (for example UTF-16, or a legacy encoding such as Windows-1252 or GBK). The edit tool only writes UTF-8, so editing it would corrupt it. The file was left unchanged. To change it, use a shell command that keeps its encoding.`,
-		);
+export function decodeFileForEdit(buffer: Buffer, path: string): FileForEdit {
+	const utf16 = getUtf16Encoding(buffer);
+	if (utf16) {
+		if (buffer.length % 2 !== 0) {
+			throw new Error(
+				`Could not edit file: ${path}. It starts with a ${utf16.toUpperCase()} byte order mark but has an odd number of bytes, so it is not valid UTF-16. The file was left unchanged.`,
+			);
+		}
+		return { encoding: utf16, text: decodeUtf16(buffer, utf16) };
 	}
+	try {
+		return { encoding: "utf-8", text: UTF8_FOR_EDIT.decode(buffer) };
+	} catch {
+		throw getNotUtf8EditError(path);
+	}
+}
+
+/** Refusal to edit a file that cannot be written back in its encoding. */
+export function getNotUtf8EditError(path: string): Error {
+	return new Error(
+		`Could not edit file: ${path}. It is not valid UTF-8 (for example UTF-16, or a legacy encoding such as Windows-1252 or GBK). The edit tool only writes UTF-8, so editing it would corrupt it. The file was left unchanged. To change it, use a shell command that keeps its encoding.`,
+	);
 }
 
 // ignoreBOM keeps a UTF-8 byte order mark in the text, as Buffer.toString("utf-8") does.
@@ -733,7 +755,7 @@ export async function computeEditsDiff(
 		}
 
 		// Read the file
-		const rawContent = decodeFileForEdit(await readFile(absolutePath), path);
+		const { text: rawContent } = decodeFileForEdit(await readFile(absolutePath), path);
 
 		// Strip BOM before matching (LLM won't include invisible BOM in oldText)
 		const { text: content } = splitBom(rawContent);

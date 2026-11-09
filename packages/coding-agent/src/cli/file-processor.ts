@@ -6,6 +6,7 @@ import { access, readFile, stat } from "node:fs/promises";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import chalk from "chalk";
 import { resolve } from "path";
+import { decodeTextFile } from "../core/tools/file-encoding.ts";
 import { resolveReadPath } from "../core/tools/path-utils.ts";
 import { processImage } from "../utils/image-process.ts";
 import { detectSupportedImageMimeTypeFromFile } from "../utils/mime.ts";
@@ -74,7 +75,7 @@ export async function processFileArguments(fileArgs: string[], options?: Process
 		} else {
 			// Handle text file
 			try {
-				const content = stripBom(await readFile(absolutePath, "utf-8"));
+				const content = stripBom(decodeTextFile(await readFile(absolutePath)));
 				text += `<file name="${absolutePath}">\n${content}\n</file>\n`;
 			} catch (error: unknown) {
 				const message = error instanceof Error ? error.message : String(error);
