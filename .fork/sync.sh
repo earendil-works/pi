@@ -30,8 +30,15 @@ if [[ -z "${FORK_SYNC_REPO:-}" ]]; then
 	# Run the tooling as fork/tooling has it, not as the checked-out branch has it: after a change to
 	# .fork/branches on fork/tooling, next still carries the old list until it is rebuilt. Commit .fork/
 	# changes on fork/tooling before running them; without a local fork/tooling, use this copy.
-	if git -C "$repo" rev-parse -q --verify refs/heads/fork/tooling >/dev/null; then
-		git -C "$repo" archive refs/heads/fork/tooling .fork | tar -x -C "$copy" --strip-components=1
+	tooling_ref="refs/heads/fork/tooling"
+	if git -C "$repo" rev-parse -q --verify "$tooling_ref" >/dev/null; then
+		# A local fork/tooling with no unpushed commits that differs from origin is merely behind it.
+		if git -C "$repo" rev-parse -q --verify refs/remotes/origin/fork/tooling >/dev/null &&
+			[[ -z "$(git -C "$repo" rev-list --no-merges "$tooling_ref" --not --remotes=origin --tags)" ]] &&
+			[[ "$(git -C "$repo" rev-parse "$tooling_ref")" != "$(git -C "$repo" rev-parse refs/remotes/origin/fork/tooling)" ]]; then
+			tooling_ref="refs/remotes/origin/fork/tooling"
+		fi
+		git -C "$repo" archive "$tooling_ref" .fork | tar -x -C "$copy" --strip-components=1
 	else
 		cp -R "$here/." "$copy/"
 	fi
@@ -241,6 +248,18 @@ report_hold() {
 	fi
 }
 
+# Install dependencies and hydrate model data when the rebuilt next changed them since `prev`.
+prepare_for_check() {
+	local prev="$1"
+	if [[ ! -d node_modules ]] || [[ -n "$(git diff --name-only "$prev" next -- package.json package-lock.json 'packages/*/package.json' 'apps/*/package.json')" ]]; then
+		npm ci --ignore-scripts
+	fi
+	if [[ $fetch -eq 1 ]] && { ! npm --prefix packages/ai run check:model-data >/dev/null 2>&1 ||
+		[[ -n "$(git diff --name-only "$prev" next -- packages/ai/catalog/ packages/ai/scripts/ packages/ai/src/models.generated.ts 'packages/ai/src/providers/*.models.ts')" ]]; }; then
+		npm run hydrate:model-data
+	fi
+}
+
 align_refs() {
 	local rc=0 ref local_sha wt
 	git fetch -q --prune origin
@@ -311,7 +330,9 @@ case "$mode" in
 		else
 			[[ $resume -eq 1 ]] || refuse_stray
 			tag_tips next
+			prev_next="$(git rev-parse next)"
 			rebuild_next
+			[[ $check -eq 0 ]] || prepare_for_check "$prev_next"
 		fi
 		[[ $check -eq 0 ]] || "$repo/.fork/check.sh" focused
 		[[ $push -eq 0 ]] || push_all
@@ -351,7 +372,14 @@ case "$mode" in
 			echo "next $(short next) already contains every branch tip; nothing to rebuild"
 		else
 			rebuild_next
-			[[ $check -eq 0 ]] || "$repo/.fork/check.sh" focused
+			if [[ $check -ne 0 ]]; then
+				prepare_for_check "refs/tags/pre-sync/$stamp/next^{commit}"
+				if [[ $push -ne 0 ]]; then
+					npm run check
+					git diff --exit-code || { echo "npm run check changed files; fix them on their owning branch" >&2; exit 1; }
+				fi
+				"$repo/.fork/check.sh" focused
+			fi
 		fi
 		[[ $push -eq 0 ]] || push_all
 		;;

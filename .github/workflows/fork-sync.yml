@@ -7,9 +7,10 @@ name: Sync fork and release next
 on:
   schedule:
     - cron: "23 7 * * *"
-  # Owning branches. next is not listed: only this workflow pushes it, so a push to next is never a request.
+  # Only workflows present on the pushed branch run, and only fork/tooling carries this file. A push to
+  # feat/** or fix/** does not start it: dispatch it by hand (gh workflow run fork-sync.yml --repo JangMan-J/pi).
   push:
-    branches: ["feat/**", "fix/**", fork/tooling]
+    branches: [fork/tooling]
   workflow_dispatch:
     inputs:
       push:
@@ -69,13 +70,6 @@ jobs:
           git remote add upstream https://github.com/earendil-works/pi.git
           .fork/sync.sh --align
 
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Hydrate model data
-        # packages/ai/src/providers/data/ is gitignored and imported by the model tables the tests load.
-        run: npm run hydrate:model-data
-
       - name: Sync with upstream
         # sync.sh rebuilds next and runs the focused checks only when upstream or a branch moved. A branch
         # that does not rebase onto the new upstream holds main back (a warning names it) instead of failing.
@@ -97,6 +91,15 @@ jobs:
             echo "needed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Fail manual sync when upstream is held back with nothing to release
+        if: github.event_name == 'workflow_dispatch' && steps.release.outputs.needed == 'false'
+        run: |
+          behind="$(git rev-list --count main..upstream/main)"
+          if [ "$behind" -gt 0 ]; then
+            echo "Upstream sync held back ($behind upstream commit(s) unmerged due to rebase conflict) and next has no new release to publish." >&2
+            exit 1
+          fi
+
       - name: Require next to be exactly the merge of the branches
         # The release gate for every pusher: no commits on next outside the branches in .fork/branches,
         # every branch on main, and main a mirror of upstream.
@@ -104,11 +107,11 @@ jobs:
         run: .fork/sync.sh --status
 
       - name: Build
-        # The sync may have moved dependencies or the model generator, so install and hydrate again.
+        # sync.sh already prepared the workspace when it rebuilt next; these guards cover a run that did not.
         if: steps.release.outputs.needed == 'true'
         run: |
-          npm ci --ignore-scripts
-          npm run hydrate:model-data
+          [ -d node_modules ] || npm ci --ignore-scripts
+          npm --prefix packages/ai run check:model-data >/dev/null 2>&1 || npm run hydrate:model-data
           npm run build:offline
 
       - name: Check
