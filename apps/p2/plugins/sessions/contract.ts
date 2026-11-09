@@ -7,11 +7,15 @@ import {
 	local,
 	ModelRefSchema,
 	method,
+	PendingEditSchema,
 	param,
 	propertiesOf,
 	record,
 	remote,
+	SessionInfoEditSchema,
+	SessionInfoSchema,
 	SessionLockSchema,
+	SessionReportSchema,
 	serverHost,
 	sessionHost,
 	ThinkingLevelSchema,
@@ -59,22 +63,6 @@ export const SessionSchema = obj({
 	branches: arr(BranchSchema),
 });
 export type Session = Static<typeof SessionSchema>;
-
-/**
- * The session's own description as its worker reports it (`p2.session-info`, the authority): the catalog row follows.
- * Reported when the worker starts and after every change of the document.
- */
-export const SessionInfoSchema = obj({
-	title: str(),
-	titleEdited: bool(),
-	cwd: str(),
-	env: union([str(), nul()]),
-	pinned: bool(),
-	archivedAt: union([num(), nul()]),
-	model: ModelRefSchema,
-	thinkingLevel: str(),
-	createdAt: num(),
-});
 
 /** Cleanup completed before an archive call returns (e.g. session-owned port forwards). */
 export const SessionArchived = keyedRegistry<(session: string, ctx: Ctx) => Promise<void>>("p2.session-archived");
@@ -212,14 +200,22 @@ const CatalogV4 = evolve(CatalogV3, (e) =>
 );
 
 /**
- * The session catalog (server, SQLite): every session, archived ones included. Host-internal. A mirror of the
- * sessions' own descriptions (`p2.session-info`): 5: `describe`, a row as the description it seeds, and `mirror`, the
- * row following a session's report. The provider still serves 2, 3 and 4 (its `accepts`).
+ * The session catalog (server): every session, archived ones included. Host-internal. Its title, `titleEdited`, model
+ * and thinking level are the session's (`p2.session-info`, `plugin-practices.md` rule 1): the catalog shows the
+ * session's last report with the edits its worker has not applied yet over it (pending edits, persisted on the server).
+ * Where a session runs, whether it is archived, when it was made and whether it is pinned stay the catalog's own.
+ *
+ * 5: `pending`, every session's edits its worker has not applied; `edit`, a person's or the system's change of a
+ * session's description, kept until its worker applied it; `seed`, the description a session without one starts from;
+ * `report`, a worker's report. `update` writes the stored row only: the session's own fields there are replaced by its
+ * next report, so change those with `edit`. The provider still serves 2 to 4.
  */
 export const Catalog = evolve(CatalogV4, (e) =>
 	e
-		.addMethod("describe", Id, SessionInfoSchema)
-		.addMethod("mirror", obj({ id: str(), description: SessionInfoSchema }), SessionSchema),
+		.addState("pending", arr(obj({ session: str(), ...propertiesOf(PendingEditSchema) })))
+		.addMethod("edit", obj({ id: str(), edit: SessionInfoEditSchema }), SessionSchema)
+		.addMethod("seed", Id, SessionInfoSchema)
+		.addMethod("report", obj({ id: str(), report: SessionReportSchema }), nul()),
 );
 
 /**
@@ -341,11 +337,24 @@ const SessionsV6 = evolve(SessionsV5, (e) =>
 );
 
 /**
- * Sessions as a principal sees them. 7: the worker's `describeSelf`, its session's own description (`p2.session-info`):
- * the session is the authority for its title, place, pin, archive, model and level, and the catalog row follows its
- * report. The provider still serves 3 to 6 (its `accepts`).
+ * Sessions as a principal sees them. 7: the worker's `describeSelf`, what its session holds (`p2.session-info`: its
+ * title, `titleEdited`, model and thinking level) and the last pending edit it applied (`applied`, null for none). The
+ * catalog follows it for those fields only. The provider still serves 3 to 6 (its `accepts`); a worker of 6 still
+ * reports through `renameSelf` and `configureSelf`.
  */
-export const Sessions = evolve(SessionsV6, (e) => e.addMethod("worker", "describeSelf", SessionInfoSchema, nul()));
+export const Sessions = evolve(SessionsV6, (e) => e.addMethod("worker", "describeSelf", SessionReportSchema, nul()));
+
+/**
+ * A session's pending edits as its worker follows them (server): the changes of its description the server keeps
+ * until the worker applied them, in revision order. The worker applies them in one commit and reports
+ * (`Sessions.describeSelf`), and the server deletes them up to the revision it reported.
+ */
+export const PendingEdits = remote("p2.session-pending-edits", {
+	version: 1,
+	params: {},
+	hostAddress: serverHost,
+	variants: { worker: { state: { edits: arr(PendingEditSchema) } } },
+});
 
 const Location = obj({ id: str(), cwd: str({ minLength: 1 }), env: union([str(), nul()]) });
 
@@ -355,8 +364,7 @@ const Location = obj({ id: str(), cwd: str({ minLength: 1 }), env: union([str(),
  * relocation (`SessionMoves`): it waits for the job and answers why a busy worker refused (nothing recorded).
  */
 export const SessionOperations = local("p2.session-operations", {
-	// 2: `edit`.
-	version: 2,
+	version: 1,
 	params: {},
 	members: {
 		operations: arr(OperationSchema),
@@ -369,17 +377,6 @@ export const SessionOperations = local("p2.session-operations", {
 		),
 		archive: method(obj({ id: str() })),
 		restore: method(obj({ id: str() })),
-		/**
-		 * An owner's edit of the session's own description (rename, pin): through its running worker, else its store
-		 * while its worker is held stopped. Answers the catalog row after it.
-		 */
-		edit: method(
-			obj({
-				id: str(),
-				change: obj({ title: opt(str()), titleEdited: opt(bool()), pinned: opt(bool()) }),
-			}),
-			SessionSchema,
-		),
 		dismiss: method(obj({ operation: str() })),
 	},
 });
@@ -430,37 +427,6 @@ export const SessionTransfer = remote("p2.session-transfer", {
 				 * `to`, which must not exist yet (its worker waits while a fork copies).
 				 */
 				copyFiles: method(obj({ to: str() })),
-			},
-		},
-	},
-});
-
-/**
- * The session's description, edited through its running worker (the server only): the owner's rename and pin, and a
- * running session's move and archive, are committed to the session's `p2.session-info` first; the catalog follows
- * the worker's report. A stopped session's description is written to its store by the server, its worker held back.
- */
-export const SessionInfo = remote("p2.session-info", {
-	version: 1,
-	params: { session: param.str() },
-	hostAddress: sessionHost,
-	variants: {
-		server: {
-			methods: {
-				/** Applies the change in one commit; absent fields stay. Resolves with the description after it. */
-				edit: method(
-					obj({
-						title: opt(str()),
-						titleEdited: opt(bool()),
-						cwd: opt(str()),
-						env: opt(union([str(), nul()])),
-						pinned: opt(bool()),
-						archivedAt: opt(union([num(), nul()])),
-						model: opt(ModelRefSchema),
-						thinkingLevel: opt(ThinkingLevelSchema),
-					}),
-					SessionInfoSchema,
-				),
 			},
 		},
 	},

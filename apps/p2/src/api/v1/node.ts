@@ -9,5 +9,11 @@ export * from "../../runtime/locked-file.ts";
 export * from "../../runtime/logs.ts";
 export * from "../../runtime/observe.ts";
 export * from "../../runtime/session-files.ts";
-export * from "../../runtime/session-info.ts";
+export {
+	applySessionInfoEdits,
+	readSessionInfo,
+	readSessionReport,
+	SessionInfoDoc,
+	sessionSeed,
+} from "../../runtime/session-info.ts";
 export * from "../../runtime/settings.ts";

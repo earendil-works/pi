@@ -6,7 +6,7 @@ import type { ModelRef } from "@earendil-works/pi-durable";
 import { arr, bool, nul, num, obj, opt, str, union } from "@earendil-works/pi-schema";
 import { param, sessionHost } from "./chord.ts";
 import { LocationSchema } from "./location.ts";
-import type { SessionInfoState } from "./session-info.ts";
+import type { SessionInfoState } from "./session-info-schema.ts";
 
 /** What the server tells a worker it spawns: `session` from the sessions plugin, more keys from other plugins. */
 export type SessionInit = {
@@ -17,7 +17,7 @@ export type SessionInit = {
 	readonly thinkingLevel: ModelThinkingLevel;
 	/** False for an archived session started only to rebuild its search index: Durable work does not resume. */
 	readonly resume?: boolean;
-	/** The catalog row as a description: the seed of `p2.session-info` for a session that has none yet. */
+	/** The description a session without `p2.session-info` starts from: its catalog row's (`Catalog.seed`). */
 	readonly info?: SessionInfoState;
 };
 export const WorkerBoundary = remote("p2.worker-boundary", {

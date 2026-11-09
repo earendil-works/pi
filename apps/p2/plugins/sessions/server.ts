@@ -5,24 +5,39 @@ import { randomUUID } from "node:crypto";
 import { mkdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
-import { arr, bool, nul, obj, str, union, unknown } from "@earendil-works/pi-schema";
+import { arr, bool, int, nul, obj, str, union, unknown } from "@earendil-works/pi-schema";
 import {
 	type AcceptsTable,
+	and,
+	applyEdit,
 	type Context,
 	type Ctx,
+	columnBool,
+	columnInt,
+	columnOpt,
+	columnStr,
 	defineFacet,
 	defineJob,
 	defineState,
+	defineTable,
 	deriveTyped,
+	eq,
 	forbidden,
 	isGuest,
 	isOwner,
 	isWorker,
 	type JobError,
+	json,
 	type Location,
 	literal,
+	lte,
+	ModelRefSchema,
 	nativeOf,
+	type PendingEdit,
+	query,
 	type Ref,
+	type SessionInfoEdit,
+	type SessionInfoState,
 	type SessionInit,
 	serveKeyed,
 	type Tx,
@@ -30,8 +45,7 @@ import {
 	WorkerBoundary,
 	withAbortSignal,
 } from "@p2/app/v1";
-import { editSessionInfo, type SessionInfoEdit, type SessionInfoState, withStoredSession } from "@p2/app/v1/node";
-import { Server, type SessionWorkerControl, serverOf, WorkerInitValues } from "@p2/app/v1/server";
+import { Server, serverOf, WorkerInitValues } from "@p2/app/v1/server";
 import { EnvManagers, EnvService } from "../envs/contract.ts";
 import { ModelConfig, ModelResources } from "../models/contract.ts";
 import { ChildStore } from "../subagents/contract.ts";
@@ -43,10 +57,10 @@ import {
 	MAX_TITLE,
 	type Operation,
 	OperationSchema,
+	PendingEdits,
 	type Session,
 	SessionArchived,
 	SessionCopied,
-	SessionInfo,
 	SessionMoves,
 	SessionOperations,
 	Sessions,
@@ -172,24 +186,6 @@ async function fenceWorker(
 				: `Background work is still running (for example a message waiting for a subagent's answer): wait for it or stop the subagent before ${doing}`;
 }
 
-/**
- * Commits `change` to the session's own description: through its running worker, else to its store while the worker
- * is held stopped (the caller holds it: a pause, a relocation's update step, an archived session's suspension).
- * Resolves with the description after it; the caller mirrors it into the catalog.
- */
-async function commitDescription(
-	catalog: Ref<typeof Catalog>,
-	workers: SessionWorkerControl,
-	dataDir: string,
-	id: string,
-	change: SessionInfoEdit,
-	ctx: Ctx,
-): Promise<SessionInfoState> {
-	if (workers.running().includes(id)) return (await ctx.get(SessionInfo, { session: id })).edit(change, ctx);
-	const seed = (await catalog.describe({ id }, ctx)) as SessionInfoState;
-	return withStoredSession(dataDir, id, (session) => editSessionInfo(session, change, seed, ctx), ctx);
-}
-
 /** Lifecycle jobs persist and run again after a crash: each run is idempotent (a copy starts over, a move repeats). */
 const RERUN = { resume: "rerun" } as const;
 
@@ -254,6 +250,56 @@ function failureText(error: JobError): string {
 	return `The operation was stopped after ${error.restarts} restarts`;
 }
 
+/**
+ * Pending edits of sessions' descriptions (`plugin-practices.md` rule 3): kept in the server's store until the session's
+ * worker applied them and reported so, also across a restart. One row per edit; `revision` grows per server.
+ */
+const PendingRows = defineTable("pending_edits", {
+	version: 1,
+	columns: {
+		session: columnStr(),
+		revision: columnInt(),
+		title: columnOpt(columnStr()),
+		titleEdited: columnOpt(columnBool()),
+		model: columnOpt(json(ModelRefSchema, { version: 1 })),
+		thinkingLevel: columnOpt(columnStr()),
+	},
+	key: ["session", "revision"],
+});
+
+/** The next revision of a pending edit, persisted with the edits so revisions never repeat. */
+const EditRevisions = defineState("p2.sessions.edit-revisions", {
+	schema: obj({ next: int({ minimum: 1 }) }),
+	version: 1,
+	initial: () => ({ next: 1 }),
+	persist: true,
+	checkpointWhen: () => true,
+});
+
+/** A pending row as the edit its worker applies. */
+function pendingEdit(row: {
+	readonly revision: number;
+	readonly title?: string | undefined;
+	readonly titleEdited?: boolean | undefined;
+	readonly model?: { readonly provider: string; readonly modelId: string } | undefined;
+	readonly thinkingLevel?: string | undefined;
+}): PendingEdit {
+	return {
+		revision: row.revision,
+		...(row.title === undefined ? {} : { title: row.title }),
+		...(row.titleEdited === undefined ? {} : { titleEdited: row.titleEdited }),
+		...(row.model === undefined ? {} : { model: { provider: row.model.provider, modelId: row.model.modelId } }),
+		...(row.thinkingLevel === undefined ? {} : { thinkingLevel: row.thinkingLevel }),
+	};
+}
+
+/** The pending edits of every session, a live query's window: the catalog overlays them on its rows. */
+const ALL_PENDING = query(PendingRows).orderBy((row) => row.revision, "asc");
+const PENDING_WINDOW = 10_000;
+
+/** An automatic title: the first user message, line breaks as spaces, its first 100 characters (as Pi Mobile). */
+const AUTO_TITLE = 100;
+
 /** How long a worker start waits for its session's row (a client-chosen ID held before `create` answered). */
 const ROW_WAIT_MS = 10_000;
 
@@ -265,42 +311,126 @@ export default defineFacet((host) => {
 		Catalog,
 		(_params, self) => {
 			const server = self.get(Server, {});
-			// The catalog's sessions: its database is this object's native, and every write sets the rows in the same
-			// method, before it answers.
-			const sessions = self.writable<Session[]>([]);
+			// The catalog's rows: its database is this object's native. A write sets the rows in the same method, before it
+			// answers. The session's own fields (title, `titleEdited`, model, level) are its last report with the edits its
+			// worker has not applied yet over them (`pending`, a live query of the server store's table).
+			const rows = self.writable<Session[]>([]);
+			/** Each session's stored description (`titleEdited` included, which rows do not show), kept with `rows`. */
+			const stored = new Map<string, SessionInfoState>();
 			const db = self.open(
 				async () => {
 					const opened = new CatalogDb(server.info.value.dataDir);
-					sessions.set(opened.all());
+					for (const [id, description] of opened.descriptions()) stored.set(id, description);
+					rows.set(opened.all());
 					return opened;
 				},
 				(opened) => opened.close(),
 			);
+			const pendingTable = self.table(PendingRows);
+			const pending = self.query(pendingTable, ALL_PENDING, PENDING_WINDOW);
+			const revisions = self.state(EditRevisions);
+			/** One row read again after a write (the rows change by that row, `plugin-practices.md` rule 7). */
+			const refresh = (id: string): Session => {
+				stored.set(id, db.value.seed(id));
+				const row = db.value.get(id);
+				const at = rows.value.findIndex((each) => each.id === id);
+				rows.set(at === -1 ? [row, ...rows.value] : rows.value.with(at, row));
+				return row;
+			};
+			/** The description as shown: the stored one with the session's pending edits over it, in revision order. */
+			const shownInfo = (id: string, edits: readonly SessionInfoEdit[]): SessionInfoState | undefined => {
+				const base = stored.get(id);
+				if (base === undefined) return undefined;
+				const info: SessionInfoState = {
+					title: base.title,
+					titleEdited: base.titleEdited,
+					model: base.model,
+					thinkingLevel: base.thinkingLevel,
+				};
+				for (const edit of edits) applyEdit(info, edit);
+				return info;
+			};
+			const sessions = deriveTyped(self, [rows, pending], ([list, edits]) => {
+				if (edits.length === 0) return list;
+				const bySession = new Map<string, SessionInfoEdit[]>();
+				for (const edit of edits)
+					bySession.set(edit.session, [...(bySession.get(edit.session) ?? []), pendingEdit(edit)]);
+				return list.map((row) => {
+					const own = bySession.get(row.id);
+					const info = own === undefined ? undefined : shownInfo(row.id, own);
+					return info === undefined
+						? row
+						: { ...row, title: info.title, model: info.model, thinkingLevel: info.thinkingLevel };
+				});
+			});
+			/** Keeps `edit` for session `id` until its worker applied it, at the next revision. */
+			const addEdit = async (id: string, edit: SessionInfoEdit, ctx: Ctx) => {
+				db.value.get(id);
+				await self.tx(async (tx) => {
+					const counter = await tx.draft(revisions);
+					const revision = counter.next;
+					counter.next = revision + 1;
+					tx.put(pendingTable, {
+						session: id,
+						revision,
+						...(edit.title === undefined ? {} : { title: edit.title }),
+						...(edit.titleEdited === undefined ? {} : { titleEdited: edit.titleEdited }),
+						...(edit.model === undefined ? {} : { model: edit.model }),
+						...(edit.thinkingLevel === undefined ? {} : { thinkingLevel: edit.thinkingLevel }),
+					});
+				}, ctx);
+			};
+			/** The row as the catalog shows it: stored, with the session's pending edits over it. */
+			const shown = (id: string): Session => {
+				const row = sessions.value.find((each) => each.id === id);
+				if (row === undefined) throw new Error("Session not found");
+				return row;
+			};
 			return {
-				sessions: deriveTyped(self, [sessions], ([value]) => value),
-				get: async ({ id }) => db.value.get(id),
+				sessions,
+				pending: deriveTyped(self, [pending], ([edits]) =>
+					edits.map((row) => ({ session: row.session, ...pendingEdit(row) })),
+				),
+				get: async ({ id }) => shown(id),
 				create: async (input) => {
-					const session = db.value.create(input);
-					sessions.set(db.value.all());
-					return session;
+					const created = db.value.create(input);
+					refresh(created.id);
+					return shown(created.id);
 				},
-				// Activity moves `updatedAt` only: the automatic title is the session's own (its worker titles `p2.session-info`
-				// from the first user message, and the row follows its report).
-				activity: async ({ id, timestamp }) => {
+				activity: async ({ id, timestamp, firstUserText }, ctx) => {
 					db.value.activity(id, timestamp);
-					sessions.set(db.value.all());
+					refresh(id);
+					// The automatic title (search's first user message) is a pending edit the session applies; raised only while
+					// it would change an untitled row, so activity after that writes nothing more.
+					const title = firstUserText?.replace(/[\r\n]/g, " ").slice(0, AUTO_TITLE);
+					const own = pending.value.flatMap((row) => (row.session === id ? [pendingEdit(row)] : []));
+					const info = shownInfo(id, own);
+					if (title && info !== undefined && !info.titleEdited && info.title !== title)
+						await addEdit(id, { title, titleEdited: false }, ctx);
 					return null;
 				},
 				update: async ({ id, ...change }) => {
-					const session = db.value.update(id, change);
-					sessions.set(db.value.all());
-					return session;
+					db.value.update(id, change);
+					refresh(id);
+					return shown(id);
 				},
-				describe: async ({ id }) => db.value.describe(id),
-				mirror: async ({ id, description }) => {
-					const session = db.value.mirror(id, description);
-					sessions.set(db.value.all());
-					return session;
+				edit: async ({ id, edit }, ctx) => {
+					await addEdit(id, edit, ctx);
+					return shown(id);
+				},
+				seed: async ({ id }) => db.value.seed(id),
+				report: async ({ id, report }, ctx) => {
+					const { applied, ...info } = report;
+					db.value.described(id, info);
+					refresh(id);
+					// The edits the session applied leave; newer ones stay over the report until it applies them too.
+					if (applied !== null)
+						await self.tx(
+							async (tx) =>
+								tx.deleteWhere(pendingTable, (row) => and(eq(row.session, id), lte(row.revision, applied))),
+							ctx,
+						);
+					return null;
 				},
 			};
 		},
@@ -367,17 +497,7 @@ export default defineFacet((host) => {
 						return refusal;
 					},
 					update: async () => {
-						// The session's description first (its fenced worker, or its store while it is stopped); the catalog
-						// follows.
-						const description = await commitDescription(
-							catalog,
-							natives().workers,
-							server.info.value.dataDir,
-							id,
-							location,
-							ctx,
-						);
-						await catalog.mirror({ id, description }, ctx);
+						await catalog.update({ id, ...location }, ctx);
 					},
 					move: async () => {
 						await (await boundary()).relocate(location, ctx);
@@ -500,17 +620,6 @@ export default defineFacet((host) => {
 				// lingering conversation) wait for a restore rather than start a worker the archive refuses.
 				for (const close of archived.value.values()) await close(id, ctx);
 				await natives().workers.suspend(id);
-				// The suspended session's own description records it (its store, no worker runs it); the row was archived
-				// at once, so the mirror leaves it as it is.
-				const description = await commitDescription(
-					catalog,
-					natives().workers,
-					server.info.value.dataDir,
-					id,
-					{ archivedAt: (await catalog.get({ id }, ctx)).archivedAt ?? Date.now() },
-					ctx,
-				);
-				await catalog.mirror({ id, description }, ctx);
 				return null;
 			},
 			finish: async (outcome, tx) => {
@@ -567,19 +676,23 @@ export default defineFacet((host) => {
 			return session;
 		};
 		/** A copy's catalog entry: the source's place, model and level under a marked title. */
-		const copyOf = (source: Session, id: string, mark: string, ctx: Ctx) =>
-			catalog.create(
+		const copyOf = async (source: Session, id: string, mark: string, ctx: Ctx) => {
+			const title = cleanTitle(`${source.title} (${mark})`).slice(0, MAX_TITLE);
+			await catalog.create(
 				{
 					id,
 					cwd: source.cwd,
 					env: source.env ?? null,
-					title: cleanTitle(`${source.title} (${mark})`).slice(0, MAX_TITLE),
+					title,
 					titleEdited: true,
 					model: source.model,
 					thinkingLevel: source.thinkingLevel,
 				},
 				ctx,
 			);
+			// A clone's store holds its source's description: the copy's own title is an edit its worker applies.
+			return catalog.edit({ id, edit: { title, titleEdited: true } }, ctx);
+		};
 		/**
 		 * Makes a copy's row and starts the job filling it, its worker held back meanwhile. A copy that exists already is
 		 * a retry of the same request: its row is the answer.
@@ -631,8 +744,8 @@ export default defineFacet((host) => {
 				model: session.model,
 				thinkingLevel: session.thinkingLevel as SessionInit["thinkingLevel"],
 				...(indexing ? { resume: false } : {}),
-				// The seed of the session's own description, for a session that has none yet.
-				info: await catalog.describe({ id }, context),
+				// The description a session without `p2.session-info` starts from: the catalog row's.
+				info: await catalog.seed({ id }, context),
 			};
 		};
 		return {
@@ -666,20 +779,7 @@ export default defineFacet((host) => {
 				return startCopy(source, copy, "fork", () => forks.start({ id, copy, entries }, ctx, { key: copy }), ctx);
 			},
 			archive: async ({ id }, ctx) => {
-				// Archived at once. A running worker records it in the session's description first, so its next report
-				// agrees with the row; a stopped one's store is written by the job, after the worker is suspended.
-				const workers = natives().workers;
-				if (workers.running().includes(id)) {
-					const description = await commitDescription(
-						catalog,
-						workers,
-						server.info.value.dataDir,
-						id,
-						{ archivedAt: Date.now() },
-						ctx,
-					);
-					await catalog.mirror({ id, description }, ctx);
-				} else await catalog.update({ id, archived: true }, ctx);
+				await catalog.update({ id, archived: true }, ctx);
 				await archives.start({ id }, ctx, { key: id });
 				return null;
 			},
@@ -687,38 +787,30 @@ export default defineFacet((host) => {
 				// After a running archive of it: its worker stop must not land after the restore.
 				const archiving = archives.running.value.find((run) => run.phase !== "blocked" && run.key === id);
 				if (archiving) await archives.outcome(archiving.id, ctx).catch(() => {});
-				// The archived session's worker is suspended: its description is written to its store, then the row follows
-				// and its holders start it again.
-				const description = await commitDescription(
-					catalog,
-					natives().workers,
-					server.info.value.dataDir,
-					id,
-					{ archivedAt: null },
-					ctx,
-				);
-				await catalog.mirror({ id, description }, ctx);
+				await catalog.update({ id, archived: false }, ctx);
 				// A start refused while archived left the worker failed or suspended: its holders start it again.
 				await natives().workers.resume(id);
 				return null;
-			},
-			edit: async ({ id, change }, ctx) => {
-				const workers = natives().workers;
-				let description: SessionInfoState | undefined;
-				const commit = async () => {
-					description = await commitDescription(catalog, workers, server.info.value.dataDir, id, change, ctx);
-				};
-				if (workers.running().includes(id)) await commit();
-				// A stopped session's store is written while its worker is held stopped; one that started meanwhile is
-				// fenced as for a clone, so nothing it runs is cut off.
-				else await workers.pause(id, () => fenceWorker(catalog, children, id, "editing", ctx), commit, "editing");
-				return catalog.mirror({ id, description: description! }, ctx);
 			},
 			dismiss: async ({ operation }, ctx) => {
 				await failed.change((draft) => {
 					draft.list = draft.list.filter((each) => each.id !== operation);
 				}, ctx);
 				return null;
+			},
+		};
+	});
+
+	host.serve(PendingEdits, (_params, principal, self) => {
+		if (!isWorker(principal)) throw forbidden("pending edits are the session worker's");
+		const session = principal.session;
+		const catalog = self.get(Catalog, {});
+		return {
+			variant: "worker",
+			members: {
+				edits: deriveTyped(self, [catalog.pending], ([all]) =>
+					all.flatMap(({ session: of, ...edit }) => (of === session ? [edit] : [])),
+				),
 			},
 		};
 	});
@@ -743,21 +835,21 @@ export default defineFacet((host) => {
 					variant: "worker",
 					members: {
 						session: sessionView,
+						// Workers before `describeSelf` (Sessions 6): their changes become edits their next worker applies.
 						renameSelf: async ({ title }, ctx) => {
 							const previous = (await catalog.get({ id }, ctx)).title;
-							await catalog.update({ id, title: cleanTitle(title) }, ctx);
+							await catalog.edit({ id, edit: { title: cleanTitle(title), titleEdited: true } }, ctx);
 							return { previous };
 						},
-						// Either field alone updates the entry; the other keeps its value (Pi Mobile's configure).
 						configureSelf: async ({ model, thinkingLevel }, ctx) => {
-							await catalog.update(
-								{ id, ...(model ? { model } : {}), ...(thinkingLevel ? { thinkingLevel } : {}) },
+							await catalog.edit(
+								{ id, edit: { ...(model ? { model } : {}), ...(thinkingLevel ? { thinkingLevel } : {}) } },
 								ctx,
 							);
 							return null;
 						},
-						describeSelf: async (description, ctx) => {
-							await catalog.mirror({ id, description }, ctx);
+						describeSelf: async (report, ctx) => {
+							await catalog.report({ id, report }, ctx);
 							return null;
 						},
 						treeSelf: async ({ main, branches }, ctx) => {
@@ -838,11 +930,11 @@ export default defineFacet((host) => {
 						const clean = cleanTitle(title);
 						if (!clean || clean.length > MAX_TITLE)
 							throw new Error(`The title must be 1–${MAX_TITLE} characters`);
-						await lifecycle.edit({ id, change: { title: clean, titleEdited: true } }, ctx);
+						await catalog.edit({ id, edit: { title: clean, titleEdited: true } }, ctx);
 						return null;
 					},
 					pin: async ({ id, pinned }, ctx) => {
-						await lifecycle.edit({ id, change: { pinned } }, ctx);
+						await catalog.update({ id, pinned }, ctx);
 						return null;
 					},
 					archive: (args, ctx) => lifecycle.archive(args, ctx),

@@ -2,28 +2,17 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { compile } from "@earendil-works/pi-schema";
+import { ModelRefSchema, type SessionInfoState } from "@p2/app/v1";
 import type { Session } from "./contract.ts";
 
-/** A session's own description (`p2.session-info`), as the catalog mirrors it. */
-export type SessionDescription = {
-	title: string;
-	titleEdited: boolean;
-	cwd: string;
-	env: string | null;
-	pinned: boolean;
-	archivedAt: number | null;
-	model: Session["model"];
-	thinkingLevel: string;
-	createdAt: number;
-};
+const isModelRef = compile(ModelRefSchema).check;
 
 /**
  * 3: `titleEdited` (Pi Mobile's): an explicit title (given at creation or renamed) is never replaced automatically.
  * 4: `main` and `branches`, the current main conversation and the `/tree` branches (`docs/tree.md`).
  */
 const SCHEMA_VERSION = 4;
-/** An automatic title: the first user message, line breaks as spaces, its first 100 characters (as Pi Mobile). */
-const AUTO_TITLE = 100;
 
 export class CatalogDb {
 	readonly #db: DatabaseSync;
@@ -165,59 +154,47 @@ export class CatalogDb {
 	}
 
 	/**
-	 * The row's description as the session's `p2.session-info` holds it: the seed of a session that has none yet (one
-	 * created before it, or a new session's first start).
+	 * Indexed activity: `updatedAt` never moves back. The automatic title is no longer the catalog's: it is a pending edit
+	 * the session's worker applies (`automaticTitle`).
 	 */
-	describe(id: string): SessionDescription {
-		const row = this.#db.prepare("SELECT * FROM sessions WHERE id=?").get(id);
+	activity(id: string, timestamp: number): void {
+		this.#db.prepare("UPDATE sessions SET updatedAt=max(updatedAt,?) WHERE id=?").run(timestamp, id);
+	}
+
+	/** The session's own fields as its worker reported them (`p2.session-info`); the catalog's other fields stay. */
+	described(id: string, info: SessionInfoState): void {
+		this.#db
+			.prepare("UPDATE sessions SET title=?,titleEdited=?,model=?,thinkingLevel=? WHERE id=?")
+			.run(info.title, Number(info.titleEdited), JSON.stringify(info.model), info.thinkingLevel, id);
+	}
+
+	/** Every row's description by session (`titleEdited` as stored): what the catalog overlays pending edits on. */
+	descriptions(): Map<string, SessionInfoState> {
+		const rows = this.#db.prepare("SELECT id,title,titleEdited,model,thinkingLevel FROM sessions").all();
+		return new Map(rows.map((row) => [String(row.id), this.#description(row)]));
+	}
+
+	/** The row's description, the seed of a session that has none yet; `titleEdited` as stored. */
+	seed(id: string): SessionInfoState {
+		const row = this.#db.prepare("SELECT title,titleEdited,model,thinkingLevel FROM sessions WHERE id=?").get(id);
 		if (!row) throw new Error("Session not found");
-		const session = this.#decode(row);
+		return this.#description(row);
+	}
+
+	#description(row: Record<string, unknown>): SessionInfoState {
 		return {
-			title: session.title,
+			title: String(row.title),
 			titleEdited: row.titleEdited === 1,
-			cwd: session.cwd,
-			env: session.env ?? null,
-			pinned: session.pinned,
-			archivedAt: session.archivedAt,
-			model: session.model,
-			thinkingLevel: session.thinkingLevel,
-			createdAt: session.createdAt,
+			model: this.#model(row.model),
+			thinkingLevel: String(row.thinkingLevel),
 		};
 	}
 
-	/**
-	 * The row follows the session's own description (its worker's report): the session is the authority for these
-	 * fields. A new location counts as activity, as for `update`. Returns the row after it.
-	 */
-	mirror(id: string, description: SessionDescription): Session {
-		const current = this.get(id);
-		const moved = description.cwd !== current.cwd || description.env !== (current.env ?? null);
-		this.#db
-			.prepare(
-				"UPDATE sessions SET title=?,titleEdited=?,cwd=?,env=?,pinned=?,archivedAt=?,model=?,thinkingLevel=?,updatedAt=CASE WHEN ? THEN max(updatedAt,?) ELSE updatedAt END WHERE id=?",
-			)
-			.run(
-				description.title,
-				Number(description.titleEdited),
-				description.cwd,
-				description.env,
-				Number(description.pinned),
-				description.archivedAt,
-				JSON.stringify(description.model),
-				description.thinkingLevel,
-				Number(moved),
-				Date.now(),
-				id,
-			);
-		return this.get(id);
-	}
-
-	activity(id: string, timestamp: number, firstUserText?: string): void {
-		const title = firstUserText?.replace(/[\r\n]/g, " ").slice(0, AUTO_TITLE);
-		this.#db
-			.prepare(`UPDATE sessions SET updatedAt=max(updatedAt,?),
-			title=CASE WHEN titleEdited=0 AND ?<>'' THEN ? ELSE title END WHERE id=?`)
-			.run(timestamp, title ?? "", title ?? "", id);
+	/** The model a row stores as JSON: a `ModelRef`, checked. */
+	#model(value: unknown): SessionInfoState["model"] {
+		const model: unknown = JSON.parse(String(value));
+		if (!isModelRef(model)) throw new Error("Invalid model in the session catalog");
+		return { provider: model.provider, modelId: model.modelId };
 	}
 
 	close(): void {

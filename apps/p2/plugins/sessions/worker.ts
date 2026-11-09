@@ -1,35 +1,28 @@
-import type { Context } from "@earendil-works/chord/context";
 import {
 	type ConversationId,
 	defineExtension,
 	type EntryDraft,
 	type EntryId,
-	type EntryRecord,
-	type Harness,
 	ROOT_CONVERSATION_ID,
 } from "@earendil-works/pi-durable";
 import { obj, str } from "@earendil-works/pi-schema";
 import {
-	agentMessage,
 	type Ctx,
-	contribute,
 	defineFacet,
 	expectVariant,
 	forbidden,
 	local,
-	messageData,
-	peerMessage,
-	SHELL_ENTRY,
+	type PendingEdit,
+	type SessionInfoEdit,
 	signalOf,
+	untilAborted,
 } from "@p2/app/v1";
 import {
-	AUTO_TITLE_LENGTH,
-	editSessionInfo,
+	applySessionInfoEdits,
 	readSessionInfo,
+	readSessionReport,
 	SessionInfoDoc,
-	type SessionInfoEdit,
-	type SessionInfoState,
-	sessionInfoSeed,
+	sessionSeed,
 } from "@p2/app/v1/node";
 import {
 	CommitSignal,
@@ -40,25 +33,24 @@ import {
 	type P2Tool,
 	workerOf,
 } from "@p2/app/v1/worker";
-import { MAX_TITLE, SessionInfo, Sessions, SessionTransfer } from "./contract.ts";
+import { MAX_TITLE, PendingEdits, Sessions, SessionTransfer } from "./contract.ts";
 import { serveLockMirror } from "./lock-worker.ts";
 
-/** The placeholder title of a session nobody titled yet. */
-const UNTITLED = "New session";
+/** Follows the server's pending edits into `p2.session-info` and reports the description (no members, routines). */
+const SessionInfoFollower = local("p2.session-info-follower", { version: 1, params: {}, members: {} });
 
 /** Contributes the `rename_session` tool: the agent keeps the session's title naming its overall task. */
 const SessionTools = local("p2.session-tools", { version: 1, params: {}, members: {} });
 
 /**
- * The tool commits to the session's own description (`p2.session-info`) in its own task's commit; the worker reports
- * the change to the catalog. Only top-level conversations (the main conversation and its `/tree` branches) may rename
- * the session.
+ * The tool runs outside Chord calls (a Durable tool), so each call opens a short root of the worker's. Only top-level
+ * conversations (the main conversation and its `/tree` branches) may rename the session.
  */
 const renameSession = (
 	edit: (
-		session: Pick<Harness, "commit">,
+		session: Parameters<typeof applySessionInfoEdits>[0],
 		change: SessionInfoEdit,
-		context: Context,
+		context: Parameters<typeof applySessionInfoEdits>[3],
 	) => Promise<{ readonly previous: string }>,
 ) =>
 	defineExtension<P2Tool>({
@@ -84,7 +76,7 @@ const renameSession = (
 					const title = args.title.replace(/\s+/g, " ").trim();
 					if (!title) return reply("The title is empty.", true);
 					try {
-						// The session's own description is the authority; the catalog follows the worker's report of it.
+						// The session's own description (`p2.session-info`): committed with the tool's task; the worker reports it.
 						const { previous } = await edit(api, { title, titleEdited: true }, context);
 						return reply(
 							previous === title
@@ -158,110 +150,66 @@ export default defineFacet((host) => {
 		const harness = harnessOf(self);
 		const worker = workerOf(self);
 		const extension = renameSession(async (session, change, context) => {
-			const seed = sessionInfoSeed(worker().init.values.session);
-			const before = (await readSessionInfo(harness().durable, context)) ?? seed;
-			await editSessionInfo(session, change, seed, context);
-			return { previous: before.title };
+			const seed = sessionSeed(worker().init.values.session);
+			const previous = ((await readSessionInfo(harness().durable, context)) ?? seed).title;
+			await applySessionInfoEdits(session, [change], seed, context);
+			return { previous };
 		});
 		self.contribute(Extensions, { [extension.name]: extension });
 		return {};
 	});
 
-	// The server edits the session's description through its running worker. Not a `liveness.call`: the server edits
-	// under its own lifecycle steps, a relocation's included, whose fence refuses calls; an edit runs no work, so
-	// admitting it under the fence changes nothing a relocation checked.
-	host.serve(SessionInfo, (_params, principal, self) => {
-		if (principal.kind !== "server") throw forbidden("server only");
+	// The session's own description: the worker applies the server's pending edits (`plugin-practices.md` rule 3) and
+	// reports when the description changed (`Sessions.describeSelf`), never on other commits (rule 7).
+	host.serve(SessionInfoFollower, (_params, self) => {
 		const harness = harnessOf(self);
 		const worker = workerOf(self);
-		return {
-			variant: "server",
-			members: {
-				edit: (change, ctx) =>
-					editSessionInfo(harness().durable, change, sessionInfoSeed(worker().init.values.session), ctx),
-			},
-		};
-	});
-
-	// The description is written at start when the session has none (from its catalog row), titled from the first user
-	// message while untitled, and reported to the catalog at start and after every change (`Sessions.describeSelf`).
-	contribute(host, "p2.session-info-report", (self) => {
-		const harness = harnessOf(self);
-		const worker = workerOf(self);
+		const pending = self.get(PendingEdits, {});
+		const sessions = self.get(Sessions, {});
 		const changes = self.open(
 			async () =>
 				new CommitSignal(harness().durable, (publication) =>
 					publication.changes.some(
-						(change) =>
-							(change.type === "document" && change.record.kind === SessionInfoDoc.definition.kind) ||
-							(change.type === "entry" && change.value.conversationId === ROOT_CONVERSATION_ID),
+						(change) => change.type === "document" && change.record.kind === SessionInfoDoc.definition.kind,
 					),
 				),
 			(signal) => signal.close(),
 		);
-		self.onLive(async (ctx) => {
-			const signal = signalOf(ctx);
-			while (!signal.aborted) {
-				const seen = changes.value.version;
-				try {
-					await describe(harness().durable, sessionInfoSeed(worker().init.values.session), ctx);
-				} catch (error) {
-					if (signal.aborted) return;
-					console.error("p2 sessions: reporting the session's description failed:", error);
-				}
-				await changes.value.next(seen, signal).catch(() => {});
+		// The references' variants are known once the object is live (as `lock-worker.ts` reads its view).
+		// Applies what the server keeps for this session, the description written from the start data first when the
+		// session has none: once at start, then at each change of its pending edits, one commit at a time.
+		self.onLive(async (ctx: Ctx) => {
+			const watch = await expectVariant(pending, "worker").edits.watch(ctx);
+			const apply = async (edits: readonly PendingEdit[]) => {
+				const written = await readSessionInfo(harness().durable, ctx);
+				if (written !== undefined && edits.length === 0) return;
+				await applySessionInfoEdits(harness().durable, edits, sessionSeed(worker().init.values.session), ctx);
+			};
+			let chain = apply(watch.value);
+			watch.start(async (call) => {
+				if (call.kind !== "value") return;
+				const edits = call.value;
+				chain = chain.then(() => apply(edits));
+				await chain;
+			});
+			try {
+				await chain;
+				await untilAborted(ctx);
+			} finally {
+				await watch.stop();
 			}
 		});
+		// Reports the description now and after each commit that changed it (`plugin-practices.md` rule 7).
+		self.onLive(async (ctx: Ctx) => {
+			const signal = signalOf(ctx);
+			const view = expectVariant(sessions, "worker");
+			while (!signal.aborted) {
+				const seen = changes.value.version;
+				const report = await readSessionReport(harness().durable, ctx);
+				if (report !== undefined) await view.describeSelf(report, ctx);
+				await changes.value.next(seen, signal);
+			}
+		});
+		return {};
 	});
 });
-
-/**
- * Writes the description when the session has none (its seed: the catalog row), gives an untitled session its first
- * user message as title, and reports the description to the catalog (which ignores an unchanged report).
- */
-async function describe(durable: Harness, seed: SessionInfoState, ctx: Ctx): Promise<void> {
-	let state = await readSessionInfo(durable, ctx);
-	// Only an untitled session takes its first user message as title: once titled, nothing changes it but a rename.
-	const untitled =
-		state === undefined
-			? !seed.titleEdited && seed.title === UNTITLED
-			: !state.titleEdited && state.title === UNTITLED;
-	const automatic = untitled ? await firstUserText(durable, ctx) : undefined;
-	if (state === undefined || automatic !== undefined)
-		state = await editSessionInfo(durable, automatic === undefined ? {} : { title: automatic }, seed, ctx);
-	await expectVariant(await ctx.get(Sessions, {}), "worker").describeSelf(state, ctx);
-}
-
-/** The automatic title: the main conversation's first user message, line breaks as spaces, at most 100 characters. */
-async function firstUserText(durable: Harness, context: Context): Promise<string | undefined> {
-	const root = await durable.conversation(ROOT_CONVERSATION_ID, context);
-	if (!root) return undefined;
-	const page = await root.entries({ order: "ascending" }, 20, undefined, context);
-	for (const entry of page.items) {
-		const text = userText(entry);
-		if (text !== undefined) return text.replace(/[\r\n]/g, " ").slice(0, AUTO_TITLE_LENGTH);
-	}
-	return undefined;
-}
-
-/** An input of the main conversation as search indexed it for the title: typed, a peer's or an agent's; not a shell command. */
-function userText(entry: EntryRecord): string | undefined {
-	if (entry.kind === SHELL_ENTRY) return undefined;
-	if (entry.model?.[0]?.role !== "user") return undefined;
-	if (entry.kind.startsWith("pi.") && entry.kind !== "pi.user") return undefined;
-	const typed =
-		messageData(entry.data)?.text ??
-		peerMessage(entry.kind, entry.data)?.text ??
-		agentMessage(entry.kind, entry.data)?.text;
-	const text =
-		typed ??
-		entry.model
-			.filter((message) => message.role === "user")
-			.map((message) =>
-				typeof message.content === "string"
-					? message.content
-					: message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n"),
-			)
-			.join("\n");
-	return text.trim() ? text : undefined;
-}

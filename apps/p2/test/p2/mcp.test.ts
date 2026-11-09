@@ -123,12 +123,14 @@ async function mcpHost(
 					sessions = self.state<Session[]>([]);
 					return {
 						sessions,
+						pending: constant([]),
 						get: UNUSED,
 						create: UNUSED,
 						activity: UNUSED,
 						update: UNUSED,
-						describe: UNUSED,
-						mirror: UNUSED,
+						edit: UNUSED,
+						seed: UNUSED,
+						report: UNUSED,
 					};
 				},
 			],

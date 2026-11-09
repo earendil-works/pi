@@ -5,6 +5,8 @@
 export {
 	type AcceptsTable,
 	type Address,
+	and,
+	bool as columnBool,
 	broken,
 	ChordError,
 	type Contract,
@@ -12,22 +14,29 @@ export {
 	defineJob,
 	defineRegistry,
 	defineState,
+	defineTable,
+	eq,
 	evolve,
 	type HandleOf,
+	int as columnInt,
 	isChordError,
 	type JobCtx,
 	type JobError,
 	type JobHandle,
+	json,
 	type KeyedHandle,
 	keyed,
 	keyedEntries,
 	local,
+	lte,
 	mapShared,
 	method,
 	type Native,
 	type Outcome,
+	opt as columnOpt,
 	orderedEntries,
 	PluginError,
+	query,
 	type RefState,
 	type Registry,
 	type RegistryValue,
@@ -36,6 +45,8 @@ export {
 	remote,
 	type SingletonHandle,
 	sleep,
+	str as columnStr,
+	type Table,
 	type Tx,
 	untilAborted,
 	type Watchable,
@@ -67,6 +78,7 @@ export * from "../../runtime/refs.ts";
 export * from "../../runtime/schema.ts";
 export * from "../../runtime/schemas.ts";
 export * from "../../runtime/sender.ts";
+export * from "../../runtime/session-info-schema.ts";
 export * from "../../runtime/session-lock.ts";
 export * from "../../runtime/session-worker.ts";
 export * from "../../runtime/shell.ts";

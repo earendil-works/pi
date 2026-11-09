@@ -95,10 +95,15 @@ it("migrates a version-2 catalog: titles other than the placeholder count as giv
 		insert.run("b", "New session");
 		db.close();
 		const catalog = new CatalogDb(directory);
-		catalog.activity("a", 2, "first message");
-		catalog.activity("b", 2, "first message");
-		assert.equal(catalog.get("a").title, "Renamed earlier");
-		assert.equal(catalog.get("b").title, "first message");
+		// The description a session starts from: a title other than the placeholder counts as given (no automatic title
+		// replaces it), the placeholder does not.
+		assert.deepEqual(catalog.seed("a"), {
+			title: "Renamed earlier",
+			titleEdited: true,
+			model: { provider: "faux", modelId: "faux-1" },
+			thinkingLevel: "off",
+		});
+		assert.equal(catalog.seed("b").titleEdited, false);
 		catalog.close();
 	} finally {
 		rmSync(directory, { recursive: true, force: true });

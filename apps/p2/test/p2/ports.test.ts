@@ -10,7 +10,7 @@ import { Chat } from "../../plugins/chat/contract.ts";
 import { ForwardsNative, Ports } from "../../plugins/ports/contract.ts";
 import { forwardOrigin, type PortsRequest } from "../../plugins/ports/protocol.ts";
 import { Forwards } from "../../plugins/ports/store.ts";
-import { SessionInfo, Sessions } from "../../plugins/sessions/contract.ts";
+import { Catalog, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { expectChord, holdIn, http, startFixture, until } from "./helpers.ts";
 
@@ -183,12 +183,10 @@ test(
 		const otherChat = await holdIn(owner, Chat, { session: other.id, conversation: 1 }, "participant");
 		// A remote-environment session cannot open (Pi Mobile's message); it can still close.
 		assert.equal((await call({ action: "list" }, otherChat)).isError, false);
-		// The session's own description says where it runs (the catalog row follows it): "gpu" is committed there.
 		await fixture.server.host.root(
-			async (ctx) => (await ctx.get(SessionInfo, { session: other.id })).edit({ env: "gpu" }, ctx),
+			async (ctx) => (await ctx.get(Catalog, {})).update({ id: other.id, env: "gpu" }, ctx),
 			BACKGROUND_CONTEXT,
 		);
-		await until(sessions.sessions, (list) => list?.find((item) => item.id === other.id)?.env === "gpu");
 		const refused = await call({ action: "open", port: 9090 }, otherChat);
 		assert.equal(refused.isError, true);
 		assert.match(

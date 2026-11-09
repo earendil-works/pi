@@ -40,7 +40,7 @@ import {
 	senderText,
 	serveKeyed,
 } from "@p2/app/v1";
-import { editSessionInfo, sessionInfoSeed } from "@p2/app/v1/node";
+import { applySessionInfoEdits, sessionSeed } from "@p2/app/v1/node";
 import {
 	ContextTally,
 	ConversationConfigured,
@@ -474,14 +474,16 @@ export default defineFacet((host) => {
 							(change.model || change.thinkingLevel) &&
 							conversation === (await mainConversation(harness().durable, ctx))
 						) {
-							// The session's own description is the authority; the catalog follows the worker's report of it.
-							await editSessionInfo(
+							// The session's own description (`p2.session-info`); its worker reports it to the catalog.
+							await applySessionInfoEdits(
 								harness().durable,
-								{
-									...(change.model ? { model: change.model } : {}),
-									...(change.thinkingLevel ? { thinkingLevel: change.thinkingLevel } : {}),
-								},
-								sessionInfoSeed(worker().init.values.session),
+								[
+									{
+										...(change.model ? { model: change.model } : {}),
+										...(change.thinkingLevel ? { thinkingLevel: change.thinkingLevel } : {}),
+									},
+								],
+								sessionSeed(worker().init.values.session),
 								ctx,
 							);
 						}
