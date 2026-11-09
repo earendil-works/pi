@@ -121,7 +121,7 @@ describe("Fireworks model generation", () => {
 		expect(payload?.output_config).toEqual({ effort: "max" });
 	});
 
-	it("does not infer adaptive thinking from toggle, budget, or missing metadata", () => {
+	it("keeps toggle, budget, or missing metadata on budget-based thinking", async () => {
 		const models = generateFireworksModels({
 			"toggle-only": [{ type: "toggle" }],
 			"budget-only": [{ type: "budget_tokens", min: 1024 }],
@@ -132,6 +132,18 @@ describe("Fireworks model generation", () => {
 			if (!hasApi(model, "anthropic-messages")) throw new Error("Expected Messages model");
 			expect(model.compat?.forceAdaptiveThinking).toBeUndefined();
 			expect(model.thinkingLevelMap).toBeUndefined();
+			let payload: Record<string, unknown> | undefined;
+			await streamSimple(model, normalizeContext({ messages: [{ role: "user", content: "test", timestamp: 0 }] }), {
+				apiKey: "test-fireworks-key",
+				reasoning: "high",
+				thinkingBudgets: { high: 1024 },
+				onPayload: (value) => {
+					payload = value as Record<string, unknown>;
+					throw new Error("payload captured");
+				},
+			}).result();
+			expect(payload?.thinking).toEqual({ type: "enabled", budget_tokens: 1024, display: "summarized" });
+			expect(payload?.output_config).toBeUndefined();
 		}
 	});
 

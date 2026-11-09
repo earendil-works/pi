@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { getModel, getModels, streamSimple } from "../src/compat.ts";
+import { getModels, streamSimple } from "../src/compat.ts";
+import { hasApi } from "../src/models.ts";
 import type { AssistantMessage, Context, Model } from "../src/types.ts";
 
 interface AnthropicPayload {
@@ -105,21 +106,17 @@ describe("Anthropic empty thinking signature compat", () => {
 	});
 
 	// Regression for #9323: Fireworks emits unsigned thinking that must survive replay.
-	it.each([
-		"accounts/fireworks/models/deepseek-v4p1-flash",
-		"accounts/fireworks/models/qwen3p8-max",
-		"accounts/fireworks/models/qwen3p8-2p4t-a95b",
-		"accounts/fireworks/models/nemotron-3-ultra-nvfp4",
-	] as const)("preserves unsigned thinking for Fireworks %s", async (modelId) => {
-		const model = getModel("fireworks", modelId);
-		expect(model.compat?.allowEmptySignature).toBe(true);
-		const context = makeContext("", "internal reasoning", "fireworks", modelId);
-		const assistant = context.messages[1] as AssistantMessage;
-		assistant.content.push({ type: "text", text: "answer" });
-		const payload = await capturePayload(model, context);
-		expect(payload.messages?.find((message) => message.role === "assistant")?.content).toEqual([
-			{ type: "thinking", thinking: "internal reasoning", signature: "" },
-			{ type: "text", text: "answer" },
-		]);
-	});
+	it.each(getModels("fireworks").filter((model) => hasApi(model, "anthropic-messages")))(
+		"preserves unsigned thinking for Fireworks $id",
+		async (model) => {
+			const context = makeContext("", "internal reasoning", "fireworks", model.id);
+			const assistant = context.messages[1] as AssistantMessage;
+			assistant.content.push({ type: "text", text: "answer" });
+			const payload = await capturePayload(model, context);
+			expect(payload.messages?.find((message) => message.role === "assistant")?.content).toEqual([
+				{ type: "thinking", thinking: "internal reasoning", signature: "" },
+				{ type: "text", text: "answer" },
+			]);
+		},
+	);
 });
