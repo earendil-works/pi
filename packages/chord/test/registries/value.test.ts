@@ -1,3 +1,5 @@
+// Tests registry value adapters, reader lifetimes, collection, observation, and reloads.
+
 import { getEventListeners } from "node:events";
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context, withAbortSignal, withCancel } from "../../src/context/index.ts";
@@ -363,9 +365,11 @@ describe("readers' memory", () => {
 		const refs = await (async () => {
 			const reader = await host.get(Reader, { id: 1 }, context);
 			expect(reader.total.value).toBe(2);
+			// Capture while held: after release yields, the reader may already have been collected.
+			const refs = objects.filter((ref) => ref.deref()?.label === "app.reader(1)");
 			reader.release();
 			await new Promise((resolve) => setTimeout(resolve, 0));
-			return objects.filter((ref) => ref.deref()?.label === "app.reader(1)");
+			return refs;
 		})();
 		expect(refs.length).toBeGreaterThan(0);
 		await (await host.get(Setter, {}, context)).set(5, context);
