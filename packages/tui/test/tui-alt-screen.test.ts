@@ -321,6 +321,42 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	// #9549: re-rendering a long transcript on every wheel event saturated a core.
+	it("scrolls without re-rendering components until content changes", async () => {
+		const terminal = new VirtualTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal);
+		const text = new Text(Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0);
+		let renders = 0;
+		const counted = {
+			render: (width: number) => {
+				renders += 1;
+				return text.render(width);
+			},
+			invalidate: () => text.invalidate(),
+		};
+		tui.setLayoutRoot(new ScrollView(counted, { follow: "end", primary: true }));
+		tui.start();
+		await terminal.waitForRender();
+		const initialRenders = renders;
+
+		terminal.sendInput("\x1b[<64;1;1M");
+		await terminal.waitForRender();
+		tui.scrollBy(-1);
+		await terminal.waitForRender();
+		assert.strictEqual(renders, initialRenders);
+		assert.deepStrictEqual(
+			terminal.getViewport().map((line) => line.trimEnd()),
+			["line 5", "line 6", "line 7", "line 8"],
+		);
+
+		text.setText("changed");
+		tui.requestRender();
+		await terminal.waitForRender();
+		assert.ok(renders > initialRenders);
+		assert.strictEqual(terminal.getViewport()[0]?.trimEnd(), "changed");
+		tui.stop();
+	});
+
 	it("scrolls faster while Alt is held during wheel input", async () => {
 		const terminal = new VirtualTerminal(20, 4);
 		const tui = new TuiAltScreen(terminal);

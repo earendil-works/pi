@@ -212,7 +212,7 @@ export class ScrollView extends Container {
 		throw new Error("ScrollView child cannot be cleared");
 	}
 
-	override render(width: number): string[] {
+	override render(width: number): readonly string[] {
 		const contentWidth = this.getContentWidth(width);
 		const lines = this.child.render(contentWidth);
 		return contentWidth === width ? lines : lines.map((line) => `${line} `);

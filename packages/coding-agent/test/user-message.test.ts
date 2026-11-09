@@ -24,6 +24,19 @@ describe("UserMessageComponent", () => {
 		expect(lines[2].endsWith(BG_RESET)).toBe(true);
 	});
 
+	// #9549: container output is reused across frames, so markers must not be added to it in place.
+	test("adds OSC 133 zone markers once across repeated renders", () => {
+		initTheme("dark");
+
+		const component = new UserMessageComponent("hello");
+		const first = component.render(20);
+		const second = component.render(20);
+
+		expect(second).toBe(first);
+		expect(second[0]!.split(OSC133_ZONE_START)).toHaveLength(2);
+		expect(second[2]!.split(OSC133_ZONE_END)).toHaveLength(2);
+	});
+
 	test("chains Markdown transformers with user message context", () => {
 		initTheme("dark");
 		const calls: string[] = [];

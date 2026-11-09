@@ -33,12 +33,17 @@ export interface LayoutBox {
 	layer: number;
 }
 
+/** Component output by width, as rendered for one layout frame. */
+export type LayoutRenderCache = Map<Component, Map<number, readonly string[]>>;
+
 export interface LayoutFrame {
 	root: LayoutBox;
 	width: number;
 	height: number;
 	lines: string[];
 	primaryScrollView?: ScrollView;
+	/** Output of every component this frame rendered; pass it to a later frame whose content did not change. */
+	renderCache: LayoutRenderCache;
 }
 
 export interface ScrollbarGeometry {
@@ -52,7 +57,7 @@ export interface ScrollbarGeometry {
 
 interface LayoutContext {
 	viewport: { width: number; height: number };
-	renderCache: Map<Component, Map<number, string[]>>;
+	renderCache: LayoutRenderCache;
 	requestRender: () => void;
 	primaryScrollView: ScrollView | undefined;
 }
@@ -65,11 +70,11 @@ function intersect(a: LayoutRect, b: LayoutRect): LayoutRect {
 	return { x, y, width: Math.max(0, right - x), height: Math.max(0, bottom - y) };
 }
 
-function renderCached(context: LayoutContext, component: Component, width: number): string[] {
+function renderCached(context: LayoutContext, component: Component, width: number): readonly string[] {
 	const safeWidth = Math.max(1, Math.floor(width));
 	let widths = context.renderCache.get(component);
 	if (!widths) {
-		widths = new Map<number, string[]>();
+		widths = new Map<number, readonly string[]>();
 		context.renderCache.set(component, widths);
 	}
 	let lines = widths.get(safeWidth);
@@ -380,17 +385,25 @@ function paintBox(box: LayoutBox, screen: string[], totalWidth: number): void {
 	paintScrollbar(box, screen, totalWidth);
 }
 
+/**
+ * Lay out and paint one frame.
+ *
+ * `renderCache` reuses component output from an earlier frame instead of calling `render()`. Pass it
+ * only when no component changed since that frame, e.g. when only a scroll position moved: the
+ * frame then costs O(viewport) instead of re-rendering the whole scrollable document.
+ */
 export function renderLayoutFrame(
 	root: Component,
 	width: number,
 	height: number,
 	requestRender: () => void,
+	renderCache: LayoutRenderCache = new Map(),
 ): LayoutFrame {
 	const safeWidth = Math.max(1, Math.floor(width));
 	const safeHeight = Math.max(1, Math.floor(height));
 	const context: LayoutContext = {
 		viewport: { width: safeWidth, height: safeHeight },
-		renderCache: new Map(),
+		renderCache,
 		requestRender,
 		primaryScrollView: undefined,
 	};
@@ -408,6 +421,7 @@ export function renderLayoutFrame(
 		height: safeHeight,
 		lines,
 		...(context.primaryScrollView === undefined ? {} : { primaryScrollView: context.primaryScrollView }),
+		renderCache,
 	};
 }
 

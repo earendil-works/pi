@@ -48,7 +48,7 @@ function isBlankRenderedLine(line: string): boolean {
 	return line.replace(ANSI_ESCAPE_REGEX, "").trim().length === 0;
 }
 
-function trimRenderedResultLines(lines: string[]): string[] {
+function trimRenderedResultLines(lines: readonly string[]): string[] {
 	let start = 0;
 	let end = lines.length;
 	while (start < end && isBlankRenderedLine(lines[start])) start++;

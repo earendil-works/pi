@@ -1,8 +1,15 @@
-import { type Component, dispatchMouseEvent, type TuiMouseDispatchResult, type TuiMouseEvent } from "../tui.ts";
+import {
+	type ChildLines,
+	type Component,
+	dispatchMouseToChildLines,
+	renderChildLines,
+	type TuiMouseDispatchResult,
+	type TuiMouseEvent,
+} from "../tui.ts";
 import { flattenLines, visibleWidth } from "../utils.ts";
 
 type RenderCache = {
-	childLines: string[];
+	childLines: readonly string[];
 	width: number;
 	bgSample: string | undefined;
 	lines: string[];
@@ -19,7 +26,7 @@ export class Box implements Component {
 
 	// Cache for rendered output
 	private cache?: RenderCache;
-	private mouseLayout?: { width: number; children: Array<{ component: Component; height: number }> };
+	private childLines?: ChildLines;
 
 	constructor(paddingX = 1, paddingY = 1, bgFn?: (text: string) => string) {
 		this.paddingX = paddingX;
@@ -57,17 +64,7 @@ export class Box implements Component {
 
 	private invalidateCache(): void {
 		this.cache = undefined;
-	}
-
-	private matchCache(width: number, childLines: string[], bgSample: string | undefined): boolean {
-		const cache = this.cache;
-		return (
-			!!cache &&
-			cache.width === width &&
-			cache.bgSample === bgSample &&
-			cache.childLines.length === childLines.length &&
-			cache.childLines.every((line, i) => line === childLines[i])
-		);
+		this.childLines = undefined;
 	}
 
 	invalidate(): void {
@@ -83,27 +80,14 @@ export class Box implements Component {
 		const contentX = event.x - this.paddingX;
 		if (contentY < 0 || contentX < 0 || contentX >= contentWidth) return undefined;
 
-		const mouseChildren =
-			this.mouseLayout?.width === contentWidth
-				? this.mouseLayout.children
-				: this.children.map((component) => ({ component, height: component.render(contentWidth).length }));
-		let childY = 0;
-		for (const { component: child, height: childHeight } of mouseChildren) {
-			if (contentY >= childY && contentY < childY + childHeight) {
-				return dispatchMouseEvent(child, {
-					...event,
-					x: contentX,
-					y: contentY - childY,
-					width: contentWidth,
-					height: childHeight,
-				});
-			}
-			childY += childHeight;
-		}
-		return undefined;
+		const layout =
+			this.childLines?.width === contentWidth
+				? this.childLines
+				: renderChildLines(this.children, contentWidth, undefined);
+		return dispatchMouseToChildLines(layout, { ...event, x: contentX, y: contentY, width: contentWidth });
 	}
 
-	render(width: number): string[] {
+	render(width: number): readonly string[] {
 		if (this.children.length === 0) {
 			return [];
 		}
@@ -111,19 +95,10 @@ export class Box implements Component {
 		const contentWidth = Math.max(1, width - this.paddingX * 2);
 		const leftPad = " ".repeat(this.paddingX);
 
-		// Render all children. Keep the child lines unpadded: children usually return the same string
-		// objects every frame, so the cache check below is a cheap identity comparison per line.
-		// Padding here would create new strings that must be compared character by character.
-		const childLines: string[] = [];
-		const mouseChildren: Array<{ component: Component; height: number }> = [];
-		for (const child of this.children) {
-			const lines = child.render(contentWidth);
-			mouseChildren.push({ component: child, height: lines.length });
-			for (const line of lines) {
-				childLines.push(line);
-			}
-		}
-		this.mouseLayout = { width: contentWidth, children: mouseChildren };
+		// Keep the child lines unpadded: unchanged children keep their line array, so the cache check
+		// below is one identity comparison. Padding here would create new strings every frame.
+		this.childLines = renderChildLines(this.children, contentWidth, this.childLines);
+		const childLines = this.childLines.lines;
 
 		if (childLines.length === 0) {
 			return [];
@@ -133,8 +108,9 @@ export class Box implements Component {
 		const bgSample = this.bgFn ? this.bgFn("test") : undefined;
 
 		// Check cache validity
-		if (this.matchCache(width, childLines, bgSample)) {
-			return this.cache!.lines;
+		const cache = this.cache;
+		if (cache?.childLines === childLines && cache.width === width && cache.bgSample === bgSample) {
+			return cache.lines;
 		}
 
 		// Apply background and padding

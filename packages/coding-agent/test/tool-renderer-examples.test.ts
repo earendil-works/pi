@@ -98,7 +98,7 @@ describe("tool renderer examples", () => {
 	});
 });
 
-function renderEditTool(definition: ToolDefinition, cwd: string): string[] {
+function renderEditTool(definition: ToolDefinition, cwd: string): readonly string[] {
 	const component = new ToolExecutionComponent(
 		"edit",
 		"edit-shell-test",

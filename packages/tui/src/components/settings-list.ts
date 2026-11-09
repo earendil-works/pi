@@ -94,7 +94,7 @@ export class SettingsList implements Component {
 		this.submenuComponent?.invalidate?.();
 	}
 
-	render(width: number): string[] {
+	render(width: number): readonly string[] {
 		// If submenu is active, render it instead
 		if (this.submenuComponent) {
 			return this.submenuComponent.render(width);

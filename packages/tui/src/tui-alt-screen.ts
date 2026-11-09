@@ -332,7 +332,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.requestRender();
 	}
 
-	override render(width: number): string[] {
+	override render(width: number): readonly string[] {
 		return this.layoutRoot?.render(width) ?? super.render(width);
 	}
 
@@ -502,17 +502,17 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	scrollBy(lines: number): void {
 		this.getPrimaryScrollView().scrollBy(lines);
-		this.requestRender();
+		this.requestViewRender();
 	}
 
 	scrollToTop(): void {
 		this.getPrimaryScrollView().scrollToStart();
-		this.requestRender();
+		this.requestViewRender();
 	}
 
 	scrollToBottom(): void {
 		this.getPrimaryScrollView().scrollToEnd();
-		this.requestRender();
+		this.requestViewRender();
 	}
 
 	private scrollToPrompt(direction: -1 | 1): void {
@@ -524,7 +524,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		for (let row = scrollView.scrollTop + direction; row >= 0 && row < lines.length; row += direction) {
 			if (!OSC133_PROMPT_START.test(lines[row] ?? "")) continue;
 			scrollView.scrollTo(row);
-			this.requestRender();
+			this.requestViewRender();
 			return;
 		}
 	}
@@ -1015,7 +1015,9 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		const primary = this.getPrimaryScrollView();
 		if (remaining !== 0 && !seen.has(primary)) primary.scrollBy(remaining);
 		this.updateScrollbarHover(event.x, event.y);
-		this.requestRender();
+		// Scrolling moves the viewport only. Reusing the previous component output keeps a wheel
+		// frame O(viewport); re-rendering a long transcript on every wheel event saturated a core.
+		this.requestViewRender();
 	}
 
 	private parseSgrMouseEvent(data: string): SgrMouseEvent | undefined {
@@ -1320,7 +1322,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		}
 		const point = this.getScrollSelectionPoint(scrollView, pointer.x, pointer.y);
 		if (point) this.updateSelectionFocus(point);
-		this.requestRender();
+		// Selection is painted onto the screen after layout, so it needs no new component output.
+		this.requestViewRender();
 	}
 
 	private stopSelectionAutoScroll(): void {
@@ -1695,9 +1698,12 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		const width = Math.max(1, this.terminal.columns);
 		const height = Math.max(1, this.terminal.rows);
 		const root = this.layoutRoot ?? this.implicitScrollView;
-		let nextLayout = renderLayoutFrame(root, width, height, () => this.requestRender());
+		const requestViewRender = () => this.requestViewRender();
+		const reusableOutput = this.contentChanged ? undefined : this.currentLayout?.renderCache;
+		this.contentChanged = false;
+		let nextLayout = renderLayoutFrame(root, width, height, requestViewRender, reusableOutput);
 		if (this.refreshSearch(nextLayout)) {
-			nextLayout = renderLayoutFrame(root, width, height, () => this.requestRender());
+			nextLayout = renderLayoutFrame(root, width, height, requestViewRender, nextLayout.renderCache);
 		}
 		// Resolve fake cursors before highlighting and compositing, which only track SGR codes
 		let screen = this.resolveFakeCursors(nextLayout.lines.map((line) => line.replace(OSC133_ZONE_PREFIX, "")));

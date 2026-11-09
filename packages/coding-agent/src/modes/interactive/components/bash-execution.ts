@@ -152,7 +152,7 @@ export class BashExecutionComponent extends Container {
 				const styledOutput = previewLogicalLines.map((line) => theme.fg("muted", line)).join("\n");
 				const styledInput = `\n${styledOutput}`;
 				let cachedWidth: number | undefined;
-				let cachedLines: string[] | undefined;
+				let cachedLines: readonly string[] | undefined;
 				this.contentContainer.addChild({
 					render: (width: number) => {
 						if (cachedLines === undefined || cachedWidth !== width) {

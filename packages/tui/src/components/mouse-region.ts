@@ -18,7 +18,7 @@ export class MouseRegion implements Component {
 		this.onMouse = onMouse;
 	}
 
-	render(width: number): string[] {
+	render(width: number): readonly string[] {
 		return this.child.render(width);
 	}
 

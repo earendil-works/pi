@@ -253,6 +253,6 @@ export function ansiToHtml(text: string): string {
  * Convert array of ANSI-escaped lines to HTML.
  * Each line is wrapped in a div element.
  */
-export function ansiLinesToHtml(lines: string[]): string {
+export function ansiLinesToHtml(lines: readonly string[]): string {
 	return lines.map((line) => `<div class="ansi-line">${ansiToHtml(line) || "&nbsp;"}</div>`).join("");
 }

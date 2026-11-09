@@ -22,7 +22,7 @@ export class ThemedText extends Text {
 		this.stale = true;
 	}
 
-	override render(width: number): string[] {
+	override render(width: number): readonly string[] {
 		if (this.stale) {
 			this.stale = false;
 			this.setText(this.build());

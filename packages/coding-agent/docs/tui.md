@@ -21,6 +21,8 @@ These APIs receive Pi’s active theme and keybindings where needed. Do not crea
 
 A component renders an array of terminal lines for an available width. It can optionally handle keyboard and mouse input, and it must invalidate cached output when its state or theme-dependent content changes.
 
+Treat lines returned by `render()` as read-only, including `super.render()` in a subclass. Built-in components such as `Container`, `Box`, `Text`, and `Markdown` return the same cached array while nothing changed, so modifying it in place corrupts later frames. Copy first, for example `const lines = [...super.render(width)]`, and cache the result if it is expensive. Return a new array when your output changes: parents reuse an unchanged array without reading it again.
+
 Every rendered line must fit within the supplied width. Measure visible terminal columns rather than string length because ANSI escapes, wide characters, emoji, and combining characters change display width.
 
 Use `visibleWidth()`, `truncateToWidth()`, `sliceByColumn()`, and `wrapTextWithAnsi()` instead of implementing terminal-width handling yourself. Pi resets styling and hyperlinks after every line, so reapply styles on each rendered line.

@@ -16,7 +16,7 @@ const CTRL_X = "\x18";
 
 const tui = { requestRender: vi.fn() } as unknown as TUI;
 
-function rendered(component: { render(width: number): string[] }): string {
+function rendered(component: { render(width: number): readonly string[] }): string {
 	return stripAnsi(component.render(80).join("\n"));
 }
 

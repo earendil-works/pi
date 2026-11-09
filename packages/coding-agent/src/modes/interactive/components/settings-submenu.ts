@@ -246,7 +246,7 @@ export class SteppedSubmenu extends Container {
 		);
 	}
 
-	render(width: number): string[] {
+	render(width: number): readonly string[] {
 		return this.activeComponent.render(width);
 	}
 

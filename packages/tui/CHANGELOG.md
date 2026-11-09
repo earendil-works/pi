@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- `Component.render()` now returns `readonly string[]`, and `Container.render()` returns the same cached array while its children are unchanged, like `Text`, `Markdown`, and `Box` already did. Code that modifies render output in place, including `super.render()` in a `Container` subclass, must copy it first ([#9549](https://github.com/earendil-works/pi/issues/9549))
+
+### Fixed
+
+- Fixed fullscreen scrolling re-rendering the whole transcript on every wheel event and key press, which saturated a CPU core in long sessions; scroll frames now reuse the previous output ([#9549](https://github.com/earendil-works/pi/issues/9549))
+- Fixed containers copying every rendered line on every frame, and sped up column slicing for ASCII and other text without combining characters ([#9549](https://github.com/earendil-works/pi/issues/9549))
+
 ## [1.5.0] - 2026-11-02
 
 ### Added
