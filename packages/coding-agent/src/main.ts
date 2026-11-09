@@ -56,8 +56,8 @@ import type { CreateAgentSessionOptions } from "./core/sdk.ts";
 import {
 	formatMissingSessionCwdPrompt,
 	getMissingSessionCwdIssue,
+	getMissingSessionCwdOptions,
 	MissingSessionCwdError,
-	type SessionCwdIssue,
 } from "./core/session-cwd.ts";
 import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
 import { collectSettingsDiagnostics, deduplicateDiagnostics } from "./core/settings-diagnostics.ts";
@@ -604,16 +604,6 @@ function resolveCliPaths(cwd: string, paths: string[] | undefined): string[] | u
 	return paths?.map((value) => (isLocalPath(value) ? resolvePath(value, cwd) : value));
 }
 
-async function promptForMissingSessionCwd(
-	issue: SessionCwdIssue,
-	settingsManager: SettingsManager,
-): Promise<string | undefined> {
-	return showStartupSelector(settingsManager, formatMissingSessionCwdPrompt(issue), [
-		{ label: "Continue", value: issue.fallbackCwd },
-		{ label: "Cancel", value: undefined },
-	]);
-}
-
 export interface MainOptions {
 	extensionFactories?: InlineExtension[];
 }
@@ -755,11 +745,23 @@ export async function main(args: string[], options?: MainOptions) {
 	const missingSessionCwdIssue = getMissingSessionCwdIssue(sessionManager, cwd);
 	if (missingSessionCwdIssue) {
 		if (appMode === "interactive") {
-			const selectedCwd = await promptForMissingSessionCwd(missingSessionCwdIssue, startupSettingsManager);
-			if (!selectedCwd) {
-				process.exit(0);
+			const sessionFile = missingSessionCwdIssue.sessionFile!;
+			const choice = await showStartupSelector(
+				startupSettingsManager,
+				formatMissingSessionCwdPrompt(missingSessionCwdIssue),
+				getMissingSessionCwdOptions(missingSessionCwdIssue),
+			);
+			switch (choice) {
+				case "continue":
+					sessionManager = SessionManager.open(sessionFile, sessionDir, cwd);
+					break;
+				// Fork like `--session <id>` from another project, so the choice sticks without rewriting history (#11060).
+				case "fork":
+					sessionManager = forkSessionOrExit(sessionFile, cwd, sessionDir);
+					break;
+				case undefined:
+					process.exit(0);
 			}
-			sessionManager = SessionManager.open(missingSessionCwdIssue.sessionFile!, sessionDir, selectedCwd);
 		} else {
 			console.error(chalk.red(new MissingSessionCwdError(missingSessionCwdIssue).message));
 			process.exit(1);
