@@ -7,6 +7,7 @@ import { radiusProvider } from "@earendil-works/pi-ai/providers/radius";
 import { DEFAULT_RADIUS_GATEWAY, normalizeRadiusGatewayUrl } from "@earendil-works/pi-ai/providers/radius-config";
 import { WebSocket } from "ws";
 import type { Forwards } from "../ports/contract.ts";
+import { readBrainIdentity } from "./identity.ts";
 import {
 	encodeRelayUser,
 	RELAY_ORIGIN_HEADER,
@@ -93,6 +94,15 @@ import {
  * `?replace=1`: the relay fails the old host and its channels and takes the new
  * socket at once. Relays that predate the parameter ignore it and answer 409,
  * which the backoff retries until the old host expires.
+ *
+ * Name. Every host connect carries the brain's name (`?name=`, from
+ * `identity.json`, see identity.ts), read again for each attempt, and Radius
+ * records it when it claims the server. Reading the name never fails a
+ * connect: an unreadable or unwritable data directory falls back to the
+ * device's name, and a brain without any name connects without `name`, which
+ * keeps the name Radius has (else Radius shows the server ID). The brain owns its name, so a rename
+ * on this machine reaches Radius with the next reconnect, and Radius never
+ * changes it. Relays that predate names ignore the parameter.
  *
  * Two p2 processes with the same `radius.json` share one server ID, so they
  * would replace each other in turn. The relay closes a replaced host with 1012
@@ -192,7 +202,7 @@ export type RadiusStatus =
 	/** No radius.json: this p2 is local only. Checked again periodically, so a later login connects. */
 	| { status: "signed_out" }
 	| { status: "connecting" }
-	| { status: "connected"; serverId: string; organizationId: string }
+	| { status: "connected"; serverId: string; organizationId: string; name?: string }
 	| { status: "retrying"; error: string };
 
 /** Who opened a channel; `email` (normalized, verified) is set for people other than the owner. */
@@ -369,6 +379,7 @@ export class RadiusBrain {
 		if (this.#closed) return;
 		let config: RadiusBrainConfig;
 		let owner: Principal;
+		let name: string | undefined;
 		try {
 			if (!(await readRadiusConfig(this.#directory))) {
 				this.#onStatus({ status: "signed_out" });
@@ -378,6 +389,7 @@ export class RadiusBrain {
 			this.#onStatus({ status: "connecting" });
 			config = await this.#freshConfig();
 			owner = await this.#owner(config);
+			name = (await readBrainIdentity(this.#directory))?.name;
 			if (this.#forwards && !this.#forwards.radiusOrigin && config.publicOrigin)
 				this.#forwards.radiusOrigin = config.publicOrigin;
 			this.#shellPage ??= config.shellPage;
@@ -390,6 +402,7 @@ export class RadiusBrain {
 		const url = new URL(`/v1/servers/${config.serverId}/connect`, config.gateway);
 		url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
 		if (this.#replace) url.searchParams.set("replace", "1");
+		if (name !== undefined) url.searchParams.set("name", name);
 		const socket = new WebSocket(url, HOST_SUBPROTOCOLS, {
 			headers: { authorization: `Bearer ${config.credential.access}` },
 			maxPayload: 16 * 1024 * 1024 + DATA_HEADER_BYTES,
@@ -423,7 +436,12 @@ export class RadiusBrain {
 				},
 				Math.max(10, Math.min(this.#heartbeatIdleMs, this.#heartbeatTimeoutMs) / 4),
 			);
-			this.#onStatus({ status: "connected", serverId: config.serverId, organizationId: owner.organization_id });
+			this.#onStatus({
+				status: "connected",
+				serverId: config.serverId,
+				organizationId: owner.organization_id,
+				...(name === undefined ? {} : { name }),
+			});
 			this.#reported = false;
 			this.#report();
 		});
