@@ -11,6 +11,7 @@ export * from "../../web/composer-state.tsx";
 export * from "../../web/conversation-cache.ts";
 export * from "../../web/Drawer.tsx";
 export * from "../../web/file-completion.tsx";
+export * from "../../web/haptics.ts";
 export * from "../../web/history.ts";
 export * from "../../web/icons.tsx";
 export * from "../../web/Markdown.tsx";

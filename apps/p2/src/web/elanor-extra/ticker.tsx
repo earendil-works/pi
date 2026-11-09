@@ -12,6 +12,7 @@ import {
 	useCallback,
 	useContext,
 	useEffect,
+	useRef,
 	useState,
 } from "react";
 import { createDrum, FACE } from "./drum.ts";
@@ -38,6 +39,11 @@ export interface TickerRootProps extends Omit<HTMLAttributes<HTMLElement>, "chil
 	 * `undefined` on the newest item. Without it, the ticker still scrolls but is neither focusable nor clickable.
 	 */
 	onActivate?: ((key?: string) => void) | undefined;
+	/**
+	 * p2 addition (not Elanor's): called when another item turns to face the reader, rolled by the reader or by a new
+	 * item rolling in; not when the ticker first shows. For a detent's haptic tick.
+	 */
+	onTurn?: (() => void) | undefined;
 	/** `Ticker.Item` elements with keys, oldest first. The last is the newest. */
 	children?: ReactNode;
 }
@@ -63,6 +69,7 @@ function TickerRoot({
 	active = false,
 	settled = false,
 	onActivate,
+	onTurn,
 	className,
 	children,
 	...props
@@ -113,6 +120,15 @@ function TickerRoot({
 		};
 	}, [element, drum]);
 	const currentIndex = Math.min(last, Math.max(0, Math.round(position)));
+	// Another item faces the reader: a detent (not on the first render).
+	const faced = useRef(currentIndex);
+	const turned = useRef(onTurn);
+	turned.current = onTurn;
+	useEffect(() => {
+		if (faced.current === currentIndex) return;
+		faced.current = currentIndex;
+		turned.current?.();
+	}, [currentIndex]);
 	const keyOf = (item: ReactElement | undefined) => (item?.key == null ? undefined : item.key);
 	const shared = {
 		...props,

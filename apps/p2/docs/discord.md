@@ -47,14 +47,20 @@ A session has at most one link and a channel at most one session (its threads fo
 
 ## How a channel talks to its session
 
-- **Waking:** a message that mentions the link's bot, by someone allowed, in a linked channel. Bots never wake Pi; other
-  messages only accumulate.
+- **Waking:** a message that mentions the link's bot, by someone allowed, in a linked channel; other messages only
+  accumulate. Other bots count as people (in batches, and waking Pi by the same rules); the link's own bot never
+  counts. Loop guard: at most 3 turns in a row started by bots per channel or thread; the next bot mention gets one
+  short notice ("Not answering more bots here until a person writes"), later ones nothing (logged), until a person
+  writes there (any message). The count is in memory.
 - **Batch:** every message after the link's cursor up to the mention (paged through Discord's history 100 at a time;
-  a thread's first batch starts at the thread's start), oldest first, one `Name: text` paragraph each, the mention
-  written `@Pi`, under a header naming the channel and the count. At most the newest 200 go into the input; the header
+  a thread's first batch starts at the thread's start), oldest first, one `Name (<@id>): text` paragraph each (bots
+  `Name (bot, <@id>)`, so the agent can mention them as `<@id>`; replies ping users, never roles or @everyone), the
+  mention written `@Pi`, under a header naming the channel and the count. At most the newest 200 go into the input; the header
   says how many earlier ones were left out. It is
-  one input of the session's main conversation by a guest author `Name · Discord` (entry kind `discord.batch`), queued
-  as a follow-up when the session is busy. The cursor moves to the mention. Deliveries run one at a time per channel
+  one input of the session's main conversation by a guest author `Name · Discord` (entry kind `discord.batch`), steering
+  the turn under way when the session is busy (the batch joins it). A turn that took several inputs has one answer
+  (Durable settles them all with it): it is posted once, to the newest mention, with the files of the whole turn; the
+  other pending replies go without a post. The cursor moves to the mention. Deliveries run one at a time per channel
   and per thread (a queue each): a second mention right after the first waits for it and starts at the cursor it
   left, so no message is in two batches and a new thread forks one subagent.
 - **Catch-up:** when a bot connects (p2 starting, a new token, a new gateway session after an outage), it reads each of

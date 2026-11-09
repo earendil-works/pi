@@ -5,6 +5,7 @@ import { type MouseEvent, type ReactNode, useContext } from "react";
 import { useRoute } from "../../runtime/web.tsx";
 import { ToolActivityContext } from "../chat-context.ts";
 import { Ticker } from "../elanor-extra/ticker.tsx";
+import { tick } from "../haptics.ts";
 import { StepList, toggleActivity, useElapsed } from "./ActivitySheet.tsx";
 import { CheckIcon, ChevronIcon, CommentIcon, SparkIcon } from "./icons.tsx";
 import { KindIcon, LabelText } from "./Label.tsx";
@@ -149,7 +150,11 @@ export function ActivityRow({
 				<Ticker.Root
 					className="activity-ticker"
 					active={working}
-					onActivate={show}
+					// The face in front opens: a step expanded (the newest too: the Ticker leaves its key out), the summary or
+					// "Working…" the block.
+					onActivate={(key) => show(key ?? faces.at(-1)?.key)}
+					// A very slight tick at each detent: rolled by the reader or by a new step rolling in.
+					onTurn={tick}
 					aria-label={`${faces.at(-1)?.label ?? "Working"}. Show the steps`}
 					aria-expanded={selected}
 				>

@@ -187,8 +187,8 @@ export const DiscordIngress = remote("p2.discord-ingress", {
 				/** The session is no longer linked: its agents' Discord prompt section goes. */
 				unlinked: method(),
 				/**
-				 * Places a batch as one input of `conversation` (default: the main conversation), queued while it is busy;
-				 * a retried `requestId` is placed once. `lock`: the session's lock, committed first. Its agent learns that
+				 * Places a batch as one input of `conversation` (default: the main conversation), steering the turn under
+				 * way while it is busy (the batch joins it); a retried `requestId` is placed once. `lock`: the session's lock, committed first. Its agent learns that
 				 * it answers Discord (a prompt section).
 				 */
 				deliver: method(
@@ -211,7 +211,8 @@ export const DiscordIngress = remote("p2.discord-ingress", {
 					obj({ submissionId: num() }),
 					union([
 						obj({ state: literal("pending") }),
-						obj({ state: literal("answered"), text: str(), files: arr(OfferedFileSchema) }),
+						// `answer`: its entry; inputs steered into one turn share it.
+						obj({ state: literal("answered"), text: str(), files: arr(OfferedFileSchema), answer: num() }),
 						obj({ state: literal("stopped") }),
 						obj({ state: literal("unanswered"), reason: str(), files: arr(OfferedFileSchema) }),
 					]),
