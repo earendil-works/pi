@@ -296,6 +296,20 @@ export default tuiFacet("footer", (runtime) => new FooterSurface(runtime), {
 			grantNotice(ctx, text.slice(0, 200) || "Plugin reload requested", result);
 		},
 	},
+	"p2.dev.restart": {
+		title: "Restart the server (dev server)",
+		category: "Owner",
+		when: "owner && !overlay",
+		slash: { name: "dev-restart" },
+		// Same dev channel as /dev-reload; the server restarts only under the `npm run dev` supervisor and says so
+		// otherwise. The request may drop as the server exits; the launcher then reconnects.
+		run: async (ctx) => {
+			const result = await ctx.grant("devCommand", { action: "restart" });
+			const value = result.ok && result.value && typeof result.value === "object" ? result.value : undefined;
+			const text = value && "message" in value && typeof value.message === "string" ? lineText(value.message) : "";
+			grantNotice(ctx, text.slice(0, 200) || "Restart requested", result);
+		},
+	},
 	"p2.session.info": {
 		title: "Session information",
 		category: "Session",

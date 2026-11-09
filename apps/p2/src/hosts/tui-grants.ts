@@ -51,7 +51,10 @@ export type LauncherAction =
 			run(payload: unknown, context: LauncherActionContext): Promise<unknown>;
 	  }
 	| {
-			/** C: requested by the worker; runs only after local confirmation of exactly what `consent` shows. */
+			/**
+			 * C: requested by the worker; runs only after local confirmation of exactly what `consent` shows, unless
+			 * `consent` answers `ask: false` (requests the server could make happen by itself).
+			 */
 			kind: "C";
 			/** Validates the payload and describes it; undefined denies without asking. */
 			consent(

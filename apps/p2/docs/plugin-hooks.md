@@ -352,7 +352,7 @@ actions can be requested; `K` actions fire on the visitor's own key and may ask 
 | `openUrl` | C | `{kind: "external", url}` (https) or `{kind: "origin", path}` | no |
 | `download` | C | `{kind: "file" \| "artifact", session, …}` | no |
 | `savePrefs` | C | `{patch}` for `prefs.json` | no |
-| `devCommand` | C | `{action: "reload"}` | yes |
+| `devCommand` | C | `{action: "reload" \| "restart"}` | yes |
 | `signOut` | C | `{all}` | yes |
 | `copy.selection` | gesture | selection text after the launcher saw the mouse release | no |
 | `attach.key`, `paste.key`, `copy.key`, `editor.external`, `suspend` | K | — (visitor's key) | no |

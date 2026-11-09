@@ -543,10 +543,11 @@ test(
 			await poll(async () => (await devState()).restartNeeded);
 			await delay(500);
 			assert.equal(ports().length, 2);
-			// The button starts the same supervised path; the old HTTP connection closes during shutdown.
-			const fromButton = button({ action: "restart" }).catch(() => undefined);
+			// The button starts the same supervised path; the server answers before the shutdown cancels the request.
+			const fromButton = await button({ action: "restart" });
+			assert.equal(fromButton.status, 202, fromButton.body);
+			assert.deepEqual(JSON.parse(fromButton.body), { ok: true, message: "Restarting server" });
 			await poll(() => ports().length === 3, 30_000);
-			await fromButton;
 			await poll(async () => (await devState()).message === "Restarted server");
 			child.kill("SIGUSR2");
 			await poll(() => ports().length === 4, 30_000);

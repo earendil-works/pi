@@ -251,13 +251,15 @@ export async function startTuiClient(options: {
 		busy = true;
 		const grant = grants.create(name, "C", worker, target);
 		try {
-			const confirmed = await ui.confirm({
-				...consent,
-				facts: [
-					...(target ? [["Session", `${target.session} #${target.conversation}`] as const] : []),
-					...(consent.facts ?? []),
-				],
-			});
+			const confirmed =
+				consent.ask === false ||
+				(await ui.confirm({
+					...consent,
+					facts: [
+						...(target ? [["Session", `${target.session} #${target.conversation}`] as const] : []),
+						...(consent.facts ?? []),
+					],
+				}));
 			if (!confirmed || !grants.valid(grant.id, worker))
 				return respond({ ok: false, error: confirmed ? "cancelled" : "denied" });
 			const value = await action.run(message.payload, actionContext(grant, worker));

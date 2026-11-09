@@ -121,6 +121,7 @@ const FAKE_WORKER = `const seen=[];export default ({send,onMessage})=>onMessage(
 	const d=message.data;
 	if(d==='r')send({kind:'request',id:seen.length,action:'test.confirm',payload:{text:'hello'}});
 	if(d==='q')send({kind:'request',id:seen.length,action:'unknown.action',payload:{}});
+	if(d==='w')send({kind:'request',id:seen.length,action:'test.unasked',payload:{}});
 	if(d==='o')send({kind:'output',data:'WORKER-OUTPUT'});
 	if(d==='s')send({kind:'keyContext',suspendPrivileged:true});
 	if(d==='u')send({kind:'keyContext',suspendPrivileged:false});
@@ -178,6 +179,14 @@ test(
 				run: async (payload, context) => {
 					ran.push(`${JSON.stringify(payload)}@${context.grant.target?.session}`);
 					return "done";
+				},
+			},
+			"test.unasked": {
+				kind: "C",
+				consent: () => ({ action: "Restart the server", ask: false }),
+				run: async () => {
+					ran.push("unasked");
+					return "restarted";
 				},
 			},
 			"test.key": {
@@ -245,6 +254,12 @@ test(
 		terminal.sendInput("y");
 		await poll(async () => JSON.stringify((await responses()).at(-1)).includes('"cancelled"'));
 		assert.equal(ran.length, 1);
+		// ask: false runs at once, without the screen.
+		writes.length = 0;
+		terminal.sendInput("w");
+		await poll(async () => JSON.stringify((await responses()).at(-1)).includes('"restarted"'));
+		assert.deepEqual(ran.slice(1), ["unasked"]);
+		assert(!writes.join("").includes("Action: Restart the server"), "no consent screen");
 		// Unknown actions are denied without any UI.
 		terminal.sendInput("q");
 		await poll(async () => JSON.stringify((await responses()).at(-1)).includes('"denied"'));

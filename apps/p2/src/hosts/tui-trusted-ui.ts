@@ -21,6 +21,11 @@ export type ConsentRequest = {
 	preview?: string;
 	/** Defaults to "confirm". */
 	confirmLabel?: string;
+	/**
+	 * false: the launcher runs the action without the screen. Only for requests the server could make happen by
+	 * itself, so asking protects nothing (a dev restart of the server the worker came from).
+	 */
+	ask?: false;
 };
 type Output = { write(data: string): void; readonly columns: number; readonly rows: number };
 

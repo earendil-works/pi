@@ -573,7 +573,15 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 						response.end();
 					} else if (request.method === "POST") {
 						try {
-							const result = await execute(await readDevCommand(request));
+							const command = await readDevCommand(request);
+							// A supervised restart stops this server before the supervisor answers, which cancels this request
+							// (the client saw an empty 500). Answer first; the outcome arrives as the supervisor's dev notice.
+							if (command.action === "restart" && watcher && supervised) {
+								sendJson(response, 202, { ok: true, message: "Restarting server" });
+								void execute(command);
+								return;
+							}
+							const result = await execute(command);
 							sendJson(response, result.ok ? 200 : 409, result);
 						} catch (error) {
 							sendJson(response, 400, { ok: false, message: String(error) });

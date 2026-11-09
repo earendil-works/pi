@@ -641,23 +641,38 @@ export function launcherActions(options: LauncherActionOptions): Record<string, 
 				return { saved: true };
 			},
 		},
-		/** C (owner): `{action: "reload"}` on the dev channel `/__p2_dev`, with the launcher's own sign-in. */
+		/**
+		 * C (owner): `{action: "reload" | "restart"}` on the dev channel `/__p2_dev`, with the launcher's own sign-in.
+		 * A restart may drop the request as the server exits; that counts as requested (the launcher reconnects).
+		 */
 		devCommand: {
 			kind: "C",
-			consent: (payload) =>
-				options.role === "owner" &&
-				record(payload)?.action === "reload" &&
-				Object.keys(record(payload)!).length === 1
-					? { action: "Reload the server's changed plugins (dev server)", confirmLabel: "reload" }
-					: undefined,
-			run: async (_payload, context) => {
-				const response = await request("/__p2_dev", {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ action: "reload" }),
-					signal: AbortSignal.any([context.grant.signal, AbortSignal.timeout(120_000)]),
-				});
-				const text = (await response.text()).slice(0, 2000);
+			consent: (payload) => {
+				const action = record(payload)?.action;
+				if (options.role !== "owner" || Object.keys(record(payload) ?? {}).length !== 1) return undefined;
+				if (action === "reload")
+					return { action: "Reload the server's changed plugins (dev server)", confirmLabel: "reload" };
+				// No screen: the request goes to the server the worker came from, which can restart itself anyway.
+				if (action === "restart") return { action: "Restart the server (npm run dev supervisor)", ask: false };
+				return undefined;
+			},
+			run: async (payload, context) => {
+				const action = record(payload)?.action === "restart" ? "restart" : "reload";
+				let response: Response;
+				let text: string;
+				try {
+					response = await request("/__p2_dev", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ action }),
+						signal: AbortSignal.any([context.grant.signal, AbortSignal.timeout(120_000)]),
+					});
+					text = (await response.text()).slice(0, 2000);
+				} catch (error) {
+					if (action === "restart" && !context.grant.signal.aborted)
+						return { message: "Restart requested; reconnecting…" };
+					throw error;
+				}
 				let message = "";
 				try {
 					const value = record(JSON.parse(text));

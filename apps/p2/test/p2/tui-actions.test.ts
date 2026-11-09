@@ -243,7 +243,7 @@ test("external editor and suspend lend the terminal; devCommand and signOut are 
 	assert.match(windows.notices[0]!, /not supported on Windows/);
 
 	const requests: { path: string; method: string; origin: string | null; cookie: string | null; body: string }[] = [];
-	t.mock.method(
+	const fetchMock = t.mock.method(
 		globalThis,
 		"fetch",
 		async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
@@ -261,8 +261,10 @@ test("external editor and suspend lend the terminal; devCommand and signOut are 
 	);
 	const dev = C(actions.devCommand);
 	assert(dev.consent({ action: "reload" }, { origin, target }));
-	assert.equal(dev.consent({ action: "restart" }, { origin, target }), undefined);
+	assert.match(dev.consent({ action: "restart" }, { origin, target })?.action ?? "", /Restart the server/);
+	assert.equal(dev.consent({ action: "restart" }, { origin, target })?.ask, false, "a restart runs without asking");
 	assert.equal(dev.consent({ action: "reload", plugins: ["x"] }, { origin, target }), undefined);
+	assert.equal(dev.consent({ action: "stop" }, { origin, target }), undefined);
 	assert.deepEqual(await dev.run({ action: "reload" }, context()), { message: "Reloaded: chat" });
 	const signOut = C(actions.signOut);
 	assert.match(signOut.consent({ all: true }, { origin, target })?.action ?? "", /ALL owner devices/);
@@ -275,8 +277,15 @@ test("external editor and suspend lend the terminal; devCommand and signOut are 
 		],
 	);
 	assert.equal(requests[0]!.body, '{"action":"reload"}');
+	// A restart may drop the request as the server exits: requested, not failed. A reload that drops still fails.
+	fetchMock.mock.mockImplementation(async () => {
+		throw new TypeError("fetch failed");
+	});
+	assert.deepEqual(await dev.run({ action: "restart" }, context()), { message: "Restart requested; reconnecting…" });
+	await assert.rejects(dev.run({ action: "reload" }, context()), /fetch failed/);
 	const guest = launcherActions({ url: origin, credentials: { cookie: "g" }, role: "guest" });
 	assert.equal(C(guest.devCommand).consent({ action: "reload" }, { origin, target }), undefined);
+	assert.equal(C(guest.devCommand).consent({ action: "restart" }, { origin, target }), undefined);
 	assert.equal(C(guest.signOut).consent({ all: true }, { origin, target }), undefined);
 	const loopback = launcherActions({ url: new URL("http://127.0.0.1:1"), credentials: {}, role: "owner" });
 	assert.equal(
