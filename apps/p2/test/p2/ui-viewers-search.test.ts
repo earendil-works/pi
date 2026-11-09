@@ -25,6 +25,7 @@ describe("search, viewers, artifacts and cost parity", { skip: !browserTests }, 
 			).create({ cwd: fixture.workspace, title: "Viewer fixture" }, BACKGROUND_CONTEXT)
 		).id;
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 	});
 	after(async () => {
 		await browser?.close();
@@ -110,6 +111,35 @@ describe("search, viewers, artifacts and cost parity", { skip: !browserTests }, 
 			`document.querySelectorAll('.artifact-row').length===2 && !document.querySelector('.viewer-panel')`,
 		);
 		await browser.click("[role=dialog] button[aria-label=Close]");
+	});
+	it("docks the artifact list on the right on wide screens, under its viewer, and toggles it from the top bar", async () => {
+		const button = 'button[aria-label="Artifacts (2)"]';
+		const docked = "document.querySelectorAll('#side-dock [data-testid=artifact-panel] .artifact-row').length===2";
+		await browser.metrics(1280, 900);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${id}`);
+		await browser.wait(`document.querySelector('${button}')`);
+		await browser.click(button);
+		await browser.wait(docked);
+		assert.equal(await browser.evaluate<number>(`document.querySelectorAll('.sheet-layer').length`), 0);
+		assert.equal(await browser.evaluate<string>(`document.querySelector('${button}').ariaPressed`), "true");
+		// A version opens its viewer above the list; Back returns to the list, still docked.
+		await browser.click("#side-dock .artifact-row");
+		await browser.wait(`document.querySelector('.viewer-panel iframe') && ${docked}`);
+		await browser.evaluate("history.back()");
+		await browser.wait(`!document.querySelector('.viewer-panel') && ${docked}`);
+		await browser.click(button);
+		await browser.wait("!document.querySelector('#side-dock [data-testid=artifact-panel]')");
+		await browser.click(button);
+		await browser.wait(docked);
+		// One thing at a time: a run's activity replaces the list, the list replaces the activity.
+		await browser.click("[data-testid=activity]");
+		await browser.wait(
+			"document.querySelector('#side-dock .activity-panel') && !document.querySelector('[data-testid=artifact-panel]')",
+		);
+		await browser.click(button);
+		await browser.wait(`${docked} && !document.querySelector('.activity-panel')`);
+		await browser.evaluate("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))");
+		await browser.wait("!document.querySelector('#side-dock [data-testid=artifact-panel]')");
 	});
 	it("opens a sent-file card as a conservative viewer and explicitly downloads the same snapshot", async () => {
 		const chat = await holdIn(fixture.browser(), Chat, { session: id, conversation: 1 }, "participant");

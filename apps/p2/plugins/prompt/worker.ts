@@ -36,6 +36,7 @@ import {
 	type Location,
 	type SessionLocation,
 	sameLocation,
+	sessionLock,
 	workerOf,
 } from "@p2/app/v1/worker";
 import type { LoadedPrompt } from "./context-files.ts";
@@ -298,6 +299,12 @@ export default defineFacet((host) => {
 				await loads.started();
 			return loads.current();
 		};
+		/** What the conversation's prompt shows: a locked session gets the global instructions only when picked. */
+		const visible = async (input: PromptInput, context: Context) => {
+			const current = await loaded(input, context);
+			const lock = await sessionLock(input.read, context);
+			return lock && !lock.instructions ? (current.project ?? current) : current;
+		};
 		// Sections are rendered for every generation, for the conversation's location: they read its latest load.
 		const extension = defineExtension({
 			name: "p2-prompt",
@@ -309,10 +316,10 @@ export default defineFacet((host) => {
 						(await harness().environments.locate(input.conversationId, context, input.read)).env,
 					),
 				),
-				section("agents-md", async (input, context) => (await loaded(input, context)).agents || undefined, {
+				section("agents-md", async (input, context) => (await visible(input, context)).agents || undefined, {
 					tag: false,
 				}),
-				section("skills", async (input, context) => (await loaded(input, context)).skills || undefined, {
+				section("skills", async (input, context) => (await visible(input, context)).skills || undefined, {
 					tag: false,
 				}),
 			],

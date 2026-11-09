@@ -15,6 +15,7 @@ test(
 		const fixture = await startFixture({ web: true });
 		t.after(() => fixture.close());
 		const browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		t.after(() => browser.close());
 		await browser.metrics(1280, 900);
 		const worker = `session:logs-worker-${Date.now()}`;
@@ -88,6 +89,7 @@ test(
 			}, BACKGROUND_CONTEXT);
 		await setEnv("missing");
 		const browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		t.after(() => browser.close());
 		await browser.metrics(1280, 900);
 		processLogs.append("session:another-worker", "event", "other-worker-only-marker");

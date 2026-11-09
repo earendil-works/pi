@@ -14,6 +14,7 @@ import { ThemeRef } from "../../src/tui/theme/ref.ts";
 import { BUILTIN_THEMES, createTheme } from "../../src/tui/theme/theme.ts";
 import { resolveToolRenderers } from "../../src/tui/tools/index.ts";
 import { buildTranscript } from "../../src/web/transcript.ts";
+import { PLUGIN_TUI_RENDERERS } from "../fixtures/tui-tools.ts";
 import { wholeView } from "../fixtures/whole-view.ts";
 
 const plain = (lines: string[]): string => lines.map((line) => stripTerminalSequences(line).trimEnd()).join("\n");
@@ -74,7 +75,7 @@ function transcript(expanded: boolean, settings: TuiSettings = {}): TranscriptVi
 			cwd: "/work",
 			markdownTransformers: [],
 			toolRenderers: (name) =>
-				resolveToolRenderers(name, new Map([["10:quiet-tools", quietTools]]), new Map(), settings),
+				resolveToolRenderers(name, new Map([["10:quiet-tools", quietTools]]), PLUGIN_TUI_RENDERERS, settings),
 			entryRenderers: new Map(),
 		},
 		{ expanded, showThinking: false },

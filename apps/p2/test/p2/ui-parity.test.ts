@@ -135,8 +135,13 @@ describe("Pi Mobile UI regressions", { skip: !browserTests }, () => {
 		);
 		await poll(() => existsSync(join(profile, "DevToolsActivePort")), 20_000, "Chromium debugging port");
 		const port = readFileSync(join(profile, "DevToolsActivePort"), "utf8").split("\n")[0];
-		const pages = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()) as { webSocketDebuggerUrl: string }[];
-		const socket = new WebSocket(pages[0].webSocketDebuggerUrl);
+		const pages = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()) as {
+			type: string;
+			webSocketDebuggerUrl: string;
+		}[];
+		// Google Chrome also lists its component extensions' background pages; drive the tab.
+		const page = pages.find((target) => target.type === "page") ?? pages[0]!;
+		const socket = new WebSocket(page.webSocketDebuggerUrl);
 		await new Promise<void>((resolve, reject) => {
 			socket.once("open", resolve);
 			socket.once("error", reject);
@@ -146,6 +151,15 @@ describe("Pi Mobile UI regressions", { skip: !browserTests }, () => {
 		await browser.call("Network.enable");
 		await browser.call("Page.setLifecycleEventsEnabled", { enabled: true });
 		await browser.phone();
+		// The local owner's session, as a sign-in link opened on the host gives it.
+		const [name, value] = fixture.owner.cookie.split("=", 2) as [string, string];
+		await browser.call("Network.setCookie", {
+			name,
+			value,
+			url: `http://127.0.0.1:${fixture.server.port}/`,
+			httpOnly: true,
+			sameSite: "Lax",
+		});
 	});
 	after(async () => {
 		await browser?.close().catch(() => {});
@@ -410,10 +424,8 @@ describe("Pi Mobile UI regressions", { skip: !browserTests }, () => {
 			'[...document.querySelectorAll("button")].find(button => button.textContent === "Devices").click()',
 		);
 		await browser.wait('Boolean(document.querySelector("[role=dialog][aria-label=Devices]"))');
-		await browser.wait(
-			'document.querySelector("[role=dialog]").textContent.includes("Associated devices cannot mint")',
-		);
-		assert(await browser.evaluate<boolean>('!document.querySelector("#owner-token")'));
+		// Redeemed on loopback, the link is a local session: it mints owner links itself.
+		await browser.wait('Boolean(document.querySelector("#owner-token")?.value)');
 		await browser.evaluate(
 			'[...document.querySelectorAll("[role=dialog] button")].find(button => button.textContent.trim() === "Sign out all devices").click()',
 		);

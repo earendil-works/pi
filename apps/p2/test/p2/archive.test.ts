@@ -27,6 +27,7 @@ test(
 			plugins: [
 				"chat",
 				"conversations",
+				"devices",
 				"drafts",
 				"envs",
 				"files",

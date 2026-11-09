@@ -15,6 +15,7 @@ describe("reopening the last conversation", { skip: !browserTests }, () => {
 	before(async () => {
 		fixture = await startFixture({ web: true });
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		// Every page of this browser runs as the installed app (iOS reports it as navigator.standalone).
 		await browser.call("Page.addScriptToEvaluateOnNewDocument", {
 			source: `if (!sessionStorage.getItem("tab")) Object.defineProperty(navigator, "standalone", { value: true });`,

@@ -6,7 +6,16 @@
 
 import assert from "node:assert/strict";
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	copyFileSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { createServer, Socket } from "node:net";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
@@ -44,6 +53,14 @@ import {
 	sandboxRevision,
 } from "../../plugins/envs/sandbox-host.ts";
 import { LauncherCheckSchema } from "../../plugins/envs/sandbox-schema.ts";
+import {
+	allSecretValues,
+	deleteSecret,
+	listSecrets,
+	sandboxSecrets,
+	saveSecret,
+	secretsPath,
+} from "../../plugins/envs/secrets.ts";
 import type { EnvInfo } from "../../plugins/locations/contract.ts";
 import { createLocationExtension, sandboxAt } from "../../plugins/locations/tool.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
@@ -121,6 +138,51 @@ test("launcher arguments: allowed hosts are always a list, values are quoted", (
 	assert.deepEqual(decode(box), { mounts: box.mounts, allowHosts: box.allowHosts, diskGb: 32 });
 	assert.notEqual(sandboxRevision(box), sandboxRevision({ ...box, allowHosts: [] }));
 	assert.equal(runLauncher("/home/a b", ["daemon", "it's"]), `sh '/home/a b/p2-sandbox.sh' 'daemon' 'it'\\''s'`);
+});
+
+test("sandbox secrets: stored 0600, listed without values, sent only to allowed hosts, part of the revision", async () => {
+	const directory = mkdtempSync(join(tmpdir(), "p2-sandbox-secrets-"));
+	try {
+		const allow = box.allowHosts;
+		await assert.rejects(
+			saveSecret(directory, "box1", "GITHUB_TOKEN", { value: "ghp_x", hosts: ["api.github.com"] }, allow),
+			/not an allowed host/,
+		);
+		await assert.rejects(saveSecret(directory, "box1", "bad-name", { value: "x", hosts: ["*.github.com"] }, allow));
+		await assert.rejects(
+			saveSecret(directory, "box1", "A", { value: "x\ny", hosts: ["*.github.com"] }, allow),
+			/one line/,
+		);
+		await saveSecret(
+			directory,
+			"box1",
+			"GITHUB_TOKEN",
+			{ value: "ghp_secret", hosts: ["*.github.com"], preset: "github" },
+			allow,
+		);
+		assert.equal(statSync(secretsPath(directory)).mode & 0o777, 0o600);
+		const listed = await listSecrets(directory, "box1");
+		assert.deepEqual(listed, [
+			{ name: "GITHUB_TOKEN", hosts: ["*.github.com"], preset: "github", setAt: listed[0]!.setAt },
+		]);
+		const first = await sandboxSecrets(directory, "box1");
+		assert.deepEqual(first.values, { GITHUB_TOKEN: "ghp_secret" });
+		assert.deepEqual(first.meta[0]?.aliases, ["GH_TOKEN"]);
+		// The configuration names the secret, never its value; a new value changes the revision.
+		const argument = Buffer.from(sandboxArgument(box, first.meta), "base64").toString("utf8");
+		assert(!argument.includes("ghp_secret") && argument.includes("GITHUB_TOKEN"));
+		await saveSecret(directory, "box1", "GITHUB_TOKEN", { hosts: ["*.github.com"] }, allow);
+		assert.deepEqual((await sandboxSecrets(directory, "box1")).values, { GITHUB_TOKEN: "ghp_secret" }, "kept");
+		await saveSecret(directory, "box1", "GITHUB_TOKEN", { value: "ghp_new", hosts: ["*.github.com"] }, allow);
+		const second = await sandboxSecrets(directory, "box1");
+		assert.notEqual(sandboxRevision(box, second.meta), sandboxRevision(box, first.meta));
+		assert.notEqual(sandboxRevision(box, second.meta), sandboxRevision(box));
+		assert.deepEqual(await allSecretValues(directory), ["ghp_new"]);
+		await deleteSecret(directory, "box1", "GITHUB_TOKEN");
+		assert.deepEqual(await listSecrets(directory, "box1"), []);
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
 });
 
 test("p2-sandbox.sh check reports the host as the manager expects", () => {
@@ -242,18 +304,47 @@ test(
 			...box,
 			host: "unused",
 			mounts: [{ host: shared, guest: "/workspace" }],
-			allowHosts: [],
+			allowHosts: ["httpbin.org"],
 			diskGb: 3,
 		};
+		// A secret the proxy puts into requests to httpbin.org (which echoes them); the VM sees a placeholder.
+		const secrets = [
+			{
+				name: "GITHUB_TOKEN",
+				hosts: ["httpbin.org"],
+				version: "1",
+				aliases: ["GH_TOKEN"],
+				gitHosts: ["httpbin.org"],
+			},
+		];
+		const values = JSON.stringify({ GITHUB_TOKEN: "real-secret-sentinel" });
+		const argument = sandboxArgument(config, secrets);
 		const name = `test-${process.pid}`;
-		// As p2 does: start first (a first start installs and boots for longer than pi-env waits for its daemon).
-		execFileSync("sh", [join(launcher, "p2-sandbox.sh"), "start", name, sandboxArgument(config)], {
+		// Without its values a supervisor never starts.
+		assert.throws(
+			() =>
+				execFileSync("sh", [join(launcher, "p2-sandbox.sh"), "daemon", name, argument, daemon, "--"], {
+					timeout: 60_000,
+					stdio: "pipe",
+				}),
+			/secrets|start/i,
+		);
+		// As p2 does: start first (a first start installs and boots for longer than pi-env waits for its daemon); the
+		// values come on stdin.
+		execFileSync("sh", [join(launcher, "p2-sandbox.sh"), "start", name, argument], {
 			timeout: 660_000,
+			input: values,
 		});
 		const launch = (...args: string[]) =>
 			execFileSync("sh", [join(launcher, "p2-sandbox.sh"), ...args], { encoding: "utf8", timeout: 660_000 });
+		const start = () =>
+			execFileSync("sh", [join(launcher, "p2-sandbox.sh"), "start", name, argument], {
+				encoding: "utf8",
+				timeout: 660_000,
+				input: values,
+			});
 		let connection = new Connection({
-			command: ["sh", join(launcher, "p2-sandbox.sh"), "daemon", name, sandboxArgument(config), daemon, "--"],
+			command: ["sh", join(launcher, "p2-sandbox.sh"), "daemon", name, argument, daemon, "--"],
 		});
 		t.after(() => {
 			connection.close();
@@ -283,6 +374,23 @@ test(
 		);
 		assert.equal(curl.ok, true);
 		assert.equal(output, "403", "hosts outside the allowed list are refused");
+		// Processes pi-env starts see the placeholder (and its alias and git helper), never the value; requests to the
+		// secret's host carry the value.
+		const shell = async (command: string) => {
+			let text = "";
+			const onOutput = (chunk: string) => {
+				text += chunk;
+			};
+			await env.exec(command, { cwd: "/workspace", onOutput }, BACKGROUND_CONTEXT);
+			return text.trim();
+		};
+		const placeholder = await shell('printf %s "$GITHUB_TOKEN"');
+		assert(placeholder.length > 0 && placeholder !== "real-secret-sentinel", `placeholder: ${placeholder}`);
+		assert.equal(await shell('printf %s "$GH_TOKEN"'), placeholder);
+		assert.equal(await shell('printf %s "$GIT_CONFIG_KEY_0"'), "credential.https://httpbin.org.helper");
+		assert(!(await shell("env")).includes("real-secret-sentinel"), "the value is nowhere in the VM's environment");
+		const echoed = await shell('curl -s -H "Authorization: Bearer $GITHUB_TOKEN" https://httpbin.org/headers');
+		assert(echoed.includes("Bearer real-secret-sentinel"), `the proxy injects the value: ${echoed}`);
 		// Refused before the host resolves the name (else it leaks to DNS): an unresolvable name gets the policy's 403,
 		// not the 502 of a failed lookup.
 		output = "";
@@ -312,9 +420,9 @@ test(
 		assert.equal(await run("echo kept > /root/kept.txt && cat /root/kept.txt"), "kept");
 		connection.close();
 		launch("stop", name);
-		launch("start", name, sandboxArgument(config));
+		start();
 		connection = new Connection({
-			command: ["sh", join(launcher, "p2-sandbox.sh"), "daemon", name, sandboxArgument(config), daemon, "--"],
+			command: ["sh", join(launcher, "p2-sandbox.sh"), "daemon", name, argument, daemon, "--"],
 		});
 		const restarted = new RemoteExecutionEnv({ connection, id: "sandbox-test-2", cwd: "/" });
 		const kept = await restarted.readTextFile("/root/kept.txt", BACKGROUND_CONTEXT);
@@ -322,9 +430,9 @@ test(
 		// A reset starts from the guest image again.
 		connection.close();
 		launch("reset", name);
-		launch("start", name, sandboxArgument(config));
+		start();
 		connection = new Connection({
-			command: ["sh", join(launcher, "p2-sandbox.sh"), "daemon", name, sandboxArgument(config), daemon, "--"],
+			command: ["sh", join(launcher, "p2-sandbox.sh"), "daemon", name, argument, daemon, "--"],
 		});
 		const fresh = new RemoteExecutionEnv({ connection, id: "sandbox-test-3", cwd: "/" });
 		assert.equal((await fresh.fileInfo("/root/kept.txt", BACKGROUND_CONTEXT)).ok, false, "a reset disk is fresh");
@@ -336,9 +444,9 @@ test(
 			.split("\n");
 		for (const pid of qemu) process.kill(Number(pid), "SIGKILL");
 		await poll(() => launch("status", name).includes('"stopped"'), 30_000, "the supervisor notices the dead VM");
-		launch("start", name, sandboxArgument(config));
+		start();
 		connection = new Connection({
-			command: ["sh", join(launcher, "p2-sandbox.sh"), "daemon", name, sandboxArgument(config), daemon, "--"],
+			command: ["sh", join(launcher, "p2-sandbox.sh"), "daemon", name, argument, daemon, "--"],
 		});
 		assert.equal((await connection.info()).os, "linux", "the disk mounts again after a crash");
 	},

@@ -2674,6 +2674,36 @@ validation and copies the v2 kernel added around Delta.
   workers only through a server restart, which the kit's `base` mark flags. Plugins are unaffected (workers get the
   server's built scripts). What the bundle keeps external (Node builtins, packages that cannot be bundled, such as
   native addons) is settled by the build. p2 adopts it through its own `createWorkers`.
+- **The kit's owner is a principal the app chooses (owner, 2026-11-06: "ok"; p3's principals are `user`, `guest`,
+  `worker`, `server`, with no `owner` kind):** the kit hardwired the owner as `{ kind: "owner" }` (the owner link,
+  the owner token file and device pairing issue sessions for it; pairing's confirm and approve, invites and a
+  pairing's starter check `kind === "owner"`; `AppOptions` required the variant in the app's principal type). Rule:
+  `startServer`'s `principal` option takes `owner: P` beside `server` and `worker`; every place above issues sessions
+  for that principal and recognizes it by canonical JSON (compared once per principal object, as the principal key);
+  the type requirement and the kit's `OWNER`/`OwnerPrincipal` exports go; `principal.worker` is required only with
+  worker kinds (a type error otherwise; added in the build for p3's first step, which has none). The owner is strict
+  JSON and never the server's principal (refused at start); the kit serves it as start data (`AppInfo.owner`), so
+  invites read it there. Changing `owner` between starts replaces the owner token file and revokes its old session;
+  other sessions issued for the old value stay what they were (the app revokes them if it wants). The kit stays
+  (owner: keep it and change it where it does not fit, rather than wiring p3 from the components: the kit keeps p3's
+  base code, which only a restart changes, small).
+- **A reloaded UI part shows its loading state (owner, 2026-11-06: "not worth it imo. a short loading state is
+  absolutely fine. this just adds more bugs and footguns"; p3 step 0a, rejected proposal `apps/p3/docs/step-0a/`
+  version 2, reviews `/tmp/p3-step0a-astra.md`, `/tmp/p3-step0a-sol.md`):** after a web or terminal plugin's reload
+  its components remount and make new references, which show `loading` (no values) for one round trip until bound;
+  the rest of the page, and every reference of a server or worker reload, stay live (design §21). Rejected: a
+  per-host table sharing references between UI components (`useHold`, `useRegistry`, `TuiScope`), released when no
+  component and no call uses them. It covered only a same-update replacement of facet-contributed components; it
+  needed the host address in its key, a lease state machine for ended references, counting of parked and queued
+  calls, a borrowed reference type without `release`, and changed presence counts (one entry for several components;
+  a never-settling call keeping it). The three bug fixes of step 0a stay (stylesheets loaded before the plugin reloads,
+  base bundles built with the server's resolution conditions, the restart mark by content).
+- **A restarting page object's old UI may show unstyled (owner, 2026-11-06: "A"; step 0a):** a page applies a plugin's
+  new stylesheet when its new code is adopted and retires the old one a drawn frame after the reload. UI a plugin's
+  facet contributes is replaced in that update and always styled. UI contributed by an object in the page stays on its
+  old version until the restarted object's successor is live (design §21); classes the edit renamed or removed are
+  unstyled until then. Accepted and documented; apps contribute UI from facets and let objects supply data. Rejected
+  for now: a kernel signal "this plugin's restarts on this host finished" to retire old sheets later.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a

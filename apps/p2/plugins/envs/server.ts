@@ -19,7 +19,7 @@ import { Catalog, type Session } from "../sessions/contract.ts";
 import { StatusStore } from "../status/contract.ts";
 import { type Child, ChildStore } from "../subagents/contract.ts";
 import { type EnvConfig, envRevision, sandboxesOn } from "./config.ts";
-import { EnvManagers, EnvService, Envs, EnvTestSchema } from "./contract.ts";
+import { EnvManagers, EnvService, Envs, EnvTestSchema, SandboxSecrets } from "./contract.ts";
 import { EnvManager } from "./manager.ts";
 import { EnvStore } from "./store.ts";
 
@@ -264,4 +264,24 @@ export default defineFacet((host) => {
 		},
 		{ accepts: ENVS_ACCEPTS },
 	);
+	host.serve(SandboxSecrets, (_params, principal, self) => {
+		if (!isOwner(principal)) throw forbidden("sandbox secrets are owner-only");
+		const service = self.get(EnvService, {});
+		const manager = nativeOf(self, EnvManagers, "The SSH manager");
+		return {
+			variant: "owner",
+			members: {
+				list: ({ name }) => manager().manager.secrets(name),
+				set: async ({ sandbox, addHosts, ...secret }, ctx) => {
+					await manager().manager.setSecret(sandbox, secret, addHosts === true);
+					await service.reload(ctx);
+					return null;
+				},
+				delete: async ({ sandbox, name }) => {
+					await manager().manager.deleteSecret(sandbox, name);
+					return null;
+				},
+			},
+		};
+	});
 });

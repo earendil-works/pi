@@ -556,6 +556,10 @@
           "type": "boolean",
           "description": "Whether replayed assistant messages with no text (e.g. tool-call-only messages) must send \"\" instead of null content. Default: false."
         },
+        "requiresToolsWithToolHistory": {
+          "type": "boolean",
+          "description": "Whether requests without tools must send \"tools\": [] when the conversation contains tool calls or tool results. Needed by some proxies in front of Anthropic, such as older LiteLLM versions. Default: false, the field is omitted."
+        },
         "requiresThinkingAsText": {
           "type": "boolean",
           "description": "Whether thinking blocks must be converted to text blocks with <thinking> delimiters. Default: auto-detected from URL."

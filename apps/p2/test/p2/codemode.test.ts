@@ -10,13 +10,14 @@ import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import type { CodemodeToolDetails } from "@earendil-works/pi-durable/codemode";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
+import { scriptCalls } from "../../plugins/codemode/nested.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { startServer } from "../../src/hosts/server.ts";
 import type { Host, RefIn } from "../../src/runtime/chord.ts";
 import { Hosts } from "../../src/runtime/server.ts";
 import { buildTranscript } from "../../src/web/transcript.ts";
 import { wholeView } from "../fixtures/whole-view.ts";
-import { clientHost, type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { clientHost, type Fixture, holdIn, localOwner, startFixture, until } from "./helpers.ts";
 
 const codemodeResults = (view: ConversationView | null | undefined): ToolResultMessage[] =>
 	(view?.entries ?? []).flatMap((entry) =>
@@ -27,10 +28,13 @@ const codemodeResults = (view: ConversationView | null | undefined): ToolResultM
 const live = (view: ConversationView | null | undefined) => view?.docs["pi.live"] as LiveState | undefined;
 /** The settled list of a code mode result: its script's tool calls (Durable writes it with the result). */
 const detailCalls = (result: ToolResultMessage) => (result.details as CodemodeToolDetails | undefined)?.calls ?? [];
-const codemodeCard = (view: ConversationView | null | undefined) =>
-	buildTranscript(wholeView(view!))
+/** The script's call, with its calls as code mode's contribution reads them (live, or its result's list). */
+const codemodeCard = (view: ConversationView | null | undefined) => {
+	const tool = buildTranscript(wholeView(view!))
 		.items.flatMap((item) => (item.type === "assistant" ? item.tools : []))
-		.findLast((tool) => tool.name === "codemode");
+		.findLast((each) => each.name === "codemode");
+	return tool && { ...tool, calls: scriptCalls(tool) };
+};
 const text = (message: ToolResultMessage | undefined) =>
 	(message?.content ?? []).flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n");
 
@@ -166,7 +170,7 @@ describe("code mode (fake provider)", () => {
 			web: false,
 			plugins: fixture.server.plugins,
 		});
-		const client = clientHost(restarted.port);
+		const client = clientHost(await localOwner(restarted));
 		try {
 			const again = await holdIn(client, Chat, { session, conversation: 1 }, "participant");
 			const view = await until(

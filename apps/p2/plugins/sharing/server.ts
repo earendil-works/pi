@@ -20,7 +20,6 @@ import {
 	Authenticators,
 	cookieValue,
 	fromOrigin,
-	hasLoopbackCookie,
 	page,
 	type RequestOrigin,
 	Routes,
@@ -303,13 +302,11 @@ export default defineFacet((host) => {
 
 	contribute(host, "p2.sharing-http", (self) => {
 		const shares = self.get(Shares, {});
-		const server = self.get(Server, {});
 		const catalog = self.get(Catalog, {});
 		const joinPage = async (
 			request: IncomingMessage,
 			response: ServerResponse,
 			principal: P2Principal | undefined,
-			origin: RequestOrigin,
 			ctx: Ctx,
 		): Promise<void> => {
 			const token = new URL(request.url ?? "/", "http://localhost").pathname.split("/")[2] ?? "";
@@ -322,13 +319,9 @@ export default defineFacet((host) => {
 				});
 				return;
 			}
-			// The owner, or a guest who already joined through this link, goes straight to the session. As in Pi Mobile,
-			// an owner only by its cookie (or relay): a cookieless loopback browser (a fresh profile opening the link) is
-			// not the device owner here, but someone joining.
-			const owner =
-				isOwner(principal) &&
-				(principal.access !== "local" || hasLoopbackCookie(request, origin.port, server.info.value.dataDir));
-			if (owner || (isGuest(principal) && principal.sessions[link.session] === link.mode)) {
+			// The owner, or a guest who already joined through this link, goes straight to the session; anyone else (a
+			// fresh browser profile on the host too) is someone joining.
+			if (isOwner(principal) || (isGuest(principal) && principal.sessions[link.session] === link.mode)) {
 				response.writeHead(303, { Location: `/s/${link.session}` });
 				response.end();
 				return;
@@ -394,9 +387,9 @@ export default defineFacet((host) => {
 		};
 		self.contribute(Routes, {
 			"GET /join/*": (request, response, { principal, origin }, ctx) =>
-				origin.relayUser ? refuseRelayed(request, response) : joinPage(request, response, principal, origin, ctx),
+				origin.relayUser ? refuseRelayed(request, response) : joinPage(request, response, principal, ctx),
 			"HEAD /join/*": (request, response, { principal, origin }, ctx) =>
-				origin.relayUser ? refuseRelayed(request, response) : joinPage(request, response, principal, origin, ctx),
+				origin.relayUser ? refuseRelayed(request, response) : joinPage(request, response, principal, ctx),
 			"POST /join": (request, response, { origin }, ctx) =>
 				origin.relayUser ? refuseRelayed(request, response) : join(request, response, origin, ctx),
 		});

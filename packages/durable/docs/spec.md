@@ -486,8 +486,9 @@ type CompactionPolicy = {
 };
 
 /**
- * `modelOverrides` is keyed by exact `"provider/modelId"`; each field it sets replaces the harness-wide one for that
- * model. Readers resolve the policy for the model they act for (see the reader table below).
+ * Of the harness (`HarnessSettings.compaction`) or of one conversation (`AgentState.compaction`). `modelOverrides` is
+ * keyed by exact `"provider/modelId"`; each field it sets replaces the general one for that model. Readers resolve the
+ * policy for the conversation and model they act for (section 8.7; see the reader table below).
  */
 type CompactionSettings = Partial<CompactionPolicy> & {
   readonly modelOverrides?: Readonly<Record<string, Partial<CompactionPolicy>>>;
@@ -553,6 +554,8 @@ type AgentState = {
   cwd?: string;
   /** Tool rounds one run takes at most (section 8.5); an integer, `1` or more; unset, no limit. */
   maxTurns?: number;
+  /** This conversation's compaction settings over the harness's (section 8.7). */
+  compaction?: CompactionSettings;
 };
 
 /** Built-in rewindable agent document; see below. */
@@ -575,6 +578,8 @@ type AgentChange = {
   readonly cwd?: string | null;
   /** `configure()` throws a `RangeError` unless it is an integer `1` or more, or `null`. */
   readonly maxTurns?: number | null;
+  /** Replaces the stored settings as a whole; `configure()` throws a `RangeError` unless every token count is an integer `0` or more. */
+  readonly compaction?: CompactionSettings | null;
 };
 
 /** One change in any commit. A given field replaces the stored one; `null` clears it; `undefined` changes nothing. */
@@ -596,6 +601,7 @@ type Agent<Tool extends ToolRegistration = ToolRegistration> = {
   readonly instructions?: string;
   readonly cwd?: string;
   readonly maxTurns?: number;
+  readonly compaction?: CompactionSettings;
 };
 
 /** Entry whose `data` has type `D`; `never` means the kind carries no data. */
@@ -836,7 +842,9 @@ writes rejects with `ReadOnlySession` before it reaches Storage, so the Session
 stays healthy; a commit that writes nothing succeeds. `resume()` throws
 `ReadOnlySession`, and every call that enables scheduling rejects with it.
 `wake()` is always inactive and `onWake` is never called. Reopening without
-`readOnly` recovers as usual: the viewer counted no restart.
+`readOnly` recovers as usual: the viewer counted no restart. The option does not
+reach the Storage, which is opened before the Harness: a backend whose open
+repairs files, such as JSONL (section 11.3), needs its own read-only open.
 
 `createConversation({ ownership, agent, init })` and
 `fork(at, { ownership, agent, init })` commit atomically: the conversation, its
@@ -3262,6 +3270,7 @@ hooks       the selected extensions' hooks for the task's name, in extension ord
 model       stored, else none: the request fails no_model
 thinking    stored, else "off"
 cwd         stored, else undefined
+compaction  stored, else undefined; readers resolve the policy from it and the settings (section 8.7)
 ```
 
 A wrapper that throws or returns a tool or section with a different name drops
@@ -3304,13 +3313,13 @@ await conversation.configure({ extensions: { add: [Venv] } }, context);
 
 | reader | resolves | when |
 |---|---|---|
-| generation `prepare` | agent (tools, sections, model, thinking level), stream options, compaction thresholds for that model | once per request; model, stream options, and offered tools are fixed in the request checkpoint (section 8.3) |
+| generation `prepare` | agent (tools, sections, model, thinking level), stream options, compaction thresholds for that conversation and model | once per request; model, stream options, and offered tools are fixed in the request checkpoint (section 8.3) |
 | every task phase | extension selection for hooks; `runtime.agent()` | at most once per phase handler, at its first hook dispatch or `agent()` call, from that phase's snapshot and the committed `pi.agent`, off the Session line, with the invocation's context; fixed for the rest of the phase |
 | tool task | the implementation of an accepted call | at `call` and `execute`: the name among the phase agent's `tools`, the current selection after the tools filter; no such tool, for example one removed after preparation, or a call flagged `unoffered` (section 8.3): `tool_unavailable`. Replay policy on reopen uses the same lookup (section 7.3) |
 | generation, when a tool round starts | tool execution mode | once per round (section 8.3) |
 | generation, compaction | retry policy | at each attempt's classification |
-| generation, on a context overflow | compaction policy for the request's model | at classification |
-| compaction `select` | model, thinking level, stream options, compaction thresholds for that model | once; the summary request stays pinned across its retries (section 8.7) |
+| generation, on a context overflow | compaction policy for the conversation and the request's model, from that phase's agent | at classification |
+| compaction `select` | model, thinking level, stream options, compaction thresholds for that conversation and model | once; the summary request stays pinned across its retries (section 8.7) |
 | boundaries and idle admission, on the Session line | queue modes | per boundary (section 6) |
 | tool task, `prepare`, `runtime.env()` | environment | at each call (section 2.2) |
 
@@ -4850,7 +4859,7 @@ The run's inputs live in `pi.live.run`, not in the task input.
   options. These stay fixed for this request attempt; a retry prepares again. `compacted` carries over to
   `request`, `retry`, `poll`, and the next `prepare`.
 - Before that commit, `prepare` checks the compaction thresholds (section 8.7)
-  when the settings' compaction policy is enabled, the model's
+  when the compaction policy (section 8.7) is enabled, the model's
   `contextWindow` is positive, and `compacted` is absent. The estimate starts at
   the newest assistant message in the committed model context whose entry was
   appended after the head marker (all qualify without one) and whose usage is
@@ -4943,8 +4952,8 @@ The run's inputs live in `pi.live.run`, not in the task input.
   - `toolUse` with at least one tool call: the commit appends the assistant
     entry and starts the tool round described below, moving to `waiting` in the
     `tools` phase. A `toolUse` message without calls is classified like `stop`.
-  - `error` that pi-ai `isContextOverflow()` recognizes, while the settings'
-    compaction policy is enabled, `compacted` is absent, and range selection finds a cut:
+  - `error` that pi-ai `isContextOverflow()` recognizes, while the
+    compaction policy (section 8.7) is enabled, `compacted` is absent, and range selection finds a cut:
     the commit appends the error entry, removes `generation`, creates a
     compaction owned by the generation with reason `overflow`, adds its status,
     and commits `waiting` on it with `allSettled` and checkpoint `{ phase:
@@ -5243,10 +5252,28 @@ that answered waits for its after-run tasks (section 8.3), at the boundary that
 ends it. Compactions do not coordinate with each other; several may run at
 once, and section 6 decides between their summaries.
 
+**Policy.** Every reader resolves the `CompactionPolicy` for the conversation's
+`AgentState.compaction` and the model it acts for, field by field, from the
+first layer that sets the field: the conversation's `modelOverrides` entry, the
+settings' `modelOverrides` entry, the conversation's own fields, then the
+settings' policy over the defaults. A model-specific value beats a general one,
+and the conversation beats the harness at the same level. One exception: when
+the conversation's `modelOverrides` entry leaves `enabled` unset, the
+conversation's own `enabled: false` wins over the settings' entry, since
+turning compaction off for a conversation does not depend on the model.
+
+```text
+settings      { keepRecentTokens: 20000, modelOverrides: { "local/small-32k": { keepRecentTokens: 8000 } } }
+conversation  { keepRecentTokens: 60000 }
+large/1m      keepRecentTokens 60000 (conversation's own field)
+local/small-32k  keepRecentTokens 8000 (settings' model override beats the conversation's general field)
+conversation  { enabled: false }: no threshold or overflow compaction on any model, even one whose settings entry sets enabled: true
+```
+
 **Range selection** is a pure function of a `ContextView`, whose
 `contributions` give each active entry's model messages after every edit in the
 range (section 2.1, rules 4 and 9), including edits carried by older in-range
-markers, and the settings' `keepRecentTokens`.
+markers, and the resolved `keepRecentTokens`.
 
 1. Cut candidates are the non-marker entries whose contribution begins with a
    user or assistant message. Tool results and system entries are never
@@ -6332,6 +6359,16 @@ Recovery:
 - A later committed latest base or retirement may prove an earlier physical
   record unnecessary.
 - Any uncertain append failure poisons the open backend.
+
+A read-only open (`readOnly: true`) is for a viewer of a directory another
+process writes. It creates no directory and writes nothing: torn final lines and
+unconfirmed sidecar tails are skipped in memory, leftover temporary replacements
+stay, and nothing is reclaimed. It holds the state committed at open, and
+`commit()` rejects. Recovery reads `main.jsonl` before the sidecars, and a
+writer reclaims a sidecar only after appending the marker that authorizes it, so
+sidecars read while `main.jsonl` keeps its size match its markers. A recovery
+that fails as corrupt while `main.jsonl` changed size raced a commit and is
+retried a few times; one that fails while it stayed the same is corruption.
 
 Reclamation starts only after the authorizing base/retirement commits. When no
 sidecar records remain, it removes the sidecar directly. Otherwise, it writes a

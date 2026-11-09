@@ -58,7 +58,9 @@ function DevicesSheet() {
 	return (
 		<Sheet title="Devices" onClose={closeLayers}>
 			<div className="stack">
-				<p>This token grants full owner access. Give it only to your own device, not to collaborators.</p>
+				<p className="small">
+					This token grants full owner access. Give it only to your own device, not to collaborators.
+				</p>
 				<p className="muted small">
 					Open Pi's domain on the other device, paste this token into the sign-in page, and tap Sign in. It expires
 					after ten minutes and works once.
@@ -79,7 +81,7 @@ function DevicesSheet() {
 						<textarea
 							id="owner-token"
 							className="input mono"
-							rows={3}
+							rows={2}
 							readOnly
 							value={token}
 							onFocus={(event) => event.target.select()}
@@ -104,8 +106,9 @@ function DevicesSheet() {
 					{confirmAll ? (
 						<>
 							<p className="muted small">
-								This signs out every associated device, including this one, and invalidates outstanding owner
-								links. Already-running agent work is not stopped.
+								This signs out every device and every browser on the host, including this one, and invalidates
+								outstanding owner links. TUIs on the host sign in again by themselves. Already-running agent
+								work is not stopped.
 							</p>
 							<button
 								type="button"

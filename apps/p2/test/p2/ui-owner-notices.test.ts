@@ -19,6 +19,7 @@ for (const [width, height] of [
 			const fixture = await startFixture({ web: true });
 			t.after(() => fixture.close());
 			const browser = await Browser.start();
+			await browser.signIn(fixture.owner);
 			t.after(() => browser.close());
 			await browser.metrics(width, height);
 			const plugins = [
@@ -174,6 +175,7 @@ test(
 		const fixture = await startFixture({ web: true });
 		t.after(() => fixture.close());
 		const browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		t.after(() => browser.close());
 		await browser.metrics(390, 844);
 		await browser.call("Page.addScriptToEvaluateOnNewDocument", {
@@ -221,6 +223,7 @@ test(
 		const fixture = await startFixture({ web: true });
 		t.after(() => fixture.close());
 		const browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		t.after(() => browser.close());
 		await browser.metrics(390, 844);
 		const url = `http://127.0.0.1:${fixture.server.port}/`;

@@ -145,21 +145,6 @@ export function prefersJsonSchemaStrictSampling(tool: Tool): boolean {
 	return !!config && config.type === "json_schema" && config.strict === "prefer";
 }
 
-/**
- * Claude rejects (on the Anthropic API and on Bedrock) a request whose strict tools exceed its limits with one of these
- * messages. Observed limits: 20 strict tools, and 16 optional or union-typed parameters across all strict tools.
- */
-const STRICT_TOOL_LIMIT_ERROR_MESSAGES = [
-	"The compiled grammar is too large",
-	"Too many strict tools (",
-	"Schemas contains too many parameters with union types (",
-];
-
-/** Returns true when a provider error message says the request's strict tools exceed the provider's limits. */
-export function isStrictToolLimitErrorMessage(message: string): boolean {
-	return STRICT_TOOL_LIMIT_ERROR_MESSAGES.some((limitMessage) => message.includes(limitMessage));
-}
-
 export function getJsonSchemaToolParameters(tool: Tool, strict: boolean | undefined): Tool["parameters"] {
 	return (strict === true ? makeStrictJsonSchema(tool.parameters) : tool.parameters) as Tool["parameters"];
 }

@@ -92,7 +92,7 @@ for (const via of ["token", "relay", "proxy"] as const)
 			await expectChord(guest.uploadKey({ name: "guest", key }, BACKGROUND_CONTEXT), "forbidden");
 			await expectChord(guest.generateKey({ name: "guest" }, BACKGROUND_CONTEXT), "forbidden");
 			await expectChord(guest.publicKey({ name: "generated" }, BACKGROUND_CONTEXT), "forbidden");
-			const ui = await http(fixture.server.port, (await webBundle(fixture.server.port)).script);
+			const ui = await fixture.http((await webBundle(fixture.server.port, { Cookie: fixture.owner.cookie })).script);
 			assert.equal(ui.status, 200);
 			assert(ui.body.includes("Upload private key"));
 			assert(!ui.body.includes("Generate/upload keys only on the device"));

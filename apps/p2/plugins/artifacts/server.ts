@@ -5,14 +5,14 @@ import { ArtifactSource } from "./contract.ts";
 import { ArtifactError, instrumentArtifact } from "./store.ts";
 
 const EXECUTABLE_CSP =
-	"default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval' https:; style-src 'unsafe-inline' https:; img-src data: blob: https:; font-src data: https:; media-src data: blob: https:; connect-src https:; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; sandbox allow-scripts allow-modals allow-pointer-lock";
-const DOCUMENT_CSP = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; sandbox";
+	"default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval' https:; style-src 'unsafe-inline' https:; img-src data: blob: https:; font-src data: https:; media-src data: blob: https:; connect-src https:; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; sandbox allow-scripts allow-modals allow-pointer-lock";
+const DOCUMENT_CSP = "default-src 'none'; base-uri 'none'; form-action 'none'; sandbox";
 
 export default defineFacet((host) => {
 	contribute(host, "p2.artifact-routes", (self) => {
 		const server = serverOf(self);
 		const catalog = self.get(Catalog, {});
-		const serve: RouteHandler = async (request, response, { principal }, outer) => {
+		const serve: RouteHandler = async (request, response, { principal, origin }, outer) => {
 			const query = new URL(request.url ?? "/", "http://localhost").searchParams;
 			const session = query.get("session") ?? "";
 			if (!canView(principal, session) || request.headers["sec-fetch-site"] === "cross-site") {
@@ -42,7 +42,11 @@ export default defineFacet((host) => {
 				const extension =
 					artifact.info.type === "markdown" ? "md" : artifact.info.type === "text" ? "txt" : artifact.info.type;
 				response.writeHead(200, {
-					"Content-Security-Policy": executable ? EXECUTABLE_CSP : DOCUMENT_CSP,
+					// `frame-ancestors` checks every ancestor: through Radius the app itself sits in the Radius shell's frame,
+					// so `'self'` alone would block every preview there.
+					"Content-Security-Policy": `${executable ? EXECUTABLE_CSP : DOCUMENT_CSP}; frame-ancestors 'self'${
+						origin.relayShellOrigin === undefined ? "" : ` ${origin.relayShellOrigin}`
+					}`,
 					"Content-Type":
 						artifact.info.type === "html"
 							? "text/html; charset=utf-8"

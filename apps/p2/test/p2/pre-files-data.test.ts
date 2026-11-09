@@ -22,7 +22,7 @@ import { type DataReport, dataReport } from "../../scripts/data-report.ts";
 import { migrateData } from "../../scripts/migrate-data.ts";
 import { verifySessions } from "../../scripts/verify-sessions.ts";
 import { startServer } from "../../src/hosts/server.ts";
-import { clientHost, holdIn, http, until } from "./helpers.ts";
+import { clientHost, holdIn, http, localOwner, until } from "./helpers.ts";
 
 const fixture = new URL("../fixtures/pre-files-data/", import.meta.url);
 const expected = JSON.parse(readFileSync(new URL("report.json", fixture), "utf8")) as DataReport;
@@ -84,13 +84,16 @@ test(
 		const server = await startServer({ dataDir, port: 0, fake: true, web: false });
 		try {
 			const url = `http://127.0.0.1:${server.port}`;
-			assert.deepEqual(await verifySessions(url, expected), []);
-			const owner = clientHost(server.port);
+			assert.deepEqual(await verifySessions(url, expected, dataDir), []);
+			const local = await localOwner(server);
+			const headers = { Cookie: local.cookie };
+			const owner = clientHost(local);
 			t.after(() => owner.close(BACKGROUND_CONTEXT));
 			const artifact = (session: string, name: string, version: number) =>
 				http(
 					server.port,
 					`/artifact?${new URLSearchParams({ session, name, version: String(version) })}&download=1`,
+					{ headers },
 				);
 
 			// Every version of every artifact, in the session and its copies.
@@ -116,6 +119,7 @@ test(
 			const sent = await http(
 				server.port,
 				`/download?${new URLSearchParams({ session: ids.alpha, id: download! })}`,
+				{ headers },
 			);
 			assert.equal(sent.status, 200);
 			assert.equal(sent.body, "before\n");

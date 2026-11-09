@@ -41,6 +41,7 @@ import {
 	workerOf,
 } from "@p2/app/v1/worker";
 import { MAX_TITLE, SessionInfo, Sessions, SessionTransfer } from "./contract.ts";
+import { serveLockMirror } from "./lock-worker.ts";
 
 /** The placeholder title of a session nobody titled yet. */
 const UNTITLED = "New session";
@@ -100,6 +101,7 @@ const renameSession = (
 	});
 
 export default defineFacet((host) => {
+	serveLockMirror(host);
 	// `Sessions.fork`: the server reads a conversation's active context here and seeds the new session's worker.
 	host.serve(SessionTransfer, (_params, principal, self) => {
 		if (principal.kind !== "server") throw forbidden("server only");

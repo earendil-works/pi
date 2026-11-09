@@ -47,7 +47,7 @@ describe("chat mode (server, sharing, fake provider)", () => {
 					.map((line) => JSON.parse(line) as Logged[])
 			: [];
 	const upload = async (name: string, body: string | Buffer, headers: Record<string, string> = {}) => {
-		const response = await http(fixture.server.port, `/upload?${new URLSearchParams({ session, name })}`, {
+		const response = await fixture.http(`/upload?${new URLSearchParams({ session, name })}`, {
 			method: "POST",
 			headers: { Origin: `http://127.0.0.1:${fixture.server.port}`, ...headers },
 			body,
@@ -84,6 +84,7 @@ describe("chat mode (server, sharing, fake provider)", () => {
 				"chat",
 				"chat-mode",
 				"conversations",
+				"devices",
 				"drafts",
 				"envs",
 				"files",

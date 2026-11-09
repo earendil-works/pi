@@ -7,7 +7,7 @@ import { after, before, describe, it } from "node:test";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SessionLock, Sessions } from "../../plugins/sessions/contract.ts";
 import type { RefIn } from "../../src/runtime/chord.ts";
 import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
 
@@ -31,6 +31,7 @@ function sections(view: ConversationView | null | undefined): Record<string, str
 describe("prompt resources (fake provider)", () => {
 	let fixture: Fixture;
 	let chat: RefIn<typeof Chat, "participant">;
+	let session: string;
 
 	before(async () => {
 		fixture = await startFixture();
@@ -43,11 +44,10 @@ describe("prompt resources (fake provider)", () => {
 			"---\nname: deploy\ndescription: Deploys the app.\n---\nRun the deploy script.",
 		);
 		const owner = fixture.browser();
-		const session = await (await holdIn(owner, Sessions, {}, "owner")).create(
-			{ cwd: fixture.workspace },
-			BACKGROUND_CONTEXT,
-		);
-		chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		session = (
+			await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
+		).id;
+		chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
 	});
 
 	after(async () => {
@@ -71,5 +71,20 @@ describe("prompt resources (fake provider)", () => {
 		await new Promise((resolve) => setTimeout(resolve, 500));
 		await chat.send({ text: "again", requestId: "2" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (value) => /use spaces/.test(sections(value)["agents-md"] ?? ""));
+	});
+
+	it("leaves the owner's global instructions and skills out of a locked session that did not pick them", async () => {
+		const locks = await holdIn(fixture.browser(), SessionLock, {}, "owner");
+		await locks.set(
+			{ session, lock: { mcp: [], projectMcp: false, instructions: false, capabilities: [] } },
+			BACKGROUND_CONTEXT,
+		);
+		await new Promise((resolve) => setTimeout(resolve, 500));
+		await chat.send({ text: "locked", requestId: "3" }, BACKGROUND_CONTEXT);
+		const view = await until(chat.view, (value) => !/Global rule/.test(sections(value)["agents-md"] ?? "x"));
+		const prompt = sections(view);
+		assert.match(prompt["agents-md"] ?? "", /Project rule/);
+		assert.doesNotMatch(prompt.skills ?? "", /deploy/);
+		await locks.set({ session, lock: null }, BACKGROUND_CONTEXT);
 	});
 });

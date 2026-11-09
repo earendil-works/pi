@@ -62,6 +62,7 @@ describe("web composer file completion", { skip: !browserTests }, () => {
 			).create({ cwd: fixture.workspace, title: "Completion" }, BACKGROUND_CONTEXT)
 		).id;
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 		await browser.metrics(1280, 900);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${id}`);
 		await browser.click(".composer textarea");

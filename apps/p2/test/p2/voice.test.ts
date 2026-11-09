@@ -872,7 +872,7 @@ describe("voice routes and mode", () => {
 			await poll(() => texts.some((event) => event.type === "welcome"), 5000, "welcome");
 			return { socket, texts, frames };
 		};
-		const ownerRoom = await join_({});
+		const ownerRoom = await join_({ Cookie: fixture.owner.cookie });
 		const guestRoom = await join_(full);
 		const room = `p2-${session}-1`;
 		const [ownerHeaders, guestHeaders] = speech.upgrades.slice(-2);
@@ -959,15 +959,21 @@ describe("voice routes and mode", () => {
 		};
 		assert.equal(await status(path, view), 403, "view-only guests have no voice");
 		assert.equal(await status(`/voice/room?session=other-session&conversation=1`, full), 403, "another session's");
-		assert.equal(await status("/voice/room?conversation=1", {}), 400);
-		assert.equal(await status(`/voice/room?session=${session}&conversation=0`, {}), 400);
+		const local = { Cookie: fixture.owner.cookie };
+		assert.equal(await status("/voice/room?conversation=1", local), 400);
+		assert.equal(await status(`/voice/room?session=${session}&conversation=0`, local), 400);
+		assert.equal(await status(path, {}), 403, "loopback alone is nobody");
 
 		// The engines for both (pushed live); a sample for the owner only; logs for both, the guest's marked as such.
 		const alice = await holdIn(fixture.client(full).host, VoiceService, {}, "talker");
 		assert.deepEqual(await until(alice.voices, (value) => value !== null), VOICES);
 		alice.release();
 		await expectChord(whenLive(fixture.client(view).host.hold(VoiceService, {}, BACKGROUND_CONTEXT)), "forbidden");
-		const origin = { Origin: `http://127.0.0.1:${port}`, "Content-Type": "application/json" };
+		const origin = {
+			Origin: `http://127.0.0.1:${port}`,
+			"Content-Type": "application/json",
+			Cookie: fixture.owner.cookie,
+		};
 		const sample = await http(port, "/voice/sample", {
 			method: "POST",
 			headers: origin,
@@ -999,7 +1005,11 @@ describe("voice routes and mode", () => {
 
 	it("writes the browser's diagnostics to the server log, for the owner only", async () => {
 		const port = fixture.server.port;
-		const origin = { Origin: `http://127.0.0.1:${port}`, "Content-Type": "application/json" };
+		const origin = {
+			Origin: `http://127.0.0.1:${port}`,
+			"Content-Type": "application/json",
+			Cookie: fixture.owner.cookie,
+		};
 		const lines: string[] = [];
 		const log = mock.method(console, "log", (line: unknown) => {
 			lines.push(String(line));

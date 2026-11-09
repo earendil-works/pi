@@ -1,12 +1,13 @@
 // Tests of the invite plugin (slice 13 §3): the owner makes an invite for a principal, the invitee's page posts the
-// token from the fragment and gets a browser session for it, once; only the owner makes invites.
+// token from the fragment and gets a browser session for it, once; only the owner (`AppInfo.owner`) makes invites,
+// whichever principal the app chose as its owner.
 
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
-import { inviteFacet, Sessions } from "../../../src/node/app/index.ts";
+import { inviteFacet } from "../../../src/node/app/index.ts";
 import { Http } from "../../../src/node/http/index.ts";
 import { send } from "../http/support.ts";
-import { API, testApp, WHOAMI } from "./support.ts";
+import { API, bearerFor, testApp, type UserPrincipal, userOwnerApp, WHOAMI } from "./support.ts";
 
 const invite = inviteFacet();
 
@@ -29,14 +30,8 @@ function post(port: number, path: string, body: unknown, headers: Readonly<Recor
 describe("invites", () => {
 	it("signs the invitee in as the chosen principal once; only the owner invites", async () => {
 		const { app, port } = await testApp({ api: WITH_INVITE, plugins: PLUGINS });
-		const token = async (principal: unknown) =>
-			app.host.root(
-				async (ctx) =>
-					(await (await ctx.get(Sessions, {})).issue({ principal, label: "t", kind: "device" }, ctx)).token,
-				context,
-			);
-		const owner = { authorization: `Bearer ${await token({ kind: "owner" })}` };
-		const user = { authorization: `Bearer ${await token({ kind: "user", id: "u", name: "u" })}` };
+		const owner = await bearerFor(app, { kind: "owner" });
+		const user = await bearerFor(app, { kind: "user", id: "u", name: "u" });
 		const guest = { kind: "user", id: "g1", name: "Guest" };
 		expect((await post(port, "/_chord/invites", { principal: guest, label: "guest" })).status).toBe(401);
 		expect((await post(port, "/_chord/invites", { principal: guest, label: "guest" }, user)).status).toBe(403);
@@ -50,6 +45,17 @@ describe("invites", () => {
 		const cookie = String(used.headers["set-cookie"]).split(";")[0]!;
 		expect(JSON.parse((await send(port, "GET", "/whoami", { headers: { cookie } })).body.toString())).toEqual(guest);
 		expect((await post(port, page, { token: secret })).status).toBe(403);
+		await app.close(context);
+	});
+
+	it("accepts the owner the app chose and refuses another user", async () => {
+		const ada: UserPrincipal = { kind: "user", id: "u1" };
+		const { app, port } = await userOwnerApp(ada, { api: WITH_INVITE, plugins: PLUGINS });
+		const guest = { kind: "user", id: "g1" };
+		const other = await bearerFor(app, { kind: "user", id: "u2" });
+		expect((await post(port, "/_chord/invites", { principal: guest, label: "guest" }, other)).status).toBe(403);
+		const made = await post(port, "/_chord/invites", { principal: guest, label: "guest" }, await bearerFor(app, ada));
+		expect(made.status).toBe(200);
 		await app.close(context);
 	});
 });

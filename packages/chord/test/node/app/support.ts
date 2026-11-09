@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
-import { hostKind, int, method, remote, str, unknown } from "../../../src/contracts/index.ts";
+import { type Address, hostKind, int, method, remote, str, unknown } from "../../../src/contracts/index.ts";
+import type { Principal } from "../../../src/data/index.ts";
 import * as chord from "../../../src/index.ts";
 import {
 	type App,
@@ -28,6 +29,12 @@ export type TestPrincipal =
 	| { readonly kind: "owner" }
 	| { readonly kind: "worker"; readonly key: string }
 	| { readonly kind: "user"; readonly id: string; readonly name: string };
+
+/** The principals of an app whose owner is one of its users: no owner kind. */
+export type UserPrincipal =
+	| { readonly kind: "server" }
+	| { readonly kind: "worker"; readonly key: string }
+	| { readonly kind: "user"; readonly id: string; readonly name?: string };
 
 /** The tests' worker kind: a project by id. */
 export const Project = hostKind("project", { id: str() });
@@ -58,13 +65,43 @@ export async function tempDir(): Promise<string> {
 	return dir;
 }
 
-/** A started test app and what it reported; `plugins` (directory name to files) written into its root first. */
-export async function testApp(
-	options: Partial<AppOptions<TestPrincipal>> & {
-		readonly plugins?: Readonly<Record<string, Readonly<Record<string, string>>>>;
-		readonly withWorkers?: boolean;
-	} = {},
-): Promise<{ app: App<TestPrincipal>; errors: unknown[]; dataDir: string; root: string; port: number }> {
+/**
+ * What a test app takes: `AppOptions` but its principals (the test app's), and plugins (directory name to files)
+ * written into its root first.
+ */
+type TestAppOptions<P extends Principal> = Partial<Omit<AppOptions<P>, "principal">> & {
+	readonly plugins?: Readonly<Record<string, Readonly<Record<string, string>>>>;
+	readonly withWorkers?: boolean;
+	/** Whether the app is handed out before its bases are built (`basesBuilt`): after by default. */
+	readonly unbuilt?: boolean;
+};
+
+/** The test apps' server principal. */
+const SERVER = { kind: "server" } as const;
+
+/** The test apps' worker principal at `address`. */
+function workerOf(address: Address) {
+	return { kind: "worker", key: address.key } as const;
+}
+
+/** A started test app (owner `{ kind: "owner" }`) and what it reported. */
+export function testApp(options: TestAppOptions<TestPrincipal> = {}) {
+	return startTestApp<TestPrincipal>({ server: SERVER, worker: workerOf, owner: { kind: "owner" } }, options);
+}
+
+/** A started test app whose owner is `owner`, one of its users, and what it reported. */
+export function userOwnerApp(owner: UserPrincipal, options: TestAppOptions<UserPrincipal> = {}) {
+	return startTestApp<UserPrincipal>({ server: SERVER, worker: workerOf, owner }, options);
+}
+
+/**
+ * A test app with the principals `principal` (`worker` only for worker kinds), started in a temporary data directory
+ * and plugins root, its bases built, and what it reported.
+ */
+export async function startTestApp<P extends Principal>(
+	principal: { readonly server: P; readonly worker?: (address: Address) => P; readonly owner: P },
+	options: TestAppOptions<P>,
+): Promise<{ app: App<P>; errors: unknown[]; dataDir: string; root: string; port: number }> {
 	const base = await tempDir();
 	const dataDir = options.dataDir ?? join(base, "data");
 	const root = options.root ?? join(base, "plugins");
@@ -72,7 +109,8 @@ export async function testApp(
 	for (const [dir, files] of Object.entries(options.plugins ?? {}))
 		await writePlugin(root, dir, `@test/${dir}`, files);
 	const errors: unknown[] = [];
-	const app = await startServer<TestPrincipal>(
+	const app = await startServer<P>(
+		// The tests pass worker kinds (`withWorkers`, `workers`) only with `principal.worker`.
 		{
 			name: "chord-test",
 			dataDir,
@@ -80,7 +118,7 @@ export async function testApp(
 			listen: { host: "127.0.0.1", port: 0 },
 			api: API,
 			kinds: { server: { platform: "node" }, worker: { platform: "node" } },
-			principal: { server: { kind: "server" }, worker: (address) => ({ kind: "worker", key: address.key }) },
+			principal,
 			workers:
 				options.withWorkers === true
 					? [
@@ -96,9 +134,11 @@ export async function testApp(
 					: [],
 			onError: (error) => errors.push(error),
 			...options,
-		},
+		} as AppOptions<P>,
 		context,
 	);
+	// The bases built after the listen: most tests get the app as its first requests see it.
+	if (options.unbuilt !== true) await app.basesBuilt;
 	const port = Number(new URL(app.ownerLink()).port);
 	return { app, errors, dataDir, root, port };
 }
@@ -185,3 +225,15 @@ export const WHOAMI = [
 	'import { Http } from "@test/app/v1/server";',
 	'export default defineFacet((_host, self) => self.contribute(Http, { routes: { "GET /whoami": async (_request, ctx) => ({ kind: "json", value: ctx.principal ?? null }) } }));',
 ].join("\n");
+
+/** The `Authorization` header of a new device session for `principal` on `app`. */
+export async function bearerFor<P extends Principal>(
+	app: App<P>,
+	principal: P,
+): Promise<{ readonly authorization: string }> {
+	const { token } = await app.host.root(
+		async (ctx) => (await ctx.get(Sessions, {})).issue({ principal, label: "test", kind: "device" }, ctx),
+		context,
+	);
+	return { authorization: `Bearer ${token}` };
+}

@@ -10,10 +10,11 @@ test(
 	"useOptimisticCall: guess at once, server value on success, visible rollback on refusal",
 	{ skip: !browserTests, timeout: 60_000 },
 	async () => {
-		const fixture = await startFixture({ web: true, plugins: ["web-shell"] });
+		const fixture = await startFixture({ web: true, plugins: ["devices", "web-shell"] });
 		let browser: Browser | undefined;
 		try {
 			browser = await Browser.start();
+			await browser.signIn(fixture.owner);
 			await browser.open(`http://127.0.0.1:${fixture.server.port}`);
 			await browser.wait("document.body");
 			await browser.loadFixture("optimistic.ts");

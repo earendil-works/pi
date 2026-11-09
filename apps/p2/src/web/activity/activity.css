@@ -1,0 +1,403 @@
+/* A run's activity row, its panel (a sheet on phones), step labels, details and results (src/web/activity). The ticker
+ * and a script's timeline of calls are Elanor's (built in p2 for now: ../elanor-extra); the sheet is p2's own
+ * (.sheet in style.css). */
+
+/*
+ * The interface's sans (--sans), not the pi brand's serif that Elanor's ui typography uses: the row, the results and
+ * the sheet or panel set its tokens anew, so every Elanor component inside them follows. Sizes and weights stay
+ * Elanor's.
+ */
+.activity,
+.results,
+.activity-panel {
+	--semantic-typography-ui-primary:
+		var(--semantic-typography-ui-primary-font-weight) var(--semantic-typography-ui-primary-font-size) /
+		var(--semantic-typography-ui-primary-line-height) var(--sans);
+	--semantic-typography-ui-secondary:
+		var(--semantic-typography-ui-secondary-font-weight) var(--semantic-typography-ui-secondary-font-size) /
+		var(--semantic-typography-ui-secondary-line-height) var(--sans);
+	--semantic-typography-ui-tertiary:
+		var(--semantic-typography-ui-tertiary-font-weight) var(--semantic-typography-ui-tertiary-font-size) /
+		var(--semantic-typography-ui-tertiary-line-height) var(--sans);
+	--semantic-typography-ui-label:
+		var(--semantic-typography-ui-label-font-weight) var(--semantic-typography-ui-label-font-size) /
+		var(--semantic-typography-ui-label-line-height) var(--sans);
+}
+
+/* The row in the chat: one large tap target per turn, without a background; it highlights when pressed. */
+.activity {
+	display: flex;
+	align-items: center;
+	align-self: stretch;
+	gap: var(--semantic-dimension-space-gap-small);
+	/* One --row, as a thought's row: the working wheel turning into a thought (or back) never changes the height. */
+	block-size: var(--row);
+	margin-inline: calc(-1 * var(--semantic-dimension-space-padding-medium));
+	padding-inline: var(--semantic-dimension-space-padding-medium);
+	border-radius: var(--semantic-dimension-radius-large);
+	color: var(--semantic-color-text-primary);
+	font: var(--semantic-typography-ui-secondary);
+	text-align: start;
+	transition: background-color 0.45s ease-out;
+}
+@media (hover: hover) {
+	.activity:hover {
+		background: var(--semantic-color-background-fill-ghost-neutral-hover);
+	}
+}
+.activity:active {
+	background: var(--semantic-color-background-fill-ghost-neutral-active);
+}
+/* Done: no background, the words in the secondary colour (the counts of changed lines keep theirs). */
+.activity[data-state="done"] {
+	color: var(--semantic-color-text-secondary);
+}
+/* How long the turn took: counting while it works. */
+.activity-time {
+	flex: none;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-tertiary);
+	font-variant-numeric: tabular-nums;
+}
+.activity-chevron {
+	display: grid;
+	flex: none;
+	place-items: center;
+	color: var(--semantic-color-icon-secondary);
+}
+
+/* A step's words: the verb, then a file (semibold) or a command (code font); the agent's words as they are. */
+.label-text {
+	min-inline-size: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.label-object[data-style="file"] {
+	font-weight: var(--semantic-font-weight-ui-selected);
+}
+.label-object[data-style="code"] {
+	font-family: var(--semantic-font-family-code);
+	font-size: 0.9em;
+}
+/* In the wheel the verb leads ("Running", "Reading"): bold, and what it acts on in the regular weight. */
+.activity-ticker .label-verb {
+	font-weight: var(--semantic-font-weight-ui-selected);
+}
+.activity-ticker .label-object[data-style="file"] {
+	font-weight: inherit;
+}
+.label-extra {
+	color: var(--semantic-color-text-secondary);
+}
+
+/* A step's detail: Input, then Output, each under its label. */
+.detail-label {
+	margin: 0;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-secondary);
+}
+/* A quiet line: no output, how a call ended, a subagent's configuration. */
+.detail-note {
+	margin: 0;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-secondary);
+	overflow-wrap: anywhere;
+}
+.detail-section {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-gap-x-small);
+	min-inline-size: 0;
+}
+.detail-section > * {
+	min-inline-size: 0;
+	max-inline-size: 100%;
+}
+.detail-section pre {
+	max-inline-size: 100%;
+	overflow-x: auto;
+}
+.detail-file {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--semantic-dimension-space-gap-small);
+}
+.detail-path {
+	font: var(--semantic-typography-code-secondary);
+	overflow-wrap: anywhere;
+}
+/* A command as a terminal: the prompt and command, then its output, in one block. */
+.detail-terminal {
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	border-radius: var(--semantic-dimension-radius-default);
+	background: var(--semantic-color-background-fill-secondary);
+}
+.detail-command,
+.detail-output {
+	margin: 0;
+	padding: var(--semantic-dimension-space-padding-medium) var(--semantic-dimension-space-padding-large);
+	overflow-x: auto;
+	font: var(--semantic-typography-code-secondary);
+	white-space: pre;
+}
+.detail-command {
+	color: var(--semantic-color-text-primary);
+	font-weight: var(--semantic-font-weight-ui-selected);
+}
+.detail-prompt {
+	color: var(--semantic-color-text-secondary);
+}
+.detail-output {
+	color: var(--semantic-color-text-code);
+}
+/* A failure: its output in red, no louder than that. */
+.detail-terminal[data-failed] .detail-output {
+	color: var(--semantic-color-text-negative);
+}
+/* "Show all" a script's calls. */
+.detail-more {
+	align-self: flex-start;
+	min-block-size: var(--control-sm);
+	color: var(--semantic-color-text-link);
+	font: var(--semantic-typography-ui-tertiary);
+}
+.detail-images {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-gap-small);
+}
+.detail-image {
+	display: block;
+	max-inline-size: 100%;
+	block-size: auto;
+	border: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-secondary);
+	border-radius: var(--semantic-dimension-radius-default);
+}
+
+/* What a turn made for the person, after its answer. */
+.results {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-gap-small);
+}
+/* The wheel (Elanor's Ticker) fills the row; a finished turn reads in the secondary colour. */
+.activity-turn {
+	cursor: pointer;
+}
+.activity-ticker {
+	flex: 1;
+	align-self: stretch;
+	min-inline-size: 0;
+	/* The row's height, not Elanor's three faces: one face shows, the others roll through it. */
+	min-block-size: 0;
+}
+/* Only the face in front: the ones before and after fade out within the row instead of showing as cut slivers. */
+.activity-ticker .el-ticker-drum {
+	-webkit-mask-image: linear-gradient(
+		transparent 8px,
+		#000 14px,
+		#000 calc(100% - 14px),
+		transparent calc(100% - 8px)
+	);
+	mask-image: linear-gradient(transparent 8px, #000 14px, #000 calc(100% - 14px), transparent calc(100% - 8px));
+}
+.activity[data-state="done"] .activity-ticker {
+	color: var(--semantic-color-text-secondary);
+}
+
+/* A block is selected in the transcript, never represented by an extra workspace tab. */
+.activity-block {
+	margin-inline: calc(-1 * var(--semantic-dimension-space-padding-medium));
+	padding-inline: var(--semantic-dimension-space-padding-medium);
+	border-radius: var(--radius);
+}
+.activity-block.selected {
+	background: var(--hover);
+}
+.activity-thought {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--s3);
+	padding: var(--s3) 0 0;
+	color: var(--muted);
+	font-size: var(--fs-sm);
+	line-height: 1.65;
+}
+.activity-thought > svg {
+	flex: none;
+	width: 18px;
+	height: 18px;
+	margin-top: var(--s1);
+}
+.activity-thought-text {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 3;
+	overflow: hidden;
+	white-space: pre-wrap;
+}
+/* The panel's own scroller follows the running step: the side panel's body (sheet or dock) does not scroll. */
+.activity-panel-body {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	padding-bottom: var(--s3);
+}
+.activity-panel .sheet-body,
+.activity-panel .side-panel-body {
+	display: flex;
+	padding: 0;
+	overflow: hidden;
+}
+.step-list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.step-list li + li {
+	border-top: 1px solid var(--line);
+}
+.step-row {
+	display: flex;
+	align-items: center;
+	gap: var(--s3);
+	width: 100%;
+	min-height: var(--row);
+	padding: 0 var(--s2) 0 var(--x);
+	color: var(--text);
+	font-size: var(--fs-sm);
+	text-align: left;
+}
+@media (hover: hover) {
+	.step-row:hover {
+		background: var(--hover);
+	}
+}
+.step-icon,
+.step-chevron {
+	display: grid;
+	flex: none;
+	place-items: center;
+	color: var(--muted);
+}
+.step-chevron {
+	color: var(--faint);
+}
+.step-words {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.step-name {
+	font-weight: var(--fw-strong);
+}
+.step-argument {
+	margin-left: var(--s2);
+	color: var(--muted);
+	font-family: var(--mono);
+	font-size: var(--fs-code);
+}
+/* A step's images in its row: a fixed size, so the row keeps its height whatever an image's shape. */
+.step-thumbs {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: var(--s1);
+}
+.step-thumb {
+	display: block;
+	width: 44px;
+	height: 34px;
+	object-fit: cover;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+}
+.step-thumbs-more {
+	padding-right: var(--s1);
+	color: var(--muted);
+	font-size: var(--fs-xs);
+	font-variant-numeric: tabular-nums;
+}
+/* Phones: the last two thumbnails and their count, so the step's words keep room; four from 700px (THUMBNAILS). */
+.step-thumb:nth-last-of-type(n + 3),
+.step-thumbs-more[data-width="wide"] {
+	display: none;
+}
+@media (min-width: 700px) {
+	.step-thumb:nth-last-of-type(n + 3) {
+		display: block;
+	}
+	.step-thumbs-more[data-width="phone"] {
+		display: none;
+	}
+	.step-thumbs-more[data-width="wide"] {
+		display: inline;
+	}
+}
+/* The step's state, and under it when it started (only where the minute changes). */
+.step-end {
+	display: flex;
+	flex: none;
+	flex-direction: column;
+	align-items: flex-end;
+	color: var(--muted);
+	font-size: var(--fs-xs);
+	font-variant-numeric: tabular-nums;
+	line-height: 1.3;
+}
+.step-state[data-state="error"] {
+	color: var(--bad);
+}
+/* A call's detail: the sheet's padding, the sections apart. */
+.activity-detail {
+	display: flex;
+	flex-direction: column;
+	gap: var(--s4);
+	min-width: 0;
+	padding: var(--s4) var(--x) var(--s5);
+}
+.nested-detail {
+	padding-inline: var(--s3);
+}
+.el-timeline-item[data-expanded="true"] > .el-timeline-step {
+	background: var(--hover);
+}
+.el-timeline-item[data-expanded="true"] .el-timeline-chevron {
+	transform: rotate(90deg);
+}
+
+/* Thinking and a text in a wheel's list (detail 1 and 2): their words, not code. */
+.step-list [data-kind] .step-argument {
+	font-family: inherit;
+	font-size: inherit;
+}
+/* At detail 4 (settings.json) a run's calls are rows in the transcript, at the text's edges, between two lines. */
+.activity-rows .step-list {
+	border-block: 1px solid var(--line);
+}
+.activity-rows .step-row {
+	padding-inline: 0;
+}
+/* In the panel, the main argument sits beneath its tool name so long commands stay useful. */
+.activity-panel-body .step-words {
+	display: flex;
+	flex-direction: column;
+}
+.activity-panel-body .step-argument {
+	margin-left: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.step-row[aria-expanded="true"] {
+	background: var(--hover);
+}
+.step-row[aria-expanded="true"] .step-chevron {
+	transform: rotate(90deg);
+}

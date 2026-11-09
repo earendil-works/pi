@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>p3 step 0a: three reload bugs</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A spec · p3 step 0a (Chord) · 2026-11-06</div>
+  <h1>Step 0a<br>Reload Bugs</h1>
+  <p class="subtitle">Three fixes in Chord so that applying a page plugin keeps it styled (UI contributed by a restarting object aside) and &quot;restart needed&quot; means base code really changed</p>
+  <div class="cover-stats"><div class="stat"><b>3</b><span>bug fixes, all in Chord</span></div><div class="stat"><b>0</b><span>decisions: each fix makes the code do what design §21 says</span></div><div class="stat"><b>1 RTT</b><span>of loading state for a reloaded UI part: accepted (owner)</span></div><div class="stat"><b>0</b><span>p3 code: p3 builds on this in step 0b</span></div></div>
+  <div class="cover-note"><p>Third version. The first two also proposed sharing references between UI components to avoid a reloaded part&#39;s
+loading state; four reviews found it held only for one path and added footguns, and the owner rejected it (decision
+&quot;A reloaded UI part shows its loading state&quot;, 2026-11-06). What is left are the three bugs the reviews confirmed,
+with the corrections from the GPT-6 Astra and GPT-6.1 Sol reviews (<code>/tmp/p3-step0a-astra.md</code>,
+<code>/tmp/p3-step0a-sol.md</code>), each kept as simple as correctness allows.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#css">I. Stylesheets Load First</a></li>
+<li><a href="#conditions">II. Base Bundles Resolve as the Server Does</a></li>
+<li><a href="#base">III. &quot;Restart Needed&quot; Compares Content</a></li>
+<li><a href="#done">IV. Tests and Done</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">An agent edits the <code>hello</code> plugin&#39;s page code and stylesheet; Mario taps Apply. Hello&#39;s part shows its loading state
+for one round trip and then the new version: that is accepted (decision &quot;A reloaded UI part shows its loading state&quot;).
+What is not accepted: for a moment the part is unstyled, because the page removes the old stylesheet before the new one
+has loaded. And after someone runs <code>npm run build</code> in the checkout, or a formatter rewrites a file without changing it,
+the bar says &quot;restart needed&quot; although nothing p3 runs has changed, and says it until a restart.</p>
+<h3 id="three-things-to-know">Three things to know</h3>
+<ol class="findings">
+<li><strong>New stylesheets load before the plugin reloads.</strong> The old ones go after the reload, except those of a plugin
+whose new code failed: it keeps its old script and its old stylesheet together.</li>
+<li><strong>Base bundles resolve packages as the server does.</strong> The page&#39;s and the terminal&#39;s base bundles are built with the
+server&#39;s resolution conditions: an app installed from npm (no flags) gets Chord&#39;s <code>dist/</code> on the server and in the
+page alike; a server started with <code>--conditions=source</code> (this monorepo) gets the source in both. Today the page
+always takes <code>dist/</code>, whatever the server runs.</li>
+<li><strong>&quot;Restart needed&quot; compares content.</strong> Each base build records a SHA-256 hash of the bytes it read per file; the mark is true exactly while a
+file differs from what a running base was built from, checked once when watching starts and again on every event.</li>
+</ol>
+</section>
+
+<section class="chapter" id="css"><header class="opener"><div class="numeral">I</div><h2>Stylesheets Load First</h2><p class="lede">The order of a page&#39;s update, and which stylesheet belongs to which code.</p></header>
+<p class="dropcap"><strong>Today</strong> (<code>src/surfaces/client.ts</code>, <code>#apply</code>; <code>src/web/scripts.ts</code>, <code>syncStylesheets</code>): the page fetches the
+changed scripts, reloads its host, then replaces the plugins&#39; <code>&lt;link&gt;</code>s: the old one removed, the new one appended. Until
+the new sheet has downloaded, the plugin&#39;s components (old or new) are unstyled. Two more faults: the new sheet is
+appended at the end, so the cascade order between plugins changes with every reload; and when a plugin&#39;s new script
+fails and its old code stays, the client records the new script&#39;s digest as loaded, so a later identical set (a
+reconnect&#39;s snapshot) is taken as applied and the plugin&#39;s old code is paired with the new stylesheet.</p>
+<p><strong>Fix</strong>, in <code>#apply</code>:</p>
+<ol>
+<li>For each plugin whose stylesheet differs from the one it has, insert the new <code>&lt;link&gt;</code> right after the plugin&#39;s
+current one (a plugin new to the page: at its place in the set&#39;s order) <strong>inactive</strong> (<code>media=&quot;not all&quot;</code>: fetched,
+not applied), and wait for its <code>load</code> or <code>error</code>, at most 10 s, ended early by the client&#39;s stop (which removes the
+unadopted links).</li>
+<li>Reload the host with the new scripts, as today.</li>
+<li>For each plugin, keep the stylesheet that belongs to the code it now runs: the new one is switched on when its new
+script was adopted; when its script failed and it kept its old code (the reload report&#39;s <code>failed</code>), the prepared
+sheet is removed without ever applying and the old one stays. Once the page has drawn a frame of the new code, the
+old sheets of adopted plugins and the links of plugins no longer in the set are removed.</li>
+<li>Record per plugin the digest of the script it actually runs, so a later set with the failed plugin&#39;s new script is
+tried again, not skipped as applied.</li>
+</ol>
+<p>A stylesheet that fails or stalls is reported (<code>stylesheet_failed</code>, <code>error</code> or <code>timeout</code>) and fetched again by the next
+update at the same URL; the plugin&#39;s new code is applied anyway (its part may lack its new classes until then); one
+that loads after its timeout is applied then. Stylesheet URLs carry a hash of the CSS, so a CSS-only edit is a new
+file.</p>
+<p><strong>Limitation (accepted, owner 2026-11-06: &quot;A&quot;):</strong> UI contributed by an object that restarts stays on its old
+version until the successor is live (design §21: such an object keeps its contribution until then). Its old sheet is
+retired after the drawn frame anyway, so during that restart the old part can show unstyled (a second in the test).
+UI contributed directly by a plugin&#39;s facet, the rule for p3&#39;s UI, is not affected. A kernel signal &quot;this plugin&#39;s
+restarts finished&quot; would close it (option B, rejected for now).</p>
+</section>
+
+<section class="chapter" id="conditions"><header class="opener"><div class="numeral">II</div><h2>Base Bundles Resolve as the Server Does</h2><p class="lede">Where the page&#39;s Chord comes from.</p></header>
+<p class="dropcap"><strong>Today</strong> (<code>src/node/surfaces/bundle.ts</code>, <code>buildBase</code>): esbuild bundles the page&#39;s and the terminal&#39;s base with its
+default conditions, so in this monorepo <code>@earendil-works/chord</code> resolves to its built <code>dist/</code>, while the server,
+started with <code>--conditions=source</code>, runs Chord&#39;s source. The page may then run other Chord code than the server, and
+every <code>npm run build</code> changes files the base was built from. The worker base already resolves as its process will
+(<code>conditionsOf(execArgv)</code> in <code>src/node/workers/base.ts</code>).</p>
+<p><strong>Fix:</strong> <code>buildBase</code> takes <code>conditions</code>. The web and terminal surfaces pass the kit&#39;s option <code>conditions</code> (new on
+<code>AppWeb</code> and the <code>tui</code> option), by default the server process&#39;s own: the <code>--conditions</code>/<code>-C</code> flags of
+<code>process.execArgv</code> and of <code>NODE_OPTIONS</code> (parsed as Node parses it, quoted values included). For browser builds
+<code>module</code> is added, which esbuild&#39;s defaults include and custom conditions drop; the platform stays <code>browser</code>. The
+helper moves into <code>bundle.ts</code>, which the worker base imports; workers keep their own <code>execArgv</code> as today.</p>
+</section>
+
+<section class="chapter" id="base"><header class="opener"><div class="numeral">III</div><h2>&quot;Restart Needed&quot; Compares Content</h2><p class="lede">A mark that is true exactly while a running base differs from the files.</p></header>
+<p class="dropcap"><strong>Today</strong> (<code>src/node/plugins/watcher.ts</code>): any file event under base code sets <code>base</code>, and nothing clears it. A
+formatter rewriting a file unchanged, an editor&#39;s swap file, a branch switched and back, an <code>npm run build</code>: &quot;restart
+needed&quot; until a restart. And an edit made between a base build and the watcher&#39;s start is never seen.</p>
+<p><strong>Fix:</strong></p>
+<ul>
+<li><strong>Each base artifact records what it read.</strong> The page&#39;s, the terminal&#39;s and each worker kind&#39;s base bundle hash the
+exact bytes their loader hands to esbuild (in the one <code>onLoad</code> that returns the contents, the workers&#39; existing
+module-location loader included, never a second reader). The server&#39;s own code is recorded by a best-effort scan at
+start: esbuild bundles the start script (<code>process.argv[1]</code>) with the server&#39;s conditions, writing and running
+nothing, only to record the files of its static import graph (the start script, the API, Chord&#39;s server modules);
+an import it cannot resolve is left out, any other failure is reported (<code>server_scan</code>) and the server starts. It
+sees literal imports, lazy ones Node may never run included (their edit conservatively asks for a restart), not
+computed <code>import(x)</code> or loader-provided modules; installed packages are left out. The app&#39;s <code>base</code> files are hashed
+at start as well.</li>
+<li><strong>The mark is computed, not latched.</strong> <code>base</code> is true while, for any running artifact, a recorded file&#39;s current
+bytes differ or the file is gone, or a base directory has a source file (<code>.ts</code>, <code>.tsx</code>, <code>.mts</code>, <code>.cts</code>, <code>.js</code>, <code>.jsx</code>,
+<code>.mjs</code>, <code>.cjs</code>, <code>.json</code>, <code>.css</code>) that was not there at start. A file two artifacts read with different bytes stays
+marked as long as either differs. Back to bytes with the recorded hash, the mark clears.</li>
+<li><strong>Checked when watching starts and on every event.</strong> After the watches are installed, every recorded file and base
+directory is compared once (an edit between the build and the watch is found there). Each event re-reads its path;
+reads of one path are serialized, the latest wins. A base directory removed and recreated is watched again.</li>
+</ul>
+<p>Plugin <code>dirty</code> marks stay as they are (latched until applied); comparing their content too is carried over.</p>
+</section>
+
+<section class="chapter" id="done"><header class="opener"><div class="numeral">IV</div><h2>Tests and Done</h2><p class="lede">What the build delivers.</p></header>
+<ul>
+<li><strong>Stylesheets</strong> (browser): a slow new sheet with a renamed class: the class is styled in the first frame after the
+reload and the old sheet was never missing; cascade order kept across a reload; a plugin whose new script fails keeps
+its old sheet and loses the new one, and a reconnect with the same set tries its script again; a failing sheet is
+reported and the new code applies; a stalled sheet ends the wait at 10 s and at the client&#39;s stop.</li>
+<li><strong>Conditions:</strong> a base built with <code>conditions: [&quot;source&quot;]</code> lists source files as inputs, not <code>dist/</code>; the default
+reads <code>process.execArgv</code> and a quoted <code>NODE_OPTIONS</code>; a browser build still takes a package&#39;s <code>module</code> and <code>browser</code>
+entries; the worker base&#39;s module locations (<code>import.meta.url</code>) still work.</li>
+<li><strong>The mark:</strong> a rewrite with equal bytes (no mark); a change and its revert (mark, then clear); reads completing in
+reverse order (the latest wins); a swap file (no mark); a new source file (mark), removed (clear); an edit between the
+build and the watch with no later event (found at the start); a directory removed and recreated (watched, compared);
+a file read with different bytes by two artifacts.</li>
+<li><code>npm run check</code>; Chord&#39;s suites that touch these (surfaces, web, tui, plugins, workers, reload, the app kit);
+design §21, §23 and the READMEs (kit, surfaces, plugins) updated; carry-over in <code>slices.md</code>: content-compared plugin
+marks.</li>
+</ul>
+<p>Then step 0b builds p3&#39;s base, <code>hello</code> and the reload suite on top.</p>
+</section>
+
+<p class="colophon">p3 step 0a · spec, third edition (bugs only) · 2026-11-06 · sources: src/surfaces/client.ts, src/web/scripts.ts, src/node/surfaces/bundle.ts, src/node/workers/base.ts, src/node/plugins/watcher.ts, design §21, §23</p>
+</div></div>
+
+</body></html>

@@ -24,7 +24,7 @@ import { terminalDaemon } from "../../plugins/terminals/daemon.ts";
 import type { TerminalEvent } from "../../plugins/terminals/protocol.ts";
 import { Workspace } from "../../plugins/workspace/contract.ts";
 import { Hosts } from "../../src/runtime/server.ts";
-import { expectChord, failureOf, holdIn, http, poll, startFixture, until } from "./helpers.ts";
+import { expectChord, failureOf, holdIn, poll, startFixture, until } from "./helpers.ts";
 
 const config = { type: "ssh" as const, host: "box" };
 function which(program: string): string | undefined {
@@ -320,8 +320,7 @@ test(
 		await chat.send({ text: "bash", requestId: "ssh-bash" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => results(view, "bash").some((text) => text.includes(session.cwd)), 60000);
 		const origin = `http://127.0.0.1:${fixture.server.port}`;
-		const uploaded = await http(
-			fixture.server.port,
+		const uploaded = await fixture.http(
 			`/upload?${new URLSearchParams({ session: session.id, name: "notes.txt" })}`,
 			{ method: "POST", headers: { Origin: origin }, body: "remote attachment" },
 		);

@@ -7,34 +7,40 @@ import {
 	type ReactNode,
 	useContext,
 	useEffect,
+	useLayoutEffect,
 	useRef,
 	useState,
 } from "react";
-import type { ArtifactInfo } from "../runtime/schemas.ts";
-import { CodeBlock, CopyButton, DiffBlock } from "./Code.tsx";
+import { ActivityRow } from "./activity/ActivityRow.tsx";
+import { ActivityLayer } from "./activity/ActivitySheet.tsx";
+import {
+	type ChatItem,
+	chatItems,
+	DEFAULT_DETAIL,
+	type Detail,
+	type ToolActivityTable,
+	thoughtPreview,
+} from "./activity/model.ts";
+import { Results } from "./activity/Results.tsx";
+import { CopyButton } from "./Code.tsx";
+import { BranchFrom, OpenConversation, OpenPeerConversation, ReplyTo, RevealEntry } from "./chat-context.ts";
 import {
 	AlertIcon,
-	ArtifactIcon,
 	BotIcon,
 	BranchIcon,
-	CheckIcon,
 	ChevronIcon,
-	CodeIcon,
-	FileIcon,
+	CommentIcon,
 	PencilIcon,
-	RefreshIcon,
 	ReplyIcon,
-	SearchIcon,
 	SparkIcon,
-	TerminalIcon,
-	ToolIcon,
+	UsersIcon,
 } from "./icons.tsx";
 import { imageSize } from "./image-size.ts";
 import { Markdown } from "./Markdown.tsx";
 import { RowEstimator, type RowFeatures } from "./row-estimate.ts";
-import type { Item, NestedCall, ToolView, Transcript } from "./transcript.ts";
+import { Time } from "./Time.tsx";
+import type { Item, Transcript } from "./transcript.ts";
 import { type RowRange, revealInTranscripts, type TranscriptScroll } from "./use-chat-scroll.ts";
-import { artifactUrls, FileCard, fileMeta, fileUrl, InlineArtifactView, OpenViewer } from "./Viewer.tsx";
 
 function tokens(count: number): string {
 	return count < 1000
@@ -79,31 +85,21 @@ export function ContextUsage({ used, limit }: { used?: number; limit?: number })
 	);
 }
 
-/** Opens a subagent conversation of the current session. */
-export const OpenConversation = createContext<(conversationId: number) => void>(() => {});
-/** The session's one-shot agents: conversation by the nested call ID that ran them (`<script call ID>/c<n>`). */
-export const OneShotAgents = createContext<ReadonlyMap<string, number>>(new Map());
-/** Owner-only navigation to another session's root; absent for guest views. */
-export const OpenPeerConversation = createContext<((sessionId: string) => void) | undefined>(undefined);
-/** Tool paths are displayed relative to the containing session's working directory. */
-export const WorkingDirectory = createContext<string | undefined>(undefined);
-/** Opens a cwd-relative file in the workspace panel; absent when the viewer has no workspace access. */
-export const OpenWorkspaceFile = createContext<((path: string, line?: number) => void) | undefined>(undefined);
-/** Shows one of the session's terminals in the terminal panel (owner only: guests have none). */
-export const OpenTerminal = createContext<((terminalId: string) => void) | undefined>(undefined);
-/** Download and artifact locators are scoped to the containing session, including child views. */
-export const SessionId = createContext<string | undefined>(undefined);
-/** Starts a reply to an entry; absent while the conversation accepts no replies (chat-mode turns them on). */
-export const ReplyTo = createContext<((target: { entryId: number; name: string }) => void) | undefined>(undefined);
-
-/**
- * Continues the session from a message (`/tree`, docs/tree.md): before a user message, whose text goes back to the
- * composer ("Edit"), after an answer ("Branch from here"). Absent unless the owner views the main conversation.
- */
-export const BranchFrom = createContext<((entryId: number) => void) | undefined>(undefined);
-
-/** Loads older history until an entry is retained; false when the conversation has no such entry. */
-export const RevealEntry = createContext<((entryId: number) => Promise<boolean>) | undefined>(undefined);
+// The chat's contexts live in chat-context.ts (the activity uses them too); re-exported here for plugins.
+export {
+	BranchFrom,
+	OneShotAgents,
+	OpenConversation,
+	OpenPeerConversation,
+	OpenTerminal,
+	OpenWorkspaceFile,
+	ReplyTo,
+	RevealEntry,
+	relativePath,
+	SessionId,
+	ToolActivityContext,
+	WorkingDirectory,
+} from "./chat-context.ts";
 
 /** Loads the next page of a gap's missing entries; absent while nothing can load them. */
 export const FillGap = createContext<((gap: Extract<Item, { type: "gap" }>["gap"]) => void) | undefined>(undefined);
@@ -209,152 +205,6 @@ function useReply(entryId: number | undefined, name: string) {
 	};
 }
 
-function str(value: unknown): string {
-	return typeof value === "string" ? value : value === undefined ? "" : JSON.stringify(value);
-}
-
-function relativePath(cwd: string | undefined, path: string): string {
-	if (!cwd?.startsWith("/") || !path.startsWith("/")) return path;
-	const from = cwd.split("/").filter(Boolean);
-	const to = path.split("/").filter(Boolean);
-	let shared = 0;
-	while (shared < from.length && from[shared] === to[shared]) shared++;
-	return [...from.slice(shared).map(() => ".."), ...to.slice(shared)].join("/") || ".";
-}
-
-function duration(ms: number): string {
-	if (ms < 1000) return `${Math.round(ms)}ms`;
-	if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-	return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
-}
-
-/** One line of a nested call's arguments: what the call is about (command, path, pattern), else its JSON. */
-function callSummary(args: NestedCall["args"], cwd: string | undefined): string {
-	if (typeof args === "string") return args.replace(/\s+/g, " ").trim();
-	const key = ["command", "path", "pattern", "url", "query", "name", "label", "prompt"].find(
-		(name) => typeof args[name] === "string",
-	);
-	// A command with an argv (the terminal tool's tmux commands): the whole command line.
-	const argv = key === "command" && Array.isArray(args.args) ? args.args.map(str) : [];
-	const value =
-		key === undefined
-			? JSON.stringify(args)
-			: key === "path"
-				? relativePath(cwd, str(args.path))
-				: [str(args[key]), ...argv].join(" ");
-	return value === "{}" ? "" : value.replace(/\s+/g, " ").trim();
-}
-
-function CallState({ status }: { status: NestedCall["status"] }) {
-	return status === "running" || status === "pending" ? (
-		<span className="spinner" />
-	) : status === "done" ? (
-		<CheckIcon />
-	) : (
-		<AlertIcon />
-	);
-}
-
-/** Rows a running list shows before "Show all"; the newest calls, where the work is. */
-const LIVE_CALLS = 8;
-
-/**
- * Calls a tool made to other tools: a list while the tool runs (the newest rows), then collapsed behind
- * "N tool calls" once it settled.
- */
-function NestedCalls({ calls, settled }: { calls: readonly NestedCall[]; settled: boolean }) {
-	// Opened in the running or the settled state: once the script settles, a list opened while it ran collapses to
-	// its summary.
-	const [openedAt, setOpenedAt] = useState<boolean>();
-	const open = openedAt === settled;
-	const cwd = useContext(WorkingDirectory)?.replace(/\/+$/, "");
-	const agents = useContext(OneShotAgents);
-	const openConversation = useContext(OpenConversation);
-	const failed = calls.filter((call) => call.status === "error" || call.status === "interrupted").length;
-	const hidden = settled ? calls.length : Math.max(0, calls.length - LIVE_CALLS);
-	const shown = open ? calls : settled ? [] : calls.slice(-LIVE_CALLS);
-	const count = `${calls.length} tool ${calls.length === 1 ? "call" : "calls"}${failed ? ` · ${failed} failed` : ""}`;
-	return (
-		<div className="nested">
-			{hidden > 0 && (
-				<button
-					type="button"
-					className="tool-link"
-					aria-expanded={open}
-					onClick={() => setOpenedAt(open ? undefined : settled)}
-				>
-					{settled ? count : open ? "Show newest calls" : `Show all ${count}`}
-				</button>
-			)}
-			{shown.length > 0 && (
-				<ol className="nested-calls">
-					{shown.map((call) => {
-						const line =
-							call.status === "running" ? call.output?.trimEnd().split("\n").at(-1)?.trim() : undefined;
-						const agent = call.name === "agent" ? agents.get(call.id) : undefined;
-						const summary = callSummary(call.args, cwd);
-						return (
-							<li
-								key={call.id}
-								className={`nested-call ${call.status}`}
-								style={call.depth ? ({ "--depth": call.depth } as CSSProperties) : undefined}
-								title={typeof call.args === "string" ? call.args : JSON.stringify(call.args)}
-							>
-								<span className="nested-state" title={call.status}>
-									<CallState status={call.status} />
-								</span>
-								<span className="nested-name">{call.name}</span>
-								{agent === undefined ? (
-									<span className="nested-summary">{summary}</span>
-								) : (
-									<button
-										type="button"
-										className="nested-summary nested-open"
-										title="Open this agent's transcript"
-										onClick={() => openConversation(agent)}
-									>
-										{summary || "Open agent"}
-									</button>
-								)}
-								<span className="nested-time">
-									{call.durationMs !== undefined
-										? duration(call.durationMs)
-										: call.status === "interrupted"
-											? "interrupted"
-											: ""}
-								</span>
-								{call.error && <span className="nested-detail nested-error">{call.error}</span>}
-								{line && <span className="nested-detail">{line}</span>}
-							</li>
-						);
-					})}
-				</ol>
-			)}
-		</div>
-	);
-}
-
-/** Lines of a script shown before "Show all". */
-const SCRIPT_LINES = 6;
-
-/** A code mode script, rendered like a written file (lowlight, `.hljs-*`), clipped to its first lines until expanded. */
-function Script({ code }: { code: string }) {
-	const [all, setAll] = useState(false);
-	const count = code.trimEnd().split("\n").length;
-	// Clipping a single line would hide no more than the control takes.
-	const long = count > SCRIPT_LINES + 1;
-	return (
-		<div className={long && !all ? "script clip" : "script"}>
-			<CodeBlock tool code={code} language="js" />
-			{long && (
-				<button type="button" className="tool-link script-more" aria-expanded={all} onClick={() => setAll(!all)}>
-					{all ? "Show less" : `Show all ${count} lines`}
-				</button>
-			)}
-		</div>
-	);
-}
-
 // Items, tools and their images keep their identity while unchanged (transcript.ts), so these memoized components
 // skip rendering when a streaming delta changes only the live message.
 const Images = memo(function Images({ images }: { images: ImageContent[] }) {
@@ -391,546 +241,9 @@ function imageBox(image: ImageContent): CSSProperties | undefined {
 	return box;
 }
 
-const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
-	const [open, setOpen] = useState(false);
-	const openConversation = useContext(OpenConversation);
-	const openViewer = useContext(OpenViewer);
-	const InlineArtifact = useContext(InlineArtifactView);
-	const sessionId = useContext(SessionId);
-	const cwd = useContext(WorkingDirectory)?.replace(/\/+$/, "");
-	const active = tool.status === "running" || tool.status === "pending";
-	const sourcePath = str(tool.args.path);
-	const path = relativePath(cwd, sourcePath);
-	const details = tool.details && typeof tool.details === "object" && !Array.isArray(tool.details) ? tool.details : {};
-	const diff = typeof details.diff === "string" ? details.diff : undefined;
-	let icon = <ToolIcon />;
-	let title = tool.name;
-	let summary = "";
-	let body: React.ReactNode = null;
-	let extra: React.ReactNode = null;
-	const openWorkspace = useContext(OpenWorkspaceFile);
-	const openTerminal = useContext(OpenTerminal);
-	// File tools link into the workspace panel when the path stays inside the working directory.
-	const inside = sourcePath && !path.startsWith("/") && path !== "." && !path.split("/").includes("..");
-	const workspaceLink = (line?: number) =>
-		openWorkspace && inside && tool.status !== "pending" ? (
-			<button type="button" className="tool-link" onClick={() => openWorkspace(path, line)}>
-				Open in workspace
-			</button>
-		) : null;
-	let targetConversation: number | undefined;
-	const reveal = useContext(RevealEntry);
-	// Entries the history tools found or read: each one reveals itself in the transcript.
-	const historyList = (rows: unknown, field: "snippet" | "preview") =>
-		Array.isArray(rows) && rows.length > 0 ? (
-			<ul className="history-hits">
-				{rows.flatMap((row) => {
-					const hit = row as {
-						entry?: unknown;
-						role?: unknown;
-						author?: unknown;
-						snippet?: unknown;
-						preview?: unknown;
-					};
-					if (typeof hit.entry !== "number") return [];
-					const entry = hit.entry;
-					return [
-						<li key={entry}>
-							<button type="button" className="tool-link" onClick={() => void revealEntry(entry, reveal)}>
-								<span className="mono muted">#{entry}</span> {str(hit.author ?? hit.role)}
-							</button>{" "}
-							<span className="history-snippet">{str(hit[field])}</span>
-						</li>,
-					];
-				})}
-			</ul>
-		) : null;
-	// Completed artifacts and sent files render as a card that opens the shared viewer.
-	let card: ReactNode = null;
-	switch (tool.name) {
-		case "bash": {
-			icon = <TerminalIcon />;
-			title = "";
-			const command = str(tool.args.command);
-			summary = command;
-			body = (
-				<>
-					<pre className="tool-command">{command}</pre>
-					{tool.output && <pre className="term">{tool.output}</pre>}
-				</>
-			);
-			break;
-		}
-		case "codemode": {
-			icon = <CodeIcon />;
-			title = "Code";
-			const code = str(tool.args.code);
-			summary =
-				code
-					.split("\n")
-					.find((line) => line.trim())
-					?.trim() ?? "";
-			body = (
-				<>
-					<Script code={code} />
-					{tool.output && (
-						<pre className={`term ${tool.status === "error" ? "tool-error" : ""}`}>{tool.output}</pre>
-					)}
-				</>
-			);
-			break;
-		}
-		case "read": {
-			icon = <FileIcon />;
-			title = "Read";
-			const start = typeof tool.args.offset === "number" ? tool.args.offset : 1;
-			const range =
-				tool.args.offset !== undefined || tool.args.limit !== undefined
-					? `:${start}${typeof tool.args.limit === "number" ? `:${start + tool.args.limit - 1}` : ""}`
-					: "";
-			summary = `${path}${range}`;
-			body = tool.output ? <CodeBlock tool code={tool.output} language={path} /> : null;
-			extra = workspaceLink(typeof tool.args.offset === "number" ? tool.args.offset : undefined);
-			break;
-		}
-		case "write":
-			icon = <FileIcon />;
-			title = "Write";
-			summary = path;
-			body = <CodeBlock tool code={str(tool.args.content)} language={path} />;
-			if (tool.status === "error") body = <pre className="code">{tool.output}</pre>;
-			else extra = workspaceLink();
-			break;
-		case "subagent": {
-			icon = <BotIcon />;
-			const action = str(tool.args.action);
-			title = action ? `Subagent ${action}` : "Subagent";
-			summary = [str(tool.args.name), str(tool.args.message)].filter(Boolean).join(" · ");
-			const target = typeof details.conversationId === "number" ? details.conversationId : undefined;
-			const config = [
-				details.model,
-				details.thinkingLevel && `thinking ${str(details.thinkingLevel)}`,
-				Array.isArray(details.tools) && `tools ${details.tools.join(", ") || "none"}`,
-				typeof details.cwd === "string" &&
-					`cwd ${typeof details.env === "string" ? `${details.env}:${details.cwd}` : relativePath(cwd, details.cwd)}`,
-			]
-				.filter(Boolean)
-				.join(" · ");
-			body = (
-				<div className="tool-sub">
-					{tool.args.message !== undefined && <Markdown text={str(tool.args.message)} />}
-					{config && <p className="mono muted">{config}</p>}
-					{tool.output &&
-						(action === "answer" && tool.status === "done" ? (
-							<Markdown text={tool.output} />
-						) : (
-							<pre className="code">{tool.output}</pre>
-						))}
-				</div>
-			);
-			if (action === "spawn" && target !== undefined) targetConversation = target;
-			else if (target !== undefined)
-				extra = (
-					<button type="button" className="tool-link" onClick={() => openConversation(target)}>
-						Open {str(details.name)} →
-					</button>
-				);
-			break;
-		}
-		case "artifact": {
-			icon = <SparkIcon size={15} />;
-			title = "Artifact";
-			summary = typeof details.title === "string" ? details.title : str(tool.args.title);
-			body = tool.output ? <pre className="code">{tool.output}</pre> : null;
-			if (
-				tool.status === "done" &&
-				sessionId &&
-				typeof details.name === "string" &&
-				/^[a-z0-9][a-z0-9_-]{0,63}$/.test(details.name) &&
-				typeof details.title === "string" &&
-				["html", "svg", "markdown", "text"].includes(String(details.type)) &&
-				typeof details.version === "number" &&
-				Number.isSafeInteger(details.version) &&
-				details.version > 0
-			) {
-				// The version this call produced, without the details' `inline` flag (the viewer's locator is closed).
-				const artifact: ArtifactInfo = {
-					name: details.name,
-					title: details.title,
-					type: details.type as ArtifactInfo["type"],
-					version: details.version,
-				};
-				const urls = artifactUrls(sessionId, artifact);
-				card = (
-					<>
-						<FileCard
-							icon={<ArtifactIcon />}
-							title={artifact.title}
-							meta={`${artifact.type.toUpperCase()} · version ${artifact.version}`}
-							href={urls.download}
-							download={urls.filename}
-							onOpen={() => openViewer({ kind: "artifact", artifact })}
-						/>
-						{details.inline === true && InlineArtifact && (
-							<InlineArtifact sessionId={sessionId} artifact={artifact} />
-						)}
-					</>
-				);
-			}
-			break;
-		}
-		case "ports": {
-			title = "Ports";
-			summary = [
-				str(tool.args.action),
-				typeof tool.args.port === "number" ? String(tool.args.port) : "",
-				str(tool.args.name),
-				tool.args.public === true ? "public" : "",
-			]
-				.filter(Boolean)
-				.join(" · ");
-			body = tool.output ? <pre className="code">{tool.output}</pre> : null;
-			// The forward this call opened: its address, and the public one when it is public.
-			const forward =
-				details.forward && typeof details.forward === "object" && !Array.isArray(details.forward)
-					? (details.forward as Record<string, unknown>)
-					: undefined;
-			const link = (value: unknown) =>
-				typeof value === "string" && /^https?:\/\/(?:fwd|pub)--[0-9a-f]{32}--[a-z0-9]+\.[^/\s]+\/$/.test(value)
-					? value
-					: undefined;
-			const url = link(forward?.url);
-			const publicUrl = link(forward?.publicUrl);
-			if (tool.status === "done" && (url || publicUrl))
-				extra = (
-					<>
-						{url && (
-							<a className="tool-link" href={url} target="_blank" rel="noopener noreferrer">
-								Open {str(forward?.name) || `port ${str(forward?.port)}`} →
-							</a>
-						)}
-						{publicUrl && (
-							<a className="tool-link" href={publicUrl} target="_blank" rel="noopener noreferrer">
-								Public link →
-							</a>
-						)}
-					</>
-				);
-			break;
-		}
-		case "terminal": {
-			icon = <TerminalIcon />;
-			title = "Terminal";
-			const argv = Array.isArray(tool.args.args) ? tool.args.args.map(str) : [];
-			summary = [str(tool.args.command), ...argv].join(" ");
-			body = (
-				<>
-					<pre className="tool-command">{summary}</pre>
-					{tool.output && (
-						<pre className={`term ${tool.status === "error" ? "tool-error" : ""}`}>{tool.output}</pre>
-					)}
-				</>
-			);
-			const terminalId = typeof details.terminalId === "string" ? details.terminalId : undefined;
-			if (openTerminal && terminalId && tool.status === "done" && str(tool.args.command) !== "kill-window")
-				extra = (
-					<button type="button" className="tool-link" onClick={() => openTerminal(terminalId)}>
-						Open terminal{typeof details.window === "number" ? ` ${details.window}` : ""} →
-					</button>
-				);
-			break;
-		}
-		case "send_file":
-			icon = <FileIcon />;
-			title = "File";
-			summary = typeof details.name === "string" ? details.name : path;
-			body = tool.output ? <pre className="code">{tool.output}</pre> : null;
-			if (
-				tool.status === "done" &&
-				sessionId &&
-				typeof details.id === "string" &&
-				/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(details.id) &&
-				typeof details.name === "string" &&
-				typeof details.size === "number" &&
-				details.size >= 0
-			) {
-				const file = { id: details.id, name: details.name, size: details.size };
-				card = (
-					<FileCard
-						icon={<FileIcon />}
-						title={file.name}
-						meta={fileMeta(file)}
-						href={fileUrl(sessionId, file)}
-						download={file.name}
-						onOpen={() => openViewer({ kind: "file", file })}
-					/>
-				);
-			}
-			break;
-		case "history_search": {
-			icon = <SearchIcon size={15} />;
-			title = "History search";
-			summary = str(tool.args.query);
-			const hits = Array.isArray(details.hits) ? details.hits : [];
-			body = (
-				<div className="tool-sub">
-					{historyList(hits, "snippet") ??
-						(tool.output && (
-							<pre className={`code ${tool.status === "error" ? "tool-error" : ""}`}>{tool.output}</pre>
-						))}
-					{details.more === true && <p className="muted">More matches</p>}
-				</div>
-			);
-			break;
-		}
-		case "history_read": {
-			icon = <SearchIcon size={15} />;
-			title = "History read";
-			const mode = str(tool.args.mode);
-			const entries = Array.isArray(details.entries) ? details.entries : [];
-			const count = entries.length;
-			summary =
-				mode === "tail"
-					? `${count} ${count === 1 ? "entry" : "entries"} before the last compaction or handoff`
-					: mode === "range"
-						? `from #${str(tool.args.from)}${tool.args.to === undefined ? "" : ` to #${str(tool.args.to)}`}`
-						: `${count} ${count === 1 ? "entry" : "entries"}`;
-			body = (
-				<div className="tool-sub">
-					{historyList(entries, "preview") ??
-						(tool.output && (
-							<pre className={`code ${tool.status === "error" ? "tool-error" : ""}`}>{tool.output}</pre>
-						))}
-					{details.truncated === true && <p className="muted">Cut at the output budget</p>}
-				</div>
-			);
-			break;
-		}
-		case "history_handoff":
-			icon = <RefreshIcon />;
-			title = "Handoff";
-			summary =
-				str(tool.args.text)
-					.split("\n")
-					.find((line) => line.trim()) ?? "";
-			body = (
-				<div className="tool-sub">
-					<Markdown text={str(tool.args.text)} />
-					<p className="muted">New context started; earlier history stays searchable.</p>
-				</div>
-			);
-			break;
-		case "edit":
-			icon = <PencilIcon />;
-			title = "Edit";
-			summary = path;
-			body = diff ? (
-				<DiffBlock diff={diff} language={path} />
-			) : tool.output ? (
-				<pre className="code">{tool.output}</pre>
-			) : null;
-			if (tool.status !== "error") {
-				const first = typeof diff === "string" ? /^[+-]\s*(\d+) /m.exec(diff)?.[1] : undefined;
-				extra = workspaceLink(first ? Number(first) : undefined);
-			}
-			break;
-		default:
-			summary = Object.keys(tool.args).length ? JSON.stringify(tool.args) : "";
-			// Built only when shown: a long transcript has many closed cards.
-			body = open ? (
-				<>
-					{Object.keys(tool.args).length > 0 && <pre className="code">{JSON.stringify(tool.args, null, 2)}</pre>}
-					{tool.output && <pre className="code">{tool.output}</pre>}
-				</>
-			) : null;
-	}
-	if (card)
-		return (
-			<div className="tool file-tool">
-				{card}
-				<Images images={tool.images} />
-			</div>
-		);
-	return (
-		<div className={`tool ${tool.status}`}>
-			<div className="tool-header">
-				<button
-					type="button"
-					className="tool-head"
-					onClick={() =>
-						targetConversation !== undefined ? openConversation(targetConversation) : setOpen(!open)
-					}
-					aria-expanded={targetConversation === undefined ? open : undefined}
-					title={targetConversation !== undefined ? `Open subagent ${str(details.name)}` : undefined}
-				>
-					<span className="tool-icon">{icon}</span>
-					{title && <span className="tool-name">{title}</span>}
-					<span className="tool-summary">{summary}</span>
-					<span className="tool-state" title={tool.status}>
-						{active ? (
-							<span className="spinner" />
-						) : tool.status === "done" ? (
-							<CheckIcon />
-						) : tool.status === "interrupted" ? (
-							"interrupted"
-						) : (
-							<AlertIcon />
-						)}
-					</span>
-					{targetConversation === undefined && (
-						<span className={`chev ${open ? "open" : ""}`}>
-							<ChevronIcon size={14} />
-						</span>
-					)}
-				</button>
-				{targetConversation !== undefined && (
-					<button
-						type="button"
-						className="tool-expand"
-						aria-label="Expand spawn details"
-						aria-expanded={open}
-						onClick={() => setOpen(!open)}
-					>
-						<span className={`chev ${open ? "open" : ""}`}>
-							<ChevronIcon size={14} />
-						</span>
-					</button>
-				)}
-			</div>
-			{open && body && <div className="tool-body">{body}</div>}
-			{extra}
-			{tool.calls && tool.calls.length > 0 && <NestedCalls calls={tool.calls} settled={!active} />}
-			<Images images={tool.images} />
-		</div>
-	);
-});
-
-function Thinking({ text, live }: { text: string; live: boolean }) {
-	const [open, setOpen] = useState(false);
-	return (
-		<div className={`thinking ${live ? "live" : ""}`}>
-			<button type="button" onClick={() => setOpen(!open)} aria-expanded={open}>
-				<SparkIcon size={15} />
-				<span>{live ? "Thinking…" : "Thought"}</span>
-				<span className={`chev ${open ? "open" : ""}`}>
-					<ChevronIcon size={14} />
-				</span>
-			</button>
-			{open && <div className="thinking-body">{text}</div>}
-		</div>
-	);
-}
-
-function Assistant({
-	entryId,
-	message,
-	tools,
-	streaming,
-}: {
-	entryId?: number;
-	message: AssistantMessage;
-	tools: ToolView[];
-	streaming: boolean;
-}) {
-	const reply = useReply(streaming ? undefined : entryId, "Pi");
-	const branch = useContext(BranchFrom);
-	const byId = new Map(tools.map((tool) => [tool.id, tool]));
-	const parts = message.content;
-	const lastText = parts.findLastIndex((part) => part.type === "text" && part.text.trim());
-	const firstThinking = parts.findIndex((part) => part.type === "thinking");
-	const thinkingText = parts
-		.flatMap((part) => (part.type === "thinking" && part.thinking.trim() ? [part.thinking.trim()] : []))
-		.join("\n\n");
-	const thinkingLive = streaming && parts.at(-1)?.type === "thinking";
-	const answer = parts
-		.flatMap((part) => (part.type === "text" ? [part.text] : []))
-		.join("\n\n")
-		.trim();
-	const notice = hasNotice(message, streaming);
-	return (
-		<div className="assistant" data-entry={entryId} {...reply.gesture}>
-			{parts.map((part, index) => {
-				const key = `${part.type}-${index}`;
-				if (part.type === "thinking")
-					return index === firstThinking && thinkingText ? (
-						<Thinking key={key} text={thinkingText} live={thinkingLive} />
-					) : null;
-				if (part.type === "text")
-					return !part.text.trim() ? null : (
-						<div key={key} className={streaming && index === lastText ? "streaming" : undefined}>
-							<Markdown text={part.text} />
-							{index === lastText && answer && !streaming && (
-								<div className="message-actions">
-									<CopyButton text={answer} />
-									{branch && entryId !== undefined && (
-										<button
-											type="button"
-											className="copy"
-											aria-label="Branch from here"
-											title="Branch from here: continue the session after this answer"
-											onClick={() => branch(entryId)}
-										>
-											<BranchIcon />
-										</button>
-									)}
-									{reply.button}
-								</div>
-							)}
-						</div>
-					);
-				if (part.type === "toolCall") {
-					const tool = byId.get(part.id) ?? {
-						id: part.id,
-						name: part.name,
-						args: part.arguments ?? {},
-						status: "pending" as const,
-						output: "",
-						images: [],
-					};
-					return <ToolCard key={part.id} tool={tool} />;
-				}
-				return null;
-			})}
-			{notice && (
-				<div className={`notice ${message.stopReason === "aborted" ? "stopped" : "error"}`}>
-					{message.stopReason === "aborted"
-						? "Stopped"
-						: message.stopReason === "length"
-							? "The response hit the model's length limit"
-							: message.errorMessage || "The provider returned an error."}
-				</div>
-			)}
-		</div>
-	);
-}
-
 /** Whether a response ends with a notice (an error, a stop, the length limit) below its parts. */
 function hasNotice(message: AssistantMessage, streaming: boolean): boolean {
 	return ["error", "aborted", "length"].includes(message.stopReason) && !streaming;
-}
-
-/** The parts a response shows: tool calls, non-empty text, and its first thinking part when it has thinking text. */
-function visibleParts(message: AssistantMessage): AssistantMessage["content"] {
-	const firstThinking = message.content.findIndex((part) => part.type === "thinking");
-	const thinking = message.content.some((part) => part.type === "thinking" && part.thinking.trim());
-	return message.content.filter(
-		(part, index) =>
-			part.type === "toolCall" ||
-			(part.type === "text" && part.text.trim()) ||
-			(part.type === "thinking" && index === firstThinking && thinking),
-	);
-}
-
-/** Whether an item's first and last visible blocks are tool calls (a tool call ending one response and one starting
- * the next stack like parallel calls, without the gap between items). */
-function toolEdges(item: Item): { starts: boolean; ends: boolean } {
-	if (item.type === "tool") return { starts: true, ends: true };
-	if (item.type !== "assistant") return { starts: false, ends: false };
-	const visible = visibleParts(item.message);
-	return {
-		starts: visible[0]?.type === "toolCall",
-		ends: !hasNotice(item.message, item.streaming) && visible.at(-1)?.type === "toolCall",
-	};
 }
 
 /** Height of images whose boxes are known from their headers (`imageBox`), at most `width` wide. */
@@ -951,39 +264,51 @@ function imagesHeight(images: readonly ImageContent[], width: number): number {
  */
 function rowFeatures(row: TranscriptRow, width: number): RowFeatures {
 	const { item } = row;
-	const spacing = row.first ? "first" : row.joined ? "joined" : "";
+	const spacing = row.first ? "first" : (row.gap ?? "");
 	switch (item.type) {
 		case "user":
 			return {
-				kind: ["user", item.author || item.peer ? "named" : "", item.images.length ? "images" : "", spacing].join(
-					":",
-				),
+				kind: [
+					incoming(item) ? "incoming" : "user",
+					item.author ? "named" : "",
+					item.images.length ? "images" : "",
+					// The owner's sent messages have a line of actions (Copy, the time) below the bubble; queued ones not yet.
+					!incoming(item) && item.entryId !== undefined ? "actions" : "",
+					spacing,
+				].join(":"),
 				text: item.text.length,
 				fixed: imagesHeight(item.images, width),
 			};
-		case "assistant": {
-			const parts = visibleParts(item.message);
-			const shape = parts.map((part) => (part.type === "toolCall" ? "t" : part.type === "thinking" ? "k" : "x"));
-			const images = item.tools.flatMap((tool) => tool.images);
+		case "activity": {
+			const preview = thoughtPreview(item.entries ?? [], item.working, item.thought);
+			// A working wheel may also carry up to three lines of its latest thought.
+			return item.rows
+				? { kind: `activity:rows:${item.steps.length}:${spacing}`, text: 0, fixed: 0 }
+				: {
+						kind: `activity:${preview ? "thought:" : ""}${spacing}`,
+						text: Math.min(preview?.length ?? 0, 300),
+						fixed: 0,
+					};
+		}
+		case "thought":
+			// One line until opened; at detail 4 in full.
+			return item.full
+				? { kind: `thought:full:${spacing}`, text: item.text.length, fixed: 0 }
+				: { kind: `thought:${spacing}`, text: 0, fixed: 0 };
+		case "text":
+			return { kind: `text:${spacing}`, text: item.text.length, fixed: 0 };
+		case "answer":
 			return {
-				// The parts' order and kinds (thinking, text, tool calls, at most four described), and whether it ends.
 				kind: [
-					"assistant",
-					shape.slice(0, 4).join("") + (shape.length > 4 ? `+${shape.length - 4}` : ""),
+					"answer",
 					item.streaming ? "live" : hasNotice(item.message, item.streaming) ? "notice" : "",
-					images.length ? "images" : "",
 					spacing,
 				].join(":"),
-				text: parts.reduce((sum, part) => sum + (part.type === "text" ? part.text.length : 0), 0),
-				fixed: imagesHeight(images, width),
+				text: item.text.length,
+				fixed: 0,
 			};
-		}
-		case "tool":
-			return {
-				kind: ["tool", item.tool.images.length ? "images" : "", spacing].join(":"),
-				text: 0,
-				fixed: imagesHeight(item.tool.images, width),
-			};
+		case "results":
+			return { kind: `results:${item.tools.length}:${spacing}`, text: 0, fixed: 0 };
 		case "failure":
 			return { kind: `failure:${spacing}`, text: item.text.length, fixed: 0 };
 		case "marker":
@@ -999,55 +324,91 @@ function rowFeatures(row: TranscriptRow, width: number): RowFeatures {
  */
 export const rowEstimates = new RowEstimator<TranscriptRow>(rowFeatures, 120);
 
-function Report({ name, status, text }: { name: string; status: string; text: string }) {
-	const [open, setOpen] = useState(false);
-	const failed = status.startsWith("failed");
-	const verb = failed ? "failed" : status === "question" ? "asks" : status === "note" ? "notes" : "answered";
-	return (
-		<div className={`report ${failed ? "failed" : ""} ${status === "question" ? "question" : ""}`}>
-			<button type="button" className="report-head" onClick={() => setOpen(!open)} aria-expanded={open}>
-				<BotIcon />
-				<span>
-					<strong>{name}</strong> {verb}
-				</span>
-				<span className={`chev ${open ? "open" : ""}`}>
-					<ChevronIcon size={14} />
-				</span>
-			</button>
-			{text && (
-				<div className={open ? "report-body" : "report-body clamp"}>{failed ? text : <Markdown text={text} />}</div>
-			)}
-		</div>
-	);
-}
+/** Whether a message is someone else's (a subagent's, another session's, a guest's): `Incoming`, not a bubble. */
+const incoming = (item: Extract<Item, { type: "user" }>): boolean =>
+	Boolean(item.agent || item.peer || item.author?.kind === "guest");
 
-/** A person's message: an input, or a display-only entry (chat). People's messages can be replied to. */
-function UserMessage({ item }: { item: Extract<Item, { type: "user" }> }) {
+const AGENT_VERBS = { answered: "answered", question: "asks", note: "wrote", failed: "failed" } as const;
+
+/**
+ * Someone else's message, one shape for every kind (owner decision: kinds differ only by icon and word, no coloured
+ * edges): a header line "icon name · what · time", muted but the name, and the body as Markdown indented under the
+ * name, cut after about eight lines with "Show more". The whole header opens where the message came from (a subagent's
+ * conversation, another session) and then shows a chevron; the body is text to select, never a link.
+ */
+function Incoming({ item }: { item: Extract<Item, { type: "user" }> }) {
+	const openConversation = useContext(OpenConversation);
 	const openPeer = useContext(OpenPeerConversation);
 	const reveal = useContext(RevealEntry);
-	const peer = item.peer;
-	const reply = useReply(item.author ? item.entryId : undefined, item.author?.name ?? "");
 	const branch = useContext(BranchFrom);
-	// Only what reached the agent can be edited: a chat message (chat mode) is not part of its history.
-	const entryId = item.chat ? undefined : item.entryId;
+	const guest = item.author?.kind === "guest" ? item.author : undefined;
+	const reply = useReply(guest ? item.entryId : undefined, guest?.name ?? "");
+	const { agent, peer } = item;
+	const sender: { kind: string; icon: ReactNode; name: string; what: string; open?: () => void } = agent
+		? {
+				kind: "agent",
+				icon: agent.intent === "failed" ? <AlertIcon /> : <BotIcon />,
+				name: agent.from.name,
+				what: AGENT_VERBS[agent.intent],
+				open: () => openConversation(agent.from.conversationId),
+			}
+		: peer
+			? {
+					kind: "session",
+					icon: <CommentIcon />,
+					name: peer.title.trim() || "Conversation",
+					what: "wrote",
+					...(openPeer ? { open: () => openPeer(peer.id) } : {}),
+				}
+			: {
+					kind: "guest",
+					icon: <UsersIcon />,
+					name: guest?.name ?? "",
+					what: item.chat ? "(guest) wrote in chat" : "(guest) wrote",
+				};
+	// Only what reached the agent can be edited, and a subagent's message is the agent's, not a person's.
+	const entryId = item.chat || agent ? undefined : item.entryId;
+	const line = (
+		<>
+			<span className="incoming-icon">{sender.icon}</span>
+			<span className="incoming-line">
+				<span className="incoming-name">{sender.name}</span> · {sender.what}
+				{item.at !== undefined && (
+					<>
+						{" · "}
+						<Time at={item.at} />
+					</>
+				)}
+			</span>
+		</>
+	);
 	return (
-		<div
-			className={`user ${item.author?.kind === "guest" ? "guest-message" : ""} ${item.chat ? "chat-message" : ""}`}
-			data-entry={item.entryId}
-		>
-			{branch && entryId !== undefined && (
-				<button
-					type="button"
-					className="edit-button"
-					aria-label="Edit"
-					title="Edit: continue the session before this message, with its text in the composer"
-					onClick={() => branch(entryId)}
-				>
-					<PencilIcon />
-				</button>
-			)}
-			{reply.button}
-			<div className="bubble" {...reply.gesture}>
+		<div className="incoming" data-entry={item.entryId} data-from={sender.kind} data-testid="incoming">
+			<div className="incoming-head">
+				{sender.open ? (
+					<button type="button" className="incoming-from" aria-label={`Open ${sender.name}`} onClick={sender.open}>
+						{line}
+						<span className="incoming-chevron" aria-hidden="true">
+							<ChevronIcon />
+						</span>
+					</button>
+				) : (
+					<div className="incoming-from">{line}</div>
+				)}
+				{branch && entryId !== undefined && (
+					<button
+						type="button"
+						className="edit-button"
+						aria-label="Edit"
+						title="Edit: continue the session before this message, with its text in the composer"
+						onClick={() => branch(entryId)}
+					>
+						<PencilIcon />
+					</button>
+				)}
+				{reply.button}
+			</div>
+			<div className="incoming-content" {...reply.gesture}>
 				{item.replyTo && (
 					<button
 						type="button"
@@ -1055,40 +416,17 @@ function UserMessage({ item }: { item: Extract<Item, { type: "user" }> }) {
 						title="Show the message this answers"
 						onClick={() => item.replyTo && void revealEntry(item.replyTo.entryId, reveal)}
 					>
+						<ReplyIcon size={12} />
 						<strong>{item.replyTo.name}</strong> {item.replyTo.excerpt}
 					</button>
 				)}
-				{item.author && (
-					<div
-						className="speaker"
-						style={
-							item.author.kind === "guest"
-								? {
-										color: `hsl(${[...item.author.id].reduce((n, c) => (n * 31 + c.charCodeAt(0)) % 360, 0)} 65% 55%)`,
-									}
-								: undefined
-						}
-					>
-						{item.author.kind === "owner" ? item.author.name : `${item.author.name} · guest`}
-						{item.chat && " · chat"}
-					</div>
-				)}
-				{peer &&
-					(openPeer ? (
-						<button
-							type="button"
-							className="speaker footer-action"
-							aria-label={`Open conversation ${peer.title.trim() || "Conversation"}`}
-							onClick={() => openPeer(peer.id)}
-						>
-							{peer.title.trim() || "Conversation"} · agent
-						</button>
+				<Clamped text={item.text}>
+					{agent?.intent === "failed" ? (
+						<div className="incoming-plain">{item.text}</div>
 					) : (
-						<div className="speaker" title={`Agent conversation ${peer.id}`}>
-							{peer.title.trim() || "Conversation"} · agent
-						</div>
-					))}
-				{item.peer ? <Markdown text={item.text} /> : item.text}
+						<Markdown text={item.text} />
+					)}
+				</Clamped>
 				{item.files.length > 0 && (
 					<div className="bubble-files">
 						{item.files.map((file) => (
@@ -1103,23 +441,190 @@ function UserMessage({ item }: { item: Extract<Item, { type: "user" }> }) {
 	);
 }
 
-const ItemView = memo(function ItemView({ item }: { item: Item }) {
+/** A body cut after about eight lines, with "Show more" when it is longer; `text` names what it shows. */
+function Clamped({ text, children }: { text: string; children: ReactNode }) {
+	const body = useRef<HTMLDivElement>(null);
+	const [long, setLong] = useState(false);
+	const [open, setOpen] = useState(false);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: measured again when the text changes.
+	useLayoutEffect(() => {
+		const element = body.current;
+		if (element && !open) setLong(element.scrollHeight > element.clientHeight + 1);
+	}, [text, open]);
+	return (
+		<>
+			<div className={`incoming-body ${open ? "" : "clamped"}`} ref={body}>
+				{children}
+			</div>
+			{long && (
+				<button type="button" className="incoming-more" aria-expanded={open} onClick={() => setOpen(!open)}>
+					{open ? "Show less" : "Show more"}
+				</button>
+			)}
+		</>
+	);
+}
+
+/** The owner's message (or an input without an author): a bubble. People's messages can be replied to. */
+function UserMessage({ item }: { item: Extract<Item, { type: "user" }> }) {
+	const reveal = useContext(RevealEntry);
+	const reply = useReply(item.author ? item.entryId : undefined, item.author?.name ?? "");
+	const branch = useContext(BranchFrom);
+	// Only what reached the agent can be edited: a chat message (chat mode) is not part of its history.
+	const entryId = item.chat ? undefined : item.entryId;
+	const edit = branch && entryId !== undefined;
+	const text = item.text.trim();
+	return (
+		<div className={`user ${item.chat ? "chat-message" : ""}`} data-entry={item.entryId}>
+			<div className="user-line">
+				{reply.button}
+				<div className="bubble" {...reply.gesture}>
+					{item.replyTo && (
+						<button
+							type="button"
+							className="reply-quote"
+							title="Show the message this answers"
+							onClick={() => item.replyTo && void revealEntry(item.replyTo.entryId, reveal)}
+						>
+							<ReplyIcon size={12} />
+							<strong>{item.replyTo.name}</strong> {item.replyTo.excerpt}
+						</button>
+					)}
+					{item.author && (
+						<div className="speaker">
+							{item.author.name}
+							{item.chat && " · chat"}
+						</div>
+					)}
+					{item.text}
+					{item.files.length > 0 && (
+						<div className="bubble-files">
+							{item.files.map((file) => (
+								<span key={file}>{file}</span>
+							))}
+						</div>
+					)}
+					<Images images={item.images} />
+					{item.note && <div className="bubble-note">{item.note}</div>}
+				</div>
+			</div>
+			{/* Sent messages only: a queued one has neither its entry nor its time yet. */}
+			{item.entryId !== undefined && (text || item.at !== undefined || edit) && (
+				<div className="message-actions">
+					{item.at !== undefined && <Time at={item.at} className="message-time" />}
+					{edit && (
+						<button
+							type="button"
+							className="copy"
+							aria-label="Edit"
+							title="Edit: continue the session before this message, with its text in the composer"
+							onClick={() => branch(entryId)}
+						>
+							<PencilIcon />
+						</button>
+					)}
+					{text && <CopyButton text={text} />}
+				</div>
+			)}
+		</div>
+	);
+}
+
+/** A thinking block in place: "Thought", opened to its text with a tap; "Thinking…" while it streams. */
+function Thought({ item }: { item: Extract<ChatItem, { type: "thought" }> }) {
+	// Open at detail 4 (settings.json), also when the setting changes while it shows, until the reader toggles it.
+	const [toggled, setOpen] = useState<boolean>();
+	const open = toggled ?? Boolean(item.full);
+	return (
+		<div className={`thinking ${item.live ? "live" : ""}`} data-entry={item.entryId} data-testid="thought">
+			<button type="button" onClick={() => setOpen(!open)} aria-expanded={open}>
+				<SparkIcon size={15} />
+				<span>{item.live ? "Thinking…" : "Thought"}</span>
+				<span className={`chev ${open ? "open" : ""}`}>
+					<ChevronIcon size={14} />
+				</span>
+			</button>
+			{open && <div className="thinking-body">{item.text}</div>}
+		</div>
+	);
+}
+
+/**
+ * The agent's answer: the last text of its turn, as prose, with Copy, Branch, Reply and its time once complete; a stop,
+ * an error or the length limit below it.
+ */
+const Answer = memo(function Answer({ item }: { item: Extract<ChatItem, { type: "answer" }> }) {
+	const reply = useReply(item.streaming ? undefined : item.entryId, "Pi");
+	const branch = useContext(BranchFrom);
+	const { message, entryId } = item;
+	const text = item.text.trim();
+	return (
+		<div className="assistant" data-entry={entryId} {...reply.gesture}>
+			{text && (
+				<div className={item.streaming ? "streaming" : undefined}>
+					<Markdown text={item.text} />
+					{!item.streaming && (
+						<div className="message-actions">
+							<CopyButton text={text} />
+							{branch && entryId !== undefined && (
+								<button
+									type="button"
+									className="copy"
+									aria-label="Branch from here"
+									title="Branch from here: continue the session after this answer"
+									onClick={() => branch(entryId)}
+								>
+									<BranchIcon />
+								</button>
+							)}
+							{reply.button}
+							<Time at={message.timestamp} className="message-time" />
+						</div>
+					)}
+				</div>
+			)}
+			{hasNotice(message, item.streaming) && (
+				<div className={`notice ${message.stopReason === "aborted" ? "stopped" : "error"}`}>
+					{message.stopReason === "aborted"
+						? "Stopped"
+						: message.stopReason === "length"
+							? "The response hit the model's length limit"
+							: message.errorMessage || "The provider returned an error."}
+				</div>
+			)}
+		</div>
+	);
+});
+
+const ItemView = memo(function ItemView({ item }: { item: ChatItem }) {
 	switch (item.type) {
-		case "user": {
-			// Subagents' messages (reports, questions, notes), from their entry data.
-			if (item.agent) return <Report name={item.agent.from.name} status={item.agent.intent} text={item.text} />;
-			return <UserMessage item={item} />;
-		}
-		case "assistant":
+		case "user":
+			return incoming(item) ? <Incoming item={item} /> : <UserMessage item={item} />;
+		case "thought":
+			return <Thought item={item} />;
+		case "text":
 			return (
-				<Assistant entryId={item.entryId} message={item.message} tools={item.tools} streaming={item.streaming} />
-			);
-		case "tool":
-			return (
-				<div className="assistant">
-					<ToolCard tool={item.tool} />
+				<div className="assistant" data-entry={item.entryId}>
+					<Markdown text={item.text} />
 				</div>
 			);
+		case "activity":
+			return (
+				<ActivityRow
+					rowKey={item.key}
+					steps={item.steps}
+					{...(item.entries ? { entries: item.entries } : {})}
+					{...(item.rows ? { rows: true } : {})}
+					working={item.working}
+					{...(item.thought ? { thought: item.thought } : {})}
+					{...(item.startedAt ? { startedAt: item.startedAt } : {})}
+					{...(item.endedAt ? { endedAt: item.endedAt } : {})}
+				/>
+			);
+		case "answer":
+			return <Answer item={item} />;
+		case "results":
+			return <Results tools={item.tools} />;
 		case "failure":
 			return <output className="notice error">{item.text}</output>;
 		case "marker":
@@ -1134,24 +639,62 @@ const ItemView = memo(function ItemView({ item }: { item: Item }) {
 	}
 });
 
-/** A transcript row: an item, and its spacing to the item before it (see `toolEdges`). */
-export type TranscriptRow = { key: string; entryId?: number; item: Item; first: boolean; joined: boolean };
+/** A transcript row: a chat item, and its spacing to the row before it. */
+export type TranscriptRow = {
+	key: string;
+	entryId?: number;
+	/** The responses a turn's activity row shows, for revealing one of them. */
+	entryIds?: readonly number[];
+	item: ChatItem;
+	first: boolean;
+	/**
+	 * The spacing to the row before: a turn's parts (thinking, words, runs of calls, the answer, its results) follow each
+	 * other closely (`step`); everything else (a person's message, the first part after it, markers) starts a new turn.
+	 */
+	gap?: "step";
+	/**
+	 * The first part of the agent's turn: at least one row tall, as the working wheel it replaces (a first line of
+	 * words is shorter), so the turn never shrinks when its first part arrives.
+	 */
+	lead?: boolean;
+};
 
-/** The rows of a transcript's items. Items keep their identity while unchanged, and so do their rows. */
-const rowsOf = new WeakMap<Item, { previous: Item | undefined; row: TranscriptRow }>();
-export function transcriptRows(items: readonly Item[]): TranscriptRow[] {
-	return items.map((item, index) => {
-		const previous = items[index - 1];
+/** The parts of the agent's turn, which follow each other at the step distance. */
+const TURN_PARTS: ReadonlySet<ChatItem["type"]> = new Set(["thought", "text", "activity", "answer", "results"]);
+
+/** Rows keep their identity while their item and spacing are unchanged. */
+const rowsOf = new WeakMap<ChatItem, { first: boolean; gap: TranscriptRow["gap"]; row: TranscriptRow }>();
+/**
+ * The rows of a transcript: its items as the chat shows them (`chatItems`: each turn's thinking, texts and runs of
+ * calls in order, its answer and results). `tools`: the tools' contributions (`ToolActivities`); `detail`: how much
+ * of a turn the transcript shows (settings.json `detail`).
+ * `working`: the agent is at it, so the last turn is live; `known`: `working` comes from the server's live state (not
+ * yet while the transcript kept on this device shows).
+ */
+export function transcriptRows(
+	items: readonly Item[],
+	tools: ToolActivityTable,
+	working = false,
+	known = true,
+	detail: Detail = DEFAULT_DETAIL,
+): TranscriptRow[] {
+	const shown = chatItems(items, working, known, tools, detail);
+	return shown.map((item, index) => {
+		const first = index === 0;
+		const before = shown[index - 1];
+		const gap = before && TURN_PARTS.has(before.type) && TURN_PARTS.has(item.type) ? ("step" as const) : undefined;
 		const cached = rowsOf.get(item);
-		if (cached && cached.previous === previous) return cached.row;
+		if (cached && cached.first === first && cached.gap === gap) return cached.row;
 		const row: TranscriptRow = {
 			key: item.key,
 			...("entryId" in item && item.entryId !== undefined ? { entryId: item.entryId } : {}),
+			...(item.type === "activity" && item.entryIds?.length ? { entryIds: item.entryIds } : {}),
 			item,
-			first: index === 0,
-			joined: previous !== undefined && toolEdges(previous).ends && toolEdges(item).starts,
+			first,
+			...(gap ? { gap } : {}),
+			...(!gap && TURN_PARTS.has(item.type) ? { lead: true } : {}),
 		};
-		rowsOf.set(item, { previous, row });
+		rowsOf.set(item, { first, gap, row });
 		return row;
 	});
 }
@@ -1254,15 +797,13 @@ export const Messages = memo(function Messages({
 					return (
 						<div
 							key={row.key}
-							className={[
-								"row",
-								row.first ? "first" : row.joined ? "joined" : "",
-								delay === undefined ? "" : "arriving",
-							]
+							className={["row", row.first ? "first" : "", delay === undefined ? "" : "arriving"]
 								.filter(Boolean)
 								.join(" ")}
 							style={delay ? { animationDelay: `${delay}ms` } : undefined}
 							data-row={row.key}
+							data-gap={row.first ? undefined : row.gap}
+							data-lead={row.lead ? "" : undefined}
 							ref={list.rowRef}
 						>
 							<ItemView item={row.item} />
@@ -1272,13 +813,6 @@ export const Messages = memo(function Messages({
 				<div className="row-space" ref={list.bottomRef} style={{ height: spacers.after }} />
 			</div>
 			{stopped && !transcript.busy && <output className="notice stopped">Stopped</output>}
-			{transcript.working && (
-				<output className="working" aria-label="Working">
-					<span />
-					<span />
-					<span />
-				</output>
-			)}
 			{transcript.compactions.map((compaction) => (
 				<output key={compaction.id} className="notice">
 					{compaction.blocking ? "Compacting context…" : "Compacting context in background…"}
@@ -1288,6 +822,7 @@ export const Messages = memo(function Messages({
 			{transcript.retry && (
 				<div className="notice">Provider error, retrying… {transcript.retry.error.slice(0, 200)}</div>
 			)}
+			<ActivityLayer rows={rows} />
 		</div>
 	);
 });

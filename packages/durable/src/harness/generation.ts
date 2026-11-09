@@ -231,7 +231,12 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			const entries = planSystemEntries(view, desired, agent.tools, runtime.now());
 			const threshold =
 				compacted === undefined
-					? thresholdCompaction(view, entries, resolved.contextWindow, compactionPolicy(settings, model))
+					? thresholdCompaction(
+							view,
+							entries,
+							resolved.contextWindow,
+							compactionPolicy(settings, model, agent.compaction),
+						)
 					: undefined;
 			if (threshold === "blocking") {
 				// Compact first and prepare again; the transcript is unchanged until the compaction appends.
@@ -802,8 +807,11 @@ async function classify(
 	// The retry and compaction policies govern the next attempt, so they are read now rather than pinned at preparation.
 	const settings = runtime.settings;
 	const overflow = message.stopReason === "error" && isContextOverflow(message);
-	const compaction = compactionPolicy(settings, ref);
-	if (overflow && compacted === undefined && compaction.enabled) {
+	const compaction =
+		overflow && compacted === undefined
+			? compactionPolicy(settings, ref, (await runtime.agent(context)).compaction)
+			: undefined;
+	if (compaction?.enabled === true) {
 		const view = await runtime.context(conversationId, context, { at: cutoff });
 		if (selectCut(view, compaction.keepRecentTokens) !== undefined) {
 			const text = message.errorMessage ?? "Context overflow";

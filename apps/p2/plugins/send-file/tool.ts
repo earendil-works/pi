@@ -5,9 +5,12 @@ import { DownloadError } from "@p2/app/v1/node";
 
 const READ_CHUNK = 1024 * 1024;
 
-/** Saves a snapshot of `name` (`size` bytes, read in order by `next` until it gives none) into the session's files. */
+/**
+ * Saves a snapshot of `name` (`size` bytes, read in order by `next` until it gives none) into the session's files, as
+ * offered by conversation `conversation` (what reads a turn's offered files, e.g. Discord's reply, finds it by that).
+ */
 export type SaveSnapshot = (
-	snapshot: { readonly name: string; readonly size: number },
+	snapshot: { readonly name: string; readonly size: number; readonly conversation: number },
 	next: () => Promise<Uint8Array>,
 	context: Context,
 ) => Promise<DownloadInfo>;
@@ -45,7 +48,7 @@ export function createSendFileExtension(save: SaveSnapshot) {
 						if (!info.ok) throw new DownloadError(400, "Could not open source file");
 						let offset = 0;
 						const saved = await save(
-							{ name: args.name ?? info.value.name, size: info.value.size },
+							{ name: args.name ?? info.value.name, size: info.value.size, conversation: api.conversationId },
 							async () => {
 								const bytes = await reader.read(offset, READ_CHUNK, context);
 								if (!bytes.ok) throw new DownloadError(400, bytes.error.message);

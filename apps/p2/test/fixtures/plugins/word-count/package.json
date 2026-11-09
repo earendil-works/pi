@@ -1,0 +1,5 @@
+{
+	"name": "word-count",
+	"private": true,
+	"type": "module"
+}

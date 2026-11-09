@@ -35,6 +35,7 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		await send(1, "first");
 		await send(1, "second");
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 	});
 	after(async () => {
 		await browser?.close();
@@ -49,7 +50,7 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		assert.equal(await browser.evaluate<number>(`document.querySelectorAll('.branch-row').length`), 0);
 		assert.equal(await browser.evaluate<number>(`document.querySelectorAll('.subagent-toggle').length`), 0);
 		await browser.evaluate(
-			`[...document.querySelectorAll('.user')].find(e=>e.textContent.includes('second')).querySelector('.edit-button').click()`,
+			`[...document.querySelectorAll('.user')].find(e=>e.textContent.includes('second')).querySelector('[aria-label=Edit]').click()`,
 		);
 		await browser.wait(`document.querySelector('.composer textarea')?.value==='second'`);
 		const main = (await until((await holdIn(fixture.browser(), Sessions, {}, "owner")).sessions, (list) =>

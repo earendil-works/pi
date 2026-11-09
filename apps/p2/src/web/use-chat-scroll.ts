@@ -28,7 +28,8 @@ import { keptSizes, RowLayout } from "./virtual-list.ts";
 /** The rendered rows, inclusive; `end < start` for none. */
 export type RowRange = { readonly start: number; readonly end: number };
 /** A row of the list: its stable key, and the entry it shows (for revealing it). */
-export type ListRow = { readonly key: string; readonly entryId?: number };
+/** A row of the list: its key, and the entry it shows, or the entries (a turn's activity holds several responses). */
+export type ListRow = { readonly key: string; readonly entryId?: number; readonly entryIds?: readonly number[] };
 
 const NO_ROWS: readonly ListRow[] = [];
 const NONE: RowRange = { start: 0, end: -1 };
@@ -54,9 +55,29 @@ const EDGE = 2;
 /** Whether the browser keeps the reader's place when content above them changes (CSS scroll anchoring). */
 const NATIVE_ANCHORING = typeof CSS !== "undefined" && CSS.supports("overflow-anchor", "auto");
 
+/** The transcripts gliding (`TranscriptScroll.#glide`), by scroller: their messages, drawn lower for a moment. */
+const gliding = new WeakMap<HTMLElement, HTMLElement>();
+
+/**
+ * Where the content ends. The browser counts a gliding transcript, drawn lower, as content below the end: scrolled
+ * there, the transcript would jump down at the next layout as the glide ends (the browser clamps the scroll position).
+ */
+function contentHeight(element: HTMLElement): number {
+	const messages = gliding.get(element);
+	if (!messages) return element.scrollHeight;
+	const shift = new DOMMatrixReadOnly(getComputedStyle(messages).transform).m42;
+	const bottom =
+		messages.getBoundingClientRect().bottom -
+		shift -
+		element.getBoundingClientRect().top +
+		element.scrollTop +
+		Number.parseFloat(getComputedStyle(element).paddingBottom);
+	return Math.max(element.clientHeight, Math.min(element.scrollHeight, Math.ceil(bottom)));
+}
+
 /** How far the viewport is from the bottom. */
 function fromEnd(element: HTMLElement): number {
-	return element.scrollHeight - element.clientHeight - element.scrollTop;
+	return contentHeight(element) - element.clientHeight - element.scrollTop;
 }
 
 /** How far the viewport is from the top. */
@@ -73,7 +94,7 @@ function isBottom(element: HTMLElement): boolean {
  * momentum on it, and a streaming answer resizes the transcript many times a second.
  */
 function toEnd(element: HTMLElement): void {
-	if (fromEnd(element) >= 1) element.scrollTop = element.scrollHeight;
+	if (fromEnd(element) >= 1) element.scrollTop = contentHeight(element) - element.clientHeight;
 }
 
 /** Mounted transcripts, so a search hit or a quoted message can be revealed wherever it is shown. */
@@ -92,7 +113,11 @@ export class TranscriptScroll {
 	/** Following the answer at the bottom (Pi Mobile's `pinned`). */
 	pinned = true;
 	atBottom = true;
-	history: { more: boolean; loading: boolean } | undefined;
+	/**
+	 * The loaded history: whether older entries exist, whether a page is loading, and how many items are loaded (a
+	 * page that arrived changes it, even when its entries joined a row already shown, such as a turn's activity).
+	 */
+	history: { more: boolean; loading: boolean; size?: number } | undefined;
 	onEarlier: (() => void) | undefined;
 
 	#cache: string | undefined;
@@ -135,8 +160,8 @@ export class TranscriptScroll {
 	 * following, even when the growing answer makes one of them read as a move up. The reader's input ends it.
 	 */
 	#following = false;
-	/** The row count when older history was last asked for. */
-	#earlierCount = -1;
+	/** The loaded history's size (or the row count) when older history was last asked for. */
+	#earlierSize = -1;
 	#resizing = false;
 	#deferred: number | undefined;
 	/** The running glide of new messages (`#glide`), if any. */
@@ -167,6 +192,7 @@ export class TranscriptScroll {
 			this.#position = undefined;
 			this.#target = undefined;
 			this.#lastKey = undefined;
+			this.#earlierSize = -1;
 		}
 		if (rows !== this.#rows || estimates !== this.#estimates) {
 			this.#rows = rows;
@@ -227,10 +253,19 @@ export class TranscriptScroll {
 		if (!messages || typeof messages.animate !== "function") return;
 		if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 		const from = Math.min(height, this.#viewport || height);
-		this.#gliding = messages.animate([{ transform: `translateY(${from}px)` }, { transform: "translateY(0)" }], {
+		const glide = messages.animate([{ transform: `translateY(${from}px)` }, { transform: "translateY(0)" }], {
 			duration: 320,
 			easing: "cubic-bezier(0.2, 0.8, 0.2, 1)",
 		});
+		this.#gliding = glide;
+		const scroller = this.#scroller;
+		if (!scroller) return;
+		gliding.set(scroller, messages);
+		const ended = () => {
+			if (this.#gliding === glide || !this.#gliding) gliding.delete(scroller);
+		};
+		glide.addEventListener("finish", ended);
+		glide.addEventListener("cancel", ended);
 	}
 
 	/**
@@ -376,13 +411,15 @@ export class TranscriptScroll {
 		else {
 			this.#following = true;
 			this.#gesture.wheel();
-			element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
+			element.scrollTo({ top: contentHeight(element) - element.clientHeight, behavior: "smooth" });
 		}
 	};
 
 	/** Scrolls entry `entryId` to the viewport's center and highlights it; false when it is not loaded here. */
 	reveal(entryId: number): boolean {
-		const row = this.#rows.find((candidate) => candidate.entryId === entryId);
+		const row = this.#rows.find(
+			(candidate) => candidate.entryId === entryId || candidate.entryIds?.includes(entryId),
+		);
 		const element = this.#scroller;
 		if (!row || !element) return false;
 		this.pinned = false;
@@ -709,17 +746,21 @@ export class TranscriptScroll {
 	}
 
 	/**
-	 * Loads older history while the reader is within `PREFETCH` viewports of the loaded start. A scroll asks for it;
-	 * a layout change (a page arrived) asks again only when the last page added rows, so a failing load is not
-	 * retried in a loop.
+	 * Loads older history while the reader is within `PREFETCH` viewports of the loaded start; following the answer at
+	 * the bottom, while less than a viewport of history is above it, so there is always something to scroll back to.
+	 * (A turn's many tool calls are one row: a page of them can add next to no height, and without this a short
+	 * transcript would show only that row under "Earlier messages", with nothing to scroll.) A scroll asks for it; a
+	 * layout change (a page arrived) asks again only when the last page added to the loaded history, so a failing load
+	 * is not retried in a loop.
 	 */
 	#loadEarlier(scrolled: boolean): void {
 		const scroller = this.#scroller;
-		if (!scroller || this.pinned || !this.history?.more || this.history.loading) return;
-		if (!scrolled && this.layout.count === this.#earlierCount) return;
+		if (!scroller || !this.history?.more || this.history.loading) return;
+		const size = this.history.size ?? this.layout.count;
+		if (!scrolled && size === this.#earlierSize) return;
 		const top = this.#layoutTop();
-		if (top === undefined || top >= scroller.clientHeight * PREFETCH) return;
-		this.#earlierCount = this.layout.count;
+		if (top === undefined || top >= scroller.clientHeight * (this.pinned ? 1 : PREFETCH)) return;
+		this.#earlierSize = size;
 		this.onEarlier?.();
 	}
 
@@ -794,7 +835,7 @@ export function useChatScroll<Row extends ListRow>(
 		cache?: string;
 		rows?: readonly Row[];
 		estimates?: RowEstimates<Row>;
-		history?: { more: boolean; loading: boolean };
+		history?: { more: boolean; loading: boolean; size?: number };
 		onEarlier?: () => void;
 	} = {},
 ) {

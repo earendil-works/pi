@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ToolExecutionApi, ToolExecutionResult, ToolRegistration, Tx } from "@earendil-works/pi-durable";
+import type { SessionLock } from "@p2/app/v1";
 import { resolveTools } from "../../plugins/subagents/contract.worker.ts";
 import { guardTool, type P2Tool } from "../../src/runtime/tool-access.ts";
 
@@ -15,12 +16,18 @@ const tool = (name: string, fields: Partial<P2Tool> = {}): P2Tool => ({
 });
 const context = {} as never;
 
-/** A call's API in conversation `conversationId`, whose run placed one input with `data`. */
-const api = (conversationId: number, data: unknown): ToolExecutionApi =>
+/**
+ * A call's API in conversation `conversationId`, whose run placed one input with `data`; `lock`: the session's lock.
+ */
+const api = (conversationId: number, data: unknown, lock?: SessionLock): ToolExecutionApi =>
 	({
 		conversationId,
 		snapshot: async (doc: { definition: { kind: string } }) =>
-			doc.definition.kind === "pi.live" ? { run: { inputs: [1] } } : undefined,
+			doc.definition.kind === "pi.live"
+				? { run: { inputs: [1] } }
+				: doc.definition.kind === "p2.session-lock" && lock
+					? { lock }
+					: undefined,
 		commit: async (change: (tx: Tx) => unknown) =>
 			change({
 				submission: async () => ({ type: "input", entry: 1 }),
@@ -50,6 +57,21 @@ describe("tool requirements", () => {
 		assert.match(text(await owned.execute({}, api(2, owner), context)) ?? "", /works only in the session's main/);
 		const anywhere = guardTool(tool("location_envs", { origin: "owner" }));
 		assert.equal(text(await anywhere.execute({}, api(2, owner), context)), "location_envs ran");
+	});
+
+	it("in a locked session, the lock decides an owner-only tool for everyone, the owner too", async () => {
+		const lock: SessionLock = { mcp: [], projectMcp: false, instructions: false, capabilities: ["ports"] };
+		const ports = guardTool(tool("ports", { origin: "owner", locked: "ports" }));
+		const conversations = guardTool(tool("conversations", { origin: "owner", locked: "conversations" }));
+		const reload = guardTool(tool("reload_plugins", { origin: "owner", locked: "never" }));
+		const location = guardTool(tool("location_envs", { origin: "owner" }));
+		assert.equal(text(await ports.execute({}, api(1, guest, lock), context)), "ports ran", "picked: guests too");
+		assert.match(
+			text(await conversations.execute({}, api(1, owner, lock), context)) ?? "",
+			/not among the resources/,
+		);
+		assert.match(text(await reload.execute({}, api(1, owner, lock), context)) ?? "", /not available in a locked/);
+		assert.equal(text(await location.execute({}, api(1, guest, lock), context)), "location_envs ran", "pass");
 	});
 });
 

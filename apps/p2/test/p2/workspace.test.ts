@@ -29,11 +29,11 @@ describe("workspace plugin (fake provider, temporary git repository)", () => {
 		headers: Record<string, string> = { Origin: origin },
 		id = session.id,
 	) =>
-		http(
-			fixture.server.port,
-			`/workspace-upload?${new URLSearchParams({ session: id, conversation: "1", path, name })}`,
-			{ method: "POST", headers, body },
-		);
+		fixture.http(`/workspace-upload?${new URLSearchParams({ session: id, conversation: "1", path, name })}`, {
+			method: "POST",
+			headers,
+			body,
+		});
 	const joinGuest = async (mode: "view" | "full") => {
 		const share = fixture.browser().hold(Sharing, { session: session.id }, BACKGROUND_CONTEXT);
 		await share.link({ mode }, BACKGROUND_CONTEXT);
@@ -178,12 +178,12 @@ describe("workspace plugin (fake provider, temporary git repository)", () => {
 	});
 
 	it("streams bytes, HEAD and media ranges; denies private paths and cross-site reads", async () => {
-		const bytes = await http(fixture.server.port, url("src/hello.ts"));
+		const bytes = await fixture.http(url("src/hello.ts"));
 		assert.equal(bytes.status, 200, bytes.body);
 		assert.equal(bytes.body, "const hello = 'after';\n");
 		// As Pi Mobile: only media keeps its type; anything else is an opaque download.
 		assert.equal(bytes.headers["content-type"], "application/octet-stream");
-		const head = await http(fixture.server.port, url("clip.mp3"), { method: "HEAD" });
+		const head = await fixture.http(url("clip.mp3"), { method: "HEAD" });
 		assert.equal(head.status, 200);
 		assert.equal(head.headers["content-type"], "audio/mpeg");
 		assert.equal(head.headers["content-length"], "10");
@@ -193,24 +193,24 @@ describe("workspace plugin (fake provider, temporary git repository)", () => {
 			["bytes=-3", "789"],
 			["bytes=7-", "789"],
 		]) {
-			const response = await http(fixture.server.port, url("clip.mp3"), { headers: { Range: range! } });
+			const response = await fixture.http(url("clip.mp3"), { headers: { Range: range! } });
 			assert.equal(response.status, 206, response.body);
 			assert.equal(response.body, expected);
 		}
-		assert.equal((await http(fixture.server.port, url("clip.mp3"), { headers: { Range: "bytes=20-" } })).status, 416);
+		assert.equal((await fixture.http(url("clip.mp3"), { headers: { Range: "bytes=20-" } })).status, 416);
 		assert.equal(
-			(await http(fixture.server.port, url("src/hello.ts"), { headers: { "Sec-Fetch-Site": "cross-site" } })).status,
+			(await fixture.http(url("src/hello.ts"), { headers: { "Sec-Fetch-Site": "cross-site" } })).status,
 			403,
 		);
 		// A whole file over 25 MiB is refused (Pi Mobile's limit); a sparse file keeps the fixture small on disk.
 		await writeFile(join(fixture.workspace, "huge.bin"), "");
 		await truncate(join(fixture.workspace, "huge.bin"), 25 * 1024 * 1024 + 1);
-		const huge = await http(fixture.server.port, url("huge.bin"));
+		const huge = await fixture.http(url("huge.bin"));
 		assert.equal(huge.status, 413);
 		assert.equal(huge.body, "File too large");
 		await rm(join(fixture.workspace, "huge.bin"));
-		assert.equal((await http(fixture.server.port, url(".git/config"))).status, 404);
-		assert.equal((await http(fixture.server.port, url("private/settings.json"))).status, 404);
+		assert.equal((await fixture.http(url(".git/config"))).status, 404);
+		assert.equal((await fixture.http(url("private/settings.json"))).status, 404);
 		const transfer = fixture
 			.browser()
 			.hold(WorkspaceTransfer, { session: session.id, conversation: 1 }, BACKGROUND_CONTEXT);
@@ -222,7 +222,7 @@ describe("workspace plugin (fake provider, temporary git repository)", () => {
 		const response = await upload("large.txt", payload, "src");
 		assert.equal(response.status, 200, response.body);
 		assert.deepEqual(await readFile(join(fixture.workspace, "src/large.txt")), payload);
-		const streamed = await http(fixture.server.port, url("src/large.txt"));
+		const streamed = await fixture.http(url("src/large.txt"));
 		assert.equal(streamed.status, 200);
 		assert.equal(streamed.body, payload.toString("utf8"));
 		const capped = await workspace.query({ kind: "file", path: "src/large.txt" }, BACKGROUND_CONTEXT);

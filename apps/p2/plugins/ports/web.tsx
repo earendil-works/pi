@@ -1,5 +1,6 @@
 import { contribute, defineFacet } from "@p2/app/v1";
-import { ChevronIcon, closeLayers, openLayer, Slots, useOwner, useSheet } from "@p2/app/v1/web";
+import { ChevronIcon, closeLayers, openLayer, Slots, ToolActivities, useOwner, useSheet } from "@p2/app/v1/web";
+import { portsActivity } from "./activity.tsx";
 import { PortsPanel } from "./PortsPanel.tsx";
 
 function PortsButton() {
@@ -18,5 +19,6 @@ function PortsSheet() {
 export default defineFacet((host) => {
 	contribute(host, "p2.web-ports", (self) => {
 		self.contribute(Slots, { "envs-actions:ports": PortsButton, "sidebar-foot:ports": PortsSheet });
+		self.contribute(ToolActivities, { ports: portsActivity });
 	});
 });

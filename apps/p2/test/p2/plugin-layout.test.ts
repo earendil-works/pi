@@ -43,7 +43,7 @@ const SHARED = [
 
 /** The API modules each kind may import. */
 const API: Record<(typeof KINDS)[number], readonly string[]> = {
-	server: ["@p2/app/v1", "@p2/app/v1/node", "@p2/app/v1/server"],
+	server: ["@p2/app/v1", "@p2/app/v1/node", "@p2/app/v1/server", "discord.js"],
 	worker: ["@p2/app/v1", "@p2/app/v1/node", "@p2/app/v1/worker"],
 	tui: ["@p2/app/v1", "@p2/app/v1/tui"],
 	web: ["@p2/app/v1", "@p2/app/v1/web", "react", "react/jsx-runtime"],

@@ -9,7 +9,9 @@ import {
 	method,
 	param,
 	propertiesOf,
+	record,
 	remote,
+	SessionLockSchema,
 	serverHost,
 	sessionHost,
 	ThinkingLevelSchema,
@@ -76,6 +78,13 @@ export const SessionInfoSchema = obj({
 
 /** Cleanup completed before an archive call returns (e.g. session-owned port forwards). */
 export const SessionArchived = keyedRegistry<(session: string, ctx: Ctx) => Promise<void>>("p2.session-archived");
+
+/**
+ * What a copy of a session takes over from its source (`/clone`, `/fork`; e.g. its project), called once the copy's row
+ * exists and before its copying starts.
+ */
+export const SessionCopied =
+	keyedRegistry<(source: string, copy: string, ctx: Ctx) => Promise<void>>("p2.session-copied");
 
 /** Pi Mobile's MAX_SESSION_TITLE. */
 export const MAX_TITLE = 120;
@@ -454,5 +463,34 @@ export const SessionInfo = remote("p2.session-info", {
 				),
 			},
 		},
+	},
+});
+
+const LockOrNone = union([SessionLockSchema, nul()]);
+
+/** Every session's lock (server, host-internal, persisted): set by the owner, followed by MCP placement and workers. */
+export const SessionLocks = local("p2.session-locks", {
+	version: 1,
+	params: {},
+	members: {
+		locks: record(SessionLockSchema),
+		set: method(obj({ session: str(), lock: LockOrNone })),
+	},
+});
+
+/**
+ * A session's lock as the owner and the session's worker see it: the owner reads and sets every session's; a worker
+ * reads its own session's (its principal names it).
+ */
+export const SessionLock = remote("p2.session-lock", {
+	version: 1,
+	params: {},
+	hostAddress: serverHost,
+	variants: {
+		owner: {
+			state: { locks: record(SessionLockSchema) },
+			methods: { set: method(obj({ session: str(), lock: LockOrNone })) },
+		},
+		worker: { state: { lock: LockOrNone } },
 	},
 });

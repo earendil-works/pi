@@ -111,7 +111,7 @@ test("uploads: the bound session, fixed route and Origin, confirmation first, no
 		BACKGROUND_CONTEXT,
 	);
 	const url = new URL(`http://127.0.0.1:${fixture.server.port}`);
-	const actions = launcherActions({ url, credentials: {}, role: "owner" });
+	const actions = launcherActions({ url, credentials: { cookie: fixture.owner.cookie }, role: "owner" });
 	const attach = C(actions.attach);
 	assert.equal(attach.consent({ path: file }, { origin: url, target: undefined }), undefined, "no session bound");
 	assert.equal(
@@ -178,7 +178,7 @@ test("Ctrl+V: an image uploads after confirmation; text is pasted as typed; file
 	const paste = K(
 		launcherActions({
 			url,
-			credentials: {},
+			credentials: { cookie: fixture.owner.cookie },
 			role: "owner",
 			readClipboard: {
 				files: async () => null,
@@ -225,11 +225,12 @@ test(
 		const client = await startTuiClient({
 			terminal,
 			url,
+			credentials: { cookie: fixture.owner.cookie },
 			pollMs: 60000,
 			colorQueryMs: 10,
 			actions: launcherActions({
 				url,
-				credentials: {},
+				credentials: { cookie: fixture.owner.cookie },
 				role: "owner",
 				readClipboard: {
 					files: async () => null,

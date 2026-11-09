@@ -11,7 +11,7 @@ import { Chat } from "../../plugins/chat/contract.ts";
 import { type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import type { Host } from "../../src/runtime/chord.ts";
-import { type Fixture, holdIn, http, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
 
 const text = (view: ConversationView | null | undefined) =>
 	(view?.entries ?? [])
@@ -81,7 +81,7 @@ describe("clone and fork (fake provider)", () => {
 		const list = owner.hold(ArtifactList, { session: copy.id, conversation: 1 }, BACKGROUND_CONTEXT);
 		const artifacts = await until(list.artifacts, (value) => (value?.length ?? 0) === 1);
 		const query = new URLSearchParams({ session: copy.id, name: artifacts![0]!.name, version: "1" });
-		assert.equal((await http(fixture.server.port, `/artifact?${query}&download=1`)).status, 200);
+		assert.equal((await fixture.http(`/artifact?${query}&download=1`)).status, 200);
 		// Both go on independently.
 		await cloned.send({ text: "only in the copy", requestId: "c1" }, BACKGROUND_CONTEXT);
 		await until(cloned.view, (next) => text(next).includes("Echo: only in the copy"));
@@ -110,7 +110,7 @@ describe("clone and fork (fake provider)", () => {
 		assert.equal(inputs(forkView).length, 2, "the inputs before the chosen one");
 		// The source's files were copied by its worker: the artifact cards of the forked history resolve under the fork.
 		const card = new URLSearchParams({ session: fork.id, name: "demo", version: "1" });
-		assert.equal((await http(fixture.server.port, `/artifact?${card}&download=1`)).status, 200);
+		assert.equal((await fixture.http(`/artifact?${card}&download=1`)).status, 200);
 		// The fork works on its own.
 		await forked.send({ text: "forked on", requestId: "f1" }, BACKGROUND_CONTEXT);
 		await until(forked.view, (next) => text(next).includes("Echo: forked on"));

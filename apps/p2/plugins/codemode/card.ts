@@ -1,14 +1,22 @@
-// Copied from coding-agent extensions/codemode/renderer.ts. The call shows the script; the result lists the nested
-// tool calls (p2: live `pi.live.nestedTools` slots while running, with depth and running output, then the settled
-// `details.calls`), followed by the script output without Durable's "Script completed|failed / Wall time / Output:"
-// header (durable/src/codemode/output.ts).
+// Code mode's card in the TUI, copied from coding-agent extensions/codemode/renderer.ts. The call shows the script; the
+// result lists the nested tool calls (`context.calls`: live `pi.live.nestedTools` slots while running, with depth and
+// running output, then the settled `details.calls`, as nested.ts reads them), followed by the script output without
+// Durable's "Script completed|failed / Wall time / Output:" header (durable/src/codemode/output.ts).
 import { Container, Spacer, Text } from "@earendil-works/pi-tui";
-import type { NestedCall } from "../../web/transcript.ts";
-import { VisualLinePreview } from "../components/visual-truncate.ts";
-import { lineText, safeText } from "../render-context.ts";
-import type { Theme } from "../theme/theme.ts";
-import { getTextOutput, moreLinesHint, replaceTabs, str } from "./render-utils.ts";
-import { record, type ToolRenderContext, type ToolRenderers } from "./types.ts";
+import {
+	getTextOutput,
+	lineText,
+	moreLinesHint,
+	type NestedCall,
+	record,
+	replaceTabs,
+	safeText,
+	str,
+	type Theme,
+	type ToolRenderContext,
+	type ToolRenderers,
+	VisualLinePreview,
+} from "@p2/app/v1/tui";
 
 const CODE_PREVIEW_LINES = 10;
 const CALL_PREVIEW_COUNT = 8;
@@ -71,7 +79,7 @@ function callLines(calls: readonly NestedCall[], theme: Theme, context: ToolRend
 	return lines;
 }
 
-export const codemodeRenderers: ToolRenderers = {
+export const codemodeCard: ToolRenderers = {
 	renderCall(args, theme, context) {
 		const code = str(args.code);
 		const title = theme.fg("toolTitle", theme.bold("codemode"));

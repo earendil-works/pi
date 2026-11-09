@@ -138,9 +138,10 @@ function ProvidersSheet({ onClose }: { onClose: () => void }) {
 	const login = useObject(ProviderLogin, {});
 	// Provider errors go to the app's toast, as in Pi Mobile.
 	const { fail } = useComposerState();
+	const known = useReadable(login?.providers);
 	// Signing out shows at once; a refused sign-out puts the provider back.
 	const [providers, signOut] = useOptimisticCall(
-		useReadable(login?.providers) ?? [],
+		known ?? [],
 		(list, providerId: string) =>
 			list.map((entry) => (entry.id === providerId ? { ...entry, signedIn: null } : entry)),
 		fail,
@@ -241,7 +242,7 @@ function ProvidersSheet({ onClose }: { onClose: () => void }) {
 				</Sheet>
 			);
 		return (
-			<Sheet title={provider.name} onClose={onClose} className="login-sheet">
+			<Sheet title={provider.name} onClose={onClose} onBack={back} className="login-sheet">
 				<div className="provider-detail">
 					<p className="muted small">
 						{provider.signedIn
@@ -311,9 +312,6 @@ function ProvidersSheet({ onClose }: { onClose: () => void }) {
 						)}
 					</div>
 					{result && <p className="provider-result">{result}</p>}
-					<button type="button" className="text-action" onClick={back}>
-						← All providers
-					</button>
 				</div>
 			</Sheet>
 		);
@@ -358,6 +356,9 @@ function ProvidersSheet({ onClose }: { onClose: () => void }) {
 						<ChevronIcon />
 					</button>
 				))}
+				{known && !listed.length && (
+					<p className="empty-note">{query ? "No provider matches." : "No providers available."}</p>
+				)}
 			</div>
 		</Sheet>
 	);

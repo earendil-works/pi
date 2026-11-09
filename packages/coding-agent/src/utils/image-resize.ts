@@ -70,7 +70,9 @@ async function resizeImageInWorker(
 			);
 		});
 	} finally {
-		void worker.terminate().catch(() => undefined);
+		// Await termination so a serial resize never starts a worker while this one is
+		// still shutting down; that overlap aborted the process on macOS with Node 24 (#10695).
+		await worker.terminate().catch(() => undefined);
 	}
 }
 

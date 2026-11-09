@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { err, FileError, type FileSystem, type Result } from "../src/env/index.ts";
 import { NodeExecutionEnv } from "../src/env/node.ts";
 import { idFromNumber } from "../src/ids.ts";
-import { JsonlStorage } from "../src/storage/jsonl/index.ts";
+import { JsonlStorage, type JsonlStorageOptions, JsonlStorageReadOnlyError } from "../src/storage/jsonl/index.ts";
 import { openNodeJsonlStorage } from "../src/storage/jsonl/node.ts";
 import { commitWrites } from "../src/testing/commit-writes.ts";
 import type {
@@ -48,7 +48,7 @@ async function tempDirectory(prefix = "pi-durable-jsonl-"): Promise<string> {
 async function openStorage(
 	directory: string,
 	fs: FileSystem = new NodeExecutionEnv({ cwd: directory }),
-	options: { readonly fsync?: boolean } = {},
+	options: JsonlStorageOptions = {},
 ): Promise<JsonlStorage> {
 	const storage = await JsonlStorage.open(directory, fs, context, options);
 	openStorages.add(storage);
@@ -310,6 +310,15 @@ class InstrumentedEnv extends NodeExecutionEnv {
 async function readLines(path: string): Promise<string[]> {
 	const text = await readFile(path, "utf8");
 	return text === "" ? [] : text.trimEnd().split("\n");
+}
+
+/** Every file of `directory` with its bytes, to show an open wrote nothing. */
+async function directoryBytes(directory: string): Promise<Record<string, string>> {
+	const files: Record<string, string> = {};
+	for (const name of (await readdir(directory)).sort()) {
+		files[name] = (await readFile(join(directory, name))).toString("base64");
+	}
+	return files;
 }
 
 async function fileExists(path: string): Promise<boolean> {
@@ -1302,3 +1311,119 @@ describe("JsonlStorage batches", () => {
 		expect((await again.document(documentId, "current", context))?.value).toEqual({ n: 9 });
 	});
 });
+
+// #11939: a viewer opens a directory another process drives without repairing or reclaiming anything.
+describe("JsonlStorage read-only open", () => {
+	it("skips torn lines, unconfirmed tails, and due reclamation in memory without writing", async () => {
+		const directory = await tempDirectory();
+		const env = new InstrumentedEnv({ cwd: directory });
+		const storage = await openStorage(directory, env);
+		await createRoot(storage);
+		const liveId = await storage.mintId<TaskId<JsonValue>>();
+		const endedId = await storage.mintId<TaskId<JsonValue>>();
+		await commitWrites(
+			storage,
+			[
+				{ type: "task", value: pendingTask(liveId) },
+				{ type: "task", value: pendingTask(endedId) },
+			],
+			context,
+		);
+		// The terminal task's sidecar stays behind: its reclamation is due at the next writable open.
+		env.fail({ operation: "remove", call: 1, mode: "before" });
+		await commitWrites(storage, [{ type: "task", value: terminalTask(endedId) }], context);
+		env.clear();
+		expect(await fileExists(join(directory, `task-${endedId}.jsonl`))).toBe(true);
+		const unconfirmed = JSON.stringify({
+			format: 1,
+			type: "record",
+			seq: 4,
+			ordinal: 0,
+			payload: { type: "task", value: pendingTask(liveId, "unconfirmed") },
+		});
+		await writeFile(join(directory, `task-${liveId}.jsonl`), `${unconfirmed}\n{"format":1`, { flag: "a" });
+		await writeFile(join(directory, "main.jsonl"), '{"format":1,"type":"commit"', { flag: "a" });
+		await writeFile(join(directory, `task-${liveId}.jsonl.reclaim`), "leftover");
+		const before = await directoryBytes(directory);
+
+		const viewer = await openStorage(directory, new NodeExecutionEnv({ cwd: directory }), { readOnly: true });
+		expect(await viewer.task(liveId, context)).toEqual(pendingTask(liveId));
+		expect(await viewer.task(endedId, context)).toEqual(terminalTask(endedId));
+		await expect(
+			commitWrites(viewer, [{ type: "task", value: pendingTask(liveId, "next") }], context),
+		).rejects.toBeInstanceOf(JsonlStorageReadOnlyError);
+		expect(await directoryBytes(directory)).toEqual(before);
+
+		// A writable open still repairs the same files.
+		await openStorage(directory);
+		expect(await directoryBytes(directory)).not.toEqual(before);
+		expect(await fileExists(join(directory, `task-${endedId}.jsonl`))).toBe(false);
+		expect(await fileExists(join(directory, `task-${liveId}.jsonl.reclaim`))).toBe(false);
+	});
+
+	it("keeps a torn-only main file", async () => {
+		const directory = await tempDirectory();
+		await writeFile(join(directory, "main.jsonl"), '{"format":1,"type":"commit"');
+		const viewer = await openStorage(directory, new NodeExecutionEnv({ cwd: directory }), { readOnly: true });
+		expect(await viewer.conversation(ROOT_CONVERSATION_ID, context)).toBeUndefined();
+		expect((await stat(join(directory, "main.jsonl"))).size).toBe(27);
+	});
+
+	it("creates no missing directory", async () => {
+		const directory = join(await tempDirectory(), "missing");
+		await expect(
+			JsonlStorage.open(directory, new NodeExecutionEnv({ cwd: directory }), context, { readOnly: true }),
+		).rejects.toThrow("directory listing");
+		expect(await fileExists(directory)).toBe(false);
+	});
+
+	it("retries a recovery that raced a writer's commit, and fails on corruption at once", async () => {
+		const directory = await tempDirectory();
+		const writer = await openStorage(directory);
+		await createRoot(writer);
+		const taskId = await writer.mintId<TaskId<JsonValue>>();
+		await commitWrites(writer, [{ type: "task", value: pendingTask(taskId) }], context);
+
+		// The writer ends the task between the viewer's read of main.jsonl and of the task's sidecar, so the sidecar the
+		// viewer's markers need is reclaimed when it reads it.
+		const env = new RacingEnv(directory, `task-${taskId}.jsonl`, () =>
+			commitWrites(writer, [{ type: "task", value: terminalTask(taskId) }], context),
+		);
+		const viewer = await openStorage(directory, env, { readOnly: true });
+		expect(await viewer.task(taskId, context)).toEqual(terminalTask(taskId));
+		expect(env.mainReads).toBe(2);
+
+		// Missing confirmed data while main.jsonl stays the same is corruption: no retry.
+		const brokenId = await writer.mintId<TaskId<JsonValue>>();
+		await commitWrites(writer, [{ type: "task", value: pendingTask(brokenId) }], context);
+		await writeFile(join(directory, `task-${brokenId}.jsonl`), "");
+		const counting = new RacingEnv(directory, "none", async () => {});
+		await expect(JsonlStorage.open(directory, counting, context, { readOnly: true })).rejects.toThrow(
+			"Missing confirmed sidecar record",
+		);
+		expect(counting.mainReads).toBe(1);
+	});
+});
+
+/** Runs `race` once, right before the first read of `file`, and counts reads of main.jsonl. */
+class RacingEnv extends NodeExecutionEnv {
+	mainReads = 0;
+	private readonly file: string;
+	private race: (() => Promise<unknown>) | undefined;
+
+	constructor(directory: string, file: string, race: () => Promise<unknown>) {
+		super({ cwd: directory });
+		this.file = file;
+		this.race = race;
+	}
+
+	override async readBinaryFile(path: string, readContext: Context): Promise<Result<Uint8Array, FileError>> {
+		if (basename(path) === "main.jsonl") this.mainReads++;
+		if (basename(path) === this.file && this.race !== undefined) {
+			const race = this.race;
+			this.race = undefined;
+			await race();
+		}
+		return super.readBinaryFile(path, readContext);
+	}
+}

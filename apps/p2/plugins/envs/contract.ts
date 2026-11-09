@@ -189,3 +189,36 @@ export const Envs = evolve(EnvsV2, (e) =>
 export function environmentPath(env: string | null | undefined, cwd: string): string {
 	return env ? `${env}:${cwd}` : cwd;
 }
+
+/** A sandbox secret as the owner sees it: its name, hosts, preset and when its value was set; never the value. */
+export const SecretInfoSchema = obj({ name: str(), hosts: arr(str()), preset: opt(str()), setAt: num() });
+export type SecretInfoView = Static<typeof SecretInfoSchema>;
+
+/**
+ * Sandbox secrets (owner only): values the sandbox's HTTP proxy injects into outbound request headers for their hosts,
+ * while the VM only sees placeholders (`secrets.ts`). Changes apply when the sandbox's VM starts next.
+ */
+export const SandboxSecrets = remote("p2.sandbox-secrets", {
+	version: 1,
+	params: {},
+	hostAddress: serverHost,
+	variants: {
+		owner: {
+			methods: {
+				list: method(Name, arr(SecretInfoSchema)),
+				/** `value` absent: keep the stored value; `addHosts`: allow the hosts the sandbox does not allow yet. */
+				set: method(
+					obj({
+						sandbox: str(),
+						name: str({ minLength: 1, maxLength: 64 }),
+						value: opt(str({ minLength: 1, maxLength: 16_384 })),
+						hosts: arr(str({ minLength: 1, maxLength: 255 }), { minItems: 1, maxItems: 32 }),
+						preset: opt(str({ maxLength: 32 })),
+						addHosts: opt(bool()),
+					}),
+				),
+				delete: method(obj({ sandbox: str(), name: str() })),
+			},
+		},
+	},
+});

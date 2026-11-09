@@ -56,15 +56,20 @@ export function startChat(dataDir: string, root: string, context: Context): Prom
 			listen: { host: "127.0.0.1", port: 0 },
 			api: API,
 			kinds: KINDS,
-			principal: { server: { kind: "server" }, worker: (address) => ({ kind: "worker", channel: address.key }) },
+			principal: {
+				server: { kind: "server" },
+				worker: (address) => ({ kind: "worker", channel: address.key }),
+				// The owner is a user like those who pick a name (theirs get fresh random ids, never "owner").
+				owner: { kind: "user", id: "owner", name: "owner" },
+			},
 			workers: [
 				{
 					kind: v1.Channel,
 					entry: fileURLToPath(new URL("./worker.ts", import.meta.url)),
 					execArgv: ["--conditions=source", "--experimental-strip-types", "--no-warnings"],
 					start: () => ({}),
-					// Anyone signed in may join a channel.
-					authorize: (principal) => principal.kind === "user" || principal.kind === "owner",
+					// Every user, the owner among them, may join a channel.
+					authorize: (principal) => principal.kind === "user",
 				},
 			],
 			web: { entry: fileURLToPath(new URL("./web/main.ts", import.meta.url)), page, paths: ["/chat"] },

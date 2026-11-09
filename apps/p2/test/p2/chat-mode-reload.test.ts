@@ -11,6 +11,7 @@ const PLUGINS = [
 	"chat",
 	"chat-mode",
 	"conversations",
+	"devices",
 	"drafts",
 	"envs",
 	"files",

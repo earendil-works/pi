@@ -1,6 +1,6 @@
 // Server host: HTTP + WebSocket accept, routes `session:` hosts to session workers, loads the server facets.
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -17,13 +17,14 @@ import { configureFetch } from "../runtime/fetch.ts";
 import { assertMigrated, hostFiles, openHostStore, serverDirectory } from "../runtime/host-dirs.ts";
 import { fromOrigin, sendJson } from "../runtime/http.ts";
 import { captureProcessLogs, processLogs } from "../runtime/logs.ts";
-import { hasLoopbackCookie, loopbackCookie } from "../runtime/loopback-cookie.ts";
+import { mintOwnerLink } from "../runtime/owner-link.ts";
 import { signIn } from "../runtime/page.ts";
 import { isGuest, isOwner, type P2Principal, SERVER } from "../runtime/principals.ts";
 import { takeProcessLock } from "../runtime/process-lock.ts";
 import {
 	Authenticators,
 	findRoute,
+	PageCookies,
 	type RequestAccess,
 	type RequestOrigin,
 	RequestResolvers,
@@ -44,7 +45,7 @@ import {
 } from "./bundles.ts";
 import { devControl } from "./dev.ts";
 import { readDevCommand, sendDevCommand, serveDevChannel } from "./dev-channel.ts";
-import { contentHash, LoadedModules, loadedModuleHashes, loadedPluginFiles } from "./dev-modules.ts";
+import { LoadedModules, loadedModuleHashes, loadedPluginFiles } from "./dev-modules.ts";
 import { createP2Plugins, listPlugins, PLUGINS_DIRECTORY, SERVER_PACKAGES, selectPlugins } from "./plugins.ts";
 import {
 	contentSecurityPolicy,
@@ -118,6 +119,9 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		: undefined;
 	const fake = options.fake ?? process.env.P2_FAKE === "1";
 	mkdirSync(join(dataDir, "sessions"), { recursive: true, mode: 0o700 });
+	// The local owner is whoever can read this directory's owner key, and not every file in it is 0600 (SQLite
+	// stores, mcp.json): a directory made before p2 (another umask) is made private too.
+	chmodSync(dataDir, 0o700);
 	// One server per data directory: a lock another server holds refuses the start after a short wait (a restart's old
 	// server may still be exiting).
 	const unlock = await takeProcessLock(`p2:server:${dataDir}`, 5000).catch((error: unknown) => {
@@ -217,12 +221,13 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		BACKGROUND_CONTEXT,
 	);
 	// Every session worker runs the worker base Chord bundled just now (not the files on disk): in dev mode its source
-	// files are a restart baseline, compared by content like the server's own modules.
+	// files are a restart baseline, compared by content like the server's own modules, with the bytes the build read
+	// (a read now could see an edit made since).
 	devModules?.set(
 		"worker-base",
-		workers.workers.inputs
-			.filter((file) => !file.startsWith(PLUGINS_DIRECTORY))
-			.map((file) => ({ file, hash: contentHash(readFileSync(file)) })),
+		[...workers.baseInputs]
+			.filter(([file]) => !file.startsWith(PLUGINS_DIRECTORY))
+			.map(([file, hash]) => ({ file, hash })),
 	);
 	// Capture before plugin resources open (e.g. provider SDK startup), not only after the logs facet activates.
 	const stopLogs = captureProcessLogs("server");
@@ -475,12 +480,11 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 	const closeDevChannel = dev && !supervised ? await serveDevChannel(dataDir, execute) : undefined;
 
 	/**
-	 * Loopback is the device owner, except for a browser request another site made or frames (Fetch Metadata) other than
-	 * a top-level navigation to an app page: no clickjacking or cross-site driving of the owner UI (`resolveAccess` also
-	 * drops cookie principals of such requests). Tunnel requests are whoever an authenticator (a cookie) says. As in Pi
-	 * Mobile, the device owner's browser carries a loopback owner cookie (set when it loads the app), which wins
-	 * over a guest cookie; without it, a guest cookie wins over the cookieless loopback fallback, so a browser that
-	 * joined a share on loopback is that guest everywhere.
+	 * Who sent a request: an owner session cookie (a local one only on loopback), a guest cookie, a Radius user. An owner
+	 * wins over a guest cookie in the same browser. Loopback alone proves nothing (any user of the machine reaches it):
+	 * the local owner is whoever proved to run as the server's user (`src/runtime/local-owner.ts`) or redeemed an owner
+	 * link on loopback, and holds that local session cookie. Another site's requests lose every principal in
+	 * `resolveAccess`.
 	 */
 	const authenticate = async (
 		request: IncomingMessage,
@@ -490,16 +494,10 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		let authenticated: P2Principal | undefined;
 		for (const authenticator of (await host.registry(Authenticators, ctx)).value.values()) {
 			const principal = await authenticator(request, origin, ctx);
-			// Associated owners stay remote even on localhost; a guest cookie cannot downgrade them.
 			if (isOwner(principal)) return principal;
 			authenticated ??= principal;
 		}
-		// A top-level page navigation from another site may load the app too (a link from another local port): it can
-		// neither be framed nor read back, and the page's own requests are same-origin.
-		const loopbackOwner = !origin.remote && (!foreignBrowserRequest(request) || pageNavigation(request));
-		if (loopbackOwner && authenticated !== undefined && hasLoopbackCookie(request, origin.port, dataDir))
-			return { kind: "owner", access: "local" };
-		return authenticated ?? (loopbackOwner ? { kind: "owner", access: "local" } : undefined);
+		return authenticated;
 	};
 	const credentialAccess = async (request: IncomingMessage, ctx: Ctx): Promise<RequestAccess | undefined> => {
 		for (const resolve of (await host.registry(RequestResolvers, ctx)).value.values()) {
@@ -612,15 +610,17 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 				}
 				const route = findRoute((await host.registry(Routes, ctx)).value, request.method ?? "GET", path);
 				if (route !== undefined) return route(request, response, { principal, origin }, ctx);
-				// The local owner's browser loading the app gets the loopback owner cookie (Pi Mobile sets it on `/`).
+				// An owner loading the app may get renewed cookies (a local session in use does not expire).
 				if (
 					isOwner(principal) &&
-					principal.access === "local" &&
-					!origin.remote &&
 					(request.method === "GET" || request.method === "HEAD") &&
 					(path === "/" || path.startsWith("/s/"))
-				)
-					response.setHeader("Set-Cookie", loopbackCookie(origin.port, dataDir));
+				) {
+					const cookies = [...(await host.registry(PageCookies, ctx)).value.values()].flatMap(
+						(cookie) => cookie(request, { principal, origin }) ?? [],
+					);
+					if (cookies.length) response.setHeader("Set-Cookie", cookies);
+				}
 				if (isOwner(principal) || (isGuest(principal) && (await web?.guestMayLoad(request, principal)))) {
 					if (web !== undefined) return web.handle(request, response);
 					response.writeHead(404, { "Content-Type": "text/plain" });
@@ -639,7 +639,9 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 					response.end("Nothing on this brain is shared with you. Ask its owner for a share link.\n");
 					return;
 				}
-				signIn(request, response, 401);
+				// A link from another site may arrive without the owner's cookie (Chrome launching an installed app sent
+				// none): the page loads itself once more from this origin, which sends it.
+				signIn(request, response, 401, { reload: foreignBrowserRequest(request) && pageNavigation(request) });
 			}, BACKGROUND_CONTEXT)
 			.catch((error: unknown) => {
 				console.error("p2 server: request failed", error);
@@ -739,7 +741,18 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.a
 	// Provider logins and server plugins (e.g. the Radius gateway) fetch in this process too.
 	configureFetch();
 	const server = await startServer();
-	console.log(`p2: http://127.0.0.1:${server.port} (data ${server.dataDir})`);
+	const local = new URL(`http://127.0.0.1:${server.port}`);
+	console.log(`p2: ${local.origin} (data ${server.dataDir})`);
+	// A browser on this machine signs in once per profile by pasting this one-time token into the sign-in page (ten
+	// minutes; later ones: npm run owner-link). It is redacted from the server's log buffer; only the terminal shows it.
+	await mintOwnerLink(local, server.dataDir, local).then(
+		(link) => {
+			const token = link.hash.slice(1);
+			processLogs.redactor.addSecret(token);
+			console.log(`p2: sign-in token (one use, ten minutes; paste it at ${local.origin}): ${token}`);
+		},
+		(error: unknown) => console.error(`p2: no sign-in token: ${error instanceof Error ? error.message : error}`),
+	);
 	// Every way out goes through `process.exit`: a signal's default action skips the exit hooks, which remove the
 	// macOS lock socket file (else the next start refuses) and kill the MCP servers' process groups.
 	let stopping = false;

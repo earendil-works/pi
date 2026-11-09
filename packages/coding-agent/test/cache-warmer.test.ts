@@ -2,6 +2,9 @@ import {
 	type Api,
 	type AssistantMessage,
 	type AssistantMessageEventStream,
+	getCacheWarmingDelayMs,
+	getPromptCacheTtlMs,
+	isCacheWarmingReplayable,
 	type Model,
 	type ModelsSimpleStreamOptions,
 	normalizeContext,
@@ -18,9 +21,6 @@ import {
 	type CacheWarmRequest,
 	formatCacheWarmingStatus,
 	formatCacheWarmingUsage,
-	getCacheWarmingDelayMs,
-	getPromptCacheTtlMs,
-	isReplayable,
 } from "../src/core/cache-warmer.ts";
 import { createEventBus } from "../src/core/event-bus.ts";
 import { createExtensionRuntime, loadExtensionFromFactory } from "../src/core/extensions/loader.ts";
@@ -137,10 +137,10 @@ describe("cache warming", () => {
 			[270_000, 50_000, undefined],
 		);
 		expect([
-			isReplayable(budgetModel, { reasoning: "medium" }),
-			isReplayable(budgetModel, undefined),
-			isReplayable(adaptiveModel, { reasoning: "medium" }),
-			isReplayable(openaiModel, { reasoning: "medium" }),
+			isCacheWarmingReplayable(budgetModel, { reasoning: "medium" }),
+			isCacheWarmingReplayable(budgetModel, undefined),
+			isCacheWarmingReplayable(adaptiveModel, { reasoning: "medium" }),
+			isCacheWarmingReplayable(openaiModel, { reasoning: "medium" }),
 		]).toEqual([false, true, true, true]);
 	});
 

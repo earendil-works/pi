@@ -37,7 +37,7 @@ describe("files (fake provider)", () => {
 		body: Buffer | string,
 		headers: Record<string, string> = { Origin: local },
 	) =>
-		http(fixture.server.port, `/upload?${new URLSearchParams({ session: id, name })}`, {
+		fixture.http(`/upload?${new URLSearchParams({ session: id, name })}`, {
 			method: "POST",
 			headers,
 			body,
@@ -130,7 +130,7 @@ describe("files (fake provider)", () => {
 		assert.equal(info.name, "résumé_.txt");
 		await writeFile(source, "changed later");
 		const path = `/download?session=${session.id}&id=${info.id}`;
-		const downloaded = await http(fixture.server.port, path);
+		const downloaded = await fixture.http(path);
 		assert.equal(downloaded.status, 200);
 		assert.equal(downloaded.body, "snapshot");
 		assert.match(String(downloaded.headers["content-disposition"]), /^attachment; filename="r_sum__\.txt"/);
@@ -139,26 +139,26 @@ describe("files (fake provider)", () => {
 			"text/plain; charset=utf-8",
 			"previewable types keep their type",
 		);
-		const head = await http(fixture.server.port, path, { method: "HEAD" });
+		const head = await fixture.http(path, { method: "HEAD" });
 		assert.equal(head.status, 200);
 		assert.equal(head.body, "");
 		assert.equal(
-			(await http(fixture.server.port, path, { headers: { "Sec-Fetch-Site": "cross-site" } })).status,
+			(await fixture.http(path, { headers: { "Sec-Fetch-Site": "cross-site" } })).status,
 			403,
 			"a cross-site page never downloads with the owner's access",
 		);
-		assert.equal((await http(fixture.server.port, `/download?session=${other.id}&id=${info.id}`)).status, 404);
-		assert.equal((await http(fixture.server.port, `/download?session=${session.id}&id=../x`)).status, 404);
+		assert.equal((await fixture.http(`/download?session=${other.id}&id=${info.id}`)).status, 404);
+		assert.equal((await fixture.http(`/download?session=${session.id}&id=../x`)).status, 404);
 		// Audio and video are seekable.
 		const audio = join(fixture.dataDir, "clip.mp3");
 		await writeFile(audio, "0123456789");
 		const clip = await snapshot(session.id, audio);
 		const clipPath = `/download?session=${session.id}&id=${clip.id}`;
-		const partial = await http(fixture.server.port, clipPath, { headers: { Range: "bytes=2-4" } });
+		const partial = await fixture.http(clipPath, { headers: { Range: "bytes=2-4" } });
 		assert.equal(partial.status, 206);
 		assert.equal(partial.body, "234");
 		assert.equal(partial.headers["content-range"], "bytes 2-4/10");
-		assert.equal((await http(fixture.server.port, clipPath, { headers: { Range: "bytes=20-" } })).status, 416);
+		assert.equal((await fixture.http(clipPath, { headers: { Range: "bytes=20-" } })).status, 416);
 	});
 
 	it("lets guests download from their session, and only read/write guests upload", async () => {
@@ -192,43 +192,31 @@ describe("files (fake provider)", () => {
 		);
 		await archivedChat.send({ text: "artifact", requestId: "archived-artifact" }, BACKGROUND_CONTEXT);
 		const artifact = `/artifact?${new URLSearchParams({ session: archived.id, name: "demo", version: "1" })}`;
-		await poll(
-			async () => (await http(fixture.server.port, artifact)).status === 200,
-			30_000,
-			"the artifact is saved",
-		);
+		await poll(async () => (await fixture.http(artifact)).status === 200, 30_000, "the artifact is saved");
 		archivedChat.release();
 		const source = join(fixture.dataDir, "archived.txt");
 		await writeFile(source, "archived");
 		const sent = await snapshot(archived.id, source);
 		const download = `/download?session=${archived.id}&id=${sent.id}`;
-		assert.equal((await http(fixture.server.port, download)).status, 200);
+		assert.equal((await fixture.http(download)).status, 200);
 		await sessions.archive({ id: archived.id }, BACKGROUND_CONTEXT);
 		await until(sessions.sessions, (rows) => rows?.find((row) => row.id === archived.id)?.archivedAt !== null);
 		const started = Date.now();
-		assert.equal((await http(fixture.server.port, artifact)).status, 404);
-		assert.equal((await http(fixture.server.port, download)).status, 404);
-		assert.equal((await http(fixture.server.port, download, { method: "HEAD" })).status, 404);
+		assert.equal((await fixture.http(artifact)).status, 404);
+		assert.equal((await fixture.http(download)).status, 404);
+		assert.equal((await fixture.http(download, { method: "HEAD" })).status, 404);
 		assert.equal((await upload(archived.id, "late.txt", "x")).status, 409);
 		const unknown = randomUUID();
-		assert.equal((await http(fixture.server.port, `/download?session=${unknown}&id=${sent.id}`)).status, 404);
+		assert.equal((await fixture.http(`/download?session=${unknown}&id=${sent.id}`)).status, 404);
 		assert.equal(
-			(
-				await http(
-					fixture.server.port,
-					`/artifact?${new URLSearchParams({ session: unknown, name: "demo", version: "1" })}`,
-				)
-			).status,
+			(await fixture.http(`/artifact?${new URLSearchParams({ session: unknown, name: "demo", version: "1" })}`))
+				.status,
 			404,
 		);
 		await assert.rejects(snapshot(archived.id, source), /archived/);
 		// A worker start that is refused would take a minute per request.
 		assert.ok(Date.now() - started < 5_000, `answered in ${Date.now() - started} ms`);
 		await sessions.restore({ id: archived.id }, BACKGROUND_CONTEXT);
-		await poll(
-			async () => (await http(fixture.server.port, download)).status === 200,
-			30_000,
-			"served again once restored",
-		);
+		await poll(async () => (await fixture.http(download)).status === 200, 30_000, "served again once restored");
 	});
 });

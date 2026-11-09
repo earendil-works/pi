@@ -1,7 +1,7 @@
-import { type ComponentType, createContext, type ReactNode, useEffect, useRef, useState } from "react";
+import { createContext, type ReactNode, useEffect, useRef, useState } from "react";
 import { type DownloadInfo, filePreview } from "../runtime/files.ts";
 import type { ArtifactInfo } from "../runtime/schemas.ts";
-import { useScrollMemory } from "../runtime/web.tsx";
+import { useScrollMemory, useShownModal } from "../runtime/web.tsx";
 import { CodeBlock } from "./Code.tsx";
 import { CloseIcon, DownloadIcon } from "./icons.tsx";
 import { Markdown } from "./Markdown.tsx";
@@ -12,13 +12,6 @@ import { Markdown } from "./Markdown.tsx";
 export type ViewerItem = { kind: "artifact"; artifact: ArtifactInfo } | { kind: "file"; file: DownloadInfo };
 /** Opens an item explicitly; tool updates and reconnects never open the viewer. */
 export const OpenViewer = createContext<(item: ViewerItem) => void>(() => {});
-/**
- * Renders an artifact version at its tool call site, below the card, when the call asked for `inline` (the artifacts
- * plugin provides it; without it the card stands alone).
- */
-export const InlineArtifactView = createContext<ComponentType<{ sessionId: string; artifact: ArtifactInfo }> | null>(
-	null,
-);
 
 function fileSize(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`;
@@ -97,6 +90,7 @@ export function ViewerShell({
 	children: ReactNode;
 }) {
 	const area = useRef<HTMLDivElement>(null);
+	useShownModal();
 	useScrollMemory(area);
 	useEffect(() => {
 		// Cancelled, so a CloseWatcher (navigation.ts) doesn't take the same Escape as Back.

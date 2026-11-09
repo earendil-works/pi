@@ -98,8 +98,13 @@ describe("sheet parity", { skip: !browserTests }, () => {
 		);
 		await poll(() => existsSync(join(profile, "DevToolsActivePort")), 20_000, "Chromium debugging port");
 		const port = readFileSync(join(profile, "DevToolsActivePort"), "utf8").split("\n")[0];
-		const pages = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()) as { webSocketDebuggerUrl: string }[];
-		socket = new WebSocket(pages[0].webSocketDebuggerUrl);
+		const pages = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()) as {
+			type: string;
+			webSocketDebuggerUrl: string;
+		}[];
+		// Google Chrome also lists its component extensions' background pages; drive the tab.
+		const page = pages.find((target) => target.type === "page") ?? pages[0]!;
+		socket = new WebSocket(page.webSocketDebuggerUrl);
 		await new Promise<void>((resolve, reject) => {
 			socket.once("open", resolve);
 			socket.once("error", reject);
@@ -114,6 +119,15 @@ describe("sheet parity", { skip: !browserTests }, () => {
 		});
 		await call("Page.enable");
 		await call("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+		// The local owner's session, as a sign-in link opened on the host gives it.
+		const [name, value] = fixture.owner.cookie.split("=", 2) as [string, string];
+		await call("Network.setCookie", {
+			name,
+			value,
+			url: `http://127.0.0.1:${fixture.server.port}/`,
+			httpOnly: true,
+			sameSite: "Lax",
+		});
 		await call("Page.navigate", { url: `http://127.0.0.1:${fixture.server.port}/` });
 		await wait(`document.querySelector('textarea') && !document.querySelector('.offline')`);
 	});

@@ -38,6 +38,7 @@ import {
 	serveNative,
 	type VariantOf,
 } from "../../src/runtime/chord.ts";
+import { localOwnerSignIn } from "../../src/runtime/local-owner.ts";
 import { HOST, type P2Principal, SERVER } from "../../src/runtime/principals.ts";
 import { follow, type HeldIn, type HeldRef, whenLive } from "../../src/runtime/refs.ts";
 import {
@@ -80,12 +81,25 @@ export const TEST = BACKGROUND_CONTEXT;
 /** What `clientHost` connects over: a WebSocket to a p2 server's `/chord` (`ws`'s or the global one). */
 export type ClientSocket = NodeWebSocket | WebSocket;
 
+/** A local owner session at a p2 server: its port, and the cookie pair the owner's browser or TUI sends there. */
+export type LocalOwner = { readonly port: number; readonly cookie: string };
+
+/** Signs in to `server` as its local owner, as the TUI on its host does (with the owner key of its data directory). */
+export async function localOwner(server: Pick<P2Server, "port" | "dataDir">): Promise<LocalOwner> {
+	const signIn = await localOwnerSignIn(new URL(`http://127.0.0.1:${server.port}`), server.dataDir);
+	if (signIn.kind === "unavailable") throw new Error(signIn.message);
+	return { port: server.port, cookie: signIn.cookie };
+}
+
 /**
- * A browser-like client host connected to a p2 server's `/chord`, as the web UI connects: by `port`, or over `socket`
- * (one that sends headers: a tunnel Host, a guest cookie, a relay).
+ * A browser-like client host connected to a p2 server's `/chord`, as the web UI connects: as the local `owner`, or over
+ * `socket` (one that sends headers: a tunnel Host, a guest cookie, a relay).
  */
-export function clientHost(target: number | ClientSocket, facets: readonly PluginFacet<P2Principal>[] = []): Host {
-	const socket = typeof target === "number" ? new WebSocket(`ws://127.0.0.1:${target}/chord`) : target;
+export function clientHost(target: LocalOwner | ClientSocket, facets: readonly PluginFacet<P2Principal>[] = []): Host {
+	const socket =
+		"cookie" in target
+			? new NodeWebSocket(`ws://127.0.0.1:${target.port}/chord`, { headers: { Cookie: target.cookie } })
+			: target;
 	const host = createHost({ onError: reportTo() });
 	// Both sockets have the subset of the WebSocket API the link uses; the types differ in their event signatures.
 	host.connect(webSocketLink(socket as unknown as WebSocketLike), { principal: SERVER }, TEST);
@@ -98,12 +112,19 @@ export type Fixture = {
 	readonly server: P2Server;
 	readonly dataDir: string;
 	readonly workspace: string;
-	/** A browser-like client host over a real WebSocket (as the web UI connects), with `facets` loaded (web facets). */
+	/** The local owner's session (needs the devices plugin, which signs it in). */
+	readonly owner: LocalOwner;
+	/**
+	 * A browser-like client host of the local owner over a real WebSocket (as the web UI connects), with `facets` loaded
+	 * (web facets).
+	 */
 	browser(facets?: readonly PluginFacet<P2Principal>[]): Host;
 	/** A client host whose WebSocket sends `headers` (a tunnel Host, a guest cookie), and that socket. */
 	client(headers: Record<string, string>): { host: Host; socket: NodeWebSocket };
 	/** A memory-linked client the server accepts as `principal` (a relay owner, a worker, a guest of a test). */
 	as(principal: P2Principal): Host;
+	/** An HTTP request to the server as the local owner: its cookie, unless `options.headers` names another. */
+	http(path: string, options?: HttpOptions): Promise<HttpResult>;
 	close(): Promise<void>;
 };
 
@@ -129,12 +150,20 @@ export async function startFixture(options: ServerOptions = {}): Promise<Fixture
 		throw error;
 	}
 	const browsers: Host[] = [];
+	const owner = server.plugins.includes("devices") ? await localOwner(server) : undefined;
+	const ownerOf = (): LocalOwner => {
+		if (owner === undefined) throw new Error("A fixture without the devices plugin has no local owner");
+		return owner;
+	};
 	return {
 		server,
 		dataDir,
 		workspace,
+		get owner() {
+			return ownerOf();
+		},
 		browser: (facets = []) => {
-			const browser = clientHost(server.port, facets);
+			const browser = clientHost(ownerOf(), facets);
 			browsers.push(browser);
 			return browser;
 		},
@@ -153,6 +182,8 @@ export async function startFixture(options: ServerOptions = {}): Promise<Fixture
 			browsers.push(client);
 			return client;
 		},
+		http: (path, options = {}) =>
+			http(server.port, path, { ...options, headers: { Cookie: ownerOf().cookie, ...options.headers } }),
 		close: async () => {
 			for (const browser of browsers) await browser.close(TEST).catch(() => {});
 			await server.close();
@@ -535,13 +566,10 @@ export async function poll(
 }
 
 export type HttpResult = { status: number; headers: Record<string, string | string[] | undefined>; body: string };
+export type HttpOptions = { method?: string; headers?: Record<string, string>; body?: string | Buffer };
 
 /** An HTTP request to the fixture's server (any Host, cookie and body). */
-export function http(
-	port: number,
-	path: string,
-	options: { method?: string; headers?: Record<string, string>; body?: string | Buffer } = {},
-): Promise<HttpResult> {
+export function http(port: number, path: string, options: HttpOptions = {}): Promise<HttpResult> {
 	return new Promise((resolve, reject) => {
 		const req = request(
 			{ host: "127.0.0.1", port, path, method: options.method ?? "GET", headers: options.headers },

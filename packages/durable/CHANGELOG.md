@@ -5,6 +5,8 @@
 ### Added
 
 - `Tx.submission(id)` reads a committed submission record by ID, so a tool can find the entries of its run's inputs (`pi.live.run.inputs`) without scanning the transcript.
+- Per-conversation compaction settings: `configure({ compaction })` stores a `CompactionSettings` (the shape of `HarnessSettings.compaction`, `modelOverrides` included) in `pi.agent`, inherited by children and forks. Each field resolves from the conversation's model override, then the harness's, then the conversation's own fields, then the harness-wide policy; a conversation's `enabled: false` also beats the harness's model overrides, so it turns off threshold, background and overflow compaction before a compaction task is created ([#11771](https://github.com/earendil-works/pi/issues/11771))
+- JSONL storage opens read-only with `{ readOnly: true }` (`JsonlStorage.open()`, `openNodeJsonlStorage()`), for a viewer of a directory another process writes. A writable open repairs files on recovery: it truncates torn lines and unconfirmed sidecar records and reclaims sidecars, which can cut records a running writer just appended. The read-only open creates and writes nothing, skips those records in memory, holds the state committed at open, and `commit()` rejects with `JsonlStorageReadOnlyError`. A recovery that fails because it raced a writer's commit is retried. The README's read-only viewer guidance now says to open JSONL storage this way, since `HarnessOptions.readOnly` does not reach the storage open ([#11939](https://github.com/earendil-works/pi/issues/11939))
 
 ### Changed
 
@@ -13,6 +15,7 @@
 ### Fixed
 
 - Fixed `tool_search` not finding a deferred tool by property names and descriptions behind a local `$ref` in its parameters, as in MCP input schemas that put their models in `$defs`. Referenced definitions are read once, so recursive schemas do not loop, and definitions nothing references stay out of the search text ([#11803](https://github.com/earendil-works/pi/issues/11803))
+- Fixed a task staying `waiting`, or `completing` with idle waits never resolving, when the last task it waited for or held ended while a scheduler pass was planning, as with a generation waiting on parallel tool calls: the pass's cleanup erased the new notification. A pass now takes its candidates and finalize checks out of the pending sets before it plans, so notifications that arrive meanwhile stay for the next pass ([#11892](https://github.com/earendil-works/pi/issues/11892))
 - Fixed every code mode run failing with `URI malformed` when any callable tool had a `$ref` with a malformed percent escape (`#/$defs/%E0`) in its schema, even scripts that do not call that tool. The parameter now renders as `unknown` in the tool's declaration ([#11803](https://github.com/earendil-works/pi/issues/11803))
 
 ## [1.5.0] - 2026-11-02

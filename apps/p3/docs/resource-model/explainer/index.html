@@ -1,0 +1,930 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>p3: groupings show, one list equips</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">An explainer for the owner · p3 resource model · second edition · 2026-11-08</div>
+  <h1>Groupings Show<br>One List Equips</h1>
+  <p class="subtitle">What a session may use, who decides, and what you will see on screen, with the code behind each piece</p>
+  <div class="cover-stats"><div class="stat"><b>1</b><span>field decides what a session may use</span></div><div class="stat"><b>1</b><span>policy, asked at one guarded step</span></div><div class="stat"><b>39</b><span>p2 plugins checked against it by two reviewers</span></div><div class="stat"><b>4</b><span>decisions left for you</span></div></div>
+  <div class="cover-note"><p>For Mario. The model you agreed on in the car (decision &quot;Resource model direction&quot;, 2026-11-08), specified with typed
+APIs in <code>apps/p3/docs/resource-model/book.md</code> (the spec, third edition) and reviewed by Astra and Sol against every
+p2 plugin. This explainer shows it: mockups of the screens, the code each plugin writes, and the sequences that run.
+Mockups are illustrations, not designs. Nothing is built.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#two-questions">I. Two Questions</a></li>
+<li><a href="#owners">II. Who Owns What</a></li>
+<li><a href="#one-list">III. The One List</a></li>
+<li><a href="#groupings">IV. Groupings</a></li>
+<li><a href="#adding">V. Adding Things</a></li>
+<li><a href="#policy">VI. Who May</a></li>
+<li><a href="#discord">VII. Discord, Locked Down</a></li>
+<li><a href="#worker">VIII. On the Worker</a></li>
+<li><a href="#kinds">IX. Kinds in Code</a></li>
+<li><a href="#directories">X. Sign-in and Directories</a></li>
+<li><a href="#screens">XI. Resources on Screen</a></li>
+<li><a href="#review">XII. What the Review Found</a></li>
+<li><a href="#four-decisions">Four Decisions</a></li>
+<li><a href="#where-it-lives">Appendix A: Where It Lives</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">You open p3 on the laptop. Your sessions have your models, your MCP servers, your machines and every tool the installed
+plugins bring; you never configured any of it. At Earendil, Colin, Cristina and Charlotta share a project; its sessions
+use exactly what the three brought, with each owner&#39;s own login. A Discord channel&#39;s session may read the answers of
+one other session for an hour and nothing else. Engineering may create MCP servers; research may not, yet researchers
+use the one Colin brought into their project.</p>
+<p>All of that comes from a few pieces. This book shows each piece three ways: what you would see, the code a plugin
+writes, and what runs when something changes.</p>
+<h3 id="seven-things-to-know">Seven things to know</h3>
+<ol class="findings">
+<li><strong>Groupings show; one list equips.</strong> A session appears in any number of groupings (recent, folders, projects,
+Discord) and uses exactly one list.</li>
+<li><strong>That list comes from one field</strong>, the session&#39;s resource source: your defaults, its own list, or one grouping
+with resources such as a project or a Discord channel.</li>
+<li><strong>Every resource has one owner forever,</strong> and with it one login. Users create resources for themselves; admins for
+the instance user, which owns company resources and everything plugins bring, such as tools.</li>
+<li><strong>Your defaults are a rule, not a list:</strong> everything you own plus every instance resource you may use. A new
+plugin&#39;s tool appears in your next turn by itself.</li>
+<li><strong>One policy decides,</strong> asked by core at the moment something happens. Plugins never know about ACL, SAML or
+Radius; pages never check anything, they show what the server&#39;s views say.</li>
+<li><strong>The worker follows its list,</strong> and checks it at every tool call; server views check it at every call too.</li>
+<li><strong>Anything can draw anything:</strong> creators per resource kind, renderers per form, detail views assembled from several
+plugins&#39; panels; layouts are plugins.</li>
+</ol>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p>A <strong>resource</strong> is something a session can use: a model provider, an MCP server, a machine, a drive, a tool, access to
+another session. Its <strong>owner</strong> is a user, or the <strong>instance user</strong> for company resources and for what plugins bring (tools
+that need no setup). A <strong>grouping</strong> is a plugin&#39;s object that shows things; a <strong>grouping with resources</strong> also keeps a list.
+A session&#39;s <strong>resource source</strong> names where its list comes from; the <strong>effective list</strong> is what its worker gets. The
+<strong>policy</strong> is the one plugin that answers typed <strong>requests</strong>; a <strong>creator</strong> is a resource kind&#39;s &quot;new ...&quot; sheet; a
+<strong>renderer</strong> draws a thing in a <strong>form</strong> (row, card, detail); a <strong>panel</strong> is one plugin&#39;s part of a detail view.</p>
+<style>
+.mk{font:13px/1.45 'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;color:#2a2723;background:#fff;border:1px solid #dcd3c1;border-radius:9px;box-shadow:0 18px 40px -28px rgba(60,40,10,.45);overflow:hidden;text-align:left}
+.mk *{box-sizing:border-box}
+.mk-bar{display:flex;align-items:center;gap:6px;padding:7px 10px;background:#f1ece2;border-bottom:1px solid #e3dbcc;font-size:11px;color:#7b7468}
+.mk-bar i{width:9px;height:9px;border-radius:50%;background:#d9cfbd;display:inline-block}
+.mk-bar span{margin-left:8px}
+.mk-cols{display:flex;min-height:300px}
+.mk-side{width:232px;flex:none;background:#f8f5ee;border-right:1px solid #e8e0d0;padding:8px 0}
+.mk-main{flex:1;padding:12px 16px;min-width:0}
+.mk-panel{width:250px;flex:none;border-left:1px solid #e8e0d0;padding:10px 12px;background:#fdfbf7}
+.mk-sec{margin:6px 0 10px}
+.mk-sec h5{margin:0;padding:3px 12px;font:600 10.5px/1.6 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:#7b7468;display:flex;justify-content:space-between;align-items:center}
+.mk-row{display:flex;align-items:center;gap:7px;padding:3px 12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mk-row.in{padding-left:26px}
+.mk-row.in2{padding-left:40px}
+.mk-row.sel{background:#efe6d6;border-left:3px solid #b4472f;padding-left:9px}
+.mk-row.in.sel{padding-left:23px}
+.mk-row small{color:#9a9182;margin-left:auto;font-size:11px}
+.mk-ico{width:16px;height:16px;border-radius:4px;flex:none;display:inline-flex;align-items:center;justify-content:center;font-size:9.5px;font-weight:700;color:#fff;background:#a89d88}
+.mk-ico.mcp{background:#6b5ca5}.mk-ico.env{background:#2e6a8a}.mk-ico.model{background:#b4472f}.mk-ico.tool{background:#8a7f6a}
+.mk-ico.drive{background:#4f8a5b}.mk-ico.access{background:#c08a2e}.mk-ico.user{background:#c2b18c;border-radius:50%}.mk-ico.group{background:#7b7468;border-radius:50%}
+.mk-ico.sess{background:transparent;border:1.5px solid #a89d88;color:#a89d88}
+.mk-by{font:600 9px/1 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#2e6a8a;border:1px solid #9fc0d2;border-radius:9px;padding:2px 6px;background:#f2f8fb;white-space:nowrap}
+.mk-by.core{color:#b4472f;border-color:#e2b2a6;background:#fcf3f0}
+.mk-h{font-size:15px;font-weight:600;margin:0 0 2px}
+.mk-sub{color:#7b7468;font-size:12px;margin-bottom:10px}
+.mk-msg{background:#f6f2ea;border-radius:8px;padding:7px 10px;margin:6px 0;max-width:90%}
+.mk-msg.me{background:#e9f1f5;margin-left:auto}
+.mk-msg b{font-size:11px;color:#7b7468;display:block;font-weight:600}
+.mk-tool{font:11.5px/1.4 'SF Mono',Menlo,monospace;color:#5a544a;border-left:2px solid #c2b18c;padding:2px 8px;margin:6px 0}
+.mk-tool.err{border-color:#b4472f;color:#b4472f}
+.mk-list{border:1px solid #ece4d4;border-radius:7px;overflow:hidden;margin:6px 0 10px}
+.mk-li{display:flex;align-items:center;gap:8px;padding:6px 9px;border-bottom:1px solid #f1ebdf}
+.mk-li:last-child{border-bottom:none}
+.mk-li .t{flex:1;min-width:0}
+.mk-li .t div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mk-li .t small{color:#9a9182;font-size:11px;display:block}
+.mk-li .x{color:#b9b0a0;font-size:14px}
+.mk-li.off{opacity:.45}
+.mk-btn{display:inline-block;border:1px solid #d5ccb9;border-radius:6px;padding:4px 10px;font-size:12px;background:#fff;color:#2a2723}
+.mk-btn.pri{background:#b4472f;border-color:#b4472f;color:#fff}
+.mk-btn.ghost{border-style:dashed;color:#7b7468}
+.mk-pill{font-size:10.5px;border-radius:9px;padding:1px 7px;background:#f1ebde;color:#7b7468;white-space:nowrap}
+.mk-pill.warn{background:#fbecd7;color:#a0661c}
+.mk-pill.inst{background:#ece7f6;color:#5a4c94}
+.mk-src{display:flex;align-items:center;gap:6px;background:#f6f2ea;border-radius:7px;padding:6px 9px;margin:4px 0 10px;font-size:12px}
+.mk-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.mk-card{border:1px solid #ece4d4;border-radius:8px;padding:9px 10px;display:flex;gap:9px;align-items:flex-start;background:#fff}
+.mk-card .t{flex:1}
+.mk-card .t b{display:block;font-size:12.5px}
+.mk-card .t small{color:#7b7468;font-size:11px;line-height:1.35;display:block}
+.mk-tabs{display:flex;gap:2px;border-bottom:1px solid #e3dbcc;margin:4px 0 0}
+.mk-tab{padding:6px 12px;font-size:12px;color:#7b7468;border:1px solid transparent;border-bottom:none;border-radius:6px 6px 0 0;display:flex;gap:6px;align-items:center}
+.mk-tab.on{color:#2a2723;background:#fff;border-color:#e3dbcc;margin-bottom:-1px;font-weight:600}
+.mk-term{background:#22201d;color:#e8e2d4;font:11.5px/1.5 'SF Mono',Menlo,monospace;padding:10px 12px;border-radius:0 0 7px 7px;min-height:120px}
+.mk-term .p{color:#d58a6f}
+.mk-files{display:grid;grid-template-columns:1fr 70px 90px;font-size:12px}
+.mk-files div{padding:4px 8px;border-bottom:1px solid #f1ebdf}
+.mk-files .hd{font-size:10px;color:#9a9182;text-transform:uppercase;letter-spacing:.08em}
+.mk-rules{width:100%;border-collapse:collapse;font-size:12px;margin:6px 0}
+.mk-rules td,.mk-rules th{padding:7px 8px;border-bottom:1px solid #f1ebdf;text-align:left;vertical-align:middle}
+.mk-rules th{font-size:10px;color:#9a9182;text-transform:uppercase;letter-spacing:.08em;font-weight:600;border-bottom:1px solid #e3dbcc}
+.mk-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid #e3dbcc;border-radius:12px;padding:2px 8px 2px 3px;margin:2px 3px 2px 0;font-size:11.5px;background:#fff}
+.mk-note{font-size:11px;color:#9a9182;margin-top:8px}
+.mk-split{display:grid;grid-template-columns:1fr 1fr;gap:0}
+.mk-split > div{padding:12px 14px}
+.mk-split > div + div{border-left:1px solid #e8e0d0}
+.mk-who{font:600 10.5px/1 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:#7b7468;margin-bottom:8px;display:flex;gap:6px;align-items:center}
+.mk-search{border:1px solid #e3dbcc;border-radius:6px;padding:5px 9px;color:#b9b0a0;font-size:12px;margin-bottom:8px}
+</style>
+</section>
+
+<section class="chapter" id="two-questions"><header class="opener"><div class="numeral">I</div><h2>Two Questions</h2><p class="lede">The idea the whole model rests on: groupings show things, one list equips a session.</p></header>
+<p class="dropcap">Every model we tried before asked groupings to decide what a session may use. Folders, projects, Discord servers and
+SAML groups each wanted a say, and each say needed a rule for combining it with the others: include, restrict,
+precedence, which login wins. Astra and Sol, designing independently, both cut the knot the same way. There are two
+questions, and they get two answers.</p>
+<figure class="fig wide anim"><svg viewBox="0 0 720 374" width="100%" role="img" aria-label="Where something appears (top) and what a session may use (bottom) are separate. A session appears in any number of groupings; one field names its one list." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#2e6a8a" text-anchor="start" font-weight="600" letter-spacing="2">GROUPINGS: SHOW</text><text x="16" y="155" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">SESSION</text><text x="16" y="277" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">LISTS: EQUIP</text><g class="step" style="--i:1"><rect x="16" y="36" width="152.5" height="55" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="92.3" y="60.8" font-size="11" fill="#2a2723" text-anchor="middle">Recent</text><text x="92.3" y="74.8" font-size="9.5" fill="#7b7468" text-anchor="middle">per user, from activity</text></g><g class="step" style="--i:4"><rect x="194.5" y="36" width="152.5" height="55" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="270.8" y="60.8" font-size="11" fill="#2a2723" text-anchor="middle">Folders</text><text x="270.8" y="74.8" font-size="9.5" fill="#7b7468" text-anchor="middle">computed from locations</text></g><g class="step" style="--i:6"><rect x="373" y="36" width="152.5" height="55" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="449.3" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">Project pi</text><text x="449.3" y="68.5" font-size="9.5" fill="#7b7468" text-anchor="middle">curated: members,</text><text x="449.3" y="81" font-size="9.5" fill="#7b7468" text-anchor="middle">resources</text></g><g class="step" style="--i:8"><rect x="551.5" y="36" width="152.5" height="55" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="627.8" y="60.8" font-size="11" fill="#2a2723" text-anchor="middle">#support</text><text x="627.8" y="74.8" font-size="9.5" fill="#7b7468" text-anchor="middle">a Discord channel</text></g><g class="step" style="--i:3"><rect x="194.5" y="169" width="152.5" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="270.8" y="188.3" font-size="11" fill="#2a2723" text-anchor="middle">Session S1</text><text x="270.8" y="202.3" font-size="9.5" fill="#7b7468" text-anchor="middle">source: project pi</text></g><g class="step" style="--i:10"><rect x="373" y="169" width="152.5" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="449.3" y="188.3" font-size="11" fill="#2a2723" text-anchor="middle">Session S2</text><text x="449.3" y="202.3" font-size="9.5" fill="#7b7468" text-anchor="middle">source: #support</text></g><g class="step" style="--i:12"><rect x="194.5" y="291" width="152.5" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="270.8" y="310.3" font-size="11" fill="#2a2723" text-anchor="middle">pi's list</text><text x="270.8" y="324.3" font-size="9.5" fill="#7b7468" text-anchor="middle">Linear · gpu · Anthropic</text></g><g class="step" style="--i:14"><rect x="373" y="291" width="152.5" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="449.3" y="310.3" font-size="11" fill="#2a2723" text-anchor="middle">#support's list</text><text x="449.3" y="324.3" font-size="9.5" fill="#7b7468" text-anchor="middle">company key · access to X</text></g><g class="step edge" style="--i:2"><path d="M92.3 91 L270.8 167" fill="none" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f1m)"/><rect x="185.5" y="123" width="34.3" height="13" fill="#fbf8f2" opacity=".92"/><text x="189.5" y="133" font-size="9.5" fill="#7b7468" text-anchor="start">shows</text></g><g class="step edge" style="--i:5"><path d="M270.8 91 L270.8 167" fill="none" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f1m)"/><rect x="274.8" y="123" width="34.3" height="13" fill="#fbf8f2" opacity=".92"/><text x="278.8" y="133" font-size="9.5" fill="#7b7468" text-anchor="start">shows</text></g><g class="step edge" style="--i:7"><path d="M449.3 91 L270.8 167" fill="none" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f1m)"/><rect x="364" y="123" width="34.3" height="13" fill="#fbf8f2" opacity=".92"/><text x="368" y="133" font-size="9.5" fill="#7b7468" text-anchor="start">shows</text></g><g class="step edge" style="--i:9"><path d="M627.8 91 L449.3 167" fill="none" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f1m)"/><rect x="542.5" y="123" width="34.3" height="13" fill="#fbf8f2" opacity=".92"/><text x="546.5" y="133" font-size="9.5" fill="#7b7468" text-anchor="start">shows</text></g><g class="step edge" style="--i:11"><path d="M270.8 213 L270.8 289" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="274.8" y="245" width="29.1" height="13" fill="#fbf8f2" opacity=".92"/><text x="278.8" y="255" font-size="9.5" fill="#7b7468" text-anchor="start">uses</text></g><g class="step edge" style="--i:13"><path d="M449.3 213 L449.3 289" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="453.3" y="245" width="29.1" height="13" fill="#fbf8f2" opacity=".92"/><text x="457.3" y="255" font-size="9.5" fill="#7b7468" text-anchor="start">uses</text></g><text x="16" y="359" font-size="10.5" fill="#7b7468" text-anchor="start">Dashed: appearing, any number. Solid: the one resource source, one field in the session catalog.</text></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 1.</span> Where something appears (top) and what a session may use (bottom) are separate. A session appears in any number of groupings; one field names its one list.</figcaption></figure>
+<p>The second answer is one field in the session catalog, the session&#39;s <strong>resource source</strong>: its owner&#39;s defaults, its own
+list, or one grouping with resources. One field means one source, by construction. Nothing checks across groupings,
+nothing needs precedence. Moving a session into another project replaces the field.</p>
+</section>
+
+<section class="chapter" id="owners"><header class="opener"><div class="numeral">II</div><h2>Who Owns What</h2><p class="lede">A resource is a row: a name, an id, an owner, a label. A plugin brings it or a person creates it.</p></header>
+<p class="dropcap">Every person is a user. One more user exists from the start: the <strong>instance user</strong>. It owns what belongs to the
+company rather than to a person (the company&#39;s Claude key, the build machine, the Discord bot) and everything the
+installed plugins bring. Nobody signs in as it; admins act for it.</p>
+<h3 id="users">Users</h3>
+<p>A user is an id the principal carries (<code>{ kind: &quot;user&quot;, id }</code>), a profile (name, email, avatar, kept by the kit&#39;s
+users plugin), the identities the person signs in with, and an admin flag. Everything else about a person lives with
+the plugin that needs it, keyed by the id: recent sessions, exclusions from defaults, model defaults.</p>
+<p>Nobody creates users by hand. Every way in is a plugin that verifies something and asks the users plugin who that is:</p>
+<pre><code><span class="tk-c">// plugins/saml/server.ts: verify, map the identity to a user, issue a kit session</span>
+<span class="tk-k">const</span> assertion = <span class="tk-k">await</span> <span class="tk-f">verify</span>(<span class="tk-k">await</span> request.<span class="tk-f">body</span>(), idp.value, ctx);
+<span class="tk-k">const</span> id = <span class="tk-k">await</span> identities.<span class="tk-f">signIn</span>({ issuer: assertion.issuer, subject: assertion.subject, profile }, ctx);   <span class="tk-c">// created at first sign-in</span>
+<span class="tk-k">const</span> session = <span class="tk-k">await</span> sessions.<span class="tk-f">issue</span>({ principal: { kind: <span class="tk-s">"user"</span>, id }, label: profile.name, kind: <span class="tk-s">"browser"</span>, secure: <span class="tk-k">true</span> }, ctx);</code></pre>
+<ul>
+<li><strong>Identities, not emails:</strong> a user is found by issuer and subject; a second sign-in method is linked explicitly.</li>
+<li><strong>The first user is an admin</strong> (on the laptop: the owner link signs in as that user). Who else administers is the
+policy&#39;s answer, so &quot;members of the SAML group admins&quot; works without touching the users plugin.</li>
+<li><strong>The instance user</strong> never signs in and is never in the user list; pickers show it as &quot;the company&quot;.</li>
+<li><strong>When someone leaves,</strong> an admin disables them: their sign-in sessions end, and their resources drop out of every
+list at once, because their logins are theirs. Their sessions stay for the people who could see them.</li>
+</ul>
+<h3 id="resources">Resources</h3>
+<p>A <strong>resource</strong> is anything a session can use: a tool, a model provider, an MCP server, a machine, a drive, access to
+one other session. The model needs four facts about it, so a resource is one row in the resources plugin&#39;s table:</p>
+<table>
+<thead>
+<tr>
+<th>name</th>
+<th>id</th>
+<th>owner</th>
+<th>label</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>coding-tools.bash</code></td>
+<td></td>
+<td>instance</td>
+<td>Bash</td>
+</tr>
+<tr>
+<td><code>mcp.server</code></td>
+<td><code>7f3a</code></td>
+<td>Colin</td>
+<td>Linear</td>
+</tr>
+<tr>
+<td><code>conversations.access</code></td>
+<td><code>91c2</code></td>
+<td>Mario</td>
+<td>Release notes draft · answers</td>
+</tr>
+</tbody></table>
+<p>There is no resource object. When a resource has state (an MCP server&#39;s configuration, its sign-in, its tools), that
+state belongs to the plugin that made it, keyed by the id. The name comes from one function, written once in the
+plugin&#39;s contract file:</p>
+<pre><code><span class="tk-c">// plugins/coding-tools/contract.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Bash</span> = <span class="tk-f">defineResource</span>(<span class="tk-s">"coding-tools.bash"</span>);
+
+<span class="tk-c">// plugins/mcp/contract.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">McpServer</span> = <span class="tk-f">defineResource</span>(<span class="tk-s">"mcp.server"</span>);</code></pre>
+<p>A resource comes to exist in one of two ways:</p>
+<ul>
+<li><strong>A plugin brings it.</strong> coding-tools contributes <code>[Bash]</code> to a server registry, <code>InstanceResources</code>. While the plugin
+is installed, the resource exists, owned by the instance user; uninstalled, it is gone from every list. No call, no
+row, no actor: installing a plugin is the admin&#39;s act.</li>
+<li><strong>A person creates it.</strong> Colin&#39;s MCP sheet calls the MCP plugin, which calls <code>Resources.create</code> with Colin as actor
+and owner: the owner rule (&quot;you create only for yourself; admins also for the company&quot;), the policy, then the row.
+The MCP plugin stores the configuration under the id it got back. Colin&#39;s server is Colin&#39;s forever, with Colin&#39;s
+login; Cristina wanting her own Linear login means a second resource.</li>
+</ul>
+<pre><code><span class="tk-c">// plugins/coding-tools/server.ts</span>
+self.<span class="tk-f">contribute</span>(<span class="tk-t">InstanceResources</span>, [<span class="tk-t">Bash</span>]);
+
+<span class="tk-c">// plugins/mcp/server.ts, inside McpServers.create (the method behind the creation sheet)</span>
+<span class="tk-k">const</span> resource = <span class="tk-k">await</span> resources.<span class="tk-f">create</span>({ actor: principal.id, owner, definition: <span class="tk-t">McpServer</span>, label: config.name }, ctx);
+<span class="tk-k">await</span> store.<span class="tk-f">add</span>({ id: resource.id, owner, config }, ctx);</code></pre>
+<div class="note"><b class="tag">Is a project a resource?</b><p>No. A resource is something a session uses. A project is a grouping that keeps a list of resources; a session in
+pi does not use pi, it uses what is on pi&#39;s list. In code, the session&#39;s source field points to the project; the
+project is never an entry on any list.</p>
+</div>
+</section>
+
+<section class="chapter" id="one-list"><header class="opener"><div class="numeral">III</div><h2>The One List</h2><p class="lede">Defaults, an own list, or a grouping&#39;s list: what a session uses, and what you see of it.</p></header>
+<p class="dropcap">A session&#39;s resource source is one of three:</p>
+<pre><code><span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ResourceSource</span> = <span class="tk-f">union</span>([
+	<span class="tk-f">obj</span>({ kind: <span class="tk-f">lit</span>(<span class="tk-s">"defaults"</span>) }),                          <span class="tk-c">// a rule: everything I own + every instance resource I may use</span>
+	<span class="tk-f">obj</span>({ kind: <span class="tk-f">lit</span>(<span class="tk-s">"own"</span>) }),                               <span class="tk-c">// the session's own list</span>
+	<span class="tk-f">obj</span>({ kind: <span class="tk-f">lit</span>(<span class="tk-s">"grouping"</span>), grouping: <span class="tk-t">ObjectAddress</span> }), <span class="tk-c">// one grouping with resources: a project, a Discord channel</span>
+]);</code></pre>
+<p><strong>Defaults</strong> is what Mario lives in and never sees. It is not a list anyone keeps; it is the rule <em>everything I own,
+plus every instance resource I may use</em>. Install a plugin with a new tool and the rule includes it: the tool is in the
+next turn of every normal session. Someone who wants code mode off everywhere adds it to their <strong>exclusions</strong> (a
+proposal, decision 3 at the end). <strong>Own</strong> is what &quot;Lock down this session&quot; makes: a snapshot of the current list the
+user then trims; from a project, only what the user may bring themselves is kept, so Cristina cannot walk off with
+Colin&#39;s server. <strong>Grouping</strong> is a project or a Discord channel; its plugin keeps the list.</p>
+<p>Everyone who may send in a session uses its whole list. That is the owner&#39;s decision of 2026-11-08: prompt injection
+cannot be prevented, so what is brought into a session is the control.</p>
+<p>The default layout shows a session&#39;s list in its side panel, with where it comes from at the top:</p>
+<figure class="fig wide"><div class="mk">
+<div class="mk-bar"><i></i><i></i><i></i><span>p3 · pi / Fix flaky upload test</span></div>
+<div class="mk-cols">
+<div class="mk-side">
+ <div class="mk-sec"><h5>Recent <span class="mk-by">recent</span></h5>
+  <div class="mk-row sel"><span class="mk-ico sess">S</span>Fix flaky upload test<small>2m</small></div>
+  <div class="mk-row"><span class="mk-ico sess">S</span>Release notes draft<small>1h</small></div>
+ </div>
+ <div class="mk-sec"><h5>Folders <span class="mk-by">folders</span></h5>
+  <div class="mk-row"><span class="mk-ico env">M</span>gpu:~/pi<small>2</small></div>
+  <div class="mk-row"><span class="mk-ico env">M</span>this machine:~/notes<small>5</small></div>
+ </div>
+ <div class="mk-sec"><h5>Projects <span class="mk-by">projects</span></h5>
+  <div class="mk-row">▾ <b>pi</b><small>3 people</small></div>
+  <div class="mk-row in sel"><span class="mk-ico sess">S</span>Fix flaky upload test</div>
+  <div class="mk-row in"><span class="mk-ico sess">S</span>GPU benchmark</div>
+  <div class="mk-row">▸ research-notes</div>
+ </div>
+ <div class="mk-sec"><h5>Discord <span class="mk-by">discord</span></h5>
+  <div class="mk-row">▾ Earendil</div>
+  <div class="mk-row in"># support<small>Support bot</small></div>
+ </div>
+ <div class="mk-sec"><h5>engineering <span class="mk-by">saml</span></h5>
+  <div class="mk-row"><span class="mk-ico user">C</span>Colin, Ada, +10</div>
+ </div>
+</div>
+<div class="mk-main">
+ <div class="mk-h">Fix flaky upload test</div>
+ <div class="mk-sub">gpu:~/pi · project pi · owner Cristina</div>
+ <div class="mk-msg"><b>Charlotta</b>Why does the upload test flake on gpu? There is a Linear issue about it.</div>
+ <div class="mk-tool">linear.search "upload flaky"  → PI-412</div>
+ <div class="mk-tool">bash  npm test -- upload --repeat 20</div>
+ <div class="mk-msg"><b>Pi</b>PI-412 matches: the test races the temp-dir cleanup. 3 of 20 runs fail; a fix is ready in <code>upload.test.ts</code>.</div>
+</div>
+<div class="mk-panel">
+ <div class="mk-h" style="font-size:13px">Resources <span class="mk-by core">core</span></div>
+ <div class="mk-src"><span class="mk-ico sess">P</span>from project <b>pi</b></div>
+ <div class="mk-list">
+  <div class="mk-li"><span class="mk-ico mcp">L</span><div class="t"><div>Linear</div><small>MCP server · Colin</small></div></div>
+  <div class="mk-li"><span class="mk-ico env">G</span><div class="t"><div>gpu</div><small>machine · Cristina</small></div></div>
+  <div class="mk-li"><span class="mk-ico model">A</span><div class="t"><div>Anthropic</div><small>model provider · Charlotta</small></div></div>
+  <div class="mk-li"><span class="mk-ico tool">T</span><div class="t"><div>Built-in tools · 14</div><small>instance</small></div><span class="mk-pill inst">instance</span></div>
+ </div>
+ <span class="mk-btn">Add resource</span> <span class="mk-btn ghost">Change source</span>
+ <div class="mk-note">Each row is drawn by its kind's plugin (its <code>Row</code> renderer); the panel only lists addresses.</div>
+</div>
+</div>
+</div><figcaption><span class="fignum">Figure 2.</span> The default layout: groupings in the sidebar (each section from its own plugin), session S1 in the middle, its list on the right. S1&#39;s source is project pi; Charlotta&#39;s question uses Colin&#39;s Linear login, Cristina&#39;s machine and Charlotta&#39;s key.</figcaption></figure>
+</section>
+
+<section class="chapter" id="groupings"><header class="opener"><div class="numeral">IV</div><h2>Groupings</h2><p class="lede">Computed and curated groupings, the few that carry resources, and a project from the inside.</p></header>
+<p class="dropcap">A grouping is any plugin&#39;s object that shows other objects. <strong>Folders</strong> are computed from where sessions work: nobody
+puts a session there. <strong>Recent</strong> is per user, from what each user opened. <strong>Projects</strong> are curated by people. A
+mirrored SAML group shows its members. None of these needs core, except the groupings that carry resources: they keep
+their list in their own plugin and register with core how to read and change it.</p>
+<pre><code><span class="tk-c">// plugins/projects/server.ts: the projects plugin knows nothing about MCP, models or ACL</span>
+self.<span class="tk-f">contribute</span>(<span class="tk-t">Groupings</span>, [{
+	grouping: <span class="tk-t">Project</span>,                               <span class="tk-c">// defineGrouping("projects.project")</span>
+	members,                                         <span class="tk-c">// users and groupings in each project</span>
+	resources: {
+		lists,                                       <span class="tk-c">// each project's entries, kept by this plugin</span>
+		mayBring: isMember,                          <span class="tk-c">// the list side of bringing: the project's own rule</span>
+		mayRemove: isMaintainer,
+		mayJoin: isMember,                           <span class="tk-c">// making a session's source this project</span>
+		add: (id, entry, ctx) =&gt; lists.<span class="tk-f">change</span>(id, (draft) =&gt; { draft.<span class="tk-f">push</span>(entry); }, ctx),
+		remove: (id, resource, ctx) =&gt; lists.<span class="tk-f">change</span>(id, (draft) =&gt; <span class="tk-f">removeEntry</span>(draft, resource), ctx),
+	},
+}]);</code></pre>
+<p>A project&#39;s sessions are a query: catalog rows whose source is the project. The session points up, never the project
+down, so two projects can never both equip one session. Selecting the project shows the project plugin&#39;s detail view,
+whose rows are drawn by each thing&#39;s own plugin:</p>
+<figure class="fig wide"><div class="mk">
+<div class="mk-bar"><i></i><i></i><i></i><span>p3 · pi</span></div>
+<div style="padding:14px 16px">
+ <div style="display:flex;align-items:baseline;gap:10px"><div class="mk-h" style="font-size:18px">pi</div><span class="mk-by">projects</span><span style="margin-left:auto" class="mk-btn">New session here</span></div>
+ <div class="mk-sub">Project · 3 people and 1 group · 5 resources · 2 sessions · you are a maintainer</div>
+ <div style="display:grid;grid-template-columns:1fr 1.25fr 1fr;gap:14px">
+  <div><div class="mk-who">People <span class="mk-by">users</span></div>
+   <div class="mk-list">
+    <div class="mk-li"><span class="mk-ico user">C</span><div class="t"><div>Colin</div><small>maintainer</small></div></div>
+    <div class="mk-li"><span class="mk-ico user">C</span><div class="t"><div>Cristina</div><small>member</small></div></div>
+    <div class="mk-li"><span class="mk-ico user">C</span><div class="t"><div>Charlotta</div><small>member</small></div></div>
+    <div class="mk-li"><span class="mk-ico group">E</span><div class="t"><div>engineering</div><small>SAML group · 12</small></div><span class="mk-by">saml</span></div>
+   </div><span class="mk-btn ghost">Add person or group</span></div>
+  <div><div class="mk-who">Resources <span class="mk-by core">core list</span></div>
+   <div class="mk-list">
+    <div class="mk-li"><span class="mk-ico mcp">L</span><div class="t"><div>Linear</div><small>brought by Colin · 23 tools · signed in</small></div><span class="mk-by">mcp</span></div>
+    <div class="mk-li"><span class="mk-ico env">G</span><div class="t"><div>gpu</div><small>brought by Cristina · ready · 2× A100</small></div><span class="mk-by">envs</span></div>
+    <div class="mk-li"><span class="mk-ico model">A</span><div class="t"><div>Anthropic</div><small>brought by Charlotta · 9 models</small></div><span class="mk-by">models</span></div>
+    <div class="mk-li"><span class="mk-ico drive">D</span><div class="t"><div>Company drive</div><small>instance · until Fri</small></div><span class="mk-pill warn">until Fri</span></div>
+    <div class="mk-li"><span class="mk-ico tool">T</span><div class="t"><div>Built-in tools · 14</div><small>bash, files, subagents… (decision 1)</small></div><span class="mk-pill inst">instance</span></div>
+   </div><span class="mk-btn ghost">Add resource</span></div>
+  <div><div class="mk-who">Sessions <span class="mk-by">sessions</span></div>
+   <div class="mk-list">
+    <div class="mk-li"><span class="mk-ico sess">S</span><div class="t"><div>Fix flaky upload test</div><small>Cristina · working</small></div></div>
+    <div class="mk-li"><span class="mk-ico sess">S</span><div class="t"><div>GPU benchmark</div><small>Colin · idle 3h</small></div></div>
+   </div></div>
+ </div>
+</div>
+</div><figcaption><span class="fignum">Figure 3.</span> Project pi selected. The projects plugin lists addresses in three columns; every row is drawn by the renderer of that thing&#39;s plugin (tags show which), so the project plugin never learns what an MCP server is.</figcaption></figure>
+<p>A Discord channel linked to a session is a grouping with resources too: its list is what the channel may use, and
+the link sheet edits it.</p>
+</section>
+
+<section class="chapter" id="adding"><header class="opener"><div class="numeral">V</div><h2>Adding Things</h2><p class="lede">Creators per kind, a picker filtered by what the server says you may create, and bringing in one step.</p></header>
+<p class="dropcap">Each resource kind contributes a <strong>creator</strong> to a page registry: a name, an icon, a description and the sheet that
+creates one. Any &quot;Add resource&quot; button opens the same picker: your existing resources and the instance&#39;s on top, the
+creators below, filtered by one list the server computes for you, <code>creatable</code>. Install a plugin and its creator
+appears; the picker knows no kinds in advance and no rules at all.</p>
+<pre><code><span class="tk-c">// plugins/mcp/web.tsx</span>
+self.<span class="tk-f">contribute</span>(<span class="tk-t">Creators</span>, [{ definition: <span class="tk-t">McpServer</span>, label: t.<span class="tk-f">message</span>(<span class="tk-s">"mcpServer"</span>), description: t.<span class="tk-f">message</span>(<span class="tk-s">"mcpAbout"</span>), icon: <span class="tk-t">PlugIcon</span>, <span class="tk-t">Sheet</span>: <span class="tk-t">NewMcpSheet</span> }]);
+
+<span class="tk-c">// plugins/resources/web.tsx: the picker behind every "Add resource"</span>
+<span class="tk-k">const</span> creatable = <span class="tk-f">useWatch</span>(<span class="tk-f">useHold</span>(<span class="tk-t">MyResources</span>, {}).creatable) ?? [];          <span class="tk-c">// computed on the server, per owner</span>
+<span class="tk-k">const</span> allowed = creatable.<span class="tk-f">find</span>((c) =&gt; c.owner === owner)?.definitions ?? [];
+<span class="tk-k">const</span> creators = <span class="tk-f">useRegistry</span>(<span class="tk-t">Creators</span>).<span class="tk-f">filter</span>((c) =&gt; allowed.<span class="tk-f">includes</span>(c.definition.name));</code></pre>
+<figure class="fig wide"><div class="mk">
+<div class="mk-bar"><i></i><i></i><i></i><span>Add a resource to project pi</span></div>
+<div class="mk-split">
+ <div><div class="mk-who"><span class="mk-ico user">C</span>Colin sees</div>
+  <div class="mk-search">Search your resources…</div>
+  <div class="mk-who" style="font-size:9.5px">Yours</div>
+  <div class="mk-list">
+   <div class="mk-li"><span class="mk-ico mcp">R</span><div class="t"><div>Radius MCP</div><small>MCP server · yours</small></div><span class="mk-btn">Bring</span></div>
+   <div class="mk-li off"><span class="mk-ico mcp">L</span><div class="t"><div>Linear</div><small>already in pi</small></div></div>
+  </div>
+  <div class="mk-who" style="font-size:9.5px">Create new</div>
+  <div class="mk-grid">
+   <div class="mk-card"><span class="mk-ico mcp">M</span><div class="t"><b>MCP server</b><small>HTTP, or a checkout's suggestion</small></div></div>
+   <div class="mk-card"><span class="mk-ico model">P</span><div class="t"><b>Model provider</b><small>API key or sign-in</small></div></div>
+   <div class="mk-card"><span class="mk-ico env">M</span><div class="t"><b>Machine</b><small>SSH host or sandbox</small></div></div>
+   <div class="mk-card"><span class="mk-ico drive">D</span><div class="t"><b>Drive</b><small>files people and agents share</small></div></div>
+  </div>
+ </div>
+ <div><div class="mk-who"><span class="mk-ico user">C</span>Cristina sees</div>
+  <div class="mk-search">Search your resources…</div>
+  <div class="mk-who" style="font-size:9.5px">Yours</div>
+  <div class="mk-list">
+   <div class="mk-li off"><span class="mk-ico env">G</span><div class="t"><div>gpu</div><small>already in pi</small></div></div>
+   <div class="mk-li"><span class="mk-ico drive">D</span><div class="t"><div>Cristina's drive</div><small>drive · yours</small></div><span class="mk-btn">Bring</span></div>
+  </div>
+  <div class="mk-who" style="font-size:9.5px">Create new</div>
+  <div class="mk-grid">
+   <div class="mk-card"><span class="mk-ico model">P</span><div class="t"><b>Model provider</b><small>API key or sign-in</small></div></div>
+   <div class="mk-card"><span class="mk-ico env">M</span><div class="t"><b>Machine</b><small>SSH host or sandbox</small></div></div>
+   <div class="mk-card"><span class="mk-ico drive">D</span><div class="t"><b>Drive</b><small>files people and agents share</small></div></div>
+   <div class="mk-card" style="border-style:dashed;opacity:.6"><span class="mk-ico" style="background:#ddd">–</span><div class="t"><b>No MCP server</b><small>not in your creatable kinds</small></div></div>
+  </div>
+ </div>
+</div>
+</div><figcaption><span class="fignum">Figure 4.</span> The same picker for Colin (engineering) and Cristina (research), with the rule &quot;only engineering may create MCP servers&quot;. Cristina&#39;s view lacks the MCP creator because her <code>creatable</code> lacks it; she still uses Colin&#39;s server in pi.</figcaption></figure>
+<p>Creating from a list creates and brings in one step for the user: the creator&#39;s sheet calls its plugin&#39;s <code>create</code>
+(core&#39;s guarded step checks the owner rule and the policy), then the picker brings the new resource into the list with
+the duration the user picked. Bringing needs two yeses: the resource&#39;s side (you own it; instance resources: you
+administer) and the list&#39;s side (the project lets you add). Admins get one more choice in the picker, the owner:
+themselves or the company, which is how the company&#39;s Claude key or build machine is created although nobody signs in
+as the instance user.</p>
+</section>
+
+<section class="chapter" id="policy"><header class="opener"><div class="numeral">VI</div><h2>Who May</h2><p class="lede">One replaceable policy, typed requests, core&#39;s guarded steps, and a rule change that reaches Cristina&#39;s page by itself.</p></header>
+<p class="dropcap">The groupings from SAML, Radius and projects do not know each other. <strong>One policy decides</strong>, behind one registry,
+asked by core at the moment an action happens, on the server. Requests are typed values, kinds are tokens compared by
+identity:</p>
+<pre><code><span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Request</span> =
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"create-resource"</span>; <span class="tk-k">readonly</span> actor: <span class="tk-t">UserId</span>; <span class="tk-k">readonly</span> definition: <span class="tk-t">ResourceDefinition</span>; <span class="tk-k">readonly</span> owner: <span class="tk-t">UserId</span> }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"create-grouping"</span>; <span class="tk-k">readonly</span> actor: <span class="tk-t">UserId</span>; <span class="tk-k">readonly</span> grouping: <span class="tk-t">GroupingDefinition</span> }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"bring"</span>; <span class="tk-k">readonly</span> actor: <span class="tk-t">UserId</span>; <span class="tk-k">readonly</span> resource: <span class="tk-t">ResourceRef</span>; <span class="tk-k">readonly</span> into: <span class="tk-t">ListRef</span>; <span class="tk-k">readonly</span> until: number | <span class="tk-k">null</span> }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"use"</span>; <span class="tk-k">readonly</span> session: <span class="tk-t">SessionRow</span>; <span class="tk-k">readonly</span> resource: <span class="tk-t">ResourceRef</span> }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"administer"</span>; <span class="tk-k">readonly</span> actor: <span class="tk-t">UserId</span> }
+	| <span class="tk-c">/* set-source, add-member, and a plugin's own operation(Contract, "method") */</span>;
+
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Policy</span> = { <span class="tk-f">decide</span>(request: <span class="tk-t">Request</span>, baseline: <span class="tk-t">Decision</span>): <span class="tk-t">Decision</span> };
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Policies</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">Policy</span>, <span class="tk-t">Policy</span>&gt;(<span class="tk-s">"p3.policy"</span>, { version: <span class="tk-n">1</span> });</code></pre>
+<p>The default policy returns the baseline: the answer core and the owning plugin give from their own facts. On a laptop
+that is &quot;Mario may do everything&quot;. A company installs the rules plugin, and an admin edits rules on a settings screen
+built from the same creators registry and every plugin&#39;s groupings:</p>
+<figure class="fig wide"><div class="mk">
+<div class="mk-bar"><i></i><i></i><i></i><span>Settings · Access rules</span></div>
+<div style="padding:14px 16px">
+ <div style="display:flex;align-items:baseline;gap:10px"><div class="mk-h">Access rules</div><span class="mk-by">rules</span><span class="mk-sub" style="margin:0 0 0 auto">Policy in use: rules · admins only</span></div>
+ <table class="mk-rules">
+  <tr><th>Permission</th><th>Only members of</th><th></th></tr>
+  <tr><td>Create · <span class="mk-chip"><span class="mk-ico mcp">M</span>MCP server</span></td><td><span class="mk-chip"><span class="mk-ico group">E</span>engineering</span><span class="mk-chip"><span class="mk-ico group">R</span>research</span></td><td><span class="mk-pill">just added</span></td></tr>
+  <tr><td>Create · <span class="mk-chip"><span class="mk-ico model">P</span>Model provider</span></td><td><span class="mk-chip"><span class="mk-ico group">A</span>admins</span></td><td></td></tr>
+  <tr><td>Use · <span class="mk-chip"><span class="mk-ico env">M</span>This machine</span></td><td><span class="mk-chip"><span class="mk-ico group">A</span>admins</span></td><td></td></tr>
+  <tr><td>Administer</td><td><span class="mk-chip"><span class="mk-ico group">A</span>admins</span></td><td></td></tr>
+ </table>
+ <div style="display:flex;gap:8px;align-items:center;margin-top:10px"><span class="mk-btn ghost">+ Rule</span><span class="mk-sub" style="margin:0">Kinds: MCP server · Model provider · Machine · Drive · Access to a session · Weather tool <span class="mk-by">creators</span></span></div>
+</div>
+</div><figcaption><span class="fignum">Figure 5.</span> The rules plugin&#39;s settings screen. Kinds come from the <code>Creators</code> registry (names, icons), groups from any plugin&#39;s groupings (here SAML). A permission with rules is restricted to their members; one without rules keeps the baseline.</figcaption></figure>
+<p>Adding research to the first rule reaches Cristina&#39;s open picker without a reload, without polling, and without the
+picker knowing anything about groups:</p>
+<figure class="fig anim"><svg viewBox="0 0 720 326" width="100%" role="img" aria-label="An admin lets research create MCP servers; Cristina's picker gains the MCP creator." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f6m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f6a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f6b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="84.8" y1="52" x2="84.8" y2="318" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="84.8" y="27" font-size="11" fill="#2a2723" text-anchor="middle">admin's page</text><text x="84.8" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">rules screen</text><line x1="222.4" y1="52" x2="222.4" y2="318" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="160.6" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="222.4" y="27" font-size="11" fill="#2a2723" text-anchor="middle">rules plugin</text><text x="222.4" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">the policy</text><line x1="360" y1="52" x2="360" y2="318" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="298.2" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="27" font-size="11" fill="#2a2723" text-anchor="middle">core resources</text><text x="360" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">server</text><line x1="497.6" y1="52" x2="497.6" y2="318" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="435.8" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="497.6" y="27" font-size="11" fill="#2a2723" text-anchor="middle">MyResources</text><text x="497.6" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">Cristina's view</text><line x1="635.2" y1="52" x2="635.2" y2="318" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="573.4" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="635.2" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Cristina's page</text><text x="635.2" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">picker</text><g class="step edge" style="--i:1"><line x1="84.8" y1="78" x2="219.4" y2="78" stroke="#7b7468" marker-end="url(#f6m)"/><text x="153.6" y="72" font-size="10" fill="#2a2723" text-anchor="middle">addRule { research may create mcp.server }</text></g><g class="step edge" style="--i:2"><path d="M222.4 104 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f6a)"/><text x="264.4" y="114" font-size="10" fill="#b4472f" text-anchor="start">commit; policy.set(new value)</text></g><g class="step edge" style="--i:3"><line x1="222.4" y1="150" x2="357" y2="150" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f6m)"/><text x="291.2" y="144" font-size="10" fill="#2a2723" text-anchor="middle">Policies value changed</text></g><g class="step edge" style="--i:4"><path d="M360 176 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f6m)"/><text x="402" y="186" font-size="10" fill="#2a2723" text-anchor="start">derive creatable per live view</text></g><g class="step edge" style="--i:5"><line x1="360" y1="222" x2="494.6" y2="222" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f6m)"/><text x="428.8" y="216" font-size="10" fill="#2a2723" text-anchor="middle">creatable gains mcp.server</text></g><g class="step edge" style="--i:6"><line x1="497.6" y1="254" x2="632.2" y2="254" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f6m)"/><text x="566.4" y="248" font-size="10" fill="#2a2723" text-anchor="middle">state pushed</text></g><g class="step edge" style="--i:7"><path d="M635.2 280 h-34 v14 h32" fill="none" stroke="#7b7468" marker-end="url(#f6m)"/><text x="593.2" y="290" font-size="10" fill="#2a2723" text-anchor="end">&quot;MCP server&quot; appears</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 6.</span> An admin lets research create MCP servers; Cristina&#39;s picker gains the MCP creator.</figcaption></figure>
+</section>
+
+<section class="chapter" id="discord"><header class="opener"><div class="numeral">VII</div><h2>Discord, Locked Down</h2><p class="lede">A configured resource: access to one session, chosen actions, one hour, added from the Discord session itself.</p></header>
+<p class="dropcap">The owner&#39;s case: the Discord session may read the answers of one other session, only that one, for an hour, then
+lose it again. The conversations tool has actions; the resource is the permission, not the tool:</p>
+<pre><code><span class="tk-c">// plugins/conversations/contract.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ConversationsTool</span> = <span class="tk-f">defineResource</span>(<span class="tk-s">"conversations.tool"</span>);      <span class="tk-c">// brought: the tool itself</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ConversationAccess</span> = <span class="tk-f">defineResource</span>(<span class="tk-s">"conversations.access"</span>);   <span class="tk-c">// created: access to one session</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">AccessConfig</span> = <span class="tk-f">obj</span>({ target: <span class="tk-f">str</span>(), actions: <span class="tk-f">arr</span>(<span class="tk-f">oneOf</span>(<span class="tk-s">"answer"</span>, <span class="tk-s">"send"</span>)) });
+
+<span class="tk-c">// plugins/conversations/server.ts</span>
+self.<span class="tk-f">contribute</span>(<span class="tk-t">InstanceResources</span>, [<span class="tk-t">ConversationsTool</span>]);
+<span class="tk-c">// SessionConversations (the worker's view): targets from the list's access entries; every send/answer finds the</span>
+<span class="tk-c">// entry naming that target and action, checks its deadline now, and that its owner may still send there.</span>
+
+<span class="tk-c">// plugins/conversations/worker.ts: the extension, keyed by the tool resource</span>
+self.<span class="tk-f">contribute</span>(<span class="tk-t">Extensions</span>, [[<span class="tk-t">ConversationsTool</span>, <span class="tk-f">conversationsExtension</span>(session)]]);</code></pre>
+<p>The channel&#39;s list therefore holds three things: the company key, the conversations tool, and the access. The add
+sheet puts the tool on the list together with the first access if it is missing.</p>
+<p>Mario starts where he wants, on the Discord session: Add resource, &quot;Access to a session&quot;, picks the target, <code>answer</code>
+only, one hour. Two checks run: may Mario grant access to that target (he can send in it), may he change the channel&#39;s
+list (the Discord plugin&#39;s rule). The expiry sits on the list entry, not on the resource.</p>
+<figure class="fig wide"><div class="mk">
+<div class="mk-bar"><i></i><i></i><i></i><span>p3 · Earendil / #support / Support bot</span></div>
+<div class="mk-cols" style="min-height:250px">
+<div class="mk-main">
+ <div class="mk-h">Support bot</div>
+ <div class="mk-sub"># support · Discord · owner Mario</div>
+ <div class="mk-msg"><b>Lena · Discord</b>Is 0.9 out yet? The changelog link 404s.</div>
+ <div class="mk-tool">conversations.answer → "Release notes draft"</div>
+ <div class="mk-msg"><b>Pi</b>Not yet: the release notes are still in draft; the 0.9 changelog goes up with the release.</div>
+ <div class="mk-msg"><b>Tom · Discord</b>Can you tell the release session to hurry up?</div>
+ <div class="mk-tool err">conversations.send → refused: this session may only read answers of "Release notes draft"</div>
+</div>
+<div class="mk-panel">
+ <div class="mk-h" style="font-size:13px">Resources <span class="mk-by core">core</span></div>
+ <div class="mk-src"><span class="mk-ico" style="background:#5865f2">#</span>from <b>#support</b> <span class="mk-by" style="margin-left:auto">discord</span></div>
+ <div class="mk-list">
+  <div class="mk-li"><span class="mk-ico model">C</span><div class="t"><div>Company Claude key</div><small>model provider · <span class="mk-pill inst">instance</span></small></div></div>
+  <div class="mk-li"><span class="mk-ico access">→</span><div class="t"><div>Release notes draft</div><small>answers only · Mario · <span class="mk-pill warn">ends 14:32</span></small></div></div>
+ </div>
+ <span class="mk-btn">Add resource</span>
+ <div class="mk-note">No bash, no machine, no MCP: nothing else is on the channel's list.</div>
+</div>
+</div>
+</div><figcaption><span class="fignum">Figure 7.</span> Session S2, fed by #support. Its source is the channel&#39;s list: the company key and access to one session, answers only, ending at 14:32. Discord people drive the whole list; the list is the control.</figcaption></figure>
+<p>At 14:32 the entry leaves the effective list; a call a second later is refused by the server, which finds the exact
+entry behind that target and action and checks its deadline against the current time, whatever the worker still shows.
+The session has no machine at all: its location is empty, so there is nothing to run bash on and no fallback to the
+server machine.</p>
+</section>
+
+<section class="chapter" id="worker"><header class="opener"><div class="numeral">VIII</div><h2>On the Worker</h2><p class="lede">The worker follows its list; the harness lets in only extensions whose resource is on it; server views check every call.</p></header>
+<p class="dropcap">The list is computed on the server and pushed to the session&#39;s worker as the state of one view, <code>SessionResources</code>.
+The worker reads it locally; a change arrives as one push. Nobody polls.</p>
+<p>A plugin&#39;s worker facet contributes its Durable extension <strong>together with the resource it belongs to</strong>, the same
+constant its server facet declared:</p>
+<pre><code><span class="tk-c">// plugins/coding-tools/worker.ts: each extension keyed by the resource it needs</span>
+self.<span class="tk-f">contribute</span>(<span class="tk-t">Extensions</span>, [
+	[<span class="tk-t">FileTools</span>, <span class="tk-f">defineExtension</span>({ name: <span class="tk-s">"files"</span>, tools: [read, write, edit] })],
+	[<span class="tk-t">Bash</span>, <span class="tk-f">defineExtension</span>({ name: <span class="tk-s">"bash"</span>, tools: [bash] })],
+]);
+
+<span class="tk-c">// plugins/harness/worker.ts: the one check</span>
+<span class="tk-k">const</span> allowed = (resource: <span class="tk-t">ResourceRef</span>): boolean =&gt;
+	resources.state.value.kind === <span class="tk-s">"live"</span> &amp;&amp; list.kind === <span class="tk-s">"ready"</span> &amp;&amp;
+	list.entries.<span class="tk-f">some</span>((e) =&gt; <span class="tk-f">sameResource</span>(e.resource, resource) &amp;&amp; (e.until === <span class="tk-k">null</span> || e.until &gt; <span class="tk-t">Date</span>.<span class="tk-f">now</span>()));</code></pre>
+<p>Tools stop guarding themselves: p2&#39;s <code>origin</code> and <code>locked</code> fields go; <code>scope</code> (main conversation or subagents) stays.</p>
+<p>The filter alone is not enough, the review found: a code-mode script captured its tools when it started, and a worker
+that lost its link still holds its last list. So the harness also checks at <strong>every tool call</strong>, nested ones included:
+link live, list ready, entry present, deadline not passed. Things that are not tools check at their own door: the
+composer&#39;s <code>!cmd</code> needs <code>Bash</code> on the list, a cache warmer re-admits its provider before each refresh, terminal and
+voice channels re-check on use.</p>
+<figure class="fig anim"><svg viewBox="0 0 720 387" width="100%" role="img" aria-label="A session worker starts and follows its list: the harness admits extensions, models get pushed auth, MCP tools appear." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f8m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f8a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f8b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="102" y1="52" x2="102" y2="379" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="102" y="27" font-size="11" fill="#2a2723" text-anchor="middle">S1's worker</text><text x="102" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">harness</text><line x1="274" y1="52" x2="274" y2="379" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="195" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="274" y="27" font-size="11" fill="#2a2723" text-anchor="middle">SessionResources</text><text x="274" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">server, core</text><line x1="446" y1="52" x2="446" y2="379" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="367" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="446" y="27" font-size="11" fill="#2a2723" text-anchor="middle">SessionModels</text><text x="446" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">server, models</text><line x1="618" y1="52" x2="618" y2="379" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="539" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="618" y="27" font-size="11" fill="#2a2723" text-anchor="middle">SessionMcp</text><text x="618" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">server, mcp</text><g class="step edge" style="--i:1"><line x1="102" y1="78" x2="271" y2="78" stroke="#7b7468" marker-end="url(#f8m)"/><text x="188" y="72" font-size="10" fill="#2a2723" text-anchor="middle">hold (principal: worker S1)</text></g><g class="step edge" style="--i:2"><line x1="274" y1="110" x2="105" y2="110" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f8m)"/><text x="188" y="104" font-size="10" fill="#2a2723" text-anchor="middle">list ready: Linear, gpu, Anthropic, tools</text></g><g class="step edge" style="--i:3"><path d="M102 136 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f8a)"/><text x="144" y="146" font-size="10" fill="#b4472f" text-anchor="start">allowed(): files, bash, conversations, Linear</text></g><g class="step edge" style="--i:4"><line x1="102" y1="182" x2="443" y2="182" stroke="#7b7468" marker-end="url(#f8m)"/><text x="274" y="176" font-size="10" fill="#2a2723" text-anchor="middle">hold</text></g><g class="step edge" style="--i:5"><line x1="446" y1="214" x2="105" y2="214" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f8m)"/><text x="274" y="208" font-size="10" fill="#2a2723" text-anchor="middle">Anthropic + auth (expires 15:10)</text></g><g class="step edge" style="--i:6"><line x1="102" y1="246" x2="615" y2="246" stroke="#7b7468" marker-end="url(#f8m)"/><text x="360" y="240" font-size="10" fill="#2a2723" text-anchor="middle">hold</text></g><g class="step edge" style="--i:7"><line x1="618" y1="278" x2="105" y2="278" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f8m)"/><text x="360" y="272" font-size="10" fill="#2a2723" text-anchor="middle">Linear: 23 tools</text></g><g class="step edge" style="--i:8"><path d="M102 304 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f8a)"/><text x="144" y="314" font-size="10" fill="#b4472f" text-anchor="start">resume Durable: first turn runs</text></g><g class="step" style="--i:9"><rect x="198" y="336" width="496" height="23" rx="3" fill="#f4eee2" stroke="#c2b18c"/><text x="446" y="350" font-size="10" fill="#5b5549" text-anchor="middle">each server view reads the same effective list: resourcesOf(self, principal, Kind)</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 8.</span> A session worker starts and follows its list: the harness admits extensions, models get pushed auth, MCP tools appear.</figcaption></figure>
+<p>Resource plugins&#39; per-session server views read the same list and check it at every call, so the worker is never the
+last line:</p>
+<figure class="fig anim"><svg viewBox="0 0 720 382" width="100%" role="img" aria-label="Colin withdraws Linear from project pi while S1 is mid-script; the next call is refused on the server." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f9m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f9a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f9b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="84.8" y1="52" x2="84.8" y2="374" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="84.8" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Colin's page</text><text x="84.8" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">MyResources</text><line x1="222.4" y1="52" x2="222.4" y2="374" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="160.6" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="222.4" y="27" font-size="11" fill="#2a2723" text-anchor="middle">core resources</text><text x="222.4" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">server</text><line x1="360" y1="52" x2="360" y2="374" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="298.2" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="27" font-size="11" fill="#2a2723" text-anchor="middle">projects</text><text x="360" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">pi's list</text><line x1="497.6" y1="52" x2="497.6" y2="374" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="435.8" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="497.6" y="27" font-size="11" fill="#2a2723" text-anchor="middle">SessionMcp</text><text x="497.6" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">S1's view</text><line x1="635.2" y1="52" x2="635.2" y2="374" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="573.4" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="635.2" y="27" font-size="11" fill="#2a2723" text-anchor="middle">S1's worker</text><text x="635.2" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">harness</text><g class="step edge" style="--i:1"><line x1="84.8" y1="78" x2="219.4" y2="78" stroke="#7b7468" marker-end="url(#f9m)"/><text x="153.6" y="72" font-size="10" fill="#2a2723" text-anchor="middle">withdraw Linear</text></g><g class="step edge" style="--i:2"><line x1="222.4" y1="110" x2="357" y2="110" stroke="#7b7468" marker-end="url(#f9m)"/><text x="291.2" y="104" font-size="10" fill="#2a2723" text-anchor="middle">remove(pi, Linear)</text></g><g class="step edge" style="--i:3"><line x1="360" y1="142" x2="225.4" y2="142" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f9m)"/><text x="291.2" y="136" font-size="10" fill="#2a2723" text-anchor="middle">pi's list changed</text></g><g class="step edge" style="--i:4"><path d="M222.4 168 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f9a)"/><text x="264.4" y="178" font-size="10" fill="#b4472f" text-anchor="start">recompute S1's list</text></g><g class="step edge" style="--i:5"><line x1="222.4" y1="214" x2="632.2" y2="214" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f9m)"/><text x="428.8" y="208" font-size="10" fill="#2a2723" text-anchor="middle">list without Linear</text></g><g class="step edge" style="--i:6"><line x1="222.4" y1="246" x2="494.6" y2="246" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f9m)"/><text x="360" y="240" font-size="10" fill="#2a2723" text-anchor="middle">Linear gone</text></g><g class="step edge" style="--i:7"><line x1="635.2" y1="278" x2="500.6" y2="278" stroke="#7b7468" marker-end="url(#f9m)"/><text x="566.4" y="272" font-size="10" fill="#2a2723" text-anchor="middle">(sent before) call linear.search</text></g><g class="step edge" style="--i:8"><line x1="497.6" y1="310" x2="632.2" y2="310" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f9m)"/><text x="566.4" y="304" font-size="10" fill="#2a2723" text-anchor="middle">refused: not on S1's list</text></g><g class="step edge" style="--i:9"><path d="M635.2 336 h-34 v14 h32" fill="none" stroke="#7b7468" marker-end="url(#f9m)"/><text x="593.2" y="346" font-size="10" fill="#2a2723" text-anchor="end">next phase: no Linear tools</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 9.</span> Colin withdraws Linear from project pi while S1 is mid-script; the next call is refused on the server.</figcaption></figure>
+<p>A call admitted before Colin&#39;s commit may finish; nothing is replayed. What is already in the transcript stays.</p>
+</section>
+
+<section class="chapter" id="kinds"><header class="opener"><div class="numeral">IX</div><h2>Kinds in Code</h2><p class="lede">How models, MCP, machines and drives look under the same three parts.</p></header>
+<p class="dropcap">Every kind has the same three parts: a token in its contract file, a server facet that registers it and serves a
+per-session view, a worker facet that contributes its extensions keyed by resource. What differs is what the worker gets.</p>
+<p><strong>Model providers push credentials.</strong> The worker streams from the provider itself; the server refreshes and pushes
+pi-ai&#39;s auth with its expiry. Refresh tokens never reach the worker, and a cached token alone is not permission: the
+worker refuses once the provider left the list or the auth expired.</p>
+<pre><code>host.<span class="tk-f">serve</span>(<span class="tk-t">SessionModels</span>, (_params, principal, self) =&gt; {
+	<span class="tk-k">const</span> list = self.<span class="tk-f">get</span>(<span class="tk-t">SessionList</span>, { session: principal.session }).list;   <span class="tk-c">// entries isOf(ModelProvider)</span>
+	<span class="tk-k">const</span> store = self.<span class="tk-f">get</span>(<span class="tk-t">ModelStore</span>, {});                       <span class="tk-c">// pi-ai CredentialStore, one refresh per credential</span>
+	<span class="tk-c">// a routine pushes { resource, models, auth, expires } for each, again before the earliest expiry</span>
+});</code></pre>
+<p><strong>MCP servers run on the server.</strong> One resource per server, its transport in its configuration: HTTP (no location),
+<code>server-stdio</code> (the p3 machine; admin by baseline), or <code>checkout</code> (an enabled <code>.pi/mcp.json</code> entry, bound to that env,
+directory and the entry&#39;s digest, run there). The worker gets one extension per server on the list; every tool calls
+<code>SessionMcp.call</code> with its conversation, so the server admits against the list now and checks that a checkout server
+runs only where that conversation works. Processes stay per session by default, as in p2 (decision 4).</p>
+<p><strong>Machines are where tools run.</strong> A conversation&#39;s location names an env on the list; the machine p3 runs on is an
+instance resource. Selecting a machine shows its detail view, assembled from panels three plugins contribute, none of
+which imports the others:</p>
+<pre><code>self.<span class="tk-f">contribute</span>(<span class="tk-t">ResourcePanels</span>, [{ definition: <span class="tk-t">Machine</span>, title: t.<span class="tk-f">message</span>(<span class="tk-s">"files"</span>), order: <span class="tk-n">10</span>, <span class="tk-t">Panel</span>: <span class="tk-t">MachineFiles</span> }]);          <span class="tk-c">// files</span>
+self.<span class="tk-f">contribute</span>(<span class="tk-t">ResourcePanels</span>, [{ definition: <span class="tk-t">Machine</span>, title: t.<span class="tk-f">message</span>(<span class="tk-s">"terminals"</span>), order: <span class="tk-n">20</span>, <span class="tk-t">Panel</span>: <span class="tk-t">MachineTerminals</span> }]);  <span class="tk-c">// terminals</span>
+self.<span class="tk-f">contribute</span>(<span class="tk-t">ResourcePanels</span>, [{ definition: <span class="tk-t">Machine</span>, title: t.<span class="tk-f">message</span>(<span class="tk-s">"settings"</span>), order: <span class="tk-n">90</span>, <span class="tk-t">Panel</span>: <span class="tk-t">MachineSettings</span> }]);    <span class="tk-c">// envs</span></code></pre>
+<figure class="fig wide"><div class="mk">
+<div class="mk-bar"><i></i><i></i><i></i><span>p3 · gpu</span></div>
+<div style="padding:12px 16px 14px">
+ <div style="display:flex;align-items:center;gap:9px"><span class="mk-ico env">G</span><div class="mk-h" style="margin:0">gpu</div><span class="mk-pill" style="background:#e3f1e6;color:#3f7a4b">ready</span><span class="mk-sub" style="margin:0">Cristina · ssh cristina@gpu.lab · Linux · 2× A100</span><span class="mk-by" style="margin-left:auto">row &amp; header: envs</span></div>
+ <div class="mk-tabs">
+  <div class="mk-tab">Files <span class="mk-by">files</span></div>
+  <div class="mk-tab on">Terminals <span class="mk-by">terminals</span></div>
+  <div class="mk-tab">Settings <span class="mk-by">envs</span></div>
+  <div class="mk-tab" style="border:1px dashed #d5ccb9;border-bottom:none">VNC <span class="mk-by">vnc (3rd party)</span></div>
+ </div>
+ <div style="border:1px solid #e3dbcc;border-top:none;border-radius:0 0 8px 8px;padding:8px">
+  <div style="display:flex;gap:6px;margin-bottom:6px"><span class="mk-chip">~/pi · bash</span><span class="mk-chip">~/bench · nvidia-smi</span><span class="mk-btn ghost" style="padding:1px 8px">+</span></div>
+  <div class="mk-term"><span class="p">cristina@gpu:~/pi$</span> npm test -- upload --repeat 20<br>  ✓ upload › resumes after drop (19/20)<br>  ✗ upload › cleans temp dir (1/20)  ENOENT: /tmp/pi-up-7f3a<br><span class="p">cristina@gpu:~/pi$</span> ▍</div>
+ </div>
+</div>
+</div><figcaption><span class="fignum">Figure 10.</span> Machine gpu selected. The detail sheet mounts every panel registered for <code>Machine</code>, each from its own plugin; a fourth (VNC) is someone&#39;s plugin added later. Each panel checks its own operations on the server.</figcaption></figure>
+<p><strong>Drives are file spaces.</strong> People use a drive directly (the owner manages, members of a list holding it read); an
+agent gets drive tools while any drive is on its list, each call naming a drive the server admits.</p>
+</section>
+
+<section class="chapter" id="directories"><header class="opener"><div class="numeral">X</div><h2>Sign-in and Directories</h2><p class="lede">SAML and Radius touch three places, each already in the model.</p></header>
+<p class="dropcap">Nothing about SAML or Radius appears in projects, MCP, models or the harness.</p>
+<ol>
+<li><strong>Sign-in creates users.</strong> A SAML plugin verifies the assertion and calls <code>Users.signIn({ issuer, subject, name })</code>.
+Emails are never identities.</li>
+<li><strong>Sync mirrors groups as groupings.</strong> <code>SamlGroup { name }</code> registers its members with core; they appear in the
+sidebar like any grouping and can be members of projects. A Radius plugin mirrors Radius org groups the same way.</li>
+<li><strong>The policy names them.</strong> &quot;Only engineering may create MCP servers&quot; is one rule on the settings screen above.</li>
+</ol>
+<p>Radius resources are ordinary resources: signing in with Radius can create the user&#39;s Radius MCP server and Radius
+model provider, by calling those plugins&#39; <code>create</code> as that user. Whether one Radius sign-in can serve the relay, the
+model gateway and the MCP server is the question still open with Armin and Vegard; in p2 these are three logins.</p>
+</section>
+
+<section class="chapter" id="screens"><header class="opener"><div class="numeral">XI</div><h2>Resources on Screen</h2><p class="lede">Creation sheets, rows and detail panels come from the plugin that owns a resource; the session panel, the picker and My resources are core&#39;s.</p></header>
+<p class="dropcap">The page never decides. It draws server views and calls their methods, and the server checks. A plugin adds UI for
+its resources through three page registries, all keyed by its resource definition:</p>
+<pre><code><span class="tk-c">// plugins/mcp/web.tsx</span>
+self.<span class="tk-f">contribute</span>(<span class="tk-t">Creators</span>, [{ definition: <span class="tk-t">McpServer</span>, label: t.<span class="tk-f">message</span>(<span class="tk-s">"mcpServer"</span>), description: t.<span class="tk-f">message</span>(<span class="tk-s">"mcpAbout"</span>), icon: <span class="tk-t">PlugIcon</span>, <span class="tk-t">Sheet</span>: <span class="tk-t">NewMcpSheet</span> }]);
+self.<span class="tk-f">contribute</span>(<span class="tk-t">ResourceRows</span>, [{ definition: <span class="tk-t">McpServer</span>, <span class="tk-t">Row</span>: <span class="tk-t">McpRow</span> }]);
+self.<span class="tk-f">contribute</span>(<span class="tk-t">ResourcePanels</span>, [
+	{ definition: <span class="tk-t">McpServer</span>, title: t.<span class="tk-f">message</span>(<span class="tk-s">"tools"</span>), order: <span class="tk-n">10</span>, <span class="tk-t">Panel</span>: <span class="tk-t">McpTools</span> },
+	{ definition: <span class="tk-t">McpServer</span>, title: t.<span class="tk-f">message</span>(<span class="tk-s">"connection"</span>), order: <span class="tk-n">20</span>, <span class="tk-t">Panel</span>: <span class="tk-t">McpConnection</span> },
+	{ definition: <span class="tk-t">McpServer</span>, title: t.<span class="tk-f">message</span>(<span class="tk-s">"configuration"</span>), order: <span class="tk-n">90</span>, <span class="tk-t">Panel</span>: <span class="tk-t">McpConfiguration</span> },
+]);</code></pre>
+<p>Core&#39;s resources plugin draws everything around them: the session&#39;s resource panel, the add-resource picker, the
+detail sheet&#39;s header (owner, where it is used, withdraw), and My resources. Each reads a server view of its own:
+<code>SessionResourcesView { session }</code>, <code>MyResources</code>, <code>ResourceInfo { name, id }</code>. Their state includes the actions this
+user may take now, computed with the same rules the methods check, so a button shown is a button that works.</p>
+<h3 id="creating">Creating</h3>
+<p>The sheet is the MCP plugin&#39;s own form; submitting calls its server method, which runs the guarded step:</p>
+<pre><code><span class="tk-c">// plugins/mcp/web.tsx</span>
+<span class="tk-k">function</span> <span class="tk-t">NewMcpSheet</span>({ owner, done, cancel }: { owner: <span class="tk-t">UserId</span>; <span class="tk-f">done</span>(resource: <span class="tk-t">ResourceRef</span>): <span class="tk-k">void</span>; <span class="tk-f">cancel</span>(): <span class="tk-k">void</span> }) {
+	<span class="tk-k">const</span> servers = <span class="tk-f">useHold</span>(<span class="tk-t">McpServers</span>, {});
+	<span class="tk-k">const</span> [config, setConfig] = <span class="tk-f">usePageState</span>&lt;<span class="tk-t">McpConfig</span>&gt;(<span class="tk-s">"mcp.new"</span>, emptyConfig);
+	<span class="tk-k">return</span> &lt;<span class="tk-t">Form</span> title={<span class="tk-f">t</span>(<span class="tk-s">"newMcpServer"</span>)} onCancel={cancel}
+		onSubmit={<span class="tk-k">async</span> (ctx) =&gt; <span class="tk-f">done</span>(<span class="tk-k">await</span> servers.<span class="tk-f">create</span>({ owner, config }, ctx))}&gt;   {<span class="tk-c">/* a refusal shows its reason */</span>}
+		&lt;<span class="tk-t">TextField</span> label={<span class="tk-f">t</span>(<span class="tk-s">"name"</span>)} value={config.name} onChange={(name) =&gt; <span class="tk-f">setConfig</span>({ ...config, name })} /&gt;
+		&lt;<span class="tk-t">TransportField</span> value={config.transport} onChange={(transport) =&gt; <span class="tk-f">setConfig</span>({ ...config, transport })} /&gt;
+	&lt;/<span class="tk-t">Form</span>&gt;;
+}</code></pre>
+<figure class="fig wide"><div class="mk">
+<div class="mk-bar"><i></i><i></i><i></i><span>Add a resource to project pi › New MCP server</span></div>
+<div class="mk-split">
+<div>
+ <div style="display:flex;align-items:center;gap:8px"><span class="mk-ico mcp">M</span><div class="mk-h" style="margin:0">New MCP server</div><span class="mk-by" style="margin-left:auto">sheet: mcp</span></div>
+ <div class="mk-sub" style="margin-top:4px">Signed in as you. Everyone who uses pi's sessions will use it with your login.</div>
+ <div class="mk-who" style="font-size:9.5px">Name</div>
+ <div class="mk-search" style="color:#2a2723">Linear</div>
+ <div class="mk-who" style="font-size:9.5px">Connects to</div>
+ <div style="display:flex;gap:6px;margin-bottom:8px"><span class="mk-chip" style="border-color:#b4472f">HTTP</span><span class="mk-chip" style="opacity:.5">Command on this machine · admins</span></div>
+ <div class="mk-search" style="color:#2a2723">https://mcp.linear.app/sse</div>
+ <div class="mk-who" style="font-size:9.5px">Processes</div>
+ <div style="display:flex;gap:6px"><span class="mk-chip" style="border-color:#b4472f">One per session</span><span class="mk-chip">Shared</span></div>
+</div>
+<div style="background:#fdfbf7">
+ <div class="mk-who">Add to pi <span class="mk-by core">picker: core</span></div>
+ <div class="mk-list">
+  <div class="mk-li"><div class="t"><div>Owner</div><small>you (Colin)</small></div><span class="mk-pill">admins: or the company</span></div>
+  <div class="mk-li"><div class="t"><div>For how long</div><small>until removed</small></div><span class="mk-chip">1 hour</span><span class="mk-chip">until Fri</span></div>
+ </div>
+ <div style="display:flex;gap:8px;margin-top:10px"><span class="mk-btn pri">Create and add to pi</span><span class="mk-btn">Cancel</span></div>
+ <div class="mk-note">Create: McpServers.create → the owner rule and the policy ("only engineering creates MCP servers") → a row, Colin's. Then MyResources.bring into pi: Colin owns it, pi lets members add.</div>
+</div>
+</div>
+</div><figcaption><span class="fignum">Figure 11.</span> The MCP plugin&#39;s creation sheet, opened from &quot;Add resource&quot; on project pi. An admin also gets the owner choice (themselves or the company); Colin sees only his own. The duration belongs to the picker, which brings the new server into pi when the sheet is done.</figcaption></figure>
+<figure class="fig anim"><svg viewBox="0 0 720 374" width="100%" role="img" aria-label="Creating from a project's picker: the plugin's sheet, the guarded step, the bring, and the sessions that follow." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f12m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f12a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f12b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="84.8" y1="52" x2="84.8" y2="366" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="84.8" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Colin's page</text><text x="84.8" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">sheet + picker</text><line x1="222.4" y1="52" x2="222.4" y2="366" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="160.6" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="222.4" y="27" font-size="11" fill="#2a2723" text-anchor="middle">McpServers</text><text x="222.4" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">server, mcp</text><line x1="360" y1="52" x2="360" y2="366" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="298.2" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="360" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Resources</text><text x="360" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">server, core</text><line x1="497.6" y1="52" x2="497.6" y2="366" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="435.8" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="497.6" y="27" font-size="11" fill="#2a2723" text-anchor="middle">projects</text><text x="497.6" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">pi's list</text><line x1="635.2" y1="52" x2="635.2" y2="366" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="573.4" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="635.2" y="27" font-size="11" fill="#2a2723" text-anchor="middle">pi sessions</text><text x="635.2" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">workers</text><g class="step edge" style="--i:1"><line x1="84.8" y1="78" x2="219.4" y2="78" stroke="#7b7468" marker-end="url(#f12m)"/><text x="153.6" y="72" font-size="10" fill="#2a2723" text-anchor="middle">create { owner: colin, config }</text></g><g class="step edge" style="--i:2"><line x1="222.4" y1="110" x2="357" y2="110" stroke="#b4472f" marker-end="url(#f12a)"/><text x="291.2" y="104" font-size="10" fill="#b4472f" text-anchor="middle">create { actor: colin, owner: colin, definition: McpServer }</text></g><g class="step edge" style="--i:3"><line x1="360" y1="142" x2="225.4" y2="142" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f12m)"/><text x="291.2" y="136" font-size="10" fill="#2a2723" text-anchor="middle">{ name: mcp.server, id: 7f3a }</text></g><g class="step edge" style="--i:4"><path d="M222.4 168 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f12m)"/><text x="264.4" y="178" font-size="10" fill="#2a2723" text-anchor="start">store.add(7f3a, config)</text></g><g class="step edge" style="--i:5"><line x1="222.4" y1="214" x2="87.8" y2="214" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f12m)"/><text x="153.6" y="208" font-size="10" fill="#2a2723" text-anchor="middle">the new resource</text></g><g class="step edge" style="--i:6"><line x1="84.8" y1="246" x2="357" y2="246" stroke="#7b7468" marker-end="url(#f12m)"/><text x="222.4" y="240" font-size="10" fill="#2a2723" text-anchor="middle">MyResources.bring { 7f3a, into: pi }</text></g><g class="step edge" style="--i:7"><line x1="360" y1="278" x2="494.6" y2="278" stroke="#7b7468" marker-end="url(#f12m)"/><text x="428.8" y="272" font-size="10" fill="#2a2723" text-anchor="middle">mayBring(colin, pi)? add(entry)</text></g><g class="step edge" style="--i:8"><line x1="497.6" y1="310" x2="363" y2="310" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f12m)"/><text x="428.8" y="304" font-size="10" fill="#2a2723" text-anchor="middle">pi's list changed</text></g><g class="step edge" style="--i:9"><line x1="360" y1="342" x2="632.2" y2="342" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f12m)"/><text x="497.6" y="336" font-size="10" fill="#2a2723" text-anchor="middle">lists recomputed: Linear added</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 12.</span> Creating from a project&#39;s picker: the plugin&#39;s sheet, the guarded step, the bring, and the sessions that follow.</figcaption></figure>
+<h3 id="a-resource-39-s-detail-sheet">A resource&#39;s detail sheet</h3>
+<p>Core draws the header from <code>ResourceInfo</code>; every panel registered for the definition follows, from any plugin.</p>
+<figure class="fig wide"><div class="mk">
+<div class="mk-bar"><i></i><i></i><i></i><span>p3 · Linear</span></div>
+<div style="padding:12px 16px 14px">
+ <div style="display:flex;align-items:center;gap:9px"><span class="mk-ico mcp">L</span><div class="mk-h" style="margin:0;font-size:17px">Linear</div><span class="mk-pill" style="background:#e3f1e6;color:#3f7a4b">signed in</span><span class="mk-by core" style="margin-left:auto">header: core</span></div>
+ <div class="mk-sub" style="margin-top:3px">MCP server · owner Colin · signed in as colin@earendil.com</div>
+ <div style="display:flex;gap:6px;align-items:center;margin:6px 0 10px;flex-wrap:wrap"><span class="mk-who" style="margin:0">Used in</span><span class="mk-chip"><span class="mk-ico sess">P</span>pi</span><span class="mk-chip"><span class="mk-ico sess">S</span>Triage bot · until Fri</span><span class="mk-chip"><span class="mk-ico user">C</span>your sessions (defaults)</span><span style="margin-left:auto" class="mk-btn">Exclude from my defaults</span><span class="mk-btn" style="color:#b4472f;border-color:#e2b2a6">Withdraw everywhere</span></div>
+ <div class="mk-tabs">
+  <div class="mk-tab on">Tools <span class="mk-by">mcp</span></div>
+  <div class="mk-tab">Connection <span class="mk-by">mcp</span></div>
+  <div class="mk-tab">Configuration <span class="mk-by">mcp</span></div>
+  <div class="mk-tab" style="border:1px dashed #d5ccb9;border-bottom:none">Usage <span class="mk-by">team-usage</span></div>
+ </div>
+ <div style="border:1px solid #e3dbcc;border-top:none;border-radius:0 0 8px 8px;padding:8px">
+  <div class="mk-files">
+   <div class="hd">Tool</div><div class="hd">Calls</div><div class="hd">Last</div>
+   <div><code>search_issues</code></div><div>212</div><div>2 min ago</div>
+   <div><code>get_issue</code></div><div>97</div><div>2 min ago</div>
+   <div><code>create_comment</code></div><div>14</div><div>yesterday</div>
+   <div style="color:#9a9182">20 more</div><div></div><div></div>
+  </div>
+ </div>
+</div>
+</div><figcaption><span class="fignum">Figure 13.</span> Linear&#39;s detail sheet as Colin sees it. The header is core&#39;s (owner, where it is used, withdraw); the tabs are the MCP plugin&#39;s panels, plus a usage panel from a team&#39;s own plugin. Cristina sees the same sheet without Configuration and without Withdraw.</figcaption></figure>
+<h3 id="my-resources">My resources</h3>
+<figure class="fig wide"><div class="mk">
+<div class="mk-bar"><i></i><i></i><i></i><span>p3 · My resources</span></div>
+<div class="mk-split">
+<div>
+ <div class="mk-who">Yours <span class="mk-by core">core</span></div>
+ <div class="mk-list">
+  <div class="mk-li"><span class="mk-ico mcp">L</span><div class="t"><div>Linear</div><small>MCP server · 23 tools · in pi, Triage bot</small></div><span class="mk-by">mcp</span></div>
+  <div class="mk-li"><span class="mk-ico model">A</span><div class="t"><div>Anthropic</div><small>model provider · 9 models</small></div><span class="mk-by">models</span></div>
+  <div class="mk-li"><span class="mk-ico env">L</span><div class="t"><div>laptop</div><small>machine · asleep</small></div><span class="mk-by">envs</span></div>
+  <div class="mk-li"><span class="mk-ico access">→</span><div class="t"><div>Release notes draft · answers</div><small>access to a session · in #support until 14:32</small></div><span class="mk-by">conversations</span></div>
+ </div>
+ <div class="mk-who">The company's <span class="mk-pill inst">admins</span></div>
+ <div class="mk-list">
+  <div class="mk-li"><span class="mk-ico model">C</span><div class="t"><div>Company Claude key</div><small>model provider</small></div></div>
+  <div class="mk-li"><span class="mk-ico env">B</span><div class="t"><div>build machine</div><small>machine</small></div></div>
+  <div class="mk-li"><span class="mk-ico tool">T</span><div class="t"><div>Tools from plugins · 14</div><small>bash, files, conversations, subagents…</small></div><span class="mk-pill">excluded: code mode</span></div>
+ </div>
+</div>
+<div style="background:#fdfbf7">
+ <div class="mk-who">Create <span class="mk-by core">creators</span></div>
+ <div class="mk-grid" style="grid-template-columns:1fr">
+  <div class="mk-card"><span class="mk-ico mcp">M</span><div class="t"><b>MCP server</b><small>HTTP, or a command on this machine</small></div></div>
+  <div class="mk-card"><span class="mk-ico model">P</span><div class="t"><b>Model provider</b><small>API key or sign-in</small></div></div>
+  <div class="mk-card"><span class="mk-ico env">M</span><div class="t"><b>Machine</b><small>SSH host or sandbox</small></div></div>
+  <div class="mk-card"><span class="mk-ico access">→</span><div class="t"><b>Access to a session</b><small>let another session read or message one of yours</small></div></div>
+ </div>
+ <div class="mk-note">Owner for new ones: <b>you</b> · the company (admins)</div>
+</div>
+</div>
+</div><figcaption><span class="fignum">Figure 14.</span> My resources, an admin&#39;s view: what I own, what the company owns (only admins create those), and the creators I may use. Every row is its plugin&#39;s renderer; nothing on the page knows MCP, models or machines.</figcaption></figure>
+</section>
+
+<section class="chapter" id="review"><header class="opener"><div class="numeral">XII</div><h2>What the Review Found</h2><p class="lede">Astra and Sol checked every p2 plugin; the model held, the edges needed work.</p></header>
+<p class="dropcap">Both reviewers mapped all 39 p2 plugins onto the spec and traced the six scenarios. Neither asked for a new noun, a
+second resource source, per-run authority or login modes. Every plugin fits as resources it brings or people create, a grouping,
+a presentation, or plain session infrastructure (search indexing, status, drafts, tree, file mirrors keep running
+whatever the list holds). What they found were edges, now fixed in the spec:</p>
+<ul>
+<li><strong>Taking things away must stick.</strong> Withdrawing a resource now raises a revision in core&#39;s index first, so the old
+entry stops counting everywhere at once, even in a project whose plugin is reloading and comes back with its old
+rows.</li>
+<li><strong>Copies must not smuggle.</strong> Locking a project session down keeps only what the user could bring themselves; clones
+and forks re-check every entry. Cristina cannot keep Colin&#39;s server by detaching her session.</li>
+<li><strong>Using is not lending.</strong> Being allowed to use the company key does not mean being allowed to put it into a project
+for everyone there.</li>
+<li><strong>Check at every call.</strong> Code-mode scripts capture tools, and a disconnected worker keeps its last list, so the
+harness checks each tool call, and doors that are not tools (<code>!cmd</code>, cache warmers, terminal and voice channels)
+check at their own entry.</li>
+<li><strong>Typed tokens compare by declaration.</strong> Each plugin bundles its own copy of another plugin&#39;s contract, so <code>===</code> on
+<code>McpKind</code> would fail; core compares declared names and versions through helpers.</li>
+<li><strong>Who acted travels as data on local calls,</strong> because a local call acts as the server.</li>
+<li><strong>A session may have no machine.</strong> The Discord session that only reads answers has an empty location, and nothing
+falls back to the server machine.</li>
+<li><strong>Per-action deadlines.</strong> An hour of &quot;answer&quot; and five minutes of &quot;send&quot; to the same session expire separately, and
+revoking the target&#39;s sharing ends the access.</li>
+</ul>
+</section>
+
+<section class="chapter epilogue" id="four-decisions"><header class="opener"><div class="numeral">∴</div><h2>Four Decisions</h2><p class="lede">What only you can decide, each with a recommendation.</p></header>
+<ol>
+<li><strong>Tools in project lists.</strong> With &quot;only admins bring instance resources&quot;, a project session has no bash
+unless an admin brings it. Recommendation: what plugins bring carries no login, so anyone who may use it may bring
+it, and a new project&#39;s list starts with all of it that its creator may use. The company key and build machine stay
+admin-only.</li>
+<li><strong>Projects showing sessions they do not equip.</strong> Linking a project session to Discord makes it use the channel&#39;s
+list, and it disappears from the project. Recommendation: let a project keep plain &quot;shown here&quot; references, drawn as
+&quot;uses #support&#39;s resources&quot;, granting nothing.</li>
+<li><strong>Exclusions from your defaults.</strong> Recommendation: yes, a per-user set, so you can turn code mode or cache warming
+off everywhere while new tools still appear.</li>
+<li><strong>MCP processes per session.</strong> Recommendation: keep p2&#39;s default, one process per session, with a typed <code>lifetime</code>
+setting for servers that should be shared.</li>
+</ol>
+<p>Still open elsewhere: whether one Radius sign-in can serve the relay, the models and the MCP server (Armin and Vegard);
+running code on the server machine safely when several people share it (its own track).</p>
+</section>
+
+<section class="chapter appendix" id="where-it-lives"><header class="opener"><div class="numeral">A</div><h2>Where It Lives</h2></header>
+<table>
+<thead>
+<tr>
+<th>Piece</th>
+<th>Plugin</th>
+<th>You meet it as</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>users, the instance user</td>
+<td>users</td>
+<td>sign-in; the company as an owner in pickers</td>
+</tr>
+<tr>
+<td><code>defineResource</code>, the index, lists, sources, <code>MyResources</code>, creators, rows, panels</td>
+<td>resources (core)</td>
+<td>the session&#39;s resource panel, &quot;Add resource&quot;, lock down</td>
+</tr>
+<tr>
+<td>groupings with resources</td>
+<td>projects, discord, ...</td>
+<td>project view, channel link sheet</td>
+</tr>
+<tr>
+<td>policy, typed requests, <code>guard</code></td>
+<td>policy (core), rules, default-policy</td>
+<td>the access rules screen</td>
+</tr>
+<tr>
+<td><code>Extensions</code> keyed by resource, admission per call</td>
+<td>harness (core)</td>
+<td>tools appearing and disappearing</td>
+</tr>
+<tr>
+<td>creators, renderers, panels, navigation</td>
+<td>resources, presentation</td>
+<td>pickers, rows, detail tabs, sidebar sections</td>
+</tr>
+</tbody></table>
+<p>The spec with every API: <code>apps/p3/docs/resource-model/book.md</code>. The reviews: <code>/tmp/resource-model-review-astra.md</code>,
+<code>/tmp/resource-model-review-sol.md</code>.</p>
+</section>
+
+<p class="colophon">p3 resource model · explainer, first edition · 2026-11-08 · from the spec and the Astra and Sol reviews</p>
+</div></div>
+<script>(function activate(root) {
+	const replay = (f) => {
+		f.classList.remove("play");
+		void f.getBoundingClientRect();
+		f.classList.add("play");
+	};
+	const io = new IntersectionObserver(
+		(es) => {
+			for (const e of es)
+				if (e.isIntersecting) {
+					e.target.classList.add("play");
+					io.unobserve(e.target);
+				}
+		},
+		{ threshold: 0.3 },
+	);
+	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
+		f.classList.add("armed");
+		io.observe(f);
+		const b = f.querySelector(".replay");
+		if (b) b.onclick = () => replay(f);
+	});
+	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
+		s.classList.add("js");
+		const ps = [...s.querySelectorAll(":scope>.step-panel")];
+		let i = 0;
+		const c = s.querySelector(".count"),
+			p = s.querySelector(".prev"),
+			n = s.querySelector(".next");
+		const show = () => {
+			ps.forEach((x, j) => x.classList.toggle("on", j === i));
+			c.textContent = `${i + 1} / ${ps.length}`;
+			p.disabled = i === 0;
+			n.disabled = i === ps.length - 1;
+			ps[i].querySelectorAll(".anim").forEach(replay);
+		};
+		p.onclick = () => {
+			i--;
+			show();
+		};
+		n.onclick = () => {
+			i++;
+			show();
+		};
+		show();
+	});
+})(document)</script>
+</body></html>

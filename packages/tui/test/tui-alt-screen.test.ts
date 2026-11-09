@@ -1151,11 +1151,9 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
-	it("redraws WezTerm Kitty images after writes to covered rows", async () => {
-		// Regression test for #10319: a scrollbar update below an unchanged image anchor erased its cells.
-		const weztermPane = process.env.WEZTERM_PANE;
+	it("redraws Kitty images after writes to covered rows", async () => {
+		// Regression test for #10319: in WezTerm, a scrollbar update below an unchanged image anchor erased its cells.
 		let tui: TuiAltScreen | undefined;
-		process.env.WEZTERM_PANE = "1";
 		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
 		try {
 			const terminal = new RecordingTerminal(20, 4);
@@ -1187,8 +1185,34 @@ describe("TuiAltScreen", () => {
 		} finally {
 			tui?.stop();
 			resetCapabilitiesCache();
-			if (weztermPane === undefined) delete process.env.WEZTERM_PANE;
-			else process.env.WEZTERM_PANE = weztermPane;
+		}
+	});
+
+	it("draws Kitty images after clearing the rows they cover", async () => {
+		// Regression test for #11835: Orca's xterm.js image addon stores images in cells, so clearing
+		// the covered rows after the placement erased all but the first image row.
+		let tui: TuiAltScreen | undefined;
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		try {
+			const terminal = new RecordingTerminal(20, 5);
+			const imageId = 11835;
+			const imageLine = encodeKitty("AAAA", { columns: 2, rows: 3, imageId, moveCursor: false });
+			registerKittyImageMetadata({ imageId, columns: 2, rows: 3, widthPx: 100, heightPx: 100 });
+			tui = new TuiAltScreen(terminal);
+			tui.setLayoutRoot({ render: () => ["before", imageLine, "", "", "after"], invalidate: () => {} });
+			tui.start();
+			await terminal.waitForRender();
+
+			const writes = terminal.events
+				.filter((event): event is { type: "write"; data: string } => event.type === "write")
+				.map((event) => event.data)
+				.join("");
+			const transmitIndex = writes.indexOf("\x1b_Ga=T");
+			assert.ok(transmitIndex > writes.lastIndexOf("\x1b[4;1H\x1b[2K"));
+			assert.ok(transmitIndex > writes.indexOf("after"));
+		} finally {
+			tui?.stop();
+			resetCapabilitiesCache();
 		}
 	});
 

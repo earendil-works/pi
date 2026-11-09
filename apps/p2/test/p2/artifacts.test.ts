@@ -58,14 +58,14 @@ describe("artifacts (fake provider)", () => {
 			index?.map((artifact) => artifact.version),
 			[1, 2],
 		);
-		const source = await http(fixture.server.port, `${url()}&download=1`);
+		const source = await fixture.http(`${url()}&download=1`);
 		assert.equal(source.status, 200);
 		assert.equal(source.body, "<!doctype html><title>Demo</title><h1>Artifact demo</h1>");
 		assert.match(String(source.headers["content-disposition"]), /attachment; filename="demo.html"/);
 	});
 
 	it("isolates executable previews and instruments only the preview, with correct HEAD", async () => {
-		const preview = await http(fixture.server.port, url());
+		const preview = await fixture.http(url());
 		assert.equal(preview.status, 200);
 		assert.match(preview.body, /p2-artifact-diagnostic/);
 		assert.equal(preview.headers["content-type"], "text/html; charset=utf-8");
@@ -73,17 +73,15 @@ describe("artifacts (fake provider)", () => {
 		assert.match(csp, /sandbox allow-scripts allow-modals allow-pointer-lock/);
 		assert.ok(!csp.includes("allow-same-origin"));
 		assert.match(csp, /frame-src 'none'.*object-src 'none'.*base-uri 'none'.*form-action 'none'/);
+		assert.match(csp, /; frame-ancestors 'self'$/);
 		assert.equal(preview.headers["cross-origin-resource-policy"], "same-origin");
-		const head = await http(fixture.server.port, url(), { method: "HEAD" });
+		const head = await fixture.http(url(), { method: "HEAD" });
 		assert.equal(head.status, 200);
 		assert.equal(head.body, "");
 		assert.equal(head.headers["content-length"], preview.headers["content-length"]);
-		assert.equal(
-			(await http(fixture.server.port, url(), { headers: { "Sec-Fetch-Site": "cross-site" } })).status,
-			403,
-		);
+		assert.equal((await fixture.http(url(), { headers: { "Sec-Fetch-Site": "cross-site" } })).status, 403);
 		for (const path of [url("../demo"), url("demo", 0), url("demo", 99), url("demo", 1, other)])
-			assert.equal((await http(fixture.server.port, path)).status, 404);
+			assert.equal((await fixture.http(path)).status, 404);
 	});
 
 	it("retains both versions and the independent index across worker restart and compatible reload", async () => {
@@ -103,8 +101,8 @@ describe("artifacts (fake provider)", () => {
 			[1, 2],
 		);
 		assert.equal(
-			(await http(fixture.server.port, `${url("demo", 1)}&download=1`)).body,
-			(await http(fixture.server.port, `${url("demo", 2)}&download=1`)).body,
+			(await fixture.http(`${url("demo", 1)}&download=1`)).body,
+			(await fixture.http(`${url("demo", 2)}&download=1`)).body,
 		);
 	});
 
@@ -170,9 +168,9 @@ describe("artifacts (fake provider)", () => {
 			index?.find((entry) => entry.name === "flow"),
 			{ name: "flow", title: "Flow", type: "svg", version: 1 },
 		);
-		assert.equal((await http(fixture.server.port, `${url("flow")}&download=1`)).body, svg);
+		assert.equal((await fixture.http(`${url("flow")}&download=1`)).body, svg);
 		// The preview's bridge is CDATA inside the root (SVG is XML) and reports the content height.
-		const preview = (await http(fixture.server.port, url("flow"))).body;
+		const preview = (await fixture.http(url("flow"))).body;
 		assert.ok(preview.startsWith("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 100'><script><![CDATA["));
 		assert.match(preview, /level:"size"/);
 		assert.ok(preview.endsWith("]]></script><rect width='200' height='100'/></svg>"));
@@ -200,13 +198,13 @@ describe("artifacts (fake provider)", () => {
 				type,
 				content: type === "svg" ? "<svg xmlns='http://www.w3.org/2000/svg'/>" : "# safe <script>no</script>",
 			});
-			const response = await http(fixture.server.port, url(info.name, info.version));
+			const response = await fixture.http(url(info.name, info.version));
 			assert.equal(response.status, 200);
 			// An empty root has no inside for the bridge: served as stored, still well-formed XML.
 			if (type === "svg") assert.equal(response.body, "<svg xmlns='http://www.w3.org/2000/svg'/>");
 			else {
 				assert.equal(response.headers["content-type"], "text/plain; charset=utf-8");
-				assert.match(String(response.headers["content-security-policy"]), /; sandbox$/);
+				assert.match(String(response.headers["content-security-policy"]), /; sandbox; frame-ancestors 'self'$/);
 				assert.ok(!response.body.includes("p2-artifact-diagnostic"));
 			}
 		}

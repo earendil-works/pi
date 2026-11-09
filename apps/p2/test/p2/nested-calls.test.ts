@@ -6,6 +6,7 @@ import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai"
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import type { ConversationView, EntryId, LiveState } from "@earendil-works/pi-durable";
 import type { CodemodeToolDetails } from "@earendil-works/pi-durable/codemode";
+import { scriptCalls } from "../../plugins/codemode/nested.ts";
 import { buildTranscript } from "../../src/web/transcript.ts";
 import { wholeView } from "../fixtures/whole-view.ts";
 import { Browser, browserTests } from "./browser.ts";
@@ -95,10 +96,13 @@ function settled(): ConversationView {
 	};
 }
 
-const calls = (view: ConversationView) =>
-	buildTranscript(wholeView(view))
+/** The script's calls, as code mode's contribution reads them (live, or its result's list). */
+const calls = (view: ConversationView) => {
+	const tool = buildTranscript(wholeView(view))
 		.items.flatMap((item) => (item.type === "assistant" ? item.tools : []))
-		.find((tool) => tool.name === "codemode")?.calls ?? [];
+		.find((each) => each.name === "codemode");
+	return (tool && scriptCalls(tool)) ?? [];
+};
 
 test("a call interrupted by a restart is interrupted, live and settled; other errors stay errors", () => {
 	assert.deepEqual(
@@ -113,38 +117,39 @@ test("a call interrupted by a restart is interrupted, live and settled; other er
 });
 
 test(
-	"browser: a list opened with Show all while the script runs collapses to its summary once it settles",
+	"browser: a script's calls in its detail, interrupted ones failed, live then settled",
 	{ skip: !browserTests, timeout: 60_000 },
 	async () => {
 		const fixture = await startFixture({ web: true });
 		let browser: Browser | undefined;
 		try {
 			browser = await Browser.start();
+			await browser.signIn(fixture.owner);
 			await browser.metrics(390, 844);
 			await browser.open(`http://127.0.0.1:${fixture.server.port}`);
 			await browser.wait("document.querySelector('.app')");
 			await browser.loadFixture("codemode-card.ts");
 			await browser.wait("typeof window.showCodemode==='function'");
 			const show = (view: ConversationView) => browser!.evaluate(`window.showCodemode(${JSON.stringify(view)})`);
+			const states = "[...document.querySelectorAll('[data-testid=call]')].map((row)=>row.dataset.state).join()";
+			// The turn's activity opens its steps; the script's step its calls.
 			await show(running(9));
-			await browser.wait("document.querySelectorAll('.nested-call').length===8");
-			await browser.click(".nested .tool-link");
-			await browser.wait("document.querySelectorAll('.nested-call').length===10");
-			assert.equal(await browser.evaluate("document.querySelectorAll('.nested-call.interrupted').length"), 1);
-			assert.equal(
-				await browser.evaluate("document.querySelector('.nested-call.interrupted .nested-name').textContent"),
-				"bash",
+			await browser.wait("document.querySelector('[data-testid=activity][data-state=working]')");
+			await browser.click("[data-testid=activity]");
+			await browser.wait("document.querySelector('[data-testid=step] button')");
+			// The running script is already expanded in the selected block's panel.
+			await browser.click("[data-testid=calls-more]");
+			await browser.wait("document.querySelectorAll('[data-testid=call]').length===10");
+			// The first failed, the ninth was interrupted by a restart (a failure too), the tenth runs.
+			assert.equal(await browser.evaluate(states), ["error", ...Array(7).fill("done"), "error", "running"].join());
+			assert.match(
+				await browser.evaluate<string>("document.querySelectorAll('[data-testid=call]')[8].textContent"),
+				/step 9/,
 			);
-			// The same card settles: the opened list collapses to the count; it opens again on request.
+			// Settled: the result's list of calls.
 			await show(settled());
-			await browser.wait("document.querySelector('.nested .tool-link')?.textContent==='3 tool calls · 2 failed'");
-			assert.equal(await browser.evaluate("document.querySelectorAll('.nested-call').length"), 0);
-			await browser.click(".nested .tool-link");
-			await browser.wait("document.querySelectorAll('.nested-call').length===3");
-			assert.equal(
-				await browser.evaluate("[...document.querySelectorAll('.nested-call')].map((row)=>row.className).join()"),
-				"nested-call done,nested-call interrupted,nested-call error",
-			);
+			await browser.wait("document.querySelectorAll('[data-testid=call]').length===3");
+			assert.equal(await browser.evaluate(states), "done,error,error");
 		} finally {
 			await browser?.close();
 			await fixture.close();

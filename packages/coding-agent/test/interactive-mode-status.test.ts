@@ -154,6 +154,7 @@ describe("InteractiveMode.setToolsExpanded", () => {
 			builtInHeader: header,
 			loadedResourcesContainer: { children: [loadedResourcesChild] },
 			chatContainer: { children: [chatChild] },
+			pendingMessagesContainer: { children: [] },
 			ui: { requestRender: vi.fn() },
 			showStatus: vi.fn(),
 		};
@@ -165,6 +166,80 @@ describe("InteractiveMode.setToolsExpanded", () => {
 		expect(loadedResourcesChild.setExpanded).toHaveBeenCalledWith(true);
 		expect(chatChild.setExpanded).toHaveBeenCalledWith(true);
 		expect(fakeThis.showStatus).toHaveBeenCalledWith("Tool output: expanded");
+	});
+});
+
+// Regression tests for https://github.com/earendil-works/pi/issues/11875
+describe("InteractiveMode pending user bash output", () => {
+	function createPendingBashComponent() {
+		return { render: () => [], invalidate: () => {}, setExpanded: vi.fn() };
+	}
+
+	function createContext(pendingBashComponents: ReturnType<typeof createPendingBashComponent>[]) {
+		const pendingMessagesContainer = new Container();
+		for (const component of pendingBashComponents) pendingMessagesContainer.addChild(component);
+		const fakeThis: any = {
+			isInitialized: true,
+			toolOutputExpanded: false,
+			loadedResourcesContainer: new Container(),
+			chatContainer: new Container(),
+			pendingMessagesContainer,
+			pendingBashComponents,
+			compactionQueuedMessages: [],
+			session: { getSteeringMessages: () => ["steer"], getFollowUpMessages: () => [] },
+			footer: { invalidate: vi.fn() },
+			programStatus: { handleEvent: vi.fn() },
+			ui: { requestRender: vi.fn() },
+			showStatus: vi.fn(),
+			checkShutdownRequested: vi.fn(async () => {}),
+			getAppKeyDisplay: () => "alt+up",
+		};
+		for (const name of [
+			"setToolsExpanded",
+			"updatePendingMessagesDisplay",
+			"getAllQueuedMessages",
+			"flushPendingBashComponents",
+			"handleEvent",
+		]) {
+			fakeThis[name] = (InteractiveMode as any).prototype[name].bind(fakeThis);
+		}
+		return fakeThis;
+	}
+
+	beforeAll(() => {
+		initTheme("dark");
+	});
+
+	test("ctrl+o expands user bash output in the pending area", () => {
+		const component = createPendingBashComponent();
+		const fakeThis = createContext([component]);
+
+		fakeThis.setToolsExpanded(true);
+
+		expect(component.setExpanded).toHaveBeenCalledWith(true);
+	});
+
+	test("queued message updates keep user bash output in the pending area", () => {
+		const component = createPendingBashComponent();
+		const fakeThis = createContext([component]);
+
+		fakeThis.updatePendingMessagesDisplay();
+		fakeThis.setToolsExpanded(true);
+
+		expect(fakeThis.pendingMessagesContainer.children).toContain(component);
+		expect(renderAll(fakeThis.pendingMessagesContainer)).toContain("Steering: steer");
+		expect(component.setExpanded).toHaveBeenCalledWith(true);
+	});
+
+	test("settling the agent run moves user bash output to the chat", async () => {
+		const component = createPendingBashComponent();
+		const fakeThis = createContext([component]);
+
+		await fakeThis.handleEvent({ type: "agent_settled", aborted: false });
+
+		expect(fakeThis.pendingMessagesContainer.children).not.toContain(component);
+		expect(fakeThis.chatContainer.children).toEqual([component]);
+		expect(fakeThis.pendingBashComponents).toEqual([]);
 	});
 });
 

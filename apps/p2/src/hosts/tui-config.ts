@@ -1,6 +1,7 @@
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { dataDirectory, localOwnerSignIn } from "../runtime/local-owner.ts";
 import { ownerLinkToken, ownerOrigin } from "../runtime/owner-link.ts";
 
 export type TuiCredentials = { cookie?: string };
@@ -8,8 +9,11 @@ export type TuiCredentials = { cookie?: string };
 export type TuiGuest = { cookie: string; session?: string };
 export type TuiConnection = TuiCredentials & { guest?: TuiGuest };
 export type TuiConfig = { connections: Record<string, TuiConnection> };
-/** Who the launcher signed in as. Only `cookie` is ever sent, and only by the launcher. */
-export type TuiAdmission = TuiCredentials & { role: "owner" | "guest"; session?: string };
+/**
+ * Who the launcher signed in as. Only `cookie` is ever sent, and only by the launcher. `local`: signed in with the data
+ * directory's owner key (never saved; a new sign-in replaces it).
+ */
+export type TuiAdmission = TuiCredentials & { role: "owner" | "guest"; session?: string; local?: true };
 export const configDirectory = (): string => process.env.P2_TUI_CONFIG_DIR ?? join(homedir(), ".pi", "p2-tui");
 const COOKIE = /^[\x21-\x7e]{1,4096}$/;
 const SESSION = /^[\w-]{1,128}$/;
@@ -173,15 +177,18 @@ export async function checkGuest(url: URL, guest: TuiGuest): Promise<boolean> {
 	throw new Error("Cannot check guest access");
 }
 
-export type TuiPrompt = (kind: "link" | "name") => Promise<string>;
+/** Asks for a link or a name; `reason` says why a link is needed (shown before the question). */
+export type TuiPrompt = (kind: "link" | "name", reason?: string) => Promise<string>;
 
 /**
  * Sign-in (section 4.1). An expired or remotely revoked cookie leads back to sign-in, not an endless unauthenticated
- * reconnect. Loopback is the device owner unless `--join` explicitly asks for a guest view; a stored guest cookie never
- * downgrades it. Remote origins use a valid owner cookie, else a valid guest cookie, else a prompt for either link.
+ * reconnect. A valid saved owner cookie comes first. On loopback the server's own user then signs in with the owner key
+ * of its data directory (`dataDir`, default `P2_DATA_DIR` or `~/.pi/p2`; a server with another data directory refuses
+ * that with a clear error), unless `--join` explicitly asks for a guest view; a stored guest cookie never downgrades
+ * it. Remote origins use a valid guest cookie next. Everyone else is asked for either link.
  */
 export async function authenticateTui(
-	options: { url: URL; ownerLink?: string; joinLink?: string },
+	options: { url: URL; ownerLink?: string; joinLink?: string; dataDir?: string },
 	config: TuiConfig,
 	prompt: TuiPrompt,
 ): Promise<TuiAdmission> {
@@ -203,20 +210,14 @@ export async function authenticateTui(
 		return { cookie: guest.cookie, role: "guest", session: guest.session };
 	};
 	if (options.joinLink) return join(options.joinLink);
-	// Direct local access is the device owner, not an associated remote cookie principal.
-	let credentials: TuiCredentials = loopback && !options.ownerLink ? {} : { cookie: stored.cookie };
-	if (!options.ownerLink && (credentials.cookie || loopback)) {
-		// The existing core owner-only endpoint also works before the Devices protocol is upgraded.
-		const response = await fetch(new URL(loopback ? "/__p2_dev" : "/owner/check", url), {
+	let credentials: TuiCredentials = { cookie: stored.cookie };
+	if (!options.ownerLink && credentials.cookie) {
+		const response = await fetch(new URL("/owner/check", url), {
 			headers: connectionHeaders(url, credentials),
 			redirect: "error",
 			signal: AbortSignal.timeout(10_000),
 		});
 		if (response.ok) {
-			if (loopback) {
-				await response.arrayBuffer();
-				return { role: "owner" };
-			}
 			const value: unknown = await response.json();
 			if (value && typeof value === "object" && "owner" in value && value.owner === true)
 				return { ...credentials, role: "owner" };
@@ -225,6 +226,12 @@ export async function authenticateTui(
 		await response.arrayBuffer().catch(() => {});
 		if (response.status !== 401 && response.status !== 403) throw new Error("Cannot check owner access");
 	}
+	let reason: string | undefined;
+	if (loopback && !options.ownerLink) {
+		const local = await localOwnerSignIn(url, options.dataDir ?? dataDirectory());
+		if (local.kind === "signed-in") return { cookie: local.cookie, role: "owner", local: true };
+		reason = local.message;
+	}
 	if (!options.ownerLink && !loopback && stored.guest) {
 		if (await checkGuest(url, stored.guest))
 			return { cookie: stored.guest.cookie, role: "guest", session: stored.guest.session };
@@ -232,7 +239,7 @@ export async function authenticateTui(
 		const { guest: _ended, ...rest } = config.connections[url.origin] ?? {};
 		config.connections[url.origin] = rest;
 	}
-	const link = options.ownerLink ?? (await prompt("link"));
+	const link = options.ownerLink ?? (await prompt("link", reason));
 	if (!options.ownerLink && /\/join\//.test(link)) return join(link);
 	credentials = await claimOwner(url, ownerLinkToken(link, url), credentials);
 	config.connections[url.origin] = { ...(config.connections[url.origin] ?? {}), ...credentials };

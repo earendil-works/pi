@@ -229,11 +229,17 @@ test(
 		const client = await startTuiClient({
 			terminal,
 			url,
+			credentials: { cookie: fixture.owner.cookie },
 			pollMs: 60000,
 			colorQueryMs: 10,
 			capabilities: { trueColor: true, platform: "linux", windowsKeys: false },
 			preferences: { current, subscribe: (listener) => watchLocalPreferences(sources, listener, current) },
-			actions: launcherActions({ url, credentials: {}, role: "owner", prefsDirectory: sources.configDir }),
+			actions: launcherActions({
+				url,
+				credentials: { cookie: fixture.owner.cookie },
+				role: "owner",
+				prefsDirectory: sources.configDir,
+			}),
 		});
 		t.after(() => client.close());
 		const screen = async () => (await terminal.flushAndGetViewport()).join("\n");

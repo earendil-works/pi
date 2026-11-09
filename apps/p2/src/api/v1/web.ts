@@ -3,6 +3,7 @@
 export * from "../../runtime/web.tsx";
 export * from "../../web/AppLayout.tsx";
 export * from "../../web/ArtifactPicker.tsx";
+export * from "../../web/activity/api.ts";
 export * from "../../web/Chat.tsx";
 export * from "../../web/Code.tsx";
 export * from "../../web/CostPanel.tsx";
@@ -20,6 +21,7 @@ export * from "../../web/PiLogo.tsx";
 export * from "../../web/query-cache.ts";
 export * from "../../web/reconnect.ts";
 export * from "../../web/SessionStats.tsx";
+export * from "../../web/SidePanel.tsx";
 export * from "../../web/sidebar.ts";
 export * from "../../web/transcript.ts";
 export * from "../../web/use-chat-scroll.ts";

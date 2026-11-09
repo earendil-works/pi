@@ -14,7 +14,7 @@ import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { clientHost, holdIn, poll, until } from "./helpers.ts";
+import { clientHost, holdIn, localOwner, poll, until } from "./helpers.ts";
 
 const draft = (text: string) =>
 	`(()=>{const e=document.querySelector('.composer textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,${JSON.stringify(text)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`;
@@ -125,7 +125,8 @@ export default defineFacet((host) => host.serve(Delay, (_params, self) => {
 		port = address.port;
 		await new Promise<void>((resolve) => listener.close(() => resolve()));
 		await start();
-		const client = clientHost(port);
+		const owner = await localOwner({ port, dataDir: join(root, "data") });
+		const client = clientHost(owner);
 		try {
 			id = (
 				await (
@@ -145,6 +146,7 @@ export default defineFacet((host) => host.serve(Delay, (_params, self) => {
 			await client.close(BACKGROUND_CONTEXT);
 		}
 		browser = await Browser.start();
+		await browser.signIn(owner);
 		await browser.metrics(1280, 900);
 		// Count the chord WebSocket's opens and the dev notice reads; the sockets themselves remain real.
 		await browser.call("Page.addScriptToEvaluateOnNewDocument", {

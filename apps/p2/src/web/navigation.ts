@@ -19,6 +19,10 @@ export type Route = {
 	conversation: number;
 	layers: Layer[];
 	workspace?: WorkspaceLocation;
+	/** The transcript block shown in the side panel (SidePanel.tsx); never together with `panel`. */
+	activity?: { row: string; step?: string };
+	/** A plugin's panel shown in the side panel, by its name; never together with `activity`. */
+	panel?: string;
 	terminal?: string;
 	startTerminal?: boolean;
 };

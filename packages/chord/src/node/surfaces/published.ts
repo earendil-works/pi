@@ -62,8 +62,8 @@ export class PublishedScripts<P extends Principal> {
 	}
 
 	/**
-	 * Takes the kind's current set as the first one (its plugins' facets of the kind built on first use), before the
-	 * server's load (the scripts object starts with it). The plugins whose build failed.
+	 * Takes the kind's current set as the first one (its plugins' facets of the kind built on first use), after the
+	 * server's load (the surface's build publishes it). The plugins whose build failed.
 	 */
 	async start(context: Context): Promise<readonly PluginFailure[]> {
 		return this.#publish(await this.#plugins.scripts(this.#kind, context));
@@ -143,8 +143,13 @@ export class PublishedScripts<P extends Principal> {
 			// are, never parsed back.
 			const stem = `${this.#prefix}plugin/${name.replace("/", "~")}.${digest}`;
 			files.set(`${stem}.js`, { mime: JAVASCRIPT, bytes: new TextEncoder().encode(text) });
-			if (css !== undefined) files.set(`${stem}.css`, { mime: CSS, bytes: new TextEncoder().encode(css) });
-			entries.push({ name, digest, url: `${stem}.js`, ...(css === undefined ? {} : { css: `${stem}.css` }) });
+			if (css === undefined) entries.push({ name, digest, url: `${stem}.js` });
+			else {
+				// Named by its own content too: a change of only the CSS keeps the script's digest.
+				const style = `${stem}.${createHash("sha256").update(css).digest("hex").slice(0, 16)}.css`;
+				files.set(style, { mime: CSS, bytes: new TextEncoder().encode(css) });
+				entries.push({ name, digest, url: `${stem}.js`, css: style });
+			}
 			combined.push(text.replace(SOURCE_MAP, ""));
 			for (const asset of assets) {
 				files.set(`${this.#prefix}assets/${asset.name}`, { mime: mimeOf(asset.name), bytes: asset.bytes });

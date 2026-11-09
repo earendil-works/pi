@@ -259,6 +259,13 @@ export type TaskSchedulerOptions = {
 	readonly readOnly?: boolean;
 };
 
+/** A reservation pass's decision (`#planReservation()`). */
+interface ReservationPlan {
+	readonly dropped: readonly TaskId[];
+	readonly cascade: boolean;
+	readonly ready: readonly RunnableTaskRecord[];
+}
+
 /**
  * Durable task scheduler of one Harness.
  *
@@ -361,9 +368,15 @@ export class TaskScheduler {
 	readonly #unloaded = new Set<TaskId>();
 	/** Live tasks with cancellation intent, the sources of abort cascades (spec §5.4). */
 	readonly #intent = new Set<TaskId>();
-	/** Live tasks that are not `completing`, the candidates of a reservation pass; ones found waiting leave it. */
-	readonly #runnable = new Set<TaskId>();
-	/** `completing` tasks the next finalize pass checks: those that started holding, and holders of ended work. */
+	/**
+	 * Live tasks that are not `completing`, the candidates of a reservation pass; ones found waiting leave it. A pass
+	 * takes the set while it plans, so a task made a candidate meanwhile is not dropped by its stale decision.
+	 */
+	#runnable = new Set<TaskId>();
+	/**
+	 * `completing` tasks the next finalize pass checks: those that started holding, and holders of ended work. A pass
+	 * takes them before it plans, so a check asked for meanwhile stays for the next pass.
+	 */
 	readonly #finalizeChecks = new Set<TaskId>();
 	/** Live waiting tasks by each task in their `on`. */
 	readonly #waiters = new Map<TaskId, Set<TaskId>>();
@@ -1151,14 +1164,11 @@ export class TaskScheduler {
 		const done = new Set<TaskId>();
 		// The commit's candidates, kept in step with the terminal records each round stages.
 		const overlay = overlayOf(tx);
-		let round: readonly TaskId[] | undefined;
+		let round: readonly TaskId[] = [...this.#finalizeChecks];
+		this.#finalizeChecks.clear();
 		for (;;) {
 			const ids = round;
-			const plan = await this.#region(
-				() => this.#planRound(ids ?? [...this.#finalizeChecks], overlay, done),
-				this.#reloadScopes,
-			);
-			if (ids === undefined) this.#finalizeChecks.clear();
+			const plan = await this.#region(() => this.#planRound(ids, overlay, done), this.#reloadScopes);
 			for (const { record, terminal } of plan.finalized) {
 				tx.setTask(terminal);
 				(overlay.tasks as Map<TaskId, AnyTaskRecord>).set(record.id, terminal);
@@ -1919,8 +1929,7 @@ export class TaskScheduler {
 				// Every pass picks up sleeps whose time has come: a pass started by any change may be the first to run after
 				// a deadline, and the wake it schedules no longer keeps a timer for a due sleep.
 				this.#wakeDue();
-				const plan = await this.#region(() => this.#planReservation(), this.#reloadScopes);
-				for (const id of plan.dropped) this.#runnable.delete(id);
+				const plan = await this.#planCandidates();
 				// Work below an owner with cancellation intent waits for its cascade mark instead of running a phase; schedule
 				// the cascade, which may not have run yet.
 				if (plan.cascade) {
@@ -1994,20 +2003,40 @@ export class TaskScheduler {
 	}
 
 	/**
+	 * Plan a reservation pass over the candidates, taken out of `#runnable` while it plans: a task made a candidate
+	 * meanwhile, such as a waiter whose last task ended, lands in the fresh set, so the pass's decision to drop it cannot
+	 * erase that. The candidates not dropped go back in front of the fresh set, unless they ended or hold meanwhile.
+	 */
+	async #planCandidates(): Promise<ReservationPlan> {
+		const candidates = this.#runnable;
+		this.#runnable = new Set();
+		let dropped: ReadonlySet<TaskId> = new Set();
+		try {
+			const plan = await this.#region(() => this.#planReservation(candidates), this.#reloadScopes);
+			dropped = new Set(plan.dropped);
+			return plan;
+		} finally {
+			const merged = new Set<TaskId>();
+			for (const id of candidates) {
+				const status = this.#live.get(id)?.state.status;
+				if (!dropped.has(id) && status !== undefined && status !== "completing") merged.add(id);
+			}
+			for (const id of this.#runnable) merged.add(id);
+			this.#runnable = merged;
+		}
+	}
+
+	/**
 	 * A reservation pass's decision region: the candidates it drops (gone, holding, waiting, asleep, or with an
 	 * invocation), whether one waits for a cascade, and the runnable records to resolve. Iterating the candidates is not
 	 * keyed: a pass that misses a task a pending commit makes runnable only delays it, as does skipping one with an
 	 * invocation without reading its record, or a waiter's check whether what it waits on is still live.
 	 */
-	#planReservation(): {
-		readonly dropped: readonly TaskId[];
-		readonly cascade: boolean;
-		readonly ready: readonly RunnableTaskRecord[];
-	} {
+	#planReservation(candidates: ReadonlySet<TaskId>): ReservationPlan {
 		const dropped: TaskId[] = [];
 		const ready: RunnableTaskRecord[] = [];
 		let cascade = false;
-		for (const id of this.#runnable) {
+		for (const id of candidates) {
 			if (this.#invocations.has(id)) {
 				dropped.push(id);
 				continue;
