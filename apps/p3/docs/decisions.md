@@ -77,3 +77,14 @@ and its working rules are in `handoff.md`.
   Configured resources cover fine-grained cases (conversation access to one session with chosen actions, expiring list
   entries). Rendering: renderers per contract and form (row, card, detail, ...) from any plugin, detail views assembled
   from panels several plugins contribute. No stringly-typed APIs.
+- **Session metadata store on the server (owner, 2026-11-09, voice):** a session's data lives in one of two places, and
+  a plugin picks one per fact. (1) The **session metadata store** on the server, provided by the base: everything about
+  a session that is needed while its worker is not running (title, pin, archive, location, a Discord channel binding, a
+  plugin's labels or settings for that session). Any plugin writes to it under its own typed key per session (a token
+  defined once in its contract file with a name and a schema, like `defineState`); server code reads and writes it by
+  session id without starting the worker; the worker reads its own session's metadata through a view and writes through
+  server methods (one writer: the server). A rename is one server write. (2) The **session's own store**: everything
+  only used while the worker runs (transcript, Durable state, a plugin's working data). Never keep the same fact in
+  both. Export of one session = its store plus its entries in the metadata store; import writes both back and resolves
+  references to instance things (environment, providers). Sessions stay self-contained as a unit; no tagging of
+  arbitrary tables, no pending edits. Replaces the split proposed on PR #11951 (comment 6737930304).
