@@ -9,7 +9,9 @@ import { RelayAccess } from "./relay-access.ts";
 /** Pi Mobile's status lines: the brain it connected as, or why it is not connected (retrying). */
 export function radiusStatusText(status: RadiusStatus): string {
 	return status.status === "connected"
-		? `connected as brain ${status.serverId}`
+		? status.name === undefined
+			? `connected as brain ${status.serverId}`
+			: `connected as brain ${status.name}`
 		: status.status === "retrying"
 			? `not connected (${status.error})`
 			: "";
