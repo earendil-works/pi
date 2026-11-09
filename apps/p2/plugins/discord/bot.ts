@@ -156,7 +156,8 @@ export class Bot implements DiscordPort {
 				? { files: files.map((file) => ({ attachment: Buffer.from(file.data), name: file.name })) }
 				: {}),
 			...(messageId ? { reply: { messageReference: messageId, failIfNotExists: false } } : {}),
-			allowedMentions: { parse: [] },
+			// The agent's `<@id>` mentions ping their users; roles and @everyone never do.
+			allowedMentions: { parse: ["users"] },
 		});
 	}
 

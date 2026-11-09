@@ -64,14 +64,15 @@ export const DiscordLinkDoc = defineDoc<{
 });
 
 /**
- * What an agent answering Discord must know, in two sentences: stable for a link (it changes only with the channel or
+ * What an agent answering Discord must know, in a few sentences: stable for a link (it changes only with the channel or
  * thread), so the prompt's cached prefix stays.
  */
 export function discordPrompt(where: string): string {
 	return [
 		`Your input comes from ${where}; your final answer of each turn is posted there as the reply, with the files you`,
 		"offer with send_file during the turn attached. Nothing else is posted (not intermediate text, thinking or tool",
-		"output), so make the final answer complete on its own.",
+		"output), so make the final answer complete on its own. Each line names its author with their mention, as in",
+		"`Ann (<@1234>): text`; write `<@1234>` to mention them.",
 	].join(" ");
 }
 
@@ -136,7 +137,8 @@ export default defineFacet((host) => {
 						{
 							text,
 							requestId,
-							whenBusy: "followUp",
+							// A batch while a turn runs joins it: its answer replies to the newest mention.
+							whenBusy: "steer",
 							author: who,
 							...(resolved.length ? { files: resolved } : {}),
 							entry: { kind: DISCORD_BATCH, data },
@@ -184,7 +186,7 @@ export default defineFacet((host) => {
 						.trim();
 					const sent = await offered(files, record.conversationId, start, message?.timestamp ?? Date.now(), ctx);
 					return text || sent.length
-						? { state: "answered" as const, text, files: sent }
+						? { state: "answered" as const, text, files: sent, answer: record.answer }
 						: {
 								state: "unanswered" as const,
 								reason:
