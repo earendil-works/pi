@@ -216,6 +216,10 @@ export function createExtensionRuntime(): ExtensionRuntime {
 			eventBusUnsubscribers.add(trackedUnsubscribe);
 			return trackedUnsubscribe;
 		},
+		// Only reached by a handler that throws while extensions still load; the runner replaces it right after.
+		reportError: (error) => {
+			console.error(`Extension error (${error.extensionPath}, ${error.event}): ${error.error}`);
+		},
 		// Pre-bind: queue registrations so bindCore() can flush them once the
 		// model registry is available. bindCore() replaces both with direct calls.
 		registerProvider: (name, config, extensionPath = "<unknown>") => {
@@ -532,7 +536,21 @@ function createExtensionAPI(
 			},
 			on(channel, handler) {
 				assertActive();
-				const unsubscribe = runtime.trackEventBusSubscription(eventBus.on(channel, handler));
+				// Report a throwing handler through the runner instead of the event bus, which prints to stderr
+				// and would draw over the interactive TUI.
+				const reportingHandler = async (data: unknown) => {
+					try {
+						await handler(data);
+					} catch (error) {
+						runtime.reportError({
+							extensionPath: extension.path,
+							event: `events:${channel}`,
+							error: error instanceof Error ? error.message : String(error),
+							stack: error instanceof Error ? error.stack : undefined,
+						});
+					}
+				};
+				const unsubscribe = runtime.trackEventBusSubscription(eventBus.on(channel, reportingHandler));
 				if (state === "loading") loadingUnsubscribers.push(unsubscribe);
 				return unsubscribe;
 			},

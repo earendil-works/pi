@@ -48,7 +48,7 @@ import { AuthStorage, ReadOnlyAuthStorage } from "./core/auth-storage.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
-import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.ts";
+import { resolveCliModel, resolveModelScopeWithDiagnostics, type ScopedModel } from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
@@ -867,10 +867,16 @@ export async function main(args: string[], options?: MainOptions) {
 		];
 
 		const modelPatterns = parsed.models ?? settingsManager.getEnabledModels();
-		const scopedModels =
-			modelPatterns && modelPatterns.length > 0
-				? await resolveModelScope(modelPatterns, modelRuntime, { signal: AbortSignal.timeout(15_000) })
-				: [];
+		let scopedModels: ScopedModel[] = [];
+		if (modelPatterns && modelPatterns.length > 0) {
+			// Returned as diagnostics, not printed: this also runs on /new, /resume and /fork while the TUI
+			// draws on the terminal, and a direct write there corrupts its screen (#11264).
+			const scope = await resolveModelScopeWithDiagnostics(modelPatterns, modelRuntime, {
+				signal: AbortSignal.timeout(15_000),
+			});
+			scopedModels = scope.scopedModels;
+			diagnostics.push(...scope.diagnostics.map(({ type, message }) => ({ type, message })));
+		}
 		const {
 			options: sessionOptions,
 			cliThinkingFromModel,
@@ -973,6 +979,15 @@ export async function main(args: string[], options?: MainOptions) {
 	time("resolveModelScope");
 	if (appMode !== "interactive" || hasRuntimeErrors) {
 		reportDiagnostics(startupDiagnostics);
+	}
+	// Interactive mode lists these under [Context issues] in its resource listing.
+	if (appMode !== "interactive") {
+		reportDiagnostics(
+			resourceLoader.getContextDiagnostics().map(({ message, path }) => ({
+				type: "warning" as const,
+				message: path ? `${path}: ${message}` : message,
+			})),
+		);
 	}
 	if (hasRuntimeErrors) {
 		if (runtime.diagnostics.some((diagnostic) => diagnostic.message.includes("Failed to load extension"))) {

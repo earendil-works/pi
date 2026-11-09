@@ -6,6 +6,10 @@ interface StdoutTakeoverState {
 
 let stdoutTakeoverState: StdoutTakeoverState | undefined;
 
+// True while the interactive TUI draws on the terminal. Output written to stdout or stderr behind its back
+// (for example by a child process) lands at the cursor and corrupts the screen.
+let terminalClaimedByTui = false;
+
 const RAW_STDOUT_RETRY_DELAY_MS = 10;
 
 let rawStdoutWriteTail: Promise<void> = Promise.resolve();
@@ -80,6 +84,21 @@ export function restoreStdout(): void {
 
 export function isStdoutTakenOver(): boolean {
 	return stdoutTakeoverState !== undefined;
+}
+
+/** Mark the terminal as drawn by the interactive TUI until releaseTerminalFromTui(). */
+export function claimTerminalForTui(): void {
+	terminalClaimedByTui = true;
+}
+
+/** Undo claimTerminalForTui() once the TUI stopped for good. */
+export function releaseTerminalFromTui(): void {
+	terminalClaimedByTui = false;
+}
+
+/** Whether the interactive TUI draws on the terminal, so nothing else may write to it. */
+export function isTerminalClaimedByTui(): boolean {
+	return terminalClaimedByTui;
 }
 
 export function writeRawStdout(text: string): void {

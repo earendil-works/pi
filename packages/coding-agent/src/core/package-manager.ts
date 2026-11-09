@@ -51,7 +51,7 @@ import {
 	resolvePath,
 } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
-import { isStdoutTakenOver } from "./output-guard.ts";
+import { isStdoutTakenOver, isTerminalClaimedByTui } from "./output-guard.ts";
 import { type PiManifest, readPiManifest } from "./pi-manifest.ts";
 import type { PackageSource, SettingsManager } from "./settings-manager.ts";
 import { BUILTIN_PATH_PREFIX, getResourcePathKey } from "./source-info.ts";
@@ -2936,7 +2936,13 @@ export class DefaultPackageManager implements PackageManager {
 		});
 	}
 
-	private runCommand(command: string, args: string[], options?: { cwd?: string }): Promise<void> {
+	private async runCommand(command: string, args: string[], options?: { cwd?: string }): Promise<void> {
+		// Installs also run on /reload, /new and /resume while the TUI draws on the terminal. Inherited output
+		// (git clone progress, npm summaries) would draw over it, so capture it; failures still carry it.
+		if (isTerminalClaimedByTui()) {
+			await this.runCommandCapture(command, args, options);
+			return;
+		}
 		return new Promise((resolvePromise, reject) => {
 			const child = this.spawnCommand(command, args, options);
 			child.on("error", reject);

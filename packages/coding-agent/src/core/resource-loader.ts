@@ -1,7 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { detectCapabilities, getTerminalColorMode, type TerminalColorMode } from "@earendil-works/pi-tui";
-import chalk from "chalk";
 import { APP_NAME, CONFIG_DIR_NAME } from "../config.ts";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
@@ -184,6 +183,8 @@ export interface ResourceLoader {
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] };
 	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> };
+	/** Context, system prompt and append system prompt files that exist but could not be read. */
+	getContextDiagnostics(): ResourceDiagnostic[];
 	getSystemPrompt(): string | undefined;
 	getSystemPromptSource(): { path: string } | undefined;
 	getAppendSystemPrompt(): string[];
@@ -192,7 +193,11 @@ export interface ResourceLoader {
 	reload(options?: ResourceLoaderReloadOptions): Promise<void>;
 }
 
-function resolvePromptInput(input: string | undefined, description: string): string | undefined {
+function resolvePromptInput(
+	input: string | undefined,
+	description: string,
+	diagnostics: ResourceDiagnostic[],
+): string | undefined {
 	if (!input) {
 		return undefined;
 	}
@@ -201,7 +206,11 @@ function resolvePromptInput(input: string | undefined, description: string): str
 		try {
 			return stripBom(readFileSync(input, "utf-8"));
 		} catch (error) {
-			console.error(chalk.yellow(`Warning: Could not read ${description} file ${input}: ${error}`));
+			diagnostics.push({
+				type: "warning",
+				message: `Could not read ${description} file: ${error instanceof Error ? error.message : String(error)}`,
+				path: input,
+			});
 			return input;
 		}
 	}
@@ -209,7 +218,10 @@ function resolvePromptInput(input: string | undefined, description: string): str
 	return input;
 }
 
-function loadContextFileFromDir(dir: string): { path: string; content: string } | null {
+function loadContextFileFromDir(
+	dir: string,
+	diagnostics: ResourceDiagnostic[],
+): { path: string; content: string } | null {
 	const candidates = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"];
 	for (const filename of candidates) {
 		const filePath = join(dir, filename);
@@ -223,7 +235,11 @@ function loadContextFileFromDir(dir: string): { path: string; content: string } 
 					content: stripBom(readFileSync(filePath, "utf-8")),
 				};
 			} catch (error) {
-				console.error(chalk.yellow(`Warning: Could not read ${filePath}: ${error}`));
+				diagnostics.push({
+					type: "warning",
+					message: `Could not read context file: ${error instanceof Error ? error.message : String(error)}`,
+					path: filePath,
+				});
 			}
 		}
 	}
@@ -253,21 +269,31 @@ function findShadowedContextFile(cwd: string): string | undefined {
 	// `proj/main`) it is just the directory holding `.bare`, which tracks nothing; a
 	// submodule's gitdir has no `commondir`, so it lands under `.git/modules`.
 	if (!pathsEqual(canonicalizePath(join(mainRepoRoot, ".git")), commonGitDir)) return undefined;
-	const worktreeContextFile = loadContextFileFromDir(worktreeRoot);
+	// The ancestor walk in loadProjectContextFilesWithDiagnostics() visits the worktree root too and reports its
+	// read failure; reporting it here as well would show it twice.
+	const worktreeContextFile = loadContextFileFromDir(worktreeRoot, []);
 	return worktreeContextFile ? join(mainRepoRoot, basename(worktreeContextFile.path)) : undefined;
 }
 
+/** Load the global and ancestor context files for `cwd`. Files that exist but cannot be read are skipped. */
 export function loadProjectContextFiles(options: {
 	cwd: string;
 	agentDir: string;
 }): Array<{ path: string; content: string }> {
+	return loadProjectContextFilesWithDiagnostics(options, []);
+}
+
+function loadProjectContextFilesWithDiagnostics(
+	options: { cwd: string; agentDir: string },
+	diagnostics: ResourceDiagnostic[],
+): Array<{ path: string; content: string }> {
 	const resolvedCwd = resolvePath(options.cwd);
 	const resolvedAgentDir = resolvePath(options.agentDir);
 
 	const contextFiles: Array<{ path: string; content: string }> = [];
 	const seenPaths = new Set<string>();
 
-	const globalContext = loadContextFileFromDir(resolvedAgentDir);
+	const globalContext = loadContextFileFromDir(resolvedAgentDir, diagnostics);
 	if (globalContext) {
 		contextFiles.push(globalContext);
 		seenPaths.add(globalContext.path);
@@ -279,7 +305,7 @@ export function loadProjectContextFiles(options: {
 	let currentDir = resolvedCwd;
 
 	while (true) {
-		const contextFile = loadContextFileFromDir(currentDir);
+		const contextFile = loadContextFileFromDir(currentDir, diagnostics);
 		// Compare the directory's real path, not the file's: a worktree AGENTS.md that
 		// symlinks to the main repo's file resolves to the shadowed path itself.
 		const isShadowed =
@@ -387,6 +413,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private themes: Theme[];
 	private themeDiagnostics: ResourceDiagnostic[];
 	private agentsFiles: Array<{ path: string; content: string }>;
+	private contextDiagnostics: ResourceDiagnostic[];
 	private systemPrompt?: string;
 	private systemPromptSourcePath?: string;
 	private appendSystemPrompt: string[];
@@ -442,6 +469,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.themes = [];
 		this.themeDiagnostics = [];
 		this.agentsFiles = [];
+		this.contextDiagnostics = [];
 		this.appendSystemPrompt = [];
 		this.appendSystemPromptSourcePaths = [];
 		this.lastSkillPaths = [];
@@ -472,6 +500,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> } {
 		return { agentsFiles: this.agentsFiles };
+	}
+
+	getContextDiagnostics(): ResourceDiagnostic[] {
+		return this.contextDiagnostics;
 	}
 
 	getSystemPrompt(): string | undefined {
@@ -675,19 +707,17 @@ export class DefaultResourceLoader implements ResourceLoader {
 			}
 		}
 
+		const contextDiagnostics: ResourceDiagnostic[] = [];
 		const agentsFiles = {
 			agentsFiles: this.noContextFiles
 				? []
-				: loadProjectContextFiles({
-						cwd: this.cwd,
-						agentDir: this.agentDir,
-					}),
+				: loadProjectContextFilesWithDiagnostics({ cwd: this.cwd, agentDir: this.agentDir }, contextDiagnostics),
 		};
 		const resolvedAgentsFiles = this.agentsFilesOverride ? this.agentsFilesOverride(agentsFiles) : agentsFiles;
 		this.agentsFiles = resolvedAgentsFiles.agentsFiles;
 
 		const systemPromptSource = this.systemPromptSource ?? this.discoverSystemPromptFile();
-		const baseSystemPrompt = resolvePromptInput(systemPromptSource, "system prompt");
+		const baseSystemPrompt = resolvePromptInput(systemPromptSource, "system prompt", contextDiagnostics);
 		this.systemPrompt = this.systemPromptOverride ? this.systemPromptOverride(baseSystemPrompt) : baseSystemPrompt;
 		this.systemPromptSourcePath =
 			systemPromptSource && existsSync(systemPromptSource) ? resolvePath(systemPromptSource) : undefined;
@@ -698,7 +728,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			appendSources = discoveredAppendSystemPromptFile ? [discoveredAppendSystemPromptFile] : [];
 		}
 		const baseAppend = appendSources
-			.map((s) => resolvePromptInput(s, "append system prompt"))
+			.map((s) => resolvePromptInput(s, "append system prompt", contextDiagnostics))
 			.filter((s): s is string => s !== undefined);
 		this.appendSystemPrompt = this.appendSystemPromptOverride
 			? this.appendSystemPromptOverride(baseAppend)
@@ -706,6 +736,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.appendSystemPromptSourcePaths = appendSources
 			.filter((source) => existsSync(source))
 			.map((source) => resolvePath(source));
+		this.contextDiagnostics = contextDiagnostics;
 		this.loaded = true;
 	}
 

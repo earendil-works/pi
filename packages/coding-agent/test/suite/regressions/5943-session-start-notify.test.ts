@@ -18,6 +18,7 @@ type LoadedResourcesContext = {
 		promptTemplates: [];
 		resourceLoader: {
 			getAgentsFiles: () => LoadedResourcesResult<{ agentsFiles: Array<{ path: string }> }>;
+			getContextDiagnostics: () => [];
 			getSystemPromptSource: () => { path: string } | undefined;
 			getAppendSystemPromptSources: () => Array<{ path: string }>;
 			getSkills: () => LoadedResourcesResult<{ skills: [] }>;
@@ -196,6 +197,7 @@ function createLoadedResourcesContext(): LoadedResourcesContext {
 			promptTemplates: [],
 			resourceLoader: {
 				getAgentsFiles: () => ({ agentsFiles: [{ path: "/repo/AGENTS.md" }], diagnostics: [] }),
+				getContextDiagnostics: () => [],
 				getSystemPromptSource: () => undefined,
 				getAppendSystemPromptSources: () => [],
 				getSkills: () => ({ skills: [], diagnostics: [] }),

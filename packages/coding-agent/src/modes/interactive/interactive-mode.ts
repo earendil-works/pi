@@ -103,6 +103,7 @@ import {
 	resolveModelScopeFromModels,
 } from "../../core/model-resolver.ts";
 import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
+import { claimTerminalForTui, releaseTerminalFromTui } from "../../core/output-guard.ts";
 import { DefaultPackageManager } from "../../core/package-manager.ts";
 import { compareProviders } from "../../core/preferred-providers.ts";
 import { findMatchingProviders } from "../../core/provider-matching.ts";
@@ -1030,6 +1031,7 @@ export class InteractiveMode {
 		this.ui.setFocus(this.editor);
 
 		// Start the UI before initializing extensions so session_start handlers can use interactive dialogs
+		claimTerminalForTui();
 		this.ui.start();
 		this.isInitialized = true;
 		this.programStatus.report();
@@ -2034,6 +2036,15 @@ export class InteractiveMode {
 		}
 
 		if (showDiagnostics) {
+			const contextDiagnostics = this.session.resourceLoader.getContextDiagnostics();
+			if (contextDiagnostics.length > 0) {
+				const warningLines = () => this.formatDiagnostics(contextDiagnostics, sourceInfos);
+				this.loadedResourcesContainer.addChild(
+					new ThemedText(() => `${theme.fg("warning", "[Context issues]")}\n${warningLines()}`, 0, 0),
+				);
+				this.loadedResourcesContainer.addChild(new Spacer(1));
+			}
+
 			const skillDiagnostics = skillsResult.diagnostics;
 			if (skillDiagnostics.length > 0) {
 				const warningLines = () => this.formatDiagnostics(skillDiagnostics, sourceInfos);
@@ -7262,6 +7273,7 @@ export class InteractiveMode {
 		}
 		if (this.isInitialized) {
 			this.stopInteractiveTui(fullscreenExitOutput);
+			releaseTerminalFromTui();
 			this.isInitialized = false;
 		}
 		this.unregisterSignalHandlers();

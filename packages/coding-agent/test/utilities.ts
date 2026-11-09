@@ -237,6 +237,7 @@ export function createTestResourceLoader(options: CreateTestResourceLoaderOption
 		getPrompts: () => ({ prompts: [], diagnostics: [] }),
 		getThemes: () => ({ themes: [], diagnostics: [] }),
 		getAgentsFiles: () => ({ agentsFiles: [] }),
+		getContextDiagnostics: () => [],
 		getSystemPrompt: () => undefined,
 		getSystemPromptSource: () => undefined,
 		getAppendSystemPrompt: () => [],

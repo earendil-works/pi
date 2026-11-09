@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -557,6 +557,53 @@ Content`,
 			expect(consoleError).not.toHaveBeenCalledWith(expect.stringContaining(join(cwd, "AGENTS.override.md")));
 			consoleError.mockRestore();
 		});
+
+		// #11264: reload also runs on /reload, /new and /resume while the TUI draws on the terminal, so read
+		// failures are returned as diagnostics instead of being printed over it.
+		it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+			"reports unreadable context and system prompt files as diagnostics without printing",
+			async () => {
+				const agentsPath = join(cwd, "AGENTS.md");
+				const systemPromptPath = join(tempDir, "SYSTEM.md");
+				writeFileSync(agentsPath, "unreadable");
+				writeFileSync(join(cwd, "CLAUDE.md"), "Fallback instructions");
+				writeFileSync(systemPromptPath, "unreadable");
+				chmodSync(agentsPath, 0o000);
+				chmodSync(systemPromptPath, 0o000);
+				const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+				try {
+					const loader = new DefaultResourceLoader({ cwd, agentDir, systemPrompt: systemPromptPath });
+					await loader.reload();
+
+					expect(loader.getAgentsFiles().agentsFiles).toContainEqual({
+						path: join(cwd, "CLAUDE.md"),
+						content: "Fallback instructions",
+					});
+					expect(loader.getContextDiagnostics()).toEqual([
+						{
+							type: "warning",
+							message: expect.stringContaining("Could not read context file: EACCES"),
+							path: agentsPath,
+						},
+						{
+							type: "warning",
+							message: expect.stringContaining("Could not read system prompt file: EACCES"),
+							path: systemPromptPath,
+						},
+					]);
+					expect(consoleError).not.toHaveBeenCalled();
+
+					chmodSync(agentsPath, 0o644);
+					chmodSync(systemPromptPath, 0o644);
+					await loader.reload();
+					expect(loader.getContextDiagnostics()).toEqual([]);
+				} finally {
+					consoleError.mockRestore();
+					chmodSync(agentsPath, 0o644);
+					chmodSync(systemPromptPath, 0o644);
+				}
+			},
+		);
 
 		it("should skip context file discovery when noContextFiles is true", async () => {
 			writeFileSync(join(cwd, "AGENTS.override.md"), "# Override Guidelines\n\nBe helpful.");

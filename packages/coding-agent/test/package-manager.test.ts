@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { claimTerminalForTui, releaseTerminalFromTui } from "../src/core/output-guard.ts";
 import { DefaultPackageManager, type ProgressEvent, type ResolvedResource } from "../src/core/package-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 
@@ -812,6 +813,23 @@ Content`,
 			]);
 
 			expect(output).toBe(valueWithSpace);
+		});
+
+		// #11264: inherited child output draws over the TUI during /reload, /new and /resume installs.
+		it("captures command output instead of inheriting the terminal while the TUI draws on it", async () => {
+			const managerWithInternals = packageManager as unknown as PackageManagerInternals;
+			const command = [
+				"-e",
+				"process.stdout.write('out'); process.stderr.write('git clone progress'); process.exit(3)",
+			];
+			claimTerminalForTui();
+			try {
+				await expect(managerWithInternals.runCommand(process.execPath, command)).rejects.toThrow(
+					"failed with code 3: git clone progress",
+				);
+			} finally {
+				releaseTerminalFromTui();
+			}
 		});
 	});
 
