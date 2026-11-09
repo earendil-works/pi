@@ -1,7 +1,9 @@
-import { mkdir as fsMkdir, writeFile as fsWriteFile } from "fs/promises";
+import { constants } from "fs";
+import { mkdir as fsMkdir, open as fsOpen, writeFile as fsWriteFile } from "fs/promises";
 import { dirname } from "path";
 import { type Static, Type } from "typebox";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import { encodeUtf16, getUtf16Encoding } from "./file-encoding.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { writeRenderers } from "./renderers/write.ts";
@@ -28,11 +30,29 @@ export interface WriteOperations {
 	writeFile: (absolutePath: string, content: string) => Promise<void>;
 	/** Create directory recursively */
 	mkdir: (dir: string) => Promise<void>;
+	/**
+	 * Read up to `length` bytes from the start of a file; rejects if it cannot be read, for example because it does
+	 * not exist. With writeFileBytes, used to overwrite UTF-16 files as UTF-16; without both, files are written as UTF-8.
+	 */
+	readFileStart?: (absolutePath: string, length: number) => Promise<Buffer>;
+	/** Write raw bytes to a file */
+	writeFileBytes?: (absolutePath: string, content: Buffer) => Promise<void>;
 }
 
 const defaultWriteOperations: WriteOperations = {
 	writeFile: (path, content) => fsWriteFile(path, content, "utf-8"),
 	mkdir: (dir) => fsMkdir(dir, { recursive: true }).then(() => {}),
+	readFileStart: async (path, length) => {
+		// Non-blocking, so that opening a FIFO does not wait for a writer.
+		const file = await fsOpen(path, constants.O_RDONLY | constants.O_NONBLOCK);
+		try {
+			const { buffer, bytesRead } = await file.read(Buffer.alloc(length), 0, length, 0);
+			return buffer.subarray(0, bytesRead);
+		} finally {
+			await file.close();
+		}
+	},
+	writeFileBytes: (path, content) => fsWriteFile(path, content),
 };
 
 export interface WriteToolOptions {
@@ -78,7 +98,9 @@ export function createWriteToolDefinition(
 				throwIfAborted();
 
 				// Write the file contents.
-				await ops.writeFile(absolutePath, content);
+				const writeContent = await getContentWriter(ops, absolutePath);
+				throwIfAborted();
+				await writeContent(content);
 				throwIfAborted();
 
 				return {
@@ -89,6 +111,22 @@ export function createWriteToolDefinition(
 		},
 		...writeRenderers,
 	};
+}
+
+/** Writer of content in the encoding of the existing file: UTF-16 with a byte order mark stays UTF-16, else UTF-8. */
+async function getContentWriter(
+	ops: WriteOperations,
+	absolutePath: string,
+): Promise<(content: string) => Promise<void>> {
+	const { readFileStart, writeFileBytes } = ops;
+	if (readFileStart && writeFileBytes) {
+		// A file that cannot be read, for example because it does not exist yet, is written as UTF-8.
+		const start = await readFileStart.call(ops, absolutePath, 2).catch(() => new Uint8Array(0));
+		const encoding = getUtf16Encoding(start);
+		// Call as a method: custom operations may be class instances.
+		if (encoding) return (content) => writeFileBytes.call(ops, absolutePath, encodeUtf16(content, encoding));
+	}
+	return (content) => ops.writeFile(absolutePath, content);
 }
 
 export function createWriteTool(cwd: string, options?: WriteToolOptions): TypeBoxAgentTool<typeof writeSchema> {

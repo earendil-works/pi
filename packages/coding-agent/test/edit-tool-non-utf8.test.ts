@@ -19,18 +19,12 @@ describe("edit tool with files that are not UTF-8", () => {
 		rmSync(dir, { recursive: true, force: true });
 	});
 
-	function utf16(byteOrder: "le" | "be", text: string): Buffer {
-		const le = Buffer.from(`\uFEFF${text}`, "utf16le");
-		return byteOrder === "le" ? le : Buffer.from(le).swap16();
-	}
-
 	// https://github.com/earendil-works/pi/issues/10349, https://github.com/earendil-works/pi/issues/5797
-	it("refuses legacy encodings and UTF-16 and leaves the file unchanged", async () => {
+	it("refuses legacy encodings and UTF-16 without a byte order mark and leaves the file unchanged", async () => {
 		const files = {
 			"windows-1252.cpp": Buffer.from("// \xe4\xf6\xdf\nTIMEOUT = 30\n", "latin1"),
 			"gbk.py": Buffer.from([0x23, 0x20, 0xc5, 0xe4, 0xd6, 0xc3, 0x0a, ...Buffer.from("TIMEOUT = 30\n")]),
-			"utf16le.txt": utf16("le", "TIMEOUT = 30\n"),
-			"utf16be.txt": utf16("be", "TIMEOUT = 30\n"),
+			"utf16le-no-bom.txt": Buffer.from("TIMEOUT = 30\n\u00e9", "utf16le"),
 		};
 		const tool = createEditTool(dir);
 		for (const [name, bytes] of Object.entries(files)) {
