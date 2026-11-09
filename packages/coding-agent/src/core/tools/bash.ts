@@ -285,6 +285,8 @@ export function createShellToolDefinition(
 		promptGuidelines: exposeSessionEnvironment && config.promptGuidelines ? [...config.promptGuidelines] : undefined,
 		parameters: bashSchema,
 		outputSchema: bashOutputSchema,
+		// Later calls in the same message often read the command's output (build log, generated image).
+		executionMode: "sequential",
 		constrainedSampling: { type: "json_schema", strict: "prefer" },
 		async execute(
 			_toolCallId,

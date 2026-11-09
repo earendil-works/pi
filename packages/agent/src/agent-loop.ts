@@ -30,6 +30,7 @@ import type {
 	AgentToolResult,
 	PrepareNextTurnContext,
 	StreamFn,
+	ToolExecutionMode,
 } from "./types.ts";
 
 export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
@@ -523,13 +524,46 @@ async function executeToolCalls(
 	emit: AgentEventSink,
 ): Promise<ExecutedToolCallBatch> {
 	const toolCalls = assistantMessage.content.filter((c) => c.type === "toolCall");
-	const hasSequentialToolCall = toolCalls.some(
-		(tc) => currentContext.tools?.find((t) => t.name === tc.name)?.executionMode === "sequential",
-	);
-	if (config.toolExecution === "sequential" || hasSequentialToolCall) {
+	if (config.toolExecution === "sequential") {
 		return executeToolCallsSequential(currentContext, assistantMessage, toolCalls, config, signal, emit);
 	}
-	return executeToolCallsParallel(currentContext, assistantMessage, toolCalls, config, signal, emit);
+
+	const messages: ToolResultMessage[] = [];
+	let terminate = toolCalls.length > 0;
+	for (const segment of splitAtSequentialToolCalls(currentContext, toolCalls)) {
+		const execute = segment.mode === "sequential" ? executeToolCallsSequential : executeToolCallsParallel;
+		const batch = await execute(currentContext, assistantMessage, segment.toolCalls, config, signal, emit);
+		messages.push(...batch.messages);
+		terminate = terminate && batch.terminate;
+		if (signal?.aborted) {
+			break;
+		}
+	}
+	return { messages, terminate };
+}
+
+type ToolCallSegment = {
+	mode: ToolExecutionMode;
+	toolCalls: AgentToolCall[];
+};
+
+/**
+ * Split tool calls into segments that run one after another. Each call to a tool with
+ * `executionMode: "sequential"` is a segment of its own, so it never overlaps any other call.
+ * Each run of other calls between them is one segment that executes in parallel.
+ */
+function splitAtSequentialToolCalls(currentContext: AgentContext, toolCalls: AgentToolCall[]): ToolCallSegment[] {
+	const segments: ToolCallSegment[] = [];
+	for (const toolCall of toolCalls) {
+		const isSequential = currentContext.tools?.find((t) => t.name === toolCall.name)?.executionMode === "sequential";
+		const last = segments[segments.length - 1];
+		if (!isSequential && last?.mode === "parallel") {
+			last.toolCalls.push(toolCall);
+		} else {
+			segments.push({ mode: isSequential ? "sequential" : "parallel", toolCalls: [toolCall] });
+		}
+	}
+	return segments;
 }
 
 type ExecutedToolCallBatch = {

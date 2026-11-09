@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- A call to a tool with `executionMode: "sequential"` is now a barrier instead of making the whole batch sequential: earlier calls finish first, it runs alone, and later calls start after it, while consecutive other calls between barriers still run in parallel. `bash, read, read, read, bash, bash` runs as `bash`, the three reads together, `bash`, `bash`.
+
 ## [1.5.0] - 2026-11-02
 
 ### Breaking Changes

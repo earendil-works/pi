@@ -113,7 +113,7 @@ Tool execution mode is configurable:
 
 In parallel mode, tool completion events follow tool completion order, but persisted toolResult messages still follow assistant source order.
 
-The mode can be set globally via `toolExecution` in the agent config, or per-tool via `executionMode` on `AgentTool`. If any tool call in a batch targets a tool with `executionMode: "sequential"`, the entire batch executes sequentially regardless of the global setting.
+The mode can be set globally via `toolExecution` in the agent config, or per-tool via `executionMode` on `AgentTool`. A call to a tool with `executionMode: "sequential"` is a barrier: calls before it finish first, it runs alone, and calls after it start once it has finished. Consecutive other calls between barriers still run in parallel. For example, `bash, read, read, read, bash, bash` runs as `bash`, then the three reads together, then `bash`, then `bash`.
 
 The `beforeToolCall` hook runs after `tool_execution_start` and validated argument parsing. It can block execution and attach `terminate: true` to the blocked result. The `afterToolCall` hook runs after tool execution finishes and before `tool_execution_end` and final tool result message events are emitted.
 
@@ -470,7 +470,7 @@ const readFileTool: AgentTool<typeof readFileParameters> = {
   description: "Read a file's contents",
   parameters: readFileParameters,
   // Override execution mode for this tool (optional).
-  // "sequential" forces the entire batch to run one at a time.
+  // "sequential" makes this tool a barrier: it runs alone, after earlier calls and before later ones.
   // "parallel" allows concurrent execution with other tool calls.
   // If omitted, the global toolExecution config applies.
   executionMode: "sequential",
