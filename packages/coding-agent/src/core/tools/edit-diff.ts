@@ -8,6 +8,23 @@ import { access, readFile } from "fs/promises";
 import { splitBom } from "../../utils/text.ts";
 import { resolveToCwd } from "./path-utils.ts";
 
+/**
+ * Decode a file for editing. Edits are written back as UTF-8, so a file that is not valid UTF-8 (UTF-16, or a
+ * legacy encoding such as Windows-1252 or GBK) is refused instead of having its other bytes replaced with U+FFFD.
+ */
+export function decodeFileForEdit(buffer: Uint8Array, path: string): string {
+	try {
+		return UTF8_FOR_EDIT.decode(buffer);
+	} catch {
+		throw new Error(
+			`Could not edit file: ${path}. It is not valid UTF-8 (for example UTF-16, or a legacy encoding such as Windows-1252 or GBK). The edit tool only writes UTF-8, so editing it would corrupt it. The file was left unchanged. To change it, use a shell command that keeps its encoding.`,
+		);
+	}
+}
+
+// ignoreBOM keeps a UTF-8 byte order mark in the text, as Buffer.toString("utf-8") does.
+const UTF8_FOR_EDIT = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
 export function normalizeToLF(text: string): string {
 	return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 }
@@ -716,7 +733,7 @@ export async function computeEditsDiff(
 		}
 
 		// Read the file
-		const rawContent = await readFile(absolutePath, "utf-8");
+		const rawContent = decodeFileForEdit(await readFile(absolutePath), path);
 
 		// Strip BOM before matching (LLM won't include invisible BOM in oldText)
 		const { text: content } = splitBom(rawContent);

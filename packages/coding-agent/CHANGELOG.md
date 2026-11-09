@@ -49,6 +49,7 @@
 - Fixed resuming a session restoring an old thinking level after `/tree` navigated to before a `/thinking` change. Like the model, the live thinking level is now recorded on the new branch with the next prompt ([#11451](https://github.com/earendil-works/pi/issues/11451))
 - Fixed inline images in fullscreen mode showing only their first row in Orca, while regular mode showed them in full. Fullscreen now draws Kitty images after the rows they cover on every terminal, as it already did for WezTerm ([#11835](https://github.com/earendil-works/pi/issues/11835))
 - Fixed the edit tool rewriting the line endings of untouched lines in files with mixed CRLF/LF or lone CR line endings, and running out of memory on large files after the file was already written; the diff now covers only the changed lines and their surroundings and is computed before writing ([#8544](https://github.com/earendil-works/pi/issues/8544))
+- Fixed the edit tool corrupting files that are not valid UTF-8, such as UTF-16 files or files in a legacy encoding like Windows-1252 or GBK: it replaced every byte it could not decode with U+FFFD, wrote the file back as UTF-8 and reported success. It now refuses to edit such files and leaves them unchanged ([#10349](https://github.com/earendil-works/pi/issues/10349))
 
 ## [1.5.0] - 2026-11-02
 
