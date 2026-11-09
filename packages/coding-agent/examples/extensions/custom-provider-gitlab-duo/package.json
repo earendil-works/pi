@@ -1,7 +1,7 @@
 {
   "name": "pi-extension-custom-provider-gitlab-duo",
   "private": true,
-  "version": "1.5.0",
+  "version": "1.5.1",
   "type": "module",
   "scripts": {
     "clean": "echo 'nothing to clean'",
