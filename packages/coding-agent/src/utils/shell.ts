@@ -27,6 +27,30 @@ function getBashShellConfig(shell: string): ShellConfig {
 	return isLegacyWslBashPath(shell) ? { shell, args: ["-s"], commandTransport: "stdin" } : { shell, args: ["-c"] };
 }
 
+/**
+ * Expand environment variables in a user-supplied path.
+ * Windows uses `%VAR%` (case-insensitive name lookup); other platforms use `$VAR` and `${VAR}`.
+ * Unset variables are left untouched so error messages show the original input.
+ */
+function expandEnvInPath(path: string): string {
+	if (process.platform === "win32") {
+		return path.replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (match, name: string) => {
+			const lower = name.toLowerCase();
+			for (const [key, value] of Object.entries(process.env)) {
+				if (key.toLowerCase() === lower) return value ?? match;
+			}
+			return match;
+		});
+	}
+	return path.replace(
+		/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,
+		(match, braced: string | undefined, bare: string | undefined) => {
+			const value = process.env[braced ?? bare!];
+			return value ?? match;
+		},
+	);
+}
+
 // Matches harness-v2's pathExists (packages/durable/src/env/node.ts).
 // On Unix this is identical to existsSync() (both are access(F_OK)), just
 // spelled with try/catch. On Windows we explicitly avoid existsSync(): its
@@ -84,12 +108,13 @@ function findExecutableOnPath(executable: string): string | null {
  * 3. On Unix: /bin/bash, then bash on PATH, then fallback to sh
  */
 export function getShellConfig(customShellPath?: string): ShellConfig {
-	// 1. Check user-specified shell path
+	// 1. Check user-specified shell path (with environment variable expansion)
 	if (customShellPath) {
-		if (shellPathExists(customShellPath)) {
-			return getBashShellConfig(customShellPath);
+		const shellPath = expandEnvInPath(customShellPath);
+		if (shellPathExists(shellPath)) {
+			return getBashShellConfig(shellPath);
 		}
-		throw new Error(`Custom shell path not found: ${customShellPath}`);
+		throw new Error(`Custom shell path not found: ${shellPath}`);
 	}
 
 	if (process.platform === "win32") {
