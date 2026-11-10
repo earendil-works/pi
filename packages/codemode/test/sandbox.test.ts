@@ -94,6 +94,24 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			expect(result).toMatchObject({ ok: true, value: 42 });
 		});
 
+		// The prelude exposes `tools`, `console`, etc. as globals, so a script must be free to declare a
+		// local of the same name without a "redefinition" error. A parameter name for the wrapper function
+		// would shadow the globals and break these scripts.
+		it.each(["tools", "console", "text", "image", "load", "models", "matches", "exit", "store"])(
+			"lets a script declare a local `%s` shadowing the prelude global",
+			async (global) => {
+				const sandbox = createSandbox();
+				const result = await sandbox.execute(`const ${global} = 42; return ${global};`);
+				expect(result).toMatchObject({ ok: true, value: 42 });
+			},
+		);
+
+		it("keeps the tool proxy reachable in scripts that do not shadow it", async () => {
+			const sandbox = createSandbox([{ name: "echo", execute: (args) => args }]);
+			const result = await sandbox.execute("return (await tools.echo(21)) * 2;");
+			expect(result).toMatchObject({ ok: true, value: 42 });
+		});
+
 		it("collects text(), image(), and console output in order", async () => {
 			const sandbox = createSandbox();
 			const result = await sandbox.execute(`

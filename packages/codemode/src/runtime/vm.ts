@@ -324,7 +324,10 @@ export async function startVm(options: StartVmOptions): Promise<VmSession> {
 		// match the script as written.
 		let fn: JSValueHandle;
 		try {
-			fn = vm.evalCode(`(async (tools, console) => {${data.code}\n})`, "codemode.js");
+			// No parameter names: the prelude defines `tools` and `console` on globalThis, so the script reads
+			// them as globals. Parameter names would shadow those globals and collide with user locals of the
+			// same name (e.g. `const tools = ...`), which QuickJS rejects as a redefinition.
+			fn = vm.evalCode(`(async () => {${data.code}\n})`, "codemode.js");
 		} catch (error) {
 			if (!(error instanceof JSException)) throw error;
 			post({ type: "done", ok: false, error: describeException(error) });
