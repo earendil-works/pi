@@ -94,9 +94,17 @@ for guests; what has no view variant (sending messages, answering questions, app
   piggybacking through the page (Chord marking a relay's origin as a weaker principal) is deferred until a case needs
   it.
 - **Revocation:** closing the view or revoking its viewer revokes its view principals; their objects end.
-- **The room** (presence, a slot per peer, broadcast messages, a shared clock, a leader) is an ordinary server object
-  with a view variant, in memory, one per open view; a netcode helper (snapshot interpolation, prediction with
-  reconciliation) ships in the view kit.
+- **The room** is an ordinary server object with a view variant, one per open view. Words (owner, 2026-11-10: one
+  term per thing): **presence** (who has the view open, and the **leader**, the oldest peer), **peer state** (what each
+  peer publishes, written only by that peer, latest wins), **messages** (ordered, lossless, kept until every present
+  peer has seen them, or since the last snapshot for a log room), the shared **clock**, and **methods** a sketch offers
+  the agent (a name, a description, an argument schema); one use of a method is a **call**, which the leader runs and
+  whose result goes back to the caller, nothing stored.
+- **Room kinds** come from plugins: a **live** room (presence and peer state: drags, cursors, games), a **log** room
+  (ordered messages since the last snapshot: turn-based games, a shared canvas), and rooms with **server rules** (the
+  plugin's server code applies and checks each message and writes the snapshot: collaborative text, as in
+  badlogic/jot's id-based editing). Every kind has presence, the leader, the clock and methods. A netcode helper and a
+  text-editing client ship in the view kit.
 - **The view kit:** React, p3's presentational components (props in, events out; none holds a Chord reference) and
   the CSS, built by the server as one content-hashed bundle and loaded by a frame from a public endpoint (cached once;
   the endpoint answers the opaque origin with an open cross-origin header).
