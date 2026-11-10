@@ -3,8 +3,8 @@
 // for a new hold, holders `failed { waiting }`) until `retry` or a rollout, a running worker's lost link recovered from
 // once a minute, idle stops and `busy`, `stop` and its suspension, the per-address queue, `close`, the rollout step,
 // stale lock files cleared, nothing kept of 1,000 addresses, and the worker base (an edit after its build runs in no
-// worker; a start waits for the build; a broken entry fails every start; close keeps the files until its workers
-// exited).
+// worker; forks without source maps; a start waits for the build; a broken entry fails every start; close keeps the
+// files until its workers exited).
 
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -89,6 +89,26 @@ describe('the worker base (decision "Workers start from the base code the server
 		expect(existsSync(forkedFrom)).toBe(true);
 		await workers.close(context);
 		expect(existsSync(forkedFrom)).toBe(false);
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	it("forks without --enable-source-maps: Node parses no map of the base, whose maps lie beside its files", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "chord-workers-maps-"));
+		await writeFile(
+			join(dir, "entry.ts"),
+			[
+				`import ${JSON.stringify(ENTRY)};`,
+				'process.stdout.write(["maps", process.sourceMapsEnabled, process.argv[1]].join(" ") + "\\n");',
+			].join("\n"),
+		);
+		const { server, workers, output } = await fleet({ entry: join(dir, "entry.ts") });
+		const notes = await server.get(Notes, { id: "S1" }, context);
+		const line = output.find((each) => each.startsWith("session|S1 maps "));
+		const [, , enabled, forkedFrom] = line!.split(" ");
+		expect(enabled).toBe("false");
+		expect(existsSync(`${forkedFrom}.map`)).toBe(true);
+		notes.release();
+		await workers.close(context);
 		await rm(dir, { recursive: true, force: true });
 	});
 

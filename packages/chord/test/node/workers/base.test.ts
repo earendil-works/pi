@@ -2,8 +2,9 @@
 // code bundled once (an edit after the build runs nowhere, every imported module runs), split at dynamic imports (a
 // lazily imported module and the packages it imports load only when imported, still from the snapshot), installed
 // packages external and Node builtins kept, a workspace package linked into `node_modules` inlined, the child's
-// `--conditions`, module locations and stack traces naming the source files, a broken entry rejected, and the files in a
-// private directory restored when a cleaner removed one.
+// `--conditions`, module locations, stack traces naming the source files through the maps beside the bundle's files
+// (with `--enable-source-maps`), a broken entry rejected, and the files in a private directory restored when a cleaner
+// removed one.
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
@@ -288,7 +289,7 @@ describe("the bundle's file", () => {
 		});
 		const base = await built(join(dir, "entry.ts"));
 		const first = base.file();
-		const chunks = readdirSync(dirname(first)).filter((name) => name !== "worker.mjs");
+		const chunks = readdirSync(dirname(first)).filter((name) => name !== "worker.mjs" && !name.endsWith(".map"));
 		expect(chunks).toHaveLength(1);
 		expect(statSync(join(dirname(first), chunks[0]!)).mode & 0o777).toBe(0o600);
 		await rm(join(dirname(first), chunks[0]!));
@@ -315,7 +316,7 @@ describe("the bundle's file", () => {
 		await writeFile(join(named, "worker-old.mjs"), "stale");
 		const base = await buildWorkerBase(join(dir, "entry.ts"), [], named);
 		expect(base.file()).toBe(join(named, "worker.mjs"));
-		expect(readdirSync(named)).toEqual(["worker.mjs"]);
+		expect(readdirSync(named).sort()).toEqual(["worker.mjs", "worker.mjs.map"]);
 		expect(statSync(named).mode & 0o777).toBe(0o700);
 		await rm(join(named, "worker.mjs"));
 		expect(base.file()).toBe(join(named, "worker.mjs"));

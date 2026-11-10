@@ -510,8 +510,11 @@ class WorkersComponent implements Workers<HostKind> {
 		const process = new WorkerProcess(
 			{
 				entry: base.file(),
-				// Stack traces name the base code's files; the app's flags come after (`--no-enable-source-maps` wins).
-				execArgv: ["--enable-source-maps", ...(this.#options.execArgv ?? [])],
+				// No `--enable-source-maps`: Node would parse the base's whole map at the first stack made text (Chord makes a
+				// kept error's stack text at once), a p2 session worker's about 1M positions, 50 MiB of its heap for its
+				// life. Stacks name the bundle's files and functions; its source maps lie beside them (an app passes the
+				// flag in `execArgv` to have Node map them, at that cost).
+				execArgv: this.#options.execArgv ?? [],
 				...(this.#environment === undefined ? {} : { env: this.#environment }),
 				...(onOutput === undefined ? {} : { onOutput: (stream, chunk) => onOutput(address, stream, chunk) }),
 			},

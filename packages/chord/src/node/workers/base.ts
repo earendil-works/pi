@@ -6,8 +6,9 @@
 // the build resolved them. Everything else, the app's files and workspace packages linked into `node_modules`, is
 // inlined. The bundle is split at each dynamic `import()` esbuild can follow: the entry module and the chunks it imports
 // statically load at each fork, a lazily imported module (pi-ai's provider APIs and the packages they import) only when
-// the worker imports it. Every file is an ES module with an inline source map, written at the first fork (`file()`;
-// a handle never forked writes nothing) into one private directory its handle owns and removes: a new temporary one, or
+// the worker imports it. Every file is an ES module with its source map beside it (`<name>.mjs.map`, linked from its
+// last line; an inline one would be text of the module V8 keeps, and Node keeps its decoded copy), written at the first
+// fork (`file()`; a handle never forked writes nothing) into one private directory its handle owns and removes: a new temporary one, or
 // one the caller names (the kit's per kind in the data directory: the same path at every start, so Node's compile cache
 // knows the files). Every file the build read is recorded with its bytes' hash
 // (`BaseInputs`), as its one read hands them to esbuild.
@@ -77,7 +78,7 @@ export async function buildWorkerBase(entry: string, execArgv: readonly string[]
 		ignoreAnnotations: true,
 		// Function and class names as the source has them (`name` stays what unbundled code sees).
 		keepNames: true,
-		sourcemap: "inline",
+		sourcemap: "linked",
 		sourcesContent: false,
 		sourceRoot: pathToFileURL(root).href,
 		// A CommonJS file of the base code requires through this (each chunk has its own); external packages by their

@@ -1,5 +1,5 @@
 // Tests of stack traces (slice 7c §3, decision Q1 (b)): `mapStack` names plugin files and lines through each
-// evaluated script's source map; nothing global; a script's map goes with its facet.
+// evaluated script's source map, parsed at its first lookup; nothing global; a script's map goes with its facet.
 
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
@@ -58,6 +58,19 @@ describe("mapStack", () => {
 		expect((error as Error).stack).toContain("/chord-plugins/@test/notes/worker.ts?");
 		expect(Error.prepareStackTrace).toBe(prepare);
 		expect(mapStack("not an error")).toBe("not an error");
+	});
+
+	it("parses a script's map at the first position looked up in it, not when the script is evaluated", async () => {
+		const { script, plugin } = await failing();
+		// A map that does not parse ("not json"), under a filename of its own: evaluation never reads it.
+		const broken = {
+			...script,
+			digest: "broken-map",
+			source: script.source.replace(/base64,[A-Za-z0-9+/=]+/, "base64,bm90IGpzb24="),
+		};
+		const facet = evaluateFacet(broken, { hostPackages: HOST_PACKAGES, plugin });
+		expect(mapStack(new Error("elsewhere"))).toMatch(/^Error: elsewhere\n/);
+		expect(() => mapStack(thrownBy(facet))).toThrow(SyntaxError);
 	});
 
 	it("lets a script's source map go with its facet", async () => {

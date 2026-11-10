@@ -2517,9 +2517,11 @@ draining old holder without polling).
   literal specifier: the entry and the chunks it imports statically load at each fork, a lazily imported module and the
   packages it imports only when the worker first imports it (an app's lazily loaded providers stay lazy; a module still
   runs after its imports, but modules that do not import each other may run in another order than unbundled); a
-  variable-specifier import resolves at run time against its module's source file, outside the snapshot. ES modules with
-  inline source maps, forked with `--enable-source-maps` before the app's `execArgv` (stack traces name the source
-  files); `execArgv` and `env` apply to every fork as before (modules an `--import` names load from disk at each fork).
+  variable-specifier import resolves at run time against its module's source file, outside the snapshot. ES modules,
+  each with its source map beside it (`<name>.mjs.map`, linked), forked without `--enable-source-maps`: Node would
+  parse the whole map at the first stack made text (Chord makes a kept error's stack text at once), about 1M positions
+  and 50 MiB of a p2 session worker's heap for its life; stack traces name the bundle's files and functions, and an app
+  that wants them mapped passes the flag in `execArgv`, at that cost. `execArgv` and `env` apply to every fork as before (modules an `--import` names load from disk at each fork).
   The files live in one private temporary directory (0700, written again into a new one when a cleaner removed one of
   them), removed at `close`. The worker's side alone is `@earendil-works/chord/workers/child` (`workerMain`,
   `processLock`): a worker entry importing it loads no esbuild. Plugins are unaffected: workers evaluate the server's
