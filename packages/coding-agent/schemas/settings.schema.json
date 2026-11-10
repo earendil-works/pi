@@ -156,11 +156,23 @@
           "type": "boolean",
           "default": true
         },
-        "reserveTokens": {
-          "type": "integer",
+        "prepareThreshold": {
+          "type": "number",
           "minimum": 0,
+          "maximum": 100,
+          "default": 75
+        },
+        "threshold": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 100,
+          "default": 85
+        },
+        "maxSummaryTokens": {
+          "type": "integer",
+          "minimum": 1,
           "maximum": 9007199254740991,
-          "default": 16384
+          "default": 8000
         },
         "keepRecentTokens": {
           "type": "integer",
@@ -174,9 +186,19 @@
             "^.*$": {
               "type": "object",
               "properties": {
-                "reserveTokens": {
-                  "type": "integer",
+                "prepareThreshold": {
+                  "type": "number",
                   "minimum": 0,
+                  "maximum": 100
+                },
+                "threshold": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 100
+                },
+                "maxSummaryTokens": {
+                  "type": "integer",
+                  "minimum": 1,
                   "maximum": 9007199254740991
                 },
                 "keepRecentTokens": {

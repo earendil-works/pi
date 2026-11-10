@@ -63,6 +63,7 @@ export interface CompactionSummaryMessage {
 	role: "compactionSummary";
 	summary: string;
 	tokensBefore: number;
+	checkpointId?: string;
 	timestamp: number;
 }
 
@@ -110,12 +111,14 @@ export function createCompactionSummaryMessage(
 	summary: string,
 	tokensBefore: number,
 	timestamp: string,
+	checkpointId?: string,
 ): CompactionSummaryMessage {
 	return {
 		role: "compactionSummary",
 		summary: summary,
 		tokensBefore,
 		timestamp: new Date(timestamp).getTime(),
+		...(checkpointId ? { checkpointId } : {}),
 	};
 }
 
@@ -177,7 +180,16 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 					return {
 						role: "user",
 						content: [
-							{ type: "text" as const, text: COMPACTION_SUMMARY_PREFIX + m.summary + COMPACTION_SUMMARY_SUFFIX },
+							{
+								type: "text" as const,
+								text:
+									COMPACTION_SUMMARY_PREFIX +
+									m.summary +
+									COMPACTION_SUMMARY_SUFFIX +
+									(m.checkpointId
+										? `\n\nPre-compaction checkpoint: ${m.checkpointId}. If this summary lacks needed details, use recall_context(checkpoint_id="${m.checkpointId}", query="...") to retrieve original history with message references.`
+										: ""),
+							},
 						],
 						timestamp: m.timestamp,
 					};

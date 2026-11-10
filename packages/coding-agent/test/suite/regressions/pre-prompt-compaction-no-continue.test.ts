@@ -26,7 +26,7 @@ describe("pre-prompt compaction regression", () => {
 	it("compacts length-stop overflow before a new prompt without continuing from an assistant message", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 100, maxTokens: 100 }],
-			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },
+			settings: { compaction: { enabled: true, keepRecentTokens: 1, prepareThreshold: 99, threshold: 100 } },
 			extensionFactories: [
 				(pi) => {
 					pi.on("session_before_compact", async (event) => ({

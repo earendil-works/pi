@@ -1,58 +1,53 @@
 import { describe, expect, it } from "vitest";
+import { SETTINGS_DEFAULTS } from "../src/core/settings-defaults.ts";
 import { InMemorySettingsStorage, SettingsManager } from "../src/core/settings-manager.ts";
 
 const model = { provider: "provider", id: "family/model" };
 const modelKey = "provider/family/model";
-const defaults = { enabled: true, reserveTokens: 16384, keepRecentTokens: 20000 };
+const defaults = SETTINGS_DEFAULTS.compaction;
 
-// Regression coverage for #8133.
+// Regression coverage for #8133: model policy overrides resolve independently of ordinary settings.
 describe("compaction model overrides", () => {
-	it("uses defaults without compaction settings", () => {
-		const manager = SettingsManager.inMemory();
-		expect(manager.getCompactionSettings()).toEqual(defaults);
-		expect(manager.getCompactionSettings(model)).toEqual(defaults);
-	});
-
-	it("resolves each field independently and keeps individual getters consistent", () => {
+	it("resolves each percentage and budget independently", () => {
 		const manager = SettingsManager.inMemory({
 			compaction: {
-				reserveTokens: 8192,
+				prepareThreshold: 60,
+				threshold: 90,
+				maxSummaryTokens: 3000,
 				keepRecentTokens: 10000,
-				modelOverrides: { [modelKey]: { reserveTokens: 400000 } },
+				modelOverrides: { [modelKey]: { threshold: 80 } },
 			},
 		});
 		expect(manager.getCompactionSettings(model)).toEqual({
 			enabled: true,
-			reserveTokens: 400000,
+			prepareThreshold: 60,
+			threshold: 80,
+			maxSummaryTokens: 3000,
 			keepRecentTokens: 10000,
 		});
-		expect(manager.getCompactionReserveTokens(model)).toBe(400000);
-		expect(manager.getCompactionKeepRecentTokens(model)).toBe(10000);
-		expect(manager.getCompactionSettings()).toEqual({ enabled: true, reserveTokens: 8192, keepRecentTokens: 10000 });
-
-		manager.applyOverrides({ compaction: { modelOverrides: { [modelKey]: { keepRecentTokens: 30000 } } } });
-		expect(manager.getCompactionKeepRecentTokens(model)).toBe(30000);
-		expect(manager.getCompactionReserveTokens(model)).toBe(400000);
-	});
-
-	it("falls back to built-in defaults for missing fields", () => {
-		const manager = SettingsManager.inMemory({
-			compaction: { modelOverrides: { [modelKey]: { keepRecentTokens: 1024 } } },
+		expect(manager.getCompactionSettings().threshold).toBe(90);
+		manager.applyOverrides({
+			compaction: { modelOverrides: { [modelKey]: { keepRecentTokens: 30000, maxSummaryTokens: 6000 } } },
 		});
-		expect(manager.getCompactionSettings(model)).toEqual({ ...defaults, keepRecentTokens: 1024 });
+		expect(manager.getCompactionSettings(model)).toMatchObject({
+			threshold: 80,
+			maxSummaryTokens: 6000,
+			keepRecentTokens: 30000,
+		});
+		expect(manager.getCompactionKeepRecentTokens(model)).toBe(30000);
 	});
 
-	it("matches exact provider/model IDs, including IDs containing slashes", () => {
+	it("matches exact provider/model IDs and falls back per missing field", () => {
 		const manager = SettingsManager.inMemory({
 			compaction: {
 				modelOverrides: {
-					[modelKey]: { reserveTokens: 400000 },
-					"provider/*": { reserveTokens: 1 },
-					"family/model": { reserveTokens: 2 },
+					[modelKey]: { threshold: 80, keepRecentTokens: 1024 },
+					"provider/*": { threshold: 90 },
+					"family/model": { threshold: 95 },
 				},
 			},
 		});
-		expect(manager.getCompactionReserveTokens(model)).toBe(400000);
+		expect(manager.getCompactionSettings(model)).toEqual({ ...defaults, threshold: 80, keepRecentTokens: 1024 });
 		for (const other of [
 			{ provider: "other", id: model.id },
 			{ provider: model.provider, id: "other" },
@@ -62,14 +57,15 @@ describe("compaction model overrides", () => {
 		}
 	});
 
-	it("merges project model overrides per field before resolving fallbacks", async () => {
+	it("merges project model overrides before resolving ordinary fallbacks and honors project trust", async () => {
 		const storage = new InMemorySettingsStorage();
 		storage.withLock("global", () =>
 			JSON.stringify({
 				compaction: {
-					reserveTokens: 8192,
+					prepareThreshold: 65,
+					threshold: 90,
 					modelOverrides: {
-						[modelKey]: { reserveTokens: 400000, keepRecentTokens: 30000 },
+						[modelKey]: { threshold: 80, keepRecentTokens: 30000 },
 						"provider/other": { keepRecentTokens: 4096 },
 					},
 				},
@@ -77,116 +73,130 @@ describe("compaction model overrides", () => {
 		);
 		storage.withLock("project", () =>
 			JSON.stringify({
-				compaction: { reserveTokens: 1024, modelOverrides: { [modelKey]: { keepRecentTokens: 2000 } } },
+				compaction: {
+					prepareThreshold: 70,
+					threshold: 95,
+					modelOverrides: { [modelKey]: { keepRecentTokens: 2000 } },
+				},
 			}),
 		);
 		const manager = SettingsManager.fromStorage(storage);
 		expect(manager.getCompactionSettings(model)).toEqual({
-			enabled: true,
-			reserveTokens: 400000,
+			...defaults,
+			prepareThreshold: 70,
+			threshold: 80,
 			keepRecentTokens: 2000,
 		});
 		expect(manager.getCompactionSettings({ provider: "provider", id: "other" })).toEqual({
-			enabled: true,
-			reserveTokens: 1024,
+			...defaults,
+			prepareThreshold: 70,
+			threshold: 95,
 			keepRecentTokens: 4096,
 		});
 		await manager.reload();
 		expect(manager.getCompactionKeepRecentTokens(model)).toBe(2000);
 		manager.setProjectTrusted(false);
-		expect(manager.getCompactionKeepRecentTokens(model)).toBe(30000);
+		expect(manager.getCompactionSettings(model)).toEqual({
+			...defaults,
+			prepareThreshold: 65,
+			threshold: 80,
+			keepRecentTokens: 30000,
+		});
 	});
 
-	it("keeps enabled global and preserves overrides when saving the toggle", async () => {
+	it("keeps enabled global and persists model policy when saving the toggle", async () => {
 		const storage = new InMemorySettingsStorage();
 		storage.withLock("global", () =>
-			JSON.stringify({
-				compaction: { modelOverrides: { [modelKey]: { enabled: false, reserveTokens: 400000 } } },
-			}),
+			JSON.stringify({ compaction: { modelOverrides: { [modelKey]: { enabled: false, threshold: 80 } } } }),
 		);
 		const manager = SettingsManager.fromStorage(storage);
 		expect(manager.getCompactionSettings(model).enabled).toBe(true);
 		manager.setCompactionEnabled(false);
 		await manager.flush();
 		await manager.reload();
-		expect(manager.getCompactionSettings(model)).toEqual({ ...defaults, enabled: false, reserveTokens: 400000 });
+		expect(manager.getCompactionSettings(model)).toEqual({ ...defaults, enabled: false, threshold: 80 });
 	});
 
-	describe.each(["reserveTokens", "keepRecentTokens"] as const)("model override %s", (field) => {
-		it.each([null, -1, 1.5, "400000", true, {}, [], Number.MAX_SAFE_INTEGER + 1])(
-			"reports invalid token values: %j",
-			(value) => {
-				const storage = new InMemorySettingsStorage();
-				storage.withLock("global", () =>
-					JSON.stringify({
-						compaction: { modelOverrides: { [modelKey]: { [field]: value } } },
-					}),
-				);
-				const manager = SettingsManager.fromStorage(storage);
-				expect(() => manager.getCompactionSettings(model)).toThrow(
-					`Invalid compaction.modelOverrides["${modelKey}"].${field} setting: ${String(value)}. Expected a non-negative safe integer.`,
-				);
-				expect(manager.getCompactionSettings()).toEqual(defaults);
-				expect(manager.getCompactionSettings({ provider: "other", id: model.id })).toEqual(defaults);
-			},
+	it.each([
+		["prepareThreshold", -1],
+		["threshold", 101],
+		["threshold", 0],
+		["maxSummaryTokens", 0],
+		["maxSummaryTokens", "1000"],
+		["keepRecentTokens", 1.5],
+		["keepRecentTokens", null],
+	] as const)("rejects invalid %s values at the settings-file boundary", (field, value) => {
+		const storage = new InMemorySettingsStorage();
+		storage.withLock("global", () =>
+			JSON.stringify({ compaction: { modelOverrides: { [modelKey]: { [field]: value } } } }),
 		);
-
-		it.each([Number.NaN, Infinity, -Infinity])("reports non-finite runtime values: %s", (value) => {
-			const manager = SettingsManager.inMemory();
-			manager.applyOverrides({ compaction: { modelOverrides: { [modelKey]: { [field]: value } } } });
-			expect(() => manager.getCompactionSettings(model)).toThrow(
-				`Invalid compaction.modelOverrides["${modelKey}"].${field} setting: ${String(value)}`,
-			);
-		});
+		const manager = SettingsManager.fromStorage(storage);
+		expect(() => manager.getCompactionSettings(model)).toThrow(field);
+		expect(manager.getCompactionSettings()).toEqual(defaults);
 	});
 
-	describe.each(["reserveTokens", "keepRecentTokens"] as const)("ordinary compaction.%s", (field) => {
-		it.each([null, -1, 1.5, "400000", true, {}, [], Number.MAX_SAFE_INTEGER + 1])(
-			"reports invalid values even when a valid model override exists: %j",
-			(value) => {
-				const storage = new InMemorySettingsStorage();
-				storage.withLock("global", () =>
-					JSON.stringify({
-						compaction: {
-							[field]: value,
-							modelOverrides: { [modelKey]: { [field]: 4096 } },
-						},
-					}),
-				);
-				const manager = SettingsManager.fromStorage(storage);
-				const error = `Invalid compaction.${field} setting: ${String(value)}. Expected a non-negative safe integer.`;
-				expect(() => manager.getCompactionSettings()).toThrow(error);
-				expect(() => manager.getCompactionSettings(model)).toThrow(error);
-			},
+	it("rejects invalid ordinary values even if a model supplies a valid override", () => {
+		const storage = new InMemorySettingsStorage();
+		storage.withLock("global", () =>
+			JSON.stringify({ compaction: { threshold: "85", modelOverrides: { [modelKey]: { threshold: 90 } } } }),
 		);
-
-		it.each([Number.NaN, Infinity, -Infinity])("reports non-finite runtime values: %s", (value) => {
-			const manager = SettingsManager.inMemory();
-			manager.applyOverrides({ compaction: { [field]: value } });
-			expect(() => manager.getCompactionSettings()).toThrow(`Invalid compaction.${field} setting: ${String(value)}`);
-		});
+		expect(() => SettingsManager.fromStorage(storage).getCompactionSettings(model)).toThrow("compaction.threshold");
 	});
 
-	it.each([null, false, 42, "invalid", []])("reports malformed model entries: %j", (entry) => {
+	it("rejects non-finite runtime overrides and inconsistent resolved thresholds", () => {
+		const manager = SettingsManager.inMemory();
+		manager.applyOverrides({ compaction: { threshold: Number.NaN } });
+		expect(() => manager.getCompactionSettings()).toThrow("threshold");
+		manager.applyOverrides({
+			compaction: { threshold: 80, modelOverrides: { [modelKey]: { prepareThreshold: 90 } } },
+		});
+		expect(() => manager.getCompactionSettings(model)).toThrow("prepareThreshold");
+		expect(manager.getCompactionSettings().threshold).toBe(80);
+	});
+
+	it.each([null, false, 42, "invalid", []])("rejects malformed model entries: %j", (entry) => {
 		const storage = new InMemorySettingsStorage();
 		storage.withLock("global", () => JSON.stringify({ compaction: { modelOverrides: { [modelKey]: entry } } }));
-		expect(() => SettingsManager.fromStorage(storage).getCompactionSettings(model)).toThrow(
-			`Invalid compaction.modelOverrides["${modelKey}"] setting: ${String(entry)}. Expected an object.`,
-		);
+		expect(() => SettingsManager.fromStorage(storage).getCompactionSettings(model)).toThrow("modelOverrides");
 	});
 
-	it("accepts zero in ordinary settings and model overrides", () => {
+	it("allows immediate preparation and retaining no recent manual-compaction messages", () => {
 		const manager = SettingsManager.inMemory({
-			compaction: { reserveTokens: 0, keepRecentTokens: 0 },
+			compaction: { prepareThreshold: 0, threshold: 1, maxSummaryTokens: 1, keepRecentTokens: 0 },
 		});
-		expect(manager.getCompactionSettings(model)).toEqual({ enabled: true, reserveTokens: 0, keepRecentTokens: 0 });
-		manager.applyOverrides({
-			compaction: {
-				reserveTokens: 1000,
-				keepRecentTokens: 1000,
-				modelOverrides: { [modelKey]: { reserveTokens: 0, keepRecentTokens: 0 } },
-			},
+		expect(manager.getCompactionSettings(model)).toEqual({
+			enabled: true,
+			prepareThreshold: 0,
+			threshold: 1,
+			maxSummaryTokens: 1,
+			keepRecentTokens: 0,
 		});
-		expect(manager.getCompactionSettings(model)).toEqual({ enabled: true, reserveTokens: 0, keepRecentTokens: 0 });
+	});
+
+	it("retires absolute-token triggers on load and removes them on the next settings write", async () => {
+		const storage = new InMemorySettingsStorage();
+		storage.withLock("global", () =>
+			JSON.stringify({
+				compaction: {
+					reserveTokens: 400000,
+					keepRecentTokens: 1200,
+					modelOverrides: { [modelKey]: { reserveTokens: 2000, keepRecentTokens: 2400 } },
+				},
+			}),
+		);
+		const manager = SettingsManager.fromStorage(storage);
+		expect(manager.getCompactionSettings(model)).toEqual({ ...defaults, keepRecentTokens: 2400 });
+		manager.setCompactionEnabled(false);
+		await manager.flush();
+		let persisted = "";
+		storage.withLock("global", (value) => {
+			persisted = value ?? "";
+			return undefined;
+		});
+		expect(JSON.parse(persisted).compaction).toEqual({
+			enabled: false,
+			keepRecentTokens: 1200,
+			modelOverrides: { [modelKey]: { keepRecentTokens: 2400 } },
+		});
 	});
 });

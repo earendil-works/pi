@@ -8,6 +8,7 @@
 - `SettingsSelectorComponent` callers must now provide `SettingsConfig.iconPreset` and `SettingsCallbacks.onIconPresetChange` for the shared icon preference
 - `grep` now defaults to one context line before and three after, pages of 20 files with 20 matches per file, and 200 matches for single-file scopes. `find` now defaults to 200 paths ordered by modification time. Source builds require Rust and a C compiler for the shared search addon; published packages include prebuilds.
 - Custom UI contexts must implement `getRexSettings()`. Settings selector callers must supply `SettingsConfig.rex` and the Rex callbacks; `PaneHandle` now reports its resolved `placement`.
+- Replaced compaction's absolute `reserveTokens` trigger with configurable `prepareThreshold`/`threshold` percentages and `maxSummaryTokens`. `SettingsManager.getCompactionReserveTokens()` is removed; use `getCompactionSettings(model)`. Background `session_before_compact` hooks now run at preparation time, before context replacement.
 
 ### Added
 
@@ -22,6 +23,8 @@
 - Added `/btw` temporary side conversations seeded from the main branch, with follow-ups and built-in read-only tools only. Side turns stay out of saved main history and are discarded on close.
 - Added Rex views, floating/split mode, and Minimized Rex jobs controls in `/settings`, backed by session-scoped preferences. Background submissions and restarts now open distinct minimized floating Rex panes by default without taking focus; disabling the feature creates no automatic view.
 - Added the shared chat icon to `/btw` headers, using Nerd Font `U+F075` with the Nerd preset.
+- Added default background compaction: prepare a frozen history summary at 75%, apply at 85%, and preserve every later message. Summary detail adapts to the conversation within an 8000-token cap; manual and overflow compaction retain their recent-history policy.
+- Added persisted pre-compaction checkpoints and the default `recall_context` tool for read-only, model-assisted retrieval of original messages with citations, paged tool output, private helper history, and recorded successful usage. SDK hosts can register `createRecallExtension()`.
 
 ### Changed
 

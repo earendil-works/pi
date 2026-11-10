@@ -14,7 +14,9 @@ export const SETTINGS_DEFAULTS = {
 	},
 	compaction: {
 		enabled: true,
-		reserveTokens: 16384,
+		prepareThreshold: 75,
+		threshold: 85,
+		maxSummaryTokens: 8000,
 		keepRecentTokens: 20000,
 	},
 	branchSummary: {

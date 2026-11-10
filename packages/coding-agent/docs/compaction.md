@@ -4,6 +4,8 @@ This reference describes automatic compaction, branch summarization, persisted e
 
 **Source files** ([pi](https://github.com/earendil-works/pi)):
 - [`packages/coding-agent/src/core/compaction/compaction.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/compaction/compaction.ts) - Auto-compaction logic
+- `src/core/compaction/background-compaction.ts` - Frozen snapshots and invalidation
+- `src/core/compaction/context-recall.ts` - Read-only checkpoint search and recall
 - [`packages/coding-agent/src/core/compaction/branch-summarization.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/compaction/branch-summarization.ts) - Branch summarization
 - [`packages/coding-agent/src/core/compaction/utils.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/compaction/utils.ts) - Shared utilities (file tracking, serialization)
 - [`packages/coding-agent/src/core/session-manager.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/session-manager.ts) - Entry types (`CompactionEntry`, `BranchSummaryEntry`)
@@ -26,21 +28,36 @@ Both use closely related structured formats and track file operations cumulative
 
 ### When It Triggers
 
-Auto-compaction triggers when:
+Automatic compaction has two configurable thresholds, measured against the effective model's context window:
 
-```
-contextTokens > contextWindow - reserveTokens
-```
+| Context usage | Action |
+|---|---|
+| 75% | Freeze a completed-history snapshot and prepare its summary in the background. The main conversation continues. |
+| 85% | Wait for preparation, then replace the summarized prefix before the next model request. |
 
-By default, `reserveTokens` is 16384 tokens (configurable in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settings.json`). It only decides when compaction starts. Summary requests use the model's output limit, reduced when needed so input and output fit the context window.
+Checks run before new prompts, between tool batches, at physical model-request boundaries, and after completed runs. An ongoing response or tool batch finishes before context is replaced. A newly added prompt or a smaller routed model can cross a threshold immediately; Pi checks the context that will actually be submitted.
 
-During a multi-turn agent run, Pi checks the canonical projected context after tools finish and their results are appended, before starting the next assistant response. If the threshold is crossed, Pi compacts during `prepareNextTurn`, then performs the existing catch-up steering poll before `turn_start`. It skips this between-turn check when the completed tool batch terminates the run and no queued message requires another response. Pi also checks before a new user prompt and performs final-attempt overflow recovery after the low-level run ends.
+For example, after preparation starts, two more user messages and their responses may arrive. Applying that summary preserves **all** those messages verbatim, not just a sliding newest-10% slice. The 75%-to-85% interval is preparation headroom, not a separate retention budget.
 
 A provider context-overflow error or an early final `stopReason: "length"` can select one compact-and-retry recovery attempt. Length responses with tool calls retain their synthetic failed tool results and follow the ordinary tool/queue scheduler rather than forcing the run to end.
 
 You can also trigger manually with `/compact [instructions]`, where optional instructions focus the summary.
 
-### How It Works
+### Background Preparation
+
+Pi freezes the last completed prefix, excluding unanswered inputs and the newest tool results until a successful assistant response consumes them. New messages accumulate after that fixed boundary. At application, Pi persists the summary and rebuilds model context as summary + the entire retained tail. Older tool outputs leave active context only when that prefix is replaced; there is no independent pruning of recent results.
+
+A model/policy change, branch navigation, manual compaction, context replacement, or edit to the summarized prefix discards the speculative result. Edits confined to the retained tail do not invalidate it. Abort, reload, and session switches cancel outstanding preparation. Preparation failure leaves original history active and reports a compaction failure; it does not replace history with a partial summary.
+
+The summarizer chooses detail based on goals, constraints, decisions, unfinished work, and blockers, with an 8000-token output cap by default. Simple conversations should produce shorter summaries rather than padding to the cap. The model's output limit can reduce the budget. Split summaries share the total budget; incomplete/length-limited summaries are rejected.
+
+Explicit summary output budgets are also reduced to estimated remaining context, with a small allowance for provider framing. Inputs estimated to leave no output room fail before a model request. These are character-based estimates, not provider-exact tokenization; a provider can still reject a request.
+
+Successful speculative generation records `usage` with `kind: "compaction_prepare"`, even when its result is later discarded. Application does not count that usage again.
+
+### Manual Compaction and Overflow Recovery
+
+`/compact` and provider-overflow recovery keep the existing recent-history cut policy:
 
 1. **Find cut point**: Walk backwards through the finalized session projection, accumulating token estimates until `keepRecentTokens` (default 20k, configurable in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settings.json`) is reached
 2. **Extract messages**: Collect projected messages from the previous kept boundary (or session start) up to the cut point
@@ -151,6 +168,7 @@ interface CompactionEntry<T = unknown> {
   firstKeptEntryId: string;
   tokensBefore: number;
   usage?: Usage;       // LLM usage that generated the summary
+  checkpointId?: string; // Original-history checkpoint for recall
   fromHook?: boolean;  // true if provided by extension (legacy field name)
   details?: T;         // implementation-specific data
 }
@@ -162,9 +180,25 @@ interface CompactionDetails {
 }
 ```
 
-Extensions can store any JSON-serializable data in `details`. The default compaction tracks file operations, but custom extension implementations can use their own structure. Generated and extension-provided summaries store their LLM `usage` when available so session totals include summarization work.
+Extensions can store any JSON-serializable data in `details`. Default compaction tracks file operations. Generated and extension-provided summaries record available LLM usage; background-generated usage is recorded separately at preparation time rather than copied onto the applied entry.
 
-See [`prepareCompaction()`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/compaction/compaction.ts) and [`compact()`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/compaction/compaction.ts) for the implementation. For direct programmatic summarization, `generateSummary()` returns the summary text and `generateSummaryWithUsage()` returns `{ text, usage }`.
+For direct programmatic summarization, `generateSummary()` returns text and `generateSummaryWithUsage()` returns `{ text, usage }`. Their third argument is the maximum summary output-token budget, defaulting to 8000 when omitted.
+
+### Checkpoints and Recall
+
+Before summary preparation, Pi appends a context-invisible custom entry with `customType: "context_checkpoint"`. Its `parentId` identifies the original branch history as of that moment. This is a reference into the existing append-only session, not another transcript copy. Applied compactions store its ID in `checkpointId`; the model-visible summary includes that ID and recall guidance. Failed or discarded preparation can leave a checkpoint without an applied compaction.
+
+The default built-in `recall` extension registers:
+
+```json
+{"checkpoint_id":"<checkpoint ID from the summary>","query":"What exact restriction did we agree on for retries?"}
+```
+
+Call `recall_context` with these arguments when a summary is missing a requirement, decision, or earlier result. It starts a private, read-only helper using the active model and thinking level. That helper can only search and read messages in the checkpoint's frozen branch history—not the filesystem, jobs, later messages, other sessions, or arbitrary main-agent tools. Tool-result text is read in pages without summarization's 2000-character cutoff. Original images are available when the model supports images and image input is not blocked.
+
+The answer cites original entry IDs as `[message:ENTRY_ID]`. Unknown/uninspected citations and unsupported uncited answers are rejected. Historical text is evidence, not instructions or proof of current file state. Private tool metadata is not exposed. Helper turns do not enter main history; only the returned answer and aggregate successful usage do. Recall makes additional model calls and incurs their normal cost.
+
+Checkpoints survive resume and repeated compaction while their original session entries remain available. They follow normal session persistence: `--no-session` checkpoints disappear on exit. Disable the tool with `-builtin:recall` in `extensions` or `--no-extensions`; SDK hosts can add `createRecallExtension()` to their extension factories.
 
 ## Branch Summarization
 
@@ -296,7 +330,7 @@ Extensions can intercept and customize both compaction and branch summarization.
 
 ### session_before_compact
 
-Fired before auto-compaction or `/compact`. Can cancel or provide custom summary. See `SessionBeforeCompactEvent` and `CompactionPreparation` in the types file.
+Fired when summary generation begins: normally at the 75% preparation threshold, or immediately for `/compact` and synchronous/overflow compaction. It can cancel or provide a custom summary. Background hooks receive the frozen branch and run once for that preparation; `session_compact` fires only when the result is applied. A custom `firstKeptEntryId` must not discard any part of the live tail. See `SessionBeforeCompactEvent` and `CompactionPreparation`.
 
 ```typescript
 pi.on("session_before_compact", async (event, ctx) => {
@@ -422,7 +456,9 @@ Configure compaction in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settin
 {
   "compaction": {
     "enabled": true,
-    "reserveTokens": 16384,
+    "prepareThreshold": 75,
+    "threshold": 85,
+    "maxSummaryTokens": 8000,
     "keepRecentTokens": 20000
   }
 }
@@ -431,33 +467,40 @@ Configure compaction in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settin
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `enabled` | `true` | Enable auto-compaction |
-| `reserveTokens` | `16384` | Free context tokens below which auto-compaction starts |
-| `keepRecentTokens` | `20000` | Recent tokens to keep (not summarized) |
+| `prepareThreshold` | `75` | Percentage at which background summary preparation starts |
+| `threshold` | `85` | Percentage at which the summary replaces completed history |
+| `maxSummaryTokens` | `8000` | Maximum total summary output tokens, bounded by model limits |
+| `keepRecentTokens` | `20000` | Recent tokens retained by manual and overflow compaction; background preparation preserves its entire live tail |
 
 Disable auto-compaction with `"enabled": false`. You can still compact manually with `/compact`.
 
 ### Per-model overrides
 
-Use `compaction.modelOverrides` to tune token budgets for different models:
+Use `compaction.modelOverrides` to tune percentages and budgets for different models:
 
 ```json
 {
   "compaction": {
-    "reserveTokens": 16384,
+    "prepareThreshold": 75,
+    "threshold": 85,
     "keepRecentTokens": 20000,
     "modelOverrides": {
       "some-provider/big-model": {
-        "reserveTokens": 400000
+        "prepareThreshold": 50,
+        "threshold": 60,
+        "maxSummaryTokens": 12000
       }
     }
   }
 }
 ```
 
-For a model with a 1M context window, this override triggers compaction above 600K tokens and keeps the ordinary 20000 recent tokens. Other models retain the ordinary 16384-token reserve.
+For a model with a 1M context window, this override prepares at 500K tokens and applies at 600K. Other models retain the ordinary 75%/85% policy.
 
-Keys are exact, case-sensitive `provider/modelId` values, including any slashes within the model ID. Each `reserveTokens` and `keepRecentTokens` value falls back independently from the model override to the ordinary setting to the built-in default. Values must be non-negative safe integers. Invalid values in the matching model override produce an error when read; only omitted fields fall back to the ordinary setting. Model override entries must be objects. Invalid ordinary token settings produce an error when read, even if the active model has a valid override. Only omitted ordinary values use built-in defaults. `enabled` remains global, not model-specific.
+Keys are exact, case-sensitive `provider/modelId` values, including slashes within the model ID. Each field falls back independently from the matching override to the ordinary setting to the built-in default. `prepareThreshold` must be non-negative and less than `threshold`; `threshold` must be positive and at most 100. Fractional percentages are allowed. `maxSummaryTokens` must be a positive safe integer; `keepRecentTokens` a non-negative safe integer. Invalid ordinary settings and invalid matching overrides produce errors rather than silently falling back. `enabled` remains global.
 
-These resolved values are used for manual compaction, all automatic threshold checks, overflow recovery, and extension-visible `preparation.settings`. Model switches affect subsequent checks and compactions without changing ordinary settings. Compaction already in progress uses the model and settings captured for that operation. Branch summarization settings are unaffected.
+The old `compaction.reserveTokens` field and corresponding model-override fields are retired. They are removed on load and omitted on the next settings write. Replace an absolute-token trigger with the desired percentage explicitly. `SettingsManager.getCompactionReserveTokens()` is removed; use `getCompactionSettings(model)` for the resolved policy. Branch-summary `reserveTokens` is unchanged.
+
+Manual/overflow operations use the model and settings captured when they start. Background work is invalidated when its model or resolved policy changes. Extension-visible `preparation.settings` contains the resolved new fields.
 
 Overrides work in both global and project settings. The files merge recursively before lookup, so a global model-specific value beats a project-wide fallback; a project must override that model entry to change it. See [Settings](settings.md#per-model-compaction-overrides) for details.

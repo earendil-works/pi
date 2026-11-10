@@ -4,6 +4,7 @@ import codemodeExtension from "./codemode/index.ts";
 import jobsExtension from "./jobs/index.ts";
 import llamaExtension from "./llama/index.ts";
 import mcpExtension from "./mcp/index.ts";
+import recallExtension from "./recall/index.ts";
 import rexExtension from "./rex/index.ts";
 import toolSearchExtension from "./tool-search/index.ts";
 
@@ -17,4 +18,5 @@ export const builtInExtensions: InlineExtension[] = [
 	{ name: "jobs", factory: jobsExtension, replaceable: true, builtin: true },
 	{ name: "rex", factory: rexExtension, replaceable: true, builtin: true },
 	{ name: "btw", factory: btwExtension, replaceable: true, builtin: true },
+	{ name: "recall", factory: recallExtension, replaceable: true, builtin: true },
 ];

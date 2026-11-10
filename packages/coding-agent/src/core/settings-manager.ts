@@ -9,6 +9,7 @@ import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import type { IconPreset } from "../modes/interactive/icons.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
+import type { CompactionSettings as ResolvedCompactionSettings } from "./compaction/compaction.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 import { SETTINGS_DEFAULTS } from "./settings-defaults.ts";
 import type {
@@ -56,10 +57,26 @@ export type {
 /** Cache-warming profile. "idle" also warms between agent runs. */
 export const CACHE_WARMING_MODES = ["off", "streaming", "idle"] as const satisfies readonly CacheWarmingMode[];
 
-const DEFAULT_COMPACTION_TOKEN_SETTINGS: Required<CompactionModelOverride> = {
-	reserveTokens: SETTINGS_DEFAULTS.compaction.reserveTokens,
-	keepRecentTokens: SETTINGS_DEFAULTS.compaction.keepRecentTokens,
-};
+const DEFAULT_COMPACTION_SETTINGS: Required<CompactionModelOverride> = SETTINGS_DEFAULTS.compaction;
+
+/** Validate compaction values from settings files, which are not schema-validated on load. */
+function readCompactionSetting(value: unknown, field: keyof CompactionModelOverride, path: string): number | undefined {
+	if (value === undefined) return undefined;
+	const percentage = field === "prepareThreshold" || field === "threshold";
+	const minimum = field === "threshold" || field === "maxSummaryTokens" ? Number.MIN_VALUE : 0;
+	const valid =
+		typeof value === "number" &&
+		Number.isFinite(value) &&
+		value >= minimum &&
+		(percentage ? value <= 100 : Number.isSafeInteger(value));
+	if (!valid) {
+		const expected = percentage
+			? `${minimum === 0 ? "0" : "greater than 0"} through 100 percent`
+			: `${minimum === 0 ? "a non-negative" : "a positive"} safe integer`;
+		throw new Error(`Invalid ${path} setting: ${String(value)}. Expected ${expected}.`);
+	}
+	return value;
+}
 
 function isMergeableObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -453,6 +470,16 @@ export class SettingsManager {
 				};
 			}
 			delete retrySettings.maxDelayMs;
+		}
+
+		// The percentage policy replaces the old absolute-token trigger on the next settings write.
+		if (isMergeableObject(settings.compaction)) {
+			delete settings.compaction.reserveTokens;
+			if (isMergeableObject(settings.compaction.modelOverrides)) {
+				for (const override of Object.values(settings.compaction.modelOverrides)) {
+					if (isMergeableObject(override)) delete override.reserveTokens;
+				}
+			}
 		}
 
 		return settings as Settings;
@@ -889,18 +916,12 @@ export class SettingsManager {
 		this.save();
 	}
 
-	private getCompactionTokenSetting(
+	private getCompactionSetting(
 		field: keyof CompactionModelOverride,
 		model?: Pick<Model<string>, "provider" | "id">,
 	): number {
 		const compaction = this.settings.compaction;
-		const ordinary = compaction?.[field];
-		if (ordinary !== undefined && (typeof ordinary !== "number" || !Number.isSafeInteger(ordinary) || ordinary < 0)) {
-			throw new Error(
-				`Invalid compaction.${field} setting: ${String(ordinary)}. Expected a non-negative safe integer.`,
-			);
-		}
-
+		const ordinary = readCompactionSetting(compaction?.[field], field, `compaction.${field}`);
 		const modelKey = model ? `${model.provider}/${model.id}` : undefined;
 		const entry = modelKey !== undefined ? compaction?.modelOverrides?.[modelKey] : undefined;
 		if (entry !== undefined && !isMergeableObject(entry)) {
@@ -908,34 +929,31 @@ export class SettingsManager {
 				`Invalid compaction.modelOverrides["${modelKey}"] setting: ${String(entry)}. Expected an object.`,
 			);
 		}
-		const override = entry?.[field];
-		if (override !== undefined && (typeof override !== "number" || !Number.isSafeInteger(override) || override < 0)) {
-			throw new Error(
-				`Invalid compaction.modelOverrides["${modelKey}"].${field} setting: ${String(override)}. Expected a non-negative safe integer.`,
-			);
-		}
-		return override ?? ordinary ?? DEFAULT_COMPACTION_TOKEN_SETTINGS[field];
-	}
-
-	getCompactionReserveTokens(model?: Pick<Model<string>, "provider" | "id">): number {
-		return this.getCompactionTokenSetting("reserveTokens", model);
+		const override = readCompactionSetting(
+			entry?.[field],
+			field,
+			`compaction.modelOverrides["${modelKey}"].${field}`,
+		);
+		return override ?? ordinary ?? DEFAULT_COMPACTION_SETTINGS[field];
 	}
 
 	getCompactionKeepRecentTokens(model?: Pick<Model<string>, "provider" | "id">): number {
-		return this.getCompactionTokenSetting("keepRecentTokens", model);
+		return this.getCompactionSetting("keepRecentTokens", model);
 	}
 
-	/** Resolve each token setting through model override, ordinary setting, then built-in default. */
-	getCompactionSettings(model?: Pick<Model<string>, "provider" | "id">): {
-		enabled: boolean;
-		reserveTokens: number;
-		keepRecentTokens: number;
-	} {
-		return {
+	/** Resolve model-specific percentages and budgets over ordinary settings and built-in defaults. */
+	getCompactionSettings(model?: Pick<Model<string>, "provider" | "id">): ResolvedCompactionSettings {
+		const settings = {
 			enabled: this.getCompactionEnabled(),
-			reserveTokens: this.getCompactionReserveTokens(model),
+			prepareThreshold: this.getCompactionSetting("prepareThreshold", model),
+			threshold: this.getCompactionSetting("threshold", model),
+			maxSummaryTokens: this.getCompactionSetting("maxSummaryTokens", model),
 			keepRecentTokens: this.getCompactionKeepRecentTokens(model),
 		};
+		if (settings.prepareThreshold >= settings.threshold) {
+			throw new Error("Invalid compaction thresholds: prepareThreshold must be less than threshold.");
+		}
+		return settings;
 	}
 
 	getBranchSummarySettings(): { reserveTokens: number; skipPrompt: boolean } {

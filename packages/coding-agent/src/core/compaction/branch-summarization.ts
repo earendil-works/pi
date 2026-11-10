@@ -175,7 +175,7 @@ function getMessageFromEntry(entry: SessionEntry, edit?: ContextEditEntry): Agen
 			return createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp);
 
 		case "compaction":
-			return createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp);
+			return createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp, entry.checkpointId);
 
 		// These don't contribute to conversation content
 		case "thinking_level_change":

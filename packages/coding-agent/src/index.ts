@@ -424,6 +424,7 @@ export type { CodemodeStoreEntryData, CodemodeToolDetails } from "./extensions/c
 export { createJobsExtension } from "./extensions/jobs/index.ts";
 export type { LoadedMcpConfig, McpExposure, McpServerConfig, McpServerEntry } from "./extensions/mcp/config.ts";
 export { createMcpExtension, type McpExtensionOptions, type McpTransportFactory } from "./extensions/mcp/index.ts";
+export { createRecallExtension } from "./extensions/recall/index.ts";
 export { createRexExtension, createRexToolDefinition } from "./extensions/rex/index.ts";
 export { createToolSearchExtension } from "./extensions/tool-search/index.ts";
 // Main entry point

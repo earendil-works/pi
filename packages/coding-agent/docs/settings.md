@@ -71,13 +71,17 @@ CLI tool options override this setting for one invocation. `--tools` with only `
 | Setting | Type | Default | Description |
 |---|---|---|---|
 | `compaction.enabled` | boolean | `true` | Enable automatic compaction. |
-| `compaction.reserveTokens` | number | `16384` | Free context tokens below which automatic compaction starts. |
-| `compaction.keepRecentTokens` | number | `20000` | Recent tokens retained without summarization. |
-| `compaction.modelOverrides` | object | None | Per-model token settings keyed by exact `provider/modelId`. |
+| `compaction.prepareThreshold` | number | `75` | Context percentage at which background summary preparation starts. |
+| `compaction.threshold` | number | `85` | Context percentage at which Pi waits for and applies the prepared summary. |
+| `compaction.maxSummaryTokens` | number | `8000` | Maximum total summary output tokens, bounded by model limits. |
+| `compaction.keepRecentTokens` | number | `20000` | Recent tokens retained by manual/overflow compaction. Background preparation keeps its whole live tail. |
+| `compaction.modelOverrides` | object | None | Per-model percentages and budgets keyed by exact `provider/modelId`. |
 
 <a id="per-model-compaction-overrides"></a>
 
-Compaction token values must be non-negative safe integers. Each value resolves independently from the matching model override, then the ordinary compaction setting, then the built-in default. Project and user objects merge before model lookup.
+Percentages may be fractional: `0 <= prepareThreshold < threshold <= 100`. `maxSummaryTokens` must be a positive safe integer and `keepRecentTokens` a non-negative safe integer. Each field resolves independently from the matching model override, then the ordinary setting, then the built-in default. Project and user objects merge before model lookup. `enabled` is not model-specific.
+
+Preparation freezes completed history; all subsequent messages remain verbatim when the summary is applied. Original entries stay in the session and the default `recall_context` tool can recover omitted details through a read-only LLM helper. Recall makes additional model calls. The old `compaction.reserveTokens` fields are retired and removed on the next settings write; set percentage thresholds instead.
 
 See [Compaction Reference](compaction.md) for trigger, summarization, and validation behavior.
 
@@ -165,6 +169,8 @@ Resource paths in user settings resolve from the agent directory. Paths in proje
 Resource arrays support glob exclusions with `!pattern`, exact inclusion with `+path`, and exact exclusion with `-path`. Pi loads resources listed in both user-level and project settings.
 
 The built-in extensions are named `builtin:mcp`, `builtin:llama.cpp`, `builtin:codemode`, and `builtin:tool-search` in `extensions`. They load by default; `-builtin:mcp` disables one. A `+builtin:<name>` or `-builtin:<name>` entry in project settings overrides the user setting. `pi config` lists them under Built-in. `--no-extensions` disables them too, and `-e builtin:<name>` loads one explicitly.
+
+`builtin:recall` enables the default `recall_context` checkpoint-retrieval tool. Use `-builtin:recall` to disable it without disabling compaction.
 
 ## Updates, telemetry, and warnings
 

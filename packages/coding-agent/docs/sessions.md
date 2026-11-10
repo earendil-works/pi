@@ -47,11 +47,13 @@ For the persisted tree and entry types, see [Session Format](session-format.md).
 
 The model receives the active branch, not every branch in the session file. Pi combines that history with the system prompt, discovered context files, available tools, and loaded skill descriptions. [How Pi Works](how-pi-works.md#context) describes how those inputs are assembled.
 
-The footer shows current context usage. When the active context approaches the model's limit, Pi normally compacts older history automatically. Compaction adds a summary and keeps recent messages. It does not delete the original session entries.
+The footer shows current context usage. By default Pi prepares a summary in the background at 75%, then waits for and applies it at 85%, before the next model request. The summary replaces completed history; every message added after the frozen boundary stays verbatim. Original session entries are not deleted.
 
 Run `/compact` to compact manually. You can add instructions when the summary should preserve a particular topic or decision. Configure automatic compaction and retained history through [Settings](settings.md#compaction).
 
 Compaction can fail if the provider is unavailable or cannot accept the summarization request. Correct the provider problem and run `/compact` again. Disabling automatic compaction does not disable the manual command.
+
+Each compaction records an original-history checkpoint. If the summary misses a needed detail, the agent can use `recall_context(checkpoint_id, query)` to recover it with original message citations. This uses additional calls to the current model through a read-only helper, not current filesystem searches. Saved checkpoints remain usable after resume; ephemeral ones disappear on exit.
 
 See [Compaction Reference](compaction.md) for thresholds, retained boundaries, branch-summary behavior, and extension hooks.
 

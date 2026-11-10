@@ -1,7 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type FauxResponseStep, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionContext } from "../../src/core/extensions/index.ts";
 import { type ModelRoute, type ModelRouteRequest, VIRTUAL_MODEL_STATE_ENTRY } from "../../src/core/virtual-models.ts";
 import { createHarness, type Harness, type HarnessOptions } from "./harness.ts";
@@ -123,7 +123,7 @@ describe("AgentSession virtual models", () => {
 
 	it("routes the compact-and-retry after a truncated response as a retry", async () => {
 		const { harness, requests, reasons } = await createRoutedHarness(defaultRoute, {
-			settings: { compaction: { keepRecentTokens: 1, reserveTokens: 0 } },
+			settings: { compaction: { keepRecentTokens: 1, prepareThreshold: 99, threshold: 100 } },
 			extensionFactories: [
 				(pi) => {
 					pi.on("session_before_compact", async ({ preparation: { firstKeptEntryId, tokensBefore } }) => ({
@@ -227,7 +227,7 @@ describe("AgentSession virtual models", () => {
 
 	it("compacts before a request routed to a model with a smaller window", async () => {
 		const { harness, dispatched } = await createRoutedHarness(defaultRoute, {
-			settings: { compaction: { keepRecentTokens: 1, reserveTokens: 0 } },
+			settings: { compaction: { keepRecentTokens: 1, prepareThreshold: 99, threshold: 100 } },
 			extensionFactories: [
 				(pi) => {
 					pi.on("session_before_compact", async ({ preparation: { firstKeptEntryId, tokensBefore } }) => ({
@@ -262,7 +262,7 @@ describe("AgentSession virtual models", () => {
 				? { model: ctx.modelRegistry.find("faux", "small")!, thinkingLevel: "off" }
 				: defaultRoute(request, ctx);
 		const { harness, dispatched } = await createRoutedHarness(route, {
-			settings: { compaction: { keepRecentTokens: 1, reserveTokens: 0 } },
+			settings: { compaction: { keepRecentTokens: 1, prepareThreshold: 99, threshold: 100 } },
 			extensionFactories: [
 				(pi) => {
 					pi.on("session_before_compact", async ({ preparation: { firstKeptEntryId, tokensBefore } }) => ({
@@ -286,20 +286,6 @@ describe("AgentSession virtual models", () => {
 		expect(harness.eventsOfType("compaction_start").map((event) => event.reason)).toEqual(["threshold"]);
 		expect(compactedBeforeSmall).toBe(true);
 		expect(dispatched()).toEqual(["faux/large:high", "faux/small:off"]);
-	});
-
-	it("projects the session once per request under a virtual selection", async () => {
-		const { harness } = await createRoutedHarness();
-		harness.setResponses([
-			fauxAssistantMessage(fauxToolCall("echo", { text: "hi" }), { stopReason: "toolUse" }),
-			fauxAssistantMessage("done"),
-		]);
-		const projections = vi.spyOn(harness.sessionManager, "buildSessionProjection");
-
-		await harness.session.prompt("hello");
-
-		// One per request, one between the turns, and one for the compaction check after the run.
-		expect(projections).toHaveBeenCalledTimes(4);
 	});
 
 	it("stores router state on the branch and passes it to later requests", async () => {

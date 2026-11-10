@@ -147,6 +147,12 @@ Follow-ups stay in that view, including questions queued while it answers. Escap
 
 The header uses the shared chat icon: Nerd Font `U+F075` when Icons is `nerd`, with a plain question-mark fallback for the Unicode preset.
 
+## Context compaction
+
+Pi prepares a summary in the background at 75% context usage and applies it at 85%, waiting before the next model request if necessary. All messages after the frozen boundary stay verbatim; old tool outputs leave active context only when covered by compaction. Original session history is retained.
+
+The default `recall_context(checkpoint_id, query)` tool uses a read-only helper to recover missing details from that history, with original message citations and additional model-call costs. Percentages and the 8000-token summary cap are configurable. `/compact` and extension hooks remain available. See [Compaction](docs/compaction.md) for settings, checkpoints, recall, and migration from `compaction.reserveTokens`.
+
 ## License
 
 MIT

@@ -33,6 +33,7 @@ import {
 	type SessionProjection,
 	sessionEntryToContextMessages,
 } from "../session-manager.ts";
+import { SETTINGS_DEFAULTS } from "../settings-defaults.ts";
 import { combineUsage } from "../usage-totals.ts";
 import {
 	computeFileLists,
@@ -105,6 +106,7 @@ function getMessagesFromProjectedEntryForCompaction(entry: ProjectedSessionEntry
 export interface CompactionResult<T = unknown> {
 	summary: string;
 	firstKeptEntryId: string;
+	checkpointId?: string;
 	tokensBefore: number;
 	estimatedTokensAfter?: number;
 	/** Usage from the LLM call(s) that generated this summary, if available */
@@ -119,15 +121,13 @@ export interface CompactionResult<T = unknown> {
 
 export interface CompactionSettings {
 	enabled: boolean;
-	reserveTokens: number;
+	prepareThreshold: number;
+	threshold: number;
+	maxSummaryTokens: number;
 	keepRecentTokens: number;
 }
 
-export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
-	enabled: true,
-	reserveTokens: 16384,
-	keepRecentTokens: 20000,
-};
+export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = SETTINGS_DEFAULTS.compaction;
 
 // ============================================================================
 // Token calculation
@@ -265,8 +265,16 @@ export function estimateProjectedContextTokens(
  * Check if compaction should trigger based on context usage.
  */
 export function shouldCompact(contextTokens: number, contextWindow: number, settings: CompactionSettings): boolean {
-	if (!settings.enabled) return false;
-	return contextTokens > contextWindow - settings.reserveTokens;
+	return settings.enabled && contextWindow > 0 && contextTokens >= (contextWindow * settings.threshold) / 100;
+}
+
+/** Whether a completed history snapshot should begin preparing in the background. */
+export function shouldPrepareCompaction(
+	contextTokens: number,
+	contextWindow: number,
+	settings: CompactionSettings,
+): boolean {
+	return settings.enabled && contextWindow > 0 && contextTokens >= (contextWindow * settings.prepareThreshold) / 100;
 }
 
 // ============================================================================
@@ -630,6 +638,16 @@ export async function completeSummarization(
 		cacheRetention: "none",
 		sessionId: options.sessionId ?? uuidv7(),
 	};
+	if (options.maxTokens !== undefined) {
+		const inputTokens = context.messages.reduce((tokens, message) => tokens + estimateTokens(message), 0);
+		// Token estimates omit provider framing; keep a small margin rather than exhausting its window.
+		const availableTokens = model.contextWindow - inputTokens - 256;
+		const maxTokens = Math.min(options.maxTokens, model.maxTokens, availableTokens);
+		if (maxTokens < 1) {
+			throw new Error("Summarization input leaves no output room in the model context window");
+		}
+		requestOptions.maxTokens = maxTokens;
+	}
 	const produce = async (): Promise<AssistantMessage> =>
 		streamFn
 			? (await streamFn(model, context, requestOptions)).result()
@@ -644,8 +662,7 @@ export async function completeSummarization(
 export async function generateSummary(
 	currentMessages: AgentMessage[],
 	model: Model<any>,
-	// Unused. Kept for existing callers; summaries use the model's output limit (#9512).
-	_reserveTokens: number | undefined,
+	maxSummaryTokens: number | undefined,
 	apiKey: string | undefined,
 	headers?: Record<string, string>,
 	signal?: AbortSignal,
@@ -662,7 +679,7 @@ export async function generateSummary(
 		await generateSummaryWithUsage(
 			currentMessages,
 			model,
-			_reserveTokens,
+			maxSummaryTokens,
 			apiKey,
 			headers,
 			signal,
@@ -696,8 +713,7 @@ function buildSummarizationContext(promptText: string): TranscriptContext {
 export async function generateSummaryWithUsage(
 	currentMessages: AgentMessage[],
 	model: Model<any>,
-	// Unused. Kept for existing callers; summaries use the model's output limit (#9512).
-	_reserveTokens: number | undefined,
+	maxSummaryTokens: number | undefined,
 	apiKey: string | undefined,
 	headers?: Record<string, string>,
 	signal?: AbortSignal,
@@ -727,8 +743,11 @@ export async function generateSummaryWithUsage(
 		promptText += `<previous-summary>\n${previousSummary}\n</previous-summary>\n\n`;
 	}
 	promptText += basePrompt;
+	const summaryBudget = Math.min(maxSummaryTokens ?? DEFAULT_COMPACTION_SETTINGS.maxSummaryTokens, model.maxTokens);
+	promptText += `\n\nAdapt detail to the complexity of the work, not the volume of repeated logs. Preserve user requirements, constraints, decisions, unfinished work, blockers, and the evidence needed to continue. Use substantially less space for simple work; stay below ${summaryBudget} output tokens.`;
 
 	const completionOptions = createSummarizationOptions(model, apiKey, headers, env, signal, thinkingLevel, sessionId);
+	completionOptions.maxTokens = summaryBudget;
 
 	const response = await completeSummarization(
 		model,
@@ -859,6 +878,7 @@ function findProjectedCutPoint(
 export function prepareCompaction(
 	pathEntries: SessionEntry[],
 	settings: CompactionSettings,
+	firstKeptEntryId?: string,
 ): CompactionPreparation | undefined {
 	if (pathEntries.length > 0 && pathEntries[pathEntries.length - 1].type === "compaction") {
 		return undefined;
@@ -882,11 +902,21 @@ export function prepareCompaction(
 	}
 	const boundaryEnd = projectedEntries.length;
 	const tokensBefore = estimateProjectedContextTokens(projection, pathEntries).tokens;
-	const cutPoint = findProjectedCutPoint(projectedEntries, boundaryStart, boundaryEnd, settings.keepRecentTokens);
+	const cutPoint =
+		firstKeptEntryId === undefined
+			? findProjectedCutPoint(projectedEntries, boundaryStart, boundaryEnd, settings.keepRecentTokens)
+			: {
+					firstKeptEntryIndex: projectedEntries.findIndex((entry) => entry.sourceEntry.id === firstKeptEntryId),
+					turnStartIndex: -1,
+					isSplitTurn: false,
+				};
+	// Snapshot boundaries come from persisted entry IDs and must belong to this projected branch.
+	if (cutPoint.firstKeptEntryIndex < boundaryStart)
+		throw new Error("Compaction boundary is not in the active context");
 
 	const firstKeptEntry = projectedEntries[cutPoint.firstKeptEntryIndex]?.sourceEntry;
 	if (!firstKeptEntry?.id) return undefined;
-	const firstKeptEntryId = firstKeptEntry.id;
+	const keptEntryId = firstKeptEntry.id;
 	const historyEnd = cutPoint.isSplitTurn ? cutPoint.turnStartIndex : cutPoint.firstKeptEntryIndex;
 
 	const messagesToSummarize = projectedEntries
@@ -911,7 +941,7 @@ export function prepareCompaction(
 	}
 
 	return {
-		firstKeptEntryId,
+		firstKeptEntryId: keptEntryId,
 		messagesToSummarize,
 		turnPrefixMessages,
 		isSplitTurn: cutPoint.isSplitTurn,
@@ -976,6 +1006,18 @@ export async function compact(
 	// Generate summaries and merge into one
 	let summary: string;
 	let summaryUsage: Usage;
+	if (
+		isSplitTurn &&
+		messagesToSummarize.length > 0 &&
+		turnPrefixMessages.length > 0 &&
+		preparation.settings.maxSummaryTokens < 2
+	) {
+		throw new Error("Split-turn compaction requires a maxSummaryTokens budget of at least 2");
+	}
+	const historyBudget =
+		isSplitTurn && turnPrefixMessages.length > 0 && messagesToSummarize.length > 0
+			? Math.floor(preparation.settings.maxSummaryTokens / 2)
+			: preparation.settings.maxSummaryTokens;
 
 	if (isSplitTurn && turnPrefixMessages.length > 0) {
 		let historyText = previousSummary ?? "No prior history.";
@@ -984,7 +1026,7 @@ export async function compact(
 			const historyResult = await generateSummaryWithUsage(
 				messagesToSummarize,
 				model,
-				undefined,
+				historyBudget,
 				apiKey,
 				headers,
 				signal,
@@ -1013,6 +1055,9 @@ export async function compact(
 			callbacks,
 			sessionId,
 			customInstructions,
+			messagesToSummarize.length > 0
+				? preparation.settings.maxSummaryTokens - historyBudget
+				: preparation.settings.maxSummaryTokens,
 		);
 		// Merge into single summary
 		summary = `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.text}`;
@@ -1022,7 +1067,7 @@ export async function compact(
 		const result = await generateSummaryWithUsage(
 			messagesToSummarize,
 			model,
-			undefined,
+			preparation.settings.maxSummaryTokens,
 			apiKey,
 			headers,
 			signal,
@@ -1072,6 +1117,7 @@ async function generateTurnPrefixSummary(
 	callbacks?: RetryCallbacks,
 	sessionId?: string,
 	customInstructions?: string,
+	maxSummaryTokens?: number,
 ): Promise<{ text: string; usage: Usage }> {
 	const llmMessages = convertToLlm(messages);
 	const conversationText = serializeConversation(llmMessages);
@@ -1079,11 +1125,14 @@ async function generateTurnPrefixSummary(
 	if (customInstructions) {
 		promptText = `${promptText}\n\nAdditional focus: ${customInstructions}`;
 	}
+	const options = createSummarizationOptions(model, apiKey, headers, env, signal, thinkingLevel, sessionId);
+	options.maxTokens = Math.min(maxSummaryTokens ?? DEFAULT_COMPACTION_SETTINGS.maxSummaryTokens, model.maxTokens);
+	promptText += `\n\nAdapt detail to the complexity of unfinished work and stay below ${options.maxTokens} output tokens.`;
 
 	const response = await completeSummarization(
 		model,
 		buildSummarizationContext(promptText),
-		createSummarizationOptions(model, apiKey, headers, env, signal, thinkingLevel, sessionId),
+		options,
 		streamFn,
 		retry,
 		callbacks,

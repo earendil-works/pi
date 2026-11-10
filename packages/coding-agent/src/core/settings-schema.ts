@@ -11,13 +11,27 @@ function timeoutSetting(options?: TSchemaOptions) {
 }
 
 const CompactionModelOverrideSchema = Type.Object({
-	reserveTokens: Type.Optional(nonNegativeSafeInteger()),
+	prepareThreshold: Type.Optional(Type.Number({ minimum: 0, maximum: 100 })),
+	threshold: Type.Optional(Type.Number({ exclusiveMinimum: 0, maximum: 100 })),
+	maxSummaryTokens: Type.Optional(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
 	keepRecentTokens: Type.Optional(nonNegativeSafeInteger()),
 });
 
 const CompactionSettingsSchema = Type.Object({
 	enabled: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.compaction.enabled })),
-	reserveTokens: Type.Optional(nonNegativeSafeInteger({ default: SETTINGS_DEFAULTS.compaction.reserveTokens })),
+	prepareThreshold: Type.Optional(
+		Type.Number({ minimum: 0, maximum: 100, default: SETTINGS_DEFAULTS.compaction.prepareThreshold }),
+	),
+	threshold: Type.Optional(
+		Type.Number({ exclusiveMinimum: 0, maximum: 100, default: SETTINGS_DEFAULTS.compaction.threshold }),
+	),
+	maxSummaryTokens: Type.Optional(
+		Type.Integer({
+			minimum: 1,
+			maximum: Number.MAX_SAFE_INTEGER,
+			default: SETTINGS_DEFAULTS.compaction.maxSummaryTokens,
+		}),
+	),
 	keepRecentTokens: Type.Optional(nonNegativeSafeInteger({ default: SETTINGS_DEFAULTS.compaction.keepRecentTokens })),
 	modelOverrides: Type.Optional(
 		Type.Record(Type.String(), CompactionModelOverrideSchema, {

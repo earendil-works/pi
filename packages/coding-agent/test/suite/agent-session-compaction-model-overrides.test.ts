@@ -43,9 +43,10 @@ describe("AgentSession compaction model overrides", () => {
 				settings: {
 					compaction: {
 						enabled: path !== "manual",
-						reserveTokens: 10,
+						prepareThreshold: 90,
+						threshold: 99.75,
 						keepRecentTokens: 20000,
-						modelOverrides: { "faux/faux-1": { reserveTokens: 2000, keepRecentTokens: 150 } },
+						modelOverrides: { "faux/faux-1": { prepareThreshold: 40, threshold: 50, keepRecentTokens: 150 } },
 					},
 				},
 				extensionFactories: [
@@ -78,18 +79,26 @@ describe("AgentSession compaction model overrides", () => {
 						: [fauxAssistantMessage(path === "post-run" ? "z".repeat(8000) : "done")],
 				);
 				await harness.session.prompt("continue");
+				if (path === "post-run") {
+					expect(harness.session.getLastAssistantText()).toBe("z".repeat(8000));
+					expect(harness.eventsOfType("compaction_end")).toEqual([]);
+					harness.appendResponses([fauxAssistantMessage("continued after compaction")]);
+					await harness.session.prompt("continue after the completed response");
+				}
 			}
 
 			expect(preparations).toHaveLength(1);
 			expect(preparations[0]?.preparation.settings).toEqual({
 				enabled: path !== "manual",
-				reserveTokens: 2000,
+				prepareThreshold: 40,
+				threshold: 50,
+				maxSummaryTokens: 8000,
 				keepRecentTokens: 150,
 			});
 			expect(preparations[0]?.reason).toBe(
 				path === "manual" ? "manual" : path === "overflow" ? "overflow" : "threshold",
 			);
-			if (path === "manual" || path === "pre-prompt") {
+			if (path === "manual") {
 				expect(preparations[0]?.preparation.firstKeptEntryId).toBe(recentUserId);
 			}
 			expect(harness.eventsOfType("compaction_end")).toHaveLength(1);
@@ -111,8 +120,9 @@ describe("AgentSession compaction model overrides", () => {
 			tools: [],
 			settings: {
 				compaction: {
-					reserveTokens: 10,
-					modelOverrides: { "faux/big": { reserveTokens: 8000, keepRecentTokens: 150 } },
+					prepareThreshold: 90,
+					threshold: 99.9,
+					modelOverrides: { "faux/big": { prepareThreshold: 10, threshold: 20, keepRecentTokens: 150 } },
 				},
 			},
 			extensionFactories: [
@@ -138,9 +148,9 @@ describe("AgentSession compaction model overrides", () => {
 		await harness.session.prompt("continue on big");
 		expect(harness.eventsOfType("compaction_end")).toHaveLength(1);
 		expect(harness.eventsOfType("compaction_end")[0]?.result?.summary).toBe("big model summary");
-		expect(harness.settingsManager.getCompactionReserveTokens()).toBe(10);
+		expect(harness.settingsManager.getCompactionSettings().threshold).toBe(99.9);
 		await harness.session.setModel(harness.getModel("small")!);
-		expect(harness.settingsManager.getCompactionReserveTokens(harness.session.model)).toBe(10);
+		expect(harness.settingsManager.getCompactionSettings(harness.session.model).threshold).toBe(99.9);
 	});
 
 	it("captures model identity before awaiting summarization auth", async () => {
@@ -149,8 +159,8 @@ describe("AgentSession compaction model overrides", () => {
 			settings: {
 				compaction: {
 					modelOverrides: {
-						"faux/first": { reserveTokens: 2000, keepRecentTokens: 150 },
-						"faux/second": { reserveTokens: 4000, keepRecentTokens: 20000 },
+						"faux/first": { maxSummaryTokens: 2000, keepRecentTokens: 150 },
+						"faux/second": { maxSummaryTokens: 4000, keepRecentTokens: 20000 },
 					},
 				},
 			},

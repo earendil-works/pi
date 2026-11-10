@@ -93,6 +93,8 @@ export interface CompactionEntry<T = unknown> extends SessionEntryBase {
 	summary: string;
 	firstKeptEntryId: string;
 	tokensBefore: number;
+	/** Frozen raw history available to recall_context, independent of the retained active tail. */
+	checkpointId?: string;
 	/** Extension-specific data (e.g., ArtifactIndex, version markers for structured compaction) */
 	details?: T;
 	/** Usage from the LLM call(s) that generated this summary, if available */
@@ -459,7 +461,12 @@ export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage
 		return [createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp)];
 	}
 	if (entry.type === "compaction") {
-		const summary = createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp);
+		const summary = createCompactionSummaryMessage(
+			entry.summary,
+			entry.tokensBefore,
+			entry.timestamp,
+			entry.checkpointId,
+		);
 		return entry.systemMessage ? [entry.systemMessage, summary] : [summary];
 	}
 	return [];
@@ -1276,6 +1283,7 @@ export class SessionManager {
 		details?: T,
 		fromHook?: boolean,
 		usage?: Usage,
+		checkpointId?: string,
 	): string {
 		const timestamp = new Date().toISOString();
 		const systemMessage = getCurrentSystemMessage(this.buildSessionProjection().messages);
@@ -1291,6 +1299,7 @@ export class SessionManager {
 			details,
 			usage,
 			fromHook,
+			...(checkpointId ? { checkpointId } : {}),
 			...(systemMessage ? { systemMessage: { ...systemMessage, timestamp: new Date(timestamp).getTime() } } : {}),
 		};
 		this._appendEntry(entry);

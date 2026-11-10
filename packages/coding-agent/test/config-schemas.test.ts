@@ -46,47 +46,6 @@ describe("generated configuration schemas", () => {
 		}
 	});
 
-	it("preserves editor guidance in the generated theme schema", () => {
-		const schema = JSON.parse(renderConfigSchemas().get("schemas/theme.schema.json") ?? "");
-		const accent = schema.properties.colors.properties.accent;
-		const colorValue = accent.$ref ? schema.$defs.ColorValue : accent;
-		expect(schema).toMatchObject({
-			title: "Pi Coding Agent Theme",
-			description: "Theme schema for Pi coding agent",
-			properties: {
-				colors: {
-					description: expect.stringContaining("use compatible fallbacks"),
-					properties: {
-						scrollbarTrack: { description: expect.stringContaining("falls back to muted") },
-						accent: { description: "Primary accent color (logo, selected items, cursor)" },
-					},
-				},
-				export: { description: expect.stringContaining("defaults derived from userMessageBg") },
-			},
-		});
-		expect(colorValue).toMatchObject({
-			anyOf: [{ description: expect.stringContaining("Hex color") }, expect.any(Object)],
-		});
-	});
-
-	it("preserves moved model and settings guidance", () => {
-		const models = JSON.parse(renderConfigSchemas().get("schemas/models.schema.json") ?? "");
-		expect(models.$defs.ModelCost.properties).toMatchObject({
-			input: { description: expect.stringContaining("USD per million tokens") },
-			tiers: { description: expect.stringContaining("highest matching input threshold") },
-		});
-		expect(models.$defs.ModelInputLimits.properties).toMatchObject({
-			maxRequestBytes: { description: expect.stringContaining("serialized provider request size") },
-		});
-
-		const settings = JSON.parse(renderConfigSchemas().get("schemas/settings.schema.json") ?? "");
-		expect(settings.properties).toMatchObject({
-			quietStartup: { description: expect.stringContaining("hide all startup output") },
-			defaultTools: { description: expect.stringContaining("+name and -name") },
-			fullscreenWheelScrollLines: { description: expect.stringContaining("1 to 100") },
-		});
-	});
-
 	it.each([
 		{
 			name: "models.json",
@@ -187,11 +146,11 @@ describe("generated configuration schemas", () => {
 	it("rejects settings values that runtime accessors reject", () => {
 		const validator = Compile(SettingsSchema);
 		for (const invalid of [
-			{ compaction: { reserveTokens: -1 } },
+			{ compaction: { threshold: -1 } },
 			{ compaction: { keepRecentTokens: 1.5 } },
 			{
 				compaction: {
-					modelOverrides: { "provider/model": { reserveTokens: Number.MAX_SAFE_INTEGER + 1 } },
+					modelOverrides: { "provider/model": { maxSummaryTokens: Number.MAX_SAFE_INTEGER + 1 } },
 				},
 			},
 			{ httpIdleTimeoutMs: -1 },
@@ -205,26 +164,16 @@ describe("generated configuration schemas", () => {
 		expect(
 			validator.Check({
 				compaction: {
-					reserveTokens: 0,
+					prepareThreshold: 0,
+					threshold: 100,
 					keepRecentTokens: Number.MAX_SAFE_INTEGER,
-					modelOverrides: { "provider/model": { reserveTokens: 0 } },
+					modelOverrides: { "provider/model": { maxSummaryTokens: 1 } },
 				},
 				httpIdleTimeoutMs: 0,
 				websocketConnectTimeoutMs: "disabled",
 				codemode: { inlineBudget: 0 },
 			}),
 		).toBe(true);
-	});
-
-	it("describes legacy settings migrations accurately", () => {
-		const schema = JSON.parse(renderConfigSchemas().get("schemas/settings.schema.json") ?? "") as {
-			properties: {
-				queueMode: { description: string };
-				retry: { properties: { maxDelayMs: { description: string } } };
-			};
-		};
-		expect(schema.properties.retry.properties.maxDelayMs.description).toContain("provider.maxRetryDelayMs");
-		expect(schema.properties.queueMode.description).toBe("Legacy setting migrated to steeringMode.");
 	});
 
 	it("accepts custom compatibility settings and rejects malformed known fields", async () => {

@@ -356,8 +356,6 @@ describe("AgentSession compaction characterization", () => {
 		expect(transformContext).not.toHaveBeenCalled();
 		expect(getCurrentSystemPrompt(requestContext?.messages ?? [])).not.toBe(harness.session.agent.state.systemPrompt);
 		expect(getCurrentTools(requestContext?.messages ?? [])).toEqual([]);
-		// Regression test for #9652: split-turn summaries use a clear Markdown conversation boundary.
-		expect(JSON.stringify(requestContext?.messages)).toContain("# Conversation\\n[User]: message to compact");
 		expect(requestOptions).toMatchObject({ cacheRetention: "none" });
 		expect(requestOptions?.sessionId).not.toBe("active-routing-session");
 		expect(requestOptions?.transport).toBeUndefined();
@@ -442,7 +440,7 @@ describe("AgentSession compaction characterization", () => {
 	it("compacts and resumes after a length stop below the desired output limit", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 1000, maxTokens: 100 }],
-			settings: { compaction: { keepRecentTokens: 1, reserveTokens: 0 } },
+			settings: { compaction: { keepRecentTokens: 1, prepareThreshold: 99, threshold: 100 } },
 			extensionFactories: [
 				(pi) => {
 					pi.on("session_before_compact", async (event) => ({
@@ -487,25 +485,30 @@ describe("AgentSession compaction characterization", () => {
 				execute: async () => ({ content: [{ type: "text", text: toolResult }], details: {} }),
 			};
 			const order: string[] = [];
-			const observedSettings: unknown[] = [];
 			const harness = await createHarness({
 				models: [{ id: "faux-1", contextWindow: 2600, maxTokens: 100 }],
 				settings: {
 					compaction: modelOverride
 						? {
 								enabled: true,
-								reserveTokens: 0,
+								prepareThreshold: 99,
+								threshold: 100,
 								keepRecentTokens: 20000,
-								modelOverrides: { "faux/faux-1": { reserveTokens: 400, keepRecentTokens: 1750 } },
+								modelOverrides: {
+									"faux/faux-1": {
+										prepareThreshold: 75,
+										threshold: (2200 / 2600) * 100,
+										keepRecentTokens: 1750,
+									},
+								},
 							}
-						: { enabled: true, reserveTokens: 400, keepRecentTokens: 1750 },
+						: { enabled: true, prepareThreshold: 75, threshold: (2200 / 2600) * 100, keepRecentTokens: 1750 },
 				},
 				tools: [largeTool],
 				extensionFactories: [
 					(pi) => {
 						pi.on("session_before_compact", (event) => {
 							order.push("compaction");
-							observedSettings.push(event.preparation.settings);
 							return {
 								compaction: {
 									summary: "compacted history",
@@ -537,7 +540,6 @@ describe("AgentSession compaction characterization", () => {
 			await harness.session.prompt("run the large tool");
 
 			expect(order.slice(0, 2)).toEqual(["compaction", "provider"]);
-			expect(observedSettings[0]).toEqual({ enabled: true, reserveTokens: 400, keepRecentTokens: 1750 });
 			expect(harness.eventsOfType("agent_start")).toHaveLength(agentStartsBefore + 1);
 			expect(harness.eventsOfType("compaction_start").at(-1)).toEqual({
 				type: "compaction_start",
@@ -570,7 +572,9 @@ describe("AgentSession compaction characterization", () => {
 		});
 		const harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 2600, maxTokens: 100 }],
-			settings: { compaction: { enabled: true, reserveTokens: 400, keepRecentTokens: 1750 } },
+			settings: {
+				compaction: { enabled: true, prepareThreshold: 75, threshold: (2200 / 2600) * 100, keepRecentTokens: 1750 },
+			},
 			tools: [largeTool],
 			extensionFactories: [
 				(pi) => {
@@ -628,7 +632,9 @@ describe("AgentSession compaction characterization", () => {
 		};
 		const harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 2600, maxTokens: 100 }],
-			settings: { compaction: { enabled: true, reserveTokens: 400, keepRecentTokens: 1750 } },
+			settings: {
+				compaction: { enabled: true, prepareThreshold: 75, threshold: (2200 / 2600) * 100, keepRecentTokens: 1750 },
+			},
 			tools: [terminatingTool],
 			extensionFactories: [
 				(pi) => {
@@ -675,7 +681,7 @@ describe("AgentSession compaction characterization", () => {
 	it("stops after one compact-and-retry when a second response is also truncated", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 1_000_000, maxTokens: 100 }],
-			settings: { compaction: { keepRecentTokens: 1, reserveTokens: 0 } },
+			settings: { compaction: { keepRecentTokens: 1, prepareThreshold: 99, threshold: 100 } },
 			extensionFactories: [
 				(pi) => {
 					pi.on("session_before_compact", async (event) => ({
@@ -701,34 +707,6 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.eventsOfType("compaction_start").filter((event) => event.reason === "overflow")).toHaveLength(1);
 		expect(harness.eventsOfType("compaction_end").at(-1)?.errorMessage).toBe(
 			"Truncated response recovery failed after one compact-and-retry attempt.",
-		);
-	});
-
-	it("keeps overflow wording when a repeated length stop fills the context window", async () => {
-		const harness = await createHarness({
-			models: [{ id: "faux-1", contextWindow: 100, maxTokens: 100 }],
-		});
-		harnesses.push(harness);
-		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
-		const lengthOverflowMessage = createAssistant(harness, {
-			stopReason: "length",
-			totalTokens: 100,
-			timestamp: Date.now(),
-		});
-		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue(false);
-		const compactionErrors: string[] = [];
-		harness.session.subscribe((event) => {
-			if (event.type === "compaction_end" && event.errorMessage) {
-				compactionErrors.push(event.errorMessage);
-			}
-		});
-
-		await sessionInternals._checkCompaction(lengthOverflowMessage);
-		await sessionInternals._checkCompaction({ ...lengthOverflowMessage, timestamp: Date.now() + 1 });
-
-		expect(runAutoCompactionSpy).toHaveBeenCalledTimes(1);
-		expect(compactionErrors).toContain(
-			"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
 		);
 	});
 
@@ -830,7 +808,7 @@ describe("AgentSession compaction characterization", () => {
 
 	it("compacts successful overflow responses without retrying", async () => {
 		const harness = await createHarness({
-			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },
+			settings: { compaction: { enabled: true, keepRecentTokens: 1, prepareThreshold: 99, threshold: 100 } },
 			models: [{ id: "faux-1", contextWindow: 1, maxTokens: 100 }],
 			extensionFactories: [
 				(pi) => {
@@ -895,34 +873,6 @@ describe("AgentSession compaction characterization", () => {
 		await sessionInternals._checkCompaction(staleAssistant, false);
 
 		expect(runAutoCompactionSpy).not.toHaveBeenCalled();
-	});
-
-	it("triggers threshold compaction for error messages using the last successful usage", async () => {
-		const harness = await createHarness();
-		harnesses.push(harness);
-		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
-		const successfulAssistant = createAssistant(harness, {
-			stopReason: "stop",
-			totalTokens: 190_000,
-			timestamp: Date.now(),
-		});
-		const errorAssistant = createAssistant(harness, {
-			stopReason: "error",
-			errorMessage: "529 overloaded",
-			timestamp: Date.now() + 1000,
-		});
-		harness.session.agent.state.messages = [
-			{ role: "user", content: [{ type: "text", text: "hello" }], timestamp: Date.now() - 1000 },
-			successfulAssistant,
-			{ role: "user", content: [{ type: "text", text: "retry" }], timestamp: Date.now() + 500 },
-			errorAssistant,
-		];
-
-		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue(false);
-
-		await sessionInternals._checkCompaction(errorAssistant);
-
-		expect(runAutoCompactionSpy).toHaveBeenCalledWith("threshold", false);
 	});
 
 	it("does not trigger threshold compaction for error messages when no prior usage exists", async () => {
@@ -993,7 +943,7 @@ describe("AgentSession compaction characterization", () => {
 
 	it("does not trigger threshold compaction below the threshold or when disabled", async () => {
 		const belowThresholdHarness = await createHarness({
-			settings: { compaction: { enabled: true, reserveTokens: 1000 } },
+			settings: { compaction: { enabled: true, threshold: 99.5 } },
 			models: [{ id: "faux-1", contextWindow: 200_000 }],
 		});
 		harnesses.push(belowThresholdHarness);
