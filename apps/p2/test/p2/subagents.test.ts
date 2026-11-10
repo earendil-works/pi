@@ -342,14 +342,21 @@ describe("subagents with code mode (fake provider)", () => {
 		);
 		return results(await until(chat.view, (view) => results(view).length > count)).at(-1)!;
 	};
-	/** Waits until `name`'s answer was reported and the main agent's turn on it ended, so it cannot race a later send. */
-	const reported = (name: string) =>
+	/**
+	 * Waits until `name`'s answer was reported after entry `after` and the main agent's turn on it ended, so it cannot
+	 * race a later send. A subagent asked again reports again: without `after`, its earlier report would satisfy the
+	 * wait at once, and the new one would arrive with the next test's input (the faux model answers only the last).
+	 */
+	const reported = (name: string, after = 0) =>
 		until(
 			chat.view,
 			(view) =>
-				texts(view).includes(`<sender kind="subagent" name="${name}"/>`) &&
-				!(view?.docs["pi.live"] as { run?: unknown } | undefined)?.run,
+				texts({ ...view!, entries: (view?.entries ?? []).filter((entry) => entry.id > after) }).includes(
+					`<sender kind="subagent" name="${name}"/>`,
+				) && !(view?.docs["pi.live"] as { run?: unknown } | undefined)?.run,
 		);
+	/** The newest entry of the main conversation's window: what a later report must follow. */
+	const newest = () => chat.view.value?.entries.at(-1)?.id ?? 0;
 	const results = (view: ConversationView | null | undefined) =>
 		(view?.entries ?? [])
 			.flatMap((entry) => entry.model ?? [])
@@ -464,13 +471,14 @@ describe("subagents with code mode (fake provider)", () => {
 						message.role === "toolResult" && message.toolName === "codemode",
 				);
 		const before = scripts().length;
+		const sentAfter = newest();
 		const script = 'return await tools.mcp__files__echo({ text: "from coder" });';
 		await subagent({ action: "send", name: "coder", message: `codemode ${script}` });
 		await until(sub.view, () => scripts().length > before);
 		const ran = scripts().at(-1);
 		assert.equal(ran?.isError, false, text(ran));
 		assert.match(text(ran), /echo: from coder$/);
-		await reported("coder");
+		await reported("coder", sentAfter);
 		sub.release();
 		mcp.release();
 	});
