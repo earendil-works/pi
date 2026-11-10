@@ -520,8 +520,30 @@ tab's sessionStorage; URLs identify conversations (`/s/<id>` and `/s/<id>/c/<con
   custom changing scroll areas should do so too, with a key for the content they display.
 - Android Chromium uses one CloseWatcher while there is a step to undo, without adding history entries or browser
   page-back animation. Other browsers use history entries. With no internal step, system Back leaves the app.
-- Conversation destinations retain the workspace tab and terminal placement, but reset file/commit/search locations
-  and never carry the request to start a terminal. Server events never push.
+- Conversation destinations in the same session retain the workspace tab and terminal placement, but reset
+  file/commit/search locations and never carry the request to start a terminal; another session opens with its own
+  panels (below). Server events never push.
+- **Panels per session** (`src/web/session-panels.ts`): the right-hand panels (the workspace and its tab, the terminal
+  below the chat or on the workspace's Terminal tab, the side panel's plugin panel or activity) belong to the session
+  they were opened in. Problem: they used to stay open across a session switch, so a terminal opened in one session
+  also opened in the next. Now every route change remembers its session's panels in `localStorage` `p2-session-panels`
+  (per device, the last 200 sessions that had one open; closing them all forgets the session), and `conversationRoute`
+  opens another session with its own: as it last had them, none if it never had any. Within a session (its subagents'
+  and `/tree` conversations) the open panels stay, as before: the panels are the session's, its terminals are too, and
+  the workspace follows the shown conversation's location; only an activity, which is a block of one transcript, is
+  dropped in another conversation. A page load without history state of its own (a link, a new tab, a typed address,
+  the installed app's launch) restores the session's panels too; a reload or Back keeps its entry's route, as before.
+  Restored are the workspace's tab (not its folder or file) and the terminal's ID (a closed one falls back to the
+  newest running terminal); a terminal never starts on its own. Restoring never covers the chat: the workspace comes
+  back from 900 px (below, it takes the screen), the side panel from 700 px (below, it is a sheet), the terminal below
+  the chat always; a phone opens a session at its chat (the views plugin's rule). Sizes stay global per browser
+  (`useDragSize`: the side panel's and the workspace's widths, the terminal's height), as does the terminal's
+  preferred placement for a new terminal: a size suits the screen, not the session, and per-session widths would make
+  the chat column jump at every switch. The views plugin's layout was per session already
+  (`p2.views.layout:<session>`). Leaving a session detaches its terminal view; the programs keep running in the
+  terminal host and coming back reattaches from a VT snapshot (Terminals). A link that opens a viewer (`?viewer=`,
+  branch `artifact-newtab`) shows it above the session's restored panels; on phones the side panel waits beneath it
+  (`useSidePanelShown`). Test: `ui-session-panels.test.ts`.
 - **Drawer swipe** (`src/web/drawer-swipe.ts`, phone layout only): with no modal open, a drag toward the inline end
   (rightward; leftward in RTL) anywhere on the chat column (`main`) drags the drawer open; a drag toward the inline
   start on the open drawer or scrim drags it closed. Not on the workspace panel, which is full screen above the
@@ -1212,9 +1234,10 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   SSH configuration comes from the envs plugin and the conversation's location environment; the separate `terminal-sessions.json`
   mapping is no longer read. Host keys use `ssh/known_hosts` and `pi-env-<name>` aliases. `envs.test.ts` exercises a
   remote terminal against a disposable localhost SSH fixture; no real remote host is used. Windows PTYs remain unsupported. The workspace has an owner-only
-  Terminal tab through the terminals plugin's `workspace-terminal` slot. Side and bottom panels carry across a
-  session switch, showing that session's terminals without starting one. Only explicit terminal-button/tab taps
-  request auto-start; attachment updates replace the route, never push or reopen a later destination.
+  Terminal tab through the terminals plugin's `workspace-terminal` slot. Side and bottom panels are remembered per
+  session (Browser navigation, Panels per session): another session opens with its own, never starting a terminal.
+  Only explicit terminal-button/tab taps request auto-start; attachment updates replace the route, never push or
+  reopen a later destination.
   Outdated hosts show Restart (ends all terminals), but idle outdated hosts are not automatically replaced yet; the
   agent's calls to an outdated host fail with that advice (`OUTDATED_HOST`); archiving closes its terminals with the
   viewer protocol every host speaks (list, then attach and force-close each).

@@ -412,7 +412,7 @@ export function useRoute(): Route {
 	return useSyncExternalStore(nav.subscribe, nav.snapshot, nav.snapshot);
 }
 
-/** Conversation destinations close modal layers and carry open workspace/terminal panels. */
+/** Conversation destinations close modal layers and open with their session's panels (`conversationRoute`). */
 export function navigate(next: Partial<Route>, options: { replace?: boolean } = {}): void {
 	const nav = getNavigation();
 	const destination = next.layers
