@@ -58,3 +58,29 @@ Nothing here is decided until the owner says so; section 3 lists the decisions.
 3. **Expiry:** links expire by default (for example 24 hours); named shares may be open-ended but always listed.
 4. **Freeze the scope, not the layout:** new views of the shared session appear for guests; nothing outside it does.
 5. **Whole-app sharing:** deferred.
+
+## 4. Open problems (owner, 2026-11-10: to think through later; the goal is a simple system)
+
+The owner's direction: keep it simple. Whoever shares accepts that everything shown for that session (or that app,
+for an app shared whole) is accessible to the guest. What a guest sees follows from what the objects give the
+guest's principal; nothing else needs per-view rules.
+
+1. **Do views need the principal?** Direction: no. Objects already decide per principal through variants, and a view
+   renders the variant its reference got: the approvals object gives the owner a variant with Allow and Deny, and a
+   guest a variant without them (or nothing). The page knows who you are only for wording and presence (your name).
+   Possible solutions: (a) views read only `ref.variant` and the members it has (recommended: one rule, no
+   principal checks in UI code); (b) the workbench also passes the principal for wording only.
+2. **Who picks the views a guest's layout shows?** Direction: the app, per principal, may choose which of its views it
+   shows; each view then shows what its objects give. Possible solutions: (a) the server projects the layout: a view
+   whose objects give the guest nothing is dropped, and the app may list views it never shows to guests (recommended);
+   (b) the app supplies a whole guest layout per mode; (c) every view declares the principal kinds it is for (a hint
+   so no empty pane opens first, never the protection).
+3. **Sharing a whole app for real use** (the family app shared read-write with the owner's wife, who then has full
+   control of it). The designers deferred whole-app sharing (membership, what a guest may create, global views).
+   Possible solutions: (a) an app share is a grant over the app's slice: its sessions, its machines and accounts, with
+   guests able to create sessions inside it (needs the slice as server data the share can check); (b) the wife is a
+   user of the instance rather than a guest, and the family app is hers or shared by membership (a users plugin);
+   (c) start with sharing the app's one long-running session and its views, which covers the family app's main use.
+4. **Modes:** Watch (read-only) and Join (talks to the agent), with a per-view player role in rooms; or only two modes
+   and rooms decide themselves. See section 3, decision 1.
+5. **Expiry and what freezes:** section 3, decisions 3 and 4.
