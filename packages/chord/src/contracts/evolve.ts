@@ -7,15 +7,19 @@ import {
 	type CurrentVariants,
 	contractData,
 	createContract,
+	type HostKeyed,
+	type KeyedSnapshot,
 	type Kind,
 	LOCAL,
 	type MemberKind,
 	type MethodData,
 	type ShapeOf,
 } from "./contract.ts";
-import { checkMembers, memberPath, readMethod } from "./declare.ts";
+import { checkMembers, keyedSnapshot, memberPath, readMethod } from "./declare.ts";
 import { materialize } from "./fingerprint.ts";
 import type { Change, CurrentStep, Increment, MemberNames, MethodAt, Variants, VariantsWith } from "./history.ts";
+import type { HostKind, KindShape } from "./host-kind.ts";
+import type { Params } from "./params.ts";
 import { Method, type Schema } from "./schema.ts";
 import { type Snapshot, snapshotArguments, snapshotSchema } from "./snapshot.ts";
 
@@ -89,15 +93,28 @@ interface LocalEditor<V extends Variants, C extends Change> extends MethodEditor
 		args: A,
 		result: R,
 	): LocalEditor<Put<V, Local, "methods", M, Method<A, R>>, C | [Local, M, "args" | "result"]>;
-	/** Changes keyed member `member`'s schema (slice 7b: an older consumer reads each key mapped, or is refused). */
+	/**
+	 * Changes keyed member `member`'s schema, keyed by string or by addresses of `key` (slice 7b: an older consumer reads
+	 * each key mapped, or is refused; a changed key kind only refused).
+	 */
 	keyed<M extends KeyedNames<V> & string, S extends Schema>(
 		member: M,
 		schema: S,
 	): LocalEditor<PutKeyed<V, M, S>, C | [Local, M, "keyed"]>;
+	keyed<M extends KeyedNames<V> & string, S extends Schema, N extends string, P extends Params>(
+		member: M,
+		schema: S,
+		key: HostKind<N, P>,
+	): LocalEditor<PutKeyed<V, M, HostKeyed<S, HostKind<N, P>>>, C | [Local, M, "keyed"]>;
 	addKeyed<const M extends string, S extends Schema>(
 		member: M,
 		schema: S,
 	): LocalEditor<PutKeyed<V, M, S>, C | [Local, M, "keyed"]>;
+	addKeyed<const M extends string, S extends Schema, N extends string, P extends Params>(
+		member: M,
+		schema: S,
+		key: HostKind<N, P>,
+	): LocalEditor<PutKeyed<V, M, HostKeyed<S, HostKind<N, P>>>, C | [Local, M, "keyed"]>;
 	removeKeyed<M extends KeyedNames<V> & string>(member: M): LocalEditor<DropKeyed<V, M>, C>;
 }
 
@@ -190,7 +207,7 @@ export function editWith<E>(editor: E, edit: (editor: E) => unknown, what: strin
 type DraftVariant = {
 	readonly state: Map<string, Snapshot>;
 	readonly methods: Map<string, MethodData>;
-	readonly keyed: Map<string, Snapshot>;
+	readonly keyed: Map<string, KeyedSnapshot>;
 };
 
 /** The next version under construction, and the remote editor. Every edit is checked as it is made. */
@@ -261,16 +278,16 @@ class Draft {
 		return this.#checked();
 	}
 
-	keyed(variant: string, member: string, schema: Schema): object {
+	keyed(variant: string, member: string, schema: Schema, key: KindShape | undefined): object {
 		if (!this.#variant(variant).keyed.has(member)) {
 			throw new Error(`${this.#path(variant, member, "keyed")}: no such keyed member`);
 		}
-		return this.#putKeyed(variant, member, schema);
+		return this.#putKeyed(variant, member, schema, key);
 	}
 
-	addKeyed(variant: string, member: string, schema: Schema): object {
+	addKeyed(variant: string, member: string, schema: Schema, key: KindShape | undefined): object {
 		this.#refuseDeclared(variant, member, "keyed");
-		return this.#putKeyed(variant, member, schema);
+		return this.#putKeyed(variant, member, schema, key);
 	}
 
 	removeKeyed(variant: string, member: string): object {
@@ -298,8 +315,8 @@ class Draft {
 		return this.#checked();
 	}
 
-	#putKeyed(variant: string, member: string, schema: Schema): object {
-		this.#variant(variant).keyed.set(member, snapshotSchema(schema, this.#path(variant, member, "keyed")));
+	#putKeyed(variant: string, member: string, schema: Schema, key: KindShape | undefined): object {
+		this.#variant(variant).keyed.set(member, keyedSnapshot(schema, key, this.#path(variant, member, "keyed")));
 		this.#changes.push([variant, member, "keyed"]);
 		return this.#checked();
 	}
@@ -363,8 +380,8 @@ function localEditor(draft: Draft): object {
 		result: (member: string, result: Schema) => draft.result(member, result),
 		method: (member: string, args: Schema, result: Schema) => draft.method(member, args, result),
 		removeMethod: (member: string) => draft.removeMethod(member),
-		keyed: (member: string, schema: Schema) => draft.keyed(LOCAL, member, schema),
-		addKeyed: (member: string, schema: Schema) => draft.addKeyed(LOCAL, member, schema),
+		keyed: (member: string, schema: Schema, key?: KindShape) => draft.keyed(LOCAL, member, schema, key),
+		addKeyed: (member: string, schema: Schema, key?: KindShape) => draft.addKeyed(LOCAL, member, schema, key),
 		removeKeyed: (member: string) => draft.removeKeyed(LOCAL, member),
 	};
 	return draft.editor;

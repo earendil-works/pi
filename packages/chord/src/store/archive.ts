@@ -26,13 +26,17 @@ import type { StoreWrite } from "./writes.ts";
 /** The archive format `export` writes; `import` takes this one only. */
 export const ARCHIVE_FORMAT = 1;
 
-/** The first part: the format, the store's schema version, its `lastSeq` and the allocator's next id (rule 24, D3). */
+/**
+ * The first part: the format, the store's schema version, its `lastSeq` and the allocator's next id (rule 24, D3);
+ * `host` in a host's data archive (`exportHostData`): the address key whose records and rows it holds.
+ */
 export type ArchiveManifest = {
 	readonly kind: "manifest";
 	readonly format: number;
 	readonly schema: number;
 	readonly lastSeq: number;
 	readonly nextId: number;
+	readonly host?: string;
 };
 
 /**
@@ -59,6 +63,8 @@ const column = obj({
 	default: opt(union([str(), num(), bool()])),
 	version: opt(version),
 	fingerprint: opt(str()),
+	// A `host(...)` column's kind.
+	host: opt(str()),
 });
 
 const versions = map(version);
@@ -94,6 +100,7 @@ const RECORD = obj({
 	createdAt: safe(1),
 	retiredAt: opt(safe(1)),
 	meta: opt(str()),
+	host: opt(str()),
 	revision: safe(1),
 	version,
 	fingerprint: str(),
@@ -112,7 +119,14 @@ const REVISION = obj({
 });
 
 const PART = union([
-	obj({ kind: lit("manifest"), format: safe(1), schema: safe(1), lastSeq: safe(0), nextId: safe(1) }),
+	obj({
+		kind: lit("manifest"),
+		format: safe(1),
+		schema: safe(1),
+		lastSeq: safe(0),
+		nextId: safe(1),
+		host: opt(str()),
+	}),
 	TABLE,
 	PUT,
 	INDEX,

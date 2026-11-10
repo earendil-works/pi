@@ -2720,7 +2720,16 @@ validation and copies the v2 kernel added around Delta.
   per-address export, import and delete (`exportData`, `importData`, archive) include the server's records and rows
   belonging to that address, next to the host's own store. Migration of imported content happens when the owning
   object loads it, as for every document. Plugins must not put addresses inside JSON values they expect to be rewritten.
-  To be specified, reviewed and built (p3 status 2026-11-09).
+  To be specified, reviewed and built (p3 status 2026-11-09). Built 2026-11-09 (spec `host-keyed/spec.md`, reviewed by
+  gpt-6-astra and gpt-6.1-sol). Owner decisions in review: (5) no checks a forged archive could defeat anyway and no
+  guards against plugin mistakes: no fingerprint or metadata comparison of archive tables (the store's own host column
+  and a per-row target check are enough), no re-validation of decoded address keys, no refusal of dropping the
+  automatic host index, no host-data guards after `host.close()`; (6) the kit has no recovery journal: import unpacks
+  into staging, moves the old directory aside, renames staging into place and commits the server's part last (definite
+  failures undo the renames; an unknown outcome keeps everything and is reported); delete commits the server's part
+  first, then removes the directory; the remaining crash windows are documented (re-run the import with replace; a
+  repeated delete removes an orphan directory). Host-keyed keyed members (`keyed(schema, Kind)`) and migration of older
+  archive tables through the owner's `evolveTable` history are part of the build.
 - **A plugin's npm dependencies are bundled; external only by opt-in (owner, 2026-10-29: "explicit opt in + (a)"):**
   a plugin's `dependencies` are installed into its own `node_modules` (`npm install --ignore-scripts`) and bundled into
   each facet that imports them (host packages, its `peerDependencies`, stay external and are passed in). On Node a

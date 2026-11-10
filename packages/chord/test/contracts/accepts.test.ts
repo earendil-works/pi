@@ -191,6 +191,19 @@ describe("method mappings", () => {
 	});
 });
 
+describe("a keyed member's key kind changed", () => {
+	it("is only refused: a value mapping cannot map keys", () => {
+		const Session = hostKind("session", { id: str() });
+		const Store = local("store", { version: 1, params: {}, members: { notes: keyed(Note) } });
+		const V2 = evolve(Store, (e) => e.keyed("notes", Note, Session));
+		expect(checkAccepts(V2, { 1: { keyed: { notes: "refuse" } } }).versions).toHaveLength(1);
+		expect(() => checkUntyped(V2, { 1: { keyed: { notes: (value: unknown) => value } } })).toThrow(
+			"its key kind changed",
+		);
+		expect(V2.fingerprint).not.toBe(Store.fingerprint);
+	});
+});
+
 describe("keyed mappings (slice 7b)", () => {
 	const Store = local("store", { version: 1, params: {}, members: { notes: keyed(Note), drafts: keyed(Note) } });
 	const V2 = evolve(Store, (e) => e.keyed("notes", NoteV2).removeKeyed("drafts"));

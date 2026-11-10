@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
-import { evolve, hostKind, int, oneOf, opt, remote, str } from "../../src/contracts/index.ts";
-import { contractData, kindParams } from "../../src/contracts/internal.ts";
+import { bool, evolve, hostKind, int, oneOf, opt, remote, str } from "../../src/contracts/index.ts";
+import { addressOfKey, contractData, keyOfAddress, kindOfKey, kindParams } from "../../src/contracts/internal.ts";
 import { isChordError } from "../../src/data/index.ts";
 import { checkAddress } from "../../src/data/internal.ts";
 import { expectCollected } from "../support.ts";
@@ -81,4 +81,46 @@ describe("hostAddress", () => {
 			variants,
 		});
 	});
+});
+
+describe("address keys", () => {
+	const Flag = hostKind("flag", { on: bool(), id: str() });
+
+	it("decode into addresses: str, int and bool fields, oneOf literals, escaped parts, a kind without params", () => {
+		for (const address of [
+			Session({ id: "a|b\\c" }),
+			Shard({ region: "us", n: 12 }),
+			Flag({ on: false, id: "" }),
+			Server(),
+		]) {
+			expect(addressOfKey(kindOf(address.kind), address.key)).toEqual(address);
+		}
+		expect(() => addressOfKey(Session, "shard|eu|1")).toThrow("not an address key of session");
+		expect(kindOfKey("session|S1")).toBe("session");
+		expect(kindOfKey("server")).toBe("server");
+	});
+
+	it("of a value are computed from its params, refused for anything that is not an address of the kind", () => {
+		expect(keyOfAddress(Session, Session({ id: "S1" }))).toBe("session|S1");
+		// A forged key is not taken: the key comes from the params.
+		expect(keyOfAddress(Session, { kind: "session", params: { id: "S1" }, key: "session|S2" })).toBe("session|S1");
+		for (const value of [
+			"session|S1",
+			null,
+			Shard({ region: "eu", n: 1 }),
+			{ kind: "session", params: { id: 1 } },
+			{ kind: "session", params: {} },
+			{ kind: "session", params: { id: "S1", extra: 1 } },
+		]) {
+			expect(keyOfAddress(Session, value)).toBeUndefined();
+		}
+		expect(keyOfAddress(Shard, { kind: "shard", params: { region: "asia", n: 1 } })).toBeUndefined();
+		expect(keyOfAddress(Shard, { kind: "shard", params: { region: "eu", n: 1.5 } })).toBeUndefined();
+		expect(keyOfAddress(Flag, { kind: "flag", params: { on: "true", id: "x" } })).toBeUndefined();
+	});
+
+	/** The declared kind named `name`. */
+	function kindOf(name: string) {
+		return [Session, Shard, Flag, Server].find((kind) => kind.kind === name)!;
+	}
 });

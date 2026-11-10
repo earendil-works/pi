@@ -11,7 +11,7 @@ import type { Contract, Implementation, ParamsOf } from "../contracts/index.ts";
 import { contractData, type ShapeOf } from "../contracts/internal.ts";
 import { ChordError, type FailureCause, type Principal } from "../data/index.ts";
 import { asChordError, checkArgs, checkParams, invalid, openFailure, type Value } from "../data/internal.ts";
-import type { HandleOf, JsonObject, StateDefinition, Tx } from "../documents/index.ts";
+import type { HandleOf, JsonObject, KeyedBy, StateDefinition, Tx } from "../documents/index.ts";
 import {
 	type AnyDefinition,
 	type KeyDeclarer,
@@ -79,7 +79,7 @@ import {
  */
 export interface Self<P extends Principal = Principal> extends RoutineDeclarations<P> {
 	/** This object's documents of `definition`, in memory for its life (across its attempts). */
-	state<D extends StateDefinition<JsonObject, boolean, false>>(definition: D): HandleOf<D>;
+	state<D extends StateDefinition<JsonObject, KeyedBy, false>>(definition: D): HandleOf<D>;
 	/**
 	 * A value computed from `sources` (JSON watchables and native ones: a `writable`, a registry value, `ref.state`) by
 	 * the pure, synchronous `compute`; always JSON.
@@ -148,7 +148,7 @@ export interface Self<P extends Principal = Principal> extends RoutineDeclaratio
  */
 export interface StoreSelf<P extends Principal = Principal> extends Self<P> {
 	/** This object's documents of `definition`: in memory for its life, or persisted in the host's store. */
-	state<D extends StateDefinition<JsonObject, boolean, boolean>>(definition: D): HandleOf<D>;
+	state<D extends StateDefinition<JsonObject, KeyedBy, boolean>>(definition: D): HandleOf<D>;
 	/** This object's table `definition` in the host's store, once per table name. */
 	table<C extends Columns, K extends readonly string[]>(definition: TableDefinition<C, K>): Table<C, K>;
 	/**
@@ -354,7 +354,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		this.#trace = trace;
 	}
 
-	state<D extends StateDefinition<JsonObject, boolean, boolean>>(definition: D): HandleOf<D> {
+	state<D extends StateDefinition<JsonObject, KeyedBy, boolean>>(definition: D): HandleOf<D> {
 		this.#assertDeclaring("state");
 		const what = `state "${definition.name}"`;
 		if (this.#declared.has(definition.name)) throw new Error(`${this.#object.label}: ${what} is declared twice`);
@@ -1098,6 +1098,12 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		if (declarations !== undefined) for (const release of declarations.reads.splice(0)) release();
 	}
 
+	/** Its declaration of table `table` (SQL name), if it declared one. */
+	declaredTable(table: string): TableDefinition | undefined {
+		for (const handle of this.#tables.values()) if (handle.sql.table === table) return handle.definition;
+		return undefined;
+	}
+
 	/** The activation steps; each catches its own failures with their kind (the table in slice 2's spec). */
 	async #activate(deadline: Deadline): Promise<Activation> {
 		let implementation: unknown;
@@ -1106,16 +1112,22 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 			implementation = this.#declare();
 			// Right after the factory, before anything can fail: a failed attempt keeps its wake signals.
 			this.#object.retryOn(this.#registryDeclarations?.retrySources ?? NONE);
-			const { documents } = this.#object;
-			// The object holds the pins from now on.
-			documents.hydrate(this.#declared, this.#pins.splice(0), this.#opening);
-			const loading = documents.load(this.#opening);
-			if (loading !== undefined) await loading;
-			if (this.#tables.size > 0) await this.#prepareTables(deadline);
-			for (const query of this.#queries) await query.load(this.#opening);
+			const { documents, host } = this.#object;
+			// The load phase: no host data operation of the host runs meanwhile (its gate), so what loads is current.
+			const entering = host.hostData.enter();
+			if (entering !== undefined) await entering;
+			try {
+				// The object holds the pins from now on.
+				documents.hydrate(this.#declared, this.#pins.splice(0), this.#opening);
+				const loading = documents.load(this.#opening);
+				if (loading !== undefined) await loading;
+				if (this.#tables.size > 0) await this.#prepareTables(deadline);
+				for (const query of this.#queries) await query.load(this.#opening);
+			} finally {
+				host.hostData.leave();
+			}
 			// A persisted job's runs, loaded once per object: rebuilt before anything runs.
 			for (const job of this.#jobs.values()) await job.load(this.#opening);
-			const { host } = this.#object;
 			for (const { binding, contract, params } of this.#references) {
 				host.bind(binding, contract, params, this.#opening);
 			}

@@ -3,7 +3,7 @@
 // data step, `drop`, `index` and `dropIndex` after it) and track the columns and key through the chain; at runtime one
 // editor records the edits, checks each as it is made, and materializes the new version at the end.
 
-import { opt } from "../contracts/index.ts";
+import { type KindShape, opt } from "../contracts/index.ts";
 import { editWith, type Increment } from "../contracts/internal.ts";
 import { isOptional, type Optional } from "../contracts/schema.ts";
 import {
@@ -18,6 +18,7 @@ import {
 	type ValueOf,
 } from "./columns.ts";
 import { type Condition, compileSet, compileWhere, type SetOf } from "./expression.ts";
+import type { HostColumnSchema } from "./host-column.ts";
 import type { ColumnRefs } from "./query.ts";
 import { INDEX_NAME, orderColumns, TableDefinition, type TableOptions } from "./table.ts";
 import type { DataStep, TableEdit } from "./table-history.ts";
@@ -85,7 +86,7 @@ type JsonNames<C extends Columns> = { [P in keyof C]: ColumnTypeOf<C[P]> extends
 type WithJson<C extends Columns, N extends keyof C & string, S extends ColumnSchema> = With<
 	C,
 	N,
-	C[N] extends Optional ? Optional<Exclude<S, Optional>> : S
+	C[N] extends Optional ? Optional<Exclude<S, Optional | HostColumnSchema<KindShape>>> : S
 >;
 
 /** `V + 1` for a literal version (contracts' `Increment<N>`); `number` stays `number`. */
@@ -173,7 +174,10 @@ class Editor {
 		if (isOptional(column)) {
 			throw new Error(`${this.#what}: json: pass json(...) itself; the column keeps its nullability`);
 		}
-		const schema = existing.optional ? opt(column) : column;
+		// A host(...) column is no json(...) one: `describeColumns` below refuses it either way.
+		const schema: ColumnSchema = existing.optional
+			? opt(column as Exclude<ColumnSchema, Optional | HostColumnSchema<KindShape>>)
+			: column;
 		const described = describeColumns({ [name]: schema }, `${this.#what}: json`)[0]!;
 		if (described.type !== "json") throw new Error(`${this.#what}: json: expected a json(...) column`);
 		const [before, after] = [existing.json, described.json];

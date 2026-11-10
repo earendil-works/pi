@@ -2,8 +2,8 @@
 // the checked `migrate` of an older value and, for a persisted document, its checkpoint rule (slice 6a §10).
 
 import type { Context } from "../context/index.ts";
-import type { Schema, Static } from "../contracts/index.ts";
-import { checkName, fingerprintOf } from "../contracts/internal.ts";
+import type { KindShape, Schema, Static } from "../contracts/index.ts";
+import { checkName, fingerprintOf, kindParams } from "../contracts/internal.ts";
 import { snapshotSchema } from "../contracts/snapshot.ts";
 import { validatorFor } from "../data/internal.ts";
 import type { Op } from "../delta/index.ts";
@@ -31,13 +31,17 @@ export type CheckpointInfo = {
 /** Whether a commit's change of a persisted document is stored as a whole new base (`true`) or as a delta. */
 export type CheckpointWhen<T> = (value: T, ops: readonly Op[], info: CheckpointInfo) => boolean;
 
+/** What a definition is keyed by: nothing (`false`, a singleton), string keys (`true`) or addresses of a host kind. */
+export type KeyedBy = boolean | KindShape;
+
 /** What `defineState` takes for any document. */
-type StateOptions<S extends Schema, K extends boolean> = {
+type StateOptions<S extends Schema, K extends KeyedBy> = {
 	readonly schema: S;
 	readonly version: number;
 	readonly initial: () => DocumentOf<S>;
 	/** Maps a value of an older version `from` to this version's shape; pure. Required to read older values. */
 	readonly migrate?: (old: JsonObject, from: number) => DocumentOf<S>;
+	/** `true`: many per object by string key; a host kind: many per object, each keyed by an address of that kind. */
 	readonly keyed?: K;
 };
 
@@ -50,18 +54,20 @@ type PersistOptions<S extends Schema> = {
 };
 
 /**
- * Declares a document: a singleton per object, or with `keyed: true` many per object, each by a string key; with
- * `persist: true` stored in the host's store. Its name is a restricted name (lowercase `[a-z0-9@/._~-]`).
+ * Declares a document: a singleton per object, or with `keyed: true` many per object, each by a string key, or with
+ * `keyed: <host kind>` many per object, each by an address of that kind, belonging to that host (the store exports,
+ * imports and deletes it with the host's data); with `persist: true` stored in the host's store. Its name is a
+ * restricted name (lowercase `[a-z0-9@/._~-]`).
  */
-export function defineState<S extends Schema, K extends boolean = false>(
+export function defineState<S extends Schema, K extends KeyedBy = false>(
 	name: string,
 	options: StateOptions<S, K> & { readonly persist?: false; readonly checkpointWhen?: never },
 ): StateDefinition<DocumentOf<S>, K, false>;
-export function defineState<S extends Schema, K extends boolean = false>(
+export function defineState<S extends Schema, K extends KeyedBy = false>(
 	name: string,
 	options: StateOptions<S, K> & PersistOptions<S>,
 ): StateDefinition<DocumentOf<S>, K, true>;
-export function defineState<S extends Schema, K extends boolean>(
+export function defineState<S extends Schema, K extends KeyedBy>(
 	name: string,
 	options: StateOptions<S, K> & {
 		readonly persist?: boolean;
@@ -70,6 +76,8 @@ export function defineState<S extends Schema, K extends boolean>(
 ): StateDefinition<DocumentOf<S>, K, boolean> {
 	checkName(name, "A state name");
 	const { schema, version, initial, migrate, keyed, persist, checkpointWhen } = options;
+	// Declaration policy: only a declared host kind keys documents (its params decode the keys).
+	if (keyed !== undefined && typeof keyed !== "boolean") kindParams(keyed);
 	return new StateDefinition(
 		name,
 		schema,
@@ -87,19 +95,22 @@ type DocumentOf<S extends Schema> = Static<S> extends JsonObject ? Static<S> : n
 
 const NEVER: CheckpointWhen<JsonObject> = () => false;
 
-/** A declared document; `T` is its value, `K` whether it is keyed, `P` whether it is persisted. */
-export class StateDefinition<T extends JsonObject, K extends boolean, P extends boolean = false> {
+/** A declared document; `T` is its value, `K` what it is keyed by, `P` whether it is persisted. */
+export class StateDefinition<T extends JsonObject, K extends KeyedBy, P extends boolean = false> {
 	readonly name: string;
 	readonly schema: Schema;
 	readonly version: number;
+	/** Whether it is keyed: by string keys or by addresses. */
 	readonly keyed: boolean;
+	/** The host kind whose addresses key it (a declared `hostKind`); `undefined` for string keys and singletons. */
+	readonly host: KindShape | undefined;
 	readonly persist: boolean;
 	/**
 	 * `hash64` of the schema's normal form (descriptions and titles ignored), computed once: the same version with
 	 * another fingerprint is a schema changed without a version bump.
 	 */
 	readonly fingerprint: string;
-	/** Type only: whether the definition is keyed. */
+	/** Type only: what the definition is keyed by. */
 	declare readonly "~keyed"?: K;
 	/** Type only: whether the definition is persisted. */
 	declare readonly "~persist"?: P;
@@ -115,7 +126,7 @@ export class StateDefinition<T extends JsonObject, K extends boolean, P extends 
 		version: number,
 		initial: () => T,
 		migrate: ((old: JsonObject, from: number) => T) | undefined,
-		keyed: boolean,
+		keyed: KeyedBy,
 		persist: boolean,
 		checkpointWhen: CheckpointWhen<T> | undefined,
 	) {
@@ -124,7 +135,8 @@ export class StateDefinition<T extends JsonObject, K extends boolean, P extends 
 		this.version = version;
 		this.#initial = initial;
 		this.#migrate = migrate;
-		this.keyed = keyed;
+		this.keyed = keyed !== false;
+		this.host = typeof keyed === "boolean" ? undefined : keyed;
 		this.persist = persist;
 		this.#checkpointWhen = checkpointWhen ?? NEVER;
 		this.fingerprint = fingerprintOf(snapshotSchema(schema, name).normal);

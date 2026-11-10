@@ -8,7 +8,7 @@ import { ChordError } from "../data/index.ts";
 import type { Batch } from "../state/internal.ts";
 import type { ChordStore } from "../store/store.ts";
 import { chordMetrics, untraced } from "../telemetry.ts";
-import type { CommitPersistence, JsonObject, StateDefinition } from "./definition.ts";
+import type { CommitPersistence, JsonObject, KeyedBy, StateDefinition } from "./definition.ts";
 import { SealToken } from "./fence.ts";
 import { type HandleOf, type KeyDeclarer, Keyed, Singleton } from "./handles.ts";
 import { KeyedSlot } from "./keyed-slot.ts";
@@ -90,14 +90,14 @@ export class Documents {
 	 * made by the first declaration of its name, checked against the values for later ones (`SlotDefinition.check`).
 	 * "Declared twice" is the attempt's check.
 	 */
-	declare<D extends StateDefinition<JsonObject, boolean, boolean>>(
+	declare<D extends StateDefinition<JsonObject, KeyedBy, boolean>>(
 		definition: D,
 		token: SealToken,
 		declarer: KeyDeclarer,
 	): HandleOf<D> {
 		const slot = this.#slots.get(definition.name);
 		if (slot !== undefined) slot.definition.check(definition);
-		const persistence = slot === undefined && definition.persist ? this.#persistence(definition.name) : undefined;
+		const persistence = slot === undefined && definition.persist ? this.#persistence(definition) : undefined;
 		// The definition's `keyed` decides the slot's class and the handle's; its documents are the definition's `T`.
 		if (definition.keyed) {
 			const keyed = slot ?? this.#add(new KeyedSlot(this, definition, persistence));
@@ -259,6 +259,17 @@ export class Documents {
 		release();
 	}
 
+	/** The persisted slots keyed by addresses of host kind `kind`: the documents of this object belonging to such hosts. */
+	hostSlots(kind: string): KeyedSlot[] {
+		const slots: KeyedSlot[] = [];
+		for (const slot of this.#slots.values()) {
+			if (slot instanceof KeyedSlot && slot.persisted !== undefined && slot.definition.current.host?.kind === kind) {
+				slots.push(slot);
+			}
+		}
+		return slots;
+	}
+
 	/** Drops every document and pin; watches end `ended`, and every later use throws `released`. */
 	end(): void {
 		this.#state = "ended";
@@ -285,9 +296,9 @@ export class Documents {
 		return slot;
 	}
 
-	/** The store side of persisted documents named `name`; the attempt checked the store first (P3). */
-	#persistence(name: string): Persistence {
+	/** The store side of persisted `definition`'s documents; the attempt checked the store first (P3). */
+	#persistence(definition: AnyDefinition): Persistence {
 		const { store, owner } = this.#owner.store!;
-		return new Persistence(store, owner, "chord", name);
+		return new Persistence(store, owner, "chord", definition.name, definition.host);
 	}
 }

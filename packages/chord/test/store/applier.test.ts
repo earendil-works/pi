@@ -70,6 +70,36 @@ describe("applied writes", () => {
 			"a json(...) column has a version and a fingerprint",
 		],
 		[
+			"two host columns",
+			[
+				{
+					...table,
+					columns: { id: { type: "str" }, a: { type: "str", host: "session" }, b: { type: "str", host: "user" } },
+				} as StoreWrite,
+			],
+			"more than one host column",
+		],
+		[
+			"a host column that is opt",
+			[
+				{
+					...table,
+					columns: { id: { type: "str" }, a: { type: "str", host: "session", optional: true } },
+				} as StoreWrite,
+			],
+			"a host column is a non-opt str column without a default",
+		],
+		[
+			"a host column of an int type",
+			[{ ...table, columns: { id: { type: "str" }, a: { type: "int", host: "session" } } } as StoreWrite],
+			"a host column is a non-opt str column without a default",
+		],
+		[
+			"a host kind that is no name",
+			[{ ...table, columns: { id: { type: "str" }, a: { type: "str", host: "Session" } } } as StoreWrite],
+			"expected lowercase",
+		],
+		[
 			"a default of another type",
 			[{ ...table, columns: { id: { type: "str" }, n: { type: "int", default: "x" } } } as StoreWrite],
 			"is not a int value",

@@ -591,6 +591,12 @@ host.serve(Notes, ({ session }, principal, self) =>
   counted pin: the key stays loaded while the consumer lives) or `ref.notes.watch(key, ctx)`/`get(key, ctx)` anywhere;
   an absent key reads `initial()`, a retirement arrives as the `retired` flag (a derive over it carries the flag on).
   Across links, a view per entity (`NoteView { session, id }`) is held as an ordinary remote object.
+  **Host-keyed members** (decision "Documents and table rows can belong to a host", 2026-11-09; spec
+  `host-keyed/spec.md` §1): `keyed(schema, Session)` keys the member by addresses of a host kind; its implementation is
+  a handle of a definition keyed by that kind (`keyed: Session`; another key kind fails the activation), the
+  reference's member takes addresses (`ref.meta.at(Session({ id }))`, checked and encoded to the canonical key), and
+  the kind's name joins the member's normal form (`{ keyed, key }`; string-keyed members keep their fingerprints). A
+  changed key kind is a change `accepts` can only refuse (a value mapping cannot map keys).
 - **Methods:** `method()` (no arguments, no result), `method(args)`, `method(args, result)`, `method(undefined,
   result)`. A method without arguments omits them in the API (`ref.bump(ctx)`, implemented as `bump: async (ctx) =>
   …`); `null` is their internal and wire form (owner, 2026-10-22).
@@ -860,7 +866,8 @@ location are dropped.
   version), keeping no node of it. After a `failed` call, the next good value arrives as `[["r", value]]` even when
   unchanged; a watch opened while failed starts at the last value and gets the failure once. No source, mapping,
   document handle or pin of an instance outlives it through a reference: a detached reference keeps only plain last
-  values and its failure; releasing it drops them and its bindings; stopping a keyed watch drops its pin. Derives over a failed reference member compute on its last value (a contribution built on it stays); only the
+  values and its failure; releasing it drops them and its bindings; stopping a keyed watch drops its pin. A host-keyed member of a
+  reference (§5) takes addresses of its kind, checked and turned into canonical keys before its reads and pins. Derives over a failed reference member compute on its last value (a contribution built on it stays); only the
   member's own watches get the `failed` call, and `ref.state` shows the failure (owner, 2026-10-29). A re-exposed member is
   the re-exposing object's reference member, followed the same way. Over a link the same rule: the replica keeps its
   last values readable while its hold is failed. Nothing outlives its object instance and nothing is handed between
@@ -1020,6 +1027,18 @@ host.serve(DraftStore, (_, self) => {               // local, empty params: may 
   nothing); `for await (const key of handle.keys(ctx))` pages keys (both take a context, owner, 2026-10-26) (indexed per owner and definition, also in memory). No
   live key list: a collection shown live is a singleton (an object holding a list or map); large collections are
   methods returning pages.
+- **Host-keyed documents** (decision "Documents and table rows can belong to a host", 2026-11-09; spec
+  `host-keyed/spec.md`): `keyed: Session` keys documents by addresses of a host kind: `KeyedHandle<T, Address<K>>`,
+  `tx.draft(meta, Session({ id }))`; `keys()` yields addresses. Only addresses of the kind are taken (a string, the
+  empty one included, is `invalid/args`). **The canonical key** is an address's key under the `str()` text rules (a
+  lone surrogate replaced, NUL refused); for an address a plugin hands in (a key, a cell, a member key) it is computed
+  from the params, never taken from its `.key`, while the host data calls take `address.key`. It is the document's
+  key, the record's `host`, a `host(...)` cell and a host data selection alike. **The discriminator:** a persisted host-keyed document's record has `host = key`, every other record
+  `host` NULL; a find or load whose record does not fit the definition's keys fails the object `broken` (no implicit
+  conversion; converting is an explicit store migration). Pins (`at(address)`), watches and retirements work by the
+  canonical key as for string keys; migration on access is unchanged. **Store maintenance** (a host data import or
+  delete, §10) is the one change of an object's documents outside its transactions: it holds the object's line,
+  reads what the object holds of the address inside its commit step and adopts it in one batch (§10).
 - **Values are immutable by convention** (Chord Delta's rule, as in Durable): `handle.value` and published values
   are shared, never mutated by their readers, and never copied or frozen; a draft belongs only to its transaction.
 
@@ -1109,9 +1128,11 @@ host.serve(DraftStore, (_, self) => {               // local, empty params: may 
 
 ### Lifetime, persistence
 
-- **No tags (owner, 2026-10-21):** deleting a session deletes its store and directory; instance data on the server that
-  refers to a session is a table with a `session` column, cleaned up by its owner (`deleteWhere`, reconciling from the
-  catalog).
+- **No tags (owner, 2026-10-21):** deleting a session deletes its store and directory. Instance data on the server
+  that refers to a session and must travel with it (export, import, delete) is host-keyed (decision "Documents and
+  table rows can belong to a host", 2026-11-09): documents keyed by `Session` or rows with a `host(Session)` column;
+  the store finds them by address (§10). Data that only refers to a session is cleaned up by its owner
+  (`deleteWhere`, reconciling from the catalog).
 - **In-memory documents are instance state (P2, owner, 2026-10-21):** attached to the live object, with no storage, no
   address, no seq and never in the outbox; their commit is prepare and adopt (inside the store's commit step when the
   transaction also writes persisted data).
@@ -1272,6 +1293,38 @@ host.serve(DraftStore, (_, self) => {               // local, empty params: may 
   of range (`CHECK`) fails only that transaction (`invalid/args`). Durable's Session fails on any commit error
   (`GuardedStorage`), as today.
 
+### Data belonging to a host (decision "Documents and table rows can belong to a host", 2026-11-09)
+
+Spec `host-keyed/spec.md` §2 to §5.
+
+- **Schema 3:** `chord_documents.host` (the canonical address key of a host-keyed document's host, NULL otherwise) with
+  a partial index. Archives stay `format: 1`; a record carries `host`, a column `host`, a host data archive's manifest
+  `host`.
+- **`host(Kind)` columns:** a non-`opt` `str` column holding canonical address keys (`{ type: "str", host: "<kind>" }`
+  in the catalog and the fingerprint), at most one per table, read as addresses. The definition adds the index `host`
+  over it unless the key starts with it; `evolveTable` cannot add a host column (no default). Queries compare it with `eq`, `ne`, `inArray` only.
+- **Filtered archives:** `exportHostData(store, address)` writes the address's records and rows in the archive
+  format (the tables with a host column of its kind, only its rows; its records), holding the commit queue.
+- **Import** (the host's `importHostData(parts, ctx, { address?, existing? })`, one commit): the archive is
+  checked as untrusted (a manifest `host`, every row and record of it, Chord records only; its table metadata is not
+  compared: a fingerprint is no security boundary);
+  existing data of the target is refused or, with `existing: "replace"`, retired and deleted in the same commit; a
+  table not recorded here is created from the archive; every row must hold the target in the recorded table's own host
+  column; an older or `migrating` archive table's rows migrate in
+  memory through the owner's `evolveTable` history (edits, `rows` and `update` steps, `$v` and `json(...)` cell
+  versions exact; the owner activated for it); a newer one is refused. Records get fresh ids and the commit's seq,
+  their values as bases at their versions (they migrate on access); rows never replace another address's row. A copy
+  under another address of the kind rewrites host cells and keys only. The commit's writes are ordinary outbox
+  writes (`document.create`, `put`, `document.retire`, `deleteWhere`).
+- **Delete** (`deleteHostData(address, ctx)`): one commit retiring the address's records and deleting its rows.
+- **Live claims:** import and delete are the host's only (the store-level functions are internal). A host data gate
+  serializes them and keeps activations' load phases out while one is exclusive; the operation holds the lines of
+  every live owner (of host-keyed documents of the kind, of tables with a host column of it, of the archive's and
+  stored records), reads what they hold of the address inside its commit step (documents through the step, live
+  queries re-run) and adopts it all in one `host.batch.commit` after `COMMIT`, as an ordinary commit (W1). The commit
+  is admitted only while the caller's context is live; an object that cannot read an imported
+  document fails alone.
+
 ---
 
 ## 11. Kinds of state
@@ -1299,7 +1352,9 @@ commits are the exact invalidation: a commit not writing the table runs nothing)
 (params decide it); **a limit is required** (`invalid/args` at declaration; the store's query language keeps the limit
 an argument of the runner, as `page` has it). A run that fails (a row the code cannot read) is a failed member, as a
 throwing derive (one failure call, `query_failed` once per episode, `[["r", rows]]` at the next good run); the object
-stays live. It is no native: a restart's successor runs its live queries again at its activation (section 21). Cost: one query per
+stays live. It is no native: a restart's successor runs its live queries again at its activation (section 21). A host
+data import or delete (§10) is the one other writer of an object's tables: it re-runs the object's live queries over
+tables with a host column of its kind inside its commit step and adopts them in its batch. Cost: one query per
 touching commit, bounded by the limit (100 rows: about 60 µs unwatched, 80 µs watched, `benchmarks.md`); **there may
 be dragons** for tables written hundreds of times a second. Incremental maintenance of the result (row-level changes
 kept in memory, a re-run only when a removal empties the window or a bulk write hides which rows changed) is left for
@@ -2022,6 +2077,11 @@ type ReloadReport = {
   them until its successor is live, which replaces them in one batch, or drops them when the successor fails or parks
   (F-c). **Routines** stop at the restart; their calls drain with the old attempt's; the successor's start when it
   goes live.
+- **Against a running host data operation** (decision "Documents and table rows can belong to a host"; spec
+  `host-keyed/spec.md` §5): a restarted object's successor (as every activation) runs its load phase (hydration,
+  persisted loads, table preparation, live query loads) through the host data gate: while an import or delete is
+  exclusive it waits, so it loads what the operation committed; an operation waits for the load phases under way. An
+  owner a running import activated for its table history passes the gate before the import becomes exclusive.
 - **Reload cycles** (rule 6): a wait of old work on an object whose activation waits, through its parked
   dependencies or the gates its opener waits at, on the old attempt that very work runs on fails at once with
   `unavailable/reload_cycle`, naming the chain (`app.f(fresh) → app.p`: old work creating an object whose new code
@@ -2520,6 +2580,20 @@ entry. Opinionated and small: an app is its API, its built-in plugins and a star
   by one object, under the worker's directory. Export and import the data a host created (`exportData`, `importData`): the store's archive plus its
   files; export stops nothing (a running worker packs its own store; without one the server reads it under the
   worker's lock), import refuses an address that has data (decision "App kit naming and export").
+- **Data belonging to the address** (decision "Documents and table rows can belong to a host"; spec
+  `host-keyed/spec.md` §6): the kit's archive format 2 adds `server.archive`, the server's records and rows belonging
+  to the address (`exportHostData`, JSONL). The server's part and the worker's part are taken at two points in time
+  (no transaction spans two stores). `importData(archive, address, ctx, { existing })` refuses an address with data
+  (a directory, or server records or rows), replaces it with `existing: "replace"`, and copies under another address
+  of the kind (host cells and keys rewritten); `deleteData(address, ctx)` (refused while the worker runs) removes the
+  directory and the server's data. **Ordering, no durability promise** (owner, after the delta review: no journal):
+  under the worker's lock an import unpacks whole into staging (nothing changed yet), moves an existing directory
+  aside (replace), renames staging into place, and commits on the server last, the one commit; a failure before it, or
+  a definite refusal, undoes the renames and rejects; an unknown outcome (`storage_failed`) undoes nothing and is
+  reported in the rejection; the aside directory goes only after the commit. A delete commits on the server first,
+  then removes the directory. Crash windows: an import between placing the directory and the server's commit (fix:
+  import again with `existing: "replace"`); a delete after the server's commit (an orphan directory nobody refers to,
+  removed by a repeated `deleteData`); leftover staging directories.
 - **Plugins:** the app's root (required) and the user's root in the data directory; installs from git or npm; one
   "apply changes" call builds and rolls out to the server, then every running worker, exposed by the app as it likes.
 - **Restart needed:** `plugins.state.base` compares base code with what runs by content (§21, the reload loop, with

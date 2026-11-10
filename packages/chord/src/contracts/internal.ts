@@ -20,7 +20,7 @@ export {
 export { editWith } from "./evolve.ts";
 export { fingerprintOf, hash64, NORMAL_FORM_VERSION } from "./fingerprint.ts";
 export type { Increment } from "./history.ts";
-export { kindParams } from "./host-kind.ts";
+export { addressOfKey, keyOfAddress, kindOfKey, kindParams } from "./host-kind.ts";
 export { checkName } from "./names.ts";
 export type { Params, ParamsData } from "./params.ts";
 export { Method } from "./schema.ts";

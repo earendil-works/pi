@@ -77,6 +77,29 @@ describe("opening", () => {
 		await reopened.close(context);
 	});
 
+	it("migrates a store of schema 2 to 3: its records kept, a host column and its index added", async () => {
+		directory = await mkdtemp(join(tmpdir(), "chord-store-"));
+		const path = join(directory, "store.sqlite");
+		const store = (await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context)) as ChordStore;
+		await created(store);
+		await store.close(context);
+		// The store as schema 2 left it.
+		const db = await openNodeSqliteDatabase(path);
+		await db.exec("DROP INDEX chord_documents_host");
+		await db.exec("ALTER TABLE chord_documents DROP COLUMN host");
+		await db.exec("UPDATE chord_store_schema SET version = 2");
+		await db.close();
+		const migrated = (await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context)) as ChordStore;
+		const record = await migrated.read((executor) => findDocument(executor, ADDRESS), context);
+		expect(record).toMatchObject({ id: 2, owner: "app.store" });
+		expect(record?.host).toBeUndefined();
+		const { fence } = recording();
+		await migrated.commit([createDocument({ ...ADDRESS, key: "s", host: "session|S1" }, BASE, "{}")], fence, context);
+		const hosted = await migrated.read((executor) => findDocument(executor, { ...ADDRESS, key: "s" }), context);
+		expect(hosted?.host).toBe("session|S1");
+		await migrated.close(context);
+	});
+
 	it("refuses a database that is not UTF-8, closing the backend (rule 12)", async () => {
 		const db = await openNodeSqliteDatabase(":memory:");
 		await db.exec('PRAGMA encoding = "UTF-16le"');

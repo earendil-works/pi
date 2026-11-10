@@ -286,3 +286,27 @@ describe("keyed members (slice 6a §12)", () => {
 		).toThrow("app.notes.editor.state.notes: keyed members are only in local contracts");
 	});
 });
+
+describe("host-keyed keyed members", () => {
+	const Session = hostKind("session", { id: str() });
+
+	it("carry their host kind in the data and the fingerprint; string-keyed ones carry none", () => {
+		const byAddress = local("store", {
+			version: 1,
+			params: {},
+			members: { meta: keyed(obj({ n: int() }), Session) },
+		});
+		const byString = local("store", { version: 1, params: {}, members: { meta: keyed(obj({ n: int() })) } });
+		const member = (contract: typeof byAddress | typeof byString) =>
+			currentVariants(contract).get(LOCAL)!.keyed.get("meta")!;
+		expect(member(byAddress).key).toBe(Session);
+		expect(member(byString).key).toBeUndefined();
+		expect(byAddress.fingerprint).not.toBe(byString.fingerprint);
+	});
+
+	it("refuse a kind that was not declared", () => {
+		expect(() =>
+			local("store", { version: 1, params: {}, members: { meta: keyed(obj({}), { kind: "x" } as never) } }),
+		).toThrow("x: not a declared host kind");
+	});
+});

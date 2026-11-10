@@ -1,14 +1,15 @@
 // Tests of `store.export(ctx)` (slice 6a §13, rule 26): the parts in archive order, lossless; the commit queue held
 // from the first `next()` until the export ends, is closed or aborts (also while the consumer is suspended); GC of
-// closed and aborted iterators and their abort listeners.
+// closed and aborted iterators and their abort listeners; a host's selection (only its tables, rows and records).
 
 import { getEventListeners } from "node:events";
 import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context, withCancel } from "../../src/context/index.ts";
 import { int, str } from "../../src/contracts/index.ts";
-import { ARCHIVE_FORMAT } from "../../src/store/archive.ts";
-import { insertDocument, insertRevision } from "../../src/store/engine.ts";
-import { EXPORT_PAGE } from "../../src/store/export.ts";
+import { applyWrite } from "../../src/store/applier.ts";
+import { ARCHIVE_FORMAT, type ArchivePart } from "../../src/store/archive.ts";
+import { createDocument, insertDocument, insertRevision } from "../../src/store/engine.ts";
+import { EXPORT_PAGE, StoreExport } from "../../src/store/export.ts";
 import { STORE_SCHEMA } from "../../src/store/schema.ts";
 import type { StagedWrite } from "../../src/store/step.ts";
 import type { ChordStore } from "../../src/store/store.ts";
@@ -279,5 +280,52 @@ describe("the commit queue", () => {
 		await flushed();
 		await store.close(context);
 		expect(await waiting).toMatchObject({ code: "released" });
+	});
+});
+
+describe("a host's selection", () => {
+	it("holds the tables with a host column of the key's kind and their rows of the key, and the records of the key", async () => {
+		store = await memoryStore();
+		const table = {
+			kind: "table",
+			table: "app.s:pins",
+			version: 1,
+			state: "ready",
+			columns: { id: { type: "str" }, session: { type: "str", host: "session" } },
+			key: ["id"],
+			fingerprint: "f",
+		} as const;
+		const other = {
+			...table,
+			table: "app.s:users",
+			columns: { id: { type: "str" }, user: { type: "str", host: "user" } },
+		} as const;
+		const put = (id: string, session: string) =>
+			({ kind: "put", table: "app.s:pins", row: { id, session }, version: 1, columns: {} }) as const;
+		const write: StagedWrite = {
+			order: "write",
+			apply: async (step) => {
+				const writes = [table, other, put("a", "session|S1"), put("b", "session|S2")] as const;
+				for (const each of writes) await applyWrite(step, each, "test");
+				const base = { version: 1, fingerprint: "f", value: {} };
+				const address = { owner: "app.s", namespace: "chord", kind: "meta" };
+				await createDocument({ ...address, key: "session|S1", host: "session|S1" }, base, "{}").apply(step);
+				await createDocument({ ...address, key: "session|S2", host: "session|S2" }, base, "{}").apply(step);
+				return writes;
+			},
+		};
+		await store.commit([write], OPEN, context);
+		const parts: ArchivePart[] = [];
+		for await (const part of new StoreExport(store, context, { kind: "host", key: "session|S1" })) parts.push(part);
+		expect(parts.map((part) => (part.kind === "put" ? `put ${part.row.id}` : part.kind))).toEqual([
+			"manifest",
+			"table",
+			"put a",
+			"document.create",
+			"document.revision",
+			"end",
+		]);
+		expect(parts[0]).toMatchObject({ host: "session|S1" });
+		expect(parts[3]).toMatchObject({ record: { key: "session|S1", host: "session|S1" } });
 	});
 });

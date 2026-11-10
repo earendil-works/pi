@@ -3,6 +3,7 @@
 // its key, its indexes, its fingerprint and the compiled row codec its writes and reads use. A version `evolveTable`
 // appends links to the one before it and to the migration between them.
 
+import type { Address, KindShape } from "../contracts/index.ts";
 import { checkName, hash64 } from "../contracts/internal.ts";
 import {
 	type Column,
@@ -10,9 +11,11 @@ import {
 	type Columns,
 	columnRecord,
 	describeColumns,
+	type HostColumnOf,
 	type OrderColumn,
 } from "./columns.ts";
 import { type ColumnRef, columnRefs } from "./expression.ts";
+import type { HostColumnSchema } from "./host-column.ts";
 import { RowCodec } from "./rows.ts";
 import type { Migration } from "./table-history.ts";
 
@@ -29,7 +32,13 @@ export type TableOptions<C extends Columns, K extends readonly OrderColumn<C>[],
 
 /** The key of a row of a table with columns `C` and key `K`: an object with exactly the key columns. */
 export type KeyOf<C extends Columns, K extends readonly string[]> = {
-	readonly [P in K[number]]: P extends keyof C ? (C[P] extends { readonly type: "integer" } ? number : string) : never;
+	readonly [P in K[number]]: P extends keyof C
+		? C[P] extends HostColumnSchema<infer H extends KindShape>
+			? Address<H>
+			: C[P] extends { readonly type: "integer" }
+				? number
+				: string
+		: never;
 };
 
 /**
@@ -48,6 +57,9 @@ export const TABLE_FORM_VERSION = 1;
 
 /** The index name rule. */
 export const INDEX_NAME = /^[a-z0-9_]+$/;
+
+/** The name of the index a table's `host(...)` column gets (unless the key starts with it). */
+export const HOST_INDEX = "host";
 
 /** How a version came about: the version before it and the migration from there, for one `evolveTable`. */
 export type Evolution = { readonly previous: TableDefinition; readonly migration: Migration };
@@ -77,6 +89,8 @@ export class TableDefinition<
 	readonly rows: RowCodec;
 	/** One reference per column, for the `(t) => …` callbacks of queries and writes. */
 	readonly refs: { readonly [column: string]: ColumnRef };
+	/** Its `host(...)` column, if it has one: its rows belong to hosts of that column's kind. */
+	readonly hostColumn: HostColumnOf | undefined;
 	/** The version before this one and the migration from it; `undefined` for a base. */
 	readonly evolution: Evolution | undefined;
 	/** Type only: the columns and key. */
@@ -96,12 +110,14 @@ export class TableDefinition<
 		this.byName = new Map(this.columns.map((column) => [column.name, column]));
 		this.key = orderColumns(this.byName, key, `${name}: the key`);
 		if (this.key.length === 0) throw new Error(`${name}: the key has no column`);
-		this.indexes = new Map(
+		const declared = new Map(
 			Object.entries(indexes).map(([index, columns]) => {
 				if (!INDEX_NAME.test(index)) throw new Error(`${name}: index "${index}": expected [a-z0-9_]+`);
 				return [index, orderColumns(this.byName, columns, `${name}: index "${index}"`)] as const;
 			}),
 		);
+		this.hostColumn = hostColumnOf(this.columns, this.key, declared, name);
+		this.indexes = declared;
 		this.record = Object.fromEntries(this.columns.map((column) => [column.name, columnRecord(column)]));
 		this.fingerprint = tableFingerprint(this.record, this.key, this.indexes);
 		this.rows = new RowCodec(this.columns, this.key, name);
@@ -115,6 +131,28 @@ export class TableDefinition<
 		if (column === undefined) throw new Error(`${this.name}: ${what}: no column "${name}"`);
 		return column;
 	}
+}
+
+/**
+ * The table's `host(...)` column (at most one, declaration policy), its index `host` added to `indexes` unless the key
+ * starts with it; a declared index of that name must be exactly that index (an `evolveTable` carries it over so).
+ */
+function hostColumnOf(
+	columns: readonly Column[],
+	key: readonly string[],
+	indexes: Map<string, readonly string[]>,
+	table: string,
+): HostColumnOf | undefined {
+	const hosts = columns.filter((column): column is HostColumnOf => column.type === "str" && column.host !== undefined);
+	if (hosts.length > 1) throw new Error(`${table}: more than one host(...) column`);
+	const [column] = hosts;
+	const declared = indexes.get(HOST_INDEX);
+	const index = column === undefined || key[0] === column.name ? undefined : [column.name];
+	if (declared !== undefined && (index === undefined || declared.length !== 1 || declared[0] !== column!.name)) {
+		throw new Error(`${table}: index "${HOST_INDEX}" is the host(...) column's own`);
+	}
+	if (index !== undefined) indexes.set(HOST_INDEX, index);
+	return column;
 }
 
 /**

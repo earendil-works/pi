@@ -1,16 +1,18 @@
 // `store.export(ctx)` (slice 6a §13, rule 26): the store's state after its `lastSeq` as archive parts, read page by
-// page with plain reads while the export holds the commit queue (no commit can interleave, no long read transaction).
+// page with plain reads while the export holds the commit queue (no commit can interleave, no long read transaction);
+// or, for one host address (`exportHostData`), only the records and rows belonging to it, in the same format.
 // The queue is taken at the first `next()` and given back when the iteration ends, throws, is closed or `ctx` aborts;
 // an abort while the consumer is suspended gives it back at once and drops the pages and records the export held, and
 // an abort while it waits for the queue ends the wait. Closing the store ends it too (`released`).
 
 import { awaitWithContext, type Context } from "../context/index.ts";
+import { kindOfKey } from "../contracts/internal.ts";
 import { ChordError } from "../data/index.ts";
 import type { JsonValue } from "../json.ts";
 import type { SqliteValue } from "../sqlite/index.ts";
 import { ARCHIVE_FORMAT, type ArchivePart } from "./archive.ts";
 import type { TableRecord } from "./catalog.ts";
-import { listRecords, listRevisions } from "./engine.ts";
+import { type DocumentRecord, listHostRecords, listRecords, listRevisions } from "./engine.ts";
 import { ROW_VERSION, type Scalar, versionColumn } from "./rows.ts";
 import { STORE_SCHEMA } from "./schema.ts";
 import { quote, recordedPut } from "./sql.ts";
@@ -20,8 +22,16 @@ import type { ChordStore } from "./store.ts";
 export const EXPORT_PAGE = 100;
 
 /**
- * An export of `store` under `context`: an async iterator of its parts. One pass; after an abort `next()` rejects
- * `aborted`, after the store closed `released`.
+ * What an export holds: the whole store, or the data belonging to the host with address key `key` (the tables with a
+ * `host(...)` column of its kind, only its rows; the records whose `host` is the key).
+ */
+export type ExportSelection = { readonly kind: "all" } | { readonly kind: "host"; readonly key: string };
+
+const ALL: ExportSelection = { kind: "all" };
+
+/**
+ * An export of `store` (of `selection`, the whole store by default) under `context`: an async iterator of its parts.
+ * One pass; after an abort `next()` rejects `aborted`, after the store closed `released`.
  */
 export class StoreExport implements AsyncIterableIterator<ArchivePart> {
 	readonly #context: Context;
@@ -32,10 +42,10 @@ export class StoreExport implements AsyncIterableIterator<ArchivePart> {
 	#release: (() => void) | undefined;
 	readonly #abort = (): void => this.#end("aborted");
 
-	constructor(store: ChordStore, context: Context) {
+	constructor(store: ChordStore, context: Context, selection: ExportSelection = ALL) {
 		this.#context = context;
 		const hold = (release: () => void): void => this.#hold(release);
-		this.#parts = parts(store, context, hold, () => this.#end("closed"));
+		this.#parts = parts(store, selection, context, hold, () => this.#end("closed"));
 	}
 
 	[Symbol.asyncIterator](): this {
@@ -103,11 +113,12 @@ function aborted(context: Context): ChordError {
 }
 
 /**
- * The parts in archive order, after taking the queue (handed to `hold`; the store's close calls `end`); the queue is
- * given back when they end.
+ * The parts of `selection` in archive order, after taking the queue (handed to `hold`; the store's close calls `end`);
+ * the queue is given back when they end.
  */
 async function* parts(
 	store: ChordStore,
+	selection: ExportSelection,
 	context: Context,
 	hold: (release: () => void) => void,
 	end: () => void,
@@ -117,14 +128,17 @@ async function* parts(
 	try {
 		if (context.abortSignal?.aborted) throw aborted(context);
 		const { lastSeq, nextId } = store;
-		yield { kind: "manifest", format: ARCHIVE_FORMAT, schema: STORE_SCHEMA, lastSeq, nextId };
+		const host = selection.kind === "host" ? { host: selection.key } : {};
+		yield { kind: "manifest", format: ARCHIVE_FORMAT, schema: STORE_SCHEMA, lastSeq, nextId, ...host };
 		let writes = 0;
-		const tables = [...store.tables.values()].sort((a, b) => (a.table < b.table ? -1 : 1));
+		const tables = [...store.tables.values()]
+			.filter((record) => selection.kind === "all" || hostColumn(record, kindOfKey(selection.key)) !== undefined)
+			.sort((a, b) => (a.table < b.table ? -1 : 1));
 		for (const record of tables) {
 			const { table, version, state, columns, key, fingerprint } = record;
 			yield { kind: "table", table, version, state, columns, key, fingerprint };
 			writes++;
-			for await (const put of puts(store, record, context)) {
+			for await (const put of puts(store, record, selection, context)) {
 				yield put;
 				writes++;
 			}
@@ -133,7 +147,7 @@ async function* parts(
 				writes++;
 			}
 		}
-		for await (const part of documents(store, context)) {
+		for await (const part of documents(store, selection, context)) {
 			yield part;
 			writes++;
 		}
@@ -143,10 +157,19 @@ async function* parts(
 	}
 }
 
-/** The `put`s of a recorded table in key order, a page per read: the stored values and their versions. */
+/** The name of a recorded table's `host(...)` column of host kind `kind`, if it has one. */
+export function hostColumn(record: Pick<TableRecord, "columns">, kind: string): string | undefined {
+	return Object.entries(record.columns).find(([, column]) => column.host === kind)?.[0];
+}
+
+/**
+ * The `put`s of a recorded table in key order (of the selected host's rows only), a page per read: the stored values
+ * and their versions.
+ */
 async function* puts(
 	store: ChordStore,
 	record: TableRecord,
+	selection: ExportSelection,
 	context: Context,
 ): AsyncGenerator<Extract<ArchivePart, { readonly kind: "put" }>> {
 	const { table, columns, key } = record;
@@ -154,13 +177,18 @@ async function* puts(
 		.physical.map((name) => quote(name))
 		.join(", ");
 	const order = key.map(quote).join(", ");
+	// The selected tables have a host column of the key's kind.
+	const host = selection.kind === "host" ? [`${quote(hostColumn(record, kindOfKey(selection.key))!)} = ?`] : [];
+	const hostParams = selection.kind === "host" ? [selection.key] : [];
 	let after: SqliteValue[] | undefined;
 	do {
 		const page = after;
-		const from = page === undefined ? "" : ` WHERE (${order}) > (${page.map(() => "?").join(", ")})`;
+		const conditions = page === undefined ? host : [...host, `(${order}) > (${page.map(() => "?").join(", ")})`];
+		const from = conditions.length === 0 ? "" : ` WHERE ${conditions.join(" AND ")}`;
 		const sql = `SELECT ${select} FROM ${quote(table)}${from} ORDER BY ${order} LIMIT ?`;
+		const params = [...hostParams, ...(page ?? [])];
 		const rows = await store.read(
-			(executor) => executor.all<{ readonly [column: string]: SqliteValue }>(sql, ...(page ?? []), EXPORT_PAGE),
+			(executor) => executor.all<{ readonly [column: string]: SqliteValue }>(sql, ...params, EXPORT_PAGE),
 			context,
 		);
 		for (const stored of rows) yield putOf(record, stored);
@@ -189,16 +217,24 @@ function putOf(
 }
 
 /**
- * Every stored record by id, live and retired, as its creation without a base, then its kept revisions in seq order:
- * a `none` or `latest` record's current base and its deltas, a retired `latest` one none, a `rewindable` one all.
+ * Every stored record by id, live and retired (of the selected host: its live records), as its creation without a
+ * base, then its kept revisions in seq order: a `none` or `latest` record's current base and its deltas, a retired
+ * `latest` one none, a `rewindable` one all.
  */
 async function* documents(
 	store: ChordStore,
+	selection: ExportSelection,
 	context: Context,
 ): AsyncGenerator<Extract<ArchivePart, { readonly kind: "document.create" | "document.revision" }>> {
 	let after = 0;
 	for (;;) {
-		const records = await store.read((executor) => listRecords(executor, after, EXPORT_PAGE), context);
+		const records = await store.read(
+			(executor): Promise<DocumentRecord[]> =>
+				selection.kind === "all"
+					? listRecords(executor, after, EXPORT_PAGE)
+					: listHostRecords(executor, selection.key, after, EXPORT_PAGE),
+			context,
+		);
 		for (const record of records) {
 			yield { kind: "document.create", record };
 			yield* revisions(store, record.id, context);

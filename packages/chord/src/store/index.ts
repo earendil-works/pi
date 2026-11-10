@@ -1,5 +1,5 @@
 // The store for apps: opening it over a backend, tables with their queries, writes and migrations, export and
-// import of archives (with their JSONL encoding), the outbox, text order.
+// import of archives (with their JSONL encoding), a host's data (export, import, delete), the outbox, text order.
 
 export type { ArchiveManifest, ArchivePart } from "./archive.ts";
 export { type Backend, sqliteBackend } from "./backend.ts";
@@ -30,6 +30,14 @@ export {
 	sub,
 	when,
 } from "./expression.ts";
+export { type HostColumnSchema, host } from "./host-column.ts";
+export {
+	exportHostData,
+	type HostArchive,
+	type HostDataCounts,
+	type HostImportOptions,
+	readHostArchive,
+} from "./host-data.ts";
 export { importStore } from "./import.ts";
 export { type JsonColumnOptions, type JsonColumnSchema, json } from "./json-column.ts";
 export { decodeJsonl, encodeJsonl } from "./jsonl.ts";

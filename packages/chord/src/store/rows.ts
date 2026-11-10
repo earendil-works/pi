@@ -6,7 +6,7 @@ import type { Context } from "../context/index.ts";
 import { invalid } from "../data/internal.ts";
 import type { JsonValue } from "../json.ts";
 import type { SqliteValue } from "../sqlite/index.ts";
-import type { Column, ColumnType } from "./columns.ts";
+import type { Column, ColumnType, HostColumnOf } from "./columns.ts";
 import { storedText } from "./text.ts";
 
 /** A scalar cell as the store keeps it in rows, writes and operands: a well-formed string, a number or a boolean. */
@@ -64,6 +64,8 @@ export class RowCodec {
 	readonly #columns: readonly Column[];
 	readonly #key: readonly Column[];
 	readonly #json: readonly Extract<Column, { readonly type: "json" }>[];
+	/** The `host(...)` column, if the table has one: its cells are keys stored, addresses read. */
+	readonly #host: HostColumnOf | undefined;
 	readonly #names: ReadonlySet<string>;
 	readonly #keyNames: ReadonlySet<string>;
 	/** The positions of the key columns in `physical`. */
@@ -76,6 +78,7 @@ export class RowCodec {
 		this.#json = columns.filter(
 			(column): column is Extract<Column, { readonly type: "json" }> => column.type === "json",
 		);
+		this.#host = columns.find((column): column is HostColumnOf => column.type === "str" && column.host !== undefined);
 		this.#names = new Set(columns.map(({ name }) => name));
 		this.#keyNames = new Set(key);
 		this.#keyPositions = key.map((name) => columns.findIndex((column) => column.name === name));
@@ -141,12 +144,34 @@ export class RowCodec {
 			const value = stored[column.name];
 			if (value === null || value === undefined) continue;
 			if (column.type === "bool") row[column.name] = value === 1;
+			else if (column.type === "str" && column.host !== undefined)
+				row[column.name] = column.host.address(value as string);
 			else if (column.type === "json") {
 				const version = stored[versionColumn(column.name)] as number;
 				row[column.name] = column.json.read(value as string, version, `${this.#table}.${column.name}`, context);
 			} else row[column.name] = value;
 		}
 		return row;
+	}
+
+	/**
+	 * A row as reads return it with its `host(...)` cell as stored (the address's key), for the evaluator, which
+	 * compares stored values; the row itself without a host column.
+	 */
+	stored<R extends { readonly [column: string]: unknown }>(row: R): R {
+		const host = this.#host;
+		const cell = host === undefined ? undefined : row[host.name];
+		if (host === undefined || typeof cell !== "object" || cell === null) return row;
+		// A read row's host cell is an address (`decode`).
+		return { ...row, [host.name]: (cell as { readonly key: string }).key };
+	}
+
+	/** A row with its `host(...)` cell as stored (a key) turned into the address reads return; `stored`'s inverse. */
+	addressed<R extends { readonly [column: string]: unknown }>(row: R): R {
+		const host = this.#host;
+		const cell = host === undefined ? undefined : row[host.name];
+		if (host === undefined || typeof cell !== "string") return row;
+		return { ...row, [host.name]: host.host.address(cell) };
 	}
 
 	/** `value`'s own fields when it is a plain object with only fields of `names`; `invalid/args` otherwise. */
@@ -165,8 +190,15 @@ export class RowCodec {
 /** A checked cell: what is bound and what is recorded. */
 type Cell = { readonly param: SqliteValue; readonly stored: Scalar | JsonValue };
 
-/** Checks and encodes a value of `column`; a `json(...)` value is serialized, not walked (R9). */
+/**
+ * Checks and encodes a value of `column`; a `json(...)` value is serialized, not walked (R9); a `host(...)` one is an
+ * address of its kind, stored as its key.
+ */
 export function encodeCell(column: Column, value: unknown, what: string): Cell {
+	if (column.type === "str" && column.host !== undefined) {
+		const key = column.host.key(value, what);
+		return { param: key, stored: key };
+	}
 	if (column.type !== "json") {
 		const stored = checkScalar(column.type, value, what);
 		return { param: toSqlite(stored), stored };
@@ -184,9 +216,10 @@ export function encodeCell(column: Column, value: unknown, what: string): Cell {
 	return { param: text, stored: value as JsonValue };
 }
 
-/** Checks a scalar value of `column` and returns what is bound (booleans as 0 and 1). */
+/** Checks a scalar value of `column` and returns what is bound (booleans as 0 and 1; an address as its key). */
 function encodeScalar(column: Column, value: unknown, what: string): string | number {
 	if (column.type === "json") throw invalid("args", `${what}: a json(...) column has no scalar value`);
+	if (column.host !== undefined) return column.host.key(value, what);
 	return toSqlite(checkScalar(column.type, value, what));
 }
 

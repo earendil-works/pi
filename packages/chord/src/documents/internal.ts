@@ -4,7 +4,7 @@ export { AddressSource } from "./address-source.ts";
 export { Documents, type DocumentsOwner, type TransactionCancelled } from "./documents.ts";
 export { SealToken } from "./fence.ts";
 export { type KeyDeclarer, Keyed, Singleton } from "./handles.ts";
-export { type KeyedSlot, KeySource } from "./keyed-slot.ts";
+export { type ChangedDocument, type KeyedSlot, KeySource } from "./keyed-slot.ts";
 export {
 	type DocumentChange,
 	type Held,

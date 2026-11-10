@@ -22,6 +22,9 @@ import {
 
 export { Optional, opt, type Schema, type Static } from "@earendil-works/pi-schema";
 
+import type { HostKind, KindShape } from "./host-kind.ts";
+import type { Params } from "./params.ts";
+
 /** Bounds of a string length, a number or an array length. */
 export type Bounds = { readonly min?: number; readonly max?: number };
 
@@ -177,18 +180,31 @@ export class Method<A extends Schema = Schema, R extends Schema = Schema> {
 	}
 }
 
-/** A keyed state member's declaration (slice 6a §12): documents of `schema` by string key; only in `local` contracts. */
-export class KeyedMember<S extends Schema = Schema> {
+/**
+ * A keyed state member's declaration (slice 6a §12): documents of `schema` by string key, or by address of host kind
+ * `key` (decision "Documents and table rows can belong to a host"); only in `local` contracts.
+ */
+export class KeyedMember<S extends Schema = Schema, K extends KindShape | undefined = KindShape | undefined> {
 	readonly schema: S;
+	readonly key: K;
 
-	constructor(schema: S) {
+	constructor(schema: S, key: K) {
 		this.schema = schema;
+		this.key = key;
 	}
 }
 
-/** Declares a keyed state member of a `local` contract: documents of `schema` by string key, each watchable. */
-export function keyed<S extends Schema>(schema: S): KeyedMember<S> {
-	return new KeyedMember(schema);
+/**
+ * Declares a keyed state member of a `local` contract: documents of `schema` by string key, or with `key` (a host kind)
+ * by address of that kind (a host-keyed document handle implements it), each watchable.
+ */
+export function keyed<S extends Schema>(schema: S): KeyedMember<S, undefined>;
+export function keyed<S extends Schema, N extends string, P extends Params>(
+	schema: S,
+	key: HostKind<N, P>,
+): KeyedMember<S, HostKind<N, P>>;
+export function keyed(schema: Schema, key?: KindShape): KeyedMember {
+	return new KeyedMember(schema, key);
 }
 
 /** Declares a method: `method()`, `method(args)`, `method(args, result)` or `method(undefined, result)`. */

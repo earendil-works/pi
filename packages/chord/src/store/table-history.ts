@@ -89,7 +89,8 @@ export function planTable(definition: TableDefinition, recorded: TableRecord | u
 }
 
 /** Every version of `definition`'s history, the base first. */
-function historyOf(definition: TableDefinition): TableDefinition[] {
+/** The versions of `definition`'s history, oldest (its base) first. */
+export function historyOf(definition: TableDefinition): TableDefinition[] {
 	const versions: TableDefinition[] = [];
 	for (let at: TableDefinition | undefined = definition; at !== undefined; at = at.evolution?.previous) {
 		versions.unshift(at);

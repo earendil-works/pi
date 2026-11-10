@@ -49,6 +49,13 @@ export class Step {
 		this.#catalog = catalog;
 	}
 
+	/** Every recorded table as this step leaves it so far. */
+	records(): TableRecord[] {
+		const records = new Map(this.#catalog);
+		for (const [name, record] of this.tables) records.set(name, record);
+		return [...records.values()];
+	}
+
 	/** The record of table `name` as this step leaves it so far. */
 	table(name: string): TableRecord | undefined {
 		return this.tables.get(name) ?? this.#catalog.get(name);

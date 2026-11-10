@@ -1,8 +1,8 @@
 // Tests of `startServer` (slice 13 §1, §4, §5): the layout and the start-data object, start and close, a server without
 // workers (and without `principal.worker`), an owner refused (not strict JSON, the server's principal), two worker
 // kinds, `applyChanges`, a required root failing, a worker entry that does not build, the base marks (a worker base's
-// inputs among them), and export and import per address (documents, tables and files round-trip; an existing address
-// refused).
+// inputs among them), and export, import and delete per address (documents, tables and files round-trip with the
+// server's records and rows belonging to the address; an existing address refused unless replaced).
 
 import { execFile, execFileSync } from "node:child_process";
 import { closeSync, constants, openSync, writeSync } from "node:fs";
@@ -13,7 +13,9 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context, withAbortSignal } from "../../../src/context/index.ts";
-import { hostKind, local, remote, str, unknown } from "../../../src/contracts/index.ts";
+import { arr, hostKind, local, method, obj, remote, str, unknown } from "../../../src/contracts/index.ts";
+import { ChordError } from "../../../src/data/index.ts";
+import { invalid } from "../../../src/data/internal.ts";
 import { addressParam, HostData } from "../../../src/node/app/data.ts";
 import { AppInfo, type AppOptions } from "../../../src/node/app/index.ts";
 import { PluginWatcher } from "../../../src/node/plugins/watcher.ts";
@@ -36,6 +38,35 @@ import {
 const ada: UserPrincipal = { kind: "user", id: "u1" };
 
 const Echo = local("test.echo", { version: 1, params: {}, members: { text: str() } });
+
+/** The meta plugin's server object (`META_PLUGIN`), declared again for the tests (contracts are data). */
+const MetaStore = local("test.meta-store", {
+	version: 1,
+	params: {},
+	members: {
+		set: method(obj({ id: str(), title: str(), label: str() })),
+		get: method(str(), obj({ title: str(), labels: arr(str()) })),
+	},
+});
+
+/** A plugin keeping data about projects on the server: a document and table rows keyed by the project's address. */
+const META_PLUGIN: Readonly<Record<string, string>> = {
+	"server.ts": [
+		'import { arr, defineFacet, defineState, defineTable, eq, host, hostKind, local, method, obj, query, str } from "@test/app/v1";',
+		'const Project = hostKind("project", { id: str() });',
+		'const Meta = defineState("test.meta", { schema: obj({ title: str() }), version: 1, initial: () => ({ title: "" }), keyed: Project, persist: true, checkpointWhen: () => false });',
+		'const Labels = defineTable("test.labels", { version: 1, columns: { project: host(Project), label: str() }, key: ["project", "label"] });',
+		'const MetaStore = local("test.meta-store", { version: 1, params: {}, members: { set: method(obj({ id: str(), title: str(), label: str() })), get: method(str(), obj({ title: str(), labels: arr(str()) })) } });',
+		"export default defineFacet((h) => h.serve(MetaStore, (_params, self) => {",
+		"	const meta = self.state(Meta);",
+		"	const labels = self.table(Labels);",
+		"	return {",
+		"		set: async ({ id, title, label }, ctx) => { await self.tx(async (tx) => { (await tx.draft(meta, Project({ id }))).title = title; tx.put(labels, { project: Project({ id }), label }); }, ctx); return null; },",
+		'		get: async (id, ctx) => ({ title: (await meta.get(Project({ id }), ctx))?.title ?? "", labels: (await labels.page(query(Labels).where((t) => eq(t.project, Project({ id }))), 10, ctx)).items.map((row) => row.label) }),',
+		"	};",
+		"}));",
+	].join("\n"),
+};
 
 describe("starting and closing", () => {
 	it("lays out the data directory, serves AppInfo and the server's plugins, and closes everything", async () => {
@@ -887,6 +918,108 @@ describe("export and import per address", () => {
 			'an archive of "chord-test", not "other-app"',
 		);
 		await other.app.close(context);
+	}, 60_000);
+
+	it("carries the server's records and rows of the address: copied, refused, replaced and deleted with it", async () => {
+		const base = await tempDir();
+		const root = join(base, "plugins");
+		await writePlugin(root, "notes", "@test/notes", NOTES_PLUGIN);
+		await writePlugin(root, "meta", "@test/meta", META_PLUGIN);
+		const { app, dataDir } = await testApp({ root, withWorkers: true });
+		const meta = await app.host.get(MetaStore, {}, context);
+		const notes = await app.host.get(Notes, { id: "p1" }, context);
+		await notes.write("buy milk", context);
+		notes.release();
+		await meta.set({ id: "p1", title: "first", label: "red" }, context);
+		const archive = join(base, "p1.tar");
+		await app.exportData(Project({ id: "p1" }), archive, context);
+		// A copy under p2: the worker's data and the server's, rewritten to p2.
+		await app.importData(archive, Project({ id: "p2" }), context);
+		expect(await meta.get("p2", context)).toEqual({ title: "first", labels: ["red"] });
+		// p3 has server data only: refused by the server, no directory left.
+		await meta.set({ id: "p3", title: "other", label: "blue" }, context);
+		await expect(app.importData(archive, Project({ id: "p3" }), context)).rejects.toThrow(
+			"project|p3 has data in this store",
+		);
+		expect(await readdir(join(dataDir, "workers", "project"))).toEqual(["project%7Cp1", "project%7Cp2"]);
+		// Replaced explicitly: the worker's directory and the server's data.
+		await meta.set({ id: "p2", title: "changed", label: "green" }, context);
+		await expect(app.importData(archive, Project({ id: "p2" }), context)).rejects.toThrow("exists already");
+		await app.importData(archive, Project({ id: "p2" }), context, { existing: "replace" });
+		expect(await meta.get("p2", context)).toEqual({ title: "first", labels: ["red"] });
+		const copy = await app.host.get(Notes, { id: "p2" }, context);
+		expect(copy.text.value).toBe("buy milk");
+		copy.release();
+		// Deleted: refused while its worker runs; then the directory and the server's data go.
+		await expect(app.deleteData(Project({ id: "p2" }), context)).rejects.toThrow("stop its worker first");
+		await app.workers.get("project")!.stop(Project({ id: "p2" }), context);
+		await app.deleteData(Project({ id: "p2" }), context);
+		expect(await meta.get("p2", context)).toEqual({ title: "", labels: [] });
+		expect(await readdir(join(dataDir, "workers", "project"))).toEqual(["project%7Cp1"]);
+		expect(await meta.get("p1", context)).toEqual({ title: "first", labels: ["red"] });
+		meta.release();
+		await app.close(context);
+	}, 60_000);
+
+	it("orders an import and a delete around the server's one commit: undone before it, kept after an unknown outcome", async () => {
+		const base = await tempDir();
+		const root = join(base, "plugins");
+		await writePlugin(root, "notes", "@test/notes", NOTES_PLUGIN);
+		await writePlugin(root, "meta", "@test/meta", META_PLUGIN);
+		const { app, dataDir } = await testApp({ root, withWorkers: true });
+		const projects = join(dataDir, "workers", "project");
+		const textOf = async (id: string) => {
+			const notes = await app.host.get(Notes, { id }, context);
+			const text = notes.text.value;
+			notes.release();
+			await app.workers.get("project")!.stop(Project({ id }), context);
+			return text;
+		};
+		for (const id of ["p1", "p2"]) {
+			const notes = await app.host.get(Notes, { id }, context);
+			await notes.write(`notes of ${id}`, context);
+			notes.release();
+			await app.workers.get("project")!.stop(Project({ id }), context);
+		}
+		const archive = join(base, "p1.tar");
+		await app.exportData(Project({ id: "p1" }), archive, context);
+		const host = app.host as {
+			importHostData: typeof app.host.importHostData;
+			deleteHostData: typeof app.host.deleteHostData;
+		};
+		const importHostData = host.importHostData.bind(app.host);
+		const deleteHostData = host.deleteHostData.bind(app.host);
+		// The server refuses: the renames are undone, the old directory is back, nothing is left beside it.
+		host.importHostData = async () => {
+			throw invalid("args", "refused by the server");
+		};
+		await expect(app.importData(archive, Project({ id: "p2" }), context, { existing: "replace" })).rejects.toThrow(
+			"refused by the server",
+		);
+		expect(await readdir(projects)).toEqual(["project%7Cp1", "project%7Cp2"]);
+		expect(await textOf("p2")).toBe("notes of p2");
+		// An unknown outcome: nothing is undone (the new directory in place, the old one aside), and it says so.
+		host.importHostData = async () => {
+			throw new ChordError({ code: "unavailable", reason: "storage_failed", message: "store: storage failed" });
+		};
+		await expect(app.importData(archive, Project({ id: "p2" }), context, { existing: "replace" })).rejects.toThrow(
+			"unknown outcome; nothing was undone",
+		);
+		expect((await readdir(projects)).filter((name) => name.includes(".aside-"))).toHaveLength(1);
+		host.importHostData = importHostData;
+		expect(await textOf("p2")).toBe("notes of p1");
+		// A delete commits on the server first: refused there, the directory stays.
+		host.deleteHostData = async () => {
+			throw invalid("args", "refused by the server");
+		};
+		await expect(app.deleteData(Project({ id: "p1" }), context)).rejects.toThrow("refused by the server");
+		expect(await readdir(projects)).toContain("project%7Cp1");
+		host.deleteHostData = deleteHostData;
+		// A directory whose server part is gone already (a crash between the two): a repeated delete removes it.
+		await app.host.deleteHostData(Project({ id: "p1" }), context);
+		await app.deleteData(Project({ id: "p1" }), context);
+		expect(await readdir(projects)).not.toContain("project%7Cp1");
+		await app.close(context);
 	}, 60_000);
 });
 

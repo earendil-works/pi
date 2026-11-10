@@ -3,6 +3,8 @@
 // checked `migrate`, and the writes one commit stages for a changed or retired document.
 
 import type { Context } from "../context/index.ts";
+import type { KindShape } from "../contracts/index.ts";
+import { kindOfKey } from "../contracts/internal.ts";
 import type { Op, Prepared } from "../delta/index.ts";
 import {
 	changeDocument,
@@ -30,8 +32,15 @@ export type Stored = {
 	readonly deltasSinceBase: number;
 };
 
-/** A live document found without loading it: what is stored of it and the fingerprint it was stored with. */
-export type FoundDocument = { readonly stored: Stored; readonly fingerprint: string };
+/**
+ * A live document found without loading it: what is stored of it, the fingerprint it was stored with and the host it
+ * belongs to (`checkHost`).
+ */
+export type FoundDocument = {
+	readonly stored: Stored;
+	readonly fingerprint: string;
+	readonly host: string | undefined;
+};
 
 /** A loaded document: its value at the definition's version, and what is stored of it. */
 export type Loaded = { readonly value: JsonObject; readonly stored: Stored };
@@ -60,11 +69,17 @@ export type StoredChange =
 export class Persistence {
 	readonly store: ChordStore;
 	readonly #address: Omit<DocumentAddress, "key">;
+	/** The host kind whose addresses key the documents: their records belong to the host (`host` = the key). */
+	readonly #host: KindShape | undefined;
 
-	/** `owner` is the object's type (R2); `kind` the definition's or the job's name. */
-	constructor(store: ChordStore, owner: string, namespace: string, kind: string) {
+	/**
+	 * `owner` is the object's type (R2); `kind` the definition's or the job's name; `host` the host kind of a
+	 * host-keyed definition.
+	 */
+	constructor(store: ChordStore, owner: string, namespace: string, kind: string, host?: KindShape) {
 		this.store = store;
 		this.#address = { owner, namespace, kind };
+		this.#host = host;
 	}
 
 	/**
@@ -83,11 +98,13 @@ export class Persistence {
 
 	/**
 	 * `document` as `definition` reads it: a stored version newer than the code's, or the same version with another
-	 * fingerprint (D9), throws; an older one is migrated and the result checked once (R8). What throws here is the
-	 * code's (a failing `migrate` too, whatever it throws), never the store's.
+	 * fingerprint (D9), or a record whose host does not match the keys (`checkHost`), throws; an older one is migrated
+	 * and the result checked once (R8). What throws here is the code's (a failing `migrate` too, whatever it throws),
+	 * never the store's.
 	 */
 	decode(document: StoredDocument, definition: AnyDefinition, context: Context): Loaded {
 		const { record, deltasSinceBase } = document;
+		this.checkHost(record.host, definition);
 		checkReadable(record, definition);
 		// The engine stores what commits gave it: JSON objects of the record's version.
 		const stored = document.value as JsonObject;
@@ -108,7 +125,22 @@ export class Persistence {
 		if (record === undefined) return undefined;
 		// The change counter is all a retirement needs; `deltasSinceBase` is not read for one.
 		const stored = { id: record.id, revision: record.revision, version: record.version, deltasSinceBase: 0 };
-		return { stored, fingerprint: record.fingerprint };
+		return { stored, fingerprint: record.fingerprint, host: record.host };
+	}
+
+	/**
+	 * Throws unless a record's `host` fits how `definition` keys its documents: a host-keyed definition reads only
+	 * records belonging to their key's host (`host` set: the key is the address key), a string-keyed one or a singleton
+	 * only records belonging to none. No implicit conversion: the owner fails, the data stays (an explicit store
+	 * migration converts it).
+	 */
+	checkHost(host: string | undefined, definition: AnyDefinition): void {
+		const keyedBy = this.#host;
+		if (keyedBy === undefined && host === undefined) return;
+		if (keyedBy !== undefined && host !== undefined) return;
+		const stored = host === undefined ? "string keys" : `addresses of ${kindOfKey(host)}`;
+		const declared = keyedBy === undefined ? "string keys" : `addresses of ${keyedBy.kind}`;
+		throw new Error(`${definition.name}: stored with ${stored}, declared with ${declared} (convert it explicitly)`);
 	}
 
 	/** Up to `limit` keys of live documents after `after`, in code point order. */
@@ -137,7 +169,9 @@ export class Persistence {
 		if (retires || stored === undefined) {
 			const base = { version, fingerprint, value: prepared.value };
 			const created = { id: 0 };
-			const write = createDocument(this.at(key), base, JSON.stringify(prepared.value), (id) => {
+			// A host-keyed document's key is its host's address key: its record belongs to that host.
+			const address = this.#host === undefined ? this.at(key) : { ...this.at(key), host: key };
+			const write = createDocument(address, base, JSON.stringify(prepared.value), (id) => {
 				created.id = id;
 			});
 			writes.push(write);

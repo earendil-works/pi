@@ -40,7 +40,13 @@ export type Members = {
  */
 export type KeyedBinding =
 	| { readonly kind: "own"; readonly slot: KeyedSlot }
-	| { readonly kind: "reexposed"; readonly binding: Binding; readonly member: string };
+	| {
+			readonly kind: "reexposed";
+			readonly binding: Binding;
+			readonly member: string;
+			/** The host kind the re-exposed member is keyed by; `undefined` for string keys. */
+			readonly key: string | undefined;
+	  };
 
 /** A method as Chord calls it. */
 export type Method = (args: unknown, context: Context) => Promise<unknown>;
@@ -97,9 +103,15 @@ function checkMembers({ state, methods, keyed }: VariantData, implementation: Im
 		if (source === undefined) throw new Error(`${member}: a state member is a JSON watchable`);
 		checked.state.set(member, source);
 	}
-	for (const member of keyed.keys()) {
+	for (const [member, { key }] of keyed) {
 		const resolved = resolveKeyed(own(member));
 		if (resolved === undefined) throw new Error(`${member}: a keyed member is a keyed document handle`);
+		// Declaration policy: the handle's keys are the member's (strings, or addresses of its host kind).
+		const keys = resolved.kind === "own" ? resolved.slot.definition.current.host?.kind : resolved.key;
+		if (keys !== key?.kind) {
+			const what = (kind: string | undefined) => (kind === undefined ? "string keys" : `addresses of ${kind}`);
+			throw new Error(`${member}: declared with ${what(key?.kind)}, implemented with ${what(keys)}`);
+		}
 		checked.keyed.set(member, resolved);
 	}
 	return checked;

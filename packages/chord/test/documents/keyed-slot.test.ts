@@ -7,9 +7,12 @@ import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
 import { keyed, local, obj, str } from "../../src/contracts/index.ts";
 import { ChordError } from "../../src/data/index.ts";
 import { defineState, type KeyedHandle, type SingletonHandle } from "../../src/documents/index.ts";
+import type { ChangedDocument, KeyedSlot } from "../../src/documents/keyed-slot.ts";
 import { RETENTION_MS } from "../../src/documents/residency.ts";
 import type { StoreSelf } from "../../src/host/index.ts";
 import { ChordObject } from "../../src/host/object.ts";
+import { createDocument, findDocument, retireDocument } from "../../src/store/engine.ts";
+import type { StagedWrite } from "../../src/store/step.ts";
 import type { ChordStore } from "../../src/store/store.ts";
 import type { Watchable, WatchHandle } from "../../src/watch.ts";
 import {
@@ -792,3 +795,72 @@ function holdNextRead(store: ChordStore): { readonly reached: Promise<void>; ope
 	};
 	return { reached: reached.promise, open: () => gate.resolve() };
 }
+
+describe("a host data change's documents", () => {
+	/** Commits `writes` outside every object's transactions, reading `key` of `slot` in the step; what it read. */
+	async function outside(store: ChordStore, writes: StagedWrite[], slot: KeyedSlot, key: string) {
+		let changed: ChangedDocument | undefined;
+		const read: StagedWrite = {
+			order: "write",
+			apply: async (step) => {
+				changed = await slot.readChanged(key, step, context);
+				return [];
+			},
+		};
+		await store.commit([...writes, read], { admit: () => true, adopt: () => {} }, context);
+		return changed!;
+	}
+
+	it("are read in the step and adopted: a pinned key shows a creation, then its retirement; a resident one too", async () => {
+		const store = await freshStore();
+		await seed(store, { b: "old" });
+		let pinned: Watchable<Note> | undefined;
+		const { host, notes } = await persisted(store, (_, __, notes) => {
+			pinned = notes.at("a");
+		});
+		const slot = (notes() as unknown as { slot: KeyedSlot }).slot;
+		expect(pinned!.value).toEqual({ title: "" });
+		expect(await notes().get("b", context)).toEqual({ title: "old" });
+		expect([slot.holds("a"), slot.holds("b"), slot.holds("c")]).toEqual([true, true, false]);
+		const base = (title: string) => ({ version: 1, fingerprint: Note.fingerprint, value: { title } });
+		const address = { owner: "app.store", namespace: "chord", kind: "notes.note" };
+		const created = await outside(
+			store,
+			[createDocument({ ...address, key: "a" }, base("new"), '{"title":"new"}')],
+			slot,
+			"a",
+		);
+		expect(created.kind).toBe("present");
+		slot.owner.batch.commit(() => slot.adoptChanged("a", created), context);
+		expect(pinned!.value).toEqual({ title: "new" });
+		const b = await store.read((executor) => findDocument(executor, { ...address, key: "b" }), context);
+		expect(await outside(store, [], slot, "b")).toEqual({ kind: "unchanged" });
+		const gone = await outside(store, [retireDocument(b!.id, b!.revision)], slot, "b");
+		expect(gone).toEqual({ kind: "absent" });
+		slot.owner.batch.commit(() => slot.adoptChanged("b", gone), context);
+		expect(await notes().get("b", context)).toBeUndefined();
+		const a = await store.read((executor) => findDocument(executor, { ...address, key: "a" }), context);
+		const retired = await outside(store, [retireDocument(a!.id, a!.revision)], slot, "a");
+		slot.owner.batch.commit(() => slot.adoptChanged("a", retired), context);
+		expect(pinned!.value).toEqual({ title: "" });
+		await host.close(context);
+	});
+
+	it("a document the owner cannot read changes nothing: the resident and the pinned key keep their value", async () => {
+		const store = await freshStore();
+		await seed(store, { a: "old" });
+		let pinned: Watchable<Note> | undefined;
+		const { host, notes } = await persisted(store, (_, __, notes) => {
+			pinned = notes.at("a");
+		});
+		const slot = (notes() as unknown as { slot: KeyedSlot }).slot;
+		const failed: ChangedDocument = {
+			kind: "failed",
+			error: new ChordError({ code: "unavailable", message: "unreadable" }),
+		};
+		slot.owner.batch.commit(() => slot.adoptChanged("a", failed), context);
+		expect(pinned!.value).toEqual({ title: "old" });
+		expect(slot.current("a")?.value).toEqual({ title: "old" });
+		await host.close(context);
+	});
+});

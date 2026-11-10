@@ -184,6 +184,14 @@ describe("refusals", () => {
 			"not an archive part",
 		],
 		["no manifest first", (parts) => parts.slice(1), "the manifest comes first"],
+		[
+			"a host's data archive",
+			(parts) => {
+				(at(parts, 0) as { host?: string }).host = "session|S1";
+				return parts;
+			},
+			"a host's data archive (session|S1); import it with importHostData",
+		],
 		["a second manifest", (parts) => [parts[0], ...parts], "the manifest comes first, once"],
 		[
 			"another format",

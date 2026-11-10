@@ -4,10 +4,11 @@
 // binds, waits unbound and binds again (slice 7b §6); one of an older version reads adapted members (Q10).
 
 import { BACKGROUND_CONTEXT, type Context } from "../context/index.ts";
-import type { Contract, Implementation, ParamsOf } from "../contracts/index.ts";
+import type { Contract, Implementation, KindShape, ParamsOf } from "../contracts/index.ts";
 import {
 	type CurrentVariants,
 	currentVariants,
+	keyOfAddress,
 	LOCAL,
 	type MethodData,
 	type ShapeOf,
@@ -15,10 +16,12 @@ import {
 	type VariantImplementation,
 } from "../contracts/internal.ts";
 import { ChordError, type FailureCause, type Principal } from "../data/index.ts";
+import { invalid } from "../data/internal.ts";
 import { Keyed, type KeyedSlot, type SealToken, Singleton } from "../documents/internal.ts";
 import type { JsonValue } from "../json.ts";
 import { RETRY_HOPS } from "../link/internal.ts";
 import { type Batch, Constant, type DeriveSource, Source } from "../state/internal.ts";
+import { storedText } from "../store/text.ts";
 import type { NativeWatchable, Watch, Watchable } from "../watch.ts";
 import type { PinnedKey } from "./attempt.ts";
 import { type Caller, withLinkedAbortSignal } from "./ctx.ts";
@@ -276,7 +279,7 @@ export class Binding implements Holder, UnboundRequest {
 		const methods = new Map<string, MethodData>();
 		for (const variant of currentVariants(contract).values()) {
 			for (const member of variant.state.keys()) reference[member] = new ReferenceMember(this, member);
-			for (const member of variant.keyed.keys()) reference[member] = new ReferenceKeyed(this, member);
+			for (const [member, { key }] of variant.keyed) reference[member] = new ReferenceKeyed(this, member, key);
 			for (const [member, method] of variant.methods) methods.set(member, method);
 		}
 		for (const [member, method] of methods) {
@@ -832,14 +835,31 @@ class ReferenceMember {
 	}
 }
 
-/** A keyed member of a reference (slice 6a §12): reads by key behave as calls (they wait while loading). */
+/**
+ * A keyed member of a reference (slice 6a §12): reads by key behave as calls (they wait while loading). A host-keyed
+ * one takes addresses of its kind (checked: a trust boundary for JavaScript callers) and reads the provider's slot by
+ * their canonical keys.
+ */
 class ReferenceKeyed {
 	readonly #binding: Binding;
 	readonly #member: string;
+	/** The host kind the member's keys are addresses of; `undefined` for string keys. */
+	readonly kind: (KindShape & { readonly kind: string }) | undefined;
 
-	constructor(binding: Binding, member: string) {
+	constructor(binding: Binding, member: string, kind: (KindShape & { readonly kind: string }) | undefined) {
 		this.#binding = binding;
 		this.#member = member;
+		this.kind = kind;
+	}
+
+	/** The provider slot's key of a key the consumer gave: an address's canonical key, or the string itself. */
+	#key(key: unknown): string {
+		const kind = this.kind;
+		// A string-keyed member's keys are strings (its type).
+		if (kind === undefined) return key as string;
+		const stored = keyOfAddress(kind, key);
+		if (stored === undefined) throw invalid("args", `${this.#member}: expected an address of ${kind.kind}`);
+		return storedText(stored, `${this.#member}: key`);
 	}
 
 	/** The provider's slot: the ultimate provider's, through re-exposures (rule 22). */
@@ -849,10 +869,11 @@ class ReferenceKeyed {
 
 	/** This member as another object re-exposing it has it: its keys held through this reference. */
 	get keyed(): KeyedBinding {
-		return { kind: "reexposed", binding: this.#binding, member: this.#member };
+		return { kind: "reexposed", binding: this.#binding, member: this.#member, key: this.kind?.kind };
 	}
 
-	async get(key: string, context: Context): Promise<JsonValue | undefined> {
+	async get(raw: unknown, context: Context): Promise<JsonValue | undefined> {
+		const key = this.#key(raw);
 		await this.#binding.hydrated(context);
 		const slot = this.slot;
 		const map = this.#binding.keyedMapping(this.#member);
@@ -864,7 +885,8 @@ class ReferenceKeyed {
 	 * A watch of the document at `key` across the object's attempts (it holds the key through the object), `undefined`
 	 * when absent; it ends with this reference.
 	 */
-	async watch(key: string, context: Context): Promise<Watch<JsonValue> | undefined> {
+	async watch(raw: unknown, context: Context): Promise<Watch<JsonValue> | undefined> {
+		const key = this.#key(raw);
 		await this.#binding.firstValues(context);
 		const slot = this.slot;
 		if ((await slot.get(key, ownAccess(slot), context)) === undefined) return undefined;
@@ -886,9 +908,9 @@ class ReferenceKeyed {
 		return this.#binding.follow(watch);
 	}
 
-	at(key: string): Watchable<JsonValue> {
+	at(key: unknown): Watchable<JsonValue> {
 		// The pinned key's values are the member's documents.
-		return this.#binding.at(this.#member, key) as unknown as Watchable<JsonValue>;
+		return this.#binding.at(this.#member, this.#key(key)) as unknown as Watchable<JsonValue>;
 	}
 }
 

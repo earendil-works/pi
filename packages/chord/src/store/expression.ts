@@ -2,7 +2,7 @@
 // form"): the builders plugins write `where` and `set` with, and their compilation at staging into one data-only
 // vocabulary (what the outbox and archives carry; `evaluate.ts` runs it in JavaScript, `sql.ts` renders it).
 
-import type { Optional } from "../contracts/index.ts";
+import type { Address, Optional } from "../contracts/index.ts";
 import { invalid } from "../data/internal.ts";
 import type { JsonValue } from "../json.ts";
 import type { Column, Columns, ColumnType, ColumnTypeOf, ValueOf } from "./columns.ts";
@@ -99,13 +99,16 @@ type ScalarType = Exclude<ColumnType, "json">;
 /** An operand of type `T` and column type `K`: an expression or a plain value. */
 type Operand<T, K extends ColumnType> = Expression<T, K> | T;
 
+/** A value `eq`, `ne` and `inArray` compare a column with: a scalar, or an address for a `host(...)` column. */
+type Comparable = Scalar | Address;
+
 /** The column equals `value` (`NULL` never matches). */
-export function eq<T extends Scalar>(column: ColumnRef<T, ScalarType>, value: T): Condition {
+export function eq<T extends Comparable>(column: ColumnRef<T, ScalarType>, value: T): Condition {
 	return new Condition("eq", [column, value]);
 }
 
 /** The column differs from `value` (`NULL` never matches). */
-export function ne<T extends Scalar>(column: ColumnRef<T, ScalarType>, value: T): Condition {
+export function ne<T extends Comparable>(column: ColumnRef<T, ScalarType>, value: T): Condition {
 	return new Condition("ne", [column, value]);
 }
 
@@ -130,7 +133,7 @@ export function gte<T extends Scalar>(column: ColumnRef<T, ScalarType>, value: T
 }
 
 /** The column equals one of `values` (`[]` matches nothing). */
-export function inArray<T extends Scalar>(column: ColumnRef<T, ScalarType>, values: readonly T[]): Condition {
+export function inArray<T extends Comparable>(column: ColumnRef<T, ScalarType>, values: readonly T[]): Condition {
 	return new Condition("inArray", [column, values]);
 }
 
@@ -224,9 +227,9 @@ export function compileWhere(table: TableDefinition, condition: unknown, what: s
 		case "not":
 			return { not: compileWhere(table, args[0], what) };
 		case "isNull":
-			return { isNull: scalarColumn(table, args[0], what).name };
+			return { isNull: ordered(table, scalarColumn(table, args[0], what), op, what).name };
 		case "prefix": {
-			const column = scalarColumn(table, args[0], what);
+			const column = ordered(table, scalarColumn(table, args[0], what), op, what);
 			if (column.type !== "str") throw invalid("args", `${table.name}: ${what}: prefix needs a str() column`);
 			return { prefix: [column.name, operand(column, args[1], what) as string] };
 		}
@@ -238,6 +241,7 @@ export function compileWhere(table: TableDefinition, condition: unknown, what: s
 		}
 		default: {
 			const column = scalarColumn(table, args[0], what);
+			if (op !== "eq" && op !== "ne") ordered(table, column, op, what);
 			// One of the six comparisons: the node's shape is `{ [op]: [column, value] }`.
 			return { [op]: [column.name, operand(column, args[1], what)] as const } as WhereNode;
 		}
@@ -271,8 +275,11 @@ export function compileSet(table: TableDefinition, set: unknown, what: string): 
 			// A row never holds an explicit `null` (decision "Nullable columns and the set form"); a JSON `null` is a value.
 			throw invalid("args", `${table.name}: ${where}: null is no ${column.type} value (undefined clears)`);
 		} else if (value instanceof Expression) {
-			if (column.type === "json")
-				throw invalid("args", `${table.name}: ${where}: json(...) columns take plain values`);
+			if (column.type === "json" || column.host !== undefined)
+				throw invalid(
+					"args",
+					`${table.name}: ${where}: ${column.type === "json" ? "json" : "host"}(...) columns take plain values`,
+				);
 			const compiled = compileExpr(table, value, column.type, where);
 			if (compiled.nullable && !column.optional) {
 				throw invalid("args", `${table.name}: ${where}: the expression may be NULL; the column is not opt(...)`);
@@ -280,7 +287,7 @@ export function compileSet(table: TableDefinition, set: unknown, what: string): 
 			node[name] = compiled.node;
 		} else if (column.type === "json") {
 			node[name] = { json: encodeCell(column, value, `${table.name}: ${where}`).stored };
-		} else node[name] = checkScalar(column.type, value, `${table.name}: ${where}`);
+		} else node[name] = encodeCell(column, value, `${table.name}: ${where}`).stored as Scalar;
 	}
 	return node;
 }
@@ -301,6 +308,8 @@ function compileExpr(table: TableDefinition, value: unknown, type: ScalarType, w
 		case "col": {
 			const column = table.byName.get(args[0] as string) ?? refuse(`no column "${String(args[0])}"`);
 			if (column.type !== type) refuse(`column "${column.name}" is ${column.type}, not ${type}`);
+			if (column.type === "str" && column.host !== undefined)
+				refuse(`host(...) column "${column.name}" holds addresses`);
 			return { node: { col: column.name }, nullable: column.optional };
 		}
 		case "add":
@@ -345,11 +354,25 @@ function scalarColumn(table: TableDefinition, ref: unknown, what: string): Colum
 	return column;
 }
 
-/** An operand compared with `column`, made storable; `undefined` and `null` are refused (rule 16). */
+/** `column` for a comparison by order, `isNull` or `prefix`: a `host(...)` column compares only with eq, ne, inArray. */
+function ordered(table: TableDefinition, column: Column, op: string, what: string): Column {
+	if (column.type === "str" && column.host !== undefined) {
+		throw invalid(
+			"args",
+			`${table.name}: ${what}: ${op} on host(...) column "${column.name}" (eq, ne, inArray only)`,
+		);
+	}
+	return column;
+}
+
+/**
+ * An operand compared with `column`, made storable (an address as its key for a `host(...)` column); `undefined` and
+ * `null` are refused (rule 16).
+ */
 function operand(column: Column, value: unknown, what: string): Scalar {
 	if (value === undefined || value === null) {
 		throw invalid("args", `${what}: column "${column.name}" compared with ${String(value)}; ask with isNull`);
 	}
 	// `scalarColumn` refused json columns.
-	return checkScalar(column.type as ScalarType, value, `${what}: column "${column.name}"`);
+	return encodeCell(column, value, `${what}: column "${column.name}"`).stored as Scalar;
 }

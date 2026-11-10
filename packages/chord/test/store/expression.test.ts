@@ -1,6 +1,6 @@
 // Tests of the table expression language: the builders and their compilation into the data vocabulary.
 import { describe, expect, it } from "vitest";
-import { bool, int, nul, num, obj, opt, str } from "../../src/contracts/index.ts";
+import { bool, hostKind, int, nul, num, obj, opt, str } from "../../src/contracts/index.ts";
 import {
 	add,
 	and,
@@ -24,6 +24,7 @@ import {
 	sub,
 	when,
 } from "../../src/store/expression.ts";
+import { host } from "../../src/store/host-column.ts";
 import { json } from "../../src/store/json-column.ts";
 import type { ColumnRefs } from "../../src/store/query.ts";
 import { defineTable } from "../../src/store/table.ts";
@@ -148,5 +149,38 @@ describe("compiling sets", () => {
 			path: { coalesce: [{ col: "note" }, "d"] },
 		});
 		expect(() => compileSet(T, { meta: refs.meta as never }, "update")).toThrow("plain values");
+	});
+});
+
+describe("host(...) columns", () => {
+	const Session = hostKind("session", { id: str() });
+	const P = defineTable("p", { version: 1, columns: { id: str(), session: host(Session) }, key: ["id"] });
+	type PC = typeof P extends { "~columns"?: infer X } ? NonNullable<X> : never;
+	const h = P.refs as ColumnRefs<PC>;
+	const S1 = Session({ id: "S1" });
+
+	it("compare with addresses by eq, ne and inArray, compiled to keys", () => {
+		expect(compileWhere(P, eq(h.session, S1), "where")).toEqual({ eq: ["session", "session|S1"] });
+		expect(compileWhere(P, ne(h.session, S1), "where")).toEqual({ ne: ["session", "session|S1"] });
+		expect(compileWhere(P, inArray(h.session, [S1, Session({ id: "S2" })]), "where")).toEqual({
+			inArray: ["session", ["session|S1", "session|S2"]],
+		});
+		expect(() => compileWhere(P, eq(h.session, "session|S1" as never), "where")).toThrow(
+			"expected an address of session",
+		);
+	});
+
+	it("refuse order comparisons, isNull and prefix", () => {
+		expect(() => compileWhere(P, lt(h.session as never, S1 as never), "where")).toThrow("eq, ne, inArray only");
+		expect(() => compileWhere(P, isNull(h.session as never), "where")).toThrow("eq, ne, inArray only");
+		expect(() => compileWhere(P, prefix(h.session as never, "session"), "where")).toThrow("eq, ne, inArray only");
+	});
+
+	it("take addresses in a set, never an expression", () => {
+		expect(compileSet(P, { session: S1 }, "set")).toEqual({ session: "session|S1" });
+		expect(() => compileSet(P, { session: concat("a", "b") as never }, "set")).toThrow(
+			"host(...) columns take plain values",
+		);
+		expect(() => compileSet(T, { path: h.session as never }, "set")).toThrow('no column "session"');
 	});
 });

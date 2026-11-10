@@ -29,10 +29,10 @@ import type { DocumentSlot, PersistedSlot, SingletonSlot } from "./slot.ts";
 export interface Tx {
 	/** The document's draft: the same one for the same document within one transaction. */
 	draft<T extends JsonObject>(handle: SingletonHandle<T>): Promise<Draft<T>>;
-	draft<T extends JsonObject>(handle: KeyedHandle<T>, key: string): Promise<Draft<T>>;
+	draft<T extends JsonObject, Key>(handle: KeyedHandle<T, Key>, key: NoInfer<Key>): Promise<Draft<T>>;
 	/** Retires the document when the transaction commits (its address reads `initial()` again); a no-op when it is absent. */
 	retire(handle: SingletonHandle<JsonObject>): Promise<void>;
-	retire(handle: KeyedHandle<JsonObject>, key: string): Promise<void>;
+	retire<Key>(handle: KeyedHandle<JsonObject, Key>, key: NoInfer<Key>): Promise<void>;
 	/**
 	 * Starts a run of `job`, one of this object's jobs, with this transaction's other writes (§15): both commit or
 	 * neither. Returns its `Run` at once; a discarded transaction's `Run` rejects `released` from `outcome`. A key of an
@@ -186,16 +186,20 @@ export class Transaction implements Tx {
 	}
 
 	draft<T extends JsonObject>(handle: SingletonHandle<T>): Promise<Draft<T>>;
-	draft<T extends JsonObject>(handle: KeyedHandle<T>, key: string): Promise<Draft<T>>;
-	draft<T extends JsonObject>(handle: SingletonHandle<T> | KeyedHandle<T>, key = ""): Promise<Draft<T>> {
+	draft<T extends JsonObject, Key>(handle: KeyedHandle<T, Key>, key: NoInfer<Key>): Promise<Draft<T>>;
+	draft<T extends JsonObject>(
+		handle: SingletonHandle<T> | KeyedHandle<T, unknown>,
+		key: unknown = "",
+	): Promise<Draft<T>> {
 		// Not `async`: the draft's promise is returned as it is, without another promise around it (the in-memory path
 		// stays as cheap as before the store); a throw still reaches the caller as a rejection.
 		let slot: SingletonSlot | KeyedSlot;
 		let at: string;
-		// Keyed keys follow the text rules (`KeyedSlot.key`); a singleton's key is always "".
+		// Keyed keys are the handle's (`keyOf`: an address's key for a host-keyed one, an empty string refused there)
+		// and follow the text rules (`KeyedSlot.key`); a singleton's key is always "".
 		try {
 			slot = this.#slotOf(handle);
-			at = key === "" ? key : slot.key(key);
+			at = slot.key(slot.keyOf(key));
 		} catch (error) {
 			return Promise.reject(error);
 		}
@@ -223,10 +227,13 @@ export class Transaction implements Tx {
 	}
 
 	retire(handle: SingletonHandle<JsonObject>): Promise<void>;
-	retire(handle: KeyedHandle<JsonObject>, key: string): Promise<void>;
-	async retire(handle: SingletonHandle<JsonObject> | KeyedHandle<JsonObject>, key = ""): Promise<void> {
+	retire<Key>(handle: KeyedHandle<JsonObject, Key>, key: NoInfer<Key>): Promise<void>;
+	async retire(
+		handle: SingletonHandle<JsonObject> | KeyedHandle<JsonObject, unknown>,
+		key: unknown = "",
+	): Promise<void> {
 		const slot = this.#slotOf(handle);
-		const at = key === "" ? key : slot.key(key);
+		const at = slot.key(slot.keyOf(key));
 		const entry = this.retireSlot(slot, at);
 		const persisted = slot.persisted;
 		// A cold persisted document is found, not loaded (one read; absent: a no-op, R13); a version or fingerprint
@@ -475,7 +482,7 @@ export class Transaction implements Tx {
 	}
 
 	/** The slot behind a handle of this object, after the handle's version fence (R15). */
-	#slotOf(handle: SingletonHandle<JsonObject> | KeyedHandle<JsonObject>): SingletonSlot | KeyedSlot {
+	#slotOf(handle: SingletonHandle<JsonObject> | KeyedHandle<JsonObject, unknown>): SingletonSlot | KeyedSlot {
 		// Handles are Chord's own: `self.state` made them.
 		const { slot, version } = handle as Singleton | Keyed;
 		slot.definition.assertVersion(version);
@@ -576,7 +583,9 @@ export class Transaction implements Tx {
 /** Throws, failing `slot`'s owner `broken`, when its definition cannot read the cold document `found` (R15). */
 function checkFound(found: FoundDocument, persisted: PersistedSlot, slot: DocumentSlot): void {
 	try {
-		checkReadable({ version: found.stored.version, fingerprint: found.fingerprint }, persisted.definition.current);
+		const definition = persisted.definition.current;
+		persisted.persistence.checkHost(found.host, definition);
+		checkReadable({ version: found.stored.version, fingerprint: found.fingerprint }, definition);
 	} catch (error) {
 		const failure = asChordError(error, slot.owner.label);
 		slot.owner.fail(failure);

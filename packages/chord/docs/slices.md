@@ -186,6 +186,14 @@ change; a slice's spec includes every entry of its section, and its build and re
 deleted (the slice's spec and code are the record). Moved here from `carry-over.md` (owner, 2026-10-24).
 
 
+### Host-keyed data (decision "Documents and table rows can belong to a host"; spec `host-keyed/spec.md` §9)
+
+- **Converting stored string-keyed documents to host keys** needs an explicit one-off store migration (the
+  discriminator refuses an implicit one); none is built.
+- **Adding a host column to an existing table:** `evolveTable` refuses (a host column has no default); a new base works.
+- **Migration on import needs the owner's code on the importing host:** a store without its owner served refuses an
+  archive whose table is older or was exported `migrating`.
+
 ### Any slice (protocol and checks)
 
 - **Bump `PROTOCOL_VERSION`** for any message or reason change once p3 has shipped (slice 3b added `retry`, `loading`

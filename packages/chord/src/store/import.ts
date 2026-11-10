@@ -151,6 +151,9 @@ class ArchiveImport {
 			throw invalid("args", `${what}: format ${part.format} is not ${ARCHIVE_FORMAT}`);
 		if (part.schema > STORE_SCHEMA)
 			throw invalid("args", `${what}: schema ${part.schema} is newer than ${STORE_SCHEMA}`);
+		if (part.host !== undefined) {
+			throw invalid("args", `${what}: a host's data archive (${part.host}); import it with importHostData`);
+		}
 		this.#manifest = part;
 		this.#step = new Step(this.#executor, part.lastSeq, new IdAllocator(part.nextId), new Map());
 	}
@@ -200,10 +203,10 @@ class ArchiveImport {
 		if (createdAt > lastSeq || (retiredAt !== undefined && (retiredAt < createdAt || retiredAt > lastSeq))) {
 			throw invalid("args", `${what}: a lifetime outside the manifest's lastSeq`);
 		}
-		const { namespace, owner, kind, meta } = record;
+		const { namespace, owner, kind, meta, host } = record;
 		// A singleton's record has no key; its column keeps `""`.
 		const key = record.key ?? "";
-		for (const text of [namespace, owner, kind, key]) {
+		for (const text of [namespace, owner, kind, key, ...(host === undefined ? [] : [host])]) {
 			if (storedText(text, what) !== text) throw invalid("args", `${what}: an address is not well-formed text`);
 		}
 		if (meta !== undefined && storedText(meta, what) !== meta) {
@@ -267,7 +270,7 @@ class ArchiveImport {
 }
 
 /** Runs `take` on each part in turn; a wait for the next part ends when `context` aborts (the input is closed). */
-async function each(
+export async function each(
 	parts: AsyncIterable<unknown> | Iterable<unknown>,
 	context: Context,
 	take: (part: unknown) => Promise<void>,

@@ -47,6 +47,8 @@ import {
 	type Upstream,
 } from "../remote/internal.ts";
 import { Batch, type BatchError } from "../state/internal.ts";
+import type { ArchivePart } from "../store/archive.ts";
+import { exportHostData, type HostDataCounts, type HostImportOptions } from "../store/host-data.ts";
 import type { ChordStore, Store } from "../store/store.ts";
 import {
 	type ChordMetrics,
@@ -66,6 +68,7 @@ import { Backoff } from "./backoff.ts";
 import { type Caller, type Ctx, withLinkedAbortSignal } from "./ctx.ts";
 import { Destination, type Placed } from "./destination.ts";
 import type { Facet } from "./facet.ts";
+import { deleteFrom, HostDataGate, type HostDataSite, importInto } from "./host-data.ts";
 import { contributionOf } from "./members.ts";
 import type { CloseFailed } from "./native.ts";
 import { ChordObject, type Holder, type ReloadFate, type Served } from "./object.ts";
@@ -367,6 +370,27 @@ export interface Host<P extends Principal = Principal, R extends JsonValue = Jso
 	 */
 	root<T>(fn: (ctx: Ctx<P>) => Promise<T>, context: Context, options?: RootOptions<P>): Promise<T>;
 	/**
+	 * The records and rows of this host's store belonging to `address` (host-keyed documents, `host(...)` cells) as a
+	 * store archive with `host` in its manifest, holding the store's commit queue while it is read. Throws
+	 * `invalid/args` without a store.
+	 */
+	exportHostData(address: Address, context: Context): AsyncIterableIterator<ArchivePart>;
+	/**
+	 * Imports a host's data archive (`exportHostData`'s) into this host's store in one commit,
+	 * under `options.address` (a copy) or the archive's; data of that address refused, or replaced with `existing:
+	 * "replace"`; older tables' rows migrated through their owners' histories. One operation at a time; activations
+	 * wait while one runs; the live owners' lines are held and what they hold of the address is adopted in one batch
+	 * (spec `docs/host-keyed/spec.md` §5). Rejects `invalid/args` without a store, for a refused archive or existing
+	 * data; `released` once `context` aborted before the commit was admitted.
+	 */
+	importHostData(
+		parts: AsyncIterable<unknown> | Iterable<unknown>,
+		context: Context,
+		options?: HostImportOptions,
+	): Promise<HostDataCounts>;
+	/** Deletes the records and rows belonging to `address` in one commit, coordinated as `importHostData`. */
+	deleteHostData(address: Address, context: Context): Promise<HostDataCounts>;
+	/**
 	 * Closes its links, seals its root scopes, then ends every object at once, then drains and closes them one by one,
 	 * the last to go live first (reason `close`). Rejects with an `AggregateError` of the closes that threw.
 	 */
@@ -516,6 +540,8 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 	readonly compression: Compression | undefined;
 	/** The host's store, if it has one. */
 	readonly store: ChordStore | undefined;
+	/** Its host data gate: host data operations one at a time, activations' load phases kept out while one runs. */
+	readonly hostData = new HostDataGate();
 	/** The telemetry adapter: root spans start on it, carriers from links are extracted with it. */
 	readonly telemetry: TelemetryContext;
 	/** The `chord.host` attribute of this host's spans: its address key, `client` without an address. */
@@ -1152,6 +1178,41 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 			this.#routing.signal.removeEventListener("abort", closing);
 			waiting.release();
 		}
+	}
+
+	exportHostData(address: Address, context: Context): AsyncIterableIterator<ArchivePart> {
+		return exportHostData(this.#dataSite("exportHostData").store, address, context);
+	}
+
+	async importHostData(
+		parts: AsyncIterable<unknown> | Iterable<unknown>,
+		context: Context,
+		options: HostImportOptions = {},
+	): Promise<HostDataCounts> {
+		return importInto(this.#dataSite("importHostData"), parts, context, options);
+	}
+
+	async deleteHostData(address: Address, context: Context): Promise<HostDataCounts> {
+		return deleteFrom(this.#dataSite("deleteHostData"), address, context);
+	}
+
+	/** What a host data operation needs of this host; `invalid/args` without a store. */
+	#dataSite(what: string): HostDataSite {
+		this.batch.assertOutside(what);
+		const { store } = this;
+		if (store === undefined) throw invalid("args", `${what}: the host has no store`);
+		return {
+			store,
+			batch: this.batch,
+			gate: this.hostData,
+			objects: () => this.#objects.values(),
+			activate: async (owner, context) => {
+				const served = this.#types.get(owner);
+				if (served === undefined || served.kind !== "local") return undefined;
+				const reference = await this.get(served.contract, {}, context);
+				return () => reference.release();
+			},
+		};
 	}
 
 	async root<T>(fn: (ctx: Ctx<P>) => Promise<T>, context: Context, options: RootOptions<P> = {}): Promise<T> {

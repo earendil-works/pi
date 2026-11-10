@@ -159,10 +159,13 @@ type Needs = {
 	readonly state: ReadonlyMap<string, ReadonlyMap<string, StateNeed>>;
 	readonly methods: ReadonlyMap<string, MethodNeed>;
 	/** Per keyed member (local contracts). */
-	readonly keyed: ReadonlyMap<string, StateNeed>;
+	readonly keyed: ReadonlyMap<string, KeyedNeed>;
 };
 
 type StateNeed = "changed" | "removed";
+
+/** A keyed member's need: a changed key kind (`rekeyed`: strings and addresses, or another kind) is only refused. */
+type KeyedNeed = StateNeed | "rekeyed";
 
 type MethodNeed =
 	| { readonly kind: "removed" }
@@ -175,11 +178,13 @@ function needs(data: ContractData, index: number): Needs {
 	const changed = (...change: Change) => changes.has(changeKey(change));
 	const state = new Map<string, Map<string, StateNeed>>();
 	const methods = new Map<string, { removed: boolean; args: boolean; result: boolean }>();
-	const keyed = new Map<string, StateNeed>();
+	const keyed = new Map<string, KeyedNeed>();
 	for (const [variant, { state: oldState, methods: oldMethods, keyed: oldKeyed }] of old.variants) {
 		const now = current.variants.get(variant)!;
-		for (const member of oldKeyed.keys()) {
-			if (!now.keyed.has(member)) keyed.set(member, "removed");
+		for (const [member, { key }] of oldKeyed) {
+			const current = now.keyed.get(member);
+			if (current === undefined) keyed.set(member, "removed");
+			else if (current.key?.kind !== key?.kind) keyed.set(member, "rekeyed");
 			else if (changed(variant, member, "keyed")) keyed.set(member, "changed");
 		}
 		const variantNeeds = new Map<string, StateNeed>();
@@ -244,9 +249,10 @@ function checkStateMapping(mapping: unknown, need: StateNeed, path: string): voi
 	throw new Error(`${path}: expected ${need === "removed" ? 'a function or "refuse"' : "a function"}`);
 }
 
-function checkKeyedMapping(mapping: unknown, need: StateNeed, path: string): void {
+function checkKeyedMapping(mapping: unknown, need: KeyedNeed, path: string): void {
 	if (mapping === "refuse" || (need === "changed" && typeof mapping === "function")) return;
-	throw new Error(`${path}: expected ${need === "changed" ? 'a function or "refuse"' : '"refuse"'}`);
+	const because = need === "rekeyed" ? " (its key kind changed: a value mapping cannot map keys)" : "";
+	throw new Error(`${path}: expected ${need === "changed" ? 'a function or "refuse"' : '"refuse"'}${because}`);
 }
 
 function checkMethodMapping(mapping: unknown, need: MethodNeed, path: string): void {

@@ -1,6 +1,7 @@
 // Declarations: `remote(...)` and `local(...)`, the checks every declared version passes, and the reading of
 // untyped declaration input.
 
+import type { HostKeyed, KeyedSnapshot } from "./contract.ts";
 import {
 	type Contract,
 	createContract,
@@ -13,7 +14,7 @@ import {
 } from "./contract.ts";
 import { materialize } from "./fingerprint.ts";
 import type { MemberNames, MethodAt, VariantShape } from "./history.ts";
-import type { Address } from "./host-kind.ts";
+import { type Address, type KindShape, kindParams } from "./host-kind.ts";
 import { checkName } from "./names.ts";
 import { type Params, type RequiredFields, readParams } from "./params.ts";
 import { KeyedMember, Method, type Schema, type Static } from "./schema.ts";
@@ -44,7 +45,7 @@ type LocalVariants<M extends { readonly [member: string]: LocalMember }> = {
 /** A local contract's member: a state schema, `method(...)` or `keyed(schema)`. */
 type LocalMember = Schema | Method | KeyedMember;
 
-type SchemaOf<M> = M extends KeyedMember<infer S> ? S : never;
+type SchemaOf<M> = M extends KeyedMember<infer S, infer K> ? (K extends KindShape ? HostKeyed<S, K> : S) : never;
 
 /** D11: a member name has one kind in every variant, a method one signature; no keyed members. */
 type SameMembers<D extends VariantDeclarations, V extends { [variant: string]: VariantShape } = RemoteVariants<D>> = {
@@ -123,11 +124,11 @@ export function local<
 	checkKeys(declaration, ["version", "params", "members"], name);
 	const state = new Map<string, Snapshot>();
 	const methods = new Map<string, MethodData>();
-	const keyed = new Map<string, Snapshot>();
+	const keyed = new Map<string, KeyedSnapshot>();
 	for (const [member, value] of entriesOf(declaration.members, `${name}.${LOCAL}`)) {
 		const path = `${name}.${LOCAL}.${member}`;
 		if (value instanceof Method) methods.set(member, readMethod(value, path));
-		else if (value instanceof KeyedMember) keyed.set(member, snapshotSchema(value.schema, path));
+		else if (value instanceof KeyedMember) keyed.set(member, keyedSnapshot(value.schema, value.key, path));
 		else state.set(member, snapshotSchema(value, path));
 	}
 	return declare("local", name, declaration, new Map([[LOCAL, { state, methods, keyed }]]));
@@ -148,6 +149,17 @@ function readVariant(source: unknown, path: string): VariantData {
 		return [member, readMethod(method, `${path}.methods.${member}`)] as const;
 	});
 	return { state: new Map(stateEntries), methods: new Map(methodEntries), keyed: new Map() };
+}
+
+/**
+ * A keyed member's snapshot: its schema's and, keyed by a host kind, the kind (declaration policy: a declared one, its
+ * name in the member's normal form).
+ */
+export function keyedSnapshot(schema: unknown, key: KindShape | undefined, path: string): KeyedSnapshot {
+	const snapshot = snapshotSchema(schema, path);
+	if (key === undefined) return snapshot;
+	kindParams(key);
+	return { ...snapshot, key };
 }
 
 /** One method declaration as Chord-owned snapshots; its arguments must be closed. */

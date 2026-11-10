@@ -4,7 +4,7 @@
 import type { Context } from "../context/index.ts";
 import type { Watchable, WatchHandle } from "../watch.ts";
 import type { Change, CurrentStep, History, VariantShape } from "./history.ts";
-import type { Address } from "./host-kind.ts";
+import type { Address, KindShape } from "./host-kind.ts";
 import type { Params, ParamsData } from "./params.ts";
 import type { Method, NullSchema, Static } from "./schema.ts";
 import type { Snapshot } from "./snapshot.ts";
@@ -69,7 +69,7 @@ export type VariantImplementation<V extends VariantShape, X extends Context = Co
 		: M extends keyof V["state"]
 			? Watchable<Static<V["state"][M]>>
 			: M extends keyof NonNullable<V["keyed"]>
-				? KeyedWatchable<Static<NonNullable<V["keyed"]>[M]>>
+				? KeyedWatchable<Static<NonNullable<V["keyed"]>[M]>, KeyOfMember<NonNullable<V["keyed"]>[M]>>
 				: never;
 };
 
@@ -77,14 +77,27 @@ export type VariantImplementation<V extends VariantShape, X extends Context = Co
  * A keyed state member (slice 6a §12): documents by key, each watchable on its own; a keyed document handle
  * provides it. `at(key)` is valid only in a factory (it pins the key while that attempt lives).
  */
-export interface KeyedWatchable<T> {
+export interface KeyedWatchable<T, Key = string> {
 	/** The document at `key`, `undefined` when absent. */
-	get(key: string, context: Context): Promise<T | undefined>;
+	get(key: Key, context: Context): Promise<T | undefined>;
 	/** A watch of the document at `key` that follows its address, `undefined` when absent. */
-	watch(key: string, context: Context): Promise<WatchHandle<T> | undefined>;
+	watch(key: Key, context: Context): Promise<WatchHandle<T> | undefined>;
 	/** In a factory only: the document at `key` as a watchable, `initial()` while absent. */
-	at(key: string): Watchable<T>;
+	at(key: Key): Watchable<T>;
 }
+
+/**
+ * A host-keyed member's schema in a contract's types: its documents' schema carrying the key's host kind (type only;
+ * `keyed(schema, kind)` declares it).
+ */
+export type HostKeyed<S, K extends KindShape> = S & { readonly "~key"?: K };
+
+/** The key type of a keyed member's schema: an address of its host kind, or a string. */
+export type KeyOfMember<S> = S extends { readonly "~key"?: infer K }
+	? K extends KindShape
+		? Address<K>
+		: string
+	: string;
 
 /** A method as a function: without the argument when its argument schema is `null` (`null` stays the wire form). */
 type MethodFunction<M extends Method, X extends Context = Context> = M["args"] extends NullSchema
@@ -121,8 +134,11 @@ export type VariantData = {
 	readonly state: ReadonlyMap<string, Snapshot>;
 	readonly methods: ReadonlyMap<string, MethodData>;
 	/** Keyed state members (slice 6a §12): only a local contract has any. */
-	readonly keyed: ReadonlyMap<string, Snapshot>;
+	readonly keyed: ReadonlyMap<string, KeyedSnapshot>;
 };
+
+/** A keyed member's schema snapshot and, for a host-keyed one, the host kind its keys are addresses of. */
+export type KeyedSnapshot = Snapshot & { readonly key?: KindShape & { readonly kind: string } };
 
 export type MethodData = { readonly args: Snapshot; readonly result: Snapshot };
 

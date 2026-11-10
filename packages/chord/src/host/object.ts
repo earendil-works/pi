@@ -24,6 +24,7 @@ import { CHAIN } from "../link/internal.ts";
 import type { RegistryContribution } from "../registries/internal.ts";
 import type { DeriveSource } from "../state/internal.ts";
 import { LiveQueries } from "../store/live-query.ts";
+import type { TableDefinition } from "../store/table.ts";
 import { chordMetrics } from "../telemetry.ts";
 import { refusal } from "./adapted.ts";
 import { Attempt, type PinnedKey, type Self } from "./attempt.ts";
@@ -679,6 +680,16 @@ export class ChordObject implements Target {
 	 */
 	claimTable(table: string): void {
 		this.host.store!.claims.table(table, this);
+	}
+
+	/** Its type's name: the owner of its documents and tables in the store (R2). */
+	get owner(): string {
+		return this.served.contract.name;
+	}
+
+	/** The live instance's declaration of table `table` (SQL name), if it has one (a host data import's history). */
+	declaredTable(table: string): TableDefinition | undefined {
+		return this.instance?.declaredTable(table);
 	}
 
 	/** Its live queries by table (`self.query`), across its attempts: what its commits writing a table re-run. */

@@ -120,18 +120,20 @@ export class TableChanges {
 		let start = writes.length;
 		while (start > 0 && writes[start - 1]!.kind === "update") start--;
 		const from = writes[start - 1];
-		// A committed row is decoded by the table's columns: scalars and JSON, what the evaluator takes.
+		// A committed row is decoded by the table's columns: scalars and JSON, what the evaluator takes once its
+		// `host(...)` cell is the stored key again.
+		const committed = from === undefined ? await this.handle.get(key, context) : undefined;
 		let row: EvaluatedRow | undefined =
-			from === undefined
-				? ((await this.handle.get(encoded.key, context)) as EvaluatedRow | undefined)
-				: from.kind === "put"
+			committed !== undefined
+				? definition.rows.stored(committed as EvaluatedRow)
+				: from?.kind === "put"
 					? from.row
 					: undefined;
 		for (const write of writes.slice(start)) {
 			// An `update` of an absent row changes nothing.
 			if (row !== undefined && write.kind === "update") row = applySet(write.set, row, definition.name);
 		}
-		return row;
+		return row === undefined ? undefined : definition.rows.addressed(row);
 	}
 
 	#set(set: unknown, what: string): SetNode {
