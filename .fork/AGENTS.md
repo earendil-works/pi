@@ -14,7 +14,7 @@ Read this before changing anything. Upstream's own rules in the repo root `AGENT
 | `feat/native-openai` | `api/openai-codex-responses.ts`, `catalog/families/openai.ts`, the OpenAI/Codex rules in `catalog/providers/openai.ts`, `openai-codex.ts` and `azure.ts`, the OpenAI context and mid-convo tests, the `end_turn` continuation in `packages/agent/src/agent-loop.ts` |
 | `fix/coding-agent` | `providers/generic-endpoint.ts`, `providers/openrouter*.ts`, `providers/README.md`, `packages/coding-agent/src/core/model-runtime.ts`, `model-config.ts`, `remote-catalog-provider.ts` (`refreshModels` preservation), `modes/interactive/interactive-mode.ts` (`/login` custom endpoint dialog), the stationarity example, the `/codemode` command in `extensions/codemode/index.ts` and `docs/codemode.md`, `packages/env` non-POSIX login shell daemon startup, provider-audit coverage, and their tests |
 | `feat/native-providers` | providers no other branch owns, such as Kimi Coding and xAI: `packages/ai/scripts/native-providers.ts` (catalog corrections such as the `kimi-for-coding` name and the unlisted `xai/grok-4.7-build-fast`) and its hooks in `catalog/providers/kimi-coding.ts` and `xai.ts`, `mergeModels` in `packages/coding-agent/src/core/remote-catalog-provider.ts`, `test/native-providers-catalog.test.ts`, `test/remote-catalog-names.test.ts`. A provider that collects enough fork changes moves to its own branch |
-| `fork/tooling` | this directory (`.fork/`: `branches`, `sync.sh`, `check.sh`, `pack-release.sh`, `install-next.sh`, `install-tests.sh`, these docs) and `.github/workflows/fork-sync.yml` |
+| `fork/tooling` | this directory (`.fork/`: `branches`, `sync.sh`, `check.sh`, `pack-release.sh`, `install-next.sh`, `install-tests.sh`, these docs) , `.github/workflows/fork-sync.yml`, the catalog snapshot (`.fork/catalog-snapshot.json`, `.fork/catalog-snapshot.mjs`) and its additive loader seam in `packages/ai/catalog/sources/index.ts` (`PI_FORK_CATALOG_SNAPSHOT`) with `packages/ai/test/catalog-snapshot-sources.test.ts` |
 
 `packages/ai/catalog/` is touched by several branches. Edit only your model family's or provider's rules, on that provider's branch. A change that spans two providers is two commits on two branches.
 
@@ -23,6 +23,20 @@ Read this before changing anything. Upstream's own rules in the repo root `AGENT
 `next` is the repository's default branch. Only the workflow `.github/workflows/fork-sync.yml` pushes `next` and `main`; no person or agent ever does. It runs on every push to `fork/tooling`, daily, and on demand (`gh workflow run fork-sync.yml --repo JangMan-J/pi`, or the Actions tab). Each run first runs the full `sync.sh --hold-on-conflict --push`: fast-forward `main` from upstream, rebase every branch onto it, rebuild `next`, focused checks, push. If a branch does not rebase cleanly onto the new upstream, the run holds `main` where it was, rebuilds `next` on it from the current branch tips, and names the conflicting branch and commit in a warning and the run summary; that branch's owner rebases it by hand (Recovery). Then, if the `next` commit has no release yet, it builds, runs `npm run check` and `.fork/check.sh focused`, packs the build with `.fork/pack-release.sh` (the layout pi's own installer produces), and publishes the GitHub release `next-<first 12 hex of the commit>` with `pi-next.tar.gz` and its `.sha256`. It releases only when `sync.sh --status` is clean: no commits on `next` outside the listed branches, every branch on `main`, and `main` a mirror of upstream. A failed check publishes nothing. The five newest releases are kept. The workflow pushes through the write deploy key in the secret `FORK_SYNC_DEPLOY_KEY` (`GITHUB_TOKEN` may not push changes to `.github/workflows/`) and signs with `FORK_SYNC_GPG_KEY`.
 
 Machines that run pi install with `.fork/install-next.sh`: it downloads the latest release, verifies the SHA-256, unpacks it under `~/.local/share/pi-fork/releases/`, and switches `~/.local/bin/pi`. It builds and checks nothing; the workflow did. `--rollback` switches back to the previous release.
+
+## Catalog snapshot
+
+Checks, the workflow's Build and released `next` never read live catalogue sources (models.dev, OpenRouter, AI Gateway, NVIDIA, Radius): a pricing change upstream once turned CI red with no code change. `.fork/catalog-snapshot.json` holds the captured catalogue source data (the output of `loadCatalogSources`, not raw HTTP responses) as pretty JSON, so a refresh is an ordinary reviewable diff. `catalog-snapshot.mjs hydrate` runs `generate.ts --strict --data-only` with `PI_FORK_CATALOG_SNAPSHOT` set to it; the checked-out tree's catalog rules (all merged branches on `next`) transform the pinned source data. `sync.sh`, `check.sh` and the workflow Build call it. Without the variable, `loadCatalogSources` is unchanged and live.
+
+Release decision: a release contains the pinned snapshot as last refreshed deliberately, so the exact tested data ships and external pricing cannot change a release without a commit.
+
+Refresh (network, on `fork/tooling` only; nobody commits on `next`):
+
+```
+git checkout fork/tooling
+.fork/catalog-snapshot.mjs refresh      # rewrites .fork/catalog-snapshot.json atomically
+git diff --stat .fork/catalog-snapshot.json   # review, then commit and push fork/tooling
+```
 
 ## Order of work
 

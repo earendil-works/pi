@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {
 	DEFAULT_RADIUS_GATEWAY,
 	getRadiusModelsFromConfig,
@@ -53,11 +54,23 @@ async function fetchRadiusModels(): Promise<Model<"pi-messages">[]> {
 	return models;
 }
 
+/** Snapshot file form of CatalogSources: the Map is stored as entries. */
+export type CatalogSnapshot = Omit<CatalogSources, "nvidiaModelIds"> & { nvidiaModelIds: [string, string][] };
+
+/** Read a snapshot written by .fork/catalog-snapshot.mjs without any network access. */
+export function readCatalogSnapshot(path: string): CatalogSources {
+	const snapshot = JSON.parse(readFileSync(path, "utf8")) as CatalogSnapshot;
+	return { ...snapshot, nvidiaModelIds: new Map(snapshot.nvidiaModelIds) };
+}
+
 /**
  * Fetch every upstream source. In strict mode any failure aborts generation;
  * otherwise a failed source contributes nothing.
  */
 export async function loadCatalogSources(strict: boolean): Promise<CatalogSources> {
+	// Fork CI seam (owned by fork/tooling, see .fork/AGENTS.md): a committed snapshot replaces every fetch.
+	const snapshotPath = process.env.PI_FORK_CATALOG_SNAPSHOT;
+	if (snapshotPath) return readCatalogSnapshot(snapshotPath);
 	async function load<T>(label: string, fetcher: () => Promise<T>, fallback: T): Promise<T> {
 		try {
 			console.log(`Fetching ${label}...`);

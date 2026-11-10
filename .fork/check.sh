@@ -21,6 +21,11 @@ ensure_ai_deps_built() {
 	done
 }
 
+# Model data comes from the committed snapshot, never live sources, so checks are offline and deterministic.
+case "${1:-focused}" in
+	focused|all) node "$here/catalog-snapshot.mjs" hydrate ;;
+esac
+
 case "${1:-focused}" in
 	focused)
 		ai_tests=(
@@ -32,7 +37,7 @@ case "${1:-focused}" in
 			generic-endpoint-provider openrouter-regional openrouter-user-models
 			openai-responses-mid-convo-effort openai-codex-stream openai-responses-compat
 			openai-completions-tool-choice images-models
-			provider-audit-model-generation native-providers-catalog native-providers-kimi-wire
+			catalog-snapshot-sources provider-audit-model-generation native-providers-catalog native-providers-kimi-wire
 		)
 		core_agent_tests=(agent-loop)
 		agent_tests=(

@@ -254,10 +254,8 @@ prepare_for_check() {
 	if [[ ! -d node_modules ]] || [[ -n "$(git diff --name-only "$prev" next -- package.json package-lock.json 'packages/*/package.json' 'apps/*/package.json')" ]]; then
 		npm ci --ignore-scripts
 	fi
-	if [[ $fetch -eq 1 ]] && { ! npm --prefix packages/ai run check:model-data >/dev/null 2>&1 ||
-		[[ -n "$(git diff --name-only "$prev" next -- packages/ai/catalog/ packages/ai/scripts/ packages/ai/src/models.generated.ts 'packages/ai/src/providers/*.models.ts')" ]]; }; then
-		npm run hydrate:model-data
-	fi
+	# Always from the pinned snapshot, never live sources: checks and releases must not move with external data.
+	node "$repo/.fork/catalog-snapshot.mjs" hydrate
 }
 
 align_refs() {
