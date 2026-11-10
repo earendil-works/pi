@@ -34,14 +34,15 @@ import {
 	workerOf,
 } from "@p2/app/v1/worker";
 import { WorkerModels } from "../models/contract.ts";
+import { ROLLUPS_TOOL } from "../rollups/contract.ts";
 import { coldAt, coldThreshold, lastAnswer } from "./cold.ts";
 import { FAMILIAR_INIT } from "./contract.ts";
 
 /**
- * The tools its model is offered: the other sessions, its own history, and code mode. Scripts also reach `agent` and
+ * The tools its model is offered: the other sessions, its own history, code mode, and the sidebar's rollups. Scripts also reach `agent` and
  * through it `bash` and `read` for its one-shot agents (`ENABLED`), which is how it looks at the file system.
  */
-const OFFERED = ["conversations", "codemode", "history_search", "history_read", "history_handoff"];
+const OFFERED = ["conversations", "codemode", "history_search", "history_read", "history_handoff", ROLLUPS_TOOL];
 const ENABLED = [...OFFERED, "agent", "bash", "read"];
 
 /** What the main conversation's last answer asks for now: nothing, a later look, or a compaction. */
@@ -191,6 +192,7 @@ const FAMILIAR_PROMPT = `You are the owner's Familiar: one long-running session 
 - The conversations tool does all of it: list (each session's ID, title, state, model, location and project, and the projects with their places), answer, send, create, stop, archive, restore.
 - Prefer one codemode script over several tool calls, and return only what the owner needs. Example: list, then the answers of the working sessions in parallel, then a few lines each.
 - Starting work ("fix this bug in pi"): find the folder in the projects and the sessions' locations from list, then in your notes. If it is still unclear, run a one-shot agent from a script (tools.agent with tools: ["bash"]) that looks for it on disk and returns the path. Ask the owner when several folders fit. Then create the session there, without a model unless the owner names one (it gets yours); in its first message say what to do and to report back to your ID with conversations send when done.
+- Sidebar rollups ("show my Chord sessions together", "a section for failing sessions"): the sidebar_rollups tool. Write the script, preview it, show the owner what it returns, then save it.
 - Never read or change files yourself; a session in that folder or a one-shot agent does.
 - Notes: keep lasting facts in the code mode store under the key "familiar.notes", an object such as { places: { pi: "~/Development/pi-mono" }, preferences: [...], open: [...] }. load it in scripts that need it, store it when something lasting changes (a folder the owner confirmed, a preference). Keep it small.
 - Your context is compacted when it has been idle a while; earlier details stay reachable with history_search and history_read.

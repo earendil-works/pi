@@ -283,6 +283,16 @@ session in it: a folder's in that folder, a project's at its place on the machin
 button open a session in another tab. The rollups' order, windows and collapsed rollups and groups are stored on the
 server, the same on every device.
 
+**Rollups made from code.** Ask the Familiar for a section ("a section for sessions with answers I have not read",
+"group my sessions by package"): it writes a short script over every session, previews what it returns, and saves it
+with its `sidebar_rollups` tool. A script sees each session's title, folder, times, state, project and unread
+answer, and can ask the search index which sessions' messages mention something ("sessions where P2 came up in the
+last day"). The section shows before the Archive, with the same window, sticky sessions, list
+page and search as the built-in rollups. A rollup refreshes automatically when what its script reads changes (a
+rollup that groups by folder does not re-run when a session is renamed), every so many minutes when that changed, or
+only by hand; its **⋯** says which, when it was last checked and why its last run failed, with **Refresh now** for the
+ones that do not refresh automatically.
+
 `cacheWarming` (`"idle"` by default, `"streaming"` or `"off"`) keeps prompt caches warm as pi does: before the cache
 entry of a conversation's last request expires (5 minutes for Anthropic and Claude on Radius), p2 sends the request
 again with a one-token answer, while that is cheaper than writing the cache again. `"streaming"` warms while a run

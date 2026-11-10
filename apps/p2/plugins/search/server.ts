@@ -139,6 +139,10 @@ export default defineFacet((host) => {
 				return null;
 			},
 			messages: async ({ query, sessions }) => dbResource.value.messages(query, sessions),
+			mentions: async ({ query, since = 0 }) => {
+				const match = ftsQuery(query);
+				return match === undefined ? {} : dbResource.value.mentions(match, since);
+			},
 			history: async ({ session, query, conversation, before, limit }) => {
 				const db = dbResource.value;
 				const indexedThrough = db.cursor(session, conversation);

@@ -70,6 +70,7 @@ describe("the Familiar session", () => {
 			"history_search",
 			"history_read",
 			"history_handoff",
+			"sidebar_rollups",
 		]);
 		assert.deepEqual(agent?.tools, [
 			"conversations",
@@ -77,6 +78,7 @@ describe("the Familiar session", () => {
 			"history_search",
 			"history_read",
 			"history_handoff",
+			"sidebar_rollups",
 			"agent",
 			"bash",
 			"read",
