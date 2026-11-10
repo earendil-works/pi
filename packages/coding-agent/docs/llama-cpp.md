@@ -131,7 +131,7 @@ curl http://127.0.0.1:9931/health
 curl http://127.0.0.1:9931/models
 ```
 
-- **No models in `/llama`:** Check `--models-dir` or the local huggingface cache, the directory layout, and restart the router.
+- **No models in `/llama`:** Check `--models-dir` or the local huggingface cache, the directory layout, and restart the router. Make sure your server URL (http://127.0.0.1:9931) and optional API Key, if you used one, are correct.
 - **Model missing from `/model` with `--no-models-autoload`:** Load it with `/llama` first.
 - **Load fails or uses too much memory:** Lower `-c` or unload another model.
 - **Server is not in router mode:** Start it without `--model`, `-m`, or `-hf`.
