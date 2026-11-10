@@ -190,6 +190,42 @@ describe("installPlugin (slice 12 §5)", () => {
 		});
 	}, 60_000);
 
+	it("reads npm 12's pack output, the packed tarballs by package name", async () => {
+		const source = await tempRoot();
+		await writeFiles(source, {
+			"package.json": JSON.stringify({ name: "@bob/clock", version: "1.2.0" }),
+			"worker.ts": "export default { setup: () => {} };",
+		});
+		const packed = execFileSync("npm", ["pack", "--silent", "--pack-destination", source], {
+			cwd: source,
+			encoding: "utf8",
+		}).trim();
+		// npm 12 as installPlugin runs it: `pack` copies the tarball to --pack-destination and prints it by name; `install`
+		// (the dependencies) does nothing.
+		const tools = await tempRoot();
+		const script = join(tools, "npm12.mjs");
+		await writeFiles(tools, {
+			"npm12.mjs": [
+				'import { copyFileSync } from "node:fs";',
+				'import { join } from "node:path";',
+				"const args = process.argv.slice(2);",
+				'if (args[0] === "pack") {',
+				'\tconst destination = args[args.indexOf("--pack-destination") + 1];',
+				`\tcopyFileSync(${JSON.stringify(join(source, packed))}, join(destination, ${JSON.stringify(packed)}));`,
+				`\tconsole.log(JSON.stringify({ "@bob/clock": { name: "@bob/clock", filename: ${JSON.stringify(packed)} } }));`,
+				"}",
+			].join("\n"),
+		});
+		const root = await tempRoot();
+		const npmCommand = [process.execPath, script];
+		expect(await installPlugin({ npm: "@bob/clock", version: "1.2.0" }, root, context, { npmCommand })).toEqual([
+			"@bob/clock",
+		]);
+		expect(JSON.parse(await readFile(join(root, "@bob", "clock", "package.json"), "utf8"))).toMatchObject({
+			version: "1.2.0",
+		});
+	}, 60_000);
+
 	it("installs exactly the folders a package's chord.plugins lists", async () => {
 		const repository = await gitRepository(
 			"bob-plugins",
