@@ -221,10 +221,10 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 			"participant",
 		);
 		await childChat.send({ text: "slow child", requestId: "drawer-busy" }, BACKGROUND_CONTEXT);
-		await browser.wait(`document.querySelector('.session-header.has-subagents .live-dot')`);
+		await browser.wait(`document.querySelector('.session-header.has-subagents :is(.working-frame, .working-mark)')`);
 		await browser.click(".session-header.has-subagents .subagent-toggle");
 		await browser.wait(
-			`!${conversations}.hidden && document.querySelector('.nav-row:has(> .subagent-row) .live-dot')`,
+			`!${conversations}.hidden && document.querySelector('.nav-row:has(> .subagent-row) .working-mark')`,
 		);
 		await browser.click(".subagent-row");
 		await browser.wait(

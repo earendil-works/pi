@@ -20,7 +20,17 @@ import {
 import { memo, type ReactNode, useEffect, useId, useState } from "react";
 import { GlyphIcon } from "../../glyphs/GlyphIcon.tsx";
 import type { Glyphs, GroupSection, NewTarget, Section, SidebarRow } from "./model.ts";
-import { NavRow, pageHref, type RowActions, SessionItem, Toggle, useOpenedFrom } from "./Row.tsx";
+import {
+	HiddenAttention,
+	IconMarker,
+	NavRow,
+	pageHref,
+	type RowActions,
+	SessionItem,
+	Toggle,
+	useOpenedFrom,
+	WorkingMark,
+} from "./Row.tsx";
 import "./style.css";
 
 /** The current time, again every minute: a rollup's window passes while the sidebar is shown. */
@@ -42,25 +52,30 @@ type HeadingActions = {
 	onCollapse?: (key: string, collapsed: boolean) => void;
 	onOptions?: (key: string) => void;
 	onNewIn?: (target: NewTarget) => void;
-	/** The owner's project glyphs; absent: groups show a folder and sessions their activity dot only. */
+	/** The owner's project glyphs; absent: groups show a folder and sessions their working mark only. */
 	glyphs?: Glyphs;
 };
 
 /**
  * A group inside a rollup: its row (its project glyph, else a folder; a lock for a sandbox; its name, "+"), which shows
- * or hides its relevant sessions below it, one step in. Its tooltip is its path (a project's: its places).
+ * or hides its relevant sessions below it, one step in. Its tooltip is its path (a project's: its places). Collapsed, it
+ * says what its hidden sessions do: its icon framed while one works, how many failed or have a new answer.
  */
 function GroupItem({ group, rows, actions }: { group: GroupSection; rows: RowActions; actions: HeadingActions }) {
 	const { onCollapse, onNewIn, connected, glyphs } = actions;
 	const { target } = group;
 	const listId = useId();
 	const glyph = target && glyphs?.target(target);
-	const marker = group.sandboxed ? (
-		<NavLockIcon size={16} aria-label="Sandbox" />
-	) : glyph ? (
-		<GlyphIcon seed={glyph.seed} />
-	) : (
-		<NavFolderIcon size={16} />
+	const marker = (
+		<IconMarker working={group.hidden.working > 0}>
+			{group.sandboxed ? (
+				<NavLockIcon size={16} aria-label="Sandbox" />
+			) : glyph ? (
+				<GlyphIcon seed={glyph.seed} />
+			) : (
+				<NavFolderIcon size={16} />
+			)}
+		</IconMarker>
 	);
 	const label = <span className="session-title">{group.name}</span>;
 	return (
@@ -73,6 +88,7 @@ function GroupItem({ group, rows, actions }: { group: GroupSection; rows: RowAct
 				onActivate={() => onCollapse?.(group.key, !group.collapsed)}
 				marker={marker}
 				label={label}
+				details={group.hidden.failed + group.hidden.unread > 0 && <HiddenAttention activity={group.hidden} />}
 				controls={
 					onNewIn &&
 					target && (
@@ -101,7 +117,8 @@ function GroupItem({ group, rows, actions }: { group: GroupSection; rows: RowAct
 /**
  * A rollup's group of the navigation: its row (its name, a link to its list; the chevron right after it that shows or
  * hides its sessions; the Archive's count instead; its options), then its sessions or its groups by its layout, or
- * "No activity" when it has none to show.
+ * "No activity" when it has none to show. Collapsed, its row says what its hidden sessions do (it has no icon to frame:
+ * a spinner while one works).
  */
 function RollupGroup({ section, rows, actions }: { section: Section; rows: RowActions; actions: HeadingActions }) {
 	const { page, onPage, onCollapse, onOptions, glyphs } = actions;
@@ -133,7 +150,18 @@ function RollupGroup({ section, rows, actions }: { section: Section; rows: RowAc
 						/>
 					)
 				}
-				details={section.layout === "link" && <span className="section-count">{section.total}</span>}
+				details={
+					section.layout === "link" ? (
+						<span className="section-count">{section.total}</span>
+					) : (
+						section.hidden.working + section.hidden.failed + section.hidden.unread > 0 && (
+							<>
+								{section.hidden.working > 0 && <WorkingMark />}
+								<HiddenAttention activity={section.hidden} />
+							</>
+						)
+					)
+				}
 				controls={
 					onOptions && (
 						<button

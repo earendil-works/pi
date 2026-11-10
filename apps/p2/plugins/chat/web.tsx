@@ -626,6 +626,7 @@ function TopBar({
 		<header className="topbar">
 			<button type="button" className="icon-button menu sidebar-open" onClick={openSidebar} aria-label="Sessions">
 				<MenuIcon />
+				<Slot name="menu-badge" />
 			</button>
 			<div className="title">
 				{child ? (

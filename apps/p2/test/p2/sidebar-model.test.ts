@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import type { Project } from "../../plugins/projects/contract.ts";
 import {
 	ARCHIVE,
+	activityOf,
 	FOLDERS,
 	folderKey,
 	glyphsOf,
@@ -22,6 +23,7 @@ import {
 	type SidebarRow,
 	sectionsOf,
 	type View,
+	wantingOf,
 } from "../../plugins/sessions/sidebar/model.ts";
 
 const NOW = 1_800_000_000_000;
@@ -141,6 +143,63 @@ describe("sectionsOf", () => {
 			[FOLDERS, "groups", []],
 			[ARCHIVE, "link", 0],
 		]);
+	});
+});
+
+describe("activity", () => {
+	const states = [
+		row("busy", { worker: { busy: [1] } }),
+		row("child", { worker: { busy: [3] } }),
+		row("read", { worker: { busy: [], unread: true } }),
+		row("both", { worker: { busy: [1], unread: true } }),
+		row("broken", { worker: { busy: [], error: "boom" } }),
+		row("move", { operation: { label: "Move failed", error: "refused" } }),
+		row("moving", { operation: { label: "Moving…" } }),
+		row("idle"),
+	];
+
+	it("counts working, failed (worker or operation) and unread sessions; one session may count in several", () => {
+		assert.deepEqual(activityOf(states), { working: 3, failed: 2, unread: 2 });
+		assert.deepEqual(activityOf([]), { working: 0, failed: 0, unread: 0 });
+	});
+
+	it("says what a collapsed rollup or group hides, and nothing while it shows its sessions", () => {
+		const rows = states.map((each) => ({ ...each, cwd: "/w/pi" }));
+		const idle = { working: 0, failed: 0, unread: 0 };
+		const all = { working: 3, failed: 2, unread: 2 };
+		const open = sectionsOf(ROLLUPS, rows, CONTEXT, VIEW);
+		for (const section of open) if (section.layout !== "link") assert.deepEqual(section.hidden, idle);
+		const group = folderKey(null, "/w/pi");
+		const closed = sectionsOf(ROLLUPS, rows, CONTEXT, { ...VIEW, collapsed: { [RECENT]: true, [group]: true } });
+		assert.deepEqual(closed[0]!.layout === "sessions" && closed[0]!.hidden, all);
+		const folders = closed[2]!;
+		assert.ok(folders.layout === "groups");
+		assert.deepEqual(folders.hidden, idle);
+		assert.deepEqual(folders.groups[0]!.hidden, all);
+		// A collapsed rollup of groups counts a session in two groups once (a rollup made from code may list it twice).
+		const twice = {
+			...ROLLUPS[1]!,
+			collect: () => ({
+				layout: "groups" as const,
+				groups: [
+					{ key: "g:1", name: "1", sandboxed: false, members: states },
+					{ key: "g:2", name: "2", sandboxed: false, members: states },
+				],
+			}),
+		};
+		const [both] = sectionsOf([twice], rows, CONTEXT, { ...VIEW, collapsed: { [twice.key]: true } });
+		assert.deepEqual(both!.layout === "groups" && both!.hidden, all);
+	});
+
+	it("counts the live sessions that want the owner, apart from the one on screen, and whether one failed", () => {
+		assert.deepEqual(wantingOf(states, undefined), { count: 4, failed: true });
+		assert.deepEqual(wantingOf(states, "broken"), { count: 3, failed: true });
+		const unread = [
+			row("read", { worker: { busy: [], unread: true } }),
+			row("gone", { archivedAt: NOW, worker: { busy: [], unread: true } }),
+		];
+		assert.deepEqual(wantingOf(unread, undefined), { count: 1, failed: false });
+		assert.deepEqual(wantingOf(unread, "read"), { count: 0, failed: false });
 	});
 });
 

@@ -2643,22 +2643,6 @@ button.diff-number:hover {
 	overflow-y: auto;
 	padding: 0 var(--x) var(--s4);
 }
-.live-dot {
-	flex: none;
-	width: 7px;
-	height: 7px;
-	border-radius: 50%;
-	background: var(--working);
-	animation: pulse 1.2s ease-in-out infinite;
-}
-/* An answer the owner has not read yet: steady, unlike the working dot. */
-.unread-dot {
-	flex: none;
-	width: 7px;
-	height: 7px;
-	border-radius: 50%;
-	background: var(--unread);
-}
 .hit {
 	display: block;
 }

@@ -68,6 +68,8 @@ import {
 	type SidebarRow,
 	sectionsOf,
 	type View,
+	type Wanting,
+	wantingOf,
 } from "./sidebar/model.ts";
 import { type CodeSource, RollupSheet } from "./sidebar/RollupSheet.tsx";
 import { SidebarView, useNow } from "./sidebar/Sidebar.tsx";
@@ -162,6 +164,20 @@ const subscribePage = (listener: () => void) => {
 function publishPage(next: PageData): void {
 	pageData = next;
 	for (const listener of pageListeners) listener();
+}
+
+// What the other sessions want from the owner, for the menu button's badge (`MenuBadge`), which the top bars render
+// outside the sidebar; published by the sidebar, which holds the rows. A new value only when it changed.
+const wantingListeners = new Set<() => void>();
+let wanting: Wanting = { count: 0, failed: false };
+const subscribeWanting = (listener: () => void) => {
+	wantingListeners.add(listener);
+	return () => wantingListeners.delete(listener);
+};
+function publishWanting(next: Wanting): void {
+	if (next.count === wanting.count && next.failed === wanting.failed) return;
+	wanting = next;
+	for (const listener of wantingListeners) listener();
 }
 
 /**
@@ -478,6 +494,7 @@ function Sidebar() {
 		[],
 	);
 	const ownerNewIn = owner ? onNewIn : undefined;
+	useEffect(() => publishWanting(wantingOf(rows, route.session)), [rows, route.session]);
 	useEffect(
 		() =>
 			publishPage({
@@ -646,6 +663,23 @@ function SectionPage() {
 	);
 }
 
+/**
+ * The menu button's badge (the `menu-badge` slot): how many other sessions want the owner (a failure or an unread
+ * answer), in the error colour when one failed, else the unread blue. Steady: only working moves in the sidebar.
+ */
+function MenuBadge() {
+	const { count, failed } = useSyncExternalStore(subscribeWanting, () => wanting);
+	if (count === 0) return null;
+	return (
+		<span
+			className={`menu-badge ${failed ? "failed" : ""}`}
+			title={failed ? `${count} want you, a failure among them` : `${count} with a new answer`}
+		>
+			{count}
+		</span>
+	);
+}
+
 /** The top bar's button that opens the Session sheet (the drawer renders the sheet, where the rows are). */
 function SessionOptions() {
 	const route = useRoute();
@@ -666,6 +700,11 @@ function SessionOptions() {
 
 export default defineFacet((host) => {
 	contribute(host, "p2.web-sessions", (self) => {
-		self.contribute(Slots, { sidebar: Sidebar, page: SectionPage, "session-options": SessionOptions });
+		self.contribute(Slots, {
+			sidebar: Sidebar,
+			page: SectionPage,
+			"session-options": SessionOptions,
+			"menu-badge": MenuBadge,
+		});
 	});
 });

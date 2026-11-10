@@ -272,12 +272,15 @@ group that has it, and is selected in the place you opened it from. The sidebar 
 pinned ones, the open one, working ones, ones with an unread answer or a failure, and those active within the rollup's
 window (its **⋯**: **Show sessions active within** 24 hours, 3 days by default, 1 week, or Forever; the same menu moves
 the rollup up or down); a group without such a session is left out, and a rollup without any says **No activity**.
-Every row has one shape: the activity dot or the group's icon in one column, the name (cut with "…" when long), then
+Every row has one shape: the working mark or the group's icon in one column, the name (cut with "…" when long), then
 the details with the time of the last activity last. A click on a group's row (its name in medium weight) shows or hides its
-sessions (an arrow after the name says which), their activity dots in the same column as every other session's. A click anywhere on a session's row opens its main conversation and selects the row.
+sessions (an arrow after the name says which), their working marks in the same column as every other session's. A click anywhere on a session's row opens its main conversation and selects the row.
 Its other conversations (its `/tree` branches, subagents and code mode's one-shot agents) are below it, shown or hidden
-only by the arrow after its name (opening a subagent shows them), in the secondary style with their labels and activity
-dots in the session's columns. A rollup's name opens its list in the main
+only by the arrow after its name (opening a subagent shows them), in the secondary style with their labels and working
+marks in the session's columns. A working session's glyph has a frame whose dash travels around it (a spinner where a
+row has no glyph); an unread answer makes its title bold with a blue dot at the row's end; a failed worker shows
+**Failed**. A collapsed group or rollup counts the failed and unread sessions it hides, and a group frames its glyph
+while one of them works. The menu button of the top bar counts the other sessions with a failure or an unread answer. A rollup's name opens its list in the main
 area (`/list/<key>`), the arrow after it shows or hides its sessions; in a rollup's list, a group's name opens the
 group's own list. A list holds every session, those outside the window after the others in the secondary colour but still openable, in groups for a rollup
 of groups (every project, with or without sessions), with a search within the list's sessions; the Archive's list

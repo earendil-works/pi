@@ -827,21 +827,21 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
     plugin's `placeSeed` (below); a group's tooltip is its path (a project's: its places), a Recents session's its cwd.
   - **View** (`Sidebar.tsx`, `Row.tsx`, `ListPage.tsx`, `RollupSheet.tsx`), on Elanor's `Sidebar` and
     `SideNavigation` and icons (re-exported by `src/web/navigation-components.ts`). Every row is a `NavRow`: a marker
-    column as wide as an icon (a session's activity dot, a group's project glyph, folder or lock, a Recents session's
-    glyph with its dot on the corner; kept when empty; a rollup has none),
+    column as wide as an icon (a session's working mark, a group's project glyph, folder or lock, a Recents session's
+    glyph; kept when empty; a rollup has none),
     the label (a link; an action: restoring an archived session, switching to another branch; or, with `expanded`, the
     control that shows or hides what is below the row, Elanor's chevron right after the label), details (the time of
     the last activity last) and controls (⋯, "+", a branch's rename), all one control whose hover and selected
     backgrounds (Elanor's ghost fills) span the row; the label's hit area covers it. Labels are one line, cut with "…" at
     the end (`.nav-label`). No leading disclosure column, so nothing is indented by it: a group's row shows or hides
-    its sessions, not indented (every session's activity dot is in one column); a group's row is medium weight. The
+    its sessions, not indented (every session's working mark is in one column); a group's row is medium weight. The
     owner's list starts with a "New session" row in a group's type ("+" marker, a link to `/new`, the new-session
     screen, selected while it shows); the header holds the Pi logo (the Familiar's button) and the
     collapse trigger. A session's row is a link to its main conversation,
     selected while that shows (the label's hit area covers the row: the label is not positioned, so its `::after` is
     laid out on the row). Its other conversations (its branches, then its subagents and one-shot agents, the most
     recently active first) are below it, shown or hidden only by its chevron (`Toggle`, a button after the label;
-    showing a subagent shows them), in the secondary style, their labels and activity dots in the session's columns. A rollup's name is a link
+    showing a subagent shows them), in the secondary style, their labels and working marks in the session's columns. A rollup's name is a link
     to its list, its chevron a `Toggle` after it; a collapsed rollup lists nothing ("No activity" is for an open one). Rows start and end on the bars' icon line (`--nav-edge`, style.css). An open session is selected
     in one place: where this tab opened it from (per session, in sessionStorage), else the first place it shows. The
     list page in the main area (`Route.page`, at `/list/<key>`; the `page` slot instead of `main`; `openPage` closes
@@ -849,6 +849,21 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
     sessions only (no conversations below them, `listsConversations`), in the transcript's column (`--chat-size`,
     `--chat-width`) inside one scroller across the main area, as the transcript; it has a search within its sessions (`Search` 3's `sessions`), kept with its scroll position across Back, its "+" for
     groups, and the error toast (`ErrorToast`, shared with the chat).
+  - **State marks** (`Row.tsx`, the top of `style.css`): a row says two things in two places. The marker says whether
+    a session runs: `IconMarker` frames the row's icon (a glyph, a folder, a lock) with a dash travelling around it
+    (22px, 3px outside the icon, clear of a glyph's corner cells), `WorkingMark` is a spinner where a row has no icon (a
+    group's sessions, conversations, the Familiar's logo, a collapsed rollup's details). That is the sidebar's only
+    motion. The row's end says whether it wants the owner, steady: an unread answer makes the title bold
+    (`.session-title.unread`) with a blue dot before the time (`UnreadMark`); a failed worker shows a warning sign and
+    "Failed" (`FailedMark`, the error in its tooltip). Each state has its own shape, not only a colour (spinner or
+    frame, dot, warning sign), so colour blindness does not merge them; the dots used to sit on a glyph's corner in the
+    glyph's own colours. With reduced motion the spinner is a still ¾ ring and the frame dashed; in the phone's closed
+    drawer they pause. A collapsed group or rollup sums up what it hides (`hidden`, `activityOf` in `model.ts`): a
+    group frames its icon while one of them works, a rollup shows a spinner, and both count the failed ones (warning
+    sign) and the unread ones (a blue count). The top bars' menu button (`menu-badge` slot, `MenuBadge` in `web.tsx`,
+    rendered by the chat's and the list page's bar) counts the other live sessions that want the owner (`wantingOf`: a
+    failure or an unread answer, the open one left out), red when one failed. The sidebar publishes it, as it publishes
+    the list page's data. A "needs input" state waits for questions and approvals (`docs/waiting.md`).
   - **Settings** (`sidebar-settings.ts`, `SidebarSettingsStore`/`SidebarSettings`, owner): the rollups' order, windows
     and collapsed rollups and groups, one persisted document in the server's store (`p2.sidebar-settings-state`): a person's
     view, not the catalog. A project's "+" sets the new-session screen's location and a join (`NewSessionJoin`:
@@ -1421,7 +1436,7 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   `InputGate` before the next input is admitted, which waits for the summary. Web: home (the `home` slot: `/` replaces
   itself with its session, made on first use; while the owner has it archived, with the new-session screen) and the
   `drawer-brand` slot, the Pi logo at the start of the owner's sidebar header (a button titled "Ask Pi" that opens it,
-  restoring it when archived; the session's activity dot on its corner); the sessions plugin's `DrawerRowsContext` (`plugins/sessions/contract.web.tsx`) gives it the
+  restoring it when archived; the session's working spinner or unread dot on its corner); the sessions plugin's `DrawerRowsContext` (`plugins/sessions/contract.web.tsx`) gives it the
   rows, `SessionDot` and `listApart`, which leaves its session out of the rollups. The TUI lists it as an ordinary session. Tests:
   `familiar.test.ts`, `ui-familiar.test.ts`, the conversations actions in `conversations.test.ts`.
 - **Subagents** (`plugins/subagents`): owns its protocol-independent Durable extension (persistent
@@ -1430,7 +1445,7 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   acknowledged reports on errors/reload. Server `ChildStore` persists the list as one row per session in the server's store, keyed by its address
   (`plugins/subagents/children.ts`); worker
   generation fences late reports. Owner `Subagents` readers see every session; guests see only their own. Reading
-  the list does not start/hold a worker. The sidebar expands children (latest entry first), with working dots;
+  the list does not start/hold a worker. The sidebar expands children (latest entry first), with working marks;
   `/s/<id>/c/<conversation>` opens an independent chat, draft and model control. A parent link returns to the root.
   Browser configuration synchronizes the subagent registry via `ConversationConfigured`. Main Stop leaves child
   work running; direct child prompts do not report to the parent. **Tools** (`resolveChoice`/`resolveTools` in

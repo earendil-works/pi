@@ -47,7 +47,7 @@ version 2; absent: `{ 1, [{ 1, null }] }`):
   label as the session title for 4, no labels for `SessionTree` 1). A web page or TUI viewing the previous main conversation follows a switch.
 - Earlier branches are read-only (`ReadOnlyConversations`): only the main conversation takes input (send, dequeue,
   configure); Stop stays allowed. A branch left while it works keeps running in the background: its run and queued
-  input go on, its sidebar row shows the working dot, and its answer counts as unread. To watch or stop it, switch
+  input go on, its sidebar row shows the working mark, and its answer counts as unread. To watch or stop it, switch
   back to it. The web shows only the main conversation and subagents (others redirect to the main one).
 - **Labels** are stored per branch (see [Labels](#labels)).
 
