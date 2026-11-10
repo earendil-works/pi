@@ -2,7 +2,7 @@
 // only with relevant sessions, a rollup's or a group's name opening its list in the main area (aged sessions after the
 // others, dimmed; the list's own search), collapsing rollups and groups, a rollup's window and place, a session
 // selected in the one place it was opened from, a group's "+" starting a session in its folder or project, and project
-// glyphs on groups and on Recents' sessions. Fake provider, disposable data; every test makes its own sessions.
+// glyphs on groups, on Recents' sessions and in the top bar. Fake provider, disposable data; every test makes its own sessions.
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
@@ -287,7 +287,7 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		projects.release();
 	});
 
-	it("shows project glyphs on groups and Recents' sessions, a project's on its folders and sessions, paths as tooltips", async () => {
+	it("shows project glyphs on groups, Recents' sessions and the top bar, a project's on its folders and sessions", async () => {
 		const place = folder("glyphed");
 		const inside = folder("glyphed/sub");
 		const other = folder("other");
@@ -339,6 +339,12 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 			),
 			place,
 		);
+		// An open session's top bar shows its glyph before its path.
+		await browser.evaluate(
+			`[...document.querySelectorAll('${recent} .session-main')].find(e=>e.querySelector('.session-title').textContent==='Inside').click()`,
+		);
+		await browser.wait(`document.querySelector('.topbar h1')?.textContent==='Inside'`);
+		assert.equal(await glyph(".topbar .title-cwd svg.glyph-icon"), project);
 		projects.release();
 	});
 });

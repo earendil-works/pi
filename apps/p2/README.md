@@ -265,7 +265,8 @@ shown (a rollup's row is where you manage it). **Recents** lists every session; 
 (projects.json and the sessions started in a project); **Folders** has a group per folder sessions work in (a lock
 for a sandbox); the **Archive** shows its name and count. Groups and the sessions in Recents show a project glyph: a
 small 3x3 picture in the Radius colors hashed from the project's first place (any other folder: from its own path), so
-a project, its folders and its sessions look alike; hovering the row shows the path. `/glyph.svg?seed=<path or
+a project, its folders and its sessions look alike; hovering the row shows the path. An open session's top bar shows
+it before the session's path. `/glyph.svg?seed=<path or
 name>&size=<px>` serves the same glyph as an SVG file, for embedding elsewhere (no sign-in needed: it reads no data). A session shows in every rollup and
 group that has it, and is selected in the place you opened it from. The sidebar shows the sessions that matter now:
 pinned ones, the open one, working ones, ones with an unread answer or a failure, and those active within the rollup's

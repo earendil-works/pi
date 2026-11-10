@@ -8,6 +8,7 @@ import {
 	grantMode,
 	type Held,
 	isChordError,
+	keptIn,
 	liveIn,
 	serveKeyed,
 	UI_LINGER,
@@ -111,8 +112,11 @@ import { createPortal } from "react-dom";
 import { Drafts } from "../drafts/contract.ts";
 import { Envs } from "../envs/contract.ts";
 import { DirectoryPicker, directoryPickerLayer } from "../envs/contract.web.tsx";
+import { GlyphIcon } from "../glyphs/GlyphIcon.tsx";
+import { placeSeed } from "../glyphs/seed.ts";
 import { Models } from "../models/contract.ts";
 import type { ResourceSnapshot } from "../models/resources.ts";
+import { Projects } from "../projects/contract.ts";
 import { type Session, Sessions } from "../sessions/contract.ts";
 import { SessionMetrics, SessionStatus, WorkerControl } from "../status/contract.ts";
 import { type Child, conversationLocation, SubagentControl, Subagents } from "../subagents/contract.ts";
@@ -229,6 +233,8 @@ type PageObjects = {
 	readonly models: Held<typeof Models> | undefined;
 	/** The owner's only. */
 	readonly envs: Held<typeof Envs> | undefined;
+	/** The owner's only: projects.json and the sessions' projects, for the top bar's project glyph. */
+	readonly projects: Held<typeof Projects> | undefined;
 };
 
 const PageObjectsContext = createContext<PageObjects | undefined>(undefined);
@@ -598,8 +604,19 @@ function TopBar({
 	const nav = useNavigation();
 	const route = useRoute();
 	// Only the owner reads environments (`PageObjects.envs`): guests see the location without the sandbox lock.
-	const envs = useReadable(usePageObjects().envs?.envs);
+	const objects = usePageObjects();
+	const envs = useReadable(objects.envs?.envs);
 	const sandboxed = envs?.find((env) => env.name === session?.env)?.config.type === "gondolin";
+	// The project glyph the sidebar shows for this session (guests read no projects: the path's own glyph).
+	const kept = keptIn(objects.projects, "owner");
+	const projects = useReadable(kept?.projects);
+	const memberships = useReadable(kept?.sessions);
+	const glyph = session && (
+		<GlyphIcon
+			seed={placeSeed(projects ?? [], session.env ?? null, session.cwd, memberships?.[session.id])}
+			size={11}
+		/>
+	);
 	const lock = sandboxed && (
 		<span className="title-lock">
 			<LockIcon size={11} />
@@ -640,12 +657,16 @@ function TopBar({
 									) : (
 										<>
 											{lock}
+											{glyph}
 											{locationLabel(session.env, session.cwd)}
 										</>
 									)}
 								</button>
 							) : (
-								<p>{locationLabel(session.env, session.cwd)}</p>
+								<p>
+									{glyph}
+									{locationLabel(session.env, session.cwd)}
+								</p>
 							))}
 					</>
 				)}
@@ -1767,9 +1788,10 @@ function Main() {
 	const status = useObject(SessionStatus, {});
 	const models = useObject(Models, owner ? {} : undefined);
 	const envs = useObject(Envs, owner ? {} : undefined);
+	const projects = useObject(Projects, owner ? {} : undefined);
 	const objects = useMemo(
-		() => ({ sessions, access, subagents, status, models, envs }),
-		[sessions, access, subagents, status, models, envs],
+		() => ({ sessions, access, subagents, status, models, envs, projects }),
+		[sessions, access, subagents, status, models, envs, projects],
 	);
 	const grant = useReadable(liveIn(access, "guest")?.grant);
 	// A guest stays within the sessions shared with it; anywhere else it lands in the one shared or joined last.

@@ -2,7 +2,8 @@
 // section of the sidebar: a flat list (Recents), groups of sessions (one per project, one per folder), or only a link to
 // its list (the Archive). The sidebar shows each rollup's relevant sessions (relevance and the rollup's window); its
 // list page shows them all, those that fell out of the window aged. No React: the views render what these return.
-import { below, type Project } from "../../projects/contract.ts";
+import { placeSeed, projectSeed } from "../../glyphs/seed.ts";
+import type { Project } from "../../projects/contract.ts";
 import type { RollupWindow } from "../../rollups/contract.ts";
 import type { Child } from "../../subagents/contract.ts";
 import type { Session, SidebarWindow } from "../contract.ts";
@@ -76,27 +77,21 @@ export type Glyphs = {
 };
 
 /**
- * Glyphs by project: a project's glyph is seeded by its first place, and a folder or a session inside one of its places
- * (a session also by membership) shows the project's, so a project, its folders and its sessions look alike. Any other
- * place is seeded by its own path.
+ * Glyphs by project (`placeSeed`): a project, its folders and its sessions show the project's glyph; any other place
+ * its own path's. The tooltip is the place's path, a project's its places.
  */
 export function glyphsOf({ projects, memberships }: Pick<RollupContext, "projects" | "memberships">): Glyphs {
-	const seedOf = (project: Project) => project.places[0]?.path ?? project.name;
 	const label = (env: string | null, path: string) => (env ? `${env}:${path}` : path);
-	const at = (env: string | null, cwd: string, member?: string): GlyphSeed => {
-		const project =
-			projects.find((each) => each.name === member) ??
-			projects.find((each) =>
-				each.places.some((place) => place.env === env && below(cwd, place.path) !== undefined),
-			);
-		return { seed: project ? seedOf(project) : cwd, title: label(env, cwd) };
-	};
+	const at = (env: string | null, cwd: string, member?: string): GlyphSeed => ({
+		seed: placeSeed(projects, env, cwd, member),
+		title: label(env, cwd),
+	});
 	return {
 		target: (target) =>
 			target.kind === "folder"
 				? at(target.env, target.cwd)
 				: {
-						seed: seedOf(target.project),
+						seed: projectSeed(target.project),
 						title:
 							target.project.places.map((place) => label(place.env, place.path)).join("\n") ||
 							target.project.name,

@@ -108,7 +108,7 @@
 	position: relative;
 	display: inline-flex;
 }
-.glyph-icon {
+.nav-marker .glyph-icon {
 	display: block;
 	flex: none;
 }

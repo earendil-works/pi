@@ -3492,6 +3492,12 @@ button.history-edge:disabled {
 	margin-right: 3px;
 	vertical-align: -1px;
 }
+/* The location's project glyph (plugins/glyphs), before the path in the top bar's location line. */
+.title .glyph-icon {
+	display: inline-block;
+	margin-right: var(--s1);
+	vertical-align: -1px;
+}
 
 /* Touch targets: on a coarse pointer every list row and small control is at least one --row (44px) tall. The
    transcript's own rows keep their rhythm (.row, TranscriptRow.gap in Chat.tsx). */
