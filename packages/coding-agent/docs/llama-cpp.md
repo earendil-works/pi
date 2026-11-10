@@ -43,7 +43,7 @@ In most cases you do not need any extra flags as the defaults should be reasonab
 - `-c 32768` sets the context size in tokens. Use `-c 0` for the model's full context window, which may require substantially more memory. Context is shared across parallel server slots.
 - `--models-dir ~/models` discovers local GGUF files from a custom local directory.
 
-By default, models will be stored in the standard huggingface local cache directory. Multimodal and multi-shard models are supported:
+By default, models will be stored in the standard huggingface local cache directory. Multimodal and multi-shard models are supported out of the box:
 
 ```text
 ~/.cache/huggingface/hub/
