@@ -72,6 +72,30 @@ inside a pane:
 - **Where they live:** a session's sketches are the views plugin's session data (the worker's store, HTML as the
   session's files); saved sketches are the owner's library on the server; promoted views are plugins.
 
+## 4a. Views as Chord clients (owner, 2026-11-10)
+
+A sketch's frame is a Chord client host of its own, with its own link (its own WebSocket) to the server and its own
+principal: a view principal `{ kind: "view", session, view, for }` (`for`: whom it is shown to, for names and presence
+only; a view principal never gets that principal's powers). Objects give view principals a variant of their own, as
+for guests; what has no view variant (sending messages, answering questions, approvals) a view cannot reach.
+
+- **Its link:** the page asks the server for a short-lived token scoped to that view and hands it to the frame through
+  the postMessage bridge; the frame opens its link with it (its origin is opaque, so the server's links endpoint
+  admits view links by that token alone). Not relayed through the page's link: that would stamp the page's principal.
+- **One socket per view, not piggybacked** (owner): a fast view (a game) never queues behind the page's traffic at the
+  TCP level, nor the page behind it. A meetup with 70 guests and two views is 210 sockets, which the server handles;
+  piggybacking through the page (Chord marking a relay's origin as a weaker principal) is deferred until a case needs
+  it.
+- **Revocation:** closing the view or revoking its viewer revokes its view principals; their objects end.
+- **The room** (presence, a slot per peer, broadcast messages, a shared clock, a leader) is an ordinary server object
+  with a view variant, in memory, one per open view; a netcode helper (snapshot interpolation, prediction with
+  reconciliation) ships in the view kit.
+- **The view kit:** React, p3's presentational components (props in, events out; none holds a Chord reference) and
+  the CSS, built by the server as one content-hashed bundle and loaded by a frame from a public endpoint (cached once;
+  the endpoint answers the opaque origin with an open cross-origin header).
+- The postMessage bridge to the page keeps only what belongs to the page: the token, state saving, selections and
+  annotations.
+
 ## 5. Phones and terminals
 
 - **Phones:** one pane at a time from a tab strip (p2's rule); global views (the sidebar) open as a drawer; the fixed
