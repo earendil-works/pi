@@ -1,0 +1,991 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Waiting for the World: suspendable work in pi-durable</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A design book · draft, fifth revision · pi-durable · 2026-11-09</div>
+  <h1>Waiting for<br>the World</h1>
+  <p class="subtitle">How a task, a tool, or a gate waits hours for a webhook, a person, or its children, while nothing runs and the process may sleep</p>
+  <div class="cover-stats"><div class="stat"><b>0</b><span>new task statuses</span></div><div class="stat"><b>1</b><span>new delivery operation, signal()</span></div><div class="stat"><b>0</b><span>changes to the SQLite schema</span></div><div class="stat"><b>4</b><span>reasons parked work wakes: time, expired, signal, tasks</span></div></div>
+  <div class="cover-note"><p>Draft for review, not built. Follows <code>spec.md</code> in the same directory (cited as §n), which records the owner&#39;s
+decisions of 2026-11-09, the review by gpt-6-astra, gpt-6.1-sol and claude-opus-5-5, and extends
+<code>packages/durable/docs/spec.md</code> (cited as spec §n). Schemas use <code>@earendil-works/pi-schema</code>. How plugins compose
+hooks into policies (approvals, quotas, ordering) is the host&#39;s design, not Durable&#39;s; the last chapter says where
+that line runs.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#today">I. Why It Fails Today</a></li>
+<li><a href="#signals">II. Signals</a></li>
+<li><a href="#sleep">III. Sleeping on Signals</a></li>
+<li><a href="#deadlines">IV. Deadlines and Keys</a></li>
+<li><a href="#tools">V. Tools That Park</a></li>
+<li><a href="#children">VI. Waiting on Children</a></li>
+<li><a href="#subagent">VII. Waiting on a Subagent</a></li>
+<li><a href="#gates">VIII. Gates Before a Tool Runs</a></li>
+<li><a href="#hooktasks">IX. Hooks That Start Tasks</a></li>
+<li><a href="#abort">X. Abort and Crashes</a></li>
+<li><a href="#visibility">XI. Seeing What Waits</a></li>
+<li><a href="#hosts">XII. Where Durable Stops</a></li>
+<li><a href="#open-questions">Open Questions</a></li>
+<li><a href="#examples-to-build">Appendix A: Examples to Build</a></li>
+<li><a href="#api-reference">Appendix B: API Reference</a></li>
+<li><a href="#glossary">Appendix C: Glossary</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">Ana asks her team&#39;s agent to fix a flaky test and verify it. The agent edits a file and calls <code>run_ci</code>, which starts
+a CI build. The build takes twenty minutes and reports its result by calling a webhook. The agent runs in a Cloudflare
+Durable Object, or in p2&#39;s per-session worker: a process that costs money or memory while it exists and can be
+evicted at any moment.</p>
+<p>What Ana&#39;s team wants is simple to say. While the build runs, nothing should run: no process held open for twenty
+minutes, no alarm except at a deadline. When the webhook arrives, the call continues where it left off and the model
+gets the result. If the process dies in between, the wait is not lost, and the build is not started twice.</p>
+<p>pi-durable cannot do that today. A tool is one in-memory function, so the only way for <code>run_ci</code> to get the webhook is
+to await it inside that function. This book shows why that fails, and then builds the solution one concept at a
+time: signals, sleeps that wait for signals, tools that park, waits on children, waiting for a subagent, and gates
+before a tool runs.</p>
+<h3 id="eight-things-to-know">Eight things to know</h3>
+<ol class="findings">
+<li><strong>No new task status.</strong> A <code>sleeping</code> task may wait for a time, for signals, or both. A <code>waiting</code> task may wake on
+the first of its tasks instead of all of them.</li>
+<li><strong>A signal is a typed value delivered to a live task.</strong> <code>harness.signal(taskId, token, key, value)</code> stores it on
+the task, checked against the token&#39;s schema; the first value for a key wins.</li>
+<li><strong>Early signals are kept.</strong> A value that arrives before the task sleeps is stored, and the sleep wakes at once.</li>
+<li><strong>Parked code is told why it woke.</strong> Tasks read <code>task.state.wake</code>, tools read <code>api.wake</code>: time, expired, a signal, or tasks.</li>
+<li><strong>A tool parks by returning instead of a result.</strong> <code>execute()</code> returns <code>{ sleep }</code> or <code>{ wait }</code>; on wake it runs
+again with <code>api.wake</code> and <code>api.checkpoint</code>.</li>
+<li><strong>Waking commits intent first.</strong> A woken tool call records its wake before its code runs, so a replay-unsafe tool
+is never run twice.</li>
+<li><strong>Gates are <code>beforeTool</code> hooks that sleep.</strong> Every wake before intent reruns the whole call phase, so every gate is
+asked again.</li>
+<li><strong>Abort ends a park at once,</strong> and hosts decide liveness from <code>wake()</code>, not from the task graph.</li>
+</ol>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p>A <strong>task</strong> is a durable state machine with a <strong>checkpoint</strong> per step (spec §5.1); an <strong>invocation</strong> is one run of its
+code in memory; a <strong>phase</strong> is one named step. A task <strong>parks</strong> when it commits <code>waiting</code> (until other tasks end) or
+<code>sleeping</code> (until a time or a signal) and its invocation ends. A <strong>signal</strong> is a JSON value delivered from outside,
+under a <strong>key</strong> that names one wait; its <strong>token</strong> gives it a name, a version, and a schema. A <strong>wake</strong> says why parked
+work runs again. <strong>Intent</strong> is the commit that records a tool call before its code runs. A <strong>gate</strong> is a <code>beforeTool</code>
+hook that may stop or delay a call. A <strong>memo</strong> is a small first-writer-wins value stored on a live task.</p>
+</section>
+
+<section class="chapter" id="today"><header class="opener"><div class="numeral">I</div><h2>Why It Fails Today</h2><p class="lede">What a durable task can wait for now, and what happens to a tool that waits for a webhook.</p></header>
+<p class="dropcap">A durable task can park in two ways today. It can wait for other tasks, and it can sleep until a time:</p>
+<pre><code><span class="tk-k">type</span> <span class="tk-t">TaskState</span>&lt;S, R&gt; =
+  | { <span class="tk-k">readonly</span> status: <span class="tk-s">"pending"</span>; <span class="tk-k">readonly</span> checkpoint: S }
+  | { <span class="tk-k">readonly</span> status: <span class="tk-s">"running"</span>; <span class="tk-k">readonly</span> checkpoint: S }
+  | { <span class="tk-k">readonly</span> status: <span class="tk-s">"waiting"</span>; <span class="tk-k">readonly</span> checkpoint: S; <span class="tk-k">readonly</span> on: <span class="tk-k">readonly</span> <span class="tk-t">TaskId</span>[]; <span class="tk-k">readonly</span> policy: <span class="tk-s">"failFast"</span> | <span class="tk-s">"allSettled"</span> }
+  | { <span class="tk-k">readonly</span> status: <span class="tk-s">"sleeping"</span>; <span class="tk-k">readonly</span> checkpoint: S; <span class="tk-k">readonly</span> until: number }
+  | { <span class="tk-k">readonly</span> status: <span class="tk-s">"completing"</span>; <span class="tk-k">readonly</span> outcome: <span class="tk-t">TaskOutcome</span>&lt;R&gt; }
+  | { <span class="tk-k">readonly</span> status: <span class="tk-s">"terminal"</span>; <span class="tk-k">readonly</span> outcome: <span class="tk-t">TaskOutcome</span>&lt;R&gt; };</code></pre>
+<p>A parked task holds no invocation. Its state is in the record, and the scheduler starts a new invocation at the stored
+checkpoint once the tasks end or the time comes. That is what makes waiting cheap: <code>harness.wake()</code> reports
+<code>{ active: false, at: until }</code>, and a Durable Object sets its alarm to <code>until</code> and hibernates.</p>
+<p>Neither state fits a webhook: nothing inside the Session finishes, and no time is known. And a tool cannot park at
+all. Its whole life is one function:</p>
+<pre><code><span class="tk-k">type</span> <span class="tk-t">ToolRegistration</span>&lt;TParameters <span class="tk-k">extends</span> object = object, TDetails <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span> = <span class="tk-t">JsonValue</span>&gt; = <span class="tk-t">Tool</span>&lt;TParameters&gt; &amp; {
+  <span class="tk-k">readonly</span> replay?: <span class="tk-s">"safe"</span> | <span class="tk-s">"unsafe"</span>;
+  <span class="tk-f">execute</span>(args: <span class="tk-t">ToolArgs</span>&lt;TParameters&gt;, api: <span class="tk-t">ToolExecutionApi</span>&lt;TDetails&gt;, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-t">ToolExecutionResult</span>&lt;TDetails&gt;&gt;;
+};</code></pre>
+<p>So <code>run_ci</code> has to await the webhook inside <code>execute()</code>:</p>
+<pre><code><span class="tk-k">import</span> { obj, str } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/pi-schema"</span>;
+
+<span class="tk-c">// The CI service's client, and a host helper that resolves when the webhook for a build arrives.</span>
+<span class="tk-k">declare</span> <span class="tk-k">const</span> ci: { <span class="tk-f">trigger</span>(input: { ref: string }, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;{ id: string }&gt; };
+<span class="tk-k">declare</span> <span class="tk-k">function</span> <span class="tk-f">webhookFor</span>(buildId: string, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;{ status: <span class="tk-s">"passed"</span> | <span class="tk-s">"failed"</span>; logUrl: string }&gt;;
+
+<span class="tk-k">const</span> runCi = <span class="tk-f">defineTool</span>({
+  name: <span class="tk-s">"run_ci"</span>,
+  description: <span class="tk-s">"Run CI on a git ref and report the result"</span>,
+  parameters: <span class="tk-f">obj</span>({ ref: <span class="tk-f">str</span>() }),
+  replay: <span class="tk-s">"safe"</span>,
+  <span class="tk-k">async</span> <span class="tk-f">execute</span>({ ref }, api, context) {
+    <span class="tk-k">const</span> build = <span class="tk-k">await</span> ci.<span class="tk-f">trigger</span>({ ref }, context);
+    <span class="tk-k">const</span> result = <span class="tk-k">await</span> <span class="tk-f">webhookFor</span>(build.id, context); <span class="tk-c">// twenty minutes, in memory</span>
+    <span class="tk-k">return</span> { output: [{ <span class="tk-k">type</span>: <span class="tk-s">"text"</span>, text: <span class="tk-s">`CI ${result.status}: ${result.logUrl}`</span> }], isError: result.status !== <span class="tk-s">"passed"</span> };
+  },
+});</code></pre>
+<figure class="fig anim"><svg viewBox="0 0 720 273" width="100%" role="img" aria-label="runci today. The invocation is held for the whole build; a crash loses the wait." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="130.7" y1="52" x2="130.7" y2="265" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="45.7" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="130.7" y="27" font-size="11" fill="#2a2723" text-anchor="middle">run_ci</text><text x="130.7" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">tool task, running</text><line x1="360" y1="52" x2="360" y2="265" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="275" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="360" y="30" font-size="11" fill="#2a2723" text-anchor="middle">Harness</text><line x1="589.3" y1="52" x2="589.3" y2="265" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="504.3" y="10" width="170" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="589.3" y="30" font-size="11" fill="#2a2723" text-anchor="middle">CI service</text><g class="step edge" style="--i:1"><line x1="130.7" y1="78" x2="586.3" y2="78" stroke="#7b7468" marker-end="url(#f1m)"/><text x="360" y="72" font-size="10" fill="#2a2723" text-anchor="middle">trigger(ref) -&gt; build 7</text></g><g class="step" style="--i:2"><rect x="26" y="96" width="668" height="23" rx="3" fill="#f4eee2" stroke="#c2b18c"/><text x="360" y="110" font-size="10" fill="#5b5549" text-anchor="middle">execute() awaits the webhook; wake().active = true; the object cannot hibernate</text></g><g class="step" style="--i:3"><line x1="16" y1="143" x2="704" y2="143" stroke="#c9bfae" stroke-dasharray="2 4"/><rect x="238" y="133" width="244" height="18" fill="#fbf8f2"/><text x="360" y="147" font-size="9.5" fill="#7b7468" text-anchor="middle" font-weight="600" letter-spacing="1.5">THE PROCESS IS EVICTED AFTER 8 MINUTES</text></g><g class="step edge" style="--i:4"><line x1="360" y1="177" x2="133.7" y2="177" stroke="#7b7468" marker-end="url(#f1m)"/><text x="245.3" y="171" font-size="10" fill="#2a2723" text-anchor="middle">recovery: replay-safe, execute() again</text></g><g class="step edge" style="--i:5"><line x1="130.7" y1="209" x2="586.3" y2="209" stroke="#7b7468" marker-end="url(#f1m)"/><text x="360" y="203" font-size="10" fill="#2a2723" text-anchor="middle">trigger(ref) -&gt; build 8, a second build</text></g><g class="step edge" style="--i:6"><line x1="589.3" y1="241" x2="363" y2="241" stroke="#7b7468" marker-end="url(#f1m)"/><text x="474.7" y="235" font-size="10" fill="#2a2723" text-anchor="middle">webhook for build 7: nobody listens</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 1.</span> run_ci today. The invocation is held for the whole build; a crash loses the wait.</figcaption></figure>
+<p>Three things go wrong. The Session stays active for twenty minutes, so the process cannot sleep. A crash loses the
+wait: a replay-safe tool starts a second build, a replay-unsafe one returns <code>interrupted</code> to the model. And the webhook
+needs something in memory to receive it, which is exactly what a sleeping process does not have.</p>
+<p>The same holds for every wait on the outside world: an approval before a tool runs, a question to a person, a subagent
+that itself waits for a person. Each is a promise in memory.</p>
+</section>
+
+<section class="chapter" id="signals"><header class="opener"><div class="numeral">II</div><h2>Signals</h2><p class="lede">A typed value delivered to a live task, stored on its record, whenever it arrives.</p></header>
+<p class="dropcap">The missing piece is a way for the outside world to hand a value to a task that is not running. That value is a
+<strong>signal</strong>. A signal has a <strong>token</strong> that names it, versions it, and gives it a schema, like a document kind:</p>
+<pre><code><span class="tk-k">function</span> <span class="tk-f">defineSignal</span>&lt;S <span class="tk-k">extends</span> object&gt;(definition: {
+  <span class="tk-k">readonly</span> name: string; <span class="tk-c">// unique like a task kind; no "/"</span>
+  <span class="tk-k">readonly</span> version: number;
+  <span class="tk-k">readonly</span> schema: S; <span class="tk-c">// a pi-schema schema of a JSON value (no bigint(), no bytes()); the value type is Static&lt;S&gt;</span>
+  <span class="tk-k">readonly</span> migrate?: (value: <span class="tk-t">JsonValue</span>, fromVersion: number) =&gt; <span class="tk-t">Static</span>&lt;S&gt;;
+}): <span class="tk-t">SignalToken</span>&lt;<span class="tk-t">Static</span>&lt;S&gt;&gt;;
+
+<span class="tk-k">interface</span> <span class="tk-t">SignalToken</span>&lt;T&gt; {
+  <span class="tk-k">readonly</span> name: string;
+  <span class="tk-k">readonly</span> version: number;
+  <span class="tk-c">/** The key of one wait, as JSON: { signal: this name, key }. */</span>
+  <span class="tk-f">key</span>(key: string): <span class="tk-t">SignalKey</span>&lt;T&gt;;
+}
+
+<span class="tk-k">type</span> <span class="tk-t">SignalKey</span>&lt;T&gt; = { <span class="tk-k">readonly</span> signal: string; <span class="tk-k">readonly</span> key: string; <span class="tk-k">readonly</span> <span class="tk-s">"~value"</span>?: T };</code></pre>
+<pre><code><span class="tk-k">import</span> { obj, oneOf, str } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/pi-schema"</span>;
+
+<span class="tk-k">const</span> <span class="tk-t">CiResult</span> = <span class="tk-f">defineSignal</span>({
+  name: <span class="tk-s">"app.ci-result"</span>,
+  version: <span class="tk-n">1</span>,
+  schema: <span class="tk-f">obj</span>({ status: <span class="tk-f">oneOf</span>([<span class="tk-s">"passed"</span>, <span class="tk-s">"failed"</span>]), logUrl: <span class="tk-f">str</span>() }),
+});
+<span class="tk-c">// CiResult: SignalToken&lt;{ status: "passed" | "failed"; logUrl: string }&gt;</span>
+
+<span class="tk-t">CiResult</span>.<span class="tk-f">key</span>(<span class="tk-s">"done"</span>); <span class="tk-c">// { signal: "app.ci-result", key: "done" }: one wait, "the CI result for this call"</span></code></pre>
+<h3 id="delivering">Delivering</h3>
+<pre><code><span class="tk-k">type</span> <span class="tk-t">SignalResult</span> = <span class="tk-s">"delivered"</span> | <span class="tk-s">"duplicate"</span> | <span class="tk-s">"invalid"</span> | <span class="tk-s">"closed"</span> | <span class="tk-s">"not_found"</span>;
+
+<span class="tk-k">interface</span> <span class="tk-t">Harness</span> {
+  <span class="tk-f">signal</span>&lt;T&gt;(taskId: <span class="tk-t">TaskId</span>, token: <span class="tk-t">SignalToken</span>&lt;T&gt;, key: string, value: T, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-t">SignalResult</span>&gt;;
+}
+<span class="tk-k">interface</span> <span class="tk-t">Tx</span> {
+  <span class="tk-f">signal</span>&lt;T&gt;(taskId: <span class="tk-t">TaskId</span>, token: <span class="tk-t">SignalToken</span>&lt;T&gt;, key: string, value: T): <span class="tk-t">Promise</span>&lt;<span class="tk-t">SignalResult</span>&gt;;
+}</code></pre>
+<p><code>signal()</code> is one commit on the Session line. It checks, in order:</p>
+<table>
+<thead>
+<tr>
+<th>check</th>
+<th>result</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>no such task</td>
+<td><code>not_found</code></td>
+</tr>
+<tr>
+<td>the task is terminal, holding its outcome, or abort-marked</td>
+<td><code>closed</code></td>
+</tr>
+<tr>
+<td>the value does not match the token&#39;s schema</td>
+<td><code>invalid</code></td>
+</tr>
+<tr>
+<td>the key already holds a value</td>
+<td><code>duplicate</code>; the first value is kept</td>
+</tr>
+<tr>
+<td>the key expired (chapter IV)</td>
+<td><code>closed</code></td>
+</tr>
+<tr>
+<td>otherwise</td>
+<td>stored: <code>delivered</code></td>
+</tr>
+</tbody></table>
+<p><code>Harness.signal()</code> is for hosts: a webhook route, a button in a UI. <code>tx.signal()</code> lets one task deliver to another
+inside its own commit. Neither checks who calls it; the host authenticates the sender.</p>
+<h3 id="early-signals-are-kept">Early signals are kept</h3>
+<p>The value is stored on the task whatever state the task is in, as long as it is live. That matters in the case that
+breaks most designs: the webhook can arrive before the task has parked.</p>
+<figure class="fig anim"><svg viewBox="0 0 720 286" width="100%" role="img" aria-label="An early webhook. The value is stored while the tool still runs; its sleep wakes at once." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f2m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f2a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f2b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="130.7" y1="52" x2="130.7" y2="278" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="45.7" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="130.7" y="27" font-size="11" fill="#2a2723" text-anchor="middle">run_ci</text><text x="130.7" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">tool task, running</text><line x1="360" y1="52" x2="360" y2="278" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="275" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="360" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Harness</text><text x="360" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">the line</text><line x1="589.3" y1="52" x2="589.3" y2="278" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="504.3" y="10" width="170" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="589.3" y="30" font-size="11" fill="#2a2723" text-anchor="middle">CI service</text><g class="step edge" style="--i:1"><line x1="130.7" y1="78" x2="586.3" y2="78" stroke="#7b7468" marker-end="url(#f2m)"/><text x="360" y="72" font-size="10" fill="#2a2723" text-anchor="middle">trigger build for task 41</text></g><g class="step edge" style="--i:2"><line x1="589.3" y1="110" x2="363" y2="110" stroke="#7b7468" marker-end="url(#f2m)"/><text x="474.7" y="104" font-size="10" fill="#2a2723" text-anchor="middle">signal(41, CiResult, &quot;done&quot;, { passed })</text></g><g class="step edge" style="--i:3"><path d="M360 136 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f2a)"/><text x="402" y="146" font-size="10" fill="#b4472f" text-anchor="start">commit: value stored (task still running)</text></g><g class="step edge" style="--i:4"><line x1="130.7" y1="182" x2="357" y2="182" stroke="#7b7468" marker-end="url(#f2m)"/><text x="245.3" y="176" font-size="10" fill="#2a2723" text-anchor="middle">return { sleep: { signals: [CiResult.key(&quot;done&quot;)] } }</text></g><g class="step edge" style="--i:5"><path d="M360 208 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f2a)"/><text x="402" y="218" font-size="10" fill="#b4472f" text-anchor="start">commit: sleeping on &quot;done&quot;</text></g><g class="step edge" style="--i:6"><line x1="360" y1="254" x2="133.7" y2="254" stroke="#7b7468" marker-end="url(#f2m)"/><text x="245.3" y="248" font-size="10" fill="#2a2723" text-anchor="middle">the key holds a value: wake at once</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 2.</span> An early webhook. The value is stored while the tool still runs; its sleep wakes at once.</figcaption></figure>
+<p>Where it is stored: the task&#39;s memos, under a prefix the Harness reserves (<code>pi.signal.app.ci-result/done</code>). Memos
+already live exactly as long as needed (spec §5.2): through checkpoints, restarts, handovers, and migrations, gone when
+the task ends. Code never reads that memo directly.</p>
+<h3 id="size">Size</h3>
+<p>There is no size limit, and no limit on keys per task. The rule instead: nothing large goes into the task record,
+because the scheduler keeps live records in memory and rewrites them on every write. A webhook that would carry a whole
+log carries the CI run&#39;s ID, and the task fetches the log by it.</p>
+</section>
+
+<section class="chapter" id="sleep"><header class="opener"><div class="numeral">III</div><h2>Sleeping on Signals</h2><p class="lede">A sleep that waits for a time, for signals, or both, and what the woken phase reads.</p></header>
+<p class="dropcap">With signals stored on the task, a sleep can wait for them. The <code>sleeping</code> state gains a list of keys, and <code>until</code>
+becomes optional:</p>
+<pre><code><span class="tk-k">type</span> <span class="tk-t">TaskState</span>&lt;S, R&gt; =
+  | { <span class="tk-k">readonly</span> status: <span class="tk-s">"pending"</span>; <span class="tk-k">readonly</span> checkpoint: S; <span class="tk-k">readonly</span> wake?: <span class="tk-t">WakeReason</span> }
+  | { <span class="tk-k">readonly</span> status: <span class="tk-s">"running"</span>; <span class="tk-k">readonly</span> checkpoint: S; <span class="tk-k">readonly</span> wake?: <span class="tk-t">WakeReason</span> }
+  | { <span class="tk-k">readonly</span> status: <span class="tk-s">"waiting"</span>; <span class="tk-k">readonly</span> checkpoint: S; <span class="tk-k">readonly</span> on: <span class="tk-k">readonly</span> <span class="tk-t">TaskId</span>[]; <span class="tk-k">readonly</span> policy: <span class="tk-s">"failFast"</span> | <span class="tk-s">"allSettled"</span> | <span class="tk-s">"any"</span> }
+  | { <span class="tk-k">readonly</span> status: <span class="tk-s">"sleeping"</span>; <span class="tk-k">readonly</span> checkpoint: S; <span class="tk-k">readonly</span> until?: number; <span class="tk-k">readonly</span> signals?: <span class="tk-k">readonly</span> <span class="tk-t">SignalKey</span>&lt;<span class="tk-k">unknown</span>&gt;[] }
+  | { <span class="tk-k">readonly</span> status: <span class="tk-s">"completing"</span>; <span class="tk-k">readonly</span> outcome: <span class="tk-t">TaskOutcome</span>&lt;R&gt; }
+  | { <span class="tk-k">readonly</span> status: <span class="tk-s">"terminal"</span>; <span class="tk-k">readonly</span> outcome: <span class="tk-t">TaskOutcome</span>&lt;R&gt; };</code></pre>
+<p>A sleep needs <code>until</code>, a non-empty <code>signals</code>, or both. With both, it ends at whichever comes first.</p>
+<h3 id="why-it-woke">Why it woke</h3>
+<p>The woken phase needs to know whether the signal came or the deadline passed. The reservation commit that wakes the
+task writes that into the running state:</p>
+<pre><code><span class="tk-k">type</span> <span class="tk-t">WakeReason</span> =
+  | { <span class="tk-k">readonly</span> reason: <span class="tk-s">"time"</span> } <span class="tk-c">// until reached, no signals listed</span>
+  | { <span class="tk-k">readonly</span> reason: <span class="tk-s">"expired"</span> } <span class="tk-c">// until reached before any listed signal</span>
+  | { <span class="tk-k">readonly</span> reason: <span class="tk-s">"signal"</span>; <span class="tk-k">readonly</span> signal: string; <span class="tk-k">readonly</span> key: string } <span class="tk-c">// the key whose value woke it</span>
+  | { <span class="tk-k">readonly</span> reason: <span class="tk-s">"tasks"</span>; <span class="tk-k">readonly</span> ended: <span class="tk-k">readonly</span> <span class="tk-t">TaskId</span>[] }; <span class="tk-c">// chapter VI</span></code></pre>
+<p>The wake stays on the task until it commits a different checkpoint, parks, or ends. A restart, a close, or a handover
+puts the task back to <code>pending</code> with its wake, so a phase that runs again after a crash reads the same one.</p>
+<p>The wake names the key, not its value. The value is read with one method, typed by the token and migrated from an
+older version if needed. It reads the live task record the scheduler keeps in memory, so it costs no storage access:</p>
+<pre><code><span class="tk-k">type</span> <span class="tk-t">SignalState</span>&lt;T&gt; = { <span class="tk-k">readonly</span> value: T } | { <span class="tk-k">readonly</span> expired: <span class="tk-k">true</span> };
+
+<span class="tk-k">interface</span> <span class="tk-t">TaskRuntime</span> {
+  <span class="tk-c">/** The key's state: its value, expired at the deadline, or undefined while nothing came. */</span>
+  <span class="tk-f">readSignal</span>&lt;T&gt;(token: <span class="tk-t">SignalToken</span>&lt;T&gt;, key: string, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-t">SignalState</span>&lt;T&gt; | <span class="tk-k">undefined</span>&gt;;
+}</code></pre>
+<pre><code><span class="tk-k">import</span> { obj, str } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/pi-schema"</span>;
+
+<span class="tk-k">const</span> HOUR = <span class="tk-n">60</span> * <span class="tk-n">60</span> * <span class="tk-n">1000</span>;
+<span class="tk-k">const</span> <span class="tk-t">Answer</span> = <span class="tk-f">defineSignal</span>({ name: <span class="tk-s">"app.answer"</span>, version: <span class="tk-n">1</span>, schema: <span class="tk-f">obj</span>({ text: <span class="tk-f">str</span>() }) });
+
+<span class="tk-k">const</span> <span class="tk-t">AskPerson</span> = defineTask&lt;{ question: string }, { phase: <span class="tk-s">"ask"</span> } | { phase: <span class="tk-s">"answered"</span> }, { text?: string }&gt;({
+  name: <span class="tk-s">"app.ask-person"</span>,
+  version: <span class="tk-n">1</span>,
+  initial: () =&gt; ({ phase: <span class="tk-s">"ask"</span> }),
+  phases: {
+    ask: (_task, runtime, context) =&gt;
+      runtime.<span class="tk-f">commit</span>(
+        () =&gt; ({ status: <span class="tk-s">"sleeping"</span>, signals: [<span class="tk-t">Answer</span>.<span class="tk-f">key</span>(<span class="tk-s">"answer"</span>)], until: runtime.<span class="tk-f">now</span>() + <span class="tk-n">4</span> * HOUR, checkpoint: { phase: <span class="tk-s">"answered"</span> } }),
+        context,
+      ),
+    answered: <span class="tk-k">async</span> (_task, runtime, context) =&gt; {
+      <span class="tk-k">const</span> state = <span class="tk-k">await</span> runtime.<span class="tk-f">readSignal</span>(<span class="tk-t">Answer</span>, <span class="tk-s">"answer"</span>, context); <span class="tk-c">// { value: { text } } when answered, { expired } after four hours</span>
+      <span class="tk-k">const</span> text = state !== <span class="tk-k">undefined</span> &amp;&amp; <span class="tk-s">"value"</span> <span class="tk-k">in</span> state ? state.value.text : <span class="tk-k">undefined</span>;
+      <span class="tk-k">return</span> runtime.<span class="tk-f">commit</span>(() =&gt; ({ status: <span class="tk-s">"terminal"</span>, outcome: { status: <span class="tk-s">"completed"</span>, result: { text } } }), context);
+    },
+  },
+  abort: (_task, runtime, context) =&gt; runtime.<span class="tk-f">commit</span>(() =&gt; ({ status: <span class="tk-s">"terminal"</span>, outcome: { status: <span class="tk-s">"aborted"</span> } }), context),
+});</code></pre>
+<p>The phase that sleeps commits the state and ends; it returns nothing. The checkpoint names the phase that runs on wake,
+<code>answered</code>. A UI that shows the question keeps its own record of it and calls
+<code>harness.signal(taskId, Answer, &quot;answer&quot;, { text })</code> with the reply.</p>
+</section>
+
+<section class="chapter" id="deadlines"><header class="opener"><div class="numeral">IV</div><h2>Deadlines and Keys</h2><p class="lede">Who wins when a signal and a deadline arrive together, and why a key serves one wait.</p></header>
+<h3 id="the-deadline-race">The deadline race</h3>
+<p>Suppose the deadline passes and the scheduler wakes the task with <code>expired</code>, and the signal arrives a second later. If
+that signal got <code>delivered</code>, its sender would believe it was taken while the task reports a timeout. So the commit that
+wakes a task for its deadline marks every listed key that holds no value as expired, and a later delivery gets
+<code>closed</code>. <code>signal()</code> itself closes a key once the deadline of a sleep on it has passed, even before the scheduler woke
+the task (for instance while a Durable Object sleeps past its alarm).</p>
+<table>
+<thead>
+<tr>
+<th>arrives</th>
+<th>result</th>
+<th>the task wakes with</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>before the deadline</td>
+<td><code>delivered</code></td>
+<td><code>signal</code></td>
+</tr>
+<tr>
+<td>after the deadline</td>
+<td><code>closed</code></td>
+<td><code>expired</code></td>
+</tr>
+<tr>
+<td>a second copy of a delivered value</td>
+<td><code>duplicate</code></td>
+<td>(unchanged)</td>
+</tr>
+</tbody></table>
+<h3 id="one-key-serves-one-wait">One key serves one wait</h3>
+<p>A value stays readable until the task ends. If a phase slept again on the key that just woke it, it would wake at
+once, and again, forever; every wake counts as progress, so the restart limit would never stop it. So the reservation
+that wakes a task on a key marks the key <strong>consumed</strong>, and a sleep on a consumed or expired key is rejected: the commit
+throws for a task, a tool call ends with an <code>invalid_park</code> error. A key with a value that arrived early, before any
+wake used it, is not consumed, and the sleep wakes at once. A second wait for the same kind of signal uses a new key:</p>
+<pre><code><span class="tk-t">CiResult</span>.<span class="tk-f">key</span>(<span class="tk-s">"ci-1"</span>); <span class="tk-c">// the first build of this call</span>
+<span class="tk-t">CiResult</span>.<span class="tk-f">key</span>(<span class="tk-s">"ci-2"</span>); <span class="tk-c">// a second build in the same call</span></code></pre>
+<p>A sleep on several keys wakes on the first that holds a value, in the order listed. The other keys stay open: a value
+delivered to them later is kept for a later sleep.</p>
+<h3 id="reading-without-waiting">Reading without waiting</h3>
+<p><code>readSignal()</code> does not depend on the wake: it reads a key whatever woke the task, or nothing did. <code>HookApi</code> and
+<code>ToolExecutionApi</code> get the same method, so hooks and tools can read a key without sleeping on it. Gates (chapter VIII)
+need exactly that: a gate asked again after another gate&#39;s wake still finds its own answer.</p>
+<h3 id="when-parked-work-counts-as-active">When parked work counts as active</h3>
+<p><code>harness.wake()</code> gains two cases for <code>active</code>: a sleeping task that is eligible (a listed key holds an unused value, or
+its <code>until</code> passed), and a waiting <code>&quot;any&quot;</code> task with a terminal member. <code>at</code> stays the earliest <code>until</code>. A sleep on
+signals alone counts for neither, so a Session whose work is all parked on signals has no alarm and may stay asleep for
+days.</p>
+</section>
+
+<section class="chapter" id="tools"><header class="opener"><div class="numeral">V</div><h2>Tools That Park</h2><p class="lede">A tool returns a park instead of a result, and runs again when it wakes.</p></header>
+<p class="dropcap">A tool cannot commit states; its task does. So a tool parks by returning what it wants instead of a result, and the
+tool task commits it:</p>
+<pre><code><span class="tk-k">type</span> <span class="tk-t">ToolPark</span>&lt;C <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span> = <span class="tk-t">JsonValue</span>&gt; =
+  | { <span class="tk-k">readonly</span> sleep: { <span class="tk-k">readonly</span> checkpoint?: C; <span class="tk-k">readonly</span> until?: number; <span class="tk-k">readonly</span> signals?: <span class="tk-k">readonly</span> <span class="tk-t">SignalKey</span>&lt;<span class="tk-k">unknown</span>&gt;[] }; <span class="tk-k">readonly</span> wait?: <span class="tk-k">never</span> }
+  | { <span class="tk-k">readonly</span> wait: { <span class="tk-k">readonly</span> checkpoint?: C; <span class="tk-k">readonly</span> on: <span class="tk-k">readonly</span> <span class="tk-t">TaskId</span>[]; <span class="tk-k">readonly</span> policy: <span class="tk-s">"failFast"</span> | <span class="tk-s">"allSettled"</span> | <span class="tk-s">"any"</span> }; <span class="tk-k">readonly</span> sleep?: <span class="tk-k">never</span> };
+
+<span class="tk-k">type</span> <span class="tk-t">ToolRegistration</span>&lt;TParameters <span class="tk-k">extends</span> object = object, TDetails <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span> = <span class="tk-t">JsonValue</span>, C <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span> = <span class="tk-t">JsonValue</span>&gt; =
+  <span class="tk-t">Tool</span>&lt;TParameters&gt; &amp; {
+    <span class="tk-k">readonly</span> replay?: <span class="tk-s">"safe"</span> | <span class="tk-s">"unsafe"</span>;
+    <span class="tk-f">execute</span>(args: <span class="tk-t">ToolArgs</span>&lt;TParameters&gt;, api: <span class="tk-t">ToolExecutionApi</span>&lt;TDetails, C&gt;, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-t">ToolExecutionResult</span>&lt;TDetails&gt; | <span class="tk-t">ToolPark</span>&lt;C&gt;&gt;;
+    <span class="tk-c">/** Clean up the external work of a call that parked; runs when no code of the tool runs. */</span>
+    cancel?(args: <span class="tk-t">ToolArgs</span>&lt;TParameters&gt;, api: <span class="tk-t">ToolExecutionApi</span>&lt;TDetails, C&gt;, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-k">void</span>&gt;;
+  };
+
+<span class="tk-k">interface</span> <span class="tk-t">ToolExecutionApi</span>&lt;TDetails <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span> = <span class="tk-t">JsonValue</span>, C <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span> = <span class="tk-t">JsonValue</span>&gt; {
+  <span class="tk-c">// ... as today, and:</span>
+  <span class="tk-k">readonly</span> wake: <span class="tk-t">WakeReason</span> | <span class="tk-k">undefined</span>; <span class="tk-c">// undefined on a fresh call</span>
+  <span class="tk-k">readonly</span> checkpoint: C | <span class="tk-k">undefined</span>; <span class="tk-c">// what the call last parked with</span>
+  <span class="tk-f">readSignal</span>&lt;T&gt;(token: <span class="tk-t">SignalToken</span>&lt;T&gt;, key: string, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-t">SignalState</span>&lt;T&gt; | <span class="tk-k">undefined</span>&gt;;
+}
+
+<span class="tk-k">function</span> defineTool&lt;TParameters <span class="tk-k">extends</span> object, TDetails <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span> = <span class="tk-t">JsonValue</span>, C <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span> = <span class="tk-t">JsonValue</span>&gt;(
+  tool: <span class="tk-t">ToolRegistration</span>&lt;TParameters, TDetails, C&gt;,
+): <span class="tk-t">ToolRegistration</span>&lt;TParameters, TDetails, C&gt;;</code></pre>
+<p>The words are the task&#39;s: <code>sleep</code> and <code>wait</code> mirror the parked states, <code>checkpoint</code> is what the tool keeps, <code>wake</code> is
+why it runs. When the call wakes, the same <code>execute()</code> runs again with the same arguments and <code>api.wake</code> set.</p>
+<h3 id="run-ci-parked">run_ci, parked</h3>
+<pre><code><span class="tk-k">import</span> { obj, oneOf, str } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/pi-schema"</span>;
+
+<span class="tk-k">const</span> HOUR = <span class="tk-n">60</span> * <span class="tk-n">60</span> * <span class="tk-n">1000</span>;
+<span class="tk-k">const</span> <span class="tk-t">CiResult</span> = <span class="tk-f">defineSignal</span>({ name: <span class="tk-s">"app.ci-result"</span>, version: <span class="tk-n">1</span>, schema: <span class="tk-f">obj</span>({ status: <span class="tk-f">oneOf</span>([<span class="tk-s">"passed"</span>, <span class="tk-s">"failed"</span>]), logUrl: <span class="tk-f">str</span>() }) });
+<span class="tk-k">const</span> <span class="tk-t">CiParameters</span> = <span class="tk-f">obj</span>({ ref: <span class="tk-f">str</span>() });
+
+<span class="tk-c">// The host's webhook registry ("when the webhook for `match` arrives, signal this key to this task"; durable and</span>
+<span class="tk-c">// idempotent), and the CI service's client.</span>
+<span class="tk-k">declare</span> <span class="tk-k">const</span> webhooks: { <span class="tk-f">expect</span>&lt;T&gt;(match: string, taskId: <span class="tk-t">TaskId</span>, token: <span class="tk-t">SignalToken</span>&lt;T&gt;, key: string, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-k">void</span>&gt; };
+<span class="tk-k">declare</span> <span class="tk-k">const</span> ci: {
+  <span class="tk-f">trigger</span>(input: { ref: string; correlationId: string; idempotencyKey: string }, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;{ id: string }&gt;;
+  <span class="tk-f">cancel</span>(buildId: string, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-k">void</span>&gt;;
+  <span class="tk-f">cancelByKey</span>(idempotencyKey: string, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-k">void</span>&gt;;
+};
+
+<span class="tk-k">const</span> runCi = <span class="tk-f">defineTool</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">CiParameters</span>, <span class="tk-t">JsonValue</span>, { buildId: string }&gt;({
+  name: <span class="tk-s">"run_ci"</span>,
+  description: <span class="tk-s">"Run CI on a git ref and report the result"</span>,
+  parameters: <span class="tk-t">CiParameters</span>,
+  replay: <span class="tk-s">"safe"</span>,
+  <span class="tk-k">async</span> <span class="tk-f">execute</span>({ ref }, api, context) {
+    <span class="tk-c">// The webhook's result, the deadline's expiry, or nothing yet (a fresh call). Read from the live record in memory.</span>
+    <span class="tk-k">const</span> state = <span class="tk-k">await</span> api.<span class="tk-f">readSignal</span>(<span class="tk-t">CiResult</span>, <span class="tk-s">"done"</span>, context);
+    <span class="tk-k">if</span> (state !== <span class="tk-k">undefined</span> &amp;&amp; <span class="tk-s">"value"</span> <span class="tk-k">in</span> state) {
+      <span class="tk-k">const</span> { status, logUrl } = state.value;
+      <span class="tk-k">return</span> { output: [{ <span class="tk-k">type</span>: <span class="tk-s">"text"</span>, text: <span class="tk-s">`CI ${status}: ${logUrl}`</span> }], isError: status !== <span class="tk-s">"passed"</span> };
+    }
+    <span class="tk-k">if</span> (state !== <span class="tk-k">undefined</span>) {
+      <span class="tk-k">return</span> { output: [{ <span class="tk-k">type</span>: <span class="tk-s">"text"</span>, text: <span class="tk-s">`CI build ${api.checkpoint?.buildId} never reported`</span> }], isError: <span class="tk-k">true</span> };
+    }
+    <span class="tk-c">// A fresh call. The tool's own idempotency key with CI: memos are first-writer-wins, so a rerun gets the same one.</span>
+    <span class="tk-k">const</span> runId = <span class="tk-k">await</span> api.<span class="tk-f">memo</span>(<span class="tk-s">"ci.run"</span>, crypto.<span class="tk-f">randomUUID</span>(), context);
+    <span class="tk-c">// Register before triggering, so a fast webhook already finds this task.</span>
+    <span class="tk-k">await</span> webhooks.<span class="tk-f">expect</span>(runId, api.taskId, <span class="tk-t">CiResult</span>, <span class="tk-s">"done"</span>, context);
+    <span class="tk-k">const</span> build = <span class="tk-k">await</span> ci.<span class="tk-f">trigger</span>({ ref, correlationId: runId, idempotencyKey: runId }, context);
+    <span class="tk-k">return</span> { sleep: { checkpoint: { buildId: build.id }, signals: [<span class="tk-t">CiResult</span>.<span class="tk-f">key</span>(<span class="tk-s">"done"</span>)], until: api.<span class="tk-f">now</span>() + <span class="tk-n">2</span> * HOUR } };
+  },
+  <span class="tk-k">async</span> <span class="tk-f">cancel</span>(_args, api, context) {
+    <span class="tk-k">if</span> (api.checkpoint !== <span class="tk-k">undefined</span>) <span class="tk-k">await</span> ci.<span class="tk-f">cancel</span>(api.checkpoint.buildId, context);
+    <span class="tk-k">else</span> <span class="tk-k">await</span> ci.<span class="tk-f">cancelByKey</span>((<span class="tk-k">await</span> api.<span class="tk-f">memo</span>&lt;string&gt;(<span class="tk-s">"ci.run"</span>, context))!, context);
+  },
+});</code></pre>
+<p>The tool owns its idempotency key and knows nothing about URLs. The host owns webhook routing: its route checks the
+service&#39;s signature, looks up which task waits for <code>runId</code>, and calls <code>harness.signal()</code>.</p>
+<h3 id="what-the-tool-task-commits">What the tool task commits</h3>
+<p>The tool task gets a third checkpoint:</p>
+<pre><code><span class="tk-k">type</span> <span class="tk-t">ToolTaskCheckpoint</span> =
+  | { phase: <span class="tk-s">"call"</span> } <span class="tk-c">// resolve, validate, beforeTool</span>
+  | { phase: <span class="tk-s">"execute"</span>; arguments: <span class="tk-t">JsonObject</span>; replay: <span class="tk-s">"safe"</span> | <span class="tk-s">"unsafe"</span>; wake?: <span class="tk-t">WakeReason</span>; checkpoint?: <span class="tk-t">JsonValue</span> } <span class="tk-c">// intent</span>
+  | { phase: <span class="tk-s">"parked"</span>; arguments: <span class="tk-t">JsonObject</span>; replay: <span class="tk-s">"safe"</span> | <span class="tk-s">"unsafe"</span>; checkpoint?: <span class="tk-t">JsonValue</span> }; <span class="tk-c">// sleeping or waiting</span></code></pre>
+<figure class="fig wide anim"><svg viewBox="0 0 720 220" width="100%" role="img" aria-label="The tool task's phases. New is accent: a park commits parked; its handler commits intent before the code runs again." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f3m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f3a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f3b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">TODAY</text><text x="16" y="144" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">NEW</text><g class="step" style="--i:1"><rect x="19" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="124" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">call</text><text x="124" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">resolve, validate, beforeTool</text></g><g class="step" style="--i:3"><rect x="255" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">execute</text><text x="360" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">intent committed; execute() runs</text></g><g class="step" style="--i:5"><rect x="491" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="596" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">result commit</text><text x="596" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">afterTool, entry, slot done</text></g><g class="step" style="--i:7"><rect x="255" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="360" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">parked</text><text x="360" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">sleeping or waiting</text></g><g class="step" style="--i:9"><rect x="491" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="596" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">parked handler</text><text x="596" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">resolve, commit intent with the wake</text></g><g class="step edge" style="--i:2"><path d="M229 58 L253 58" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><rect x="222.2" y="41" width="39.6" height="13" fill="#fbf8f2" opacity=".92"/><text x="242" y="51" font-size="9.5" fill="#7b7468" text-anchor="middle">intent</text></g><g class="step edge" style="--i:4"><path d="M465 58 L489 58" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><rect x="452.9" y="41" width="50.1" height="13" fill="#fbf8f2" opacity=".92"/><text x="478" y="51" font-size="9.5" fill="#7b7468" text-anchor="middle">a result</text></g><g class="step edge" style="--i:6"><path d="M360 80 L360 156" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><rect x="364" y="112" width="39.6" height="13" fill="#fbf8f2" opacity=".92"/><text x="368" y="122" font-size="9.5" fill="#7b7468" text-anchor="start">a park</text></g><g class="step edge" style="--i:8"><path d="M465 180 L489 180" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><rect x="424" y="163" width="108.1" height="13" fill="#fbf8f2" opacity=".92"/><text x="478" y="173" font-size="9.5" fill="#7b7468" text-anchor="middle">signal, time, tasks</text></g><g class="step edge" style="--i:10"><path d="M596 158 L360 82" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><rect x="482" y="114" width="87" height="13" fill="#fbf8f2" opacity=".92"/><text x="486" y="124" font-size="9.5" fill="#7b7468" text-anchor="start">execute() again</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 3.</span> The tool task&#39;s phases. New is accent: a park commits <code>parked</code>; its handler commits intent before the code runs again.</figcaption></figure>
+<p>The wake goes through the <code>parked</code> phase&#39;s own handler, not straight into <code>execute</code>, because <code>execute</code> is the phase
+only recovery reaches. The handler resolves the tool (a tool removed meanwhile settles <code>tool_unavailable</code> and the task
+fails, so work the call owns is aborted), commits
+<code>execute</code> with the wake, then calls <code>execute()</code> in the same handler. That intent commit is what keeps replay honest: a
+close writes running tasks back as <code>pending</code> without counting a restart, so without it a first wake and a rerun after a
+close would look the same. With it, recovery finds <code>execute</code> and applies today&#39;s rule: rerun when both the stored and
+the current policy say <code>safe</code>, otherwise <code>interrupted</code>. The wake is stored with it, so a rerun sees the same one.</p>
+<figure class="fig anim"><svg viewBox="0 0 720 507" width="100%" role="img" aria-label="The webhook arrives twenty minutes later. Between the park and the wake nothing runs." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f4m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f4a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f4b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="84.8" y1="52" x2="84.8" y2="499" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="123.6" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="84.8" y="27" font-size="11" fill="#2a2723" text-anchor="middle">generation</text><text x="84.8" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">waiting on its tools</text><line x1="222.4" y1="52" x2="222.4" y2="499" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="160.6" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="222.4" y="27" font-size="11" fill="#2a2723" text-anchor="middle">run_ci</text><text x="222.4" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">tool task</text><line x1="360" y1="52" x2="360" y2="499" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="298.2" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="360" y="30" font-size="11" fill="#2a2723" text-anchor="middle">Harness</text><line x1="497.6" y1="52" x2="497.6" y2="499" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="435.8" y="10" width="123.6" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="497.6" y="30" font-size="11" fill="#2a2723" text-anchor="middle">host route</text><line x1="635.2" y1="52" x2="635.2" y2="499" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="573.4" y="10" width="123.6" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="635.2" y="30" font-size="11" fill="#2a2723" text-anchor="middle">CI service</text><g class="step edge" style="--i:1"><line x1="222.4" y1="78" x2="357" y2="78" stroke="#7b7468" marker-end="url(#f4m)"/><text x="291.2" y="72" font-size="10" fill="#2a2723" text-anchor="middle">return { sleep: ... }</text></g><g class="step edge" style="--i:2"><path d="M360 104 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f4a)"/><text x="402" y="114" font-size="10" fill="#b4472f" text-anchor="start">commit: checkpoint parked, sleeping on &quot;done&quot;, until +2h</text></g><g class="step" style="--i:3"><rect x="26" y="136" width="668" height="23" rx="3" fill="#f4eee2" stroke="#c2b18c"/><text x="360" y="150" font-size="10" fill="#5b5549" text-anchor="middle">no invocation; wake().at = the deadline; the object hibernates</text></g><g class="step edge" style="--i:4"><line x1="635.2" y1="187" x2="500.6" y2="187" stroke="#7b7468" marker-end="url(#f4m)"/><text x="566.4" y="181" font-size="10" fill="#2a2723" text-anchor="middle">POST webhook (signed)</text></g><g class="step edge" style="--i:5"><line x1="497.6" y1="219" x2="363" y2="219" stroke="#7b7468" marker-end="url(#f4m)"/><text x="428.8" y="213" font-size="10" fill="#2a2723" text-anchor="middle">arm recovery wakeup; signal(41, CiResult, &quot;done&quot;, body)</text></g><g class="step edge" style="--i:6"><path d="M360 245 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f4a)"/><text x="402" y="255" font-size="10" fill="#b4472f" text-anchor="start">commit: value stored</text></g><g class="step edge" style="--i:7"><path d="M360 285 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f4a)"/><text x="402" y="295" font-size="10" fill="#b4472f" text-anchor="start">reserve: running at parked, wake = signal</text></g><g class="step edge" style="--i:8"><path d="M360 325 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f4a)"/><text x="402" y="335" font-size="10" fill="#b4472f" text-anchor="start">parked handler: commit intent (execute, wake)</text></g><g class="step edge" style="--i:9"><line x1="360" y1="371" x2="225.4" y2="371" stroke="#7b7468" marker-end="url(#f4m)"/><text x="291.2" y="365" font-size="10" fill="#2a2723" text-anchor="middle">execute(args) with api.wake</text></g><g class="step edge" style="--i:10"><line x1="222.4" y1="403" x2="357" y2="403" stroke="#7b7468" marker-end="url(#f4m)"/><text x="291.2" y="397" font-size="10" fill="#2a2723" text-anchor="middle">result</text></g><g class="step edge" style="--i:11"><path d="M360 429 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f4a)"/><text x="402" y="439" font-size="10" fill="#b4472f" text-anchor="start">commit: result entry, slot done</text></g><g class="step edge" style="--i:12"><line x1="360" y1="475" x2="87.8" y2="475" stroke="#7b7468" marker-end="url(#f4m)"/><text x="222.4" y="469" font-size="10" fill="#2a2723" text-anchor="middle">all tools terminal: next request</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 4.</span> The webhook arrives twenty minutes later. Between the park and the wake nothing runs.</figcaption></figure>
+<h3 id="cleanup">Cleanup</h3>
+<p><code>cancel</code> covers the cases where the call&#39;s external work may be live while no code of the tool runs:</p>
+<ul>
+<li>the call is aborted while parked;</li>
+<li>a woken run was aborted, also before <code>execute()</code> was even entered (the checkpoint is <code>execute</code> with a wake);</li>
+<li>a woken run of a replay-unsafe tool was cut off by a crash or a close, and recovery settles it <code>interrupted</code> (a
+replay-safe one simply runs again);</li>
+<li><code>execute()</code> returned a park but the call was abort-marked before the park was stored; this <code>cancel</code> gets a context
+the abort does not cancel.</li>
+</ul>
+<p>It does not run for a first run cut off before it ever parked: that run&#39;s work is found only through the tool&#39;s own
+idempotency key, which is why <code>run_ci</code> memoizes <code>runId</code> before calling CI. While <code>execute()</code> runs, an abort reaches
+the tool through its context and the tool cleans up itself; <code>cancel</code> may still run afterwards, so it must be
+idempotent.</p>
+<h3 id="output-and-timing">Output and timing</h3>
+<p>Each run starts with empty output; details and diagnostics carry over in the call&#39;s slot. <code>durationMs</code> on a tool result
+becomes the span from the task&#39;s start to the result, for every result: gate waits, parks and reruns included. Today
+it measures only the last <code>execute()</code> attempt; records from before <code>startedAt</code> existed keep that.</p>
+</section>
+
+<section class="chapter" id="children"><header class="opener"><div class="numeral">VI</div><h2>Waiting on Children</h2><p class="lede">A tool starts nested calls without waiting for them in memory, and parks until one ends.</p></header>
+<p class="dropcap">A tool that calls other tools today awaits <code>executeTool()</code>, which holds its invocation for as long as the nested call
+takes. With parking, it can start the call, get a handle, and park until the call ends:</p>
+<pre><code><span class="tk-k">interface</span> <span class="tk-t">ToolExecutionApi</span> {
+  <span class="tk-c">/** As today: start or find the nested call, wait, return its result. */</span>
+  <span class="tk-f">executeTool</span>(name: string, args: <span class="tk-t">JsonObject</span>, context: <span class="tk-t">Context</span>, options?: { key?: string; progress?: boolean; wait?: <span class="tk-k">true</span> }): <span class="tk-t">Promise</span>&lt;<span class="tk-t">NestedToolExecutionResult</span>&gt;;
+  <span class="tk-c">/** wait: false: start or find it, return a handle at once. */</span>
+  <span class="tk-f">executeTool</span>(name: string, args: <span class="tk-t">JsonObject</span>, context: <span class="tk-t">Context</span>, options: { key?: string; progress?: boolean; wait: <span class="tk-k">false</span> }): <span class="tk-t">Promise</span>&lt;<span class="tk-t">NestedToolCall</span>&gt;;
+  <span class="tk-c">/** As today; with a key, a later call with the same key returns the existing task. */</span>
+  <span class="tk-f">createTask</span>&lt;I, S <span class="tk-k">extends</span> { phase: string }, R, H <span class="tk-k">extends</span> object&gt;(
+    task: <span class="tk-t">Task</span>&lt;I, S, R, H&gt;,
+    input: I,
+    options: <span class="tk-t">Omit</span>&lt;<span class="tk-t">TaskOptions</span>, <span class="tk-s">"conversationId"</span>&gt; &amp; { <span class="tk-k">readonly</span> key?: string },
+    context: <span class="tk-t">Context</span>,
+  ): <span class="tk-t">Promise</span>&lt;<span class="tk-t">TaskId</span>&lt;R&gt;&gt;;
+}
+
+<span class="tk-k">type</span> <span class="tk-t">NestedToolCall</span> = {
+  <span class="tk-k">readonly</span> taskId: <span class="tk-t">TaskId</span>;
+  <span class="tk-c">/** The stored result once the call is terminal; otherwise waits for it. */</span>
+  <span class="tk-f">result</span>(context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-t">NestedToolExecutionResult</span>&gt;;
+};</code></pre>
+<p>Keys are what make this safe across runs. The call&#39;s key map (spec §7.3) records each child under its key in the
+commit that creates it, so every later run with the same key gets the same child; another tool, other arguments, or
+another task kind under a used key throw. Default keys are positions in a run, which mean different calls after a
+wake, so after a wake every <code>executeTool()</code> needs an explicit key and an unkeyed <code>createTask()</code> throws.</p>
+<p>A <code>wait</code> with <code>policy: &quot;any&quot;</code> wakes on the first child that ends; the wake lists the children that are terminal:</p>
+<pre><code><span class="tk-k">import</span> { obj, str } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/pi-schema"</span>;
+
+<span class="tk-k">const</span> <span class="tk-t">ResearchParameters</span> = <span class="tk-f">obj</span>({ x: <span class="tk-f">str</span>(), y: <span class="tk-f">str</span>() });
+
+<span class="tk-k">const</span> researchBoth = <span class="tk-f">defineTool</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">ResearchParameters</span>, <span class="tk-t">JsonValue</span>, { done: <span class="tk-t">TaskId</span>[] }&gt;({
+  name: <span class="tk-s">"research_both"</span>,
+  description: <span class="tk-s">"Research two topics in parallel"</span>,
+  parameters: <span class="tk-t">ResearchParameters</span>,
+  replay: <span class="tk-s">"safe"</span>,
+  <span class="tk-k">async</span> <span class="tk-f">execute</span>({ x, y }, api, context) {
+    <span class="tk-k">const</span> a = <span class="tk-k">await</span> api.<span class="tk-f">executeTool</span>(<span class="tk-s">"research"</span>, { topic: x }, context, { key: <span class="tk-s">"a"</span>, wait: <span class="tk-k">false</span> });
+    <span class="tk-k">const</span> b = <span class="tk-k">await</span> api.<span class="tk-f">executeTool</span>(<span class="tk-s">"research"</span>, { topic: y }, context, { key: <span class="tk-s">"b"</span>, wait: <span class="tk-k">false</span> });
+    <span class="tk-k">const</span> done = <span class="tk-k">new</span> <span class="tk-t">Set</span>(api.checkpoint?.done ?? []);
+    <span class="tk-k">if</span> (api.wake?.reason === <span class="tk-s">"tasks"</span>) <span class="tk-k">for</span> (<span class="tk-k">const</span> id <span class="tk-k">of</span> api.wake.ended) done.<span class="tk-f">add</span>(id);
+    <span class="tk-k">const</span> open = [a, b].<span class="tk-f">filter</span>((call) =&gt; !done.<span class="tk-f">has</span>(call.taskId));
+    <span class="tk-k">if</span> (open.length &gt; <span class="tk-n">0</span>) <span class="tk-k">return</span> { wait: { checkpoint: { done: [...done] }, on: open.<span class="tk-f">map</span>((call) =&gt; call.taskId), policy: <span class="tk-s">"any"</span> } };
+    <span class="tk-k">const</span> [ra, rb] = <span class="tk-k">await</span> <span class="tk-t">Promise</span>.<span class="tk-f">all</span>([a.<span class="tk-f">result</span>(context), b.<span class="tk-f">result</span>(context)]);
+    <span class="tk-k">return</span> { output: [{ <span class="tk-k">type</span>: <span class="tk-s">"text"</span>, text: <span class="tk-s">`${String(ra.structuredOutput)}\n${String(rb.structuredOutput)}`</span> }] };
+  },
+});</code></pre>
+<p>Two rules keep the children alive. Parking is not settling: the tool task does not abort live nested calls when it
+parks, as it does when a call settles. And children of a replay-unsafe tool, normally abandoned at the next restart
+because their caller never runs again, are kept while their caller is parked: the rule looks at the caller&#39;s
+checkpoint, <code>call</code> or <code>parked</code>, so it also holds if the caller crashed between its wake and its intent.</p>
+</section>
+
+<section class="chapter" id="subagent"><header class="opener"><div class="numeral">VII</div><h2>Waiting on a Subagent</h2><p class="lede">A subagent tool parks until the subagent&#39;s answer settles.</p></header>
+<p class="dropcap">A subagent tool creates a conversation, submits the task, and waits for the answer. The subagent&#39;s work runs as
+generation tasks owned by that conversation, not as children of the tool, so <code>wait.on</code> cannot name them. What the tool
+can name is the submission. A submission can ask for a signal when it settles:</p>
+<pre><code><span class="tk-k">type</span> <span class="tk-t">SubmissionDraft</span> = <span class="tk-c">/* as today */</span> &amp; {
+  <span class="tk-k">readonly</span> notify?: { <span class="tk-k">readonly</span> taskId: <span class="tk-t">TaskId</span>; <span class="tk-k">readonly</span> key: string };
+};
+
+<span class="tk-c">/** Built in: its value is what Submission.wait() resolves to. */</span>
+<span class="tk-k">const</span> <span class="tk-t">SubmissionSettled</span>: <span class="tk-t">SignalToken</span>&lt;<span class="tk-t">SettledSubmissionRecord</span>&gt;;</code></pre>
+<p>The commit that settles the submission also delivers the signal, as part of the same commit, so the delivery is atomic
+with the settlement. It runs after the commit&#39;s own writes, like the submission settlement itself, and never fails the
+commit:</p>
+<pre><code><span class="tk-c">// The answer entry's text, read from the settled record.</span>
+<span class="tk-k">declare</span> <span class="tk-k">function</span> <span class="tk-f">answerText</span>(api: <span class="tk-t">ToolExecutionApi</span>, settled: <span class="tk-t">SettledSubmissionRecord</span>, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;string&gt;;
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Subagent</span> = <span class="tk-f">defineExtension</span>({
+  name: <span class="tk-s">"subagent"</span>,
+  tools: [
+    <span class="tk-f">defineTool</span>({
+      name: <span class="tk-s">"subagent"</span>,
+      description: <span class="tk-s">"Delegate a task to a subagent and get its answer back"</span>,
+      parameters: <span class="tk-f">obj</span>({ task: <span class="tk-f">str</span>() }),
+      replay: <span class="tk-s">"safe"</span>,
+      <span class="tk-k">async</span> <span class="tk-f">execute</span>({ task }, api, context) {
+        <span class="tk-k">const</span> state = <span class="tk-k">await</span> api.<span class="tk-f">readSignal</span>(<span class="tk-t">SubmissionSettled</span>, <span class="tk-s">"answered"</span>, context);
+        <span class="tk-k">if</span> (state !== <span class="tk-k">undefined</span> &amp;&amp; <span class="tk-s">"value"</span> <span class="tk-k">in</span> state) {
+          <span class="tk-k">const</span> settled = state.value;
+          <span class="tk-k">if</span> (settled.status !== <span class="tk-s">"done"</span>) <span class="tk-k">return</span> { output: [{ <span class="tk-k">type</span>: <span class="tk-s">"text"</span>, text: <span class="tk-s">`Subagent ended: ${settled.status}`</span> }], isError: <span class="tk-k">true</span> };
+          <span class="tk-k">return</span> { output: [{ <span class="tk-k">type</span>: <span class="tk-s">"text"</span>, text: <span class="tk-k">await</span> <span class="tk-f">answerText</span>(api, settled, context) }] };
+        }
+        <span class="tk-c">// The parent's own selection without this extension, computed before the commit (spec §7.3).</span>
+        <span class="tk-k">const</span> extensions = (<span class="tk-k">await</span> api.<span class="tk-f">agent</span>(context)).extensions.<span class="tk-f">filter</span>((name) =&gt; name !== <span class="tk-t">Subagent</span>.name);
+        <span class="tk-k">const</span> child = <span class="tk-k">await</span> api.<span class="tk-f">commit</span>(<span class="tk-k">async</span> (tx) =&gt; {
+          <span class="tk-k">const</span> existing = (<span class="tk-k">await</span> tx.<span class="tk-f">scanConversations</span>({ ownerTaskId: api.taskId }, <span class="tk-n">1</span>)).items[<span class="tk-n">0</span>];
+          <span class="tk-k">if</span> (existing !== <span class="tk-k">undefined</span>) <span class="tk-k">return</span> existing.id;
+          <span class="tk-k">const</span> created = <span class="tk-k">await</span> tx.<span class="tk-f">createConversation</span>({ ownership: { kind: <span class="tk-s">"task"</span>, taskId: api.taskId } });
+          <span class="tk-k">await</span> <span class="tk-f">configure</span>(tx, created.id, { extensions });
+          <span class="tk-k">return</span> created.id;
+        }, context);
+        <span class="tk-k">const</span> handle = (<span class="tk-k">await</span> api.<span class="tk-f">conversation</span>(child, context))!;
+        <span class="tk-c">// The request ID makes a rerun find the same submission.</span>
+        <span class="tk-k">await</span> handle.<span class="tk-f">submit</span>(
+          { <span class="tk-k">type</span>: <span class="tk-s">"input"</span>, content: task, requestId: <span class="tk-s">`subagent:${api.taskId}`</span>, notify: { taskId: api.taskId, key: <span class="tk-s">"answered"</span> } },
+          context,
+        );
+        <span class="tk-k">return</span> { sleep: { signals: [<span class="tk-t">SubmissionSettled</span>.<span class="tk-f">key</span>(<span class="tk-s">"answered"</span>)] } };
+      },
+    }),
+  ],
+});</code></pre>
+<p>While the subagent works, the Session is active anyway. Once the subagent parks too, asking a person or waiting for CI,
+every task in the Session is parked and the process may sleep. A subagent that answers before the tool has parked is an
+early signal, and the tool wakes at once.</p>
+</section>
+
+<section class="chapter" id="gates"><header class="opener"><div class="numeral">VIII</div><h2>Gates Before a Tool Runs</h2><p class="lede">A beforeTool hook that makes a call wait for an approval, a time window, or a quota.</p></header>
+<p class="dropcap">Some waits come before the tool runs at all: a person approves a risky command, a send waits for business hours, a
+paid tool waits for its quota. Durable already has the place for &quot;may this call run&quot;: <code>beforeTool</code>, which can block a
+call or change its arguments. It gains one more answer, and hooks gain <code>readSignal</code>:</p>
+<pre><code><span class="tk-k">interface</span> <span class="tk-t">ToolHooks</span> {
+  <span class="tk-f">beforeTool</span>(
+    call: <span class="tk-t">ToolHookCall</span>,
+    api: <span class="tk-t">HookApi</span>,
+    context: <span class="tk-t">Context</span>,
+  ): <span class="tk-t">HookResult</span>&lt;{
+    <span class="tk-k">readonly</span> arguments?: <span class="tk-t">JsonObject</span>;
+    <span class="tk-k">readonly</span> block?: string;
+    <span class="tk-k">readonly</span> sleep?: { <span class="tk-k">readonly</span> until?: number; <span class="tk-k">readonly</span> signals?: <span class="tk-k">readonly</span> <span class="tk-t">SignalKey</span>&lt;<span class="tk-k">unknown</span>&gt;[] };
+  }&gt;;
+}
+
+<span class="tk-k">interface</span> <span class="tk-t">HookApi</span> {
+  <span class="tk-c">// ... as today, and:</span>
+  <span class="tk-f">readSignal</span>&lt;T&gt;(token: <span class="tk-t">SignalToken</span>&lt;T&gt;, key: string, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-t">SignalState</span>&lt;T&gt; | <span class="tk-k">undefined</span>&gt;;
+  <span class="tk-f">now</span>(): number; <span class="tk-c">// the Harness clock</span>
+}</code></pre>
+<p>The chain is today&#39;s: argument replacements in extension order, and the first <code>block</code> or <code>sleep</code> stops it. A <code>sleep</code>
+parks the tool task at its <code>call</code> checkpoint. On every wake before intent, the whole <code>call</code> phase runs again from the
+top: resolve, validate, every <code>beforeTool</code> in order, validate again. A gate that waited reads its key with
+<code>readSignal()</code>, a value, expired, or nothing yet, and passes, blocks, or sleeps on a new key. The call runs only when a
+whole pass ends without a block or a sleep; once intent is committed, <code>beforeTool</code> never runs again.</p>
+<pre><code><span class="tk-k">import</span> { bool, obj } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/pi-schema"</span>;
+
+<span class="tk-k">const</span> DAY = <span class="tk-n">24</span> * <span class="tk-n">60</span> * <span class="tk-n">60</span> * <span class="tk-n">1000</span>;
+<span class="tk-k">const</span> <span class="tk-t">Approval</span> = <span class="tk-f">defineSignal</span>({ name: <span class="tk-s">"approvals.decision"</span>, version: <span class="tk-n">1</span>, schema: <span class="tk-f">obj</span>({ allow: <span class="tk-f">bool</span>() }) });
+
+<span class="tk-c">// The extension's own judgment of a command, and a hash of JSON with sorted keys.</span>
+<span class="tk-k">declare</span> <span class="tk-k">function</span> <span class="tk-f">isRisky</span>(args: <span class="tk-t">JsonObject</span>): boolean;
+<span class="tk-k">declare</span> <span class="tk-k">function</span> <span class="tk-f">canonicalDigest</span>(value: <span class="tk-t">JsonValue</span>): string;
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Approvals</span> = <span class="tk-f">defineExtension</span>({
+  name: <span class="tk-s">"approvals"</span>,
+  hooks: [
+    <span class="tk-f">hook</span>(<span class="tk-t">ToolTask</span>, {
+      beforeTool: <span class="tk-k">async</span> (call, api, context) =&gt; {
+        <span class="tk-k">if</span> (call.name !== <span class="tk-s">"bash"</span> || !<span class="tk-f">isRisky</span>(call.arguments)) <span class="tk-k">return</span> <span class="tk-k">undefined</span>;
+        <span class="tk-k">const</span> key = <span class="tk-f">canonicalDigest</span>(call.arguments); <span class="tk-c">// other arguments, another question</span>
+        <span class="tk-k">const</span> state = <span class="tk-k">await</span> api.<span class="tk-f">readSignal</span>(<span class="tk-t">Approval</span>, key, context);
+        <span class="tk-c">// One deadline per question, fixed at the first pass: later passes keep it.</span>
+        <span class="tk-k">const</span> until = <span class="tk-k">await</span> api.<span class="tk-f">memo</span>(<span class="tk-s">`approvals.until.${key}`</span>, api.<span class="tk-f">now</span>() + DAY, context);
+        <span class="tk-k">if</span> (state === <span class="tk-k">undefined</span>) <span class="tk-k">return</span> { sleep: { signals: [<span class="tk-t">Approval</span>.<span class="tk-f">key</span>(key)], until } };
+        <span class="tk-k">if</span> (<span class="tk-s">"expired"</span> <span class="tk-k">in</span> state) <span class="tk-k">return</span> { block: <span class="tk-s">"No approval within a day"</span> };
+        <span class="tk-k">return</span> state.value.allow ? <span class="tk-k">undefined</span> : { block: <span class="tk-s">"Not approved"</span> };
+      },
+    }),
+  ],
+});</code></pre>
+<div class="steps"><div class="steps-head"><span class="title">A risky command, approved an hour later</span><span class="count"></span><button class="prev" type="button">Back</button><button class="next" type="button">Next</button></div><div class="step-panel"><h4>The first pass</h4><p>The call phase runs; the approval gate finds nothing yet and returns a sleep. The tool task commits <code>sleeping</code> at
+<code>call</code>. Nothing runs; the process may sleep.</p>
+</div><div class="step-panel"><h4>The answer</h4><p>A person presses Allow. The host calls <code>harness.signal(taskId, Approval, key, { allow: true })</code>; the task wakes.</p>
+</div><div class="step-panel"><h4>The second pass</h4><p>The call phase runs again from the top. Every gate is asked again; the approval gate reads its stored answer and
+passes.</p>
+</div><div class="step-panel"><h4>Intent</h4><p>No gate blocked or slept, so intent is committed and the command runs. Gates are never asked again for this call.</p>
+</div></div>
+<p>Asking every gate again on every wake is what keeps several gates correct together. A quiet-hours gate that passed at
+20:00 is asked again when the approval arrives at 23:30, and makes the call wait until morning.</p>
+<p>An approval binds to the arguments it saw. A later <code>beforeTool</code> in the chain may still replace them, so making argument
+changes come before approvals is the host&#39;s composition (chapter XII), not a Durable guarantee.</p>
+<h3 id="removing-and-adding-gates">Removing and adding gates</h3>
+<p>The call phase reruns, so the gates installed now decide, whenever the registry may have changed under a parked call:
+a registry publication wakes every call parked at <code>call</code>; a <code>beforeTool</code> sleep that commits while the registry changed
+since its phase started is woken at once; and the first pass after open wakes calls parked at <code>call</code>. That last one is
+the only thing a restart runs while work is parked. When the sleep&#39;s deadline has already passed, such a wake takes
+the deadline path, so the keys expire as they would have; and because every pass reruns the gate, a gate fixes its
+deadline once, in a memo, as <code>Approvals</code> does. Calls that already committed intent are not affected.</p>
+<h3 id="hooks-do-not-commit">Hooks do not commit</h3>
+<p>Hooks get no <code>commit</code>. A hook answers; the asking task makes the decision durable in its own commit. A hook that writes
+elsewhere, to a plugin&#39;s own store or a service, performs an external effect: it is not atomic with the task&#39;s commit
+and runs again with every pass, so it is idempotent by a key derived from the task. Whatever it reserves is released
+from the call&#39;s outcome: <code>afterTool</code> runs on every result the tool task writes, blocked and aborted included, except
+past the restart limit and for tool tasks the scheduler faulted or orphaned, where the plugin reconciles against the
+task graph.</p>
+</section>
+
+<section class="chapter" id="hooktasks"><header class="opener"><div class="numeral">IX</div><h2>Hooks That Start Tasks</h2><p class="lede">afterTools and onYield may return tasks the generation waits for, instead of parking themselves.</p></header>
+<p class="dropcap">The gates of the last chapter park a tool call, and that is safe for one reason: <code>beforeTool</code> runs in the tool task&#39;s
+<code>call</code> phase, before intent, and that whole phase reruns on every wake. The generation&#39;s hooks sit in the middle of its
+phases: <code>onYield</code> runs between receiving an answer and classifying it, <code>afterTools</code> between a round and the next
+request. Parking there would mean resuming a generation mid-phase, or rerunning a model request, which this design
+avoids. So these hooks never park the generation. A hook that needs to wait returns tasks instead, and the generation
+waits for them as its children, as it already does for <code>afterRun</code> (spec §8.3):</p>
+<pre><code><span class="tk-k">interface</span> <span class="tk-t">GenerationHooks</span> {
+  <span class="tk-f">afterTools</span>(assistant: <span class="tk-t">EntryId</span>, results: <span class="tk-k">readonly</span> <span class="tk-t">EntryId</span>[], api: <span class="tk-t">HookApi</span>, context: <span class="tk-t">Context</span>): <span class="tk-t">HookResult</span>&lt;{ <span class="tk-k">readonly</span> tasks: <span class="tk-k">readonly</span> <span class="tk-t">HookTask</span>[] }&gt;;
+  <span class="tk-f">onYield</span>(answer: <span class="tk-t">AssistantMessage</span>, api: <span class="tk-t">HookApi</span>, context: <span class="tk-t">Context</span>): <span class="tk-t">HookResult</span>&lt;{ <span class="tk-k">readonly</span> <span class="tk-k">continue</span>: <span class="tk-t">UserInput</span> } | { <span class="tk-k">readonly</span> tasks: <span class="tk-k">readonly</span> <span class="tk-t">HookTask</span>[] }&gt;;
+}
+
+<span class="tk-c">/** Built by hookTask(task, input), which types input by the task. */</span>
+<span class="tk-k">type</span> <span class="tk-t">HookTask</span> = { <span class="tk-k">readonly</span> task: <span class="tk-t">AnyTask</span>; <span class="tk-k">readonly</span> input: <span class="tk-t">JsonValue</span> };
+<span class="tk-c">/** What an onYield task completes with to continue the run. */</span>
+<span class="tk-k">type</span> <span class="tk-t">YieldDecision</span> = { <span class="tk-k">readonly</span> <span class="tk-k">continue</span>?: <span class="tk-t">UserInput</span> };</code></pre>
+<p><strong>After a tool round,</strong> returned tasks are created as the generation&#39;s children, and the round&#39;s usual end waits for
+them. A task talks back in one of two ways: it completes with <code>{ terminate: true }</code>, and the run ends as a <code>terminate</code> round
+ends, with the tool-calling answer; or it submits a steer, which the next boundary places before the next request.
+Ana&#39;s Stop reaches the tasks through the generation.</p>
+<p><strong>When the model answers,</strong> <code>onYield</code> may return tasks, for a review that takes a model call or a person. The answer is
+appended and the run stays open. Once all the tasks have ended, the first of them, in the order they were created, that
+completed with <code>{ continue: input }</code> sends the agent back to work; without one, the run ends as it does today.</p>
+<pre><code><span class="tk-c">// A review the extension runs with a model of its choice; a rerun after a crash pays again.</span>
+<span class="tk-k">declare</span> <span class="tk-k">function</span> <span class="tk-f">reviewWithModel</span>(runtime: <span class="tk-t">TaskRuntime</span>&lt;{}, { phase: <span class="tk-s">"review"</span> }, <span class="tk-t">YieldDecision</span>, {}&gt;, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;{ ok: boolean; notes: string }&gt;;
+
+<span class="tk-k">const</span> <span class="tk-t">Review</span> = <span class="tk-f">defineTask</span>&lt;{}, { phase: <span class="tk-s">"review"</span> }, <span class="tk-t">YieldDecision</span>&gt;({
+  name: <span class="tk-s">"app.review"</span>,
+  version: <span class="tk-n">1</span>,
+  initial: () =&gt; ({ phase: <span class="tk-s">"review"</span> }),
+  phases: {
+    review: <span class="tk-k">async</span> (_task, runtime, context) =&gt; {
+      <span class="tk-k">const</span> verdict = <span class="tk-k">await</span> <span class="tk-f">reviewWithModel</span>(runtime, context);
+      <span class="tk-k">const</span> result: <span class="tk-t">YieldDecision</span> = verdict.ok ? {} : { <span class="tk-k">continue</span>: <span class="tk-s">`A reviewer found problems:\n${verdict.notes}`</span> };
+      <span class="tk-k">await</span> runtime.<span class="tk-f">commit</span>(() =&gt; ({ status: <span class="tk-s">"terminal"</span>, outcome: { status: <span class="tk-s">"completed"</span>, result } }), context);
+    },
+  },
+  abort: (_task, runtime, context) =&gt; runtime.<span class="tk-f">commit</span>(() =&gt; ({ status: <span class="tk-s">"terminal"</span>, outcome: { status: <span class="tk-s">"aborted"</span> } }), context),
+});
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Reviewer</span> = <span class="tk-f">defineExtension</span>({
+  name: <span class="tk-s">"reviewer"</span>,
+  tasks: [<span class="tk-t">Review</span>],
+  hooks: [<span class="tk-f">hook</span>(<span class="tk-t">GenerationTask</span>, { onYield: () =&gt; ({ tasks: [<span class="tk-f">hookTask</span>(<span class="tk-t">Review</span>, {})] }) })],
+});</code></pre>
+<p>Either kind of task may itself sleep on a signal, an <code>AskPerson</code> for example; the generation only waits for its
+children to end.</p>
+<p><code>onYield</code> tasks and <code>afterRun</code> tasks are two different moments of a run. <code>onYield</code> tasks decide whether the answer
+stands while the run&#39;s inputs are still open: whoever waits on the run (a parent&#39;s subagent tool, a chat bridge) gets
+only an answer that passed them, and one of them can send the agent back to work. <code>afterRun</code> tasks act on an answer
+that stands, after the inputs settled: delivering it to a chat, a notification, a subagent&#39;s report to its parent.
+A review in <code>afterRun</code> would come too late, since the callers already have the answer.</p>
+</section>
+
+<section class="chapter" id="abort"><header class="opener"><div class="numeral">X</div><h2>Abort and Crashes</h2><p class="lede">What Stop does to parked work, and what runs again after a crash or a close.</p></header>
+<p class="dropcap">An abort is a durable mark, not a signal to running code, which is why it reaches work that has no running code. A
+parked task with an abort mark stops waiting at once: it becomes runnable for its abort handler without waiting for its
+signals, its deadline, or its tasks. Its children are aborted first, as always (spec §5.5).</p>
+<figure class="fig anim"><svg viewBox="0 0 720 310" width="100%" role="img" aria-label="Ana presses Stop while runci waits for its webhook." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f5m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f5a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f5b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="102" y1="52" x2="102" y2="302" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="102" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Ana</text><text x="102" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">Stop</text><line x1="274" y1="52" x2="274" y2="302" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="195" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="274" y="30" font-size="11" fill="#2a2723" text-anchor="middle">Harness</text><line x1="446" y1="52" x2="446" y2="302" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="367" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="446" y="27" font-size="11" fill="#2a2723" text-anchor="middle">run_ci</text><text x="446" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">parked</text><line x1="618" y1="52" x2="618" y2="302" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="539" y="10" width="158" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="618" y="30" font-size="11" fill="#2a2723" text-anchor="middle">CI service</text><g class="step edge" style="--i:1"><line x1="102" y1="78" x2="271" y2="78" stroke="#7b7468" marker-end="url(#f5m)"/><text x="188" y="72" font-size="10" fill="#2a2723" text-anchor="middle">Conversation.abort()</text></g><g class="step edge" style="--i:2"><path d="M274 104 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f5a)"/><text x="316" y="114" font-size="10" fill="#b4472f" text-anchor="start">commit abort marks: generation, run_ci</text></g><g class="step edge" style="--i:3"><line x1="274" y1="150" x2="443" y2="150" stroke="#7b7468" marker-end="url(#f5m)"/><text x="360" y="144" font-size="10" fill="#2a2723" text-anchor="middle">abort invocation: cancel(args) with api.checkpoint</text></g><g class="step edge" style="--i:4"><line x1="446" y1="182" x2="615" y2="182" stroke="#7b7468" marker-end="url(#f5m)"/><text x="532" y="176" font-size="10" fill="#2a2723" text-anchor="middle">cancel(build 7)</text></g><g class="step edge" style="--i:5"><line x1="446" y1="214" x2="277" y2="214" stroke="#b4472f" marker-end="url(#f5a)"/><text x="360" y="208" font-size="10" fill="#b4472f" text-anchor="middle">commit aborted result</text></g><g class="step edge" style="--i:6"><line x1="618" y1="246" x2="277" y2="246" stroke="#7b7468" marker-end="url(#f5m)"/><text x="446" y="240" font-size="10" fill="#2a2723" text-anchor="middle">signal(41, ...)</text></g><g class="step edge" style="--i:7"><line x1="274" y1="278" x2="615" y2="278" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f5m)"/><text x="446" y="272" font-size="10" fill="#2a2723" text-anchor="middle">closed</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 5.</span> Ana presses Stop while run_ci waits for its webhook.</figcaption></figure>
+<div class="steps"><div class="steps-head"><span class="title">Crash points of run_ci</span><span class="count"></span><button class="prev" type="button">Back</button><button class="next" type="button">Next</button></div><div class="step-panel"><h4>Before the park is stored</h4><p><code>execute()</code> triggered the build and the process died. The task is still in <code>execute</code>, without a wake. Replay-safe:
+<code>execute()</code> runs again, and the memoized idempotency key makes CI return the same build. Replay-unsafe: <code>interrupted</code>;
+only the tool&#39;s own key can find the build later.</p>
+</div><div class="step-panel"><h4>While parked</h4><p>Nothing runs. Open keeps the task sleeping and counts no restart. The webhook may arrive before, during, or after the
+restart: it is stored either way.</p>
+</div><div class="step-panel"><h4>Between the wake and the intent commit</h4><p>The task comes back as <code>pending</code> at <code>parked</code> with its wake; the next reservation runs the <code>parked</code> handler again.
+Nothing of the tool had run.</p>
+</div><div class="step-panel"><h4>While a woken run runs</h4><p>Intent was committed with the wake. Replay-safe: the run repeats with the same wake. Replay-unsafe: <code>cancel</code> runs with
+the last park&#39;s checkpoint, then <code>interrupted</code>.</p>
+</div><div class="step-panel"><h4>After the result</h4><p>The result commit is atomic with the entry and the slot. Nothing reruns.</p>
+</div></div>
+</section>
+
+<section class="chapter" id="visibility"><header class="opener"><div class="numeral">XI</div><h2>Seeing What Waits</h2><p class="lede">What hosts and UIs can see of parked work, and how a host decides whether to stay awake.</p></header>
+<p class="dropcap">The task graph shows a sleeping node with its <code>until</code> and its keys, and a waiting node with its policy. A parked tool
+call&#39;s slot in <code>pi.live</code> shows <code>status: &quot;sleeping&quot;</code> or <code>&quot;waiting&quot;</code>. Durable stores no description of what a wait is
+for: a question&#39;s text or an approval&#39;s arguments live with whoever asked, in their own records, keyed by task ID and
+key.</p>
+<p>A host decides whether its process must stay up from <code>wake()</code>, not from the task graph: a Session whose work is all
+parked is not active. It arms its recovery wakeup before calling <code>signal()</code>, as before <code>submit()</code>. A host whose process
+exits when idle, as p2&#39;s worker does, hands its next <code>at</code> to something durable before it exits, because <code>onWake</code> runs
+after the commit and nothing waits for it. p2 counts every graph node as work today (<code>apps/p2/plugins/status/worker.ts</code>)
+and must switch to <code>wake()</code>; its transcript and activity views must learn the new slot statuses.</p>
+</section>
+
+<section class="chapter" id="hosts"><header class="opener"><div class="numeral">XII</div><h2>Where Durable Stops</h2><p class="lede">What this design leaves to the host&#39;s harness, and the one rule for wrappers.</p></header>
+<p class="dropcap">Durable provides the primitives: sleeps on signals, <code>policy: &quot;any&quot;</code>, tools that park, <code>beforeTool</code> that sleeps,
+<code>readSignal()</code>, the rerun of the call phase on wakes and registry changes, <code>afterTool</code> on every result, tasks returned
+from hooks. How a host composes its plugins&#39; hooks on top (which run first, observers that cannot modify, several gates
+merged into one answer, argument changes before approvals, a quota taken only after every approval passed) is the
+host&#39;s harness design. p2 and p3 build that from extension order and these primitives. A third-party task that wants
+gates of its own declares a hook whose result may ask to block or sleep, and commits the sleep itself.</p>
+<p>Wrappers keep decorating how a tool runs: a command prefix, a timeout. They never park. The Harness hands each wrapper
+a base whose <code>execute()</code> records the parks it returns, so a park the composite returns that its base did not return is
+recognized and becomes an error result.</p>
+</section>
+
+<section class="chapter epilogue" id="open-questions"><header class="opener"><div class="numeral">∴</div><h2>Open Questions</h2><p class="lede">What was decided at the end of the review.</p></header>
+<p class="dropcap">None left. Decided: an <code>afterTools</code> task can end the run with <code>{ terminate: true }</code>, as a <code>terminate</code> round ends;
+<code>RunEndTask</code> and <code>runEndTask</code> (released in 1.5.0) are renamed <code>HookTask</code> and <code>hookTask</code>, a task spawned by a hook; <code>run.yield</code> stays in
+<code>pi.live</code>; a model request cannot sleep yet (deferred); code mode parking its VM is separate work
+(earendil-works/pi#11981).</p>
+</section>
+
+<section class="chapter appendix" id="examples-to-build"><header class="opener"><div class="numeral">A</div><h2>Examples to Build</h2></header>
+<p>The implementation adds one runnable example per concept to <code>packages/durable/test/examples/</code>, in the existing
+format (faux provider, memory storage, printed results), after <code>37-harness-registry.ts</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Example</th>
+<th>Shows</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>38-signals.ts</code></td>
+<td>tokens, every <code>signal()</code> result, an early signal waking the sleep at once</td>
+</tr>
+<tr>
+<td><code>39-ask-a-person.ts</code></td>
+<td>a task sleeping on a signal with a deadline: answered once, expired once; <code>wake()</code> while it sleeps</td>
+</tr>
+<tr>
+<td><code>40-tool-waits-for-webhook.ts</code></td>
+<td><code>run_ci</code> parking on a signal; a crash before the park, Stop while parked (<code>cancel</code>)</td>
+</tr>
+<tr>
+<td><code>41-tool-polls.ts</code></td>
+<td>a tool parking on time and polling with backoff</td>
+</tr>
+<tr>
+<td><code>42-parallel-children.ts</code></td>
+<td><code>executeTool(..., { wait: false })</code> and <code>wait</code> with <code>policy: &quot;any&quot;</code></td>
+</tr>
+<tr>
+<td><code>43-subagent-waits.ts</code></td>
+<td>a subagent tool parked on <code>SubmissionSettled</code> while its child waits for a person</td>
+</tr>
+<tr>
+<td><code>44-approval-gate.ts</code></td>
+<td>an approval gate with a memoized deadline, and a quiet-hours gate asked again on every wake</td>
+</tr>
+<tr>
+<td><code>45-review-on-yield.ts</code></td>
+<td>a review task sending the agent back with <code>{ continue }</code>; a user message winning over it</td>
+</tr>
+<tr>
+<td><code>46-after-tools-terminate.ts</code></td>
+<td>an <code>afterTools</code> task that steers on &quot;go on&quot; and ends the run with <code>{ terminate: true }</code> on &quot;stop&quot;</td>
+</tr>
+</tbody></table>
+</section>
+
+<section class="chapter appendix" id="api-reference"><header class="opener"><div class="numeral">B</div><h2>API Reference</h2></header>
+<table>
+<thead>
+<tr>
+<th>Surface</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>TaskState</code></td>
+<td><code>sleeping</code>: <code>until?</code>, <code>signals?</code>; <code>waiting</code>: <code>policy: &quot;any&quot;</code>; <code>pending</code>/<code>running</code>: <code>wake?</code></td>
+</tr>
+<tr>
+<td><code>WakeReason</code></td>
+<td><code>time</code> | <code>expired</code> | <code>signal</code> (name, key) | <code>tasks</code> (ended); the existing <code>Wake</code> is unchanged</td>
+</tr>
+<tr>
+<td>signals</td>
+<td><code>defineSignal({ name, version, schema, migrate? })</code> over a pi-schema schema; <code>token.key(key)</code></td>
+</tr>
+<tr>
+<td>delivery</td>
+<td><code>harness.signal(taskId, token, key, value, context)</code>, <code>tx.signal(taskId, token, key, value)</code>: <code>delivered</code> | <code>duplicate</code> | <code>invalid</code> | <code>closed</code> | <code>not_found</code></td>
+</tr>
+<tr>
+<td>reading</td>
+<td><code>readSignal(token, key, context)</code> on <code>TaskRuntime</code>, <code>HookApi</code>, <code>ToolExecutionApi</code>: <code>{ value }</code> | <code>{ expired: true }</code> | undefined</td>
+</tr>
+<tr>
+<td>tools</td>
+<td><code>execute()</code> may return <code>{ sleep }</code> or <code>{ wait }</code>; <code>api.wake</code>, <code>api.checkpoint</code>; <code>cancel?(args, api, context)</code>; <code>defineTool&lt;TParameters, TDetails, C&gt;</code></td>
+</tr>
+<tr>
+<td>nested</td>
+<td><code>executeTool(..., { wait: false })</code> returns <code>{ taskId, result(context) }</code>; <code>createTask(..., { key })</code>; explicit keys after a wake</td>
+</tr>
+<tr>
+<td>submissions</td>
+<td><code>notify: { taskId, key }</code>; built-in <code>SubmissionSettled</code></td>
+</tr>
+<tr>
+<td>hooks</td>
+<td><code>beforeTool</code> may return <code>{ sleep }</code>; <code>afterTools</code> and <code>onYield</code> may return <code>{ tasks }</code>; <code>afterTools</code> tasks may end with <code>{ terminate: true }</code>; <code>RunEndTask</code>/<code>runEndTask</code> renamed <code>HookTask</code>/<code>hookTask</code></td>
+</tr>
+<tr>
+<td><code>HookApi</code></td>
+<td><code>readSignal()</code>, <code>now()</code></td>
+</tr>
+<tr>
+<td>tool task</td>
+<td><code>pi.tool</code> 4: checkpoint <code>parked</code>; intent stores <code>wake</code> and <code>checkpoint</code>; <code>durationMs</code> is the whole span</td>
+</tr>
+<tr>
+<td>documents</td>
+<td><code>pi.live</code>: slot status <code>sleeping</code>/<code>waiting</code>, <code>run.yield</code> (no version bump); <code>pi.generation</code> 3: phases <code>afterTools</code>, <code>yield</code></td>
+</tr>
+<tr>
+<td>error codes</td>
+<td><code>invalid_park</code></td>
+</tr>
+<tr>
+<td>storage</td>
+<td>no schema change</td>
+</tr>
+</tbody></table>
+</section>
+
+<section class="chapter appendix" id="glossary"><header class="opener"><div class="numeral">C</div><h2>Glossary</h2></header>
+<p><strong>Checkpoint:</strong> a task&#39;s saved step; for a parked tool, what it returned in its park. <strong>Consumed:</strong> a key that has
+woken its task; it serves no second wait. <strong>Expired:</strong> a key closed by a sleep&#39;s deadline. <strong>Gate:</strong> a <code>beforeTool</code> hook
+that may block or sleep. <strong>Intent:</strong> the commit that records a tool call before its code runs. <strong>Invocation:</strong> one run
+of a task&#39;s code in memory. <strong>Key:</strong> names one wait for a signal. <strong>Memo:</strong> a small first-writer-wins value on a live
+task. <strong>Park:</strong> commit <code>waiting</code> or <code>sleeping</code> and end the invocation. <strong>Signal:</strong> a typed JSON value delivered to a
+live task. <strong>Token:</strong> a signal&#39;s name, version, and schema. <strong>Wake:</strong> why parked work runs again.</p>
+</section>
+
+<p class="colophon">Waiting for the World · fifth revision · 2026-11-09 · based on suspendable/spec.md and pi-durable spec.md</p>
+</div></div>
+<script>(function activate(root) {
+	const replay = (f) => {
+		f.classList.remove("play");
+		void f.getBoundingClientRect();
+		f.classList.add("play");
+	};
+	const io = new IntersectionObserver(
+		(es) => {
+			for (const e of es)
+				if (e.isIntersecting) {
+					e.target.classList.add("play");
+					io.unobserve(e.target);
+				}
+		},
+		{ threshold: 0.3 },
+	);
+	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
+		f.classList.add("armed");
+		io.observe(f);
+		const b = f.querySelector(".replay");
+		if (b) b.onclick = () => replay(f);
+	});
+	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
+		s.classList.add("js");
+		const ps = [...s.querySelectorAll(":scope>.step-panel")];
+		let i = 0;
+		const c = s.querySelector(".count"),
+			p = s.querySelector(".prev"),
+			n = s.querySelector(".next");
+		const show = () => {
+			ps.forEach((x, j) => x.classList.toggle("on", j === i));
+			c.textContent = `${i + 1} / ${ps.length}`;
+			p.disabled = i === 0;
+			n.disabled = i === ps.length - 1;
+			ps[i].querySelectorAll(".anim").forEach(replay);
+		};
+		p.onclick = () => {
+			i--;
+			show();
+		};
+		n.onclick = () => {
+			i++;
+			show();
+		};
+		show();
+	});
+})(document)</script>
+</body></html>
