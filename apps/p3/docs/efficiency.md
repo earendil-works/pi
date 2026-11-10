@@ -49,8 +49,8 @@ Rules for p3:
    Switching a session or a conversation holds only what that view shows.
 2. **Lists are per session or paged.** No object returns all children of all sessions; a view's state is bounded (a
    window or a live query with a limit).
-3. **Compression at the origin on every Node host** (`createHost({ compression })`), once the flake p2 sees with it
-   (a view stalling about 1 in 5 runs, suspected in the browser's asynchronous inflate path) is understood and fixed.
+3. **Compression at the origin on every Node host** (`createHost({ compression })`). The test flake first suspected
+   in it is unrelated: the same p2 test fails under load on a clean checkout too (perf session, 2026-11-09).
 4. **A byte budget per common action** (switching sessions, switching conversations, opening the page), measured in
    tests through a real page.
 
@@ -71,5 +71,5 @@ borrowed references are needed.
 Not part of it: keeping the hold after the last reference ends. That would be a consumer-side linger, rejected by
 decision D8 and design §19/§31. Hoisting page-wide holds (section 2, rule 1) covers the remount case instead.
 
-Open: the owner's decision on the presence change; then a design note, the full review (one reviewer adversarial, one
+The owner agreed to design it (2026-11-09: "sounds ok"). Next: a design note, the full review (one reviewer adversarial, one
 against design.md), and a build with the reference, recovery, revocation, retry, too-large and reload cases tested.
