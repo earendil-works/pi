@@ -2,24 +2,24 @@
    row is one control (.nav-row): leading disclosure, the label (its hit area covers the row), details, and controls at
    the trailing end; its hover and selected background, Elanor's ghost fills, span all of it. */
 
-/* The rows' measures, in the sidebar and the list pages. Rows sit --bar-pad from the sidebar's edges, as p2's bars'
-   buttons do, and start and end their content on the line where a bar's buttons show their glyphs (--nav-edge in from
-   the row: a 16px glyph centred in a --control box). A row's control box (--nav-control) is wider than its glyph, so
-   a trailing one reaches past that line by the difference (--nav-glyph-inset). A label starts after the marker column
-   and its gap (--nav-label-start). Nothing is indented: every session's activity dot, in a group or not, is in one
-   column. */
+/* The rows' measures, in the sidebar and the list pages. A row is as tall as Elanor's side navigation link (--nav-row:
+   one line of its UI text and its control padding, 28px), on every pointer; rows are Elanor's list gap apart. Rows sit
+   --bar-pad from the sidebar's edges, as p2's bars' buttons do, and start and end their content on the line where a
+   bar's buttons show their glyphs (--nav-edge in from the row: a 16px glyph centred in a --control box). A row's
+   controls are square boxes as tall as the row, wider than their glyph, so a trailing one reaches past that line by
+   the difference (--nav-glyph-inset). A label starts after the marker column and its gap (--nav-label-start). Nothing
+   is indented: every session's activity dot, in a group or not, is in one column. */
 .sidebar-root,
 .list-page {
-	--nav-control: var(--control-sm);
-	--nav-glyph-inset: calc((var(--nav-control) - 16px) / 2);
+	--nav-row: calc(
+		var(--semantic-typography-ui-primary-font-size) *
+		var(--semantic-typography-ui-primary-line-height) +
+		2 *
+		var(--semantic-dimension-space-control-padding-block-small)
+	);
+	--nav-glyph-inset: calc((var(--nav-row) - 16px) / 2);
 	--nav-edge: calc((var(--control) - 16px) / 2);
 	--nav-label-start: calc(var(--nav-edge) + 16px + 2 * var(--s1));
-}
-@media (pointer: coarse) {
-	.sidebar-root,
-	.list-page {
-		--nav-control: var(--row);
-	}
 }
 
 /* Elanor's sidebar fills p2's drawer column (its width, border and resizing are the layout's). */
@@ -53,13 +53,20 @@
 .sidebar-root .collapse-sidebar {
 	margin: 0;
 }
-.sidebar-nav {
-	font: inherit;
-	gap: 0;
+/* Elanor's UI text size and line height (not its font: p2 keeps its own family). The list page's search keeps 16px:
+   iOS zooms smaller inputs. */
+.sidebar-nav,
+.list-page-body ul {
+	font-size: var(--semantic-typography-ui-primary-font-size);
+	line-height: var(--semantic-typography-ui-primary-line-height);
 }
-/* Rollups are apart by their rows' top margin; a collapsed one takes no more than its row. */
-.sidebar-nav > .sidebar-section {
-	padding-block-end: var(--s2);
+.sidebar-nav {
+	font-family: inherit;
+}
+/* A list below its row (a group's sessions, a session's conversations) is one list gap below it, as its rows are
+   apart. */
+.sidebar-nav li > ul {
+	margin-block-start: var(--semantic-dimension-space-gap-small);
 }
 
 /* A row: one control from the leading edge to the trailing one, its glyphs and trailing text on the icon line. */
@@ -68,7 +75,7 @@
 	display: flex;
 	align-items: center;
 	gap: var(--s1);
-	min-height: var(--control);
+	min-height: var(--nav-row);
 	padding-inline: var(--nav-edge);
 	border-radius: var(--semantic-dimension-radius-small);
 	color: var(--text);
@@ -119,6 +126,17 @@
 	inset: 0;
 	border-radius: inherit;
 	content: "";
+}
+/* On touch, a row's and its controls' hit areas reach half the list gap above and below, as Elanor's compact controls
+   do: the whole space between rows is tappable, without taller rows. */
+@media (pointer: coarse) {
+	.nav-row > .nav-link::after,
+	.nav-control::after {
+		position: absolute;
+		inset-block: calc(var(--semantic-dimension-space-gap-small) / -2);
+		inset-inline: 0;
+		content: "";
+	}
 }
 /* Elanor's label inside a link: one line, as narrow as the label it holds. */
 .nav-row > a.nav-link > span {
@@ -177,7 +195,7 @@
 	align-items: center;
 	gap: var(--s2);
 	color: var(--muted);
-	font-size: var(--fs-xs);
+	font-size: var(--semantic-typography-ui-secondary-font-size);
 }
 /* Controls sit above the label's hit area. */
 .nav-control {
@@ -187,8 +205,8 @@
 	flex: none;
 	align-items: center;
 	justify-content: center;
-	width: var(--nav-control);
-	height: var(--nav-control);
+	width: var(--nav-row);
+	height: var(--nav-row);
 	border-radius: var(--semantic-dimension-radius-small);
 	color: var(--semantic-color-icon-secondary);
 }
@@ -220,7 +238,6 @@
 
 /* A rollup's row: its name as a section label. */
 .rollup-row {
-	margin-top: var(--s3);
 	color: var(--muted);
 	font-size: var(--fs-xs);
 	font-weight: var(--fw-strong);
@@ -275,6 +292,11 @@
 }
 .session-operation.failed {
 	color: var(--bad);
+}
+/* A rollup made from code whose last run failed: why, in its options. */
+.rollup-error {
+	color: var(--bad);
+	overflow-wrap: anywhere;
 }
 .session-operation > .session-operation-text {
 	overflow: hidden;
@@ -348,9 +370,6 @@
 }
 
 @media (pointer: coarse) {
-	.nav-row {
-		min-height: var(--row);
-	}
 	.branch-rename {
 		opacity: 1;
 	}
