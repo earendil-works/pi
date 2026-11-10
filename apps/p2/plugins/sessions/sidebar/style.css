@@ -101,6 +101,24 @@
 .nav-marker + .nav-link {
 	margin-inline-start: var(--s1);
 }
+/* A session's project glyph (Recents): its activity dot sits on the glyph's bottom right corner, ringed in the
+   sidebar's background so it reads on any glyph color. Not positioned above the row: the row's hit area covers it,
+   so a click opens the session and hovering shows the row's tooltip (the path). */
+.nav-glyph {
+	position: relative;
+	display: inline-flex;
+}
+.glyph-icon {
+	display: block;
+	flex: none;
+}
+.nav-glyph > .live-dot,
+.nav-glyph > .unread-dot {
+	position: absolute;
+	inset-block-end: -2px;
+	inset-inline-end: -2px;
+	box-shadow: 0 0 0 2px var(--bg);
+}
 /* The label: its hit area covers the whole row, below the controls. It is as wide as its text, so a chevron follows it;
    the fill after it keeps the details and controls at the trailing end. */
 .nav-row > .nav-link {

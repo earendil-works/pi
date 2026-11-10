@@ -1,6 +1,6 @@
 // The sidebar's rules (plugins/sessions/sidebar/model.ts): what each built-in rollup collects (Recents, projects,
 // folders, the Archive), the sections with relevance, windows and collapsed rollups and groups, the list pages with
-// aged sessions after the others, folder keys and names, and moving a rollup.
+// aged sessions after the others, folder keys and names, moving a rollup, and which project glyph a place shows.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Project } from "../../plugins/projects/contract.ts";
@@ -8,6 +8,7 @@ import {
 	ARCHIVE,
 	FOLDERS,
 	folderKey,
+	glyphsOf,
 	type ListPageData,
 	listPageOf,
 	moved,
@@ -233,5 +234,52 @@ describe("ordered and moved", () => {
 		);
 		assert.deepEqual(moved(rollups, RECENT, -1), [RECENT, FOLDERS, PROJECTS, ARCHIVE]);
 		assert.deepEqual(moved(rollups, ARCHIVE, 1), [FOLDERS, RECENT, PROJECTS, ARCHIVE]);
+	});
+});
+
+describe("glyphsOf", () => {
+	const REMOTE: Project = {
+		name: "remote",
+		places: [
+			{ env: "gpu", path: "~/remote" },
+			{ env: null, path: "/w/remote" },
+		],
+	};
+	const glyphs = glyphsOf({
+		projects: [PI, WEB, REMOTE, { name: "nowhere", places: [] }],
+		memberships: { member: "web" },
+	});
+
+	it("seeds a project by its first place and lists its places as the tooltip", () => {
+		assert.deepEqual(glyphs.target({ kind: "project", project: REMOTE }), {
+			seed: "~/remote",
+			title: "gpu:~/remote\n/w/remote",
+		});
+		assert.deepEqual(glyphs.target({ kind: "project", project: { name: "nowhere", places: [] } }), {
+			seed: "nowhere",
+			title: "nowhere",
+		});
+	});
+
+	it("gives a folder or a session inside a project's place the project's glyph, with its own path as the tooltip", () => {
+		assert.deepEqual(glyphs.target({ kind: "folder", env: null, cwd: "/w/pi/apps/p2" }), {
+			seed: "/w/pi",
+			title: "/w/pi/apps/p2",
+		});
+		assert.deepEqual(glyphs.row(row("x", { env: "gpu", cwd: "/home/me/remote/src" })), {
+			seed: "~/remote",
+			title: "gpu:/home/me/remote/src",
+		});
+		// Membership decides first: a session started from a project's row, wherever it works now.
+		assert.deepEqual(glyphs.row(row("member", { cwd: "/w/pi" })).seed, "/w/web");
+	});
+
+	it("seeds any other place by its own path", () => {
+		assert.deepEqual(glyphs.row(row("free", { cwd: "/elsewhere" })), { seed: "/elsewhere", title: "/elsewhere" });
+		// Inside a project's path, on another machine where the project has no place: the folder's own path.
+		assert.deepEqual(glyphs.target({ kind: "folder", env: "gpu", cwd: "/w/web/x" }), {
+			seed: "/w/web/x",
+			title: "gpu:/w/web/x",
+		});
 	});
 });

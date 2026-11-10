@@ -2,7 +2,7 @@
 // section of the sidebar: a flat list (Recents), groups of sessions (one per project, one per folder), or only a link to
 // its list (the Archive). The sidebar shows each rollup's relevant sessions (relevance and the rollup's window); its
 // list page shows them all, those that fell out of the window aged. No React: the views render what these return.
-import type { Project } from "../../projects/contract.ts";
+import { below, type Project } from "../../projects/contract.ts";
 import type { RollupWindow } from "../../rollups/contract.ts";
 import type { Child } from "../../subagents/contract.ts";
 import type { Session, SidebarWindow } from "../contract.ts";
@@ -65,6 +65,45 @@ export type Rollup = {
 	readonly keeps?: (row: SidebarRow) => boolean;
 	collect(rows: readonly SidebarRow[], context: RollupContext): Collected;
 };
+
+/** A place's project glyph (plugins/glyphs): what it hashes, and the path its row's tooltip shows. */
+export type GlyphSeed = { readonly seed: string; readonly title: string };
+
+/** The sidebar's glyphs: a group's, by where its "+" starts a session; a session's, in a flat list (Recents). */
+export type Glyphs = {
+	readonly target: (target: NewTarget) => GlyphSeed;
+	readonly row: (row: SidebarRow) => GlyphSeed;
+};
+
+/**
+ * Glyphs by project: a project's glyph is seeded by its first place, and a folder or a session inside one of its places
+ * (a session also by membership) shows the project's, so a project, its folders and its sessions look alike. Any other
+ * place is seeded by its own path.
+ */
+export function glyphsOf({ projects, memberships }: Pick<RollupContext, "projects" | "memberships">): Glyphs {
+	const seedOf = (project: Project) => project.places[0]?.path ?? project.name;
+	const label = (env: string | null, path: string) => (env ? `${env}:${path}` : path);
+	const at = (env: string | null, cwd: string, member?: string): GlyphSeed => {
+		const project =
+			projects.find((each) => each.name === member) ??
+			projects.find((each) =>
+				each.places.some((place) => place.env === env && below(cwd, place.path) !== undefined),
+			);
+		return { seed: project ? seedOf(project) : cwd, title: label(env, cwd) };
+	};
+	return {
+		target: (target) =>
+			target.kind === "folder"
+				? at(target.env, target.cwd)
+				: {
+						seed: seedOf(target.project),
+						title:
+							target.project.places.map((place) => label(place.env, place.path)).join("\n") ||
+							target.project.name,
+					},
+		row: (row) => at(row.env ?? null, row.cwd, memberships[row.id]),
+	};
+}
 
 export const RECENT = "recent";
 export const PROJECTS = "projects";

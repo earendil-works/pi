@@ -14,7 +14,8 @@ import {
 	SideNavigation,
 } from "@p2/app/v1/web";
 import { type MouseEvent, type ReactNode, useEffect, useId, useState, useSyncExternalStore } from "react";
-import type { SidebarRow } from "./model.ts";
+import { GlyphIcon } from "../../glyphs/GlyphIcon.tsx";
+import type { GlyphSeed, SidebarRow } from "./model.ts";
 
 /** Working (pulsing), else an unread answer (steady blue), else nothing. */
 export function SessionDot({ worker }: { worker: SidebarRow["worker"] }) {
@@ -220,7 +221,7 @@ type Conversation =
  * switches; then its subagents and one-shot agents) are below it, shown or hidden only by the chevron after its title,
  * in the secondary style with their labels and activity dots in the session's columns. Showing a subagent shows them.
  * A running or failed lifecycle operation shows below the row. `aged`: it fell out of its rollup's window and shows
- * dimmed.
+ * dimmed. `glyph`: its project glyph in the marker column, the activity dot on its corner, its path as the tooltip.
  */
 export function SessionItem({
 	session,
@@ -229,6 +230,7 @@ export function SessionItem({
 	archived = false,
 	aged = false,
 	actions,
+	glyph,
 }: {
 	session: SidebarRow;
 	/** Where the item is (a rollup's or a group's key, or the page): a session shows in several places. */
@@ -238,6 +240,7 @@ export function SessionItem({
 	archived?: boolean;
 	aged?: boolean;
 	actions: RowActions;
+	glyph?: GlyphSeed;
 }) {
 	const {
 		activeId,
@@ -384,7 +387,14 @@ export function SessionItem({
 			<span className="session-time">{ago(session.updatedAt, now)}</span>
 		</>
 	);
-	const marker = <SessionDot worker={session.worker} />;
+	const marker = glyph ? (
+		<span className="nav-glyph">
+			<GlyphIcon seed={glyph.seed} />
+			<SessionDot worker={session.worker} />
+		</span>
+	) : (
+		<SessionDot worker={session.worker} />
+	);
 	return (
 		<SideNavigation.Item className={`session-row ${aged ? "aged" : ""}`}>
 			<NavRow
@@ -393,7 +403,10 @@ export function SessionItem({
 				linkClassName="session-main"
 				{...(archived
 					? { title: "Restore and open" }
-					: { href: routePath({ session: session.id, conversation: session.main, layers: [] }) })}
+					: {
+							title: glyph?.title,
+							href: routePath({ session: session.id, conversation: session.main, layers: [] }),
+						})}
 				onActivate={() => {
 					if (archived) {
 						openFrom(session.id, scope);

@@ -823,10 +823,14 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
     page: every session, the aged ones (outside the window) after the others, by group for a rollup of groups; the
     archived ones newest archived first. Keys: `recent`, `projects`, `folders`, `archive`, `project:<name>`,
     `folder:<base64url of JSON [env, cwd]>` (no slash, for `/list/<key>`). Folders take as many trailing path segments
-    as tell same-named ones apart. Rollup order never follows activity.
+    as tell same-named ones apart. Rollup order never follows activity. `glyphsOf` picks project glyphs: a project's is
+    seeded by its first place's path; a folder or a session inside one of its places (a session also by membership)
+    shows the project's, any other place its own path's. A group's tooltip is its path (a project's: its places), a
+    Recents session's its cwd.
   - **View** (`Sidebar.tsx`, `Row.tsx`, `ListPage.tsx`, `RollupSheet.tsx`), on Elanor's `Sidebar` and
     `SideNavigation` and icons (re-exported by `src/web/navigation-components.ts`). Every row is a `NavRow`: a marker
-    column as wide as an icon (a session's activity dot, a group's folder or lock; kept when empty; a rollup has none),
+    column as wide as an icon (a session's activity dot, a group's project glyph, folder or lock, a Recents session's
+    glyph with its dot on the corner; kept when empty; a rollup has none),
     the label (a link; an action: restoring an archived session, switching to another branch; or, with `expanded`, the
     control that shows or hides what is below the row, Elanor's chevron right after the label), details (the time of
     the last activity last) and controls (⋯, "+", a branch's rename), all one control whose hover and selected
@@ -854,6 +858,16 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
     creation leaves no membership; a failed join shows in the toast) and clears after. Tests: `sidebar-model.test.ts`,
     `sidebar-settings.test.ts`, `ui-sidebar.test.ts`, the scoped search in `search.test.ts`, list links in
     `foreign-requests.test.ts`.
+- **Project glyphs** (`plugins/glyphs`): `glyph.ts` (pure, browser-safe) draws a 3x3 identicon in the Radius mark's four
+  colors from a seed (a path or a name; paths in their `shortPath` form, so `/Users/me/x`, `/home/me/x` and `~/x` draw
+  one glyph): SHA-256 of `glyph-v1:<seed>` seeds two sfc32 streams, one for colors, mirror axis and corner style, one
+  for cells and shapes (fan, leaf, drop, dome, wedge, circle, diamond, square). It is the "Tiles, 3x3" generator of
+  the project-glyphs prototype (Radius artifact) with its recommended settings, and draws the same glyphs. Mirror
+  axes only (vertical, horizontal, both diagonals): every glyph is mirror-symmetric, so none is a pinwheel (a
+  swastika); 3x3 cannot hold one anyway. `GlyphIcon.tsx` draws one inline (the sidebar);
+  `GET /glyph.svg?seed=<seed>&size=<8 to 1024, default 64>` serves one as an SVG file to anyone (it reads no data; the
+  seed is at most 1024 characters), cacheable for a day and embeddable from other origins. Tests: `glyphs.test.ts` (the prototype's output, seed forms, colors, symmetry),
+  `sidebar-model.test.ts` (`glyphsOf`), `ui-sidebar.test.ts`.
 - **Rollups made from code** (`plugins/rollups`; README, The web sidebar): a saved script over every session that returns
   one sidebar section, in the built-in rollups' layouts. The script decides what a rollup collects; the sidebar decides
   what it shows, so the window, sticky sessions and the owner's settings work the same as for the built-in ones.

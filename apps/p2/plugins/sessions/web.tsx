@@ -57,6 +57,7 @@ import { customKey, customRollup } from "./sidebar/custom.ts";
 import { ListPage } from "./sidebar/ListPage.tsx";
 import {
 	ARCHIVE,
+	glyphsOf,
 	listPageOf,
 	moved,
 	type NewTarget,
@@ -339,6 +340,8 @@ function Sidebar() {
 	const { route, catalog, owner, fail, list, edit, rows, answers, reads, marks, search, settings, changeSettings } =
 		data;
 	const { rollups, rollupsHeld, entries, context, view, onOpen, onRestore } = data;
+	// Project glyphs for groups and the sessions of flat lists; the owner's only (guests read no projects).
+	const glyphs = useMemo(() => (owner ? glyphsOf(context) : undefined), [owner, context]);
 	// Sessions a plugin's sidebar entry shows (the Familiar's, in `drawer-brand`) are left out of the rollups.
 	const [apart, setApart] = useState<Readonly<Record<string, readonly string[]>>>({});
 	const listApart = useCallback(
@@ -554,6 +557,7 @@ function Sidebar() {
 				onRestore={onRestore}
 				onNew={onNew}
 				onNewIn={ownerNewIn}
+				glyphs={glyphs}
 				onOptions={owner ? onOptions : undefined}
 				onCollapse={owner ? onCollapse : undefined}
 				onPage={openPage}

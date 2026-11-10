@@ -1,8 +1,8 @@
 // Browser: the sidebar's rollups on Elanor's side navigation (Recents, projects, folders, the Archive), groups shown
 // only with relevant sessions, a rollup's or a group's name opening its list in the main area (aged sessions after the
 // others, dimmed; the list's own search), collapsing rollups and groups, a rollup's window and place, a session
-// selected in the one place it was opened from, and a group's "+" starting a session in its folder or project. Fake
-// provider, disposable data; every test makes its own sessions.
+// selected in the one place it was opened from, a group's "+" starting a session in its folder or project, and project
+// glyphs on groups and on Recents' sessions. Fake provider, disposable data; every test makes its own sessions.
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
@@ -284,6 +284,61 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		// The next new session joins no project.
 		await browser.click(".new-session");
 		await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.cwd-join')`);
+		projects.release();
+	});
+
+	it("shows project glyphs on groups and Recents' sessions, a project's on its folders and sessions, paths as tooltips", async () => {
+		const place = folder("glyphed");
+		const inside = folder("glyphed/sub");
+		const other = folder("other");
+		await writeFile(join(fixture.dataDir, "projects.json"), JSON.stringify({ glyphed: [{ path: place }] }));
+		const projects = await holdIn(fixture.browser(), Projects, {}, "owner");
+		await until(projects.projects, (list) => list?.some((project) => project.name === "glyphed"));
+		const member = await create("Member", other);
+		await projects.assign({ session: member.id, project: "glyphed" }, BACKGROUND_CONTEXT);
+		await create("Inside", inside);
+		await create("Other", other);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		const recent = ".sidebar-section[data-key=recent]";
+		await browser.wait(`document.querySelectorAll('${recent} .nav-glyph > svg.glyph-icon').length===3`);
+		// A Recents row: its glyph in the marker column, its path as the row's tooltip.
+		assert.deepEqual(
+			await browser.evaluate(
+				`[...document.querySelectorAll('${recent} .session-main')].map(e=>[e.querySelector('.session-title').textContent,e.title]).sort()`,
+			),
+			[
+				["Inside", inside],
+				["Member", other],
+				["Other", other],
+			],
+		);
+		const glyph = (selector: string) =>
+			browser.evaluate(`document.querySelector(${JSON.stringify(selector)}).innerHTML`);
+		const inRecents = (title: string) =>
+			browser.evaluate(
+				`[...document.querySelectorAll('${recent} .session-row')].find(e=>e.querySelector('.session-title').textContent===${JSON.stringify(title)}).querySelector('.nav-glyph svg').innerHTML`,
+			);
+		const project = await glyph(`.sidebar-group${withAttribute("data-key", projectKey("glyphed"))} .nav-marker svg`);
+		// The project, a folder inside its place, a session there and a member elsewhere share the project's glyph.
+		assert.equal(
+			await glyph(`.sidebar-group${withAttribute("data-key", folderKey(null, inside))} .nav-marker svg`),
+			project,
+		);
+		assert.equal(await inRecents("Inside"), project);
+		assert.equal(await inRecents("Member"), project);
+		// Any other place has its own.
+		const elsewhere = await glyph(
+			`.sidebar-group${withAttribute("data-key", folderKey(null, other))} .nav-marker svg`,
+		);
+		assert.notEqual(elsewhere, project);
+		assert.equal(await inRecents("Other"), elsewhere);
+		// A group's tooltip: a project's places, a folder's path.
+		assert.equal(
+			await browser.evaluate(
+				`document.querySelector(${JSON.stringify(`.sidebar-group${withAttribute("data-key", projectKey("glyphed"))} .group-link`)}).title`,
+			),
+			place,
+		);
 		projects.release();
 	});
 });

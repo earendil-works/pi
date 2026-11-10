@@ -18,7 +18,8 @@ import {
 	ThemeButton,
 } from "@p2/app/v1/web";
 import { memo, type ReactNode, useEffect, useId, useState } from "react";
-import type { GroupSection, NewTarget, Section, SidebarRow } from "./model.ts";
+import { GlyphIcon } from "../../glyphs/GlyphIcon.tsx";
+import type { Glyphs, GroupSection, NewTarget, Section, SidebarRow } from "./model.ts";
 import { NavRow, pageHref, type RowActions, SessionItem, Toggle, useOpenedFrom } from "./Row.tsx";
 import "./style.css";
 
@@ -41,14 +42,26 @@ type HeadingActions = {
 	onCollapse?: (key: string, collapsed: boolean) => void;
 	onOptions?: (key: string) => void;
 	onNewIn?: (target: NewTarget) => void;
+	/** The owner's project glyphs; absent: groups show a folder and sessions their activity dot only. */
+	glyphs?: Glyphs;
 };
 
-/** A group inside a rollup: its row (icon, name, "+"), which shows or hides its relevant sessions below it, one step in. */
+/**
+ * A group inside a rollup: its row (its project glyph, else a folder; a lock for a sandbox; its name, "+"), which shows
+ * or hides its relevant sessions below it, one step in. Its tooltip is its path (a project's: its places).
+ */
 function GroupItem({ group, rows, actions }: { group: GroupSection; rows: RowActions; actions: HeadingActions }) {
-	const { onCollapse, onNewIn, connected } = actions;
+	const { onCollapse, onNewIn, connected, glyphs } = actions;
 	const { target } = group;
 	const listId = useId();
-	const marker = group.sandboxed ? <NavLockIcon size={16} aria-label="Sandbox" /> : <NavFolderIcon size={16} />;
+	const glyph = target && glyphs?.target(target);
+	const marker = group.sandboxed ? (
+		<NavLockIcon size={16} aria-label="Sandbox" />
+	) : glyph ? (
+		<GlyphIcon seed={glyph.seed} />
+	) : (
+		<NavFolderIcon size={16} />
+	);
 	const label = <span className="session-title">{group.name}</span>;
 	return (
 		<SideNavigation.Item className="sidebar-group" data-key={group.key}>
@@ -56,7 +69,7 @@ function GroupItem({ group, rows, actions }: { group: GroupSection; rows: RowAct
 				className="group-row"
 				linkClassName="group-link"
 				{...(onCollapse ? { expanded: !group.collapsed, controlsId: listId } : {})}
-				title={group.title}
+				title={group.title ?? glyph?.title}
 				onActivate={() => onCollapse?.(group.key, !group.collapsed)}
 				marker={marker}
 				label={label}
@@ -91,7 +104,7 @@ function GroupItem({ group, rows, actions }: { group: GroupSection; rows: RowAct
  * "No activity" when it has none to show.
  */
 function RollupGroup({ section, rows, actions }: { section: Section; rows: RowActions; actions: HeadingActions }) {
-	const { page, onPage, onCollapse, onOptions } = actions;
+	const { page, onPage, onCollapse, onOptions, glyphs } = actions;
 	const listId = useId();
 	const collapsed = section.layout === "link" ? undefined : section.collapsed;
 	// A collapsed rollup lists nothing, whatever it has: "No activity" is for an open one with nothing to show.
@@ -139,7 +152,13 @@ function RollupGroup({ section, rows, actions }: { section: Section; rows: RowAc
 				<SideNavigation.List id={listId} hidden={section.collapsed}>
 					{section.layout === "sessions" &&
 						section.rows.map((session) => (
-							<SessionItem key={session.id} session={session} scope={section.key} actions={rows} />
+							<SessionItem
+								key={session.id}
+								session={session}
+								scope={section.key}
+								actions={rows}
+								glyph={glyphs?.row(session)}
+							/>
 						))}
 					{section.layout === "groups" &&
 						section.groups.map((group) => (
@@ -180,6 +199,7 @@ export const SidebarView = memo(function SidebarView({
 	onRestore,
 	onNew,
 	onNewIn,
+	glyphs,
 	onOptions,
 	onCollapse,
 	onPage,
@@ -211,6 +231,8 @@ export const SidebarView = memo(function SidebarView({
 	onNew: () => void;
 	/** Starts a new session in a group; absent: groups have no "+". */
 	onNewIn?: (target: NewTarget) => void;
+	/** The owner's project glyphs, for groups and the sessions of flat lists (Recents). */
+	glyphs?: Glyphs;
 	/** Opens a rollup's options (its window and place). */
 	onOptions?: (key: string) => void;
 	/** Shows or hides a rollup's or a group's sessions. */
@@ -236,7 +258,7 @@ export const SidebarView = memo(function SidebarView({
 		onRenameBranch,
 		onRestore,
 	};
-	const headings: HeadingActions = { page, connected, onPage, onCollapse, onOptions, onNewIn };
+	const headings: HeadingActions = { page, connected, onPage, onCollapse, onOptions, onNewIn, glyphs };
 	// p2's layout hides a collapsed sidebar, so the root is never shown collapsed: its trigger only asks for it.
 	const frame = (label: string, header: ReactNode, content: ReactNode, foot: ReactNode) => (
 		<Sidebar.Root
