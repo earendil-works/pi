@@ -4,6 +4,7 @@
 // background spans the whole row. A session with several conversations (`/tree` branches, subagents) shows or hides
 // them on a click of its row.
 import {
+	BranchIcon,
 	HOME,
 	locationLabel,
 	NavDisclosureIcon,
@@ -23,7 +24,7 @@ export function SessionDot({ worker }: { worker: SidebarRow["worker"] }) {
 }
 
 /** How long ago `time` was, in the sidebar's short form. */
-function ago(time: number, now: number): string {
+export function ago(time: number, now: number): string {
 	const seconds = Math.max(0, (now - time) / 1000);
 	if (seconds < 60) return "now";
 	if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
@@ -313,6 +314,12 @@ export function SessionItem({
 						}}
 						marker={busy}
 						label={<span className="session-title">{item.label}</span>}
+						// Where a subagent shows its model, a branch shows its kind; the pencil takes its place on hover.
+						details={
+							<span className="branch-mark" title="Branch">
+								<BranchIcon size={16} />
+							</span>
+						}
 						controls={
 							onRenameBranch && (
 								<button

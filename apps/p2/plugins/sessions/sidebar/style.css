@@ -218,7 +218,7 @@
 		color: var(--text);
 	}
 }
-/* A title outside a row's label (the Familiar's entry): the rest of its line, cut with "…". */
+/* A row's title text: the rest of its line, cut with "…". */
 .session-title {
 	flex: 1;
 	min-width: 0;
@@ -258,9 +258,15 @@
 	text-align: left;
 }
 
-/* A group's row (a folder, a project): medium weight, above its sessions in the hierarchy. */
+/* A group's row (a folder, a project), and the "New session" row in the same type: medium weight, above its sessions
+   in the hierarchy. */
 .group-row {
 	font-weight: var(--fw-medium);
+}
+/* The "New session" row: a step below the header, apart from the first rollup as a rollup from the next (Elanor's
+   group padding). */
+.sidebar-start {
+	padding-block: var(--s2) var(--semantic-dimension-space-padding-x-large);
 }
 /* A hidden list stays hidden: Elanor's lists are flex boxes, which would override the attribute. */
 .sidebar-nav ul[hidden] {
@@ -304,16 +310,29 @@
 	white-space: nowrap;
 }
 
-/* Renaming a branch: the pencil on hover or focus, always shown where there is no hover. */
-.branch-rename {
-	opacity: 0;
+/* A branch's mark at the trailing end (where a subagent shows its model). With a fine pointer the rename pencil takes
+   its place on hover or focus; on touch both show, the pencil after the mark. */
+.branch-mark {
+	display: inline-flex;
+	color: var(--semantic-color-icon-secondary);
 }
-.nav-row:focus-within > .branch-rename {
-	opacity: 1;
+@media not all and (pointer: coarse) {
+	.branch-rename {
+		display: none;
+	}
+	.nav-row:focus-within > .branch-rename {
+		display: inline-flex;
+	}
+	.nav-row:has(> .branch-rename):focus-within .branch-mark {
+		display: none;
+	}
 }
-@media (hover: hover) {
+@media (hover: hover) and (not (pointer: coarse)) {
 	.nav-row:hover > .branch-rename {
-		opacity: 1;
+		display: inline-flex;
+	}
+	.nav-row:has(> .branch-rename):hover .branch-mark {
+		display: none;
 	}
 }
 
@@ -367,10 +386,4 @@
 	font-weight: var(--fw-strong);
 	letter-spacing: 0.04em;
 	text-transform: uppercase;
-}
-
-@media (pointer: coarse) {
-	.branch-rename {
-		opacity: 1;
-	}
 }
