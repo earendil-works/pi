@@ -1205,6 +1205,13 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   Directory sources and files over 25 MiB fail. The existing authorized `/download` route serves snapshots even
   after source deletion or plugin reload. `test/p2/send-file.test.ts` and the files integration tests cover it.
   The artifacts plugin supplies the shared viewer.
+- **Views** (`plugins/views`, `docs/views.md`): panes beside the transcript that the person and the agent share
+  (a workspace Markdown file, the working tree's changes, custom HTML views with JSON state and a `window.p2view`
+  bridge), laid out per device (tabs, splits, drag and drop; one pane at a time on phones), with an annotation layer
+  (comments, removals, drawings on any pane, the transcript included). Selections and annotations go with the person's
+  next message (send router `views`, entry kind `p2.view-input`); the agent's `view` tool reads and changes views;
+  the owner's library keeps saved views in `<data>/views/`. Core: `AppLayout` wraps `main` in the `workbench` slot,
+  the chat's top bar has `view-actions`.
 - **Artifacts and viewer** (`plugins/artifacts`): owns its native artifact tool; versions live in the session's
   files (space `artifacts`, path = the name, Files versions = artifact versions, never reused; title and type in
   `meta`; 2 MiB UTF-8). The `/artifact` route reads through the worker's `ArtifactSource` (server only). `ArtifactList` follows the conversation's latest-only `ArtifactDoc`, independently of

@@ -666,6 +666,7 @@ function TopBar({
 				)}
 			</div>
 			{!connected && <span className="offline">Offline</span>}
+			<Slot name="view-actions" />
 			<Slot name="artifact-actions" />
 			<Slot name="terminal-actions" />
 			<Slot name="workspace-actions" />

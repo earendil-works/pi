@@ -36,7 +36,7 @@ describe("chat control parity", { skip: !browserTests }, () => {
 			await browser.evaluate<string[]>(
 				`[...document.querySelectorAll('.topbar>button')].map(e=>e.getAttribute('aria-label'))`,
 			),
-			["Sessions", "Terminal", "Workspace files and changes", "Session options"],
+			["Sessions", "Annotate", "Terminal", "Workspace files and changes", "Session options"],
 		);
 		await browser.click('button[aria-label="Model and thinking"]');
 		await browser.wait(`document.querySelector('[role=dialog][aria-label=Model]')`);
