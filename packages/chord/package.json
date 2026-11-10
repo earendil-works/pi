@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/chord",
-	"version": "1.5.1",
+	"version": "1.5.2",
 	"description": "Object runtime for apps across processes: contracts, documents, a store, links, plugins with hot reload, HTTP, workers, web and terminal clients",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -165,8 +165,8 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@earendil-works/pi-schema": "1.5.1",
-		"@earendil-works/pi-telemetry": "1.5.1"
+		"@earendil-works/pi-schema": "1.5.2",
+		"@earendil-works/pi-telemetry": "1.5.2"
 	},
 	"peerDependencies": {
 		"esbuild": "0.28.2",
