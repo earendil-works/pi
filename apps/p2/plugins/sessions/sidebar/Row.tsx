@@ -5,6 +5,7 @@
 // them on a click of its row.
 import {
 	BranchIcon,
+	type CommandTargetRow,
 	HOME,
 	locationLabel,
 	NavDisclosureIcon,
@@ -13,6 +14,8 @@ import {
 	PinIcon,
 	routePath,
 	SideNavigation,
+	shortPath,
+	useCommandTargetRow,
 } from "@p2/app/v1/web";
 import { type MouseEvent, type ReactNode, useEffect, useId, useState, useSyncExternalStore } from "react";
 import { GlyphIcon } from "../../glyphs/GlyphIcon.tsx";
@@ -101,6 +104,16 @@ export function ago(time: number, now: number): string {
 }
 
 /**
+ * A folder's name in the sidebar: its last `segments` path segments, with its environment; its row's title has the
+ * whole path.
+ */
+export function folderName(env: string | null, cwd: string, segments: number): string {
+	const path = shortPath(cwd).split(/[\\/]/).filter(Boolean);
+	const base = path.slice(-segments).join("/") || cwd;
+	return env ? `${base} · ${env}` : base;
+}
+
+/**
  * A click handler for a link that acts in the page (`act`) on a plain primary click; any other click (a modifier, the
  * middle button, "Open in new tab") is the browser's, so the target opens in another tab or window.
  */
@@ -162,7 +175,8 @@ export const useOpenedFrom = (): Readonly<Record<string, string>> =>
  * trailing end. The label is a link to `href`, an action without one, or with `expanded`, the control that shows or
  * hides what is below the row (its chevron right after the label). The whole row is one control: its hover and selected
  * background spans it, and the label's hit area covers it (the controls stay above it). `after`: a control right after
- * the label (a rollup's or a session's chevron, `Toggle`).
+ * the label (a rollup's or a session's chevron, `Toggle`). `target`: the command menu's target while the row is hovered
+ * or has focus (`useCommandTargetRow`).
  */
 export function NavRow({
 	selected = false,
@@ -178,6 +192,7 @@ export function NavRow({
 	after,
 	details,
 	controls,
+	target,
 }: {
 	selected?: boolean;
 	className?: string;
@@ -198,10 +213,11 @@ export function NavRow({
 	details?: ReactNode;
 	/** Buttons at the trailing end. */
 	controls?: ReactNode;
+	target?: CommandTargetRow;
 }) {
 	const link = `nav-link ${linkClassName} ${selected ? "active" : ""}`;
 	return (
-		<div className={`nav-row ${selected ? "selected" : ""} ${className}`}>
+		<div className={`nav-row ${selected ? "selected" : ""} ${className}`} {...target}>
 			{marker !== undefined && <span className="nav-marker">{marker}</span>}
 			{href === undefined ? (
 				<button
@@ -460,6 +476,7 @@ export function SessionItem({
 	) : working ? (
 		<WorkingMark />
 	) : null;
+	const target = useCommandTargetRow({ type: "session", id: session.id, kind: "Session", label: session.title });
 	return (
 		<SideNavigation.Item className={`session-row ${aged ? "aged" : ""}`}>
 			<NavRow
@@ -481,6 +498,7 @@ export function SessionItem({
 				}}
 				marker={marker}
 				label={title}
+				target={target}
 				after={
 					nested && (
 						<Toggle

@@ -50,7 +50,22 @@ import { follow, followRegistry, type HeldIn, type HeldRef, knownRegistry, liveI
 import { Slots } from "./web-core.ts";
 
 export { shortPath } from "../web/path-label.ts";
-export { type SettingsSection, SettingsSections, Slots, ToolActivities, webCoreFacet } from "./web-core.ts";
+export {
+	type Command,
+	type CommandAction,
+	type CommandContext,
+	type CommandPage,
+	CommandPages,
+	type CommandSearch,
+	CommandSearches,
+	Commands,
+	type CommandTarget,
+	type SettingsSection,
+	SettingsSections,
+	Slots,
+	ToolActivities,
+	webCoreFacet,
+} from "./web-core.ts";
 
 export const HostContext = createContext<Host | undefined>(undefined);
 

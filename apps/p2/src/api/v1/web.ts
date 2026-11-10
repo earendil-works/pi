@@ -7,6 +7,19 @@ export * from "../../web/activity/api.ts";
 export * from "../../web/Chat.tsx";
 export * from "../../web/Code.tsx";
 export * from "../../web/CostPanel.tsx";
+export { CommandMenu } from "../../web/command-menu/CommandMenu.tsx";
+export {
+	type CommandMenuActions,
+	useCommandMenu,
+	useCommandQuery,
+	useCommandTarget,
+} from "../../web/command-menu/context.ts";
+export { useCommandMatches } from "../../web/command-menu/match.ts";
+export {
+	type CommandTargetRow,
+	useCommandRouteTarget,
+	useCommandTargetRow,
+} from "../../web/command-menu/targets.ts";
 export * from "../../web/composer-state.tsx";
 export * from "../../web/conversation-cache.ts";
 export * from "../../web/drag-size.ts";

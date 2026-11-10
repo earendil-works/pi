@@ -1,4 +1,5 @@
-// Main view: the transcript of the open session with its composer, or the new-session screen.
+// Main view: the transcript of the open session with its composer, or the new-session screen; the model commands of
+// the command menu (commands.tsx).
 
 import {
 	Access,
@@ -20,6 +21,9 @@ import {
 	buildTranscript,
 	ChevronIcon,
 	CloseIcon,
+	CommandPages,
+	Commands,
+	type CommandTarget,
 	ContextUsage,
 	CostPanel,
 	closeLayers,
@@ -79,6 +83,7 @@ import {
 	transcriptOf,
 	transcriptRows,
 	useChatScroll,
+	useCommandRouteTarget,
 	useComposerState,
 	useConnected,
 	useFileCompletion,
@@ -121,7 +126,9 @@ import { type Session, Sessions } from "../sessions/contract.ts";
 import { SessionMetrics, SessionStatus, WorkerControl } from "../status/contract.ts";
 import { type Child, conversationLocation, SubagentControl, Subagents } from "../subagents/contract.ts";
 import { SessionTree } from "../tree/contract.ts";
+import { MODEL_COMMANDS, MODEL_PAGES } from "./commands.tsx";
 import { Chat, ChatCosts, TranscriptEntries } from "./contract.ts";
+import { newSessionChoice, thinkingLevelOf } from "./model-choice.ts";
 import { type Outgoing, outboxOf } from "./outbox.ts";
 import { sessionStart } from "./session-start.ts";
 
@@ -739,6 +746,23 @@ function useRestoredDrafts(
 	}, [drafts, pending, restore]);
 }
 
+/**
+ * What the command menu acts on while a conversation shows: a subagent's conversation, else the session while its own
+ * conversation shows; nothing for a one-shot agent (read-only) or before the session and its subagents are known.
+ */
+function viewTarget(
+	session: Session | undefined,
+	conversation: number,
+	child: Child | undefined,
+): CommandTarget | undefined {
+	if (!session || child?.kind === "agent") return undefined;
+	if (child)
+		return { type: "conversation", id: `${session.id}/${conversation}`, kind: "Conversation", label: child.name };
+	return session.main === conversation
+		? { type: "session", id: session.id, kind: "Session", label: session.title }
+		: undefined;
+}
+
 function SessionChat({ sessionId, conversationId }: { sessionId: string; conversationId: number }) {
 	const nav = useNavigation();
 	const openConversation = useCallback(
@@ -806,6 +830,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	const child = children?.[sessionId]?.find((entry) => entry.conversationId === conversationId);
 	// A code mode script's one-shot agent: read-only, opened from the script's tool card.
 	const oneShot = child?.kind === "agent";
+	useCommandRouteTarget(viewTarget(session, conversationId, child));
 	// Where the viewed conversation works: a subagent may have its own location (e.g. a git worktree, or another machine).
 	const viewLocation = conversationLocation(session, child);
 	const viewCwd = viewLocation?.cwd;
@@ -1213,8 +1238,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 		session
 			? {
 					model: agentModel ?? session.model,
-					thinkingLevel:
-						transcript?.agent.thinkingLevel ?? (session.thinkingLevel as ModelChoice["thinkingLevel"]),
+					thinkingLevel: transcript?.agent.thinkingLevel ?? thinkingLevelOf(session.thinkingLevel),
 				}
 			: undefined,
 		(_, next) => next,
@@ -1547,6 +1571,9 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	);
 }
 
+/** The new-session screen as the command menu's target: a model change there applies to the session about to start. */
+const NEW_SESSION_TARGET: CommandTarget = { type: "new-session", id: "new", kind: "New session", label: "" };
+
 function NewSession() {
 	const connected = useConnected();
 	const host = useHost();
@@ -1567,10 +1594,8 @@ function NewSession() {
 	} = useNewSessionState();
 	const location =
 		selectedLocation ?? (recent[0] ? { env: recent[0].env ?? null, cwd: recent[0].cwd } : { env: null, cwd: "~" });
-	const fallback = resources?.settings.defaultModel ?? recent[0]?.model;
-	const choice: ModelChoice | undefined =
-		selectedChoice ??
-		(fallback ? { model: fallback, thinkingLevel: resources?.settings.thinkingLevel ?? "high" } : undefined);
+	const choice = newSessionChoice(selectedChoice, resources, recent[0]);
+	useCommandRouteTarget(NEW_SESSION_TARGET);
 	const contextWindow = resources?.models.find(
 		(entry) => entry.provider === choice?.model.provider && entry.modelId === choice?.model.modelId,
 	)?.contextWindow;
@@ -1846,4 +1871,6 @@ export default defineFacet((host, self) => {
 	// The chat plugin defines the transcript's entry displays (chat-mode adds its own): served on the page too.
 	serveKeyed(host, TranscriptEntries);
 	self.contribute(Slots, { main: Main });
+	self.contribute(Commands, MODEL_COMMANDS);
+	self.contribute(CommandPages, MODEL_PAGES);
 });

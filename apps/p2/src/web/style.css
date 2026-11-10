@@ -316,7 +316,8 @@ textarea.input {
 	padding: var(--s2) 0;
 	resize: none;
 }
-.search input {
+.search input,
+.command-input input {
 	flex: 1;
 	min-width: 0;
 	height: 100%;
@@ -1918,7 +1919,8 @@ button.diff-number:hover {
 	gap: var(--s1);
 	padding: var(--s1) var(--bar-pad) 0 0;
 }
-.workspace-section {
+.workspace-section,
+.command-heading {
 	margin: 0;
 	padding: var(--s3) var(--x) var(--s1);
 	color: var(--muted);
@@ -2727,7 +2729,8 @@ button.diff-number:hover {
 	inset: 0;
 	z-index: 38;
 	display: flex;
-	align-items: flex-end;
+	/* A layer may place its dialog elsewhere (the command menu: near the top). */
+	align-items: var(--layer-align, flex-end);
 	justify-content: center;
 }
 .scrim {
@@ -2874,7 +2877,7 @@ button.diff-number:hover {
 }
 @media (min-width: 700px) {
 	.sheet-layer {
-		align-items: center;
+		align-items: var(--layer-align, center);
 	}
 	.sheet {
 		border: 1px solid var(--line);
@@ -3410,6 +3413,7 @@ button.history-edge:disabled {
 	.drawer,
 	.drawer-scrim,
 	.sheet,
+	.command-menu,
 	.scrim,
 	.toast,
 	.to-bottom {
@@ -3510,6 +3514,16 @@ button.history-edge:disabled {
 	.terminal-keys button {
 		height: var(--control);
 		min-width: var(--control);
+	}
+	/* The command menu's chip ×: a full target around its 16px glyph box without growing the chip. The row's bottom
+	   padding holds the target's lower half, so it never reaches the input below. */
+	.command-context {
+		padding-bottom: var(--s3);
+	}
+	.command-chip-remove::after {
+		position: absolute;
+		inset: calc((16px - var(--row)) / 2);
+		content: "";
 	}
 }
 

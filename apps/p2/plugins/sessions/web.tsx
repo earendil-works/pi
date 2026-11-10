@@ -1,6 +1,6 @@
 // The sidebar and its list pages (sidebar/: the rollups' rules and their views) with the catalog, status, subagent,
-// search, project and settings handles supplying their data, the owner's session actions on the rows, and the session
-// and rollup sheets.
+// search, project and settings handles supplying their data, the owner's session actions on the rows, the session
+// and rollup sheets, and the sessions' command menu commands (commands.tsx).
 
 import {
 	Access,
@@ -14,25 +14,26 @@ import {
 	whenLive,
 } from "@p2/app/v1";
 import {
+	CommandPages,
+	CommandSearches,
+	Commands,
 	closeLayers,
 	MoreIcon,
 	NEW_SESSION,
 	navigate,
 	openLayer,
-	openNewSession,
 	openPage,
 	PiLogo,
 	rememberMains,
 	Slot,
 	SlotList,
 	Slots,
-	shortPath,
+	startNewSession,
 	toggleSidebar,
 	useComposerState,
 	useConnected,
 	useHost,
 	useNavigation,
-	useNewSessionState,
 	useObject,
 	useOptimisticCall,
 	useOwner,
@@ -50,6 +51,7 @@ import { SessionStatus } from "../status/contract.ts";
 import { Subagents } from "../subagents/contract.ts";
 import { SessionTree } from "../tree/contract.ts";
 import { BranchSheet } from "./BranchSheet.tsx";
+import { SESSION_COMMANDS, SESSION_PAGES, SESSION_SEARCH } from "./commands.tsx";
 import { type Operation, type Session, Sessions, SidebarSettings, type SidebarWindow } from "./contract.ts";
 import { type DrawerRows, DrawerRowsContext } from "./contract.web.tsx";
 import { SessionSheet } from "./SessionSheet.tsx";
@@ -72,6 +74,7 @@ import {
 	wantingOf,
 } from "./sidebar/model.ts";
 import { type CodeSource, RollupSheet } from "./sidebar/RollupSheet.tsx";
+import { folderName } from "./sidebar/Row.tsx";
 import { SidebarView, useNow } from "./sidebar/Sidebar.tsx";
 
 const subscribeVisibility = (listener: () => void) => {
@@ -85,6 +88,9 @@ const usePageVisible = () => useSyncExternalStore(subscribeVisibility, () => doc
 const brand = <Slot name="drawer-brand" fallback={<PiLogo compact />} />;
 /** Icon buttons at the footer's end, before the theme switch (`sidebar-actions:<name>`, e.g. the Settings gear). */
 const actions = <SlotList prefix="sidebar-actions" />;
+
+/** The sidebar's New session: the new-session screen, without the project or model chosen before. */
+const newSession = () => startNewSession();
 
 /** What a row says about a lifecycle operation (`Sessions.operations`), by kind: running, and failed. */
 const OPERATION_LABELS: Record<Operation["kind"], { running: string; failed: string }> = {
@@ -127,16 +133,6 @@ type Settings = {
 };
 const applySettings = (state: Settings, change: Partial<Settings>): Settings => ({ ...state, ...change });
 const NO_SETTINGS: Settings = { order: [], windows: {}, collapsed: {} };
-
-/**
- * A folder's name in the sidebar: its last `segments` path segments, with its environment; its row's title has the
- * whole path.
- */
-function folderName(env: string | null, cwd: string, segments: number): string {
-	const path = shortPath(cwd).split(/[\\/]/).filter(Boolean);
-	const base = path.slice(-segments).join("/") || cwd;
-	return env ? `${base} · ${env}` : base;
-}
 
 /** What a rollup's or a group's list page shows and acts with: the sidebar's data, published by the sidebar. */
 type PageData = {
@@ -439,16 +435,6 @@ function Sidebar() {
 			() => withTree(session.id, (tree) => tree.rename({ conversation, label }, BACKGROUND_CONTEXT)),
 		);
 	const sessionSheet = useSheet("session");
-	const { setChoice, setLocation, setJoin } = useNewSessionState();
-	const focusNew = useCallback(() => {
-		setChoice(undefined);
-		openNewSession();
-		setTimeout(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus(), 50);
-	}, [setChoice]);
-	const onNew = useCallback(() => {
-		setJoin(undefined);
-		focusNew();
-	}, [setJoin, focusNew]);
 	const { projectsHeld, localLabel } = data;
 	/**
 	 * A group's "+": a folder's new session starts in the folder; a project's joins the project (once it exists) and
@@ -456,17 +442,15 @@ function Sidebar() {
 	 */
 	const onNewIn = useCallback(
 		(target: NewTarget) => {
-			if (target.kind === "folder") {
-				setLocation({ env: target.env, cwd: target.cwd });
-				setJoin(undefined);
-			} else {
-				const latest = rows
-					.filter((row) => !row.archivedAt && context.memberships[row.id] === target.project.name)
-					.toSorted((a, b) => b.updatedAt - a.updatedAt)[0];
-				const place =
-					(latest && placeOn(target.project, latest.env ?? LOCAL, localLabel ?? "")) ?? target.project.places[0];
-				if (place) setLocation({ env: place.env, cwd: place.path });
-				setJoin({
+			if (target.kind === "folder") return startNewSession({ location: { env: target.env, cwd: target.cwd } });
+			const latest = rows
+				.filter((row) => !row.archivedAt && context.memberships[row.id] === target.project.name)
+				.toSorted((a, b) => b.updatedAt - a.updatedAt)[0];
+			const place =
+				(latest && placeOn(target.project, latest.env ?? LOCAL, localLabel ?? "")) ?? target.project.places[0];
+			startNewSession({
+				...(place ? { location: { env: place.env, cwd: place.path } } : {}),
+				join: {
 					label: target.project.name,
 					// The page is connected (the session was just created): wait for the projects to be live too.
 					run: async (session) => {
@@ -476,11 +460,10 @@ function Sidebar() {
 						if (!live) throw new Error("Only the owner has projects");
 						await live.assign({ session, project: target.project.name }, BACKGROUND_CONTEXT);
 					},
-				});
-			}
-			focusNew();
+				},
+			});
 		},
-		[rows, context, localLabel, projectsHeld, setLocation, setJoin, focusNew],
+		[rows, context, localLabel, projectsHeld],
 	);
 	const onCollapse = useCallback(
 		(key: string, collapsed: boolean) =>
@@ -572,7 +555,7 @@ function Sidebar() {
 				onBranch={catalog ? onBranch : undefined}
 				onRenameBranch={catalog ? onRenameBranch : undefined}
 				onRestore={onRestore}
-				onNew={onNew}
+				onNew={newSession}
 				onNewIn={ownerNewIn}
 				glyphs={glyphs}
 				onOptions={owner ? onOptions : undefined}
@@ -706,5 +689,8 @@ export default defineFacet((host) => {
 			"session-options": SessionOptions,
 			"menu-badge": MenuBadge,
 		});
+		self.contribute(Commands, SESSION_COMMANDS);
+		self.contribute(CommandPages, SESSION_PAGES);
+		self.contribute(CommandSearches, { sessions: SESSION_SEARCH });
 	});
 });
