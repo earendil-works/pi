@@ -84,3 +84,17 @@ guest's principal; nothing else needs per-view rules.
 4. **Modes:** Watch (read-only) and Join (talks to the agent), with a per-view player role in rooms; or only two modes
    and rooms decide themselves. See section 3, decision 1.
 5. **Expiry and what freezes:** section 3, decisions 3 and 4.
+
+### Owner's direction on the open problems (2026-11-10)
+
+- **Views know who is there.** A view (a game above all) gets presence: who has this view instance open, on which
+  page and device, with their name and role (owner, user, guest). An ad hoc view (a sketch) has no server objects of
+  its own and no variants, so presence comes from its room; that is enough, since a sketch cannot reach remote objects
+  anyway. What a sketch shows is visible to whoever may see the session, which the sharer accepts.
+- **Sharing an app with another person: they are a user of the instance.** The owner's wife is a user, not a guest;
+  the app is shared with her as a user. Which of the app's sessions she sees is the app's decision: the app already
+  tags the sessions it creates as its own and records who created each and whether it is private or public (or
+  shared with named users), and enforces that in its own objects' variants. No access-control lists in the base.
+- **No per-user environments.** A session in any app may use every environment of the instance; an app may lock its
+  sessions to one environment it chooses. Separation of machines, accounts or people beyond that means a separate Pi
+  instance, not a resource model (the resource-model plugin stays shelved).
