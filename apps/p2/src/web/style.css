@@ -3527,19 +3527,10 @@ button.history-edge:disabled {
 	min-width: 0;
 }
 
-/* The Pi macOS app (apps/p2-mac, in progress) shows the page under its transparent title bar, the window buttons over its top left
-   corner. It sets data-shell="macos" on <html> and --shell-inset-start to the width the buttons take (0 in full
-   screen): whichever bar is at the window's left edge starts its content after them. */
-:root[data-shell="macos"] .sidebar-root .drawer-top {
-	padding-left: max(var(--x), var(--shell-inset-start, 0px));
-}
-@media (min-width: 900px) {
-	:root[data-shell="macos"] .sidebar-collapsed .topbar {
-		padding-left: max(var(--bar-pad), var(--shell-inset-start, 0px));
-	}
-}
-@media (max-width: 899px) {
-	:root[data-shell="macos"] .topbar {
-		padding-left: max(var(--bar-pad), var(--shell-inset-start, 0px));
-	}
+/* The Pi macOS app (apps/p2-mac, in progress) shows the page under its transparent title bar, the window buttons over
+   its top left corner. It sets data-shell="macos" and --shell-inset-start (the buttons' width) on <html>, and marks the
+   bars at that corner with data-shell-corner, whichever layout or plugin put them there: their content starts after
+   the buttons. */
+:root[data-shell="macos"] [data-shell-corner] {
+	padding-left: var(--shell-inset-start);
 }
