@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed MCP tools loaded by `tool_search` being dropped on resume and `/reload` when an extension deactivates only its own tool at `session_start`, as pi-web-access and pi-subagents do in `toolActivation: "auto"` mode ([#11996](https://github.com/earendil-works/pi/issues/11996))
+
 ## [1.5.1] - 2026-11-09
 
 ### New Features
