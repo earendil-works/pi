@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed fullscreen Kitty images disappearing after a full redraw such as a window resize. Clearing the screen made Kitty free the cached image data that the redraw then tried to reuse ([#12010](https://github.com/earendil-works/pi/issues/12010))
+
 ## [1.5.2] - 2026-11-10
 
 ## [1.5.1] - 2026-11-09
