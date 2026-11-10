@@ -363,7 +363,9 @@ p2 runs on Chord v2 (`packages/chord`, `docs/design.md` there); the port's notes
   The session catalog (`Catalog`) is the server store's table `p2.catalog:sessions`, one row per session keyed by its
   address (`host(Session)`, decision "Documents and table rows can belong to a host"): everything about a session needed
   while its worker is off (place, title, model and level, pin, archive, `/tree` branches), so a session's export,
-  import and delete carry it. A data directory with a `catalog.sqlite` from before is refused at start: `npm run
+  import and delete carry it. Share links and grants and each session's subagents are likewise rows keyed by the session (guests are
+  per person, keyed by their own ID). A data directory with a `catalog.sqlite`, `shares.sqlite` or `subagents.sqlite`
+  from before is refused at start: `npm run
   migrate-data` moves it (below). Clone copies the whole session directory
   while its worker is stopped (blobs hard-linked); fork copies only the source's files, through its worker
   (`SessionTransfer.copyFiles`, the kit's `copyFiles`), and seeds its history into a fresh store; a failed copy's
@@ -375,7 +377,9 @@ p2 runs on Chord v2 (`packages/chord`, `docs/design.md` there); the port's notes
 - **Migration** (`npm run migrate-data -- [--dry-run] [--data <dir>]`, `scripts/migrate-data.ts`): offline (refused
   while a server holds the data directory's lock, which it takes). The server's store is copied to `server/store.sqlite`
   and verified (equal exports); `catalog.sqlite` (schema 1 to 4) is written into that store's catalog table in one
-  transaction, read back from the store reopened and compared, then moved to `pre-catalog-backup/`
+  transaction, read back from the store reopened and compared, then moved to `pre-catalog-backup/`; `shares.sqlite`
+  (schema 1 and 2) and `subagents.sqlite` go the same way into `Shares`' and `ChildStore`'s tables, then to
+  `pre-server-data-backup/` (`scripts/migrate-server-data.ts`; an own-cwd child is placed on its session's environment)
   (`scripts/migrate-catalog.ts`; a table that holds rows already is not written again); each session is built in `sessions/.<id>.migrating/` from a copy of its old store:
   Durable's records replayed into `StoreStorage` in seq order (`scripts/migrate-durable.ts`: seqs renumbered in order,
   ids kept, the allocator past the old next id) and its artifacts (same version numbers), uploads and downloads (same
@@ -1020,8 +1024,9 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   (status). A document nobody wrote yet is absent and cannot be followed, so chat mode and artifacts create it empty on
   first follow. A method that writes such a document returns after Durable's commit, by when the follow has the new
   value (`chat-mode.test.ts`). The same holds for p2's own natives: `PromptResources` follows the prompt loads.
-- **Sharing** (`plugins/sharing`): `Shares` (server local, `shares.sqlite`: links, guest identities with a
-  revision; the database tells listeners of each committed change and `Shares` follows it), `Presence` (connected
+- **Sharing** (`plugins/sharing`): `Shares` (server local; its tables in the server's store, `plugins/sharing/store.ts`:
+  links and grants keyed by their session's address (`host(Session)`), guests with a revision; its lists are live
+  queries over them), `Presence` (connected
   guests: derived from `host.references(GuestPresence)`, design §19), `GuestPresence` (held by a guest page's web
   facet; a link drop is a leaving), owner-only `Sharing` (links, connected guests, link/reset/remove). Guest
   principals carry their grant revision; removal, link reset, archive and restore bump it and call
@@ -1345,7 +1350,8 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
 - **Subagents** (`plugins/subagents`): owns its protocol-independent Durable extension (persistent
   anchor conversations and exactly-once background reporter tasks, model/thinking/tool validation). The worker
   facet (an object of lifetime "host") contributes it to `Extensions` and catches up child metadata after relevant commits, retrying
-  acknowledged reports on errors/reload. Server `ChildStore` persists the list in `subagents.sqlite`; worker
+  acknowledged reports on errors/reload. Server `ChildStore` persists the list as one row per session in the server's store, keyed by its address
+  (`plugins/subagents/children.ts`); worker
   generation fences late reports. Owner `Subagents` readers see every session; guests see only their own. Reading
   the list does not start/hold a worker. The sidebar expands children (latest entry first), with working dots;
   `/s/<id>/c/<conversation>` opens an independent chat, draft and model control. A parent link returns to the root.

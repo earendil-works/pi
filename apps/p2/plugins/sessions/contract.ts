@@ -120,6 +120,16 @@ export const OperationSchema = union([
 export type Operation = Static<typeof OperationSchema>;
 
 /**
+ * Every session's catalog row by its id (server, host-internal): built once per catalog write, so each worker's view
+ * of its own row (`Sessions`, worker variant) is a lookup, not a scan of the rows.
+ */
+export const SessionIndex = local("p2.session-index", {
+	version: 1,
+	params: {},
+	members: { byId: record(SessionSchema) },
+});
+
+/**
  * Archived sessions whose worker may start anyway, without resuming Durable work: rebuilding their search index
  * (server, host-internal; the search plugin's `rebuildIndex`, as Pi Mobile's).
  */

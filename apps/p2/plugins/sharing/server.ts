@@ -9,12 +9,12 @@ import {
 	defineFacet,
 	defineTypedState,
 	deriveTyped,
-	followNative,
 	forbidden,
 	type GuestPrincipal,
 	isGuest,
 	isOwner,
 	type P2Principal,
+	query,
 } from "@p2/app/v1";
 import {
 	Authenticators,
@@ -32,7 +32,18 @@ import {
 import { Catalog } from "../sessions/contract.ts";
 import { ChildStore, remoteEnvironments } from "../subagents/contract.ts";
 import { GuestPresence, Presence, type ShareLink, type ShareMode, Shares, Sharing } from "./contract.ts";
-import { type GuestRow, JoinError, openEmails, ShareDb } from "./db.ts";
+import {
+	emailGrantsOf,
+	GrantRows,
+	type GuestRow,
+	GuestRows,
+	JoinError,
+	LinkRows,
+	openEmails,
+	peopleOf,
+	ShareStore,
+	sortedLinks,
+} from "./store.ts";
 
 /** Registers the join routes, the guest cookie and Radius authenticators, and guest session access. */
 
@@ -96,27 +107,32 @@ const Archived = defineTypedState("p2.shares.archived", {
 	initial: () => ({ sessions: null }),
 });
 
+/** The most links, guests and grants kept live (a live query needs a bound); far more than a server has. */
+const WINDOW = 100_000;
+
+/** Guests by ID. */
+const guestMap = <G extends { readonly id: string }>(rows: readonly G[]): Map<string, G> =>
+	new Map(rows.map((row) => [row.id, row]));
+
 export default defineFacet((host) => {
 	host.serve(Shares, (_params, self) => {
 		const catalog = self.get(Catalog, {});
 		const children = self.get(ChildStore, {});
 		const server = self.get(Server, {});
 		const archived = self.state(Archived);
-		const dbResource = self.open(
-			async () => new ShareDb(server.info.value.dataDir),
-			(db) => db.close(),
-		);
-		// The database's links, people and email grants as it holds them: a method's write tells this source before the
-		// method returns.
-		const stored = followNative(
-			self,
-			(changed) => dbResource.value.subscribe(changed),
-			() => ({
-				links: dbResource.value.links(),
-				people: dbResource.value.people(),
-				emails: dbResource.value.emailGrants(),
-			}),
-		);
+		// Links, guests and grants: tables of the server's store, their live queries the source of the lists below.
+		const linkTable = self.table(LinkRows);
+		const guestTable = self.table(GuestRows);
+		const grantTable = self.table(GrantRows);
+		const links = self.query(linkTable, query(LinkRows), WINDOW);
+		const guests = self.query(guestTable, query(GuestRows), WINDOW);
+		const grants = self.query(grantTable, query(GrantRows), WINDOW);
+		const db = new ShareStore({
+			links: linkTable,
+			guests: guestTable,
+			grants: grantTable,
+			tx: (fn, context) => self.tx(fn, context),
+		});
 		/** The session is known and not archived. */
 		const open = async (session: string, ctx: Ctx): Promise<boolean> => {
 			const found = await catalog.get({ id: session }, ctx).catch(() => undefined);
@@ -127,7 +143,7 @@ export default defineFacet((host) => {
 			if (row === undefined) return null;
 			const sessions: Record<string, ShareMode> = {};
 			let home: { session: string; at: number } | undefined;
-			for (const grant of dbResource.value.grants(row.id)) {
+			for (const grant of await db.grants(row.id, ctx)) {
 				if (grant.removed || !(await open(grant.session, ctx))) continue;
 				sessions[grant.session] = grant.mode;
 				if (!home || grant.grantedAt >= home.at) home = { session: grant.session, at: grant.grantedAt };
@@ -167,54 +183,53 @@ export default defineFacet((host) => {
 			const before = new Set(previous);
 			const after = new Set(now);
 			const changed = [...now.filter((id) => !before.has(id)), ...previous.filter((id) => !after.has(id))];
-			for (const session of changed) await revoke(dbResource.value.bump(session), ctx);
+			for (const session of changed) await revoke(await db.bump(session, ctx), ctx);
 		});
 		return {
-			links: deriveTyped(self, [stored], ([value]) => value.links),
-			emails: self.derive([stored, catalog.sessions], ([{ emails }, sessions]) => {
+			links: deriveTyped(self, [links], ([rows]) => sortedLinks(rows)),
+			emails: deriveTyped(self, [grants, guests, catalog.sessions], ([rows, guestRows, sessions]) => {
 				const archivedNow = new Set(sessions.filter((entry) => entry.archivedAt !== null).map((entry) => entry.id));
-				return openEmails(emails, (session) => !archivedNow.has(session));
+				return openEmails(emailGrantsOf(rows, guestMap(guestRows)), (session) => !archivedNow.has(session));
 			}),
-			people: deriveTyped(self, [stored], ([value]) => value.people),
+			people: deriveTyped(self, [grants, guests], ([rows, guestRows]) => peopleOf(rows, guestMap(guestRows))),
 			authenticate: async ({ cookie }, ctx) => {
-				const principal = await principalOf(dbResource.value.guestOfCookie(cookie), ctx);
-				if (principal) dbResource.value.seen(principal.id);
+				const principal = await principalOf(await db.guestOfCookie(cookie, ctx), ctx);
+				if (principal) await db.seen(principal.id, ctx);
 				return principal;
 			},
 			authenticateEmail: async ({ email }, ctx) => {
-				const principal = await principalOf(dbResource.value.guestOfEmail(email), ctx);
-				if (principal) dbResource.value.seen(principal.id);
+				const principal = await principalOf(await db.guestOfEmail(email, ctx), ctx);
+				if (principal) await db.seen(principal.id, ctx);
 				return principal;
 			},
-			grant: ({ id }, ctx) => principalOf(dbResource.value.guest(id), ctx),
+			grant: async ({ id }, ctx) => principalOf(await db.guest(id, ctx), ctx),
 			active: async ({ token }, ctx) => {
-				const link = dbResource.value.linkByToken(token);
+				const link = await db.linkByToken(token, ctx);
 				return link && (await open(link.session, ctx)) ? link : null;
 			},
 			link: async ({ session, mode, reset, remoteConfirmed }, ctx) => {
 				await confirmRemote(session, mode, remoteConfirmed, ctx);
-				await revoke(dbResource.value.link(session, mode, reset), ctx);
+				await revoke(await db.link(session, mode, reset, ctx), ctx);
 				return null;
 			},
 			share: async ({ session, email, mode, remoteConfirmed }, ctx) => {
 				const normalized = normalizeEmail(email);
 				if (!normalized) throw new Error("Enter an email address");
 				await confirmRemote(session, mode, remoteConfirmed, ctx);
-				const shared = dbResource.value.share(session, normalized, email.trim(), mode);
+				const shared = await db.share(session, normalized, email.trim(), mode, ctx);
 				if (shared.changed) await revoke([shared.guest], ctx);
 				return null;
 			},
 			remove: async ({ session, guestId }, ctx) => {
-				if (dbResource.value.remove(session, guestId)) await revoke([guestId], ctx);
+				if (await db.remove(session, guestId, ctx)) await revoke([guestId], ctx);
 				return null;
 			},
 			join: async ({ token, name, cookie }, ctx) => {
-				const db = dbResource.value;
-				const link = db.linkByToken(token);
+				const link = await db.linkByToken(token, ctx);
 				if (!link || !(await open(link.session, ctx))) throw new JoinError("This share has ended");
 				// The same browser keeps its identity and gains the session; a removed one cannot join it again.
-				const existing = cookie === undefined ? undefined : db.guestOfCookie(cookie);
-				const joined = db.join(link, name, existing);
+				const existing = cookie === undefined ? undefined : await db.guestOfCookie(cookie, ctx);
+				const joined = await db.join(link, name, existing, ctx);
 				if (joined.changed) await revoke([joined.guest], ctx);
 				return { session: link.session, ...(joined.cookie ? { cookie: joined.cookie } : {}) };
 			},
