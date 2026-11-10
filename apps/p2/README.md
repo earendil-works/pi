@@ -268,10 +268,14 @@ group that has it, and is selected in the place you opened it from. The sidebar 
 pinned ones, the open one, working ones, ones with an unread answer or a failure, and those active within the rollup's
 window (its **⋯**: **Show sessions active within** 24 hours, 3 days by default, 1 week, or Forever; the same menu moves
 the rollup up or down); a group without such a session is left out, and a rollup without any says **No activity**.
-Every row has one shape: a leading arrow (a rollup's or a group's sessions, a session's conversations: its `/tree`
-branches and subagents), the activity dot or the group's icon in one column, the name, then the details with the
-time of the last activity last. A rollup's or a group's name opens its list in the main area (`/list/<key>`): every
-session, those outside the window after the others in the secondary colour but still openable, in groups for a rollup
+Every row has one shape: the activity dot or the group's icon in one column, the name (cut with "…" when long), then
+the details with the time of the last activity last. A click on a group's row (its name in medium weight) shows or hides its
+sessions (an arrow after the name says which), their activity dots in the same column as every other session's. A click anywhere on a session's row opens its main conversation and selects the row.
+Its other conversations (its `/tree` branches, subagents and code mode's one-shot agents) are below it, shown or hidden
+only by the arrow after its name (opening a subagent shows them), in the secondary style with their labels and activity
+dots in the session's columns. A rollup's name opens its list in the main
+area (`/list/<key>`), the arrow after it shows or hides its sessions; in a rollup's list, a group's name opens the
+group's own list. A list holds every session, those outside the window after the others in the secondary colour but still openable, in groups for a rollup
 of groups (every project, with or without sessions), with a search within the list's sessions; the Archive's list
 searches the archive and restores a session when you open it. A group's **+** (on the sidebar row or the list) starts a
 session in it: a folder's in that folder, a project's at its place on the machine of its most recently active session

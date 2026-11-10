@@ -66,14 +66,12 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 			`document.querySelector('.messages')?.textContent.includes('Echo: first') && !document.querySelector('.messages').textContent.includes('Echo: second')`,
 		);
 		// The fork has a row at once, newest first, labelled with the edited message; conversation 1 shows the title. The
-		// rows wait collapsed behind the session's expand control (here without subagents), which shows them.
+		// rows wait hidden behind the arrow after the session's title (here without subagents), which shows them.
 		await browser.wait(`document.querySelectorAll('.sidebar-section[data-key=recent] .branch-row').length===2`);
 		const header = `document.querySelector('.sidebar-section[data-key=recent] .session-header')`;
 		const toggle = `${header}.querySelector('.subagent-toggle')`;
 		const branches = `document.getElementById(${toggle}.getAttribute('aria-controls'))`;
 		assert.equal(await browser.evaluate<boolean>(`${branches}.hidden`), true);
-		assert.equal(await browser.evaluate<string>(`${toggle}.getAttribute('aria-label')`), "Show conversations");
-		assert.equal(await browser.evaluate<string>(`${header}.querySelector('.conversation-count').textContent`), "2");
 		await browser.evaluate(`${toggle}.click()`);
 		await browser.wait(`!${branches}.hidden && ${toggle}.getAttribute('aria-expanded')==='true'`);
 		assert.deepEqual(
@@ -90,14 +88,15 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		await browser.wait(`location.pathname==='/s/${id}'`);
 		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: second')`);
 		assert.equal((await row()).main, 1);
-		// The rows keep their order: only the selection moves. They stay expanded across the switch.
+		// The rows keep their order. They stay shown across the switch; the main conversation is selected on the session's
+		// row, not on its branch's.
 		await browser.wait(
-			`[...document.querySelectorAll('.sidebar-section[data-key=recent] .branch-row')].map(e=>e.textContent+(e.classList.contains('active')?'*':'')).join('|')==='second|Branches*'`,
+			`[...document.querySelectorAll('.sidebar-section[data-key=recent] .branch-row')].map(e=>e.textContent+(e.classList.contains('active')?'*':'')).join('|')==='second|Branches' && document.querySelector('.sidebar-section[data-key=recent] .nav-row.selected > .session-main')`,
 		);
 		assert.equal(await browser.evaluate<boolean>(`${branches}.hidden`), false);
 		// Collapsing hides them again.
 		await browser.evaluate(`${toggle}.click()`);
-		await browser.wait(`${branches}.hidden && ${toggle}.getAttribute('aria-label')==='Show conversations'`);
+		await browser.wait(`${branches}.hidden && ${toggle}.getAttribute('aria-expanded')==='false'`);
 		await browser.evaluate(`${toggle}.click()`);
 		await browser.wait(`!${branches}.hidden`);
 	});

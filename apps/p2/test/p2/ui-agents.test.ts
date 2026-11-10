@@ -64,14 +64,20 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 		await fixture?.close();
 	});
 
-	it("lists only named subagents in the sidebar and opens a one-shot agent from its script's row", async () => {
+	it("lists the subagent and the one-shot agent in the sidebar and opens the agent from its script's row", async () => {
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session}`);
 		// The script's turn: its activity opens the timeline, the script its calls, the agent's call its conversation.
 		await browser.wait(
 			`[...document.querySelectorAll('[data-testid=activity]')].at(-1) && !document.querySelector('.offline')`,
 		);
-		// The sidebar counts the subagent, not the script's one-shot agent.
-		assert.equal(await browser.evaluate(text(".session-header.has-subagents .conversation-count")), "1");
+		// The session's other conversations are listed below it: the helper and the script's one-shot agent.
+		const conversations = `document.getElementById(document.querySelector('.sidebar-section[data-key=recent] .session-header.has-subagents .subagent-toggle').getAttribute('aria-controls'))`;
+		assert.deepEqual(
+			await browser.evaluate<string[]>(
+				`[...${conversations}.querySelectorAll('.session-title')].map(e=>e.textContent)`,
+			),
+			["helper", "Check ok"],
+		);
 		await browser.evaluate(`[...document.querySelectorAll('[data-testid=activity]')].at(-1).click()`);
 		const script = `[...document.querySelectorAll('[data-testid=step]')].find(e=>e.textContent.startsWith('codemode'))`;
 		await browser.wait(script);
@@ -95,7 +101,11 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 		assert.equal(await browser.evaluate(`document.querySelector('.composer')===null`), true);
 		assert.equal(await browser.evaluate(`document.querySelector('.model-control')===null`), true);
 		assert.equal(await browser.evaluate(`document.querySelector('.subagent-bar .text-action')===null`), true);
-		assert.equal(await browser.evaluate(`document.querySelector('.subagent-row.active')===null`), true);
+		// Its row in the sidebar is the selected one.
+		assert.equal(
+			await browser.evaluate(text(".sidebar-section[data-key=recent] .agent-row.active .session-title")),
+			"Check ok",
+		);
 	});
 
 	it("stops a working one-shot agent from its bar", async () => {
@@ -149,13 +159,11 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 		await browser.wait(`document.querySelector('.subagent-bar .text-action')?.textContent==='Restore'`);
 		assert.match(String(await browser.evaluate(text(".subagent-wrap .subagent-bar span"))), / · archived$/);
 		// Viewing an archived subagent opens its row.
-		await browser.wait(
-			`document.querySelector('.nav-row:has(> .subagent-stored) .nav-disclosure')?.getAttribute('aria-expanded')==='true'`,
-		);
+		await browser.wait(`document.querySelector('.subagent-stored')?.getAttribute('aria-expanded')==='true'`);
 		assert.equal(await browser.evaluate(text(".subagent-stored .session-title")), "1 archived");
 		assert.equal(
 			await browser.evaluate(
-				`document.querySelectorAll('.sidebar-section[data-key=recent] .subagent-row:not(.subagent-stored)').length`,
+				`document.querySelectorAll('.sidebar-section[data-key=recent] .subagent-row:not(.subagent-stored):not(.agent-row)').length`,
 			),
 			1,
 		);
@@ -164,7 +172,9 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 		await browser.wait(`document.querySelector('.subagent-bar .text-action')?.textContent==='Archive'`);
 		await browser.wait(`document.querySelector('.subagent-stored')===null`);
 		assert.equal(
-			await browser.evaluate(`document.querySelectorAll('.sidebar-section[data-key=recent] .subagent-row').length`),
+			await browser.evaluate(
+				`document.querySelectorAll('.sidebar-section[data-key=recent] .subagent-row:not(.agent-row)').length`,
+			),
 			1,
 		);
 	});

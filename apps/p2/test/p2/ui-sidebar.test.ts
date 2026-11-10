@@ -20,7 +20,7 @@ import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
 const SECTIONS = `[...document.querySelectorAll('.sidebar-section')].map(s=>[s.dataset.key,s.querySelector('.sidebar-group')?[...s.querySelectorAll('.sidebar-group')].map(g=>[g.querySelector('.group-link').textContent,[...g.querySelectorAll('.session-main .session-title')].map(e=>e.textContent)]):[...s.querySelectorAll('.session-main .session-title')].map(e=>e.textContent)])`;
 
 /** The main area's list: its group labels and titles, an aged one marked. */
-const PAGE = `[...document.querySelectorAll('.list-page .list-group-label > span:first-child, .list-page .session-row')].map(e=>e.classList.contains('session-row')?e.querySelector('.session-main .session-title').textContent+(e.classList.contains('aged')?' aged':''):'# '+e.textContent)`;
+const PAGE = `[...document.querySelectorAll('.list-page .list-group-link, .list-page .session-row')].map(e=>e.classList.contains('session-row')?e.querySelector('.session-main .session-title').textContent+(e.classList.contains('aged')?' aged':''):'# '+e.textContent)`;
 
 /** The keys of the places where a session is selected. */
 const SELECTED = `[...document.querySelectorAll('.sidebar-nav .nav-row.selected > .session-main')].map(e=>e.closest('[data-key]').dataset.key)`;
@@ -118,7 +118,14 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 			),
 			`/s/${other.id}`,
 		);
-		// Folders' name lists every folder with its sessions; a folder's own name lists its own; Back returns.
+		// A click anywhere in a row opens it: here between the title and the time.
+		const blank = await browser.evaluate<{ x: number; y: number }>(
+			`(() => { const row = document.querySelector('.sidebar-section[data-key=recent] .nav-row:has(> a.session-main[href="/s/${other.id}"])'), title = row.querySelector('.nav-link').getBoundingClientRect(), time = row.querySelector('.session-time').getBoundingClientRect(); return { x: (title.right + time.left) / 2, y: title.top + title.height / 2 }; })()`,
+		);
+		for (const type of ["mousePressed", "mouseReleased"])
+			await browser.call("Input.dispatchMouseEvent", { type, ...blank, button: "left", clickCount: 1 });
+		await browser.wait(`location.pathname==='/s/${other.id}'`);
+		// Folders' name lists every folder with its sessions; a folder's name there lists its own; Back returns.
 		await browser.click(".sidebar-section[data-key=folders] .group-label");
 		await browser.wait(
 			`location.pathname==='/list/folders' && document.querySelectorAll('.list-page .session-row').length>=2`,
@@ -129,8 +136,9 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 			),
 			["# home", "Free", "# other", "Other"],
 		);
-		const homeKey = folderKey(null, home);
-		await browser.click(`.sidebar-group${withAttribute("data-key", homeKey)} .group-link`);
+		await browser.evaluate(
+			`[...document.querySelectorAll('.list-page .list-group-link')].find(e=>e.textContent==='home').click()`,
+		);
 		await browser.wait(`document.querySelector('.list-page h1')?.textContent==='home'`);
 		assert.deepEqual(await browser.evaluate(PAGE), ["Free"]);
 		await browser.click(".list-page a.session-main");
@@ -220,7 +228,8 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		await until(settings.collapsed, (collapsed) => collapsed?.recent === true);
 		await browser.wait(`document.querySelector('.sidebar-section[data-key=recent] > ul').hidden`);
 		const group = `.sidebar-group${withAttribute("data-key", homeKey)}`;
-		await browser.click(`${group} .nav-disclosure`);
+		// A group's row shows or hides its sessions.
+		await browser.click(`${group} .group-link`);
 		await until(settings.collapsed, (collapsed) => collapsed?.[homeKey] === true);
 		await browser.wait(`!document.querySelector(${JSON.stringify(`${group} .session-main`)})`);
 		// The rollup's options: its window, and its place among the rollups.

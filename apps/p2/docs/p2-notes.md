@@ -814,12 +814,19 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
     `folder:<base64url of JSON [env, cwd]>` (no slash, for `/list/<key>`). Folders take as many trailing path segments
     as tell same-named ones apart. Rollup order never follows activity.
   - **View** (`Sidebar.tsx`, `Row.tsx`, `ListPage.tsx`, `RollupSheet.tsx`), on Elanor's `Sidebar` and
-    `SideNavigation` and icons (re-exported by `src/web/navigation-components.ts`). Every row is a `NavRow`: a leading
-    disclosure (Elanor's chevron) or its space, a marker column as wide as an icon (a session's activity dot, a group's
-    folder or lock; kept when empty), the label (a link, or an action: restoring an archived session, switching to
-    another branch), details (the time of the last activity last) and controls (⋯, "+", a branch's rename), all one
-    control whose hover and selected backgrounds (Elanor's ghost fills) span the row; the label's hit area covers it.
-    A session's conversations (branches and subagents) are one list behind its disclosure. An open session is selected
+    `SideNavigation` and icons (re-exported by `src/web/navigation-components.ts`). Every row is a `NavRow`: a marker
+    column as wide as an icon (a session's activity dot, a group's folder or lock; kept when empty; a rollup has none),
+    the label (a link; an action: restoring an archived session, switching to another branch; or, with `expanded`, the
+    control that shows or hides what is below the row, Elanor's chevron right after the label), details (the time of
+    the last activity last) and controls (⋯, "+", a branch's rename), all one control whose hover and selected
+    backgrounds (Elanor's ghost fills) span the row; the label's hit area covers it. Labels are one line, cut with "…" at
+    the end (`.nav-label`). No leading disclosure column, so nothing is indented by it: a group's row shows or hides
+    its sessions, not indented (every session's activity dot is in one column); a group's row is medium weight. A session's row is a link to its main conversation,
+    selected while that shows (the label's hit area covers the row: the label is not positioned, so its `::after` is
+    laid out on the row). Its other conversations (its branches, then its subagents and one-shot agents, the most
+    recently active first) are below it, shown or hidden only by its chevron (`Toggle`, a button after the label;
+    showing a subagent shows them), in the secondary style, their labels and activity dots in the session's columns. A rollup's name is a link
+    to its list, its chevron a `Toggle` after it; a collapsed rollup lists nothing ("No activity" is for an open one). Rows start and end on the bars' icon line (`--nav-edge`, style.css). An open session is selected
     in one place: where this tab opened it from (per session, in sessionStorage), else the first place it shows. The
     list page in the main area (`Route.page`, at `/list/<key>`; the `page` slot instead of `main`; `openPage` closes
     the phone drawer as opening a conversation does; top-level links to it authenticate as `/s/` links do) has a

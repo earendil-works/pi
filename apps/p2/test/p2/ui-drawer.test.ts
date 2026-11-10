@@ -199,10 +199,13 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 			),
 			0,
 		);
-		await browser.click(".session-header.has-subagents .subagent-toggle");
+		// The open session's row is selected; the arrow after its title shows its other conversations, and hides them.
+		const conversations = `document.getElementById(document.querySelector('.sidebar-section[data-key=recent] .session-header.has-subagents .subagent-toggle').getAttribute('aria-controls'))`;
 		await browser.wait(
-			`document.querySelector('.subagent-row') && !document.querySelector('.subagent-row').parentElement.hidden`,
+			`${conversations}?.hidden && document.querySelector('.sidebar-section[data-key=recent] .nav-row.selected > .session-main')`,
 		);
+		await browser.click(".session-header.has-subagents .subagent-toggle");
+		await browser.wait(`!${conversations}.hidden && ${conversations}.querySelector('.subagent-row')`);
 		assert.equal(
 			await browser.evaluate<string>(
 				`document.querySelector('.nav-row:has(> .subagent-row) .subagent-model').textContent`,
@@ -210,6 +213,7 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 			"faux-1",
 		);
 		await browser.click(".session-header.has-subagents .subagent-toggle");
+		await browser.wait(`${conversations}.hidden`);
 		const childChat = await holdIn(
 			owner,
 			Chat,
@@ -219,7 +223,9 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		await childChat.send({ text: "slow child", requestId: "drawer-busy" }, BACKGROUND_CONTEXT);
 		await browser.wait(`document.querySelector('.session-header.has-subagents .live-dot')`);
 		await browser.click(".session-header.has-subagents .subagent-toggle");
-		await browser.wait(`document.querySelector('.nav-row:has(> .subagent-row) .live-dot')`);
+		await browser.wait(
+			`!${conversations}.hidden && document.querySelector('.nav-row:has(> .subagent-row) .live-dot')`,
+		);
 		await browser.click(".subagent-row");
 		await browser.wait(
 			`location.pathname.endsWith('/c/${child.conversationId}') && document.querySelector('.subagent-row.active')`,
@@ -238,14 +244,14 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		const toggle = `document.querySelector('.sidebar-section[data-key=recent] .session-header.has-subagents .subagent-toggle')`;
 		const list = `document.getElementById(${toggle}.getAttribute('aria-controls'))`;
 		await browser.wait(`${list}?.querySelectorAll('.branch-row').length===2`);
-		assert.equal(await browser.evaluate<string>(`${toggle}.getAttribute('aria-label')`), "Hide conversations");
+		assert.equal(await browser.evaluate<string>(`${toggle}.getAttribute('aria-expanded')`), "true");
 		assert.equal(
 			await browser.evaluate<number>(`${list}.querySelectorAll('.subagent-row:not(.branch-row)').length`),
 			1,
 		);
 		await browser.evaluate(`${toggle}.click()`);
 		await browser.wait(`${list}.hidden`);
-		assert.equal(await browser.evaluate<string>(`${toggle}.getAttribute('aria-label')`), "Show conversations");
+		assert.equal(await browser.evaluate<string>(`${toggle}.getAttribute('aria-expanded')`), "false");
 	});
 
 	it("preserves rename, pin and archive after moving actions out of session rows", async () => {

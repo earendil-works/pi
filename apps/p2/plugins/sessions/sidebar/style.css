@@ -2,6 +2,26 @@
    row is one control (.nav-row): leading disclosure, the label (its hit area covers the row), details, and controls at
    the trailing end; its hover and selected background, Elanor's ghost fills, span all of it. */
 
+/* The rows' measures, in the sidebar and the list pages. Rows sit --bar-pad from the sidebar's edges, as p2's bars'
+   buttons do, and start and end their content on the line where a bar's buttons show their glyphs (--nav-edge in from
+   the row: a 16px glyph centred in a --control box). A row's control box (--nav-control) is wider than its glyph, so
+   a trailing one reaches past that line by the difference (--nav-glyph-inset). A label starts after the marker column
+   and its gap (--nav-label-start). Nothing is indented: every session's activity dot, in a group or not, is in one
+   column. */
+.sidebar-root,
+.list-page {
+	--nav-control: var(--control-sm);
+	--nav-glyph-inset: calc((var(--nav-control) - 16px) / 2);
+	--nav-edge: calc((var(--control) - 16px) / 2);
+	--nav-label-start: calc(var(--nav-edge) + 16px + 2 * var(--s1));
+}
+@media (pointer: coarse) {
+	.sidebar-root,
+	.list-page {
+		--nav-control: var(--row);
+	}
+}
+
 /* Elanor's sidebar fills p2's drawer column (its width, border and resizing are the layout's). */
 .sidebar-root {
 	inline-size: 100%;
@@ -28,7 +48,7 @@
 	align-items: center;
 }
 .sidebar-root .session-scroll {
-	padding: 0 var(--s2) var(--s4);
+	padding: 0 var(--bar-pad) var(--s4);
 }
 .sidebar-root .collapse-sidebar {
 	margin: 0;
@@ -37,15 +57,19 @@
 	font: inherit;
 	gap: 0;
 }
+/* Rollups are apart by their rows' top margin; a collapsed one takes no more than its row. */
+.sidebar-nav > .sidebar-section {
+	padding-block-end: var(--s2);
+}
 
-/* A row: one control from the leading edge to the trailing one. */
+/* A row: one control from the leading edge to the trailing one, its glyphs and trailing text on the icon line. */
 .nav-row {
 	position: relative;
 	display: flex;
 	align-items: center;
 	gap: var(--s1);
 	min-height: var(--control);
-	padding-inline: 0 var(--s1);
+	padding-inline: var(--nav-edge);
 	border-radius: var(--semantic-dimension-radius-small);
 	color: var(--text);
 }
@@ -57,15 +81,6 @@
 .nav-row:has(> .nav-link:active),
 .nav-row.selected {
 	background: var(--semantic-color-background-fill-ghost-neutral-active);
-}
-/* The leading slot: a disclosure, or its space, so labels line up. */
-.nav-leading {
-	display: inline-flex;
-	flex: none;
-	align-items: center;
-	justify-content: center;
-	width: var(--control-sm);
-	align-self: stretch;
 }
 /* The marker column: a session's activity dot or a group's icon, as wide as the icon; kept when empty. */
 .nav-marker {
@@ -79,10 +94,15 @@
 .nav-marker + .nav-link {
 	margin-inline-start: var(--s1);
 }
-/* The label: its hit area covers the whole row, below the controls. */
+/* The label: its hit area covers the whole row, below the controls. It is as wide as its text, so a chevron follows it;
+   the fill after it keeps the details and controls at the trailing end. */
 .nav-row > .nav-link {
+	/* Not positioned (Elanor's links are): its hit area (::after) is laid out on the row, not on the label. */
+	position: static;
 	display: flex;
-	flex: 1;
+	flex: 0 1 auto;
+	gap: var(--s1);
+	inline-size: auto;
 	align-items: center;
 	min-width: 0;
 	min-height: 0;
@@ -100,13 +120,24 @@
 	border-radius: inherit;
 	content: "";
 }
-.nav-row > .nav-link > span {
+/* Elanor's label inside a link: one line, as narrow as the label it holds. */
+.nav-row > a.nav-link > span {
 	display: flex;
+	flex: 0 1 auto;
 	align-items: center;
-	gap: var(--s2);
 	min-width: 0;
+	overflow: hidden;
 	-webkit-line-clamp: none;
 	line-clamp: none;
+}
+/* The label's text: one line, cut with "…" at its end. */
+.nav-label {
+	display: block;
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 .nav-row > .nav-link:focus-visible {
 	outline: none;
@@ -117,6 +148,28 @@
 .nav-row > .nav-link:focus-visible::after {
 	outline: var(--semantic-dimension-border-width-focus-ring) solid var(--semantic-color-focus-ring);
 }
+.nav-fill {
+	flex: 1;
+}
+/* The chevron after a label that shows or hides what is below its row: pointing down when shown, right when hidden. */
+.nav-chevron {
+	flex: none;
+	color: var(--semantic-color-icon-secondary);
+	transition: rotate var(--semantic-transition-movement-disclosure);
+}
+[aria-expanded="false"] > .nav-chevron {
+	rotate: -90deg;
+}
+@media (prefers-reduced-motion: reduce) {
+	.nav-chevron {
+		transition: none;
+	}
+}
+/* A rollup's or a session's chevron is its own button, right after its name: its glyph, not its box, follows the
+   name's gap. */
+.nav-row > .nav-toggle {
+	margin-inline-start: calc(-1 * var(--nav-glyph-inset));
+}
 /* Details: information after the label, the time last so it never moves. */
 .nav-details {
 	display: flex;
@@ -126,8 +179,7 @@
 	color: var(--muted);
 	font-size: var(--fs-xs);
 }
-/* Disclosures and controls sit above the label's hit area. */
-.nav-disclosure,
+/* Controls sit above the label's hit area. */
 .nav-control {
 	position: relative;
 	z-index: 1;
@@ -135,29 +187,20 @@
 	flex: none;
 	align-items: center;
 	justify-content: center;
-	width: var(--control-sm);
-	height: var(--control-sm);
+	width: var(--nav-control);
+	height: var(--nav-control);
 	border-radius: var(--semantic-dimension-radius-small);
 	color: var(--semantic-color-icon-secondary);
 }
+.nav-row > .nav-control:last-child {
+	margin-inline-end: calc(-1 * var(--nav-glyph-inset));
+}
 @media (hover: hover) {
-	.nav-disclosure:hover,
 	.nav-control:hover:not(:disabled) {
 		color: var(--text);
 	}
 }
-.nav-disclosure > svg {
-	transition: rotate var(--semantic-transition-movement-disclosure);
-}
-.nav-disclosure[aria-expanded="false"] > svg {
-	rotate: -90deg;
-}
-@media (prefers-reduced-motion: reduce) {
-	.nav-disclosure > svg {
-		transition: none;
-	}
-}
-
+/* A title outside a row's label (the Familiar's entry): the rest of its line, cut with "…". */
 .session-title {
 	flex: 1;
 	min-width: 0;
@@ -169,13 +212,6 @@
 	margin-right: var(--s1);
 	color: var(--muted);
 	vertical-align: -1px;
-}
-.conversation-count {
-	min-width: 1.5em;
-	padding: 0 var(--s1);
-	border-radius: var(--semantic-dimension-radius-small);
-	background: var(--semantic-color-background-fill-ghost-neutral-hover);
-	text-align: center;
 }
 .session-time {
 	min-width: 2.2em;
@@ -200,22 +236,26 @@
 }
 /* "No activity" lines up with the sessions' labels: after the disclosure and the marker columns. */
 .sidebar-section .sidebar-empty {
-	padding: var(--s1) 0 var(--s1) calc(var(--control-sm) + 16px + 3 * var(--s1));
+	padding: var(--s1) 0 var(--s1) var(--nav-label-start);
 	list-style: none;
 	text-align: left;
 }
 
-/* Nested rows (a group's sessions, a session's conversations): one step in. */
-.nested-items {
-	padding-inline-start: var(--s3);
+/* A group's row (a folder, a project): medium weight, above its sessions in the hierarchy. */
+.group-row {
+	font-weight: var(--fw-medium);
 }
-.nested-items[hidden] {
+/* A hidden list stays hidden: Elanor's lists are flex boxes, which would override the attribute. */
+.sidebar-nav ul[hidden] {
 	display: none;
 }
+/* A session's conversations: part of it, in the secondary style, their labels and activity dots in its columns. */
 .conversation-row {
-	min-height: var(--control-sm);
 	color: var(--muted);
 	font-size: var(--fs-sm);
+}
+.conversation-row.selected {
+	color: var(--text);
 }
 .subagent-location,
 .subagent-model {
@@ -229,7 +269,7 @@
 	display: flex;
 	align-items: center;
 	gap: var(--s1);
-	padding: 0 var(--s2) var(--s1) calc(var(--control-sm) + var(--s1));
+	padding: 0 var(--nav-edge) var(--s1) var(--nav-label-start);
 	color: var(--muted);
 	font-size: var(--fs-xs);
 }
@@ -286,6 +326,15 @@
 	padding: var(--s1) var(--s2);
 	text-align: left;
 }
+.list-group-link {
+	color: inherit;
+	text-decoration: none;
+}
+@media (hover: hover) {
+	.list-group-link:hover {
+		color: var(--text);
+	}
+}
 .list-group-label {
 	display: flex;
 	align-items: center;
@@ -300,15 +349,8 @@
 }
 
 @media (pointer: coarse) {
-	.nav-row,
-	.conversation-row {
+	.nav-row {
 		min-height: var(--row);
-	}
-	.nav-leading,
-	.nav-disclosure,
-	.nav-control {
-		width: var(--row);
-		height: var(--row);
 	}
 	.branch-rename {
 		opacity: 1;

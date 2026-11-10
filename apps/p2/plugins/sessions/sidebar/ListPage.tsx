@@ -5,6 +5,7 @@ import {
 	ErrorToast,
 	MenuIcon,
 	NavAddIcon,
+	openPage,
 	openSidebar,
 	requestReveal,
 	SearchIcon,
@@ -14,7 +15,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import type { SearchResults } from "../../search/contract.ts";
 import { type ListEntry, type ListPageData, type NewTarget, WINDOWS } from "./model.ts";
-import { type RowActions, SessionItem } from "./Row.tsx";
+import { inPage, pageHref, type RowActions, SessionItem } from "./Row.tsx";
 
 /** What the page says under its title: the window, or what the archive holds. */
 function subtitle(data: ListPageData | undefined): string {
@@ -173,7 +174,14 @@ export function ListPage({
 						results && matching(group.entries).length === 0 ? null : (
 							<section className="list-group" key={group.key}>
 								<h2 className="list-group-label">
-									<span>{group.name}</span>
+									{/* A group's own list: the sidebar's group rows show or hide their sessions instead. */}
+									<a
+										className="list-group-link"
+										href={pageHref(group.key)}
+										onClick={inPage(() => openPage(group.key))}
+									>
+										{group.name}
+									</a>
 									<NewIn name={group.name} target={group.target} onNewIn={onNewIn} />
 								</h2>
 								{group.entries.length > 0 ? rows(group.entries) : <p className="empty-note">No sessions</p>}

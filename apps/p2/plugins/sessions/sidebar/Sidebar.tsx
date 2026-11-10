@@ -1,8 +1,9 @@
 // The sidebar's view, built from Elanor's sidebar and side navigation: one navigation group per rollup, in the layout
 // of what it collected (its relevant sessions, groups with theirs, or only its name), and the guest's list of shared
-// sessions. Every row has the same shape (Row.tsx's `NavRow`): a leading disclosure, a label that opens the rollup's,
-// group's or session's page, details and controls at the trailing end. It renders what model.ts computes and calls
-// back for every action.
+// sessions. Every row has the same shape (Row.tsx's `NavRow`): a marker, a label, details and controls at the trailing
+// end. A rollup's name opens its list page, its chevron shows or hides its sessions; a group's row shows or hides its
+// sessions; a session's row opens it (and shows its conversations), its chevron shows or hides them. It renders what
+// model.ts computes and calls back for every action.
 import { type Grant, grantMode } from "@p2/app/v1";
 import {
 	NavAddIcon,
@@ -17,7 +18,7 @@ import {
 } from "@p2/app/v1/web";
 import { memo, type ReactNode, useEffect, useId, useState } from "react";
 import type { GroupSection, NewTarget, Section, SidebarRow } from "./model.ts";
-import { Disclosure, NavRow, pageHref, type RowActions, SessionItem, useOpenedFrom } from "./Row.tsx";
+import { NavRow, pageHref, type RowActions, SessionItem, Toggle, useOpenedFrom } from "./Row.tsx";
 import "./style.css";
 
 /** The current time, again every minute: a rollup's window passes while the sidebar is shown. */
@@ -41,31 +42,22 @@ type HeadingActions = {
 	onNewIn?: (target: NewTarget) => void;
 };
 
-/** A group inside a rollup: its row (disclosure, icon and name, "+"), and its relevant sessions below it. */
+/** A group inside a rollup: its row (icon, name, "+"), which shows or hides its relevant sessions below it, one step in. */
 function GroupItem({ group, rows, actions }: { group: GroupSection; rows: RowActions; actions: HeadingActions }) {
-	const { page, onPage, onCollapse, onNewIn, connected } = actions;
+	const { onCollapse, onNewIn, connected } = actions;
 	const listId = useId();
+	const marker = group.sandboxed ? <NavLockIcon size={16} aria-label="Sandbox" /> : <NavFolderIcon size={16} />;
+	const label = <span className="session-title">{group.name}</span>;
 	return (
 		<SideNavigation.Item className="sidebar-group" data-key={group.key}>
 			<NavRow
-				selected={page === group.key}
 				className="group-row"
 				linkClassName="group-link"
-				leading={
-					onCollapse && (
-						<Disclosure
-							open={!group.collapsed}
-							label={`the sessions of ${group.name}`}
-							controls={listId}
-							onToggle={() => onCollapse(group.key, !group.collapsed)}
-						/>
-					)
-				}
-				href={pageHref(group.key)}
+				{...(onCollapse ? { expanded: !group.collapsed, controlsId: listId } : {})}
 				title={group.title}
-				onActivate={() => onPage(group.key)}
-				marker={group.sandboxed ? <NavLockIcon size={16} aria-label="Sandbox" /> : <NavFolderIcon size={16} />}
-				label={<span className="session-title">{group.name}</span>}
+				onActivate={() => onCollapse?.(group.key, !group.collapsed)}
+				marker={marker}
+				label={label}
 				controls={
 					onNewIn && (
 						<button
@@ -81,7 +73,7 @@ function GroupItem({ group, rows, actions }: { group: GroupSection; rows: RowAct
 					)
 				}
 			/>
-			<SideNavigation.List className="nested-items" id={listId} hidden={group.collapsed}>
+			<SideNavigation.List className="group-items" id={listId} hidden={group.collapsed}>
 				{group.rows.map((session) => (
 					<SessionItem key={session.id} session={session} scope={group.key} actions={rows} />
 				))}
@@ -91,26 +83,32 @@ function GroupItem({ group, rows, actions }: { group: GroupSection; rows: RowAct
 }
 
 /**
- * A rollup's group of the navigation: its row (disclosure, name, options; the Archive's count instead of a disclosure),
- * then its sessions or its groups by its layout, or "No activity" when it has none to show.
+ * A rollup's group of the navigation: its row (its name, a link to its list; the chevron right after it that shows or
+ * hides its sessions; the Archive's count instead; its options), then its sessions or its groups by its layout, or
+ * "No activity" when it has none to show.
  */
 function RollupGroup({ section, rows, actions }: { section: Section; rows: RowActions; actions: HeadingActions }) {
 	const { page, onPage, onCollapse, onOptions } = actions;
 	const listId = useId();
 	const collapsed = section.layout === "link" ? undefined : section.collapsed;
+	// A collapsed rollup lists nothing, whatever it has: "No activity" is for an open one with nothing to show.
 	const empty =
-		(section.layout === "sessions" && section.rows.length === 0) ||
-		(section.layout === "groups" && section.groups.length === 0);
+		collapsed === false &&
+		((section.layout === "sessions" && section.rows.length === 0) ||
+			(section.layout === "groups" && section.groups.length === 0));
 	return (
 		<SideNavigation.Group className="sidebar-section" data-key={section.key}>
 			<NavRow
 				selected={page === section.key}
 				className="rollup-row group-head"
 				linkClassName="group-label"
-				leading={
+				href={pageHref(section.key)}
+				onActivate={() => onPage(section.key)}
+				label={section.name}
+				after={
 					onCollapse &&
 					collapsed !== undefined && (
-						<Disclosure
+						<Toggle
 							className="section-toggle"
 							open={!collapsed}
 							label={`the sessions of ${section.name}`}
@@ -119,9 +117,6 @@ function RollupGroup({ section, rows, actions }: { section: Section; rows: RowAc
 						/>
 					)
 				}
-				href={pageHref(section.key)}
-				onActivate={() => onPage(section.key)}
-				label={section.name}
 				details={section.layout === "link" && <span className="section-count">{section.total}</span>}
 				controls={
 					onOptions && (

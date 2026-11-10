@@ -2,14 +2,15 @@
 .familiar-group {
 	padding-top: var(--s2);
 }
-/* Its icon sits in the rows' marker column (after their disclosure's), so its title lines up with the sessions'. */
+/* Its icon sits in the rows' marker column, so its title lines up with the sessions', and its details end on the rows'
+   trailing line (the sidebar's row measures, plugins/sessions/sidebar/style.css). */
 .familiar-entry {
 	display: flex;
 	align-items: center;
 	gap: calc(2 * var(--s1));
 	width: 100%;
 	min-height: var(--control);
-	padding: var(--s1) var(--s1) var(--s1) calc(var(--control-sm) + var(--s1));
+	padding: var(--s1) var(--nav-edge);
 	border-radius: var(--radius);
 	color: var(--text);
 	font-size: var(--fs-md);

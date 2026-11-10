@@ -1,7 +1,8 @@
 // The rows of the sidebar and its list pages, items of Elanor's side navigation. Every row has one shape (`NavRow`): a
-// leading disclosure (or its space), the label (a link or an action), its details and its controls at the trailing
-// end, all inside the one control whose hover and selected background spans the whole row. A session's row expands
-// to its conversations (`/tree` branches and subagents).
+// marker, the label (a link, an action, or the control that shows or hides what is below it, its chevron after the
+// label), its details and its controls at the trailing end, all inside the one control whose hover and selected
+// background spans the whole row. A session with several conversations (`/tree` branches, subagents) shows or hides
+// them on a click of its row.
 import {
 	HOME,
 	locationLabel,
@@ -35,7 +36,7 @@ function ago(time: number, now: number): string {
  * A click handler for a link that acts in the page (`act`) on a plain primary click; any other click (a modifier, the
  * middle button, "Open in new tab") is the browser's, so the target opens in another tab or window.
  */
-const inPage = (act: () => void) => (event: MouseEvent<HTMLAnchorElement>) => {
+export const inPage = (act: () => void) => (event: MouseEvent<HTMLAnchorElement>) => {
 	if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
 	event.preventDefault();
 	act();
@@ -87,66 +88,45 @@ const subscribeScopes = (listener: () => void) => {
 export const useOpenedFrom = (): Readonly<Record<string, string>> =>
 	useSyncExternalStore(subscribeScopes, () => openedFrom);
 
-/** The leading control that shows or hides what is below a row; Elanor's chevron, turned while closed. */
-export function Disclosure({
-	open,
-	label,
-	controls,
-	className = "",
-	onToggle,
-}: {
-	open: boolean;
-	/** What it shows or hides, for its accessible name ("conversations", "the sessions of Recents"). */
-	label: string;
-	controls: string;
-	className?: string;
-	onToggle: () => void;
-}) {
-	return (
-		<button
-			type="button"
-			className={`nav-disclosure ${className}`}
-			aria-expanded={open}
-			aria-controls={controls}
-			aria-label={`${open ? "Hide" : "Show"} ${label}`}
-			onClick={onToggle}
-		>
-			<NavDisclosureIcon size={16} />
-		</button>
-	);
-}
-
 /**
- * One row: the leading disclosure or its space, a marker (a session's activity dot, a group's icon; its column is kept
- * when empty, so labels line up), the label (a link to `href`, or an action without one), its details and its
- * controls. The whole row is one control: its hover and selected background spans to the trailing end, and the label's
- * hit area covers it (the controls stay above it).
+ * One row: a marker (a session's activity dot, a group's icon; its column is kept when empty, so labels line up; absent:
+ * no column, as a rollup's), the label (on one line, cut with "…" at its end), then details and controls at the
+ * trailing end. The label is a link to `href`, an action without one, or with `expanded`, the control that shows or
+ * hides what is below the row (its chevron right after the label). The whole row is one control: its hover and selected
+ * background spans it, and the label's hit area covers it (the controls stay above it). `after`: a control right after
+ * the label (a rollup's or a session's chevron, `Toggle`).
  */
 export function NavRow({
 	selected = false,
 	className = "",
 	linkClassName = "",
-	leading,
 	marker,
 	href,
 	title,
+	expanded,
+	controlsId,
 	onActivate,
 	label,
+	after,
 	details,
 	controls,
 }: {
 	selected?: boolean;
 	className?: string;
 	linkClassName?: string;
-	leading?: ReactNode;
-	/** The marker column (absent: the row has none, as a rollup's): a dot or an icon, or `null` for its empty space. */
+	/** The marker column (absent: the row has none): a dot or an icon, or `null` for its empty space. */
 	marker?: ReactNode;
-	/** The address the label links to; absent: the label is an action (restore, switch a branch). */
+	/** The address the label links to; absent: the label is an action (restore, switch a branch, show or hide). */
 	href?: string;
 	title?: string;
+	/** Whether what the row shows or hides is shown; absent: the row does not show or hide anything. */
+	expanded?: boolean;
+	/** The element the row shows or hides. */
+	controlsId?: string;
 	onActivate: () => void;
 	label: ReactNode;
-	/** Information after the label (state, counts, time last), not interactive. */
+	after?: ReactNode;
+	/** Information after the label (state, time last), not interactive. */
 	details?: ReactNode;
 	/** Buttons at the trailing end. */
 	controls?: ReactNode;
@@ -154,11 +134,18 @@ export function NavRow({
 	const link = `nav-link ${linkClassName} ${selected ? "active" : ""}`;
 	return (
 		<div className={`nav-row ${selected ? "selected" : ""} ${className}`}>
-			<span className="nav-leading">{leading}</span>
 			{marker !== undefined && <span className="nav-marker">{marker}</span>}
 			{href === undefined ? (
-				<button type="button" className={link} title={title} onClick={onActivate}>
-					{label}
+				<button
+					type="button"
+					className={link}
+					title={title}
+					aria-expanded={expanded}
+					aria-controls={controlsId}
+					onClick={onActivate}
+				>
+					<span className="nav-label">{label}</span>
+					{expanded !== undefined && <NavDisclosureIcon className="nav-chevron" size={16} aria-hidden="true" />}
 				</button>
 			) : (
 				<SideNavigation.Link
@@ -168,12 +155,43 @@ export function NavRow({
 					active={selected}
 					onClick={inPage(onActivate)}
 				>
-					{label}
+					<span className="nav-label">{label}</span>
 				</SideNavigation.Link>
 			)}
+			{after}
+			<span className="nav-fill" />
 			{details && <span className="nav-details">{details}</span>}
 			{controls}
 		</div>
+	);
+}
+
+/** The chevron right after a row's label that shows or hides what is below the row, as its own button. */
+export function Toggle({
+	open,
+	label,
+	controls,
+	className,
+	onToggle,
+}: {
+	open: boolean;
+	/** What it shows or hides, for its accessible name ("conversations", "the sessions of Recents"). */
+	label: string;
+	controls: string;
+	className: string;
+	onToggle: () => void;
+}) {
+	return (
+		<button
+			type="button"
+			className={`nav-control nav-toggle ${className}`}
+			aria-expanded={open}
+			aria-controls={controls}
+			aria-label={`${open ? "Hide" : "Show"} ${label}`}
+			onClick={onToggle}
+		>
+			<NavDisclosureIcon className="nav-chevron" size={16} />
+		</button>
 	);
 }
 
@@ -190,15 +208,18 @@ export type RowActions = {
 	onRestore: (id: string, conversationId?: number) => void;
 };
 
-/** One of a session's conversations below its row: a `/tree` branch or a subagent. */
+/** One of a session's conversations below its row: a `/tree` branch, or a subagent or one-shot agent. */
 type Conversation =
 	| { kind: "branch"; conversation: number; label: string }
 	| { kind: "subagent"; conversation: number; agent: SidebarRow["subagents"][number] };
 
 /**
- * A session's item: its row (a link to it; for an archived session, an action that restores and opens it) with its
- * conversations behind the leading disclosure, a running or failed lifecycle operation, and the conversations. A
- * subagent shown expands them. `aged`: it fell out of its rollup's window and shows dimmed.
+ * A session's item: its row is a link to its main conversation, selected while that shows (for an archived session, an
+ * action that restores and opens it). Its other conversations (`/tree` branches, the current one a link and the others
+ * switches; then its subagents and one-shot agents) are below it, shown or hidden only by the chevron after its title,
+ * in the secondary style with their labels and activity dots in the session's columns. Showing a subagent shows them.
+ * A running or failed lifecycle operation shows below the row. `aged`: it fell out of its rollup's window and shows
+ * dimmed.
  */
 export function SessionItem({
 	session,
@@ -230,13 +251,15 @@ export function SessionItem({
 		openFrom(session.id, scope);
 		actions.onOpen(session.id, conversation);
 	};
-	// One-shot agents are opened from their script's tool card; archived subagents wait behind their own row.
-	const listed = (archived ? [] : session.subagents)
-		.filter((agent) => agent.kind !== "agent")
-		.toSorted((a, b) => (b.lastEntryId ?? 0) - (a.lastEntryId ?? 0) || b.conversationId - a.conversationId);
+	// Every conversation of the session is listed: subagents and code mode's one-shot agents (read-only), the most
+	// recently active first; archived subagents wait behind their own row.
+	const listed = (archived ? [] : session.subagents).toSorted(
+		(a, b) => (b.lastEntryId ?? 0) - (a.lastEntryId ?? 0) || b.conversationId - a.conversationId,
+	);
 	const stored = listed.filter((agent) => agent.archived);
+	const branched = onBranch !== undefined && !archived && session.branches.length >= 2;
 	const conversations: Conversation[] = [
-		...(onBranch !== undefined && !archived && session.branches.length >= 2
+		...(branched
 			? session.branches.map(
 					(branch): Conversation => ({
 						kind: "branch",
@@ -252,8 +275,8 @@ export function SessionItem({
 	const [showStored, setShowStored] = useState(false);
 	const storedOpen = showStored || stored.some((agent) => agent.conversationId === conversationId);
 	const nested = conversations.length > 0 || stored.length > 0;
-	// A subagent shown expands them; not a branch: right after a `/tree` switch the page shows the new branch before the
-	// row names it main.
+	// Showing a subagent or agent shows them, so it is in view, selected; the main conversation is the row's. Not a
+	// branch: right after a `/tree` switch the page shows the new branch before the row names it main.
 	const showsNested = active && session.subagents.some((agent) => agent.conversationId === conversationId);
 	const [expanded, setExpanded] = useState(showsNested);
 	useEffect(() => {
@@ -261,10 +284,12 @@ export function SessionItem({
 	}, [showsNested]);
 	const listId = useId();
 	const conversationRow = (item: Conversation) => {
-		const selected = active && conversationId === item.conversation;
+		// The main conversation is selected on the session's row.
+		const selected = active && conversationId === item.conversation && item.conversation !== session.main;
 		const busy = session.worker.busy.includes(item.conversation) ? (
 			<span className="live-dot" title="Working" />
 		) : null;
+		const href = routePath({ session: session.id, conversation: item.conversation, layers: [] });
 		if (item.kind === "branch") {
 			const main = item.conversation === session.main;
 			return (
@@ -275,9 +300,7 @@ export function SessionItem({
 						linkClassName="subagent-row branch-row"
 						title={main ? "The current branch" : "Switch the session to this branch"}
 						// Another branch is a switch of the session, not an address: an action, not a link.
-						{...(main
-							? { href: routePath({ session: session.id, conversation: item.conversation, layers: [] }) }
-							: {})}
+						{...(main ? { href } : {})}
 						onActivate={() => {
 							if (main) onOpen(item.conversation);
 							else {
@@ -310,8 +333,8 @@ export function SessionItem({
 				<NavRow
 					selected={selected}
 					className="conversation-row"
-					linkClassName="subagent-row"
-					href={routePath({ session: session.id, conversation: item.conversation, layers: [] })}
+					linkClassName={`subagent-row ${agent.kind === "agent" ? "agent-row" : ""}`}
+					href={href}
 					title={
 						agent.location
 							? `Works in ${locationLabel(agent.location.env, agent.location.cwd)}`
@@ -335,15 +358,44 @@ export function SessionItem({
 			</SideNavigation.Item>
 		);
 	};
+	const title = (
+		<span className="session-title">
+			{session.pinned && <PinIcon size={12} />}
+			{session.title}
+		</span>
+	);
+	const details = (
+		<>
+			{session.worker.error && (
+				<span className="error session-worker-error" title={session.worker.error}>
+					Worker failed
+				</span>
+			)}
+			<span className="session-time">{ago(session.updatedAt, now)}</span>
+		</>
+	);
+	const marker = <SessionDot worker={session.worker} />;
 	return (
 		<SideNavigation.Item className={`session-row ${aged ? "aged" : ""}`}>
 			<NavRow
 				selected={active && conversationId === session.main}
 				className={`session-header ${nested ? "has-subagents" : ""}`}
 				linkClassName="session-main"
-				leading={
+				{...(archived
+					? { title: "Restore and open" }
+					: { href: routePath({ session: session.id, conversation: session.main, layers: [] }) })}
+				onActivate={() => {
+					if (archived) {
+						openFrom(session.id, scope);
+						return onRestore(session.id);
+					}
+					onOpen();
+				}}
+				marker={marker}
+				label={title}
+				after={
 					nested && (
-						<Disclosure
+						<Toggle
 							className="subagent-toggle"
 							open={expanded}
 							label="conversations"
@@ -352,36 +404,7 @@ export function SessionItem({
 						/>
 					)
 				}
-				{...(archived
-					? { title: "Restore and open" }
-					: { href: routePath({ session: session.id, conversation: session.main, layers: [] }) })}
-				onActivate={() => {
-					if (!archived) return onOpen();
-					openFrom(session.id, scope);
-					onRestore(session.id);
-				}}
-				marker={<SessionDot worker={session.worker} />}
-				label={
-					<span className="session-title">
-						{session.pinned && <PinIcon size={12} />}
-						{session.title}
-					</span>
-				}
-				details={
-					<>
-						{session.worker.error && (
-							<span className="error session-worker-error" title={session.worker.error}>
-								Worker failed
-							</span>
-						)}
-						{conversations.length > 0 && (
-							<span className="conversation-count" title={`${conversations.length} conversations`}>
-								{conversations.length}
-							</span>
-						)}
-						<span className="session-time">{ago(session.updatedAt, now)}</span>
-					</>
-				}
+				details={details}
 			/>
 			{session.operation && (
 				<div className={`session-operation ${session.operation.error === undefined ? "" : "failed"}`}>
@@ -397,26 +420,20 @@ export function SessionItem({
 				</div>
 			)}
 			{nested && (
-				<SideNavigation.List className="nested-items" id={listId} hidden={!expanded}>
+				<SideNavigation.List className="conversation-items" id={listId} hidden={!expanded}>
 					{conversations.map(conversationRow)}
 					{stored.length > 0 && (
 						<SideNavigation.Item>
 							<NavRow
 								className="conversation-row"
 								linkClassName="subagent-row subagent-stored"
-								leading={
-									<Disclosure
-										open={storedOpen}
-										label="archived subagents"
-										controls={`${listId}-stored`}
-										onToggle={() => setShowStored(!storedOpen)}
-									/>
-								}
+								expanded={storedOpen}
+								controlsId={`${listId}-stored`}
 								onActivate={() => setShowStored(!storedOpen)}
 								marker={null}
 								label={<span className="session-title">{stored.length} archived</span>}
 							/>
-							<SideNavigation.List className="nested-items" id={`${listId}-stored`} hidden={!storedOpen}>
+							<SideNavigation.List className="conversation-items" id={`${listId}-stored`} hidden={!storedOpen}>
 								{stored.map((agent) =>
 									conversationRow({ kind: "subagent", conversation: agent.conversationId, agent }),
 								)}
