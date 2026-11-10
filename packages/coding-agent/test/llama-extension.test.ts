@@ -86,20 +86,20 @@ describe("llama.cpp extension", () => {
 				{ id: "unloaded", status: { value: "unloaded" } },
 				{ id: "loading", status: { value: "loading" } },
 			],
-			"http://localhost:8080",
+			"http://localhost:9931",
 		);
 
 		expect(controller.provider.getModels()).toEqual([
 			expect.objectContaining({
 				id: "loaded",
-				baseUrl: "http://localhost:8080/v1",
+				baseUrl: "http://localhost:9931/v1",
 				contextWindow: 65536,
 				maxTokens: 65536,
 				input: ["text", "image"],
 			}),
 			expect.objectContaining({
 				id: "sleeping",
-				baseUrl: "http://localhost:8080/v1",
+				baseUrl: "http://localhost:9931/v1",
 			}),
 		]);
 	});
@@ -551,7 +551,7 @@ describe("llama.cpp extension", () => {
 					architecture: { output_modalities: ["text", "decisions"] },
 				},
 			],
-			"http://localhost:8080",
+			"http://localhost:9931",
 		);
 		expect(controller.provider.getModels().map((model) => model.id)).toEqual(["hybrid"]);
 		expect(

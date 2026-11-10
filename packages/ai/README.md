@@ -1362,7 +1362,7 @@ const llamacpp = createProvider({
   id: 'llamacpp',
   auth: { apiKey: { name: 'llama.cpp', resolve: async () => ({ auth: {} }) } },
   models: [],
-  fetchModels: async ({ signal }) => fetchModelsFromServer('http://localhost:8080', signal),
+  fetchModels: async ({ signal }) => fetchModelsFromServer('http://localhost:9931', signal),
   api: openAICompletionsApi(),
 });
 

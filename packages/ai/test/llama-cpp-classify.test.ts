@@ -20,7 +20,7 @@ function model(): ClassifierModel<"llama-cpp-classify"> {
 		name: "qwen",
 		api: "llama-cpp-classify",
 		provider: "llama.cpp",
-		baseUrl: `http://llama-${serverCount}.test:8080/v1`,
+		baseUrl: `http://llama-${serverCount}.test:9931/v1`,
 		input: ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: 32768,
