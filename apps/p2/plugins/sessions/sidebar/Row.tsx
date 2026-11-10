@@ -224,6 +224,7 @@ type Conversation =
 export function SessionItem({
 	session,
 	scope,
+	listsConversations = true,
 	archived = false,
 	aged = false,
 	actions,
@@ -231,6 +232,8 @@ export function SessionItem({
 	session: SidebarRow;
 	/** Where the item is (a rollup's or a group's key, or the page): a session shows in several places. */
 	scope: string;
+	/** Whether its other conversations are listed below it (the sidebar's); a list page lists sessions only. */
+	listsConversations?: boolean;
 	archived?: boolean;
 	aged?: boolean;
 	actions: RowActions;
@@ -274,7 +277,7 @@ export function SessionItem({
 	];
 	const [showStored, setShowStored] = useState(false);
 	const storedOpen = showStored || stored.some((agent) => agent.conversationId === conversationId);
-	const nested = conversations.length > 0 || stored.length > 0;
+	const nested = listsConversations && (conversations.length > 0 || stored.length > 0);
 	// Showing a subagent or agent shows them, so it is in view, selected; the main conversation is the row's. Not a
 	// branch: right after a `/tree` switch the page shows the new branch before the row names it main.
 	const showsNested = active && session.subagents.some((agent) => agent.conversationId === conversationId);

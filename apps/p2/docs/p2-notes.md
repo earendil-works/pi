@@ -836,8 +836,9 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
     to its list, its chevron a `Toggle` after it; a collapsed rollup lists nothing ("No activity" is for an open one). Rows start and end on the bars' icon line (`--nav-edge`, style.css). An open session is selected
     in one place: where this tab opened it from (per session, in sessionStorage), else the first place it shows. The
     list page in the main area (`Route.page`, at `/list/<key>`; the `page` slot instead of `main`; `openPage` closes
-    the phone drawer as opening a conversation does; top-level links to it authenticate as `/s/` links do) has a
-    search within its sessions (`Search` 3's `sessions`), kept with its scroll position across Back, its "+" for
+    the phone drawer as opening a conversation does; top-level links to it authenticate as `/s/` links do) lists
+    sessions only (no conversations below them, `listsConversations`), in the transcript's column (`--chat-size`,
+    `--chat-width`) inside one scroller across the main area, as the transcript; it has a search within its sessions (`Search` 3's `sessions`), kept with its scroll position across Back, its "+" for
     groups, and the error toast (`ErrorToast`, shared with the chat).
   - **Settings** (`sidebar-settings.ts`, `SidebarSettingsStore`/`SidebarSettings`, owner): the rollups' order, windows
     and collapsed rollups and groups, one persisted document in the server's store (`p2.sidebar-settings-state`): a person's

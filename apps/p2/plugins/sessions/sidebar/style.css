@@ -310,13 +310,12 @@
 .list-page .title p.list-page-subtitle {
 	font-family: inherit;
 }
+/* The list sits in the transcript's column (.messages): its width, centred in the main area's scroller. */
 .list-page-body {
-	flex: 1;
-	overflow-y: auto;
-	width: 100%;
-	max-width: calc(48 * var(--s4));
+	width: var(--chat-size);
+	max-width: var(--chat-width);
 	margin: 0 auto;
-	padding: var(--s2) var(--x) var(--s5);
+	padding: var(--s5) var(--x);
 }
 .list-page-body > .search {
 	width: 100%;
