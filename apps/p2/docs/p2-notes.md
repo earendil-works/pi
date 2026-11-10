@@ -27,7 +27,7 @@ P2_FAKE=1 npm start          # http://127.0.0.1:8788, data in ~/.pi/p2
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `P2_DATA_DIR` | `~/.pi/p2` | data directory: `catalog.sqlite`, `server/` and `sessions/<id>/` (see **Host stores and files**), `settings.json`, `models.json`, `envs.json`, `projects.json`, `mcp.json`, `mcp-auth.json`, `auth.json`, `radius.json`, `forwards.json` |
+| `P2_DATA_DIR` | `~/.pi/p2` | data directory: `server/` and `sessions/<id>/` (see **Host stores and files**), `settings.json`, `models.json`, `envs.json`, `projects.json`, `mcp.json`, `mcp-auth.json`, `auth.json`, `radius.json`, `forwards.json` |
 | `PORT` | `8788` | listen port (loopback only), so p2 never collides with pi-mobile on 8787 |
 | `P2_FAKE` | unset | `1`: the faux provider (`faux/faux-1`, echoes the prompt; `slow …` streams long; `rename-session <title>` calls the tool; `subagent`, `subagent-bad`, `subagent-answer`, `subagent-configure`, `subagent-send`, `subagent-archive`, `subagent-status` exercise subagents, `subagent <json>` calls the tool with those arguments, as do `team <json>`, `history_search|read|handoff <json>`, `location_envs|dirs|move <json>`, `tool_search <json>`, `terminal <json>` and `mcp__<server>__<tool> <json>`; `codemode` runs a script calling bash and read, `codemode-restart` one whose slow middle call a restart interrupts, `codemode <script>` runs that script; `artifact <json>` calls the artifact tool with those arguments; `steps` makes a turn of thinking, calls and words, `inline-steps` one with an inline artifact between two calls; `json <text>` answers exactly `<text>`; a one-shot agent whose task is not `json …`/`slow…` answers a small value matching its schema) |
 | `P2_IDLE_MS` | `300000` | idle time before a session worker stops |
@@ -359,7 +359,12 @@ p2 runs on Chord v2 (`packages/chord`, `docs/design.md` there); the port's notes
   `filesFacet` from `@earendil-works/chord/app/files`); a session's Durable runs on its store through `StoreStorage`
   under the owner name `p2.durable` (`src/runtime/session-store.ts`), beside `Files`' tables. Plugins reach `Files`
   with `self.get(Files, {})` / `ctx.get(Files, {})` (`@p2/app/v1/node`), never a path; a session's spaces are
-  `artifacts`, `uploads` and `downloads` (`src/runtime/session-files.ts`). Clone copies the whole session directory
+  `artifacts`, `uploads` and `downloads` (`src/runtime/session-files.ts`).
+  The session catalog (`Catalog`) is the server store's table `p2.catalog:sessions`, one row per session keyed by its
+  address (`host(Session)`, decision "Documents and table rows can belong to a host"): everything about a session needed
+  while its worker is off (place, title, model and level, pin, archive, `/tree` branches), so a session's export,
+  import and delete carry it. A data directory with a `catalog.sqlite` from before is refused at start: `npm run
+  migrate-data` moves it (below). Clone copies the whole session directory
   while its worker is stopped (blobs hard-linked); fork copies only the source's files, through its worker
   (`SessionTransfer.copyFiles`, the kit's `copyFiles`), and seeds its history into a fresh store; a failed copy's
   directory is removed. Each change of a space is pushed by the worker, inside the method that made it, to the server's
@@ -369,7 +374,9 @@ p2 runs on Chord v2 (`packages/chord`, `docs/design.md` there); the port's notes
   `artifacts/`, `downloads/`) is refused at start: `npm run migrate-data` moves it (below).
 - **Migration** (`npm run migrate-data -- [--dry-run] [--data <dir>]`, `scripts/migrate-data.ts`): offline (refused
   while a server holds the data directory's lock, which it takes). The server's store is copied to `server/store.sqlite`
-  and verified (equal exports); each session is built in `sessions/.<id>.migrating/` from a copy of its old store:
+  and verified (equal exports); `catalog.sqlite` (schema 1 to 4) is written into that store's catalog table in one
+  transaction, read back from the store reopened and compared, then moved to `pre-catalog-backup/`
+  (`scripts/migrate-catalog.ts`; a table that holds rows already is not written again); each session is built in `sessions/.<id>.migrating/` from a copy of its old store:
   Durable's records replayed into `StoreStorage` in seq order (`scripts/migrate-durable.ts`: seqs renumbered in order,
   ids kept, the allocator past the old next id) and its artifacts (same version numbers), uploads and downloads (same
   ids, as keys; each file's time from the old file's modification time, through `Files`' `created` for imports) written

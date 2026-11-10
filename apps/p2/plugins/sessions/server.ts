@@ -23,8 +23,10 @@ import {
 	type JobError,
 	type Location,
 	literal,
+	mapShared,
 	nativeOf,
 	type Ref,
+	Session as SessionHost,
 	type SessionInit,
 	serveKeyed,
 	type Tx,
@@ -36,7 +38,15 @@ import { Server, serverOf, WorkerInitValues } from "@p2/app/v1/server";
 import { EnvManagers, EnvService } from "../envs/contract.ts";
 import { ModelConfig, ModelResources } from "../models/contract.ts";
 import { ChildStore } from "../subagents/contract.ts";
-import { CatalogDb } from "./catalog.ts";
+import {
+	automaticTitle,
+	BY_ACTIVITY,
+	CATALOG_WINDOW,
+	type SessionRow,
+	SessionRows,
+	sessionOf,
+	updateRow,
+} from "./catalog.ts";
 import {
 	ArchivedStarts,
 	Catalog,
@@ -248,36 +258,59 @@ export default defineFacet((host) => {
 	host.serve(
 		Catalog,
 		(_params, self) => {
-			const server = self.get(Server, {});
-			// The catalog's sessions: its database is this object's native, and every write sets the rows in the same
-			// method, before it answers.
-			const sessions = self.writable<Session[]>([]);
-			const db = self.open(
-				async () => {
-					const opened = new CatalogDb(server.info.value.dataDir);
-					sessions.set(opened.all());
-					return opened;
-				},
-				(opened) => opened.close(),
-			);
+			// The catalog's rows: a table of the server's store keyed by each session's address, its `sessions` a live
+			// query over it (re-run by every write, published before the write's answer).
+			const table = self.table(SessionRows);
+			const rows = self.query(table, BY_ACTIVITY, CATALOG_WINDOW);
+			const toSession = mapShared(sessionOf);
+			const read = async (id: string, ctx: Ctx): Promise<Session> => {
+				const row = await table.get({ session: SessionHost({ id }) }, ctx);
+				if (row === undefined) throw new Error("Session not found");
+				return sessionOf(row);
+			};
 			return {
-				sessions: deriveTyped(self, [sessions], ([value]) => value),
-				get: async ({ id }) => db.value.get(id),
-				create: async (input) => {
-					const session = db.value.create(input);
-					sessions.set(db.value.all());
-					return session;
+				sessions: deriveTyped(self, [rows], ([value]) => toSession(value)),
+				get: async ({ id }, ctx) => read(id, ctx),
+				create: async (input, ctx) => {
+					const id = input.id ?? randomUUID();
+					const now = Date.now();
+					const row = await self.tx(async (tx) => {
+						const key = { session: SessionHost({ id }) };
+						if ((await tx.get(table, key)) !== undefined) throw new Error("Session already exists");
+						const created: SessionRow = {
+							session: key.session,
+							cwd: input.cwd,
+							...(input.env === null || input.env === undefined ? {} : { env: input.env }),
+							title: input.title,
+							titleEdited: input.titleEdited ?? false,
+							createdAt: now,
+							updatedAt: now,
+							pinned: false,
+							model: input.model,
+							thinkingLevel: input.thinkingLevel,
+							main: 1,
+							branches: [],
+						};
+						tx.put(table, created);
+						return created;
+					}, ctx);
+					return sessionOf(row);
 				},
-				activity: async ({ id, timestamp, firstUserText }) => {
-					db.value.activity(id, timestamp, firstUserText);
-					sessions.set(db.value.all());
+				activity: async ({ id, timestamp, firstUserText }, ctx) => {
+					const title = automaticTitle(firstUserText);
+					await self.tx(async (tx) => {
+						const current = await tx.get(table, { session: SessionHost({ id }) });
+						if (current === undefined) return;
+						const updatedAt = Math.max(current.updatedAt, Math.floor(timestamp));
+						const retitled = title !== undefined && !current.titleEdited && current.title !== title;
+						// Nothing changed: nothing written, so the sessions are not published again.
+						if (updatedAt === current.updatedAt && !retitled) return;
+						tx.put(table, { ...current, updatedAt, ...(retitled ? { title } : {}) });
+					}, ctx);
 					return null;
 				},
-				update: async ({ id, ...change }) => {
-					const session = db.value.update(id, change);
-					sessions.set(db.value.all());
-					return session;
-				},
+				update: async ({ id, ...change }, ctx) =>
+					sessionOf(await self.tx((tx) => updateRow(tx, table, id, change, Date.now()), ctx)),
 			};
 		},
 		{ accepts: CATALOG_ACCEPTS },

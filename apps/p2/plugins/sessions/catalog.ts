@@ -1,165 +1,131 @@
-// SQLite session catalog (server). Durable owns transcripts; this holds what the sidebar needs without workers.
-import { randomUUID } from "node:crypto";
-import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import type { Session } from "./contract.ts";
+// The session catalog's rows (server): what the sidebar and the server need about each session while its worker is
+// off, as rows of the server's Chord store keyed by the session's address (decision "Documents and table rows can belong
+// to a host"), so a session's export, import and delete carry them. Durable owns transcripts.
+import { arr } from "@earendil-works/pi-schema";
+import {
+	columnBool,
+	columnInt,
+	columnOpt,
+	columnStr,
+	defineTable,
+	hostColumn,
+	jsonColumn,
+	ModelRefSchema,
+	query,
+	type RowOf,
+	Session as SessionHost,
+	type Table,
+	type TableOf,
+	type Tx,
+} from "@p2/app/v1";
+import { BranchSchema, type Session } from "./contract.ts";
+
+/** One row per session: its place, title, model and level, pin and archive, and its `/tree` branches. */
+export const SessionRows = defineTable("sessions", {
+	version: 1,
+	columns: {
+		session: hostColumn(SessionHost),
+		cwd: columnStr(),
+		env: columnOpt(columnStr()),
+		title: columnStr(),
+		/** An explicit title (given at creation or renamed): automatic titles never replace it (Pi Mobile's). */
+		titleEdited: columnBool(),
+		createdAt: columnInt(),
+		updatedAt: columnInt(),
+		archivedAt: columnOpt(columnInt()),
+		pinned: columnBool(),
+		model: jsonColumn(ModelRefSchema, { version: 1 }),
+		thinkingLevel: columnStr(),
+		/** The current main conversation: 1, or the `/tree` branch the session continues in (`docs/tree.md`). */
+		main: columnInt(),
+		branches: jsonColumn(arr(BranchSchema), { version: 1 }),
+	},
+	key: ["session"],
+});
+export type SessionTable = TableOf<typeof SessionRows>;
+export type SessionRow = SessionTable extends Table<infer C, readonly string[]> ? RowOf<C> : never;
+
+/** The sidebar's order: most recent activity first. */
+export const BY_ACTIVITY = query(SessionRows).orderBy((row) => row.updatedAt, "desc");
 
 /**
- * 3: `titleEdited` (Pi Mobile's): an explicit title (given at creation or renamed) is never replaced automatically.
- * 4: `main` and `branches`, the current main conversation and the `/tree` branches (`docs/tree.md`).
+ * The most rows the catalog keeps live (its `sessions` state): every session, archived ones included. A live query
+ * needs a bound; the catalog re-read every row on each write before it was a table, so this costs no more.
  */
-const SCHEMA_VERSION = 4;
+export const CATALOG_WINDOW = 100_000;
+
 /** An automatic title: the first user message, line breaks as spaces, its first 100 characters (as Pi Mobile). */
 const AUTO_TITLE = 100;
 
-export class CatalogDb {
-	readonly #db: DatabaseSync;
+/** A row as the contract's `Session`. */
+export function sessionOf(row: SessionRow): Session {
+	return {
+		id: row.session.params.id,
+		cwd: row.cwd,
+		env: row.env ?? null,
+		title: row.title,
+		createdAt: row.createdAt,
+		updatedAt: row.updatedAt,
+		archivedAt: row.archivedAt ?? null,
+		pinned: row.pinned,
+		model: row.model,
+		thinkingLevel: row.thinkingLevel,
+		main: row.main,
+		branches: row.branches,
+	};
+}
 
-	constructor(directory: string) {
-		this.#db = new DatabaseSync(join(directory, "catalog.sqlite"));
-		this.#db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
-		const version = Number(this.#db.prepare("PRAGMA user_version").get()?.user_version ?? 0);
-		if (version !== 0 && version !== 1 && version !== 2 && version !== 3 && version !== SCHEMA_VERSION) {
-			this.#db.close();
-			throw new Error(`Unsupported catalog schema: ${version}`);
-		}
-		this.#db.exec(`
-			CREATE TABLE IF NOT EXISTS sessions (
-				id TEXT PRIMARY KEY, cwd TEXT NOT NULL, env TEXT, title TEXT NOT NULL,
-				createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL, archivedAt INTEGER,
-				pinned INTEGER NOT NULL DEFAULT 0, model TEXT NOT NULL, thinkingLevel TEXT NOT NULL,
-				titleEdited INTEGER NOT NULL DEFAULT 0, main INTEGER NOT NULL DEFAULT 1,
-				branches TEXT NOT NULL DEFAULT '[]'
-			) STRICT;
-		`);
-		if (version === 1) this.#db.exec("ALTER TABLE sessions ADD COLUMN env TEXT;");
-		// Before the flag, any title other than the placeholder was explicit or already automatic: keep them all.
-		if (version === 1 || version === 2)
-			this.#db.exec(
-				"ALTER TABLE sessions ADD COLUMN titleEdited INTEGER NOT NULL DEFAULT 0; UPDATE sessions SET titleEdited=1 WHERE title<>'New session';",
-			);
-		if (version !== 0 && version < 4)
-			this.#db.exec(
-				"ALTER TABLE sessions ADD COLUMN main INTEGER NOT NULL DEFAULT 1; ALTER TABLE sessions ADD COLUMN branches TEXT NOT NULL DEFAULT '[]';",
-			);
-		this.#db.exec(`PRAGMA user_version=${SCHEMA_VERSION};`);
-	}
+/** `firstUserText` as an automatic title, or undefined when it gives none. */
+export function automaticTitle(firstUserText: string | undefined): string | undefined {
+	const title = firstUserText?.replace(/[\r\n]/g, " ").slice(0, AUTO_TITLE);
+	return title === "" ? undefined : title;
+}
 
-	#decode(row: Record<string, unknown>): Session {
-		return {
-			id: String(row.id),
-			cwd: String(row.cwd),
-			env: row.env === null ? null : String(row.env),
-			title: String(row.title),
-			createdAt: Number(row.createdAt),
-			updatedAt: Number(row.updatedAt),
-			archivedAt: row.archivedAt === null ? null : Number(row.archivedAt),
-			pinned: row.pinned === 1,
-			model: JSON.parse(String(row.model)) as Session["model"],
-			thinkingLevel: String(row.thinkingLevel),
-			main: Number(row.main),
-			branches: JSON.parse(String(row.branches)) as Session["branches"],
-		};
-	}
+/** The catalog's change of one row (`Catalog.update`). */
+export type CatalogChange = {
+	readonly title?: string;
+	readonly cwd?: string;
+	readonly env?: string | null;
+	readonly pinned?: boolean;
+	readonly archived?: boolean;
+	readonly model?: Session["model"];
+	readonly thinkingLevel?: string;
+	readonly main?: number;
+	readonly branches?: Session["branches"];
+};
 
-	all(): Session[] {
-		return this.#db
-			.prepare("SELECT * FROM sessions ORDER BY updatedAt DESC, id")
-			.all()
-			.map((row) => this.#decode(row));
-	}
-
-	get(id: string): Session {
-		const row = this.#db.prepare("SELECT * FROM sessions WHERE id=?").get(id);
-		if (!row) throw new Error("Session not found");
-		return this.#decode(row);
-	}
-
-	create(input: {
-		/** A chosen ID (a clone's or fork's); default a new one. */
-		id?: string;
-		env?: string | null;
-		cwd: string;
-		title: string;
-		/** The title was given (not the placeholder): automatic titles never replace it. */
-		titleEdited?: boolean;
-		model: Session["model"];
-		thinkingLevel: string;
-	}): Session {
-		const id = input.id ?? randomUUID();
-		const now = Date.now();
-		this.#db
-			.prepare(
-				"INSERT INTO sessions (id,cwd,env,title,titleEdited,createdAt,updatedAt,model,thinkingLevel) VALUES (?,?,?,?,?,?,?,?,?)",
-			)
-			.run(
-				id,
-				input.cwd,
-				input.env ?? null,
-				input.title,
-				Number(input.titleEdited ?? false),
-				now,
-				now,
-				JSON.stringify(input.model),
-				input.thinkingLevel,
-			);
-		return this.get(id);
-	}
-
-	update(
-		id: string,
-		change: {
-			title?: string;
-			cwd?: string;
-			env?: string | null;
-			pinned?: boolean;
-			archived?: boolean;
-			model?: Session["model"];
-			thinkingLevel?: string;
-			main?: number;
-			branches?: Session["branches"];
-		},
-	): Session {
-		const current = this.get(id);
-		const archivedAt =
-			change.archived === undefined
-				? current.archivedAt
-				: change.archived
-					? (current.archivedAt ?? Date.now())
-					: null;
-		// A rename is explicit; a new location counts as activity (Pi Mobile's setLocation).
-		const moved = change.cwd !== undefined || change.env !== undefined;
-		this.#db
-			.prepare(
-				"UPDATE sessions SET title=?,titleEdited=CASE WHEN ? THEN 1 ELSE titleEdited END,updatedAt=CASE WHEN ? THEN max(updatedAt,?) ELSE updatedAt END,pinned=?,archivedAt=?,model=?,thinkingLevel=?,cwd=?,env=?,main=?,branches=? WHERE id=?",
-			)
-			.run(
-				change.title ?? current.title,
-				Number(change.title !== undefined),
-				Number(moved),
-				Date.now(),
-				Number(change.pinned ?? current.pinned),
-				archivedAt,
-				JSON.stringify(change.model ?? current.model),
-				change.thinkingLevel ?? current.thinkingLevel,
-				change.cwd ?? current.cwd,
-				change.env === undefined ? (current.env ?? null) : change.env,
-				change.main ?? current.main,
-				JSON.stringify(change.branches ?? current.branches),
-				id,
-			);
-		return this.get(id);
-	}
-
-	activity(id: string, timestamp: number, firstUserText?: string): void {
-		const title = firstUserText?.replace(/[\r\n]/g, " ").slice(0, AUTO_TITLE);
-		this.#db
-			.prepare(`UPDATE sessions SET updatedAt=max(updatedAt,?),
-			title=CASE WHEN titleEdited=0 AND ?<>'' THEN ? ELSE title END WHERE id=?`)
-			.run(timestamp, title ?? "", title ?? "", id);
-	}
-
-	close(): void {
-		this.#db.close();
-	}
+/**
+ * Writes `change` to the row of session `id` in `tx` and returns the row as written; throws when there is none. A
+ * rename is explicit; a new location counts as activity (Pi Mobile's setLocation).
+ */
+export async function updateRow(
+	tx: Tx,
+	table: SessionTable,
+	id: string,
+	change: CatalogChange,
+	now: number,
+): Promise<SessionRow> {
+	const current = await tx.get(table, { session: SessionHost({ id }) });
+	if (current === undefined) throw new Error("Session not found");
+	const moved = change.cwd !== undefined || change.env !== undefined;
+	const archivedAt =
+		change.archived === undefined ? current.archivedAt : change.archived ? (current.archivedAt ?? now) : undefined;
+	const env = change.env === undefined ? current.env : (change.env ?? undefined);
+	const row: SessionRow = {
+		session: current.session,
+		cwd: change.cwd ?? current.cwd,
+		...(env === undefined ? {} : { env }),
+		title: change.title ?? current.title,
+		titleEdited: change.title !== undefined || current.titleEdited,
+		createdAt: current.createdAt,
+		updatedAt: moved ? Math.max(current.updatedAt, now) : current.updatedAt,
+		...(archivedAt === undefined ? {} : { archivedAt }),
+		pinned: change.pinned ?? current.pinned,
+		model: change.model ?? current.model,
+		thinkingLevel: change.thinkingLevel ?? current.thinkingLevel,
+		main: change.main ?? current.main,
+		branches: change.branches ?? current.branches,
+	};
+	tx.put(table, row);
+	return row;
 }

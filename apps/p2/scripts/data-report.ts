@@ -39,10 +39,7 @@ export type DataReport = {
 
 /** Reports the data directory `dataDir`. */
 export function dataReport(dataDir: string): DataReport {
-	const catalog = rows(
-		join(dataDir, "catalog.sqlite"),
-		"SELECT id,title,cwd,env,updatedAt,archivedAt FROM sessions ORDER BY id",
-	);
+	const catalog = catalogRows(dataDir);
 	const children = new Map(
 		rows(join(dataDir, "subagents.sqlite"), "SELECT session,value FROM children").map((row) => [
 			String(row.session),
@@ -117,6 +114,21 @@ function rows(path: string, sql: string): Row[] {
 }
 
 const located = (env: string | null, cwd: string): string => (env ? `${env}:${cwd}` : cwd);
+
+/**
+ * The catalog's rows, `id` first, in either layout: the server store's table (`p2.catalog:sessions`, keyed by the
+ * session's address, `session|<id>`) once p2 imported it, else `catalog.sqlite` as p2 kept it before.
+ */
+function catalogRows(dataDir: string): Row[] {
+	const columns = "title,cwd,env,updatedAt,archivedAt";
+	const stored = rows(
+		join(dataDir, "server", "store.sqlite"),
+		`SELECT substr(session, 9) AS id,${columns} FROM "p2.catalog:sessions" ORDER BY id`,
+	);
+	return stored.length > 0
+		? stored
+		: rows(join(dataDir, "catalog.sqlite"), `SELECT id,${columns} FROM sessions ORDER BY id`);
+}
 
 /**
  * The links' and the current guests' modes of every shared session. Version 1 of `shares.sqlite` (one session per
