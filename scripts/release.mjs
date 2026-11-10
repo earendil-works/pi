@@ -23,7 +23,6 @@
 import { execSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { findPackageDirectories } from "./package-workspaces.mjs";
 import { getPublicWorkspacePackages } from "./release-packages.mjs";
 import { hydrateModelCatalogBytes, updateModelCatalogPin } from "./update-model-catalog-pin.mjs";
 
@@ -209,8 +208,8 @@ function bumpOrSetVersion(target) {
 }
 
 function getChangelogs() {
-	return findPackageDirectories()
-		.map((directory) => join(directory, "CHANGELOG.md"))
+	return getPublicWorkspacePackages()
+		.map(({ directory }) => join(directory, "CHANGELOG.md"))
 		.filter((path) => existsSync(path));
 }
 

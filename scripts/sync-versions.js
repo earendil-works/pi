@@ -11,6 +11,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { findPackageDirectories } from "./package-workspaces.mjs";
+import { getPublicWorkspacePackages } from "./release-packages.mjs";
 
 const GENERATED_PACKAGE_SUFFIXES = [join("coding-agent", "install-lock")];
 
@@ -30,7 +31,9 @@ const workspacePackages = readManifests(
 // Apps pin the workspace packages exactly too; stale pins would make npm install them from the registry.
 const appRoot = join(dirname(packageRoot), "apps");
 const appPackages = existsSync(appRoot) ? readManifests(findPackageDirectories(appRoot)) : [];
-const publishedPackages = workspacePackages.filter((pkg) => pkg.data.private !== true);
+// Not a filter over workspacePackages: that walk also finds leftover build output, such as
+// packages/coding-agent/binaries/<platform>, which holds non-private copies of a package's manifest.
+const publishedPackages = readManifests(getPublicWorkspacePackages(packageRoot).map(({ directory }) => directory));
 const versionMap = new Map(publishedPackages.map((pkg) => [pkg.data.name, pkg.data.version]));
 
 console.log("Current versions:");
