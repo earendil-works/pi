@@ -303,11 +303,18 @@ describe("Antigravity native catalog", () => {
 		expect(found).toEqual({ id: "gemini-alias-agent", model: "MODEL_REAL_ENUM" });
 	});
 
-	it("exposes gemini-4-argon, claude-opus-5-5, and claude-sonnet-5-5 natively and prevents stale models-store entries from downgrading baseline limits", async () => {
+	it("exposes gemini-4-carbon, gemini-4-argon, claude-opus-5-5, and claude-sonnet-5-5 natively and prevents stale models-store entries from downgrading baseline limits", async () => {
 		const { models, modelsStore } = await setup("project-a");
+		const carbon = models.getModel("antigravity", "gemini-4-carbon")!;
 		const argon = models.getModel("antigravity", "gemini-4-argon")!;
 		const opus55 = models.getModel("antigravity", "claude-opus-5-5")!;
 		const sonnet55 = models.getModel("antigravity", "claude-sonnet-5-5")!;
+		expect(carbon).toMatchObject({
+			name: "Gemini 4 Carbon (Antigravity)",
+			contextWindow: 1048576,
+			maxTokens: 262144,
+			thinkingLevelMap: { low: "low", medium: "medium", high: "high" },
+		});
 		expect(argon).toMatchObject({
 			contextWindow: 1048576,
 			maxTokens: 65536,
@@ -324,6 +331,27 @@ describe("Antigravity native catalog", () => {
 			thinkingLevelMap: { low: "low", medium: "medium", high: "high" },
 		});
 
+		expect(await sentModel(models, "gemini-4-carbon", "low")).toMatchObject({
+			model: "gemini-4-carbon-low",
+			request: {
+				generationConfig: { maxOutputTokens: 262144 },
+				labels: { model_enum: "MODEL_PLACEHOLDER_M438" },
+			},
+		});
+		expect(await sentModel(models, "gemini-4-carbon", "medium")).toMatchObject({
+			model: "gemini-4-carbon-medium",
+			request: {
+				generationConfig: { maxOutputTokens: 262144 },
+				labels: { model_enum: "MODEL_PLACEHOLDER_M437" },
+			},
+		});
+		expect(await sentModel(models, "gemini-4-carbon", "high")).toMatchObject({
+			model: "gemini-4-carbon-high",
+			request: {
+				generationConfig: { maxOutputTokens: 262144 },
+				labels: { model_enum: "MODEL_PLACEHOLDER_M427" },
+			},
+		});
 		expect(await sentModel(models, "gemini-4-argon", "high")).toMatchObject({
 			model: "gemini-4-argon-high",
 			request: { labels: { model_enum: "MODEL_PLACEHOLDER_M417" } },
@@ -333,10 +361,14 @@ describe("Antigravity native catalog", () => {
 			request: { labels: { model_enum: "MODEL_PLACEHOLDER_M402" } },
 		});
 
-		// Simulate a stale models-store.json entry with 250k/64k limits for claude-opus-5-5
+		// Simulate stale models-store.json entries with smaller limits
 		await modelsStore.write("antigravity", {
 			checkedAt: Date.now(),
 			models: [
+				{
+					...carbon,
+					maxTokens: 65536,
+				},
 				{
 					...opus55,
 					contextWindow: 250000,
@@ -346,6 +378,10 @@ describe("Antigravity native catalog", () => {
 		});
 		const restored = await setup("project-a", modelsStore);
 		await restored.models.refresh({ allowNetwork: false });
+		expect(restored.models.getModel("antigravity", "gemini-4-carbon")).toMatchObject({
+			contextWindow: 1048576,
+			maxTokens: 262144,
+		});
 		expect(restored.models.getModel("antigravity", "claude-opus-5-5")).toMatchObject({
 			contextWindow: 1000000,
 			maxTokens: 128000,
@@ -457,7 +493,13 @@ describe("Antigravity native catalog", () => {
 		const m25 = restored.models.getModel("antigravity", "gemini-2.5-flash");
 		expect(m25?.name).toBe("Gemini 2.5 Flash (Antigravity)");
 
-		// Baseline models not present in the store (e.g. gemini-4-argon) are preserved
+		// Baseline models not present in the store (e.g. gemini-4-carbon, gemini-4-argon) are preserved
+		const carbon = restored.models.getModel("antigravity", "gemini-4-carbon");
+		expect(carbon).toBeDefined();
+		expect(carbon?.name).toBe("Gemini 4 Carbon (Antigravity)");
+		expect((carbon as any)?.antigravityModelEnums?.["gemini-4-carbon"]).toBe("MODEL_PLACEHOLDER_M437");
+		expect((carbon as any)?.antigravityModelEnums?.["gemini-4-carbon-high"]).toBe("MODEL_PLACEHOLDER_M427");
+		expect((carbon as any)?.antigravityModelEnums?.["gemini-4-carbon-low"]).toBe("MODEL_PLACEHOLDER_M438");
 		const argon = restored.models.getModel("antigravity", "gemini-4-argon");
 		expect(argon).toBeDefined();
 		expect(argon?.name).toBe("Gemini 4 Argon (Antigravity)");
@@ -489,6 +531,8 @@ describe("Antigravity native catalog", () => {
 		expect(isFamilyVersionMismatch("gemini-2.5-flash-lite", "Gemini 2.5 Flash")).toBe(true);
 		expect(isFamilyVersionMismatch("gemini-2.5-pro", "Gemini 2.5 Flash")).toBe(true);
 		expect(isFamilyVersionMismatch("gemini-4-argon", "Gemini 4 Flash")).toBe(true);
+		expect(isFamilyVersionMismatch("gemini-4-carbon", "Gemini 4 Argon")).toBe(true);
+		expect(isFamilyVersionMismatch("gemini-4-carbon", "Gemini 4 Flash")).toBe(true);
 
 		// Claude sub-family tier mismatches
 		expect(isFamilyVersionMismatch("claude-opus-5-5", "Claude Sonnet 5.5")).toBe(true);
@@ -510,6 +554,7 @@ describe("Antigravity native catalog", () => {
 		// Valid matches
 		expect(isFamilyVersionMismatch("gemini-2.5-flash", "Gemini 2.5 Flash")).toBe(false);
 		expect(isFamilyVersionMismatch("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite")).toBe(false);
+		expect(isFamilyVersionMismatch("gemini-4-carbon", "Gemini 4 Carbon")).toBe(false);
 		expect(isFamilyVersionMismatch("claude-opus-5-5", "Claude Opus 5.5")).toBe(false);
 		expect(isFamilyVersionMismatch("gpt-oss-120b", "GPT-OSS 120B")).toBe(false);
 
@@ -645,6 +690,9 @@ describe("Antigravity catalog retirement", () => {
 		"gemini-4-argon-low": { ...flash("New"), displayName: "Gemini 4 Argon (Low)" },
 		"gemini-4-argon-medium": { ...flash("New"), displayName: "Gemini 4 Argon (Medium)" },
 		"gemini-4-argon-high": { ...flash("New"), displayName: "Gemini 4 Argon (High)" },
+		"gemini-4-carbon-low": { ...flash("New"), displayName: "Gemini 4 Carbon (Low)" },
+		"gemini-4-carbon-medium": { ...flash("New"), displayName: "Gemini 4 Carbon (Medium)" },
+		"gemini-4-carbon-high": { ...flash("New"), displayName: "Gemini 4 Carbon (High)" },
 		"claude-opus-5-5-low": { ...flash(), displayName: "Claude Opus 5.5 (Low)" },
 		"claude-opus-5-5-high": { ...flash(), displayName: "Claude Opus 5.5 (High)" },
 		"claude-sonnet-5-5-low": { ...flash(), displayName: "Claude Sonnet 5.5 (Low)" },
@@ -659,6 +707,7 @@ describe("Antigravity catalog retirement", () => {
 			"gemini-3.5-flash",
 			"gemini-3.8-flash",
 			"gemini-4-argon",
+			"gemini-4-carbon",
 			"gpt-oss-120b",
 		]);
 	});
@@ -674,6 +723,7 @@ describe("Antigravity catalog retirement", () => {
 			"claude-sonnet-5-5",
 			"gemini-3.8-flash",
 			"gemini-4-argon",
+			"gemini-4-carbon",
 			"gpt-oss-120b",
 		]);
 	});

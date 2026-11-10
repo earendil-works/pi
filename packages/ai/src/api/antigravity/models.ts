@@ -34,6 +34,17 @@ export const PROVIDER_NAME = "Antigravity";
  * advertised by the backend for each model.
  */
 export const ANTIGRAVITY_ROUTING: Record<string, AntigravityRouting> = {
+	"gemini-4-carbon": {
+		off: "gemini-4-carbon-low",
+		routing: {
+			minimal: "gemini-4-carbon-low",
+			low: "gemini-4-carbon-low",
+			medium: "gemini-4-carbon-medium",
+			high: "gemini-4-carbon-high",
+			xhigh: "gemini-4-carbon-high",
+		},
+		defaultRequestId: "gemini-4-carbon-low",
+	},
 	"gemini-4-argon": {
 		off: "gemini-4-argon-low",
 		routing: {
@@ -163,6 +174,10 @@ export const ANTIGRAVITY_ROUTING: Record<string, AntigravityRouting> = {
  * Requesting more than these limits returns a 400 Bad Request from the API.
  */
 export const RUNTIME_MAX_OUTPUT_TOKENS: Record<string, number> = {
+	"gemini-4-carbon": 262144,
+	"gemini-4-carbon-low": 262144,
+	"gemini-4-carbon-medium": 262144,
+	"gemini-4-carbon-high": 262144,
 	"gemini-4-argon": 65536,
 	"gemini-4-argon-low": 65536,
 	"gemini-4-argon-medium": 65536,
@@ -215,6 +230,7 @@ export function getMaxOutputTokens(modelId: string, runtimeModel?: string): numb
 		if (runtimeModel.startsWith("claude-opus-5") || runtimeModel.startsWith("claude-sonnet-5")) return 128000;
 		if (runtimeModel.startsWith("claude-")) return 64000;
 		if (runtimeModel.startsWith("gpt-oss-")) return 32768;
+		if (runtimeModel.startsWith("gemini-4-carbon")) return 262144;
 		if (runtimeModel.startsWith("gemini-3.1-pro") || runtimeModel === "gemini-pro-agent") return 65535;
 		if (runtimeModel.startsWith("gemini-")) return 65536;
 	}
@@ -311,6 +327,16 @@ export const ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
 		maxTokens: 65536,
 	},
 	{
+		id: "gemini-4-carbon",
+		name: "Gemini 4 Carbon (Antigravity)",
+		reasoning: true,
+		thinkingLevelMap: thinkingLevelMaps.lowMediumHigh,
+		input: ["text", "image"],
+		cost: geminiProCost,
+		contextWindow: 1048576,
+		maxTokens: 262144,
+	},
+	{
 		id: "gemini-3.5-flash",
 		name: "Gemini 3.5 Flash (Antigravity)",
 		reasoning: true,
@@ -360,6 +386,11 @@ export function getAntigravityRequestModelId(modelId: string, effort: string | u
 export type { ThinkingWire };
 
 export const ANTIGRAVITY_MODEL_ENUM: Record<string, string> = {
+	// Gemini 4 Carbon
+	"gemini-4-carbon": "MODEL_PLACEHOLDER_M437",
+	"gemini-4-carbon-high": "MODEL_PLACEHOLDER_M427",
+	"gemini-4-carbon-medium": "MODEL_PLACEHOLDER_M437",
+	"gemini-4-carbon-low": "MODEL_PLACEHOLDER_M438",
 	// Gemini 4 Argon
 	"gemini-4-argon": "MODEL_PLACEHOLDER_M418",
 	"gemini-4-argon-high": "MODEL_PLACEHOLDER_M417",

@@ -333,10 +333,10 @@ function familyTemplate(publicId: string, fallbackModels: ProviderModelConfig[])
 	if (/^gemini-.*-flash/i.test(publicId)) {
 		return fallbackModels.find((model) => /^gemini-.*-flash/i.test(model.id));
 	}
-	if (/^gemini-.*-(?:pro|argon)/i.test(publicId)) {
+	if (/^gemini-.*-(?:pro|argon|carbon)/i.test(publicId)) {
 		return (
 			fallbackModels.find((model) => model.id === publicId) ??
-			fallbackModels.find((model) => /^gemini-.*-(?:pro|argon)/i.test(model.id))
+			fallbackModels.find((model) => /^gemini-.*-(?:pro|argon|carbon)/i.test(model.id))
 		);
 	}
 	if (publicId.startsWith("claude-opus")) {
@@ -379,12 +379,13 @@ function extractBrand(s: string): string {
 	return match ? match[1] : "";
 }
 
-function extractGeminiTier(s: string): "flash-lite" | "flash" | "pro" | "ultra" | "argon" | undefined {
+function extractGeminiTier(s: string): "flash-lite" | "flash" | "pro" | "ultra" | "argon" | "carbon" | undefined {
 	if (/\bflash[- ]?lite\b/i.test(s)) return "flash-lite";
 	if (/\bflash\b/i.test(s)) return "flash";
 	if (/\bpro\b/i.test(s)) return "pro";
 	if (/\bultra\b/i.test(s)) return "ultra";
 	if (/\bargon\b/i.test(s)) return "argon";
+	if (/\bcarbon\b/i.test(s)) return "carbon";
 	return undefined;
 }
 
@@ -502,7 +503,7 @@ function modelRank(id: string): [number, number] {
 	if (id.startsWith("claude-opus")) return [1, -claudeVer];
 	if (id.startsWith("claude-sonnet")) return [2, -claudeVer];
 	if (id.startsWith("claude-")) return [3, -claudeVer];
-	if (/^gemini-.*(?:pro|argon)/i.test(id)) return [4, -version];
+	if (/^gemini-.*(?:pro|argon|carbon)/i.test(id)) return [4, -version];
 	if (id.startsWith("gemini-")) return [5, -version];
 	if (id.startsWith("gpt-oss")) return [6, 0];
 	return [7, 0];

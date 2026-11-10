@@ -367,7 +367,7 @@ describe("native image registration", () => {
 	});
 });
 
-it.each(["gemini-2.5-flash", "gemini-3-flash", "gemini-3.8-flash", "gemini-4-argon"])(
+it.each(["gemini-2.5-flash", "gemini-3-flash", "gemini-3.8-flash", "gemini-4-argon", "gemini-4-carbon"])(
 	"encodes tool image responses for %s",
 	(id) => {
 		const chat = { ...antigravityProvider().getModels()[0], id };
