@@ -13,6 +13,7 @@ import {
 	OpenViewer,
 	openLayer,
 	openPanel,
+	routeHref,
 	SessionId,
 	Slots,
 	ToolActivities,
@@ -20,6 +21,7 @@ import {
 	useReadable,
 	useRoute,
 	useSidePanelShown,
+	ViewerHref,
 	type ViewerItem,
 } from "@p2/app/v1/web";
 import type { ReactNode } from "react";
@@ -44,35 +46,42 @@ function Content({ children }: { children?: ReactNode }) {
 	const top = route.layers.at(-1);
 	const item = viewerItem(top);
 	const open = (item: ViewerItem): void => openLayer(viewerLayer(item));
+	// Another tab opens the item's viewer over this conversation, without this tab's other layers and panels.
+	const href = (session: string, item: ViewerItem): string =>
+		routeHref({ session, conversation: route.conversation, layers: [viewerLayer(item)] });
+	const session = route.session;
 	return (
-		<SessionId.Provider value={route.session}>
+		<SessionId.Provider value={session}>
 			<OpenViewer.Provider value={open}>
-				{children}
-				{route.panel === PANEL && shown && (
-					<ArtifactPicker
-						artifacts={artifacts.toReversed()}
-						onOpen={(artifact) => open({ kind: "artifact", artifact })}
-						onClose={closePanel}
-					/>
-				)}
+				<ViewerHref.Provider value={(item) => (session ? href(session, item) : undefined)}>
+					{children}
+					{session && route.panel === PANEL && shown && (
+						<ArtifactPicker
+							artifacts={artifacts.toReversed()}
+							href={(artifact) => href(session, { kind: "artifact", artifact })}
+							onOpen={(artifact) => open({ kind: "artifact", artifact })}
+							onClose={closePanel}
+						/>
+					)}
 
-				{route.session &&
-					item &&
-					(item.kind === "artifact" ? (
-						<ArtifactPanel
-							key={top?.kind !== "drawer" ? top?.locator : undefined}
-							sessionId={route.session}
-							artifact={item.artifact}
-							onClose={closeLayers}
-						/>
-					) : (
-						<FilePanel
-							key={top?.kind !== "drawer" ? top?.locator : undefined}
-							sessionId={route.session}
-							file={item.file}
-							onClose={closeLayers}
-						/>
-					))}
+					{session &&
+						item &&
+						(item.kind === "artifact" ? (
+							<ArtifactPanel
+								key={top?.kind !== "drawer" ? top?.locator : undefined}
+								sessionId={session}
+								artifact={item.artifact}
+								onClose={closeLayers}
+							/>
+						) : (
+							<FilePanel
+								key={top?.kind !== "drawer" ? top?.locator : undefined}
+								sessionId={session}
+								file={item.file}
+								onClose={closeLayers}
+							/>
+						))}
+				</ViewerHref.Provider>
 			</OpenViewer.Provider>
 		</SessionId.Provider>
 	);

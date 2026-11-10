@@ -3,6 +3,7 @@
 // or the archived sessions, each restored on a click. Its search finds sessions and messages within the list only.
 import {
 	ErrorToast,
+	inPage,
 	MenuIcon,
 	NavAddIcon,
 	openPage,
@@ -16,7 +17,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import type { SearchResults } from "../../search/contract.ts";
 import { type ListEntry, type ListPageData, type NewTarget, WINDOWS } from "./model.ts";
-import { inPage, pageHref, type RowActions, SessionItem } from "./Row.tsx";
+import { pageHref, type RowActions, SessionItem } from "./Row.tsx";
 
 /** What the page says under its title: the window, or what the archive holds. */
 function subtitle(data: ListPageData | undefined): string {

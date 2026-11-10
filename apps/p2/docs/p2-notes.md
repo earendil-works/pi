@@ -510,6 +510,15 @@ sidebar rollup's or group's list (`page`). Only the top modal shows. The stack a
 tab's sessionStorage; URLs identify conversations (`/s/<id>` and `/s/<id>/c/<conversation>`) and section lists
 (`/list/<key>`), not modal payloads. Restored locators may be unavailable.
 
+- **Links that open in another tab.** In-app destinations are real `<a href>` links whose click handler is
+  `inPage(act)`: a plain primary click acts in the page; Cmd/Ctrl/Shift/Alt clicks, the middle button and "Open in
+  new tab" stay the browser's. Sidebar rows and list pages link `routePath`; artifact and sent-file cards and the
+  artifact list link `routeHref`, which adds the top layer when it is a viewer (`/s/<id>?viewer=<name>&at=<locator>`).
+  A page loading such an address starts with that viewer over the conversation (`pathRoute(path, search)`); the
+  address bar then shows the conversation's path again. Only viewers are linkable: they only show content, and every
+  content fetch is authorized by its route, so a link (also another site's) cannot open a sheet that acts. Not yet
+  links: the "Back to main conversation" and parent-session buttons, peer-message attributions, Discord's bound
+  sessions.
 - `push`: one step at the tap; `replace`: lateral changes and server/startup corrections. A correction can pass
   its captured route as `replace(next, expected)` so it cannot overwrite a later queued destination.
 - `close`: whole-modal ×/scrim/Escape, or a sheet/file parent; `reset`: workspace tabs, dropping visited files/commits.
@@ -1395,7 +1404,8 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   which replaces it; a sheet on phones). Dragging a docked side panel's left edge resizes it; every side panel shares
   that width, kept per browser (`p2-side-panel-width`; `useDragSize` in `src/web/drag-size.ts`, which the sidebar,
   workspace and terminal use too). The viewer is a named `Route.layers` entry (Back and sessionStorage restoration);
-  picking an artifact pushes a viewer above the list.
+  picking an artifact pushes a viewer above the list. Cards and list rows are links to the viewer (`ViewerHref`,
+  Browser navigation), so a modified or middle click opens it in another tab.
   HTML/SVG use a sandboxed iframe, Markdown/text render safely,
   sent files use the conservative file preview. Nothing opens from a server update. `test/p2/artifacts.test.ts`
   covers fake-provider publication, versions, independent index, reload/restart, CSP, HEAD, guest isolation and

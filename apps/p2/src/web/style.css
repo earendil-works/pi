@@ -1148,6 +1148,7 @@ textarea.input {
 	min-width: 0;
 	padding: var(--s2) var(--s3);
 	text-align: left;
+	text-decoration: none;
 }
 @media (hover: hover) {
 	.file-card-main:hover {

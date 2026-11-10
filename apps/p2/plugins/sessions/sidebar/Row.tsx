@@ -7,6 +7,7 @@ import {
 	BranchIcon,
 	type CommandTargetRow,
 	HOME,
+	inPage,
 	locationLabel,
 	NavDisclosureIcon,
 	NavEditIcon,
@@ -17,7 +18,7 @@ import {
 	shortPath,
 	useCommandTargetRow,
 } from "@p2/app/v1/web";
-import { type MouseEvent, type ReactNode, useEffect, useId, useState, useSyncExternalStore } from "react";
+import { type ReactNode, useEffect, useId, useState, useSyncExternalStore } from "react";
 import { GlyphIcon } from "../../glyphs/GlyphIcon.tsx";
 import type { Activity, GlyphSeed, SidebarRow } from "./model.ts";
 
@@ -112,16 +113,6 @@ export function folderName(env: string | null, cwd: string, segments: number): s
 	const base = path.slice(-segments).join("/") || cwd;
 	return env ? `${base} · ${env}` : base;
 }
-
-/**
- * A click handler for a link that acts in the page (`act`) on a plain primary click; any other click (a modifier, the
- * middle button, "Open in new tab") is the browser's, so the target opens in another tab or window.
- */
-export const inPage = (act: () => void) => (event: MouseEvent<HTMLAnchorElement>) => {
-	if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-	event.preventDefault();
-	act();
-};
 
 /** The address of a rollup's or a group's list page. */
 export const pageHref = (page: string): string => routePath({ ...HOME, page });
