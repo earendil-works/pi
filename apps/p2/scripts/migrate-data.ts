@@ -3,7 +3,8 @@
 //   npm run migrate-data -- [--dry-run] [--data <dir>]
 //
 // It refuses while a server holds the data directory's process lock, and holds it meanwhile. The server's Chord store
-// moves from `server.sqlite` to `server/store.sqlite`; each session's Durable records move from `sessions/<id>.sqlite`
+// moves from `server.sqlite` to `server/store.sqlite`; the session catalog from `catalog.sqlite` into that store
+// (`migrate-catalog.ts`, its old file to `pre-catalog-backup/`); each session's Durable records move from `sessions/<id>.sqlite`
 // into its store `sessions/<id>/store.sqlite` (`migrate-durable.ts`), its artifacts, uploads and download snapshots
 // into its `Files` (`migrate-files.ts`). A session is built in `sessions/.<id>.migrating/`, from a copy of its old
 // store, verified (every record read back through Durable's `Storage` from both and compared; every file byte for
@@ -26,6 +27,7 @@ import { HOST } from "../src/runtime/principals.ts";
 import { takeProcessLock } from "../src/runtime/process-lock.ts";
 import { Files } from "../src/runtime/session-files.ts";
 import { durableStorage } from "../src/runtime/session-store.ts";
+import { type CatalogMigration, migrateCatalog } from "./migrate-catalog.ts";
 import { convertDurable, type DurableCounts, verifyDurable } from "./migrate-durable.ts";
 import { type FileCounts, migrateFiles, verifyFiles } from "./migrate-files.ts";
 
@@ -35,6 +37,8 @@ export type MigrationSummary = {
 	readonly dryRun: boolean;
 	/** The server's store: moved now, moved before, or there was none. */
 	readonly server: "migrated" | "done" | "absent";
+	/** The session catalog: moved from `catalog.sqlite` into the server's store now, moved before, or there was none. */
+	readonly catalog: CatalogMigration;
 	readonly sessions: {
 		readonly migrated: readonly string[];
 		/** Finished by an earlier run. */
@@ -70,6 +74,7 @@ export async function migrateData(options: {
 		const work = dryRun ? mkdtempSync(join(tmpdir(), "p2-migrate-dry-run-")) : dataDir;
 		try {
 			const server = await migrateServer(dataDir, work, dryRun);
+			const catalog = await migrateCatalog(dataDir, work, dryRun);
 			const summary = {
 				migrated: [] as string[],
 				skipped: [] as string[],
@@ -95,7 +100,7 @@ export async function migrateData(options: {
 					summary.failed.push({ id, error: error instanceof Error ? error.message : String(error) });
 				}
 			}
-			return { dataDir, dryRun, server, sessions: summary, entries, documents, files, bytes };
+			return { dataDir, dryRun, server, catalog, sessions: summary, entries, documents, files, bytes };
 		} finally {
 			if (dryRun) rmSync(work, { recursive: true, force: true });
 		}

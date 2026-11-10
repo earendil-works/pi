@@ -183,7 +183,7 @@ const CatalogV3 = evolve(CatalogV2, (e) =>
 );
 
 /**
- * The session catalog (server, SQLite): every session, archived ones included. Host-internal. 4: a branch's label may
+ * The session catalog (server, the server store's table keyed by each session's address): every session, archived ones included. Host-internal. 4: a branch's label may
  * be null (the session title). The provider still serves 2 and 3 (its `accepts`).
  */
 export const Catalog = evolve(CatalogV3, (e) =>

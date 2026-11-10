@@ -48,16 +48,18 @@ export async function openHostStore(
 }
 
 /**
- * Refuses a data directory still in the layout before per-host stores (`server.sqlite`, `sessions/<id>.sqlite`): the
- * server would start on empty stores beside them. `npm run migrate-data` moves them.
+ * Refuses a data directory still in a layout before the current one: before per-host stores (`server.sqlite`,
+ * `sessions/<id>.sqlite`), or with its session catalog still in `catalog.sqlite`. The server would start on an empty
+ * store beside them. `npm run migrate-data` moves them.
  */
 export function assertMigrated(dataDir: string): void {
 	const sessions = join(dataDir, "sessions");
 	const old =
 		existsSync(join(dataDir, "server.sqlite")) ||
+		existsSync(join(dataDir, "catalog.sqlite")) ||
 		(existsSync(sessions) && readdirSync(sessions).some((name) => name.endsWith(".sqlite")));
 	if (old)
 		throw new Error(
-			`${dataDir} holds data in p2's old layout (server.sqlite, sessions/<id>.sqlite): stop p2 and run \`npm run migrate-data\``,
+			`${dataDir} holds data in p2's old layout (server.sqlite, catalog.sqlite or sessions/<id>.sqlite): stop p2 and run \`npm run migrate-data\``,
 		);
 }
