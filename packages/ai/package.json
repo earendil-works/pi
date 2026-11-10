@@ -19,6 +19,10 @@
 			"types": "./dist/models.d.ts",
 			"import": "./dist/models.js"
 		},
+		"./session-resources": {
+			"types": "./dist/session-resources.d.ts",
+			"import": "./dist/session-resources.js"
+		},
 		"./compat": {
 			"types": "./dist/compat.d.ts",
 			"import": "./dist/compat.js"

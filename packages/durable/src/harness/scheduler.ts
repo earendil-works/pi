@@ -46,6 +46,7 @@ import type {
 } from "../types.ts";
 import { agentHooks, DEFAULT_RESTART_LIMIT } from "./agent.ts";
 import { advanceRange, type ContextRange, rangeEntry, readContextFrom } from "./context.ts";
+import { providerSessionsByRuntime } from "./provider.ts";
 import { DURABLE_TELEMETRY_SCHEMA } from "./telemetry.ts";
 import type {
 	Agent,
@@ -296,6 +297,7 @@ interface ReservationPlan {
  * the memberships its task changes alter (`membershipKeys()`), so a walk that a pending commit would change waits.
  */
 export class TaskScheduler {
+	readonly providerSessionIds = new Set<string>();
 	readonly #telemetry: NonNullable<HarnessOptions["telemetry"]>;
 	readonly #activeMetric;
 	readonly #durationMetric;
@@ -2679,7 +2681,7 @@ export class TaskScheduler {
 		};
 		const settings = this.#settings;
 		const models = this.#models;
-		return {
+		const runtime: ErasedRuntime = {
 			taskId: invocation.taskId as TaskId<JsonValue>,
 			conversationId: invocation.conversationId,
 			signal: invocation.controller.signal,
@@ -2942,6 +2944,8 @@ export class TaskScheduler {
 				);
 			},
 		};
+		providerSessionsByRuntime.set(runtime, this.providerSessionIds);
+		return runtime;
 	}
 
 	/**
