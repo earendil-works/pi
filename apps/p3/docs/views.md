@@ -55,6 +55,10 @@ inside a pane:
   plugin manager can then disable what broke the page.
 - **The layout is a plugin:** sidebar, transcript and panel is the default layout plugin; another layout (or an agent
   arrangement) only places panes. A broken layout falls back to the default one.
+- **Layouts are apps (owner, 2026-11-10):** an app is a layout of views for one purpose (coding, the triage agent, a
+  game studio for the kids, a family planner), each a different view on its slice of the instance's sessions. The
+  person switches apps (an app switcher in the fixed bar); opening a thing shows its view inside the current app. No
+  layout belongs to a kind of thing.
 
 ## 4. Prebuilt and agent-made views
 
