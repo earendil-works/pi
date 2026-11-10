@@ -71,6 +71,11 @@
 			"types": "./dist/node/workers/index.d.ts",
 			"import": "./dist/node/workers/index.js"
 		},
+		"./compression": {
+			"source": "./src/node/compression.ts",
+			"types": "./dist/node/compression.d.ts",
+			"import": "./dist/node/compression.js"
+		},
 		"./workers/child": {
 			"source": "./src/node/workers/child.ts",
 			"types": "./dist/node/workers/child.d.ts",

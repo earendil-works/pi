@@ -235,7 +235,6 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
 - `withLinkedAbortSignal` lives in `src/host/ctx.ts` and moves next to `withAbortSignal` in `src/context` (pi
   first): a call's context linked to long-lived abort signals until the call settles, instead of `AbortSignal.any`,
   which keeps cleanup entries per call while its sources live before Node 24.16.0 (nodejs/node#62367). (Slice 4a.)
-- An export for `nodeCompression` (`src/node/compression.ts`; no subpath exports it yet). (Slice 4b.)
 
 ### The sync layer (not a slice; when Radius sync is built)
 

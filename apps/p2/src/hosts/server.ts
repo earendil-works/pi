@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isChordError, type PluginFacet, webSocketLink } from "@earendil-works/chord";
 import { filesFacet } from "@earendil-works/chord/app/files";
+import { nodeCompression } from "@earendil-works/chord/compression";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { RolloutResult } from "@earendil-works/chord/plugins";
 import { WebSocketServer } from "ws";
@@ -144,6 +145,9 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		address: Server(),
 		principal: SERVER,
 		store,
+		// JSON parts above 16 KiB this host originates (snapshots of the catalogs) go deflated: the WebSocket does not
+		// compress, and a tunnel carries them as they are.
+		compression: nodeCompression,
 		onError: (error) => {
 			if (isOwnerNotice(error)) processLogs.notice("server", hostErrorText(error));
 			console.error("p2 server:", error);
