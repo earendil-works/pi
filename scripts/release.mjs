@@ -7,7 +7,7 @@
  *   node scripts/release.mjs <x.y.z>
  *
  * Steps:
- * 1. Check for uncommitted changes
+ * 1. Check the npm version and for uncommitted changes
  * 2. Verify every public workspace package is registered on npm,
  *    pin the newest model catalog for Nix, and build with it
  * 3. Bump version via npm run version:xxx or set an explicit version
@@ -255,7 +255,18 @@ function addUnreleasedSection() {
 // Main flow
 console.log("\n=== Release Script ===\n");
 
-// 1. Check for uncommitted changes
+// 1. Check the npm version and for uncommitted changes
+// The release rewrites package-lock.json. npm 10 (bundled with Node 22) drops the `libc`
+// fields that tell npm which native packages are glibc and which are musl builds.
+console.log("Checking npm version...");
+const npmVersion = run("npm --version", { silent: true }).trim();
+if (Number(npmVersion.split(".")[0]) < 11) {
+	console.error(`Error: the release needs npm 11 or newer to write package-lock.json; found npm ${npmVersion}.`);
+	console.error("Run `npm install -g npm@11` or use a Node version that bundles npm 11 or newer.");
+	process.exit(1);
+}
+console.log(`  npm ${npmVersion}\n`);
+
 console.log("Checking for uncommitted changes...");
 const status = run("git status --porcelain", { silent: true });
 if (status && status.trim()) {
