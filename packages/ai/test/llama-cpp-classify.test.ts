@@ -379,9 +379,9 @@ describe("llama.cpp classifier", () => {
 	});
 
 	it("derives the server root from OpenAI-compatible base URLs", () => {
-		expect(llamaServerRoot("http://127.0.0.1:8080/v1/")).toBe("http://127.0.0.1:8080");
+		expect(llamaServerRoot("http://127.0.0.1:9931/v1/")).toBe("http://127.0.0.1:9931");
 		expect(llamaServerRoot("https://example.com/prefix/v1")).toBe("https://example.com/prefix");
-		expect(llamaServerRoot("http://127.0.0.1:8080")).toBe("http://127.0.0.1:8080");
+		expect(llamaServerRoot("http://127.0.0.1:9931")).toBe("http://127.0.0.1:9931");
 	});
 
 	it("computes TypeSafe's confidence and expected scores", () => {

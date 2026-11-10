@@ -82,7 +82,7 @@ spec-draft-backend-sampling = true
 Open PowerShell in the llama.cpp folder and run:
 
 ```powershell
-.\llama-server.exe --models-preset qwen3.8-27b.ini --host 127.0.0.1 --port 8080
+.\llama-server.exe --models-preset qwen3.8-27b.ini --host 127.0.0.1
 ```
 
 If the recipe requires a Hugging Face token, set `$env:HF_TOKEN` in the same PowerShell window before starting the router. On its first start, the router downloads the model files.
@@ -91,6 +91,6 @@ Use the [router health checks](llama-cpp.md#troubleshooting) to confirm that the
 
 ## Use the model in Pi
 
-Follow [Configure Pi](llama-cpp.md#configure-pi) and connect to `http://127.0.0.1:8080`. The preset section name is the model ID, so select `qwen3.8-27b` in `/model` for this example.
+Follow [Configure Pi](llama-cpp.md#configure-pi) and connect to `http://127.0.0.1:9931`. The preset section name is the model ID, so select `qwen3.8-27b` in `/model` for this example.
 
 NVIDIA recipe memory settings assume that only the selected model uses the GPU. If `/llama` shows other loaded models, unload them before using the recipe model.

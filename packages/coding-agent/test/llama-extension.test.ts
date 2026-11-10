@@ -54,7 +54,7 @@ describe("llama.cpp extension", () => {
 	});
 
 	it("normalizes management and inference URLs", () => {
-		expect(normalizeLlamaServerUrl("http://127.0.0.1:8080/v1/")).toBe("http://127.0.0.1:8080");
+		expect(normalizeLlamaServerUrl("http://127.0.0.1:9931/v1/")).toBe("http://127.0.0.1:9931");
 		expect(normalizeLlamaServerUrl("https://example.com/prefix/v1")).toBe("https://example.com/prefix");
 		expect(() => normalizeLlamaServerUrl("file:///tmp/llama")).toThrow("http or https");
 	});
