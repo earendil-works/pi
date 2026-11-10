@@ -204,7 +204,10 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 			dataDir,
 			fake,
 			entry: fileURLToPath(new URL("./worker.ts", import.meta.url)),
-			execArgv: ["--import", new URL("../source.ts", import.meta.url).href],
+			// A young generation of at most 2 MiB per semi-space (default 16): V8 grows it to 32 MiB committed during bursts
+			// and keeps most of it, about 26 MiB of every worker's private memory; the cap costs a few ms more minor GC
+			// per run (measured: 53 minor GCs instead of 14 over a start and a turn, 18-23 ms instead of 15, same CPU).
+			execArgv: ["--max-semi-space-size=2", "--import", new URL("../source.ts", import.meta.url).href],
 			env: {
 				...options.workerEnv,
 				...(dev ? { P2_DEV: "1", P2_DEV_MODULE_DIR: join(dataDir, "dev-modules") } : {}),

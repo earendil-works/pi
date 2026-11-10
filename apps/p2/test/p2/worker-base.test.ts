@@ -12,7 +12,7 @@ import { buildWorkerBase, type WorkerBase } from "../../../../packages/chord/src
 const WORKER = fileURLToPath(new URL("../../src/hosts/worker.ts", import.meta.url));
 const AI_SOURCE = fileURLToPath(new URL("../../../../packages/ai/src/", import.meta.url));
 // As the server forks session workers (src/hosts/server.ts).
-const EXEC_ARGV = ["--import", new URL("../../src/source.ts", import.meta.url).href];
+const EXEC_ARGV = ["--max-semi-space-size=2", "--import", new URL("../../src/source.ts", import.meta.url).href];
 
 /** Installed packages a fork must not load before a request needs them. */
 const LAZY_PACKAGES = ["@anthropic-ai/sdk", "openai", "@google/genai", "@mistralai/", "@aws-sdk/", "esbuild"];
@@ -61,16 +61,15 @@ function staticGraph(entry: string): { chunks: string[]; externals: string[] } {
 	return { chunks, externals: [...externals] };
 }
 
-/** The bundle's files that hold the module `source`: their inline source maps name it. */
+/** The bundle's modules that hold the module `source`: their source maps (`<name>.map` beside them) name it. */
 function chunksWith(source: string): string[] {
 	const dir = dirname(base.file());
-	return readdirSync(dir).filter((name) => {
-		const map = /sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/=]+)/.exec(
-			readFileSync(join(dir, name), "utf8"),
-		);
-		const { sources, sourceRoot } = JSON.parse(Buffer.from(map![1]!, "base64").toString()) as SourceMap;
-		return sources.some((path) => fileURLToPath(new URL(path, sourceRoot)) === source);
-	});
+	return readdirSync(dir)
+		.filter((name) => name.endsWith(".mjs"))
+		.filter((name) => {
+			const { sources, sourceRoot } = JSON.parse(readFileSync(join(dir, `${name}.map`), "utf8")) as SourceMap;
+			return sources.some((path) => fileURLToPath(new URL(path, sourceRoot)) === source);
+		});
 }
 
 type SourceMap = { readonly sources: readonly string[]; readonly sourceRoot: string };
