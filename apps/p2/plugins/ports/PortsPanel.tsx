@@ -1,6 +1,6 @@
 import type { Static } from "@earendil-works/pi-schema";
 import { BACKGROUND_CONTEXT, liveIn } from "@p2/app/v1";
-import { CopyButton, errorText, Sheet, useObject, useOptimisticCall, useReadable } from "@p2/app/v1/web";
+import { CopyButton, errorText, Sheet, Switch, useObject, useOptimisticCall, useReadable } from "@p2/app/v1/web";
 import { useState } from "react";
 import { type ForwardSchema, Ports } from "./contract.ts";
 
@@ -135,17 +135,14 @@ export function PortsPanel({ onClose }: { onClose: () => void }) {
 									</button>
 								</div>
 							) : (
-								<label className="check forward-public">
-									<input
-										type="checkbox"
+								<div className="forward-public">
+									<Switch
+										label="Public: no sign-in"
 										checked={forward.public ?? false}
 										disabled={pending}
-										onChange={(event) =>
-											event.target.checked ? setPublishing(forward.id) : setPublic(false)
-										}
+										onChange={(checked) => (checked ? setPublishing(forward.id) : setPublic(false))}
 									/>
-									Public: no sign-in
-								</label>
+								</div>
 							)}
 							{forward.publicUrl && (
 								<div className="inline-form forward-public">

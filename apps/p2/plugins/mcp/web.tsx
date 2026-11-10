@@ -7,9 +7,8 @@ import {
 	ChevronIcon,
 	closeLayers,
 	errorText,
-	openLayer,
+	SettingsSections,
 	Sheet,
-	Slots,
 	useComposerState,
 	useObject,
 	useOptimisticCall,
@@ -219,28 +218,15 @@ function PendingSignIn({ view, signIn, onCancel }: { view: OwnerView; signIn: Si
 	);
 }
 
-/** The sidebar footer's MCP button: any authenticated owner. */
-function McpButton() {
+/** The MCP sheet while it is open (any authenticated owner): a page of Settings. */
+function McpSheetSlot() {
 	const owner = useOwner();
 	const open = useSheet("mcp") !== undefined;
-	if (!owner) return null;
-	return (
-		<>
-			<button
-				type="button"
-				className="foot-button"
-				onClick={() => openLayer({ kind: "sheet", name: "mcp" }, { fromDrawer: true })}
-				title="MCP servers"
-			>
-				MCP
-			</button>
-			{open && <McpSheet onClose={closeLayers} />}
-		</>
-	);
+	return owner && open ? <McpSheet onClose={closeLayers} /> : null;
 }
 
 export default defineFacet((host) => {
 	contribute(host, "p2.web-mcp", (self) => {
-		self.contribute(Slots, { "sidebar-foot:mcp": McpButton });
+		self.contribute(SettingsSections, { mcp: { label: "MCP servers", order: 20, Sheet: McpSheetSlot } });
 	});
 });

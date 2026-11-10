@@ -212,7 +212,9 @@ Do not publish the owner link or paste it into logs. A valid saved remote cookie
 
 ## Configuration
 
-Edit `<P2_DATA_DIR>/settings.json` as a file; there is no Settings editor UI. Valid changes hot-reload without a
+Edit `<P2_DATA_DIR>/settings.json` as a file, or in the Settings window (the gear beside the sidebar's theme switch,
+owner only), which saves each change to the file at once. The window also holds Providers, MCP servers,
+Environments, Ports, Devices, Discord, Voice and Logs. Valid changes hot-reload without a
 restart, and in-flight requests keep their configuration. Set the default model and thinking level with
 **Make default for new sessions** in the model picker. `ownerName` (1 to 40 characters, no control characters, `<`
 or `>`; default "Owner") is the name your messages carry from then on; messages already written keep theirs.

@@ -278,7 +278,6 @@ export const Drawer = memo(function Drawer({
 	onSearch,
 	onRestore,
 	head,
-	footer,
 	sessions,
 	activeId,
 	conversationId,
@@ -289,9 +288,7 @@ export const Drawer = memo(function Drawer({
 	onNew,
 	onNewIn,
 	onCollapse,
-	onProviders,
-	onEnvs,
-	onOwnerLink,
+	actions,
 	guest,
 	sandboxes,
 }: {
@@ -300,7 +297,6 @@ export const Drawer = memo(function Drawer({
 	onRestore: (id: string, conversationId?: number) => void;
 	/** Entries above the folders (plugins' `drawer-head` slots), shown while the list is neither searched nor archived. */
 	head?: ReactNode;
-	footer?: ReactNode;
 	sessions: SessionSummary[];
 	activeId?: string;
 	conversationId: number;
@@ -314,9 +310,8 @@ export const Drawer = memo(function Drawer({
 	/** Starts a new session in a sidebar folder's location; absent: folders have no "+". */
 	onNewIn?: (env: string | null, cwd: string) => void;
 	onCollapse: () => void;
-	onProviders: () => void;
-	onEnvs: () => void;
-	onOwnerLink: () => void;
+	/** Icon buttons before the theme switch at the footer's end (the owner's), e.g. the Settings gear. */
+	actions?: ReactNode;
 	guest?: Grant;
 	/** Environments that are sandboxes (the owner's view): their groups show a lock. */
 	sandboxes?: ReadonlySet<string>;
@@ -528,20 +523,8 @@ export const Drawer = memo(function Drawer({
 				>
 					Archived
 				</button>
-				{footer ?? (
-					<>
-						<button type="button" className="foot-button" onClick={onProviders}>
-							Providers
-						</button>
-						<button type="button" className="foot-button" onClick={onEnvs} title="Remote environments">
-							Envs
-						</button>
-						<button type="button" className="foot-button" onClick={onOwnerLink} title="Sign in another device">
-							Devices
-						</button>
-					</>
-				)}
 				<span className="spacer" />
+				{actions}
 				<ThemeButton />
 			</div>
 		</nav>

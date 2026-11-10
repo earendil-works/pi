@@ -3,7 +3,6 @@
 
 import { Access, BACKGROUND_CONTEXT, contribute, defineFacet, type HeldIn, keptIn, liveIn, whenLive } from "@p2/app/v1";
 import {
-	ChevronIcon,
 	closeLayers,
 	conversationRoute,
 	Drawer,
@@ -12,7 +11,6 @@ import {
 	openLayer,
 	rememberMains,
 	type SessionSummary,
-	Slot,
 	SlotList,
 	Slots,
 	toggleSidebar,
@@ -28,7 +26,7 @@ import {
 	useRoute,
 	useSheet,
 } from "@p2/app/v1/web";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Envs } from "../envs/contract.ts";
 import { directoryPickerLayer } from "../envs/contract.web.tsx";
 import { Search, SessionReads } from "../search/contract.ts";
@@ -47,62 +45,10 @@ const subscribeVisibility = (listener: () => void) => {
 /** Whether the page is shown (not a background tab or a hidden app). */
 const usePageVisible = () => useSyncExternalStore(subscribeVisibility, () => document.visibilityState === "visible");
 
-/**
- * The footer's owner entries, in an explicit order, behind one "More" button whose menu opens upwards: one row of
- * buttons no longer fits them. The entries stay mounted while the menu is closed, because each renders the sheet it
- * opens (through a portal, so the hidden menu does not hide it).
- */
-function FooterMenu() {
-	const [open, setOpen] = useState(false);
-	const menu = useRef<HTMLDivElement>(null);
-	useEffect(() => {
-		if (!open) return;
-		const outside = (event: PointerEvent) => {
-			if (!menu.current?.contains(event.target as Node)) setOpen(false);
-		};
-		const onKey = (event: KeyboardEvent) => {
-			if (event.key === "Escape") setOpen(false);
-		};
-		document.addEventListener("pointerdown", outside);
-		document.addEventListener("keydown", onKey);
-		return () => {
-			document.removeEventListener("pointerdown", outside);
-			document.removeEventListener("keydown", onKey);
-		};
-	}, [open]);
-	return (
-		<div className="foot-menu" ref={menu}>
-			<button
-				type="button"
-				className={`foot-button ${open ? "on" : ""}`}
-				aria-haspopup="true"
-				aria-expanded={open}
-				onClick={() => setOpen(!open)}
-			>
-				More
-				<span className="foot-menu-chevron">
-					<ChevronIcon size={14} />
-				</span>
-			</button>
-			{/* An entry's click opens its sheet, then closes the menu. */}
-			{/* biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: the entries are buttons; this only notices their clicks. */}
-			<div className="foot-menu-list" hidden={!open} onClick={() => setOpen(false)}>
-				<Slot name="sidebar-foot:providers" />
-				<Slot name="sidebar-foot:mcp" />
-				<Slot name="sidebar-foot:envs" />
-				<Slot name="sidebar-foot:devices" />
-				<Slot name="sidebar-foot:ports" />
-				<Slot name="sidebar-foot:discord" />
-				<Slot name="sidebar-foot:voice" />
-				<Slot name="sidebar-foot:logs" />
-			</div>
-		</div>
-	);
-}
-
-const footer = <FooterMenu />;
 /** Entries above the folders, e.g. the Familiar's. */
 const head = <SlotList prefix="drawer-head" />;
+/** Icon buttons at the footer's end, before the theme switch (`sidebar-actions:<name>`, e.g. the Settings gear). */
+const actions = <SlotList prefix="sidebar-actions" />;
 
 /** What a row says about a lifecycle operation (`Sessions.operations`), by kind: running, and failed. */
 const OPERATION_LABELS: Record<Operation["kind"], { running: string; failed: string }> = {
@@ -330,10 +276,7 @@ function Sidebar() {
 				onSearch={search ? onSearch : undefined}
 				onRestore={onRestore}
 				head={head}
-				footer={footer}
-				onProviders={() => openLayer({ kind: "sheet", name: "providers" }, { fromDrawer: true })}
-				onEnvs={() => openLayer({ kind: "sheet", name: "envs" }, { fromDrawer: true })}
-				onOwnerLink={() => openLayer({ kind: "sheet", name: "devices" }, { fromDrawer: true })}
+				actions={actions}
 			/>
 			{renamed && branch && (
 				<BranchSheet

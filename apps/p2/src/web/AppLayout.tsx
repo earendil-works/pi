@@ -4,6 +4,7 @@ import { useComposerState } from "./composer-state.tsx";
 import { useDragSize } from "./drag-size.ts";
 import { useDrawerSwipe } from "./drawer-swipe.ts";
 import { OwnerNotices } from "./OwnerNotices.tsx";
+import { SettingsSectionSheets } from "./SettingsNav.tsx";
 import { useSidebarCollapsed } from "./sidebar.ts";
 
 export function AppLayout() {
@@ -85,6 +86,7 @@ export function AppLayout() {
 			</main>
 			<div id="side-dock" className="side-dock" />
 			<Slot name="workspace-panel" />
+			<SettingsSectionSheets />
 		</div>
 	);
 }

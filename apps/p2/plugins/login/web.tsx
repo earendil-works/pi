@@ -6,10 +6,9 @@ import {
 	CheckIcon,
 	ChevronIcon,
 	closeLayers,
-	openLayer,
 	SearchIcon,
+	SettingsSections,
 	Sheet,
-	Slots,
 	useComposerState,
 	useHost,
 	useNavigation,
@@ -364,27 +363,15 @@ function ProvidersSheet({ onClose }: { onClose: () => void }) {
 	);
 }
 
-/** The sidebar footer's Providers button: any authenticated owner. */
-function ProvidersButton() {
+/** The Providers sheet while it is open (any authenticated owner): on its own, or as a page of Settings. */
+function ProvidersSheetSlot() {
 	const owner = useOwner();
 	const open = useSheet("providers") !== undefined;
-	if (!owner) return null;
-	return (
-		<>
-			<button
-				type="button"
-				className="foot-button"
-				onClick={() => openLayer({ kind: "sheet", name: "providers" }, { fromDrawer: true })}
-			>
-				Providers
-			</button>
-			{open && <ProvidersSheet onClose={closeLayers} />}
-		</>
-	);
+	return owner && open ? <ProvidersSheet onClose={closeLayers} /> : null;
 }
 
 export default defineFacet((host) => {
 	contribute(host, "p2.web-login", (self) => {
-		self.contribute(Slots, { "sidebar-foot:providers": ProvidersButton });
+		self.contribute(SettingsSections, { providers: { label: "Providers", order: 10, Sheet: ProvidersSheetSlot } });
 	});
 });

@@ -102,7 +102,7 @@ verifying an agent's files on their own before committing. Node 24: `~/node-v24.
   extension switches, input entries, settings, logs, fetch).
 - **Plugins**: chat, chat-mode, sessions, familiar (the session above the others), subagents, agent (one-shot agents),
   codemode, cache-warming, coding-tools, prompt, models, login, search, status, drafts, files, send-file, artifacts,
-  workspace, file-index, terminals, envs, mcp, ports, radius, sharing, devices, proxy-marker, logs, dev-tools,
+  workspace, file-index, terminals, envs, mcp, ports, radius, sharing, devices, settings, proxy-marker, logs, dev-tools,
   powershell, web-shell, projects. Before writing one, read Chord's
   tutorial (`packages/chord/docs/tutorial/`) and plugin guide (`packages/chord/docs/plugin-authoring.md`), then an
   existing p2 plugin of the same shape.

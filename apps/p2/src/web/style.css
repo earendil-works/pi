@@ -3726,3 +3726,17 @@ button.history-edge:disabled {
 		min-width: var(--control);
 	}
 }
+
+/* A setting that applies at once (Switch.tsx): its label, and Elanor's switch at the row's end. */
+.switch-row {
+	display: flex;
+	align-items: center;
+	gap: var(--s3);
+	min-height: var(--row);
+	font-size: var(--fs-sm);
+	cursor: pointer;
+}
+.switch-label {
+	flex: 1;
+	min-width: 0;
+}
