@@ -2,9 +2,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added Ling 3.2 Flash, Ling 3.1 Flash, and Ling 3.0 Flash to the `ant-ling` provider. Ling 3.2 Flash accepts image input. All three use the documented `thinking.type` on/off toggle, exposed as the `off` and `high` thinking levels
+
 ### Fixed
 
 - Fixed Anthropic OAuth requests reporting an outdated Claude Code version.
+
+### Removed
+
+- Removed the deprecated `Ring-2.6-1T`, `Ling-2.6-flash`, and `Ling-2.6-1T` models from the `ant-ling` provider. Configs and model lists that reference these IDs no longer resolve; switch to the Ling 3.x models added below
+- Removed the `ant-ling` `thinkingFormat` value. Custom models that explicitly set it must switch to `deepseek`; custom models with an Ant Ling base URL are now auto-detected as `deepseek`
 
 ## [1.5.1] - 2026-11-09
 

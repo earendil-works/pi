@@ -1,36 +1,65 @@
-import type { Model, OpenAICompletionsCompat } from "../../src/types.ts";
-import { defineProvider, mergeThinking } from "../define.ts";
+import type { Model, ModelInputModality, ThinkingLevelMap } from "../../src/types.ts";
+import { defineProvider } from "../define.ts";
 
-const COMPAT: OpenAICompletionsCompat = {
-	supportsStore: false,
-	supportsDeveloperRole: false,
-	supportsReasoningEffort: false,
-	maxTokensField: "max_tokens",
-	supportsLongCacheRetention: false,
+// Ling 3.x exposes a thinking on/off toggle, not effort levels.
+const THINKING_LEVELS: ThinkingLevelMap = {
+	off: "off",
+	minimal: null,
+	low: null,
+	medium: null,
+	high: "high",
+	xhigh: null,
+	max: null,
 };
 
-function model(id: string, name: string, reasoning: boolean, cost: Model<"openai-completions">["cost"]) {
+function model(
+	id: string,
+	name: string,
+	cost: Model<"openai-completions">["cost"],
+	contextWindow: number,
+	maxTokens: number,
+	input: ModelInputModality[] = ["text"],
+) {
 	return {
 		id,
 		name,
 		api: "openai-completions",
 		baseUrl: "https://api.ant-ling.com/v1",
 		provider: "ant-ling",
-		reasoning,
-		input: ["text"],
+		reasoning: true,
+		input,
 		cost,
-		contextWindow: 262144,
-		maxTokens: 65536,
-		compat: reasoning ? { ...COMPAT, thinkingFormat: "ant-ling" } : COMPAT,
+		contextWindow,
+		maxTokens,
+		thinkingLevelMap: THINKING_LEVELS,
 	} satisfies Model<"openai-completions">;
 }
 
 export default defineProvider({
 	id: "ant-ling",
 	models: () => [
-		model("Ling-2.6-flash", "Ling 2.6 Flash", false, { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0 }),
-		model("Ling-2.6-1T", "Ling 2.6 1T", false, { input: 0.06, output: 0.25, cacheRead: 0, cacheWrite: 0 }),
-		model("Ring-2.6-1T", "Ring 2.6 1T", true, { input: 0.06, output: 0.25, cacheRead: 0, cacheWrite: 0 }),
+		model(
+			"Ling-3.2-flash",
+			"Ling 3.2 Flash",
+			{ input: 0.075, output: 0.225, cacheRead: 0.015, cacheWrite: 0 },
+			1_000_000,
+			262_144,
+			["text", "image"],
+		),
+		model(
+			"Ling-3.1-flash",
+			"Ling 3.1 Flash",
+			{ input: 0.075, output: 0.225, cacheRead: 0.015, cacheWrite: 0 },
+			1_000_000,
+			262_144,
+		),
+		model(
+			"Ling-3.0-flash",
+			"Ling 3.0 Flash",
+			{ input: 0.021, output: 0.063, cacheRead: 0.0042, cacheWrite: 0 },
+			262_144,
+			32_768,
+		),
 	],
 	compat: {
 		"openai-completions": {
@@ -38,15 +67,9 @@ export default defineProvider({
 			supportsDeveloperRole: false,
 			supportsReasoningEffort: false,
 			maxTokensField: "max_tokens",
-			thinkingFormat: "ant-ling",
+			thinkingFormat: "deepseek",
 			supportsStrictMode: true,
 			supportsLongCacheRetention: false,
 		},
-	},
-	finalize: (model) => {
-		// Ring reasons by default. Only high/xhigh have documented explicit effort controls.
-		if (model.reasoning) {
-			mergeThinking(model, { off: null, minimal: null, low: null, medium: null, high: "high", xhigh: "xhigh" });
-		}
 	},
 });

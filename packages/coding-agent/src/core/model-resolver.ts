@@ -19,7 +19,7 @@ import type { ModelRuntime } from "./model-runtime.ts";
 /** Default chat model IDs for providers with built-in chat models. */
 export const defaultModelPerProvider: Partial<Record<KnownProvider, string>> = {
 	"amazon-bedrock": "us.anthropic.claude-opus-5-5",
-	"ant-ling": "Ring-2.6-1T",
+	"ant-ling": "Ling-3.1-flash",
 	anthropic: "claude-opus-5-5",
 	openai: "gpt-6.1-sol",
 	azure: "gpt-6.1-sol",

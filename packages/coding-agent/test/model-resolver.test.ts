@@ -708,7 +708,7 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider.minimax).toBe("MiniMax-M3");
 		expect(defaultModelPerProvider["minimax-cn"]).toBe("MiniMax-M3");
 		expect(defaultModelPerProvider.cerebras).toBe("gpt-oss-120b");
-		expect(defaultModelPerProvider["ant-ling"]).toBe("Ring-2.6-1T");
+		expect(defaultModelPerProvider["ant-ling"]).toBe("Ling-3.1-flash");
 	});
 
 	test("built-in chat providers have defaults in their generated catalogs", () => {

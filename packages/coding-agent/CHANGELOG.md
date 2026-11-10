@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The default model for the `ant-ling` provider is now Ling 3.1 Flash (`Ling-3.1-flash`) instead of the removed Ring 2.6 1T (`Ring-2.6-1T`)
+
 ## [1.5.1] - 2026-11-09
 
 ### New Features
