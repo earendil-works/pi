@@ -8,7 +8,6 @@
 		"packages/chord/test/examples/61-tutorial",
 		"packages/coding-agent/examples/extensions/with-deps",
 		"packages/coding-agent/examples/extensions/custom-provider-anthropic",
-		"packages/coding-agent/examples/extensions/custom-provider-gitlab-duo",
 		"packages/coding-agent/examples/extensions/gondolin"
 	],
 	"scripts": {
