@@ -421,6 +421,14 @@ export function navigate(next: Partial<Route>, options: { replace?: boolean } = 
 	else void nav.closeThenPush(() => destination);
 }
 
+/**
+ * A sidebar rollup's or group's list in the main area (`Route.page`). As opening a conversation, it closes the phone drawer
+ * and modal layers; Back returns to where the reader was.
+ */
+export function openPage(page: string): void {
+	void getNavigation().closeThenPush(() => ({ ...HOME, page }));
+}
+
 /** Named plugin modal: locators are small serialized values, not component state. */
 export function openLayer(layer: Layer, options: { fromDrawer?: boolean } = {}): void {
 	const nav = getNavigation();

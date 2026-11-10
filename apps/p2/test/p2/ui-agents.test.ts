@@ -152,14 +152,19 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 		await browser.wait(`document.querySelector('.subagent-stored')?.getAttribute('aria-expanded')==='true'`);
 		assert.equal(await browser.evaluate(text(".subagent-stored .session-title")), "1 archived");
 		assert.equal(
-			await browser.evaluate(`document.querySelectorAll('.subagent-row:not(.subagent-stored)').length`),
+			await browser.evaluate(
+				`document.querySelectorAll('.sidebar-section[data-key=recent] .subagent-row:not(.subagent-stored)').length`,
+			),
 			1,
 		);
 		await browser.click(".subagent-bar .text-action");
 		await until(list.children, (value) => !value?.[session]?.find((child) => child.kind !== "agent")?.archived);
 		await browser.wait(`document.querySelector('.subagent-bar .text-action')?.textContent==='Archive'`);
 		await browser.wait(`document.querySelector('.subagent-stored')===null`);
-		assert.equal(await browser.evaluate(`document.querySelectorAll('.subagent-row').length`), 1);
+		assert.equal(
+			await browser.evaluate(`document.querySelectorAll('.sidebar-section[data-key=recent] .subagent-row').length`),
+			1,
+		);
 	});
 
 	// Pi Mobile 24e3fccdd: a subagent spawned with its own cwd shows it in its bar and spawn card, and its workspace

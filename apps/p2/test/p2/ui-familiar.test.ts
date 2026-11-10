@@ -1,5 +1,5 @@
-// The Familiar's drawer entry (plugins/familiar/web.tsx): above the folders for the owner, opening its session (made on
-// the first tap), which is then listed there and not in its folder.
+// The Familiar's sidebar entry (plugins/familiar/web.tsx): above the rollups for the owner, opening its session (made on
+// the first tap), which is then listed there and not in any rollup.
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { after, before, describe, it } from "node:test";
@@ -27,17 +27,17 @@ describe("the Familiar's drawer entry", { skip: !browserTests }, () => {
 		await fixture?.close();
 	});
 
-	it("sits above the folders, makes and opens its session, which leaves its folder", async () => {
+	it("sits above the rollups, makes and opens its session, which leaves the rollups", async () => {
 		const owner = fixture.browser();
 		const sessions = await holdIn(owner, Sessions, {}, "owner");
 		await sessions.create({ cwd: fixture.workspace, title: "Ordinary" }, BACKGROUND_CONTEXT);
 		await browser.metrics(1280, 900);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
 		await browser.wait(`document.querySelector('.familiar-entry') && !document.querySelector('.offline')`);
-		// First in the list: before every folder.
+		// First in the list: before every rollup.
 		assert.equal(
 			await browser.evaluate<boolean>(
-				`document.querySelector('.session-scroll').firstElementChild.classList.contains('familiar-group')`,
+				`Boolean(document.querySelector('.session-scroll .familiar-group').compareDocumentPosition(document.querySelector('.sidebar-nav')) & Node.DOCUMENT_POSITION_FOLLOWING)`,
 			),
 			true,
 		);
@@ -46,9 +46,9 @@ describe("the Familiar's drawer entry", { skip: !browserTests }, () => {
 		const id = await until(familiar.session, (value) => typeof value === "string");
 		await browser.wait(`location.pathname.startsWith('/s/${id}')`);
 		await browser.wait(`document.querySelector('.familiar-entry.active')`);
-		// Its row is the entry: no folder lists it.
+		// Its row is the entry: no rollup lists it.
 		await browser.wait(
-			`[...document.querySelectorAll('.group .session-main:not(.familiar-entry) .session-title')].map(e=>e.textContent).join()==='Ordinary'`,
+			`[...new Set([...document.querySelectorAll('.sidebar-nav .session-main .session-title')].map(e=>e.textContent))].join()==='Ordinary'`,
 		);
 		if (process.env.P2_SCREENSHOT) {
 			const { data } = (await browser.call("Page.captureScreenshot", { format: "png" })) as { data: string };

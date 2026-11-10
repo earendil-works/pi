@@ -1,9 +1,8 @@
-// The Familiar's entry at the top of the owner's drawer, above the folders: opens its session, making it on first use.
-// The drawer lists its session here only, not in its folder.
+// The Familiar's entry at the top of the owner's sidebar, above the rollups: opens its session, making it on first use.
+// The sidebar lists its session here only, not in any rollup.
 import { BACKGROUND_CONTEXT, contribute, defineFacet, keptIn, liveIn } from "@p2/app/v1";
 import {
 	navigate,
-	SessionDot,
 	Slots,
 	SparkIcon,
 	useComposerState,
@@ -14,7 +13,7 @@ import {
 	useRoute,
 } from "@p2/app/v1/web";
 import { useContext, useEffect, useState } from "react";
-import { DrawerRowsContext } from "../sessions/contract.web.tsx";
+import { DrawerRowsContext, SessionDot } from "../sessions/contract.web.tsx";
 import { FAMILIAR_TITLE, Familiar } from "./contract.ts";
 import "./style.css";
 
@@ -25,8 +24,8 @@ function FamiliarEntry() {
 function OwnerEntry() {
 	const held = useObject(Familiar, {});
 	const familiar = liveIn(held, "owner");
-	// As the server last said: while the connection is down or coming back, its row stays out of its folder, as the
-	// drawer's rows stay.
+	// As the server last said: while the connection is down or coming back, its row stays out of the rollups, as the
+	// sidebar's rows stay.
 	const session = useReadable(keptIn(held, "owner")?.session) ?? null;
 	const { sessions, listApart } = useContext(DrawerRowsContext);
 	const row = sessions.find((each) => each.id === session);

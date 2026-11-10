@@ -53,7 +53,7 @@ export function AppLayout() {
 			/>
 			<main
 				ref={swipe.main}
-				className={`main ${draggingFiles ? "dragging-files" : ""} ${route.session ? "" : "new-session-view"}`}
+				className={`main ${draggingFiles ? "dragging-files" : ""} ${route.session || route.page !== undefined ? "" : "new-session-view"}`}
 				onDragEnter={(event) => {
 					if (!canWrite || ![...event.dataTransfer.items].some((item) => item.kind === "file")) return;
 					event.preventDefault();
@@ -82,10 +82,15 @@ export function AppLayout() {
 			>
 				{draggingFiles && <div className="drop-overlay">Drop files to attach</div>}
 				{/* The chat (with the owner's notices below its top bar), as the workbench's first pane when a plugin lays
-				    out panes beside it (views). */}
+				    out panes beside it (views); a sidebar rollup's or group's list (`Route.page`, the sessions plugin's)
+				    instead of the chat. */}
 				<Slot name="workbench">
 					<OwnerNotices />
-					<Slot name="main" fallback={<div className="hero">No chat plugin</div>} />
+					{route.page !== undefined ? (
+						<Slot name="page" fallback={<div className="hero">No list pages</div>} />
+					) : (
+						<Slot name="main" fallback={<div className="hero">No chat plugin</div>} />
+					)}
 				</Slot>
 			</main>
 			<div id="side-dock" className="side-dock" />

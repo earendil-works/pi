@@ -494,9 +494,10 @@ taking turns with the chord link so a download cannot hold up live output. Then 
 
 `src/web/navigation.ts` is an independent, minimized copy of Pi Mobile's stack. `src/runtime/web.tsx` exposes
 `useNavigation()` and `useRoute()` to plugins. Routes contain a session/conversation, named sheet/viewer layers
-(with small string locators), the workspace location, and an optional bottom terminal. Only the top modal shows.
-The stack and per-area scroll positions persist in this tab's sessionStorage; URLs identify conversations
-(`/s/<id>` and `/s/<id>/c/<conversation>`), not modal payloads. Restored locators may be unavailable.
+(with small string locators), the workspace location, and an optional bottom terminal; or, instead of a session, a
+sidebar rollup's or group's list (`page`). Only the top modal shows. The stack and per-area scroll positions persist in this
+tab's sessionStorage; URLs identify conversations (`/s/<id>` and `/s/<id>/c/<conversation>`) and section lists
+(`/list/<key>`), not modal payloads. Restored locators may be unavailable.
 
 - `push`: one step at the tap; `replace`: lateral changes and server/startup corrections. A correction can pass
   its captured route as `replace(next, expected)` so it cannot overwrite a later queued destination.
@@ -631,8 +632,8 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   envs plugin's directory picker `plugins/envs/contract.web.tsx`); a contract imports only the API, shared packages
   and its own plugin's files. What two plugins share otherwise lives in the base and reaches them through the API
   (`src/runtime/schemas.ts`, `entries.ts`, `notices.ts`, `origin.ts`, `environments.ts`, `downloads.ts`,
-  `tui-chat.ts`). Base code imports no plugin code; only the page's shared components (`src/web/Drawer.tsx`,
-  `ModelPicker.tsx`) read plugin contract types (`import type`). A plugin's own files stay in the plugin, assets
+  `tui-chat.ts`). Base code imports no plugin code; only the page's shared components (`ModelPicker.tsx`) read
+  plugin contract types (`import type`). A plugin's own files stay in the plugin, assets
   included (`plugins/terminals/vendor/ghostty`). Facets use no `import.meta`: the p2 app directory is start data
   (`Server.info.app`, `WorkerInit.app`). The terminal host (`plugins/terminals/main.ts`) is its own program, not a
   facet, and imports base code directly. `plugin-layout.test.ts` builds every server, worker, TUI and web facet with
@@ -794,6 +795,32 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
     segment boundaries after a non-empty home, `~` matches everything with no subpath) and the target has it, else the
     move goes to the target's root (with a notice when the subfolder is missing there). Then `/cd`'s flow (its
     confirmation, `Sessions.relocate`). Tests: `projects.test.ts`, `tui-projects.test.ts`.
+- **Web sidebar** (`plugins/sessions/sidebar/`; README, Projects): the sessions plugin owns it, because the Session
+  sheet's optimistic edits must show in the rows (docs/optimistic-ui.md). Three layers:
+  - **Facts** (unchanged): the catalog's rows, `SessionStatus`, `SessionReads`, `Subagents`, `Sessions.operations`,
+    `Projects` (projects.json and memberships), and `SidebarSettings` (below). `useSidebarData` in `web.tsx` reads them
+    for the sidebar and for the list page alike.
+  - **Rules** (`model.ts`, pure, `sidebar-model.test.ts`): a `Rollup` collects sessions into one section, in one of
+    three layouts: a flat list (`sessions`: Recents), groups of sessions (`groups`: one per project, one per folder,
+    each with where its "+" starts a session), or a link only (`link`: the Archive). `ROLLUPS` are the built-in ones,
+    `ordered` puts them in the owner's order. `sectionsOf` applies relevance (`isRelevant`: pinned, open, working,
+    unread, a failed worker, an operation, or `updatedAt` within the rollup's window: `1d`, `3d` (default), `1w`,
+    `forever`): a session shows in every rollup and group that has it, a group only with relevant sessions, a
+    collapsed rollup only its label. `listPageOf` makes a rollup's or a group's list page: every session, the aged ones
+    (outside the window) after the others, by group for a rollup of groups; the archived ones newest archived first.
+    Keys: `recent`, `projects`, `folders`, `archive`, `project:<name>`, `folder:<JSON of [env, cwd]>`. Rollup order
+    never follows activity.
+  - **View** (`Sidebar.tsx`, `Row.tsx`, `ListPage.tsx`, `RollupSheet.tsx`), on Elanor's `Sidebar` and
+    `SideNavigation` (re-exported by `src/web/navigation-components.ts`): a rollup is a navigation group (its label:
+    arrow, name, options), a group an item with its link and "+", a session an item with its link (a session shows in
+    several places: its nested lists' ids carry the place, `<scope>/branches-<id>`). The list page in the main area
+    (`Route.page`, at `/list/<key>`; the `page` slot instead of `main`; `openPage` closes the phone drawer as opening a
+    conversation does) has the search (the archive's for the Archive), aged rows after the others in `--muted`. Rows and
+    names are `<a href>` links: a plain primary click navigates in the page, any other click is the browser's.
+  - **Settings** (`sidebar-settings.ts`, `SidebarSettingsStore`/`SidebarSettings`, owner): the rollups' order, windows
+    and collapsed state, one persisted document in the server's store (`p2.sidebar-settings`): a person's view, not the
+    catalog. A project group's "+" sets the new-session screen's location and a join (`NewSessionJoin`:
+    `Projects.assign`), which the chat plugin runs before `Sessions.create`. Tests: `ui-sidebar.test.ts`.
 - **Principals** (`src/runtime/principals.ts`, typed: `P2Principal`, with Chord's API typed by it in
   `src/runtime/chord.ts`): `owner` (a local owner session on loopback `access: "local"`, authenticated Radius `access: "relay"`, or a
   signed owner cookie `access: "device"` with a device ID), `guest`, `worker` (stamped by the server's `session:` route
@@ -1286,8 +1313,8 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   lower, compaction is enabled, and the conversation is idle: from a timer set after each answer (only while the
   worker runs; an idle worker stops after 5 minutes without viewers or warming) and at each start, else in an
   `InputGate` before the next input is admitted, which waits for the summary. Web: a `drawer-head:familiar` slot above
-  the drawer's folders; the sessions plugin's `DrawerRowsContext` (`plugins/sessions/contract.web.tsx`) gives it the
-  rows and `listApart`, which leaves its session out of its folder. The TUI lists it as an ordinary session. Tests:
+  the sidebar's rollups; the sessions plugin's `DrawerRowsContext` (`plugins/sessions/contract.web.tsx`) gives it the
+  rows, `SessionDot` and `listApart`, which leaves its session out of the rollups. The TUI lists it as an ordinary session. Tests:
   `familiar.test.ts`, `ui-familiar.test.ts`, the conversations actions in `conversations.test.ts`.
 - **Subagents** (`plugins/subagents`): owns its protocol-independent Durable extension (persistent
   anchor conversations and exactly-once background reporter tasks, model/thinking/tool validation). The worker

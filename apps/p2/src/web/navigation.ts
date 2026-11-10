@@ -16,6 +16,11 @@ export type WorkspaceRoute = {
 export type WorkspaceLocation = WorkspaceRoute;
 export type Route = {
 	session?: string;
+	/**
+	 * A sidebar rollup's or group's list in the main area instead of a conversation (the owner's), by its key
+	 * (plugins/sessions/sidebar/model.ts). Never together with `session`.
+	 */
+	page?: string;
 	conversation: number;
 	layers: Layer[];
 	workspace?: WorkspaceLocation;
@@ -46,12 +51,20 @@ export function conversationRoute(current: Route, session: string | undefined, c
 }
 
 export function routePath(route: Route): string {
+	if (route.page !== undefined) return `/list/${encodeURIComponent(route.page)}`;
 	if (!route.session) return "/";
 	return `/s/${route.session}${route.conversation === 1 ? "" : `/c/${route.conversation}`}`;
 }
 
 /** The route a URL alone describes, for entries this module didn't create. */
 export function pathRoute(path: string): Route {
+	const page = /^\/list\/([^/]+)$/.exec(path)?.[1];
+	if (page !== undefined)
+		try {
+			return { ...HOME, page: decodeURIComponent(page) };
+		} catch {
+			return HOME;
+		}
 	const match = /^\/s\/([^/]+)(?:\/c\/([1-9]\d*))?$/.exec(path);
 	const conversation = Number(match?.[2] ?? 1);
 	return match?.[1] && Number.isSafeInteger(conversation) ? { session: match[1], conversation, layers: [] } : HOME;

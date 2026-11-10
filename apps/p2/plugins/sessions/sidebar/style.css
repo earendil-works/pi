@@ -1,0 +1,322 @@
+/* The sidebar and its list pages (Sidebar.tsx, Row.tsx, ListPage.tsx), on Elanor's sidebar and side navigation. Elanor
+   styles links, groups and lists; these rules fit them into p2's drawer column and type, and lay out what Elanor has no
+   part for: a row's meta, its expand control, a branch's rename, a heading's controls. */
+
+/* Elanor's sidebar fills p2's drawer column (its width, border and resizing are the layout's). */
+.sidebar-root {
+	inline-size: 100%;
+	max-block-size: none;
+	height: 100%;
+	padding: 0;
+	gap: 0;
+	border: 0;
+	background: transparent;
+	font: inherit;
+}
+.sidebar-root .drawer-top {
+	align-items: stretch;
+	padding: 0 var(--s2) 0 var(--x);
+}
+.drawer-header-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	min-height: var(--bar);
+}
+.sidebar-root .drawer-foot {
+	flex-direction: row;
+	align-items: center;
+}
+.sidebar-root .session-scroll {
+	padding: 0 var(--s2) var(--s4);
+}
+.sidebar-root .collapse-sidebar {
+	margin: 0;
+}
+.sidebar-nav {
+	font: inherit;
+	gap: 0;
+}
+
+/* A rollup's label: its arrow, its name (a link to its list), its count and options. */
+.sidebar-section > .group-head {
+	display: flex;
+	align-items: center;
+	gap: 0;
+	padding: var(--s3) var(--s1) var(--s1);
+	color: var(--muted);
+	font: inherit;
+	font-size: var(--fs-xs);
+	font-weight: var(--fw-strong);
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+.sidebar-section .group-label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	color: inherit;
+	text-decoration: none;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.sidebar-section > .group-head.active .group-label,
+.sidebar-section .group-label:active {
+	color: var(--text);
+}
+@media (hover: hover) {
+	.sidebar-section .group-label:hover {
+		color: var(--text);
+	}
+}
+.section-toggle {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: var(--control-sm);
+	height: var(--control-sm);
+	margin: calc(-1 * var(--s1)) 0 calc(-1 * var(--s1)) calc(-1 * var(--s2));
+	color: var(--faint);
+}
+.section-toggle .chev,
+.subagent-toggle .chev,
+.subagent-stored .chev {
+	display: inline-flex;
+	transition: transform 120ms;
+}
+.section-toggle .chev.open,
+.subagent-toggle .chev.open,
+.subagent-stored .chev.open {
+	transform: rotate(90deg);
+}
+.section-count {
+	flex: none;
+	padding: 0 var(--s2);
+	font-weight: normal;
+}
+.sidebar-section .sidebar-empty {
+	padding: var(--s1) var(--s2);
+	text-align: left;
+}
+
+/* Links: p2's type, one line, the meta at the end (Elanor's label holds both). */
+.session-main,
+.group-link {
+	min-height: var(--control);
+	font: inherit;
+	font-size: var(--fs-md);
+}
+.session-main > span:last-child,
+.subagent-row > span:last-child,
+.group-link > span:last-child {
+	display: flex;
+	align-items: center;
+	gap: var(--s2);
+	min-width: 0;
+	-webkit-line-clamp: none;
+	line-clamp: none;
+}
+.session-title {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.session-title svg {
+	margin-right: var(--s1);
+	color: var(--muted);
+	vertical-align: -1px;
+}
+.session-meta {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: var(--s1);
+	color: var(--muted);
+	font-size: var(--fs-xs);
+	font-weight: normal;
+}
+
+/* A session's item: its link and its expand control on one line; its branches and subagents below, one step in. */
+.session-header {
+	display: flex;
+	align-items: center;
+}
+.session-header > .session-main {
+	flex: 1;
+	min-width: 0;
+}
+.subagent-toggle {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	gap: var(--s1);
+	min-width: var(--control-sm);
+	height: var(--control-sm);
+	padding: 0 var(--s1);
+	color: var(--muted);
+	font-size: var(--fs-xs);
+}
+.subagent-toggle:hover {
+	color: var(--text);
+}
+.toggle-branches {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+}
+.nested-items {
+	padding-inline-start: var(--s4);
+}
+.nested-items[hidden] {
+	display: none;
+}
+a.subagent-row {
+	min-height: var(--control-sm);
+	color: var(--muted);
+	font-size: var(--fs-sm);
+}
+.subagent-row .session-meta {
+	max-width: 40%;
+	overflow: hidden;
+	font-family: var(--mono);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.subagent-location {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.subagent-stored {
+	display: flex;
+	align-items: center;
+	gap: var(--s2);
+	width: 100%;
+	min-height: var(--control-sm);
+	padding: 0 var(--s2);
+	color: var(--faint);
+	font-size: var(--fs-sm);
+}
+.session-operation {
+	display: flex;
+	align-items: center;
+	gap: var(--s1);
+	padding: 0 var(--s2) var(--s1);
+	color: var(--muted);
+	font-size: var(--fs-xs);
+}
+.session-operation.failed {
+	color: var(--bad);
+}
+.session-operation > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Renaming a branch: the pencil at the item's end on hover, always shown where there is no hover. */
+.branch-item {
+	position: relative;
+}
+.branch-item > .branch-row {
+	padding-inline-end: calc(var(--s2) + var(--control-sm));
+}
+.branch-rename {
+	position: absolute;
+	top: 50%;
+	right: 0;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--control-sm);
+	height: var(--control-sm);
+	color: var(--faint);
+	opacity: 0;
+	transform: translateY(-50%);
+}
+.branch-rename:hover {
+	color: var(--text);
+}
+.branch-item:hover .branch-rename,
+.branch-rename:focus-visible {
+	opacity: 1;
+}
+
+/* A group inside a rollup: its link (a folder or a project) with "+", its sessions one step in. */
+.group-row {
+	display: flex;
+	align-items: center;
+}
+.group-row > .group-link {
+	flex: 1;
+	min-width: 0;
+}
+.group-new {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: var(--control-sm);
+	height: var(--control-sm);
+	color: var(--faint);
+}
+.group-new:hover:not(:disabled) {
+	color: var(--text);
+}
+
+/* A session that fell out of its rollup's window: still part of it, shown in the secondary colour. */
+.session-row.aged .session-title,
+.session-row.aged .session-meta {
+	color: var(--muted);
+}
+
+/* A rollup's or a group's list in the main area. */
+.list-page {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-height: 0;
+}
+.list-page .title p.list-page-subtitle {
+	font-family: inherit;
+}
+.list-page-body {
+	flex: 1;
+	overflow-y: auto;
+	width: 100%;
+	max-width: 760px;
+	margin: 0 auto;
+	padding: var(--s2) var(--x) var(--s5);
+}
+.list-page-body > .search {
+	width: 100%;
+	margin: 0 0 var(--s3);
+}
+.list-page .list-group-label {
+	padding: var(--s4) var(--s2) var(--s1);
+	color: var(--muted);
+	font: inherit;
+	font-size: var(--fs-xs);
+	font-weight: var(--fw-strong);
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+@media (pointer: coarse) {
+	.session-main,
+	.group-link,
+	.subagent-row,
+	.section-toggle,
+	.subagent-stored {
+		min-height: var(--row);
+	}
+	.branch-rename {
+		width: var(--row);
+		height: var(--row);
+		opacity: 1;
+	}
+}

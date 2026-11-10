@@ -233,9 +233,11 @@ A project is one codebase in several places, one per environment. `<P2_DATA_DIR>
 
 Object order is display order; array order is preference. A place without `env` is this device; `path` is absolute or
 starts with `~` (that machine's home); a project has at most one place per environment. p2 watches the file: valid edits
-apply at once, an invalid one keeps the last valid projects and shows why. Projects are owner-only and, for now, TUI-only:
+apply at once, an invalid one keeps the last valid projects and shows why. Projects are owner-only; the TUI's session
+selector and the web sidebar (below) group sessions by them:
 
-- A session belongs to a project only when it was started from the project's row (below), or copied (`/clone`,
+- A session belongs to a project only when it was started from the project's row (below) or its section's **+** in
+  the web sidebar, or copied (`/clone`,
   `/fork`) from a session that does. Its folder does not matter: "+ New session" never puts a session in a project,
   and `/cd` and `/move` keep its project. p2 stores this itself (not in projects.json).
 - With an empty search the session selector is grouped: each project's row, then its sessions below it (newest first,
@@ -257,6 +259,20 @@ apply at once, an invalid one keeps the last valid projects and shows why. Proje
   machine, it keeps the subfolder (`.../pi/apps/p2` to `.../pi/apps/p2`) if the target has it, else it goes to the
   target place itself with a notice; that is read from the paths alone, so `/move` works while the session's machine is
   unreachable.
+
+**The web sidebar** (owner) is made of rollups: rules that collect sessions into one section each. **Recents** lists
+every session; **Projects** has a group per project that has sessions (projects.json and the sessions started in a
+project); **Folders** has a group per folder sessions work in; the **Archive** shows only its name. A session shows in
+every rollup and group that has it. The sidebar shows the sessions that matter now: pinned ones, the open one, working
+ones, ones with an unread answer or a failure, and those active within the rollup's window (its **⋯**: **Show sessions
+active within** 24 hours, 3 days by default, 1 week, or Forever; the same menu moves the rollup up or down); a group
+without such a session is not shown, and a rollup's arrow hides its sessions. A rollup's or a group's name opens its
+list in the main area (`/list/<key>`): every session, those outside the window after the others and dimmed but still
+openable, in groups for a rollup of groups, with a search over the list's titles and messages; the Archive's list
+searches the archive and restores a session when you open it. A group's **+** starts a session in it: a folder's in that
+folder, a project's at its place on the machine of its most recently active session (else its first place). Rows are
+links, so Cmd/Ctrl-click and the middle button open a session in another tab. The rollups' order, windows and collapsed
+state are stored on the server, the same on every device.
 
 `cacheWarming` (`"idle"` by default, `"streaming"` or `"off"`) keeps prompt caches warm as pi does: before the cache
 entry of a conversation's last request expires (5 minutes for Anthropic and Claude on Radius), p2 sends the request

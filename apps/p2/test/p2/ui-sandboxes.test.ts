@@ -122,9 +122,6 @@ describe("sandbox UI", { skip: !browserTests }, () => {
 		);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session.id}`);
 		await browser.wait(`document.querySelector('.title-cwd .title-lock')`);
-		await browser.wait(
-			`[...document.querySelectorAll('.group h3')].some(h=>h.querySelector('.group-lock') && h.textContent.includes('box1:/workspace'))`,
-		);
 		await browser.evaluate(`document.querySelector('.title-cwd').click()`);
 		await browser.wait(`document.querySelector('[role=dialog][aria-label="Working directory"] select')`);
 		assert.deepEqual(

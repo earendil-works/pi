@@ -1,7 +1,8 @@
 // The session catalog and its views (server): the sidebar's rows, creating and renaming sessions, and the lifecycle
 // operations (relocate, clone, fork, archive), each a method that answers once its visible effect committed and a job
 // for its long part, shown in `Sessions.operations` while it runs and when it failed. Creating is `SessionOperations`'
-// too, so the owner's `Sessions.create` and the conversations tool share it.
+// too, so the owner's `Sessions.create` and the conversations tool share it. Locks and the sidebar's settings are
+// served from their own files (`locks.ts`, `sidebar-settings.ts`).
 import { randomUUID } from "node:crypto";
 import { mkdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -53,6 +54,7 @@ import {
 } from "./contract.ts";
 import { copySessionDirectory, removeSessionCopy } from "./copy.ts";
 import { serveLocks } from "./locks.ts";
+import { serveSidebarSettings } from "./sidebar-settings.ts";
 
 /** A row as `Sessions` v4 and `Catalog` v3 consumers read it: a null branch label is the session title. */
 function sessionV4(row: Session) {
@@ -240,6 +242,7 @@ const ROW_WAIT_MS = 10_000;
 
 export default defineFacet((host) => {
 	serveLocks(host);
+	serveSidebarSettings(host);
 	serveKeyed(host, SessionArchived);
 	serveKeyed(host, SessionCopied);
 	host.serve(

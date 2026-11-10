@@ -2,7 +2,7 @@
 
 pi's `/tree` in p2 (owner decisions from the design discussion). Code: `plugins/tree/` (worker, web sheet),
 `src/runtime/main-conversation.ts`, `src/tui/components/tree-selector.ts`, `/tree` in `plugins/chat/tui.ts`, the sidebar's
-branch rows (`src/web/Drawer.tsx`, `plugins/sessions/web.tsx`, `BranchSheet.tsx`). Tests:
+branch rows (`plugins/sessions/sidebar/Row.tsx`, `plugins/sessions/web.tsx`, `BranchSheet.tsx`). Tests:
 `tree.test.ts`, `tui-tree.test.ts`, `ui-tree.test.ts`.
 
 ## Goal

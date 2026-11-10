@@ -59,7 +59,7 @@ import {
 import { SessionWorkers } from "./session-workers.ts";
 import { limitedSocket, MAX_CLIENT_FRAME } from "./socket-limits.ts";
 import { tuiPreferencesFacet } from "./tui-preferences.ts";
-import { createWeb, isPublicFile } from "./web.ts";
+import { createWeb, isAppPage, isPublicFile } from "./web.ts";
 
 /** The p2 app directory (`apps/p2`), told to facets as `Server.info.app` and `WorkerInit.app`. */
 const APP = fileURLToPath(new URL("../../", import.meta.url));
@@ -626,11 +626,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 				const route = findRoute((await host.registry(Routes, ctx)).value, request.method ?? "GET", path);
 				if (route !== undefined) return route(request, response, { principal, origin }, ctx);
 				// An owner loading the app may get renewed cookies (a local session in use does not expire).
-				if (
-					isOwner(principal) &&
-					(request.method === "GET" || request.method === "HEAD") &&
-					(path === "/" || path.startsWith("/s/"))
-				) {
+				if (isOwner(principal) && (request.method === "GET" || request.method === "HEAD") && isAppPage(path)) {
 					const cookies = [...(await host.registry(PageCookies, ctx)).value.values()].flatMap(
 						(cookie) => cookie(request, { principal, origin }) ?? [],
 					);

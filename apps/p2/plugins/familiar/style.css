@@ -1,8 +1,34 @@
-/* The Familiar's entry above the drawer's folders: a session row with its icon, no folder heading. */
+/* The Familiar's entry above the sidebar's rollups: a session row with its icon, no heading. */
 .familiar-group {
-	padding-top: var(--s2);
+	padding: var(--s2) var(--s2) 0;
+}
+.familiar-entry {
+	display: flex;
+	align-items: center;
+	gap: var(--s2);
+	width: 100%;
+	min-height: var(--control);
+	padding: var(--s1) var(--s2);
+	border-radius: var(--radius);
+	color: var(--text);
+	font-size: var(--fs-md);
+	text-align: left;
+}
+.familiar-entry.active,
+.familiar-entry:active {
+	background: var(--hover);
+}
+@media (hover: hover) {
+	.familiar-entry:hover {
+		background: var(--hover);
+	}
 }
 .familiar-entry > svg {
 	flex: none;
 	color: var(--muted);
+}
+@media (pointer: coarse) {
+	.familiar-entry {
+		min-height: var(--row);
+	}
 }

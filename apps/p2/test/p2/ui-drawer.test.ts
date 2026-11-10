@@ -163,7 +163,7 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		await browser.evaluate("localStorage.removeItem('pi-sidebar-width')");
 	});
 
-	it("groups cwd identities, orders pinned sessions first, expands child rows in the header, and keeps child busy dots visible when collapsed", async () => {
+	it("orders pinned sessions first, expands child rows in the header, and keeps child busy dots visible when collapsed", async () => {
 		const owner = fixture.browser();
 		const sessions = await holdIn(owner, Sessions, {}, "owner");
 		const second = join(fixture.workspace, "second");
@@ -181,24 +181,11 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		await browser.metrics(1280, 900);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${pinned.id}`);
 		await browser.wait(`[...document.querySelectorAll('.session-title')].some(e=>e.textContent==='Pinned parent')`);
-		const groups = await browser.evaluate<{ cwd: string; titles: string[] }[]>(
-			`[...document.querySelectorAll('.session-scroll .group')].map(g=>({cwd:g.querySelector('h3').title,titles:[...g.querySelectorAll('.session-main .session-title')].map(e=>e.textContent)}))`,
+		// Recents, across folders: pinned first, then the most recently active.
+		const titles = await browser.evaluate<string[]>(
+			`[...document.querySelectorAll('.sidebar-section[data-key=recent] .session-main .session-title')].map(e=>e.textContent)`,
 		);
-		assert.equal(groups[0].cwd, second);
-		assert.deepEqual(groups.find((group) => group.cwd === fixture.workspace)?.titles.slice(0, 2), [
-			"Pinned parent",
-			"Recent sibling",
-		]);
-		// A folder's "+" opens a new session in that folder.
-		const label = await browser.evaluate<string>(
-			`document.querySelector('.session-scroll .group h3 .group-label').textContent`,
-		);
-		await browser.click(".session-scroll .group h3 .group-new");
-		await browser.wait(
-			`location.pathname==='/' && document.querySelector('.cwd-pick span')?.textContent===${JSON.stringify(label)}`,
-		);
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${pinned.id}`);
-		await browser.wait(`[...document.querySelectorAll('.session-title')].some(e=>e.textContent==='Pinned parent')`);
+		assert.deepEqual(titles.slice(0, 3), ["Pinned parent", "Other directory", "Recent sibling"]);
 		const chat = await holdIn(owner, Chat, { session: pinned.id, conversation: 1 }, "participant");
 		await chat.send({ text: "subagent", requestId: "drawer-child" }, BACKGROUND_CONTEXT);
 		const agents = await holdIn(owner, Subagents, {}, "reader");
@@ -245,17 +232,17 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		await tree.navigate({ entry: first.entry }, BACKGROUND_CONTEXT);
 		await tree.select({ conversation: 1 }, BACKGROUND_CONTEXT);
 		tree.release();
-		const toggle = `document.querySelector('.subagent-toggle[aria-controls="branches-${pinned.id} subagents-${pinned.id}"]')`;
+		const toggle = `document.querySelector('.subagent-toggle[aria-controls="recent/branches-${pinned.id} recent/subagents-${pinned.id}"]')`;
 		await browser.wait(`${toggle}?.getAttribute('aria-label')==='Collapse branches and subagents'`);
 		assert.deepEqual(
 			await browser.evaluate<string[]>(
-				`[...document.getElementById('branches-${pinned.id}').parentElement.children].slice(1).map(e=>e.id+(e.hidden?':hidden':''))`,
+				`[...document.getElementById('recent/branches-${pinned.id}').parentElement.children].slice(1).map(e=>e.id+(e.hidden?':hidden':''))`,
 			),
-			[`branches-${pinned.id}`, `subagents-${pinned.id}`],
+			[`recent/branches-${pinned.id}`, `recent/subagents-${pinned.id}`],
 		);
 		await browser.evaluate(`${toggle}.click()`);
 		await browser.wait(
-			`document.getElementById('branches-${pinned.id}').hidden && document.getElementById('subagents-${pinned.id}').hidden`,
+			`document.getElementById('recent/branches-${pinned.id}').hidden && document.getElementById('recent/subagents-${pinned.id}').hidden`,
 		);
 		assert.equal(
 			await browser.evaluate<string>(`${toggle}.getAttribute('aria-label')`),
@@ -278,7 +265,8 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		await browser.click("[role=dialog] .row-button.danger");
 		await browser.wait(`location.pathname==='/' && !document.querySelector('[role=dialog]')`);
 		await until(sessions.sessions, (list) => Boolean(list?.find((row) => row.id === session.id)?.archivedAt));
-		await browser.click(".drawer-foot .foot-button");
+		// The Archive's heading opens its list in the main area; a row there restores and opens the session.
+		await browser.click(".sidebar-section[data-key=archive] .group-label");
 		await browser.wait(
 			`[...document.querySelectorAll('.session-main .session-title')].some(e=>e.textContent==='Options renamed')`,
 		);
