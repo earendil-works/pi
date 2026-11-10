@@ -15,7 +15,7 @@ import {
 	summary,
 	type ToolActivity,
 	type ToolActivityTable,
-	thoughtPreview,
+	wheelThought,
 } from "../../src/web/activity/model.ts";
 import type { Item, NestedCall, ToolView } from "../../src/web/transcript.ts";
 
@@ -588,14 +588,14 @@ test("at detail 1, a rebuilt run keeps its wheel when it shows the same", () => 
 	assert.equal(second[1], first[1]);
 });
 
-test("an active wheel previews its latest thought, but not while that thought is the current step", () => {
+test("a working wheel shows its newest thought below it, also while it streams, and none once done", () => {
 	const content: AssistantMessage["content"] = [
 		{ type: "thinking", thinking: "First plan." },
 		{ type: "toolCall", id: "a", name: "bash", arguments: { command: "check" } },
 		{ type: "thinking", thinking: "Wait for the deployment." },
 		{ type: "toolCall", id: "b", name: "bash", arguments: { command: "watch" } },
 	];
-	const preview = (parts: AssistantMessage["content"], working: boolean) => {
+	const shown = (parts: AssistantMessage["content"], working: boolean) => {
 		const items = chatItemsWith(
 			[user("preview", "Go"), response("preview-response", 2, parts)],
 			working,
@@ -604,21 +604,22 @@ test("an active wheel previews its latest thought, but not while that thought is
 		);
 		const activity = items.findLast((item) => item.type === "activity");
 		assert.ok(activity?.type === "activity");
-		return thoughtPreview(activity.entries ?? [], activity.working, activity.thought);
+		return wheelThought(activity.entries ?? [], activity.working)?.text;
 	};
-	assert.equal(preview(content, true), "Wait for the deployment.");
-	assert.equal(preview(content.slice(0, -1), true), undefined);
-	assert.equal(preview(content, false), undefined);
-	assert.equal(preview([content[3]!], true), undefined);
-	assert.equal(thoughtPreview([], true), undefined);
+	assert.equal(shown(content, true), "Wait for the deployment.");
+	// The thought on the wheel's front is shown too: the slot below the wheel does not repeat anything above it.
+	assert.equal(shown(content.slice(0, -1), true), "Wait for the deployment.");
+	assert.equal(shown(content, false), undefined);
+	assert.equal(shown([content[3]!], true), undefined);
+	assert.equal(wheelThought([], true), undefined);
 });
 
-test("the latest thought survives a note splitting wheels, but never leaks into another turn", () => {
+test("a note ends its wheel's thought: the wheel after it starts without one, and none leaks into another turn", () => {
 	const made = turn().slice(0, 3);
 	const shown = chatItemsWith(made, true, true, TOOLS);
 	const active = shown.findLast((item) => item.type === "activity");
 	assert.ok(active?.type === "activity");
-	assert.equal(thoughtPreview(active.entries ?? [], active.working, active.thought), "Run them first.");
+	assert.equal(wheelThought(active.entries ?? [], active.working), undefined);
 	const next = chatItemsWith(
 		[
 			...made,
@@ -631,5 +632,5 @@ test("the latest thought survives a note splitting wheels, but never leaks into 
 	);
 	const current = next.findLast((item) => item.type === "activity");
 	assert.ok(current?.type === "activity");
-	assert.equal(thoughtPreview(current.entries ?? [], current.working, current.thought), undefined);
+	assert.equal(wheelThought(current.entries ?? [], current.working), undefined);
 });

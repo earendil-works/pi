@@ -19,9 +19,10 @@ import {
 	DEFAULT_DETAIL,
 	type Detail,
 	type ToolActivityTable,
-	thoughtPreview,
+	wheelThought,
 } from "./activity/model.ts";
 import { Results } from "./activity/Results.tsx";
+import { handoff, type SlotHeights, SlotHeightsContext } from "./activity/ThoughtSlot.tsx";
 import { CopyButton } from "./Code.tsx";
 import { BranchFrom, OpenConversation, OpenPeerConversation, ReplyTo, RevealEntry } from "./chat-context.ts";
 import {
@@ -280,13 +281,13 @@ function rowFeatures(row: TranscriptRow, width: number): RowFeatures {
 				fixed: imagesHeight(item.images, width),
 			};
 		case "activity": {
-			const preview = thoughtPreview(item.entries ?? [], item.working, item.thought);
+			const thought = wheelThought(item.entries ?? [], item.working);
 			// A working wheel may also carry up to three lines of its latest thought.
 			return item.rows
 				? { kind: `activity:rows:${item.steps.length}:${spacing}`, text: 0, fixed: 0 }
 				: {
-						kind: `activity:${preview ? "thought:" : ""}${spacing}`,
-						text: Math.min(preview?.length ?? 0, 300),
+						kind: `activity:${thought ? "thought:" : ""}${spacing}`,
+						text: Math.min(thought?.text.length ?? 0, 300),
 						fixed: 0,
 					};
 		}
@@ -616,7 +617,6 @@ const ItemView = memo(function ItemView({ item }: { item: ChatItem }) {
 					{...(item.entries ? { entries: item.entries } : {})}
 					{...(item.rows ? { rows: true } : {})}
 					working={item.working}
-					{...(item.thought ? { thought: item.thought } : {})}
 					{...(item.startedAt ? { startedAt: item.startedAt } : {})}
 					{...(item.endedAt ? { endedAt: item.endedAt } : {})}
 				/>
@@ -770,6 +770,7 @@ export const Messages = memo(function Messages({
 }) {
 	const spacers = list.spacers(range);
 	const arriving = useArriving(rows);
+	const [slotHeights] = useState<SlotHeights>(() => new Map());
 	return (
 		<div className="messages">
 			{/* One height in every state: the edge changing never moves the transcript under the reader. It loads ahead
@@ -792,24 +793,37 @@ export const Messages = memo(function Messages({
 			)}
 			<div className="rows" ref={list.listRef} data-rows={rows.length}>
 				<div className="row-space" ref={list.topRef} style={{ height: spacers.before }} />
-				{rows.slice(range.start, range.end + 1).map((row) => {
-					const delay = arriving.get(row.key);
-					return (
-						<div
-							key={row.key}
-							className={["row", row.first ? "first" : "", delay === undefined ? "" : "arriving"]
-								.filter(Boolean)
-								.join(" ")}
-							style={delay ? { animationDelay: `${delay}ms` } : undefined}
-							data-row={row.key}
-							data-gap={row.first ? undefined : row.gap}
-							data-lead={row.lead ? "" : undefined}
-							ref={list.rowRef}
-						>
-							<ItemView item={row.item} />
-						</div>
-					);
-				})}
+				<SlotHeightsContext value={slotHeights}>
+					{rows.slice(range.start, range.end + 1).map((row, offset) => {
+						const index = range.start + offset;
+						const delay = arriving.get(row.key);
+						// The row after a finished wheel takes the place of its thought (activity/ThoughtSlot.tsx).
+						const held = handoff(slotHeights, rows[index - 1], index === rows.length - 1, transcript.working);
+						return (
+							<div
+								key={row.key}
+								className={["row", row.first ? "first" : "", delay === undefined ? "" : "arriving"]
+									.filter(Boolean)
+									.join(" ")}
+								style={
+									delay || held !== undefined
+										? {
+												...(delay ? { animationDelay: `${delay}ms` } : {}),
+												...(held === undefined ? {} : { minHeight: held }),
+											}
+										: undefined
+								}
+								data-row={row.key}
+								data-gap={row.first ? undefined : row.gap}
+								data-lead={row.lead ? "" : undefined}
+								data-handoff={held === undefined ? undefined : held ? "held" : "released"}
+								ref={list.rowRef}
+							>
+								<ItemView item={row.item} />
+							</div>
+						);
+					})}
+				</SlotHeightsContext>
 				<div className="row-space" ref={list.bottomRef} style={{ height: spacers.after }} />
 			</div>
 			{stopped && !transcript.busy && <output className="notice stopped">Stopped</output>}

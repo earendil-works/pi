@@ -744,6 +744,26 @@ textarea.input {
 .row[data-lead] > * {
 	min-height: var(--row);
 }
+/* The row after a finished wheel takes the place of its thought (activity/ThoughtSlot.tsx): at least as tall as the
+   thought's slot while the turn runs (an inline min-height), its content fading in as the thought fades out; once the
+   turn ends the space it does not need closes smoothly. */
+.row[data-handoff] > * {
+	animation: row-handoff 0.38s ease-out both;
+}
+.row[data-handoff="released"] {
+	transition: min-height 0.36s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes row-handoff {
+	0%,
+	42% {
+		opacity: 0;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.row[data-handoff] > * {
+		animation: none;
+	}
+}
 /* A transcript appearing (opening a conversation) fades in rather than snapping in (`.messages`). */
 @keyframes transcript-appear {
 	from {

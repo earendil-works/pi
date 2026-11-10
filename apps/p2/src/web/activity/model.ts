@@ -26,10 +26,9 @@ export type Words = { kind: "thought" | "text"; id: string; text: string; live: 
 /** What a wheel rolls through, in order: its tool calls, and at detail 1 and 2 thinking (and texts) among them. */
 export type WheelEntry = { kind: "call"; step: Step } | Words;
 
-/** The latest thought above a working wheel's non-thinking step; never repeat the thought currently on the wheel. */
-export function thoughtPreview(entries: readonly WheelEntry[], working: boolean, thought?: string): string | undefined {
-	if (!working || entries.at(-1)?.kind === "thought") return;
-	return entries.findLast((entry): entry is Words => entry.kind === "thought")?.text ?? thought;
+/** The thought a working wheel shows below it: its newest, also while it streams; none once the wheel is done. */
+export function wheelThought(entries: readonly WheelEntry[], working: boolean): Words | undefined {
+	return working ? entries.findLast((entry): entry is Words => entry.kind === "thought") : undefined;
 }
 
 /** The items the chat shows: the transcript's people, markers and failures, and each turn's parts in order. */
@@ -42,8 +41,6 @@ export type ChatItem =
 			steps: Step[];
 			/** At detail 1 and 2: everything on the wheel in order, thinking (and texts) among the calls. */
 			entries?: WheelEntry[];
-			/** The active turn's latest thought, including one before a note that split the wheels. */
-			thought?: string;
 			/** At detail 4: the calls as rows, one each, not a wheel. */
 			rows?: true;
 			/** The agent is still at it: the row is a ticker, not a summary. */
@@ -249,7 +246,6 @@ function runItems(
 	// answer arrives in the transcript once, when the agent stopped (the row fades in, as new rows do).
 	const answer = last?.type === "text" && !(detail === 1 && working) ? last : undefined;
 	if (answer) parts.pop();
-	const thought = parts.findLast((part) => part.type === "thought");
 	// What goes on the wheels with the calls (detail 1: thinking and texts; 2: thinking), merged into them.
 	if (detail <= 2) parts = wheels(parts, responses, after, detail === 1 ? ["thought", "text"] : ["thought"]);
 	const final = parts.at(-1);
@@ -260,7 +256,6 @@ function runItems(
 			? {
 					...activityOf(part, responses, working && !answer && part === final),
 					...(part.entries ? { entries: part.entries } : {}),
-					...(detail <= 2 && working && !answer && part === final && thought ? { thought: thought.text } : {}),
 					...(detail === 4 ? { rows: true as const } : {}),
 				}
 			: part.type === "thought" && detail === 4
@@ -275,7 +270,6 @@ function runItems(
 			key: `activity:${final ? final.key : after}`,
 			steps: [],
 			working: true,
-			...(detail <= 2 && thought ? { thought: thought.text } : {}),
 		});
 	if (response && (answer || notice))
 		items.push({
