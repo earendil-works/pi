@@ -4,6 +4,8 @@
  * Validates lockstep versions for published packages, then synchronizes
  * exact internal dependency versions in all workspace packages, including private ones,
  * and in the apps next to the packages directory (`apps/*`, never published).
+ * Only dependencies on published packages are rewritten: private packages, such as the
+ * fixtures in Chord's examples, are referenced by path or git URL and must stay that way.
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -29,7 +31,7 @@ const workspacePackages = readManifests(
 const appRoot = join(dirname(packageRoot), "apps");
 const appPackages = existsSync(appRoot) ? readManifests(findPackageDirectories(appRoot)) : [];
 const publishedPackages = workspacePackages.filter((pkg) => pkg.data.private !== true);
-const versionMap = new Map(workspacePackages.map((pkg) => [pkg.data.name, pkg.data.version]));
+const versionMap = new Map(publishedPackages.map((pkg) => [pkg.data.name, pkg.data.version]));
 
 console.log("Current versions:");
 for (const pkg of [...publishedPackages].sort((a, b) => a.data.name.localeCompare(b.data.name))) {
