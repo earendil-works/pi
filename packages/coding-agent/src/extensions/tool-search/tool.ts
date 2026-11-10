@@ -124,6 +124,24 @@ function schemaText(schema: unknown, root: unknown, parts: string[], seen: Set<u
 	}
 }
 
+// Read-only verb prefixes, kept for the leading-segment check below.
+const READ_ONLY_PREFIXES = ["list_", "get_", "read_", "search_", "view_", "check_", "fetch_"] as const;
+// Read-only verbs that appear as a delimited segment of the name, e.g. `mcp__gmail__read_email`.
+// Delimited matching (rather than a bare `startsWith`) is what lets an MCP-prefixed name like
+// `mcp__gmail__read_email` count as read-only.
+const READ_ONLY_TERMS = ["list", "get", "read", "search", "view", "check", "fetch"] as const;
+const READ_ONLY_NAME_RE = new RegExp(`(^|[-_])(${READ_ONLY_TERMS.join("|")})([-_]|$)`);
+
+/**
+ * Whether a tool name denotes a read-only operation, so a query for that verb can find it. Used to
+ * bias the ranking toward read tools when the query is a read action (e.g. "read my email").
+ */
+function isReadOnlyTool(name: string): boolean {
+	const lower = name.toLowerCase();
+	if (READ_ONLY_PREFIXES.some((prefix) => lower.startsWith(prefix))) return true;
+	return READ_ONLY_NAME_RE.test(lower);
+}
+
 /**
  * Search text of a tool: the description and the schema descriptions and property names, and
  * separately the namespace name, description, and instructions. The ranker reads the name from `name`.
@@ -133,6 +151,10 @@ export function createToolSearchDocument(
 	namespace?: ToolNamespace,
 ): ToolSearchDocument {
 	const parts = [tool.description];
+	// Read-only tools are the ones a "read/search/list <x>" query is after, so repeat the verb in the
+	// document. This makes `gmail_read_email` surface for "read email" even when the description alone
+	// does not use the word "read".
+	if (isReadOnlyTool(tool.name)) parts.push(...READ_ONLY_TERMS);
 	schemaText(tool.parameters, tool.parameters, parts, new Set([tool.parameters]));
 	const namespaceText = namespace
 		? [namespace.name, namespace.description ?? "", namespace.instructions ?? ""].join(" ")

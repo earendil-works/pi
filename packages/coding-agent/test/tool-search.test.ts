@@ -310,3 +310,44 @@ describe("codemode description catalog", () => {
 		expect(description).not.toContain("codemode tool declaration:");
 	});
 });
+
+describe("read-only tool ranking", () => {
+	const gmail = [
+		tool("mcp__gmail__read_email", "Open a message body and its attachments."),
+		tool("mcp__gmail__send_email", "Send a composed message."),
+		tool("mcp__gmail__draft_email", "Create or update a draft."),
+		tool("mcp__gmail__list_messages", "List messages in a mailbox."),
+	].map((entry) => createToolSearchDocument(entry));
+
+	const calendar = [
+		tool("mcp__calendar__list_events", "List events in a date range."),
+		tool("mcp__calendar__create_event", "Create a calendar event."),
+		tool("mcp__calendar__delete_event", "Delete a calendar event."),
+	].map((entry) => createToolSearchDocument(entry));
+
+	it("surfaces a read tool for a read verb the description does not use", () => {
+		const ranker = new Bm25Ranker();
+		expect(ranker.rank("read my email", gmail, 1).map((match) => match.name)).toEqual(["mcp__gmail__read_email"]);
+	});
+
+	it("ranks read tools first for read queries and write tools for write queries", () => {
+		const ranker = new Bm25Ranker();
+		const all = [...gmail, ...calendar];
+		expect(ranker.rank("list calendar events", all, 1).map((match) => match.name)).toEqual([
+			"mcp__calendar__list_events",
+		]);
+		expect(ranker.rank("create a calendar event", all, 1).map((match) => match.name)).toEqual([
+			"mcp__calendar__create_event",
+		]);
+		expect(ranker.rank("send an email", all, 1).map((match) => match.name)).toEqual(["mcp__gmail__send_email"]);
+	});
+
+	// A discriminating case: the write tool's description shares the query's terms, so only the read-only
+	// document bias can pull the read tool to the top. Fails without the isReadOnlyTool bias.
+	it("boosts a read tool above a write tool whose description matches the query", () => {
+		const docs = [tool("get_item", "Read a record by key."), tool("save_item", "Store a record by key.")].map(
+			(entry) => createToolSearchDocument(entry),
+		);
+		expect(new Bm25Ranker().rank("read the thing", docs, 1).map((match) => match.name)).toEqual(["get_item"]);
+	});
+});
