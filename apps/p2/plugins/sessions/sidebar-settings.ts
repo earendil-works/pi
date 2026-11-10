@@ -4,7 +4,7 @@ import { arr, bool, obj, str } from "@earendil-works/pi-schema";
 import { defineState, deriveTyped, type FacetHost, forbidden, isOwner, record } from "@p2/app/v1";
 import { SidebarSettings, SidebarSettingsStore, SidebarWindowSchema } from "./contract.ts";
 
-const Settings = defineState("p2.sidebar-settings", {
+const Settings = defineState("p2.sidebar-settings-state", {
 	schema: obj({ order: arr(str()), windows: record(SidebarWindowSchema), collapsed: record(bool()) }),
 	version: 1,
 	initial: () => ({ order: [], windows: {}, collapsed: {} }),

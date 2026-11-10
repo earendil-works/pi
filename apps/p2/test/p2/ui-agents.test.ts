@@ -71,7 +71,7 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 			`[...document.querySelectorAll('[data-testid=activity]')].at(-1) && !document.querySelector('.offline')`,
 		);
 		// The sidebar counts the subagent, not the script's one-shot agent.
-		assert.equal(await browser.evaluate(text(".session-header.has-subagents .subagent-toggle span")), "1");
+		assert.equal(await browser.evaluate(text(".session-header.has-subagents .conversation-count")), "1");
 		await browser.evaluate(`[...document.querySelectorAll('[data-testid=activity]')].at(-1).click()`);
 		const script = `[...document.querySelectorAll('[data-testid=step]')].find(e=>e.textContent.startsWith('codemode'))`;
 		await browser.wait(script);
@@ -149,7 +149,9 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 		await browser.wait(`document.querySelector('.subagent-bar .text-action')?.textContent==='Restore'`);
 		assert.match(String(await browser.evaluate(text(".subagent-wrap .subagent-bar span"))), / · archived$/);
 		// Viewing an archived subagent opens its row.
-		await browser.wait(`document.querySelector('.subagent-stored')?.getAttribute('aria-expanded')==='true'`);
+		await browser.wait(
+			`document.querySelector('.nav-row:has(> .subagent-stored) .nav-disclosure')?.getAttribute('aria-expanded')==='true'`,
+		);
 		assert.equal(await browser.evaluate(text(".subagent-stored .session-title")), "1 archived");
 		assert.equal(
 			await browser.evaluate(
@@ -206,7 +208,7 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 		);
 		// The sidebar row shows its own location (it stays there when the session moves).
 		assert.equal(
-			await browser.evaluate(text(".subagent-row.active .subagent-location")),
+			await browser.evaluate(text(".nav-row:has(> .subagent-row.active) .subagent-location")),
 			worktree.replace(/^\/home\/[^/]+/, "~"),
 		);
 		await browser.click('button[aria-label="Workspace files and changes"]');

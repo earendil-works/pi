@@ -158,11 +158,19 @@ const SearchV1 = remote("p2.search", {
 	},
 });
 
+/** 2: `rebuildIndex` answers once the rebuild started (a job); `rebuilds` shows it running, and why it failed. */
+const SearchV2 = evolve(SearchV1, (e) => e.addState("owner", "rebuilds", arr(RebuildSchema)));
+
 /**
- * Search over session titles, working directories and message text (owner only). 2: `rebuildIndex` answers once the
- * rebuild started (a job); `rebuilds` shows it running, and why it failed. The provider still serves 1.
+ * Search over session titles, working directories and message text (owner only). 3: `sessions` limits a search to those
+ * sessions before ranking and the 41-hit limit (a sidebar list's own sessions). The provider still serves 1 and 2.
  */
-export const Search = evolve(SearchV1, (e) => e.addState("owner", "rebuilds", arr(RebuildSchema)));
+export const Search = evolve(SearchV2, (e) =>
+	e.args(
+		"search",
+		obj({ ...propertiesOf(QuerySchema), sessions: opt(arr(str({ maxLength: 64 }), { maxItems: 10_000 })) }),
+	),
+);
 
 /**
  * Unread answers (owners only): a session is unread while its latest root answer (`answers`) is newer than what an owner

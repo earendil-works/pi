@@ -11,7 +11,8 @@ export function AppLayout() {
 	const drawer = useDrawer(),
 		route = useRoute(),
 		collapsed = useSidebarCollapsed();
-	const canWrite = useCanWrite(route.session);
+	// Files dropped go to the composer: a list page (`Route.page`) has none.
+	const canDrop = useCanWrite(route.session) && route.page === undefined;
 	const { addFiles } = useComposerState();
 	const [draggingFiles, setDraggingFiles] = useState(false);
 	const dragDepth = useRef(0);
@@ -55,13 +56,13 @@ export function AppLayout() {
 				ref={swipe.main}
 				className={`main ${draggingFiles ? "dragging-files" : ""} ${route.session || route.page !== undefined ? "" : "new-session-view"}`}
 				onDragEnter={(event) => {
-					if (!canWrite || ![...event.dataTransfer.items].some((item) => item.kind === "file")) return;
+					if (!canDrop || ![...event.dataTransfer.items].some((item) => item.kind === "file")) return;
 					event.preventDefault();
 					dragDepth.current++;
 					setDraggingFiles(true);
 				}}
 				onDragOver={(event) => {
-					if (!canWrite || ![...event.dataTransfer.items].some((item) => item.kind === "file")) return;
+					if (!canDrop || ![...event.dataTransfer.items].some((item) => item.kind === "file")) return;
 					event.preventDefault();
 					event.dataTransfer.dropEffect = "copy";
 				}}
@@ -72,7 +73,7 @@ export function AppLayout() {
 					if (dragDepth.current === 0) setDraggingFiles(false);
 				}}
 				onDrop={(event) => {
-					if (!canWrite) return;
+					if (!canDrop) return;
 					event.preventDefault();
 					dragDepth.current = 0;
 					setDraggingFiles(false);

@@ -1,14 +1,15 @@
 /* The Familiar's entry above the sidebar's rollups: a session row with its icon, no heading. */
 .familiar-group {
-	padding: var(--s2) var(--s2) 0;
+	padding-top: var(--s2);
 }
+/* Its icon sits in the rows' marker column (after their disclosure's), so its title lines up with the sessions'. */
 .familiar-entry {
 	display: flex;
 	align-items: center;
-	gap: var(--s2);
+	gap: calc(2 * var(--s1));
 	width: 100%;
 	min-height: var(--control);
-	padding: var(--s1) var(--s2);
+	padding: var(--s1) var(--s1) var(--s1) calc(var(--control-sm) + var(--s1));
 	border-radius: var(--radius);
 	color: var(--text);
 	font-size: var(--fs-md);

@@ -1,6 +1,6 @@
-/* The sidebar and its list pages (Sidebar.tsx, Row.tsx, ListPage.tsx), on Elanor's sidebar and side navigation. Elanor
-   styles links, groups and lists; these rules fit them into p2's drawer column and type, and lay out what Elanor has no
-   part for: a row's meta, its expand control, a branch's rename, a heading's controls. */
+/* The sidebar and its list pages (Sidebar.tsx, Row.tsx, ListPage.tsx), on Elanor's sidebar and side navigation. Every
+   row is one control (.nav-row): leading disclosure, the label (its hit area covers the row), details, and controls at
+   the trailing end; its hover and selected background, Elanor's ghost fills, span all of it. */
 
 /* Elanor's sidebar fills p2's drawer column (its width, border and resizing are the layout's). */
 .sidebar-root {
@@ -38,78 +38,69 @@
 	gap: 0;
 }
 
-/* A rollup's label: its arrow, its name (a link to its list), its count and options. */
-.sidebar-section > .group-head {
+/* A row: one control from the leading edge to the trailing one. */
+.nav-row {
+	position: relative;
 	display: flex;
 	align-items: center;
-	gap: 0;
-	padding: var(--s3) var(--s1) var(--s1);
-	color: var(--muted);
-	font: inherit;
-	font-size: var(--fs-xs);
-	font-weight: var(--fw-strong);
-	letter-spacing: 0.04em;
-	text-transform: uppercase;
-}
-.sidebar-section .group-label {
-	flex: 1;
-	min-width: 0;
-	overflow: hidden;
-	color: inherit;
-	text-decoration: none;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-.sidebar-section > .group-head.active .group-label,
-.sidebar-section .group-label:active {
+	gap: var(--s1);
+	min-height: var(--control);
+	padding-inline: 0 var(--s1);
+	border-radius: var(--semantic-dimension-radius-small);
 	color: var(--text);
 }
 @media (hover: hover) {
-	.sidebar-section .group-label:hover {
-		color: var(--text);
+	.nav-row:hover {
+		background: var(--semantic-color-background-fill-ghost-neutral-hover);
 	}
 }
-.section-toggle {
+.nav-row:has(> .nav-link:active),
+.nav-row.selected {
+	background: var(--semantic-color-background-fill-ghost-neutral-active);
+}
+/* The leading slot: a disclosure, or its space, so labels line up. */
+.nav-leading {
 	display: inline-flex;
 	flex: none;
 	align-items: center;
 	justify-content: center;
 	width: var(--control-sm);
-	height: var(--control-sm);
-	margin: calc(-1 * var(--s1)) 0 calc(-1 * var(--s1)) calc(-1 * var(--s2));
-	color: var(--faint);
+	align-self: stretch;
 }
-.section-toggle .chev,
-.subagent-toggle .chev,
-.subagent-stored .chev {
+/* The marker column: a session's activity dot or a group's icon, as wide as the icon; kept when empty. */
+.nav-marker {
 	display: inline-flex;
-	transition: transform 120ms;
-}
-.section-toggle .chev.open,
-.subagent-toggle .chev.open,
-.subagent-stored .chev.open {
-	transform: rotate(90deg);
-}
-.section-count {
 	flex: none;
-	padding: 0 var(--s2);
-	font-weight: normal;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	color: var(--semantic-color-icon-secondary);
 }
-.sidebar-section .sidebar-empty {
-	padding: var(--s1) var(--s2);
-	text-align: left;
+.nav-marker + .nav-link {
+	margin-inline-start: var(--s1);
 }
-
-/* Links: p2's type, one line, the meta at the end (Elanor's label holds both). */
-.session-main,
-.group-link {
-	min-height: var(--control);
+/* The label: its hit area covers the whole row, below the controls. */
+.nav-row > .nav-link {
+	display: flex;
+	flex: 1;
+	align-items: center;
+	min-width: 0;
+	min-height: 0;
+	padding: 0;
+	background: none;
+	box-shadow: none;
+	color: inherit;
 	font: inherit;
-	font-size: var(--fs-md);
+	text-align: left;
+	text-decoration: none;
 }
-.session-main > span:last-child,
-.subagent-row > span:last-child,
-.group-link > span:last-child {
+.nav-row > .nav-link::after {
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	content: "";
+}
+.nav-row > .nav-link > span {
 	display: flex;
 	align-items: center;
 	gap: var(--s2);
@@ -117,6 +108,56 @@
 	-webkit-line-clamp: none;
 	line-clamp: none;
 }
+.nav-row > .nav-link:focus-visible {
+	outline: none;
+}
+.nav-row.selected > .nav-link {
+	font-weight: var(--semantic-font-weight-ui-selected);
+}
+.nav-row > .nav-link:focus-visible::after {
+	outline: var(--semantic-dimension-border-width-focus-ring) solid var(--semantic-color-focus-ring);
+}
+/* Details: information after the label, the time last so it never moves. */
+.nav-details {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: var(--s2);
+	color: var(--muted);
+	font-size: var(--fs-xs);
+}
+/* Disclosures and controls sit above the label's hit area. */
+.nav-disclosure,
+.nav-control {
+	position: relative;
+	z-index: 1;
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: var(--control-sm);
+	height: var(--control-sm);
+	border-radius: var(--semantic-dimension-radius-small);
+	color: var(--semantic-color-icon-secondary);
+}
+@media (hover: hover) {
+	.nav-disclosure:hover,
+	.nav-control:hover:not(:disabled) {
+		color: var(--text);
+	}
+}
+.nav-disclosure > svg {
+	transition: rotate var(--semantic-transition-movement-disclosure);
+}
+.nav-disclosure[aria-expanded="false"] > svg {
+	rotate: -90deg;
+}
+@media (prefers-reduced-motion: reduce) {
+	.nav-disclosure > svg {
+		transition: none;
+	}
+}
+
 .session-title {
 	flex: 1;
 	min-width: 0;
@@ -129,148 +170,93 @@
 	color: var(--muted);
 	vertical-align: -1px;
 }
-.session-meta {
-	display: flex;
-	flex: none;
-	align-items: center;
-	gap: var(--s1);
-	color: var(--muted);
-	font-size: var(--fs-xs);
-	font-weight: normal;
+.conversation-count {
+	min-width: 1.5em;
+	padding: 0 var(--s1);
+	border-radius: var(--semantic-dimension-radius-small);
+	background: var(--semantic-color-background-fill-ghost-neutral-hover);
+	text-align: center;
+}
+.session-time {
+	min-width: 2.2em;
+	text-align: right;
 }
 
-/* A session's item: its link and its expand control on one line; its branches and subagents below, one step in. */
-.session-header {
-	display: flex;
-	align-items: center;
-}
-.session-header > .session-main {
-	flex: 1;
-	min-width: 0;
-}
-.subagent-toggle {
-	display: inline-flex;
-	flex: none;
-	align-items: center;
-	justify-content: center;
-	gap: var(--s1);
-	min-width: var(--control-sm);
-	height: var(--control-sm);
-	padding: 0 var(--s1);
+/* A rollup's row: its name as a section label. */
+.rollup-row {
+	margin-top: var(--s3);
 	color: var(--muted);
 	font-size: var(--fs-xs);
+	font-weight: var(--fw-strong);
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
 }
-.subagent-toggle:hover {
+.rollup-row.selected {
 	color: var(--text);
 }
-.toggle-branches {
-	display: inline-flex;
-	align-items: center;
-	gap: 2px;
+.section-count {
+	font-weight: normal;
+	letter-spacing: 0;
 }
+/* "No activity" lines up with the sessions' labels: after the disclosure and the marker columns. */
+.sidebar-section .sidebar-empty {
+	padding: var(--s1) 0 var(--s1) calc(var(--control-sm) + 16px + 3 * var(--s1));
+	list-style: none;
+	text-align: left;
+}
+
+/* Nested rows (a group's sessions, a session's conversations): one step in. */
 .nested-items {
-	padding-inline-start: var(--s4);
+	padding-inline-start: var(--s3);
 }
 .nested-items[hidden] {
 	display: none;
 }
-a.subagent-row {
+.conversation-row {
 	min-height: var(--control-sm);
 	color: var(--muted);
 	font-size: var(--fs-sm);
 }
-.subagent-row .session-meta {
-	max-width: 40%;
+.subagent-location,
+.subagent-model {
+	max-width: 8em;
 	overflow: hidden;
 	font-family: var(--mono);
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
-.subagent-location {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-.subagent-stored {
-	display: flex;
-	align-items: center;
-	gap: var(--s2);
-	width: 100%;
-	min-height: var(--control-sm);
-	padding: 0 var(--s2);
-	color: var(--faint);
-	font-size: var(--fs-sm);
-}
 .session-operation {
 	display: flex;
 	align-items: center;
 	gap: var(--s1);
-	padding: 0 var(--s2) var(--s1);
+	padding: 0 var(--s2) var(--s1) calc(var(--control-sm) + var(--s1));
 	color: var(--muted);
 	font-size: var(--fs-xs);
 }
 .session-operation.failed {
 	color: var(--bad);
 }
-.session-operation > span {
+.session-operation > .session-operation-text {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
-/* Renaming a branch: the pencil at the item's end on hover, always shown where there is no hover. */
-.branch-item {
-	position: relative;
-}
-.branch-item > .branch-row {
-	padding-inline-end: calc(var(--s2) + var(--control-sm));
-}
+/* Renaming a branch: the pencil on hover or focus, always shown where there is no hover. */
 .branch-rename {
-	position: absolute;
-	top: 50%;
-	right: 0;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: var(--control-sm);
-	height: var(--control-sm);
-	color: var(--faint);
 	opacity: 0;
-	transform: translateY(-50%);
 }
-.branch-rename:hover {
-	color: var(--text);
-}
-.branch-item:hover .branch-rename,
-.branch-rename:focus-visible {
+.nav-row:focus-within > .branch-rename {
 	opacity: 1;
 }
-
-/* A group inside a rollup: its link (a folder or a project) with "+", its sessions one step in. */
-.group-row {
-	display: flex;
-	align-items: center;
-}
-.group-row > .group-link {
-	flex: 1;
-	min-width: 0;
-}
-.group-new {
-	display: inline-flex;
-	flex: none;
-	align-items: center;
-	justify-content: center;
-	width: var(--control-sm);
-	height: var(--control-sm);
-	color: var(--faint);
-}
-.group-new:hover:not(:disabled) {
-	color: var(--text);
+@media (hover: hover) {
+	.nav-row:hover > .branch-rename {
+		opacity: 1;
+	}
 }
 
 /* A session that fell out of its rollup's window: still part of it, shown in the secondary colour. */
-.session-row.aged .session-title,
-.session-row.aged .session-meta {
+.session-row.aged > .nav-row {
 	color: var(--muted);
 }
 
@@ -288,7 +274,7 @@ a.subagent-row {
 	flex: 1;
 	overflow-y: auto;
 	width: 100%;
-	max-width: 760px;
+	max-width: calc(48 * var(--s4));
 	margin: 0 auto;
 	padding: var(--s2) var(--x) var(--s5);
 }
@@ -296,10 +282,17 @@ a.subagent-row {
 	width: 100%;
 	margin: 0 0 var(--s3);
 }
-.list-page .list-group-label {
+.list-page-body .empty-note {
+	padding: var(--s1) var(--s2);
+	text-align: left;
+}
+.list-group-label {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin: 0;
 	padding: var(--s4) var(--s2) var(--s1);
 	color: var(--muted);
-	font: inherit;
 	font-size: var(--fs-xs);
 	font-weight: var(--fw-strong);
 	letter-spacing: 0.04em;
@@ -307,16 +300,17 @@ a.subagent-row {
 }
 
 @media (pointer: coarse) {
-	.session-main,
-	.group-link,
-	.subagent-row,
-	.section-toggle,
-	.subagent-stored {
+	.nav-row,
+	.conversation-row {
 		min-height: var(--row);
 	}
-	.branch-rename {
+	.nav-leading,
+	.nav-disclosure,
+	.nav-control {
 		width: var(--row);
 		height: var(--row);
+	}
+	.branch-rename {
 		opacity: 1;
 	}
 }

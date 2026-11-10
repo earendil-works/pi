@@ -68,18 +68,19 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		// The fork has a row at once, newest first, labelled with the edited message; conversation 1 shows the title. The
 		// rows wait collapsed behind the session's expand control (here without subagents), which shows them.
 		await browser.wait(`document.querySelectorAll('.sidebar-section[data-key=recent] .branch-row').length===2`);
-		const branches = `document.getElementById('recent/branches-${id}')`;
-		const toggle = `document.querySelector('.subagent-toggle[aria-controls="recent/branches-${id}"]')`;
+		const header = `document.querySelector('.sidebar-section[data-key=recent] .session-header')`;
+		const toggle = `${header}.querySelector('.subagent-toggle')`;
+		const branches = `document.getElementById(${toggle}.getAttribute('aria-controls'))`;
 		assert.equal(await browser.evaluate<boolean>(`${branches}.hidden`), true);
-		assert.equal(await browser.evaluate<string>(`${toggle}.getAttribute('aria-label')`), "Expand branches");
-		assert.equal(await browser.evaluate<string>(`${toggle}.textContent`), "2");
+		assert.equal(await browser.evaluate<string>(`${toggle}.getAttribute('aria-label')`), "Show conversations");
+		assert.equal(await browser.evaluate<string>(`${header}.querySelector('.conversation-count').textContent`), "2");
 		await browser.evaluate(`${toggle}.click()`);
 		await browser.wait(`!${branches}.hidden && ${toggle}.getAttribute('aria-expanded')==='true'`);
 		assert.deepEqual(
 			await browser.evaluate<string[]>(
 				`[...document.querySelectorAll('.sidebar-section[data-key=recent] .branch-row')].map(e=>e.textContent)`,
 			),
-			["secondcurrent", "Branches"],
+			["second", "Branches"],
 		);
 		await send(main, "other");
 		// Switching back to conversation 1 from the sidebar.
@@ -89,14 +90,14 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		await browser.wait(`location.pathname==='/s/${id}'`);
 		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: second')`);
 		assert.equal((await row()).main, 1);
-		// The rows keep their order: only the "current" mark moves. They stay expanded across the switch.
+		// The rows keep their order: only the selection moves. They stay expanded across the switch.
 		await browser.wait(
-			`[...document.querySelectorAll('.sidebar-section[data-key=recent] .branch-row')].map(e=>e.textContent).join('|')==='second|Branchescurrent'`,
+			`[...document.querySelectorAll('.sidebar-section[data-key=recent] .branch-row')].map(e=>e.textContent+(e.classList.contains('active')?'*':'')).join('|')==='second|Branches*'`,
 		);
 		assert.equal(await browser.evaluate<boolean>(`${branches}.hidden`), false);
 		// Collapsing hides them again.
 		await browser.evaluate(`${toggle}.click()`);
-		await browser.wait(`${branches}.hidden && ${toggle}.getAttribute('aria-label')==='Expand branches'`);
+		await browser.wait(`${branches}.hidden && ${toggle}.getAttribute('aria-label')==='Show conversations'`);
 		await browser.evaluate(`${toggle}.click()`);
 		await browser.wait(`!${branches}.hidden`);
 	});
@@ -125,13 +126,13 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		const sessions = await holdIn(fixture.browser(), Sessions, {}, "owner");
 		await sessions.rename({ id, title: "Renamed" }, BACKGROUND_CONTEXT);
 		await browser.wait(
-			`[...document.querySelectorAll('.sidebar-section[data-key=recent] .branch-row')].some(e=>e.textContent==='Renamedcurrent')`,
+			`[...document.querySelectorAll('.sidebar-section[data-key=recent] .branch-row')].some(e=>e.textContent==='Renamed')`,
 		);
 		await rename("Renamed", "Main line");
 		await browser.wait(
-			`[...document.querySelectorAll('.sidebar-section[data-key=recent] .branch-row')].some(e=>e.textContent==='Main linecurrent')`,
+			`[...document.querySelectorAll('.sidebar-section[data-key=recent] .branch-row')].some(e=>e.textContent==='Main line')`,
 		);
-		assert.equal(await rows(), "Second try|Main linecurrent");
+		assert.equal(await rows(), "Second try|Main line");
 		assert.equal((await row()).branches.find((branch) => branch.conversation === 1)?.label, "Main line");
 		// Back to the session title.
 		await browser.evaluate(`document.querySelector('.branch-rename[aria-label="Rename branch Main line"]').click()`);
@@ -139,7 +140,7 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 			`[...document.querySelectorAll('.sheet button')].find(e=>e.textContent==='Use the session title').click()`,
 		);
 		await browser.wait(
-			`[...document.querySelectorAll('.sidebar-section[data-key=recent] .branch-row')].some(e=>e.textContent==='Renamedcurrent')`,
+			`[...document.querySelectorAll('.sidebar-section[data-key=recent] .branch-row')].some(e=>e.textContent==='Renamed')`,
 		);
 	});
 

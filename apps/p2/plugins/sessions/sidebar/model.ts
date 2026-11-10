@@ -23,6 +23,8 @@ export type Group = {
 	readonly key: string;
 	readonly name: string;
 	readonly title?: string;
+	/** Its sessions run in a sandbox (a folder on a sandbox environment): it shows a lock. */
+	readonly sandboxed: boolean;
 	readonly members: readonly SidebarRow[];
 	readonly target: NewTarget;
 };
@@ -33,18 +35,24 @@ export type Collected =
 	| { readonly layout: "groups"; readonly groups: readonly Group[] }
 	| { readonly layout: "link"; readonly members: readonly SidebarRow[] };
 
-/** What rollups collect from besides the sessions: the projects and their sessions, and how a folder is named. */
+/** What rollups collect from besides the sessions: projects and their sessions, folder names, sandbox environments. */
 export type RollupContext = {
 	readonly projects: readonly Project[];
 	readonly memberships: Readonly<Record<string, string>>;
-	readonly folderName: (env: string | null, cwd: string) => string;
+	/** A folder's name in the sidebar; two folders of the same name get their parents (`disambiguate`). */
+	readonly folderName: (env: string | null, cwd: string, segments: number) => string;
+	readonly sandboxes: ReadonlySet<string>;
 };
 
-/** A rule that turns sessions into one section of the sidebar. `archived`: it collects archived sessions. */
+/**
+ * A rule that turns sessions into one section of the sidebar. `archived`: it collects archived sessions. `prefix`: the
+ * key prefix of the groups it collects.
+ */
 export type Rollup = {
 	readonly key: string;
 	readonly name: string;
 	readonly archived: boolean;
+	readonly prefix?: string;
 	collect(rows: readonly SidebarRow[], context: RollupContext): Collected;
 };
 
@@ -54,7 +62,13 @@ export const FOLDERS = "folders";
 export const ARCHIVE = "archive";
 
 export const projectKey = (name: string): string => `project:${name}`;
-export const folderKey = (env: string | null, cwd: string): string => `folder:${JSON.stringify([env, cwd])}`;
+
+/** A folder's key: its environment and path, base64url-encoded so the key has no slash (it goes into `/list/<key>`). */
+export function folderKey(env: string | null, cwd: string): string {
+	const bytes = new TextEncoder().encode(JSON.stringify([env, cwd]));
+	const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
+	return `folder:${btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "")}`;
+}
 
 const live = (rows: readonly SidebarRow[]) => rows.filter((row) => !row.archivedAt);
 
@@ -70,23 +84,36 @@ export const ROLLUPS: readonly Rollup[] = [
 		key: PROJECTS,
 		name: "Projects",
 		archived: false,
-		// One group per project of projects.json that has sessions, in the file's order.
-		collect: (rows, { projects, memberships }) => ({
-			layout: "groups",
-			groups: projects.flatMap((project) => {
-				const members = live(rows).filter((row) => memberships[row.id] === project.name);
-				return members.length
-					? [{ key: projectKey(project.name), name: project.name, members, target: { kind: "project", project } }]
-					: [];
-			}),
-		}),
+		prefix: "project:",
+		// One group per project of projects.json, in the file's order, sessions or not (a new one starts from its "+").
+		collect: (rows, { projects, memberships }) => {
+			const byProject = new Map<string, SidebarRow[]>();
+			for (const row of live(rows)) {
+				const project = memberships[row.id];
+				if (project === undefined) continue;
+				const members = byProject.get(project);
+				if (members) members.push(row);
+				else byProject.set(project, [row]);
+			}
+			return {
+				layout: "groups",
+				groups: projects.map((project) => ({
+					key: projectKey(project.name),
+					name: project.name,
+					sandboxed: false,
+					members: byProject.get(project.name) ?? [],
+					target: { kind: "project", project },
+				})),
+			};
+		},
 	},
 	{
 		key: FOLDERS,
 		name: "Folders",
 		archived: false,
+		prefix: "folder:",
 		// One group per folder sessions work in, by name.
-		collect: (rows, { folderName }) => {
+		collect: (rows, { folderName, sandboxes }) => {
 			const folders = new Map<string, { env: string | null; cwd: string; members: SidebarRow[] }>();
 			for (const row of live(rows)) {
 				const env = row.env ?? null;
@@ -95,13 +122,15 @@ export const ROLLUPS: readonly Rollup[] = [
 				if (folder) folder.members.push(row);
 				else folders.set(key, { env, cwd: row.cwd, members: [row] });
 			}
+			const names = disambiguate([...folders.values()], ({ env, cwd }, segments) => folderName(env, cwd, segments));
 			const groups = [...folders].map(
-				([key, { env, cwd, members }]): Group => ({
+				([key, folder], index): Group => ({
 					key,
-					name: folderName(env, cwd),
-					title: env ? `${env}:${cwd}` : cwd,
-					members,
-					target: { kind: "folder", env, cwd },
+					name: names[index]!,
+					title: folder.env ? `${folder.env}:${folder.cwd}` : folder.cwd,
+					sandboxed: folder.env !== null && sandboxes.has(folder.env),
+					members: folder.members,
+					target: { kind: "folder", env: folder.env, cwd: folder.cwd },
 				}),
 			);
 			return {
@@ -118,6 +147,28 @@ export const ROLLUPS: readonly Rollup[] = [
 	},
 ];
 
+/**
+ * Names for `items` by `name(item, segments)`: one segment each, more for the items whose name another one shares,
+ * until they differ (or stop changing: the same path on two machines differs by its machine only).
+ */
+function disambiguate<T>(items: readonly T[], name: (item: T, segments: number) => string): string[] {
+	const names = items.map((item) => name(item, 1));
+	for (let segments = 2; segments <= 8; segments++) {
+		const counts = new Map<string, number>();
+		for (const each of names) counts.set(each, (counts.get(each) ?? 0) + 1);
+		const shared = names.flatMap((each, index) => ((counts.get(each) ?? 0) > 1 ? [index] : []));
+		if (shared.length === 0) break;
+		let changed = false;
+		for (const index of shared) {
+			const longer = name(items[index]!, segments);
+			changed ||= longer !== names[index];
+			names[index] = longer;
+		}
+		if (!changed) break;
+	}
+	return names;
+}
+
 /** The rollups in the owner's order: the keys in `order` first, then the rest in their default order. */
 export function ordered(rollups: readonly Rollup[], order: readonly string[]): Rollup[] {
 	const rank = new Map(order.map((key, index) => [key, index]));
@@ -126,9 +177,7 @@ export function ordered(rollups: readonly Rollup[], order: readonly string[]): R
 	return rollups.toSorted((a, b) => placed(a) - placed(b));
 }
 
-/** The window of a rollup the owner did not set. */
-export const DEFAULT_WINDOW: SidebarWindow = "3d";
-
+const DEFAULT_WINDOW: SidebarWindow = "3d";
 const DAY = 24 * 60 * 60 * 1000;
 const WINDOW_MS: Record<SidebarWindow, number> = { "1d": DAY, "3d": 3 * DAY, "1w": 7 * DAY, forever: Infinity };
 
@@ -144,7 +193,7 @@ export const WINDOWS: readonly { readonly window: SidebarWindow; readonly label:
  * Whether the sidebar shows `row`: something keeps it in view (pinned, open now, working, an unread answer, a failed
  * worker, a running or failed operation), or it had activity within the rollup's window.
  */
-export function isRelevant(row: SidebarRow, window: SidebarWindow, now: number, open: string | undefined): boolean {
+function isRelevant(row: SidebarRow, window: SidebarWindow, now: number, open: string | undefined): boolean {
 	return (
 		row.pinned ||
 		row.id === open ||
@@ -163,30 +212,29 @@ const byPinThenActivity = (a: SidebarRow, b: SidebarRow) =>
 /** The owner's sidebar settings (`SidebarSettings`), and what relevance depends on. */
 export type View = {
 	readonly windows: Readonly<Record<string, SidebarWindow>>;
+	/** Whether a rollup or a group shows only its heading, by key; one not named shows its sessions. */
 	readonly collapsed: Readonly<Record<string, boolean>>;
 	readonly now: number;
 	readonly open: string | undefined;
 };
 
-/** A group in the sidebar: its relevant sessions and how many it has. */
-export type GroupSection = Omit<Group, "members"> & { readonly rows: readonly SidebarRow[]; readonly total: number };
+/** A group in the sidebar: its relevant sessions (none while collapsed). */
+export type GroupSection = Omit<Group, "members"> & {
+	readonly collapsed: boolean;
+	readonly rows: readonly SidebarRow[];
+};
 
 /** A rollup's section of the sidebar, by the layout of what it collected. */
 export type Section = { readonly key: string; readonly name: string; readonly window: SidebarWindow } & (
-	| {
-			readonly layout: "sessions";
-			readonly collapsed: boolean;
-			readonly rows: readonly SidebarRow[];
-			readonly total: number;
-	  }
+	| { readonly layout: "sessions"; readonly collapsed: boolean; readonly rows: readonly SidebarRow[] }
 	| { readonly layout: "groups"; readonly collapsed: boolean; readonly groups: readonly GroupSection[] }
 	| { readonly layout: "link"; readonly total: number }
 );
 
 /**
- * The sidebar's sections, one per rollup in order: each shows its relevant sessions, flat or in groups. A session shows
- * in every rollup and group that has it. A group shows only while it has relevant sessions; a rollup of groups shows
- * once it has a group (its heading opens them all), a link once it has a session.
+ * The sidebar's sections, one per rollup in order, every rollup always (its label is where it is managed): each shows
+ * its relevant sessions, flat or in groups. A session shows in every rollup and group that has it; a group shows only
+ * while it has relevant sessions.
  */
 export function sectionsOf(
 	rollups: readonly Rollup[],
@@ -194,47 +242,32 @@ export function sectionsOf(
 	context: RollupContext,
 	view: View,
 ): Section[] {
-	return rollups.flatMap((rollup) => {
-		const section = sectionOf(rollup, rows, context, view);
-		return section ? [section] : [];
+	return rollups.map((rollup): Section => {
+		const window = view.windows[rollup.key] ?? DEFAULT_WINDOW;
+		const collapsed = view.collapsed[rollup.key] ?? false;
+		const relevant = (members: readonly SidebarRow[]) =>
+			members.filter((row) => isRelevant(row, window, view.now, view.open)).sort(byPinThenActivity);
+		const base = { key: rollup.key, name: rollup.name, window };
+		const collected = rollup.collect(rows, context);
+		if (collected.layout === "link") return { ...base, layout: "link", total: collected.members.length };
+		if (collected.layout === "sessions")
+			return { ...base, layout: "sessions", collapsed, rows: collapsed ? [] : relevant(collected.members) };
+		const groups = collapsed
+			? []
+			: collected.groups.flatMap(({ members, ...group }) => {
+					const shown = relevant(members);
+					const closed = view.collapsed[group.key] ?? false;
+					return shown.length === 0 ? [] : [{ ...group, collapsed: closed, rows: closed ? [] : shown }];
+				});
+		return { ...base, layout: "groups", collapsed, groups };
 	});
-}
-
-/** Rollup `rollup`'s section, or undefined when it has nothing to show. */
-function sectionOf(
-	rollup: Rollup,
-	rows: readonly SidebarRow[],
-	context: RollupContext,
-	view: View,
-): Section | undefined {
-	const window = view.windows[rollup.key] ?? DEFAULT_WINDOW;
-	const collapsed = view.collapsed[rollup.key] ?? false;
-	const relevant = (members: readonly SidebarRow[]) =>
-		members.filter((row) => isRelevant(row, window, view.now, view.open)).sort(byPinThenActivity);
-	const base = { key: rollup.key, name: rollup.name, window };
-	const collected = rollup.collect(rows, context);
-	if (collected.layout === "link")
-		return collected.members.length === 0 ? undefined : { ...base, layout: "link", total: collected.members.length };
-	if (collected.layout === "sessions")
-		return {
-			...base,
-			layout: "sessions",
-			collapsed,
-			rows: collapsed ? [] : relevant(collected.members),
-			total: collected.members.length,
-		};
-	if (collected.groups.length === 0) return undefined;
-	const groups = collapsed
-		? []
-		: collected.groups.flatMap(({ members, ...group }) => {
-				const shown = relevant(members);
-				return shown.length === 0 ? [] : [{ ...group, rows: shown, total: members.length }];
-			});
-	return { ...base, layout: "groups", collapsed, groups };
 }
 
 /** A row of a list page: `aged` when it fell out of the rollup's window (still part of it, shown dimmed). */
 export type ListEntry = { readonly row: SidebarRow; readonly aged: boolean };
+
+/** A group of a list page: its sessions, and where its "+" starts a new one. */
+export type ListGroup = Omit<Group, "members"> & { readonly entries: readonly ListEntry[] };
 
 /** A list page: a flat list of sessions, or groups with theirs, of one rollup or one of its groups. */
 export type ListPageData = {
@@ -242,23 +275,17 @@ export type ListPageData = {
 	/** The rollup's window; absent for archived sessions. */
 	readonly window?: SidebarWindow;
 	readonly archived: boolean;
+	/** For one group's page: where its "+" starts a new session. */
+	readonly target?: NewTarget;
 	readonly content:
 		| { readonly layout: "sessions"; readonly entries: readonly ListEntry[] }
-		| {
-				readonly layout: "groups";
-				readonly groups: readonly {
-					readonly key: string;
-					readonly name: string;
-					readonly entries: readonly ListEntry[];
-				}[];
-		  };
+		| { readonly layout: "groups"; readonly groups: readonly ListGroup[] };
 };
 
 /**
- * The list page of `key`, a rollup's or one of its groups' (a rollup of groups lists every group): every session, those
- * its rollup's window still shows first (pinned first, then the most recently active), then the aged ones; archived
- * sessions newest archived first. Undefined for a key no rollup
- * has (a folder without sessions any more).
+ * The list page of `key`, a rollup's or one of its groups' (a rollup of groups lists every group, sessions or not):
+ * every session, those its rollup's window still shows first (pinned first, then the most recently active), then the
+ * aged ones; archived sessions newest archived first. Undefined for a key no rollup has (a folder without sessions).
  */
 export function listPageOf(
 	key: string,
@@ -267,40 +294,42 @@ export function listPageOf(
 	context: RollupContext,
 	view: View,
 ): ListPageData | undefined {
-	for (const rollup of rollups) {
-		const window = view.windows[rollup.key] ?? DEFAULT_WINDOW;
-		const entries = (members: readonly SidebarRow[]): ListEntry[] =>
-			rollup.archived
-				? members.toSorted((a, b) => (b.archivedAt ?? 0) - (a.archivedAt ?? 0)).map((row) => ({ row, aged: false }))
-				: members
-						.map((row) => ({ row, aged: !isRelevant(row, window, view.now, view.open) }))
-						.sort((a, b) => Number(a.aged) - Number(b.aged) || byPinThenActivity(a.row, b.row));
-		const base = { archived: rollup.archived, ...(rollup.archived ? {} : { window }) };
-		const collected = rollup.collect(rows, context);
-		if (collected.layout === "groups") {
-			if (key === rollup.key)
-				return {
-					...base,
-					name: rollup.name,
-					content: {
-						layout: "groups",
-						groups: collected.groups.map((group) => ({
-							key: group.key,
-							name: group.name,
-							entries: entries(group.members),
-						})),
-					},
-				};
-			const group = collected.groups.find((each) => each.key === key);
-			if (group)
-				return { ...base, name: group.name, content: { layout: "sessions", entries: entries(group.members) } };
-		} else if (key === rollup.key)
-			return { ...base, name: rollup.name, content: { layout: "sessions", entries: entries(collected.members) } };
-	}
-	return undefined;
+	const rollup = rollups.find(
+		(each) => each.key === key || (each.prefix !== undefined && key.startsWith(each.prefix)),
+	);
+	if (!rollup) return undefined;
+	const window = view.windows[rollup.key] ?? DEFAULT_WINDOW;
+	const entries = (members: readonly SidebarRow[]): ListEntry[] =>
+		rollup.archived
+			? members.toSorted((a, b) => (b.archivedAt ?? 0) - (a.archivedAt ?? 0)).map((row) => ({ row, aged: false }))
+			: members
+					.map((row) => ({ row, aged: !isRelevant(row, window, view.now, view.open) }))
+					.sort((a, b) => Number(a.aged) - Number(b.aged) || byPinThenActivity(a.row, b.row));
+	const base = { archived: rollup.archived, ...(rollup.archived ? {} : { window }) };
+	const collected = rollup.collect(rows, context);
+	if (collected.layout !== "groups")
+		return { ...base, name: rollup.name, content: { layout: "sessions", entries: entries(collected.members) } };
+	if (key === rollup.key)
+		return {
+			...base,
+			name: rollup.name,
+			content: {
+				layout: "groups",
+				groups: collected.groups.map(({ members, ...group }) => ({ ...group, entries: entries(members) })),
+			},
+		};
+	const group = collected.groups.find((each) => each.key === key);
+	return (
+		group && {
+			...base,
+			name: group.name,
+			target: group.target,
+			content: { layout: "sessions", entries: entries(group.members) },
+		}
+	);
 }
 
-/** The rollups' keys in their order, with `key` moved one place up (`-1`) or down (`1`). */
+/** The keys of the rollups in `rollups`' order, with `key` moved one place up (`-1`) or down (`1`). */
 export function moved(rollups: readonly Rollup[], key: string, by: -1 | 1): string[] {
 	const keys = rollups.map((rollup) => rollup.key);
 	const from = keys.indexOf(key);

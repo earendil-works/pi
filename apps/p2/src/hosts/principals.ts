@@ -55,8 +55,8 @@ export function foreignBrowserRequest(request: IncomingMessage): boolean {
 	return typeof dest === "string" && FRAMES.has(dest) && site !== "same-origin";
 }
 
-/** App pages a link may open: the app, a session or conversation, a share's join page, owner sign-in. */
-const PAGE = /^\/(?:$|s\/|join\/|owner$)/;
+/** App pages a link may open: the app, a session or conversation, a sidebar list, a share's join page, owner sign-in. */
+const PAGE = /^\/(?:$|s\/|list\/|join\/|owner$)/;
 
 /**
  * A top-level page load (link, address bar, bookmark, home-screen app launch): the only foreign browser request that

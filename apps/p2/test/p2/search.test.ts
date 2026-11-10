@@ -120,6 +120,45 @@ describe("search (fake provider)", () => {
 		await sessions.restore({ id: session.id }, BACKGROUND_CONTEXT);
 	});
 
+	it("limits a search to the given sessions before ranking and the hit limit (a sidebar list's own sessions)", async () => {
+		// 45 sessions whose message ranks above the listed one's: an unscoped search's 41 hits leave it out.
+		const crowd = await Promise.all(
+			Array.from({ length: 45 }, (_, index) =>
+				sessions.create({ cwd: fixture.workspace, title: `Crowd ${index}` }, BACKGROUND_CONTEXT),
+			),
+		);
+		const listed = await sessions.create({ cwd: fixture.workspace, title: "Listed" }, BACKGROUND_CONTEXT);
+		const text = (id: string) =>
+			id === listed.id ? "pangolin facts, among other things" : "pangolin pangolin pangolin";
+		await fixture.server.host.root(async (ctx) => {
+			const index = await ctx.get(SearchIndex, {});
+			for (const { id } of [...crowd, listed])
+				await index.index(
+					{
+						session: id,
+						conversation: 1,
+						messages: [{ conversationId: 1, entryId: 1, role: "user", timestamp: Date.now(), text: text(id) }],
+						through: 1,
+					},
+					ctx,
+				);
+		}, BACKGROUND_CONTEXT);
+		const everywhere = await search.search({ query: "pangolin" }, BACKGROUND_CONTEXT);
+		assert.equal(everywhere.messages.length, 41);
+		assert(!everywhere.messages.some((hit) => hit.session === listed.id));
+		const within = await search.search({ query: "pangolin", sessions: [listed.id] }, BACKGROUND_CONTEXT);
+		assert.deepEqual(
+			within.messages.map((hit) => hit.session),
+			[listed.id],
+		);
+		// Titles too: only the listed sessions'.
+		assert.deepEqual(
+			(await search.search({ query: "crowd", sessions: [listed.id] }, BACKGROUND_CONTEXT)).sessions,
+			[],
+		);
+		for (const { id } of [...crowd, listed]) await sessions.archive({ id }, BACKGROUND_CONTEXT);
+	});
+
 	it("indexes subagent messages with independent cursors", async () => {
 		const chat = await chatOf(other.id);
 		await chat.send({ text: "subagent", requestId: "child" }, BACKGROUND_CONTEXT);

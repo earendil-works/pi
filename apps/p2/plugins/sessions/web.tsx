@@ -38,9 +38,10 @@ import {
 	useSheet,
 } from "@p2/app/v1/web";
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { Envs } from "../envs/contract.ts";
 import { directoryPickerLayer } from "../envs/contract.web.tsx";
 import { Projects, placeOn } from "../projects/contract.ts";
-import { Search, SessionReads } from "../search/contract.ts";
+import { Search, type SearchResults, SessionReads } from "../search/contract.ts";
 import { SessionStatus } from "../status/contract.ts";
 import { Subagents } from "../subagents/contract.ts";
 import { SessionTree } from "../tree/contract.ts";
@@ -50,15 +51,16 @@ import { type DrawerRows, DrawerRowsContext } from "./contract.web.tsx";
 import { SessionSheet } from "./SessionSheet.tsx";
 import { ListPage } from "./sidebar/ListPage.tsx";
 import {
-	type GroupSection,
 	listPageOf,
 	moved,
+	type NewTarget,
 	ordered,
-	RECENT,
 	ROLLUPS,
+	type Rollup,
 	type RollupContext,
 	type SidebarRow,
 	sectionsOf,
+	type View,
 } from "./sidebar/model.ts";
 import { RollupSheet } from "./sidebar/RollupSheet.tsx";
 import { SidebarView, useNow } from "./sidebar/Sidebar.tsx";
@@ -117,10 +119,42 @@ type Settings = {
 const applySettings = (state: Settings, change: Partial<Settings>): Settings => ({ ...state, ...change });
 const NO_SETTINGS: Settings = { order: [], windows: {}, collapsed: {} };
 
-/** A folder's name in the sidebar: its last path segment, with its environment; its heading's title has the path. */
-function folderName(env: string | null, cwd: string): string {
-	const base = shortPath(cwd).split(/[\\/]/).filter(Boolean).pop() ?? cwd;
+/**
+ * A folder's name in the sidebar: its last `segments` path segments, with its environment; its row's title has the
+ * whole path.
+ */
+function folderName(env: string | null, cwd: string, segments: number): string {
+	const path = shortPath(cwd).split(/[\\/]/).filter(Boolean);
+	const base = path.slice(-segments).join("/") || cwd;
 	return env ? `${base} · ${env}` : base;
+}
+
+/** What a rollup's or a group's list page shows and acts with: the sidebar's data, published by the sidebar. */
+type PageData = {
+	readonly rows: readonly SidebarRow[];
+	readonly rollups: readonly Rollup[];
+	readonly context: RollupContext;
+	readonly view: View;
+	/** The sessions (or, for a project's list, the projects) are not known yet. */
+	readonly loading: (page: string) => boolean;
+	readonly connected: boolean;
+	readonly onOpen: (id: string, conversation?: number) => void;
+	readonly onRestore: (id: string, conversation?: number) => void;
+	readonly onSearch?: (query: string, archived: boolean, sessions: readonly string[]) => Promise<SearchResults>;
+	readonly onNewIn?: (target: NewTarget) => void;
+};
+
+// The sidebar is always mounted (docked, or in the drawer) and holds the one copy of the data, with its edits shown at
+// once; a list page in the main area renders from it, so both show the same rows, offline too.
+const pageListeners = new Set<() => void>();
+let pageData: PageData | undefined;
+const subscribePage = (listener: () => void) => {
+	pageListeners.add(listener);
+	return () => pageListeners.delete(listener);
+};
+function publishPage(next: PageData): void {
+	pageData = next;
+	for (const listener of pageListeners) listener();
 }
 
 /**
@@ -181,9 +215,16 @@ function useSidebarData() {
 	const projects = useReadable(projectsKept?.projects);
 	const memberships = useReadable(projectsKept?.sessions);
 	const localLabel = useReadable(projectsKept?.local);
+	// Folders on a sandbox environment show a lock; only the owner reads environments.
+	const envs = useReadable(useObject(Envs, owner ? {} : undefined)?.envs);
 	const context = useMemo(
-		(): RollupContext => ({ projects: projects ?? [], memberships: memberships ?? {}, folderName }),
-		[projects, memberships],
+		(): RollupContext => ({
+			projects: projects ?? [],
+			memberships: memberships ?? {},
+			folderName,
+			sandboxes: new Set((envs ?? []).flatMap((env) => (env.config.type === "gondolin" ? [env.name] : []))),
+		}),
+		[projects, memberships, envs],
 	);
 	const settingsHeld = useObject(SidebarSettings, owner ? {} : undefined);
 	const settingsKept = keptIn(settingsHeld, "owner");
@@ -231,10 +272,18 @@ function useSidebarData() {
 		},
 		[catalog, edit, onOpen],
 	);
-	const search = liveIn(useObject(Search, owner ? {} : undefined), "owner");
-	const onSearch = useCallback(
-		(query: string, archived: boolean) => search!.search({ query, archived }, BACKGROUND_CONTEXT),
-		[search],
+	const searchHeld = useObject(Search, owner ? {} : undefined);
+	const search = liveIn(searchHeld, "owner");
+	// The owner's lists keep their search field while offline; a search waits for the connection (the page skips it).
+	const onSearch = useMemo(
+		() =>
+			searchHeld &&
+			((query: string, archived: boolean, sessions: readonly string[]) => {
+				const live = liveIn(searchHeld, "owner");
+				if (!live) return Promise.reject(new Error("Not connected"));
+				return live.search({ query, archived, sessions: [...sessions] }, BACKGROUND_CONTEXT);
+			}),
+		[searchHeld],
 	);
 	return {
 		route,
@@ -248,7 +297,8 @@ function useSidebarData() {
 		reads,
 		marks,
 		search,
-		onSearch: search ? onSearch : undefined,
+		onSearch,
+		projects,
 		projectsHeld,
 		localLabel,
 		context,
@@ -286,6 +336,7 @@ function Sidebar() {
 		return hidden.size ? rows.filter((row) => !hidden.has(row.id)) : rows;
 	}, [rows, apart]);
 	const sections = useMemo(() => sectionsOf(rollups, rolledUp, context, view), [rollups, rolledUp, context, view]);
+	const { onSearch, projects } = data;
 	const access = useObject(Access, {});
 	const guest = useReadable(keptIn(access, "guest")?.grant);
 	useEffect(() => {
@@ -366,12 +417,11 @@ function Sidebar() {
 	}, [setJoin, focusNew]);
 	const { projectsHeld, localLabel } = data;
 	/**
-	 * A group's "+": a folder's new session starts in the folder; a project's joins the project and starts at its place
-	 * on the machine of its most recently active session, else at its first place.
+	 * A group's "+": a folder's new session starts in the folder; a project's joins the project (once it exists) and
+	 * starts at its place on the machine of its most recently active session, else at its first place.
 	 */
 	const onNewIn = useCallback(
-		(group: GroupSection) => {
-			const target = group.target;
+		(target: NewTarget) => {
 			if (target.kind === "folder") {
 				setLocation({ env: target.env, cwd: target.cwd });
 				setJoin(undefined);
@@ -384,9 +434,12 @@ function Sidebar() {
 				if (place) setLocation({ env: place.env, cwd: place.path });
 				setJoin({
 					label: target.project.name,
+					// The page is connected (the session was just created): wait for the projects to be live too.
 					run: async (session) => {
+						if (!projectsHeld) throw new Error("Only the owner has projects");
+						await whenLive(projectsHeld);
 						const live = liveIn(projectsHeld, "owner");
-						if (!live) throw new Error("Not connected");
+						if (!live) throw new Error("Only the owner has projects");
 						await live.assign({ session, project: target.project.name }, BACKGROUND_CONTEXT);
 					},
 				});
@@ -401,6 +454,28 @@ function Sidebar() {
 				live.setCollapsed({ key, collapsed }, BACKGROUND_CONTEXT),
 			),
 		[changeSettings, settings.collapsed],
+	);
+	const onOptions = useCallback(
+		(key: string) => openLayer({ kind: "sheet", name: "sidebar-rollup", locator: key }, { fromDrawer: true }),
+		[],
+	);
+	const ownerNewIn = owner ? onNewIn : undefined;
+	useEffect(
+		() =>
+			publishPage({
+				rows: rolledUp,
+				rollups,
+				context,
+				view,
+				// A project's list waits for the projects too: before them it would say the list is gone.
+				loading: (page) => !list || (page.startsWith("project:") && projects === undefined),
+				connected,
+				onOpen,
+				onRestore,
+				...(onSearch ? { onSearch } : {}),
+				...(ownerNewIn ? { onNewIn: ownerNewIn } : {}),
+			}),
+		[rolledUp, rollups, context, view, list, projects, connected, onOpen, onRestore, onSearch, ownerNewIn],
 	);
 	const rollupSheet = useSheet("sidebar-rollup");
 	const optionsOf = rollupSheet && sections.find((section) => section.key === rollupSheet.locator);
@@ -436,12 +511,8 @@ function Sidebar() {
 				onRenameBranch={catalog ? onRenameBranch : undefined}
 				onRestore={onRestore}
 				onNew={onNew}
-				onNewIn={owner ? onNewIn : undefined}
-				onOptions={
-					owner
-						? (key) => openLayer({ kind: "sheet", name: "sidebar-rollup", locator: key }, { fromDrawer: true })
-						: undefined
-				}
+				onNewIn={ownerNewIn}
+				onOptions={owner ? onOptions : undefined}
 				onCollapse={owner ? onCollapse : undefined}
 				onPage={openPage}
 				onCollapseSidebar={toggleSidebar}
@@ -498,18 +569,31 @@ function Sidebar() {
 	);
 }
 
-/** A rollup's or a group's list in the main area (`Route.page`), with the same rows and actions as the sidebar. */
+/** A rollup's or a group's list in the main area (`Route.page`), from the sidebar's data (`publishPage`). */
 function SectionPage() {
-	const { route, list, rows, rollups, context, view, onOpen, onRestore, onSearch } = useSidebarData();
-	const key = route.page ?? RECENT;
-	const data = useMemo(() => listPageOf(key, rollups, rows, context, view), [key, rollups, rows, context, view]);
+	const route = useRoute();
+	const data = useSyncExternalStore(subscribePage, () => pageData);
+	const page = route.page;
+	const list = useMemo(
+		() => data && page !== undefined && listPageOf(page, data.rollups, data.rows, data.context, data.view),
+		[data, page],
+	);
+	if (!data || page === undefined) return null;
 	return (
 		<ListPage
-			key={key}
-			data={data}
-			loading={!list}
-			actions={{ conversationId: route.conversation, now: view.now, onOpen, onRestore }}
-			onSearch={onSearch}
+			key={page}
+			page={page}
+			data={list || undefined}
+			loading={data.loading(page)}
+			connected={data.connected}
+			actions={{
+				conversationId: route.conversation,
+				now: data.view.now,
+				onOpen: data.onOpen,
+				onRestore: data.onRestore,
+			}}
+			{...(data.onSearch ? { onSearch: data.onSearch } : {})}
+			{...(data.onNewIn ? { onNewIn: data.onNewIn } : {})}
 		/>
 	);
 }

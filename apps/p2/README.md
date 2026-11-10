@@ -260,19 +260,24 @@ selector and the web sidebar (below) group sessions by them:
   target place itself with a notice; that is read from the paths alone, so `/move` works while the session's machine is
   unreachable.
 
-**The web sidebar** (owner) is made of rollups: rules that collect sessions into one section each. **Recents** lists
-every session; **Projects** has a group per project that has sessions (projects.json and the sessions started in a
-project); **Folders** has a group per folder sessions work in; the **Archive** shows only its name. A session shows in
-every rollup and group that has it. The sidebar shows the sessions that matter now: pinned ones, the open one, working
-ones, ones with an unread answer or a failure, and those active within the rollup's window (its **⋯**: **Show sessions
-active within** 24 hours, 3 days by default, 1 week, or Forever; the same menu moves the rollup up or down); a group
-without such a session is not shown, and a rollup's arrow hides its sessions. A rollup's or a group's name opens its
-list in the main area (`/list/<key>`): every session, those outside the window after the others and dimmed but still
-openable, in groups for a rollup of groups, with a search over the list's titles and messages; the Archive's list
-searches the archive and restores a session when you open it. A group's **+** starts a session in it: a folder's in that
-folder, a project's at its place on the machine of its most recently active session (else its first place). Rows are
-links, so Cmd/Ctrl-click and the middle button open a session in another tab. The rollups' order, windows and collapsed
-state are stored on the server, the same on every device.
+**The web sidebar** (owner) is made of rollups: rules that collect sessions into one section each, all of them always
+shown (a rollup's row is where you manage it). **Recents** lists every session; **Projects** has a group per project
+(projects.json and the sessions started in a project); **Folders** has a group per folder sessions work in (a lock
+instead of the folder icon for a sandbox); the **Archive** shows its name and count. A session shows in every rollup and
+group that has it, and is selected in the place you opened it from. The sidebar shows the sessions that matter now:
+pinned ones, the open one, working ones, ones with an unread answer or a failure, and those active within the rollup's
+window (its **⋯**: **Show sessions active within** 24 hours, 3 days by default, 1 week, or Forever; the same menu moves
+the rollup up or down); a group without such a session is left out, and a rollup without any says **No activity**.
+Every row has one shape: a leading arrow (a rollup's or a group's sessions, a session's conversations: its `/tree`
+branches and subagents), the activity dot or the group's icon in one column, the name, then the details with the
+time of the last activity last. A rollup's or a group's name opens its list in the main area (`/list/<key>`): every
+session, those outside the window after the others in the secondary colour but still openable, in groups for a rollup
+of groups (every project, with or without sessions), with a search within the list's sessions; the Archive's list
+searches the archive and restores a session when you open it. A group's **+** (on the sidebar row or the list) starts a
+session in it: a folder's in that folder, a project's at its place on the machine of its most recently active session
+(else its first place), joining the project once created. Session rows are links, so Cmd/Ctrl-click and the middle
+button open a session in another tab. The rollups' order, windows and collapsed rollups and groups are stored on the
+server, the same on every device.
 
 `cacheWarming` (`"idle"` by default, `"streaming"` or `"off"`) keeps prompt caches warm as pi does: before the cache
 entry of a conversation's last request expires (5 minutes for Anthropic and Claude on Radius), p2 sends the request

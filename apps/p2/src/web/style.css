@@ -2650,45 +2650,10 @@ button.diff-number:hover {
 .new-session:hover {
 	color: var(--text);
 }
-.drawer-content > .search {
-	width: auto;
-	margin: 0 var(--x);
-}
-.drawer-content > .empty-note {
-	padding: var(--s4) var(--x);
-	text-align: left;
-}
 .session-scroll {
 	flex: 1;
 	overflow-y: auto;
 	padding: 0 var(--x) var(--s4);
-}
-/* A sidebar section's heading names its group as typed; other headings (Messages) are section labels. */
-.group > .group-head {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	text-transform: none;
-	letter-spacing: 0;
-	white-space: nowrap;
-}
-.group-label {
-	flex: 1;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-.group-new {
-	display: inline-flex;
-	flex: none;
-	align-items: center;
-	justify-content: center;
-	width: var(--control-sm);
-	height: var(--control-sm);
-	margin: calc(-1 * var(--s1)) 0;
-	color: var(--faint);
-}
-.group-new:hover:not(:disabled) {
-	color: var(--text);
 }
 .live-dot {
 	flex: none;
@@ -3563,13 +3528,6 @@ button.history-edge:disabled {
 	.line-comment .icon-button {
 		width: var(--row);
 		height: var(--row);
-	}
-	/* The glyph stays where it was: the larger box grows into the label's padding and past the row's end. */
-	.group-new {
-		width: var(--row);
-		height: var(--row);
-		margin: calc((var(--control-sm) - var(--row)) / 2 - var(--s1)) calc((var(--control-sm) - var(--row)) / 2)
-			calc((var(--control-sm) - var(--row)) / 2 - var(--s1)) 0;
 	}
 	.terminal-keys button {
 		height: var(--control);

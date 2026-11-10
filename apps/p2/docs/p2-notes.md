@@ -757,14 +757,15 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
     one connection each and closing only unused machines), `harness-cwd.test.ts` (version 1 registry placement),
     `envs.test.ts` (local to SSH and back in place, an own local location staying while the session moves to SSH,
     real sshd).
-- **Projects** (`plugins/projects`, owner, TUI only so far): `projects.json` names a codebase's places, one per
+- **Projects** (`plugins/projects`, owner; the TUI's selector and the web sidebar's Projects rollup): `projects.json` names a codebase's places, one per
   environment (README, Configuration). The server observes it as envs.json is observed (`ProjectService`: one observer,
   the last valid projects and the reason the last read failed); `Projects` serves them to owners with `local`, the
   server's hostname, which the TUI writes for this device.
   - **Membership** is explicit, never derived from a path: `ProjectService` keeps session ID → project name in a
     persisted document of the server's Chord store (`p2.project-sessions`), not in the session catalog, so the
     catalog's schema and the `Sessions`/`Catalog` contracts stay as they are and dropping the plugin leaves only an
-    unused document. Written by `Projects.assign` (the TUI's project rows, before `Sessions.create`, refused for a name
+    unused document. Written by `Projects.assign` (the TUI's project rows, before `Sessions.create`; the web sidebar's
+    project "+", once the session exists; refused for a name
     projects.json lacks) and by copies: the sessions plugin's `SessionCopied` registry (called once a clone's or fork's
     row exists) gives the copy its source's project. Nothing clears it; archived sessions keep theirs; a project removed
     from projects.json leaves its name on its sessions.
@@ -798,29 +799,39 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
 - **Web sidebar** (`plugins/sessions/sidebar/`; README, Projects): the sessions plugin owns it, because the Session
   sheet's optimistic edits must show in the rows (docs/optimistic-ui.md). Three layers:
   - **Facts** (unchanged): the catalog's rows, `SessionStatus`, `SessionReads`, `Subagents`, `Sessions.operations`,
-    `Projects` (projects.json and memberships), and `SidebarSettings` (below). `useSidebarData` in `web.tsx` reads them
-    for the sidebar and for the list page alike.
+    `Projects` (projects.json and memberships), `Envs` (sandboxes) and `SidebarSettings` (below), read once by the
+    sidebar (`useSidebarData` in `web.tsx`). The sidebar is always mounted; it publishes what a list page needs
+    (`publishPage`), so the list page shows the same rows and edits, offline too, without holding its own copy.
   - **Rules** (`model.ts`, pure, `sidebar-model.test.ts`): a `Rollup` collects sessions into one section, in one of
-    three layouts: a flat list (`sessions`: Recents), groups of sessions (`groups`: one per project, one per folder,
-    each with where its "+" starts a session), or a link only (`link`: the Archive). `ROLLUPS` are the built-in ones,
-    `ordered` puts them in the owner's order. `sectionsOf` applies relevance (`isRelevant`: pinned, open, working,
-    unread, a failed worker, an operation, or `updatedAt` within the rollup's window: `1d`, `3d` (default), `1w`,
-    `forever`): a session shows in every rollup and group that has it, a group only with relevant sessions, a
-    collapsed rollup only its label. `listPageOf` makes a rollup's or a group's list page: every session, the aged ones
-    (outside the window) after the others, by group for a rollup of groups; the archived ones newest archived first.
-    Keys: `recent`, `projects`, `folders`, `archive`, `project:<name>`, `folder:<JSON of [env, cwd]>`. Rollup order
-    never follows activity.
+    three layouts: a flat list (`sessions`: Recents), groups of sessions (`groups`: every project, one per folder, each
+    with where its "+" starts a session; a sandbox folder `sandboxed`), or a link only (`link`: the Archive).
+    `ROLLUPS` are the built-in ones, `ordered` puts them in the owner's order. `sectionsOf` shows every rollup and
+    applies relevance (pinned, open, working, unread, a failed worker, an operation, or `updatedAt` within the rollup's
+    window: `1d`, `3d` (default), `1w`, `forever`): a session shows in every rollup and group that has it, a group only
+    with relevant sessions, a collapsed rollup or group only its row. `listPageOf` makes a rollup's or a group's list
+    page: every session, the aged ones (outside the window) after the others, by group for a rollup of groups; the
+    archived ones newest archived first. Keys: `recent`, `projects`, `folders`, `archive`, `project:<name>`,
+    `folder:<base64url of JSON [env, cwd]>` (no slash, for `/list/<key>`). Folders take as many trailing path segments
+    as tell same-named ones apart. Rollup order never follows activity.
   - **View** (`Sidebar.tsx`, `Row.tsx`, `ListPage.tsx`, `RollupSheet.tsx`), on Elanor's `Sidebar` and
-    `SideNavigation` (re-exported by `src/web/navigation-components.ts`): a rollup is a navigation group (its label:
-    arrow, name, options), a group an item with its link and "+", a session an item with its link (a session shows in
-    several places: its nested lists' ids carry the place, `<scope>/branches-<id>`). The list page in the main area
-    (`Route.page`, at `/list/<key>`; the `page` slot instead of `main`; `openPage` closes the phone drawer as opening a
-    conversation does) has the search (the archive's for the Archive), aged rows after the others in `--muted`. Rows and
-    names are `<a href>` links: a plain primary click navigates in the page, any other click is the browser's.
+    `SideNavigation` and icons (re-exported by `src/web/navigation-components.ts`). Every row is a `NavRow`: a leading
+    disclosure (Elanor's chevron) or its space, a marker column as wide as an icon (a session's activity dot, a group's
+    folder or lock; kept when empty), the label (a link, or an action: restoring an archived session, switching to
+    another branch), details (the time of the last activity last) and controls (⋯, "+", a branch's rename), all one
+    control whose hover and selected backgrounds (Elanor's ghost fills) span the row; the label's hit area covers it.
+    A session's conversations (branches and subagents) are one list behind its disclosure. An open session is selected
+    in one place: where this tab opened it from (per session, in sessionStorage), else the first place it shows. The
+    list page in the main area (`Route.page`, at `/list/<key>`; the `page` slot instead of `main`; `openPage` closes
+    the phone drawer as opening a conversation does; top-level links to it authenticate as `/s/` links do) has a
+    search within its sessions (`Search` 3's `sessions`), kept with its scroll position across Back, its "+" for
+    groups, and the error toast (`ErrorToast`, shared with the chat).
   - **Settings** (`sidebar-settings.ts`, `SidebarSettingsStore`/`SidebarSettings`, owner): the rollups' order, windows
-    and collapsed state, one persisted document in the server's store (`p2.sidebar-settings`): a person's view, not the
-    catalog. A project group's "+" sets the new-session screen's location and a join (`NewSessionJoin`:
-    `Projects.assign`), which the chat plugin runs before `Sessions.create`. Tests: `ui-sidebar.test.ts`.
+    and collapsed rollups and groups, one persisted document in the server's store (`p2.sidebar-settings-state`): a person's
+    view, not the catalog. A project's "+" sets the new-session screen's location and a join (`NewSessionJoin`:
+    `Projects.assign` once the projects are live), which the chat plugin runs once `Sessions.create` answered (a refused
+    creation leaves no membership; a failed join shows in the toast) and clears after. Tests: `sidebar-model.test.ts`,
+    `sidebar-settings.test.ts`, `ui-sidebar.test.ts`, the scoped search in `search.test.ts`, list links in
+    `foreign-requests.test.ts`.
 - **Principals** (`src/runtime/principals.ts`, typed: `P2Principal`, with Chord's API typed by it in
   `src/runtime/chord.ts`): `owner` (a local owner session on loopback `access: "local"`, authenticated Radius `access: "relay"`, or a
   signed owner cookie `access: "device"` with a device ID), `guest`, `worker` (stamped by the server's `session:` route
@@ -1148,11 +1159,12 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   committed it, and the cursor sent stays put until the last page of a range, so an interrupted scan repeats the
   range (idempotent by entry ID). It runs at start and after every commit adding entries (Durable
   `observeCommits`), and retries after an error (server unreachable, reload) from a fresh cursor. The speaker and
-  peer-sender blocks are not indexed. Owner-only `Search.rebuildIndex({ session })` (Pi Mobile's) starts a persisted job on `SearchIndex` (stop the worker, reset its entries, scan from a fresh worker; an archived session's starts without resuming its work and stops again) and answers once it started; `Search.rebuilds` shows it running and why it failed (`rebuild-index.test.ts`). Owner-only `Search.search({ query, archived })`: sessions whose title or cwd
-  contains the query (sidebar order) and up to 41 message hits (literal terms, all required) in the archive scope.
+  peer-sender blocks are not indexed. Owner-only `Search.rebuildIndex({ session })` (Pi Mobile's) starts a persisted job on `SearchIndex` (stop the worker, reset its entries, scan from a fresh worker; an archived session's starts without resuming its work and stops again) and answers once it started; `Search.rebuilds` shows it running and why it failed (`rebuild-index.test.ts`). Owner-only `Search.search({ query, archived, sessions })`: sessions whose title or
+  cwd contains the query (sidebar order) and up to 41 message hits (literal terms, all required) in the archive scope,
+  within `sessions` when given (3; a sidebar list's own sessions, applied before ranking and the limit).
   Search hits include conversation IDs, and a hit opens that conversation (a subagent's too); default titles derive from the first root user message, explicit titles
-  survive reindexing, and `updatedAt` advances monotonically with indexed activity. The sidebar search box (owner) filters sessions and
-  lists message hits.
+  survive reindexing, and `updatedAt` advances monotonically with indexed activity. A sidebar list page's search (owner) filters its
+  sessions and lists message hits within them.
 - **Configuration** (`plugins/models`): `ModelConfig` (server local) owns p2's `Resources` observer
   (settings.json, models.json, auth.json; hot reload) and contributes it to `ModelResources` (a native), plus `summary` (model
   picker) and `snapshot` (settings, providers, credential metadata, errors; never secrets). Workers run their own

@@ -3,8 +3,8 @@ import { createContext, type ReactNode, useContext, useState } from "react";
 import type { ModelChoice } from "./ModelPicker.tsx";
 
 /**
- * A group the new session joins (a sidebar group's "+"): its name, shown on the new-session screen, and how the session
- * joins it, given its chosen ID before it is created (a retried creation joins again, which changes nothing).
+ * A project the new session joins (a sidebar project group's "+"): its name, shown on the new-session screen, and how
+ * the session joins it once created (given its ID).
  */
 export type NewSessionJoin = { readonly label: string; readonly run: (session: string) => Promise<unknown> };
 

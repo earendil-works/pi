@@ -20,7 +20,7 @@ import { GIVE_UP, type Outgoing, outboxOf, retryDelay } from "./outbox.ts";
 export type Start = {
 	readonly session: string;
 	readonly location: { readonly env: string | null; readonly cwd: string };
-	/** The sidebar group it joins before it is created (a group's "+"). */
+	/** The project it joins once it is created (a project group's "+"). */
 	readonly join?: NewSessionJoin;
 	readonly choice: ModelChoice;
 	readonly messages: readonly Outgoing[];
