@@ -43,7 +43,7 @@ describe("sandbox UI", { skip: !browserTests }, () => {
 	});
 
 	it("lists a sandbox under its host and edits its folders and allowed hosts", async () => {
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.wait(`document.querySelector('textarea') && !document.querySelector('.offline')`);
 		await browser.openSettings("Environments");
 		await browser.wait(`document.querySelector('[role=dialog] [aria-label=Environments] .env-sandbox svg')`);

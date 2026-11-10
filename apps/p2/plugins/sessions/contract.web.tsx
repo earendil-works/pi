@@ -1,4 +1,4 @@
-// What the sessions sidebar shares with other plugins' entries (`drawer-head:*` slots, browser): the rows as the sidebar
+// What the sessions sidebar shares with other plugins' entries (the `drawer-brand` slot, browser): the rows as the sidebar
 // shows them, their state dot, and listing sessions apart from the rollups because an entry of their own shows them.
 import { createContext } from "react";
 import type { SidebarRow } from "./sidebar/model.ts";
@@ -13,5 +13,5 @@ export type DrawerRows = {
 	readonly listApart: (key: string, ids: readonly string[]) => void;
 };
 
-/** The sidebar's rows for its `drawer-head` entries. */
+/** The sidebar's rows for other plugins' entries in it. */
 export const DrawerRowsContext = createContext<DrawerRows>({ sessions: [], listApart: () => {} });

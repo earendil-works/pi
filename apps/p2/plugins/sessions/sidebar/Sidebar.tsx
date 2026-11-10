@@ -1,17 +1,18 @@
 // The sidebar's view, built from Elanor's sidebar and side navigation: one navigation group per rollup, in the layout
 // of what it collected (its relevant sessions, groups with theirs, or only its name), and the guest's list of shared
 // sessions. Every row has the same shape (Row.tsx's `NavRow`): a marker, a label, details and controls at the trailing
-// end. A rollup's name opens its list page, its chevron shows or hides its sessions; a group's row shows or hides its
-// sessions; a session's row opens it (and shows its conversations), its chevron shows or hides them. It renders what
-// model.ts computes and calls back for every action.
+// end. The owner's first row opens the new-session screen. A rollup's name opens its list page, its chevron shows or
+// hides its sessions; a group's row shows or hides its sessions; a session's row opens it (and shows its
+// conversations), its chevron shows or hides them. It renders what model.ts computes and calls back for every action.
 import { type Grant, grantMode } from "@p2/app/v1";
 import {
 	NavAddIcon,
 	NavFolderIcon,
 	NavLockIcon,
 	NavMoreIcon,
+	NEW_SESSION,
 	PiLogo,
-	PlusIcon,
+	routePath,
 	Sidebar,
 	SideNavigation,
 	ThemeButton,
@@ -45,6 +46,7 @@ type HeadingActions = {
 /** A group inside a rollup: its row (icon, name, "+"), which shows or hides its relevant sessions below it, one step in. */
 function GroupItem({ group, rows, actions }: { group: GroupSection; rows: RowActions; actions: HeadingActions }) {
 	const { onCollapse, onNewIn, connected } = actions;
+	const { target } = group;
 	const listId = useId();
 	const marker = group.sandboxed ? <NavLockIcon size={16} aria-label="Sandbox" /> : <NavFolderIcon size={16} />;
 	const label = <span className="session-title">{group.name}</span>;
@@ -59,14 +61,15 @@ function GroupItem({ group, rows, actions }: { group: GroupSection; rows: RowAct
 				marker={marker}
 				label={label}
 				controls={
-					onNewIn && (
+					onNewIn &&
+					target && (
 						<button
 							type="button"
 							className="nav-control group-new"
 							aria-label={`New session in ${group.name}`}
 							title={`New session in ${group.name}`}
 							disabled={!connected}
-							onClick={() => onNewIn(group.target)}
+							onClick={() => onNewIn(target)}
 						>
 							<NavAddIcon size={16} />
 						</button>
@@ -165,7 +168,8 @@ export const SidebarView = memo(function SidebarView({
 	sections,
 	now,
 	page,
-	head,
+	newSession,
+	brand,
 	guest,
 	activeId,
 	conversationId,
@@ -190,8 +194,10 @@ export const SidebarView = memo(function SidebarView({
 	now: number;
 	/** The list shown in the main area, by its key. */
 	page: string | undefined;
-	/** Entries above the rollups (plugins' `drawer-head` slots, e.g. the Familiar's). */
-	head?: ReactNode;
+	/** Whether the new-session screen is shown. */
+	newSession: boolean;
+	/** The owner's header start: the Pi logo, or what a plugin puts there (the `drawer-brand` slot: the Familiar's). */
+	brand: ReactNode;
 	guest?: Grant;
 	activeId?: string;
 	conversationId: number;
@@ -280,25 +286,27 @@ export const SidebarView = memo(function SidebarView({
 	return frame(
 		"Sessions",
 		<div className="drawer-header-row">
-			<div className="brand">
-				<PiLogo compact />
-			</div>
-			<div className="drawer-actions">
-				<button type="button" className="new-session" onClick={onNew} disabled={!connected}>
-					<PlusIcon size={16} />
-					<span>New session</span>
-				</button>
-				<Sidebar.Trigger className="collapse-sidebar" aria-label="Collapse sidebar" />
-			</div>
+			<div className="brand">{brand}</div>
+			<Sidebar.Trigger className="collapse-sidebar" aria-label="Collapse sidebar" />
 		</div>,
-		<>
-			{head}
-			<SideNavigation.Root className="sidebar-nav" aria-label="Rollups">
-				{sections.map((section) => (
-					<RollupGroup key={section.key} section={section} rows={actions} actions={headings} />
-				))}
-			</SideNavigation.Root>
-		</>,
+		<SideNavigation.Root className="sidebar-nav" aria-label="Rollups">
+			<SideNavigation.List className="sidebar-start">
+				<SideNavigation.Item>
+					<NavRow
+						selected={newSession}
+						className="group-row"
+						linkClassName="new-session"
+						href={routePath(NEW_SESSION)}
+						onActivate={onNew}
+						marker={<NavAddIcon size={16} />}
+						label="New session"
+					/>
+				</SideNavigation.Item>
+			</SideNavigation.List>
+			{sections.map((section) => (
+				<RollupGroup key={section.key} section={section} rows={actions} actions={headings} />
+			))}
+		</SideNavigation.Root>,
 		<>
 			<span className="spacer" />
 			{footerActions}

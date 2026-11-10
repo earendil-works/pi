@@ -47,6 +47,7 @@ import {
 	type ModelChoice,
 	ModelPicker,
 	modelName,
+	NEW_SESSION,
 	navigate,
 	OneShotAgents,
 	OpenConversation,
@@ -765,7 +766,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 			// What this device kept of a session the server no longer has goes with it (an archived one stays).
 			if (!session) void forgetSession(sessionId);
 			toast(session ? "Session is archived" : "Session not found");
-			void nav.replace(conversationRoute(current, undefined), current);
+			void nav.replace(NEW_SESSION, current);
 		}
 	}, [listed, session, nav, sessionId, toast]);
 	// Who this browser is, as the server last said: kept while reconnecting (`useOwner`), so the composer stays.
@@ -1800,8 +1801,11 @@ function Main() {
 							<SessionChat key={conversation} sessionId={route.session} conversationId={shownConversation} />
 						</Slot>
 					</Slot>
-				) : (
+				) : route.newSession ? (
 					<NewSession />
+				) : (
+					// Home: what a plugin shows there (the Familiar opens its session), else the new-session screen.
+					<Slot name="home" fallback={<NewSession />} />
 				)}
 				{/* The transcript of the screen above goes into the view (`useChatScreen`), the dock floats over its bottom. */}
 				<div className="chat">

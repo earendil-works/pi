@@ -2638,18 +2638,6 @@ button.diff-number:hover {
 .collapse-sidebar svg {
 	transform: rotate(180deg);
 }
-.new-session {
-	display: inline-flex;
-	align-items: center;
-	gap: var(--s1);
-	height: var(--control);
-	padding: 0 var(--s2);
-	color: var(--muted);
-	font-size: var(--fs-sm);
-}
-.new-session:hover {
-	color: var(--text);
-}
 .session-scroll {
 	flex: 1;
 	overflow-y: auto;

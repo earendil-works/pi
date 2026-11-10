@@ -221,7 +221,7 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		const home = folder("home");
 		await create("Kept", home);
 		const homeKey = folderKey(null, home);
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.wait(`document.querySelector('.sidebar-section[data-key=recent] .session-main')`);
 		// A rollup collapses to its row, the choice is kept on the server; so does a group.
 		await browser.click(".sidebar-section[data-key=recent] .section-toggle");
@@ -249,7 +249,7 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		await create("In target", target);
 		// The newest session is elsewhere: the new-session screen would start there without the "+".
 		await create("Newest", folder("elsewhere"));
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.click(`.sidebar-group${withAttribute("data-key", folderKey(null, target))} .group-new`);
 		await browser.wait(`!document.querySelector('.offline') && document.body.textContent.includes('Faux Model')`);
 		await browser.evaluate(setInput(".composer textarea", "Folder start"));

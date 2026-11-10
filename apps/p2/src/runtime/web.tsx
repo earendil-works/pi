@@ -25,6 +25,7 @@ import {
 	HOME,
 	type Layer,
 	Navigation,
+	NEW_SESSION,
 	type Route,
 	useScrollMemory,
 } from "../web/navigation.ts";
@@ -428,6 +429,11 @@ export function navigate(next: Partial<Route>, options: { replace?: boolean } = 
  */
 export function openPage(page: string): void {
 	void getNavigation().closeThenPush(() => ({ ...HOME, page }));
+}
+
+/** The new-session screen (`NEW_SESSION`). As opening a conversation, it closes the phone drawer and modal layers. */
+export function openNewSession(): void {
+	void getNavigation().closeThenPush(() => NEW_SESSION);
 }
 
 /** Named plugin modal: locators are small serialized values, not component state. */

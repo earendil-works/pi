@@ -1,20 +1,15 @@
-/* The Familiar's entry above the sidebar's rollups: a session row with its icon, no heading. */
-.familiar-group {
-	padding-top: var(--s2);
-}
-/* Its icon sits in the rows' marker column, so its title lines up with the sessions', and its details end on the rows'
-   trailing line (the sidebar's row measures, plugins/sessions/sidebar/style.css). */
+/* The Familiar's entry: the Pi logo at the start of the sidebar header, as a button a control wide. The logo stays where
+   the header puts it (the box reaches past it by half the difference), and the session's activity dot sits on the
+   logo's top end corner. */
 .familiar-entry {
-	display: flex;
+	position: relative;
+	display: inline-flex;
 	align-items: center;
-	gap: calc(2 * var(--s1));
-	width: 100%;
-	min-height: var(--control);
-	padding: var(--s1) var(--nav-edge);
+	justify-content: center;
+	width: var(--control);
+	height: var(--control);
+	margin-inline-start: calc((24px - var(--control)) / 2);
 	border-radius: var(--radius);
-	color: var(--text);
-	font-size: var(--fs-md);
-	text-align: left;
 }
 .familiar-entry.active,
 .familiar-entry:active {
@@ -25,12 +20,16 @@
 		background: var(--hover);
 	}
 }
-.familiar-entry > svg {
-	flex: none;
-	color: var(--muted);
+.familiar-entry > .live-dot,
+.familiar-entry > .unread-dot {
+	position: absolute;
+	top: var(--s1);
+	right: var(--s1);
 }
 @media (pointer: coarse) {
 	.familiar-entry {
-		min-height: var(--row);
+		width: var(--row);
+		height: var(--row);
+		margin-inline-start: calc((24px - var(--row)) / 2);
 	}
 }

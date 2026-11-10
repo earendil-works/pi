@@ -14,6 +14,10 @@ export type WorkspaceRoute = {
 	startTerminal?: boolean;
 };
 export type WorkspaceLocation = WorkspaceRoute;
+/**
+ * Where the app is. Without `session`, `page` and `newSession` it is home (`/`): what a plugin's `home` slot shows (the
+ * Familiar's session), else the new-session screen.
+ */
 export type Route = {
 	session?: string;
 	/**
@@ -21,6 +25,8 @@ export type Route = {
 	 * (plugins/sessions/sidebar/model.ts). Never together with `session`.
 	 */
 	page?: string;
+	/** The new-session screen (`/new`). Never together with `session` or `page`. */
+	newSession?: true;
 	conversation: number;
 	layers: Layer[];
 	workspace?: WorkspaceLocation;
@@ -33,6 +39,9 @@ export type Route = {
 };
 
 export const HOME: Route = { conversation: 1, layers: [] };
+
+/** The new-session screen. */
+export const NEW_SESSION: Route = { newSession: true, conversation: 1, layers: [] };
 
 /**
  * Another conversation, with no modal layers. An open workspace panel (docked beside the
@@ -52,12 +61,14 @@ export function conversationRoute(current: Route, session: string | undefined, c
 
 export function routePath(route: Route): string {
 	if (route.page !== undefined) return `/list/${encodeURIComponent(route.page)}`;
+	if (route.newSession) return "/new";
 	if (!route.session) return "/";
 	return `/s/${route.session}${route.conversation === 1 ? "" : `/c/${route.conversation}`}`;
 }
 
 /** The route a URL alone describes, for entries this module didn't create. */
 export function pathRoute(path: string): Route {
+	if (path === "/new") return NEW_SESSION;
 	const page = /^\/list\/([^/]+)$/.exec(path)?.[1];
 	if (page !== undefined)
 		try {

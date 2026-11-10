@@ -43,7 +43,7 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 
 	it("hides the new-session title, opens sign-in and the model sheet, selects cwd, and sends an attached first message", async () => {
 		await browser.metrics(390, 844);
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
 		assert.equal(
 			await browser.evaluate<string>(`getComputedStyle(document.querySelector('.topbar .title')).visibility`),
@@ -98,7 +98,7 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 
 	it("collapses and reopens the desktop sidebar without a navigation step; closes the phone drawer through Back and scrim", async () => {
 		await browser.metrics(1280, 900);
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.wait(`document.querySelector('.collapse-sidebar') && !document.querySelector('.offline')`);
 		const length = await browser.evaluate<number>("history.length");
 		await browser.click('button[aria-label="Collapse sidebar"]');
@@ -123,7 +123,7 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 
 	it("resizes the desktop sidebar from its edge within limits, remembers the width, and ignores it on phones", async () => {
 		await browser.metrics(1280, 900);
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.wait(`document.querySelector('.sidebar-resize') && !document.querySelector('.offline')`);
 		await browser.evaluate("localStorage.removeItem('pi-sidebar-width')");
 		const width = () => browser.evaluate<number>(`document.querySelector('.drawer').getBoundingClientRect().width`);
@@ -154,7 +154,7 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		await browser.wait(`localStorage.getItem('pi-sidebar-width')==='220'`);
 		await drag(1200);
 		await browser.wait(`localStorage.getItem('pi-sidebar-width')==='560'`);
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.wait(`document.querySelector('.sidebar-resize') && !document.querySelector('.offline')`);
 		assert.equal(await width(), 560);
 		await browser.metrics(390, 844);
@@ -267,7 +267,7 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		await browser.click("[role=dialog] .list .row-button:nth-child(3)");
 		await until(sessions.sessions, (list) => Boolean(list?.find((row) => row.id === session.id)?.pinned));
 		await browser.click("[role=dialog] .row-button.danger");
-		await browser.wait(`location.pathname==='/' && !document.querySelector('[role=dialog]')`);
+		await browser.wait(`location.pathname==='/new' && !document.querySelector('[role=dialog]')`);
 		await until(sessions.sessions, (list) => Boolean(list?.find((row) => row.id === session.id)?.archivedAt));
 		// The Archive's heading opens its list in the main area; a row there restores and opens the session.
 		await browser.click(".sidebar-section[data-key=archive] .group-label");

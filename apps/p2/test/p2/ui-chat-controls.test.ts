@@ -83,7 +83,7 @@ describe("chat control parity", { skip: !browserTests }, () => {
 		await browser.wait(`document.querySelector('.attachment-name')?.textContent==='kept.txt'`);
 		await browser.click(".new-session");
 		await browser.wait(
-			`location.pathname==='/' && document.querySelector('.new-session-view .composer textarea') && document.querySelector('.attachment-name')`,
+			`location.pathname==='/new' && document.querySelector('.new-session-view .composer textarea') && document.querySelector('.attachment-name')`,
 		);
 		assert.equal(
 			await browser.evaluate<string>(`document.querySelector('.composer textarea').value`),
