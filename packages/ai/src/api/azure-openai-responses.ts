@@ -8,7 +8,9 @@ import { headersToRecord } from "../utils/headers.ts";
 import { getIdentityHeaders } from "../utils/identity.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { getDeclaredTools, resolveTranscript, resolveTranscriptTools } from "../utils/transcript.ts";
+import { isAzureEntraIdAuth } from "./azure-openai-auth-constants.ts";
 import { type AzureEndpointOptions, resolveAzureConfig, resolveDeploymentName } from "./azure-openai-config.ts";
+import { createAzureEntraIdFetch } from "./azure-openai-entra-auth.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import {
@@ -164,7 +166,7 @@ function createClient(model: Model<"azure-openai-responses">, apiKey: string, op
 		apiKey,
 		apiVersion,
 		dangerouslyAllowBrowser: true,
-		fetch: options?.fetch,
+		fetch: isAzureEntraIdAuth(options?.apiKey) ? createAzureEntraIdFetch(options?.fetch) : options?.fetch,
 		defaultHeaders: headers,
 		baseURL: baseUrl,
 	});

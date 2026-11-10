@@ -23,6 +23,11 @@ if (typeof process !== "undefined" && (process.versions?.node || process.version
 	});
 }
 
+import {
+	AZURE_OPENAI_AUTH_MODE_ENV,
+	AZURE_OPENAI_ENTRA_ID_MARKER,
+	AZURE_OPENAI_ENTRA_ID_MODE,
+} from "./api/azure-openai-auth-constants.ts";
 import type { KnownProvider, ProviderEnv } from "./types.ts";
 import { getProviderEnvValue } from "./utils/provider-env.ts";
 
@@ -152,6 +157,10 @@ export function findEnvKeys(provider: string, env?: ProviderEnv): string[] | und
 export function getEnvApiKey(provider: KnownProvider, env?: ProviderEnv): string | undefined;
 export function getEnvApiKey(provider: string, env?: ProviderEnv): string | undefined;
 export function getEnvApiKey(provider: string, env?: ProviderEnv): string | undefined {
+	if (provider === "azure" && getProviderEnvValue(AZURE_OPENAI_AUTH_MODE_ENV, env) === AZURE_OPENAI_ENTRA_ID_MODE) {
+		return AZURE_OPENAI_ENTRA_ID_MARKER;
+	}
+
 	const envKeys = findEnvKeys(provider, env);
 	if (envKeys?.[0]) {
 		const apiKeyEnv = provider === "anthropic" ? envKeys.find((key) => key !== ANTHROPIC_AUTH_TOKEN_ENV) : envKeys[0];

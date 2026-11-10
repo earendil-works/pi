@@ -15,6 +15,7 @@ import type { ChildProcess } from "child_process";
 import { execSync, spawn } from "child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { complete, getModel, getModels } from "../src/compat.ts";
+import { getEnvApiKey } from "../src/env-api-keys.ts";
 import type { AssistantMessage, Context, Model, Usage } from "../src/types.ts";
 import { isContextOverflow } from "../src/utils/overflow.ts";
 import { hasAzureOpenAICredentials } from "./azure-utils.ts";
@@ -188,7 +189,7 @@ describe("Context overflow error handling", () => {
 	describe.skipIf(!hasAzureOpenAICredentials())("Azure OpenAI Responses", () => {
 		it("gpt-4o-mini - should detect overflow via isContextOverflow", async () => {
 			const model = getModel("azure", "gpt-4o-mini");
-			const result = await testContextOverflow(model, process.env.AZURE_OPENAI_API_KEY!);
+			const result = await testContextOverflow(model, getEnvApiKey("azure")!);
 			logResult(result);
 
 			expect(result.stopReason).toBe("error");

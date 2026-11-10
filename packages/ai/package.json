@@ -79,6 +79,7 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
+		"@azure/identity": "4.14.0",
 		"@anthropic-ai/sdk": "0.129.0",
 		"@aws-sdk/client-bedrock-runtime": "3.1127.0",
 		"@earendil-works/pi-schema": "1.5.2",

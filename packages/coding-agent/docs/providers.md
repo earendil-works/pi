@@ -139,7 +139,9 @@ The provider ID is `azure` (formerly `azure-openai-responses`). Use it as the ke
 
 The `azure` provider serves OpenAI models through the Responses API and Microsoft Foundry models through Chat Completions, such as `azure/deepseek-v4-pro`.
 
-Set an API key plus either a base URL or resource name:
+Use an API key or Microsoft Entra ID, and set either a base URL or resource name.
+
+For API-key authentication:
 
 ```bash
 export AZURE_OPENAI_API_KEY=...
@@ -147,6 +149,16 @@ export AZURE_OPENAI_BASE_URL=https://your-resource.ai.azure.com
 # Or:
 export AZURE_OPENAI_RESOURCE_NAME=your-resource
 ```
+
+For Entra ID, sign in with Azure CLI (or configure another supported Azure Identity credential source), then set:
+
+```bash
+az login
+export AZURE_OPENAI_AUTH_MODE=entra-id
+export AZURE_OPENAI_BASE_URL=https://your-resource.ai.azure.com
+```
+
+The identity needs permission to use the Azure OpenAI resource. You can also select Microsoft Entra ID with `/login azure`; Pi uses Azure Identity's `DefaultAzureCredential` chain for each request.
 
 Resource root URLs under `ai.azure.com`, `cognitiveservices.azure.com`, and `openai.azure.com` are normalized to the OpenAI API path.
 

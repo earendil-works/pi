@@ -16,9 +16,9 @@ function parseDeploymentNameMap(value: string | undefined): Map<string, string> 
 }
 
 export function hasAzureOpenAICredentials(): boolean {
-	const hasKey = !!process.env.AZURE_OPENAI_API_KEY;
+	const hasAuth = !!process.env.AZURE_OPENAI_API_KEY || process.env.AZURE_OPENAI_AUTH_MODE === "entra-id";
 	const hasBaseUrl = !!(process.env.AZURE_OPENAI_BASE_URL || process.env.AZURE_OPENAI_RESOURCE_NAME);
-	return hasKey && hasBaseUrl;
+	return hasAuth && hasBaseUrl;
 }
 
 export function resolveAzureDeploymentName(modelId: string): string | undefined {

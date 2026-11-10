@@ -1,11 +1,11 @@
+import { azureOpenAICompletionsApi } from "../api/azure-openai-completions.lazy.ts";
 import { resolveAzureBaseUrl, resolveDeploymentName } from "../api/azure-openai-config.ts";
 import { azureOpenAIResponsesApi } from "../api/azure-openai-responses.lazy.ts";
 import { lazyStream } from "../api/lazy.ts";
-import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
-import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
 import type { Api, Model, ProviderStreams, StreamOptions } from "../types.ts";
 import { AZURE_MODELS } from "./azure.models.ts";
+import { azureAuth } from "./azure-auth.ts";
 
 function resolveAzureModel(model: Model<Api>, options: StreamOptions | undefined): Model<Api> {
 	return { ...model, baseUrl: resolveAzureBaseUrl(model, options) };
@@ -45,11 +45,11 @@ export function azureProvider(): Provider<"azure-openai-responses" | "openai-com
 	return createProvider({
 		id: "azure",
 		name: "Azure",
-		auth: { apiKey: envApiKeyAuth("Azure OpenAI API key", ["AZURE_OPENAI_API_KEY"]) },
+		auth: { apiKey: azureAuth },
 		models: Object.values(AZURE_MODELS),
 		api: {
 			"azure-openai-responses": azureOpenAIResponsesApi(),
-			"openai-completions": azureStreams(openAICompletionsApi()),
+			"openai-completions": azureStreams(azureOpenAICompletionsApi()),
 		},
 	});
 }
