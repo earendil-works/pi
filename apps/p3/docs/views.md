@@ -86,6 +86,9 @@ for guests; what has no view variant (sending messages, answering questions, app
 - **Its link:** the page asks the server for a short-lived token scoped to that view and hands it to the frame through
   the postMessage bridge; the frame opens its link with it (its origin is opaque, so the server's links endpoint
   admits view links by that token alone). Not relayed through the page's link: that would stamp the page's principal.
+- **The socket is opened on demand** (owner, 2026-11-10): a frame connects only when its code first asks for its
+  room or for its plugin's objects; a sketch that only renders and saves its state uses the page's bridge over the
+  page's connection and opens no socket.
 - **One socket per view, not piggybacked** (owner): a fast view (a game) never queues behind the page's traffic at the
   TCP level, nor the page behind it. A meetup with 70 guests and two views is 210 sockets, which the server handles;
   piggybacking through the page (Chord marking a relay's origin as a weaker principal) is deferred until a case needs
