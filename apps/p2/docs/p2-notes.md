@@ -839,7 +839,7 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
     selected while that shows (the label's hit area covers the row: the label is not positioned, so its `::after` is
     laid out on the row). Its other conversations (its branches, then its subagents and one-shot agents, the most
     recently active first) are below it, shown or hidden only by its chevron (`Toggle`, a button after the label;
-    showing a subagent shows them), in the secondary style, their labels and activity dots in the session's columns. A rollup's name is a link
+    showing a subagent shows them), in the secondary style, their activity dots and labels one small step (`--nav-indent`, 12px) in from the session's while their fill and details span the row as every row's do; one step for all of them (also the archived ones below "N archived"): the list is flat, a subagent cannot start subagents. A rollup's name is a link
     to its list, its chevron a `Toggle` after it; a collapsed rollup lists nothing ("No activity" is for an open one). Rows start and end on the bars' icon line (`--nav-edge`, style.css). An open session is selected
     in one place: where this tab opened it from (per session, in sessionStorage), else the first place it shows. The
     list page in the main area (`Route.page`, at `/list/<key>`; the `page` slot instead of `main`; `openPage` closes

@@ -7,8 +7,9 @@
    --bar-pad from the sidebar's edges, as p2's bars' buttons do, and start and end their content on the line where a
    bar's buttons show their glyphs (--nav-edge in from the row: a 16px glyph centred in a --control box). A row's
    controls are square boxes as tall as the row, wider than their glyph, so a trailing one reaches past that line by
-   the difference (--nav-glyph-inset). A label starts after the marker column and its gap (--nav-label-start). Nothing
-   is indented: every session's activity dot, in a group or not, is in one column. */
+   the difference (--nav-glyph-inset). A label starts after the marker column and its gap (--nav-label-start). Sessions
+   are not indented: every session's activity dot, in a group or not, is in one column. A session's conversations are
+   indented one small step (--nav-indent), their dots in a column of their own. */
 .sidebar-root,
 .list-page {
 	--nav-row: calc(
@@ -20,6 +21,7 @@
 	--nav-glyph-inset: calc((var(--nav-row) - 16px) / 2);
 	--nav-edge: calc((var(--control) - 16px) / 2);
 	--nav-label-start: calc(var(--nav-edge) + 16px + 2 * var(--s1));
+	--nav-indent: var(--s3);
 }
 
 /* Elanor's sidebar fills p2's drawer column (its width, border and resizing are the layout's). */
@@ -272,8 +274,12 @@
 .sidebar-nav ul[hidden] {
 	display: none;
 }
-/* A session's conversations: part of it, in the secondary style, their labels and activity dots in its columns. */
+/* A session's conversations: part of it, in the secondary style, their activity dots and labels one small step in from
+   the session's. Only their content moves: the hover and selected fill spans the row as every row's does, and the
+   details stay on the trailing icon line. One step for all of them, also the archived ones below "N archived": the
+   list is flat (a subagent cannot start subagents), so a deeper step would show a hierarchy that is not there. */
 .conversation-row {
+	padding-inline-start: calc(var(--nav-edge) + var(--nav-indent));
 	color: var(--muted);
 	font-size: var(--fs-sm);
 }

@@ -212,6 +212,12 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 			),
 			"faux-1",
 		);
+		// A conversation's marker and label sit one small step in from the session's; its row's fill and trailing details
+		// do not move.
+		const geometry = await browser.evaluate<Record<string, number>>(
+			`(() => { const box = (row, part) => row.querySelector(part).getBoundingClientRect(); const parent = document.querySelector('.sidebar-section[data-key=recent] .session-header.has-subagents'), child = ${conversations}.querySelector('.nav-row:has(> .subagent-row)'); return { marker: box(child, '.nav-marker').left - box(parent, '.nav-marker').left, label: box(child, '.nav-label').left - box(parent, '.nav-label').left, left: child.getBoundingClientRect().left - parent.getBoundingClientRect().left, right: child.getBoundingClientRect().right - parent.getBoundingClientRect().right, details: box(child, '.nav-details').right - box(parent, '.nav-details').right }; })()`,
+		);
+		assert.deepEqual(geometry, { marker: 12, label: 12, left: 0, right: 0, details: 0 });
 		await browser.click(".session-header.has-subagents .subagent-toggle");
 		await browser.wait(`${conversations}.hidden`);
 		const childChat = await holdIn(
