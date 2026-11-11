@@ -30,7 +30,7 @@ and what they need here:
 | --- | --- | --- |
 | Snapshot interpolation, prediction (Quake, Source) | inputs up and snapshots down every tick, droppable, sample times | inputs up as calls through a latest-only outbox (section 7), snapshots down as events; sample times in the payload |
 | Rollback (fighting games, GGPO) | each frame's input with its frame number, packets repeating the unconfirmed ones, peer confirmations, a prediction horizon | events carry the inputs; frame numbers, confirmations and stalls are the game's |
-| Deterministic lockstep (RTS) | every command, in order, exactly once, a reset after a snapshot | state: an ordered log (p2's log room) with a submit that reports its outcome (section 7) |
+| Deterministic lockstep (RTS) | every command, in order, a reset after a snapshot | state: an ordered log (p2's log room) with a send that reports its outcome (section 7); after an uncertain outcome the game dedupes by its own command IDs |
 
 What no change in Chord fixes: a WebSocket is TCP (one lost packet stalls everything behind it for a round trip;
 browsers inflate compressed parts one after another per link), and frames reach each other through the server.
@@ -39,8 +39,9 @@ WebTransport datagrams are the later path.
 ## 2. Events: a third kind of member
 
 A contract member is state (a JSON value: snapshot and ops, folded), a method (a call and its answer), or now an
-**event**: a JSON value an object emits, delivered once to each reference bound to the object when the event is sent,
-never folded, never kept, never sent to a later holder, and dropped for a holder that cannot keep up.
+**event**: a JSON value an object emits, delivered once to each reference that was bound to the object before the
+emit and still is when the event is sent, never folded, never kept, never sent to a later holder, and dropped for a
+holder that cannot keep up.
 
 ### 2.1 Contracts
 
@@ -137,17 +138,24 @@ host.serve(Match, ({ match }, principal, self) => {
 
 ### 2.4 Delivery: one rule
 
-**The events of a turn are sent at the end of that turn, after every `state` message of the turn.**
+**Events are collected until the event flush, a microtask the first emit queues; the flush sends them after every
+`state` message published before it runs.**
 
-- An emit appends `{ source, value, at, n }` to the host's event list (`n` a host-wide emit counter) and, if the list
-  was empty, queues one microtask: the **event flush**. Commits keep flushing synchronously at their end (W1), so a
-  turn's `state` messages are sent before its event flush runs. `emit(A); commit; emit(B)` in one turn: the commit's
-  `state` message, then one `event` message with A and B.
-- **Who gets an event:** at the flush, each entry goes to the holds bound to its source's object instance whose
-  `bound` was sent before the emit (each hold records the emit counter `n` when its `bound` is sent and skips entries
-  with a lower `n`) and that are still bound to that instance; to same-host references bound to it then; and through
-  re-exposure to the references of the re-exposing objects, by the same rule. A hold released, unbound (`loading`,
-  `failed`) or ended before the flush gets nothing; a hold bound later never inherits an earlier entry.
+- An emit increments the host's emit counter and appends `{ source, value, at, n }` (`n` the counter's new value) to
+  the host's event list; if the list was empty it queues one microtask: the **event flush**. Commits keep flushing
+  synchronously at their end (W1), so state published before the flush runs is sent first. `emit(A); commit; emit(B)`
+  in one synchronous run: the commit's `state` message, then one `event` message with A and B. A commit whose
+  publication itself waits for a later microtask (`emit(A); queueMicrotask(commit)`) may follow A: only state already
+  published when the flush runs is ordered before it.
+- **Who gets an event:** each binding records the counter's value when it is made: a hold when its `bound` is sent, a
+  same-host reference when it binds to the instance, a re-exposing reference likewise (counter values are each host's
+  own: an event arriving over a link takes the receiving host's next counter value as it arrives, and that host's
+  bindings are judged by it); it gets only entries with
+  `n` greater than that value, and only while it stays that binding. At the flush, each entry goes to the bindings of
+  its source's object instance that pass this test, and through re-exposure to the bindings of the re-exposing
+  objects by the same test. A binding that ended before the flush (released, `loading`, `failed`, ended, or unbound
+  and bound again, even to the same instance) gets nothing; one made after the emit never inherits it. A subscription
+  stopped, aborted or released before its listener is called is skipped.
 - **Wire:** per link and origin with entries, one `event` message (section 2.6), unless that origin's event window is
   full (section 2.6).
 - **Same-host listeners** are called after the flush's sends, outside the publication's reentrancy fence, as watch
@@ -188,10 +196,13 @@ subscription.stop();
   `PROTOCOL_VERSION` stays 1 (nothing deployed, §22). Every bound hold receives all its variant's events (no
   subscription message); a consumer without listeners drops them on arrival.
 - **Acks:** `ack` gains `events?: int` (at least 1): the number of `event` messages of that origin the consumer
-  **received** (applied or dropped: no listener, an unknown or released hold, a part over the limit) since its last
-  such ack. A consumer sends at most one per origin per inbound turn (a microtask after the message that started it).
-  An `ack` without `events` is a state ack, as today; one may carry both? No: two acks, kept apart, so state's
-  `ownSent`/`ownAcked` bookkeeping is untouched.
+  **consumed** since its last such ack. A message is consumed once its parts are inflated (a browser's asynchronous
+  inflate included) and parsed, and its entries delivered or deliberately dropped (no listener, an unknown or released
+  hold, a part over the limit); never on transport receipt, so a message waiting behind an inflate keeps its slot. A
+  consumer sends at most one such ack per origin per inbound turn (coalesced in a microtask after the first message it
+  consumed).
+  An `ack` without `events` is a state ack, as today; an `ack` with `events` acknowledges events only. The two are
+  never combined, so state's `ownSent`/`ownAcked` bookkeeping (and its variant fence) is untouched.
 - **The event window** per link and origin, at the emitting host: at most `eventWindow` `event` messages of its own
   unacknowledged (a host option, default 32). When it is full at a flush, that origin's entries of the flush are
   **dropped** and counted; nothing is queued for later. So the provider holds no backlog for a slow consumer; what is
@@ -207,8 +218,10 @@ subscription.stop();
   flight (or its link or origin closes). Tickets are separate from the state FIFO and from its variant fence.
 - **Relays** forward an upstream `event` message at once, never dropping for congestion. As for state, a link answers
   only for what was relayed over it (§3, "Relays"): entries of holds not relayed over the link they came from (released,
-  rebound, from an old upstream link) are filtered out; a message left with some entries is forwarded with those, one
-  left with none is acknowledged to its upstream link at once.
+  rebound, from an old upstream link) are filtered out, and the message is forwarded with what is left, also with no
+  entries. A relay never acknowledges an event message itself: an early ack of a filtered message would consume an
+  upstream ticket of an earlier message still unconsumed downstream (two senders behind an upstream relay), so the
+  downstream's acks, in order, stay the only credit.
 - **Part limits** (§22) apply to each event's value where it is parsed: an oversized value is dropped and counted, its
   hold stays bound.
 - **Compression at the origin** (§22) applies to event parts; a browser inflates them in link order, as any part.
@@ -256,8 +269,15 @@ Decision "Call windows only for untrusted links" (§3, "Calls"):
   for running calls.
 - **Relays honour each upstream window.** A relay forwards a downstream origin's calls upstream under that origin; when
   the upstream link announced a window, relayed calls of an origin past it wait in a FIFO per (upstream link, origin)
-  and go as answers free slots (the consumer side's call window logic); `abort`, `release`, `closed` and the upstream's
-  drop free or reject them as for the relay's own calls. This resolves `slices.md`'s carry-over "one N everywhere
+  and go as answers free slots (the consumer side's call window logic), a new call never overtaking the origin's
+  queue. Queued relayed calls follow the lifecycle of the relay's own queued calls (§3: "A call still queued when its
+  hold rebinds"): when the relayed hold gets `loading`, its unsent calls are rejected `unavailable` (they carry the old
+  variant's method indexes) and its forwarded ones are kept; on `failed` or `gone` its unsent calls are rejected with
+  that cause. A call that crossed the `loading` notice and arrives after it carries the old indexes too: before the
+  relay forwards the downstream's `ack` of a new `bound` upstream (which ends the provider's decoding by the old
+  indexes), it rejects every call of that hold still in its queue `unavailable`; calls arriving after that ack were
+  made with the new binding. `abort`, `release`, `closed` and the upstream's drop free or reject them as for the relay's own calls. A
+  queue entry is removed before its slot is counted free. This resolves `slices.md`'s carry-over "one N everywhere
   until relays account for differing windows".
 - The window bounds calls in flight, not calls waiting to be sent: a caller's queue is the caller's (section 7).
 
@@ -300,21 +320,26 @@ carry-over), and the READMEs of `contracts/`, `host/`, `remote/`, `link/`, `reac
   behaviour).
 - **Eligibility:** a hold bound after the emit gets nothing; released, `loading` or failed before the flush gets
   nothing; a `bound` held back by the state window gets no event before it; emit, unbind and rebind to another variant
-  in one turn.
+  in one turn; emit, then a binding made at the same counter value (a same-host reference and a re-exposing view); unbind and rebind to the same instance before the
+  flush.
 - **Subscriptions:** `on` while loading, failed, or on a variant without the member, then a binding with it;
   pre-aborted context; released reference; subscriptions moving across a restart and a retry.
 - **Wire:** both codecs round-trip `event` and `ack.events` with origins and compressed parts; one `event` message per
   link and origin per flush; `at` preserved; state and event credits independent (state window full while events
   flow, and the reverse); the event window drops when full, counts, recovers after acks; acks for dropped, unknown
-  and oversized entries.
+  and oversized entries; a held browser inflate keeps the event window exhausted until the message is consumed.
 - **Relays:** forwarded at once; local and two upstream senders mixed on one downstream origin, acks spanning senders;
-  some and all entries filtered after a release; an upstream drop and its replacement (old tickets consumed, never
+  some and all entries filtered after a release (forwarded, also empty, never acked by the relay); two relay
+  hops with two senders and a filtered second message behind an unconsumed first; an upstream drop and its replacement (old tickets consumed, never
   credited to the new link); downstream `closed`; a provider side retired only after its tickets drain.
 - **Versions:** mapped values for an older consumer; a throwing mapping drops for its version only, reported once,
   next emit tried; mappings dropped with the last binding (GC test).
 - **Call windows:** nothing announced on trusted `accept`, `connect` and route links; asymmetric trust; no calls before
   `hello`; `callWindow` honoured and its default; a provider never closing for running calls on a trusted link;
-  relays queuing per upstream window (unequal finite windows, none to finite) with abort, release, closed and drop.
+  relays queuing per upstream window (unequal finite windows, none to finite) with abort, release, closed and drop;
+  a queued relayed call when its hold gets `loading`, then a `bound` of another variant (rejected, never sent with the
+  old index), a call crossing the `loading` notice still queued when the new `bound`'s ack passes (rejected), and on
+  `failed` and `gone`.
 - **GC:** stopped subscriptions, released references, the flushed list and the ticket FIFO keep nothing.
 - **Cost guards** (in-memory telemetry adapter): encodes per emit with 0, 1, 10 holders and a mapped version; no walks
   or copies; NOOP adapter costs nothing measurable.
@@ -332,13 +357,20 @@ carry-over), and the READMEs of `contracts/`, `host/`, `remote/`, `link/`, `reac
   Read-only peers receive events.
 - **The kit's motion outbox.** `room.emit(data, { key? })` and `room.onEvent(fn) → unsubscribe`, fn gets
   `{ from, key, at, data }`. Emits leave at once while the room is joined, at most `maxInFlight` unanswered `emit` calls
-  (a kit setting, default 32); past it, a new emit replaces the waiting one with its key (latest only; unkeyed ones
-  wait in order). While the room is not joined (connecting, reconnecting, the reference loading) emits are dropped,
-  never queued or replayed. Listeners belong to the room handle: on every rejoin they are attached to the new
+  (a kit setting, default 32); past it, a keyed emit replaces the waiting one with its key (at most one waits per
+  key) and an unkeyed one is dropped (the API is lossy). While the room is not joined (connecting, reconnecting, the reference loading) emits are dropped,
+  never queued or replayed. On leaving joined the outbox is emptied and its generation retired: an answer of an emit
+  of an earlier generation changes nothing of the new one's count, and nothing sent before is retried. Listeners belong to the room handle: on every rejoin they are attached to the new
   reference and detached from the old.
 - **Reliable sends.** `room.send` keeps its own outbox (keyed replacement before sending, as today) and stops waiting
-  for each call: batches leave in order at once. `send` returns a promise of the message numbers it got, rejecting
-  when the room refused it (`room_full`, revoked), so a game that needs every command (lockstep) sees failures. A test
+  for each call: batches leave in order at once. `send` returns a promise of a tagged outcome: `{ kind: "sent", seq }`
+  (numbered by the room), `{ kind: "superseded" }` (a keyed message replaced in the outbox before it left; the newer
+  one carries its key), `{ kind: "refused", error }` (the room refused it: `room_full`, a read-only frame) or
+  `{ kind: "uncertain" }` (the link closed before the answer: it may or may not have been numbered). Nothing is replayed
+  by itself; a lockstep game dedupes resends by its own command IDs.
+  `ViewRoom.send` and `RoomStore.send` change their result from none to the numbers given, in order, from the
+  numbering transaction; `ViewRoom` version 2's `accepts[1].methods.send.result` maps them back to `null` for old
+  kits. A test
   shows a frame's messages keep their order in the room's numbering with many calls in flight.
 - **Monotonic acknowledgements.** The room keeps a peer's acknowledgement as the highest it saw (`ack` and a send's
   piggybacked `ack`), so a delayed send cannot move it back.
@@ -349,8 +381,10 @@ carry-over), and the READMEs of `contracts/`, `host/`, `remote/`, `link/`, `reac
 - **Docs and `help`:** events for motion, keyed messages for what joiners need, `send` (log rooms) for commands every
   peer must get.
 - **Tests:** old-kit compatibility; emit and listeners, reattached after a reconnect; read-only peers receive, cannot
-  emit; no replay after a reconnect; room accounting unchanged by events; pipelined sends in order; acks never moving
-  back; lag eviction quiet and a revoked grant reported (browser test).
+  emit; no replay after a reconnect; room accounting unchanged by events; pipelined sends in order and their numbers, old kits getting `null`; a
+  keyed message replaced before it left resolving `superseded`, a send whose link closed before its answer
+  resolving `uncertain`; unkeyed emits dropped past `maxInFlight`; a reconnect with `maxInFlight` full and a keyed sample
+  waiting (nothing replayed, the new count untouched); acks never moving back; lag eviction quiet and a revoked grant reported (browser test).
 
 ## 8. Pong, version 7 (after the p2 build)
 
@@ -371,7 +405,15 @@ carry-over), and the READMEs of `contracts/`, `host/`, `remote/`, `link/`, `reac
 2. p2: section 7; `cd apps/p2 && npm run check` and the rooms tests; deploy to the phone.
 3. Pong version 7.
 
-## 10. Review record (first draft)
+## 10. Review record
+
+Second round (both): relays acknowledging filtered messages early could credit the wrong sender two hops up (now
+forwarded, also empty, never acked by a relay); the emit counter's boundary and each host's own counter; acks only
+after a message is consumed (browser inflate); ordering only against state published before the flush; queued
+relayed calls across `loading` and a new `bound`'s ack; the motion outbox bounded (one waiting per key, unkeyed
+dropped) and emptied on leaving joined; `send`'s tagged outcomes and its contract result.
+
+First draft:
 
 Both reviewers: delivery and listener reentrancy undefined (section 2.4: one rule, listeners outside the fence, emits
 from listeners in the next flush); eligibility at a deferred flush (emit counter per hold, binding at flush); relay
