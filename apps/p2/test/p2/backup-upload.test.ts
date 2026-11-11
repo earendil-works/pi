@@ -6,6 +6,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { PutBatchResult, SyncBody } from "@p2/app/v1/node";
 import { StreamedUpload } from "../../plugins/backup/server.ts";
+import { isUrgentCommit } from "../../src/runtime/backup.ts";
+import { INPUT_ENTRY } from "../../src/runtime/input.ts";
 
 /** A remote that reads the whole body, then answers `created` with what it read. */
 function reader(read: Uint8Array[]): (body: SyncBody) => Promise<PutBatchResult> {
@@ -62,4 +64,11 @@ test("an upload whose worker stops sending is dropped: the remote's read fails",
 	}
 	assert.equal(dropped, true);
 	assert.equal(read.length, 1);
+});
+
+test("what a person sent is urgent on its own, before any answer", () => {
+	const entry = (kind: string) => ({ seq: 1, changes: [{ type: "entry", value: { kind } }] }) as never;
+	assert.equal(isUrgentCommit(entry(INPUT_ENTRY)), true, "p2's input");
+	assert.equal(isUrgentCommit(entry("pi.assistant")), true, "an answer");
+	assert.equal(isUrgentCommit(entry("p2.something-else")), false);
 });

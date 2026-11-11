@@ -21,6 +21,7 @@ import {
 } from "@earendil-works/chord/sync";
 import type { CommitPublication } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+import { INPUT_ENTRY } from "./input.ts";
 
 export type { PutBatchResult, SessionSyncStore, SessionSyncUploader, SyncBody };
 
@@ -44,6 +45,9 @@ export const SERVER_STORE = "server";
 /** The remote's name of a session's store. */
 export const sessionStoreName = (session: string): string => `session-${session}`;
 
+/** Entries that should leave the machine soon: what a person sent (p2's input, Durable's user entry) and an answer. */
+const URGENT_ENTRIES: ReadonlySet<string> = new Set([INPUT_ENTRY, "pi.user", "pi.assistant"]);
+
 /**
  * Whether a session commit should be uploaded soon (about 200 ms) rather than with the next ordinary flush (5 s): what
  * the user sent, a finished answer, a settled submission. A host that may be stopped any time (a Durable Object evicted
@@ -52,7 +56,7 @@ export const sessionStoreName = (session: string): string => `session-${session}
 export function isUrgentCommit(publication: CommitPublication): boolean {
 	return publication.changes.some(
 		(change) =>
-			(change.type === "entry" && (change.value.kind === "pi.user" || change.value.kind === "pi.assistant")) ||
+			(change.type === "entry" && URGENT_ENTRIES.has(change.value.kind)) ||
 			(change.type === "submission" && (change.value.status === "done" || change.value.status === "unanswered")),
 	);
 }
