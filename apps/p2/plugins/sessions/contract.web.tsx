@@ -1,8 +1,10 @@
-// What the sessions sidebar shares with other plugins' entries (the `drawer-brand` slot, browser): the rows as the sidebar
-// shows them, their state mark, and listing sessions apart from the rollups because an entry of their own shows them.
+// What the sessions plugin shares with other plugins' web facets: for entries in the sidebar (the `drawer-brand` slot)
+// the rows as the sidebar shows them, their state mark, and listing sessions apart from the rollups because an entry of
+// their own shows them; for session commands in the command menu, the session a command acts on (command-session.tsx).
 import { createContext } from "react";
 import type { SidebarRow } from "./sidebar/model.ts";
 
+export { commandSession, NotArchived, openPanelIn } from "./command-session.tsx";
 export type { SidebarRow } from "./sidebar/model.ts";
 export { SessionDot } from "./sidebar/Row.tsx";
 

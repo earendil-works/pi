@@ -315,3 +315,17 @@ export const BookmarkIcon = ({ size = 16 }: { size?: number }) => (
 		<path d="M6 3h12v18l-6-4-6 4z" />
 	</Icon>
 );
+/** A folder with a plus: a new session in a folder. */
+export const FolderPlusIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+		<path d="M12 10v6M9 13h6" />
+	</Icon>
+);
+/** A folder with an arrow into it: change a session's working directory. */
+export const FolderMoveIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+		<path d="M8 13h7M12.5 10.5l2.5 2.5-2.5 2.5" />
+	</Icon>
+);

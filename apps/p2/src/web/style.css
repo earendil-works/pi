@@ -262,6 +262,10 @@ body,
 	flex: none;
 	color: var(--faint);
 }
+/* An icon before a row's label keeps its size when the label is cut. */
+.row-button > span > svg {
+	flex: none;
+}
 .row-button.danger,
 .login-action.danger {
 	color: var(--bad);
@@ -2920,6 +2924,14 @@ button.diff-number:hover {
 }
 .directory-head {
 	padding-bottom: var(--s3);
+}
+/* A path in the directory picker (the Use button, folder and recent rows): one line, cut with "…" at its end; the
+   element's title has it whole. */
+.directory-path {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 .list .row-button.mono {
 	font-family: var(--mono);

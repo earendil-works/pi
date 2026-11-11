@@ -46,7 +46,7 @@ import { Envs } from "../envs/contract.ts";
 import { directoryPickerLayer } from "../envs/contract.web.tsx";
 import { Projects, placeOn } from "../projects/contract.ts";
 import { SidebarRollups } from "../rollups/contract.ts";
-import { Search, type SearchResults, SessionReads } from "../search/contract.ts";
+import { Search, SessionReads } from "../search/contract.ts";
 import { SessionStatus } from "../status/contract.ts";
 import { Subagents } from "../subagents/contract.ts";
 import { SessionTree } from "../tree/contract.ts";
@@ -65,14 +65,13 @@ import {
 	type NewTarget,
 	ordered,
 	ROLLUPS,
-	type Rollup,
 	type RollupContext,
 	type SidebarRow,
 	sectionsOf,
-	type View,
 	type Wanting,
 	wantingOf,
 } from "./sidebar/model.ts";
+import { publishPage, usePageData } from "./sidebar/page-data.ts";
 import { type CodeSource, RollupSheet } from "./sidebar/RollupSheet.tsx";
 import { folderName } from "./sidebar/Row.tsx";
 import { SidebarView, useNow } from "./sidebar/Sidebar.tsx";
@@ -133,34 +132,6 @@ type Settings = {
 };
 const applySettings = (state: Settings, change: Partial<Settings>): Settings => ({ ...state, ...change });
 const NO_SETTINGS: Settings = { order: [], windows: {}, collapsed: {} };
-
-/** What a rollup's or a group's list page shows and acts with: the sidebar's data, published by the sidebar. */
-type PageData = {
-	readonly rows: readonly SidebarRow[];
-	readonly rollups: readonly Rollup[];
-	readonly context: RollupContext;
-	readonly view: View;
-	/** The sessions (or, for a project's list, the projects) are not known yet. */
-	readonly loading: (page: string) => boolean;
-	readonly connected: boolean;
-	readonly onOpen: (id: string, conversation?: number) => void;
-	readonly onRestore: (id: string, conversation?: number) => void;
-	readonly onSearch?: (query: string, archived: boolean, sessions: readonly string[]) => Promise<SearchResults>;
-	readonly onNewIn?: (target: NewTarget) => void;
-};
-
-// The sidebar is always mounted (docked, or in the drawer) and holds the one copy of the data, with its edits shown at
-// once; a list page in the main area renders from it, so both show the same rows, offline too.
-const pageListeners = new Set<() => void>();
-let pageData: PageData | undefined;
-const subscribePage = (listener: () => void) => {
-	pageListeners.add(listener);
-	return () => pageListeners.delete(listener);
-};
-function publishPage(next: PageData): void {
-	pageData = next;
-	for (const listener of pageListeners) listener();
-}
 
 // What the other sessions want from the owner, for the menu button's badge (`MenuBadge`), which the top bars render
 // outside the sidebar; published by the sidebar, which holds the rows. A new value only when it changed.
@@ -620,7 +591,7 @@ function Sidebar() {
 /** A rollup's or a group's list in the main area (`Route.page`), from the sidebar's data (`publishPage`). */
 function SectionPage() {
 	const route = useRoute();
-	const data = useSyncExternalStore(subscribePage, () => pageData);
+	const data = usePageData();
 	const page = route.page;
 	const list = useMemo(
 		() => data && page !== undefined && listPageOf(page, data.rollups, data.rows, data.context, data.view),
