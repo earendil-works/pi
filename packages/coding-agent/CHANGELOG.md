@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed pi exiting with an uncaught `AbortError` when a `read` tool call is cancelled while the file is being opened ([#11956](https://github.com/earendil-works/pi/issues/11956))
+- Fixed pi exiting with an uncaught `AbortError` when the session picker cancels loading after skipping a `.jsonl` file that is not a session, and fixed such files staying open ([#11956](https://github.com/earendil-works/pi/issues/11956))
+- Fixed `/share` crashing pi when the GitHub CLI fails to start
+
 ## [1.5.2] - 2026-11-10
 
 ### New Features
