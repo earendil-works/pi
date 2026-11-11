@@ -500,6 +500,11 @@ export class Connection {
 				out.push({ seq: entry.seq, from: peer, key, data: parse(entry.data.slice(1)) });
 			}
 		for (const message of log.messages) if (message.seq > this.#applied) this.#applied = message.seq;
+		// A live room numbers its keyed messages too, and a peer that left takes its keyed ones along: with the window
+		// delivered and the keyed messages taken (one transaction publishes a number with its message), this frame has
+		// everything up to the room's number. Acknowledging only the window would leave a frame of a room that sends
+		// keyed messages only behind every later joiner for good, and the room would cut its link every 30 s.
+		if (room.kind === "live" && room.seq > this.#applied) this.#applied = room.seq;
 		out.sort((a, b) => a.seq - b.seq);
 		if (out.length) this.#listener.deliver(out);
 		this.#scheduleAck(ref);

@@ -1,7 +1,8 @@
 // Rooms with events (docs/rooms.md, packages/chord/docs/events/spec.md §7): `ViewRoom` 2 serving version 1's kits,
 // motion as events (read-only peers receive, cannot emit, nothing counted or replayed), monotonic acknowledgements, and
 // the view kit's connection run in Node over a real socket: its motion outbox, its listeners across a reconnect,
-// pipelined sends with their outcomes, and which failures it reports. Each case opens its own session and view.
+// pipelined sends with their outcomes, which failures it reports, and its acknowledgements of keyed messages (no lag
+// eviction of a room that sends keyed messages only). Each case opens its own session and view.
 import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
@@ -38,11 +39,15 @@ async function eventually(done: () => boolean, what: string, timeout = 10_000): 
 
 /**
  * A frame's socket in Node: `Origin: null`, as a sandboxed frame's; its deliveries to the kit can be held back
- * (`stall`), so the server's answers wait while its calls go out.
+ * (`stall`), so the server's answers wait while its calls go out, or come over a slow path (`slow`).
  */
 class FrameSocket extends NodeWebSocket {
 	static all: FrameSocket[] = [];
 	held: (() => void)[] | undefined;
+	/** A slow path's one-way delay (ms), and what arrived and waits for its burst. */
+	#oneWay: number | undefined;
+	readonly #arrived: (() => void)[] = [];
+	#burst: ReturnType<typeof setTimeout> | undefined;
 
 	constructor(url: string | URL) {
 		super(url, { headers: { Origin: "null" } });
@@ -50,13 +55,40 @@ class FrameSocket extends NodeWebSocket {
 	}
 
 	override emit(event: string | symbol, ...args: unknown[]): boolean {
-		if (event !== "message" || !this.held) return super.emit(event, ...args);
-		this.held.push(() => super.emit(event, ...args));
+		if (event !== "message" || (!this.held && this.#oneWay === undefined)) return super.emit(event, ...args);
+		const deliver = () => super.emit(event, ...args);
+		if (this.held) this.held.push(deliver);
+		else this.#later(deliver);
 		return true;
 	}
 
 	stall(): void {
 		this.held = [];
+	}
+
+	/** From now on what it sends is delayed by `oneWay` ms, and what arrives comes in bursts, as over a mobile path. */
+	slow(oneWay: number): void {
+		this.#oneWay = oneWay;
+		const send = this.send.bind(this);
+		// The kit's link sends bytes only (`send(data)`), the first of `ws`'s overloads.
+		this.send = ((data: Uint8Array) =>
+			setTimeout(() => {
+				if (this.readyState === NodeWebSocket.OPEN) send(data);
+			}, oneWay)) as unknown as NodeWebSocket["send"];
+	}
+
+	/** Delivers at the next burst: after the one-way delay and a gap of up to 40 ms (one in ten up to 120 ms). */
+	#later(deliver: () => void): void {
+		this.#arrived.push(deliver);
+		if (this.#burst) return;
+		const gap = Math.random() < 0.1 ? 40 + Math.random() * 80 : Math.random() * 40;
+		this.#burst = setTimeout(
+			() => {
+				this.#burst = undefined;
+				for (const each of this.#arrived.splice(0)) each();
+			},
+			(this.#oneWay ?? 0) + gap,
+		);
 	}
 }
 
@@ -279,6 +311,53 @@ describe("view rooms with events", () => {
 			[{ n: 1 }, { n: 3 }],
 		);
 	});
+
+	it(
+		"keeps both frames of a room with keyed messages only joined past the lag limit, one over a slow path",
+		{ timeout: 120_000 },
+		async () => {
+			const { id } = await session();
+			const near = await kitFrame(id);
+			// Numbered before the far frame joins: the near frame's join is behind the far one's.
+			const ready = await near.connection.send({ ready: true }, "stats");
+			assert.equal(ready.kind, "sent");
+			const far = await kitFrame(id);
+			far.socket.slow(33);
+			const frames = [near, far];
+			const ids = frames.map((frame) => new Set([frame.connection.me]));
+			// What the Pong view sends: a paddle per animation frame, a keyed report every 2 s; never an unkeyed message.
+			let y = 0;
+			const paddles = setInterval(() => {
+				for (const [index, frame] of frames.entries()) {
+					frame.connection.emit({ y: y++ }, "paddle");
+					if (frame.connection.me) ids[index]?.add(frame.connection.me);
+				}
+			}, 16);
+			const reports = setInterval(() => {
+				for (const frame of frames) void frame.connection.send({ events: frame.events.length }, "stats");
+			}, 2000);
+			const fromNear = () => far.events.filter((event) => event.from === near.connection.me).length;
+			const gaps: number[] = [];
+			try {
+				// Past the room's lag limit (30 s, checked every 5 s): a frame behind every other one would be cut by now.
+				for (let second = 0; second < 40; second++) {
+					const before = fromNear();
+					await pause(1000);
+					if (fromNear() === before) gaps.push(second);
+				}
+			} finally {
+				clearInterval(paddles);
+				clearInterval(reports);
+			}
+			assert.deepEqual(
+				ids.map((each) => each.size),
+				[1, 1],
+				"no frame reconnected",
+			);
+			// The far frame got the near one's paddle every second.
+			assert.deepEqual(gaps, []);
+		},
+	);
 
 	it("sends without waiting for each answer: in order, each with its number, a replaced one superseded", async () => {
 		const { id } = await session();

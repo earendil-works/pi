@@ -144,7 +144,9 @@ then has its own dependencies on the worker, its own line, and its own end.
   between. Tested over a link that holds back the server's messages (so the frame's acknowledgements stop and the
   server's window fills): fifty 2 KB updates reach it as about 6 KB (the two messages in its window and one folded
   update). A peer's keyed messages go when it leaves. **Live:** `log` keeps messages until every present peer
-  acknowledged them (`ack({ seq })`, or `send`'s `ack`; the kit acknowledges what it applied, at most every 100 ms).
+  acknowledged them (`ack({ seq })`, or `send`'s `ack`; the kit acknowledges what it applied, at most every 100 ms:
+  with the window delivered and the keyed messages taken, that is the room's number, keyed messages included, so a
+  room that sends keyed messages only never leaves a peer behind a later joiner and its links are not cut).
   No size limits; a peer that never acknowledges holds the log while connected (a writer could equally flood).
 - **Base** (log and text): `{ seq, epoch, value }`. A joiner (or a peer that fell behind a trim) resets from it, then
   applies `log` entries after `base.seq`. **Log:** `log` keeps messages since the base; the leader's
@@ -261,6 +263,8 @@ goes on; the agent's call runs in the leader's frame.
 
 ## 7. Open
 
-- Not tested: the lag eviction (5a), a cost test of encodes with many peers.
+- Not tested: the lag eviction (5a) itself (that a frame which keeps acknowledging is not evicted is tested:
+  `rooms-events.test.ts`, two frames of a keyed-only room past the lag limit, one over a slow path, no reconnect), a
+  cost test of encodes with many peers.
 - Radius (decision 4). The TUI shows no views, so no rooms.
 - A paged keyed snapshot for joiners (now a keyed send past the link part limit is refused).
