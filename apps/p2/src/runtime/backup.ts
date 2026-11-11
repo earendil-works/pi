@@ -13,9 +13,8 @@ import {
 	FileSystemSyncRemote,
 	FlushScheduler,
 	type PutBatchResult,
-	type RemoteListing,
-	type SessionChanges,
 	type SessionSyncStore,
+	type SessionSyncUploader,
 	type SyncBody,
 	type SyncFileSystem,
 	uploadSession,
@@ -23,7 +22,7 @@ import {
 import type { CommitPublication } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 
-export type { PutBatchResult, RemoteListing, SessionChanges, SessionSyncStore, SyncBody };
+export type { PutBatchResult, SessionSyncStore, SessionSyncUploader, SyncBody };
 
 /** Where this instance backs up to: a folder (a local disk, a mounted bucket or NAS; tests). */
 export type BackupTarget = { readonly kind: "folder"; readonly path: string };
@@ -85,7 +84,8 @@ export type BackupUploaderOptions = {
 	readonly name: string;
 	/** This instance (the device of the slots it creates). */
 	readonly device: string;
-	readonly remote: SessionSyncStore;
+	/** Where the store's slots are created: only `putBatch` (an upload never reads the remote). */
+	readonly remote: SessionSyncUploader;
 	/** The store's host directory: the last sequence the backup holds is kept in `backup/` beside its store. */
 	readonly directory: string;
 	readonly files: SyncFileSystem;

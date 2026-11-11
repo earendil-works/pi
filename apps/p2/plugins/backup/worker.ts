@@ -1,6 +1,7 @@
 // A session's worker uploads its own store (one writer per store) through the server's `BackupRemote`: soon after a
 // commit (about 200 ms after an urgent one: what the user sent, a finished answer), and once more as the worker stops.
-// Inert while backup is off (the server's `device` is null).
+// Inert while backup is off (the server's `device` is null). The device is the server's: the one it stamps on every
+// slot, which an upload compares with a taken slot's to tell its own lost answer from another machine's upload.
 import { defineFacet, expectVariant, local, untilAborted } from "@p2/app/v1";
 import {
 	BackupUploader,

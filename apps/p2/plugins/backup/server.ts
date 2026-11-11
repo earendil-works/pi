@@ -20,8 +20,6 @@ import {
 import { Server, serverOf } from "@p2/app/v1/server";
 import { Backup, BackupRemote, type BackupStatus } from "./contract.ts";
 
-/** How often the server's own store is checked for commits to upload (its writes come from many objects). */
-const SERVER_POLL_MS = 1000;
 /** An upload whose worker sends nothing for this long is dropped (its body was abandoned). */
 const UPLOAD_IDLE_MS = 60_000;
 
@@ -42,87 +40,102 @@ async function deviceId(dataDir: string): Promise<string> {
 }
 
 /**
- * A slot's body as a stream the remote reads while chunks arrive: `push` hands it the next chunk and resolves once
- * the remote took it; `end` closes it. The remote's `putBatch` runs alongside, started by `begin`.
+ * A slot's body handed to the remote as its chunks arrive. `begin` starts the remote's `putBatch` on `#body()` and
+ * waits for `ready`: the remote asked for the body's first chunk, or answered without it (`answered`). `push` hands
+ * over one chunk and resolves once the remote asks for the next one (it took this one) or answered; `end` closes the
+ * body and resolves with the result; `abort` fails the body, so the remote drops what it read.
  */
-class StreamedUpload {
+export class StreamedUpload {
 	readonly store: string;
 	readonly result: Promise<PutBatchResult>;
-	/** Set when the remote answered without reading the whole body (`exists`, `not_head`). */
+	/** Resolves when the remote asks for the next chunk, or once it answered. */
+	#asked = Promise.withResolvers<void>();
+	/** The chunk the remote waits for, while it waits. */
+	#waiting: PromiseWithResolvers<IteratorResult<Uint8Array>> | undefined;
 	#answered = false;
-	#next: PromiseWithResolvers<IteratorResult<Uint8Array>> | undefined;
-	#taken: PromiseWithResolvers<void> | undefined;
-	#ended = false;
+	#aborted: Error | undefined;
 	#timer: ReturnType<typeof setTimeout> | undefined;
-	readonly #onIdle: () => void;
+	#onIdle: (() => void) | undefined;
+	#idleMs = UPLOAD_IDLE_MS;
 
-	constructor(store: string, put: (body: SyncBody) => Promise<PutBatchResult>, onIdle: () => void) {
+	constructor(store: string, put: (body: SyncBody) => Promise<PutBatchResult>) {
 		this.store = store;
-		this.#onIdle = onIdle;
 		this.result = put(this.#body());
-		void this.result.then(
-			() => {
-				this.#answered = true;
-				this.#taken?.resolve();
-			},
-			() => {
-				this.#answered = true;
-				this.#taken?.resolve();
-			},
-		);
-		this.#touch();
+		const settled = (): void => {
+			this.#answered = true;
+			this.#stopIdle();
+			this.#asked.resolve();
+		};
+		this.result.then(settled, settled);
 	}
 
-	/** The remote wants no body: it answered before reading any. */
-	async answeredEarly(): Promise<PutBatchResult | undefined> {
-		const later = new Promise<undefined>((resolve) => setImmediate(() => resolve(undefined)));
-		return Promise.race([this.result, later]);
+	/** The remote asked for the body, or answered without it. */
+	get ready(): Promise<void> {
+		return this.#asked.promise;
+	}
+
+	/** The remote answered (`result` settled), before or while reading the body. */
+	get answered(): boolean {
+		return this.#answered;
+	}
+
+	/** `onIdle` runs when no chunk arrives for `idleMs` (its worker is gone); each `push` restarts the wait. */
+	watch(onIdle: () => void, idleMs = UPLOAD_IDLE_MS): void {
+		this.#idleMs = idleMs;
+		this.#onIdle = onIdle;
+		this.#restartIdle();
 	}
 
 	async push(bytes: Uint8Array): Promise<void> {
-		this.#touch();
-		if (this.#answered || this.#ended) return;
-		this.#taken = Promise.withResolvers<void>();
-		await this.#waitForReader();
-		this.#next?.resolve({ value: bytes, done: false });
-		this.#next = undefined;
-		await this.#taken.promise;
+		this.#restartIdle();
+		await this.#asked.promise;
+		const waiting = this.#waiting;
+		if (this.#answered || waiting === undefined) return;
+		this.#waiting = undefined;
+		this.#asked = Promise.withResolvers<void>();
+		waiting.resolve({ value: bytes, done: false });
+		await this.#asked.promise;
 	}
 
-	end(): Promise<PutBatchResult> {
-		this.#ended = true;
-		clearTimeout(this.#timer);
-		this.#next?.resolve({ value: undefined, done: true });
-		this.#next = undefined;
+	async end(): Promise<PutBatchResult> {
+		this.#stopIdle();
+		await this.#asked.promise;
+		const waiting = this.#waiting;
+		this.#waiting = undefined;
+		waiting?.resolve({ value: undefined, done: true });
 		return this.result;
 	}
 
 	abort(): void {
-		this.#ended = true;
-		clearTimeout(this.#timer);
-		this.#next?.reject(new Error("The upload was aborted"));
-		this.#next = undefined;
-	}
-
-	async #waitForReader(): Promise<void> {
-		while (this.#next === undefined && !this.#answered) await new Promise((resolve) => setImmediate(resolve));
-	}
-
-	#touch(): void {
-		clearTimeout(this.#timer);
-		this.#timer = setTimeout(this.#onIdle, UPLOAD_IDLE_MS);
-		this.#timer.unref();
+		this.#stopIdle();
+		this.#aborted = new Error("The upload was aborted");
+		const waiting = this.#waiting;
+		this.#waiting = undefined;
+		waiting?.reject(this.#aborted);
 	}
 
 	async *#body(): SyncBody {
-		while (!this.#ended || this.#next !== undefined) {
-			this.#next = Promise.withResolvers<IteratorResult<Uint8Array>>();
-			// The previous chunk was consumed when the reader asks for the next one.
-			this.#taken?.resolve();
-			const item = await this.#next.promise;
-			if (item.done) return;
-			yield item.value;
+		for (;;) {
+			if (this.#aborted !== undefined) throw this.#aborted;
+			this.#waiting = Promise.withResolvers<IteratorResult<Uint8Array>>();
+			const item = this.#waiting.promise;
+			this.#asked.resolve();
+			const next = await item;
+			if (next.done) return;
+			yield next.value;
 		}
+	}
+
+	#restartIdle(): void {
+		if (this.#onIdle === undefined || this.#answered) return;
+		clearTimeout(this.#timer);
+		this.#timer = setTimeout(this.#onIdle, this.#idleMs);
+		this.#timer.unref();
+	}
+
+	#stopIdle(): void {
+		clearTimeout(this.#timer);
+		this.#timer = undefined;
 	}
 }
 
@@ -160,21 +173,19 @@ export default defineFacet((host) => {
 					files,
 					report: (status) => report(SERVER_STORE, status),
 				});
-				// The server's store is written by many objects: its sequence is checked instead of each writer telling.
-				let seen = store.lastSeq;
-				const poll = setInterval(() => {
-					if (store.lastSeq === seen) return;
-					seen = store.lastSeq;
-					uploader.committed(false);
-				}, SERVER_POLL_MS);
-				poll.unref();
+				// The server's store is written by many objects: the store tells of every commit. Uploading writes nothing
+				// to the store (its bookmark is a file, its outbox trim no commit), so this never wakes itself.
+				const stopWatching = store.onCommitted(
+					() => uploader.committed(false),
+					(error) => processLogs.append("backup:server", "event", `following commits failed: ${text(error)}`),
+				);
 				processLogs.append("backup", "event", `Backing up to ${target.path} as device ${id}`);
-				return { remote, uploader, poll };
+				return { remote, uploader, stopWatching };
 			},
 			async (opened) => {
 				ended = true;
 				if (opened === undefined) return;
-				clearInterval(opened.poll);
+				opened.stopWatching();
 				for (const upload of uploads.values()) upload.abort();
 				uploads.clear();
 				await opened.uploader.close().catch((error: unknown) => report(SERVER_STORE, failed(error)));
@@ -197,27 +208,23 @@ export default defineFacet((host) => {
 				report(store, status);
 				return null;
 			},
-			list: async ({ store }, ctx) => {
-				const listing = await remote().list(store, ctx);
-				return { batches: [...listing.batches], snapshots: [...listing.snapshots] };
-			},
 			begin: async ({ store, after, to, archive }, ctx) => {
 				const id = device.value;
 				if (id === null) throw new Error("Backup is off");
-				// The remote reads the body as chunks arrive; the call outlives this method, so not its abort.
+				// The remote reads the body as chunks arrive; its call outlives this method, so not this call's abort.
 				const context: Context = withoutAbortSignal(ctx);
-				const started = new StreamedUpload(
-					store,
-					(body) => remote().putBatch(store, after, to, id, body, context, archive === true ? { archive } : {}),
-					() => {
-						started.abort();
-						uploads.delete(uploadId);
-					},
+				const started = new StreamedUpload(store, (body) =>
+					remote().putBatch(store, after, to, id, body, context, archive === true ? { archive } : {}),
 				);
-				const early = await started.answeredEarly();
-				if (early !== undefined) return { result: early };
+				await started.ready;
+				// Answered without the body (the slot is taken, the history ends elsewhere), or failed before asking for it.
+				if (started.answered) return { result: await started.result };
 				const uploadId = randomUUID();
 				uploads.set(uploadId, started);
+				started.watch(() => {
+					started.abort();
+					uploads.delete(uploadId);
+				});
 				return { upload: uploadId };
 			},
 			append: async ({ store, upload: id, bytes }) => {
@@ -251,7 +258,6 @@ export default defineFacet((host) => {
 			members: {
 				device: backup.device,
 				report: ({ status }, ctx) => backup.report({ store, status }, ctx),
-				list: (_args, ctx) => backup.list({ store }, ctx),
 				begin: (args, ctx) => backup.begin({ store, ...args }, ctx),
 				append: (args, ctx) => backup.append({ store, ...args }, ctx),
 				finish: (args, ctx) => backup.finish({ store, ...args }, ctx),
@@ -261,8 +267,6 @@ export default defineFacet((host) => {
 	});
 });
 
-const failed = (error: unknown): BackupStatus => ({
-	state: "error",
-	error: error instanceof Error ? error.message : String(error),
-	at: Date.now(),
-});
+const text = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+const failed = (error: unknown): BackupStatus => ({ state: "error", error: text(error), at: Date.now() });

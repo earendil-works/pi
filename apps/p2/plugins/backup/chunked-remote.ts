@@ -1,8 +1,8 @@
-// The backup remote as a session's worker sees it: the server's `BackupRemote`, a slot's body sent in chunks of at most
+// A session's worker uploads its store through the server's `BackupRemote`: a slot's body sent in chunks of at most
 // `CHUNK_BYTES` (Chord carries bytes only as whole method arguments), streamed on to the remote as they arrive. A worker
 // only uploads its own store, which the server names from the worker's principal.
 import type { Context, Ctx, RefIn } from "@p2/app/v1";
-import type { PutBatchResult, RemoteListing, SessionChanges, SessionSyncStore, SyncBody } from "@p2/app/v1/node";
+import type { PutBatchResult, SessionSyncUploader, SyncBody } from "@p2/app/v1/node";
 import { type BackupRemote, CHUNK_BYTES } from "./contract.ts";
 
 /** Runs `fn` with the server's `BackupRemote`, as the worker (a root of the worker's own under `context`). */
@@ -11,8 +11,8 @@ export type WithRemote = <T>(
 	context: Context,
 ) => Promise<T>;
 
-/** A worker's remote for its own store, named `name` (the uploader passes it as the session ID). */
-export class ChunkedRemote implements SessionSyncStore {
+/** A worker's uploads of its own store, named `name` (the uploader passes it as the session ID). */
+export class ChunkedRemote implements SessionSyncUploader {
 	readonly #name: string;
 	readonly #with: WithRemote;
 
@@ -46,35 +46,9 @@ export class ChunkedRemote implements SessionSyncStore {
 		}, context);
 	}
 
-	list(sessionId: string, context: Context): Promise<RemoteListing> {
-		this.#own(sessionId);
-		return this.#with((remote, ctx) => remote.list({}, ctx), context);
-	}
-
-	// A worker only uploads: restoring reads the remote offline, never through a worker.
-	getBatch(): Promise<undefined> {
-		return uploadsOnly();
-	}
-	getSnapshot(): Promise<undefined> {
-		return uploadsOnly();
-	}
-	sessions(): Promise<SessionChanges> {
-		return uploadsOnly();
-	}
-	putMeta(): Promise<void> {
-		return uploadsOnly();
-	}
-	getMeta(): Promise<undefined> {
-		return uploadsOnly();
-	}
-
 	#own(sessionId: string): void {
 		if (sessionId !== this.#name) throw new Error(`A worker uploads only its own store, not ${sessionId}`);
 	}
-}
-
-function uploadsOnly(): Promise<never> {
-	return Promise.reject(new Error("A worker's backup remote only uploads"));
 }
 
 /** `body` as chunks of at most `CHUNK_BYTES`, read as they are sent. */

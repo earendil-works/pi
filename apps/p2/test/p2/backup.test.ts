@@ -95,6 +95,16 @@ describe("backup to a folder (fake provider)", () => {
 			);
 			assert.ok(readdirSync(join(backupDir, name, "slots")).length >= 2, "a first upload and a later batch");
 			assert.ok(existsSync(join(backupDir, "server", "slots")));
+
+			// A change of the server's store (a rename): the store tells of the commit, an ordinary upload follows (5 s).
+			const serverHead = (await until(backup.statuses, (value) => value?.server?.state === "synced"))?.server
+				?.syncedHead;
+			await sessions.rename({ id: session.id, title: "Renamed" }, BACKGROUND_CONTEXT);
+			await until(
+				backup.statuses,
+				(value) => value?.server?.state === "synced" && (value.server?.syncedHead ?? 0) > (serverHead ?? 0),
+				20_000,
+			);
 		} finally {
 			backup.release();
 			sessions.release();

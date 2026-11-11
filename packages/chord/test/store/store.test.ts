@@ -367,6 +367,82 @@ describe("close", () => {
 	});
 });
 
+describe("onCommitted", () => {
+	it("announces the new lastSeq after commits are durable, once per microtask, never inside a commit", async () => {
+		const store = await memoryStore();
+		const seen: number[] = [];
+		let inside = false;
+		const remove = store.onCommitted(
+			(seq) => {
+				expect(inside).toBe(false);
+				seen.push(seq);
+			},
+			(error) => {
+				throw error;
+			},
+		);
+		const { fence } = recording();
+		inside = true;
+		const first = store.commit([createDocument(ADDRESS, BASE, "{}")], fence, context);
+		inside = false;
+		await first;
+		await Promise.resolve();
+		expect(seen).toEqual([store.lastSeq]);
+		// Several commits before the announcement runs: one call, with the last seq.
+		await store.commit([createDocument({ ...ADDRESS, key: "b" }, BASE, "{}")], fence, context);
+		await store.commit([createDocument({ ...ADDRESS, key: "c" }, BASE, "{}")], fence, context);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(seen.at(-1)).toBe(store.lastSeq);
+		remove();
+		await store.commit([createDocument({ ...ADDRESS, key: "d" }, BASE, "{}")], fence, context);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(seen.at(-1)).toBe(store.lastSeq - 1);
+	});
+
+	it("announces a series and a refused commit not at all", async () => {
+		const store = await memoryStore();
+		const seen: number[] = [];
+		store.onCommitted(
+			(seq) => void seen.push(seq),
+			(error) => {
+				throw error;
+			},
+		);
+		await store.commitSeries(
+			[{ check: async () => {}, writes: [createDocument(ADDRESS, BASE, "{}")] }],
+			() => {},
+			context,
+		);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(seen).toEqual([store.lastSeq]);
+		const before = seen.length;
+		await expect(store.commit([BROKEN], recording().fence, context)).rejects.toThrow();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(seen.length).toBe(before);
+	});
+
+	it("removes a listener that throws and hands its error to onError; the commit stands", async () => {
+		const store = await memoryStore();
+		const errors: unknown[] = [];
+		let calls = 0;
+		store.onCommitted(
+			() => {
+				calls++;
+				throw new Error("listener");
+			},
+			(error) => void errors.push(error),
+		);
+		const { fence } = recording();
+		await store.commit([createDocument(ADDRESS, BASE, "{}")], fence, context);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		await store.commit([createDocument({ ...ADDRESS, key: "b" }, BASE, "{}")], fence, context);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(calls).toBe(1);
+		expect(errors).toHaveLength(1);
+		expect(store.lastSeq).toBe(2);
+	});
+});
+
 describe("a commit series", () => {
 	/** A series commit with no check of its own. */
 	const unchecked = (writes: readonly StagedWrite[]) => ({ check: async () => {}, writes });

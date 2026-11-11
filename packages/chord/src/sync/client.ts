@@ -23,6 +23,7 @@ import {
 	type Seq,
 	type SessionSyncMaintenance,
 	type SessionSyncStore,
+	type SessionSyncUploader,
 } from "./remote.ts";
 
 /** Commits read from the outbox per page at most. */
@@ -128,7 +129,8 @@ export async function uploadSession(options: {
 	readonly sessionId: string;
 	readonly device: string;
 	readonly source: Store;
-	readonly store: SessionSyncStore;
+	/** Only `putBatch` is used: an upload creates slots and never reads the remote. */
+	readonly store: SessionSyncUploader;
 	readonly state: SyncStateStore;
 	/** The writer's epoch, from whatever grants it (the remote, Radius); sent with every slot. */
 	readonly epoch?: number;
