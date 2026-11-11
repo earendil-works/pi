@@ -1,7 +1,7 @@
 // The views' controls outside the workbench: the top bar's Annotate switch and Views sheet (the session's views, shown
 // or hidden on this device, adding one, the owner's saved views), and the composer's chip for what the next message
-// carries.
-import { BACKGROUND_CONTEXT, liveIn } from "@p2/app/v1";
+// carries; opening a view and describing one, shared with the views' commands (commands.tsx).
+import { BACKGROUND_CONTEXT, type HeldIn, liveIn } from "@p2/app/v1";
 import {
 	closeLayers,
 	openLayer,
@@ -17,7 +17,7 @@ import {
 	useStatus,
 } from "@p2/app/v1/web";
 import { type FormEvent, useState } from "react";
-import { SavedViews, type View, Views } from "./contract.ts";
+import { type OpenInput, SavedViews, type View, Views } from "./contract.ts";
 import { viewsIn } from "./layout.ts";
 import { hide, setAnnotateMode, show, useAnnotateMode, useLayout } from "./layout-store.ts";
 
@@ -76,17 +76,14 @@ function ViewsSheet({ session }: { session: string }) {
 	const [closing, setClosing] = useState<string>();
 	const placed = new Set(viewsIn(layout.tree));
 
-	const open = (input: Parameters<NonNullable<typeof editor>["open"]>[0]) =>
-		editor
-			?.open(input, BACKGROUND_CONTEXT)
-			.then(({ id }) => {
-				show(session, id);
-				closeLayers();
-			})
+	const open = (input: OpenInput) =>
+		editor &&
+		openView(editor, session, input)
+			.then(() => closeLayers())
 			.catch(fail);
 	const openMarkdown = (event: FormEvent) => {
 		event.preventDefault();
-		const file = path.trim().replace(/^\.\//, "");
+		const file = markdownPath(path);
 		if (file) void open({ kind: "markdown", path: file });
 	};
 
@@ -205,8 +202,21 @@ function ViewsSheet({ session }: { session: string }) {
 	);
 }
 
+/** Opens a view in the session (for everyone in it) and shows it in front on this device. */
+export async function openView(
+	editor: HeldIn<typeof Views, "editor">,
+	session: string,
+	input: OpenInput,
+): Promise<void> {
+	const { id } = await editor.open(input, BACKGROUND_CONTEXT);
+	show(session, id);
+}
+
+/** A Markdown file's path as the person typed it, relative to the workspace (a leading `./` dropped); empty: none. */
+export const markdownPath = (text: string): string => text.trim().replace(/^\.\//, "");
+
 /** What a view shows, in a few words. */
-function describe(view: View): string {
+export function describe(view: View): string {
 	if (view.kind === "markdown") return `Markdown · ${view.path ?? ""}`;
 	if (view.kind === "changes") return view.path ? `Changes · ${view.path}` : "Changes";
 	return view.selection && !view.selection.sent ? "Custom · selection waiting" : "Custom";

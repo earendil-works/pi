@@ -1217,6 +1217,22 @@ describe("Coding Agent Tools", () => {
 			expect(getTextOutput(result)).toContain("No files found matching pattern");
 		});
 
+		// #12020: fd matches nothing for a leading "./", so the tool drops it.
+		it("should ignore a leading ./ in the pattern", async () => {
+			mkdirSync(join(testDir, "src"));
+			writeFileSync(join(testDir, "src", "a.ts"), "a");
+			writeFileSync(join(testDir, "package.json"), "{}");
+
+			for (const pattern of ["./src/*.ts", "./src/**/*.ts", "././src/*.ts"]) {
+				const result = await findTool.execute("test-call-find-dot-slash", { pattern, path: testDir });
+				expect(getTextOutput(result)).toBe("src/a.ts");
+			}
+			// Without a "/" left, "./*.json" matches basenames at any depth, like "*.json".
+			writeFileSync(join(testDir, "src", "b.json"), "{}");
+			const json = await findTool.execute("test-call-find-dot-slash-json", { pattern: "./*.json", path: testDir });
+			expect(getTextOutput(json).split("\n").sort()).toEqual(["package.json", "src/b.json"]);
+		});
+
 		// #7121: exactly `limit` matches must not report that the limit was reached.
 		it("should report the result limit only when more results exist", async () => {
 			for (const name of ["a.txt", "b.txt", "c.txt"]) writeFileSync(join(testDir, name), name);

@@ -172,7 +172,7 @@ describe("sharing (fake provider)", () => {
 			`/s/${other.id}`,
 			"/__p2_web/app-UNKNOWN.js",
 			"/src/hosts/server.ts",
-			`/@fs${fixture.dataDir}/shares.sqlite`,
+			`/@fs${fixture.dataDir}/server/store.sqlite`,
 			"/src/hosts/web/%2e%2e%2fserver.ts",
 			"/plugins/../src/hosts/server.ts",
 		]) {
@@ -341,9 +341,9 @@ describe("sharing across restarts", () => {
 		const fixture = await startFixture({ allowedHosts: ["share.test"] });
 		const { dataDir, workspace } = fixture;
 		const revision = (): number => {
-			const db = new DatabaseSync(joinPath(dataDir, "shares.sqlite"), { readOnly: true });
+			const db = new DatabaseSync(joinPath(dataDir, "server", "store.sqlite"), { readOnly: true });
 			try {
-				return Number(db.prepare("SELECT revision FROM guests").get()?.revision);
+				return Number(db.prepare('SELECT revision FROM "p2.shares:guests"').get()?.revision);
 			} finally {
 				db.close();
 			}

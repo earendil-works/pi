@@ -5,8 +5,8 @@ import type {
 	Extension,
 	HookRegistration,
 	HooksOf,
+	HookTask,
 	PromptSection,
-	RunEndTask,
 	ToolRegistration,
 	Wrap,
 } from "./types.ts";
@@ -18,10 +18,12 @@ export function defineExtension<Tool extends ToolRegistration = ToolRegistration
 	return extension;
 }
 
-/** Identity function that types a tool: `args` from `parameters`, details from what it reports. */
-export function defineTool<TParameters extends object, TDetails extends JsonValue = JsonValue>(
-	tool: ToolRegistration<TParameters, TDetails>,
-): ToolRegistration<TParameters, TDetails> {
+/** Identity function that types a tool: `args` from `parameters`, details from what it reports, `C` its park checkpoint. */
+export function defineTool<
+	TParameters extends object,
+	TDetails extends JsonValue = JsonValue,
+	C extends JsonValue = JsonValue,
+>(tool: ToolRegistration<TParameters, TDetails, C>): ToolRegistration<TParameters, TDetails, C> {
 	return tool;
 }
 
@@ -39,15 +41,18 @@ export function hook<K extends AnyTask>(task: K, handlers: Partial<HooksOf<K>>):
 	return { task: task.definition.name, handlers };
 }
 
-/** A task an `afterRun` hook asks for, its input typed by the task (spec §8.3). */
-export function runEndTask<I extends JsonValue, S extends { phase: string }, R, H extends object>(
+/** A task a hook (`afterTools`, `onYield`, `afterRun`) asks for, its input typed by the task. */
+export function hookTask<I extends JsonValue, S extends { phase: string }, R, H extends object>(
 	task: Task<I, S, R, H>,
 	input: I,
-): RunEndTask {
+): HookTask {
 	return { task, input };
 }
 
-/** Wrap the tool named like `tool` wherever the wrapping extension is selected. */
+/**
+ * Wrap the tool named like `tool` wherever the wrapping extension is selected. Wrappers never park: one passes `api` to
+ * its base unchanged or spread and returns the base's park unchanged; a park of its own ends the call `invalid_park`.
+ */
 export function wrapTool<Tool extends ToolRegistration>(tool: Tool, wrapper: (tool: Tool) => Tool): Wrap<Tool> {
 	return { tool: tool.name, wrap: wrapper };
 }

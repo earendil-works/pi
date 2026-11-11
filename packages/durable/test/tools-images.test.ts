@@ -206,7 +206,8 @@ async function read(
 		models: { getModel: () => model },
 	} as unknown as ToolExecutionApi;
 	const tool = options.tool ?? createReadTool(options);
-	return tool.execute({ path: name }, api, context);
+	// `read` never parks.
+	return (await tool.execute({ path: name }, api, context)) as ToolExecutionResult;
 }
 
 function messages(result: ToolExecutionResult): string[] {

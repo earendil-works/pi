@@ -1,7 +1,7 @@
 // Views (worker): the session's views and annotations as browsers hold them (`Views`, `ViewState`), a custom view's
 // HTML for the server's frame route (`ViewSource`), the agent's `view` tool, and the send router that adds what the
 // person selected and annotated to their next message.
-import type { Harness as DurableHarness, Tx } from "@earendil-works/pi-durable";
+import type { Harness as DurableHarness, JsonObject, SessionDocFamilyToken, Tx } from "@earendil-works/pi-durable";
 import {
 	type Author,
 	authorOf,
@@ -20,14 +20,16 @@ import {
 	isOwner,
 	type MessageData,
 	type Ref,
+	type Self,
 } from "@p2/app/v1";
 import { ARTIFACTS, Files, readWhole } from "@p2/app/v1/node";
-import { Extensions, harnessOf, workerOf } from "@p2/app/v1/worker";
+import { Extensions, harnessOf, type WorkerParts, workerOf } from "@p2/app/v1/worker";
 import { readArtifact } from "../artifacts/store.ts";
 import { Conversation, SendRouters } from "../chat/contract.ts";
 import { Attachments, MAX_ATTACHMENTS } from "../files/contract.ts";
 import { WorkerModels } from "../models/contract.ts";
 import {
+	LEGACY_OPENING,
 	MAX_VIEW_HTML,
 	type SavedView,
 	SavedViews,
@@ -37,19 +39,23 @@ import {
 	ViewSource,
 	ViewState,
 	Views,
+	type ViewsState,
 } from "./contract.ts";
 import {
 	addAnnotation,
-	checkedState,
 	freeViewId,
 	markSent,
 	openView,
 	readViews,
 	removeView,
+	setViewState,
+	ViewRoomDoc,
 	ViewStateDoc,
 	ViewsDoc,
 	viewContext,
 } from "./doc.ts";
+import { ViewBacking, ViewOpenings, ViewRoom } from "./room-contract.ts";
+import { createRoomExtension, type RoomsBackend } from "./room-tools.ts";
 import { createViewsExtension, type ViewsBackend } from "./tool.ts";
 
 /** The most a selection's data may hold, as JSON: the agent reads it with the view. */
@@ -61,7 +67,8 @@ export default defineFacet((host) => {
 		const harness = harnessOf(self);
 		const backend = viewsBackend((fn, context) => worker().root(fn, context));
 		const extension = createViewsExtension(backend);
-		self.contribute(Extensions, { [extension.name]: extension });
+		const rooms = createRoomExtension(roomsBackend(() => worker().init.values.session.id, worker));
+		self.contribute(Extensions, { [extension.name]: extension, [rooms.name]: rooms });
 
 		/** Validates upload IDs of this session, as any input's. */
 		const resolve = async (ids: readonly string[], conversation: number, ctx: Ctx) => {
@@ -109,16 +116,7 @@ export default defineFacet((host) => {
 		if (!canView(principal, session)) throw forbidden("viewers only");
 		const harness = harnessOf(self);
 		const worker = workerOf(self);
-		const index = self.follow(async (observer, ctx) => {
-			const durable = harness().durable;
-			const observed = await durable.observeDoc(ViewsDoc, observer, ctx);
-			if (observed !== undefined) return observed;
-			// No view yet: the document is absent, and an absent address cannot be followed. Create it empty.
-			await durable.commit(async (tx) => {
-				await tx.doc(ViewsDoc);
-			}, ctx);
-			return durable.observeDoc(ViewsDoc, observer, ctx);
-		});
+		const index = followViews(self);
 		const views = deriveTyped(self, [index], ([value]) => value.views);
 		const annotations = deriveTyped(self, [index], ([value]) => value.annotations);
 		const arrangement = deriveTyped(self, [index], ([value]) => value.arrangement ?? null);
@@ -213,17 +211,7 @@ export default defineFacet((host) => {
 	host.serve(ViewState, ({ session, view: id }, principal, self) => {
 		if (!canView(principal, session)) throw forbidden("viewers only");
 		const harness = harnessOf(self);
-		const doc = self.follow(async (observer, ctx) => {
-			const durable = harness().durable;
-			const observed = await durable.observeDoc(ViewStateDoc, id, observer, ctx);
-			if (observed !== undefined) return observed;
-			if (!(await readViews(durable, ctx)).views.some((view) => view.id === id))
-				throw invalid("params", `No view "${id}"`);
-			await durable.commit(async (tx) => {
-				await tx.doc(ViewStateDoc, id, null);
-			}, ctx);
-			return durable.observeDoc(ViewStateDoc, id, observer, ctx);
-		});
+		const doc = followViewDoc(self, ViewStateDoc, id, () => true);
 		const value = deriveTyped(self, [doc], ([state]) => state.value);
 		if (!canSend(principal, session) || (!isOwner(principal) && !isGuest(principal)))
 			return { variant: "reader", members: { value } };
@@ -238,11 +226,49 @@ export default defineFacet((host) => {
 						durable.commit(async (tx) => {
 							if (!(await tx.doc(ViewsDoc)).views.some((view) => view.id === id))
 								throw invalid("args", `No view "${id}"`);
-							(await tx.doc(ViewStateDoc, id, null)).value = checkedState(next);
+							setViewState(await tx.doc(ViewStateDoc, id, null), next, "other");
 						}, ctx),
 					);
 					return null;
 				},
+			},
+		};
+	});
+
+	// The server's side of a custom view's room (docs/rooms.md): the views' current openings, and one opening's state.
+	host.serve(ViewOpenings, (_params, principal, self) => {
+		if (principal.kind !== "server") throw forbidden("server only");
+		const index = followViews(self);
+		return { variant: "server", members: { openings: deriveTyped(self, [index], ([value]) => openingsOf(value)) } };
+	});
+
+	host.serve(ViewBacking, ({ view: id, opening }, principal, self) => {
+		if (principal.kind !== "server") throw forbidden("server only");
+		const harness = harnessOf(self);
+		const worker = workerOf(self);
+		const current = (state: Readonly<ViewsState>) => openingsOf(state)[id] === opening;
+		const state = followViewDoc(self, ViewStateDoc, id, current);
+		const room = followViewDoc(self, ViewRoomDoc, id, current);
+		return {
+			variant: "server",
+			members: {
+				current: deriveTyped(self, [state], ([doc]) => ({
+					value: doc.value,
+					revision: doc.revision ?? 0,
+					by: doc.by ?? "other",
+				})),
+				room: deriveTyped(self, [room], ([doc]) => doc.value),
+				write: ({ revision, value, room: next }, ctx) =>
+					worker().liveness.call(() =>
+						harness().durable.commit(async (tx) => {
+							if (!current(await tx.doc(ViewsDoc))) return false;
+							const doc = await tx.doc(ViewStateDoc, id, null);
+							if ((doc.revision ?? 0) !== revision) return false;
+							if (next !== undefined) (await tx.doc(ViewRoomDoc, id, null)).value = next;
+							if (value !== undefined) setViewState(doc, value, "room");
+							return true;
+						}, ctx),
+					),
 			},
 		};
 	});
@@ -264,6 +290,52 @@ export default defineFacet((host) => {
 		};
 	});
 });
+
+/** The session's views document, followed (created empty when absent: an absent address cannot be followed). */
+function followViews(self: Self) {
+	const harness = harnessOf(self);
+	return self.follow(async (observer, ctx) => {
+		const durable = harness().durable;
+		const observed = await durable.observeDoc(ViewsDoc, observer, ctx);
+		if (observed !== undefined) return observed;
+		await durable.commit(async (tx) => {
+			await tx.doc(ViewsDoc);
+		}, ctx);
+		return durable.observeDoc(ViewsDoc, observer, ctx);
+	});
+}
+
+/**
+ * View `id`'s document of family `family`, followed; created when absent if the views document has a view `id` that
+ * `admits` accepts, else the activation fails.
+ */
+function followViewDoc<T extends JsonObject>(
+	self: Self,
+	family: SessionDocFamilyToken<T, null>,
+	id: string,
+	admits: (state: Readonly<ViewsState>) => boolean,
+) {
+	const harness = harnessOf(self);
+	return self.follow(async (observer, ctx) => {
+		const durable = harness().durable;
+		const views = await readViews(durable, ctx);
+		if (!views.views.some((view) => view.id === id) || !admits(views)) throw invalid("params", `No view "${id}"`);
+		const observed = await durable.observeDoc(family, id, observer, ctx);
+		if (observed !== undefined) return observed;
+		await durable.commit(async (tx) => {
+			await tx.doc(family, id, null);
+		}, ctx);
+		return durable.observeDoc(family, id, observer, ctx);
+	});
+}
+
+/** Each custom view's current opening. */
+function openingsOf(state: Readonly<ViewsState>): Record<string, string> {
+	const openings: Record<string, string> = {};
+	for (const view of state.views)
+		if (view.kind === "custom") openings[view.id] = state.opened?.[view.id] ?? LEGACY_OPENING;
+	return openings;
+}
 
 /** The views document's draft in `tx`. */
 const viewsDraft = (tx: Tx) => tx.doc(ViewsDoc);
@@ -300,6 +372,18 @@ function viewsBackend(root: <T>(fn: (ctx: Ctx) => Promise<T>, context: Context) 
 		listSaved: (context) => root(async (ctx) => (await library(ctx)).list(ctx), context),
 		getSaved: (name, context) => root(async (ctx) => (await library(ctx)).get({ name }, ctx), context),
 		save: (view, context) => root(async (ctx) => (await library(ctx)).save(view, ctx), context),
+	};
+}
+
+/** The agent's way to its views' rooms on the server, in roots of the worker's own (it acts as the worker there). */
+function roomsBackend(session: () => string, worker: () => WorkerParts): RoomsBackend {
+	const room = async (view: string, opening: string, ctx: Ctx) =>
+		expectVariant(await ctx.get(ViewRoom, { session: session(), view, opening }), "worker");
+	return {
+		methods: (view, opening, context) =>
+			worker().root(async (ctx) => (await room(view, opening, ctx)).methods(ctx), context),
+		call: (view, opening, method, args, context) =>
+			worker().root(async (ctx) => (await room(view, opening, ctx)).call({ method, args }, ctx), context),
 	};
 }
 

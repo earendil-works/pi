@@ -473,7 +473,7 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		await browser.wait(`!document.querySelector('[role=dialog]')`);
 		await sessions.archive({ id: session.id }, BACKGROUND_CONTEXT);
 		await browser.wait(
-			`location.pathname === '/' && document.querySelector('.toast')?.textContent === 'Session is archived'`,
+			`location.pathname === '/new' && document.querySelector('.toast')?.textContent === 'Session is archived'`,
 		);
 	});
 
@@ -497,7 +497,7 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 			await browser.evaluate(
 				`({ path: location.pathname, toast: document.querySelector('.toast')?.textContent ?? null, notices: [...document.querySelectorAll('.owner-notice')].map((e) => e.textContent) })`,
 			),
-			{ path: "/", toast: null, notices: [] },
+			{ path: "/new", toast: null, notices: [] },
 		);
 		hosts.release();
 	});

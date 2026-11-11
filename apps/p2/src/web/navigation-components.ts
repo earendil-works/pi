@@ -7,5 +7,6 @@ export {
 	KeyboardArrowDownIcon as NavDisclosureIcon,
 	LockIcon as NavLockIcon,
 	MoreHorizIcon as NavMoreIcon,
+	WarningIcon as NavWarningIcon,
 } from "@earendil-works/elanor-icons-react";
 export { Sidebar, SideNavigation } from "@earendil-works/elanor-react";

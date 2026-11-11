@@ -4,7 +4,8 @@
 //
 // It refuses while a server holds the data directory's process lock, and holds it meanwhile. The server's Chord store
 // moves from `server.sqlite` to `server/store.sqlite`; the session catalog from `catalog.sqlite` into that store
-// (`migrate-catalog.ts`, its old file to `pre-catalog-backup/`); each session's Durable records move from `sessions/<id>.sqlite`
+// (`migrate-catalog.ts`, its old file to `pre-catalog-backup/`); share links, guests and grants (`shares.sqlite`)
+// and the subagent lists (`subagents.sqlite`) into it too (`migrate-server-data.ts`, to `pre-server-data-backup/`); each session's Durable records move from `sessions/<id>.sqlite`
 // into its store `sessions/<id>/store.sqlite` (`migrate-durable.ts`), its artifacts, uploads and download snapshots
 // into its `Files` (`migrate-files.ts`). A session is built in `sessions/.<id>.migrating/`, from a copy of its old
 // store, verified (every record read back through Durable's `Storage` from both and compared; every file byte for
@@ -30,6 +31,7 @@ import { durableStorage } from "../src/runtime/session-store.ts";
 import { type CatalogMigration, migrateCatalog } from "./migrate-catalog.ts";
 import { convertDurable, type DurableCounts, verifyDurable } from "./migrate-durable.ts";
 import { type FileCounts, migrateFiles, verifyFiles } from "./migrate-files.ts";
+import { type FileMigration, migrateServerData } from "./migrate-server-data.ts";
 
 /** What a migration did. */
 export type MigrationSummary = {
@@ -39,6 +41,8 @@ export type MigrationSummary = {
 	readonly server: "migrated" | "done" | "absent";
 	/** The session catalog: moved from `catalog.sqlite` into the server's store now, moved before, or there was none. */
 	readonly catalog: CatalogMigration;
+	/** Share links, guests and grants, and the sessions' subagent lists: moved into the server's store now, or not. */
+	readonly serverData: { readonly shares: FileMigration; readonly subagents: FileMigration };
 	readonly sessions: {
 		readonly migrated: readonly string[];
 		/** Finished by an earlier run. */
@@ -75,6 +79,7 @@ export async function migrateData(options: {
 		try {
 			const server = await migrateServer(dataDir, work, dryRun);
 			const catalog = await migrateCatalog(dataDir, work, dryRun);
+			const serverData = await migrateServerData(dataDir, work, dryRun);
 			const summary = {
 				migrated: [] as string[],
 				skipped: [] as string[],
@@ -100,7 +105,7 @@ export async function migrateData(options: {
 					summary.failed.push({ id, error: error instanceof Error ? error.message : String(error) });
 				}
 			}
-			return { dataDir, dryRun, server, catalog, sessions: summary, entries, documents, files, bytes };
+			return { dataDir, dryRun, server, catalog, serverData, sessions: summary, entries, documents, files, bytes };
 		} finally {
 			if (dryRun) rmSync(work, { recursive: true, force: true });
 		}

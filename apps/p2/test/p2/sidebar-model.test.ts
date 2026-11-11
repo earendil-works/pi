@@ -1,13 +1,15 @@
 // The sidebar's rules (plugins/sessions/sidebar/model.ts): what each built-in rollup collects (Recents, projects,
 // folders, the Archive), the sections with relevance, windows and collapsed rollups and groups, the list pages with
-// aged sessions after the others, folder keys and names, and moving a rollup.
+// aged sessions after the others, folder keys and names, moving a rollup, and which project glyph a place shows.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Project } from "../../plugins/projects/contract.ts";
 import {
 	ARCHIVE,
+	activityOf,
 	FOLDERS,
 	folderKey,
+	glyphsOf,
 	type ListPageData,
 	listPageOf,
 	moved,
@@ -21,6 +23,7 @@ import {
 	type SidebarRow,
 	sectionsOf,
 	type View,
+	wantingOf,
 } from "../../plugins/sessions/sidebar/model.ts";
 
 const NOW = 1_800_000_000_000;
@@ -143,6 +146,63 @@ describe("sectionsOf", () => {
 	});
 });
 
+describe("activity", () => {
+	const states = [
+		row("busy", { worker: { busy: [1] } }),
+		row("child", { worker: { busy: [3] } }),
+		row("read", { worker: { busy: [], unread: true } }),
+		row("both", { worker: { busy: [1], unread: true } }),
+		row("broken", { worker: { busy: [], error: "boom" } }),
+		row("move", { operation: { label: "Move failed", error: "refused" } }),
+		row("moving", { operation: { label: "Moving…" } }),
+		row("idle"),
+	];
+
+	it("counts working, failed (worker or operation) and unread sessions; one session may count in several", () => {
+		assert.deepEqual(activityOf(states), { working: 3, failed: 2, unread: 2 });
+		assert.deepEqual(activityOf([]), { working: 0, failed: 0, unread: 0 });
+	});
+
+	it("says what a collapsed rollup or group hides, and nothing while it shows its sessions", () => {
+		const rows = states.map((each) => ({ ...each, cwd: "/w/pi" }));
+		const idle = { working: 0, failed: 0, unread: 0 };
+		const all = { working: 3, failed: 2, unread: 2 };
+		const open = sectionsOf(ROLLUPS, rows, CONTEXT, VIEW);
+		for (const section of open) if (section.layout !== "link") assert.deepEqual(section.hidden, idle);
+		const group = folderKey(null, "/w/pi");
+		const closed = sectionsOf(ROLLUPS, rows, CONTEXT, { ...VIEW, collapsed: { [RECENT]: true, [group]: true } });
+		assert.deepEqual(closed[0]!.layout === "sessions" && closed[0]!.hidden, all);
+		const folders = closed[2]!;
+		assert.ok(folders.layout === "groups");
+		assert.deepEqual(folders.hidden, idle);
+		assert.deepEqual(folders.groups[0]!.hidden, all);
+		// A collapsed rollup of groups counts a session in two groups once (a rollup made from code may list it twice).
+		const twice = {
+			...ROLLUPS[1]!,
+			collect: () => ({
+				layout: "groups" as const,
+				groups: [
+					{ key: "g:1", name: "1", sandboxed: false, members: states },
+					{ key: "g:2", name: "2", sandboxed: false, members: states },
+				],
+			}),
+		};
+		const [both] = sectionsOf([twice], rows, CONTEXT, { ...VIEW, collapsed: { [twice.key]: true } });
+		assert.deepEqual(both!.layout === "groups" && both!.hidden, all);
+	});
+
+	it("counts the live sessions that want the owner, apart from the one on screen, and whether one failed", () => {
+		assert.deepEqual(wantingOf(states, undefined), { count: 4, failed: true });
+		assert.deepEqual(wantingOf(states, "broken"), { count: 3, failed: true });
+		const unread = [
+			row("read", { worker: { busy: [], unread: true } }),
+			row("gone", { archivedAt: NOW, worker: { busy: [], unread: true } }),
+		];
+		assert.deepEqual(wantingOf(unread, undefined), { count: 1, failed: false });
+		assert.deepEqual(wantingOf(unread, "read"), { count: 0, failed: false });
+	});
+});
+
 describe("listPageOf", () => {
 	/** A page in short: its name, then its entries' ids (aged marked), flat or by group. */
 	const page = (key: string, view = VIEW) => {
@@ -233,5 +293,52 @@ describe("ordered and moved", () => {
 		);
 		assert.deepEqual(moved(rollups, RECENT, -1), [RECENT, FOLDERS, PROJECTS, ARCHIVE]);
 		assert.deepEqual(moved(rollups, ARCHIVE, 1), [FOLDERS, RECENT, PROJECTS, ARCHIVE]);
+	});
+});
+
+describe("glyphsOf", () => {
+	const REMOTE: Project = {
+		name: "remote",
+		places: [
+			{ env: "gpu", path: "~/remote" },
+			{ env: null, path: "/w/remote" },
+		],
+	};
+	const glyphs = glyphsOf({
+		projects: [PI, WEB, REMOTE, { name: "nowhere", places: [] }],
+		memberships: { member: "web" },
+	});
+
+	it("seeds a project by its first place and lists its places as the tooltip", () => {
+		assert.deepEqual(glyphs.target({ kind: "project", project: REMOTE }), {
+			seed: "~/remote",
+			title: "gpu:~/remote\n/w/remote",
+		});
+		assert.deepEqual(glyphs.target({ kind: "project", project: { name: "nowhere", places: [] } }), {
+			seed: "nowhere",
+			title: "nowhere",
+		});
+	});
+
+	it("gives a folder or a session inside a project's place the project's glyph, with its own path as the tooltip", () => {
+		assert.deepEqual(glyphs.target({ kind: "folder", env: null, cwd: "/w/pi/apps/p2" }), {
+			seed: "/w/pi",
+			title: "/w/pi/apps/p2",
+		});
+		assert.deepEqual(glyphs.row(row("x", { env: "gpu", cwd: "/home/me/remote/src" })), {
+			seed: "~/remote",
+			title: "gpu:/home/me/remote/src",
+		});
+		// Membership decides first: a session started from a project's row, wherever it works now.
+		assert.deepEqual(glyphs.row(row("member", { cwd: "/w/pi" })).seed, "/w/web");
+	});
+
+	it("seeds any other place by its own path", () => {
+		assert.deepEqual(glyphs.row(row("free", { cwd: "/elsewhere" })), { seed: "/elsewhere", title: "/elsewhere" });
+		// Inside a project's path, on another machine where the project has no place: the folder's own path.
+		assert.deepEqual(glyphs.target({ kind: "folder", env: "gpu", cwd: "/w/web/x" }), {
+			seed: "/w/web/x",
+			title: "gpu:/w/web/x",
+		});
 	});
 });

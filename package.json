@@ -22,6 +22,7 @@
 		"check:pinned-deps": "node scripts/check-pinned-deps.mjs",
 		"check:runtime-deps": "node scripts/check-runtime-deps.mjs",
 		"check:package-install": "node scripts/check-package-install.mjs",
+		"check:released-changelogs": "node scripts/check-released-changelogs.mjs",
 		"check:install-lock:coding-agent": "node scripts/generate-coding-agent-install-lock.mjs --check",
 		"check:ts-imports": "node scripts/check-ts-relative-imports.mjs",
 		"check:entry-graphs": "node scripts/check-entry-graphs.mjs",

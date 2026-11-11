@@ -57,6 +57,7 @@ import {
 	type Session,
 	SessionArchived,
 	SessionCopied,
+	SessionIndex,
 	SessionMoves,
 	SessionOperations,
 	Sessions,
@@ -712,16 +713,27 @@ export default defineFacet((host) => {
 		return { relocate: (target, ctx) => operations.move(target, ctx) };
 	});
 
+	// Each session's row by its id, built once per catalog write and shared by every worker's view (below), so one
+	// write costs the rows once plus a lookup per running worker, not a scan of the rows per worker.
+	host.serve(SessionIndex, (_params, self) => {
+		const catalog = self.get(Catalog, {});
+		return {
+			byId: deriveTyped(self, [catalog.sessions], ([sessions]) =>
+				Object.fromEntries(sessions.map((row) => [row.id, row])),
+			),
+		};
+	});
+
 	host.serve(
 		Sessions,
 		(_params, principal, self) => {
 			const catalog = self.get(Catalog, {});
 			if (isWorker(principal)) {
 				const id = principal.session;
-				const sessionView = deriveTyped(
-					self,
-					[catalog.sessions],
-					([sessions]) => sessions.find((s) => s.id === id) ?? null,
+				// The worker's own row only: its view changes when that row does (rows of others are other objects).
+				const index = self.get(SessionIndex, {});
+				const sessionView = deriveTyped(self, [index.byId], ([byId]) =>
+					Object.hasOwn(byId, id) ? (byId[id] ?? null) : null,
 				);
 				return {
 					variant: "worker",

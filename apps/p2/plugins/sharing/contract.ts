@@ -32,7 +32,7 @@ export const ConnectedSchema = obj({
 });
 
 /**
- * Share links, guests and their grants (server, SQLite `shares.sqlite`). Host-internal. A guest holds one grant per
+ * Share links, guests and their grants (server, tables of the server's store; links and grants keyed by their session). Host-internal. A guest holds one grant per
  * session shared with it; every change of its grants (share, join, removal, link reset, archive, restore) bumps its
  * revision and invalidates the objects of the older principal.
  *

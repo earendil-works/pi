@@ -9,8 +9,9 @@ import { Access } from "../../runtime/access.ts";
 import { createHost, type Facet, hostErrorText, newerPeerProtocol } from "../../runtime/chord.ts";
 import { SERVER } from "../../runtime/principals.ts";
 import { whenLive } from "../../runtime/refs.ts";
-import { HostContext, Slot, setConnected, setShareEnded, webCoreFacet } from "../../runtime/web.tsx";
+import { getNavigation, HostContext, Slot, setConnected, setShareEnded, webCoreFacet } from "../../runtime/web.tsx";
 import { browserEnvironment, keepConnected } from "../../web/reconnect.ts";
+import { startShellBridge } from "../../web/shell-bridge.ts";
 import { startTheme } from "../../web/theme.ts";
 
 /**
@@ -126,6 +127,8 @@ export function startWeb(facets: readonly (readonly [string, Facet])[]): void {
 	if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/sw.js").catch(() => {});
 
 	startTheme();
+	// Through Radius, the shell's URL follows the app's and links open the shell (no-op elsewhere).
+	startShellBridge(getNavigation());
 	const element = document.getElementById("root");
 	if (!element) throw new Error("Missing application root");
 	createRoot(element).render(

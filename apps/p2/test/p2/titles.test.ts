@@ -152,3 +152,43 @@ it("migrate-data moves a catalog.sqlite of any version into the server's store, 
 		rmSync(root, { recursive: true, force: true });
 	}
 });
+
+it("a worker's view of its own row changes only with that row", async () => {
+	const fixture = await startFixture();
+	try {
+		const model = { provider: "faux", modelId: "faux-1" };
+		const catalog = await fixture.server.host.get(Catalog, {}, BACKGROUND_CONTEXT);
+		const [a, b] = [
+			await catalog.create({ cwd: fixture.workspace, title: "A", model, thinkingLevel: "off" }, BACKGROUND_CONTEXT),
+			await catalog.create({ cwd: fixture.workspace, title: "B", model, thinkingLevel: "off" }, BACKGROUND_CONTEXT),
+		];
+		// Each held as its own worker would hold it (no worker started: only the views are under test).
+		const viewOf = async (id: string) =>
+			holdIn(fixture.as({ kind: "worker", session: id, generation: 1 }), Sessions, {}, "worker");
+		const [viewA, viewB] = [await viewOf(a.id), await viewOf(b.id)];
+		const calls = { a: 0, b: 0 };
+		const watchA = await viewA.session.watch(BACKGROUND_CONTEXT);
+		const watchB = await viewB.session.watch(BACKGROUND_CONTEXT);
+		watchA.start(async (call) => void (call.kind === "value" && calls.a++));
+		watchB.start(async (call) => void (call.kind === "value" && calls.b++));
+		try {
+			assert.equal(watchA.value?.title, "A");
+			assert.equal(watchB.value?.title, "B");
+			// Activity and a rename of A: A's view follows, B's hears nothing.
+			await catalog.activity({ id: a.id, timestamp: Date.now() + 1000 }, BACKGROUND_CONTEXT);
+			await catalog.update({ id: a.id, title: "A renamed" }, BACKGROUND_CONTEXT);
+			await until(viewA.session, (row) => row?.title === "A renamed");
+			assert.ok(calls.a >= 1);
+			assert.equal(calls.b, 0);
+			assert.equal(viewB.session.value?.title, "B");
+		} finally {
+			await watchA.stop();
+			await watchB.stop();
+			viewA.release();
+			viewB.release();
+			catalog.release();
+		}
+	} finally {
+		await fixture.close();
+	}
+});
