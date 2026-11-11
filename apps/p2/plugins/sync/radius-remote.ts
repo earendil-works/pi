@@ -1,6 +1,5 @@
 // Radius's HTTP adapter for Chord's session-sync remote contract.
-import { Buffer } from "node:buffer";
-import type { Context } from "@earendil-works/chord/context";
+import type { Context } from "@p2/app/v1";
 import type {
 	JsonObject,
 	PutBatchResult,
@@ -9,7 +8,7 @@ import type {
 	SessionChanges,
 	SessionSyncStore,
 	SyncBody,
-} from "@earendil-works/chord/sync";
+} from "@p2/app/v1/node";
 
 /** What a Radius sync request needs. Authentication and token refresh stay outside the adapter. */
 export type RadiusSyncAccess = { readonly gateway: string; readonly serverId: string; readonly token: string };
@@ -142,20 +141,53 @@ export class RadiusSyncRemote implements SessionSyncStore {
 /** Radius currently accepts one HTTP request body, so the prototype collects Chord's streamed body at this boundary. */
 async function collect(body: SyncBody): Promise<Uint8Array<ArrayBuffer>> {
 	const chunks: Uint8Array[] = [];
-	for await (const chunk of body) chunks.push(chunk);
-	return Buffer.concat(chunks);
+	let size = 0;
+	for await (const chunk of body) {
+		chunks.push(chunk);
+		size += chunk.length;
+	}
+	// Joined without Node's `Buffer`: a plugin's file loaded by another plugin may import only host packages.
+	const joined = new Uint8Array(size);
+	let at = 0;
+	for (const chunk of chunks) {
+		joined.set(chunk, at);
+		at += chunk.length;
+	}
+	return joined;
 }
 
 function isSeq(value: unknown): value is Seq {
 	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
-async function failure(response: Response, operation: string): Promise<Error> {
+/** A request Radius answered with an error: its HTTP status, so a caller tells a refusal from a passing failure. */
+export class RadiusSyncError extends Error {
+	readonly status: number;
+	constructor(message: string, status: number) {
+		super(message);
+		this.name = "RadiusSyncError";
+		this.status = status;
+	}
+}
+
+/**
+ * Whether retrying `error` cannot help (Radius's session-sync contract, radius#295): a body Radius refuses (400), one
+ * too large (413), or sync not allowed for this server or user (403: the `session_sync` feature off, the server not
+ * theirs). Expired credentials (401) refresh on the next attempt; server errors and network failures pass.
+ */
+export function isTerminalSyncError(error: unknown): boolean {
+	return error instanceof RadiusSyncError && (error.status === 400 || error.status === 403 || error.status === 413);
+}
+
+async function failure(response: Response, operation: string): Promise<RadiusSyncError> {
 	let message = "";
 	try {
 		message = ((await response.json()) as ErrorBody).error?.message ?? "";
 	} catch {
 		// The response was not a Radius JSON error.
 	}
-	return new Error(`Radius sync could not ${operation}: ${response.status}${message ? ` ${message}` : ""}`);
+	return new RadiusSyncError(
+		`Radius sync could not ${operation}: ${response.status}${message ? ` ${message}` : ""}`,
+		response.status,
+	);
 }

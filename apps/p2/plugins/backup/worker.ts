@@ -6,6 +6,7 @@ import { defineFacet, expectVariant, local, untilAborted } from "@p2/app/v1";
 import {
 	BackupUploader,
 	backupFiles,
+	isTerminalBackupError,
 	isUrgentCommit,
 	processLogs,
 	sessionDirectory,
@@ -40,6 +41,8 @@ export default defineFacet((host) => {
 				),
 				directory: sessionDirectory(init.dataDir, session),
 				files: backupFiles(init.dataDir),
+				// What the server's target refuses for good crosses as `BACKUP_TERMINAL`: stop, as the server does.
+				terminal: isTerminalBackupError,
 				// A status the server misses is replaced by the next one; the failure goes to the session's log.
 				report: (status) =>
 					void root(

@@ -15,7 +15,7 @@ import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Backup } from "../../plugins/backup/contract.ts";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { type Session, Sessions } from "../../plugins/sessions/contract.ts";
-import { openBackupRemote } from "../../src/runtime/backup.ts";
+import { backupFiles, openFolderRemote } from "../../src/runtime/backup.ts";
 import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
 
 const answers = (count: number) => (view: ConversationView | null | undefined) =>
@@ -113,12 +113,11 @@ describe("backup to a folder (fake provider)", () => {
 		// The server stops, and the worker with it (its last upload runs then); the data stays until `after`. The session's
 		// backup restores into a store equal to the session's.
 		await fixture.server.close();
-		const { remote, files } = openBackupRemote({ kind: "folder", path: backupDir }, fixture.dataDir);
 		const restored = await pullSession({
 			sessionId: name,
-			store: remote,
+			store: openFolderRemote(backupDir, fixture.dataDir),
 			local: { kind: "empty", backend: sqliteBackend(await openNodeSqliteDatabase(join(root, "restored.sqlite"))) },
-			state: new FileSyncStateStore(files, join(root, "restore-state")),
+			state: new FileSyncStateStore(backupFiles(fixture.dataDir), join(root, "restore-state")),
 			context: BACKGROUND_CONTEXT,
 		});
 		const original = await openStore(

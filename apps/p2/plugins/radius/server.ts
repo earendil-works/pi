@@ -1,7 +1,9 @@
 import { defineFacet, nativeOf, serveNative } from "@p2/app/v1";
 import { RequestResolvers, Server, ServerName, ShareUrls } from "@p2/app/v1/server";
+import { BackupTargets } from "../backup/contract.ts";
 import { ForwardStore, ForwardsNative } from "../ports/contract.ts";
 import { Shares } from "../sharing/contract.ts";
+import { isTerminalSyncError, RadiusSyncRemote } from "../sync/radius-remote.ts";
 import { RadiusBrain, type RadiusStatus } from "./brain.ts";
 import { RadiusConnections, RadiusService } from "./contract.ts";
 import { RelayAccess } from "./relay-access.ts";
@@ -80,6 +82,23 @@ export default defineFacet((host) => {
 		self.contribute(RadiusConnections, {
 			get connection() {
 				return connection.value;
+			},
+		});
+		// Backup to the Radius this instance is signed in to (`P2_BACKUP=radius`): no sign-in of its own. Radius records
+		// this server's ID as the device of every slot it creates, and holds all of a user's servers in one space, so the
+		// server's store is named by it too.
+		self.contribute(BackupTargets, {
+			radius: {
+				open: async () => {
+					const brain = connection.value.brain;
+					const { serverId } = await brain.syncAccess();
+					return {
+						remote: new RadiusSyncRemote(() => brain.syncAccess()),
+						device: serverId,
+						server: `server-${serverId}`,
+						terminal: isTerminalSyncError,
+					};
+				},
 			},
 		});
 		return {};
