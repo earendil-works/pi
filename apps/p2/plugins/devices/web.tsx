@@ -3,9 +3,8 @@ import {
 	CopyButton,
 	closeLayers,
 	forgetOwner,
-	openLayer,
+	SettingsSections,
 	Sheet,
-	Slots,
 	useObject,
 	useOwner,
 	useReadable,
@@ -142,25 +141,16 @@ function DevicesSheet() {
 		</Sheet>
 	);
 }
-function DevicesButton() {
+/** The Devices sheet while it is open (the owner): a page of Settings. */
+function DevicesSheetSlot() {
 	const sheet = useSheet("devices");
-	if (!useOwner()) return null;
-	return (
-		<>
-			<button
-				type="button"
-				className="foot-button"
-				title="Sign in another device"
-				onClick={() => openLayer({ kind: "sheet", name: "devices" }, { fromDrawer: true })}
-			>
-				Devices
-			</button>
-			{sheet && <DevicesSheet />}
-		</>
-	);
+	return useOwner() && sheet ? <DevicesSheet /> : null;
 }
+
 export default defineFacet((host) => {
 	contribute(host, "p2.web-devices", (self) => {
-		self.contribute(Slots, { "sidebar-foot:devices": DevicesButton });
+		self.contribute(SettingsSections, {
+			devices: { label: "Devices", title: "Sign in another device", order: 50, Sheet: DevicesSheetSlot },
+		});
 	});
 });

@@ -10,6 +10,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { workerMain } from "@earendil-works/chord/workers/child";
 import { registerLazyBedrockProvider } from "@earendil-works/pi-ai/lazy-bedrock-provider";
 import { registerLazyOAuthFlows } from "@earendil-works/pi-ai/lazy-oauth";
+import { backupConfigured } from "../runtime/backup.ts";
 import { createHost, hostErrorText } from "../runtime/chord.ts";
 import { configureFetch } from "../runtime/fetch.ts";
 import { hostFiles, openHostStore, sessionDirectory } from "../runtime/host-dirs.ts";
@@ -41,11 +42,11 @@ workerMain(
 		// Keep a redacted diagnostics copy without changing the worker's actual stdout/stderr writes.
 		const stopLogs = captureProcessLogs(`session:${init.values.session.id}`);
 		onClose(() => stopLogs());
-		// The session's directory: its store (Durable's records, its `Files` index) and its files. The outbox is off
-		// until p2 syncs (turning it on later starts it at the current commit; a first sync uploads an archive).
-		// Closed after the host (closers run in reverse).
+		// The session's directory: its store (Durable's records, its `Files` index) and its files. The store keeps an
+		// outbox while backup is configured (`src/runtime/backup.ts`; turned on, it starts at the current commit and the
+		// first upload is a full copy), which `plugins/backup` uploads. Closed after the host (closers run in reverse).
 		const dir = sessionDirectory(init.dataDir, init.values.session.id);
-		const store = await openHostStore(dir, { outbox: false }, context);
+		const store = await openHostStore(dir, { outbox: backupConfigured() }, context);
 		onClose(() => store.close(BACKGROUND_CONTEXT));
 		const host = createHost({
 			address,

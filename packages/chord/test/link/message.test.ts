@@ -29,6 +29,8 @@ const error = { kind: "chord", error: { code: "released", message: "gone" } } as
 /** One message of every kind, with the optional fields both present and absent; parts are JSON text. */
 const EVERY_KIND: Message[] = [
 	{ kind: "hello", protocol: 1, incarnation, calls: 256 },
+	// No call window: a trusted link's (decision "Call windows only for untrusted links").
+	{ kind: "hello", protocol: 1, incarnation },
 	{
 		kind: "hold",
 		hold: 300,
@@ -125,7 +127,19 @@ const EVERY_KIND: Message[] = [
 	{ kind: "gone", hold: 0, error: { kind: "chord", error: { code: "released", message: "m" } } },
 	{ kind: "ack" },
 	{ kind: "ack", origin: 1 },
+	// Event acks (decision "Events: fire-and-forget members"): the event messages consumed, never a state ack.
+	{ kind: "ack", events: 1 },
+	{ kind: "ack", origin: 300, events: 4000 },
 	{ kind: "closed", origin: 300 },
+	// Events: `at` a whole `Date.now()`, several holds and members in one message, and none (a relay's filtered one).
+	{
+		kind: "event",
+		events: [
+			{ hold: 0, member: 0, at: 1_762_819_200_123, value: '{"t":1,"y":0.5}' },
+			{ hold: 300, member: 2, at: 0, value: "null" },
+		],
+	},
+	{ kind: "event", origin: 7, events: [] },
 	{
 		kind: "hold",
 		origin: 2,
@@ -235,6 +249,8 @@ function plain(message: Message): Message {
 					members: entry.members.map(({ member, ops }) => ({ member, ops: partText(ops) })),
 				})),
 			};
+		case "event":
+			return { ...message, events: message.events.map((entry) => ({ ...entry, value: partText(entry.value) })) };
 		default:
 			return message;
 	}
@@ -268,6 +284,7 @@ forEachCodec(() => {
 					holds: [{ hold: 0, variant: 0, members: [{ member: 0, value: deflated() }], failed: [] }],
 				},
 				{ kind: "state", holds: [{ hold: 0, members: [{ member: 0, ops: deflated() }], failed: [], retired: [] }] },
+				{ kind: "event", origin: 2, events: [{ hold: 0, member: 1, at: 5, value: deflated() }] },
 			];
 			for (const message of messages) {
 				const decoded = checkMessage(codec.decode(codec.encode(message)), context);
@@ -412,6 +429,10 @@ forEachCodec(() => {
 describe("the binary codec", () => {
 	it("writes ids as varints, the incarnation as 16 and the fingerprint as 8 raw bytes, no outer length", () => {
 		expect(binaryCodec.encode({ kind: "hello", protocol: 1, incarnation, calls: 1 })).toHaveLength(1 + 1 + 16 + 1);
+		// No call window is written as 0 (a window is at least 1) and read back as absent.
+		const none = binaryCodec.encode({ kind: "hello", protocol: 1, incarnation });
+		expect(none.at(-1)).toBe(0);
+		expect(binaryCodec.decode(none)).toEqual({ kind: "hello", protocol: 1, incarnation });
 		expect([...binaryCodec.encode({ kind: "release", hold: 300 })]).toEqual([2, 0xac, 0x02]);
 		const hold = binaryCodec.encode({
 			kind: "hold",
@@ -425,6 +446,10 @@ describe("the binary codec", () => {
 		// kind, id, type, version, fingerprint, params, the address's kind and params, the optional fields' flags
 		expect(hold).toHaveLength(1 + 1 + 2 + 1 + 8 + 3 + 7 + 3 + 1);
 		expect([...binaryCodec.encode({ kind: "ack" })]).toEqual([13]);
+		// An event ack: the kind byte's third flag, then its count (a state ack stays one byte).
+		expect([...binaryCodec.encode({ kind: "ack", events: 3 })]).toEqual([13 | 0x20, 3]);
+		expect(binaryCodec.decode(binaryCodec.encode({ kind: "ack", events: 3 }))).toEqual({ kind: "ack", events: 3 });
+		expect(() => binaryCodec.decode(new Uint8Array([14 | 0x20, 1]))).toThrow("binary: an unknown kind");
 		// An origin: the kind byte's high bit, then the origin as a varint.
 		expect([...binaryCodec.encode({ kind: "ack", origin: 300 })]).toEqual([13 | 0x80, 0xac, 0x02]);
 		expect([...binaryCodec.encode({ kind: "closed", origin: 1 })]).toEqual([14 | 0x80, 1]);
@@ -580,6 +605,10 @@ describe("the text codec", () => {
 		);
 		expect(() => textCodec.decode(new TextEncoder().encode('["f",2,"x",{}]'))).toThrow("an unknown failure kind");
 		expect(text({ kind: "ack" })).toBe('["a"]');
+		expect(text({ kind: "ack", events: 2 })).toBe('["a",2]');
+		expect(text({ kind: "event", events: [{ hold: 1, member: 0, at: 9, value: '{"y":1}' }] })).toBe(
+			'["E",[[1,0,9,[0,{"y":1}]]]]',
+		);
 		// An origin wraps the message's own tuple.
 		expect(text({ kind: "release", origin: 4, hold: 3 })).toBe('["@",4,["R",3]]');
 		expect(text({ kind: "closed", origin: 4 })).toBe('["@",4,["C"]]');

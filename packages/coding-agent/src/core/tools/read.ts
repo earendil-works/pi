@@ -70,14 +70,17 @@ const defaultReadOperations: ReadOperations = {
 /**
  * Stream a local file the way fs.readFile reads it: a regular file up to its size when opened, so text
  * appended during the read is not counted and a growing file still ends; a file reporting size 0 (such
- * as /proc files) and other file types until EOF.
+ * as /proc files) and other file types until EOF. Abort is left to the read tool, which stops consuming
+ * the stream when its signal aborts; leaving its loop closes the stream.
  */
-async function* readLocalFileChunks(path: string, { signal }: { signal?: AbortSignal }): AsyncIterable<Uint8Array> {
+async function* readLocalFileChunks(path: string): AsyncIterable<Uint8Array> {
 	const handle = await fsOpen(path, "r");
 	try {
 		const stats = await handle.stat();
 		const end = stats.isFile() && stats.size > 0 ? stats.size - 1 : undefined;
-		yield* handle.createReadStream({ end, signal, autoClose: false });
+		// No signal for the stream: one that aborts before the stream's iterator attaches makes the stream
+		// emit an 'error' no listener handles, which crashes the process (#11956).
+		yield* handle.createReadStream({ end, autoClose: false });
 	} finally {
 		await handle.close();
 	}

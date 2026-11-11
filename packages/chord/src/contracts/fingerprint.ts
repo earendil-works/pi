@@ -36,13 +36,14 @@ export function fingerprintOf(normal: JsonValue): string {
 }
 
 /**
- * Members as a sorted dictionary of `{ state }`, `{ args, result }` or `{ keyed }` (`{ keyed, key }` keyed by a host
- * kind) (slice 6a §12: a node of its own, so contracts without keyed members keep their fingerprints and
- * `NORMAL_FORM_VERSION` stays).
+ * Members as a sorted dictionary of `{ state }`, `{ args, result }`, `{ keyed }` (`{ keyed, key }` keyed by a host
+ * kind) or `{ event }` (slice 6a §12, decision "Events: fire-and-forget members": a node of its own per kind, so
+ * contracts without keyed or event members keep their fingerprints and `NORMAL_FORM_VERSION` stays).
  */
-function variantNormal({ state, methods, keyed }: VariantData): JsonValue {
+function variantNormal({ state, methods, keyed, events }: VariantData): JsonValue {
 	return sortedDict([
 		...[...state].map(([member, schema]) => [member, { state: schema.normal }] as const),
+		...[...events].map(([member, schema]) => [member, { event: schema.normal }] as const),
 		// A host-keyed member's kind joins its node: string-keyed members keep their fingerprints.
 		...[...keyed].map(([member, { normal, key }]) => {
 			const node: JsonValue = key === undefined ? { keyed: normal } : { keyed: normal, key: key.kind };

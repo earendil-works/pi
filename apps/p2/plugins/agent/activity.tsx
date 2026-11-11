@@ -27,6 +27,7 @@ function AgentLink({ call }: { call: NestedCall }) {
 }
 
 export const agentActivity: ToolActivity = {
+	brief: "Asking agent",
 	describe(step) {
 		const label = stringOf(step.tool.args.label);
 		const prompt = plainText(sentence(stringOf(step.tool.args.prompt)));

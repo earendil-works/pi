@@ -15,7 +15,7 @@ import {
 	type MethodData,
 	type ShapeOf,
 } from "./contract.ts";
-import { checkMembers, keyedSnapshot, memberPath, readMethod } from "./declare.ts";
+import { checkMembers, eventSnapshot, keyedSnapshot, memberPath, readMethod } from "./declare.ts";
 import { materialize } from "./fingerprint.ts";
 import type { Change, CurrentStep, Increment, MemberNames, MethodAt, Variants, VariantsWith } from "./history.ts";
 import type { HostKind, KindShape } from "./host-kind.ts";
@@ -75,6 +75,21 @@ interface RemoteEditor<V extends Variants, C extends Change> extends MethodEdito
 		args: A,
 		result: R,
 	): RemoteEditor<Put<V, X, "methods", M, Method<A, R>>, C | [X, M, "args" | "result"]>;
+	/** Changes event member `member`'s schema in `variant` (an older consumer gets each value mapped, or is refused). */
+	event<X extends keyof V & string, M extends EventNames<V, X> & string, S extends Schema>(
+		variant: X,
+		member: M,
+		schema: S,
+	): RemoteEditor<PutEvent<V, X, M, S>, C | [X, M, "event"]>;
+	addEvent<X extends keyof V & string, const M extends string, S extends Schema>(
+		variant: X,
+		member: M,
+		schema: S,
+	): RemoteEditor<PutEvent<V, X, M, S>, C | [X, M, "event"]>;
+	removeEvent<X extends keyof V & string, M extends EventNames<V, X> & string>(
+		variant: X,
+		member: M,
+	): RemoteEditor<DropEvent<V, X, M>, C>;
 }
 
 /** Edits of a local contract: like remote ones, without a variant. */
@@ -116,7 +131,40 @@ interface LocalEditor<V extends Variants, C extends Change> extends MethodEditor
 		key: HostKind<N, P>,
 	): LocalEditor<PutKeyed<V, M, HostKeyed<S, HostKind<N, P>>>, C | [Local, M, "keyed"]>;
 	removeKeyed<M extends KeyedNames<V> & string>(member: M): LocalEditor<DropKeyed<V, M>, C>;
+	/** Changes event member `member`'s schema (an older consumer gets each value mapped, or is refused). */
+	event<M extends EventNames<V, Local> & string, S extends Schema>(
+		member: M,
+		schema: S,
+	): LocalEditor<PutEvent<V, Local, M, S>, C | [Local, M, "event"]>;
+	addEvent<const M extends string, S extends Schema>(
+		member: M,
+		schema: S,
+	): LocalEditor<PutEvent<V, Local, M, S>, C | [Local, M, "event"]>;
+	removeEvent<M extends EventNames<V, Local> & string>(member: M): LocalEditor<DropEvent<V, Local, M>, C>;
 }
+
+/** Variant `X`'s event member names. */
+type EventNames<V extends Variants, X extends keyof V> = keyof NonNullable<V[X]["events"]>;
+
+/** Variants `X` with event member `M` set to `T`. */
+type PutEvent<V extends Variants, X, M extends string, T> = {
+	[Y in keyof V]: Y extends X
+		? {
+				[S in keyof V[Y] | "events"]: S extends "events"
+					? {
+							[K in keyof NonNullable<V[Y]["events"]> | M]: K extends M ? T : NonNullable<V[Y]["events"]>[K];
+						}
+					: V[Y][S & keyof V[Y]];
+			}
+		: V[Y];
+};
+
+/** Variants `X` without event member `M`. */
+type DropEvent<V extends Variants, X, M extends string> = {
+	[Y in keyof V]: Y extends X
+		? { [S in keyof V[Y]]: S extends "events" ? Omit<NonNullable<V[Y]["events"]>, M> : V[Y][S] }
+		: V[Y];
+};
 
 /** The local variant's keyed member names. */
 type KeyedNames<V extends Variants> = keyof NonNullable<V[Local]["keyed"]>;
@@ -208,6 +256,7 @@ type DraftVariant = {
 	readonly state: Map<string, Snapshot>;
 	readonly methods: Map<string, MethodData>;
 	readonly keyed: Map<string, KeyedSnapshot>;
+	readonly events: Map<string, Snapshot>;
 };
 
 /** The next version under construction, and the remote editor. Every edit is checked as it is made. */
@@ -229,9 +278,9 @@ class Draft {
 		this.#version = current.version + 1;
 		this.path = `${data.name} v${this.#version}`;
 		this.#variants = new Map(
-			[...current.variants].map(([name, { state, methods, keyed }]) => [
+			[...current.variants].map(([name, { state, methods, keyed, events }]) => [
 				name,
-				{ state: new Map(state), methods: new Map(methods), keyed: new Map(keyed) },
+				{ state: new Map(state), methods: new Map(methods), keyed: new Map(keyed), events: new Map(events) },
 			]),
 		);
 		this.#kinds = new Map(data.kinds);
@@ -302,6 +351,25 @@ class Draft {
 		return this.editor;
 	}
 
+	event(variant: string, member: string, schema: Schema): object {
+		if (!this.#variant(variant).events.has(member)) {
+			throw new Error(`${this.#path(variant, member, "event")}: no such event member`);
+		}
+		return this.#putEvent(variant, member, schema);
+	}
+
+	addEvent(variant: string, member: string, schema: Schema): object {
+		this.#refuseDeclared(variant, member, "event");
+		return this.#putEvent(variant, member, schema);
+	}
+
+	removeEvent(variant: string, member: string): object {
+		if (!this.#variant(variant).events.delete(member)) {
+			throw new Error(`${this.#path(variant, member, "event")}: no such event member`);
+		}
+		return this.editor;
+	}
+
 	/** The contract data with this version appended. */
 	next(): ContractData {
 		const { kind, params, versions } = this.#data;
@@ -312,6 +380,12 @@ class Draft {
 	#putState(variant: string, member: string, schema: Schema): object {
 		this.#variant(variant).state.set(member, snapshotSchema(schema, this.#path(variant, member, "state")));
 		this.#changes.push([variant, member, "state"]);
+		return this.#checked();
+	}
+
+	#putEvent(variant: string, member: string, schema: Schema): object {
+		this.#variant(variant).events.set(member, eventSnapshot(schema, this.#path(variant, member, "event")));
+		this.#changes.push([variant, member, "event"]);
 		return this.#checked();
 	}
 
@@ -352,8 +426,8 @@ class Draft {
 	}
 
 	#refuseDeclared(variant: string, member: string, kind: MemberKind): void {
-		const { state, methods, keyed } = this.#variant(variant);
-		if (state.has(member) || methods.has(member) || keyed.has(member)) {
+		const { state, methods, keyed, events } = this.#variant(variant);
+		if (state.has(member) || methods.has(member) || keyed.has(member) || events.has(member)) {
 			throw new Error(`${this.#path(variant, member, kind)}: already declared`);
 		}
 	}
@@ -383,6 +457,9 @@ function localEditor(draft: Draft): object {
 		keyed: (member: string, schema: Schema, key?: KindShape) => draft.keyed(LOCAL, member, schema, key),
 		addKeyed: (member: string, schema: Schema, key?: KindShape) => draft.addKeyed(LOCAL, member, schema, key),
 		removeKeyed: (member: string) => draft.removeKeyed(LOCAL, member),
+		event: (member: string, schema: Schema) => draft.event(LOCAL, member, schema),
+		addEvent: (member: string, schema: Schema) => draft.addEvent(LOCAL, member, schema),
+		removeEvent: (member: string) => draft.removeEvent(LOCAL, member),
 	};
 	return draft.editor;
 }

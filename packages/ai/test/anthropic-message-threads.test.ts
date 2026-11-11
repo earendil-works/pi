@@ -528,6 +528,23 @@ describe("Anthropic message threads", () => {
 		expect(h.requests[0].betas).not.toContain(THREADS_BETA);
 	});
 
+	// #11987
+	it("uses threads for any provider on api.anthropic.com, not for other endpoints", async () => {
+		const alias = harness();
+		const aliasModel = { ...baseModel, provider: "anthropic-1-api" };
+		const aliasMessages = [user("first")];
+		await say(alias, aliasMessages, { model: aliasModel });
+		aliasMessages.push(user("second"));
+		await say(alias, aliasMessages, { model: aliasModel });
+		expect(threadOf(alias.requests[0])).toEqual({ type: "create" });
+		expect(threadOf(alias.requests[1])).toEqual({ type: "continue", previous_message_id: "msg_1" });
+
+		const gateway = harness();
+		await say(gateway, [user("first")], { model: { ...baseModel, baseUrl: "https://gateway.example.com" } });
+		expect(gateway.requests[0].body).not.toHaveProperty("thread");
+		expect(gateway.requests[0].betas).not.toContain(THREADS_BETA);
+	});
+
 	it("matches Claude Code tool names across turns with OAuth", async () => {
 		const h = harness();
 		h.queue.push((request) =>

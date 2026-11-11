@@ -7,10 +7,23 @@ export * from "../../web/activity/api.ts";
 export * from "../../web/Chat.tsx";
 export * from "../../web/Code.tsx";
 export * from "../../web/CostPanel.tsx";
+export { CommandMenu } from "../../web/command-menu/CommandMenu.tsx";
+export {
+	type CommandMenuActions,
+	useCommandMenu,
+	useCommandQuery,
+	useCommandTarget,
+} from "../../web/command-menu/context.ts";
+export { useCommandMatches } from "../../web/command-menu/match.ts";
+export {
+	type CommandTargetRow,
+	useCommandRouteTarget,
+	useCommandTargetRow,
+} from "../../web/command-menu/targets.ts";
 export * from "../../web/composer-state.tsx";
 export * from "../../web/conversation-cache.ts";
-export * from "../../web/Drawer.tsx";
 export * from "../../web/drag-size.ts";
+export * from "../../web/ErrorToast.tsx";
 export * from "../../web/file-completion.tsx";
 export * from "../../web/haptics.ts";
 export * from "../../web/history.ts";
@@ -18,13 +31,19 @@ export * from "../../web/icons.tsx";
 export * from "../../web/Markdown.tsx";
 export * from "../../web/ModelPicker.tsx";
 export * from "../../web/navigation.ts";
+export * from "../../web/navigation-components.ts";
 export * from "../../web/new-session.tsx";
 export * from "../../web/PiLogo.tsx";
+export * from "../../web/path-label.ts";
 export * from "../../web/query-cache.ts";
 export * from "../../web/reconnect.ts";
 export * from "../../web/SessionStats.tsx";
+export * from "../../web/SettingsNav.tsx";
 export * from "../../web/SidePanel.tsx";
+export * from "../../web/Switch.tsx";
 export * from "../../web/sidebar.ts";
+export * from "../../web/ThemeButton.tsx";
+export { setTheme, type ThemePreference } from "../../web/theme.ts";
 export * from "../../web/transcript.ts";
 export * from "../../web/use-chat-scroll.ts";
 export * from "../../web/Viewer.tsx";

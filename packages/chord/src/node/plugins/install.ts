@@ -229,6 +229,9 @@ async function clone(url: string, ref: string, dir: string, context: Context): P
 	await run("git", ["-c", "advice.detachedHead=false", "checkout", "--quiet", "FETCH_HEAD", "--"], dir, context, what);
 }
 
+/** What `npm pack --json` prints: a list of the packed tarballs (npm 11 and earlier), or them by package name. */
+type PackOutput = { readonly filename: string }[] | Readonly<Record<string, { readonly filename: string } | undefined>>;
+
 /** npm package `name` at `version` packed (`npm pack`) and extracted into `dir` (made). */
 async function unpack(
 	name: string,
@@ -241,8 +244,10 @@ async function unpack(
 	const packed = await mkdtemp(join(dirname(dir), "pack-"));
 	const what = `${command} pack ${name}@${version}`;
 	const args = [...prefix, "pack", "--json", "--pack-destination", packed, "--", `${name}@${version}`];
-	// npm's own output: a list of the packed tarballs.
-	const [tarball] = JSON.parse(await run(command, args, packed, context, what)) as { readonly filename: string }[];
+	// npm's own output (a trust boundary: its shape is npm's): the packed tarballs, a list up to npm 11, an object keyed
+	// by package name from npm 12.
+	const output = JSON.parse(await run(command, args, packed, context, what)) as PackOutput;
+	const tarball = Array.isArray(output) ? output[0] : output[name];
 	if (tarball === undefined) throw new Error(`${what}: packed nothing`);
 	await mkdir(dir);
 	const file = join(packed, basename(tarball.filename));

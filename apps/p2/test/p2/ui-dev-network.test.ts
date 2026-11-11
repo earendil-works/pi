@@ -225,8 +225,9 @@ describe("clients through a public-origin proxy", { skip: !browserTests }, () =>
 		await browser.open(origin);
 		await browser.wait('document.querySelector(".composer textarea") && !document.querySelector(".offline")');
 		// Remote owners (not only the device) may sign in to model providers.
+		await browser.click(".drawer-foot .settings-open");
 		await browser.wait(
-			'[...document.querySelectorAll("button")].some((button) => button.textContent === "Providers")',
+			'[...document.querySelectorAll(".settings-nav-item")].some((item) => item.textContent === "Providers")',
 		);
 		await new Promise((resolve) => setTimeout(resolve, 1500));
 		assertPublicOnly(requests, websockets);

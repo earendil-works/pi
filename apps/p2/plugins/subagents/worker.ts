@@ -1,6 +1,15 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import type { Models } from "@earendil-works/pi-ai/models";
-import { type ConversationId, type Harness, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
+import {
+	type Conversation,
+	type ConversationId,
+	type EntryId,
+	type Harness,
+	LiveDoc,
+	type LiveState,
+	ROOT_CONVERSATION_ID,
+	type TaskGraph,
+} from "@earendil-works/pi-durable";
 import {
 	type Ctx,
 	canSend,
@@ -59,24 +68,46 @@ class ChildReporter {
 /** The worker's child reporter, for methods that push what they changed (contributed by the tools' object). */
 const ChildReports = defineRegistry<ChildReporter, ChildReporter | undefined>("p2.subagents.reports", { version: 1 });
 
-/** The session's subagents and one-shot agents as the server's index lists them. */
-async function childrenOf(durable: Harness, ctx: Ctx): Promise<Child[]> {
+/** What the reports keep of a subagent between them: its newest entry, its newest message's time, its run failure. */
+type Seen = {
+	readonly lastEntryId: EntryId | undefined;
+	readonly updatedAt: number | undefined;
+	readonly failure: Child["failure"];
+};
+
+/**
+ * How many times each subagent's work ended since a report last read its live document, by conversation: the task
+ * graph's listener counts, a report's read takes the count it saw (an end counted meanwhile stays for the next).
+ */
+type Endings = Map<ConversationId, number>;
+
+/**
+ * The session's subagents and one-shot agents as the server's index lists them. `seen` holds what the last report saw
+ * of each subagent, by conversation; it and `endings` are pruned to the registry's subagents.
+ */
+async function childrenOf(
+	durable: Harness,
+	seen: Map<ConversationId, Seen>,
+	endings: Endings,
+	ctx: Ctx,
+): Promise<Child[]> {
 	const registry = await durable.snapshot(Registry, ROOT_CONVERSATION_ID, ctx);
-	const children: Child[] = [];
-	for (const [name, agent] of Object.entries(registry?.agents ?? {})) {
-		const child = await durable.conversation(agent.conversationId, ctx);
-		const latest = await child?.entries({}, 1, undefined, ctx);
-		children.push({
+	const agents = Object.entries(registry?.agents ?? {});
+	const listed = new Set(agents.map(([, agent]) => agent.conversationId));
+	for (const id of seen.keys()) if (!listed.has(id)) seen.delete(id);
+	for (const id of endings.keys()) if (!listed.has(id)) endings.delete(id);
+	const children: Child[] = await Promise.all(
+		agents.map(async ([name, agent]) => ({
 			name,
 			conversationId: agent.conversationId,
 			model: agent.model,
 			thinkingLevel: agent.thinkingLevel,
 			tools: [...agent.tools],
 			...(agent.location === undefined ? {} : { location: agent.location }),
-			lastEntryId: latest?.items[0]?.id ?? 0,
+			...(await detailsOf(durable, agent.conversationId, seen, endings, ctx)),
 			...(agent.archived ? { archived: true } : {}),
-		});
-	}
+		})),
+	);
 	for (const [callId, agent] of Object.entries(registry?.oneShots ?? {}))
 		children.push({
 			name: agent.label,
@@ -89,6 +120,92 @@ async function childrenOf(durable: Harness, ctx: Ctx): Promise<Child[]> {
 			lastEntryId: 0,
 		});
 	return children;
+}
+
+/**
+ * A subagent's newest entry, time and failure: its entries since the newest one seen, and its live document's run
+ * failure when that can have changed (`failureSource`).
+ */
+async function detailsOf(
+	durable: Harness,
+	id: ConversationId,
+	seen: Map<ConversationId, Seen>,
+	endings: Endings,
+	ctx: Ctx,
+): Promise<Pick<Child, "lastEntryId" | "updatedAt" | "failure">> {
+	const conversation = await durable.conversation(id, ctx);
+	if (conversation === undefined) return { lastEntryId: 0 };
+	const known = seen.get(id);
+	const { lastEntryId, updatedAt } = await newestOf(conversation, known, ctx);
+	const ended = endings.get(id);
+	const source = failureSource(known, lastEntryId, ended !== undefined);
+	let failure: Child["failure"];
+	if (source.kind === "cached") failure = source.failure;
+	else {
+		failure = failureOf(await durable.snapshot(LiveDoc, id, ctx));
+		// An end counted while the live document was read stays for the next report.
+		if (endings.get(id) === ended) endings.delete(id);
+	}
+	seen.set(id, { lastEntryId, updatedAt, failure });
+	return {
+		lastEntryId: lastEntryId ?? 0,
+		...(updatedAt === undefined ? {} : { updatedAt }),
+		...(failure === undefined ? {} : { failure }),
+	};
+}
+
+/** Where a report takes a subagent's run failure from: its live document, or what the last report read. */
+export type FailureSource = { readonly kind: "read" } | { readonly kind: "cached"; readonly failure: Child["failure"] };
+
+/**
+ * Where a report takes a subagent's run failure from, given what the last report saw of it (`known`), its newest entry
+ * now and whether its work ended since. A run's failure changes only in a commit that writes an entry or ends its work
+ * (a stop or a missing model can end it without an entry): with neither, and a report before, the cached one holds.
+ */
+export function failureSource(known: Seen | undefined, newest: EntryId | undefined, ended: boolean): FailureSource {
+	if (known === undefined || ended || newest !== known.lastEntryId) return { kind: "read" };
+	return { kind: "cached", failure: known.failure };
+}
+
+/** A live document's run failure as a child carries it. */
+function failureOf(live: LiveState | undefined): Child["failure"] {
+	const failure = live?.runFailure;
+	if (failure === undefined) return undefined;
+	return { reason: failure.reason, ...(failure.detail === undefined ? {} : { detail: failure.detail }) };
+}
+
+/** How many of a subagent's newest entries a report reads to find its newest message. */
+const NEWEST_ENTRIES = 20;
+
+/**
+ * A subagent's newest entry and when its newest message was written: its entries from the newest one seen on, newest
+ * first (an idle subagent's is one entry). Without a message among them, the time seen before stays.
+ */
+async function newestOf(
+	conversation: Conversation,
+	known: Seen | undefined,
+	ctx: Ctx,
+): Promise<Pick<Seen, "lastEntryId" | "updatedAt">> {
+	const since = known?.lastEntryId;
+	const page = await conversation.entries(
+		since === undefined ? {} : { minEntryId: since },
+		NEWEST_ENTRIES,
+		undefined,
+		ctx,
+	);
+	const newest = page.items[0];
+	if (newest === undefined || newest.id === since) return { lastEntryId: since, updatedAt: known?.updatedAt };
+	const message = page.items.find((entry) => entry.model?.length)?.model?.at(-1);
+	return { lastEntryId: newest.id, updatedAt: message?.timestamp ?? known?.updatedAt };
+}
+
+/** The subagents of `seen` with foreground work, as the task graph lists them. */
+function workingChildren(graph: TaskGraph, seen: ReadonlyMap<ConversationId, Seen>): Set<ConversationId> {
+	return new Set(
+		Object.values(graph.tasks)
+			.filter((node) => !node.background && seen.has(node.conversationId))
+			.map((node) => node.conversationId),
+	);
 }
 
 export default defineFacet((host, self) => {
@@ -182,12 +299,26 @@ export default defineFacet((host, self) => {
 				),
 			(signal) => signal.close(),
 		);
+		const seen = new Map<ConversationId, Seen>();
+		const endings: Endings = new Map();
 		const reporter = new ChildReporter(async (ctx) => {
-			const children = await childrenOf(harness().durable, ctx);
+			const children = await childrenOf(harness().durable, seen, endings, ctx);
 			for (const child of children) if (child.kind === "agent") oneShots.add(child.conversationId);
 			await expectVariant(feed, "reporter").report({ children }, ctx);
 		});
 		self.contribute(ChildReports, reporter);
+		// A subagent's run can end without an entry (stopped, no model): the subagents whose work ended are counted and
+		// pushed, so the report reads their live documents. Other task changes cost a scan of the graph, no read.
+		const graph = self.follow((observer, ctx) => harness().durable.observeTaskGraph(observer, ctx));
+		let working = new Set<ConversationId>();
+		self.on(graph, async (_call, ctx) => {
+			const current = workingChildren(graph.value as TaskGraph, seen);
+			const ended = [...working].filter((id) => !current.has(id));
+			working = current;
+			if (ended.length === 0) return;
+			for (const id of ended) endings.set(id, (endings.get(id) ?? 0) + 1);
+			await reporter.push(ctx);
+		});
 		// What the agent changes on its own (a spawn, a subagent's messages moving it up the list) is pushed after each
 		// commit that touches it; methods push their own changes before they answer (`SubagentControl.archive`).
 		self.onLive(async (ctx) => {

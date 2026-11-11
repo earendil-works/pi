@@ -2,7 +2,7 @@
 // (`plugins/subagents/contract.worker.ts`): checked before each call, resolved from the caller's own tools.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { ToolExecutionApi, ToolExecutionResult, ToolRegistration, Tx } from "@earendil-works/pi-durable";
+import type { ToolExecutionApi, ToolExecutionResult, ToolPark, ToolRegistration, Tx } from "@earendil-works/pi-durable";
 import type { SessionLock } from "@p2/app/v1";
 import { resolveTools } from "../../plugins/subagents/contract.worker.ts";
 import { guardTool, type P2Tool } from "../../src/runtime/tool-access.ts";
@@ -36,7 +36,7 @@ const api = (conversationId: number, data: unknown, lock?: SessionLock): ToolExe
 	}) as unknown as ToolExecutionApi;
 const owner = { author: { kind: "owner", id: "owner", name: "Owner" }, text: "x", attachments: [] };
 const guest = { author: { kind: "guest", id: "g", name: "Guest" }, text: "x", attachments: [] };
-const text = (result: ToolExecutionResult) => {
+const text = (result: ToolExecutionResult | ToolPark) => {
 	const [first] = result.output ?? [];
 	return first?.type === "text" ? first.text : undefined;
 };

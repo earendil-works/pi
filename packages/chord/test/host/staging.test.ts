@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
-import { hostKind, int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
+import { event, hostKind, int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
 import { defineState } from "../../src/documents/index.ts";
 import {
 	createHost,
@@ -142,6 +142,29 @@ describe("staging: recorded declarations decide the fate", () => {
 		// Neither staging nor the restart opened it: the new attempt parks on the missing `Dep` first.
 		expect(opened).toEqual([]);
 		expect(store.state.value).toMatchObject({ kind: "failed", cause: { kind: "waiting" } });
+		await host.close(context);
+	});
+
+	it('hands out an inert event source: an emit in staging delivers nothing (decision "Events: fire-and-forget members")', async () => {
+		const Ticks = local("app.ticks", { version: 1, params: {}, members: { ticks: event(obj({ y: int() })) } });
+		const host = createHost({ onError: () => {} });
+		const facet = (label: string) =>
+			defineFacet((h: FacetHost) =>
+				h.serve(Ticks, (_, self) => {
+					const ticks = self.events<{ y: number }>();
+					// Staging runs this against a recording self: its handle is inert, the emit does nothing.
+					ticks.emit({ y: label.length });
+					return { ticks };
+				}),
+			);
+		await host.load([{ name: "@test/app", facet: facet("v1") }], context);
+		const ticks = await host.get(Ticks, {}, context);
+		const seen: unknown[] = [];
+		await ticks.ticks.on(({ value }) => void seen.push(value.y), context);
+		const report = await host.reload([{ name: "@test/app", facet: facet("v2!") }], context);
+		expect(report.failed).toEqual([]);
+		await flushed();
+		expect(seen).toEqual([]);
 		await host.close(context);
 	});
 

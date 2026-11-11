@@ -67,6 +67,7 @@ import { type Attempt, notLive } from "./attempt.ts";
 import { Backoff } from "./backoff.ts";
 import { type Caller, type Ctx, withLinkedAbortSignal } from "./ctx.ts";
 import { Destination, type Placed } from "./destination.ts";
+import { HostEvents } from "./events.ts";
 import type { Facet } from "./facet.ts";
 import { deleteFrom, HostDataGate, type HostDataSite, importInto } from "./host-data.ts";
 import { contributionOf } from "./members.ts";
@@ -136,6 +137,18 @@ export type HostOptions<P extends Principal = Principal, R extends JsonValue = J
 	 */
 	readonly heartbeat?: { readonly ping?: number; readonly close?: number };
 	/**
+	 * How many concurrent calls of one origin this host accepts on a link it was not given as trusted (its call window,
+	 * announced in `hello`); 10,000 by default, a positive integer. On a trusted link it announces none (decision "Call
+	 * windows only for untrusted links"): the app's own hosts never queue calls behind each other.
+	 */
+	readonly callWindow?: number;
+	/**
+	 * How many `event` messages of its own this host leaves unacknowledged per link and origin (decision "Events:
+	 * fire-and-forget members"); 32 by default. A flush finding the window full drops that origin's events (counted):
+	 * nothing waits for a slow consumer.
+	 */
+	readonly eventWindow?: number;
+	/**
 	 * What revokes a principal (§4): `host.revoke(r)` ends the objects and closes the child links of every principal
 	 * `p` whose `revokedBy(p)` holds `r` (compared as canonical JSON). The same function on every host.
 	 */
@@ -176,6 +189,17 @@ export type HostError =
 	| { readonly kind: "close_failed"; readonly object: string; readonly native: Position; readonly error: unknown }
 	| { readonly kind: "close_timeout"; readonly object: string; readonly native: Position }
 	| { readonly kind: "drain_timeout"; readonly object: string }
+	/**
+	 * An event mapping for an older consumer threw (decision "Events: fire-and-forget members"): that emit is dropped for
+	 * that version only; once per failure episode (the next mapped emit ends it).
+	 */
+	| {
+			readonly kind: "event_mapping_failed";
+			readonly object: string;
+			readonly member: string;
+			readonly version: number;
+			readonly error: unknown;
+	  }
 	| { readonly kind: "protocol_error"; readonly error: unknown }
 	| { readonly kind: "resolve_failed"; readonly address: string; readonly error: unknown }
 	/**
@@ -528,6 +552,12 @@ const NO_ATTRIBUTES: Readonly<SpanAttributes> = Object.freeze({});
 export class ChordHost<P extends Principal = Principal, R extends JsonValue = JsonValue> implements Host<P, R> {
 	readonly batch: Batch;
 	readonly timeouts: { readonly close: number; readonly ready: number; readonly reload: number };
+	/** The call window it announces on links it was not given as trusted (`HostOptions.callWindow`). */
+	readonly callWindow: number;
+	/** Its own `event` messages unacknowledged per link and origin at most (`HostOptions.eventWindow`). */
+	readonly eventWindow: number;
+	/** Its events: the emit counter, the list waiting for the event flush, the flush. */
+	readonly events: HostEvents;
 	/** Its old work during reloads (whether a context runs under it): see `old-work.ts`. */
 	readonly oldWork = new OldWork();
 	/** The waits of old work on objects that are not live, cut at once when they cycle through their own drain. */
@@ -620,6 +650,9 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		const reload = Math.min(close, options.reloadDrainTimeout ?? 5_000);
 		this.timeouts = { close, ready: options.readyTimeout ?? 60_000, reload };
 		this.#heartbeat = { ping: options.heartbeat?.ping ?? 15_000, close: options.heartbeat?.close ?? 30_000 };
+		this.callWindow = options.callWindow ?? 10_000;
+		this.eventWindow = options.eventWindow ?? 32;
+		this.events = new HostEvents(this.metrics, (error) => this.report(error));
 		this.#destination = new Destination(this.address, this.#routes, this.#parent);
 		// Chord's own: `openStore` made it.
 		this.store = options.store as ChordStore | undefined;
@@ -1626,7 +1659,8 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 
 	/** A new reference's binding made by `caller`; its parked calls wait its `readyTimeout`. */
 	#binding(Type: Contract, dependent: ChordObject | undefined, caller: Caller, options: GetOptions): Binding {
-		return new Binding(Type, this.batch, dependent, caller, options.readyTimeout ?? this.timeouts.ready);
+		const timeout = options.readyTimeout ?? this.timeouts.ready;
+		return new Binding(Type, this.batch, dependent, caller, timeout, this.events);
 	}
 
 	/** This host as the maker of its own references: its principal and incarnation. */

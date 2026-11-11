@@ -33,7 +33,7 @@ them, removing the plugin removes them. Only objects of lifetime "host" may regi
 
 ```ts
 export default defineFacet((host) =>
-	contribute(host, "p2.web-envs", (self) => self.register(Slots, { "sidebar-foot:envs": EnvsButton })),
+	contribute(host, "p2.web-envs", (self) => self.register(Slots, { "envs-actions:ports": PortsButton })),
 );
 ```
 
@@ -235,10 +235,12 @@ self.register(SendRouters, {
 | `chat-bottom` | `plugins/chat/web.tsx:934` | single | terminals |
 | `chat-content` | `plugins/chat/web.tsx:1133` | wrapper (gets `children`) | artifacts (viewer contexts) |
 | `chat-attribution` | `plugins/chat/web.tsx:1134` | wrapper | conversations |
-| `sidebar-foot:providers\|envs\|devices\|ports\|logs` | `plugins/sessions/web.tsx:29-37` | five fixed `Slot`s, not a list | login, envs, devices, ports, logs |
+| `sidebar-actions:*` | `plugins/sessions/web.tsx` (`SlotList`) | list: icon buttons before the theme switch | settings |
 | `envs-actions:*` | `plugins/envs/EnvsPanel.tsx:524` (`SlotList`) | list | ports |
 | `workspace-terminal` | `src/web/Workspace.tsx:730` | single | terminals |
 | `chat-parent` | **nowhere** | — | subagents registers it (`plugins/subagents/web.tsx:22`) |
+| `workbench` | `src/web/AppLayout.tsx` | wrapper (gets the `main` slot as `children`) | views |
+| `view-actions` | chat top bar, `plugins/chat/web.tsx` | single | views |
 
 ### 4.2 Sheets, navigation, hooks
 
@@ -258,6 +260,10 @@ Pattern: the plugin's slot component renders its button and, when `useSheet(name
 
 ### 4.3 Composer, transcript, notices, theme
 
+- **Settings sections:** `SettingsSections` (`src/runtime/web-core.ts`): layer name → `{ label, title?, order, Sheet,
+  Shown? }`, one contribution per section. The Settings window lists them by `order` (then key) and opens the layer
+  as a page of the window; the app's layout keeps every `Sheet` mounted (`SettingsSectionSheets`,
+  `src/web/SettingsNav.tsx`). Used by login, mcp, envs, ports, devices, discord, voice, logs.
 - **Composer:** `ComposerExpanders` (`src/runtime/composer.ts:7`): `(host, session, text) => text?`, asked in key order
   for text starting with `/` (`plugins/chat/web.tsx:621`); prompt registers one (`plugins/prompt/composer.ts:10`).
   Chips: `composer:*` slots. Shared state: `useComposerState()` (`src/web/composer-state.tsx:123`: draft, files,
@@ -375,8 +381,7 @@ actions can be requested; `K` actions fire on the visitor's own key and may ask 
 5. **Naming.** TUI registries are `Tui*`; web ones are unprefixed (`Slots`, `ComposerExpanders`); `TranscriptEntries`
    lives in the chat plugin but is used by both UIs; worker `SendRouters` lives in chat, `ReadOnlyConversations`
    in the runtime, `SessionArchived` in sessions. Ordered registries are marked only by convention in key strings.
-6. **Slot lists that are not lists.** `sidebar-foot:*` is five fixed names (`plugins/sessions/web.tsx:29-37`): a
-   new plugin's `sidebar-foot:foo` never renders. `footer:*` in the TUI renders only the first entry. `chat-parent`
+6. **Slot lists that are not lists.** `footer:*` in the TUI renders only the first entry. `chat-parent`
    is registered and rendered nowhere. Wrapper slots (`chat-content`, `chat-attribution`) admit one plugin each.
 7. **Slots as lifecycle.** TUI plugins register invisible `service:*` / `widget-above:*` slots to get a per-runtime
    object, then find it with `ctx.surface(name)` (`plugins/prompt/tui.ts:74-80`, `plugins/models/tui.ts:116-118`).
@@ -437,7 +442,7 @@ Ordered by value; each keeps one name and one shape across surfaces.
    shared); give registries an explicit `ordered: true` option (or an `order` field in values) instead of key
    conventions; make `SlotList` key-ordered like the TUI. Move shared registries (`TranscriptEntries`) to
    `src/runtime` or a neutral contract module.
-5. **Real lists.** `sidebar-foot:*` and TUI `footer:*` as ordered lists; delete or render `chat-parent`; make
+5. **Real lists.** TUI `footer:*` as an ordered list; delete or render `chat-parent`; make
    wrapper slots chains (`chat-content:*`).
 6. **A TUI service registry.** `TuiServices` (`name → (runtime) => { dispose() }`) for per-runtime holders, and
    render `widget-above:*`/`widget-below:*` as designed; replace `ctx.surface("chat") instanceof ChatSurface` with a

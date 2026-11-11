@@ -270,7 +270,8 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		await child.send({ text: "zebrafish unique words", requestId: "direct" }, BACKGROUND_CONTEXT);
 		await until(child.view, answered("Echo: zebrafish unique words"), 30_000);
 		await browser.metrics(1280, 900);
-		await browser.open(url("/"));
+		// Recents' list page searches messages too, subagents' included.
+		await browser.open(url("/list/recent"));
 		const search = 'input[aria-label="Search sessions and messages"]';
 		await browser.wait(`document.querySelector('${search}') && !document.querySelector('.offline')`);
 		await browser.evaluate(input(search, "zebrafish"));
@@ -279,7 +280,6 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		await browser.wait(
 			`location.pathname === '/s/${session.id}/c/${helper.conversationId}' && ${messages}.includes('zebrafish unique words')`,
 		);
-		await browser.evaluate(input(search, ""));
 		child.release();
 		list.release();
 		chat.release();
@@ -456,7 +456,7 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		}
 	});
 
-	it("says why a session archived elsewhere closed, and titles the Envs button", async () => {
+	it("says why a session archived elsewhere closed, and titles the Environments section", async () => {
 		const sessions = await holdIn(owner, Sessions, {}, "owner");
 		const session = await sessions.create(
 			{ cwd: fixture.workspace, title: "Archived elsewhere" },
@@ -465,15 +465,15 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		await browser.metrics(1280, 900);
 		await browser.open(url(`/s/${session.id}`));
 		await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
-		assert.equal(
-			await browser.evaluate<string>(
-				`[...document.querySelectorAll('.foot-button')].find((e) => e.textContent === 'Envs')?.title`,
-			),
-			"Remote environments",
-		);
+		await browser.click(".drawer-foot .settings-open");
+		const environments = `[...document.querySelectorAll('.settings-nav-item')].find((e) => e.textContent === 'Environments')`;
+		await browser.wait(environments);
+		assert.equal(await browser.evaluate<string>(`${environments}.title`), "Remote environments");
+		await browser.click("[role=dialog] button[aria-label=Close]");
+		await browser.wait(`!document.querySelector('[role=dialog]')`);
 		await sessions.archive({ id: session.id }, BACKGROUND_CONTEXT);
 		await browser.wait(
-			`location.pathname === '/' && document.querySelector('.toast')?.textContent === 'Session is archived'`,
+			`location.pathname === '/new' && document.querySelector('.toast')?.textContent === 'Session is archived'`,
 		);
 	});
 
@@ -497,7 +497,7 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 			await browser.evaluate(
 				`({ path: location.pathname, toast: document.querySelector('.toast')?.textContent ?? null, notices: [...document.querySelectorAll('.owner-notice')].map((e) => e.textContent) })`,
 			),
-			{ path: "/", toast: null, notices: [] },
+			{ path: "/new", toast: null, notices: [] },
 		);
 		hosts.release();
 	});

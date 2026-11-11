@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	type AcceptsTable,
 	arr,
+	event,
 	evolve,
 	hostKind,
 	int,
@@ -278,5 +279,65 @@ describe("versions", () => {
 		expect(() =>
 			checkUntyped(v2, { 1: { state: { members: { title: String } }, methods: { save: "refuse" } } }),
 		).toThrow("info accepts[1].state.members: unnecessary mapping");
+	});
+});
+
+describe('event mappings (decision "Events: fire-and-forget members")', () => {
+	const Sample = obj({ y: int() });
+	const Timed = obj({ y: int(), t: int() });
+	const MatchV1 = remote("match", {
+		version: 1,
+		params: {},
+		hostAddress: () => Server(),
+		variants: {
+			player: { events: { paddle: Sample, ball: Sample } },
+			watcher: { events: { paddle: Sample } },
+		},
+	});
+
+	it("need a function or refuse for a changed event member, by variant", () => {
+		const v2 = evolve(MatchV1, (e) => e.event("player", "paddle", Timed));
+		const accepts: AcceptsTable<typeof v2> = { 1: { events: { player: { paddle: ({ y }) => ({ y }) } } } };
+		expect(checkAccepts(v2, accepts).versions).toHaveLength(1);
+		expect(checkAccepts(v2, { 1: { events: { player: { paddle: "refuse" } } } }).versions).toHaveLength(1);
+		// @ts-expect-error: the changed member needs a mapping
+		expect(() => checkAccepts(v2, { 1: {} })).toThrow("match accepts[1].events.player: missing mapping");
+		expect(() => checkUntyped(v2, { 1: { events: { player: { paddle: 1 } } } })).toThrow(
+			'match accepts[1].events.player.paddle: expected a function or "refuse"',
+		);
+		// One variant's change needs nothing for another (its refusal breaks only that variant's binding).
+		expect(() => checkUntyped(v2, { 1: { events: { player: { paddle: "refuse" }, watcher: {} } } })).toThrow(
+			"match accepts[1].events.watcher: unnecessary mapping",
+		);
+	});
+
+	it("need nothing for a removed or an added event member; a re-added one counts as changed", () => {
+		const removed = evolve(MatchV1, (e) => e.removeEvent("player", "ball").addEvent("watcher", "ball", Sample));
+		expect(checkAccepts(removed, {}).versions).toEqual([]);
+		expect(checkAccepts(removed, { 1: {} }).versions).toHaveLength(1);
+		expect(() => checkUntyped(removed, { 1: { events: { player: { ball: () => null } } } })).toThrow(
+			"match accepts[1].events.player: unnecessary mapping",
+		);
+		const readded = evolve(removed, (e) => e.addEvent("player", "ball", Timed));
+		expect(() => checkUntyped(readded, { 1: {} })).toThrow("match accepts[1].events.player: missing mapping");
+		expect(checkAccepts(readded, { 1: { events: { player: { ball: ({ y }) => ({ y }) } } } }).versions).toHaveLength(
+			1,
+		);
+	});
+
+	it("need an identity mapping for a no-op edit (by edit, never by schema)", () => {
+		const v2 = evolve(MatchV1, (e) => e.event("watcher", "paddle", Sample));
+		expect(() => checkUntyped(v2, { 1: {} })).toThrow("match accepts[1].events.watcher: missing mapping");
+		expect(checkAccepts(v2, { 1: { events: { watcher: { paddle: (value) => value } } } }).versions).toHaveLength(1);
+	});
+
+	it("are flat in a local contract", () => {
+		const v1 = local("store", { version: 1, params: {}, members: { paddle: event(Sample) } });
+		const v2 = evolve(v1, (e) => e.event("paddle", Timed));
+		const accepts: AcceptsTable<typeof v2> = { 1: { events: { paddle: ({ y }) => ({ y }) } } };
+		expect(checkAccepts(v2, accepts).versions).toHaveLength(1);
+		expect(() => checkUntyped(v2, { 1: { events: { members: { paddle: String } } } })).toThrow(
+			"store accepts[1].events.members: unnecessary mapping",
+		);
 	});
 });

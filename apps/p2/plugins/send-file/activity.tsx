@@ -18,6 +18,7 @@ import {
 	stringOf,
 	type ToolActivity,
 	type ToolView,
+	ViewerHref,
 } from "@p2/app/v1/web";
 import { useContext } from "react";
 import type { DownloadInfo } from "../files/contract.ts";
@@ -38,6 +39,7 @@ function sentFileOf(tool: ToolView): DownloadInfo | undefined {
 function SentFile({ tool }: { tool: ToolView }) {
 	const sessionId = useContext(SessionId);
 	const openViewer = useContext(OpenViewer);
+	const viewerHref = useContext(ViewerHref);
 	const file = sentFileOf(tool);
 	if (!sessionId || !file) return null;
 	return (
@@ -47,6 +49,7 @@ function SentFile({ tool }: { tool: ToolView }) {
 			meta={fileMeta(file)}
 			href={fileUrl(sessionId, file)}
 			download={file.name}
+			openHref={viewerHref({ kind: "file", file })}
 			onOpen={() => openViewer({ kind: "file", file })}
 		/>
 	);
@@ -68,6 +71,7 @@ function SendFileDetail({ step }: { step: Step }) {
 }
 
 export const sendFileActivity: ToolActivity = {
+	brief: "Sending file",
 	describe: (step) => ({
 		label: {
 			kind: "file",

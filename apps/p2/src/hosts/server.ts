@@ -11,6 +11,7 @@ import { nodeCompression } from "@earendil-works/chord/compression";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { RolloutResult } from "@earendil-works/chord/plugins";
 import { WebSocketServer } from "ws";
+import { backupConfigured } from "../runtime/backup.ts";
 import { type Ctx, createHost, type Host, type HostError, hostErrorText, Server } from "../runtime/chord.ts";
 import { envDefaultModel } from "../runtime/default-model.ts";
 import { type DevCommand, type DevResult, parseDevCommand } from "../runtime/dev-protocol.ts";
@@ -25,6 +26,7 @@ import { takeProcessLock } from "../runtime/process-lock.ts";
 import {
 	Authenticators,
 	findRoute,
+	LinkTokens,
 	PageCookies,
 	type RequestAccess,
 	type RequestOrigin,
@@ -59,7 +61,7 @@ import {
 import { SessionWorkers } from "./session-workers.ts";
 import { limitedSocket, MAX_CLIENT_FRAME } from "./socket-limits.ts";
 import { tuiPreferencesFacet } from "./tui-preferences.ts";
-import { createWeb, isPublicFile } from "./web.ts";
+import { createWeb, isAppPage, isPublicFile } from "./web.ts";
 
 /** The p2 app directory (`apps/p2`), told to facets as `Server.info.app` and `WorkerInit.app`. */
 const APP = fileURLToPath(new URL("../../", import.meta.url));
@@ -89,6 +91,12 @@ export type ServerOptions = {
 	/** Facets loaded with the core, never reloaded (disposable test probes: their routes and types). */
 	readonly facets?: readonly PluginFacet<P2Principal>[];
 };
+
+/** The view kit's path, the one route a sandboxed frame's `Origin: null` request reaches (docs/rooms.md). */
+const VIEW_KIT = /^\/view-kit\/[0-9a-f]{64}\.js$/;
+
+/** A token link's path: `/chord/<kind>` (docs/rooms.md). */
+const TOKEN_LINK = /^\/chord\/([a-z][a-z0-9-]{0,31})$/;
 
 /** Old content-named files remain briefly so HTML returned just before a reload can finish loading. */
 const WEB_BUNDLE_GRACE_MS = 60_000;
@@ -129,13 +137,13 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		throw new Error(`Another p2 server uses ${dataDir}`, { cause: error });
 	});
 	const allowedHosts = options.allowedHosts ?? parseAllowedHosts(process.env.P2_ALLOWED_HOSTS);
-	// The server's Chord store (`<data>/server/store.sqlite`): persisted documents and job runs of its host-lifetime
-	// objects (session lifecycle operations, search rebuilds) and its `Files` index. Its outbox stays off: local-only
-	// data never goes to a sync. p2's older SQLite files stay their owners' natives.
+	// The server's Chord store (`<data>/server/store.sqlite`): persisted documents, tables and job runs of its
+	// host-lifetime objects (the catalog, shares, subagents, session lifecycle operations) and its `Files` index. It keeps
+	// an outbox while backup is configured (`src/runtime/backup.ts`), which `plugins/backup` uploads.
 	let store: Awaited<ReturnType<typeof openHostStore>>;
 	try {
 		assertMigrated(dataDir);
-		store = await openHostStore(serverDirectory(dataDir), { outbox: false }, BACKGROUND_CONTEXT);
+		store = await openHostStore(serverDirectory(dataDir), { outbox: backupConfigured() }, BACKGROUND_CONTEXT);
 	} catch (error) {
 		await unlock();
 		throw error;
@@ -168,11 +176,13 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 	});
 	http.on("upgrade", (request, socket, head) => {
 		const path = new URL(request.url ?? "/", "http://localhost").pathname;
+		/** `/chord/<kind>`: a link admitted by a token alone (`LinkTokens`). */
+		const tokenKind = TOKEN_LINK.exec(path)?.[1];
 		void loaded
-			.then(() => upgradePrincipal(request))
+			.then(() => (tokenKind === undefined ? upgradePrincipal(request) : tokenPrincipal(request, tokenKind)))
 			.catch(() => undefined)
 			.then(async (principal) => {
-				if (path === "/chord" && principal !== undefined) {
+				if ((path === "/chord" || tokenKind !== undefined) && principal !== undefined) {
 					upgraded.set(request, principal);
 					sockets.handleUpgrade(request, socket, head, (ws) => sockets.emit("connection", ws, request));
 				} else if (principal !== undefined) {
@@ -333,6 +343,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 							resourceOptions: options.resources ?? {},
 							workers,
 							root: (fn, context) => host.root(fn, context),
+							store,
 						}),
 					},
 					{ name: "@p2/tui-preferences", facet: tuiPreferencesFacet(dataDir) },
@@ -552,12 +563,19 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 					// The Radius shell frames the relayed UI; X-Frame-Options cannot name another origin.
 					if (access.origin.relayShellOrigin !== undefined) response.removeHeader("X-Frame-Options");
 				}
-				if (access === undefined || !sameOrigin(request, access.origin)) {
+				// A sandboxed frame (an opaque origin: Chrome sends `Origin: null` even for its scripts) may load the view
+				// kit (views plugin, docs/rooms.md), and only that, as nobody: no cookie reaches the route.
+				const anonymous =
+					request.headers.origin === "null" &&
+					(request.method === "GET" || request.method === "HEAD") &&
+					VIEW_KIT.test(path);
+				if (access === undefined || (!anonymous && !sameOrigin(request, access.origin))) {
 					response.writeHead(403, { "Content-Type": "text/plain" });
 					response.end(access === undefined ? "Localhost only" : "Invalid origin");
 					return;
 				}
-				const { principal, origin } = access;
+				const { origin } = access;
+				const principal = anonymous ? undefined : access.principal;
 				// Unauthenticated readiness (Pi Mobile's /health, polled by launchers); known Hosts only.
 				if (path === "/health" && (request.method === "GET" || request.method === "HEAD")) {
 					response.writeHead(200, { "Content-Type": "application/json" });
@@ -626,18 +644,14 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 				const route = findRoute((await host.registry(Routes, ctx)).value, request.method ?? "GET", path);
 				if (route !== undefined) return route(request, response, { principal, origin }, ctx);
 				// An owner loading the app may get renewed cookies (a local session in use does not expire).
-				if (
-					isOwner(principal) &&
-					(request.method === "GET" || request.method === "HEAD") &&
-					(path === "/" || path.startsWith("/s/"))
-				) {
+				if (isOwner(principal) && (request.method === "GET" || request.method === "HEAD") && isAppPage(path)) {
 					const cookies = [...(await host.registry(PageCookies, ctx)).value.values()].flatMap(
 						(cookie) => cookie(request, { principal, origin }) ?? [],
 					);
 					if (cookies.length) response.setHeader("Set-Cookie", cookies);
 				}
 				if (isOwner(principal) || (isGuest(principal) && (await web?.guestMayLoad(request, principal)))) {
-					if (web !== undefined) return web.handle(request, response);
+					if (web !== undefined) return web.handle(request, response, origin.relayShellOrigin);
 					response.writeHead(404, { "Content-Type": "text/plain" });
 					response.end("Not found");
 					return;
@@ -672,6 +686,26 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 			return access !== undefined && sameOrigin(request, access.origin) ? access.principal : undefined;
 		}, BACKGROUND_CONTEXT);
 	};
+	/**
+	 * The principal of a token link (`/chord/<kind>?token=…`), or undefined to refuse it. Its caller may be a sandboxed
+	 * frame: `Origin` may be `null` (or this server's own), and its cookies are never read. The Host must be one this
+	 * server answers (loopback, an allowed tunnel, a relay's): DNS rebinding is refused as for every request.
+	 */
+	const tokenPrincipal = async (request: IncomingMessage, kind: string): Promise<P2Principal | undefined> =>
+		host.root(async (ctx) => {
+			let origin: RequestOrigin | undefined;
+			for (const resolve of (await host.registry(RequestResolvers, ctx)).value.values()) {
+				origin = resolve(request, ctx)?.origin;
+				if (origin !== undefined) break;
+			}
+			origin ??= requestOrigin(request, allowedHosts);
+			const from = request.headers.origin;
+			if (origin === undefined || (from !== undefined && from !== "null" && from !== origin.origin))
+				return undefined;
+			const token = new URL(request.url ?? "/", "http://localhost").searchParams.get("token");
+			const admit = (await host.registry(LinkTokens, ctx)).value.get(kind);
+			return token && admit ? admit(token, ctx) : undefined;
+		}, BACKGROUND_CONTEXT);
 	const upgraded = new WeakMap<IncomingMessage, P2Principal>();
 	// Mobile's limits: frames up to 1 MiB, 4 MiB unsent output (socket-limits.ts); Chord queues calls behind its window.
 	sockets.on("connection", (socket, request: IncomingMessage) => {

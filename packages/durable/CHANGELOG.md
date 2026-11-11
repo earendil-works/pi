@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- `RunEndTask` and `runEndTask` are renamed `HookTask` and `hookTask`, as `afterTools` and `onYield` hooks now ask for tasks too. Migration: rename the import in `afterRun` hooks.
+- A tool's `execute()` returns `Promise<ToolExecutionResult | ToolPark>`: it may park instead of returning a result. Code that calls a tool's `execute()` itself, such as a wrapper or a test, handles parks; reading a result field still compiles, since a park has none. Code that annotates `Promise<ToolExecutionResult>` widens the annotation.
+- `until` is optional on sleeping task states (`TaskState`, `TaskInspection`, `TaskGraphState`): a sleep may wait for signals only. Code that reads `until` of a sleeping task handles its absence.
+- `durationMs` of a tool result (`ToolResultMessage.durationMs`, `NestedToolExecutionResult.durationMs`, nested slot summaries) is the span from the tool task's first run (`startedAt`) to its result on the Harness clock, hooks, parks, crash downtime, and reruns included, and results that never executed have one too. It was the time of the last `execute()` attempt. A record written before `startedAt` existed keeps the old measure.
+- `pi.tool` is version 4 and `pi.generation` version 3; a database written by this version is not meant to be opened by an older Harness, which would block these tasks (`task_too_old`) and treat a sleep without `until` as due.
+
+### Added
+
+- Signals: `defineSignal({ name, version, schema, migrate? })` defines a typed JSON value delivered to a live task from outside with `harness.signal(taskId, token, key, value, context)` or `tx.signal()`, which answer `delivered`, `duplicate`, `invalid`, `closed`, or `not_found`. A value is kept in the task, also one that arrives before the sleep on its key, which then wakes at once; `readSignal(token, key, context)` on `TaskRuntime`, `HookApi`, and `ToolExecutionApi` reads it until the task ends, migrated to the token's version, or that the key expired. A key serves one wait: the wake marks it consumed.
+- A sleep may wait for signals (`{ status: "sleeping", signals, until? }`) and ends at whichever comes first; a wait may use `policy: "any"` to resume once one task in `on` ends. A woken task reads why in `state.wake` (`WakeReason`: `time`, `expired`, `signal`, `tasks`), kept until it commits another checkpoint. Parked work holds no invocation, and `Harness.wake()` reports it inactive; a sleep without `until` adds no `at`.
+- Tools that park: `execute()` may return `{ sleep: { checkpoint?, until?, signals? } }` or `{ wait: { checkpoint?, on, policy } }` and runs again, once woken, with `api.wake` and `api.checkpoint` set. The call holds no invocation meanwhile, its slot shows `sleeping` or `waiting` without output, and an invalid park ends it with an `invalid_park` result. `cancel(args, api, context)` cleans up the external work of a parked call that is aborted. Wrappers never park: a composite's park its base did not return is invalid.
+- `executeTool(name, args, context, { wait: false })` starts or finds a nested call and returns `{ taskId, result(context) }`, so a tool can park on its nested calls; `api.createTask()` with a `key` returns the task the key names on a rerun or a later wake. After a wake, nested calls and tasks need explicit keys. A restart keeps the `abandonOnRestart` children of a call that was parked or not started yet.
+- `SubmissionDraft.notify: { taskId, key }` delivers the built-in `SubmissionSettled` signal, the settled record, to a task when the submission settles, in the settling commit; a subagent tool can park until its child conversation answers.
+- Gates: a `beforeTool` hook may return `{ sleep: { until?, signals? } }` to park a call before it runs; every wake, every registry publication, and every open run the whole `call` phase again, so the gates installed then decide. `HookApi.now()` reads the Harness clock.
+- Hooks that start tasks: `afterTools` and `onYield` hooks may return `{ tasks }`, run as the generation's children. An `afterTools` task ends the run with `{ terminate: true }` (`AfterToolsDecision`) or answers it with a steer; `onYield` tasks decide whether an answer stands while the run's inputs stay open (`pi.live.run.yield`): once all are terminal, the first in creation order that completed with a valid `{ continue }` (`YieldDecision`) continues the run, unless a user message or a reset was queued meanwhile.
+- Examples 38-46: signals, asking a person, a tool that waits for a webhook, a tool that polls, parallel nested calls, a subagent that waits, an approval gate, a review on yield, and an `afterTools` task that ends the run.
+
+### Fixed
+
+- `NodeExecutionEnv.listDir()` leaves out an entry removed between enumeration and `lstat` instead of failing, so a read-only JSONL open beside a live writer no longer rejects with `JSONL directory listing failed: ENOENT` when the writer renames a `.reclaim` file over a sidecar during the listing. Names that are not valid UTF-8, which `lstat` also reports as missing, are now left out the same way instead of failing the listing, as the directory readers already did ([#11994](https://github.com/earendil-works/pi/issues/11994))
+- Fixed `Submission.wait()` and `waitForTask()` leaving an unhandled promise rejection when the wait was cancelled or the Harness closed after the wait was checked but before its result reached the caller, as when a host shuts down while earlier commits are still being published. The caller still gets the rejection ([#11963](https://github.com/earendil-works/pi/issues/11963), [#11820](https://github.com/earendil-works/pi/issues/11820))
+- Fixed task changes deep in a long ownership chain costing time proportional to the chain's depth: finding the conversations whose idleness a change can affect walked every owner task up to the conversation, so creating or ending a chain of n tasks cost O(n²). A child task lives in its owner's conversation, so the walk now starts there
+
+## [1.5.2] - 2026-11-10
+
 ## [1.5.1] - 2026-11-09
 
 ### Added

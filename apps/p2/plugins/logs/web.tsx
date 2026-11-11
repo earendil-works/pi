@@ -2,9 +2,9 @@ import { contribute, defineFacet, whenLive } from "@p2/app/v1";
 import {
 	closeLayers,
 	errorText,
-	openLayer,
+	SettingsSections,
 	Sheet,
-	Slots,
+	Switch,
 	useNavigation,
 	useObject,
 	useOwner,
@@ -82,10 +82,7 @@ function LogsSheet({ source }: { source: string }) {
 					onChange={(event) => setFilter(event.target.value)}
 				/>
 				<div className="logs-actions">
-					<label>
-						<input type="checkbox" checked={follow} onChange={(event) => setFollow(event.target.checked)} />{" "}
-						Follow tail
-					</label>
+					<Switch label="Follow tail" checked={follow} onChange={setFollow} />
 					<button
 						type="button"
 						className="text-action"
@@ -115,25 +112,14 @@ function LogsSheet({ source }: { source: string }) {
 	);
 }
 
-function LogsButton() {
+/** The Logs sheet while it is open (the owner): on its own (a session's logs), or as a page of Settings. */
+function LogsSheetSlot() {
 	const sheet = useSheet("logs");
-	if (!useOwner()) return null;
-	return (
-		<>
-			<button
-				type="button"
-				className="foot-button"
-				onClick={() => openLayer({ kind: "sheet", name: "logs" }, { fromDrawer: true })}
-			>
-				Logs
-			</button>
-			{sheet && <LogsSheet source={sheet.locator ?? "server"} />}
-		</>
-	);
+	return useOwner() && sheet ? <LogsSheet source={sheet.locator ?? "server"} /> : null;
 }
 
 export default defineFacet((host) => {
 	contribute(host, "p2.web-logs", (self) => {
-		self.contribute(Slots, { "sidebar-foot:logs": LogsButton });
+		self.contribute(SettingsSections, { logs: { label: "Logs", order: 80, Sheet: LogsSheetSlot } });
 	});
 });

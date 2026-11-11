@@ -44,5 +44,6 @@ export {
 	type SessionSummary,
 	type SessionSyncMaintenance,
 	type SessionSyncStore,
+	type SessionSyncUploader,
 } from "./remote.ts";
 export { FileSyncStateStore } from "./state.ts";

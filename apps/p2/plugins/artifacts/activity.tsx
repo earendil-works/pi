@@ -15,6 +15,7 @@ import {
 	stringOf,
 	type ToolActivity,
 	type ToolView,
+	ViewerHref,
 } from "@p2/app/v1/web";
 import { useContext } from "react";
 import type { ArtifactInfo } from "./contract.ts";
@@ -45,6 +46,7 @@ function artifactOf(tool: ToolView): ArtifactInfo | undefined {
 function ArtifactResult({ tool, inline }: { tool: ToolView; inline: boolean }) {
 	const sessionId = useContext(SessionId);
 	const openViewer = useContext(OpenViewer);
+	const viewerHref = useContext(ViewerHref);
 	const artifact = artifactOf(tool);
 	if (!sessionId || !artifact) return null;
 	const urls = artifactUrls(sessionId, artifact);
@@ -56,6 +58,7 @@ function ArtifactResult({ tool, inline }: { tool: ToolView; inline: boolean }) {
 				meta={`${artifact.type.toUpperCase()} · version ${artifact.version}`}
 				href={urls.download}
 				download={urls.filename}
+				openHref={viewerHref({ kind: "artifact", artifact })}
 				onOpen={() => openViewer({ kind: "artifact", artifact })}
 			/>
 			{inline && detailsOf(tool).inline === true && <InlineArtifact sessionId={sessionId} artifact={artifact} />}
@@ -79,6 +82,7 @@ function ArtifactDetail({ step }: { step: Step }) {
 }
 
 export const artifactActivity: ToolActivity = {
+	brief: "Making artifact",
 	describe(step) {
 		const details = detailsOf(step.tool);
 		return {

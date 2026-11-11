@@ -39,17 +39,11 @@ export type DataReport = {
 
 /** Reports the data directory `dataDir`. */
 export function dataReport(dataDir: string): DataReport {
-	const catalog = rows(
-		join(dataDir, "catalog.sqlite"),
-		"SELECT id,title,cwd,env,updatedAt,archivedAt FROM sessions ORDER BY id",
-	);
+	const catalog = catalogRows(dataDir);
 	const children = new Map(
-		rows(join(dataDir, "subagents.sqlite"), "SELECT session,value FROM children").map((row) => [
-			String(row.session),
-			JSON.parse(String(row.value)) as StoredChild[],
-		]),
+		childRows(dataDir).map((row) => [String(row.session), JSON.parse(String(row.value)) as StoredChild[]]),
 	);
-	const shares = sharesBySession(join(dataDir, "shares.sqlite"));
+	const shares = sharesBySession(dataDir);
 	const sessions: Record<string, SessionReport> = {};
 	for (const row of catalog) {
 		const id = String(row.id);
@@ -119,16 +113,56 @@ function rows(path: string, sql: string): Row[] {
 const located = (env: string | null, cwd: string): string => (env ? `${env}:${cwd}` : cwd);
 
 /**
- * The links' and the current guests' modes of every shared session. Version 1 of `shares.sqlite` (one session per
+ * The catalog's rows, `id` first, in either layout: the server store's table (`p2.catalog:sessions`, keyed by the
+ * session's address, `session|<id>`) once p2 imported it, else `catalog.sqlite` as p2 kept it before.
+ */
+function catalogRows(dataDir: string): Row[] {
+	const columns = "title,cwd,env,updatedAt,archivedAt";
+	const stored = rows(
+		join(dataDir, "server", "store.sqlite"),
+		`SELECT substr(session, 9) AS id,${columns} FROM "p2.catalog:sessions" ORDER BY id`,
+	);
+	return stored.length > 0
+		? stored
+		: rows(join(dataDir, "catalog.sqlite"), `SELECT id,${columns} FROM sessions ORDER BY id`);
+}
+
+/**
+ * Each session's stored subagents, in either layout: `p2.child-store`'s table in the server's store, else
+ * `subagents.sqlite`.
+ */
+function childRows(dataDir: string): Row[] {
+	const stored = rows(
+		join(dataDir, "server", "store.sqlite"),
+		'SELECT substr(session, 9) AS session,children AS value FROM "p2.child-store:children"',
+	);
+	return stored.length > 0 ? stored : rows(join(dataDir, "subagents.sqlite"), "SELECT session,value FROM children");
+}
+
+/**
+ * The links' and the current guests' modes of every shared session, in either layout. Version 1 of `shares.sqlite` (one session per
  * guest, through its link) reports as version 2's grants do, so a report from before its migration compares equal.
  */
-function sharesBySession(path: string): Map<string, { links: string[]; guests: string[] }> {
+function sharesBySession(dataDir: string): Map<string, { links: string[]; guests: string[] }> {
 	const shares = new Map<string, { links: string[]; guests: string[] }>();
 	const of = (session: string) => {
 		const entry = shares.get(session) ?? { links: [], guests: [] };
 		shares.set(session, entry);
 		return entry;
 	};
+	// In the server's store once p2 moved them there (`p2.shares`' tables, a session as its address key `session|<id>`).
+	const store = join(dataDir, "server", "store.sqlite");
+	const links = rows(store, 'SELECT substr(session, 9) AS session,mode FROM "p2.shares:links" ORDER BY session,mode');
+	if (links.length > 0) {
+		for (const row of links) of(String(row.session)).links.push(String(row.mode));
+		for (const row of rows(
+			store,
+			'SELECT substr(session, 9) AS session,mode FROM "p2.shares:grants" WHERE removed=0 ORDER BY session,mode',
+		))
+			of(String(row.session)).guests.push(String(row.mode));
+		return shares;
+	}
+	const path = join(dataDir, "shares.sqlite");
 	for (const row of rows(path, "SELECT session,mode FROM links ORDER BY session,mode"))
 		of(String(row.session)).links.push(String(row.mode));
 	const grants = rows(path, "SELECT 1 FROM sqlite_master WHERE type='table' AND name='grants'").length

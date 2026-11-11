@@ -9,6 +9,10 @@ peer), non-React apps never load it. No components, no styling.
 - `useWatch(watchable)`: its current value (`undefined` while it has none), re-rendering on change
   (`useSyncExternalStore` over `watchStore`).
 - `useRegistry(R)`: the registry's composed value; `useRefState(ref)`: the reference's state.
+- `useEvents(member, listener)`: an event member (a reference's, decision "Events: fire-and-forget members")
+  subscribed while the component is mounted (and while `member` stays the same object): each event calls the latest
+  `listener` (a new function per render subscribes nothing again); nothing without a member; events re-render nothing
+  by themselves.
 - `useMessages(t)`: `{ t, locale }`, a plugin's messages bound to the host's language (followed by `startPage`),
   re-rendering when the locale or a translation changes; before a language is followed, the first catalog.
 - `usePageState(key, initial)`: `useState`'s pair, the value kept by the page (its host's life) under `key`

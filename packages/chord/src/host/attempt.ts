@@ -7,7 +7,7 @@
 
 import type { TelemetryContext, TelemetrySpan } from "@earendil-works/pi-telemetry";
 import { awaitWithContext, type Context, withAbortSignal, withContextValue, withTelemetry } from "../context/index.ts";
-import type { Contract, Implementation, ParamsOf } from "../contracts/index.ts";
+import type { Contract, EventSource, Implementation, ParamsOf } from "../contracts/index.ts";
 import { contractData, type ShapeOf } from "../contracts/internal.ts";
 import { ChordError, type FailureCause, type Principal } from "../data/index.ts";
 import { asChordError, checkArgs, checkParams, invalid, openFailure, type Value } from "../data/internal.ts";
@@ -40,6 +40,7 @@ import { AdaptedMembers } from "./adapted.ts";
 import { CallContext, type Caller, type Ctx, withLinkedAbortSignal } from "./ctx.ts";
 import { Deadline } from "./deadline.ts";
 import { checkDependencies, type Dependency, ParkedLong, parkedCause, waitingOn } from "./dependencies.ts";
+import { type EventNode, OwnEventSource, type SourceOwner } from "./events.ts";
 import { type FollowAttach, FollowSource } from "./follow.ts";
 import type { HostError } from "./host.ts";
 import {
@@ -63,6 +64,7 @@ import type { ChordObject, Served } from "./object.ts";
 import { OPENING } from "./old-work.ts";
 import type { Failed, RefState } from "./ref-state.ts";
 import type { Binding, CheckedParams, Reference, RetryWalk } from "./reference.ts";
+import { ReexposedEvents } from "./reference-events.ts";
 import { type RetrySource, retrySource } from "./retry-on.ts";
 import {
 	type OnHandler,
@@ -73,9 +75,9 @@ import {
 } from "./routines.ts";
 
 /**
- * What a factory declares with. Declarations (`state`, `derive`, `get`, `registry`, `writable`, `retryOn`, `open`,
- * `on`, `onLive`, `job`; `table`, `query` and `contribute` in `StoreSelf`) are valid only while it runs. `P` is the
- * app's principal type, which the ctx of routine calls and job runs carry.
+ * What a factory declares with. Declarations (`state`, `derive`, `get`, `registry`, `writable`, `events`, `retryOn`,
+ * `open`, `on`, `onLive`, `job`; `table`, `query` and `contribute` in `StoreSelf`) are valid only while it runs. `P` is
+ * the app's principal type, which the ctx of routine calls and job runs carry.
  */
 export interface Self<P extends Principal = Principal> extends RoutineDeclarations<P> {
 	/** This object's documents of `definition`, in memory for its life (across its attempts). */
@@ -110,6 +112,13 @@ export interface Self<P extends Principal = Principal> extends RoutineDeclaratio
 	 * source, never a state member; its watches end with the attempt, and `set` after its end throws `released`.
 	 */
 	writable<T>(initial: T): Writable<T>;
+	/**
+	 * An event source of this attempt (decision "Events: fire-and-forget members"), implementing an event member: `emit`
+	 * delivers a JSON value once to each reference bound to the object before it, at the event flush (a microtask), after
+	 * the state published before it; never kept, never folded, dropped for a holder that cannot keep up. Emits are no
+	 * transaction work (`await self.tx(...)`, then `emit`); after the attempt's seal `emit` throws `released`.
+	 */
+	events<T>(): EventSource<T>;
 	/**
 	 * Wake signals: a new value of any of `sources` (registry values; constants never change) retries this object
 	 * while it is failed, as `ref.retry()` does, and once more at once if its current activation fails. Followed from
@@ -334,6 +343,10 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	#endedEarly: ChordError | undefined;
 	/** Its registry reads, contributions, wake signals and writables, made by the first: most attempts have none. */
 	#registryDeclarations: RegistryDeclarations | undefined;
+	/** What its own event sources check (its seal) and count with, made by the first `self.events()`. */
+	#sourceOwner: SourceOwner | undefined;
+	/** Its own event sources, detached at its end; made by the first. */
+	#sources: OwnEventSource[] | undefined;
 	/**
 	 * Its first dependency check, for a reload (its report, its predecessor's references): waited for by someone, or
 	 * done with why it parked (`undefined`: it did not). Made by the first who asks or by the check.
@@ -471,6 +484,20 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		const writable = new WritableSource(initial, owner, this.#object.host.batch);
 		this.#declarations().writables.push(writable);
 		return writable;
+	}
+
+	events<T>(): EventSource<T> {
+		this.#assertDeclaring("events");
+		const object = this.#object;
+		this.#sourceOwner ??= {
+			events: object.host.events,
+			sealed: () => (this.#token.sealed ? object.ended() : undefined),
+		};
+		const source = new OwnEventSource(this.#sourceOwner);
+		this.#sources ??= [];
+		this.#sources.push(source);
+		// Its values are `T`: JSON the object emits, never validated (as state).
+		return source as unknown as EventSource<T>;
 	}
 
 	retryOn(...sources: readonly (Watchable<unknown> | NativeWatchable<unknown>)[]): void {
@@ -1006,13 +1033,27 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 					label,
 					batch: host.batch,
 					member: (name) => this.member(name),
+					event: (name) => this.#members?.events.get(name),
 					report: (member, error) => host.report({ kind: "derive_failed", object: label, member, error }),
+					reportEvent: (member, error) =>
+						host.report({ kind: "event_mapping_failed", object: label, member, version, error }),
+					metrics: host.metrics,
 				},
 				version,
 			);
 			this.#adapted.set(version, adapted);
 		}
 		return adapted;
+	}
+
+	/**
+	 * Event member `member`'s node as a binding of `version` taps it: its own at its version, else its shared mapping for
+	 * that version; `undefined` outside the variant (or removed since that version), before the members check, and for a
+	 * version its provider does not serve.
+	 */
+	eventNode(member: string, version: number): EventNode | undefined {
+		if (version === this.#served.contract.version) return this.#members?.events.get(member);
+		return this.#adaptedAt(version).event(member);
 	}
 
 	/** The state member `member`, as Chord follows it; one outside the variant fails `invalid/member`. */
@@ -1087,6 +1128,8 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		for (const derive of this.#derives) derive.detach(ended);
 		for (const query of this.#queries) query.detach(ended);
 		for (const follow of this.#follows) follow.detach();
+		for (const source of this.#sources ?? []) source.detach();
+		for (const node of this.#members?.events.values() ?? []) if (node instanceof ReexposedEvents) node.detach();
 		const declarations = this.#registryDeclarations;
 		if (declarations !== undefined) for (const writable of declarations.writables) writable.detach(ended);
 	}
@@ -1320,10 +1363,12 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		}
 		let members: Members;
 		try {
-			const checked = checkImplementation(this.#object.served.contract, implementation);
+			const checked = checkImplementation(this.#object.served.contract, implementation, this.#sourceOwner);
 			members = checked.members;
 			this.#members = members;
 			this.#variant = checked.variant;
+			// Fed by their references from now on (the object's bindings tap them once it is live).
+			for (const node of members.events.values()) if (node instanceof ReexposedEvents) node.attach();
 			if (this.#registryDeclarations !== undefined)
 				this.#registryDeclarations.contributions = this.#resolveContributions(this.#registryDeclarations);
 			const { host, label } = this.#object;

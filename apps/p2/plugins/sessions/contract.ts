@@ -120,6 +120,16 @@ export const OperationSchema = union([
 export type Operation = Static<typeof OperationSchema>;
 
 /**
+ * Every session's catalog row by its id (server, host-internal): built once per catalog write, so each worker's view
+ * of its own row (`Sessions`, worker variant) is a lookup, not a scan of the rows.
+ */
+export const SessionIndex = local("p2.session-index", {
+	version: 1,
+	params: {},
+	members: { byId: record(SessionSchema) },
+});
+
+/**
  * Archived sessions whose worker may start anyway, without resuming Durable work: rebuilding their search index
  * (server, host-internal; the search plugin's `rebuildIndex`, as Pi Mobile's).
  */
@@ -183,7 +193,7 @@ const CatalogV3 = evolve(CatalogV2, (e) =>
 );
 
 /**
- * The session catalog (server, SQLite): every session, archived ones included. Host-internal. 4: a branch's label may
+ * The session catalog (server, the server store's table keyed by each session's address): every session, archived ones included. Host-internal. 4: a branch's label may
  * be null (the session title). The provider still serves 2 and 3 (its `accepts`).
  */
 export const Catalog = evolve(CatalogV3, (e) =>
@@ -425,4 +435,46 @@ export const SessionLock = remote("p2.session-lock", {
 		},
 		worker: { state: { lock: LockOrNone } },
 	},
+});
+
+/**
+ * How long a sidebar rollup keeps showing a session that nothing else keeps in view (pinned, open, working, unread,
+ * failed): one day, three days, a week, or as long as it is not archived.
+ */
+export const SidebarWindowSchema = union([literal("1d"), literal("3d"), literal("1w"), literal("forever")]);
+export type SidebarWindow = Static<typeof SidebarWindowSchema>;
+
+/** A rollup's key (plugins/sessions/sidebar/model.ts): `recent`, `projects`, `folders`, `archive`. */
+const SidebarKey = str({ minLength: 1, maxLength: 1000 });
+
+const SIDEBAR_SETTINGS_STATE = {
+	/** Rollup keys in the order the owner put them; rollups not named follow in their default order. */
+	order: arr(str()),
+	/** Each rollup's window by key; a rollup not named has the default. */
+	windows: record(SidebarWindowSchema),
+	/** Whether a rollup shows only its heading, by key; one not named shows its sessions. */
+	collapsed: record(bool()),
+};
+const SIDEBAR_SETTINGS_METHODS = {
+	setOrder: method(obj({ order: arr(SidebarKey, { maxItems: 100 }) })),
+	setWindow: method(obj({ key: SidebarKey, window: SidebarWindowSchema })),
+	setCollapsed: method(obj({ key: SidebarKey, collapsed: bool() })),
+};
+
+/**
+ * The owner's sidebar settings (server, host-internal, persisted in the server's store: a person's view, not the
+ * session catalog): the rollups' order and windows, and which rollups are collapsed.
+ */
+export const SidebarSettingsStore = local("p2.sidebar-settings-store", {
+	version: 1,
+	params: {},
+	members: { ...SIDEBAR_SETTINGS_STATE, ...SIDEBAR_SETTINGS_METHODS },
+});
+
+/** The owner's sidebar settings, and the methods that change them. */
+export const SidebarSettings = remote("p2.sidebar-settings", {
+	version: 1,
+	params: {},
+	hostAddress: serverHost,
+	variants: { owner: { state: SIDEBAR_SETTINGS_STATE, methods: SIDEBAR_SETTINGS_METHODS } },
 });

@@ -4,6 +4,7 @@
 export type { Attempt, PinnedKey } from "./attempt.ts";
 export { nextDelay } from "./backoff.ts";
 export { CallContext, type Caller, SpanCtx } from "./ctx.ts";
+export { type EventEntry, type EventFlush, EventNode, type EventSender, type Tap } from "./events.ts";
 export type { AnyHost, ChordHost, Serving } from "./host.ts";
 export type { ChordObject, Holder, Removal } from "./object.ts";
 export { asRemoteOldWork } from "./old-work.ts";

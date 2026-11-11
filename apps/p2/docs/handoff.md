@@ -68,7 +68,8 @@ npm test                     # full suite; TUI tests need Node 26, browser tests
 ```
 
 Environment variables: `docs/p2-notes.md` (Running). Configuration in the data dir: `models.json`, `settings.json`
-(incl. `codemode`, default on in p2), `envs.json`, `projects.json`, `mcp.json`, `auth.json`, `radius.json`, `forwards.json`.
+(incl. `codemode`, default on in p2), `envs.json`, `projects.json`, `mcp.json`, `auth.json`, `radius.json`, `forwards.json`,
+`identity.json` (the server's name, only while the owner set one).
 
 **Sign-in.** Loopback alone is nobody (shared machines). A browser on the host signs in once per profile with the
 token the server prints at startup (pasted into the sign-in page); the TUI and scripts sign in with the data directory's owner key (README, Signing
@@ -102,8 +103,8 @@ verifying an agent's files on their own before committing. Node 24: `~/node-v24.
   extension switches, input entries, settings, logs, fetch).
 - **Plugins**: chat, chat-mode, sessions, familiar (the session above the others), subagents, agent (one-shot agents),
   codemode, cache-warming, coding-tools, prompt, models, login, search, status, drafts, files, send-file, artifacts,
-  workspace, file-index, terminals, envs, mcp, ports, radius, sharing, devices, proxy-marker, logs, dev-tools,
-  powershell, web-shell, projects. Before writing one, read Chord's
+  workspace, file-index, terminals, envs, mcp, ports, radius, sharing, devices, settings, proxy-marker, logs, dev-tools,
+  powershell, web-shell, projects, views, rollups (sidebar sections made from code). Before writing one, read Chord's
   tutorial (`packages/chord/docs/tutorial/`) and plugin guide (`packages/chord/docs/plugin-authoring.md`), then an
   existing p2 plugin of the same shape.
 - **Locations:** every conversation works at `{ env, cwd }`: the main one at the session's, subagents spawned with a
@@ -183,5 +184,6 @@ From `AGENTS.md` and this project's history:
 | `docs/tool-ui.md` | how a plugin shows its tool (web and TUI registrations), with a complete example plugin |
 | `docs/workflows.md` | code mode workflows with one-shot agents |
 | `docs/tree.md` | `/tree`: branches of the main conversation as Durable forks |
+| `docs/views.md` | views beside the transcript (Markdown, changes, custom HTML views), layouts, annotations, saved views |
 | `docs/remote-envs.md` | SSH environments |
 | `packages/chord/docs/` | Chord v2's design, slices and guides; `tutorial/` for writing plugins |
