@@ -2,8 +2,8 @@
 
 Status: spec, second draft, 2026-11-11, by the p3 session (8b6ab5cc). The first draft was reviewed by gpt-6-astra
 (`/tmp/rooms-v2-astra.md`) and gpt-6.1-sol (`/tmp/rooms-v2-sol.md`); both approved the direction and found the
-mutation, confirmation and persistence rules missing. The owner then decided: every state has a single writer
-(section 2). Replaces the generic room of `rooms.md` §2-§3 (messages, keyed messages, live and log rooms, journal,
+mutation, confirmation and persistence rules missing. The owner then proposed that every state have a single writer
+(section 2), to be adopted only if it resolves those problems (second review). Replaces the generic room of `rooms.md` §2-§3 (messages, keyed messages, live and log rooms, journal,
 acknowledgements, lag rule); keeps view principals, tokens and revocation (`rooms.md` §1), methods and calls (§4), the
 text room, and events. The owner allowed commit and deploy for the rooms work.
 
@@ -15,7 +15,7 @@ a Pong view sent only keyed messages, the kit counted only unkeyed ones as appli
 joined first every 30-35 s, it rejoined with a new peer ID and the sides swapped mid-game. Chord state already gives a
 joiner a snapshot, a slow view merged changes, and order per link; events give lossy motion.
 
-## 2. Two worlds, one rule (owner, 2026-11-11)
+## 2. Two worlds, and a proposed rule
 
 - **A plugin** is ordinary Chord: its leader is its server object; its views are Chord clients of its contracts
   (typed state, schema-checked method arguments, documents with fingerprints and `migrate`). It takes intents as
@@ -23,7 +23,7 @@ joiner a snapshot, a slow view merged changes, and order per link; events give l
 - **A sketch** keeps all logic in its views. The server has only a helper object that holds, distributes and saves the
   sketch's state without understanding or enforcing its contents (the views' business; bad values break only that
   sketch).
-- **Every state has a single writer.** The shared state is written only by the **leader** (the oldest view that may
+- **Every state has a single writer** (the owner's proposal, under review). The shared state is written only by the **leader** (the oldest view that may
   write); everyone else (other views, the agent) sends **intents as calls** to methods the leader offers, and the
   leader applies them. A peer state is written only by its own view. A single writer's changes are made against the
   base it saw, which is the base the server applies them to (one ordered link, no other writer), so Delta's revision
