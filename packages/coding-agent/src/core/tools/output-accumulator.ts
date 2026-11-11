@@ -89,10 +89,19 @@ export class OutputAccumulator {
 	}
 
 	snapshot(options: { persistIfTruncated?: boolean } = {}): OutputSnapshot {
-		const tailTruncation = truncateTail(this.getSnapshotText(), {
+		let tailTruncation = truncateTail(this.getSnapshotText(), {
 			maxLines: this.maxLines,
 			maxBytes: this.maxBytes,
 		});
+		// The clipped tail can be nothing but the end of one over-long line plus its newline; dropping
+		// that partial line leaves an empty snapshot. Truncate the unclipped tail instead so the
+		// partial-line path still shows the end of the output.
+		if (tailTruncation.content === "" && this.tailText.length > 0) {
+			tailTruncation = truncateTail(this.tailText, {
+				maxLines: this.maxLines,
+				maxBytes: this.maxBytes,
+			});
+		}
 		const truncated = this.totalLines > this.maxLines || this.totalDecodedBytes > this.maxBytes;
 		const truncatedBy = truncated
 			? (tailTruncation.truncatedBy ?? (this.totalDecodedBytes > this.maxBytes ? "bytes" : "lines"))
