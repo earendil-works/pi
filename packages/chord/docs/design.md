@@ -2599,7 +2599,11 @@ entry. Opinionated and small: an app is its API, its built-in plugins and a star
   import again with `existing: "replace"`); a delete after the server's commit (an orphan directory nobody refers to,
   removed by a repeated `deleteData`); leftover staging directories.
 - **Plugins:** the app's root (required) and the user's root in the data directory; installs from git or npm; one
-  "apply changes" call builds and rolls out to the server, then every running worker, exposed by the app as it likes.
+  "apply changes" call builds and rolls out to the server, then every running worker. The kit serves it to the owner
+  as a remote object on the server, `AppChanges` (`chord.app.changes`, params `{}`; decision "The kit serves the reload
+  control", owner, 2026-11-11; not built yet): state `marks` (the plugins component's state: `dirty`, `install`, `set`,
+  `base`) and `apply()`, which runs `applyChanges` and answers each step's host and the plugins whose new code failed
+  and kept the old; any other principal is refused `forbidden`. Pages, terminals and agent tools use the one object.
 - **Restart needed:** `plugins.state.base` compares base code with what runs by content (§21, the reload loop, with
   its one latched exception): the app's `base` files and directories hashed at start, the server's own code (a
   best-effort static scan of its entry, `process.argv[1]`, bundled by esbuild with the server's conditions only to

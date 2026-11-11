@@ -2704,6 +2704,13 @@ validation and copies the v2 kernel added around Delta.
   old version until the restarted object's successor is live (design §21); classes the edit renamed or removed are
   unstyled until then. Accepted and documented; apps contribute UI from facets and let objects supply data. Rejected
   for now: a kernel signal "this plugin's restarts on this host finished" to retire old sheets later.
+- **The kit serves the reload control (owner, 2026-11-11: "approve of AppChanges"; p3 step 0, decision 1):** the kit's
+  plugin marks (`app.plugins.state`) and `app.applyChanges` were reachable only from the start script, so applying a
+  change from a page, a terminal or an agent tool would need base code (a signal handler or a route in the start
+  script), against p3's "Reloads first". The kit serves `AppChanges` (`chord.app.changes`, remote, on the server,
+  params `{}`) to the app's owner only (any other principal: `forbidden`): state `marks` (the plugins component's state
+  as it is) and `apply()`, which runs `applyChanges` and answers `{ steps: { name, failed: string[] }[] }`. The app
+  re-exports the token through its server API. Rejected: applying on a signal or a start-script route.
 - **Call windows only for untrusted links (owner, 2026-11-11: "make the limit ten thousand"; from the Pong netcode
   discussion):** the call window N (design §3) bounds how many calls one caller runs at once on a provider; calls past
   it wait in the caller's own queue, so a client that fires too many only slows itself. No saturation by calls was
