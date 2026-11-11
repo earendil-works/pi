@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `RemoteExecutionEnv.listDir()` leaves out an entry removed between enumeration and `lstat` instead of failing, like `NodeExecutionEnv.listDir()` and both directory readers. Names that are not valid UTF-8, which `lstat` also reports as missing, are now left out the same way instead of failing the listing, as the directory readers already did ([#11994](https://github.com/earendil-works/pi/issues/11994))
 ## [1.5.2] - 2026-11-10
 
 ## [1.5.1] - 2026-11-09

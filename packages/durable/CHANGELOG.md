@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `NodeExecutionEnv.listDir()` leaves out an entry removed between enumeration and `lstat` instead of failing, so a read-only JSONL open beside a live writer no longer rejects with `JSONL directory listing failed: ENOENT` when the writer renames a `.reclaim` file over a sidecar during the listing. Names that are not valid UTF-8, which `lstat` also reports as missing, are now left out the same way instead of failing the listing, as the directory readers already did ([#11994](https://github.com/earendil-works/pi/issues/11994))
 ### Breaking Changes
 
 - `RunEndTask` and `runEndTask` are renamed `HookTask` and `hookTask`, as `afterTools` and `onYield` hooks now ask for tasks too. Migration: rename the import in `afterRun` hooks.
