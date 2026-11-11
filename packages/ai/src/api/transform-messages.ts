@@ -124,16 +124,25 @@ export function transformMessages<TApi extends Api>(
 				assistantMsg.api === model.api &&
 				assistantMsg.model === model.id;
 
-			const transformedContent = assistantMsg.content.flatMap((block) => {
+			const contentIndices: number[] = [];
+			let droppedThinkingBlocks = 0;
+			const transformedContent = assistantMsg.content.flatMap((block, index) => {
+				contentIndices[index] = index - droppedThinkingBlocks;
 				if (block.type === "thinking") {
 					// Thinking from another model is dropped. Signatures and encrypted reasoning are
 					// only valid for the model that produced them, and sending readable thinking as
 					// plain text makes the new model treat it as part of the visible reply.
-					if (!isSameModel) return [];
+					if (!isSameModel) {
+						droppedThinkingBlocks++;
+						return [];
+					}
 					// Keep redacted and signed blocks even if the thinking text is empty
 					// (OpenAI encrypted reasoning); they are needed for replay.
 					if (block.redacted || block.thinkingSignature) return block;
-					if (!block.thinking || block.thinking.trim() === "") return [];
+					if (!block.thinking || block.thinking.trim() === "") {
+						droppedThinkingBlocks++;
+						return [];
+					}
 					return block;
 				}
 
@@ -167,10 +176,19 @@ export function transformMessages<TApi extends Api>(
 
 				return block;
 			});
+			contentIndices[assistantMsg.content.length] = transformedContent.length;
 
 			return {
 				...assistantMsg,
 				content: transformedContent,
+				...(assistantMsg.toolSearchItems
+					? {
+							toolSearchItems: assistantMsg.toolSearchItems.map((entry) => ({
+								...entry,
+								contentIndex: contentIndices[entry.contentIndex],
+							})),
+						}
+					: {}),
 			};
 		}
 		return msg;

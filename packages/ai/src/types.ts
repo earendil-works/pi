@@ -593,6 +593,12 @@ export interface UserMessage {
 export interface AssistantMessage {
 	role: "assistant";
 	content: (TextContent | ThinkingContent | ToolCall)[];
+	/**
+	 * Provider-native hosted tool-search items, serialized as JSON for lossless replay.
+	 * Each item precedes content[contentIndex], or follows the last block when the index
+	 * equals content.length. Only the same provider, API, and model may replay them.
+	 */
+	toolSearchItems?: { contentIndex: number; item: string }[];
 	api: Api;
 	provider: ProviderId;
 	model: string;

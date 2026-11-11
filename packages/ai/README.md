@@ -1687,6 +1687,8 @@ const continuation = await models.complete(newModel, restored);
 
 Models are plain serializable data too — no functions or implementations attached — so persisting "which model was this conversation using" is a `JSON.stringify` away.
 
+OpenAI Responses replies can also carry `toolSearchItems`: opaque hosted tool-search calls and loaded definitions, anchored to their position among the content blocks. Persist these with the complete assistant message. Pi replays them only to the same provider, API, and model so follow-up turns retain loaded tools and the cached prompt prefix. They are provider history, not tool calls for the application to execute.
+
 > **Note**: If the context contains images (encoded as base64 as shown in the Image Input section), those will also be serialized.
 
 ## Browser Usage

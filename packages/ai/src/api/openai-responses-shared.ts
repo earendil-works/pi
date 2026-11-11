@@ -331,7 +331,14 @@ export function convertResponsesMessages<TApi extends Api>(
 			const isDifferentModel = isSameProviderAndApi && assistantMsg.model !== model.id;
 			let textBlockIndex = 0;
 
-			for (const block of msg.content) {
+			const searchItems = isSameModel ? (assistantMsg.toolSearchItems ?? []) : [];
+			const appendSearchItems = (contentIndex: number): void => {
+				for (const entry of searchItems) {
+					if (entry.contentIndex === contentIndex) output.push(JSON.parse(entry.item) as ResponseInputItem);
+				}
+			};
+			for (const [contentIndex, block] of msg.content.entries()) {
+				appendSearchItems(contentIndex);
 				if (block.type === "thinking") {
 					if (block.thinkingSignature) {
 						const reasoningItem = JSON.parse(block.thinkingSignature) as ResponseReasoningItem;
@@ -398,6 +405,7 @@ export function convertResponsesMessages<TApi extends Api>(
 					}
 				}
 			}
+			appendSearchItems(msg.content.length);
 			if (output.length === 0) continue;
 			if (
 				options?.configurationUpdateEffort !== undefined &&
@@ -512,6 +520,13 @@ export async function processResponsesStream<TApi extends Api>(
 	// Tool calls whose output_item.done has not arrived yet.
 	const unfinishedToolCalls = new Set<ToolCall>();
 	const reasoningBlocksById = new Map<string, ThinkingContent>();
+	const toolSearchItems = new Map<number, { contentIndex: number; item: string }>();
+	const toolSearchPositions = new Map<number, number>();
+	const recordToolSearchItem = (outputIndex: number, item: ResponseOutputItem, contentIndex: number): void => {
+		if (item.type !== "tool_search_call" && item.type !== "tool_search_output") return;
+		toolSearchItems.set(outputIndex, { contentIndex, item: JSON.stringify(item) });
+		output.toolSearchItems = [...toolSearchItems].sort(([a], [b]) => a - b).map(([, entry]) => entry);
+	};
 	const applyMessagePhaseStopReason = (item: ResponseOutputItem): void => {
 		if (item.type === "message" && item.phase === "final_answer") {
 			output.stopReason = "stop";
@@ -626,6 +641,18 @@ export async function processResponsesStream<TApi extends Api>(
 	): void => {
 		sawTerminalResponseEvent = true;
 		backfillReasoningSignatures(response.output ?? []);
+		// Some Responses proxies supply hosted search items only in the terminal output.
+		let contentIndex = 0;
+		for (const [outputIndex, item] of (response.output ?? []).entries()) {
+			if (!toolSearchItems.has(outputIndex)) recordToolSearchItem(outputIndex, item, contentIndex);
+			if (
+				item.type === "reasoning" ||
+				item.type === "message" ||
+				item.type === "function_call" ||
+				item.type === "custom_tool_call"
+			)
+				contentIndex++;
+		}
 		if (response?.id) {
 			output.responseId = response.id;
 		}
@@ -673,6 +700,9 @@ export async function processResponsesStream<TApi extends Api>(
 		if (event.type === "response.created") {
 			output.responseId = event.response.id;
 		} else if (event.type === "response.output_item.added") {
+			if (event.item.type === "tool_search_call" || event.item.type === "tool_search_output") {
+				toolSearchPositions.set(event.output_index, output.content.length);
+			}
 			createSlot(event.output_index, event.item);
 		} else if (event.type === "response.reasoning_summary_text.delta") {
 			const slot = getSlot(event.output_index, "thinking");
@@ -745,6 +775,11 @@ export async function processResponsesStream<TApi extends Api>(
 			pushToolCallDelta(slot, closeCustomInput(slot.block, slot.input, event.input));
 		} else if (event.type === "response.output_item.done") {
 			const item = event.item;
+			recordToolSearchItem(
+				event.output_index,
+				item,
+				toolSearchPositions.get(event.output_index) ?? output.content.length,
+			);
 			applyMessagePhaseStopReason(item);
 			const slot = getOrCreateSlot(event.output_index, item);
 

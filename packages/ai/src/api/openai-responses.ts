@@ -213,6 +213,19 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			if (nextParams !== undefined) {
 				params = nextParams as ResponseCreateParamsStreaming;
 			}
+			// The gateway confuses old client function calls named tool_search with hosted
+			// search when both occur in one request. Only relabel history in that case.
+			if (
+				model.provider === "vercel-ai-gateway" &&
+				params.tools?.some((tool) => tool.type === "tool_search" && tool.execution !== "client") &&
+				Array.isArray(params.input)
+			) {
+				params.input = params.input.map((item) =>
+					item.type === "function_call" && item.name === "tool_search"
+						? { ...item, name: "pi_tool_search" }
+						: item,
+				);
+			}
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
