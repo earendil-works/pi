@@ -13,10 +13,12 @@ note: |
   (`/tmp/rooms-verdict-opus.md`) and gpt-6-astra (`/tmp/rooms-verdict-astra.md`), and the use cases worked through by
   claude-opus-5-5 (games, `/tmp/uc-opus.md`), gpt-6-astra (documents and boards, `/tmp/uc-astra.md`) and gpt-6.1-sol
   (cross-cutting, `/tmp/uc-sol.md`), each cross-reviewed by another (`/tmp/uc-review-{opus,astra,sol}.md`); second
-  edition with all three cross-reviews folded in. Nothing here is built. Latencies are estimates
+  edition with all three cross-reviews folded in; third edition with the RTS chapter rewritten from Terrano and Bettner's
+  "1500 Archers on a 28.8" (read in full) and the glyph chapter rewritten from Max's actual editor (his gist:
+  `glyph-editor.html`, `glyph-editor-ge.py`, `glyph-editor-bridge.js`), after the owner rejected both stories. Nothing here is built. Latencies are estimates
   at 200 ms round trip; server costs come from an isolated approximation of today's publish path, not from a v3
   implementation. Notes marked *review* are open points found while working through the cases.
-colophon: Rooms v3 use cases · second edition · 2026-11-11 · p3 session 8b6ab5cc with Opus, Astra and Sol
+colophon: Rooms v3 use cases · third edition · 2026-11-11 · p3 session 8b6ab5cc with Opus, Astra and Sol
 ---
 
 # Before we begin {.preface}
@@ -24,8 +26,8 @@ colophon: Rooms v3 use cases · second edition · 2026-11-11 · p3 session 8b6ab
 Mario opens a Connect Four view on his laptop; his son opens the same view on the tablet in the next room. Each taps a
 column, the piece falls on both screens about a fifth of a second later, and the agent, asked "who is winning?",
 looks at the board and answers. They stop for dinner and continue the next evening, where they left off. A guest at
-a meetup watches a Pong match on her phone without being able to play. Max drags a point of a glyph while a
-colleague drags another one. Each of these is a **sketch**: an HTML view the agent wrote, running in a sandboxed
+a meetup watches a Pong match on her phone without being able to play. Max reshapes the `a` of a typeface while the
+agent fixes the other glyphs and writes them back to the font's sources. Each of these is a **sketch**: an HTML view the agent wrote, running in a sandboxed
 frame, with no server code of its own.
 
 The first rooms (built, `rooms.md`) gave sketches a numbered journal, keyed messages, three room kinds,
@@ -53,15 +55,18 @@ survives a restart, how it fails, what it costs, and whether it works.
    each view's latest value a joiner must see (a selection, a grabbed point, "typing"). A moving mouse never touches
    the journal.
 5. **Games fit, with changes.** Connect Four is the model's best case. Pong works as a hybrid (paddles as events, one
-   input per hit), with visible corrections at 200 ms. A small RTS needs sequenced ticks and explicit seats first.
-6. **Boards fit while they are small.** Max's glyph editor works well; a whiteboard hits the 256 Ki-character
-   checkpoint limit after about 150 strokes.
+   input per hit), with visible corrections at 200 ms. A small RTS works the way Age of Empires did: every player sends one input per turn, and a
+   turn runs when all are in; no server clock.
+6. **Documents mostly need no rules at all.** Max's glyph editor (a font on disk, edited by a person and the agent)
+   needs only path-level built-ins the server applies, path reads for the agent, and read-only view assets for its
+   big base data; a whiteboard hits the 256 Ki-character limit after about 150 strokes.
 7. **The agent sees fresh computed state only while a view runs.** Otherwise it gets the last checkpoint plus the
    raw inputs after it, labelled as such. Data kept with the kit's built-in operations (`$set`, `$delete`, `$merge`)
    is the exception: the server applies those itself, so a shopping list the agent edits alone stays current.
 8. **Some things are not sketches.** A trusted vote, hidden cards, real motors and secrets need a plugin.
-9. **The model needs changes before it is built.** A stable person ID, input outcomes, saved watermarks, sequenced
-   ticks, server-applied built-ins, a persisted input catalogue, migration, and more (the epilogue).
+9. **The model needs changes before it is built.** Identity and seats, input outcomes, saved watermarks,
+   server-applied built-ins with path reads, view assets, a persisted input catalogue, migration, and more (the
+   epilogue).
 :::
 
 ## Words used throughout
@@ -147,7 +152,6 @@ const room = p2view.room({
       },
     },
   },
-  tick: 0,                                              // real-time sims: a tick every N ms
 });
 const { join, drop } = room.inputs;                    // functions, no strings
 await drop({ col: 3 });                                // resolves { seq } once sequenced
@@ -170,10 +174,12 @@ room.answer({ describeRegion: async (args) => ... });  // questions the agent ma
   the server accepts it for the current version and epoch if it is newer, trims, and saves it as the view's state.
   No leader, no term: a checkpoint at a number is a function of the inputs before it.
 - **Persistence.** The server saves the checkpoint and the tail periodically, without any view.
-- **Real time.** With `tick`, the server's clock closes turns: a frozen phone never stalls a match.
-- **Built-in data operations.** `$set(path, value)`, `$delete(path)` and `$merge` are the kit's own inputs; the server
-  can apply them to the checkpoint itself whenever the tail holds no custom input (Opus, cross-review). Sketches that
-  keep data with them need no view for current state.
+- **No server clock.** Turns are the game's own: in a real-time simulation every player sends one input per turn and a
+  turn runs when all are in, as in Age of Empires (chapter V). The server never ticks.
+- **Built-in data operations.** `room.set(path, value)`, `room.delete(path)`, `room.merge(path, value)`, list append and
+  remove, and conditional forms, are the kit's own inputs; the server applies them to the checkpoint itself whenever
+  the tail holds no custom input (Opus, cross-review). Documents kept with them need no view for current state and
+  no `apply` at all, which is most documents (chapter VI).
 - **The agent.** It reads (fresh with a view running or a built-ins-only tail, labelled stale otherwise), sends inputs
   by name, replaces the state (a new epoch), merges, and asks questions (chapter XII).
 
@@ -314,104 +320,196 @@ unseated view claim; `bounce` reuses the vertical speed before the wall reflecti
 before using it as the reference sketch.
 :::
 
-# A Little RTS {#rts lede="The owner's 1500 archers: it fits once ticks are sequenced and seats are explicit."}
+# A Little RTS {#rts lede="Age of Empires' model, as the article describes it: commands for two turns ahead, and a turn runs when every player's turn is in."}
 
-Three seats, 500 archers each, a step every 100 ms, integer math. Your units start moving about 0.3 s after your
-click; a target marker appears at once. A third player can open the view mid-match, watch the battle catch up in a
-second, press Join, and have 500 archers appear. The next day the match is where it was left.
+Three players, 500 archers each, integer math. The model is the one Mark Terrano and Paul Bettner describe in "1500
+Archers on a 28.8" (Age of Empires, 2001), and it maps onto the room almost one to one.
+
+## What Age of Empires does
+
+- **Simultaneous simulations.** No unit state crosses the network; every machine runs the same simulation from the
+  same commands. Passing positions would have capped the game at 250 moving units.
+- **Commands for two turns ahead.** Commands issued during communication turn 1000 execute in turn 1002, so they are
+  received and acknowledged while turn 1001 still animates. Turns were about 200 ms; rendering frames are separate.
+- **A turn runs when every player's turn is in.** Each machine sends a "Turn Done" each turn, with its commands. The
+  game runs only as fast as the slowest machine and connection; a frozen machine stalls everyone.
+- **Speed control.** Each Turn Done carries the frame rate that machine can sustain and its longest ping (2 bytes);
+  the host sets the next turn length from them, rising fast and settling slowly, because a steady 500 ms of command
+  latency plays better than latency jumping between 80 and 500 ms. Players did not notice 250 ms at all.
+- **Out of sync stops the game.** Checksums of the world catch the slightest divergence ("a deer slightly out of
+  alignment ... minutes later a villager would path a tiny bit off"); random numbers are seeded and synchronized and
+  must be drawn the same number of times everywhere.
+- **Recorded games come free.** The command stream replays the whole game; it became a feature and the best bug report.
+- **Players send a command every 1.5 to 2 seconds,** spikes of 3 to 4 per second in battles; repeated clicks on the
+  same spot are filtered.
+
+## In the room
+
+Each player's view sends **one input per turn**, its Turn Done: the commands collected during the turn, scheduled for
+two turns ahead, plus its frame rate, its ping and a hash of an earlier turn's state. The room orders them; that is
+all the server does. Every view runs turn T as soon as the sequence holds every seated player's input for T. Since
+every view sees the same sequence, every view runs every turn at the same point and in the same way. No server ticks,
+no host: the turn length is a deterministic function of the reported frame rates and pings, computed identically in
+every view.
 
 ```js
+const AHEAD = 2;
 const room = p2view.room({
   version: 1,
-  initial: () => ({ step: 0, players: [], units: [], nextId: 1 }),
-  tick: 100,
-  onTick(s) { simulate(s); s.step++; },       // MISSING: the model's tick has no hook (see below)
+  initial: () => ({ turn: 0, turnMs: 200, seats: [], units: [], pending: {}, nextId: 1, outOfSync: false }),
   inputs: {
-    join: { description: "Take a seat; spawns 500 archers", apply(s, _a, { from, rand }) { /* place 500 units with rand() */ } },
-    order: {
-      description: "Send the player's units inside box [x0,y0,x1,y1] to (x,y)",
-      args: { type: "object", properties: { box: { type: "array", items: { type: "integer" } }, x: { type: "integer" }, y: { type: "integer" } } },
-      apply(s, { box: [x0, y0, x1, y1], x, y }, { from }) {
-        const slot = s.players.indexOf(from);
-        for (const u of s.units) if (u.slot === slot && inBox(u, x0, y0, x1, y1)) { u.tx = x; u.ty = y; }
+    seat: { description: "Take a free seat before the match starts", apply(s, { name }, { from, rand }) {
+      if (s.turn === 0 && s.seats.length < 3 && !s.seats.some((x) => x.peer === from)) spawn(s, { name, peer: from }, rand);
+    } },
+    turnDone: {
+      description: "One player's commands for a turn, sent every turn even when empty",
+      apply(s, { t, commands, fps, ping, hash }, { from }) {
+        const seat = s.seats.findIndex((x) => x.peer === from);
+        if (seat < 0 || t < s.turn || s.outOfSync) return;
+        (s.pending[t] ??= {})[seat] = { commands, fps, ping, hash };
+        while (s.turn < AHEAD || s.seats.every((_, i) => s.pending[s.turn]?.[i])) runTurn(s);
       },
     },
   },
 });
+function runTurn(s) {
+  const turn = s.pending[s.turn] ?? {}; delete s.pending[s.turn];
+  for (const [seat, { commands }] of Object.entries(turn)) for (const c of commands) command(s, Number(seat), c);
+  if (new Set(Object.values(turn).map((x) => x.hash)).size > 1) s.outOfSync = true;   // the senders' hashes of turn T-2
+  s.turnMs = speedControl(s.turnMs, turn);       // from every fps and ping: rise fast, settle slowly, the same in every view
+  simulate(s, s.turnMs);                          // integer steps, squared distances, fixed tie order, rand from meta
+  s.turn++;
+}
+// the view: collect clicks during a turn, send them for two turns ahead
+let commands = [];
+canvas.onpointerup = () => commands.push({ box: dragBox(), x: px(mouse.x), y: px(mouse.y) });
+setInterval(() => {
+  room.inputs.turnDone({ t: room.state.turn + AHEAD, commands, fps: sustainableFps(), ping: room.rtt(), hash: hashOfTurn(room.state.turn - AHEAD) });
+  commands = [];
+}, room.state.turnMs);
 ```
 
-**What happens.** At t = 0 A releases a drag around 300 archers and clicks a hill. The server sequences tick k at 50
-ms, the order at about 100 ms, tick k+1 at 150 ms. Every view applies the tick, the order, the next tick, and moves
-the same 300 archers the same way; with interpolation the motion shows 250 to 350 ms after the click. Every couple of
-hundred messages (about 20 s, mostly ticks) a view posts a 60 KB checkpoint and the server trims. A joiner loads it
-and replays the messages after it: with a healthy checkpoint cadence about 200, about 0.2 s on a laptop and about 1 s
-on a phone; if the producer stalls, more.
+:::sequence animate | One turn: three players, 200 ms turns, 200 ms round trip; A's click executes two turns later in every view.
+actor a "A's view" accent
+actor server "room" blue
+actor b "B's view"
+actor c "C's view"
+a -> server: turnDone t=1002: [order hill], fps 30, ping 200, hash(1000)
+b -> server: turnDone t=1002: [], fps 60, ping 180, hash(1000)
+c -> server: turnDone t=1002: [], fps 24, ping 210, hash(1000)
+server --> a: seq 3007, 3008, 3009
+server --> b: seq 3007, 3008, 3009
+server --> c: seq 3007, 3008, 3009
+note a..c: turn 1001 still animates meanwhile
+a -> a: all three for 1002 are in: run turn 1002, the archers turn towards the hill
+c -> c: the same turn, the same result; hashes of 1000 agree
+:::
 
-## What the model must change for it
+## What the person sees, and when
 
-- **Ticks in the sequence, with a hook.** Otherwise "the state after input N" is undefined (two views at the same
-  number may have run different numbers of steps), and checkpoints and hashes disagree. Ticks must stop when no
-  writer is present, or the battle runs through the night.
-- **A way to pause.** Either server-sequenced `$joined` and `$left`, so the game can pause until everyone is back, or
-  explicit ready, pause and forfeit inputs the game defines itself (Sol: presence in the sequence is one policy, not a
-  requirement for every game); `apply` must not read peer state.
-- **Explicit seats.** With today's frame IDs, after a reload or overnight nobody owns a slot and the armies are
-  orphaned. A person ID alone does not fix it (two of your devices are the same owner): the game needs a seat it can
-  claim and recover, separate from the frame and the principal.
-- **Migration.** If the agent edits the sketch overnight and bumps `version`, the saved match is stranded until
-  something migrates the checkpoint.
-- **A cheap draft.** If `apply` mutates a tracking proxy, a 1500-unit step could be 10 to 50 times slower than on plain
-  arrays; measure before building.
+A's click shows a target marker at once; the archers start moving two turns later, about 400 ms with 200 ms turns,
+the same moment on every screen (as the article says, 250 to 500 ms is very playable in an RTS, and steady matters more
+than short). If C's phone falls behind, its frame rate in its turn inputs raises the turn length a little for
+everyone; the game slows smoothly instead of stuttering.
 
-**Failure that matters most:** nondeterminism makes a Safari player's archers die on one screen and live on another.
-JavaScript does not promise the same results for `Math.sin`, `Math.sqrt` and friends across engines; the simulation
-uses bounded integer arithmetic, squared distances instead of roots, and fixed tie-breaking orders (Sol, cross-review),
-and never `Math.random` or the clock. Hashes notice it;
-refolding does not cure an engine-level cause. It needs a visible "out of sync"; a lint of `apply` sources helps but proves nothing.
-**Numbers:** about 130 bytes per order, 10 ticks per second of about 60 bytes, a 60 KB checkpoint, 80 to 250 KB of
-server memory per room. Removing dead units by rebuilding the array (`s.units = s.units.filter(...)`) copies the
-surviving units through the draft every step; measure the real loop. **Verdict: works with caveats, after the changes
-above;** and like every sketch it trusts its writers (no secrets, no authoritative rules).
+## Waiting, leaving, coming back
 
-# Max's Glyph Editor {#glyph lede="Shared vector editing: drags as events, releases as inputs."}
+- **A frozen phone stalls the match,** as in Age of Empires: no turn runs without C's input. After a while the others
+  can sequence `drop({ seat })`, which every view applies at the same turn, and the match goes on without C's commands
+  (C's archers stand).
+- **Everyone leaves:** nobody sends turn inputs, so nothing runs; there is no server clock to keep the battle going
+  through the night. The next day the views load the checkpoint, and the match resumes when the seated players are
+  back (or the others drop the missing ones).
+- **A spectator or a late view** loads the checkpoint (taken at any number: the state includes the pending inputs of
+  future turns) and replays the inputs after it, about 1 s on a phone for a few hundred.
+- **Out of sync** stops the game for everyone, visibly, as in Age of Empires, and the recording (checkpoint plus
+  inputs) is the bug report. Refolding silently would hide exactly the bug the article spent years on.
+- **Recorded games:** the sequence is the recording; a replay view folds it from the start of the match.
 
-Max sees a glyph with anchor points and handles. His drag moves at once; a colleague's drag trails by about 200 ms
-in her colour; releasing a point commits it for both. The agent can edit a stem by replacing the whole glyph, guarded
-by a revision.
+## Numbers and verdict
+
+Three players at 200 ms turns send 15 inputs per second, mostly empty (about 60 bytes, commands about 40 bytes more):
+about 3 ms of server work per second at the 0.19 ms approximation, 2.7 KB/s of fan-out per view. The checkpoint (about
+60 KB for 1500 units) goes out every few hundred inputs, about every 20 to 30 seconds. **Verdict: works well,** with
+no tick machinery in the room at all. What it needs from the model: seats that survive a reload (a frame ID changes,
+so a seat must be reclaimable by its person), a migration when the sketch changes between sessions, and a simulation
+loop that does not pay for a tracking draft on every unit (measure it). Like every sketch it trusts its players.
+
+# Max's Glyph Editor {#glyph lede="Not a game with rules: a font on disk that a person and the agent edit together."}
+
+The real editor (Max's gist, `glyph-editor.html`, `glyph-editor-ge.py`, `glyph-editor-bridge.js`) edits the UFO
+sources of a typeface, Mallos Serif, four masters. The truth lives in `.glif` files on disk; the view holds a working
+copy. Its state today:
+
+| Key | What | Size |
+| --- | --- | --- |
+| `glyphs` | every glyph of one master, compactly encoded (`{ w, u, c: [[x, y, t, ...]], k, a }`) | the bulk; one master must fit the 256 KB view-state limit |
+| `edits` | the unsaved glyphs, name to glyph, overlaying `glyphs` | small; kept first because the agent's `view read` returns only the first 40,000 characters |
+| `current`, `notes`, `previewText`, `metrics`, `order` | the open glyph, the agent's notes pinned on glyphs, the preview line | small |
+
+The page edits one glyph locally: points, handles, the pen, contours, components, undo. Dragging stays local; every
+finished operation writes the whole glyph into `edits[name]` (`commit()`, through `p2view.setState`, saved after 300 ms
+of rest). Its selection goes to the agent with `p2view.select` ("Regular /a: 2 points selected ...").
+
+**The agent is the main partner,** through code-mode helpers (`bridge.js`): `load(master)` exports a master from the UFO
+with Python and pushes it into the view (`view update` with the whole state); `peek()` reads the open glyph, the
+unsaved names, the notes and the selection; `edit(fn)` changes glyphs programmatically (`api.get`, `api.set`,
+`api.note`, `api.open`) and merges `edits`, `notes` and `current`; `save()` writes the unsaved glyphs back to the
+`.glif` files and folds them into the base, keeping "edits made since the read". Every one of these works around a limit
+of today's views: reads chunked to 30 KB because the read tool truncates, the state ordered so `edits` survive the
+40,000-character read, whole-map merges that can overwrite a glyph the person changed meanwhile, and the 256 KB cap on a
+master.
+
+## Under the new model
+
+The editor has no rules for the server or other views to agree on: it is a document. It needs no custom inputs and no
+deterministic `apply`, only the room's built-in operations at path granularity, which the server applies itself:
 
 ```js
-const room = p2view.room({
-  version: 1,
-  initial: () => ({ rev: 0, glyph: { points: { p0: { x: 0, y: 0 }, p1: { x: 0, y: 100 } }, curves: [] } }),
-  inputs: {
-    move: {
-      description: "Move one glyph point to an absolute position",
-      args: { type: "object", properties: { id: { type: "string" }, x: { type: "number" }, y: { type: "number" } } },
-      apply(s, { id, x, y }, { seq }) { if (!Object.hasOwn(s.glyph.points, id)) return; s.glyph.points[id] = { x, y }; s.rev = seq; },
-    },
-    replace: {
-      description: "Replace the glyph if its revision is still the one read",
-      apply(s, a, { seq }) { if (s.rev !== a.expected) return; s.glyph = a.glyph; s.rev = seq; },
-    },
-  },
-});
-room.onState((s) => drawGlyph(s.glyph));
-room.onEvent(({ from, value }) => drawOtherDrag(from, value));            // drag positions: motion, as events
-room.onPeerState((id, value) => markHeld(id, value?.dragging));           // who holds which point: peer state
-const drag = (id, x, y) => { drawOwnDrag(id, x, y); room.emit({ id, x, y }); };
-const grab = (id) => room.setMine({ dragging: id });
-const release = (id, x, y) => room.inputs.move({ id, x, y });
-room.answer({ describeRegion: (args) => ({ seq: room.seq, items: hitTest(room.state.glyph, args) }) });
+const room = p2view.room({ version: 1, initial: () => ({ edits: {}, current: null, notes: {}, previewText: "" }) });
+// the page, after each finished operation on the open glyph: one glyph, one path
+const commit = (name, glyph) => room.set(["edits", name], encode(glyph));
+const open = (name) => room.set(["current"], name);
+const dropNote = (id) => room.delete(["notes", id]);              // notes keyed by id, not by index
+room.onState((s) => redraw(s));                                   // the agent's edits arrive as state changes
+room.emit({ glyph: cur, points: draggedPoints() });               // optional: show the live drag to others
+room.setMine({ glyph: cur, selection: selectedKeys() });          // who is on which glyph, for other people
 ```
 
-Drag positions go as events: peer state is Chord state, which a passive receiver gets about twice per round trip,
-folded, so a dragged point would jump (the reason events exist). Peer state only says who holds which point. Two people
-releasing the same handle: the later commit wins, and both coloured previews make that understandable.
-Different points both survive. A point deleted before a queued move makes the move a no-op. The agent's guarded
-`replace` loses a race by doing nothing, and `{ seq }` does not tell it so; it has to read again. The revision guard
-needs `seq` to keep rising across epochs, or it has to compare epoch and number together. **Numbers:** a move
-is 120 to 220 bytes; a 128-point glyph is 6 to 10 KB of state; about 0.19 ms of server work per move. **Verdict: works
-well for a single glyph.** A whole font or a revision history belongs in a document or file service.
+And the agent, without rewriting the state:
+
+```js
+// code mode, through the view tool's room operations (proposed)
+await tools.view({ action: "set", id: "glyph", path: ["edits", "a"], value: enc(fixedA) });   // one glyph, a few hundred bytes
+await tools.view({ action: "read", id: "glyph", path: ["edits"] });                             // only what it needs
+// save: write the .glif files, then drop each saved glyph from `edits` only if it is still what was saved
+await tools.view({ action: "deleteIf", id: "glyph", path: ["edits", "a"], equals: hashOf(saved.a) });
+```
+
+What changes, concretely:
+
+- **The agent's edits are small and current.** A glyph change is one `set` at `["edits", name]`, applied by the server
+  whether or not the view is open, instead of a merge of the whole `edits` map. A person editing glyph `b` while the
+  agent saves glyph `a` lose nothing; today's whole-map merge could.
+- **Reads by path.** The agent reads `["edits"]`, `["current"]` or one glyph, not the first 40,000 characters of
+  everything; the ordering trick and the chunked reads go away. This is possible only because the server applies the
+  built-ins and so always holds the current document.
+- **Saving without a race.** `deleteIf` drops a saved glyph from `edits` only if it still equals what was written to
+  disk; an edit made during the save stays unsaved. A conditional built-in, compare-and-set on one path.
+- **Same glyph, two people:** the later commit of the whole glyph wins. Peer state shows who has which glyph open, so
+  people see the collision coming; finer merges inside a contour are not worth it (point indexes shift when points are
+  added).
+- **The base master is not state.** All glyphs of a master are reference data from disk that only `load` and `save`
+  change. Kept in the room, they are what hits the 256 KB cap and makes every checkpoint and every joiner carry a
+  whole master. They belong in a read-only **view asset**: a file of the session the frame fetches by URL, as it
+  fetches its HTML, written by `load` and `save`. The room then holds only `edits`, `current`, `notes` and the
+  preview line, a few KB.
+
+**Numbers:** a glyph commit is a few hundred bytes to a few KB; the room's state is the unsaved glyphs plus a little;
+the master asset is loaded once per frame (about 200 KB for Mallos Serif Regular). **Verdict: works well** with
+path-level built-ins, path reads for the agent, a conditional delete, and view assets; the custom-input machinery of
+the model plays no part. The ideas from the first edition of this chapter (point-level moves, a guarded whole-glyph
+replace) were invented, not taken from the real editor.
 
 # A Whiteboard {#whiteboard lede="Strokes as one input each at pointer-up; the checkpoint limit arrives early."}
 
@@ -661,11 +759,13 @@ brackets.
    rule only for small states); a fallback producer when the preferred one is frozen; a reference, not the value, to
    current views; whether a checkpoint may exceed the view-state limit with a projection as the view's state; a
    refused checkpoint visible to person and agent. [RTS, whiteboard, family list, agent, failures]
-5. **Ticks.** `tick: { every, apply }`, sequenced while a writer is present, stopped when none is; `at` never
-   decreases; `seq` keeps rising across epochs. [RTS, lockstep Pong, failures]
-6. **Server-applied built-ins.** Precisely defined `$set`, `$delete`, `$merge` (and list append and remove), applied by
-   the server while the tail has no custom input; `view update` takes an expected epoch or head. [family list, agent,
-   simple boards]
+5. **View assets.** Read-only files of the session a frame fetches by URL, as it fetches its HTML, for large reference
+   data (a font master) that should not live in the room's state, its checkpoints and every joiner's snapshot. [glyph,
+   whiteboard backgrounds, RTS maps]
+6. **Server-applied built-ins.** Precisely defined `set`, `delete`, `merge`, list append and remove, and a conditional
+   `deleteIf`/`setIf` (compare-and-set on one path), applied by the server while the tail has no custom input; the
+   agent reads and writes by path through the view tool; `view update` takes an expected epoch or head; `at` never
+   decreases and `seq` keeps rising across epochs. [glyph, family list, agent, simple boards]
 7. **A persisted input catalogue.** Names, descriptions and schemas per opening and version, posted by the kit, stored
    by the server, for the agent's inputs with no view open. [family list, agent, Connect Four]
 8. **Versions and migration.** `view update` carries the new version; a `migrate(value, fromVersion)` hook in the
@@ -705,8 +805,8 @@ brackets.
 | --- | --- | --- |
 | Connect Four | works well | seats; no-op feedback; agent waiting |
 | Pong (hybrid) | works with caveats | corrections up to 120 px; own prediction; seats; code fixes |
-| RTS | works with caveats | sequenced ticks, explicit seats, a way to pause, migration, cheap draft |
-| Glyph editor | works well (one glyph) | outcome of guarded replace; fonts belong elsewhere |
+| RTS | works well | per-turn inputs as in Age of Empires; seats across reloads, migration, a cheap draft |
+| Glyph editor | works well | path-level built-ins, path reads, a conditional delete, view assets for the base master |
 | Whiteboard | works with caveats | checkpoint size limit, ~150 strokes |
 | Family list | works well with built-ins | custom rules need a view; built-ins need precise semantics |
 | Meetup poll | caveats / plugin | vote rights, identity, checkpoint trust, hash cadence |
