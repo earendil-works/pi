@@ -8,6 +8,8 @@ use crate::exec::{Control, Groups, running};
 use crate::exec::{Message, kill_group, start_waiter};
 #[cfg(unix)]
 use crate::frame::{EVENT, Frame};
+#[cfg(unix)]
+use crate::output::Gate;
 use crate::output::Output;
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
@@ -187,17 +189,18 @@ pub fn run(
         groups.lock().unwrap().remove(&pid);
         Failure::new("spawn_error", error.to_string())
     };
+    // Like a full pipe: a program that writes faster than the link waits.
+    let gate = Gate::new(output);
     let started = {
         let master = master.clone();
         let sender = sender.clone();
         let stop = stop.clone();
-        let output = output.clone();
+        let gate = gate.clone();
         thread::Builder::new().spawn(move || {
             unix::read(&master, &stop, |bytes| {
-                let delivered = sender.send(Message::Data(0, bytes.to_vec())).is_ok();
-                // Like a full pipe: a program that writes faster than the link waits.
-                output.wait_for_room(&stop);
-                delivered
+                gate.pass(&stop, || {
+                    sender.send(Message::Data(0, bytes.to_vec())).is_ok()
+                })
             });
             let _ = sender.send(Message::Eof(0));
         })
@@ -246,11 +249,16 @@ pub fn run(
         let wait = match idle_until {
             Some(idle) => {
                 let now = Instant::now();
-                if now >= idle {
+                if now < idle {
+                    idle - now
+                } else if gate.held() {
+                    // Silence while the link holds the reader up is not the end of the output.
+                    idle_until = Some(now + EXIT_GRACE);
+                    EXIT_GRACE
+                } else {
                     // A background job may keep the terminal open after the program exited.
                     break;
                 }
-                idle - now
             }
             None => Duration::from_secs(3600),
         };
