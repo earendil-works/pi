@@ -193,6 +193,7 @@ export class Connection {
 	/** Ends the connection for good: no more links, its host closed (the frame goes away). */
 	async close(): Promise<void> {
 		this.#closed = true;
+		this.#sends.close();
 		this.#socket?.close();
 		await this.#host.close(BACKGROUND_CONTEXT);
 	}
@@ -222,7 +223,6 @@ export class Connection {
 				BACKGROUND_CONTEXT,
 			);
 			if (ref.variant !== "peer") throw new Error("This frame's room refused it");
-			const link = this.#link;
 			// A reference replaced after a reconnect stays quiet.
 			const changed = async () => {
 				if ((await this.#ref) === ref) this.#update(ref);
@@ -242,14 +242,6 @@ export class Connection {
 						console.error(error);
 					}
 			}, BACKGROUND_CONTEXT);
-			this.#sends.attach({
-				send: (messages) => {
-					const ack = this.#applied > this.#acked ? this.#applied : undefined;
-					if (ack !== undefined) this.#acked = ack;
-					return ref.send({ messages: [...messages], ...(ack === undefined ? {} : { ack }) }, BACKGROUND_CONTEXT);
-				},
-				closed: () => this.#linkClosed(link),
-			});
 			void ref.room.watch(BACKGROUND_CONTEXT).then((watch) => watch.start(changed));
 			void ref.presence.watch(BACKGROUND_CONTEXT).then((watch) => watch.start(changed));
 			void ref.log.watch(BACKGROUND_CONTEXT).then((watch) => watch.start(changed));
@@ -372,10 +364,17 @@ export class Connection {
 	 * by itself; a refused token is what reports a revoked grant or a closed view).
 	 */
 	#report(error: unknown, link: number): void {
-		if (this.#linkClosed(link)) return;
-		if (isChordError(error, "unavailable") || isChordError(error, "released")) return;
-		if (isChordError(error, "forbidden") && error.reason === "revoked") return;
-		console.error("p2 view kit:", error);
+		if (!this.#lost(error, link)) console.error("p2 view kit:", error);
+	}
+
+	/**
+	 * Whether a call over link `link` failed with the link: it closed, or its failure is one a closing link gives (the
+	 * frame's room revoked with its link, the link gone, the call cut off).
+	 */
+	#lost(error: unknown, link: number): boolean {
+		if (this.#linkClosed(link)) return true;
+		if (isChordError(error, "unavailable") || isChordError(error, "released")) return true;
+		return isChordError(error, "forbidden") && error.reason === "revoked";
 	}
 
 	/** After a reconnect: join and offer again (a new link is a new peer); waiting sends leave on the new link. */
@@ -399,16 +398,26 @@ export class Connection {
 		const joined = await ref.join(kind === undefined ? {} : { kind }, BACKGROUND_CONTEXT);
 		this.#me = joined.me;
 		if (kind === undefined) return;
-		// Joined on the open link: motion leaves from now on (a new generation of the outbox).
-		if (!this.#linkClosed(link))
-			this.#motion.attach({
-				emit: (messages) => ref.emit({ messages: [...messages] }, BACKGROUND_CONTEXT),
-				report: (error) => this.#report(error, link),
-			});
 		// A live room's joiner takes the messages after its join (and every peer's keyed ones).
 		if (!this.#joined && kind === "live") this.#applied = joined.from;
 		this.#joined = true;
 		this.#update(ref);
+		if (this.#linkClosed(link)) return;
+		// Joined on the open link: motion leaves from now on (a new generation of the outbox), and so do sends. Not
+		// before: the first join of a log or text room starts it over (a new base), which would pass over a command sent
+		// ahead of it.
+		this.#motion.attach({
+			emit: (messages) => ref.emit({ messages: [...messages] }, BACKGROUND_CONTEXT),
+			report: (error) => this.#report(error, link),
+		});
+		this.#sends.attach({
+			send: (messages) => {
+				const ack = this.#applied > this.#acked ? this.#applied : undefined;
+				if (ack !== undefined) this.#acked = ack;
+				return ref.send({ messages: [...messages], ...(ack === undefined ? {} : { ack }) }, BACKGROUND_CONTEXT);
+			},
+			lost: (error) => this.#lost(error, link),
+		});
 	}
 
 	async #offer(ref: PeerRef): Promise<void> {

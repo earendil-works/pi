@@ -16,11 +16,11 @@ export type SendOutcome =
 /** A message as it leaves: its key, if any, and its data as JSON text. */
 export type Outgoing = { readonly key?: string; readonly data: string };
 
-/** Where the sends of one link go: the room's `send`, and whether that link has closed meanwhile. */
+/** Where the sends of one link go: the room's `send`, and whether a call's failure was its link's. */
 export type SendTarget = {
 	send(messages: readonly Outgoing[]): Promise<readonly number[]>;
-	/** Whether the link the target sends over closed (a rejection then is no refusal). */
-	closed(): boolean;
+	/** Whether `error` came from the link (closed, the frame's room revoked with it): no refusal, the outcome unknown. */
+	lost(error: unknown): boolean;
 };
 
 /** The most messages one `send` call carries (the contract's bound). */
@@ -35,9 +35,11 @@ export class Sends {
 	#waiting: { message: Outgoing; resolve: (outcome: SendOutcome) => void }[] = [];
 	#target: SendTarget | undefined;
 	#scheduled = false;
+	#closed = false;
 
-	/** Sends `message`; resolves with its outcome. */
+	/** Sends `message`; resolves with its outcome (`uncertain` at once after `close`: nothing will send it). */
 	send(message: Outgoing): Promise<SendOutcome> {
+		if (this.#closed) return Promise.resolve({ kind: "uncertain" });
 		return new Promise((resolve) => {
 			if (message.key !== undefined) {
 				const at = this.#waiting.findIndex((each) => each.message.key === message.key);
@@ -63,6 +65,16 @@ export class Sends {
 		this.#target = undefined;
 	}
 
+	/**
+	 * The connection ended for good: what waits resolves `uncertain` (nothing will send it), as do later sends; what
+	 * left resolves when its call fails with the link.
+	 */
+	close(): void {
+		this.#closed = true;
+		this.#target = undefined;
+		for (const each of this.#waiting.splice(0)) each.resolve({ kind: "uncertain" });
+	}
+
 	/** Messages sent in one turn leave in one batch, after it. */
 	#schedule(): void {
 		if (this.#scheduled || !this.#target || !this.#waiting.length) return;
@@ -83,7 +95,7 @@ export class Sends {
 					for (const [index, each] of batch.entries()) each.resolve({ kind: "sent", seq: seqs[index] ?? -1 });
 				},
 				(error: unknown) => {
-					const outcome: SendOutcome = target.closed()
+					const outcome: SendOutcome = target.lost(error)
 						? { kind: "uncertain" }
 						: { kind: "refused", error: error instanceof Error ? error.message : String(error) };
 					for (const each of batch) each.resolve(outcome);

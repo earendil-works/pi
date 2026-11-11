@@ -83,12 +83,15 @@ newest per key), unkeyed sends (log rooms) for commands every frame must get in 
   closes) empties it and retires its generation: an answer of an earlier generation's emit changes nothing of the new
   count, and nothing sent before is sent again. The room's event listeners belong to the connection: each new
   reference (every rejoin) subscribes them, the released old one ends its subscription.
-- **Reliable sends** (`Sends`): `send` waits only for a link: messages sent in one turn leave in one batch, batches in
+- **Reliable sends** (`Sends`): `send` waits until the room is joined (the first join of a log or text room starts it
+  over at a new base, which would pass over a command sent ahead of it; after a reconnect, until the rejoin): messages
+  sent in one turn leave in one batch, batches in
   order without waiting for earlier answers (Chord keeps a link's calls in order; the room numbers in that order).
   Outcome: `{ kind: "sent", seq }` (the number from the numbering transaction), `"superseded"` (a keyed message
   replaced in the outbox before it left), `"refused"` with the error (the budget, a frame that may only watch), or
   `"uncertain"` (its link closed before the answer: it may or may not have been numbered). Nothing is replayed by
-  itself; a lockstep game dedupes resends by its own command IDs.
+  itself; a lockstep game dedupes resends by its own command IDs. A connection closed for good (`close`) resolves what waits, and
+  every later send, `uncertain`.
 - **Clock:** a few samples of `now()` at the first join, then one every 10 s; the shortest round trip of the last six
   (measured with `performance.now()`) sets the offset and `rtt()`.
 - **Quiet reconnects:** a call rejected because the frame's own link closed (a reconnect, a lag eviction: revoked

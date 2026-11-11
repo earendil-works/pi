@@ -301,11 +301,57 @@ describe("view rooms with events", () => {
 		assert.equal(second?.kind, "sent");
 	});
 
+	it("sends a command made before the join after it, so a log room's new base never passes over it", async () => {
+		const { id } = await session();
+		const connection = new Connection(id, "room");
+		connections.push(connection);
+		const messages: Delivered[] = [];
+		// The page's usual pattern: the room, then a command at once, before the join answered.
+		const joined = connection.join("log", { deliver: (list) => messages.push(...list) });
+		const outcome = await connection.send({ command: "first" });
+		await joined;
+		assert.equal(outcome.kind, "sent");
+		const seq = outcome.kind === "sent" ? outcome.seq : -1;
+		const { room } = await connection.state();
+		assert.ok(seq > (room.base?.seq ?? Number.POSITIVE_INFINITY), `seq ${seq}, base ${room.base?.seq}`);
+		await eventually(() => messages.some((message) => message.seq === seq), "the command delivered");
+		assert.deepEqual(messages.find((message) => message.seq === seq)?.data, { command: "first" });
+	});
+
+	it("sends a command made while away after the rejoin, also to a new store", async () => {
+		const { id } = await session();
+		const frame = await kitFrame(id);
+		const away = frame.connection.me;
+		// The frame stays away past the store's linger (its page holds the token): the store ends.
+		mode = { kind: "hold" };
+		await cut(away);
+		await eventually(() => frame.socket.readyState === NodeWebSocket.CLOSED, "the link closed");
+		const outcome = frame.connection.send({ command: "while away" });
+		await pause(11_000);
+		mode = { kind: "answer" };
+		for (const release of held.splice(0)) release();
+		const settled = await outcome;
+		assert.equal(settled.kind, "sent", JSON.stringify(settled));
+		const seq = settled.kind === "sent" ? settled.seq : -1;
+		await eventually(() => frame.messages.some((message) => message.seq === seq), "the command delivered");
+		assert.deepEqual(frame.messages.find((message) => message.seq === seq)?.data, { command: "while away" });
+	});
+
+	it("resolves what waits, and later sends, as uncertain once the connection is closed", async () => {
+		const { id } = await session();
+		const connection = new Connection(id, "room");
+		// Never joined: the send waits.
+		const waiting = connection.send({ command: "never sent" });
+		await connection.close();
+		assert.deepEqual(await waiting, { kind: "uncertain" });
+		assert.deepEqual(await connection.send({ command: "after" }), { kind: "uncertain" });
+	});
+
 	it("resolves a send the room refuses as refused, with the error", async () => {
 		const sends = new Sends();
 		sends.attach({
 			send: () => Promise.reject(new Error("The views' rooms keep too much memory now")),
-			closed: () => false,
+			lost: () => false,
 		});
 		assert.deepEqual(await sends.send({ data: "1" }), {
 			kind: "refused",
