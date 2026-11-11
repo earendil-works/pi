@@ -121,3 +121,5 @@ and its working rules are in `handoff.md`.
   variants (the room for real-time collaboration among them). One WebSocket per view, not piggybacked on the page's:
   a fast view never queues behind the page's traffic; piggybacking (a weaker principal for a relay's origin) waits for
   a case. Details: `views.md` §4a.
+- **Read-only sharing (owner, 2026-11-11: "we obv want read-only sharing"; merged.md §4 question 2):** a session can be
+  shared with a viewer who reads everything and sends nothing (`mayView` without `maySend`), besides full participation.
