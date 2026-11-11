@@ -5,6 +5,7 @@ import { useScrollMemory, useShownModal } from "../runtime/web.tsx";
 import { CodeBlock } from "./Code.tsx";
 import { CloseIcon, DownloadIcon } from "./icons.tsx";
 import { Markdown } from "./Markdown.tsx";
+import { inPage } from "./navigation.ts";
 
 // One full-screen viewer for everything a conversation hands the user: versioned
 // artifacts and sent files today, workspace files later. Each content type keeps
@@ -12,6 +13,11 @@ import { Markdown } from "./Markdown.tsx";
 export type ViewerItem = { kind: "artifact"; artifact: ArtifactInfo } | { kind: "file"; file: DownloadInfo };
 /** Opens an item explicitly; tool updates and reconnects never open the viewer. */
 export const OpenViewer = createContext<(item: ViewerItem) => void>(() => {});
+/**
+ * The address that opens an item's viewer in this conversation, for links a modified click, the middle button or "Open
+ * in new tab" open in another tab (`routeHref`); undefined where no viewer is provided.
+ */
+export const ViewerHref = createContext<(item: ViewerItem) => string | undefined>(() => undefined);
 
 function fileSize(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`;
@@ -39,13 +45,17 @@ export function artifactUrls(sessionId: string, artifact: ArtifactInfo) {
 	};
 }
 
-/** Transcript card: the body opens the viewer, the separate button downloads. */
+/**
+ * Transcript card: the body opens the viewer (a link to `openHref` when there is one, so it also opens in another tab),
+ * the separate button downloads.
+ */
 export function FileCard({
 	icon,
 	title,
 	meta,
 	href,
 	download,
+	openHref,
 	onOpen,
 }: {
 	icon: ReactNode;
@@ -53,17 +63,29 @@ export function FileCard({
 	meta: string;
 	href: string;
 	download: string;
+	openHref?: string;
 	onOpen: () => void;
 }) {
+	const body = (
+		<>
+			<span className="file-card-icon">{icon}</span>
+			<span className="file-card-text">
+				<strong>{title}</strong>
+				<small>{meta}</small>
+			</span>
+		</>
+	);
 	return (
 		<div className="file-card">
-			<button type="button" className="file-card-main" onClick={onOpen} aria-label={`Open ${title}`}>
-				<span className="file-card-icon">{icon}</span>
-				<span className="file-card-text">
-					<strong>{title}</strong>
-					<small>{meta}</small>
-				</span>
-			</button>
+			{openHref === undefined ? (
+				<button type="button" className="file-card-main" onClick={onOpen} aria-label={`Open ${title}`}>
+					{body}
+				</button>
+			) : (
+				<a className="file-card-main" href={openHref} onClick={inPage(onOpen)} aria-label={`Open ${title}`}>
+					{body}
+				</a>
+			)}
 			<a className="file-card-download" href={href} download={download} aria-label={`Download ${title}`}>
 				<DownloadIcon />
 			</a>

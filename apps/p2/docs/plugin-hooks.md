@@ -239,6 +239,8 @@ self.register(SendRouters, {
 | `envs-actions:*` | `plugins/envs/EnvsPanel.tsx:524` (`SlotList`) | list | ports |
 | `workspace-terminal` | `src/web/Workspace.tsx:730` | single | terminals |
 | `chat-parent` | **nowhere** | — | subagents registers it (`plugins/subagents/web.tsx:22`) |
+| `workbench` | `src/web/AppLayout.tsx` | wrapper (gets the `main` slot as `children`) | views |
+| `view-actions` | chat top bar, `plugins/chat/web.tsx` | single | views |
 
 ### 4.2 Sheets, navigation, hooks
 

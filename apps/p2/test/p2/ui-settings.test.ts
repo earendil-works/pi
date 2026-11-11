@@ -35,14 +35,14 @@ describe("Settings window", { skip: !browserTests }, () => {
 		const read = () => JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
 		writeFileSync(file, JSON.stringify({ thinkingLevel: "low" }));
 		await browser.metrics(1280, 900);
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.wait(`document.querySelector('.drawer-foot .settings-open + .theme-toggle')`);
 		await browser.click(".drawer-foot .settings-open");
 		await browser.wait(
 			`document.querySelector('[role=dialog][aria-label=Settings] .settings-page[aria-label=General] select')`,
 		);
 		assert.equal(
-			await browser.evaluate<string>(`document.querySelector('[aria-current=page]').textContent`),
+			await browser.evaluate<string>(`document.querySelector('[role=dialog] [aria-current=page]').textContent`),
 			"General",
 		);
 		const detail = `.settings-page select`;
@@ -76,7 +76,7 @@ describe("Settings window", { skip: !browserTests }, () => {
 
 	it("shows a plugin's sheet as a page beside the list", async () => {
 		await browser.metrics(1280, 900);
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.click(".drawer-foot .settings-open");
 		await browser.wait(navItem("Providers"));
 		await browser.evaluate(`${navItem("Providers")}.click()`);
@@ -106,7 +106,7 @@ describe("Settings window", { skip: !browserTests }, () => {
 			],
 		);
 		assert.equal(
-			await browser.evaluate<string>(`document.querySelector('[aria-current=page]').textContent`),
+			await browser.evaluate<string>(`document.querySelector('[role=dialog] [aria-current=page]').textContent`),
 			"Providers",
 		);
 		await browser.evaluate(`${navItem("Environments")}.click()`);
@@ -118,7 +118,7 @@ describe("Settings window", { skip: !browserTests }, () => {
 
 	it("on phones shows the list, then a section with Back to the list", async () => {
 		await browser.metrics(390, 844);
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.wait(`document.querySelector('.drawer-foot .settings-open')`);
 		await browser.evaluate(`document.querySelector('.drawer-foot .settings-open').click()`);
 		await browser.wait(`${navItem("Providers")}?.offsetParent && !document.querySelector('.settings-page')`);

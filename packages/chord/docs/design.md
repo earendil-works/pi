@@ -400,8 +400,10 @@ host.route(Session, {
     that does not relay the answer.
   Not built, by decision: a byte window, credit messages, snapshot admission or debt, an adapter `backlog()` API,
   `reset` from anyone.
-- **Calls: a call window N** (default 256, the same on every host) announced in `hello`: how many concurrent calls a
-  side accepts **per origin**. A side sends no call before the peer's `hello`. A host sends at most N of its own calls
+- **Calls: a call window N** announced in `hello`: how many concurrent calls a side accepts **per origin** (decision
+  "Call windows only for untrusted links", owner, 2026-11-11): on a link it accepts as untrusted, the host option
+  `callWindow` (default 10,000; not built yet: today a fixed 256); on a trusted link none (`hello` carries 0: no
+  window), so the app's own hosts never queue calls behind each other. A side sends no call before the peer's `hello`. A host sends at most N of its own calls
   per link in flight; further calls wait in the link's **call queue**, one FIFO, sent in order as replies free slots;
   nothing is refused for being "too many" (K16). A slot is freed once per call: by its `result` or `error`, its
   `abort` (when sent, at the caller; when received, at the provider), its hold's `release`, `gone`, its origin's

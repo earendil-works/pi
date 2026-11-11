@@ -1,4 +1,4 @@
-import { awaitWithContext, type Context } from "@earendil-works/chord/context";
+import { awaitWithContext, type Context, withAbortSignal, withoutAbortSignal } from "@earendil-works/chord/context";
 import { type Draft, overlap, ownedSlice } from "@earendil-works/chord/delta";
 import { copyJson, type JsonRepresentation, type JsonValue } from "@earendil-works/chord/json";
 import {
@@ -27,13 +27,16 @@ import type {
 	TaskId,
 	TaskOptions,
 	TaskOutcome,
+	TaskRecord,
 	TaskRuntime,
 	Tx,
 	TypedEntry,
+	WakeReason,
 } from "../types.ts";
 import { toolExtension } from "./agent.ts";
 import { assignJson } from "./json.ts";
 import {
+	clearOutput,
 	clearProgress,
 	cutOffCount,
 	cutOffTooOften,
@@ -47,7 +50,11 @@ import {
 	type ToolSlot,
 	toolSlot,
 } from "./live.ts";
+import { BASE_PARKS, isPark, type ParkCarrier, parkError } from "./parks.ts";
+import { closeSignal } from "./scheduler.ts";
 import type {
+	GateSleep,
+	NestedToolCall,
 	NestedToolExecutionResult,
 	ToolControl,
 	ToolDiagnostic,
@@ -55,6 +62,7 @@ import type {
 	ToolExecutionResult,
 	ToolHookCall,
 	ToolHooks,
+	ToolPark,
 	ToolRegistration,
 } from "./types.ts";
 import { recordUsage } from "./usage.ts";
@@ -84,8 +92,14 @@ export type ToolTaskInput =
 
 export type ToolTaskCheckpoint =
 	| { phase: "call" }
-	/** Durable intent: the final arguments and the replay policy recorded before execution. */
-	| { phase: "execute"; arguments: JsonObject; replay: "safe" | "unsafe" };
+	/**
+	 * Durable intent: the final arguments and the replay policy recorded before execution, and for a run after a park,
+	 * why it woke and what it parked with. `execute()` runs in the phase that commits it; this phase is reached only by
+	 * recovery.
+	 */
+	| { phase: "execute"; arguments: JsonObject; replay: "safe" | "unsafe"; wake?: WakeReason; checkpoint?: JsonValue }
+	/** The call is parked: the `sleeping` or `waiting` state holds this checkpoint (spec suspendable §4.2). */
+	| { phase: "parked"; arguments: JsonObject; replay: "safe" | "unsafe"; checkpoint?: JsonValue };
 
 /**
  * A model-issued call's result is its transcript entry; a nested call's result is in its caller's
@@ -101,10 +115,14 @@ export type ToolTaskResult = { kind: "model"; entryId: EntryId; control?: ToolCo
  */
 const MADE_NESTED_CALLS = "pi.tool.madeNestedCalls";
 
-/** One nested call of a running tool: its task, and once it ended, its result. */
+/**
+ * One key of a running tool: a nested call, its task and once it ended its result, or a task created under the key
+ * (`createTask()` with `key`). A member without `kind`, written before keyed tasks, is a nested call's.
+ */
 export type NestedCallState = {
-	/** Absent only inside the commit that creates the call; a creation that fails leaves no member. */
-	taskId?: TaskId<ToolTaskResult>;
+	kind?: "nested" | "task";
+	/** Absent only inside the commit that creates the member; a creation that fails leaves no member. */
+	taskId?: TaskId;
 	/** Exactly what `executeTool()` returns; absent while running, and for a call the scheduler faulted or orphaned. */
 	result?: JsonRepresentation<NestedToolExecutionResult>;
 };
@@ -130,14 +148,16 @@ type Content = (TextContent | ImageContent)[];
 /**
  * Built-in tool task: resolves the called tool among its phase agent's tools, validates, runs `beforeTool`, records intent,
  * executes, runs `afterTool`, and settles the result, all in one `call` handler so nothing separates resolution from
- * settlement. `execute` is reached only by recovery and applies the replay rule. A model-issued call settles by
+ * settlement. A call that parks runs again in `parked`, which resolves the tool, records intent, and executes in one
+ * handler too. `execute` is reached only by recovery and applies the replay rule. A model-issued call settles by
  * appending its result entry; a nested call by writing its result to its caller's `NestedCallDoc`.
  */
 export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskResult, ToolHooks>({
 	name: "pi.tool",
-	version: 3,
+	version: 4,
 	initial: () => ({ phase: "call" }),
-	// Version 1 had only model-issued calls, without `kind`; version 3 added `unoffered`, absent in version 2 inputs.
+	// Version 1 had only model-issued calls, without `kind`; version 3 added `unoffered`, absent in version 2 inputs;
+	// version 4 added `parked` and the optional fields of `execute`, absent in older checkpoints.
 	migrate: (input, checkpoint, fromVersion) => ({
 		input:
 			fromVersion === 1
@@ -159,11 +179,13 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 			if ("error" in checked) return reject(runtime, task.input, call, tool, invalid(checked.error), context);
 			let args = checked.args;
 			let block: string | undefined;
+			let sleep: GateSleep | undefined;
 			await runtime.hooks.each("beforeTool", async (hook) => {
-				if (block !== undefined) return;
+				if (block !== undefined || sleep !== undefined) return;
 				try {
 					const decision = await hook({ ...call, arguments: args }, runtime, context);
 					if (decision?.block !== undefined) block = decision.block;
+					else if (decision?.sleep !== undefined) sleep = decision.sleep;
 					else if (decision?.arguments !== undefined) args = decision.arguments;
 				} catch (error) {
 					if (runtime.signal.aborted) throw error;
@@ -174,33 +196,43 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 				const blocked = harnessError("blocked", `Tool call blocked: ${block}`);
 				return reject(runtime, task.input, call, tool, blocked, context);
 			}
+			if (sleep !== undefined) return parkAtGate(runtime, task.input, call, tool, sleep, context);
 			const validated = validate(tool, call, args);
 			if ("error" in validated) return reject(runtime, task.input, call, tool, invalid(validated.error), context);
 			// Strict JSON: repair may set optional properties to undefined, which the slot and checkpoint cannot hold.
 			const final = copyJson(validated.args, { omitUndefinedProperties: true }) as JsonObject;
-			// The slot's status and arguments are presentation, stored like progress (`PROGRESS_COMMIT`); the intent is
-			// durable before the tool runs. Parallel calls of one round then share no immediate write to `pi.live`.
-			await runtime.commit(
-				async (tx) => {
-					const slot = toolSlot(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId);
-					if (slot !== undefined) slot.status = "running";
-					// A nested slot shows the arguments the call runs with, which repair, hooks, and coercion may have changed.
-					// Assigned whole: an equal value records no change, and a rerun corrects what an earlier attempt showed.
-					if (slot !== undefined && "parentTaskId" in slot) slot.arguments = final;
-					return undefined;
-				},
-				context,
-				PROGRESS_COMMIT,
-			);
-			await runtime.commit(() => {
-				const intent = { phase: "execute", arguments: final, replay: tool.replay ?? "unsafe" } as const;
-				return { status: "running", checkpoint: intent };
-			}, context);
-			await run(runtime, task.input, call, tool, final, context);
+			await commitIntent(runtime, { phase: "execute", arguments: final, replay: tool.replay ?? "unsafe" }, context);
+			await run(runtime, task.input, call, tool, final, {}, context);
+		},
+		/**
+		 * Woken from a park: resolve the tool again, record intent with the wake, and run `execute()` again. A tool that
+		 * no longer resolves cannot run or clean up; the call ends `failed`, so what it owns is aborted.
+		 */
+		parked: async (task, runtime, context) => {
+			const { arguments: args, checkpoint } = task.state.checkpoint;
+			const wake = task.state.wake;
+			const call = await readCall(runtime, task.input, context);
+			if (cutOffTooOften(task, runtime)) return endCutOff(runtime, task, call, context);
+			const tool = await resolveTool(runtime, task.input, call.name, context);
+			if (tool === undefined) {
+				const message = `Tool ${call.name} is not available`;
+				runtime.report(new Error(`${message}: its parked call ${call.id} cannot run again`));
+				const ending = { status: "failed", message } as const;
+				return settleFromSlot(runtime, task.input, call, { tool }, ending, "tool_unavailable", message, context);
+			}
+			const intent = {
+				phase: "execute",
+				arguments: args,
+				replay: tool.replay ?? "unsafe",
+				...(wake === undefined ? {} : { wake }),
+				...(checkpoint === undefined ? {} : { checkpoint }),
+			} as const;
+			await commitIntent(runtime, intent, context);
+			await run(runtime, task.input, call, tool, args, { wake, checkpoint }, context);
 		},
 		/** Recovery after intent: rerun only when the stored and the current policy both say `safe`. */
 		execute: async (task, runtime, context) => {
-			const { arguments: args, replay } = task.state.checkpoint;
+			const { arguments: args, replay, wake, checkpoint } = task.state.checkpoint;
 			const call = await readCall(runtime, task.input, context);
 			// Also before an interruption result: its `afterTool` hooks may be what cut the task off.
 			if (cutOffTooOften(task, runtime)) return endCutOff(runtime, task, call, context);
@@ -208,17 +240,22 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 			if (replay === "safe" && tool?.replay === "safe") {
 				// The rerun reports from scratch: clear what the interrupted attempt published, and show the slot running with
 				// the arguments it runs with again, as the deferred commit that showed them may have been lost with the crash.
+				// A woken run keeps the details and diagnostics earlier runs left, as a park does.
 				await runtime.commit(async (tx) => {
 					const slot = toolSlot(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId);
 					if (slot !== undefined) {
-						clearProgress(slot);
+						if (wake === undefined) clearProgress(slot);
+						else clearOutput(slot);
 						slot.status = "running";
 						if ("parentTaskId" in slot) slot.arguments = args;
 					}
 					return undefined;
 				}, context);
-				return run(runtime, task.input, call, tool, args, context);
+				return run(runtime, task.input, call, tool, args, { wake, checkpoint }, context);
 			}
+			// A woken run may have restarted external work that nothing will collect now.
+			if (wake !== undefined && tool !== undefined)
+				await cancel(runtime, task.input, call, tool, args, checkpoint, context);
 			const message = `Tool ${call.name} was interrupted and may have partially run`;
 			// `failed` records cancellation intent, so the call's owned conversations, left unsupervised, are aborted.
 			const ending = { status: "failed", message } as const;
@@ -228,24 +265,118 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 	},
 	abort: async (task, runtime, context) => {
 		const call = await readCall(runtime, task.input, context);
+		const checkpoint = task.state.checkpoint;
 		// Abandoned after a restart (`TaskOptions.abandonOnRestart`): say whether the call may have run. An unoffered call
 		// could not run in any case, and its result says so.
 		const [code, message] = isUnoffered(task.input)
 			? ["tool_unavailable", `Tool ${call.name} is not available`]
 			: task.abortReason !== "restart"
 				? ["aborted", `Tool ${call.name} was aborted`]
-				: task.state.checkpoint.phase === "execute"
+				: checkpoint.phase === "execute"
 					? ["interrupted", `Tool ${call.name} was interrupted by a restart and may have partially run`]
-					: ["abandoned", `Tool ${call.name} was not started: its caller ended with a restart`];
-		// The scheduler runs an abort handler only while its restarts are below the limit, and faults the task without a
-		// result when the last attempt is cut off. That attempt skips the hooks, which may be what cuts it off.
-		const hooks =
-			(task.restarts ?? 0) < runtime.settings.restartLimit - 1
-				? { tool: await toolForLimits(runtime, task.input, call.name, context) }
-				: undefined;
+					: checkpoint.phase === "parked"
+						? ["abandoned", `Tool ${call.name} was parked: its caller ended with a restart`]
+						: ["abandoned", `Tool ${call.name} was not started: its caller ended with a restart`];
+		const tool = await toolForLimits(runtime, task.input, call.name, context);
+		// External work may be live while no code of the tool runs: parked, or woken and cut off before it parked again.
+		// The scheduler ends an abort handler cut off `restartLimit` times itself, so `cancel` cannot keep it from ending.
+		if (checkpoint.phase === "parked" || (checkpoint.phase === "execute" && checkpoint.wake !== undefined)) {
+			if (tool !== undefined) {
+				await cancel(runtime, task.input, call, tool, checkpoint.arguments, checkpoint.checkpoint, context);
+			} else {
+				runtime.report(
+					new Error(`Tool ${call.name} is not available: its parked call ${call.id} was not cancelled`),
+				);
+			}
+		}
+		// The scheduler faults the task without a result when its last abort attempt is cut off. That attempt skips the
+		// hooks, which may be what cuts it off.
+		const hooks = (task.restarts ?? 0) < runtime.settings.restartLimit - 1 ? { tool } : undefined;
 		await settleFromSlot(runtime, task.input, call, hooks, { status: "aborted" }, code, message, context);
 	},
 });
+
+/**
+ * Park the call at its gates, before it runs (spec suspendable §5.1): the task sleeps at `call`, its slot `sleeping`,
+ * and every wake runs the whole phase again. A sleep the commit refuses (no `until` or signals, a used key, a bad
+ * deadline) ends the call `invalid_park`, through `afterTool`.
+ */
+async function parkAtGate(
+	runtime: Runtime,
+	input: ToolTaskInput,
+	call: ToolHookCall,
+	tool: ToolRegistration,
+	{ until, signals }: GateSleep,
+	context: Context,
+): Promise<void> {
+	try {
+		await runtime.commit(async (tx) => {
+			const slot = toolSlot(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId);
+			if (slot !== undefined) slot.status = "sleeping";
+			return {
+				status: "sleeping",
+				checkpoint: { phase: "call" },
+				...(until === undefined ? {} : { until }),
+				...(signals === undefined ? {} : { signals }),
+			};
+		}, context);
+	} catch (error) {
+		// A close seals the Session before it signals the run.
+		if (runtime.signal.aborted || closeSignal(runtime).aborted) throw error;
+		const invalid = harnessError(
+			"invalid_park",
+			`Tool call ${call.id} cannot wait at its gates: ${errorMessage(error)}`,
+		);
+		await reject(runtime, input, call, tool, invalid, context);
+	}
+}
+
+/**
+ * Whether a sleeping task is a tool call parked at its gates, before its intent (spec suspendable §5.2): the registry,
+ * and every open, wake it, so the gates installed then decide.
+ */
+export function gatedCall(record: TaskRecord<JsonValue, JsonValue, JsonValue>): boolean {
+	return (
+		record.kind === ToolTask.definition.name &&
+		record.state.status === "sleeping" &&
+		(record.state.checkpoint as ToolTaskCheckpoint).phase === "call"
+	);
+}
+
+/**
+ * Whether a task's `abandonOnRestart` children survive a restart (spec suspendable §2.5): it is a tool call that was
+ * not cut off while running, parked or not started yet, whatever its status.
+ */
+export function keepsChildren(record: TaskRecord<JsonValue, JsonValue, JsonValue>): boolean {
+	if (record.kind !== ToolTask.definition.name) return false;
+	// A tool task's checkpoint; absent once it holds or has its outcome.
+	const phase = (record.state.checkpoint as ToolTaskCheckpoint | undefined)?.phase;
+	return phase === "call" || phase === "parked";
+}
+
+/**
+ * Record intent: the slot shows the call `running` (and a nested call the arguments it runs with), stored like progress
+ * (`PROGRESS_COMMIT`), so parallel calls of one round share no immediate write to `pi.live`; then the `execute`
+ * checkpoint, durable before the tool runs.
+ */
+async function commitIntent(
+	runtime: Runtime,
+	intent: Extract<ToolTaskCheckpoint, { phase: "execute" }>,
+	context: Context,
+): Promise<void> {
+	await runtime.commit(
+		async (tx) => {
+			const slot = toolSlot(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId);
+			if (slot !== undefined) slot.status = "running";
+			// Assigned whole: an equal value records no change, and a rerun corrects what an earlier attempt showed.
+			if (slot !== undefined && "parentTaskId" in slot) slot.arguments = intent.arguments;
+			return undefined;
+		},
+		context,
+		PROGRESS_COMMIT,
+	);
+	await runtime.commit(() => ({ status: "running", checkpoint: intent }), context);
+}
 
 /**
  * End a call cut off `settings.restartLimit` times in a row (spec §5.4) with an error result, built from the slot like
@@ -411,45 +542,134 @@ type Reported = {
 	details: JsonValue | undefined;
 };
 
-/** Execute with the resolved implementation, then settle its result. */
+/** What a run of `execute()` starts from after a park: why it woke, and what the call last parked with. */
+type Resumed = { readonly wake?: WakeReason; readonly checkpoint?: JsonValue };
+
+/** Execute with the resolved implementation, then settle its result or park the call. */
 async function run(
 	runtime: Runtime,
 	input: ToolTaskInput,
 	call: ToolHookCall,
 	tool: ToolRegistration,
 	args: JsonObject,
+	resumed: Resumed,
 	context: Context,
 ): Promise<void> {
+	const attempt = await startAttempt(runtime, input, call, tool, resumed, context);
+	let returned: ToolExecutionResult | ToolPark;
+	let ending = COMPLETED;
+	// Execution time of this attempt, for a record without `startedAt` (`settle()`).
+	let measured: number | undefined;
+	try {
+		attempt.env = await runtime.env(context);
+		const startedAt = performance.now();
+		try {
+			returned = await tool.execute(args, attempt.api, context);
+		} finally {
+			measured = Math.round(performance.now() - startedAt);
+		}
+	} catch (error) {
+		if (runtime.signal.aborted) {
+			attempt.ended = true;
+			for (const waiter of await attempt.progress.stop()) waiter.reject(error);
+			throw error;
+		}
+		returned = { isError: true, diagnostics: [toolDiagnostic("tool_error", errorMessage(error))] };
+		// A throw, from `execute()` or from building the environment, ends the task `failed`, which cancels what the call
+		// owned; it no longer supervises it. The error text is already in the result.
+		ending = { status: "failed", message: `Tool ${call.name} threw` };
+	}
+	// Details still waiting for a progress commit settle with the next commit, the park's or the result's.
+	const pending = await attempt.end();
+	try {
+		if (isPark(returned)) {
+			const invalid = await park(runtime, input, call, tool, args, returned, attempt, context);
+			if (invalid === undefined) {
+				for (const waiter of pending) waiter.resolve();
+				return;
+			}
+			returned = harnessError("invalid_park", `Tool ${call.name} returned an invalid park: ${invalid}`);
+			ending = { status: "failed", message: `Tool ${call.name} returned an invalid park` };
+		}
+		const settled = await finalResult(runtime, input, call, tool, returned, attempt.reported, context);
+		await settle(runtime, input, call, ending, settled, context, measured);
+	} catch (error) {
+		for (const waiter of pending) waiter.reject(error);
+		throw error;
+	}
+	for (const waiter of pending) waiter.resolve();
+}
+
+/** One run of a tool's code (`execute()` or `cancel`): its api, what it reported, and its progress commits. */
+type Attempt = {
+	readonly api: ToolExecutionApi & ParkCarrier;
+	readonly reported: Reported;
+	readonly progress: Progress;
+	/** Built for this run with `HarnessOptions.env`, so a rerun after recovery gets the conversation's at that time. */
+	env: ExecutionEnv | undefined;
+	/** Set once the code returned: the api then throws, and no nested call is admitted. */
+	ended: boolean;
+	/** End the attempt: let admitted nested calls commit, end the output, and stop progress; returns its waiters. */
+	end(): Promise<PromiseWithResolvers<void>[]>;
+};
+
+/**
+ * Start a run of the tool's code. A woken run adds to the details and diagnostics earlier runs left in the slot (spec
+ * suspendable §4.2), so it starts from them; a nested call without progress keeps none there.
+ */
+async function startAttempt(
+	runtime: Runtime,
+	input: ToolTaskInput,
+	call: ToolHookCall,
+	tool: ToolRegistration,
+	resumed: Resumed,
+	context: Context,
+): Promise<Attempt> {
 	const limits = outputLimits(tool);
-	const reported: Reported = { output: new OutputBuffer(limits), limits, diagnostics: [], details: undefined };
 	const streams = input.kind === "model" || input.progress !== false;
+	const live =
+		resumed.wake !== undefined && streams
+			? await runtime.snapshot(LiveDoc, runtime.conversationId, context)
+			: undefined;
+	const kept = live === undefined ? undefined : toolSlot(live, runtime.taskId);
+	const reported: Reported = {
+		output: new OutputBuffer(limits),
+		limits,
+		diagnostics: [...(kept?.diagnostics ?? [])],
+		details: kept?.details,
+	};
 	const progress = publishProgress(runtime, reported, streams, context);
-	/** Nested call admissions this invocation started; cleanup waits for them, so it sees every nested call. */
+	/** Nested call admissions this attempt started; its end waits for them, so settlement sees every nested call. */
 	const admissions: Promise<unknown>[] = [];
 	// A caller that can rerun reattaches to its nested calls and child tasks after a restart; any other caller never
 	// resumes, so they are abandoned (`TaskOptions.abandonOnRestart`).
 	const resumes = tool.replay === "safe";
-	/** Default keys: the order of this invocation's calls, so a rerun that calls in the same order reattaches. */
+	/** Default keys: the order of this attempt's calls, so a rerun that calls in the same order reattaches. */
 	let sequence = 0;
 	/** This attempt's commit of the `MADE_NESTED_CALLS` memo. */
 	let madeNestedMemo: Promise<unknown> | undefined;
-	let ended = false;
 	const assertLive = (): void => {
-		if (ended) throw new Error(`Tool call ${call.id} has settled`);
+		if (attempt.ended) throw new Error(`Tool call ${call.id} has settled`);
 	};
-	/** Built for this call, below, so a rerun after recovery gets the conversation's environment at that time. */
-	let env: ExecutionEnv | undefined;
-	const api: ToolExecutionApi = {
+	/** The next position, for a nested call made without a key; after a wake a position may mean another call. */
+	const defaultKey = (): string => {
+		if (resumed.wake !== undefined) throw new Error(`Tool call ${call.id} needs explicit keys after a wake`);
+		return String(++sequence);
+	};
+	const api: ToolExecutionApi & ParkCarrier = {
+		[BASE_PARKS]: new Set(),
 		taskId: runtime.taskId,
 		conversationId: runtime.conversationId,
 		callId: call.id,
+		wake: resumed.wake,
+		checkpoint: resumed.checkpoint,
 		registry: runtime.registry,
 		agent: runtime.agent,
 		get models() {
 			return runtime.models;
 		},
 		get env() {
-			return env;
+			return attempt.env;
 		},
 		now: () => runtime.now(),
 		output: (chunk, skipped) => {
@@ -497,16 +717,37 @@ async function run(
 			return result as Awaited<ReturnType<typeof change>>;
 		},
 		memo: runtime.memo,
+		readSignal: runtime.readSignal,
 		createTask: async <I, S extends { phase: string }, R, H extends object>(
 			task: Task<I, S, R, H>,
-			input: I,
-			options: Omit<TaskOptions, "conversationId">,
+			taskInput: I,
+			{ key, ...options }: Omit<TaskOptions, "conversationId"> & { readonly key?: string },
 			taskContext: Context,
 		): Promise<TaskId<R>> => {
+			if (key !== undefined) checkKey(key);
+			else if (resumed.wake !== undefined) throw new Error(`Tool call ${call.id} needs explicit keys after a wake`);
 			const child = options.ownership.kind === "task" && !resumes ? { abandonOnRestart: true, ...options } : options;
 			let id: TaskId<R> | undefined;
 			await runtime.commit(async (tx) => {
-				id = await tx.createTask(task, input, child);
+				if (key === undefined) {
+					id = await tx.createTask(task, taskInput, child);
+					return undefined;
+				}
+				// Opened, or created empty for a key not used yet.
+				const member = await tx.doc(NestedCallDoc, runtime.taskId, key, null);
+				if (member.taskId !== undefined) {
+					const existing = member.kind === "task" ? await tx.task(member.taskId) : undefined;
+					const same =
+						existing?.kind === task.definition.name &&
+						jsonEqual(existing.input, copyJson(taskInput, { omitUndefinedProperties: true }));
+					if (!same)
+						throw new Error(`Key ${key} of tool call ${call.id} was already used for another call or task`);
+					id = member.taskId as TaskId<R>;
+					return undefined;
+				}
+				id = await tx.createTask(task, taskInput, child);
+				member.kind = "task";
+				member.taskId = id;
 				return undefined;
 			}, taskContext);
 			return id!;
@@ -517,16 +758,21 @@ async function run(
 		snapshot: runtime.snapshot,
 		snapshotAsOf: runtime.snapshotAsOf,
 		watchDoc: runtime.watchDoc,
-		executeTool: async (name, toolArgs, callContext, options = {}) => {
+		executeTool: (async (
+			name: string,
+			toolArgs: JsonObject,
+			callContext: Context,
+			options: { readonly key?: string; readonly progress?: boolean; readonly wait?: boolean } = {},
+		) => {
 			assertLive();
-			const key = options.key ?? String(++sequence);
+			const key = options.key ?? defaultKey();
 			if (options.key !== undefined) checkKey(options.key);
 			// The memo first, once per attempt; a failed one is tried again by the next call.
 			madeNestedMemo ??= runtime.memo(MADE_NESTED_CALLS, true, callContext).catch((error: unknown) => {
 				madeNestedMemo = undefined;
 				throw error;
 			});
-			// Registered now, so cleanup waits for it.
+			// Registered now, so the attempt's end waits for it.
 			const admission = madeNestedMemo.then(() =>
 				startNestedCall(
 					runtime,
@@ -539,52 +785,142 @@ async function run(
 			);
 			admissions.push(admission);
 			const id = await admission;
-			const settled = await runtime.waitForTask(id, callContext);
-			const stored = (await runtime.snapshot(NestedCallDoc, runtime.taskId, key, callContext))?.result;
-			// A copy the tool may change; a nested call the scheduler faulted or orphaned stored none.
-			return stored === undefined
-				? fallbackResult(id, name, settled.state.outcome)
-				: (copyJson(stored as unknown as JsonValue) as unknown as NestedToolExecutionResult);
+			const nested: NestedToolCall = {
+				taskId: id,
+				result: async (resultContext) => {
+					const settled = await runtime.waitForTask(id, resultContext);
+					const stored = (await runtime.snapshot(NestedCallDoc, runtime.taskId, key, resultContext))?.result;
+					// A copy the tool may change; a nested call the scheduler faulted or orphaned stored none.
+					return stored === undefined
+						? fallbackResult(id, name, settled.state.outcome)
+						: (copyJson(stored as unknown as JsonValue) as unknown as NestedToolExecutionResult);
+				},
+			};
+			return options.wait === false ? nested : nested.result(callContext);
+		}) as ToolExecutionApi["executeTool"],
+	};
+	const attempt: Attempt = {
+		api,
+		reported,
+		progress,
+		env: undefined,
+		ended: false,
+		end: async () => {
+			attempt.ended = true;
+			// No admission starts after `ended`; let those underway commit, so settlement aborts and lists their calls.
+			await Promise.allSettled(admissions);
+			reported.output.end();
+			return progress.stop();
 		},
 	};
+	return attempt;
+}
 
-	let result: ToolExecutionResult;
-	let ending = COMPLETED;
-	// Execution time of this attempt; a rerun after recovery measures only itself.
-	let durationMs: number | undefined;
-	try {
-		env = await runtime.env(context);
-		const startedAt = performance.now();
-		try {
-			result = await tool.execute(args, api, context);
-		} finally {
-			durationMs = Math.round(performance.now() - startedAt);
+/**
+ * Park the call (spec suspendable §4.2). One commit persists the details and diagnostics the attempt reported, shows the
+ * slot `sleeping` or `waiting` without output, and stores the `parked` checkpoint with the park's sleep or wait; the
+ * call's live nested calls keep running. Returns why the park is invalid instead, when it is. When the commit is refused
+ * because the call was abort-marked meanwhile, `cancel` cleans up what the run started before the error ends the run.
+ */
+async function park(
+	runtime: Runtime,
+	input: ToolTaskInput,
+	call: ToolHookCall,
+	tool: ToolRegistration,
+	args: JsonObject,
+	returned: ToolPark,
+	attempt: Attempt,
+	context: Context,
+): Promise<string | undefined> {
+	const { api, reported } = attempt;
+	const shape = parkError(tool, returned, api);
+	if (shape !== undefined) return shape;
+	if (returned.wait !== undefined) {
+		for (const id of returned.wait.on) {
+			if ((await runtime.getTask(id, context))?.owner !== runtime.taskId)
+				return `task ${id} is not owned by the call`;
 		}
-	} catch (error) {
-		if (runtime.signal.aborted) {
-			ended = true;
-			for (const waiter of await progress.stop()) waiter.reject(error);
-			throw error;
-		}
-		result = { isError: true, diagnostics: [toolDiagnostic("tool_error", errorMessage(error))] };
-		// A throw, from `execute()` or from building the environment, ends the task `failed`, which cancels what the call
-		// owned; it no longer supervises it. The error text is already in the result.
-		ending = { status: "failed", message: `Tool ${call.name} threw` };
 	}
-	ended = true;
-	// No admission starts after `ended`; let those underway commit, so settlement aborts and lists their calls.
-	await Promise.allSettled(admissions);
-	reported.output.end();
-	// Details still waiting for a progress commit settle with the terminal commit, the final flush.
-	const pending = await progress.stop();
+	const { sleep, wait } = returned;
+	const checkpoint = (sleep ?? wait)!.checkpoint;
+	const parked = {
+		phase: "parked",
+		arguments: args,
+		replay: tool.replay ?? "unsafe",
+		...(checkpoint === undefined ? {} : { checkpoint }),
+	} as const;
+	const streams = input.kind === "model" || input.progress !== false;
 	try {
-		const settled = await finalResult(runtime, input, call, tool, result, reported, context);
-		await settle(runtime, input, call, ending, settled, context, durationMs);
+		await runtime.commit(async (tx) => {
+			const slot = toolSlot(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId);
+			if (slot !== undefined) {
+				if (streams && reported.details !== undefined) assignJson(slot, "details", reported.details);
+				if (streams && reported.diagnostics.length > 0) assignJson(slot, "diagnostics", reported.diagnostics);
+				clearOutput(slot);
+				slot.status = sleep !== undefined ? "sleeping" : "waiting";
+			}
+			if (sleep !== undefined) {
+				const { until, signals } = sleep;
+				return {
+					status: "sleeping",
+					checkpoint: parked,
+					...(until === undefined ? {} : { until }),
+					...(signals === undefined ? {} : { signals }),
+				};
+			}
+			return { status: "waiting", checkpoint: parked, on: wait!.on, policy: wait!.policy };
+		}, context);
 	} catch (error) {
-		for (const waiter of pending) waiter.reject(error);
+		// The sleep or wait broke a rule the commit checks: a deadline, a used key, a missing task, a wait cycle. A close
+		// seals the Session before it signals the run.
+		if (!runtime.signal.aborted && !closeSignal(runtime).aborted) return errorMessage(error);
+		// Abort-marked meanwhile, unlike a close, which leaves the run to recovery: the park is not stored, so clean up
+		// with its checkpoint now, in a context only the Harness's close cancels.
+		const cleanup = withAbortSignal(closeSignal(runtime), withoutAbortSignal(context));
+		if ((await runtime.getTask(runtime.taskId, cleanup))?.abortRequested === true) {
+			await cancel(runtime, input, call, tool, args, checkpoint, cleanup);
+		}
 		throw error;
 	}
-	for (const waiter of pending) waiter.resolve();
+	return undefined;
+}
+
+/**
+ * Run the tool's `cancel`, if it has one, to clean up the external work of a call that parked (spec suspendable §4.2):
+ * `api.checkpoint` is the last park's, `api.wake` undefined, and the api starts no nested calls or tasks. A throw is
+ * reported; the call ends either way.
+ */
+async function cancel(
+	runtime: Runtime,
+	input: ToolTaskInput,
+	call: ToolHookCall,
+	tool: ToolRegistration,
+	args: JsonObject,
+	checkpoint: JsonValue | undefined,
+	context: Context,
+): Promise<void> {
+	if (tool.cancel === undefined) return;
+	const attempt = await startAttempt(
+		runtime,
+		input,
+		call,
+		tool,
+		checkpoint === undefined ? {} : { checkpoint },
+		context,
+	);
+	const refused = (): never => {
+		throw new Error(`Tool ${call.name} cannot start nested calls or tasks in cancel`);
+	};
+	try {
+		attempt.env = await runtime.env(context);
+		// Spread once the environment is built: the copy reads the getters once.
+		await tool.cancel(args, { ...attempt.api, executeTool: refused, createTask: refused }, context);
+	} catch (error) {
+		// Only the Harness's close cancels a cleanup.
+		if (context.abortSignal?.aborted === true) throw error;
+		await reportToolError(runtime, tool, error, context);
+	}
+	for (const waiter of await attempt.end()) waiter.resolve();
 }
 
 /**
@@ -611,7 +947,8 @@ function progressClock(runtime: Runtime): ProgressClock {
  * only what changed since the last one, deferred (`PROGRESS_COMMIT`); none when `enabled` is false.
  */
 function publishProgress(runtime: Runtime, reported: Reported, enabled: boolean, context: Context): Progress {
-	let written = { text: "", details: undefined as JsonValue | undefined, diagnostics: 0 };
+	// The slot holds what the attempt started from (`startAttempt()`).
+	let written = { text: "", details: reported.details, diagnostics: reported.diagnostics.length };
 	return new Progress(
 		async () => {
 			if (!enabled) return 0;
@@ -708,12 +1045,7 @@ async function finalResult(
 		} else {
 			// The model never sees structured output, so its call stands; the host learns of the broken tool.
 			final = rest;
-			// Only names the extension: a failed resolution leaves the report without the name.
-			const extension = await runtime.agent(context).then(
-				(agent) => toolExtension(agent, tool.name),
-				() => undefined,
-			);
-			runtime.report(new Error(broken), { kind: "extension", ...optionalExtension(extension) });
+			await reportToolError(runtime, tool, new Error(broken), context);
 		}
 	}
 	// Programs get the tool's own value: without a schema, its output. The model reads only `output`, so model-issued
@@ -734,6 +1066,20 @@ async function finalResult(
 		if (text !== "") harness.push(toolDiagnostic("tool_error", text));
 	}
 	return { ...final, output: bounded.content, diagnostics: [...(final.diagnostics ?? []), ...harness] };
+}
+
+/** Report a failure of the tool's code as an `extension_error`, naming its extension when the agent resolves. */
+async function reportToolError(
+	runtime: Runtime,
+	tool: ToolRegistration,
+	error: unknown,
+	context: Context,
+): Promise<void> {
+	const extension = await runtime.agent(context).then(
+		(agent) => toolExtension(agent, tool.name),
+		() => undefined,
+	);
+	runtime.report(error, { kind: "extension", ...optionalExtension(extension) });
 }
 
 /**
@@ -814,7 +1160,7 @@ async function settle(
 	ending: Ending,
 	result: ToolExecutionResult,
 	context: Context,
-	durationMs?: number,
+	measured?: number,
 ): Promise<void> {
 	// A crash in between leaves the call in `execute`: a safe rerun reattaches to the calls, an interruption ends here.
 	// Every live nested call the task owns, also those an earlier attempt made and this one never called again.
@@ -825,8 +1171,11 @@ async function settle(
 	const madeNested = (await runtime.memo(MADE_NESTED_CALLS, context)) === true;
 	// Mark them all before waiting for any: one may run until a sibling is cancelled.
 	await Promise.all(nestedIds.map((id) => runtime.abortOwned(id, context)));
-	await runtime.commit(async (tx) => {
+	await runtime.commit(async (tx, current) => {
 		const conversationId = runtime.conversationId;
+		// The call's whole span, parks, reruns, and downtime included (spec suspendable §4.2); a record from before
+		// lifecycle times keeps the last attempt's execution time.
+		const durationMs = current.startedAt === undefined ? measured : runtime.now() - current.startedAt;
 		const live = await tx.doc(LiveDoc, conversationId);
 		const slot = toolSlot(live, runtime.taskId);
 		let settled: ToolTaskResult;
@@ -921,7 +1270,8 @@ async function startNestedCall(
 		const state = await tx.doc(NestedCallDoc, runtime.taskId, key, null);
 		const existing = state.taskId;
 		if (existing !== undefined) {
-			const input = (await tx.task(existing))?.input as ToolTaskInput | undefined;
+			const input =
+				state.kind === "task" ? undefined : ((await tx.task(existing))?.input as ToolTaskInput | undefined);
 			const same =
 				input?.kind === "nested" &&
 				input.call.name === name &&
@@ -943,6 +1293,7 @@ async function startNestedCall(
 			ownership: { kind: "task", taskId: runtime.taskId },
 			abandonOnRestart: options.abandonOnRestart,
 		});
+		state.kind = "nested";
 		state.taskId = created;
 		const live = await tx.doc(LiveDoc, runtime.conversationId);
 		live.nestedTools ??= [];

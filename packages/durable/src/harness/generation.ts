@@ -51,14 +51,15 @@ import { endedByCrashes } from "./scheduler.ts";
 import { appendToolResult, harnessError, ToolTask, type ToolTaskResult } from "./tool.ts";
 import type {
 	AfterFailedRun,
+	AfterToolsDecision,
 	CompactionPolicy,
 	CompactionResult,
 	ContextView,
 	ConversationStreamOptions,
 	GenerationHooks,
+	HookTask,
 	ModelRef,
 	PromptInput,
-	RunEndTask,
 	RunSummary,
 	ToolControl,
 	UserInput,
@@ -135,6 +136,25 @@ export type GenerationCheckpoint =
 			phase: "drain";
 			answer: EntryId;
 			tasks: TaskId[];
+	  }
+	| {
+			/**
+			 * The round is complete and waits on the tasks `afterTools` hooks asked for, which the generation owns; then it
+			 * ends as the `tools` phase ends it (spec suspendable §6). A crash before they exist asks the hooks again.
+			 */
+			phase: "afterTools";
+			assistant: EntryId;
+			tools: TaskId<ToolTaskResult>[];
+			tasks: TaskId[];
+	  }
+	| {
+			/**
+			 * The answer is appended, and the run's inputs stay open while the tasks an `onYield` hook asked for, which the
+			 * generation owns, decide whether it stands (`LiveRun.yield`).
+			 */
+			phase: "yield";
+			answer: EntryId;
+			tasks: TaskId[];
 	  };
 
 export type GenerationResult = { entryId: EntryId };
@@ -163,11 +183,11 @@ const DEFAULT_POLL_AFTER_MS = 5000;
  */
 export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, GenerationResult, GenerationHooks>({
 	name: "pi.generation",
-	version: 2,
+	version: 3,
 	initial: () => ({ phase: "prepare", attempt: 1 }),
 	// Version 2 leaves calls to tools not offered in a sequential round's `pending`, flagged `unoffered` in their slots.
 	// A version 1 Harness would start their tool tasks unflagged, resolving the name, so it leaves version 2 blocked
-	// instead. A version 1 checkpoint has no such calls and is kept as it is.
+	// instead. Version 3 adds the `afterTools` and `yield` phases. Older checkpoints are kept as they are.
 	migrate: (input, checkpoint) => ({
 		input: input as GenerationInput,
 		checkpoint: checkpoint as GenerationCheckpoint,
@@ -373,14 +393,11 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			const prepared: PreparedTask[] = [];
 			await runtime.hooks.each("afterRun", async (hook) => {
 				const asked = await hook(run, runtime, context);
-				if (asked !== undefined) prepareRunEndTasks(runtime, asked.tasks, prepared);
+				if (asked !== undefined) prepareHookTasks(runtime, asked.tasks, prepared);
 			});
 			if (prepared.length === 0) return endAnsweredRun(runtime, run.answer, context);
 			await runtime.commit(async (tx): Promise<Next> => {
-				const tasks: TaskId[] = [];
-				for (const { task, input } of prepared) {
-					tasks.push(await tx.createTask(task, input, { ownership: { kind: "task", taskId: runtime.taskId } }));
-				}
+				const tasks = await createHookTasks(tx, runtime, prepared);
 				const live = await tx.doc(LiveDoc, runtime.conversationId);
 				if (live.run?.taskId === runtime.taskId && live.run.afterRun !== undefined) live.run.afterRun.tasks = tasks;
 				const checkpoint = { phase: "drain", answer: run.answer, tasks } as const;
@@ -392,6 +409,45 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			const { answer } = task.state.checkpoint;
 			if (cutOffTooOften(task, runtime)) return endAnsweredCutOff(runtime, task, answer, context);
 			return endAnsweredRun(runtime, answer, context);
+		},
+		/** The `afterTools` tasks are terminal: end the round, the run too when one asked to terminate. */
+		afterTools: async (task, runtime, context) => {
+			if (cutOffTooOften(task, runtime)) return endCutOff(runtime, task, context);
+			const { assistant, tools, tasks } = task.state.checkpoint;
+			let terminate = false;
+			const outcomes = await runtime.outcomes(tasks, context);
+			for (const [index, outcome] of outcomes.entries()) {
+				if (outcome.status !== "completed") continue;
+				const decision = afterToolsDecision(outcome.result);
+				if (decision?.terminate === true) terminate = true;
+				if (decision !== undefined) continue;
+				// Reported against the extension that installed the task, as a rule the one whose hook asked for it.
+				const kind = (await runtime.getTask(tasks[index]!, context))?.kind;
+				const extension = runtime.registry
+					.installed()
+					.findLast((installed) => installed.tasks?.some((each) => each.definition.name === kind) === true)?.name;
+				const error = new Error(`afterTools task ${tasks[index]} (${kind}) completed with no AfterToolsDecision`);
+				runtime.report(error, { kind: "extension", ...optionalExtension(extension) });
+			}
+			return endToolRound(runtime, assistant, tools, terminate, context);
+		},
+		/**
+		 * The `onYield` tasks are terminal: the first in creation order that completed with a continuation continues the
+		 * run, as a hook's `continue` does; otherwise the answer stands and the run ends with it.
+		 */
+		yield: async (task, runtime, context) => {
+			const { answer, tasks } = task.state.checkpoint;
+			// The run answered: the limit ends it with the answer.
+			if (cutOffTooOften(task, runtime)) return endAnsweredCutOff(runtime, task, answer, context);
+			const outcomes = await runtime.outcomes(tasks, context);
+			const continuation = outcomes.map(yieldContinuation).find((input) => input !== undefined);
+			const afterRun = await asksAfterRun(runtime, context);
+			await runtime.commit(async (tx): Promise<Next> => {
+				const boundary = await prepareBoundary(tx, runtime.conversationId, runtime.settings);
+				const live = await tx.doc(LiveDoc, runtime.conversationId);
+				if (live.run?.taskId === runtime.taskId) delete live.run.yield;
+				return concludeAnswer(tx, runtime, live, boundary, answer, continuation, afterRun);
+			}, context);
 		},
 	},
 	abort: async (task, runtime, context) => {
@@ -416,8 +472,16 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 					: harnessError("aborted", `Tool ${call.name} was aborted`);
 				await appendToolResult(tx, conversationId, call, result, { timestamp: runtime.now() });
 			}
-			// In `finish` and `drain` the run answered already: it ends without a failure, its inputs stay `done`.
-			endRun(tx, live, runtime.taskId, { status: "unanswered", reason: "aborted" });
+			// In `finish` and `drain` the run answered already: it ends without a failure, its inputs stay `done`. In
+			// `yield` it answered too, and its inputs settle `done` with that answer.
+			endRun(
+				tx,
+				live,
+				runtime.taskId,
+				checkpoint.phase === "yield"
+					? { status: "done", answer: checkpoint.answer }
+					: { status: "unanswered", reason: "aborted" },
+			);
 			return { status: "terminal", outcome: { status: "aborted" } };
 		}, context);
 	},
@@ -860,44 +924,112 @@ async function classify(
 }
 
 /**
- * A final answer; the final boundary places queued items (spec §6). The first `onYield` continuation appends a user
- * message and hands the run to a successor generation, but only when the inbox holds no user item and no reset.
- * Otherwise the run's inputs settle `done`; with `afterRun` hooks selected the run waits for the tasks they ask for,
- * in `finish` and `drain`, before the final boundary; without, selected user items start the next run now.
+ * A final answer; the final boundary places queued items (spec §6). The first `onYield` result wins: a continuation
+ * appends a user message and hands the run to a successor generation, but only when the inbox holds no user item and
+ * no reset; tasks decide whether the answer stands, in `yield`. Otherwise the run's inputs settle `done`; with
+ * `afterRun` hooks selected the run waits for the tasks they ask for, in `finish` and `drain`, before the final
+ * boundary; without, selected user items start the next run now.
  */
 async function answer(runtime: Runtime, message: AssistantMessage, context: Context): Promise<void> {
+	let decided = false;
 	let continuation: UserInput | undefined;
+	const prepared: PreparedTask[] = [];
 	await runtime.hooks.each("onYield", async (hook) => {
-		if (continuation !== undefined) return;
-		continuation = (await hook(message, runtime, context))?.continue;
+		if (decided) return;
+		const decision = await hook(message, runtime, context);
+		if (decision === undefined) return;
+		decided = true;
+		if ("tasks" in decision) prepareHookTasks(runtime, decision.tasks, prepared);
+		else continuation = decision.continue;
 	});
-	const afterRun = await asksAfterRun(runtime, context);
 	const conversationId = runtime.conversationId;
+	if (prepared.length > 0) {
+		// The answer waits for its deciders: appended, no boundary, the inputs still open.
+		await runtime.commit(async (tx): Promise<Next> => {
+			const live = await tx.doc(LiveDoc, conversationId);
+			const entry = await appendAssistant(tx, conversationId, message);
+			const tasks = await createHookTasks(tx, runtime, prepared);
+			delete live.generation;
+			if (live.run?.taskId === runtime.taskId) live.run.yield = { answer: entry.id, tasks };
+			const checkpoint = { phase: "yield", answer: entry.id, tasks } as const;
+			return { status: "waiting", checkpoint, on: tasks, policy: "allSettled" };
+		}, context);
+		return;
+	}
+	const afterRun = await asksAfterRun(runtime, context);
 	await runtime.commit(async (tx): Promise<Next> => {
 		// Queue modes are read on the Session line, when the boundary is decided.
 		const boundary = await prepareBoundary(tx, conversationId, runtime.settings);
 		const live = await tx.doc(LiveDoc, conversationId);
 		const entry = await appendAssistant(tx, conversationId, message);
-		const result: Next = { status: "terminal", outcome: { status: "completed", result: { entryId: entry.id } } };
-		const continues = takesContinuation(continuation, boundary) ? continuation : undefined;
-		if (continues === undefined && afterRun) {
-			const held = holdRun(tx, live, runtime, { reason: "answer", answer: entry.id, last: entry.id });
-			if (held !== undefined) return held;
-		}
-		const { users, first } = await applyBoundary(tx, boundary, "final", runtime.now());
-		if (continues !== undefined) {
-			const user = { role: "user", content: continues, timestamp: runtime.now() } as const;
-			await tx.appendEntry(UserEntry, conversationId, { model: [user] });
-			// The continuation starts the run's turn count over: bounding `onYield` loops is the extension's job.
-			if (live.run?.taskId === runtime.taskId) live.run.turns = 0;
-			handOver(live, runtime.taskId, await createGeneration(tx, conversationId));
-			delete live.generation;
-			return result;
-		}
-		endRun(tx, live, runtime.taskId, { status: "done", answer: entry.id });
-		if (users.length > 0) await startRun(tx, conversationId, live, { inputs: users, first });
-		return result;
+		return concludeAnswer(tx, runtime, live, boundary, entry.id, continuation, afterRun);
 	}, context);
+}
+
+/**
+ * Settle an answer that stands, or take its continuation: shared by `answer()` and the `yield` phase. A continuation is
+ * taken only when the inbox holds no user item and no reset (`takesContinuation()`).
+ */
+async function concludeAnswer(
+	tx: Tx,
+	runtime: Runtime,
+	live: Draft<LiveState>,
+	boundary: Boundary,
+	answer: EntryId,
+	continuation: UserInput | undefined,
+	afterRun: boolean,
+): Promise<Next> {
+	const conversationId = runtime.conversationId;
+	const result: Next = { status: "terminal", outcome: { status: "completed", result: { entryId: answer } } };
+	const continues = takesContinuation(continuation, boundary) ? continuation : undefined;
+	if (continues === undefined && afterRun) {
+		const held = holdRun(tx, live, runtime, { reason: "answer", answer, last: answer });
+		if (held !== undefined) return held;
+	}
+	const { users, first } = await applyBoundary(tx, boundary, "final", runtime.now());
+	if (continues !== undefined) {
+		const user = { role: "user", content: continues, timestamp: runtime.now() } as const;
+		await tx.appendEntry(UserEntry, conversationId, { model: [user] });
+		// The continuation starts the run's turn count over: bounding `onYield` loops is the extension's job.
+		if (live.run?.taskId === runtime.taskId) live.run.turns = 0;
+		handOver(live, runtime.taskId, await createGeneration(tx, conversationId));
+		delete live.generation;
+		return result;
+	}
+	endRun(tx, live, runtime.taskId, { status: "done", answer });
+	if (users.length > 0) await startRun(tx, conversationId, live, { inputs: users, first });
+	return result;
+}
+
+/** The continuation an `onYield` task completed with (`YieldDecision`), when it holds a valid user input. */
+function yieldContinuation(outcome: TaskOutcome<unknown>): UserInput | undefined {
+	if (outcome.status !== "completed" || !isRecord(outcome.result)) return undefined;
+	// Task results are task code's: the trust boundary of the decision's shape.
+	const input = outcome.result.continue;
+	if (typeof input === "string") return input;
+	const content = Array.isArray(input) && input.length > 0 && input.every(isUserContent);
+	return content ? (input as UserInput) : undefined;
+}
+
+/** A text item with its text, or an image item with its data and MIME type. */
+function isUserContent(item: unknown): boolean {
+	if (!isRecord(item)) return false;
+	if (item.type === "text") return typeof item.text === "string";
+	return item.type === "image" && typeof item.data === "string" && typeof item.mimeType === "string";
+}
+
+/** An `afterTools` task's result as an `AfterToolsDecision`: none (`null`) is one; anything else is not. */
+function afterToolsDecision(result: unknown): AfterToolsDecision | undefined {
+	if (result === null) return {};
+	if (!isRecord(result)) return undefined;
+	const keys = Object.keys(result);
+	return keys.every((key) => key === "terminate") && (keys.length === 0 || result.terminate === true)
+		? (result as AfterToolsDecision)
+		: undefined;
+}
+
+function isRecord(value: unknown): value is { readonly [key: string]: unknown } {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Whether the phase's agent selects an `afterRun` hook, so a run that answers waits for its tasks (spec §8.3). */
@@ -925,22 +1057,22 @@ function holdRun(tx: Tx, live: Draft<LiveState>, runtime: Runtime, end: Omit<Run
 	return { status: "running", checkpoint: { phase: "finish", run: summary } };
 }
 
-/** A task an `afterRun` hook asked for, checked and ready to create. */
+/** A task a hook asked for, checked and ready to create. */
 type PreparedTask = { readonly task: Task<JsonValue, { phase: string }, JsonValue, object>; readonly input: JsonValue };
 
 /**
- * Check the tasks one `afterRun` hook asked for, off the line, and add those that pass to `prepared`, so a broken request
+ * Check the tasks one hook (`afterTools`, `onYield`, `afterRun`) asked for, off the line, and add those that pass to `prepared`, so a broken request
  * is skipped instead of failing the creating commit: its kind must be an installed task that is not built-in, its input
  * JSON, and its definition's `initial()` must return a JSON checkpoint of one of its phases. The task is created from
  * the installed definition, as every task runs under it, with that checkpoint, so `initial()` runs once. Then throws
  * the rejections, which `hooks.each` reports against the hook's extension.
  */
-function prepareRunEndTasks(runtime: Runtime, requests: readonly RunEndTask[], prepared: PreparedTask[]): void {
+function prepareHookTasks(runtime: Runtime, requests: readonly HookTask[], prepared: PreparedTask[]): void {
 	const rejected: unknown[] = [];
 	for (const request of requests) {
 		try {
 			const name = request.task.definition.name;
-			if (name.startsWith("pi.")) throw new Error(`An afterRun hook cannot start the built-in task ${name}`);
+			if (name.startsWith("pi.")) throw new Error(`A hook cannot start the built-in task ${name}`);
 			const installed = runtime.registry.task(name);
 			if (installed === undefined) throw new Error(`Task ${name} is not installed`);
 			const input = copyJson(request.input, { omitUndefinedProperties: true });
@@ -956,8 +1088,16 @@ function prepareRunEndTasks(runtime: Runtime, requests: readonly RunEndTask[], p
 		}
 	}
 	if (rejected.length === 1) throw rejected[0];
-	if (rejected.length > 1)
-		throw new AggregateError(rejected, `${rejected.length} afterRun task requests were rejected`);
+	if (rejected.length > 1) throw new AggregateError(rejected, `${rejected.length} hook task requests were rejected`);
+}
+
+/** Create the tasks hooks asked for, prepared by `prepareHookTasks()`, as children of the generation. */
+async function createHookTasks(tx: Tx, runtime: Runtime, prepared: readonly PreparedTask[]): Promise<TaskId[]> {
+	const tasks: TaskId[] = [];
+	for (const { task, input } of prepared) {
+		tasks.push(await tx.createTask(task, input, { ownership: { kind: "task", taskId: runtime.taskId } }));
+	}
+	return tasks;
 }
 
 /**
@@ -1066,15 +1206,49 @@ async function startToolRound(
 }
 
 /**
- * The round's tools are terminal: apply their controls, append a `handoff`'s reset, and then end the run at the final
- * boundary (`terminate`), end it like a failure at the conversation's turn limit (`turn_limit`), end it at a queued
- * reset, or hand it to the next generation at the `postTools` boundary, in the handoff's new context when there is one
- * (spec §8.5).
+ * The round's tools are terminal: ask the `afterTools` hooks, and wait for the tasks they ask for in `afterTools`, or
+ * end the round now.
  */
 async function finishToolRound(
 	runtime: Runtime,
 	assistant: EntryId,
+	tools: TaskId<ToolTaskResult>[],
+	context: Context,
+): Promise<void> {
+	const { results } = await roundSlots(runtime, context);
+	const prepared: PreparedTask[] = [];
+	await runtime.hooks.each("afterTools", async (hook) => {
+		const asked = await hook(assistant, results, runtime, context);
+		if (asked !== undefined) prepareHookTasks(runtime, asked.tasks, prepared);
+	});
+	if (prepared.length === 0) return endToolRound(runtime, assistant, tools, false, context);
+	await runtime.commit(async (tx): Promise<Next> => {
+		const tasks = await createHookTasks(tx, runtime, prepared);
+		const checkpoint = { phase: "afterTools", assistant, tools, tasks } as const;
+		return { status: "waiting", checkpoint, on: tasks, policy: "allSettled" };
+	}, context);
+}
+
+/** The round's slots in call order, and the result entries they hold. */
+async function roundSlots(
+	runtime: Runtime,
+	context: Context,
+): Promise<{ readonly slots: readonly ToolSlot[]; readonly results: EntryId[] }> {
+	const slots = (await runtime.snapshot(LiveDoc, runtime.conversationId, context))?.tools ?? [];
+	return { slots, results: slots.flatMap((slot) => (slot.entry === undefined ? [] : [slot.entry])) };
+}
+
+/**
+ * End a tool round: apply its controls, append a `handoff`'s reset, and then end the run at the final boundary
+ * (`terminate`, asked by every call or by an `afterTools` task), end it like a failure at the conversation's turn limit
+ * (`turn_limit`), end it at a queued reset, or hand it to the next generation at the `postTools` boundary, in the
+ * handoff's new context when there is one (spec §8.5).
+ */
+async function endToolRound(
+	runtime: Runtime,
+	assistant: EntryId,
 	tools: readonly TaskId<ToolTaskResult>[],
+	taskTerminates: boolean,
 	context: Context,
 ): Promise<void> {
 	const conversationId = runtime.conversationId;
@@ -1088,13 +1262,11 @@ async function finishToolRound(
 			outcome.status === "completed" && outcome.result.kind !== "nested" ? outcome.result.control : undefined,
 		);
 	});
-	const slots = (await runtime.snapshot(LiveDoc, conversationId, context))?.tools ?? [];
-	const results = slots.flatMap((slot) => (slot.entry === undefined ? [] : [slot.entry]));
-	await runtime.hooks.each("afterTools", (hook) => hook(assistant, results, runtime, context));
+	const { slots, results } = await roundSlots(runtime, context);
 	// In call order, the slots' order; a slot without a task (faulted or orphaned before it got one) has no control.
 	const ordered = slots.map((slot) => (slot.taskId === undefined ? undefined : controls.get(slot.taskId)));
-	// Every call of the round must ask to terminate.
-	const terminate = slots.length > 0 && ordered.every((control) => control?.terminate === true);
+	// Every call of the round must ask to terminate, unless an `afterTools` task asked for it.
+	const terminate = taskTerminates || (slots.length > 0 && ordered.every((control) => control?.terminate === true));
 	const added = ordered.flatMap((control) => control?.addTools ?? []);
 	// The last handoff in call order wins.
 	const handoff = ordered.findLast((control) => control?.handoff !== undefined)?.handoff;

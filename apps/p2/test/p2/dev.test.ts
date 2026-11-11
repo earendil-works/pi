@@ -362,7 +362,7 @@ test(
 			if (browserTests) {
 				page = await Browser.start();
 				await page.signIn(await ownerOf(port));
-				await page.open(`http://127.0.0.1:${port}/`);
+				await page.open(`http://127.0.0.1:${port}/new`);
 				await page.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
 				await page.evaluate(`window.beforeReload = true`);
 			}

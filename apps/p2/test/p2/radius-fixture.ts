@@ -176,6 +176,7 @@ export async function radiusFixture(
 	t: TestContext,
 	content = Buffer.from("body"),
 	relay: Parameters<typeof fakeRadius>[0] = {},
+	options: { web?: boolean } = {},
 ) {
 	const directory = await mkdtemp(join(tmpdir(), "p2-radius-"));
 	const radius = await fakeRadius(relay);
@@ -221,7 +222,7 @@ export async function radiusFixture(
 		dataDir: directory,
 		port: 0,
 		fake: true,
-		web: false,
+		web: options.web ?? false,
 		facets: [{ name: "radius-probe", facet: probe }],
 	});
 	t.after(() => server.close());

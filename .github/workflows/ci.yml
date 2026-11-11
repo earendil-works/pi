@@ -52,6 +52,15 @@ jobs:
       - name: Check
         run: npm run check
 
+      # The checkout has no tags; the released changelog sections are compared with the newest release tag.
+      - name: Fetch the newest release tag
+        run: |
+          tag=$(git ls-remote --tags --sort=-v:refname origin 'v*.*.*' | grep -v '\^{}' | head -1 | sed 's#.*refs/tags/##')
+          git fetch --depth=1 origin "refs/tags/$tag:refs/tags/$tag"
+
+      - name: Check released changelog sections
+        run: npm run check:released-changelogs
+
   # Tests are split across parallel jobs so the slowest suites do not run back to back.
   test:
     name: test (${{ matrix.name }})

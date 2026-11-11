@@ -105,7 +105,10 @@ describe("clearStaleLockAt", () => {
 
 /** Runs `fn` in a fresh temporary directory, removed afterwards whatever `fn` did. */
 async function inTemporaryDirectory(fn: (dir: string) => Promise<void>): Promise<void> {
-	const dir = await mkdtemp(join(tmpdir(), "chord-lock-file-"));
+	// Under /tmp, as `socketPath` falls back to: a socket file's path must fit in sun_path (103 bytes on macOS), and a
+	// deep TMPDIR, such as test.sh's isolated one inside macOS's /var/folders/..., does not leave room for it.
+	const base = process.platform === "win32" ? tmpdir() : "/tmp";
+	const dir = await mkdtemp(join(base, "chord-lock-file-"));
 	try {
 		await fn(dir);
 	} finally {

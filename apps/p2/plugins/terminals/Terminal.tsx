@@ -10,6 +10,7 @@ import {
 	PanelSideIcon,
 	PlusIcon,
 	type ReconnectLink,
+	type Route,
 	type SocketEvents,
 	useDragSize,
 } from "@p2/app/v1/web";
@@ -82,6 +83,17 @@ export function setTerminalPlacement(placement: TerminalPlacement): void {
 	try {
 		localStorage.setItem(PLACEMENT, placement);
 	} catch {}
+}
+
+/** Whether `route` shows its session's terminal: below the chat, or on the workspace's Terminal tab. */
+export const terminalShown = (route: Route): boolean =>
+	route.terminal !== undefined || route.workspace?.tab === "terminal";
+
+/** `route` with its session's terminal shown where the reader last had it, starting one if the session has none. */
+export function withTerminal(route: Route): Route {
+	return terminalPlacement() === "bottom"
+		? { ...route, terminal: "", startTerminal: true }
+		: { ...route, workspace: { tab: "terminal", directory: route.workspace?.directory ?? "", startTerminal: true } };
 }
 
 /** Whether the row of extra keys shows. Kept per browser; by default only on touch screens. */
@@ -315,8 +327,13 @@ class TerminalSession {
 	#frame = 0;
 	#connection?: { stop(): void };
 	#stopped = false;
-	/** Open a terminal if the first listing has none (`start`); later reconnects only reattach. */
-	#autoOpen: boolean;
+	/**
+	 * What the next listing does: attach the preferred or newest terminal, opening one if there is none (`start`, the
+	 * first listing only), or open a new one (`openNew` before it). Later reconnects only reattach.
+	 */
+	#onList: "attach" | "start" | "new";
+	/** A listing arrived since the channel opened: a terminal opened now is not replaced by the listing's attach. */
+	#listed = false;
 	#cell = { width: 8, height: 16 };
 	#resize: ResizeObserver;
 	/** The app's light/dark switch, which programs in the terminal hear about through the host. */
@@ -371,7 +388,7 @@ class TerminalSession {
 		this.#control = options.control;
 		this.#conversation = options.conversation;
 		if (options.terminalId) this.#preferred = options.terminalId;
-		this.#autoOpen = options.start;
+		this.#onList = options.start ? "start" : "attach";
 		this.#screen = options.screen;
 		this.#input = options.input;
 		this.#onState = options.onState;
@@ -459,6 +476,12 @@ class TerminalSession {
 		this.#themeObserver.disconnect();
 		this.#vt?.free();
 		this.#vt = undefined;
+	}
+
+	/** Opens a new terminal now, or once the channel listed the terminals (before that, the listing would replace it). */
+	openNew(): void {
+		if (this.#listed && this.#socket?.readyState === WebSocket.OPEN) this.open();
+		else this.#onList = "new";
 	}
 
 	open(): void {
@@ -950,6 +973,7 @@ class TerminalSession {
 			channel.onopen = () => {
 				if (ended) return;
 				events.opened();
+				this.#listed = false;
 				this.#emit({ connected: true, error: undefined, outdated: undefined });
 				// First: terminals opened or attached afterwards answer color queries in these colors.
 				this.#request((control) => control.theme(this.#theme(), BACKGROUND_CONTEXT));
@@ -999,11 +1023,13 @@ class TerminalSession {
 					event.terminals.find((terminal) => terminal.id === wanted) ??
 					running.toSorted((a, b) => b.createdAt - a.createdAt)[0];
 				this.#preferred = undefined;
-				if (target) {
+				if (this.#onList === "new") this.open();
+				else if (target) {
 					this.#emit({ current: undefined });
 					this.#request((control) => control.attach({ terminalId: target.id }, BACKGROUND_CONTEXT), true);
-				} else if (this.#autoOpen) this.open();
-				this.#autoOpen = false;
+				} else if (this.#onList === "start") this.open();
+				this.#onList = "attach";
+				this.#listed = true;
 				return;
 			}
 			case "terminals": {
@@ -1245,6 +1271,7 @@ export function TerminalView({
 	conversation = 1,
 	terminalId,
 	start = false,
+	newTerminal,
 	onTerminal,
 	placement,
 	onMove,
@@ -1257,6 +1284,8 @@ export function TerminalView({
 	terminalId?: string;
 	/** Start a terminal if the session has none: the user just opened this view. */
 	start?: boolean;
+	/** A new terminal asked for from outside the view (the command menu): the view opens one, then calls `taken`. */
+	newTerminal?: { readonly taken: () => void };
 	/** The shown terminal, for the route. */
 	onTerminal: (terminalId: string) => void;
 	placement: TerminalPlacement;
@@ -1313,6 +1342,14 @@ export function TerminalView({
 			session.current = undefined;
 		};
 	}, [control]);
+
+	// After the session above: a view opening with the request opens the new terminal instead of attaching one.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: control makes the session above; a request waits for it.
+	useEffect(() => {
+		if (!newTerminal || !session.current) return;
+		session.current.openNew();
+		newTerminal.taken();
+	}, [newTerminal, control]);
 
 	// Back or Forward to another terminal of this session.
 	useEffect(() => {

@@ -224,8 +224,12 @@ export class TranscriptScroll {
 		}
 		this.#applyHold();
 		const appended = this.#appended();
+		const before = this.#scroller?.scrollTop ?? 0;
 		this.#sync();
-		if (appended > 0) this.#glide(appended);
+		// The glide shows how far the new rows pushed the transcript up: none while it fits the viewport, and none when
+		// they took space another row gave up (an answer taking the place of its wheel's thought, ThoughtSlot.tsx).
+		const pushed = Math.min(appended, (this.#scroller?.scrollTop ?? 0) - before);
+		if (pushed > 0) this.#glide(pushed);
 	}
 
 	/**
@@ -718,8 +722,12 @@ export class TranscriptScroll {
 		this.#gesture.scrolled();
 		const top = scroller.scrollTop;
 		const down = top > this.#lastScrollTop;
+		// The browser moving the position up by a pixel without the reader is a clamp (the content's end came up by a
+		// rounding difference, as when a glide ends), not the reader leaving the bottom: by the time its event arrives,
+		// content may have grown again (a thought streaming in), so it would read as a move away from the bottom.
+		const clamped = !down && !this.#gesture.active && this.#lastScrollTop - top < 2;
 		this.#lastScrollTop = top;
-		const bottom = isBottom(scroller);
+		const bottom = isBottom(scroller) || clamped;
 		// Pi Mobile's rule: reaching the bottom while scrolling down follows the answer; anything else stops.
 		if (!this.#target && !this.#following) this.pinned = bottom ? this.pinned || down : this.pinned && down;
 		// A held correction pushes its amount of content past an edge, out of reach: a reader scrolling into that

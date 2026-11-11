@@ -68,7 +68,7 @@ export default defineFacet((host) => {
 		self.contribute(ShareUrls, {
 			radius: (session) => {
 				const page = connection.value.brain.shellPage;
-				return page && `${page}?${new URLSearchParams({ path: `/s/${session}` })}`;
+				return page && `${page}/s/${encodeURIComponent(session)}`;
 			},
 		});
 		self.contribute(RadiusConnections, {

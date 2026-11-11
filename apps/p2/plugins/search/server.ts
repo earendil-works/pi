@@ -139,6 +139,10 @@ export default defineFacet((host) => {
 				return null;
 			},
 			messages: async ({ query, sessions }) => dbResource.value.messages(query, sessions),
+			mentions: async ({ query, since = 0 }) => {
+				const match = ftsQuery(query);
+				return match === undefined ? {} : dbResource.value.mentions(match, since);
+			},
 			history: async ({ session, query, conversation, before, limit }) => {
 				const db = dbResource.value;
 				const indexedThrough = db.cursor(session, conversation);
@@ -191,8 +195,11 @@ export default defineFacet((host) => {
 				members: {
 					rebuilds: index.rebuilds,
 					rebuildIndex: (args, ctx) => index.rebuild(args, ctx),
-					search: async ({ query, archived = false }, ctx) => {
-						const scope = catalog.sessions.value.filter((session) => (session.archivedAt !== null) === archived);
+					search: async ({ query, archived = false, sessions: within }, ctx) => {
+						const listed = within && new Set(within);
+						const scope = catalog.sessions.value.filter(
+							(session) => (session.archivedAt !== null) === archived && (!listed || listed.has(session.id)),
+						);
 						const needle = query.toLowerCase();
 						const sessions = scope
 							.filter((session) => `${session.title}\n${session.cwd}`.toLowerCase().includes(needle))
@@ -210,6 +217,12 @@ export default defineFacet((host) => {
 				},
 			};
 		},
-		{ accepts: { 1: {} } },
+		// Older pages search every session of the scope: their arguments are the same without `sessions`.
+		{
+			accepts: {
+				1: { methods: { search: { args: (old) => old } } },
+				2: { methods: { search: { args: (old) => old } } },
+			},
+		},
 	);
 });

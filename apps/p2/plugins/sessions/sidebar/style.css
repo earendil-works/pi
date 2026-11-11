@@ -1,0 +1,518 @@
+/* The sidebar and its list pages (Sidebar.tsx, Row.tsx, ListPage.tsx), on Elanor's sidebar and side navigation. Every
+   row is one control (.nav-row): leading disclosure, the label (its hit area covers the row), details, and controls at
+   the trailing end; its hover and selected background, Elanor's ghost fills, span all of it. */
+
+/* The rows' measures, in the sidebar and the list pages. A row is as tall as Elanor's side navigation link (--nav-row:
+   one line of its UI text and its control padding, 28px), on every pointer; rows are Elanor's list gap apart. Rows sit
+   --bar-pad from the sidebar's edges, as p2's bars' buttons do, and start and end their content on the line where a
+   bar's buttons show their glyphs (--nav-edge in from the row: a 16px glyph centred in a --control box). A row's
+   controls are square boxes as tall as the row, wider than their glyph, so a trailing one reaches past that line by
+   the difference (--nav-glyph-inset). A label starts after the marker column and its gap (--nav-label-start). Nothing
+   is indented: every session's activity dot, in a group or not, is in one column. */
+.sidebar-root,
+.list-page {
+	--nav-row: calc(
+		var(--semantic-typography-ui-primary-font-size) *
+		var(--semantic-typography-ui-primary-line-height) +
+		2 *
+		var(--semantic-dimension-space-control-padding-block-small)
+	);
+	--nav-glyph-inset: calc((var(--nav-row) - 16px) / 2);
+	--nav-edge: calc((var(--control) - 16px) / 2);
+	--nav-label-start: calc(var(--nav-edge) + 16px + 2 * var(--s1));
+}
+
+/* Elanor's sidebar fills p2's drawer column (its width, border and resizing are the layout's). */
+.sidebar-root {
+	inline-size: 100%;
+	max-block-size: none;
+	height: 100%;
+	padding: 0;
+	gap: 0;
+	border: 0;
+	background: transparent;
+	font: inherit;
+}
+.sidebar-root .drawer-top {
+	align-items: stretch;
+	padding: 0 var(--s2) 0 var(--x);
+}
+.drawer-header-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	min-height: var(--bar);
+}
+.sidebar-root .drawer-foot {
+	flex-direction: row;
+	align-items: center;
+}
+.sidebar-root .session-scroll {
+	padding: 0 var(--bar-pad) var(--s4);
+}
+.sidebar-root .collapse-sidebar {
+	margin: 0;
+}
+/* Elanor's UI text size and line height (not its font: p2 keeps its own family). The list page's search keeps 16px:
+   iOS zooms smaller inputs. */
+.sidebar-nav,
+.list-page-body ul {
+	font-size: var(--semantic-typography-ui-primary-font-size);
+	line-height: var(--semantic-typography-ui-primary-line-height);
+}
+.sidebar-nav {
+	font-family: inherit;
+}
+/* A list below its row (a group's sessions, a session's conversations) is one list gap below it, as its rows are
+   apart. */
+.sidebar-nav li > ul {
+	margin-block-start: var(--semantic-dimension-space-gap-small);
+}
+
+/* A row: one control from the leading edge to the trailing one, its glyphs and trailing text on the icon line. */
+.nav-row {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: var(--s1);
+	min-height: var(--nav-row);
+	padding-inline: var(--nav-edge);
+	border-radius: var(--semantic-dimension-radius-small);
+	color: var(--text);
+}
+@media (hover: hover) {
+	.nav-row:hover {
+		background: var(--semantic-color-background-fill-ghost-neutral-hover);
+	}
+}
+.nav-row:has(> .nav-link:active),
+.nav-row.selected {
+	background: var(--semantic-color-background-fill-ghost-neutral-active);
+}
+/* The marker column: a session's working mark or a group's icon, as wide as the icon; kept when empty. */
+.nav-marker {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	color: var(--semantic-color-icon-secondary);
+}
+.nav-marker + .nav-link {
+	margin-inline-start: var(--s1);
+}
+/* What a row's state looks like (Row.tsx). Working is the only motion: a frame around the row's icon, or a spinner
+   where it has none. Wanting the owner is steady and at the row's end: a blue dot (an unread answer; the title is bold),
+   a warning sign with "Failed". Each state has its own shape, so none depends on telling colours apart. */
+
+/* A row's icon (IconMarker), framed while working. The frame sits 3px outside the 16px icon, clear of a glyph's corner
+   cells, inside the marker column's gaps. Not positioned above the row: the row's hit area covers it, so a click opens
+   the session and hovering shows the row's tooltip (the path). */
+.nav-icon {
+	position: relative;
+	display: inline-flex;
+}
+.nav-marker .glyph-icon {
+	display: block;
+	flex: none;
+}
+.working-frame {
+	position: absolute;
+	inset: -3px;
+	width: 22px;
+	height: 22px;
+	overflow: visible;
+	pointer-events: none;
+}
+.working-frame rect {
+	fill: none;
+	stroke-width: 1.5;
+}
+.working-frame-track {
+	stroke: color-mix(in srgb, var(--working) 26%, transparent);
+}
+/* A third of the outline travels around it (pathLength 100), once per 1.5s. */
+.working-frame-dash {
+	stroke: var(--working);
+	stroke-dasharray: 32 68;
+	animation: working-frame 1.5s linear infinite;
+}
+@keyframes working-frame {
+	to {
+		stroke-dashoffset: -100;
+	}
+}
+/* Working where the row has no icon (a group's sessions, a session's conversations, a collapsed rollup, the
+   Familiar's logo): a spinner, rotating on the compositor. */
+.working-mark {
+	flex: none;
+	width: 10px;
+	height: 10px;
+	border: 2px solid color-mix(in srgb, var(--working) 28%, transparent);
+	border-block-start-color: var(--working);
+	border-inline-end-color: var(--working);
+	border-radius: 50%;
+	animation: working-mark 1s linear infinite;
+}
+@keyframes working-mark {
+	to {
+		rotate: 360deg;
+	}
+}
+/* Without motion working keeps a shape of its own: a still ¾ ring, a dashed frame. */
+@media (prefers-reduced-motion: reduce) {
+	.working-mark {
+		border-color: var(--working);
+		border-inline-start-color: transparent;
+		animation: none;
+	}
+	.working-frame-track {
+		stroke: none;
+	}
+	.working-frame-dash {
+		stroke-dasharray: 7 5.5;
+		animation: none;
+	}
+}
+/* The phone's drawer stays rendered off screen while closed: its marks stop there. */
+@media (max-width: 899px) {
+	.app:not(.drawer-open) .drawer :is(.working-mark, .working-frame-dash) {
+		animation-play-state: paused;
+	}
+}
+/* An unread answer: a steady dot before the time, and the session's title in bold. */
+.unread-dot {
+	flex: none;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--unread);
+}
+.session-title.unread {
+	font-weight: var(--fw-strong);
+}
+/* A failure that wants the owner: a warning sign and a word or a count, in the error colour. */
+.failed-mark {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	gap: 2px;
+	color: var(--bad);
+	font-weight: var(--fw-medium);
+}
+/* How many sessions a collapsed group or rollup hides have an unread answer; the menu button's badge (the other
+   sessions that want the owner, red when one failed). */
+.unread-count,
+.menu-badge {
+	flex: none;
+	min-width: 16px;
+	height: 16px;
+	padding: 0 var(--s1);
+	border-radius: 8px;
+	background: var(--unread);
+	color: var(--bg);
+	font-size: var(--fs-xs);
+	font-weight: var(--fw-strong);
+	letter-spacing: 0;
+	line-height: 16px;
+	text-align: center;
+}
+.menu-badge.failed {
+	background: var(--bad);
+}
+/* On the menu button's top end corner, ringed in the bar's background. */
+.sidebar-open {
+	position: relative;
+}
+.menu-badge {
+	position: absolute;
+	inset-block-start: 2px;
+	inset-inline-end: 0;
+	box-shadow: 0 0 0 2px var(--bg);
+}
+/* The label: its hit area covers the whole row, below the controls. It is as wide as its text, so a chevron follows it;
+   the fill after it keeps the details and controls at the trailing end. */
+.nav-row > .nav-link {
+	/* Not positioned (Elanor's links are): its hit area (::after) is laid out on the row, not on the label. */
+	position: static;
+	display: flex;
+	flex: 0 1 auto;
+	gap: var(--s1);
+	inline-size: auto;
+	align-items: center;
+	min-width: 0;
+	min-height: 0;
+	padding: 0;
+	background: none;
+	box-shadow: none;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	text-decoration: none;
+}
+.nav-row > .nav-link::after {
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	content: "";
+}
+/* On touch, a row's and its controls' hit areas reach half the list gap above and below, as Elanor's compact controls
+   do: the whole space between rows is tappable, without taller rows. */
+@media (pointer: coarse) {
+	.nav-row > .nav-link::after,
+	.nav-control::after {
+		position: absolute;
+		inset-block: calc(var(--semantic-dimension-space-gap-small) / -2);
+		inset-inline: 0;
+		content: "";
+	}
+}
+/* Elanor's label inside a link: one line, as narrow as the label it holds. */
+.nav-row > a.nav-link > span {
+	display: flex;
+	flex: 0 1 auto;
+	align-items: center;
+	min-width: 0;
+	overflow: hidden;
+	-webkit-line-clamp: none;
+	line-clamp: none;
+}
+/* The label's text: one line, cut with "…" at its end. */
+.nav-label {
+	display: block;
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.nav-row > .nav-link:focus-visible {
+	outline: none;
+}
+.nav-row.selected > .nav-link {
+	font-weight: var(--semantic-font-weight-ui-selected);
+}
+.nav-row > .nav-link:focus-visible::after {
+	outline: var(--semantic-dimension-border-width-focus-ring) solid var(--semantic-color-focus-ring);
+}
+.nav-fill {
+	flex: 1;
+}
+/* The chevron after a label that shows or hides what is below its row: pointing down when shown, right when hidden. */
+.nav-chevron {
+	flex: none;
+	color: var(--semantic-color-icon-secondary);
+	transition: rotate var(--semantic-transition-movement-disclosure);
+}
+[aria-expanded="false"] > .nav-chevron {
+	rotate: -90deg;
+}
+@media (prefers-reduced-motion: reduce) {
+	.nav-chevron {
+		transition: none;
+	}
+}
+/* A rollup's or a session's chevron is its own button, right after its name: its glyph, not its box, follows the
+   name's gap. */
+.nav-row > .nav-toggle {
+	margin-inline-start: calc(-1 * var(--nav-glyph-inset));
+}
+/* Details: information after the label, the time last so it never moves. */
+.nav-details {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: var(--s2);
+	color: var(--muted);
+	font-size: var(--semantic-typography-ui-secondary-font-size);
+}
+/* Controls sit above the label's hit area. */
+.nav-control {
+	position: relative;
+	z-index: 1;
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: var(--nav-row);
+	height: var(--nav-row);
+	border-radius: var(--semantic-dimension-radius-small);
+	color: var(--semantic-color-icon-secondary);
+}
+.nav-row > .nav-control:last-child {
+	margin-inline-end: calc(-1 * var(--nav-glyph-inset));
+}
+@media (hover: hover) {
+	.nav-control:hover:not(:disabled) {
+		color: var(--text);
+	}
+}
+/* A row's title text: the rest of its line, cut with "…". */
+.session-title {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.session-title svg {
+	margin-right: var(--s1);
+	color: var(--muted);
+	vertical-align: -1px;
+}
+.session-time {
+	min-width: 2.2em;
+	text-align: right;
+}
+
+/* A rollup's row: its name as a section label. */
+.rollup-row {
+	color: var(--muted);
+	font-size: var(--fs-xs);
+	font-weight: var(--fw-strong);
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+.rollup-row.selected {
+	color: var(--text);
+}
+.section-count {
+	font-weight: normal;
+	letter-spacing: 0;
+}
+/* "No activity" lines up with the sessions' labels: after the disclosure and the marker columns. */
+.sidebar-section .sidebar-empty {
+	padding: var(--s1) 0 var(--s1) var(--nav-label-start);
+	list-style: none;
+	text-align: left;
+}
+
+/* A group's row (a folder, a project), and the "New session" row in the same type: medium weight, above its sessions
+   in the hierarchy. */
+.group-row {
+	font-weight: var(--fw-medium);
+}
+/* The "New session" row: a step below the header, apart from the first rollup as a rollup from the next (Elanor's
+   group padding). */
+.sidebar-start {
+	padding-block: var(--s2) var(--semantic-dimension-space-padding-x-large);
+}
+/* A hidden list stays hidden: Elanor's lists are flex boxes, which would override the attribute. */
+.sidebar-nav ul[hidden] {
+	display: none;
+}
+/* A session's conversations: part of it, in the secondary style, their labels and activity dots in its columns. */
+.conversation-row {
+	color: var(--muted);
+	font-size: var(--fs-sm);
+}
+.conversation-row.selected {
+	color: var(--text);
+}
+.subagent-location,
+.subagent-model {
+	max-width: 8em;
+	overflow: hidden;
+	font-family: var(--mono);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.session-operation {
+	display: flex;
+	align-items: center;
+	gap: var(--s1);
+	padding: 0 var(--nav-edge) var(--s1) var(--nav-label-start);
+	color: var(--muted);
+	font-size: var(--fs-xs);
+}
+.session-operation.failed {
+	color: var(--bad);
+}
+/* A rollup made from code whose last run failed: why, in its options. */
+.rollup-error {
+	color: var(--bad);
+	overflow-wrap: anywhere;
+}
+.session-operation > .session-operation-text {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* A branch's mark at the trailing end (where a subagent shows its model). With a fine pointer the rename pencil takes
+   its place on hover or focus; on touch both show, the pencil after the mark. */
+.branch-mark {
+	display: inline-flex;
+	color: var(--semantic-color-icon-secondary);
+}
+@media not all and (pointer: coarse) {
+	.branch-rename {
+		display: none;
+	}
+	.nav-row:focus-within > .branch-rename {
+		display: inline-flex;
+	}
+	.nav-row:has(> .branch-rename):focus-within .branch-mark {
+		display: none;
+	}
+}
+@media (hover: hover) and (not (pointer: coarse)) {
+	.nav-row:hover > .branch-rename {
+		display: inline-flex;
+	}
+	.nav-row:has(> .branch-rename):hover .branch-mark {
+		display: none;
+	}
+}
+
+/* A session that fell out of its rollup's window: still part of it, shown in the secondary colour. */
+.session-row.aged > .nav-row {
+	color: var(--muted);
+}
+
+/* A rollup's or a group's list in the main area. */
+.list-page {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-height: 0;
+}
+.list-page .title p.list-page-subtitle {
+	font-family: inherit;
+}
+/* The list sits in the transcript's column (.messages): its width, centred in the main area's scroller. */
+.list-page-body {
+	width: var(--chat-size);
+	max-width: var(--chat-width);
+	margin: 0 auto;
+	padding: var(--s5) var(--x);
+}
+.list-page-body > .search {
+	width: 100%;
+	margin: 0 0 var(--s3);
+}
+.list-page-body .empty-note {
+	padding: var(--s1) var(--s2);
+	text-align: left;
+}
+.list-group-link {
+	color: inherit;
+	text-decoration: none;
+}
+@media (hover: hover) {
+	.list-group-link:hover {
+		color: var(--text);
+	}
+}
+.list-group-label {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin: 0;
+	padding: var(--s4) var(--s2) var(--s1);
+	color: var(--muted);
+	font-size: var(--fs-xs);
+	font-weight: var(--fw-strong);
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}

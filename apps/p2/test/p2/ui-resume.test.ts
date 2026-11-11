@@ -1,13 +1,13 @@
 // The installed app launching at `/` reopens the conversation that was open when it was last used, if that was
-// recently; after a long break, or after going home, it starts at home (src/web/navigation.ts). A browser tab opening
-// `/` starts at home.
+// recently; after a long break, or after leaving conversations for the new-session screen, it starts at home
+// (src/web/navigation.ts): the Familiar's session (plugins/familiar/web.tsx). A browser tab opening `/` starts at home.
 
-import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
+import { Familiar } from "../../plugins/familiar/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture } from "./helpers.ts";
+import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
 
 describe("reopening the last conversation", { skip: !browserTests }, () => {
 	let fixture: Fixture;
@@ -26,7 +26,7 @@ describe("reopening the last conversation", { skip: !browserTests }, () => {
 		await fixture?.close();
 	});
 
-	it("reopens it within two hours of the last use, and starts at home after that or after going home", async () => {
+	it("reopens it within two hours of the last use, and starts at home after that or after a new session", async () => {
 		const session = await (await holdIn(fixture.browser(), Sessions, {}, "owner")).create(
 			{
 				cwd: fixture.workspace,
@@ -48,27 +48,27 @@ describe("reopening the last conversation", { skip: !browserTests }, () => {
 			`localStorage.setItem("p2-last-conversation", JSON.stringify({ session: ${JSON.stringify(session.id)}, conversation: 1, at: Date.now() - 3 * 3600 * 1000 }))`,
 		);
 		await browser.open(url("/"));
-		await new Promise((resolve) => setTimeout(resolve, 500));
-		assert.equal(await browser.evaluate<string>("location.pathname"), "/");
+		const familiar = await holdIn(fixture.browser(), Familiar, {}, "owner");
+		const home = `/s/${await until(familiar.session, (value) => typeof value === "string")}`;
+		await browser.wait(`location.pathname === '${home}'`);
+		familiar.release();
 
-		// Going home forgets it: the next launch stays home.
+		// The new-session screen forgets it: the next launch is at home.
 		await browser.open(url(`/s/${session.id}`));
 		await browser.wait(`document.querySelector('.composer textarea')`);
 		await browser.open(url("/"));
 		await browser.wait(`location.pathname === '/s/${session.id}'`);
 		await browser.metrics(1280, 900);
-		await browser.click("button.new-session");
-		await browser.wait(`location.pathname === '/'`);
+		await browser.click(".new-session");
+		await browser.wait(`location.pathname === '/new'`);
 		await browser.open(url("/"));
-		await new Promise((resolve) => setTimeout(resolve, 500));
-		assert.equal(await browser.evaluate<string>("location.pathname"), "/");
+		await browser.wait(`location.pathname === '${home}'`);
 
 		// A browser tab opening `/` starts at home, however recent the conversation.
 		await browser.open(url(`/s/${session.id}`));
 		await browser.wait(`document.querySelector('.composer textarea')`);
 		await browser.evaluate(`sessionStorage.setItem("tab", "1")`);
 		await browser.open(url("/"));
-		await new Promise((resolve) => setTimeout(resolve, 500));
-		assert.equal(await browser.evaluate<string>("location.pathname"), "/");
+		await browser.wait(`location.pathname === '${home}'`);
 	});
 });
