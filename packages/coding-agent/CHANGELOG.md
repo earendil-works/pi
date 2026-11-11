@@ -12,6 +12,7 @@
 - Fixed `/share` crashing pi when the GitHub CLI fails to start
 - Fixed `pi update` on Windows managed installs failing with "Could not verify managed Pi" when an older system Node.js comes before the installer's standalone Node.js on PATH ([#12048](https://github.com/earendil-works/pi/issues/12048))
 - Fixed `/export` HTML showing raw terminal hyperlink escape codes around links in custom tool output; links are now clickable ([#12003](https://github.com/earendil-works/pi/issues/12003))
+- Fixed provider errors reading "Connection closed." not triggering automatic retries ([#12064](https://github.com/earendil-works/pi/issues/12064))
 
 ## [1.5.2] - 2026-11-10
 
