@@ -10,6 +10,9 @@ import { setSettingsEmbed } from "./settings-embed.ts";
 /** The name of the Settings window's layer. */
 export const SETTINGS_LAYER = "settings";
 
+/** A section of the Settings window: one of its own (`locator`) or a plugin's sheet (`layer`). */
+export type SettingsSectionChoice = { locator: string } | { layer: Layer };
+
 /** Where the Settings window is in `route.layers`; -1 while it is closed. */
 export function settingsIndex(route: Route): number {
 	return route.layers.findIndex((layer) => layer.kind === "sheet" && layer.name === SETTINGS_LAYER);
@@ -20,18 +23,31 @@ export function settingsIndex(route: Route): number {
  * another section beside the list (wide screens) replaces the step; on phones the list is a page of its own, so a
  * section is a new step and Back returns to the list.
  */
-export function showSettingsSection(section: { locator: string } | { layer: Layer }, wide: boolean): void {
+export function showSettingsSection(section: SettingsSectionChoice, wide: boolean): void {
 	const nav = getNavigation();
 	const at = settingsIndex(nav.route);
 	if (at < 0) return;
+	const layers = [...nav.route.layers.slice(0, at), ...settingsLayers(section)];
+	if (wide) void nav.replace({ ...nav.route, layers });
+	else void nav.push({ ...nav.route, layers });
+}
+
+/**
+ * Opens the Settings window in one step, at `section` when given (else the list, or General beside it), over the
+ * screen: layers open before it (the drawer) close first, as for any sheet opened from the sidebar.
+ */
+export function openSettings(section?: SettingsSectionChoice): void {
+	void getNavigation().closeThenPush((route) => ({ ...route, layers: settingsLayers(section) }));
+}
+
+/** The window's layer showing `section`, with a plugin's sheet layer above it. */
+function settingsLayers(section: SettingsSectionChoice | undefined): Layer[] {
 	const window: Layer = {
 		kind: "sheet",
 		name: SETTINGS_LAYER,
-		...("locator" in section ? { locator: section.locator } : {}),
+		...(section && "locator" in section ? { locator: section.locator } : {}),
 	};
-	const layers = [...nav.route.layers.slice(0, at), window, ...("layer" in section ? [section.layer] : [])];
-	if (wide) void nav.replace({ ...nav.route, layers });
-	else void nav.push({ ...nav.route, layers });
+	return section && "layer" in section ? [window, section.layer] : [window];
 }
 
 /** The section the Settings window shows: a plugin's sheet layer name, its own section's locator, or none (the list). */

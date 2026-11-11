@@ -100,6 +100,18 @@ export class SearchDb {
 		return row ? String(row.text) : undefined;
 	}
 
+	/**
+	 * The sessions with a message matching the MATCH expression `match` (see `ftsQuery`) at or after `since`, each with
+	 * the time of its latest one: one query over every session, never their transcripts.
+	 */
+	mentions(match: string, since: number): Record<string, number> {
+		const rows = this.#db
+			.prepare(`SELECT m.session, max(m.timestamp) AS at FROM message_search JOIN messages m ON m.rowid=message_search.rowid
+				WHERE message_search MATCH ? AND m.timestamp >= ? GROUP BY m.session`)
+			.all(match, since);
+		return Object.fromEntries(rows.map((row) => [String(row.session), Number(row.at)]));
+	}
+
 	/** Each session's latest indexed answer: the highest assistant entry ID of its root conversation. */
 	answers(): Record<string, number> {
 		const rows = this.#db

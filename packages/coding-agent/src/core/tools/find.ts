@@ -207,6 +207,8 @@ export function createFindToolDefinition(
 						// On Windows `\` is a path separator, so native patterns like 'src\**\*.ts' are
 						// normalized to '/' (#9262). On POSIX `\` stays a glob escape character.
 						let effectivePattern = process.platform === "win32" ? pattern.replaceAll("\\", "/") : pattern;
+						// fd's full paths never contain "/./", so "./src/*.ts" would find nothing; drop the "./".
+						effectivePattern = effectivePattern.replace(/^(?:\.\/)+/, "");
 						const isPathPattern = effectivePattern.includes("/");
 						if (
 							isPathPattern &&

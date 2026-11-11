@@ -40,8 +40,11 @@ export function isPublicFile(path: string): boolean {
 	return publicFile(path) !== undefined;
 }
 
-/** A page path of the app: `/`, a session, or one of its conversations; for the owner also a list (`/list/<key>`). */
-const PAGE = /^\/(?:s\/[0-9a-f-]+(?:\/c\/[1-9]\d*)?|list\/[^/]+)$/;
+/**
+ * A page path of the app: `/`, a session, or one of its conversations; for the owner also a list (`/list/<key>`) and
+ * the new-session screen (`/new`).
+ */
+const PAGE = /^\/(?:s\/[0-9a-f-]+(?:\/c\/[1-9]\d*)?|list\/[^/]+|new)$/;
 
 /** Whether `path` is one of the app's pages (where a browser loads the app). */
 export function isAppPage(path: string): boolean {

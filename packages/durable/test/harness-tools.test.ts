@@ -458,7 +458,7 @@ describe("tool results", () => {
 	});
 
 	// #10549
-	it("records how long execute() took, excluding hooks, and nothing for calls that did not run", async () => {
+	it("records each result's span from the call's first run, hooks included, also for calls that did not execute", async () => {
 		const setup = chatSetup();
 		const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 		addTool(
@@ -486,12 +486,9 @@ describe("tool results", () => {
 			DONE,
 		]);
 		const byId = new Map(results(entries).map((result) => [result.toolCallId, result]));
-		for (const id of ["slow", "thrower"]) {
-			expect(byId.get(id)?.durationMs).toBeGreaterThanOrEqual(25);
-			expect(byId.get(id)?.durationMs).toBeLessThan(100);
-		}
+		for (const id of ["slow", "thrower"]) expect(byId.get(id)?.durationMs).toBeGreaterThanOrEqual(125);
 		expect(byId.get("thrower")?.isError).toBe(true);
-		expect(byId.get("blocked")).not.toHaveProperty("durationMs");
+		expect(byId.get("blocked")?.durationMs).toBeGreaterThanOrEqual(95);
 		await harness.close(context);
 	});
 

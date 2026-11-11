@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed text after a multi-row inline image in Markdown drawing over the image when the image's rows were joined with hard line breaks ([#12017](https://github.com/earendil-works/pi/issues/12017))
+
 ## [1.5.2] - 2026-11-10
 
 ## [1.5.1] - 2026-11-09

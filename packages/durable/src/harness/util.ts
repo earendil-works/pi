@@ -8,8 +8,14 @@ export class Waiters<K, T> {
 
 	add(key: K, context: Context): Promise<T> {
 		const signal = context.abortSignal;
-		if (signal?.aborted) return Promise.reject(signal.reason);
 		const waiter = Promise.withResolvers<T>();
+		// Callers may hand the promise out only after later awaits (a job's result on the line): handled now, so a
+		// rejection before then is not reported unhandled. The caller still gets it.
+		waiter.promise.catch(() => {});
+		if (signal?.aborted) {
+			waiter.reject(signal.reason);
+			return waiter.promise;
+		}
 		const set = this.#sets.get(key) ?? new Set();
 		this.#sets.set(key, set.add(waiter));
 		if (signal !== undefined) {

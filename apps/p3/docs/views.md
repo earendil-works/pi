@@ -55,6 +55,10 @@ inside a pane:
   plugin manager can then disable what broke the page.
 - **The layout is a plugin:** sidebar, transcript and panel is the default layout plugin; another layout (or an agent
   arrangement) only places panes. A broken layout falls back to the default one.
+- **Layouts are apps (owner, 2026-11-10):** an app is a layout of views for one purpose (coding, the triage agent, a
+  game studio for the kids, a family planner), each a different view on its slice of the instance's sessions. The
+  person switches apps (an app switcher in the fixed bar); opening a thing shows its view inside the current app. No
+  layout belongs to a kind of thing.
 
 ## 4. Prebuilt and agent-made views
 
@@ -71,6 +75,41 @@ inside a pane:
     plugin. Installing it is the owner's choice, as for any plugin.
 - **Where they live:** a session's sketches are the views plugin's session data (the worker's store, HTML as the
   session's files); saved sketches are the owner's library on the server; promoted views are plugins.
+
+## 4a. Views as Chord clients (owner, 2026-11-10)
+
+A sketch's frame is a Chord client host of its own, with its own link (its own WebSocket) to the server and its own
+principal: a view principal `{ kind: "view", session, view, for }` (`for`: whom it is shown to, for names and presence
+only; a view principal never gets that principal's powers). Objects give view principals a variant of their own, as
+for guests; what has no view variant (sending messages, answering questions, approvals) a view cannot reach.
+
+- **Its link:** the page asks the server for a short-lived token scoped to that view and hands it to the frame through
+  the postMessage bridge; the frame opens its link with it (its origin is opaque, so the server's links endpoint
+  admits view links by that token alone). Not relayed through the page's link: that would stamp the page's principal.
+- **The socket is opened on demand** (owner, 2026-11-10): a frame connects only when its code first asks for its
+  room or for its plugin's objects; a sketch that only renders and saves its state uses the page's bridge over the
+  page's connection and opens no socket.
+- **One socket per view, not piggybacked** (owner): a fast view (a game) never queues behind the page's traffic at the
+  TCP level, nor the page behind it. A meetup with 70 guests and two views is 210 sockets, which the server handles;
+  piggybacking through the page (Chord marking a relay's origin as a weaker principal) is deferred until a case needs
+  it.
+- **Revocation:** closing the view or revoking its viewer revokes its view principals; their objects end.
+- **The room** is an ordinary server object with a view variant, one per open view. Words (owner, 2026-11-10: one
+  term per thing): **presence** (who has the view open, and the **leader**, the oldest peer), **peer state** (what each
+  peer publishes, written only by that peer, latest wins), **messages** (ordered, lossless, kept until every present
+  peer has seen them, or since the last snapshot for a log room), the shared **clock**, and **methods** a sketch offers
+  the agent (a name, a description, an argument schema); one use of a method is a **call**, which the leader runs and
+  whose result goes back to the caller, nothing stored.
+- **Room kinds** come from plugins: a **live** room (presence and peer state: drags, cursors, games), a **log** room
+  (ordered messages since the last snapshot: turn-based games, a shared canvas), and rooms with **server rules** (the
+  plugin's server code applies and checks each message and writes the snapshot: collaborative text, as in
+  badlogic/jot's id-based editing). Every kind has presence, the leader, the clock and methods. A netcode helper and a
+  text-editing client ship in the view kit.
+- **The view kit:** React, p3's presentational components (props in, events out; none holds a Chord reference) and
+  the CSS, built by the server as one content-hashed bundle and loaded by a frame from a public endpoint (cached once;
+  the endpoint answers the opaque origin with an open cross-origin header).
+- The postMessage bridge to the page keeps only what belongs to the page: the token, state saving, selections and
+  annotations.
 
 ## 5. Phones and terminals
 

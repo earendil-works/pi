@@ -23,8 +23,12 @@ export const ViewsDoc = defineDoc<ViewsState>({
 	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 32,
 });
 
-/** Each view's JSON state, keyed by the view's ID; retired with the view. */
-export const ViewStateDoc = defineDocFamily<{ value: JsonValue }, null>({
+/**
+ * Each view's JSON state, keyed by the view's ID; retired with the view. `revision` grows with every write and `by`
+ * says whose it was (a view's room, or anyone else): a room writes only over the revision it saw (docs/rooms.md).
+ */
+export type ViewStateValue = { value: JsonValue; revision?: number; by?: "room" | "other" };
+export const ViewStateDoc = defineDocFamily<ViewStateValue, null>({
 	kind: "p2.view-state",
 	version: 1,
 	scope: "session",
@@ -33,6 +37,26 @@ export const ViewStateDoc = defineDocFamily<{ value: JsonValue }, null>({
 	// A state change replaces the whole value: a delta is as large as a base.
 	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 8,
 });
+
+/**
+ * A text room's own state (docs/rooms.md: the text, its IDs, the editors' watermarks), keyed by the view's ID; written
+ * only by its room through `ViewBacking`, retired with the view.
+ */
+export const ViewRoomDoc = defineDocFamily<{ value: JsonValue }, null>({
+	kind: "p2.view-room",
+	version: 1,
+	scope: "session",
+	family: true,
+	initial: () => ({ value: null }),
+	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 8,
+});
+
+/** Sets view state `doc` to `value`, written by `by`: the revision grows. */
+export function setViewState(doc: ViewStateValue, value: JsonValue, by: "room" | "other"): void {
+	doc.value = checkedState(value);
+	doc.revision = (doc.revision ?? 0) + 1;
+	doc.by = by;
+}
 
 /** The session's views and annotations as committed (empty before the first view). */
 export async function readViews(read: DocumentReader, context: Context): Promise<Readonly<ViewsState>> {
@@ -96,9 +120,12 @@ export async function openView(tx: Tx, spec: ViewSpec, now: number): Promise<Vie
 		...(spec.source !== undefined ? { source: spec.source } : {}),
 	};
 	if (spec.source !== undefined) delete view.errors;
-	if (at < 0) draft.views.push(view);
-	else draft.views[at] = view;
-	if (spec.state !== undefined) (await tx.doc(ViewStateDoc, spec.id, null)).value = checkedState(spec.state);
+	if (at < 0) {
+		draft.views.push(view);
+		// A new opening: tokens, frames and rooms of an earlier view under this ID never reach this one.
+		draft.opened = { ...draft.opened, [spec.id]: crypto.randomUUID() };
+	} else draft.views[at] = view;
+	if (spec.state !== undefined) setViewState(await tx.doc(ViewStateDoc, spec.id, null), spec.state, "other");
 	return view;
 }
 
@@ -109,7 +136,9 @@ export async function removeView(tx: Tx, id: string): Promise<boolean> {
 	if (at < 0) return false;
 	draft.views.splice(at, 1);
 	draft.annotations = draft.annotations.filter((annotation) => annotation.view !== id);
+	if (draft.opened) delete draft.opened[id];
 	await tx.retireDoc(ViewStateDoc, id);
+	await tx.retireDoc(ViewRoomDoc, id);
 	return true;
 }
 

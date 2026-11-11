@@ -14,6 +14,11 @@ export const sameLocation = (a: Location, b: Location): boolean => a.env === b.e
 export const locationText = (location: Location): string =>
 	location.env ? `${location.env}:${location.cwd}` : location.cwd;
 
+/** Shows conventional macOS, Linux and Termux home directories as `~`. */
+export function shortPath(path: string): string {
+	return path.replace(/^\/(?:Users\/[^/]+|home\/[^/]+|root|data\/data\/com\.termux\/files\/home)(?=\/|$)/, "~");
+}
+
 /** `envs.ENV_NAME`: the names an environment may have. */
 export const ENV_PREFIX = /^([a-z0-9][a-z0-9_-]{0,31}):(.*)$/s;
 /** `local:` names this device, unless an environment is called "local". */

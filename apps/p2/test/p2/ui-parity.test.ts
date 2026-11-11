@@ -169,7 +169,7 @@ describe("Pi Mobile UI regressions", { skip: !browserTests }, () => {
 	});
 
 	it("opens Providers in the viewport after closing the translated phone drawer", async () => {
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.evaluate('document.querySelector("button[aria-label=Sessions]").click()');
 		await browser.evaluate('document.querySelector(".drawer-foot .settings-open").click()');
 		await browser.wait(
@@ -191,7 +191,7 @@ describe("Pi Mobile UI regressions", { skip: !browserTests }, () => {
 	});
 
 	it("opens Devices and offers a private one-time token to the localhost owner", async () => {
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.evaluate('document.querySelector("button[aria-label=Sessions]").click()');
 		await browser.evaluate('document.querySelector(".drawer-foot .settings-open").click()');
 		await browser.wait(
@@ -211,7 +211,7 @@ describe("Pi Mobile UI regressions", { skip: !browserTests }, () => {
 	});
 
 	it("has only the folder cwd button on New session, and applies a directory-picker selection", async () => {
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		assert.equal(await browser.evaluate<number>('document.querySelectorAll(".hero .cwd-pick").length'), 1);
 		assert.equal(await browser.evaluate<number>('document.querySelectorAll(".hero input").length'), 0);
 		// Delay only this disposable browser's transport so the loading interaction is deterministic.
@@ -407,7 +407,12 @@ describe("Pi Mobile UI regressions", { skip: !browserTests }, () => {
 		const { token } = await fixture.browser().hold(Devices, {}, BACKGROUND_CONTEXT).token(BACKGROUND_CONTEXT);
 		const origin = `http://127.0.0.1:${fixture.server.port}`;
 		await browser.open(`${origin}/owner#${token}`);
-		assert(await browser.evaluate<boolean>('location.pathname === "/" && location.hash === ""'));
+		// Home: the app at `/`, which opens the Familiar's session.
+		assert(
+			await browser.evaluate<boolean>(
+				'(location.pathname === "/" || location.pathname.startsWith("/s/")) && location.hash === ""',
+			),
+		);
 		const cookies = (await browser.call("Network.getCookies", { urls: [origin] })) as {
 			cookies: { name: string; httpOnly: boolean; sameSite: string }[];
 		};

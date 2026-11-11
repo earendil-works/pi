@@ -30,7 +30,7 @@ test(
 			if (event.method === "Runtime.exceptionThrown") errors.push(JSON.stringify(event.params));
 		});
 		await browser.call("Runtime.enable");
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		try {
 			await browser.openSettings("Logs");
 		} catch (error) {
@@ -58,7 +58,7 @@ test(
 		);
 		await browser.wait("window.logsCopied?.includes('second-failure live-marker')");
 		assert(!(await browser.evaluate<string>("window.logsCopied")).includes("worker-ready-marker"));
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.wait(`document.querySelector('#logs-source')?.value===${JSON.stringify(worker)}`);
 		await browser.wait(`document.querySelector('.logs-output')?.textContent.includes('worker-start-failure')`);
 		await browser.click("[role=dialog] button[aria-label=Close]");
@@ -94,7 +94,7 @@ test(
 		processLogs.append("session:another-worker", "event", "other-worker-only-marker");
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session.id}`);
 		await browser.wait("document.querySelector('.worker-start-error')?.textContent.includes('not configured')");
-		await browser.wait("document.querySelector('.session-worker-error')?.textContent==='Worker failed'");
+		await browser.wait("document.querySelector('.session-worker-error')?.textContent==='Failed'");
 		await browser.wait("document.querySelector('.owner-notice')?.textContent.includes('not configured')");
 		const failed = await until(status.statuses, (value) => Boolean(value?.[session.id]?.error));
 		assert.equal(failed?.[session.id]?.running, false);

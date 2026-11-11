@@ -188,6 +188,8 @@ async function shareViaGist(tmpFile: string, context: SessionShareContext): Prom
 			proc.stderr?.on("data", (data) => {
 				stderr += data.toString();
 			});
+			// A failed spawn emits 'error' and may never emit 'close'; without a listener it crashes pi.
+			proc.on("error", (error) => resolve({ stdout, stderr: stderr || error.message, code: null }));
 			proc.on("close", (code) => resolve({ stdout, stderr, code }));
 		});
 

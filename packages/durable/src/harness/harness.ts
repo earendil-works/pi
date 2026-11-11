@@ -20,6 +20,7 @@ import { ResetEntry } from "../entries.ts";
 import type { ExecutionEnv } from "../env/index.ts";
 import { contained, SessionImpl } from "../session/session.ts";
 import type { Transaction } from "../session/transaction.ts";
+import type { SignalResult, SignalToken } from "../signals.ts";
 import { hostTimers } from "../timers.ts";
 import type {
 	CommitOptions,
@@ -53,6 +54,7 @@ import { type InvocationBinding, TaskScheduler } from "./scheduler.ts";
 import { Submissions } from "./submissions.ts";
 import { type TaskGraph, TaskGraphView, type TaskGraphWatch } from "./task-graph.ts";
 import { DURABLE_TELEMETRY_SCHEMA } from "./telemetry.ts";
+import { gatedCall, keepsChildren } from "./tool.ts";
 import type {
 	Agent,
 	AgentChange,
@@ -251,6 +253,8 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 			writeAtClose: (writes) => this.writeAtClose(writes),
 			report: this.#report,
 			limitsRestarts: (kind) => LIMITS_RESTARTS.has(kind),
+			keepsAbandoned: keepsChildren,
+			gated: gatedCall,
 			settleOutcome: settleSchedulerOutcome,
 			withdrawInputs: withdrawQueuedInputs,
 			conversation: async (id, binding, callContext) => {
@@ -352,6 +356,17 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 
 	abortTask(id: TaskId, context: Context): Promise<"marked" | "terminal"> {
 		return this.#tasks.abort(id, context);
+	}
+
+	async signal<T>(
+		taskId: TaskId,
+		token: SignalToken<T>,
+		key: string,
+		value: T,
+		context: Context,
+	): Promise<SignalResult> {
+		this.#tasks.resume();
+		return this.commitWith((tx) => tx.signal(taskId, token, key, value), context);
 	}
 
 	async waitForTask<R>(id: TaskId<R>, context: Context): Promise<SettledTask<R>> {

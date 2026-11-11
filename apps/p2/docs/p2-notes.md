@@ -520,8 +520,30 @@ tab's sessionStorage; URLs identify conversations (`/s/<id>` and `/s/<id>/c/<con
   custom changing scroll areas should do so too, with a key for the content they display.
 - Android Chromium uses one CloseWatcher while there is a step to undo, without adding history entries or browser
   page-back animation. Other browsers use history entries. With no internal step, system Back leaves the app.
-- Conversation destinations retain the workspace tab and terminal placement, but reset file/commit/search locations
-  and never carry the request to start a terminal. Server events never push.
+- Conversation destinations in the same session retain the workspace tab and terminal placement, but reset
+  file/commit/search locations and never carry the request to start a terminal; another session opens with its own
+  panels (below). Server events never push.
+- **Panels per session** (`src/web/session-panels.ts`): the right-hand panels (the workspace and its tab, the terminal
+  below the chat or on the workspace's Terminal tab, the side panel's plugin panel or activity) belong to the session
+  they were opened in. Problem: they used to stay open across a session switch, so a terminal opened in one session
+  also opened in the next. Now every route change remembers its session's panels in `localStorage` `p2-session-panels`
+  (per device, the last 200 sessions that had one open; closing them all forgets the session), and `conversationRoute`
+  opens another session with its own: as it last had them, none if it never had any. Within a session (its subagents'
+  and `/tree` conversations) the open panels stay, as before: the panels are the session's, its terminals are too, and
+  the workspace follows the shown conversation's location; only an activity, which is a block of one transcript, is
+  dropped in another conversation. A page load without history state of its own (a link, a new tab, a typed address,
+  the installed app's launch) restores the session's panels too; a reload or Back keeps its entry's route, as before.
+  Restored are the workspace's tab (not its folder or file) and the terminal's ID (a closed one falls back to the
+  newest running terminal); a terminal never starts on its own. Restoring never covers the chat: the workspace comes
+  back from 900 px (below, it takes the screen), the side panel from 700 px (below, it is a sheet), the terminal below
+  the chat always; a phone opens a session at its chat (the views plugin's rule). Sizes stay global per browser
+  (`useDragSize`: the side panel's and the workspace's widths, the terminal's height), as does the terminal's
+  preferred placement for a new terminal: a size suits the screen, not the session, and per-session widths would make
+  the chat column jump at every switch. The views plugin's layout was per session already
+  (`p2.views.layout:<session>`). Leaving a session detaches its terminal view; the programs keep running in the
+  terminal host and coming back reattaches from a VT snapshot (Terminals). A link that opens a viewer (`?viewer=`,
+  branch `artifact-newtab`) shows it above the session's restored panels; on phones the side panel waits beneath it
+  (`useSidePanelShown`). Test: `ui-session-panels.test.ts`.
 - **Drawer swipe** (`src/web/drawer-swipe.ts`, phone layout only): with no modal open, a drag toward the inline end
   (rightward; leftward in RTL) anywhere on the chat column (`main`) drags the drawer open; a drag toward the inline
   start on the open drawer or scrim drags it closed. Not on the workspace panel, which is full screen above the
@@ -823,20 +845,25 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
     page: every session, the aged ones (outside the window) after the others, by group for a rollup of groups; the
     archived ones newest archived first. Keys: `recent`, `projects`, `folders`, `archive`, `project:<name>`,
     `folder:<base64url of JSON [env, cwd]>` (no slash, for `/list/<key>`). Folders take as many trailing path segments
-    as tell same-named ones apart. Rollup order never follows activity.
+    as tell same-named ones apart. Rollup order never follows activity. `glyphsOf` picks project glyphs by the glyphs
+    plugin's `placeSeed` (below); a group's tooltip is its path (a project's: its places), a Recents session's its cwd.
   - **View** (`Sidebar.tsx`, `Row.tsx`, `ListPage.tsx`, `RollupSheet.tsx`), on Elanor's `Sidebar` and
     `SideNavigation` and icons (re-exported by `src/web/navigation-components.ts`). Every row is a `NavRow`: a marker
-    column as wide as an icon (a session's activity dot, a group's folder or lock; kept when empty; a rollup has none),
+    column as wide as an icon (a session's working mark, a group's project glyph, folder or lock, a Recents session's
+    glyph; kept when empty; a rollup has none),
     the label (a link; an action: restoring an archived session, switching to another branch; or, with `expanded`, the
     control that shows or hides what is below the row, Elanor's chevron right after the label), details (the time of
     the last activity last) and controls (⋯, "+", a branch's rename), all one control whose hover and selected
     backgrounds (Elanor's ghost fills) span the row; the label's hit area covers it. Labels are one line, cut with "…" at
     the end (`.nav-label`). No leading disclosure column, so nothing is indented by it: a group's row shows or hides
-    its sessions, not indented (every session's activity dot is in one column); a group's row is medium weight. A session's row is a link to its main conversation,
+    its sessions, not indented (every session's working mark is in one column); a group's row is medium weight. The
+    owner's list starts with a "New session" row in a group's type ("+" marker, a link to `/new`, the new-session
+    screen, selected while it shows); the header holds the Pi logo (the Familiar's button) and the
+    collapse trigger. A session's row is a link to its main conversation,
     selected while that shows (the label's hit area covers the row: the label is not positioned, so its `::after` is
     laid out on the row). Its other conversations (its branches, then its subagents and one-shot agents, the most
     recently active first) are below it, shown or hidden only by its chevron (`Toggle`, a button after the label;
-    showing a subagent shows them), in the secondary style, their labels and activity dots in the session's columns. A rollup's name is a link
+    showing a subagent shows them), in the secondary style, their labels and working marks in the session's columns. A rollup's name is a link
     to its list, its chevron a `Toggle` after it; a collapsed rollup lists nothing ("No activity" is for an open one). Rows start and end on the bars' icon line (`--nav-edge`, style.css). An open session is selected
     in one place: where this tab opened it from (per session, in sessionStorage), else the first place it shows. The
     list page in the main area (`Route.page`, at `/list/<key>`; the `page` slot instead of `main`; `openPage` closes
@@ -844,6 +871,21 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
     sessions only (no conversations below them, `listsConversations`), in the transcript's column (`--chat-size`,
     `--chat-width`) inside one scroller across the main area, as the transcript; it has a search within its sessions (`Search` 3's `sessions`), kept with its scroll position across Back, its "+" for
     groups, and the error toast (`ErrorToast`, shared with the chat).
+  - **State marks** (`Row.tsx`, the top of `style.css`): a row says two things in two places. The marker says whether
+    a session runs: `IconMarker` frames the row's icon (a glyph, a folder, a lock) with a dash travelling around it
+    (22px, 3px outside the icon, clear of a glyph's corner cells), `WorkingMark` is a spinner where a row has no icon (a
+    group's sessions, conversations, the Familiar's logo, a collapsed rollup's details). That is the sidebar's only
+    motion. The row's end says whether it wants the owner, steady: an unread answer makes the title bold
+    (`.session-title.unread`) with a blue dot before the time (`UnreadMark`); a failed worker shows a warning sign and
+    "Failed" (`FailedMark`, the error in its tooltip). Each state has its own shape, not only a colour (spinner or
+    frame, dot, warning sign), so colour blindness does not merge them; the dots used to sit on a glyph's corner in the
+    glyph's own colours. With reduced motion the spinner is a still ¾ ring and the frame dashed; in the phone's closed
+    drawer they pause. A collapsed group or rollup sums up what it hides (`hidden`, `activityOf` in `model.ts`): a
+    group frames its icon while one of them works, a rollup shows a spinner, and both count the failed ones (warning
+    sign) and the unread ones (a blue count). The top bars' menu button (`menu-badge` slot, `MenuBadge` in `web.tsx`,
+    rendered by the chat's and the list page's bar) counts the other live sessions that want the owner (`wantingOf`: a
+    failure or an unread answer, the open one left out), red when one failed. The sidebar publishes it, as it publishes
+    the list page's data. A "needs input" state waits for questions and approvals (`docs/waiting.md`).
   - **Settings** (`sidebar-settings.ts`, `SidebarSettingsStore`/`SidebarSettings`, owner): the rollups' order, windows
     and collapsed rollups and groups, one persisted document in the server's store (`p2.sidebar-settings-state`): a person's
     view, not the catalog. A project's "+" sets the new-session screen's location and a join (`NewSessionJoin`:
@@ -851,6 +893,69 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
     creation leaves no membership; a failed join shows in the toast) and clears after. Tests: `sidebar-model.test.ts`,
     `sidebar-settings.test.ts`, `ui-sidebar.test.ts`, the scoped search in `search.test.ts`, list links in
     `foreign-requests.test.ts`.
+- **Project glyphs** (`plugins/glyphs`): `glyph.ts` (pure, browser-safe) draws a 3x3 identicon in the Radius mark's four
+  colors from a seed (a path or a name; paths in their `shortPath` form, so `/Users/me/x`, `/home/me/x` and `~/x` draw
+  one glyph): SHA-256 of `glyph-v1:<seed>` seeds two sfc32 streams, one for colors, mirror axis and corner style, one
+  for cells and shapes (fan, leaf, drop, dome, wedge, circle, diamond, square). It is the "Tiles, 3x3" generator of
+  the project-glyphs prototype (Radius artifact) with its recommended settings, and draws the same glyphs. Mirror
+  axes only (vertical, horizontal, both diagonals): every glyph is mirror-symmetric, so none is a pinwheel (a
+  swastika); 3x3 cannot hold one anyway. `seed.ts` decides which glyph a place shows (`placeSeed`): a project's is
+  seeded by its first place's path, and a folder or a session inside one of its places (a session also by membership)
+  shows the project's; any other place its own path's. `GlyphIcon.tsx` draws one inline (the sidebar's groups and
+  Recents, the chat's top bar before the location; the chat page holds `Projects` once for it, owner only);
+  `GET /glyph.svg?seed=<seed>&size=<8 to 1024, default 64>` serves one as an SVG file to anyone (it reads no data; the
+  seed is at most 1024 characters), cacheable for a day and embeddable from other origins. Tests: `glyphs.test.ts` (the prototype's output, seed forms, colors, symmetry),
+  `sidebar-model.test.ts` (`glyphsOf`), `ui-sidebar.test.ts`.
+- **Rollups made from code** (`plugins/rollups`; README, The web sidebar): a saved script over every session that returns
+  one sidebar section, in the built-in rollups' layouts. The script decides what a rollup collects; the sidebar decides
+  what it shows, so the window, sticky sessions and the owner's settings work the same as for the built-in ones.
+  - **Schema** (`contract.ts`): `RollupOutput` is `{ layout: "sessions" | "link", members }` or `{ layout: "groups",
+    groups: [{ key, name, title?, keep?, target?, members }] }`. A member is a session ID or `{ id, at?, keep? }`:
+    `at` is the time the window compares and the list sorts by (default `updatedAt`), `keep` shows it whatever its time;
+    a group's `keep` shows it without a relevant session; `target` (a folder, or a project by name) is where its "+"
+    starts a session. `RollupDefinition`: `key` (sidebar key `rollup:<key>`, groups `rollup:<key>:<keyPart(group
+    key)>`), `name`, `window` (a sidebar window the owner can change, or `none`: every member shows), `refresh`, `code`.
+    The script's output is checked against the schema on the server (the trust boundary); a failed run keeps the last
+    good output and records why.
+  - **Input** (`runner.ts`, `inputOf`): `sessions` (every session but the Familiar's, archived ones included, oldest
+    first, with `project`, `state` stopped/idle/working, `error`, `unread` and `model` as `provider/modelId`),
+    `projects`, `now()`, and `await mentions(query, { since })`: the sessions with a user or assistant message matching
+    the query (subagents included; `ftsQuery`'s keywords, all required), each with the time of its latest one, from
+    one query over the search index (`SearchIndex.mentions`, version 2; a few milliseconds on 4k messages), never the
+    transcripts. Scripts run in a code mode sandbox without tools (`CodemodeSandbox`, 5 s, 64 MiB), the input passed in
+    its store; `mentions` is the sandbox global `__p2Mentions`, called with the run's token so it runs in the run's
+    context.
+  - **Refresh** (`server.ts`): `auto` runs again when what the script read changed (a routine over the catalog,
+    status, read marks, projects and the Familiar's session, never over the rollups' own results: a script reading
+    `now()` would otherwise run in a loop on its own write; one queue per rollup), and on the 30 s tick when it reads
+    `now()`; `every` checks on its interval (the same tick) and runs when what it read changed; `manual` only by hand.
+    Every rollup can be refreshed by hand (`refresh`), and saving one runs it. **What it read:** the wrapper hands the
+    script proxies that record each session field read (`sessions.cwd`; `sessions.*` after a spread or
+    `Object.keys`), any read of `projects`, `now()`, and each `mentions` call (`mentions:{"query":"p2"}`); the
+    fingerprint (`fingerprintOf`) is a hash of the sessions' IDs in order plus those values, with what each `mentions`
+    call answered (asked again for a check: one index query each). Equal fingerprints skip the run: a script is a
+    function of what it read. A rename does not re-run a rollup that never read `title`; a new message re-runs a
+    `mentions` rollup only when it changes what the call answers (indexing a message touches the catalog, which wakes
+    the check). A failed run counts as having read every session field and the projects: it runs again once anything
+    changed.
+  - **Who:** `SidebarRollups` serves the owner (state and methods) and the Familiar's current worker (variant
+    `familiar`: `list` and the methods; other workers, stale generations and guests are refused). The Familiar's worker
+    gets the `sidebar_rollups` tool (`worker.ts`: list, preview, save, refresh, remove; its description renders the
+    input and output schemas as TypeScript), offered in its tool lists; preview runs a script against the sessions now
+    without saving. Definitions and last results are one persisted document in the server's store (`p2.rollups`), not
+    the Familiar's session: the sidebar needs them while its worker is stopped.
+  - **Sidebar** (`plugins/sessions/sidebar/custom.ts`): `customRollup` turns a saved rollup into a `Rollup` (its IDs
+    resolved to the sidebar's live rows, archived and unknown ones dropped; a session in several groups takes its first
+    member's `at` and `keep`); `Rollup.window`, `timeOf` and `keeps` and `Group.keep` carry them through `sectionsOf`
+    and `listPageOf`. New rollups go before the Archive until the owner moves them. Their options (`RollupSheet`) say
+    how they refresh, when they were last checked and why the last run failed, with **Refresh now** for `every` and
+    `manual`. Tests: `rollups.test.ts`, `sidebar-custom.test.ts`, `ui-rollups.test.ts`.
+  - **Not yet:** scripts with tools (`bash`, `models.classify`) for `every` and `manual` rollups, which would run in
+    the Familiar's worker; a declared cheap check (for example `git rev-parse HEAD`) that decides whether such a
+    script runs; editing a rollup's code from its options; the TUI shows no rollups. `auto` rollups run on the
+    server, so after an edit (a new or moved session) their section follows one round trip and a run later; the
+    built-ins are computed in the browser at once. Running `auto` scripts in the browser would need QuickJS in the web
+    bundle (about 640 KB of wasm, `InlineCodemodeSandbox`), which p2 does not ship today.
 - **Principals** (`src/runtime/principals.ts`, typed: `P2Principal`, with Chord's API typed by it in
   `src/runtime/chord.ts`): `owner` (a local owner session on loopback `access: "local"`, authenticated Radius `access: "relay"`, or a
   signed owner cookie `access: "device"` with a device ID), `guest`, `worker` (stamped by the server's `session:` route
@@ -921,8 +1026,13 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
 - **Reopening the last conversation** (`resumeRoute` in `src/web/navigation.ts`): the installed app (standalone display
   mode, iOS `navigator.standalone`) launching at `/` reopens the conversation open when it was last used (recorded on
   navigation and when the page is hidden, `localStorage` `p2-last-conversation`) if that was less than 2 hours ago.
-  Going home forgets it; a browser tab opening `/` and a launch with another address are unaffected; signing out
-  forgets it.
+  The new-session screen forgets it; a browser tab opening `/` and a launch with another address are unaffected;
+  signing out forgets it.
+- **Home and the new-session screen** (`Route` in `src/web/navigation.ts`): home is `/`, a route without `session`,
+  `page` and `newSession`; the chat shows the `home` slot there (the Familiar's, which replaces the route with its
+  session), else the new-session screen. The new-session screen is `/new` (`NEW_SESSION`, `openNewSession`): the
+  sidebar's "New session" row and a group's "+" open it, and a session archived or removed while viewed is replaced by
+  it.
 - **Conversations kept on the device** (`src/web/conversation-cache.ts`, IndexedDB, the owner's browser only): the
   transcript's newest entries without a gap among them (up to 4 MB) as a window (`before` the entry just before them),
   with the documents but without the live run and queue, and the measured row heights, of the 20 most recently used
@@ -1124,9 +1234,10 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   SSH configuration comes from the envs plugin and the conversation's location environment; the separate `terminal-sessions.json`
   mapping is no longer read. Host keys use `ssh/known_hosts` and `pi-env-<name>` aliases. `envs.test.ts` exercises a
   remote terminal against a disposable localhost SSH fixture; no real remote host is used. Windows PTYs remain unsupported. The workspace has an owner-only
-  Terminal tab through the terminals plugin's `workspace-terminal` slot. Side and bottom panels carry across a
-  session switch, showing that session's terminals without starting one. Only explicit terminal-button/tab taps
-  request auto-start; attachment updates replace the route, never push or reopen a later destination.
+  Terminal tab through the terminals plugin's `workspace-terminal` slot. Side and bottom panels are remembered per
+  session (Browser navigation, Panels per session): another session opens with its own, never starting a terminal.
+  Only explicit terminal-button/tab taps request auto-start; attachment updates replace the route, never push or
+  reopen a later destination.
   Outdated hosts show Restart (ends all terminals), but idle outdated hosts are not automatically replaced yet; the
   agent's calls to an outdated host fail with that advice (`OUTDATED_HOST`); archiving closes its terminals with the
   viewer protocol every host speaks (list, then attach and force-close each).
@@ -1173,7 +1284,8 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   `ghostty.test.ts` and `terminal-input.test.ts` cover the copied browser primitives. PTY tests skip when no daemon
   build exists (`npm run build:daemon` in `packages/env` builds a debug one).
 - **Search** (`plugins/search`): `SearchIndex` (server local, `search.sqlite`: root/subagent user/assistant text in FTS5 and
-  one cursor per conversation; derived, dropped on a schema change). Each worker's `Indexer` (lifetime "host") runs a task that reads
+  one cursor per conversation; derived, dropped on a schema change; version 2 adds `mentions`, each session's latest
+  message matching a query since a time, for rollups made from code). Each worker's `Indexer` (lifetime "host") runs a task that reads
   the server's cursor (`SearchFeed`, worker principals only, session from the principal), scans each root/subagent
   conversation's immutable history after it in pages of 200, and sends them; each call returns once the server
   committed it, and the cursor sent stays put until the last page of a range, so an interrupted scan repeats the
@@ -1331,9 +1443,9 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
 - **Familiar** (`plugins/familiar`): one long-running session above the others that keeps track of them and starts,
   steers, stops, archives and restores them. The server's `FamiliarStore` holds which session it is (persisted; the
   ID is chosen before the row is made, so a crash makes the same one); the owner's `Familiar.open` makes it on first
-  use (home directory, default model, title "Familiar") or restores it when archived, one open at a time. Workers learn
+  use (home directory, default model, title "Ask Pi", its name for the owner) or restores it when archived, one open at a time. Workers learn
   whether they are it from their start data (`WorkerInitValues` key `familiar`). In its worker, the main conversation's
-  `pi.agent` gets `modelTools` (conversations, codemode, history_search/read/handoff) and `tools` (those plus `agent`,
+  `pi.agent` gets `modelTools` (conversations, codemode, history_search/read/handoff, sidebar_rollups) and `tools` (those plus `agent`,
   `bash` and `read`, so scripts and one-shot agents can look at the file system) at each start; its extension adds the
   `familiar` prompt section (role, notes in the code mode store key `familiar.notes`, finding folders).
   **Compaction by cost** (`cold.ts`): while its prompt cache is warm a turn reads the context at about a tenth of the
@@ -1344,8 +1456,10 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   answer after the context's head reported at least 150k tokens, or the regular cutoff (window − `reserveTokens`) when
   lower, compaction is enabled, and the conversation is idle: from a timer set after each answer (only while the
   worker runs; an idle worker stops after 5 minutes without viewers or warming) and at each start, else in an
-  `InputGate` before the next input is admitted, which waits for the summary. Web: a `drawer-head:familiar` slot above
-  the sidebar's rollups; the sessions plugin's `DrawerRowsContext` (`plugins/sessions/contract.web.tsx`) gives it the
+  `InputGate` before the next input is admitted, which waits for the summary. Web: home (the `home` slot: `/` replaces
+  itself with its session, made on first use; while the owner has it archived, with the new-session screen) and the
+  `drawer-brand` slot, the Pi logo at the start of the owner's sidebar header (a button titled "Ask Pi" that opens it,
+  restoring it when archived; the session's working spinner or unread dot on its corner); the sessions plugin's `DrawerRowsContext` (`plugins/sessions/contract.web.tsx`) gives it the
   rows, `SessionDot` and `listApart`, which leaves its session out of the rollups. The TUI lists it as an ordinary session. Tests:
   `familiar.test.ts`, `ui-familiar.test.ts`, the conversations actions in `conversations.test.ts`.
 - **Subagents** (`plugins/subagents`): owns its protocol-independent Durable extension (persistent
@@ -1354,7 +1468,7 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   acknowledged reports on errors/reload. Server `ChildStore` persists the list as one row per session in the server's store, keyed by its address
   (`plugins/subagents/children.ts`); worker
   generation fences late reports. Owner `Subagents` readers see every session; guests see only their own. Reading
-  the list does not start/hold a worker. The sidebar expands children (latest entry first), with working dots;
+  the list does not start/hold a worker. The sidebar expands children (latest entry first), with working marks;
   `/s/<id>/c/<conversation>` opens an independent chat, draft and model control. A parent link returns to the root.
   Browser configuration synchronizes the subagent registry via `ConversationConfigured`. Main Stop leaves child
   work running; direct child prompts do not report to the parent. **Tools** (`resolveChoice`/`resolveTools` in

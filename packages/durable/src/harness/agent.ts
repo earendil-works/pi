@@ -3,6 +3,7 @@ import { copyJson } from "@earendil-works/chord/json";
 import { defineDoc } from "../documents.ts";
 import { documentRetention, persistWithin } from "../session/session.ts";
 import type { ConversationId, ConversationRecord, Tx } from "../types.ts";
+import { wrapComposite } from "./parks.ts";
 import type {
 	Agent,
 	AgentChange,
@@ -276,7 +277,7 @@ export function resolveAgent<Tool extends ToolRegistration>(
 				applyWrap(
 					composed,
 					wrap.tool,
-					(tool) => wrap.wrap(tool),
+					(tool) => wrapComposite(tool, (base) => wrap.wrap(base)),
 					(tool) => tool.name,
 					wrapReport,
 				);

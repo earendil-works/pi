@@ -44,7 +44,7 @@ test(
 		await browser.signIn(fixture.owner);
 		t.after(() => browser.close());
 		await browser.metrics(390, 844);
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.openSettings("Discord");
 		await browser.wait(`${text("Discord bot")} && ${text("Not connected")}`);
 		assert(!(await browser.evaluate<boolean>(text("Bind a channel"))), "no channels in the global sheet");

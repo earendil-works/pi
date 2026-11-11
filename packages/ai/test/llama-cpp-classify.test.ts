@@ -20,7 +20,7 @@ function model(): ClassifierModel<"llama-cpp-classify"> {
 		name: "qwen",
 		api: "llama-cpp-classify",
 		provider: "llama.cpp",
-		baseUrl: `http://llama-${serverCount}.test:8080/v1`,
+		baseUrl: `http://llama-${serverCount}.test:9931/v1`,
 		input: ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: 32768,
@@ -379,9 +379,9 @@ describe("llama.cpp classifier", () => {
 	});
 
 	it("derives the server root from OpenAI-compatible base URLs", () => {
-		expect(llamaServerRoot("http://127.0.0.1:8080/v1/")).toBe("http://127.0.0.1:8080");
+		expect(llamaServerRoot("http://127.0.0.1:9931/v1/")).toBe("http://127.0.0.1:9931");
 		expect(llamaServerRoot("https://example.com/prefix/v1")).toBe("https://example.com/prefix");
-		expect(llamaServerRoot("http://127.0.0.1:8080")).toBe("http://127.0.0.1:8080");
+		expect(llamaServerRoot("http://127.0.0.1:9931")).toBe("http://127.0.0.1:9931");
 	});
 
 	it("computes TypeSafe's confidence and expected scores", () => {

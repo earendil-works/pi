@@ -115,3 +115,9 @@ and its working rules are in `handoff.md`.
   request it has no script for fails the test. A test waits for an effect it caused (an entry newer than its own input,
   a result of its own call), never for a pattern that may already be there. A failure under load is a bug until its
   root cause is known.
+- **A view's frame is a Chord client with a view principal and its own socket (owner, 2026-11-10):** agent-made views
+  run in sandboxed frames that connect to the server with their own link, authenticated by a short-lived token scoped to
+  the view, as a principal `{ kind: "view", session, view, for }` that never gets the viewer's powers; objects serve view
+  variants (the room for real-time collaboration among them). One WebSocket per view, not piggybacked on the page's:
+  a fast view never queues behind the page's traffic; piggybacking (a weaker principal for a relay's origin) waits for
+  a case. Details: `views.md` §4a.

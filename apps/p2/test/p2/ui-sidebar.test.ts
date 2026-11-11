@@ -1,14 +1,16 @@
 // Browser: the sidebar's rollups on Elanor's side navigation (Recents, projects, folders, the Archive), groups shown
 // only with relevant sessions, a rollup's or a group's name opening its list in the main area (aged sessions after the
 // others, dimmed; the list's own search), collapsing rollups and groups, a rollup's window and place, a session
-// selected in the one place it was opened from, and a group's "+" starting a session in its folder or project. Fake
-// provider, disposable data; every test makes its own sessions.
+// selected in the one place it was opened from, a group's "+" starting a session in its folder or project, what a
+// session does (working, unread) and its sum on collapsed groups and rollups and the menu button, and project glyphs on
+// groups, on Recents' sessions and in the top bar. Fake provider, disposable data; every test makes its own sessions.
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
+import { Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
 import { Projects } from "../../plugins/projects/contract.ts";
 import { Sessions, SidebarSettings } from "../../plugins/sessions/contract.ts";
@@ -221,7 +223,7 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		const home = folder("home");
 		await create("Kept", home);
 		const homeKey = folderKey(null, home);
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.wait(`document.querySelector('.sidebar-section[data-key=recent] .session-main')`);
 		// A rollup collapses to its row, the choice is kept on the server; so does a group.
 		await browser.click(".sidebar-section[data-key=recent] .section-toggle");
@@ -249,7 +251,7 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		await create("In target", target);
 		// The newest session is elsewhere: the new-session screen would start there without the "+".
 		await create("Newest", folder("elsewhere"));
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.click(`.sidebar-group${withAttribute("data-key", folderKey(null, target))} .group-new`);
 		await browser.wait(`!document.querySelector('.offline') && document.body.textContent.includes('Faux Model')`);
 		await browser.evaluate(setInput(".composer textarea", "Folder start"));
@@ -284,6 +286,106 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		// The next new session joins no project.
 		await browser.click(".new-session");
 		await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.cwd-join')`);
+		projects.release();
+	});
+
+	it("shows what sessions do: framed or spinning while working, bold with a dot when unread, summed up when hidden", async () => {
+		const work = folder("work");
+		const runs = await create("Runs", work);
+		const looking = await create("Looking", folder("look"));
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${looking.id}`);
+		const inRecents = `[...document.querySelectorAll('.sidebar-section[data-key=recent] .session-row')].find(e=>e.querySelector('.session-title').textContent==='Runs')`;
+		const group = `.sidebar-group${withAttribute("data-key", folderKey(null, work))}`;
+		await browser.wait(`Boolean(${inRecents})`);
+		const chat = await holdIn(fixture.browser(), Chat, { session: runs.id, conversation: 1 }, "participant");
+		await chat.send({ text: "slow-tool", requestId: "working" }, BACKGROUND_CONTEXT);
+		// Working: a frame around a Recents row's glyph, a spinner on a group's session row (it has no glyph).
+		await browser.wait(`Boolean(${inRecents}.querySelector('.nav-icon.working > .working-frame'))`);
+		await browser.wait(`Boolean(document.querySelector(${JSON.stringify(`${group} .session-row .working-mark`)}))`);
+		// A collapsed group frames its own icon while a session it hides works.
+		await settings.setCollapsed({ key: folderKey(null, work), collapsed: true }, BACKGROUND_CONTEXT);
+		await browser.wait(`Boolean(document.querySelector(${JSON.stringify(`${group} .group-row .working-frame`)}))`);
+		// Done and unread: no motion, a bold title and a dot; the collapsed group and the menu badge count it.
+		await browser.wait(
+			`Boolean(${inRecents}.querySelector('.unread-dot')) && !${inRecents}.querySelector('.working-frame')`,
+		);
+		assert.ok(
+			await browser.evaluate<boolean>(`${inRecents}.querySelector('.session-title').classList.contains('unread')`),
+		);
+		await browser.wait(
+			`document.querySelector(${JSON.stringify(`${group} .group-row .unread-count`)})?.textContent==='1' && !document.querySelector(${JSON.stringify(`${group} .working-frame`)})`,
+		);
+		await browser.wait(`document.querySelector('.topbar .sidebar-open .menu-badge')?.textContent==='1'`);
+		// A collapsed rollup counts too.
+		await settings.setCollapsed({ key: "recent", collapsed: true }, BACKGROUND_CONTEXT);
+		await browser.wait(
+			`document.querySelector('.sidebar-section[data-key=recent] .rollup-row .unread-count')?.textContent==='1'`,
+		);
+		// Opening it reads it: the badge goes.
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${runs.id}`);
+		await browser.wait(`document.querySelector('.topbar .sidebar-open') && !document.querySelector('.menu-badge')`);
+		await browser.wait(`!document.querySelector('.sidebar-section[data-key=recent] .unread-count')`);
+		chat.release();
+	});
+
+	it("shows project glyphs on groups, Recents' sessions and the top bar, a project's on its folders and sessions", async () => {
+		const place = folder("glyphed");
+		const inside = folder("glyphed/sub");
+		const other = folder("other");
+		await writeFile(join(fixture.dataDir, "projects.json"), JSON.stringify({ glyphed: [{ path: place }] }));
+		const projects = await holdIn(fixture.browser(), Projects, {}, "owner");
+		await until(projects.projects, (list) => list?.some((project) => project.name === "glyphed"));
+		const member = await create("Member", other);
+		await projects.assign({ session: member.id, project: "glyphed" }, BACKGROUND_CONTEXT);
+		await create("Inside", inside);
+		await create("Other", other);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		const recent = ".sidebar-section[data-key=recent]";
+		await browser.wait(`document.querySelectorAll('${recent} .nav-icon > svg.glyph-icon').length===3`);
+		// A Recents row: its glyph in the marker column, its path as the row's tooltip.
+		assert.deepEqual(
+			await browser.evaluate(
+				`[...document.querySelectorAll('${recent} .session-main')].map(e=>[e.querySelector('.session-title').textContent,e.title]).sort()`,
+			),
+			[
+				["Inside", inside],
+				["Member", other],
+				["Other", other],
+			],
+		);
+		const glyph = (selector: string) =>
+			browser.evaluate(`document.querySelector(${JSON.stringify(selector)}).innerHTML`);
+		const inRecents = (title: string) =>
+			browser.evaluate(
+				`[...document.querySelectorAll('${recent} .session-row')].find(e=>e.querySelector('.session-title').textContent===${JSON.stringify(title)}).querySelector('.nav-icon svg').innerHTML`,
+			);
+		const project = await glyph(`.sidebar-group${withAttribute("data-key", projectKey("glyphed"))} .nav-marker svg`);
+		// The project, a folder inside its place, a session there and a member elsewhere share the project's glyph.
+		assert.equal(
+			await glyph(`.sidebar-group${withAttribute("data-key", folderKey(null, inside))} .nav-marker svg`),
+			project,
+		);
+		assert.equal(await inRecents("Inside"), project);
+		assert.equal(await inRecents("Member"), project);
+		// Any other place has its own.
+		const elsewhere = await glyph(
+			`.sidebar-group${withAttribute("data-key", folderKey(null, other))} .nav-marker svg`,
+		);
+		assert.notEqual(elsewhere, project);
+		assert.equal(await inRecents("Other"), elsewhere);
+		// A group's tooltip: a project's places, a folder's path.
+		assert.equal(
+			await browser.evaluate(
+				`document.querySelector(${JSON.stringify(`.sidebar-group${withAttribute("data-key", projectKey("glyphed"))} .group-link`)}).title`,
+			),
+			place,
+		);
+		// An open session's top bar shows its glyph before its path.
+		await browser.evaluate(
+			`[...document.querySelectorAll('${recent} .session-main')].find(e=>e.querySelector('.session-title').textContent==='Inside').click()`,
+		);
+		await browser.wait(`document.querySelector('.topbar h1')?.textContent==='Inside'`);
+		assert.equal(await glyph(".topbar .title-cwd svg.glyph-icon"), project);
 		projects.release();
 	});
 });

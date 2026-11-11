@@ -148,6 +148,41 @@ describe("views (fake provider)", () => {
 		assert.match(await tool({ action: "list" }), /Layout you arranged last/);
 	});
 
+	it("takes state, merge and layout given as JSON text, and refuses a state that is no object", async () => {
+		// Its own session: a harness that sends objects as strings.
+		const own = (await sessions.create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)).id;
+		const ownChat = await holdIn(owner, Chat, { session: own, conversation: 1 }, "participant");
+		const ownViews = await holdIn(owner, Views, { session: own }, "editor");
+		await tool(
+			{
+				action: "open",
+				kind: "custom",
+				title: "Note",
+				id: "note",
+				html: PAGE,
+				state: JSON.stringify({ text: "hi" }),
+			},
+			ownChat,
+		);
+		const state = await holdIn(owner, ViewState, { session: own, view: "note" }, "editor");
+		await until(state.value, (value) => JSON.stringify(value) === '{"text":"hi"}');
+		await tool({ action: "update", id: "note", merge: JSON.stringify({ more: 1 }) }, ownChat);
+		await until(state.value, (value) => JSON.stringify(value) === '{"text":"hi","more":1}');
+		assert.match(
+			await tool({ action: "arrange", layout: JSON.stringify({ row: ["transcript", "note"] }) }, ownChat),
+			/Arranged/,
+		);
+		assert.deepEqual((await until(ownViews.arrangement, (value) => value !== null))?.layout, {
+			row: ["transcript", "note"],
+		});
+		// A plain string is a view ID for a layout, and no state.
+		assert.match(await tool({ action: "arrange", layout: "note" }, ownChat), /Arranged/);
+		assert.doesNotMatch(await tool({ action: "update", id: "note", state: "plain text" }, ownChat), /Updated/);
+		assert.doesNotMatch(await tool({ action: "update", id: "note", state: [1, 2] }, ownChat), /Updated/);
+		assert.equal(JSON.stringify(state.value.value), '{"text":"hi","more":1}');
+		state.release();
+	});
+
 	it("saves people's state changes within bounds", async () => {
 		const state = await holdIn(owner, ViewState, { session, view: "glyph" }, "editor");
 		await state.set({ value: { points: 4 } }, BACKGROUND_CONTEXT);

@@ -92,7 +92,8 @@ const EntryIdsSchema = record(num());
  * rebuildable: a schema change drops it, and workers catch up from their cursors (0) at their next start.
  */
 export const SearchIndex = local("p2.search-index", {
-	version: 1,
+	/** 2: `mentions`. Only the server's plugins hold it, and they reload with it: no `accepts`. */
+	version: 2,
 	params: {},
 	members: {
 		/** The entry ID up to which the chosen conversation is indexed (0: nothing). */
@@ -110,6 +111,11 @@ export const SearchIndex = local("p2.search-index", {
 		history: method(obj({ session: str(), ...propertiesOf(HistoryQuerySchema) }), HistoryHitsSchema),
 		/** Message matches among `sessions` (literal terms, all required). */
 		messages: method(obj({ query: str(), sessions: arr(str()) }), arr(MessageHitSchema)),
+		/**
+		 * The sessions with a message matching `query` (keywords as `ftsQuery` reads them, all required) at or after
+		 * `since`, each with the time of its latest one (rollups' `mentions`).
+		 */
+		mentions: method(obj({ query: str({ minLength: 1, maxLength: 500 }), since: opt(num()) }), record(num())),
 		/** The index rebuilds running or failed (a job each: they survive a server restart). */
 		rebuilds: arr(RebuildSchema),
 		/** Starts re-indexing `session` from the start (`Search.rebuildIndex`); refuses an unknown session. */

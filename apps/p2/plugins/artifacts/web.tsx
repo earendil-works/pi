@@ -1,8 +1,12 @@
-import { compile, obj, union } from "@earendil-works/pi-schema";
-import { contribute, defineFacet, literal } from "@p2/app/v1";
+// Artifacts in the browser: the viewer over the chat (viewer.ts), the artifact list in the side panel and its top bar
+// button, the tool's card, and the artifact commands of the command menu (commands.tsx).
+import { contribute, defineFacet } from "@p2/app/v1";
 import {
 	ArtifactIcon,
 	ArtifactPicker,
+	CommandPages,
+	CommandSearches,
+	Commands,
 	closeLayers,
 	closePanel,
 	FilePanel,
@@ -19,30 +23,14 @@ import {
 	type ViewerItem,
 } from "@p2/app/v1/web";
 import type { ReactNode } from "react";
-import { DownloadInfoSchema } from "../files/contract.ts";
 import { artifactActivity } from "./activity.tsx";
-import { ArtifactInfoSchema, ArtifactList } from "./contract.ts";
+import { ARTIFACT_COMMANDS, ARTIFACT_PAGES, ARTIFACT_SEARCH } from "./commands.tsx";
+import { ArtifactList } from "./contract.ts";
 import { ArtifactPanel } from "./preview.tsx";
-
-const ViewerSchema = union([
-	obj({ kind: literal("file"), file: DownloadInfoSchema }, { open: true }),
-	obj({ kind: literal("artifact"), artifact: ArtifactInfoSchema }, { open: true }),
-]);
-const isViewer = compile(ViewerSchema).check;
+import { viewerItem, viewerLayer } from "./viewer.ts";
 
 /** The side panel's name for the artifact list (`Route.panel`). */
 const PANEL = "artifacts";
-
-/** Untrusted URL metadata is only a locator. HTTP routes authorize every content fetch. */
-function viewer(overlay: string | undefined): ViewerItem | undefined {
-	if (!overlay?.startsWith("viewer:")) return undefined;
-	try {
-		const value: unknown = JSON.parse(overlay.slice("viewer:".length));
-		return isViewer(value) ? value : undefined;
-	} catch {
-		return undefined;
-	}
-}
 
 function Content({ children }: { children?: ReactNode }) {
 	const route = useRoute();
@@ -54,9 +42,8 @@ function Content({ children }: { children?: ReactNode }) {
 	const shown = useSidePanelShown();
 
 	const top = route.layers.at(-1);
-	const item = viewer(top?.kind === "viewer" && top.name === "artifacts" ? top.locator : undefined);
-	const open = (item: ViewerItem): void =>
-		openLayer({ kind: "viewer", name: "artifacts", locator: `viewer:${JSON.stringify(item)}` });
+	const item = viewerItem(top);
+	const open = (item: ViewerItem): void => openLayer(viewerLayer(item));
 	return (
 		<SessionId.Provider value={route.session}>
 			<OpenViewer.Provider value={open}>
@@ -119,5 +106,8 @@ export default defineFacet((host) => {
 	contribute(host, "p2.web-artifacts", (self) => {
 		self.contribute(Slots, { "chat-content": Content, "artifact-actions": ArtifactButton });
 		self.contribute(ToolActivities, { artifact: artifactActivity });
+		self.contribute(Commands, ARTIFACT_COMMANDS);
+		self.contribute(CommandPages, ARTIFACT_PAGES);
+		self.contribute(CommandSearches, { artifacts: ARTIFACT_SEARCH });
 	});
 });
