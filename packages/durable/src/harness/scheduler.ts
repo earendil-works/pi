@@ -904,15 +904,22 @@ export class TaskScheduler {
 	}
 
 	/**
-	 * Add the conversations above `record` to `scopes`: those whose idleness a change of it can change. False when a node
-	 * on the way up is not known. A conversation already in `scopes` has everything above it there too.
+	 * Add the conversations above `record` to `scopes`: those whose idleness a change of it can change. False when an
+	 * owner edge or owner task on the way up is not known. A conversation already in `scopes` has everything above it
+	 * there too.
 	 */
 	#addScopesAbove(record: AnyTaskRecord, scopes: Set<ConversationId>): boolean {
-		for (const step of this.#above(parentOf(record))) {
-			if ("unknown" in step) return false;
-			if (!("conversation" in step)) continue;
-			if (scopes.has(step.conversation)) return true;
-			scopes.add(step.conversation);
+		// A child task lives in its owner's conversation, so the first conversation above a task is its own: the walk skips
+		// the owner chain between, which made a change deep in a long chain cost its depth.
+		let conversation = record.conversationId;
+		while (!scopes.has(conversation)) {
+			scopes.add(conversation);
+			const owner = this.#edge(conversation);
+			if (owner === undefined) return false;
+			if (owner === null) return true;
+			const node = this.#node(owner);
+			if (node === undefined) return false;
+			conversation = node.conversationId;
 		}
 		return true;
 	}
