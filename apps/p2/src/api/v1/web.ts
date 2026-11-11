@@ -20,6 +20,7 @@ export {
 	useCommandRouteTarget,
 	useCommandTargetRow,
 } from "../../web/command-menu/targets.ts";
+export { conversationKey } from "../../web/composer-focus.ts";
 export * from "../../web/composer-state.tsx";
 export * from "../../web/conversation-cache.ts";
 export * from "../../web/drag-size.ts";

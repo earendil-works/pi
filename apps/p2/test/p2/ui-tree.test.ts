@@ -81,12 +81,14 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 			["second", "Branches"],
 		);
 		await send(main, "other");
-		// Switching back to conversation 1 from the sidebar.
+		// Switching back to conversation 1 from the sidebar; its composer takes the focus once the switch is made.
+		await browser.evaluate(`document.activeElement?.blur()`);
 		await browser.evaluate(
 			`[...document.querySelectorAll('.sidebar-section[data-key=recent] .branch-row')].find(e=>e.textContent==='Branches').click()`,
 		);
 		await browser.wait(`location.pathname==='/s/${id}'`);
 		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: second')`);
+		await browser.wait(`document.activeElement === document.querySelector('.composer textarea')`);
 		assert.equal((await row()).main, 1);
 		// The rows keep their order. They stay shown across the switch; the main conversation is selected on the session's
 		// row, not on its branch's.

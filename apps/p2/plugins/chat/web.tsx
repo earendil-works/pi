@@ -27,6 +27,7 @@ import {
 	ContextUsage,
 	CostPanel,
 	closeLayers,
+	conversationKey,
 	conversationRoute,
 	type Detail,
 	DownIcon,
@@ -357,9 +358,17 @@ function Composer({
 	// The draft straight from the app's composer state, not through the screen's dock content: that arrives a layout
 	// effect after a keystroke, so the controlled textarea rendered the previous text first, which put the caret at the
 	// end on every keystroke and broke a phone keyboard's composition (its first tap on Send only closed the keyboard).
-	const { draft, setDraft } = useComposerState();
+	const { draft, setDraft, registerTextarea } = useComposerState();
 	const ownRef = useRef<HTMLTextAreaElement>(null);
 	const textarea = textareaRef ?? ownRef;
+	// The app's composer state focuses it on request (`focus`): opening a session, a reply, restored text.
+	const ref = useCallback(
+		(element: HTMLTextAreaElement | null) => {
+			textarea.current = element;
+			registerTextarea(element);
+		},
+		[textarea, registerTextarea],
+	);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: resizing follows the rendered draft, as in Pi Mobile.
 	useLayoutEffect(() => {
 		const element = textarea.current;
@@ -410,7 +419,7 @@ function Composer({
 			)}
 			{completion && <FileCompletionPopover completion={completion} />}
 			<textarea
-				ref={textarea}
+				ref={ref}
 				rows={1}
 				value={draft}
 				placeholder={busy ? (steer ? "Steer the current run…" : "Queue a follow-up…") : "Message Pi…"}
@@ -510,6 +519,8 @@ type ComposerProps = Omit<Parameters<typeof Composer>[0], "textareaRef">;
  * and its footer. Absent: nothing below the bar above (a one-shot agent's view).
  */
 type DockContent = {
+	/** The screen's key (`conversationKey`): an open's focus request goes to the composer of its own screen. */
+	readonly screen: string;
 	readonly above?: ReactNode;
 	readonly composer?: { readonly toBottom?: ReactNode } & (
 		| { readonly bar: ReactNode }
@@ -574,6 +585,11 @@ function useFrame(): Frame {
 function Dock({ frame, dockRef }: { frame: Frame; dockRef: (element: HTMLDivElement | null) => void }) {
 	const content = useSyncExternalStore(frame.contents.subscribe, frame.contents.snapshot);
 	const composer = content?.composer;
+	const { screenShown } = useComposerState();
+	// After the commit that put the screen's composer, or none, in place: the textarea is the one this screen shows.
+	useLayoutEffect(() => screenShown(content?.screen), [content, screenShown]);
+	// A list page replaces the chat: no chat screen shows, so opening the one shown before waits for it again.
+	useLayoutEffect(() => () => screenShown(undefined), [screenShown]);
 	return (
 		<div className="dock" ref={dockRef}>
 			{content?.above}
@@ -925,6 +941,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 		setReplyTo,
 		canReply,
 		mentionName,
+		focus,
 	} = composer;
 	// `/tree` from a message (docs/tree.md): the owner, in the main conversation. A reference of its own, as the switch
 	// reaches the session row (whose `main` moves this view) before its result; a user message's text fills the composer.
@@ -951,9 +968,9 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	const startReply = useCallback(
 		(target: { entryId: number; name: string }) => {
 			setReplyTo(target);
-			document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus();
+			focus();
 		},
-		[setReplyTo],
+		[setReplyTo, focus],
 	);
 	// Kept while reconnecting, as the composer is (`canWrite`).
 	const replying = canWrite && canReply ? replyTo : undefined;
@@ -979,9 +996,9 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 		(texts: readonly string[], after = false) => {
 			if (!texts.length) return;
 			setDraft((current) => (after ? joinDraft(current, ...texts) : joinDraft(...texts, current)));
-			document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus();
+			focus();
 		},
-		[setDraft],
+		[setDraft, focus],
 	);
 	// Who may write is known before the chat object is live (`canWrite`): drafts hold at once.
 	useRestoredDrafts(sessionId, conversationId, canWrite, restore);
@@ -1405,6 +1422,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	);
 	const place = useChatScreen(
 		{
+			screen: conversationKey({ session: sessionId, conversation: conversationId }),
 			above: subagentBar,
 			// A one-shot agent's view has no composer: its bar above has the Stop.
 			...(oneShot && canWrite
@@ -1702,6 +1720,7 @@ function NewSession() {
 	}, [start]);
 	const place = useChatScreen(
 		{
+			screen: conversationKey(NEW_SESSION),
 			composer: owner
 				? {
 						props: { busy: false, steer, setSteer, disabled: false, onSend: send, attaching },

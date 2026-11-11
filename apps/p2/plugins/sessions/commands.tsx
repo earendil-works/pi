@@ -216,6 +216,7 @@ function SessionResults() {
  */
 function SessionRow({ session, now }: { session: Session; now: number }) {
 	const { close } = useCommandMenu();
+	const { focusWhenOpen } = useComposerState();
 	const open = useRoute().session === session.id;
 	return (
 		<CommandMenu.Row
@@ -224,7 +225,10 @@ function SessionRow({ session, now }: { session: Session; now: number }) {
 			checked={open}
 			onSelect={async () => {
 				await close();
-				navigate({ session: session.id, conversation: session.main });
+				// After the close, which gives the focus back to where the menu opened from: the composer takes it from there.
+				const target = { session: session.id, conversation: session.main };
+				focusWhenOpen(target);
+				navigate(target);
 			}}
 		/>
 	);
