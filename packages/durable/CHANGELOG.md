@@ -2,9 +2,6 @@
 
 ## [Unreleased]
 
-### Fixed
-
-- `NodeExecutionEnv.listDir()` leaves out an entry removed between enumeration and `lstat` instead of failing, so a read-only JSONL open beside a live writer no longer rejects with `JSONL directory listing failed: ENOENT` when the writer renames a `.reclaim` file over a sidecar during the listing. Names that are not valid UTF-8, which `lstat` also reports as missing, are now left out the same way instead of failing the listing, as the directory readers already did ([#11994](https://github.com/earendil-works/pi/issues/11994))
 ### Breaking Changes
 
 - `RunEndTask` and `runEndTask` are renamed `HookTask` and `hookTask`, as `afterTools` and `onYield` hooks now ask for tasks too. Migration: rename the import in `afterRun` hooks.
@@ -24,6 +21,11 @@
 - Hooks that start tasks: `afterTools` and `onYield` hooks may return `{ tasks }`, run as the generation's children. An `afterTools` task ends the run with `{ terminate: true }` (`AfterToolsDecision`) or answers it with a steer; `onYield` tasks decide whether an answer stands while the run's inputs stay open (`pi.live.run.yield`): once all are terminal, the first in creation order that completed with a valid `{ continue }` (`YieldDecision`) continues the run, unless a user message or a reset was queued meanwhile.
 - Examples 38-46: signals, asking a person, a tool that waits for a webhook, a tool that polls, parallel nested calls, a subagent that waits, an approval gate, a review on yield, and an `afterTools` task that ends the run.
 
+### Fixed
+
+- `NodeExecutionEnv.listDir()` leaves out an entry removed between enumeration and `lstat` instead of failing, so a read-only JSONL open beside a live writer no longer rejects with `JSONL directory listing failed: ENOENT` when the writer renames a `.reclaim` file over a sidecar during the listing. Names that are not valid UTF-8, which `lstat` also reports as missing, are now left out the same way instead of failing the listing, as the directory readers already did ([#11994](https://github.com/earendil-works/pi/issues/11994))
+- Fixed `Submission.wait()` and `waitForTask()` leaving an unhandled promise rejection when the wait was cancelled or the Harness closed after the wait was checked but before its result reached the caller, as when a host shuts down while earlier commits are still being published. The caller still gets the rejection ([#11963](https://github.com/earendil-works/pi/issues/11963), [#11820](https://github.com/earendil-works/pi/issues/11820))
+
 ## [1.5.2] - 2026-11-10
 
 ## [1.5.1] - 2026-11-09
@@ -40,7 +42,6 @@
 
 ### Fixed
 
-- Fixed `Submission.wait()` and `waitForTask()` leaving an unhandled promise rejection when the wait was cancelled or the Harness closed after the wait was checked but before its result reached the caller, as when a host shuts down while earlier commits are still being published. The caller still gets the rejection ([#11963](https://github.com/earendil-works/pi/issues/11963), [#11820](https://github.com/earendil-works/pi/issues/11820))
 - Fixed `tool_search` not finding a deferred tool by property names and descriptions behind a local `$ref` in its parameters, as in MCP input schemas that put their models in `$defs`. Referenced definitions are read once, so recursive schemas do not loop, and definitions nothing references stay out of the search text ([#11803](https://github.com/earendil-works/pi/issues/11803))
 - Fixed a task staying `waiting`, or `completing` with idle waits never resolving, when the last task it waited for or held ended while a scheduler pass was planning, as with a generation waiting on parallel tool calls: the pass's cleanup erased the new notification. A pass now takes its candidates and finalize checks out of the pending sets before it plans, so notifications that arrive meanwhile stay for the next pass ([#11892](https://github.com/earendil-works/pi/issues/11892))
 - Fixed every code mode run failing with `URI malformed` when any callable tool had a `$ref` with a malformed percent escape (`#/$defs/%E0`) in its schema, even scripts that do not call that tool. The parameter now renders as `unknown` in the tool's declaration ([#11803](https://github.com/earendil-works/pi/issues/11803))
