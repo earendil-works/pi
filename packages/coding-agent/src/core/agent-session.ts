@@ -465,6 +465,7 @@ export class AgentSession {
 	private _abortDuringBeforeSettle = false;
 	private _isEmittingAgentSettled = false;
 	private readonly _deferredSettledActions: Array<() => Promise<void>> = [];
+	private readonly _deferredCompactionActions: Array<() => Promise<void>> = [];
 
 	private _resourceLoader: ResourceLoader;
 	private _customTools: ToolDefinition[];
@@ -1127,6 +1128,18 @@ export class AgentSession {
 	}
 
 	private _resolveIdleWaitIfIdle(): void {
+		// Start runs requested during compaction before releasing idle waiters, so waitForIdle() covers them.
+		if (this.isIdle) {
+			for (const action of this._deferredCompactionActions.splice(0)) {
+				action().catch((error) => {
+					this._extensionRunner.emitError({
+						extensionPath: "<runtime>",
+						event: "send_message",
+						error: error instanceof Error ? error.message : String(error),
+					});
+				});
+			}
+		}
 		if (!this.isIdle || !this._resolveIdleWait) {
 			return;
 		}
@@ -1475,6 +1488,8 @@ export class AgentSession {
 	 * Call this when completely done with the session.
 	 */
 	dispose(): void {
+		// Aborting compaction below would otherwise start these runs on the disposed session.
+		this._deferredCompactionActions.length = 0;
 		try {
 			this.abortRetry();
 			this.abortCompaction();
@@ -2447,9 +2462,10 @@ export class AgentSession {
 	/**
 	 * Send a custom message to the session. Creates a CustomMessageEntry.
 	 *
-	 * Handles four cases:
+	 * Handles five cases:
 	 * - Streaming: queues message, processed when loop pulls from queue
 	 * - Streaming + triggerTurn false: appended to state/session once the current turn ends
+	 * - Compacting + triggerTurn: sent once compaction or branch summarization ends; abort() and dispose() drop it
 	 * - Not streaming + triggerTurn: appends to state/session, starts new turn
 	 * - Not streaming + no trigger: appends to state/session, no turn
 	 *
@@ -2479,6 +2495,11 @@ export class AgentSession {
 				this.agent.steer(appMessage);
 			}
 		} else if (options?.triggerTurn) {
+			// A run started now would build on the branch compaction is replacing (#10982).
+			if (this.isCompacting) {
+				this._deferredCompactionActions.push(async () => await this.sendCustomMessage(message, options));
+				return;
+			}
 			if (this._isEmittingAgentSettled) {
 				this._deferredSettledActions.push(async () => await this.sendCustomMessage(message, options));
 				return;
@@ -2602,6 +2623,8 @@ export class AgentSession {
 		if (this._isAgentRunActive) {
 			this._agentRunAbortRequested = true;
 		}
+		// Runs deferred by compaction would otherwise start once the aborted compaction settles.
+		this._deferredCompactionActions.length = 0;
 		this.abortRetry();
 		this.abortCompaction();
 		this.abortBranchSummary();
