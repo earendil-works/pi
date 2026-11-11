@@ -16,6 +16,7 @@ export {
 	defineTable,
 	eq,
 	evolve,
+	evolveTable,
 	type HandleOf,
 	host as hostColumn,
 	int as columnInt,

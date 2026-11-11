@@ -1,4 +1,5 @@
 import {
+	type AcceptsTable,
 	contribute,
 	defineFacet,
 	deriveTyped,
@@ -11,10 +12,32 @@ import {
 } from "@p2/app/v1";
 import { Hosts, WorkerInitValues } from "@p2/app/v1/server";
 import { ChildRows } from "./children.ts";
-import { ChildStore, Subagents } from "./contract.ts";
+import { type Child, ChildStore, Subagents } from "./contract.ts";
 
 /** The most sessions whose children stay live (a live query needs a bound): every session, as the catalog's. */
 const WINDOW = 100_000;
+
+/** `Subagents` 2: pages read children without their time and failure; workers report them without. */
+const SUBAGENTS_ACCEPTS: AcceptsTable<typeof Subagents> = {
+	2: {
+		state: {
+			reader: {
+				children: (children) =>
+					Object.fromEntries(
+						Object.entries(children).map(([session, list]) => [
+							session,
+							list.map(({ updatedAt: _updatedAt, failure: _failure, ...child }) => child),
+						]),
+					),
+			},
+		},
+		methods: { report: { args: (old) => old } },
+	},
+};
+
+/** A child as a guest sees it: its failure without the detail. */
+const withoutDetail = (child: Child): Child =>
+	child.failure?.detail === undefined ? child : { ...child, failure: { reason: child.failure.reason } };
 
 export default defineFacet((host) => {
 	host.serve(ChildStore, (_params, self) => {
@@ -48,22 +71,32 @@ export default defineFacet((host) => {
 		});
 	});
 
-	host.serve(Subagents, (_params, principal, self) => {
-		const store = self.get(ChildStore, {});
-		if (isWorker(principal)) {
-			const { session, generation } = principal;
-			return {
-				variant: "reporter",
-				members: { report: ({ children }, ctx) => store.report({ session, generation, children }, ctx) },
-			};
-		}
-		if (isGuest(principal)) {
-			const children = deriveTyped(self, [store.children], ([value]) =>
-				Object.fromEntries(Object.keys(principal.sessions).map((session) => [session, value[session] ?? []])),
-			);
-			return { variant: "reader", members: { children } };
-		}
-		if (!isOwner(principal)) throw forbidden("owners and guests only");
-		return { variant: "reader", members: { children: store.children } };
-	});
+	host.serve(
+		Subagents,
+		(_params, principal, self) => {
+			const store = self.get(ChildStore, {});
+			if (isWorker(principal)) {
+				const { session, generation } = principal;
+				return {
+					variant: "reporter",
+					members: { report: ({ children }, ctx) => store.report({ session, generation, children }, ctx) },
+				};
+			}
+			if (isGuest(principal)) {
+				// A failure's reason, never its detail (an error's text: paths, stacks), as status keeps the worker's error.
+				const children = deriveTyped(self, [store.children], ([value]) =>
+					Object.fromEntries(
+						Object.keys(principal.sessions).map((session) => [
+							session,
+							(value[session] ?? []).map(withoutDetail),
+						]),
+					),
+				);
+				return { variant: "reader", members: { children } };
+			}
+			if (!isOwner(principal)) throw forbidden("owners and guests only");
+			return { variant: "reader", members: { children: store.children } };
+		},
+		{ accepts: SUBAGENTS_ACCEPTS },
+	);
 });

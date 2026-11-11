@@ -66,6 +66,7 @@ const bash: ToolActivity = {
 			style: "code",
 		};
 	},
+	brief: "Running",
 	argument: (tool) => firstLine(stringOf(tool.args.command)),
 	failure: (tool) => {
 		const code = /exited with code (\d+)/.exec(tool.output)?.[1];
@@ -128,6 +129,7 @@ const read: ToolActivity = {
 		};
 	},
 	running: (step) => ({ kind: "read", verb: "Reading", object: fileName(pathOf(step)), style: "file" }),
+	brief: "Reading",
 	argument: (tool, cwd) => relativePath(cwd, stringOf(tool.args.path)),
 	summary: (count) => (count === 1 ? "read a file" : `read ${count} files`),
 	Detail: ReadDetail,
@@ -165,6 +167,7 @@ const change = (verb: string, running: string): ToolActivity => ({
 		description: failureOf(step) ?? pathOf(step),
 	}),
 	running: (step) => ({ kind: "edit", verb: running, object: fileName(pathOf(step)), style: "file" }),
+	brief: running,
 	argument: (tool, cwd) => relativePath(cwd, stringOf(tool.args.path)),
 	summary: edited,
 	Detail: ChangeDetail,

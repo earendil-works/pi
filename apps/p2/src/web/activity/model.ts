@@ -551,6 +551,11 @@ export type ToolActivity = {
 	describe?: (step: Step) => Described;
 	/** Its words while it runs ("Running npm test"); without it, `describe`'s. */
 	running?: (step: Step) => Label;
+	/**
+	 * One or two words for a call while it runs, where there is room for no more and its arguments are not known (a
+	 * subagent's row in the sidebar: "Reading"); without it, the tool's name.
+	 */
+	brief?: string;
 	/** Its main argument for its row in the sheet (`cwd`: the session's working directory, for relative paths). */
 	argument?: (tool: ToolView, cwd: string | undefined) => string;
 	/** How a failed call's row says it failed ("exit 1"); without it, "failed". */

@@ -49,6 +49,7 @@ function TerminalDetail({ step }: { step: Step }) {
 }
 
 export const terminalActivity: ToolActivity = {
+	brief: "Using terminal",
 	describe: (step) => ({
 		label: { kind: "command", verb: "Terminal", object: commandLine(step.tool), style: "code" },
 		description: failureOf(step) ?? lastLine(step.tool.output),

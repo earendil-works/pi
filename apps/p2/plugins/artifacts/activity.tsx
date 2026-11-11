@@ -82,6 +82,7 @@ function ArtifactDetail({ step }: { step: Step }) {
 }
 
 export const artifactActivity: ToolActivity = {
+	brief: "Making artifact",
 	describe(step) {
 		const details = detailsOf(step.tool);
 		return {

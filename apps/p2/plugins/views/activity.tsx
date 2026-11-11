@@ -32,6 +32,7 @@ const objectOf = (step: Step): string => {
 const kindOf = (action: string) => (["read", "list", "saved", "help"].includes(action) ? "read" : "artifact");
 
 export const viewActivity: ToolActivity = {
+	brief: "Using views",
 	describe(step) {
 		const action = stringOf(step.tool.args.action);
 		const [verb] = WORDS[action] ?? ["Used views"];

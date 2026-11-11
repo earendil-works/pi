@@ -1,5 +1,6 @@
 import { num, obj } from "@earendil-works/pi-schema";
 import {
+	type AcceptsTable,
 	canView,
 	defineFacet,
 	defineTypedState,
@@ -14,12 +15,30 @@ import {
 import { Hosts, serverOf } from "@p2/app/v1/server";
 import { ReportFields, SessionMetrics, SessionStatus, type Status, StatusStore, WorkerControl } from "./contract.ts";
 
-/** The latest report of each session's worker, with the generation that sent it. */
+/** The latest report of each session's worker, with the generation that sent it. 2: `work`. */
 const Reports = defineTypedState("p2.status-reports", {
 	schema: obj({ reports: record(obj({ generation: num(), ...ReportFields })) }),
-	version: 1,
+	version: 2,
 	initial: () => ({ reports: {} }),
 });
+
+/**
+ * `SessionStatus` 1: pages read statuses without `work`; a worker built then reports none (its conversations show
+ * as busy without a step).
+ */
+const STATUS_ACCEPTS: AcceptsTable<typeof SessionStatus> = {
+	1: {
+		state: {
+			reader: {
+				statuses: (statuses) =>
+					Object.fromEntries(
+						Object.entries(statuses).map(([session, { work: _work, ...status }]) => [session, status]),
+					),
+			},
+		},
+		methods: { report: { args: (old) => ({ ...old, work: {} }) } },
+	},
+};
 
 export default defineFacet((host) => {
 	// Who looks at a session: one entry per `SessionMetrics` reference (its params name the session and the viewer).
@@ -35,19 +54,25 @@ export default defineFacet((host) => {
 					if (!worker.running)
 						return [
 							session,
-							{ running: false, tasks: 0, busy: [], ...(worker.error ? { error: worker.error } : {}) },
+							{
+								running: false,
+								tasks: 0,
+								busy: [],
+								work: {},
+								...(worker.error ? { error: worker.error } : {}),
+							},
 						];
 					const report = latest[session];
 					if (report === undefined || report.generation !== worker.generation)
-						return [session, { running: true, tasks: 0, busy: [] }];
-					const { generation: _generation, ...work } = report;
-					return [session, { running: true, ...work }];
+						return [session, { running: true, tasks: 0, busy: [], work: {} }];
+					const { generation: _generation, ...reported } = report;
+					return [session, { running: true, ...reported }];
 				}),
 			),
 		);
 		return {
 			statuses,
-			report: async ({ session, generation, tasks, busy, usage }, ctx) => {
+			report: async ({ session, generation, tasks, busy, work, usage }, ctx) => {
 				// A report of an older worker (one that exited while its report travelled) is dropped.
 				const worker = hosts.workers.value[session];
 				if (worker === undefined || !worker.running || worker.generation !== generation) return null;
@@ -56,6 +81,7 @@ export default defineFacet((host) => {
 						generation,
 						tasks,
 						busy: [...busy].sort((a, b) => a - b),
+						work,
 						...(usage ? { usage } : {}),
 					};
 				}, ctx);
@@ -93,30 +119,34 @@ export default defineFacet((host) => {
 		return { variant: "reader", members: { clients, usage } };
 	});
 
-	host.serve(SessionStatus, (_params, principal, self) => {
-		const store = self.get(StatusStore, {});
-		if (isWorker(principal)) {
-			const { session, generation } = principal;
-			return {
-				variant: "reporter",
-				members: { report: (report, ctx) => store.report({ ...report, session, generation }, ctx) },
-			};
-		}
-		if (isGuest(principal)) {
-			// As in Pi Mobile: whether it runs, its work and spend, never the worker's error text (paths, stacks).
-			const statusesView = deriveTyped(self, [store.statuses], ([statuses]) =>
-				Object.fromEntries(
-					Object.keys(principal.sessions).flatMap((session) => {
-						const status = statuses[session];
-						if (status === undefined) return [];
-						const { running, tasks, busy, usage } = status;
-						return [[session, { running, tasks, busy, ...(usage === undefined ? {} : { usage }) }]];
-					}),
-				),
-			);
-			return { variant: "reader", members: { statuses: statusesView } };
-		}
-		if (!isOwner(principal)) throw forbidden("owners and guests only");
-		return { variant: "reader", members: { statuses: store.statuses } };
-	});
+	host.serve(
+		SessionStatus,
+		(_params, principal, self) => {
+			const store = self.get(StatusStore, {});
+			if (isWorker(principal)) {
+				const { session, generation } = principal;
+				return {
+					variant: "reporter",
+					members: { report: (report, ctx) => store.report({ ...report, session, generation }, ctx) },
+				};
+			}
+			if (isGuest(principal)) {
+				// As in Pi Mobile: whether it runs, its work and spend, never the worker's error text (paths, stacks).
+				const statusesView = deriveTyped(self, [store.statuses], ([statuses]) =>
+					Object.fromEntries(
+						Object.keys(principal.sessions).flatMap((session) => {
+							const status = statuses[session];
+							if (status === undefined) return [];
+							const { running, tasks, busy, work, usage } = status;
+							return [[session, { running, tasks, busy, work, ...(usage === undefined ? {} : { usage }) }]];
+						}),
+					),
+				);
+				return { variant: "reader", members: { statuses: statusesView } };
+			}
+			if (!isOwner(principal)) throw forbidden("owners and guests only");
+			return { variant: "reader", members: { statuses: store.statuses } };
+		},
+		{ accepts: STATUS_ACCEPTS },
+	);
 });

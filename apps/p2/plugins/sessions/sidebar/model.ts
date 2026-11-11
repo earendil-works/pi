@@ -5,14 +5,18 @@
 import { placeSeed, projectSeed } from "../../glyphs/seed.ts";
 import type { Project } from "../../projects/contract.ts";
 import type { RollupWindow } from "../../rollups/contract.ts";
+import type { Work } from "../../status/contract.ts";
 import type { Child } from "../../subagents/contract.ts";
 import type { Session, SidebarWindow } from "../contract.ts";
 
 /** A session as the sidebar shows it: its catalog row with its subagents, its worker's state and an operation. */
 export type SidebarRow = Session & {
 	subagents: Child[];
-	/** `unread`: a finished answer the owner has not read on any device (see `SessionReads`). */
-	worker: { busy: number[]; error?: string; unread?: boolean };
+	/**
+	 * `work`: what each busy conversation does, by conversation ID. `unread`: a finished answer the owner has not read on
+	 * any device (see `SessionReads`).
+	 */
+	worker: { busy: number[]; work: Readonly<Record<string, Work>>; error?: string; unread?: boolean };
 	/** A lifecycle operation of the session: running (`label` only), or failed with its error and a Dismiss. */
 	operation?: { readonly label: string; readonly error?: string; readonly dismiss?: () => void };
 };

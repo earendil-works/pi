@@ -409,11 +409,12 @@
 .conversation-row.selected {
 	color: var(--text);
 }
-.subagent-location,
-.subagent-model {
-	max-width: 8em;
+/* A subagent's step or how its last run ended, in its session's time column (right-aligned to the same edge): a word
+   or two, cut with "…" rather than squeezing its name away. */
+.subagent-step {
+	max-width: 9em;
 	overflow: hidden;
-	font-family: var(--mono);
+	text-align: right;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
@@ -439,7 +440,7 @@
 	white-space: nowrap;
 }
 
-/* A branch's mark at the trailing end (where a subagent shows its model). With a fine pointer the rename pencil takes
+/* A branch's mark at the trailing end (where a subagent shows its step). With a fine pointer the rename pencil takes
    its place on hover or focus; on touch both show, the pencil after the mark. */
 .branch-mark {
 	display: inline-flex;

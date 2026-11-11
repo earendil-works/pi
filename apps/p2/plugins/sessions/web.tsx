@@ -190,6 +190,7 @@ function useSidebarData() {
 					env: session.env ?? null,
 					worker: {
 						busy,
+						work: statuses?.[session.id]?.work ?? {},
 						error: statuses?.[session.id]?.error,
 						unread: (answers?.[session.id] ?? 0) > (reads?.[session.id] ?? 0),
 					},

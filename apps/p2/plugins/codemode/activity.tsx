@@ -39,6 +39,7 @@ function ScriptDetail({ step }: { step: Step }) {
 }
 
 export const codemodeActivity: ToolActivity = {
+	brief: "Running script",
 	describe(step) {
 		const count = step.tool.calls?.length ?? 0;
 		const failed = step.tool.calls?.filter((call) => call.status === "error").length ?? 0;

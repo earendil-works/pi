@@ -1,35 +1,42 @@
-// Pages, TUIs and plugins built before a deploy keep working: the providers of `Sessions`, `SessionTree` and `Catalog`
-// still bind the versions released before `/tree` and its branch labels, through their `accepts`, and map the current
-// state and results back. The old contracts below are copied verbatim from the releases that bundled them
-// (`Sessions` v3 and `Catalog` v2 from 0a730c8a7, `Sessions` v4, `Catalog` v3 and `SessionTree` v1 from e88525506,
-// `Sessions` v5 from 9ff0ebfd0, `Envs` v1 from 2a32a605a and v2 from d07548004), so their fingerprints are the ones
-// old bundles send.
+// Pages, TUIs, workers and plugins built before a deploy keep working: the providers of `Sessions`, `SessionTree`,
+// `Catalog`, `Envs`, `SessionStatus` and `Subagents` still bind the versions released before, through their `accepts`,
+// and map the current state, arguments and results between versions. The old contracts below are copied verbatim from
+// the releases that bundled them (`Sessions` v3 and `Catalog` v2 from 0a730c8a7, `Sessions` v4, `Catalog` v3 and
+// `SessionTree` v1 from e88525506, `Sessions` v5 from 9ff0ebfd0, `Envs` v1 from 2a32a605a and v2 from d07548004,
+// `SessionStatus` v1 and `Subagents` v2 from 6e11a00a0), so their fingerprints are the ones old bundles send.
 
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
-import { arr, bool, int, nul, num, obj, opt, str, union } from "@earendil-works/pi-schema";
+import type { Usage } from "@earendil-works/pi-ai";
+import type { ConversationView } from "@earendil-works/pi-durable";
+import { arr, bool, int, nul, num, obj, opt, str, union, unknown } from "@earendil-works/pi-schema";
 import {
 	BACKGROUND_CONTEXT,
 	DirectoryListingSchema,
 	evolve,
+	LocationSchema,
 	literal,
 	local,
 	ModelRefSchema,
 	method,
 	param,
 	propertiesOf,
+	record,
 	remote,
 	serverHost,
 	sessionHost,
 	ThinkingLevelSchema,
+	unsafe,
 } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Envs, EnvTestSchema, SandboxStatusSchema } from "../../plugins/envs/contract.ts";
 import { SandboxMountSchema, SshEnvConfigSchema } from "../../plugins/envs/schema.ts";
 import { CreateSchema, MAX_TITLE, type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
+import { Subagents } from "../../plugins/subagents/contract.ts";
 import { SessionTree } from "../../plugins/tree/contract.ts";
 import type { Host } from "../../src/runtime/chord.ts";
+import { Hosts } from "../../src/runtime/server.ts";
 import { bound, boundIn, type Fixture, holdIn, startFixture, until } from "./helpers.ts";
 
 const Id = obj({ id: str() });
@@ -354,6 +361,93 @@ const EnvsV2 = evolve(EnvsV1, (e) =>
 		.args("delete", obj({ name: str(), force: opt(bool()) })),
 );
 
+/** 6e11a00a0's `StatusSchema`, `StatusesSchema` and `ReportFields`: no per-conversation work. */
+const StatusSchemaV1 = obj({
+	/** A worker process runs for the session. */
+	running: bool(),
+	error: opt(str()),
+	usage: opt(unsafe<Usage>(unknown())),
+	/** Live Durable tasks (foreground and background). */
+	tasks: num(),
+	/** Conversations with foreground work, ascending. */
+	busy: arr(num()),
+});
+const StatusesSchemaV1 = record(StatusSchemaV1);
+const ReportFieldsV1 = {
+	tasks: num(),
+	busy: arr(num()),
+	usage: opt(unsafe<Usage>(unknown())),
+};
+const ReportSchemaV1 = obj(ReportFieldsV1);
+
+/** `SessionStatus` as 6e11a00a0 declared it. */
+const SessionStatusV1 = remote("p2.session-status", {
+	version: 1,
+	params: {},
+	hostAddress: serverHost,
+	variants: {
+		reader: { state: { statuses: StatusesSchemaV1 } },
+		reporter: { methods: { report: method(ReportSchemaV1) } },
+	},
+});
+
+/** 6e11a00a0's `ChildSchema`: no time or failure. */
+const ChildSchemaV2 = obj({
+	/** A subagent's name; a one-shot agent's label. */
+	name: str(),
+	/** `agent`: a code mode script's one-shot agent, read-only and listed on the script's tool card, not the sidebar. */
+	kind: opt(literal("agent")),
+	/** A one-shot agent's nested call ID (`<script call ID>/c<n>`), as the script's tool card lists it. */
+	callId: opt(str()),
+	/** An archived subagent: hidden in the sidebar's archived row; still usable. */
+	archived: opt(bool()),
+	conversationId: num(),
+	model: str(),
+	thinkingLevel: str(),
+	tools: arr(str()),
+	/** A subagent's own location (environment and cwd, e.g. a git worktree); absent: it follows the session. */
+	location: opt(LocationSchema),
+	lastEntryId: num(),
+});
+const ChildrenSchemaV2 = record(arr(ChildSchemaV2));
+
+/** `Subagents` as 6e11a00a0 declared it. */
+const SubagentsV2 = remote("p2.subagents", {
+	// 2: a child's own location instead of its own cwd.
+	version: 2,
+	params: {},
+	hostAddress: serverHost,
+	variants: {
+		reader: { state: { children: ChildrenSchemaV2 } },
+		reporter: { methods: { report: method(obj({ children: arr(ChildSchemaV2) })) } },
+	},
+});
+
+/** The fields a status and a child had in the released versions (the current ones add more). */
+const STATUS_KEYS_V1 = new Set(["running", "error", "usage", "tasks", "busy"]);
+const CHILD_KEYS_V2 = new Set([
+	"name",
+	"kind",
+	"callId",
+	"archived",
+	"conversationId",
+	"model",
+	"thinkingLevel",
+	"tools",
+	"location",
+	"lastEntryId",
+]);
+const added = (value: object, released: ReadonlySet<string>): Record<string, unknown> =>
+	Object.fromEntries(Object.entries(value).filter(([key]) => !released.has(key)));
+const texts = (view: ConversationView | null | undefined): string[] =>
+	(view?.entries ?? []).flatMap((entry) =>
+		(entry.model ?? []).flatMap((message) =>
+			typeof message.content === "string"
+				? [message.content]
+				: message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])),
+		),
+	);
+
 describe("older contract versions against the current server (fake provider)", () => {
 	let fixture: Fixture;
 	let owner: Host;
@@ -383,6 +477,13 @@ describe("older contract versions against the current server (fake provider)", (
 	after(async () => {
 		await fixture?.close();
 	});
+
+	const workerGeneration = (id: string): Promise<number> =>
+		fixture.server.host.root(async (ctx) => {
+			const generation = (await ctx.get(Hosts, {})).workers.value[id]?.generation;
+			assert(generation !== undefined, `no worker for ${id}`);
+			return generation;
+		}, BACKGROUND_CONTEXT);
 
 	it("binds Sessions v5: rows as they are, create answered with its row", async () => {
 		const ref = await boundIn(owner, SessionsV5, {}, "owner");
@@ -453,6 +554,80 @@ describe("older contract versions against the current server (fake provider)", (
 		await current.delete({ name: "v2-box" }, BACKGROUND_CONTEXT).catch(() => {});
 		ref.release();
 		current.release();
+	});
+
+	it("binds SessionStatus v1 as a reader: statuses without per-conversation work", async () => {
+		const current = await holdIn(owner, SessionStatus, {}, "reader");
+		const now = await until(current.statuses, (value) => value?.[session.id]?.running === true);
+		assert.notDeepEqual(added(now[session.id]!, STATUS_KEYS_V1), {}, "the current status has more fields");
+		const ref = await boundIn(owner, SessionStatusV1, {}, "reader");
+		const statuses = await until(ref.statuses, (value) => value?.[session.id]?.running === true);
+		assert.deepEqual(added(statuses[session.id]!, STATUS_KEYS_V1), {});
+		assert.equal(statuses[session.id]!.tasks, 0);
+		ref.release();
+		current.release();
+	});
+
+	it("binds SessionStatus v1 as a worker: its report is accepted, with no conversation's work", async () => {
+		// The open chat keeps the session's worker running, so a report of its generation counts.
+		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const current = await holdIn(owner, SessionStatus, {}, "reader");
+		await until(current.statuses, (value) => value?.[session.id]?.running === true);
+		const generation = await workerGeneration(session.id);
+		const worker = await boundIn(
+			fixture.as({ kind: "worker", session: session.id, generation }),
+			SessionStatusV1,
+			{},
+			"reporter",
+		);
+		await worker.report({ tasks: 4, busy: [9, 2] }, BACKGROUND_CONTEXT);
+		const statuses = await until(current.statuses, (value) => value?.[session.id]?.tasks === 4);
+		const { running, tasks, busy, ...rest } = statuses[session.id]!;
+		assert.deepEqual({ running, tasks, busy }, { running: true, tasks: 4, busy: [2, 9] });
+		// The field version 2 adds (each busy conversation's work) is empty.
+		assert.deepEqual(Object.values(added(rest, STATUS_KEYS_V1)), [{}]);
+		await worker.report({ tasks: 0, busy: [] }, BACKGROUND_CONTEXT);
+		await until(current.statuses, (value) => value?.[session.id]?.tasks === 0);
+		worker.release();
+		current.release();
+		chat.release();
+	});
+
+	it("binds Subagents v2 as a reader and a worker: children without time and failure", async () => {
+		// The main conversation is the edited branch (conversation 1 is an earlier one, read-only).
+		const chat = await holdIn(owner, Chat, { session: session.id, conversation: branch }, "participant");
+		const current = await holdIn(owner, Subagents, {}, "reader");
+		await chat.send({ text: "subagent", requestId: "subagent" }, BACKGROUND_CONTEXT);
+		await until(chat.view, (view) =>
+			texts(view).some(
+				(text) => text.startsWith("[answered, no reply needed]") && text.includes("Echo: hello helper"),
+			),
+		);
+		const listed = await until(current.children, (value) =>
+			Boolean(value?.[session.id]?.some((child) => Object.keys(added(child, CHILD_KEYS_V2)).length > 0)),
+		);
+		const child = listed[session.id]!.find((each) => each.name === "helper")!;
+		const reader = await boundIn(owner, SubagentsV2, {}, "reader");
+		const old = await until(reader.children, (value) => value?.[session.id]?.length === 1);
+		assert.deepEqual(old[session.id], [
+			Object.fromEntries(Object.entries(child).filter(([key]) => CHILD_KEYS_V2.has(key))),
+		]);
+		reader.release();
+		// A worker built then reports its children without the new fields; they read as absent.
+		const generation = await workerGeneration(session.id);
+		const worker = await boundIn(
+			fixture.as({ kind: "worker", session: session.id, generation }),
+			SubagentsV2,
+			{},
+			"reporter",
+		);
+		const reported = { ...old[session.id]![0]!, name: "from-v2" };
+		await worker.report({ children: [reported] }, BACKGROUND_CONTEXT);
+		const replaced = await until(current.children, (value) => value?.[session.id]?.[0]?.name === "from-v2");
+		assert.deepEqual(replaced[session.id], [reported]);
+		worker.release();
+		current.release();
+		chat.release();
 	});
 
 	it("binds Catalog v2 and v3 on the server", async () => {

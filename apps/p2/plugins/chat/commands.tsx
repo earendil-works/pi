@@ -23,7 +23,7 @@ import {
 import { type ReactNode, useCallback, useMemo } from "react";
 import { Models, type ResourceSnapshot } from "../models/contract.ts";
 import { type Session, Sessions } from "../sessions/contract.ts";
-import { type Child, Subagents } from "../subagents/contract.ts";
+import { type Child, modelRefOf, Subagents } from "../subagents/contract.ts";
 import { Chat } from "./contract.ts";
 import { newSessionChoice, thinkingLevelOf } from "./model-choice.ts";
 
@@ -257,12 +257,8 @@ export function conversationOf(id: string): { readonly session: string; readonly
 
 /** A subagent's model as it reports it (`provider/modelId`, the model ID may hold more slashes). */
 function childChoice(child: Child): ModelChoice | undefined {
-	const slash = child.model.indexOf("/");
-	if (slash <= 0) return undefined;
-	return {
-		model: { provider: child.model.slice(0, slash), modelId: child.model.slice(slash + 1) },
-		thinkingLevel: thinkingLevelOf(child.thinkingLevel),
-	};
+	const model = modelRefOf(child.model);
+	return model && { model, thinkingLevel: thinkingLevelOf(child.thinkingLevel) };
 }
 
 /** Sets the model of a conversation (its worker starts if it is not running). */

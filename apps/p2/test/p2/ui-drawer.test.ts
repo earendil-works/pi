@@ -206,11 +206,18 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		);
 		await browser.click(".session-header.has-subagents .subagent-toggle");
 		await browser.wait(`!${conversations}.hidden && ${conversations}.querySelector('.subagent-row')`);
+		// An idle subagent's row ends with when it was last active, in its session's time column; its model and where it
+		// works are its tooltip.
+		const subagentRow = `document.querySelector('.nav-row:has(> .subagent-row)')`;
+		await browser.wait(`${subagentRow}.querySelector('.session-time')?.textContent === 'now'`);
+		assert.equal(await browser.evaluate<number>(`${subagentRow}.querySelectorAll('.subagent-model').length`), 0);
+		const edges = await browser.evaluate<number[]>(
+			`[${subagentRow}.closest('.session-row').querySelector('.session-header .session-time'), ${subagentRow}.querySelector('.session-time')].map(e=>Math.round(e.getBoundingClientRect().right))`,
+		);
+		assert.equal(edges[0], edges[1]);
 		assert.equal(
-			await browser.evaluate<string>(
-				`document.querySelector('.nav-row:has(> .subagent-row) .subagent-model').textContent`,
-			),
-			"faux-1",
+			await browser.evaluate<string>(`${subagentRow}.querySelector('.subagent-row').title`),
+			"faux-1 · off\nFollows the session",
 		);
 		await browser.click(".session-header.has-subagents .subagent-toggle");
 		await browser.wait(`${conversations}.hidden`);
@@ -226,6 +233,8 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		await browser.wait(
 			`!${conversations}.hidden && document.querySelector('.nav-row:has(> .subagent-row) .working-mark')`,
 		);
+		// While it works, its row ends with its step: the model's answer streams.
+		await browser.wait(`${subagentRow}.querySelector('.subagent-step')?.textContent === 'Thinking'`);
 		await browser.click(".subagent-row");
 		await browser.wait(
 			`location.pathname.endsWith('/c/${child.conversationId}') && document.querySelector('.subagent-row.active')`,
@@ -233,6 +242,8 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		const status = await holdIn(owner, SessionStatus, {}, "reader");
 		await childChat.stop(BACKGROUND_CONTEXT);
 		await until(status.statuses, (states) => !states?.[pinned.id]?.busy.includes(child.conversationId));
+		// A stopped run says so at the row's end (a tool's step words: test/p2/subagent-state.test.ts).
+		await browser.wait(`${subagentRow}.querySelector('.subagent-step')?.textContent === 'Stopped'`);
 		// With `/tree` branches as well, the one control shows the branch rows, then the subagents, and hides both.
 		await until(status.statuses, (states) => states?.[pinned.id]?.tasks === 0);
 		const tree = await holdIn(owner, SessionTree, { session: pinned.id }, "owner");

@@ -33,7 +33,7 @@ function row(id: string, change: Partial<SidebarRow> = {}): SidebarRow {
 		main: 1,
 		branches: [],
 		subagents: [],
-		worker: { busy: [] },
+		worker: { work: {}, busy: [] },
 		...change,
 	};
 }

@@ -216,11 +216,11 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 			await browser.evaluate(text(".subagent-wrap .subagent-bar span")),
 			`Tools: none · in ${worktree.replace(/^\/home\/[^/]+/, "~")}`,
 		);
-		// The sidebar row shows its own location (it stays there when the session moves).
-		assert.equal(
-			await browser.evaluate(text(".nav-row:has(> .subagent-row.active) .subagent-location")),
-			worktree.replace(/^\/home\/[^/]+/, "~"),
+		// Its row's tooltip names its own location (it stays there when the session moves).
+		const tooltip = await browser.evaluate<string>(
+			`document.querySelector('.nav-row:has(> .subagent-row.active) .subagent-row').title`,
 		);
+		assert.equal(tooltip.split("\n")[1], `Works in ${worktree.replace(/^\/home\/[^/]+/, "~")}`);
 		await browser.click('button[aria-label="Workspace files and changes"]');
 		await browser.wait(`[...document.querySelectorAll('.workspace-name')].some(e=>e.textContent==='marker.txt')`);
 		assert.equal(await browser.evaluate(`document.querySelectorAll('.workspace-name').length`), 1);
