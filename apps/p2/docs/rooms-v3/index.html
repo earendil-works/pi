@@ -116,7 +116,8 @@ table{max-width:100%}
   <div class="cover-note"><p>Based on the working model <code>apps/p2/docs/rooms-v3-model.md</code>, the independent verdicts of claude-opus-5-5
 (<code>/tmp/rooms-verdict-opus.md</code>) and gpt-6-astra (<code>/tmp/rooms-verdict-astra.md</code>), and the use cases worked through by
 claude-opus-5-5 (games, <code>/tmp/uc-opus.md</code>), gpt-6-astra (documents and boards, <code>/tmp/uc-astra.md</code>) and gpt-6.1-sol
-(cross-cutting, <code>/tmp/uc-sol.md</code>), each cross-reviewed by another. Nothing here is built. Latencies are estimates
+(cross-cutting, <code>/tmp/uc-sol.md</code>), each cross-reviewed by another (<code>/tmp/uc-review-{opus,astra,sol}.md</code>); second
+edition with all three cross-reviews folded in. Nothing here is built. Latencies are estimates
 at 200 ms round trip; server costs come from an isolated approximation of today&#39;s publish path, not from a v3
 implementation. Notes marked <em>review</em> are open points found while working through the cases.</p>
 </div>
@@ -171,8 +172,8 @@ number; the server accepts it by numbers alone, trims the inputs it covers, and 
 <li><strong>Cursors and motion stay out of the sequence.</strong> Events carry motion (cursors, drags, paddles); peer state holds
 each view&#39;s latest value a joiner must see (a selection, a grabbed point, &quot;typing&quot;). A moving mouse never touches
 the journal.</li>
-<li><strong>Games fit, with three changes.</strong> Connect Four is the model&#39;s best case. Pong works as a hybrid (paddles as
-events, one input per hit). A small RTS needs ticks and presence in the sequence and a stable player identity.</li>
+<li><strong>Games fit, with changes.</strong> Connect Four is the model&#39;s best case. Pong works as a hybrid (paddles as events, one
+input per hit), with visible corrections at 200 ms. A small RTS needs sequenced ticks and explicit seats first.</li>
 <li><strong>Boards fit while they are small.</strong> Max&#39;s glyph editor works well; a whiteboard hits the 256 Ki-character
 checkpoint limit after about 150 strokes.</li>
 <li><strong>The agent sees fresh computed state only while a view runs.</strong> Otherwise it gets the last checkpoint plus the
@@ -344,8 +345,10 @@ room.<span class="tk-f">onPeerState</span>((id, v) =&gt; <span class="tk-f">draw
 <p>At t = 0 Alice clicks column 3; the kit sends <code>drop { col: 3 }</code> with her counter and the sketch draws a ghost. At
 about 100 ms the server checks the counter, stamps <code>seq 18</code>, appends and fans out, without parsing the input. At
 about 200 ms both views apply it; the piece falls, the ghost clears, <code>drop()</code> resolves <code>{ seq: 18 }</code>. If Bob clicked
-during his wait, his <code>drop</code> becomes <code>seq 19</code> and is a no-op in every view: his ghost disappears, and nothing tells him
-why. After a quiet 300 ms the checkpoint writer posts the 250-byte board and the server saves it.</p>
+while it was still Alice&#39;s turn and his <code>drop</code> reached the server before hers, it becomes <code>seq 17</code> and is a no-op in
+every view: his ghost disappears, and nothing tells him why. If his click reaches the server after hers, it is his
+turn by then and the move counts, although he made it without seeing her piece; a sketch that wants to prevent that
+sends the turn number it saw and refuses a mismatch (Sol, cross-review). After a quiet 300 ms the checkpoint writer posts the 250-byte board and the server saves it.</p>
 <h3 id="joining-the-agent-persistence">Joining, the agent, persistence</h3>
 <p>A joiner gets the checkpoint (usually current, thanks to the quiet rule) and folds the few inputs after it. A
 dropped link keeps the seat and the kit resends an unconfirmed <code>drop</code>, applied once. The agent reads the 250-byte
@@ -355,7 +358,8 @@ to ask again. A server crash rewinds by whatever was not saved yet; with a save 
 is a move or two.</p>
 <h3 id="how-it-fails">How it fails</h3>
 <ul>
-<li><strong>Clicking out of turn:</strong> the ghost appears and vanishes with no message; <code>drop()</code> only says it was sequenced.</li>
+<li><strong>Clicking out of turn:</strong> the ghost appears and vanishes with no message; <code>drop()</code> only says it was sequenced.
+The ghost must stay until the input is applied locally, not until the server&#39;s receipt.</li>
 <li><strong>A reload loses the seat.</strong> <code>from</code> is today the frame&#39;s editor ID, new on every reload and every day; the player
 is no longer <code>players[slot]</code> and can never move again in this game.</li>
 <li><strong>An opponent who never returns:</strong> the game waits forever; the rules cannot see who is present.</li>
@@ -397,12 +401,21 @@ room.<span class="tk-f">onEvent</span>(({ <span class="tk-k">from</span>, value 
 <figure class="fig anim"><svg viewBox="0 0 720 324" width="100%" role="img" aria-label="A hit: Bob defends; the ball arrives at t = 5000 in server time." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f2m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f2a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f2b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="130.7" y1="42" x2="130.7" y2="316" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="45.7" y="10" width="170" height="32" rx="4" fill="#fff" stroke="#c9bfae"/><text x="130.7" y="30" font-size="11" fill="#2a2723" text-anchor="middle">Alice (attacker)</text><line x1="360" y1="42" x2="360" y2="316" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="275" y="10" width="170" height="32" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="360" y="30" font-size="11" fill="#2a2723" text-anchor="middle">room</text><line x1="589.3" y1="42" x2="589.3" y2="316" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="504.3" y="10" width="170" height="32" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="589.3" y="30" font-size="11" fill="#2a2723" text-anchor="middle">Bob (defender)</text><g class="step edge" style="--i:1"><path d="M589.3 62 h-34 v14 h32" fill="none" stroke="#b4472f" marker-end="url(#f2a)"/><text x="547.3" y="72" font-size="10" fill="#b4472f" text-anchor="end">t=5000: ball arrives, paddle at 300: hit({ rally: 7, off: 0.25 }); draw the bounce at once</text></g><g class="step edge" style="--i:2"><path d="M130.7 102 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><text x="172.7" y="112" font-size="10" fill="#2a2723" text-anchor="start">t=5000: predict the bounce from Bob's last paddle</text></g><g class="step edge" style="--i:3"><line x1="589.3" y1="148" x2="363" y2="148" stroke="#7b7468" marker-end="url(#f2m)"/><text x="474.7" y="142" font-size="10" fill="#2a2723" text-anchor="middle">hit</text></g><g class="step edge" style="--i:4"><path d="M360 174 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><text x="402" y="184" font-size="10" fill="#2a2723" text-anchor="start">t≈5100: seq 42</text></g><g class="step edge" style="--i:5"><line x1="360" y1="220" x2="133.7" y2="220" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="245.3" y="214" font-size="10" fill="#2a2723" text-anchor="middle">seq 42</text></g><g class="step edge" style="--i:6"><line x1="360" y1="252" x2="586.3" y2="252" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="474.7" y="246" font-size="10" fill="#2a2723" text-anchor="middle">seq 42</text></g><g class="step edge" style="--i:7"><path d="M130.7 278 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><text x="172.7" y="288" font-size="10" fill="#2a2723" text-anchor="start">t≈5200: apply: correct the predicted bounce by a few pixels</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 2.</span> A hit: Bob defends; the ball arrives at t = 5000 in server time.</figcaption></figure>
 <p>Your paddle follows your finger with no delay, the ball moves smoothly on both screens from a shared trajectory and
 the server clock, and you never lose to a ball that passed through your paddle. The opponent&#39;s paddle trails by about
-a quarter second. <strong>Numbers:</strong> one sequenced input every 1.5 s, 30 events per second per player of about 70 bytes,
-state under 1 KB. <strong>Verdict: works well</strong> at 60 to 200 ms. Caveats: the sketch writes its own prediction (the kit
-gives no access to pending inputs), and a reload loses the seat.</p>
+a quarter second. The attacker predicts the bounce from the opponent&#39;s last paddle, about 200 ms old; the real <code>off</code>
+can differ by up to 2, which moves the ball by up to 120 px by the time the hit arrives (Sol, cross-review), so the
+sketch blends the correction over a moment. The defender&#39;s decision is trusted: every view replays it, none checks the
+collision itself. <strong>Numbers:</strong> one sequenced input every 1.5 s, paddle events throttled to about 30 per second per
+player of about 70 bytes, state under 1 KB. <strong>Verdict: works with caveats</strong> at 60 to 200 ms: visible corrections after
+the opponent&#39;s hits, the sketch writes its own prediction (the kit gives no access to pending inputs), and a reload
+loses the seat.</p>
+<div class="note review"><b class="tag">Review: the sketch above is not finished</b><p>Sol found three bugs in this code: a defender returning the next day can hit the hours-old ball before the timeout
+voids the rally (stale rallies must be handled before any collision test); <code>hit</code> has no time window and <code>miss</code> lets an
+unseated view claim; <code>bounce</code> reuses the vertical speed before the wall reflections instead of the reflected one. Fix
+before using it as the reference sketch.</p>
+</div>
 </section>
 
-<section class="chapter" id="rts"><header class="opener"><div class="numeral">V</div><h2>A Little RTS</h2><p class="lede">The owner&#39;s 1500 archers: it fits, after ticks, presence and identity join the sequence.</p></header>
+<section class="chapter" id="rts"><header class="opener"><div class="numeral">V</div><h2>A Little RTS</h2><p class="lede">The owner&#39;s 1500 archers: it fits once ticks are sequenced and seats are explicit.</p></header>
 <p class="dropcap">Three seats, 500 archers each, a step every 100 ms, integer math. Your units start moving about 0.3 s after your
 click; a target marker appears at once. A third player can open the view mid-match, watch the battle catch up in a
 second, press Join, and have 500 archers appear. The next day the match is where it was left.</p>
@@ -434,20 +447,26 @@ on a phone; if the producer stalls, more.</p>
 <li><strong>Ticks in the sequence, with a hook.</strong> Otherwise &quot;the state after input N&quot; is undefined (two views at the same
 number may have run different numbers of steps), and checkpoints and hashes disagree. Ticks must stop when no
 writer is present, or the battle runs through the night.</li>
-<li><strong>Presence in the sequence.</strong> Server-sequenced <code>$joined</code> and <code>$left</code>, so the game can pause until everyone is back;
-<code>apply</code> must not read peer state.</li>
-<li><strong>A stable person ID.</strong> With today&#39;s frame IDs, after a reload or overnight nobody owns a slot and the armies are
-orphaned.</li>
+<li><strong>A way to pause.</strong> Either server-sequenced <code>$joined</code> and <code>$left</code>, so the game can pause until everyone is back, or
+explicit ready, pause and forfeit inputs the game defines itself (Sol: presence in the sequence is one policy, not a
+requirement for every game); <code>apply</code> must not read peer state.</li>
+<li><strong>Explicit seats.</strong> With today&#39;s frame IDs, after a reload or overnight nobody owns a slot and the armies are
+orphaned. A person ID alone does not fix it (two of your devices are the same owner): the game needs a seat it can
+claim and recover, separate from the frame and the principal.</li>
 <li><strong>Migration.</strong> If the agent edits the sketch overnight and bumps <code>version</code>, the saved match is stranded until
 something migrates the checkpoint.</li>
 <li><strong>A cheap draft.</strong> If <code>apply</code> mutates a tracking proxy, a 1500-unit step could be 10 to 50 times slower than on plain
 arrays; measure before building.</li>
 </ul>
-<p><strong>Failure that matters most:</strong> nondeterminism (<code>Math.sin</code> in V8 versus JavaScriptCore, a <code>for…in</code> over numeric keys, a
-stray <code>Math.random</code>) makes a Safari player&#39;s archers die on one screen and live on another. Hashes notice it;
-refolding does not cure an engine-level cause. It needs a visible &quot;out of sync&quot; and a lint of <code>apply</code> sources.
+<p><strong>Failure that matters most:</strong> nondeterminism makes a Safari player&#39;s archers die on one screen and live on another.
+JavaScript does not promise the same results for <code>Math.sin</code>, <code>Math.sqrt</code> and friends across engines; the simulation
+uses bounded integer arithmetic, squared distances instead of roots, and fixed tie-breaking orders (Sol, cross-review),
+and never <code>Math.random</code> or the clock. Hashes notice it;
+refolding does not cure an engine-level cause. It needs a visible &quot;out of sync&quot;; a lint of <code>apply</code> sources helps but proves nothing.
 <strong>Numbers:</strong> about 130 bytes per order, 10 ticks per second of about 60 bytes, a 60 KB checkpoint, 80 to 250 KB of
-server memory per room. <strong>Verdict: works with caveats, after the changes above.</strong></p>
+server memory per room. Removing dead units by rebuilding the array (<code>s.units = s.units.filter(...)</code>) copies the
+surviving units through the draft every step; measure the real loop. <strong>Verdict: works with caveats, after the changes
+above;</strong> and like every sketch it trusts its writers (no secrets, no authoritative rules).</p>
 </section>
 
 <section class="chapter" id="glyph"><header class="opener"><div class="numeral">VI</div><h2>Max&#39;s Glyph Editor</h2><p class="lede">Shared vector editing: drags as events, releases as inputs.</p></header>
@@ -714,11 +733,12 @@ is not designed yet.</p>
 motion beside the sequence. Before building, the model needs these changes; the use cases that need each are in
 brackets.</p>
 <ol>
-<li><strong>Identity.</strong> <code>from</code> is the editor ID, kept across reconnects, and <code>room.me === from</code>; <code>meta.person</code> (the owner or
-a guest grant, with a role) is stable across reloads, devices, days and restarts; the editor map is persisted.
-[Connect Four, Pong, RTS, poll, presence, failures]</li>
+<li><strong>Identity, three kinds.</strong> <code>from</code> is the editor ID (the frame), kept across reconnects, and <code>room.me === from</code>;
+<code>meta.person</code> is the authenticated principal (the owner or a guest grant, with a role); a game&#39;s <strong>seat</strong> is its own
+state, claimed and recovered explicitly, since two of the owner&#39;s devices are one person (Sol). The editor map is
+persisted. [Connect Four, Pong, RTS, poll, presence, failures]</li>
 <li><strong>Outcomes, validation, status.</strong> <code>apply</code> may return a reason; a submit resolves <code>{ seq, result }</code> after the local
-apply; a throwing <code>apply</code> is a no-op everywhere; the kit checks <code>args</code> in every view before <code>apply</code> (the server
+apply (a local result, not a durable one); a throwing <code>apply</code> is a no-op everywhere; the kit checks <code>args</code> in every view before <code>apply</code> (the server
 checks only the agent&#39;s inputs); a room status: connecting, catching up, incompatible version, reset, out of sync,
 budget refused. [Connect Four, glyph, whiteboard, poll, agent, guests, failures]</li>
 <li><strong>Durability and dedupe.</strong> A named save interval; accepted versus saved progress; checkpoint, tail, epoch, version
@@ -763,7 +783,7 @@ tail and version. [glyph, whiteboard, family list]</li>
 <li><strong>Build the sequenced room</strong> as the generic sketch room, replacing v1&#39;s live and log kinds and dropping v2.</li>
 <li><strong>Server-applied built-ins</strong> (Opus) or a <strong>separate server-owned document kind</strong> (Astra) for data the agent
 maintains alone, like the family list.</li>
-<li><strong>What <code>from</code> is:</strong> the frame, the person, or both (<code>from</code> and <code>person</code>).</li>
+<li><strong>Identity:</strong> <code>from</code> (the frame) and <code>person</code> (the principal), with seats left to each game.</li>
 <li><strong>Checkpoint trust:</strong> any writer (simple; a modified client can lie) or only the owner&#39;s views (safer; stalls when
 the owner is away).</li>
 </ul>
@@ -781,17 +801,17 @@ the owner is away).</li>
 <tbody><tr>
 <td>Connect Four</td>
 <td>works well</td>
-<td>stable identity; no-op feedback; agent waiting</td>
+<td>seats; no-op feedback; agent waiting</td>
 </tr>
 <tr>
 <td>Pong (hybrid)</td>
-<td>works well</td>
-<td>own prediction; stable identity</td>
+<td>works with caveats</td>
+<td>corrections up to 120 px; own prediction; seats; code fixes</td>
 </tr>
 <tr>
 <td>RTS</td>
 <td>works with caveats</td>
-<td>sequenced ticks and presence, identity, migration, cheap draft</td>
+<td>sequenced ticks, explicit seats, a way to pause, migration, cheap draft</td>
 </tr>
 <tr>
 <td>Glyph editor</td>
@@ -858,7 +878,7 @@ the owner is away).</li>
 </tr>
 <tr>
 <td>Server per input</td>
-<td>~0.19 ms single, ~13 µs per input in batches of 20 (approximation of v1&#39;s publish path)</td>
+<td>~0.19 ms single (an isolated approximation of v1&#39;s publish path, without validation, fan-out or storage)</td>
 </tr>
 <tr>
 <td>Agent read with a view</td>
@@ -879,7 +899,7 @@ the owner is away).</li>
 </tbody></table>
 </section>
 
-<p class="colophon">Rooms v3 use cases · first edition · 2026-11-11 · p3 session 8b6ab5cc with Opus, Astra and Sol</p>
+<p class="colophon">Rooms v3 use cases · second edition · 2026-11-11 · p3 session 8b6ab5cc with Opus, Astra and Sol</p>
 </div></div>
 <script>(function activate(root) {
 	const replay = (f) => {

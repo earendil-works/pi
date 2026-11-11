@@ -12,10 +12,11 @@ note: |
   Based on the working model `apps/p2/docs/rooms-v3-model.md`, the independent verdicts of claude-opus-5-5
   (`/tmp/rooms-verdict-opus.md`) and gpt-6-astra (`/tmp/rooms-verdict-astra.md`), and the use cases worked through by
   claude-opus-5-5 (games, `/tmp/uc-opus.md`), gpt-6-astra (documents and boards, `/tmp/uc-astra.md`) and gpt-6.1-sol
-  (cross-cutting, `/tmp/uc-sol.md`), each cross-reviewed by another. Nothing here is built. Latencies are estimates
+  (cross-cutting, `/tmp/uc-sol.md`), each cross-reviewed by another (`/tmp/uc-review-{opus,astra,sol}.md`); second
+  edition with all three cross-reviews folded in. Nothing here is built. Latencies are estimates
   at 200 ms round trip; server costs come from an isolated approximation of today's publish path, not from a v3
   implementation. Notes marked *review* are open points found while working through the cases.
-colophon: Rooms v3 use cases · first edition · 2026-11-11 · p3 session 8b6ab5cc with Opus, Astra and Sol
+colophon: Rooms v3 use cases · second edition · 2026-11-11 · p3 session 8b6ab5cc with Opus, Astra and Sol
 ---
 
 # Before we begin {.preface}
@@ -51,8 +52,8 @@ survives a restart, how it fails, what it costs, and whether it works.
 4. **Cursors and motion stay out of the sequence.** Events carry motion (cursors, drags, paddles); peer state holds
    each view's latest value a joiner must see (a selection, a grabbed point, "typing"). A moving mouse never touches
    the journal.
-5. **Games fit, with three changes.** Connect Four is the model's best case. Pong works as a hybrid (paddles as
-   events, one input per hit). A small RTS needs ticks and presence in the sequence and a stable player identity.
+5. **Games fit, with changes.** Connect Four is the model's best case. Pong works as a hybrid (paddles as events, one
+   input per hit), with visible corrections at 200 ms. A small RTS needs sequenced ticks and explicit seats first.
 6. **Boards fit while they are small.** Max's glyph editor works well; a whiteboard hits the 256 Ki-character
    checkpoint limit after about 150 strokes.
 7. **The agent sees fresh computed state only while a view runs.** Otherwise it gets the last checkpoint plus the
@@ -222,8 +223,10 @@ room.onPeerState((id, v) => drawHover(id, v?.hover));
 At t = 0 Alice clicks column 3; the kit sends `drop { col: 3 }` with her counter and the sketch draws a ghost. At
 about 100 ms the server checks the counter, stamps `seq 18`, appends and fans out, without parsing the input. At
 about 200 ms both views apply it; the piece falls, the ghost clears, `drop()` resolves `{ seq: 18 }`. If Bob clicked
-during his wait, his `drop` becomes `seq 19` and is a no-op in every view: his ghost disappears, and nothing tells him
-why. After a quiet 300 ms the checkpoint writer posts the 250-byte board and the server saves it.
+while it was still Alice's turn and his `drop` reached the server before hers, it becomes `seq 17` and is a no-op in
+every view: his ghost disappears, and nothing tells him why. If his click reaches the server after hers, it is his
+turn by then and the move counts, although he made it without seeing her piece; a sketch that wants to prevent that
+sends the turn number it saw and refuses a mismatch (Sol, cross-review). After a quiet 300 ms the checkpoint writer posts the 250-byte board and the server saves it.
 
 ## Joining, the agent, persistence
 
@@ -237,6 +240,7 @@ is a move or two.
 ## How it fails
 
 - **Clicking out of turn:** the ghost appears and vanishes with no message; `drop()` only says it was sequenced.
+  The ghost must stay until the input is applied locally, not until the server's receipt.
 - **A reload loses the seat.** `from` is today the frame's editor ID, new on every reload and every day; the player
   is no longer `players[slot]` and can never move again in this game.
 - **An opponent who never returns:** the game waits forever; the rules cannot see who is present.
@@ -295,11 +299,22 @@ a -> a: t≈5200: apply: correct the predicted bounce by a few pixels
 
 Your paddle follows your finger with no delay, the ball moves smoothly on both screens from a shared trajectory and
 the server clock, and you never lose to a ball that passed through your paddle. The opponent's paddle trails by about
-a quarter second. **Numbers:** one sequenced input every 1.5 s, 30 events per second per player of about 70 bytes,
-state under 1 KB. **Verdict: works well** at 60 to 200 ms. Caveats: the sketch writes its own prediction (the kit
-gives no access to pending inputs), and a reload loses the seat.
+a quarter second. The attacker predicts the bounce from the opponent's last paddle, about 200 ms old; the real `off`
+can differ by up to 2, which moves the ball by up to 120 px by the time the hit arrives (Sol, cross-review), so the
+sketch blends the correction over a moment. The defender's decision is trusted: every view replays it, none checks the
+collision itself. **Numbers:** one sequenced input every 1.5 s, paddle events throttled to about 30 per second per
+player of about 70 bytes, state under 1 KB. **Verdict: works with caveats** at 60 to 200 ms: visible corrections after
+the opponent's hits, the sketch writes its own prediction (the kit gives no access to pending inputs), and a reload
+loses the seat.
 
-# A Little RTS {#rts lede="The owner's 1500 archers: it fits, after ticks, presence and identity join the sequence."}
+:::review | Review: the sketch above is not finished
+Sol found three bugs in this code: a defender returning the next day can hit the hours-old ball before the timeout
+voids the rally (stale rallies must be handled before any collision test); `hit` has no time window and `miss` lets an
+unseated view claim; `bounce` reuses the vertical speed before the wall reflections instead of the reflected one. Fix
+before using it as the reference sketch.
+:::
+
+# A Little RTS {#rts lede="The owner's 1500 archers: it fits once ticks are sequenced and seats are explicit."}
 
 Three seats, 500 archers each, a step every 100 ms, integer math. Your units start moving about 0.3 s after your
 click; a target marker appears at once. A third player can open the view mid-match, watch the battle catch up in a
@@ -337,20 +352,26 @@ on a phone; if the producer stalls, more.
 - **Ticks in the sequence, with a hook.** Otherwise "the state after input N" is undefined (two views at the same
   number may have run different numbers of steps), and checkpoints and hashes disagree. Ticks must stop when no
   writer is present, or the battle runs through the night.
-- **Presence in the sequence.** Server-sequenced `$joined` and `$left`, so the game can pause until everyone is back;
-  `apply` must not read peer state.
-- **A stable person ID.** With today's frame IDs, after a reload or overnight nobody owns a slot and the armies are
-  orphaned.
+- **A way to pause.** Either server-sequenced `$joined` and `$left`, so the game can pause until everyone is back, or
+  explicit ready, pause and forfeit inputs the game defines itself (Sol: presence in the sequence is one policy, not a
+  requirement for every game); `apply` must not read peer state.
+- **Explicit seats.** With today's frame IDs, after a reload or overnight nobody owns a slot and the armies are
+  orphaned. A person ID alone does not fix it (two of your devices are the same owner): the game needs a seat it can
+  claim and recover, separate from the frame and the principal.
 - **Migration.** If the agent edits the sketch overnight and bumps `version`, the saved match is stranded until
   something migrates the checkpoint.
 - **A cheap draft.** If `apply` mutates a tracking proxy, a 1500-unit step could be 10 to 50 times slower than on plain
   arrays; measure before building.
 
-**Failure that matters most:** nondeterminism (`Math.sin` in V8 versus JavaScriptCore, a `for…in` over numeric keys, a
-stray `Math.random`) makes a Safari player's archers die on one screen and live on another. Hashes notice it;
-refolding does not cure an engine-level cause. It needs a visible "out of sync" and a lint of `apply` sources.
+**Failure that matters most:** nondeterminism makes a Safari player's archers die on one screen and live on another.
+JavaScript does not promise the same results for `Math.sin`, `Math.sqrt` and friends across engines; the simulation
+uses bounded integer arithmetic, squared distances instead of roots, and fixed tie-breaking orders (Sol, cross-review),
+and never `Math.random` or the clock. Hashes notice it;
+refolding does not cure an engine-level cause. It needs a visible "out of sync"; a lint of `apply` sources helps but proves nothing.
 **Numbers:** about 130 bytes per order, 10 ticks per second of about 60 bytes, a 60 KB checkpoint, 80 to 250 KB of
-server memory per room. **Verdict: works with caveats, after the changes above.**
+server memory per room. Removing dead units by rebuilding the array (`s.units = s.units.filter(...)`) copies the
+surviving units through the draft every step; measure the real loop. **Verdict: works with caveats, after the changes
+above;** and like every sketch it trusts its writers (no secrets, no authoritative rules).
 
 # Max's Glyph Editor {#glyph lede="Shared vector editing: drags as events, releases as inputs."}
 
@@ -624,11 +645,12 @@ The core holds across all thirteen cases: the server orders, every view folds, c
 motion beside the sequence. Before building, the model needs these changes; the use cases that need each are in
 brackets.
 
-1. **Identity.** `from` is the editor ID, kept across reconnects, and `room.me === from`; `meta.person` (the owner or
-   a guest grant, with a role) is stable across reloads, devices, days and restarts; the editor map is persisted.
-   [Connect Four, Pong, RTS, poll, presence, failures]
+1. **Identity, three kinds.** `from` is the editor ID (the frame), kept across reconnects, and `room.me === from`;
+   `meta.person` is the authenticated principal (the owner or a guest grant, with a role); a game's **seat** is its own
+   state, claimed and recovered explicitly, since two of the owner's devices are one person (Sol). The editor map is
+   persisted. [Connect Four, Pong, RTS, poll, presence, failures]
 2. **Outcomes, validation, status.** `apply` may return a reason; a submit resolves `{ seq, result }` after the local
-   apply; a throwing `apply` is a no-op everywhere; the kit checks `args` in every view before `apply` (the server
+   apply (a local result, not a durable one); a throwing `apply` is a no-op everywhere; the kit checks `args` in every view before `apply` (the server
    checks only the agent's inputs); a room status: connecting, catching up, incompatible version, reset, out of sync,
    budget refused. [Connect Four, glyph, whiteboard, poll, agent, guests, failures]
 3. **Durability and dedupe.** A named save interval; accepted versus saved progress; checkpoint, tail, epoch, version
@@ -673,7 +695,7 @@ brackets.
 - **Build the sequenced room** as the generic sketch room, replacing v1's live and log kinds and dropping v2.
 - **Server-applied built-ins** (Opus) or a **separate server-owned document kind** (Astra) for data the agent
   maintains alone, like the family list.
-- **What `from` is:** the frame, the person, or both (`from` and `person`).
+- **Identity:** `from` (the frame) and `person` (the principal), with seats left to each game.
 - **Checkpoint trust:** any writer (simple; a modified client can lie) or only the owner's views (safer; stalls when
   the owner is away).
 
@@ -681,9 +703,9 @@ brackets.
 
 | Use case | Verdict | What it needs or where it stops |
 | --- | --- | --- |
-| Connect Four | works well | stable identity; no-op feedback; agent waiting |
-| Pong (hybrid) | works well | own prediction; stable identity |
-| RTS | works with caveats | sequenced ticks and presence, identity, migration, cheap draft |
+| Connect Four | works well | seats; no-op feedback; agent waiting |
+| Pong (hybrid) | works with caveats | corrections up to 120 px; own prediction; seats; code fixes |
+| RTS | works with caveats | sequenced ticks, explicit seats, a way to pause, migration, cheap draft |
 | Glyph editor | works well (one glyph) | outcome of guarded replace; fonts belong elsewhere |
 | Whiteboard | works with caveats | checkpoint size limit, ~150 strokes |
 | Family list | works well with built-ins | custom rules need a view; built-ins need precise semantics |
@@ -700,7 +722,7 @@ brackets.
 | What | Estimate |
 | --- | --- |
 | Tap to every view | about one round trip; A to B about (R_A + R_B)/2 |
-| Server per input | ~0.19 ms single, ~13 µs per input in batches of 20 (approximation of v1's publish path) |
+| Server per input | ~0.19 ms single (an isolated approximation of v1's publish path, without validation, fan-out or storage) |
 | Agent read with a view | ~200 ms (one view round trip; the tool runs next to the server) |
 | Joiner | one checkpoint plus up to ~200 inputs; RTS ~1 s on a phone |
 | Checkpoint | Connect Four 250 B, glyph 6-10 KB, RTS 60 KB, limit 256 Ki characters |
