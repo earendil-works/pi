@@ -43,6 +43,7 @@ export * from "../../web/SidePanel.tsx";
 export * from "../../web/Switch.tsx";
 export * from "../../web/sidebar.ts";
 export * from "../../web/ThemeButton.tsx";
+export { setTheme, type ThemePreference } from "../../web/theme.ts";
 export * from "../../web/transcript.ts";
 export * from "../../web/use-chat-scroll.ts";
 export * from "../../web/Viewer.tsx";

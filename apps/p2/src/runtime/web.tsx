@@ -31,7 +31,7 @@ import {
 } from "../web/navigation.ts";
 import { type SettingsEmbed, useSettingsEmbed } from "../web/settings-embed.ts";
 import { useSheetSwipe } from "../web/sheet-swipe.ts";
-import { setSidebarCollapsed } from "../web/sidebar.ts";
+import { SIDEBAR_DOCKS, setSidebarCollapsed } from "../web/sidebar.ts";
 import type { Host, VariantOf } from "./chord.ts";
 
 export {
@@ -485,7 +485,7 @@ export function setDrawer(open: boolean): void {
 
 /** Shows the sessions: the docked sidebar from 900px (expanding it if collapsed), the drawer below. */
 export function openSidebar(): void {
-	if (window.matchMedia("(min-width: 900px)").matches) setSidebarCollapsed(false);
+	if (window.matchMedia(SIDEBAR_DOCKS).matches) setSidebarCollapsed(false);
 	else setDrawer(true);
 }
 

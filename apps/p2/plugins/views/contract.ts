@@ -129,6 +129,7 @@ export const OpenSchema = union([
 	obj({ kind: literal("changes"), path: opt(str({ maxLength: 4096 })), title: opt(str({ maxLength: 120 })) }),
 	obj({ saved: str({ pattern: VIEW_ID.source }) }),
 ]);
+export type OpenInput = Static<typeof OpenSchema>;
 
 /**
  * A session's views and annotations as anyone who may view the session sees them; people who may send there also open,

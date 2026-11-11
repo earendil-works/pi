@@ -289,3 +289,29 @@ export const ShareIcon = ({ size = 16 }: { size?: number }) => (
 		<path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" />
 	</Icon>
 );
+/** A window with a bar at its start: the sidebar (Show sidebar, Hide sidebar). */
+export const SidebarIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<rect x="3" y="4" width="18" height="16" rx="2" />
+		<path d="M9 4v16" />
+	</Icon>
+);
+/** An eye: show a view. */
+export const EyeIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+		<circle cx="12" cy="12" r="3" />
+	</Icon>
+);
+/** An eye struck through: hide a view. */
+export const EyeOffIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<path d="M10.6 5.1A9.8 9.8 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-2.2 3.2M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2M3 3l18 18" />
+	</Icon>
+);
+/** A bookmark: a saved view. */
+export const BookmarkIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<path d="M6 3h12v18l-6-4-6 4z" />
+	</Icon>
+);

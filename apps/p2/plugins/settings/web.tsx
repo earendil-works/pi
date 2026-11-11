@@ -2,13 +2,15 @@
 // pane (on phones the list, then a section). Its own sections edit settings.json; the plugins' sections (Providers,
 // Envs, ...) are their sheets, shown as pages of the window (`SettingsSections`, src/web/SettingsNav.tsx). Each
 // change of settings.json is saved at once (text and number fields when they lose focus or on Enter) and shown before
-// the save returns.
+// the save returns. The command menu opens it at a section (commands.tsx).
 import { BACKGROUND_CONTEXT, contribute, defineFacet } from "@p2/app/v1";
 import {
+	CommandPages,
+	CommandSearches,
+	Commands,
 	closeLayers,
 	ModalSheet,
-	openLayer,
-	SETTINGS_LAYER,
+	openSettings,
 	SettingsIcon,
 	SettingsNavItem,
 	SettingsPane,
@@ -26,7 +28,9 @@ import {
 } from "@p2/app/v1/web";
 import { type ReactNode, useCallback, useId, useState } from "react";
 import { Models } from "../models/contract.ts";
+import { SETTINGS_COMMANDS, SETTINGS_PAGES, SETTINGS_SEARCH } from "./commands.tsx";
 import { type MobileSettings, Settings } from "./contract.ts";
+import { OWN_SECTIONS, type OwnSection } from "./sections.ts";
 import "./settings.css";
 
 /** A change of top-level settings: each one's new value, `undefined` back to its default (removed from the file). */
@@ -56,16 +60,6 @@ function patched<T extends object>(group: T | undefined, change: T): T | undefin
 const numberText = (value: number | undefined) => (value === undefined ? "" : String(value));
 const textNumber = (text: string) => (text === "" ? undefined : Number(text));
 
-/** The window's own sections, over settings.json, in the list's order. */
-const OWN_SECTIONS = [
-	{ id: "general", label: "General" },
-	{ id: "models", label: "Models" },
-	{ id: "agent", label: "Agent" },
-	{ id: "requests", label: "Requests" },
-	{ id: "compaction", label: "Compaction" },
-] as const;
-type OwnSection = (typeof OWN_SECTIONS)[number]["id"];
-
 function GearButton() {
 	const owner = useOwner();
 	const open = useSettingsSection() !== undefined;
@@ -75,7 +69,7 @@ function GearButton() {
 			<button
 				type="button"
 				className="icon-button settings-open"
-				onClick={() => openLayer({ kind: "sheet", name: SETTINGS_LAYER }, { fromDrawer: true })}
+				onClick={() => openSettings()}
 				aria-label="Settings"
 				title="Settings"
 			>
@@ -555,5 +549,8 @@ function NumberSetting({
 export default defineFacet((host) => {
 	contribute(host, "p2.web-settings", (self) => {
 		self.contribute(Slots, { "sidebar-actions:settings": GearButton });
+		self.contribute(Commands, SETTINGS_COMMANDS);
+		self.contribute(CommandPages, SETTINGS_PAGES);
+		self.contribute(CommandSearches, { settings: SETTINGS_SEARCH });
 	});
 });
