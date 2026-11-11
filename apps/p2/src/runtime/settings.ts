@@ -70,6 +70,11 @@ const schema = obj({
 			pattern: "^[^<>\\u0000-\\u001f\\u007f]*\\S[^<>\\u0000-\\u001f\\u007f]*$",
 		}),
 	),
+	/**
+	 * p2 addition: how much memory, in MiB, all custom views' rooms may keep together (messages kept for peers that have
+	 * not taken them, keyed messages); past it a room refuses new messages until it drains. Default 64.
+	 */
+	viewRoomsMemory: opt(int({ minimum: 1 })),
 });
 const validator = compile(schema);
 export type MobileSettings = Static<typeof schema>;

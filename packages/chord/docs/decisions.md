@@ -2704,6 +2704,14 @@ validation and copies the v2 kernel added around Delta.
   old version until the restarted object's successor is live (design §21); classes the edit renamed or removed are
   unstyled until then. Accepted and documented; apps contribute UI from facets and let objects supply data. Rejected
   for now: a kernel signal "this plugin's restarts on this host finished" to retire old sheets later.
+- **Call windows only for untrusted links (owner, 2026-11-11: "make the limit ten thousand"; from the Pong netcode
+  discussion):** the call window N (design §3) bounds how many calls one caller runs at once on a provider; calls past
+  it wait in the caller's own queue, so a client that fires too many only slows itself. No saturation by calls was
+  ever observed, and the app's own hosts are assumed to behave: a link a host accepts as trusted (`trusted: true`)
+  has no call window (`hello` announces 0). An untrusted link (pages, guests, view frames running agent-written code)
+  keeps one, a host option `callWindow`, default 10,000 (was a fixed 256 in `remote/host-link.ts`): many people may
+  have much in flight, and a misbehaving page still cannot start unbounded handlers. To be built with the events
+  change if that is decided, otherwise on its own.
 - **Documents and table rows can belong to a host (owner, 2026-11-09: "it looks like we have a plan"; p3 session data,
   backups and exports):** data needed while a host is not running lives on another host (p3: facts about a session the
   server needs while its worker is off) but must travel with that host on export, import and delete. (1) `defineState`'s

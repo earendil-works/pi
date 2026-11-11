@@ -240,7 +240,7 @@ describe("offline in the browser", { skip: !browserTests }, () => {
 
 	it("keeps the one composer, focused, when a new session's first message opens the session", async () => {
 		await browser.metrics(390, 844);
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.wait(
 			`document.querySelector('.composer textarea') && document.querySelector('.cwd-pick') && !document.querySelector('.offline') && document.querySelector('.model-control')?.textContent !== 'Choose model'`,
 		);
@@ -265,7 +265,7 @@ describe("offline in the browser", { skip: !browserTests }, () => {
 		const catalog = await holdIn(owner, Sessions, {}, "owner");
 		const before = new Set(catalog.sessions.value.map((session) => session.id));
 		await browser.metrics(390, 844);
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.wait(
 			`document.querySelector('.composer textarea') && document.querySelector('.cwd-pick') && !document.querySelector('.offline') && document.querySelector('.model-control')?.textContent !== 'Choose model'`,
 		);
@@ -280,7 +280,7 @@ describe("offline in the browser", { skip: !browserTests }, () => {
 		await browser.click("button[aria-label=Send]");
 		// It leaves the composer and shows at once, on the new-session screen: the session does not exist yet.
 		await browser.wait(
-			`document.querySelector('.composer textarea').value === '' && ${bubbles(text)} === 1 && location.pathname === '/'`,
+			`document.querySelector('.composer textarea').value === '' && ${bubbles(text)} === 1 && location.pathname === '/new'`,
 		);
 		assert.equal(catalog.sessions.value.filter((session) => !before.has(session.id)).length, 0);
 		// From here until the answer: the message never leaves the screen (creation, navigation, the worker's start).

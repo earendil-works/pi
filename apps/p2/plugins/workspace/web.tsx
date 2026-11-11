@@ -1,6 +1,7 @@
 import { BACKGROUND_CONTEXT, contribute, defineFacet, follow, liveIn } from "@p2/app/v1";
 import type { Navigation, WorkspaceRoute } from "@p2/app/v1/web";
 import {
+	Commands,
 	FolderIcon,
 	locationLabel,
 	Slots,
@@ -17,7 +18,9 @@ import { useEffect, useState } from "react";
 import { Chat } from "../chat/contract.ts";
 import { Sessions } from "../sessions/contract.ts";
 import { conversationLocation, Subagents } from "../subagents/contract.ts";
+import { WORKSPACE_COMMANDS } from "./commands.tsx";
 import { Workspace } from "./contract.ts";
+import { withWorkspace } from "./tabs.ts";
 import { WorkspacePanel as MobileWorkspacePanel } from "./Workspace.tsx";
 
 function WorkspaceButton() {
@@ -34,7 +37,7 @@ function WorkspaceButton() {
 			onClick={() =>
 				route.workspace
 					? void nav.close((current) => ({ ...current, workspace: undefined }))
-					: void nav.push({ ...route, workspace: { tab: "files", directory: "" } })
+					: void nav.push(withWorkspace(route, "files"))
 			}
 		>
 			<FolderIcon />
@@ -134,5 +137,6 @@ function NativePanel({
 export default defineFacet((host) => {
 	contribute(host, "p2.web-workspace", (self) => {
 		self.contribute(Slots, { "workspace-actions": WorkspaceButton, "workspace-panel": WorkspacePanel });
+		self.contribute(Commands, WORKSPACE_COMMANDS);
 	});
 });

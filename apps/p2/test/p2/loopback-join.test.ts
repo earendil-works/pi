@@ -111,7 +111,8 @@ describe("share links on loopback", () => {
 					(await http(fixture.server.port, "/owner-token", { headers: { Cookie: fixture.owner.cookie } })).body,
 				) as { token: string };
 				await owner.open(`${origin}/owner#${token}`);
-				await owner.wait(`location.pathname === "/"`);
+				// Home: the app at `/`, which opens the Familiar's session.
+				await owner.wait(`location.pathname === "/" || location.pathname.startsWith("/s/")`);
 				await owner.wait(ownerUi);
 				assert.equal(await owner.evaluate<string>("location.hash"), "", "the token left the address bar");
 				// The owner opening its own link goes straight to the session.

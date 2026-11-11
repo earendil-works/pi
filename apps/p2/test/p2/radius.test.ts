@@ -11,7 +11,13 @@ import { WebSocket, WebSocketServer } from "ws";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Devices } from "../../plugins/devices/contract.ts";
 import { ProviderLogin } from "../../plugins/login/contract.ts";
-import { RadiusBrain, type RadiusStatus, readRadiusConfig, writeRadiusConfig } from "../../plugins/radius/brain.ts";
+import {
+	currentShellPage,
+	RadiusBrain,
+	type RadiusStatus,
+	readRadiusConfig,
+	writeRadiusConfig,
+} from "../../plugins/radius/brain.ts";
 import {
 	deviceName,
 	normalizeBrainName,
@@ -164,6 +170,27 @@ test("Radius-relayed artifact previews may sit below the Radius shell's frame", 
 	assert.match(String(csp?.[1]), /; frame-ancestors 'self' https:\/\/radius\.earendil\.com$/);
 });
 
+test("the relayed app page names the Radius shell that frames it", { timeout: 60_000 }, async (t) => {
+	const f = await fixture(t, undefined, {}, { web: true });
+	const id = f.open("/s/0b0e6f1c-1d2e-4f00-9a7a-3c1e2f1a0b0c");
+	assert.equal((await f.radius.response(id)).status, 200);
+	const html = (await f.radius.body(id)).toString();
+	// The shell bridge (src/web/shell-bridge.ts) posts only to this origin.
+	assert.match(html, /<meta name="p2-shell-origin" content="https:\/\/radius\.earendil\.com" \/>/);
+});
+
+test("a shell page saved before the shell's URLs dropped /brains is read in the current form", () => {
+	const server = randomUUID();
+	assert.equal(
+		currentShellPage(`https://radius.earendil.com/pi/brains/org_1/${server}`),
+		`https://radius.earendil.com/pi/org_1/${server}`,
+	);
+	assert.equal(
+		currentShellPage(`https://radius.earendil.com/pi/org_1/${server}`),
+		`https://radius.earendil.com/pi/org_1/${server}`,
+	);
+});
+
 test("Radius admits people sessions are shared with by email, across organizations", { timeout: 30_000 }, async (t) => {
 	const f = await fixture(t);
 	// The owner's relayed request names the shell, so people get links into it.
@@ -188,7 +215,7 @@ test("Radius admits people sessions are shared with by email, across organizatio
 	);
 	assert.equal(
 		await until(sharing.peopleUrl, Boolean),
-		`https://radius.earendil.com/pi/brains/org_1/${config.serverId}?path=%2Fs%2F${first.id}`,
+		`https://radius.earendil.com/pi/org_1/${config.serverId}/s/${first.id}`,
 	);
 	await poll(() => f.radius.shares.at(-1)?.[0] === "annexample@gmail.com", 10_000, "Radius learns the email");
 	const secondSharing = owner.hold(Sharing, { session: second.id }, BACKGROUND_CONTEXT);

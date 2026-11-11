@@ -168,8 +168,8 @@ export default defineFacet((host) => {
 - **The wheel** (the activity row): one row per run of consecutive calls. While the agent works it faces the newest
   call in the present tense (`running`, else `describe`'s label); when the run ends it rolls to a summary built from
   each tool's `summary` phrase, counted ("Counted words in 2 texts"; a failed call is red on the wheel, and the
-  activity list says how it failed). While active, the latest thought appears above a non-thinking step, clamped
-  to three lines; it is not repeated when thinking is the current step.
+  activity list says how it failed). While active, its latest thought shows below it, also while it streams, in at
+  most three lines; that space only grows, and the note or answer after the wheel takes its place (`ThoughtSlot.tsx`).
 - **The step list** (a tap on the wheel opens that block's right-hand panel, or a sheet on phones): one row per
   call with the tool's name, its `argument`, and its state (✓ and its time; ✗ and the `failure` word; ● running).
   The panel has no tab or conversation-wide list: select another block in the transcript to switch it.
@@ -306,7 +306,7 @@ before `execute` ran.
 Briefly; each is a keyed registry a facet contributes to (`docs/plugin-hooks.md` lists them all):
 
 - **Web slots** (`Slots`, `src/runtime/web-core.ts`): components by slot name, e.g. `composer:<name>` (chips beside
-  the composer, a `SlotList` by prefix), `sidebar-foot:<name>`, `session-actions`, `session-options`,
+  the composer, a `SlotList` by prefix), `sidebar-actions:<name>`, `session-actions`, `session-options`,
   `envs-actions:<name>`, `chat-attribution`, `chat-content`, `chat-bottom` (the terminal below the chat).
 - **Composer expanders** (`ComposerExpanders`, `src/runtime/composer.ts`): rewrite the composer's text before it is
   sent (the prompt plugin expands `/template` and `/skill:`).

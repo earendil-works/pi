@@ -106,7 +106,7 @@ function getCacheControl(
 }
 
 // Stealth mode: Mimic Claude Code's tool naming exactly
-const claudeCodeVersion = "2.1.280";
+const claudeCodeVersion = "2.1.322";
 
 // Claude Code 2.x tool names (canonical casing)
 // Source: https://cchistory.mariozechner.at/data/prompts-2.1.11.md
@@ -246,9 +246,7 @@ function getAnthropicCompat(model: Model<"anthropic-messages">) {
 		// Gateways that drop unknown request fields would silently turn a `continue` into a request
 		// without the earlier conversation, so the default is limited to Anthropic's own endpoint.
 		// Widen or remove this restriction once proxies generally forward the `thread` field.
-		supportsMessageThreads:
-			model.compat?.supportsMessageThreads ??
-			(model.provider === "anthropic" && model.baseUrl.includes("api.anthropic.com")),
+		supportsMessageThreads: model.compat?.supportsMessageThreads ?? model.baseUrl.includes("api.anthropic.com"),
 	};
 }
 

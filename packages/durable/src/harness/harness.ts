@@ -2,6 +2,7 @@ import type { Context } from "@earendil-works/chord/context";
 import { withAbortSignal, withoutAbortSignal } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
 import type { Models } from "@earendil-works/pi-ai";
+import { cleanupSessionResources } from "@earendil-works/pi-ai/session-resources";
 import {
 	type ClientIdentity,
 	mergeClientIdentity,
@@ -19,6 +20,7 @@ import { ResetEntry } from "../entries.ts";
 import type { ExecutionEnv } from "../env/index.ts";
 import { contained, SessionImpl } from "../session/session.ts";
 import type { Transaction } from "../session/transaction.ts";
+import type { SignalResult, SignalToken } from "../signals.ts";
 import { hostTimers } from "../timers.ts";
 import type {
 	CommitOptions,
@@ -52,6 +54,7 @@ import { type InvocationBinding, TaskScheduler } from "./scheduler.ts";
 import { Submissions } from "./submissions.ts";
 import { type TaskGraph, TaskGraphView, type TaskGraphWatch } from "./task-graph.ts";
 import { DURABLE_TELEMETRY_SCHEMA } from "./telemetry.ts";
+import { gatedCall, keepsChildren } from "./tool.ts";
 import type {
 	Agent,
 	AgentChange,
@@ -250,6 +253,8 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 			writeAtClose: (writes) => this.writeAtClose(writes),
 			report: this.#report,
 			limitsRestarts: (kind) => LIMITS_RESTARTS.has(kind),
+			keepsAbandoned: keepsChildren,
+			gated: gatedCall,
 			settleOutcome: settleSchedulerOutcome,
 			withdrawInputs: withdrawQueuedInputs,
 			conversation: async (id, binding, callContext) => {
@@ -353,6 +358,17 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		return this.#tasks.abort(id, context);
 	}
 
+	async signal<T>(
+		taskId: TaskId,
+		token: SignalToken<T>,
+		key: string,
+		value: T,
+		context: Context,
+	): Promise<SignalResult> {
+		this.#tasks.resume();
+		return this.commitWith((tx) => tx.signal(taskId, token, key, value), context);
+	}
+
 	async waitForTask<R>(id: TaskId<R>, context: Context): Promise<SettledTask<R>> {
 		this.#tasks.resume();
 		return this.#tasks.waitForTask(id, context) as Promise<SettledTask<R>>;
@@ -421,9 +437,19 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		return this.#tasks.membershipKeys(tx);
 	}
 
-	/** Signal and join task invocations after the close listeners and before Storage closes; writes no task outcome. */
+	/** Join task invocations before releasing provider resources, so none close while in use or outlive the Harness. */
 	protected override beforeClose(): Promise<void> {
-		return this.#tasks.join();
+		const joined = this.#tasks.join();
+		if (this.#tasks.providerSessionIds.size === 0) return joined;
+		return joined.then(() => {
+			for (const sessionId of this.#tasks.providerSessionIds) {
+				contained(
+					() => cleanupSessionResources(sessionId),
+					(error) => this.#report(error, { kind: "host_error", callback: "models" }),
+				);
+			}
+			this.#tasks.providerSessionIds.clear();
+		});
 	}
 
 	async #create(target: CreateTarget, options: CreateOptions, context: Context): Promise<Conversation> {

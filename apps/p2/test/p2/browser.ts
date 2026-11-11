@@ -175,6 +175,18 @@ export class Browser {
 		);
 		await this.clickPoint(point.x, point.y);
 	}
+	/**
+	 * Opens the Settings window from the sidebar's gear (a click in the page: on phones the drawer may be closed) and
+	 * then its section `label`, and waits for that section's page.
+	 */
+	async openSettings(label: string): Promise<void> {
+		await this.wait(`document.querySelector('.drawer-foot .settings-open')`);
+		await this.evaluate(`document.querySelector('.drawer-foot .settings-open').click()`);
+		const item = `[...document.querySelectorAll('.settings-nav-item')].find((e) => e.textContent === ${JSON.stringify(label)})`;
+		await this.wait(item);
+		await this.evaluate(`${item}.click()`);
+		await this.wait(`document.querySelector('.settings-pane > .settings-page')`);
+	}
 	async clickPoint(x: number, y: number): Promise<void> {
 		await this.call("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
 		await this.call("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });

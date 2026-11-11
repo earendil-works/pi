@@ -33,17 +33,49 @@ export type GuestPrincipal = {
 export type ServerPrincipal = { readonly kind: "server" };
 /** A host's own code calling objects on the same host. */
 export type HostPrincipal = { readonly kind: "host" };
-export type P2Principal = OwnerPrincipal | GuestPrincipal | WorkerPrincipal | ServerPrincipal | HostPrincipal;
+/**
+ * A custom view's frame on its own link (docs/rooms.md): stamped by the server's `/chord/view` route from a token the
+ * page asked for. It reaches only types declared `forViews` (its room), never what its viewer may reach.
+ */
+export type ViewPrincipal = {
+	readonly kind: "view";
+	readonly session: string;
+	readonly view: string;
+	/** Which opening of the view: a view closed and opened again under its ID is another opening. */
+	readonly opening: string;
+	/** What the frame may do in its room: watch (`read`), or also send (`write`): the viewer's mode when the token was made. */
+	readonly mode: "read" | "write";
+	/** Whom the frame is shown to: for names and presence only, never authority. */
+	readonly for: { readonly name: string; readonly role: "owner" | "guest" };
+	/** The token's ID, minted by the server: each frame link is a principal (and a room's peer) of its own. */
+	readonly link: string;
+	/** The ID of the frame's first link: one frame across its reconnects (a text room's editor). */
+	readonly editor: string;
+	/** The viewer's revocations when the token was made: revoking the viewer revokes its frames. */
+	readonly viewer: Revocation[];
+};
+export type P2Principal =
+	| OwnerPrincipal
+	| GuestPrincipal
+	| WorkerPrincipal
+	| ServerPrincipal
+	| HostPrincipal
+	| ViewPrincipal;
 
 /**
  * What revokes principals (`host.revoke`, the same on every host): one associated device's owner, every remote owner
- * (relay and devices), every local owner session ("sign out all devices" revokes both), or one guest (all revisions of
- * its grant).
+ * (relay and devices), every local owner session ("sign out all devices" revokes both), one guest (all revisions of
+ * its grant), every frame of one opening of a view (`viewKey`), or one frame's link.
  */
 export type Revocation =
 	| { readonly device: string }
 	| { readonly owners: "remote" | "local" }
-	| { readonly guest: string };
+	| { readonly guest: string }
+	| { readonly view: string }
+	| { readonly link: string };
+
+/** The `view` revocation's value for one opening of a view of a session. */
+export const viewKey = (session: string, view: string, opening: string): string => `${session}/${view}/${opening}`;
 
 /** The revocations that end `principal`'s objects and links. */
 export function revokedBy(principal: P2Principal): Revocation[] {
@@ -56,6 +88,12 @@ export function revokedBy(principal: P2Principal): Revocation[] {
 					: [{ owners: "local" }];
 		case "guest":
 			return [{ guest: principal.id }];
+		case "view":
+			return [
+				{ view: viewKey(principal.session, principal.view, principal.opening) },
+				{ link: principal.link },
+				...principal.viewer,
+			];
 		default:
 			return [];
 	}
@@ -71,6 +109,7 @@ export const isOwner = (principal: P2Principal | undefined): principal is OwnerP
 export const isWorker = (principal: P2Principal | undefined): principal is WorkerPrincipal =>
 	principal?.kind === "worker";
 export const isGuest = (principal: P2Principal | undefined): principal is GuestPrincipal => principal?.kind === "guest";
+export const isView = (principal: P2Principal | undefined): principal is ViewPrincipal => principal?.kind === "view";
 
 /** May read the session: the owner, or a guest it was shared with. */
 export const canView = (principal: P2Principal | undefined, session: string): boolean =>
@@ -89,6 +128,8 @@ export function principalKey(principal: P2Principal): string {
 			return `guest:${principal.id}:r${principal.revision}`;
 		case "worker":
 			return `worker:${principal.session}:${principal.generation}`;
+		case "view":
+			return `view:${principal.link}`;
 		default:
 			return principal.kind;
 	}

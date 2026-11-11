@@ -2,7 +2,7 @@
 // worker's Durable registry checks it before every call, so no tool repeats the checks.
 import type { Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
-import type { Extension, ToolExecutionResult, ToolRegistration } from "@earendil-works/pi-durable";
+import type { Extension, ToolExecutionResult, ToolPark, ToolRegistration } from "@earendil-works/pi-durable";
 import { isTopLevel } from "./main-conversation.ts";
 import { originOf } from "./origin.ts";
 import type { LockCapability } from "./session-lock.ts";
@@ -44,7 +44,7 @@ export function guardTool(tool: P2Tool): P2Tool {
 	if (tool.origin !== "owner" && tool.scope !== "main") return tool;
 	return {
 		...tool,
-		execute: async (args, api, context: Context): Promise<ToolExecutionResult> => {
+		execute: async (args, api, context: Context): Promise<ToolExecutionResult | ToolPark> => {
 			if (tool.scope === "main" && !(await isTopLevel(api, api.conversationId, context)))
 				return refusal(`${tool.name} works only in the session's main conversation.`);
 			if (tool.origin === "owner") {

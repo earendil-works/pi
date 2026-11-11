@@ -1,0 +1,128 @@
+/* The Settings window (web.tsx): the list of sections beside the pane on wide screens, one or the other on phones. */
+.sheet.settings-window {
+	max-width: 920px;
+	height: 88dvh;
+}
+@media (min-width: 700px) {
+	.sheet.settings-window {
+		height: min(720px, 88dvh);
+	}
+}
+.settings-window > .sheet-body {
+	display: flex;
+	flex: 1;
+	min-height: 0;
+	padding: 0;
+	overflow: hidden;
+}
+.settings-nav {
+	display: flex;
+	flex: none;
+	flex-direction: column;
+	width: 200px;
+	padding: var(--s2) 0;
+	overflow-y: auto;
+	border-right: 1px solid var(--line);
+}
+.settings-nav-item {
+	display: flex;
+	align-items: center;
+	min-height: var(--control);
+	padding: 0 var(--x);
+	color: var(--muted);
+	font-size: var(--fs-sm);
+	text-align: left;
+}
+.settings-nav-item[aria-current="page"] {
+	background: var(--hover);
+	color: var(--text);
+	font-weight: var(--fw-strong);
+}
+@media (hover: hover) {
+	.settings-nav-item:hover {
+		background: var(--hover);
+		color: var(--text);
+	}
+}
+.settings-nav-break {
+	margin: var(--s2) var(--x);
+	border: 0;
+	border-top: 1px solid var(--line);
+}
+
+/* The pane, and a section's page in it (a plugin's sheet too: src/runtime/web.tsx, SettingsPage). */
+.settings-pane {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-width: 0;
+}
+.settings-pane > .settings-page {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	width: auto;
+	max-width: none;
+	min-height: 0;
+}
+.settings-page-head {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: var(--s1);
+	min-height: var(--bar);
+	padding: 0 var(--x);
+	border-bottom: 1px solid var(--line);
+}
+.settings-page-head.has-back {
+	padding-left: var(--bar-pad);
+}
+.settings-page-head h2 {
+	flex: 1;
+	min-width: 0;
+	margin: 0;
+	overflow: hidden;
+	font-size: var(--fs-md);
+	font-weight: var(--fw-strong);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.settings-page-head .back svg {
+	transform: rotate(180deg);
+}
+.settings-page-body {
+	flex: 1;
+	min-height: 0;
+}
+
+@media (max-width: 699px) {
+	.settings-nav {
+		width: 100%;
+		border-right: 0;
+	}
+	.settings-nav-item {
+		min-height: var(--row);
+		color: var(--text);
+		font-size: var(--fs-md);
+	}
+	.settings-window:not(.shows-list) .settings-nav,
+	.settings-window.shows-list .settings-pane {
+		display: none;
+	}
+}
+
+/* settings.json's fields: groups under their headings. */
+.settings-group {
+	display: flex;
+	flex-direction: column;
+}
+.settings-group > h3 {
+	margin: 0;
+	padding: var(--s4) 0 var(--s3);
+	color: var(--text);
+	font-size: var(--fs-md);
+	font-weight: var(--fw-strong);
+}
+.settings-fields select.input {
+	padding-inline: 0;
+}

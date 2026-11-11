@@ -1,16 +1,29 @@
 import { type PointerEvent as ReactPointerEvent, useRef, useState } from "react";
 import { closeLayers, Slot, useCanWrite, useDrawer, useRoute, useUnshownLayers } from "../runtime/web.tsx";
+import { CommandMenu } from "./command-menu/CommandMenu.tsx";
 import { useComposerState } from "./composer-state.tsx";
 import { useDragSize } from "./drag-size.ts";
 import { useDrawerSwipe } from "./drawer-swipe.ts";
 import { OwnerNotices } from "./OwnerNotices.tsx";
+import { SettingsSectionSheets } from "./SettingsNav.tsx";
 import { useSidebarCollapsed } from "./sidebar.ts";
 
+/** The app's layout with the command menu (Cmd+K) over it: its pages read the new-session and composer state. */
 export function AppLayout() {
+	return (
+		<CommandMenu.Provider>
+			<Layout />
+			<CommandMenu.Frame />
+		</CommandMenu.Provider>
+	);
+}
+
+function Layout() {
 	const drawer = useDrawer(),
 		route = useRoute(),
 		collapsed = useSidebarCollapsed();
-	const canWrite = useCanWrite(route.session);
+	// Files dropped go to the composer: a list page (`Route.page`) has none.
+	const canDrop = useCanWrite(route.session) && route.page === undefined;
 	const { addFiles } = useComposerState();
 	const [draggingFiles, setDraggingFiles] = useState(false);
 	const dragDepth = useRef(0);
@@ -52,15 +65,15 @@ export function AppLayout() {
 			/>
 			<main
 				ref={swipe.main}
-				className={`main ${draggingFiles ? "dragging-files" : ""} ${route.session ? "" : "new-session-view"}`}
+				className={`main ${draggingFiles ? "dragging-files" : ""} ${route.session || route.page !== undefined ? "" : "new-session-view"}`}
 				onDragEnter={(event) => {
-					if (!canWrite || ![...event.dataTransfer.items].some((item) => item.kind === "file")) return;
+					if (!canDrop || ![...event.dataTransfer.items].some((item) => item.kind === "file")) return;
 					event.preventDefault();
 					dragDepth.current++;
 					setDraggingFiles(true);
 				}}
 				onDragOver={(event) => {
-					if (!canWrite || ![...event.dataTransfer.items].some((item) => item.kind === "file")) return;
+					if (!canDrop || ![...event.dataTransfer.items].some((item) => item.kind === "file")) return;
 					event.preventDefault();
 					event.dataTransfer.dropEffect = "copy";
 				}}
@@ -71,7 +84,7 @@ export function AppLayout() {
 					if (dragDepth.current === 0) setDraggingFiles(false);
 				}}
 				onDrop={(event) => {
-					if (!canWrite) return;
+					if (!canDrop) return;
 					event.preventDefault();
 					dragDepth.current = 0;
 					setDraggingFiles(false);
@@ -80,11 +93,21 @@ export function AppLayout() {
 				}}
 			>
 				{draggingFiles && <div className="drop-overlay">Drop files to attach</div>}
-				<OwnerNotices />
-				<Slot name="main" fallback={<div className="hero">No chat plugin</div>} />
+				{/* The chat (with the owner's notices below its top bar), as the workbench's first pane when a plugin lays
+				    out panes beside it (views); a sidebar rollup's or group's list (`Route.page`, the sessions plugin's)
+				    instead of the chat. */}
+				<Slot name="workbench">
+					<OwnerNotices />
+					{route.page !== undefined ? (
+						<Slot name="page" fallback={<div className="hero">No list pages</div>} />
+					) : (
+						<Slot name="main" fallback={<div className="hero">No chat plugin</div>} />
+					)}
+				</Slot>
 			</main>
 			<div id="side-dock" className="side-dock" />
 			<Slot name="workspace-panel" />
+			<SettingsSectionSheets />
 		</div>
 	);
 }

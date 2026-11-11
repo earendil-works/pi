@@ -1,4 +1,4 @@
-// The owner's Discord bots (More › Discord): the list with each bot's status, adding one by its token, and a bot's own
+// The owner's Discord bots (Settings › Discord): the list with each bot's status, adding one by its token, and a bot's own
 // sheet (identity, its servers, the invite link, its linked sessions read-only, a new token, removing it). Linking a
 // session to a channel happens from the session (LinkSheet.tsx), not here.
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
@@ -51,7 +51,7 @@ function Avatar({ bot }: { bot: BotView }) {
 	);
 }
 
-/** More › Discord: the bots, and Add bot. */
+/** Settings › Discord: the bots, and Add bot. */
 export function BotsSheet() {
 	const bots = useReadable(useObject(Discord, {})?.bots);
 	return (

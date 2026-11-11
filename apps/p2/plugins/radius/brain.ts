@@ -191,8 +191,10 @@ export type RadiusBrainConfig = {
 	 */
 	publicOrigin?: string;
 	/**
-	 * This brain's page in the Radius shell (`<shell>/pi/brains/<organization>/<server>`), as last seen on a relayed
-	 * request for its UI. People sessions are shared with by email open them there, signed in to Radius.
+	 * This brain's page in the Radius shell (`<shell>/pi/<organization ID>/<server>`), as last seen on a relayed request
+	 * for its UI; a page of the brain's UI is below it (`…/s/<session>`). People sessions are shared with by email open
+	 * them there, signed in to Radius. The shell names organizations by slug when they have one and replaces this ID
+	 * form, but a link people keep names the organization by ID, which a slug change leaves valid.
 	 */
 	shellPage?: string;
 	credential: OAuthCredential;
@@ -269,6 +271,14 @@ export async function writeRadiusConfig(directory: string, config: RadiusBrainCo
 	const path = radiusConfigPath(directory);
 	await writeFile(`${path}.tmp`, `${JSON.stringify(config, null, "\t")}\n`, { mode: 0o600 });
 	await rename(`${path}.tmp`, path);
+}
+
+/**
+ * A saved shell page in the shell's current URL form: pages saved before its URLs dropped `/brains`
+ * (`<shell>/pi/brains/<organization>/<server>`) no longer resolve. The next relayed request saves the current form.
+ */
+export function currentShellPage(saved: string): string {
+	return saved.replace(/^(https?:\/\/[^/]+)\/pi\/brains\//, "$1/pi/");
 }
 
 /** Gateway for new logins: `PI_RADIUS_GATEWAY`, as in the coding agent, else production. */
@@ -392,7 +402,7 @@ export class RadiusBrain {
 			name = (await readBrainIdentity(this.#directory))?.name;
 			if (this.#forwards && !this.#forwards.radiusOrigin && config.publicOrigin)
 				this.#forwards.radiusOrigin = config.publicOrigin;
-			this.#shellPage ??= config.shellPage;
+			this.#shellPage ??= config.shellPage && currentShellPage(config.shellPage);
 		} catch (error) {
 			this.#retry(error);
 			return;
@@ -680,7 +690,7 @@ export class RadiusBrain {
 	#remember(origin: string, shellOrigin: string, owner: Principal): void {
 		const shellPage =
 			SHELL_ORIGIN.test(shellOrigin) && this.#config
-				? `${shellOrigin}/pi/brains/${encodeURIComponent(owner.organization_id)}/${encodeURIComponent(this.#config.serverId)}`
+				? `${shellOrigin}/pi/${encodeURIComponent(owner.organization_id)}/${encodeURIComponent(this.#config.serverId)}`
 				: this.#shellPage;
 		const newOrigin = this.#forwards !== undefined && this.#forwards.radiusOrigin !== origin;
 		if (!newOrigin && shellPage === this.#shellPage) return;

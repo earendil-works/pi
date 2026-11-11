@@ -49,7 +49,7 @@ for (const [width, height] of [
 		};
 	`,
 			});
-			await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+			await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 			await browser.wait(
 				`document.querySelector('.composer textarea') && document.querySelectorAll('.owner-notice.pending').length===2 && !document.querySelector('.offline')`,
 			);
@@ -187,7 +187,7 @@ test(
 		};
 	`,
 		});
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.wait(
 			`document.querySelector('.owner-notice.pending button') && document.querySelector('.composer textarea')`,
 		);
@@ -226,7 +226,7 @@ test(
 		await browser.signIn(fixture.owner);
 		t.after(() => browser.close());
 		await browser.metrics(390, 844);
-		const url = `http://127.0.0.1:${fixture.server.port}/`;
+		const url = `http://127.0.0.1:${fixture.server.port}/new`;
 		processLogs.notice("dev", "No dirty plugins");
 		await browser.open(url);
 		await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);

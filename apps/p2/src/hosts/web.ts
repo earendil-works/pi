@@ -40,8 +40,16 @@ export function isPublicFile(path: string): boolean {
 	return publicFile(path) !== undefined;
 }
 
-/** A page path of the app: `/`, a session, or one of its conversations. */
-const PAGE = /^\/s\/[0-9a-f-]+(?:\/c\/[1-9]\d*)?$/;
+/**
+ * A page path of the app: `/`, a session, or one of its conversations; for the owner also a list (`/list/<key>`) and
+ * the new-session screen (`/new`).
+ */
+const PAGE = /^\/(?:s\/[0-9a-f-]+(?:\/c\/[1-9]\d*)?|list\/[^/]+|new)$/;
+
+/** Whether `path` is one of the app's pages (where a browser loads the app). */
+export function isAppPage(path: string): boolean {
+	return path === "/" || PAGE.test(path);
+}
 
 /** A page path of `guest`'s sessions: `/`, a session shared with it, or one of its conversations. */
 function guestPage(path: string, guest: GuestPrincipal): boolean {
@@ -50,11 +58,14 @@ function guestPage(path: string, guest: GuestPrincipal): boolean {
 	return session !== undefined && Object.hasOwn(guest.sessions, session);
 }
 
+const escapeAttribute = (value: string): string =>
+	value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
 /**
  * The app page. The inline style and theme script run before any CSS so the first paint has the right background;
  * the bundle's stylesheet follows them, so its rules win. The module script runs after parsing, wherever it stands.
  */
-function page(nonce: string, manifest: WebManifest): string {
+function page(nonce: string, manifest: WebManifest, shellOrigin: string | undefined): string {
 	return `<!doctype html>
 <html lang="en" data-web-version="${manifest.version}">
 	<head>
@@ -69,7 +80,11 @@ function page(nonce: string, manifest: WebManifest): string {
 		<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
 		<meta name="apple-mobile-web-app-title" content="Pi" />
 		<meta name="mobile-web-app-capable" content="yes" />
-		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-capable" content="yes" />${
+			shellOrigin === undefined
+				? ""
+				: `\n\t\t<!-- The Radius shell framing this page (src/web/shell-bridge.ts). -->\n\t\t<meta name="p2-shell-origin" content="${escapeAttribute(shellOrigin)}" />`
+		}
 		<title>Pi</title>
 		<style>
 			:root {
@@ -134,7 +149,11 @@ export function createWeb(options: {
 		return (await bundleFile(path.slice(WEB_BUNDLE_PATH.length))) !== undefined;
 	}
 
-	async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
+	/**
+	 * `shellOrigin`: the Radius shell that frames a relayed request (`RequestOrigin.relayShellOrigin`), named in app
+	 * pages for the shell bridge.
+	 */
+	async function handle(request: IncomingMessage, response: ServerResponse, shellOrigin?: string): Promise<void> {
 		const path = new URL(request.url ?? "/", "http://localhost").pathname;
 		const head = request.method === "HEAD";
 		if (request.method !== "GET" && !head) {
@@ -142,8 +161,8 @@ export function createWeb(options: {
 			response.end("Not found");
 			return;
 		}
-		if (path === "/" || PAGE.test(path)) {
-			const html = page(options.nonce, webManifest(await options.bundle()));
+		if (isAppPage(path)) {
+			const html = page(options.nonce, webManifest(await options.bundle()), shellOrigin);
 			response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
 			response.end(head ? undefined : html);
 			return;
@@ -184,9 +203,9 @@ export function createWeb(options: {
 	}
 
 	return {
-		/** Serves `request`; a failed build answers 500. */
-		handle: (request: IncomingMessage, response: ServerResponse): void => {
-			handle(request, response).catch((error: unknown) => {
+		/** Serves `request`; a failed build answers 500. `shellOrigin`: see the inner `handle`. */
+		handle: (request: IncomingMessage, response: ServerResponse, shellOrigin?: string): void => {
+			handle(request, response, shellOrigin).catch((error: unknown) => {
 				console.error("p2 web:", error);
 				if (!response.headersSent) response.writeHead(500, { "Content-Type": "text/plain" });
 				response.end("Could not load the UI");

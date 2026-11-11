@@ -13,7 +13,7 @@ curl -LsSf https://llama.app/install.sh | sh
 Verify the installation:
 
 ```bash
-llama cli --version
+llama --version
 ```
 
 See [llama.app](https://llama.app) for other installation methods, including package managers and building from source.

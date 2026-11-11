@@ -2,7 +2,7 @@
 
 pi's `/tree` in p2 (owner decisions from the design discussion). Code: `plugins/tree/` (worker, web sheet),
 `src/runtime/main-conversation.ts`, `src/tui/components/tree-selector.ts`, `/tree` in `plugins/chat/tui.ts`, the sidebar's
-branch rows (`src/web/Drawer.tsx`, `plugins/sessions/web.tsx`, `BranchSheet.tsx`). Tests:
+branch rows (`plugins/sessions/sidebar/Row.tsx`, `plugins/sessions/web.tsx`, `BranchSheet.tsx`). Tests:
 `tree.test.ts`, `tui-tree.test.ts`, `ui-tree.test.ts`.
 
 ## Goal
@@ -47,7 +47,7 @@ version 2; absent: `{ 1, [{ 1, null }] }`):
   label as the session title for 4, no labels for `SessionTree` 1). A web page or TUI viewing the previous main conversation follows a switch.
 - Earlier branches are read-only (`ReadOnlyConversations`): only the main conversation takes input (send, dequeue,
   configure); Stop stays allowed. A branch left while it works keeps running in the background: its run and queued
-  input go on, its sidebar row shows the working dot, and its answer counts as unread. To watch or stop it, switch
+  input go on, its sidebar row shows the working mark, and its answer counts as unread. To watch or stop it, switch
   back to it. The web shows only the main conversation and subagents (others redirect to the main one).
 - **Labels** are stored per branch (see [Labels](#labels)).
 

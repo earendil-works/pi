@@ -6,7 +6,7 @@ import { type ReactNode, useContext, useEffect, useLayoutEffect, useRef, useStat
 import { getNavigation, useRoute, useScrollMemory } from "../../runtime/web.tsx";
 import { ToolActivityContext, WorkingDirectory } from "../chat-context.ts";
 import type { Route } from "../navigation.ts";
-import { SidePanel, showInSidePanel, useSidePanelShown } from "../SidePanel.tsx";
+import { closePanel, SidePanel, showInSidePanel, useSidePanelShown } from "../SidePanel.tsx";
 import { clockTime, Time } from "../Time.tsx";
 import { DetailProse, imageUrl, StepDetail } from "./Detail.tsx";
 import { ChevronIcon, CommentIcon, SparkIcon } from "./icons.tsx";
@@ -37,13 +37,8 @@ export function openActivity(row: string, step?: string): void {
  */
 export function toggleActivity(row: string, step?: string): void {
 	const { route } = getNavigation();
-	if (!route.workspace && route.activity?.row === row && route.activity.step === step) closeActivity();
+	if (!route.workspace && route.activity?.row === row && route.activity.step === step) closePanel();
 	else openActivity(row, step);
-}
-
-/** Closes only the activity panel, returning to the screen beneath it. */
-function closeActivity(): void {
-	void getNavigation().close((route) => ({ ...route, activity: undefined }));
 }
 
 /** A live duration, or the total once the run is done; unknown without either endpoint. */
@@ -139,7 +134,7 @@ function ActivityPanel({
 			title="Activity"
 			sheetTitle={meta}
 			meta={meta}
-			onClose={closeActivity}
+			onClose={closePanel}
 			className="activity-panel"
 			testId="activity-sheet"
 		>

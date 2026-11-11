@@ -212,8 +212,6 @@ body,
 .artifact-row,
 .login-action,
 .hit,
-.session-main,
-.subagent-row,
 .guest-row,
 .share-row {
 	display: flex;
@@ -235,8 +233,6 @@ body,
 .artifact-row:active,
 .login-action:active,
 .hit:active,
-.session-main:active,
-.subagent-row:active,
 .workspace-row:active {
 	background: var(--hover);
 }
@@ -245,18 +241,9 @@ body,
 	.model-row:hover,
 	.artifact-row:hover,
 	.login-action:hover,
-	.hit:hover,
-	.session-main:hover,
-	.subagent-row:hover {
+	.hit:hover {
 		background: var(--hover);
 	}
-}
-/* The open session or conversation is a filled row, never a side edge; the chosen model shows its check. */
-.session-header:has(> .session-main.active),
-.session-main.active,
-.subagent-row.active {
-	background: var(--hover);
-	color: var(--text);
 }
 .row-button > span,
 .model-row > span,
@@ -274,6 +261,10 @@ body,
 .login-action > svg {
 	flex: none;
 	color: var(--faint);
+}
+/* An icon before a row's label keeps its size when the label is cut. */
+.row-button > span > svg {
+	flex: none;
 }
 .row-button.danger,
 .login-action.danger {
@@ -329,7 +320,8 @@ textarea.input {
 	padding: var(--s2) 0;
 	resize: none;
 }
-.search input {
+.search input,
+.command-input input {
 	flex: 1;
 	min-width: 0;
 	height: 100%;
@@ -744,6 +736,26 @@ textarea.input {
 .row[data-lead] > * {
 	min-height: var(--row);
 }
+/* The row after a finished wheel takes the place of its thought (activity/ThoughtSlot.tsx): at least as tall as the
+   thought's slot while the turn runs (an inline min-height), its content fading in as the thought fades out; once the
+   turn ends the space it does not need closes smoothly. */
+.row[data-handoff] > * {
+	animation: row-handoff 0.38s ease-out both;
+}
+.row[data-handoff="released"] {
+	transition: min-height 0.36s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes row-handoff {
+	0%,
+	42% {
+		opacity: 0;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.row[data-handoff] > * {
+		animation: none;
+	}
+}
 /* A transcript appearing (opening a conversation) fades in rather than snapping in (`.messages`). */
 @keyframes transcript-appear {
 	from {
@@ -1136,6 +1148,7 @@ textarea.input {
 	min-width: 0;
 	padding: var(--s2) var(--s3);
 	text-align: left;
+	text-decoration: none;
 }
 @media (hover: hover) {
 	.file-card-main:hover {
@@ -1911,7 +1924,8 @@ button.diff-number:hover {
 	gap: var(--s1);
 	padding: var(--s1) var(--bar-pad) 0 0;
 }
-.workspace-section {
+.workspace-section,
+.command-heading {
 	margin: 0;
 	padding: var(--s3) var(--x) var(--s1);
 	color: var(--muted);
@@ -2216,6 +2230,12 @@ button.diff-number:hover {
 	color: var(--muted);
 	font-family: var(--mono);
 	font-size: var(--fs-sm);
+}
+/* The sidebar group a new session joins (a group's "+"), after its location. */
+.cwd-join {
+	color: var(--muted);
+	font-size: var(--fs-sm);
+	white-space: nowrap;
 }
 .cwd-pick span {
 	overflow: hidden;
@@ -2625,230 +2645,10 @@ button.diff-number:hover {
 .collapse-sidebar svg {
 	transform: rotate(180deg);
 }
-.new-session {
-	display: inline-flex;
-	align-items: center;
-	gap: var(--s1);
-	height: var(--control);
-	padding: 0 var(--s2);
-	color: var(--muted);
-	font-size: var(--fs-sm);
-}
-.new-session:hover {
-	color: var(--text);
-}
-.drawer-content > .search {
-	width: auto;
-	margin: 0 var(--x);
-}
-.drawer-content > .empty-note {
-	padding: var(--s4) var(--x);
-	text-align: left;
-}
 .session-scroll {
 	flex: 1;
 	overflow-y: auto;
 	padding: 0 var(--x) var(--s4);
-}
-/* A folder's heading names its path (mono, as typed); other headings (Messages) are section labels. */
-.group > .group-head {
-	overflow: hidden;
-	font-family: var(--mono);
-	text-overflow: ellipsis;
-	text-transform: none;
-	letter-spacing: 0;
-	white-space: nowrap;
-}
-.group-label {
-	flex: 1;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-.group-new {
-	display: inline-flex;
-	flex: none;
-	align-items: center;
-	justify-content: center;
-	width: var(--control-sm);
-	height: var(--control-sm);
-	margin: calc(-1 * var(--s1)) 0;
-	color: var(--faint);
-}
-.group-new:hover:not(:disabled) {
-	color: var(--text);
-}
-.session-main {
-	min-height: var(--control);
-	padding-top: var(--s1);
-	padding-bottom: var(--s1);
-}
-/* Block, not flex: text in a flex container is clipped without an ellipsis. */
-.session-title {
-	display: block;
-	flex: 1;
-	min-width: 0;
-	overflow: hidden;
-	font-size: var(--fs-md);
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-.session-title svg {
-	margin-right: var(--s1);
-	color: var(--muted);
-	vertical-align: -1px;
-}
-.session-meta {
-	display: flex;
-	flex: none;
-	align-items: center;
-	gap: var(--s1);
-	color: var(--muted);
-	font-size: var(--fs-xs);
-}
-/* A lifecycle operation of the session (a move, a copy, an archive) running, or failed with Dismiss. */
-.session-operation {
-	display: flex;
-	align-items: center;
-	gap: var(--s1);
-	padding: 0 0 var(--s1);
-	color: var(--muted);
-	font-size: var(--fs-xs);
-}
-.session-operation.failed {
-	color: var(--bad);
-}
-.session-operation > span {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-.session-header {
-	display: flex;
-	align-items: stretch;
-	margin: 0 calc(-1 * var(--x));
-}
-.session-header .session-main {
-	flex: 1;
-	min-width: 0;
-	width: 0;
-	margin: 0;
-}
-.session-header.has-subagents .session-main {
-	padding-right: var(--s1);
-}
-.subagent-toggle {
-	display: inline-flex;
-	flex: none;
-	align-items: center;
-	justify-content: center;
-	gap: var(--s1);
-	min-width: var(--control-sm);
-	margin-right: var(--s2);
-	padding: 0 var(--s1);
-	color: var(--muted);
-	font-size: var(--fs-xs);
-}
-.subagent-toggle:hover {
-	color: var(--text);
-}
-/* The branch count beside the subagent count: the fork icon before it. */
-.toggle-branches {
-	display: inline-flex;
-	align-items: center;
-	gap: 2px;
-}
-.subagent-row {
-	min-height: var(--control-sm);
-	padding-top: 2px;
-	padding-bottom: 2px;
-	color: var(--muted);
-}
-.subagent-row .session-title {
-	font-size: var(--fs-sm);
-}
-.subagent-stored {
-	color: var(--faint);
-}
-.subagent-row .session-meta {
-	max-width: 40%;
-	overflow: hidden;
-	font-family: var(--mono);
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-/* `/tree` branches under their session: the fork icon before the label (docs/tree.md). */
-.branch-row > svg {
-	flex: none;
-	color: var(--faint);
-}
-.branch-row .session-title {
-	flex: 1;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-/* Renaming a branch: the pencil at the row's end on hover, always shown where there is no hover. */
-.branch-item {
-	position: relative;
-}
-.branch-item .branch-row {
-	padding-right: calc(var(--x) + var(--control-sm));
-}
-.branch-rename {
-	position: absolute;
-	top: 50%;
-	right: 0;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: var(--control-sm);
-	height: var(--control-sm);
-	color: var(--faint);
-	opacity: 0;
-	transform: translateY(-50%);
-}
-.branch-rename:hover {
-	color: var(--text);
-}
-.branch-item:hover .branch-rename,
-.branch-rename:focus-visible {
-	opacity: 1;
-}
-@media (pointer: coarse) {
-	.branch-rename {
-		opacity: 1;
-	}
-}
-.subagent-location {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-.branch {
-	flex: none;
-	width: 10px;
-	height: 12px;
-	margin-top: calc(-1 * var(--s2));
-	border-bottom: 1px solid var(--line);
-	border-left: 1px solid var(--line);
-}
-.live-dot {
-	flex: none;
-	width: 7px;
-	height: 7px;
-	border-radius: 50%;
-	background: var(--working);
-	animation: pulse 1.2s ease-in-out infinite;
-}
-/* An answer the owner has not read yet: steady, unlike the working dot. */
-.unread-dot {
-	flex: none;
-	width: 7px;
-	height: 7px;
-	border-radius: 50%;
-	background: var(--unread);
 }
 .hit {
 	display: block;
@@ -2934,7 +2734,8 @@ button.diff-number:hover {
 	inset: 0;
 	z-index: 38;
 	display: flex;
-	align-items: flex-end;
+	/* A layer may place its dialog elsewhere (the command menu: near the top). */
+	align-items: var(--layer-align, flex-end);
 	justify-content: center;
 }
 .scrim {
@@ -3081,7 +2882,7 @@ button.diff-number:hover {
 }
 @media (min-width: 700px) {
 	.sheet-layer {
-		align-items: center;
+		align-items: var(--layer-align, center);
 	}
 	.sheet {
 		border: 1px solid var(--line);
@@ -3124,6 +2925,14 @@ button.diff-number:hover {
 }
 .directory-head {
 	padding-bottom: var(--s3);
+}
+/* A path in the directory picker (the Use button, folder and recent rows): one line, cut with "…" at its end; the
+   element's title has it whole. */
+.directory-path {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 .list .row-button.mono {
 	font-family: var(--mono);
@@ -3617,6 +3426,7 @@ button.history-edge:disabled {
 	.drawer,
 	.drawer-scrim,
 	.sheet,
+	.command-menu,
 	.scrim,
 	.toast,
 	.to-bottom {
@@ -3677,21 +3487,22 @@ button.history-edge:disabled {
 	margin: var(--s2) 0 0;
 }
 
-/* The lock of a sandboxed location: in the top bar's location line and on sidebar groups. */
+/* The lock of a sandboxed location, in the top bar's location line. */
 .title-lock {
 	display: inline-flex;
 	margin-right: 3px;
 	vertical-align: -1px;
 }
-.group-lock {
-	display: inline-flex;
+/* The location's project glyph (plugins/glyphs), before the path in the top bar's location line. */
+.title .glyph-icon {
+	display: inline-block;
+	margin-right: var(--s1);
+	vertical-align: -1px;
 }
 
 /* Touch targets: on a coarse pointer every list row and small control is at least one --row (44px) tall. The
    transcript's own rows keep their rhythm (.row, TranscriptRow.gap in Chat.tsx). */
 @media (pointer: coarse) {
-	.session-main,
-	.subagent-row,
 	.workspace-row,
 	.foot-button,
 	.text-action,
@@ -3708,21 +3519,45 @@ button.history-edge:disabled {
 		align-items: center;
 	}
 	.queue-remove,
-	.branch-rename,
 	.comment-nav .icon-button,
 	.line-comment .icon-button {
 		width: var(--row);
 		height: var(--row);
 	}
-	/* The glyph stays where it was: the larger box grows into the label's padding and past the row's end. */
-	.group-new {
-		width: var(--row);
-		height: var(--row);
-		margin: calc((var(--control-sm) - var(--row)) / 2 - var(--s1)) calc((var(--control-sm) - var(--row)) / 2)
-			calc((var(--control-sm) - var(--row)) / 2 - var(--s1)) 0;
-	}
 	.terminal-keys button {
 		height: var(--control);
 		min-width: var(--control);
 	}
+	/* The command menu's chip ×: a full target around its 16px glyph box without growing the chip. The row's bottom
+	   padding holds the target's lower half, so it never reaches the input below. */
+	.command-context {
+		padding-bottom: var(--s3);
+	}
+	.command-chip-remove::after {
+		position: absolute;
+		inset: calc((16px - var(--row)) / 2);
+		content: "";
+	}
+}
+
+/* A setting that applies at once (Switch.tsx): its label, and Elanor's switch at the row's end. */
+.switch-row {
+	display: flex;
+	align-items: center;
+	gap: var(--s3);
+	min-height: var(--row);
+	font-size: var(--fs-sm);
+	cursor: pointer;
+}
+.switch-label {
+	flex: 1;
+	min-width: 0;
+}
+
+/* The Pi macOS app (apps/p2-mac, in progress) shows the page under its transparent title bar, the window buttons over
+   its top left corner. It sets data-shell="macos" and --shell-inset-start (the buttons' width) on <html>, and marks the
+   bars at that corner with data-shell-corner, whichever layout or plugin put them there: their content starts after
+   the buttons. */
+:root[data-shell="macos"] [data-shell-corner] {
+	padding-left: var(--shell-inset-start);
 }

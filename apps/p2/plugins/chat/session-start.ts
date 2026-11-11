@@ -10,7 +10,7 @@
  * directory that does not exist, an unknown model) puts the messages back into the composer; a failure of the
  * connection is tried again, at most `GIVE_UP` times while connected.
  */
-import type { ModelChoice } from "@p2/app/v1/web";
+import type { ModelChoice, NewSessionJoin } from "@p2/app/v1/web";
 import { GIVE_UP, type Outgoing, outboxOf, retryDelay } from "./outbox.ts";
 
 /**
@@ -20,6 +20,8 @@ import { GIVE_UP, type Outgoing, outboxOf, retryDelay } from "./outbox.ts";
 export type Start = {
 	readonly session: string;
 	readonly location: { readonly env: string | null; readonly cwd: string };
+	/** The project it joins once it is created (a project group's "+"). */
+	readonly join?: NewSessionJoin;
 	readonly choice: ModelChoice;
 	readonly messages: readonly Outgoing[];
 };

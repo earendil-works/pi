@@ -13,6 +13,11 @@ Paths are relative to `apps/p2`. Read `docs/handoff.md` and the matching part of
   `src/web/style.css`): grip, 52px header with an `h2` title and Close, swipe down to close on phones, a centred dialog
   from 700px. A page inside a sheet passes `onBack` (Back button before the title). Never use a third-party
   drawer/dialog (Elanor/base-ui `Drawer`, etc.) where p2 has one.
+- **Settings window:** an owner's global settings or service page belongs in Settings (`plugins/settings`): contribute
+  `SettingsSections` once (`{ label, order, Sheet }`, keyed by the sheet layer's name); while the window is open a
+  `Sheet` renders as a page of it (`src/web/SettingsNav.tsx`, `src/web/settings-embed.ts`).
+- **Switches and checkboxes:** a setting that applies the moment it changes is a `Switch` (`src/web/Switch.tsx`);
+  checkboxes only in forms that are submitted.
 - **Side panel:** `SidePanel` from `src/web/SidePanel.tsx`: docked on the right from 700px (`#side-dock`, beside the
   chat from 1280px), p2's `Sheet` on phones. Not modal; one thing at a time: a run's activity (`Route.activity`) or a
   plugin's panel (`Route.panel`, `openPanel(name)`/`closePanel()`); render it only while `useSidePanelShown()`.

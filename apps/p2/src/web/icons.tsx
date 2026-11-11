@@ -201,6 +201,13 @@ export const MoonIcon = () => (
 		<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" />
 	</Icon>
 );
+/** A gear: the server's settings. */
+export const SettingsIcon = () => (
+	<Icon size={16}>
+		<path d="M12.2 2h-.4a2 2 0 0 0-2 2v.2a2 2 0 0 1-1 1.7l-.4.3a2 2 0 0 1-2 0l-.2-.1a2 2 0 0 0-2.7.7l-.2.4a2 2 0 0 0 .7 2.7l.2.1a2 2 0 0 1 1 1.7v.5a2 2 0 0 1-1 1.7l-.2.1a2 2 0 0 0-.7 2.7l.2.4a2 2 0 0 0 2.7.7l.2-.1a2 2 0 0 1 2 0l.4.3a2 2 0 0 1 1 1.7v.2a2 2 0 0 0 2 2h.4a2 2 0 0 0 2-2v-.2a2 2 0 0 1 1-1.7l.4-.3a2 2 0 0 1 2 0l.2.1a2 2 0 0 0 2.7-.7l.2-.4a2 2 0 0 0-.7-2.7l-.2-.1a2 2 0 0 1-1-1.7v-.5a2 2 0 0 1 1-1.7l.2-.1a2 2 0 0 0 .7-2.7l-.2-.4a2 2 0 0 0-2.7-.7l-.2.1a2 2 0 0 1-2 0l-.4-.3a2 2 0 0 1-1-1.7V4a2 2 0 0 0-2-2z" />
+		<circle cx="12" cy="12" r="3" />
+	</Icon>
+);
 /** Half-filled circle: follow the system light/dark setting. */
 export const SystemThemeIcon = () => (
 	<Icon size={16}>
@@ -238,5 +245,87 @@ export const KeyboardIcon = () => (
 export const HideIcon = () => (
 	<Icon size={18}>
 		<path d="M6 9l6 6 6-6" />
+	</Icon>
+);
+/** A box with a lid: archive a session. */
+export const ArchiveIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<rect x="3" y="4" width="18" height="4" rx="1" />
+		<path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4" />
+	</Icon>
+);
+/** An arrow out of the archive box: restore an archived session. */
+export const RestoreIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<rect x="3" y="4" width="18" height="4" rx="1" />
+		<path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M12 17v-6M9.5 13.5 12 11l2.5 2.5" />
+	</Icon>
+);
+/** Lines with bullets: a list to pick from (Switch session…). */
+export const ListIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01" />
+	</Icon>
+);
+/** A chip: a model. */
+export const ModelIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<rect x="6" y="6" width="12" height="12" rx="2" />
+		<path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4" />
+	</Icon>
+);
+/** A light bulb: the thinking level. */
+export const ThinkingIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9V16h7v-2.1A6 6 0 0 0 12 3z" />
+	</Icon>
+);
+/** Three linked nodes: share a session. */
+export const ShareIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<circle cx="18" cy="5" r="3" />
+		<circle cx="6" cy="12" r="3" />
+		<circle cx="18" cy="19" r="3" />
+		<path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" />
+	</Icon>
+);
+/** A window with a bar at its start: the sidebar (Show sidebar, Hide sidebar). */
+export const SidebarIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<rect x="3" y="4" width="18" height="16" rx="2" />
+		<path d="M9 4v16" />
+	</Icon>
+);
+/** An eye: show a view. */
+export const EyeIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+		<circle cx="12" cy="12" r="3" />
+	</Icon>
+);
+/** An eye struck through: hide a view. */
+export const EyeOffIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<path d="M10.6 5.1A9.8 9.8 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-2.2 3.2M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2M3 3l18 18" />
+	</Icon>
+);
+/** A bookmark: a saved view. */
+export const BookmarkIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<path d="M6 3h12v18l-6-4-6 4z" />
+	</Icon>
+);
+/** A folder with a plus: a new session in a folder. */
+export const FolderPlusIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+		<path d="M12 10v6M9 13h6" />
+	</Icon>
+);
+/** A folder with an arrow into it: change a session's working directory. */
+export const FolderMoveIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+		<path d="M8 13h7M12.5 10.5l2.5 2.5-2.5 2.5" />
 	</Icon>
 );

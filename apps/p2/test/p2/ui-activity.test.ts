@@ -1,5 +1,5 @@
 // Selected-block activity: docked on the right without a tab, a sheet on phones, with inline step and nested-call
-// expansion. The active transcript block keeps an abbreviated latest thought above its non-thinking step.
+// expansion. The active transcript block shows its latest thought below the wheel (ThoughtSlot).
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -185,6 +185,11 @@ describe("a block's steps and active thought", { skip: !browserTests }, () => {
 		fixture = await startFixture({ web: true });
 		browser = await Browser.start();
 		await browser.signIn(fixture.owner);
+		// Every page starts without remembered panels (src/web/session-panels.ts): each view below shows in the Familiar's
+		// session, which would otherwise reopen the block an earlier test left open there.
+		await browser.call("Page.addScriptToEvaluateOnNewDocument", {
+			source: `localStorage.removeItem("p2-session-panels")`,
+		});
 	});
 	after(async () => {
 		await browser?.close();
@@ -448,17 +453,24 @@ describe("a block's steps and active thought", { skip: !browserTests }, () => {
 		});
 	});
 
-	it("shows the latest thought above the current step, clamps it, and streams output without closing expanded details", async () => {
+	it("shows the latest thought below the wheel in three lines, and streams output without closing expanded details", async () => {
 		await show(running("building\n"), 2);
-		await browser.wait("document.querySelector('[data-testid=activity-thought]')");
+		const words = "document.querySelector('[data-testid=activity-slot-words]')";
+		await browser.wait(`${words}?.textContent===${JSON.stringify(thought.trim())}`);
+		// Below the wheel: the slot follows the wheel's row in the block, its icon under the wheel's icon.
 		assert.equal(
-			await browser.evaluate("document.querySelector('[data-testid=activity-thought]').textContent"),
-			thought,
+			await browser.evaluate("document.querySelector('.activity-block > .activity + .activity-slot') !== null"),
+			true,
 		);
-		const clamp = await browser.evaluate<{ lines: string; clipped: boolean }>(
-			"(e=>({lines:getComputedStyle(e).webkitLineClamp,clipped:e.scrollHeight>e.clientHeight}))(document.querySelector('.activity-thought-text'))",
+		const layout = await browser.evaluate<{ lines: number; clipped: boolean; icon: number }>(
+			`(() => {
+				const window = document.querySelector('.activity-slot-window');
+				const line = parseFloat(getComputedStyle(window).lineHeight) || parseFloat(getComputedStyle(window).fontSize) * 1.65;
+				const icon = document.querySelector('.activity-slot-icon').getBoundingClientRect().left - document.querySelector('.activity .el-ticker-item[data-current] svg').getBoundingClientRect().left;
+				return { lines: Math.round(window.clientHeight / line), clipped: window.classList.contains('more-above'), icon: Math.round(icon) };
+			})()`,
 		);
-		assert.deepEqual(clamp, { lines: "3", clipped: true });
+		assert.deepEqual(layout, { lines: 3, clipped: true, icon: 0 });
 		await browser.click("[data-testid=activity]");
 		await browser.wait("document.querySelector('pre.detail-output')?.textContent==='building'");
 		await browser.evaluate(`window.showCodemode(${JSON.stringify(running("building\ntesting\n"))}, 2)`);
@@ -476,11 +488,17 @@ describe("a block's steps and active thought", { skip: !browserTests }, () => {
 		);
 	});
 
-	it("does not duplicate the currently thinking step, and removes the preview once the block finishes", async () => {
+	it("shows the thought while it streams, and hands its place to the answer once the block finishes", async () => {
+		const words = "document.querySelector('[data-testid=activity-slot-words]')";
 		await show(running("", true), 2);
-		assert.equal(await browser.evaluate("document.querySelector('[data-testid=activity-thought]')"), null);
+		await browser.wait(`${words}?.textContent===${JSON.stringify(thought.trim())}`);
+		// Its height grows to fit (a transition).
+		await browser.wait("document.querySelector('.activity-slot').getBoundingClientRect().height>40");
 		await browser.evaluate(`window.showCodemode(${JSON.stringify(running("done"))}, 2)`);
-		await browser.wait("document.querySelector('[data-testid=activity-thought]')");
+		await browser.wait(
+			"document.querySelector('[data-testid=activity] [data-current]')?.textContent.includes('gh run watch')",
+		);
+		assert.equal(await browser.evaluate(`${words}.textContent`), thought.trim());
 		const entries: ConversationView["entries"][number][] = [];
 		respond(entries, [
 			{ type: "thinking", thinking: thought },
@@ -489,7 +507,75 @@ describe("a block's steps and active thought", { skip: !browserTests }, () => {
 		respond(entries, [{ type: "text", text: "The deployment passed." }], "stop");
 		await browser.evaluate(`window.showCodemode(${JSON.stringify({ conversation, entries, docs: {} })}, 2)`);
 		await browser.wait("document.querySelector('[data-testid=activity][data-state=done]')");
-		assert.equal(await browser.evaluate("document.querySelector('[data-testid=activity-thought]')"), null);
+		// The slot left the layout; the answer took its place and, the turn over, gives back the space it does not need.
+		assert.deepEqual(
+			await browser.evaluate(
+				"(() => { const slot = document.querySelector('.activity-slot'); const answer = document.querySelector('.activity-block').closest('.row').nextElementSibling; return { slot: slot.classList.contains('handed-off') && slot.getBoundingClientRect().height === 0, handoff: answer.dataset.handoff, minHeight: answer.style.minHeight }; })()",
+			),
+			{ slot: true, handoff: "released", minHeight: "0px" },
+		);
+	});
+
+	it("starts a shorter next thought on the slot's first line, keeping the taller space, and scrolls a long one", async () => {
+		const working = (entries: ConversationView["entries"][number][], callId: string): ConversationView => ({
+			conversation,
+			entries,
+			docs: {
+				"pi.live": {
+					run: { taskId: 1, inputs: [] },
+					tools: [{ callId, name: "bash", taskId: 1, status: "running", output: "" }],
+				} as unknown as LiveState,
+			} as ConversationView["docs"],
+		});
+		const first: ConversationView["entries"][number][] = [];
+		respond(first, [
+			// Models' summaries end in blank lines and separate their parts with them: neither takes a line of the slot.
+			{
+				type: "thinking",
+				thinking: `**Checking the build**\n\n${"Check the build output before changing anything else. ".repeat(6)}\n\n`,
+			},
+			call("a", "bash", { command: "npm run build" }),
+		]);
+		await show(working(first, "a"), 2, 390);
+		const words = "document.querySelector('[data-testid=activity-slot-words]')";
+		await browser.wait(`${words}?.textContent.startsWith('Checking the build\\nCheck the build')`);
+		// Longer than three lines: it scrolls, its newest line in view and the edge above faded.
+		await browser.wait(
+			"(w => w.scrollHeight > w.clientHeight && w.scrollTop >= w.scrollHeight - w.clientHeight - 2 && w.classList.contains('more-above'))(document.querySelector('.activity-slot-window'))",
+		);
+		// The reader scrolls up to read: the words stay there while the thought grows.
+		const area = "document.querySelector('.activity-slot-window')";
+		await browser.evaluate(
+			`(w => { w.dispatchEvent(new WheelEvent("wheel", { deltaY: -40 })); w.scrollTop = 0; })(${area})`,
+		);
+		const grown: ConversationView["entries"][number][] = [];
+		respond(grown, [
+			{
+				type: "thinking",
+				thinking: `**Checking the build**\n\n${"Check the build output before changing anything else. ".repeat(6)}More.`,
+			},
+			call("a", "bash", { command: "npm run build" }),
+		]);
+		await browser.evaluate(`window.showCodemode(${JSON.stringify(working(grown, "a"))}, 2)`);
+		await browser.wait(`${words}?.textContent.endsWith('More.')`);
+		await browser.evaluate("new Promise((resolve) => setTimeout(resolve, 400))");
+		assert.equal(await browser.evaluate(`${area}.scrollTop`), 0);
+		const second = [...first];
+		respond(second, [{ type: "thinking", thinking: "Short.\n\n" }, call("b", "bash", { command: "npm test" })]);
+		await browser.evaluate(`window.showCodemode(${JSON.stringify(working(second, "b"))}, 2)`);
+		await browser.wait(`${words}?.textContent==='Short.'`);
+		await browser.evaluate("new Promise((resolve) => setTimeout(resolve, 600))");
+		const place = await browser.evaluate<{ offset: number; lines: number }>(
+			`(() => {
+				const window = document.querySelector('.activity-slot-window');
+				const line = parseFloat(getComputedStyle(window).lineHeight);
+				return {
+					offset: Math.round(${words}.getBoundingClientRect().top - window.getBoundingClientRect().top),
+					lines: Math.round((document.querySelector('.activity-slot').getBoundingClientRect().height - 12) / line),
+				};
+			})()`,
+		);
+		assert.deepEqual(place, { offset: 0, lines: 3 });
 	});
 
 	it("keeps selection and expansion when resizing between the right panel and phone sheet", async () => {
