@@ -49,9 +49,9 @@ export function openPanel(name: string): void {
 	showInSidePanel({ panel: name });
 }
 
-/** Closes a plugin panel, returning to the screen beneath it. */
+/** Closes the side panel, whatever it shows (a run's activity or a plugin's panel), returning to the screen beneath it. */
 export function closePanel(): void {
-	void getNavigation().close((route) => ({ ...route, panel: undefined }));
+	void getNavigation().close((route) => ({ ...route, activity: undefined, panel: undefined }));
 }
 
 /**

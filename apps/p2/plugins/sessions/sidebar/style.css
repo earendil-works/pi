@@ -89,7 +89,7 @@
 .nav-row.selected {
 	background: var(--semantic-color-background-fill-ghost-neutral-active);
 }
-/* The marker column: a session's activity dot or a group's icon, as wide as the icon; kept when empty. */
+/* The marker column: a session's working mark or a group's icon, as wide as the icon; kept when empty. */
 .nav-marker {
 	display: inline-flex;
 	flex: none;
@@ -100,6 +100,135 @@
 }
 .nav-marker + .nav-link {
 	margin-inline-start: var(--s1);
+}
+/* What a row's state looks like (Row.tsx). Working is the only motion: a frame around the row's icon, or a spinner
+   where it has none. Wanting the owner is steady and at the row's end: a blue dot (an unread answer; the title is bold),
+   a warning sign with "Failed". Each state has its own shape, so none depends on telling colours apart. */
+
+/* A row's icon (IconMarker), framed while working. The frame sits 3px outside the 16px icon, clear of a glyph's corner
+   cells, inside the marker column's gaps. Not positioned above the row: the row's hit area covers it, so a click opens
+   the session and hovering shows the row's tooltip (the path). */
+.nav-icon {
+	position: relative;
+	display: inline-flex;
+}
+.nav-marker .glyph-icon {
+	display: block;
+	flex: none;
+}
+.working-frame {
+	position: absolute;
+	inset: -3px;
+	width: 22px;
+	height: 22px;
+	overflow: visible;
+	pointer-events: none;
+}
+.working-frame rect {
+	fill: none;
+	stroke-width: 1.5;
+}
+.working-frame-track {
+	stroke: color-mix(in srgb, var(--working) 26%, transparent);
+}
+/* A third of the outline travels around it (pathLength 100), once per 1.5s. */
+.working-frame-dash {
+	stroke: var(--working);
+	stroke-dasharray: 32 68;
+	animation: working-frame 1.5s linear infinite;
+}
+@keyframes working-frame {
+	to {
+		stroke-dashoffset: -100;
+	}
+}
+/* Working where the row has no icon (a group's sessions, a session's conversations, a collapsed rollup, the
+   Familiar's logo): a spinner, rotating on the compositor. */
+.working-mark {
+	flex: none;
+	width: 10px;
+	height: 10px;
+	border: 2px solid color-mix(in srgb, var(--working) 28%, transparent);
+	border-block-start-color: var(--working);
+	border-inline-end-color: var(--working);
+	border-radius: 50%;
+	animation: working-mark 1s linear infinite;
+}
+@keyframes working-mark {
+	to {
+		rotate: 360deg;
+	}
+}
+/* Without motion working keeps a shape of its own: a still ¾ ring, a dashed frame. */
+@media (prefers-reduced-motion: reduce) {
+	.working-mark {
+		border-color: var(--working);
+		border-inline-start-color: transparent;
+		animation: none;
+	}
+	.working-frame-track {
+		stroke: none;
+	}
+	.working-frame-dash {
+		stroke-dasharray: 7 5.5;
+		animation: none;
+	}
+}
+/* The phone's drawer stays rendered off screen while closed: its marks stop there. */
+@media (max-width: 899px) {
+	.app:not(.drawer-open) .drawer :is(.working-mark, .working-frame-dash) {
+		animation-play-state: paused;
+	}
+}
+/* An unread answer: a steady dot before the time, and the session's title in bold. */
+.unread-dot {
+	flex: none;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--unread);
+}
+.session-title.unread {
+	font-weight: var(--fw-strong);
+}
+/* A failure that wants the owner: a warning sign and a word or a count, in the error colour. */
+.failed-mark {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	gap: 2px;
+	color: var(--bad);
+	font-weight: var(--fw-medium);
+}
+/* How many sessions a collapsed group or rollup hides have an unread answer; the menu button's badge (the other
+   sessions that want the owner, red when one failed). */
+.unread-count,
+.menu-badge {
+	flex: none;
+	min-width: 16px;
+	height: 16px;
+	padding: 0 var(--s1);
+	border-radius: 8px;
+	background: var(--unread);
+	color: var(--bg);
+	font-size: var(--fs-xs);
+	font-weight: var(--fw-strong);
+	letter-spacing: 0;
+	line-height: 16px;
+	text-align: center;
+}
+.menu-badge.failed {
+	background: var(--bad);
+}
+/* On the menu button's top end corner, ringed in the bar's background. */
+.sidebar-open {
+	position: relative;
+}
+.menu-badge {
+	position: absolute;
+	inset-block-start: 2px;
+	inset-inline-end: 0;
+	box-shadow: 0 0 0 2px var(--bg);
 }
 /* The label: its hit area covers the whole row, below the controls. It is as wide as its text, so a chevron follows it;
    the fill after it keeps the details and controls at the trailing end. */

@@ -185,6 +185,11 @@ describe("a block's steps and active thought", { skip: !browserTests }, () => {
 		fixture = await startFixture({ web: true });
 		browser = await Browser.start();
 		await browser.signIn(fixture.owner);
+		// Every page starts without remembered panels (src/web/session-panels.ts): each view below shows in the Familiar's
+		// session, which would otherwise reopen the block an earlier test left open there.
+		await browser.call("Page.addScriptToEvaluateOnNewDocument", {
+			source: `localStorage.removeItem("p2-session-panels")`,
+		});
 	});
 	after(async () => {
 		await browser?.close();

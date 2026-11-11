@@ -13,6 +13,7 @@ import type {
 	Settings,
 	SettledTask,
 } from "./harness/types.ts";
+import type { SignalKey, SignalResult, SignalState, SignalToken } from "./signals.ts";
 
 /** JSON object used as the root of every durable document. */
 export type JsonObject = { [key: string]: JsonValue };
@@ -230,12 +231,12 @@ export type RunningTask<I, S, R> = TaskRecord<I, S, R> & {
 
 /**
  * Next state a task commits for itself: a replacement checkpoint, a wait on tasks, a sleep, or its outcome. A returned `terminal` state is
- * stored as `completing` while ordinary owned work below the task is live (spec §5.5).
+ * stored as `completing` while ordinary owned work below the task is live (spec §5.5). A task never writes its own
+ * `wake`: a commit of the same checkpoint keeps it, any other state drops it.
  */
-export type NextTaskState<S, R> = Extract<
-	TaskState<S, R>,
-	{ readonly status: "running" | "waiting" | "sleeping" | "terminal" }
->;
+export type NextTaskState<S, R> =
+	| { readonly status: "running"; readonly checkpoint: S; readonly wake?: never; readonly outcome?: never }
+	| Extract<TaskState<S, R>, { readonly status: "waiting" | "sleeping" | "terminal" }>;
 
 /**
  * Runs one checkpoint phase. It must commit a changed checkpoint or a terminal outcome through `runtime.commit()`;
@@ -301,6 +302,11 @@ export interface TaskRuntime<I, S, R, H extends object> extends DocumentObserver
 	memo<T extends JsonValue>(name: string, context: Context): Promise<T | undefined>;
 	/** Store `candidate` unless a memo already exists; return the durable winner. */
 	memo<T extends JsonValue>(name: string, candidate: T, context: Context): Promise<T>;
+	/**
+	 * A signal key's committed state, the value migrated to the token's version; undefined while nothing came. Throws when
+	 * the stored value cannot be migrated or the migrated value does not match the schema.
+	 */
+	readSignal<T>(token: SignalToken<T>, key: string, context: Context): Promise<SignalState<T> | undefined>;
 	/** Committed task record. */
 	getTask<T>(id: TaskId<T>, context: Context): Promise<TaskRecord<JsonValue, JsonValue, T> | undefined>;
 	/** Resolve with the task's terminal receipt; rejects when the invocation ends. */
@@ -396,8 +402,23 @@ export interface Task<I, S extends { phase: string }, R, H extends object> {
 /** Who owns a task: its conversation (a top-level task) or another task of the same conversation (a child task). */
 export type TaskOwnership = { readonly kind: "conversation" } | { readonly kind: "task"; readonly taskId: TaskId };
 
-/** How a waiting task treats the tasks it waits on (spec §5.5). */
-export type JoinPolicy = "failFast" | "allSettled";
+/**
+ * How a waiting task treats the tasks it waits on (spec §5.5): `allSettled` resumes once every task in `on` is terminal,
+ * `failFast` too but aborts the others once one fails, `any` once at least one is terminal.
+ */
+export type JoinPolicy = "failFast" | "allSettled" | "any";
+
+/**
+ * Why parked work runs again, as the reservation that woke it recorded: `time` (the sleep's `until`, no signals listed),
+ * `expired` (`until` came before any listed signal), `signal` (the key whose value woke it; read the value with
+ * `readSignal()`), `tasks` (the terminal tasks of the wait's `on` at the reservation). Kept until the task commits another
+ * checkpoint, parks, or ends.
+ */
+export type WakeReason =
+	| { readonly reason: "time" }
+	| { readonly reason: "expired" }
+	| { readonly reason: "signal"; readonly signal: string; readonly key: string }
+	| { readonly reason: "tasks"; readonly ended: readonly TaskId[] };
 
 /** Creation options for a durable task. */
 export type TaskOptions = {
@@ -502,7 +523,12 @@ type SubmissionRecordBase = {
 	readonly conversationId: ConversationId;
 	/** Host-provided deduplication key, scoped to the conversation. */
 	readonly requestId?: string;
+	/** The task to deliver `SubmissionSettled` to under `key` when the submission settles. */
+	readonly notify?: SubmissionNotify;
 };
+
+/** Where a settling submission delivers `SubmissionSettled`: a task, and the key it sleeps on. */
+export type SubmissionNotify = { readonly taskId: TaskId; readonly key: string };
 
 /** Durable lifecycle of one admitted user input, passive entry write, or continue. */
 export type SubmissionRecord =
@@ -663,6 +689,8 @@ export type TaskState<S, R> =
 			readonly status: "pending";
 			/** Complete durable state from which execution resumes. */
 			readonly checkpoint: S;
+			/** Why the task woke from its last wait or sleep, kept while it runs at the checkpoint it woke at. */
+			readonly wake?: WakeReason;
 			readonly outcome?: never;
 	  }
 	| {
@@ -670,6 +698,8 @@ export type TaskState<S, R> =
 			readonly status: "running";
 			/** Complete durable state from which execution resumes. */
 			readonly checkpoint: S;
+			/** Why the task woke from its last wait or sleep, kept while it runs at the checkpoint it woke at. */
+			readonly wake?: WakeReason;
 			readonly outcome?: never;
 	  }
 	| {
@@ -683,11 +713,13 @@ export type TaskState<S, R> =
 	| {
 			/**
 			 * Parked without an invocation until the Harness clock reaches `until`, in milliseconds on the
-			 * `HarnessOptions.now` clock; then resumes at `checkpoint`. An abort mark does not wait for it.
+			 * `HarnessOptions.now` clock, or one of `signals` holds a value no wake used, whichever comes first; then resumes
+			 * at `checkpoint`. Needs `until` or a non-empty `signals`. An abort mark does not wait for it.
 			 */
 			readonly status: "sleeping";
 			readonly checkpoint: S;
-			readonly until: number;
+			readonly until?: number;
+			readonly signals?: readonly SignalKey<unknown>[];
 			readonly outcome?: never;
 	  }
 	| {
@@ -1049,6 +1081,12 @@ export interface Tx {
 	 * `settleSubmission()`. Inbox boundaries place the submissions they select.
 	 */
 	placeSubmission(id: SubmissionId, entry: EntryId): void;
+	/**
+	 * Deliver `value` to task `taskId` under `key`: stored in the task until a sleep on the key wakes on it, also when the
+	 * task does not sleep on it yet. Reads the task, so it throws `ReadAfterWrite` after the commit's first table write;
+	 * the result is provisional until the commit is stored. Checks nothing about the caller.
+	 */
+	signal<T>(taskId: TaskId, token: SignalToken<T>, key: string, value: T): Promise<SignalResult>;
 
 	doc<T extends JsonObject>(token: SessionDocToken<T>): Promise<Draft<T>>;
 	doc<T extends JsonObject>(token: ConversationDocToken<T>, conversationId: ConversationId): Promise<Draft<T>>;

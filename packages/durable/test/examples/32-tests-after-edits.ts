@@ -15,9 +15,9 @@ import {
 	GenerationTask,
 	Harness,
 	hook,
+	hookTask,
 	LiveDoc,
 	MemoryStorage,
-	runEndTask,
 	ToolResultEntry,
 } from "../../src/index.ts";
 
@@ -88,7 +88,7 @@ const TestsAfterEdits = defineExtension({
 					return ToolResultEntry.is(entry) && message?.role === "toolResult" && message.toolName === "edit";
 				});
 				// Each fix run asks again with a fresh turn budget: the extension caps the loop itself.
-				return edited ? { tasks: [runEndTask(RunTests, { attempt: ++attempts })] } : undefined;
+				return edited ? { tasks: [hookTask(RunTests, { attempt: ++attempts })] } : undefined;
 			},
 		}),
 	],

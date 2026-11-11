@@ -1,4 +1,5 @@
-// Main view: the transcript of the open session with its composer, or the new-session screen.
+// Main view: the transcript of the open session with its composer, or the new-session screen; the model commands of
+// the command menu (commands.tsx).
 
 import {
 	Access,
@@ -8,6 +9,7 @@ import {
 	grantMode,
 	type Held,
 	isChordError,
+	keptIn,
 	liveIn,
 	serveKeyed,
 	UI_LINGER,
@@ -19,6 +21,9 @@ import {
 	buildTranscript,
 	ChevronIcon,
 	CloseIcon,
+	CommandPages,
+	Commands,
+	type CommandTarget,
 	ContextUsage,
 	CostPanel,
 	closeLayers,
@@ -78,6 +83,7 @@ import {
 	transcriptOf,
 	transcriptRows,
 	useChatScroll,
+	useCommandRouteTarget,
 	useComposerState,
 	useConnected,
 	useFileCompletion,
@@ -111,13 +117,18 @@ import { createPortal } from "react-dom";
 import { Drafts } from "../drafts/contract.ts";
 import { Envs } from "../envs/contract.ts";
 import { DirectoryPicker, directoryPickerLayer } from "../envs/contract.web.tsx";
+import { GlyphIcon } from "../glyphs/GlyphIcon.tsx";
+import { placeSeed } from "../glyphs/seed.ts";
 import { Models } from "../models/contract.ts";
 import type { ResourceSnapshot } from "../models/resources.ts";
+import { Projects } from "../projects/contract.ts";
 import { type Session, Sessions } from "../sessions/contract.ts";
 import { SessionMetrics, SessionStatus, WorkerControl } from "../status/contract.ts";
 import { type Child, conversationLocation, SubagentControl, Subagents } from "../subagents/contract.ts";
 import { SessionTree } from "../tree/contract.ts";
+import { MODEL_COMMANDS, MODEL_PAGES } from "./commands.tsx";
 import { Chat, ChatCosts, TranscriptEntries } from "./contract.ts";
+import { newSessionChoice, thinkingLevelOf } from "./model-choice.ts";
 import { type Outgoing, outboxOf } from "./outbox.ts";
 import { sessionStart } from "./session-start.ts";
 
@@ -229,6 +240,8 @@ type PageObjects = {
 	readonly models: Held<typeof Models> | undefined;
 	/** The owner's only. */
 	readonly envs: Held<typeof Envs> | undefined;
+	/** The owner's only: projects.json and the sessions' projects, for the top bar's project glyph. */
+	readonly projects: Held<typeof Projects> | undefined;
 };
 
 const PageObjectsContext = createContext<PageObjects | undefined>(undefined);
@@ -598,8 +611,19 @@ function TopBar({
 	const nav = useNavigation();
 	const route = useRoute();
 	// Only the owner reads environments (`PageObjects.envs`): guests see the location without the sandbox lock.
-	const envs = useReadable(usePageObjects().envs?.envs);
+	const objects = usePageObjects();
+	const envs = useReadable(objects.envs?.envs);
 	const sandboxed = envs?.find((env) => env.name === session?.env)?.config.type === "gondolin";
+	// The project glyph the sidebar shows for this session (guests read no projects: the path's own glyph).
+	const kept = keptIn(objects.projects, "owner");
+	const projects = useReadable(kept?.projects);
+	const memberships = useReadable(kept?.sessions);
+	const glyph = session && (
+		<GlyphIcon
+			seed={placeSeed(projects ?? [], session.env ?? null, session.cwd, memberships?.[session.id])}
+			size={11}
+		/>
+	);
 	const lock = sandboxed && (
 		<span className="title-lock">
 			<LockIcon size={11} />
@@ -609,6 +633,7 @@ function TopBar({
 		<header className="topbar">
 			<button type="button" className="icon-button menu sidebar-open" onClick={openSidebar} aria-label="Sessions">
 				<MenuIcon />
+				<Slot name="menu-badge" />
 			</button>
 			<div className="title">
 				{child ? (
@@ -640,12 +665,16 @@ function TopBar({
 									) : (
 										<>
 											{lock}
+											{glyph}
 											{locationLabel(session.env, session.cwd)}
 										</>
 									)}
 								</button>
 							) : (
-								<p>{locationLabel(session.env, session.cwd)}</p>
+								<p>
+									{glyph}
+									{locationLabel(session.env, session.cwd)}
+								</p>
 							))}
 					</>
 				)}
@@ -717,6 +746,23 @@ function useRestoredDrafts(
 	}, [drafts, pending, restore]);
 }
 
+/**
+ * What the command menu acts on while a conversation shows: a subagent's conversation, else the session while its own
+ * conversation shows; nothing for a one-shot agent (read-only) or before the session and its subagents are known.
+ */
+function viewTarget(
+	session: Session | undefined,
+	conversation: number,
+	child: Child | undefined,
+): CommandTarget | undefined {
+	if (!session || child?.kind === "agent") return undefined;
+	if (child)
+		return { type: "conversation", id: `${session.id}/${conversation}`, kind: "Conversation", label: child.name };
+	return session.main === conversation
+		? { type: "session", id: session.id, kind: "Session", label: session.title }
+		: undefined;
+}
+
 function SessionChat({ sessionId, conversationId }: { sessionId: string; conversationId: number }) {
 	const nav = useNavigation();
 	const openConversation = useCallback(
@@ -784,6 +830,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	const child = children?.[sessionId]?.find((entry) => entry.conversationId === conversationId);
 	// A code mode script's one-shot agent: read-only, opened from the script's tool card.
 	const oneShot = child?.kind === "agent";
+	useCommandRouteTarget(viewTarget(session, conversationId, child));
 	// Where the viewed conversation works: a subagent may have its own location (e.g. a git worktree, or another machine).
 	const viewLocation = conversationLocation(session, child);
 	const viewCwd = viewLocation?.cwd;
@@ -1191,8 +1238,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 		session
 			? {
 					model: agentModel ?? session.model,
-					thinkingLevel:
-						transcript?.agent.thinkingLevel ?? (session.thinkingLevel as ModelChoice["thinkingLevel"]),
+					thinkingLevel: transcript?.agent.thinkingLevel ?? thinkingLevelOf(session.thinkingLevel),
 				}
 			: undefined,
 		(_, next) => next,
@@ -1525,6 +1571,9 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	);
 }
 
+/** The new-session screen as the command menu's target: a model change there applies to the session about to start. */
+const NEW_SESSION_TARGET: CommandTarget = { type: "new-session", id: "new", kind: "New session", label: "" };
+
 function NewSession() {
 	const connected = useConnected();
 	const host = useHost();
@@ -1545,10 +1594,8 @@ function NewSession() {
 	} = useNewSessionState();
 	const location =
 		selectedLocation ?? (recent[0] ? { env: recent[0].env ?? null, cwd: recent[0].cwd } : { env: null, cwd: "~" });
-	const fallback = resources?.settings.defaultModel ?? recent[0]?.model;
-	const choice: ModelChoice | undefined =
-		selectedChoice ??
-		(fallback ? { model: fallback, thinkingLevel: resources?.settings.thinkingLevel ?? "high" } : undefined);
+	const choice = newSessionChoice(selectedChoice, resources, recent[0]);
+	useCommandRouteTarget(NEW_SESSION_TARGET);
 	const contextWindow = resources?.models.find(
 		(entry) => entry.provider === choice?.model.provider && entry.modelId === choice?.model.modelId,
 	)?.contextWindow;
@@ -1767,9 +1814,10 @@ function Main() {
 	const status = useObject(SessionStatus, {});
 	const models = useObject(Models, owner ? {} : undefined);
 	const envs = useObject(Envs, owner ? {} : undefined);
+	const projects = useObject(Projects, owner ? {} : undefined);
 	const objects = useMemo(
-		() => ({ sessions, access, subagents, status, models, envs }),
-		[sessions, access, subagents, status, models, envs],
+		() => ({ sessions, access, subagents, status, models, envs, projects }),
+		[sessions, access, subagents, status, models, envs, projects],
 	);
 	const grant = useReadable(liveIn(access, "guest")?.grant);
 	// A guest stays within the sessions shared with it; anywhere else it lands in the one shared or joined last.
@@ -1823,4 +1871,6 @@ export default defineFacet((host, self) => {
 	// The chat plugin defines the transcript's entry displays (chat-mode adds its own): served on the page too.
 	serveKeyed(host, TranscriptEntries);
 	self.contribute(Slots, { main: Main });
+	self.contribute(Commands, MODEL_COMMANDS);
+	self.contribute(CommandPages, MODEL_PAGES);
 });

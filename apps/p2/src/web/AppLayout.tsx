@@ -1,5 +1,6 @@
 import { type PointerEvent as ReactPointerEvent, useRef, useState } from "react";
 import { closeLayers, Slot, useCanWrite, useDrawer, useRoute, useUnshownLayers } from "../runtime/web.tsx";
+import { CommandMenu } from "./command-menu/CommandMenu.tsx";
 import { useComposerState } from "./composer-state.tsx";
 import { useDragSize } from "./drag-size.ts";
 import { useDrawerSwipe } from "./drawer-swipe.ts";
@@ -7,7 +8,17 @@ import { OwnerNotices } from "./OwnerNotices.tsx";
 import { SettingsSectionSheets } from "./SettingsNav.tsx";
 import { useSidebarCollapsed } from "./sidebar.ts";
 
+/** The app's layout with the command menu (Cmd+K) over it: its pages read the new-session and composer state. */
 export function AppLayout() {
+	return (
+		<CommandMenu.Provider>
+			<Layout />
+			<CommandMenu.Frame />
+		</CommandMenu.Provider>
+	);
+}
+
+function Layout() {
 	const drawer = useDrawer(),
 		route = useRoute(),
 		collapsed = useSidebarCollapsed();

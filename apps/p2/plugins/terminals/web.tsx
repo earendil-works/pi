@@ -1,9 +1,20 @@
 import { contribute, defineFacet } from "@p2/app/v1";
-import { Slots, TerminalIcon, ToolActivities, useNavigation, useObject, useOwner, useRoute } from "@p2/app/v1/web";
+import {
+	Commands,
+	Slots,
+	TerminalIcon,
+	ToolActivities,
+	useNavigation,
+	useObject,
+	useOwner,
+	useRoute,
+} from "@p2/app/v1/web";
 import { useState } from "react";
 import { terminalActivity } from "./activity.tsx";
+import { TERMINAL_COMMANDS } from "./commands.tsx";
 import { Terminals } from "./contract.ts";
-import { setTerminalPlacement, TerminalPanel, TerminalView, terminalPlacement } from "./Terminal.tsx";
+import { useNewTerminal } from "./new-terminal.ts";
+import { setTerminalPlacement, TerminalPanel, TerminalView, terminalShown, withTerminal } from "./Terminal.tsx";
 
 function Surface({ bottom }: { bottom: boolean }) {
 	const nav = useNavigation();
@@ -12,6 +23,7 @@ function Surface({ bottom }: { bottom: boolean }) {
 	const owner = useOwner();
 	const open = bottom ? route.terminal !== undefined : route.workspace?.tab === "terminal";
 	const control = useObject(Terminals, route.session && open && owner ? { session: route.session, view } : undefined);
+	const newTerminal = useNewTerminal(route.session);
 	if (!route.session || !open || !owner) return null;
 	const session = route.session;
 	const terminalId = bottom ? route.terminal : route.workspace?.terminal;
@@ -24,6 +36,7 @@ function Surface({ bottom }: { bottom: boolean }) {
 		conversation: route.conversation ?? 1,
 		terminalId: terminalId || undefined,
 		start: bottom ? route.startTerminal === true : route.workspace?.startTerminal === true,
+		...(newTerminal ? { newTerminal } : {}),
 		onTerminal: (id: string) => {
 			// A late attachment never changes another session or reopens a hidden panel.
 			const current = nav.route;
@@ -72,7 +85,7 @@ function TerminalButton() {
 	const nav = useNavigation();
 	const route = useRoute();
 	if (!useOwner() || !route.session) return null;
-	const open = route.terminal !== undefined || route.workspace?.tab === "terminal";
+	const open = terminalShown(route);
 	return (
 		<button
 			type="button"
@@ -84,12 +97,7 @@ function TerminalButton() {
 					void nav.close((current) => ({ ...current, terminal: undefined, startTerminal: undefined }));
 				else if (route.workspace?.tab === "terminal")
 					void nav.close((current) => ({ ...current, workspace: undefined }));
-				else if (terminalPlacement() === "bottom") void nav.push({ ...route, terminal: "", startTerminal: true });
-				else
-					void nav.push({
-						...route,
-						workspace: { tab: "terminal", directory: route.workspace?.directory ?? "", startTerminal: true },
-					});
+				else void nav.push(withTerminal(route));
 			}}
 		>
 			<TerminalIcon size={20} />
@@ -112,5 +120,6 @@ export default defineFacet((host) => {
 			"workspace-terminal": WorkspaceTerminal,
 		});
 		self.contribute(ToolActivities, { terminal: terminalActivity });
+		self.contribute(Commands, TERMINAL_COMMANDS);
 	});
 });

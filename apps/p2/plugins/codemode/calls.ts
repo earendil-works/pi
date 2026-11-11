@@ -6,7 +6,6 @@ import {
 	type LiveState,
 	type TaskId,
 	type ToolExecutionApi,
-	type ToolExecutionResult,
 } from "@earendil-works/pi-durable";
 import type { Context } from "@p2/app/v1";
 
@@ -28,7 +27,7 @@ export class RunningCalls {
 	readonly #idle = new Set<() => void>();
 
 	/** Runs one codemode `execute()`, known as running until it returns. */
-	async track(api: ToolExecutionApi, run: () => Promise<ToolExecutionResult>): Promise<ToolExecutionResult> {
+	async track<T>(api: ToolExecutionApi, run: () => Promise<T>): Promise<T> {
 		this.#calls.set(api.taskId, api);
 		try {
 			return await run();

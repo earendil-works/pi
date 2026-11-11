@@ -17,8 +17,9 @@
 import { type RefObject, useEffect, useRef } from "react";
 import { getNavigation, modalShown, setDrawer } from "../runtime/web.tsx";
 import { FLING, SETTLE_EASING, settleDuration, trackDrags } from "./drag-gesture.ts";
+import { SIDEBAR_DOCKS } from "./sidebar.ts";
 
-const wide = () => window.matchMedia("(min-width: 900px)").matches;
+const wide = () => window.matchMedia(SIDEBAR_DOCKS).matches;
 // Fields where a horizontal drag moves a caret, selects text or moves a slider.
 const OWN_DRAG = "input, textarea, select, [contenteditable=''], [contenteditable='true']";
 

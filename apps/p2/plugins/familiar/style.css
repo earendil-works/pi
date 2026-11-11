@@ -1,6 +1,6 @@
 /* The Familiar's entry: the Pi logo at the start of the sidebar header, as a button a control wide. The logo stays where
-   the header puts it (the box reaches past it by half the difference), and the session's activity dot sits on the
-   logo's top end corner. */
+   the header puts it (the box reaches past it by half the difference), and the session's working spinner or unread
+   dot sits on the logo's top end corner. */
 .familiar-entry {
 	position: relative;
 	display: inline-flex;
@@ -20,7 +20,7 @@
 		background: var(--hover);
 	}
 }
-.familiar-entry > .live-dot,
+.familiar-entry > .working-mark,
 .familiar-entry > .unread-dot {
 	position: absolute;
 	top: var(--s1);

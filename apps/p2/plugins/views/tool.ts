@@ -2,7 +2,7 @@
 // from) the owner's library, and explains a custom view's page API on request (kept out of the description, which
 // every request carries). What it reaches beyond the session's documents comes in through `ViewsBackend`.
 import { defineExtension, type ToolExecutionApi } from "@earendil-works/pi-durable";
-import { arr, obj, oneOf, opt, str, unknown } from "@earendil-works/pi-schema";
+import { arr, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import { type Context, type JsonValue, unsafe } from "@p2/app/v1";
 import { defineP2Tool, originOf, type P2Tool } from "@p2/app/v1/worker";
 import {
@@ -16,13 +16,13 @@ import {
 	ViewKindSchema,
 } from "./contract.ts";
 import {
-	checkedState,
 	describeAnnotation,
 	freeViewId,
 	openView,
 	readViewState,
 	readViews,
 	removeView,
+	setViewState,
 	ViewStateDoc,
 	ViewsDoc,
 	viewName,
@@ -64,7 +64,62 @@ const PAGE_API = [
 	"- p2view.readOnly: true for viewers who cannot change the session; their changes are not saved.",
 	"- p2view.onDescribeRegion(fn): fn({x, y, width, height}) returns text naming what lies there (CSS pixels of the page), for drawings the person makes over it; without it, the labels and texts of the elements there (aria-label or data-label attributes help).",
 	"Keep the document's own data in the state, not only in the page: the state is what you read and change, and what a saved view keeps. Script errors the page logs show when you read the view.",
+	"",
+	"Rooms: every browser showing the view (each frame, people the session is shared with included) can share a room on the server. The first call opens the frame's own connection; pages that only render and save state need none.",
+	"- const room = p2view.room('live'): presence and messages. room.me, room.peers ([{id, name, role, mode}]; mode read: watches only), room.leader / room.isLeader (the oldest frame that may write), room.onPeers(fn(peers, leader)).",
+	"  room.send(data) delivers to every frame in one order (own messages too) through room.onMessage(fn({seq, from, key, data})). room.send(data, {key: 'cursor'}): a newer message with that key replaces an older one not yet delivered, and joiners get each frame's latest per key; use keys for replaceable state (positions, cursors, drags), never for events or edits. room.now(): the server's clock, for a shared clock (games).",
+	"- p2view.room('log'): messages since a snapshot, for turn-based games or a shared canvas. room.onReset(fn(state, seq)) gives the state to start from (the view's state at first), then onMessage the moves after it. The leader saves now and then: if (room.isLeader) room.snapshot(state) (the state after every message applied so far; it becomes the view's state). Your update of the state resets the room to it.",
+	"- const text = p2view.room('text'): one shared text the server merges (concurrent typing is safe). text.bind(textareaOrInput), or text.value / text.set(next) / text.onChange(fn(value, from)); text.onCursors(fn([{peer, name, anchor, head}])) for others' carets. The text is the view state's text field; your update of text is merged as an edit.",
+	"Methods for you: p2view.methods.offer({ zoom: { description: 'Zoom to a region', args: {type: 'object', properties: {x: {type: 'number'}}, required: ['x']}, run: async (args) => ({ zoomed: args.x }) } }). From code mode: await tools.view_methods({ view }) lists them, await tools.view_call({ view, method: 'zoom', args: { x: 2 } }) runs one in the leader's frame and returns its result (fails at once when no browser shows the view; 'uncertain' when the frame left before answering). Offer idempotent: true for methods safe to run twice.",
 ].join("\n");
+
+/** A view's state, or keys to merge into it: a JSON object. */
+const JsonObjectSchema = unsafe<{ [key: string]: JsonValue }>({ type: "object" });
+
+/** A layout node: a view ID, tabs, or a row or column of nodes with their shares (`layout.ts`, `arrangementError`). */
+const LayoutNodeSchema = unsafe<JsonValue>({
+	anyOf: [
+		{ type: "string", description: "A view ID ('transcript' is the chat)" },
+		{
+			type: "object",
+			properties: { tabs: { type: "array", items: { type: "string" } }, active: { type: "string" } },
+			required: ["tabs"],
+		},
+		{
+			type: "object",
+			properties: { row: { type: "array" }, sizes: { type: "array", items: { type: "number" } } },
+			required: ["row"],
+		},
+		{
+			type: "object",
+			properties: { column: { type: "array" }, sizes: { type: "array", items: { type: "number" } } },
+			required: ["column"],
+		},
+	],
+});
+
+/**
+ * The call's arguments with `state`, `merge` and `layout` given as JSON text parsed (a harness that sends objects as
+ * strings): the trust boundary's fallback. Anything else stays as it came; Durable checks the result against the
+ * parameters.
+ */
+function withJsonArguments<T>(raw: unknown): T {
+	// Checked against the tool's parameters right after this step (Durable's `prepareArguments`).
+	if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return raw as T;
+	const args: Record<string, unknown> = { ...raw };
+	for (const key of ["state", "merge", "layout"] as const) {
+		const value = args[key];
+		if (typeof value !== "string") continue;
+		try {
+			const parsed: unknown = JSON.parse(value);
+			// A layout's plain string is a view ID; only an object (or array) given as JSON text is parsed.
+			if (parsed !== null && typeof parsed === "object") args[key] = parsed;
+		} catch {
+			// Not JSON: left as it came, for the parameters' check to refuse (or, for a layout, a view ID).
+		}
+	}
+	return args as T;
+}
 
 /** The `view` tool. */
 export function createViewsExtension(backend: ViewsBackend) {
@@ -95,9 +150,9 @@ export function createViewsExtension(backend: ViewsBackend) {
 						path: opt(str({ maxLength: 4096 })),
 						html: opt(str()),
 						artifact: opt(str({ maxLength: 64 })),
-						state: opt(unsafe<JsonValue>(unknown())),
-						merge: opt(unsafe<JsonValue>(unknown())),
-						layout: opt(unsafe<JsonValue>(unknown())),
+						state: opt(JsonObjectSchema),
+						merge: opt(JsonObjectSchema),
+						layout: opt(LayoutNodeSchema),
 						annotations: opt(arr(str(), { maxItems: 200 })),
 						name: opt(str({ maxLength: 64 })),
 						description: opt(str({ maxLength: 2000 })),
@@ -105,6 +160,7 @@ export function createViewsExtension(backend: ViewsBackend) {
 					{ open: true },
 				),
 				replay: "unsafe",
+				prepareArguments: withJsonArguments,
 				execute: async (args, api, context) => {
 					try {
 						return await run(args, api, backend, context);
@@ -125,8 +181,9 @@ type Args = {
 	path?: string;
 	html?: string;
 	artifact?: string;
+	/** An object from the agent; a saved view's state (`load`) may be any JSON. */
 	state?: JsonValue;
-	merge?: JsonValue;
+	merge?: { [key: string]: JsonValue };
 	layout?: JsonValue;
 	annotations?: string[];
 	name?: string;
@@ -303,7 +360,6 @@ async function update(args: Args, api: ToolExecutionApi, backend: ViewsBackend, 
 	const current = await viewOf(api, id, context);
 	if (args.state !== undefined && args.merge !== undefined) throw new Error("Give state or merge, not both");
 	const merge = args.merge;
-	if (merge !== undefined && !isObject(merge)) throw new Error("merge: an object");
 	const source =
 		args.html === undefined
 			? undefined
@@ -324,8 +380,10 @@ async function update(args: Args, api: ToolExecutionApi, backend: ViewsBackend, 
 		}
 		if (args.state !== undefined || merge !== undefined) {
 			const doc = await tx.doc(ViewStateDoc, id, null);
-			doc.value = checkedState(
+			setViewState(
+				doc,
 				merge === undefined ? (args.state ?? null) : { ...(isObject(doc.value) ? doc.value : {}), ...merge },
+				"other",
 			);
 		}
 	}, context);

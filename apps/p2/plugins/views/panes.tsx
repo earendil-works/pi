@@ -19,6 +19,7 @@ import { VIEW_CHANNEL } from "./bridge.ts";
 import { MAX_VIEW_STATE, ViewState, Views } from "./contract.ts";
 import { frameHandles, noteSelection, type PaneProps } from "./kinds.ts";
 import { annotateMode } from "./layout-store.ts";
+import { ViewLinks } from "./room-contract.ts";
 
 /** How long a selection rests before it is reported (a drag selects many times). */
 const SELECTION_PAUSE = 600;
@@ -171,6 +172,9 @@ export function CustomPane({ session, view, editable, select, annotations }: Pan
 	const viewsRef = useObject(Views, { session });
 	useStatus(viewsRef);
 	const views = liveIn(viewsRef, "editor");
+	const linksRef = useObject(ViewLinks, { session });
+	useStatus(linksRef);
+	const links = liveIn(linksRef, "viewer");
 	const { fail } = useComposerState();
 	/** The JSON the frame last saved: coming back from the worker, it is not sent to the frame again. */
 	const own = useRef<string | undefined>(undefined);
@@ -285,6 +289,20 @@ export function CustomPane({ session, view, editable, select, annotations }: Pan
 					noteSelection(view.id, text);
 					break;
 				}
+				case "token": {
+					// The frame's own link to its room (docs/rooms.md): a token the server makes for this viewer.
+					const id = typeof message.id === "string" ? message.id.slice(0, 64) : "";
+					const editor = typeof message.editor === "string" ? message.editor.slice(0, 64) : undefined;
+					if (!links) {
+						post({ type: "token", id, error: "Not connected" });
+						break;
+					}
+					links.token({ view: view.id, ...(editor ? { editor } : {}) }, BACKGROUND_CONTEXT).then(
+						(answer) => post({ type: "token", id, ...answer }),
+						(error: unknown) => post({ type: "token", id, error: errorText(error) }),
+					);
+					break;
+				}
 				case "region": {
 					const id = typeof message.id === "string" ? message.id : "";
 					regions.current.get(id)?.(typeof message.text === "string" ? message.text : "");
@@ -302,7 +320,7 @@ export function CustomPane({ session, view, editable, select, annotations }: Pan
 				save();
 			}
 		};
-	}, [view.id, editable, writer, views, select, sendState, post, quotesJson, fail]);
+	}, [view.id, editable, writer, views, links, select, sendState, post, quotesJson, fail]);
 
 	// A new version is a new page: it says hello again.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: runs for each version of the page.

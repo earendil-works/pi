@@ -85,6 +85,12 @@ The page's posts are untrusted. The page side (`CustomPane`) accepts them only f
 view's state, and checks the state's size (256 KiB of JSON). Script errors the page logs reach the view's `errors`, so
 the agent sees them when it reads the view.
 
+## Rooms
+
+A custom view's frames may share a room on the server (presence, ordered messages, log and text rooms) and offer
+methods the agent calls from code mode (`view_methods`, `view_call`): `docs/rooms.md`. The frame then opens its own
+link with a view principal; the view kit (`kit/`) is the frame's side.
+
 ## Core hooks it uses
 
 - `src/web/AppLayout.tsx`: `<Slot name="workbench">` wraps the owner's notices and the `main` slot. Without the

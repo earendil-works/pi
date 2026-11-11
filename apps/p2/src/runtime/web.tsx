@@ -31,7 +31,7 @@ import {
 } from "../web/navigation.ts";
 import { type SettingsEmbed, useSettingsEmbed } from "../web/settings-embed.ts";
 import { useSheetSwipe } from "../web/sheet-swipe.ts";
-import { setSidebarCollapsed } from "../web/sidebar.ts";
+import { SIDEBAR_DOCKS, setSidebarCollapsed } from "../web/sidebar.ts";
 import type { Host, VariantOf } from "./chord.ts";
 
 export {
@@ -50,7 +50,22 @@ import { follow, followRegistry, type HeldIn, type HeldRef, knownRegistry, liveI
 import { Slots } from "./web-core.ts";
 
 export { shortPath } from "../web/path-label.ts";
-export { type SettingsSection, SettingsSections, Slots, ToolActivities, webCoreFacet } from "./web-core.ts";
+export {
+	type Command,
+	type CommandAction,
+	type CommandContext,
+	type CommandPage,
+	CommandPages,
+	type CommandSearch,
+	CommandSearches,
+	Commands,
+	type CommandTarget,
+	type SettingsSection,
+	SettingsSections,
+	Slots,
+	ToolActivities,
+	webCoreFacet,
+} from "./web-core.ts";
 
 export const HostContext = createContext<Host | undefined>(undefined);
 
@@ -412,7 +427,7 @@ export function useRoute(): Route {
 	return useSyncExternalStore(nav.subscribe, nav.snapshot, nav.snapshot);
 }
 
-/** Conversation destinations close modal layers and carry open workspace/terminal panels. */
+/** Conversation destinations close modal layers and open with their session's panels (`conversationRoute`). */
 export function navigate(next: Partial<Route>, options: { replace?: boolean } = {}): void {
 	const nav = getNavigation();
 	const destination = next.layers
@@ -443,6 +458,22 @@ export function openLayer(layer: Layer, options: { fromDrawer?: boolean } = {}):
 	else void nav.push({ ...nav.route, layers: [...nav.route.layers, layer] });
 }
 
+/**
+ * Opens `layer` over a conversation: on the current route when it shows that conversation (one step), else after
+ * opening it (two steps: Back closes the layer, then returns to where the reader was). For sheets and viewers that
+ * render only on their session's route (the share sheet, the artifact viewer), opened from outside it (the command
+ * menu's target may be a session the reader is not in).
+ */
+export function openLayerIn(session: string, conversation: number, layer: Layer): void {
+	const nav = getNavigation();
+	const { route } = nav;
+	const shown = route.session === session && route.conversation === conversation;
+	// Pushes are queued (`nav.route` is not updated yet): both routes are computed from the current one.
+	const at = shown ? route : conversationRoute(route, session, conversation);
+	if (!shown) void nav.closeThenPush(() => at);
+	void nav.push({ ...at, layers: [...at.layers, layer] });
+}
+
 export function closeLayers(): void {
 	void getNavigation().close((route) => ({ ...route, layers: [] }));
 }
@@ -454,7 +485,7 @@ export function setDrawer(open: boolean): void {
 
 /** Shows the sessions: the docked sidebar from 900px (expanding it if collapsed), the drawer below. */
 export function openSidebar(): void {
-	if (window.matchMedia("(min-width: 900px)").matches) setSidebarCollapsed(false);
+	if (window.matchMedia(SIDEBAR_DOCKS).matches) setSidebarCollapsed(false);
 	else setDrawer(true);
 }
 

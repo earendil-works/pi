@@ -2,6 +2,7 @@
 // section of the sidebar: a flat list (Recents), groups of sessions (one per project, one per folder), or only a link to
 // its list (the Archive). The sidebar shows each rollup's relevant sessions (relevance and the rollup's window); its
 // list page shows them all, those that fell out of the window aged. No React: the views render what these return.
+import { placeSeed, projectSeed } from "../../glyphs/seed.ts";
 import type { Project } from "../../projects/contract.ts";
 import type { RollupWindow } from "../../rollups/contract.ts";
 import type { Child } from "../../subagents/contract.ts";
@@ -65,6 +66,39 @@ export type Rollup = {
 	readonly keeps?: (row: SidebarRow) => boolean;
 	collect(rows: readonly SidebarRow[], context: RollupContext): Collected;
 };
+
+/** A place's project glyph (plugins/glyphs): what it hashes, and the path its row's tooltip shows. */
+export type GlyphSeed = { readonly seed: string; readonly title: string };
+
+/** The sidebar's glyphs: a group's, by where its "+" starts a session; a session's, in a flat list (Recents). */
+export type Glyphs = {
+	readonly target: (target: NewTarget) => GlyphSeed;
+	readonly row: (row: SidebarRow) => GlyphSeed;
+};
+
+/**
+ * Glyphs by project (`placeSeed`): a project, its folders and its sessions show the project's glyph; any other place
+ * its own path's. The tooltip is the place's path, a project's its places.
+ */
+export function glyphsOf({ projects, memberships }: Pick<RollupContext, "projects" | "memberships">): Glyphs {
+	const label = (env: string | null, path: string) => (env ? `${env}:${path}` : path);
+	const at = (env: string | null, cwd: string, member?: string): GlyphSeed => ({
+		seed: placeSeed(projects, env, cwd, member),
+		title: label(env, cwd),
+	});
+	return {
+		target: (target) =>
+			target.kind === "folder"
+				? at(target.env, target.cwd)
+				: {
+						seed: projectSeed(target.project),
+						title:
+							target.project.places.map((place) => label(place.env, place.path)).join("\n") ||
+							target.project.name,
+					},
+		row: (row) => at(row.env ?? null, row.cwd, memberships[row.id]),
+	};
+}
 
 export const RECENT = "recent";
 export const PROJECTS = "projects";
@@ -247,16 +281,70 @@ export type View = {
 	readonly open: string | undefined;
 };
 
-/** A group in the sidebar: its relevant sessions (none while collapsed). */
+/**
+ * What sessions are doing, counted: running a turn (`working`), wanting the owner because their worker or an operation
+ * failed (`failed`), or with an answer the owner has not read (`unread`). A session may count in several.
+ */
+export type Activity = { readonly working: number; readonly failed: number; readonly unread: number };
+
+/** The activity of `rows`, each counted once. */
+export function activityOf(rows: Iterable<SidebarRow>): Activity {
+	let working = 0;
+	let failed = 0;
+	let unread = 0;
+	for (const row of rows) {
+		if (row.worker.busy.length > 0) working++;
+		if (row.worker.error !== undefined || row.operation?.error !== undefined) failed++;
+		if (row.worker.unread) unread++;
+	}
+	return { working, failed, unread };
+}
+
+const IDLE: Activity = { working: 0, failed: 0, unread: 0 };
+
+/** What the sessions the owner is not looking at want: how many (a failure or an unread answer), and whether one failed. */
+export type Wanting = { readonly count: number; readonly failed: boolean };
+
+/** What the live sessions of `rows` other than `shown` (the one on screen) want from the owner. */
+export function wantingOf(rows: readonly SidebarRow[], shown: string | undefined): Wanting {
+	let count = 0;
+	let failed = false;
+	for (const row of rows) {
+		if (row.archivedAt || row.id === shown) continue;
+		const broken = row.worker.error !== undefined || row.operation?.error !== undefined;
+		if (broken || row.worker.unread) count++;
+		failed ||= broken;
+	}
+	return { count, failed };
+}
+
+/**
+ * A group in the sidebar: its relevant sessions (none while collapsed), and what the sessions it hides while collapsed
+ * do (`hidden`; nothing while shown), so its row can say so.
+ */
 export type GroupSection = Omit<Group, "members"> & {
 	readonly collapsed: boolean;
 	readonly rows: readonly SidebarRow[];
+	readonly hidden: Activity;
 };
 
-/** A rollup's section of the sidebar, by the layout of what it collected. */
+/**
+ * A rollup's section of the sidebar, by the layout of what it collected. A collapsed one says what the sessions it hides
+ * do (`hidden`; nothing while shown).
+ */
 export type Section = { readonly key: string; readonly name: string; readonly window: RollupWindow } & (
-	| { readonly layout: "sessions"; readonly collapsed: boolean; readonly rows: readonly SidebarRow[] }
-	| { readonly layout: "groups"; readonly collapsed: boolean; readonly groups: readonly GroupSection[] }
+	| {
+			readonly layout: "sessions";
+			readonly collapsed: boolean;
+			readonly rows: readonly SidebarRow[];
+			readonly hidden: Activity;
+	  }
+	| {
+			readonly layout: "groups";
+			readonly collapsed: boolean;
+			readonly groups: readonly GroupSection[];
+			readonly hidden: Activity;
+	  }
 	| { readonly layout: "link"; readonly total: number }
 );
 
@@ -280,17 +368,25 @@ export function sectionsOf(
 		const collected = rollup.collect(rows, context);
 		if (collected.layout === "link") return { ...base, layout: "link", total: collected.members.length };
 		if (collected.layout === "sessions")
-			return { ...base, layout: "sessions", collapsed, rows: collapsed ? [] : relevant(collected.members) };
-		const groups = collapsed
-			? []
-			: collected.groups.flatMap(({ members, ...group }) => {
-					const shown = relevant(members);
-					const closed = view.collapsed[group.key] ?? false;
-					return shown.length === 0 && !group.keep
-						? []
-						: [{ ...group, collapsed: closed, rows: closed ? [] : shown }];
-				});
-		return { ...base, layout: "groups", collapsed, groups };
+			return collapsed
+				? { ...base, layout: "sessions", collapsed, rows: [], hidden: activityOf(collected.members) }
+				: { ...base, layout: "sessions", collapsed, rows: relevant(collected.members), hidden: IDLE };
+		if (collapsed) {
+			// A session may be in several groups: count it once.
+			const members = new Map(collected.groups.flatMap((group) => group.members.map((row) => [row.id, row])));
+			return { ...base, layout: "groups", collapsed, groups: [], hidden: activityOf(members.values()) };
+		}
+		const groups = collected.groups.flatMap(({ members, ...group }): GroupSection[] => {
+			const shown = relevant(members);
+			const closed = view.collapsed[group.key] ?? false;
+			if (shown.length === 0 && !group.keep) return [];
+			return [
+				closed
+					? { ...group, collapsed: closed, rows: [], hidden: activityOf(shown) }
+					: { ...group, collapsed: closed, rows: shown, hidden: IDLE },
+			];
+		});
+		return { ...base, layout: "groups", collapsed, groups, hidden: IDLE };
 	});
 }
 

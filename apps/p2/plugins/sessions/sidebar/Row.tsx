@@ -5,22 +5,92 @@
 // them on a click of its row.
 import {
 	BranchIcon,
+	type CommandTargetRow,
 	HOME,
 	locationLabel,
 	NavDisclosureIcon,
 	NavEditIcon,
+	NavWarningIcon,
 	PinIcon,
 	routePath,
 	SideNavigation,
+	shortPath,
+	useCommandTargetRow,
 } from "@p2/app/v1/web";
 import { type MouseEvent, type ReactNode, useEffect, useId, useState, useSyncExternalStore } from "react";
-import type { SidebarRow } from "./model.ts";
+import { GlyphIcon } from "../../glyphs/GlyphIcon.tsx";
+import type { Activity, GlyphSeed, SidebarRow } from "./model.ts";
 
-/** Working (pulsing), else an unread answer (steady blue), else nothing. */
+// A row says two things in two places. Its marker says whether the session runs: a frame whose dash travels around its
+// icon, or a spinner where it has none; the only motion in the sidebar. The end of the row says whether it wants the
+// owner: a bold title and a blue dot for an unread answer, "Failed" for a failed worker. Every state has its own shape,
+// not only its own colour.
+
+/** A conversation running a turn where its row has no icon: a small spinner (a still ¾ ring with reduced motion). */
+export function WorkingMark() {
+	return <span className="working-mark" role="img" aria-label="Working" title="Working" />;
+}
+
+/** An answer the owner has not read: a steady blue dot. */
+export function UnreadMark() {
+	return <span className="unread-dot" role="img" aria-label="New answer" title="New answer" />;
+}
+
+/** The Familiar's corner mark: working (the spinner), else an unread answer (the dot), else nothing. */
 export function SessionDot({ worker }: { worker: SidebarRow["worker"] }) {
-	if (worker.busy.length) return <span className="live-dot" title="Working" />;
-	if (worker.unread) return <span className="unread-dot" title="New answer" />;
+	if (worker.busy.length) return <WorkingMark />;
+	if (worker.unread) return <UnreadMark />;
 	return null;
+}
+
+/**
+ * A row's 16px icon (a project glyph, a folder, a lock), framed while `working`: a rounded frame just outside the icon,
+ * clear of its corners, whose dash travels around it (a still dashed frame with reduced motion).
+ */
+export function IconMarker({ working, children }: { working: boolean; children: ReactNode }) {
+	return (
+		<span className={`nav-icon ${working ? "working" : ""}`}>
+			{children}
+			{working && (
+				<svg className="working-frame" viewBox="0 0 22 22" role="img" aria-label="Working">
+					<title>Working</title>
+					<rect className="working-frame-track" {...FRAME} />
+					<rect className="working-frame-dash" {...FRAME} />
+				</svg>
+			)}
+		</span>
+	);
+}
+
+/** The frame's outline: 22px around a 16px icon, its 1.5px stroke inside the box; one unit per percent of its length. */
+const FRAME = { x: 0.75, y: 0.75, width: 20.5, height: 20.5, rx: 5.5, pathLength: 100 } as const;
+
+/** A failure that wants the owner: a warning sign and `label`, in the error colour; `title` says what failed. */
+export function FailedMark({ label, title, className = "" }: { label: string; title: string; className?: string }) {
+	return (
+		<span className={`failed-mark ${className}`} title={title}>
+			<NavWarningIcon size={14} aria-hidden="true" />
+			{label}
+		</span>
+	);
+}
+
+/**
+ * What the sessions a collapsed group or rollup hides want from the owner: how many failed (the warning sign), how many
+ * have an unread answer (a blue count). Nothing when none does.
+ */
+export function HiddenAttention({ activity }: { activity: Activity }) {
+	const { failed, unread } = activity;
+	return (
+		<>
+			{failed > 0 && <FailedMark label={String(failed)} title={`${failed} failed`} />}
+			{unread > 0 && (
+				<span className="unread-count" title={`${unread} with a new answer`}>
+					{unread}
+				</span>
+			)}
+		</>
+	);
 }
 
 /** How long ago `time` was, in the sidebar's short form. */
@@ -31,6 +101,16 @@ export function ago(time: number, now: number): string {
 	if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
 	if (seconds < 604800) return `${Math.floor(seconds / 86400)}d`;
 	return new Date(time).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/**
+ * A folder's name in the sidebar: its last `segments` path segments, with its environment; its row's title has the
+ * whole path.
+ */
+export function folderName(env: string | null, cwd: string, segments: number): string {
+	const path = shortPath(cwd).split(/[\\/]/).filter(Boolean);
+	const base = path.slice(-segments).join("/") || cwd;
+	return env ? `${base} · ${env}` : base;
 }
 
 /**
@@ -90,12 +170,13 @@ export const useOpenedFrom = (): Readonly<Record<string, string>> =>
 	useSyncExternalStore(subscribeScopes, () => openedFrom);
 
 /**
- * One row: a marker (a session's activity dot, a group's icon; its column is kept when empty, so labels line up; absent:
+ * One row: a marker (a session's working mark, a group's icon; its column is kept when empty, so labels line up; absent:
  * no column, as a rollup's), the label (on one line, cut with "…" at its end), then details and controls at the
  * trailing end. The label is a link to `href`, an action without one, or with `expanded`, the control that shows or
  * hides what is below the row (its chevron right after the label). The whole row is one control: its hover and selected
  * background spans it, and the label's hit area covers it (the controls stay above it). `after`: a control right after
- * the label (a rollup's or a session's chevron, `Toggle`).
+ * the label (a rollup's or a session's chevron, `Toggle`). `target`: the command menu's target while the row is hovered
+ * or has focus (`useCommandTargetRow`).
  */
 export function NavRow({
 	selected = false,
@@ -111,11 +192,12 @@ export function NavRow({
 	after,
 	details,
 	controls,
+	target,
 }: {
 	selected?: boolean;
 	className?: string;
 	linkClassName?: string;
-	/** The marker column (absent: the row has none): a dot or an icon, or `null` for its empty space. */
+	/** The marker column (absent: the row has none): a mark or an icon, or `null` for its empty space. */
 	marker?: ReactNode;
 	/** The address the label links to; absent: the label is an action (restore, switch a branch, show or hide). */
 	href?: string;
@@ -131,10 +213,11 @@ export function NavRow({
 	details?: ReactNode;
 	/** Buttons at the trailing end. */
 	controls?: ReactNode;
+	target?: CommandTargetRow;
 }) {
 	const link = `nav-link ${linkClassName} ${selected ? "active" : ""}`;
 	return (
-		<div className={`nav-row ${selected ? "selected" : ""} ${className}`}>
+		<div className={`nav-row ${selected ? "selected" : ""} ${className}`} {...target}>
 			{marker !== undefined && <span className="nav-marker">{marker}</span>}
 			{href === undefined ? (
 				<button
@@ -218,9 +301,10 @@ type Conversation =
  * A session's item: its row is a link to its main conversation, selected while that shows (for an archived session, an
  * action that restores and opens it). Its other conversations (`/tree` branches, the current one a link and the others
  * switches; then its subagents and one-shot agents) are below it, shown or hidden only by the chevron after its title,
- * in the secondary style with their labels and activity dots in the session's columns. Showing a subagent shows them.
+ * in the secondary style with their labels and working marks in the session's columns. Showing a subagent shows them.
  * A running or failed lifecycle operation shows below the row. `aged`: it fell out of its rollup's window and shows
- * dimmed.
+ * dimmed. `glyph`: its project glyph in the marker column (framed while working), its path as the tooltip. An unread
+ * answer makes its title bold with a dot before the time; a failed worker shows "Failed" there.
  */
 export function SessionItem({
 	session,
@@ -229,6 +313,7 @@ export function SessionItem({
 	archived = false,
 	aged = false,
 	actions,
+	glyph,
 }: {
 	session: SidebarRow;
 	/** Where the item is (a rollup's or a group's key, or the page): a session shows in several places. */
@@ -238,6 +323,7 @@ export function SessionItem({
 	archived?: boolean;
 	aged?: boolean;
 	actions: RowActions;
+	glyph?: GlyphSeed;
 }) {
 	const {
 		activeId,
@@ -290,9 +376,7 @@ export function SessionItem({
 	const conversationRow = (item: Conversation) => {
 		// The main conversation is selected on the session's row.
 		const selected = active && conversationId === item.conversation && item.conversation !== session.main;
-		const busy = session.worker.busy.includes(item.conversation) ? (
-			<span className="live-dot" title="Working" />
-		) : null;
+		const busy = session.worker.busy.includes(item.conversation) ? <WorkingMark /> : null;
 		const href = routePath({ session: session.id, conversation: item.conversation, layers: [] });
 		if (item.kind === "branch") {
 			const main = item.conversation === session.main;
@@ -368,23 +452,31 @@ export function SessionItem({
 			</SideNavigation.Item>
 		);
 	};
+	const { worker } = session;
+	const working = worker.busy.length > 0;
 	const title = (
-		<span className="session-title">
+		<span className={`session-title ${worker.unread ? "unread" : ""}`}>
 			{session.pinned && <PinIcon size={12} />}
 			{session.title}
 		</span>
 	);
 	const details = (
 		<>
-			{session.worker.error && (
-				<span className="error session-worker-error" title={session.worker.error}>
-					Worker failed
-				</span>
+			{worker.error !== undefined && (
+				<FailedMark className="session-worker-error" label="Failed" title={`Worker failed: ${worker.error}`} />
 			)}
+			{worker.unread && <UnreadMark />}
 			<span className="session-time">{ago(session.updatedAt, now)}</span>
 		</>
 	);
-	const marker = <SessionDot worker={session.worker} />;
+	const marker = glyph ? (
+		<IconMarker working={working}>
+			<GlyphIcon seed={glyph.seed} />
+		</IconMarker>
+	) : working ? (
+		<WorkingMark />
+	) : null;
+	const target = useCommandTargetRow({ type: "session", id: session.id, kind: "Session", label: session.title });
 	return (
 		<SideNavigation.Item className={`session-row ${aged ? "aged" : ""}`}>
 			<NavRow
@@ -393,7 +485,10 @@ export function SessionItem({
 				linkClassName="session-main"
 				{...(archived
 					? { title: "Restore and open" }
-					: { href: routePath({ session: session.id, conversation: session.main, layers: [] }) })}
+					: {
+							title: glyph?.title,
+							href: routePath({ session: session.id, conversation: session.main, layers: [] }),
+						})}
 				onActivate={() => {
 					if (archived) {
 						openFrom(session.id, scope);
@@ -403,6 +498,7 @@ export function SessionItem({
 				}}
 				marker={marker}
 				label={title}
+				target={target}
 				after={
 					nested && (
 						<Toggle

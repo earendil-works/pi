@@ -1,6 +1,6 @@
 // The sidebar and its list pages (sidebar/: the rollups' rules and their views) with the catalog, status, subagent,
-// search, project and settings handles supplying their data, the owner's session actions on the rows, and the session
-// and rollup sheets.
+// search, project and settings handles supplying their data, the owner's session actions on the rows, the session
+// and rollup sheets, and the sessions' command menu commands (commands.tsx).
 
 import {
 	Access,
@@ -14,25 +14,26 @@ import {
 	whenLive,
 } from "@p2/app/v1";
 import {
+	CommandPages,
+	CommandSearches,
+	Commands,
 	closeLayers,
 	MoreIcon,
 	NEW_SESSION,
 	navigate,
 	openLayer,
-	openNewSession,
 	openPage,
 	PiLogo,
 	rememberMains,
 	Slot,
 	SlotList,
 	Slots,
-	shortPath,
+	startNewSession,
 	toggleSidebar,
 	useComposerState,
 	useConnected,
 	useHost,
 	useNavigation,
-	useNewSessionState,
 	useObject,
 	useOptimisticCall,
 	useOwner,
@@ -45,11 +46,12 @@ import { Envs } from "../envs/contract.ts";
 import { directoryPickerLayer } from "../envs/contract.web.tsx";
 import { Projects, placeOn } from "../projects/contract.ts";
 import { SidebarRollups } from "../rollups/contract.ts";
-import { Search, type SearchResults, SessionReads } from "../search/contract.ts";
+import { Search, SessionReads } from "../search/contract.ts";
 import { SessionStatus } from "../status/contract.ts";
 import { Subagents } from "../subagents/contract.ts";
 import { SessionTree } from "../tree/contract.ts";
 import { BranchSheet } from "./BranchSheet.tsx";
+import { SESSION_COMMANDS, SESSION_PAGES, SESSION_SEARCH } from "./commands.tsx";
 import { type Operation, type Session, Sessions, SidebarSettings, type SidebarWindow } from "./contract.ts";
 import { type DrawerRows, DrawerRowsContext } from "./contract.web.tsx";
 import { SessionSheet } from "./SessionSheet.tsx";
@@ -57,18 +59,21 @@ import { customKey, customRollup } from "./sidebar/custom.ts";
 import { ListPage } from "./sidebar/ListPage.tsx";
 import {
 	ARCHIVE,
+	glyphsOf,
 	listPageOf,
 	moved,
 	type NewTarget,
 	ordered,
 	ROLLUPS,
-	type Rollup,
 	type RollupContext,
 	type SidebarRow,
 	sectionsOf,
-	type View,
+	type Wanting,
+	wantingOf,
 } from "./sidebar/model.ts";
+import { publishPage, usePageData } from "./sidebar/page-data.ts";
 import { type CodeSource, RollupSheet } from "./sidebar/RollupSheet.tsx";
+import { folderName } from "./sidebar/Row.tsx";
 import { SidebarView, useNow } from "./sidebar/Sidebar.tsx";
 
 const subscribeVisibility = (listener: () => void) => {
@@ -82,6 +87,9 @@ const usePageVisible = () => useSyncExternalStore(subscribeVisibility, () => doc
 const brand = <Slot name="drawer-brand" fallback={<PiLogo compact />} />;
 /** Icon buttons at the footer's end, before the theme switch (`sidebar-actions:<name>`, e.g. the Settings gear). */
 const actions = <SlotList prefix="sidebar-actions" />;
+
+/** The sidebar's New session: the new-session screen, without the project or model chosen before. */
+const newSession = () => startNewSession();
 
 /** What a row says about a lifecycle operation (`Sessions.operations`), by kind: running, and failed. */
 const OPERATION_LABELS: Record<Operation["kind"], { running: string; failed: string }> = {
@@ -125,42 +133,18 @@ type Settings = {
 const applySettings = (state: Settings, change: Partial<Settings>): Settings => ({ ...state, ...change });
 const NO_SETTINGS: Settings = { order: [], windows: {}, collapsed: {} };
 
-/**
- * A folder's name in the sidebar: its last `segments` path segments, with its environment; its row's title has the
- * whole path.
- */
-function folderName(env: string | null, cwd: string, segments: number): string {
-	const path = shortPath(cwd).split(/[\\/]/).filter(Boolean);
-	const base = path.slice(-segments).join("/") || cwd;
-	return env ? `${base} · ${env}` : base;
-}
-
-/** What a rollup's or a group's list page shows and acts with: the sidebar's data, published by the sidebar. */
-type PageData = {
-	readonly rows: readonly SidebarRow[];
-	readonly rollups: readonly Rollup[];
-	readonly context: RollupContext;
-	readonly view: View;
-	/** The sessions (or, for a project's list, the projects) are not known yet. */
-	readonly loading: (page: string) => boolean;
-	readonly connected: boolean;
-	readonly onOpen: (id: string, conversation?: number) => void;
-	readonly onRestore: (id: string, conversation?: number) => void;
-	readonly onSearch?: (query: string, archived: boolean, sessions: readonly string[]) => Promise<SearchResults>;
-	readonly onNewIn?: (target: NewTarget) => void;
+// What the other sessions want from the owner, for the menu button's badge (`MenuBadge`), which the top bars render
+// outside the sidebar; published by the sidebar, which holds the rows. A new value only when it changed.
+const wantingListeners = new Set<() => void>();
+let wanting: Wanting = { count: 0, failed: false };
+const subscribeWanting = (listener: () => void) => {
+	wantingListeners.add(listener);
+	return () => wantingListeners.delete(listener);
 };
-
-// The sidebar is always mounted (docked, or in the drawer) and holds the one copy of the data, with its edits shown at
-// once; a list page in the main area renders from it, so both show the same rows, offline too.
-const pageListeners = new Set<() => void>();
-let pageData: PageData | undefined;
-const subscribePage = (listener: () => void) => {
-	pageListeners.add(listener);
-	return () => pageListeners.delete(listener);
-};
-function publishPage(next: PageData): void {
-	pageData = next;
-	for (const listener of pageListeners) listener();
+function publishWanting(next: Wanting): void {
+	if (next.count === wanting.count && next.failed === wanting.failed) return;
+	wanting = next;
+	for (const listener of wantingListeners) listener();
 }
 
 /**
@@ -339,6 +323,8 @@ function Sidebar() {
 	const { route, catalog, owner, fail, list, edit, rows, answers, reads, marks, search, settings, changeSettings } =
 		data;
 	const { rollups, rollupsHeld, entries, context, view, onOpen, onRestore } = data;
+	// Project glyphs for groups and the sessions of flat lists; the owner's only (guests read no projects).
+	const glyphs = useMemo(() => (owner ? glyphsOf(context) : undefined), [owner, context]);
 	// Sessions a plugin's sidebar entry shows (the Familiar's, in `drawer-brand`) are left out of the rollups.
 	const [apart, setApart] = useState<Readonly<Record<string, readonly string[]>>>({});
 	const listApart = useCallback(
@@ -420,16 +406,6 @@ function Sidebar() {
 			() => withTree(session.id, (tree) => tree.rename({ conversation, label }, BACKGROUND_CONTEXT)),
 		);
 	const sessionSheet = useSheet("session");
-	const { setChoice, setLocation, setJoin } = useNewSessionState();
-	const focusNew = useCallback(() => {
-		setChoice(undefined);
-		openNewSession();
-		setTimeout(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus(), 50);
-	}, [setChoice]);
-	const onNew = useCallback(() => {
-		setJoin(undefined);
-		focusNew();
-	}, [setJoin, focusNew]);
 	const { projectsHeld, localLabel } = data;
 	/**
 	 * A group's "+": a folder's new session starts in the folder; a project's joins the project (once it exists) and
@@ -437,17 +413,15 @@ function Sidebar() {
 	 */
 	const onNewIn = useCallback(
 		(target: NewTarget) => {
-			if (target.kind === "folder") {
-				setLocation({ env: target.env, cwd: target.cwd });
-				setJoin(undefined);
-			} else {
-				const latest = rows
-					.filter((row) => !row.archivedAt && context.memberships[row.id] === target.project.name)
-					.toSorted((a, b) => b.updatedAt - a.updatedAt)[0];
-				const place =
-					(latest && placeOn(target.project, latest.env ?? LOCAL, localLabel ?? "")) ?? target.project.places[0];
-				if (place) setLocation({ env: place.env, cwd: place.path });
-				setJoin({
+			if (target.kind === "folder") return startNewSession({ location: { env: target.env, cwd: target.cwd } });
+			const latest = rows
+				.filter((row) => !row.archivedAt && context.memberships[row.id] === target.project.name)
+				.toSorted((a, b) => b.updatedAt - a.updatedAt)[0];
+			const place =
+				(latest && placeOn(target.project, latest.env ?? LOCAL, localLabel ?? "")) ?? target.project.places[0];
+			startNewSession({
+				...(place ? { location: { env: place.env, cwd: place.path } } : {}),
+				join: {
 					label: target.project.name,
 					// The page is connected (the session was just created): wait for the projects to be live too.
 					run: async (session) => {
@@ -457,11 +431,10 @@ function Sidebar() {
 						if (!live) throw new Error("Only the owner has projects");
 						await live.assign({ session, project: target.project.name }, BACKGROUND_CONTEXT);
 					},
-				});
-			}
-			focusNew();
+				},
+			});
 		},
-		[rows, context, localLabel, projectsHeld, setLocation, setJoin, focusNew],
+		[rows, context, localLabel, projectsHeld],
 	);
 	const onCollapse = useCallback(
 		(key: string, collapsed: boolean) =>
@@ -475,6 +448,7 @@ function Sidebar() {
 		[],
 	);
 	const ownerNewIn = owner ? onNewIn : undefined;
+	useEffect(() => publishWanting(wantingOf(rows, route.session)), [rows, route.session]);
 	useEffect(
 		() =>
 			publishPage({
@@ -552,8 +526,9 @@ function Sidebar() {
 				onBranch={catalog ? onBranch : undefined}
 				onRenameBranch={catalog ? onRenameBranch : undefined}
 				onRestore={onRestore}
-				onNew={onNew}
+				onNew={newSession}
 				onNewIn={ownerNewIn}
+				glyphs={glyphs}
 				onOptions={owner ? onOptions : undefined}
 				onCollapse={owner ? onCollapse : undefined}
 				onPage={openPage}
@@ -616,7 +591,7 @@ function Sidebar() {
 /** A rollup's or a group's list in the main area (`Route.page`), from the sidebar's data (`publishPage`). */
 function SectionPage() {
 	const route = useRoute();
-	const data = useSyncExternalStore(subscribePage, () => pageData);
+	const data = usePageData();
 	const page = route.page;
 	const list = useMemo(
 		() => data && page !== undefined && listPageOf(page, data.rollups, data.rows, data.context, data.view),
@@ -642,6 +617,23 @@ function SectionPage() {
 	);
 }
 
+/**
+ * The menu button's badge (the `menu-badge` slot): how many other sessions want the owner (a failure or an unread
+ * answer), in the error colour when one failed, else the unread blue. Steady: only working moves in the sidebar.
+ */
+function MenuBadge() {
+	const { count, failed } = useSyncExternalStore(subscribeWanting, () => wanting);
+	if (count === 0) return null;
+	return (
+		<span
+			className={`menu-badge ${failed ? "failed" : ""}`}
+			title={failed ? `${count} want you, a failure among them` : `${count} with a new answer`}
+		>
+			{count}
+		</span>
+	);
+}
+
 /** The top bar's button that opens the Session sheet (the drawer renders the sheet, where the rows are). */
 function SessionOptions() {
 	const route = useRoute();
@@ -662,6 +654,14 @@ function SessionOptions() {
 
 export default defineFacet((host) => {
 	contribute(host, "p2.web-sessions", (self) => {
-		self.contribute(Slots, { sidebar: Sidebar, page: SectionPage, "session-options": SessionOptions });
+		self.contribute(Slots, {
+			sidebar: Sidebar,
+			page: SectionPage,
+			"session-options": SessionOptions,
+			"menu-badge": MenuBadge,
+		});
+		self.contribute(Commands, SESSION_COMMANDS);
+		self.contribute(CommandPages, SESSION_PAGES);
+		self.contribute(CommandSearches, { sessions: SESSION_SEARCH });
 	});
 });
