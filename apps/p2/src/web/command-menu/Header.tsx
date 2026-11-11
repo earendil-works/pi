@@ -3,7 +3,7 @@ import type { KeyboardEvent, Ref } from "react";
 import { CommandPages, useRegistry } from "../../runtime/web.tsx";
 import { ChevronIcon, CloseIcon } from "../icons.tsx";
 import { useCommandMenuValue } from "./context.ts";
-import { highlighted, moveHighlight } from "./highlight.ts";
+import { enter, moveHighlight } from "./highlight.ts";
 
 /**
  * The target chip, its kind then its label ("Session · Fix the build"; Backspace or its × removes it), and a crumb per
@@ -85,7 +85,7 @@ export function Input({
 				event.preventDefault();
 				// The list may still show the previous query's rows (it filters on the deferred one).
 				if (query !== state.query) meta.settle(query);
-				if (list) highlighted(list)?.click();
+				if (list) enter(list, query);
 				return;
 			case "Escape":
 				event.preventDefault();

@@ -281,8 +281,16 @@ describe("command menu", { skip: !browserTests }, () => {
 					const id = await create("Terminal keys");
 					for (const platform of ["other", "mac"] as const) {
 						await openSession(id, "Terminal keys", platform);
-						if (!(await browser.evaluate<boolean>(`Boolean(document.querySelector('.terminal-row'))`)))
-							await browser.click(".topbar button[aria-label=Terminal]");
+						// The second page load restores the session's terminal panel (its route says so at once, before its
+						// rows render): the button only opens it when it is not shown, as a click would hide it.
+						const button = ".topbar button[aria-label=Terminal]";
+						await browser.wait(`document.querySelector(${JSON.stringify(button)})`);
+						if (
+							(await browser.evaluate<string | null>(
+								`document.querySelector(${JSON.stringify(button)}).getAttribute('aria-pressed')`,
+							)) !== "true"
+						)
+							await browser.click(button);
 						await browser.wait(
 							`[...document.querySelectorAll('.terminal-row')].some((row) => /[$#]/.test(row.textContent))`,
 						);
@@ -549,6 +557,27 @@ describe("command menu", { skip: !browserTests }, () => {
 			await Promise.all([type(" second"), press("Enter")]);
 			await browser.wait(CLOSED);
 			await until(sessions.sessions, (rows) => rows?.find((row) => row.id === id)?.title === "First second");
+		});
+
+		it("runs a command entered with its text at once, before its row behind a Shown wrapper rendered", async () => {
+			const id = await create("Enter at once");
+			await openSession(id, "Enter at once");
+			// Once run, "Change model…" is in Recent: typing moves it to the Model group, where its row (behind its
+			// `Shown` wrapper, which reads the catalog) mounts empty and renders once the catalog arrives.
+			await openMenu();
+			await run("change model", "Change model…");
+			await browser.wait(`document.querySelector('.command-menu .command-crumb')?.textContent==='Models'`);
+			await press("Escape");
+			await browser.wait(CLOSED);
+			await openMenu();
+			await browser.wait(`${SELECTED}==='Change model…'`);
+			// The text and Enter in one task: the list for the text has no row yet when the Enter arrives.
+			await browser.evaluate(
+				`(() => { const input = document.querySelector('.command-menu input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'change model'); input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); })()`,
+			);
+			await browser.wait(`document.querySelector('.command-menu .command-crumb')?.textContent==='Models'`);
+			await press("Escape");
+			await browser.wait(CLOSED);
 		});
 
 		it("archives the open session (its row goes, the new-session screen shows) and restores it", async () => {
