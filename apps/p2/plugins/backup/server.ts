@@ -3,7 +3,7 @@
 // keeps every store's last reported status. Inert while backup is not configured (`P2_BACKUP_DIR`).
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { type Context, defineFacet, forbidden, isWorker, withoutAbortSignal } from "@p2/app/v1";
+import { type Context, defineFacet, forbidden, isWorker, nativeOf, serveNative, withoutAbortSignal } from "@p2/app/v1";
 import {
 	BackupUploader,
 	backupTarget,
@@ -18,7 +18,7 @@ import {
 	sessionStoreName,
 } from "@p2/app/v1/node";
 import { Server, serverOf } from "@p2/app/v1/server";
-import { Backup, BackupRemote, type BackupStatus } from "./contract.ts";
+import { Backup, BackupNative, BackupRemote, type BackupStatus, type BackupUploads } from "./contract.ts";
 
 /** An upload whose worker sends nothing for this long is dropped (its body was abandoned). */
 const UPLOAD_IDLE_MS = 60_000;
@@ -139,13 +139,60 @@ export class StreamedUpload {
 	}
 }
 
+/**
+ * The slot uploads of the open backup: `remote` the backup's, `device` this instance's. Each upload's remote call runs
+ * under `context` (the backup's own, not a caller's: it outlives the call that began it).
+ */
+function openUploads(remote: SessionSyncStore, device: string, context: Context): BackupUploads & { close(): void } {
+	const uploads = new Map<string, StreamedUpload>();
+	/** The upload `id` of `store`: a store never reaches another store's. */
+	const of = (store: string, id: string): StreamedUpload => {
+		const found = uploads.get(id);
+		if (found === undefined || found.store !== store) throw new Error("No such upload");
+		return found;
+	};
+	return {
+		begin: async (store, { after, to, archive }) => {
+			const started = new StreamedUpload(store, (body) =>
+				remote.putBatch(store, after, to, device, body, context, archive === true ? { archive } : {}),
+			);
+			await started.ready;
+			// Answered without the body (the slot is taken, the history ends elsewhere), or failed before asking for it.
+			if (started.answered) return { result: await started.result };
+			const id = randomUUID();
+			uploads.set(id, started);
+			started.watch(() => {
+				started.abort();
+				uploads.delete(id);
+			});
+			return { upload: id };
+		},
+		append: (store, id, bytes) => of(store, id).push(bytes),
+		finish: (store, id) => {
+			const found = of(store, id);
+			uploads.delete(id);
+			return found.end();
+		},
+		abort: (store, id) => {
+			const found = uploads.get(id);
+			if (found?.store !== store) return;
+			found.abort();
+			uploads.delete(id);
+		},
+		close: () => {
+			for (const upload of uploads.values()) upload.abort();
+			uploads.clear();
+		},
+	};
+}
+
 export default defineFacet((host) => {
+	serveNative(host, BackupNative);
 	host.serve(Backup, (_params, self) => {
 		const server = self.get(Server, {});
 		const natives = serverOf(self);
 		const statuses = self.writable<Record<string, BackupStatus>>({});
 		const device = self.writable<string | null>(null);
-		const uploads = new Map<string, StreamedUpload>();
 		// Set while this object runs; the server store's last upload reports after it ended (its close), to the log only.
 		let ended = false;
 		const report = (store: string, status: BackupStatus): void => {
@@ -153,10 +200,10 @@ export default defineFacet((host) => {
 			if (status.state === "error" || status.state === "behind" || status.state === "diverged")
 				processLogs.append(`backup:${store}`, "event", `${status.state}${status.error ? `: ${status.error}` : ""}`);
 		};
-		// The remote, this instance's device, and the server store's uploader (its outbox is on while backup is
-		// configured: the server opens the store so).
+		// The remote, this instance's device, the uploads workers stream through it, and the server store's uploader (its
+		// outbox is on while backup is configured: the server opens the store so).
 		const backup = self.open(
-			async () => {
+			async (context) => {
 				const target = backupTarget();
 				const store = natives().store;
 				if (target === undefined || store === undefined) return undefined;
@@ -164,6 +211,7 @@ export default defineFacet((host) => {
 				const { remote, files } = openBackupRemote(target, dataDir);
 				const id = await deviceId(dataDir);
 				device.set(id);
+				const uploads = openUploads(remote, id, withoutAbortSignal(context));
 				const uploader = new BackupUploader({
 					store,
 					name: SERVER_STORE,
@@ -180,69 +228,26 @@ export default defineFacet((host) => {
 					(error) => processLogs.append("backup:server", "event", `following commits failed: ${text(error)}`),
 				);
 				processLogs.append("backup", "event", `Backing up to ${target.path} as device ${id}`);
-				return { remote, uploader, stopWatching };
+				return { uploads, uploader, stopWatching };
 			},
 			async (opened) => {
 				ended = true;
 				if (opened === undefined) return;
 				opened.stopWatching();
-				for (const upload of uploads.values()) upload.abort();
-				uploads.clear();
+				opened.uploads.close();
 				await opened.uploader.close().catch((error: unknown) => report(SERVER_STORE, failed(error)));
 			},
 		);
-		const remote = (): SessionSyncStore => {
-			const opened = backup.value;
-			if (opened === undefined) throw new Error("Backup is off");
-			return opened.remote;
-		};
-		const upload = (store: string, id: string): StreamedUpload => {
-			const found = uploads.get(id);
-			if (found === undefined || found.store !== store) throw new Error("No such upload");
-			return found;
-		};
+		self.contribute(BackupNative, {
+			get uploads() {
+				return backup.value?.uploads;
+			},
+		});
 		return {
 			device: self.derive([device], ([value]) => value),
 			statuses: self.derive([statuses], ([value]) => value),
 			report: async ({ store, status }) => {
 				report(store, status);
-				return null;
-			},
-			begin: async ({ store, after, to, archive }, ctx) => {
-				const id = device.value;
-				if (id === null) throw new Error("Backup is off");
-				// The remote reads the body as chunks arrive; its call outlives this method, so not this call's abort.
-				const context: Context = withoutAbortSignal(ctx);
-				const started = new StreamedUpload(store, (body) =>
-					remote().putBatch(store, after, to, id, body, context, archive === true ? { archive } : {}),
-				);
-				await started.ready;
-				// Answered without the body (the slot is taken, the history ends elsewhere), or failed before asking for it.
-				if (started.answered) return { result: await started.result };
-				const uploadId = randomUUID();
-				uploads.set(uploadId, started);
-				started.watch(() => {
-					started.abort();
-					uploads.delete(uploadId);
-				});
-				return { upload: uploadId };
-			},
-			append: async ({ store, upload: id, bytes }) => {
-				await upload(store, id).push(bytes);
-				return null;
-			},
-			finish: async ({ store, upload: id }) => {
-				const found = upload(store, id);
-				uploads.delete(id);
-				return found.end();
-			},
-			abort: async ({ store, upload: id }) => {
-				// Only the store's own upload: a worker never ends another store's.
-				const found = uploads.get(id);
-				if (found?.store === store) {
-					found.abort();
-					uploads.delete(id);
-				}
 				return null;
 			},
 		};
@@ -253,15 +258,27 @@ export default defineFacet((host) => {
 		if (!isWorker(principal)) throw forbidden("the backup remote is for session workers");
 		const store = sessionStoreName(principal.session);
 		const backup = self.get(Backup, {});
+		const native = nativeOf(self, BackupNative, "The backup");
+		const uploads = (): BackupUploads => {
+			const open = native().uploads;
+			if (open === undefined) throw new Error("Backup is off");
+			return open;
+		};
 		return {
 			variant: "worker",
 			members: {
 				device: backup.device,
 				report: ({ status }, ctx) => backup.report({ store, status }, ctx),
-				begin: (args, ctx) => backup.begin({ store, ...args }, ctx),
-				append: (args, ctx) => backup.append({ store, ...args }, ctx),
-				finish: (args, ctx) => backup.finish({ store, ...args }, ctx),
-				abort: (args, ctx) => backup.abort({ store, ...args }, ctx),
+				begin: (slot) => uploads().begin(store, slot),
+				append: async ({ upload, bytes }) => {
+					await uploads().append(store, upload, bytes);
+					return null;
+				},
+				finish: ({ upload }) => uploads().finish(store, upload),
+				abort: async ({ upload }) => {
+					uploads().abort(store, upload);
+					return null;
+				},
 			},
 		};
 	});
