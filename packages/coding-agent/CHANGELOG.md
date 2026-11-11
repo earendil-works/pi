@@ -12,6 +12,7 @@
 - Fixed `/share` crashing pi when the GitHub CLI fails to start
 - Fixed `pi update` on Windows managed installs failing with "Could not verify managed Pi" when an older system Node.js comes before the installer's standalone Node.js on PATH ([#12048](https://github.com/earendil-works/pi/issues/12048))
 - Fixed `/export` HTML showing raw terminal hyperlink escape codes around links in custom tool output; links are now clickable ([#12003](https://github.com/earendil-works/pi/issues/12003))
+- Fixed the bash tool returning no output, with a footer like `[Showing lines 3-2 of 2]`, when the output ends in one line longer than about 100KB, such as a `grep` match in a minified file; it now shows the end of that line ([#12062](https://github.com/earendil-works/pi/issues/12062))
 
 ## [1.5.2] - 2026-11-10
 
