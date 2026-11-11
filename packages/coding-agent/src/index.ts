@@ -315,6 +315,7 @@ export {
 	sessionEntryToContextMessages,
 	type ThinkingLevelChangeEntry,
 } from "./core/session-manager.ts";
+export { getSessionRecovery, SessionRecovery, type SessionRecoveryInfo } from "./core/session-recovery.ts";
 export {
 	type CacheWarmingMode,
 	type CompactionModelOverride,
@@ -436,6 +437,7 @@ export { createJobsExtension } from "./extensions/jobs/index.ts";
 export type { LoadedMcpConfig, McpExposure, McpServerConfig, McpServerEntry } from "./extensions/mcp/config.ts";
 export { createMcpExtension, type McpExtensionOptions, type McpTransportFactory } from "./extensions/mcp/index.ts";
 export { createRecallExtension } from "./extensions/recall/index.ts";
+export { createRecoveryExtension } from "./extensions/recovery/index.ts";
 export { createRexExtension, createRexToolDefinition } from "./extensions/rex/index.ts";
 export { createSubagentExtension } from "./extensions/subagents/index.ts";
 export { createToolSearchExtension } from "./extensions/tool-search/index.ts";

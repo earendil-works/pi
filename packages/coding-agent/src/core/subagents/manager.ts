@@ -12,6 +12,7 @@ import {
 } from "@earendil-works/pi-ai";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../../config.ts";
+import { raceWithAbortSignal } from "../../utils/abort.ts";
 import type { AgentSession } from "../agent-session.ts";
 import { serializeConversation } from "../compaction/utils.ts";
 import { convertToLlm } from "../messages.ts";
@@ -70,6 +71,9 @@ interface Work {
 	release(): void;
 	leaseLost?: Error;
 	done: PromiseWithResolvers<SubagentResult>;
+	operation: "prompt" | "recovery";
+	ready: PromiseWithResolvers<void>;
+	stopStatus?: "stopped" | "paused";
 }
 const supportedTools: ReadonlySet<string> = allToolNames;
 const idPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -87,6 +91,8 @@ export class SubagentManager {
 	private readonly queue: Work[] = [];
 	private readonly listeners = new Set<(event: SubagentEvent) => void>();
 	private closed = false;
+	private paused = false;
+	private pauseRequest: AbortController | undefined;
 
 	constructor(options: SubagentManagerOptions) {
 		if (options.parent.getBranch().some((entry) => entry.type === "custom" && entry.customType === "pi.subagent")) {
@@ -208,6 +214,80 @@ export class SubagentManager {
 		return this.inspect(id);
 	}
 
+	/** List unfinished children not currently controlled by this instance, including leased crash remnants. */
+	recoverable(): SubagentInfo[] {
+		return this.list().filter(
+			(agent) =>
+				!this.work.has(agent.id) &&
+				(agent.status === "interrupted" ||
+					agent.status === "paused" ||
+					agent.status === "running" ||
+					agent.status === "queued"),
+		);
+	}
+
+	/** Recover the same run and child history; project-role approval belongs to the calling UI. */
+	recover(id: string): SubagentInfo {
+		this.assertOpen();
+		if (!this.recoverable().some((agent) => agent.id === id))
+			throw new Error("This child has no interrupted work to recover");
+		const previous = this.getRecord(id);
+		const history = this.directory ? SessionManager.open(this.historyPath(id)!) : this.memory.get(id)!;
+		const record: SubagentRecord = { ...previous, status: "queued", updatedAt: Date.now(), error: undefined };
+		this.enqueue(record, history, record.task, "recovery");
+		return this.inspect(id);
+	}
+
+	/** Park child execution at tool/request boundaries while keeping queued work and histories intact. */
+	async pause(): Promise<void> {
+		this.paused = true;
+		const request = new AbortController();
+		this.pauseRequest?.abort();
+		this.pauseRequest = request;
+		const owned = [...this.work.values()];
+		for (const work of owned) {
+			if (!this.running.has(work.record.id)) {
+				work.record.status = "paused";
+				this.save(work.record);
+				this.emit(work.record.id, "status");
+			}
+		}
+		try {
+			await Promise.all(
+				owned
+					.filter((work) => this.running.has(work.record.id))
+					.map(async (work) => {
+						await raceWithAbortSignal(work.ready.promise, request.signal);
+						if (request.signal.aborted || work.closing || !work.session) return;
+						await work.session.recovery.pause();
+						if (request.signal.aborted || work.closing || !this.work.has(work.record.id)) return;
+						work.record.status = "paused";
+						work.record.updatedAt = Date.now();
+						this.save(work.record);
+						this.emit(work.record.id, "status");
+					}),
+			);
+		} catch (error) {
+			if (!request.signal.aborted) throw error;
+		}
+	}
+
+	/** Reopen owned child gates and start queued work without resubmitting any task. */
+	continuePaused(): void {
+		this.paused = false;
+		this.pauseRequest?.abort();
+		for (const work of this.work.values()) {
+			if (work.record.status === "paused") {
+				work.record.status = this.running.has(work.record.id) ? "running" : "queued";
+				work.record.updatedAt = Date.now();
+				this.save(work.record);
+				this.emit(work.record.id, "status");
+			}
+			if (work.session && !work.session.recovery.needsRecovery) work.session.recovery.resume();
+		}
+		this.pump();
+	}
+
 	/** Send steering input to a running child or a durable follow-up to a queued child. */
 	async message(id: string, text: string): Promise<SubagentInfo> {
 		this.assertOpen();
@@ -252,7 +332,13 @@ export class SubagentManager {
 		const work = this.work.get(id);
 		if (!work) {
 			const record = this.getRecord(id);
-			if (record.status !== "queued" && record.status !== "running") return this.info(record);
+			if (
+				record.status !== "queued" &&
+				record.status !== "running" &&
+				record.status !== "paused" &&
+				record.status !== "interrupted"
+			)
+				return this.info(record);
 			const release = this.acquire(id);
 			try {
 				record.status = "stopped";
@@ -263,9 +349,14 @@ export class SubagentManager {
 			}
 			return this.info(record);
 		}
+		return this.stop(work, "stopped");
+	}
+
+	private async stop(work: Work, status: "stopped" | "paused"): Promise<SubagentInfo> {
+		work.stopStatus = status;
 		work.controller.abort();
 		if (work.session) await work.session.abort();
-		if (!this.running.has(id)) this.finish(work, "stopped");
+		if (!this.running.has(work.record.id)) this.finish(work, status);
 		return (await work.done.promise).agent;
 	}
 
@@ -329,7 +420,9 @@ export class SubagentManager {
 	async close(): Promise<void> {
 		this.closed = true;
 		const owned = [...this.work.values()];
-		const cancelled = await Promise.allSettled(owned.map((work) => this.cancel(work.record.id)));
+		const cancelled = await Promise.allSettled(
+			owned.map((work) => this.stop(work, this.paused ? "paused" : "stopped")),
+		);
 		const settled = await Promise.allSettled(owned.map((work) => work.done.promise));
 		this.queue.length = 0;
 		this.listeners.clear();
@@ -376,7 +469,12 @@ export class SubagentManager {
 		return SessionManager.open(file);
 	}
 
-	private enqueue(record: SubagentRecord, history: SessionManager, task: string): void {
+	private enqueue(
+		record: SubagentRecord,
+		history: SessionManager,
+		task: string,
+		operation: Work["operation"] = "prompt",
+	): void {
 		const controller = new AbortController();
 		const work: Work = {
 			record,
@@ -386,6 +484,8 @@ export class SubagentManager {
 			closing: false,
 			done: Promise.withResolvers<SubagentResult>(),
 			release: () => {},
+			operation,
+			ready: Promise.withResolvers<void>(),
 		};
 		// Async callers need not immediately wait; the original promise still reports failures to waiters.
 		void work.done.promise.catch(() => {});
@@ -408,7 +508,7 @@ export class SubagentManager {
 	}
 
 	private pump(): void {
-		if (this.closed) return;
+		if (this.closed || this.paused) return;
 		let limit: number;
 		try {
 			limit = this.limit();
@@ -431,17 +531,19 @@ export class SubagentManager {
 		const { record, controller } = work;
 		let unsubscribe: (() => void) | undefined;
 		let label: Promise<void> | undefined;
-		let outcome: { status: "completed" | "failed" | "stopped"; error?: string } = { status: "failed" };
+		let stopRecoveryWatch: (() => void) | undefined;
+		let pauseFailure: unknown;
+		let outcome: { status: "completed" | "failed" | "stopped" | "paused"; error?: string } = { status: "failed" };
 		try {
 			controller.signal.throwIfAborted();
-			record.status = "running";
+			record.status = this.paused ? "paused" : "running";
 			record.updatedAt = Date.now();
 			this.save(record);
 			this.emit(record.id, "status");
 			const model = this.options.modelRuntime.getModel(record.model.provider, record.model.id);
 			if (!model) throw new Error(`Sub-agent model is unavailable: ${record.model.provider}/${record.model.id}`);
-			label = this.generateLabel(work, model);
-			void label.catch(() => {});
+			if (!record.label) label = this.generateLabel(work, model);
+			void label?.catch(() => {});
 			const parentSettings = this.options.getSettings();
 			// A fresh loader preserves repository instructions, not parent extension closures or package-install side effects.
 			const settingsManager = SettingsManager.inMemory({
@@ -478,6 +580,22 @@ export class SubagentManager {
 				tools,
 			});
 			work.session = created.session;
+			stopRecoveryWatch = created.session.recovery.subscribe(() => {
+				if (this.paused && !created.session.recovery.isPaused) {
+					void created.session.recovery.pause().catch((error: unknown) => {
+						pauseFailure = error;
+						controller.abort();
+						void created.session.abort();
+					});
+				}
+			});
+			if (this.paused)
+				void created.session.recovery.pause().catch((error: unknown) => {
+					pauseFailure = error;
+					controller.abort();
+					void created.session.abort();
+				});
+			work.ready.resolve();
 			record.thinkingLevel = created.session.agent.state.thinkingLevel;
 			unsubscribe = created.session.subscribe((event) => {
 				if (event.type === "message_update" && event.message.role === "assistant") this.emit(record.id, "progress");
@@ -489,22 +607,47 @@ export class SubagentManager {
 				}
 			});
 			controller.signal.throwIfAborted();
-			await created.session.prompt(work.task);
+			if (work.operation === "recovery") {
+				if (created.session.recovery.needsRecovery) await created.session.recovery.recover();
+				else {
+					const entries = work.history.getEntries();
+					const boundary = entries.findIndex((entry) => entry.id === record.runStartId);
+					const hasInput = entries.some(
+						(entry, index) => index > boundary && entry.type === "message" && entry.message.role === "user",
+					);
+					if (!hasInput) await created.session.prompt(work.task);
+					else {
+						// The task can settle before its manager publishes status (for example, while naming finishes).
+						const saved = this.lastResponse(record, entries);
+						if (!saved || saved.stopReason === "toolUse")
+							throw new Error(
+								"This child has no unfinished execution checkpoint. Inspect its history and explicitly resume it if further work is needed.",
+							);
+					}
+				}
+			} else {
+				if (created.session.recovery.needsRecovery) await created.session.recovery.restore();
+				await created.session.prompt(work.task);
+			}
 			const last = created.session.messages.findLast((message) => message.role === "assistant");
-			if (controller.signal.aborted || last?.stopReason === "aborted") outcome = { status: "stopped" };
+			if (controller.signal.aborted || last?.stopReason === "aborted")
+				outcome = { status: work.stopStatus ?? "stopped" };
 			else if (!last || last.stopReason === "error" || last.stopReason === "length")
 				outcome = { status: "failed", error: last?.errorMessage ?? "Sub-agent did not complete its response" };
 			else outcome = { status: "completed" };
 		} catch (error) {
 			outcome = {
-				status: controller.signal.aborted ? "stopped" : "failed",
+				status: controller.signal.aborted ? (work.stopStatus ?? "stopped") : "failed",
 				error:
 					work.leaseLost?.message ??
 					(controller.signal.aborted ? undefined : error instanceof Error ? error.message : String(error)),
 			};
 		} finally {
+			work.ready.resolve();
 			work.closing = true;
 			unsubscribe?.();
+			stopRecoveryWatch?.();
+			if (pauseFailure) outcome = { status: "failed", error: `Cannot pause child: ${String(pauseFailure)}` };
 			try {
 				await label;
 			} catch (error) {
@@ -549,7 +692,7 @@ export class SubagentManager {
 		this.emit(record.id, "status");
 	}
 
-	private finish(work: Work, status: "completed" | "failed" | "stopped", error?: string): void {
+	private finish(work: Work, status: "completed" | "failed" | "stopped" | "paused", error?: string): void {
 		if (!this.work.has(work.record.id)) return;
 		const record = work.record;
 		record.status = status;

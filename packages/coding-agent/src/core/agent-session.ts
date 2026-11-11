@@ -142,6 +142,7 @@ import {
 	SessionManager,
 	type SessionProjection,
 } from "./session-manager.ts";
+import { configureSessionRecovery, type RecoveryQueuedInput, type SessionRecovery } from "./session-recovery.ts";
 import {
 	applyToolModifiers,
 	type CacheWarmingMode,
@@ -423,6 +424,7 @@ export class AgentSession {
 	readonly sessionManager: SessionManager;
 	readonly settingsManager: SettingsManager;
 	private readonly _outputArtifacts: OutputArtifacts;
+	readonly recovery: SessionRecovery;
 
 	private _scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
 
@@ -432,6 +434,7 @@ export class AgentSession {
 	private _isAgentRunActive = false;
 	private _promptPreflightCount = 0;
 	private _agentRunAbortRequested = false;
+	private _extensionBinding: Promise<void> | undefined;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
 
@@ -546,6 +549,18 @@ export class AgentSession {
 			() => this.settingsManager.getSettings().outputArtifacts,
 			() => this._limitsModel()?.contextWindow,
 		);
+		this.recovery = configureSessionRecovery(this.sessionManager, config.agentDir ?? getAgentDir(), {
+			isRunning: () => this.isStreaming,
+			abort: () => this.agent.abort(),
+			restoreInputs: (inputs) => this._restoreRecoveryInputs(inputs),
+			clearInputs: () => {
+				this.clearQueue();
+				this._pendingNextTurnMessages = [];
+				this._pendingCustomMessages = [];
+			},
+			continueWork: () => this._continueRecoveredWork(),
+			refreshContext: () => this.refreshContext(),
+		});
 		if (this._cacheWarmer) {
 			this._cacheWarmer.onWarmed = (entry) => this._emit({ type: "entry_appended", entry });
 		}
@@ -849,6 +864,7 @@ export class AgentSession {
 	private _installAgentRequestProjection(): void {
 		const previousPrepareRequest = this.agent.prepareRequest;
 		this.agent.prepareRequest = async (request, signal) => {
+			await this.recovery.beforeRequest(signal);
 			const failed = this._failedResponse;
 			this._failedResponse = undefined;
 			const prepare = async () => {
@@ -972,6 +988,7 @@ export class AgentSession {
 				? async (_turn: PrepareNextTurnContext, signal?: AbortSignal) => await this.agent.prepareNextTurn?.(signal)
 				: undefined);
 		this.agent.prepareNextTurnWithContext = async (turn, signal) => {
+			await this.recovery.beforeRequest(signal);
 			const context = await this._compactBeforeNextAssistantResponse(turn.context);
 			const previousSnapshot = await previousPrepareNextTurnWithContext?.({ ...turn, context }, signal);
 			const nextContext = previousSnapshot?.context ?? context;
@@ -1149,7 +1166,8 @@ export class AgentSession {
 	}
 
 	private async _emitAgentSettled(): Promise<void> {
-		this._cacheWarmer?.onAgentSettled();
+		this.recovery.finish(!this._agentRunAbortRequested);
+		if (!this.recovery.isPaused) this._cacheWarmer?.onAgentSettled();
 		this._isAgentRunActive = false;
 		this._isEmittingAgentSettled = true;
 		try {
@@ -1174,6 +1192,23 @@ export class AgentSession {
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = async (event: AgentEvent): Promise<void> => {
+		if (event.type === "tool_execution_end") {
+			const result: ToolResultMessage = {
+				role: "toolResult",
+				toolCallId: event.toolCallId,
+				toolName: event.toolName,
+				content: event.result.content ?? [],
+				details: event.result.details,
+				usage: event.result.usage,
+				isError: event.isError,
+				timestamp: Date.now(),
+				...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
+			};
+			const nested = this._nestedToolCalls?.takeRecord(event.toolCallId);
+			if (nested?.calls) result.nestedCalls = nested.calls;
+			if (nested?.usage) result.usage = result.usage ? combineUsage(result.usage, nested.usage) : nested.usage;
+			this.recovery.completed(result);
+		}
 		// An abort requested while the run was starting, e.g. during before_agent_start, stops it
 		// here. agent_start is awaited before the first request.
 		if (event.type === "agent_start" && this._agentRunAbortRequested) this.agent.abort();
@@ -1181,8 +1216,11 @@ export class AgentSession {
 		if (this._nestedToolCalls) {
 			if (event.type === "message_start" && event.message.role === "toolResult") {
 				const message = event.message;
-				const summary = this._nestedToolCalls.takeRecord(message.toolCallId);
-				if (summary?.calls) message.nestedCalls = summary.calls;
+				const receipt = this.recovery.receipt(message.toolCallId);
+				const summary = receipt ? undefined : this._nestedToolCalls.takeRecord(message.toolCallId);
+				if (receipt?.usage) message.usage = receipt.usage;
+				const calls = receipt?.nestedCalls ?? summary?.calls;
+				if (calls) message.nestedCalls = calls;
 				if (summary?.usage) {
 					message.usage = message.usage ? combineUsage(message.usage, summary.usage) : summary.usage;
 				}
@@ -1231,6 +1269,7 @@ export class AgentSession {
 					event.message.content,
 					event.message.display,
 					event.message.details,
+					this.recovery.inputId(event.message),
 				);
 			} else if (
 				event.message.role === "system" ||
@@ -1239,9 +1278,16 @@ export class AgentSession {
 				event.message.role === "toolResult"
 			) {
 				// Regular LLM message - persist as SessionMessageEntry
-				entryId = this.sessionManager.appendMessage(event.message);
+				entryId = this.sessionManager.appendMessage(
+					event.message,
+					event.message.role === "user" ? this.recovery.inputId(event.message) : undefined,
+				);
 			}
 			if (entryId) this._entryIdsByMessage.set(event.message, entryId);
+			if (event.message.role === "user" || event.message.role === "custom")
+				this.recovery.committedInput(event.message);
+			if (event.message.role === "toolResult") this.recovery.committedTool(event.message.toolCallId);
+			if (event.message.role === "assistant") this.recovery.modelFinished();
 			// Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
 
 			if (event.message.role === "assistant") {
@@ -1495,6 +1541,8 @@ export class AgentSession {
 			this.abortBranchSummary();
 			this.abortBash();
 			this.agent.abort();
+			if (this.agent.state.isStreaming) void this.agent.waitForIdle().then(() => this.recovery.dispose());
+			else this.recovery.dispose();
 		} catch {
 			// Dispose must succeed even if an abort hook throws.
 		}
@@ -1719,7 +1767,7 @@ export class AgentSession {
 			});
 		}
 		this._hiddenDeclarations = hidden;
-		this.agent.state.tools = declared;
+		this.agent.state.tools = declared.map((tool) => this.recovery.guard(tool));
 		return declared;
 	}
 
@@ -1955,16 +2003,27 @@ export class AgentSession {
 	 * @param onStarted Called once the run's messages are prepared, before the first request.
 	 */
 	private async _startRun(trigger: BeforeAgentStartTrigger, onStarted?: () => void): Promise<void> {
+		this.recovery.begin();
+		const input: UserMessage | CustomMessage =
+			trigger.messageType === "custom"
+				? trigger.message
+				: {
+						role: "user",
+						content: [{ type: "text", text: trigger.prompt }, ...(trigger.images ?? [])],
+						timestamp: Date.now(),
+					};
+		this.recovery.queue("start", input);
 		this._isAgentRunActive = true;
 		this._agentRunAbortRequested = false;
 		let messages: AgentMessage[];
 		try {
-			messages = await this._prepareRun(trigger);
+			messages = await this._prepareRun(trigger, input);
 		} catch (error) {
 			this._isAgentRunActive = false;
 			this._flushPendingBashMessages();
 			this._flushPendingCustomMessages();
 			this._resolveIdleWaitIfIdle();
+			this.recovery.finish(false);
 			throw error;
 		}
 		// Messages held while the run was starting go before its starting messages, as they would
@@ -2007,11 +2066,14 @@ export class AgentSession {
 	 * message followed by pending nextTurn messages (consumed here) and handler messages, with a
 	 * system patch first when the prompt changed.
 	 */
-	private async _prepareRun(trigger: BeforeAgentStartTrigger): Promise<AgentMessage[]> {
+	private async _prepareRun(
+		trigger: BeforeAgentStartTrigger,
+		input: UserMessage | CustomMessage,
+	): Promise<AgentMessage[]> {
 		// Check if we need to compact before sending (catches aborted responses).
 		// The starting message is sent below, so do not call agent.continue() here.
 		const lastAssistant = this._findLastAssistantMessage();
-		if (lastAssistant) {
+		if (lastAssistant && !this.recovery.isPaused) {
 			await this._checkCompaction(lastAssistant, false);
 		}
 
@@ -2027,18 +2089,15 @@ export class AgentSession {
 
 		const messages: AgentMessage[] = [];
 		if (trigger.messageType === "custom") {
-			messages.push(trigger.message);
+			messages.push(input);
 		} else {
 			// Normalize images after before_agent_start so extension-driven model selection
 			// determines the resize profile used for the request and history.
 			const normalized = await this._normalizePromptImages(trigger.images);
 			const text =
 				normalized.hints.length > 0 ? `${trigger.prompt}\n\n${normalized.hints.join("\n")}` : trigger.prompt;
-			messages.push({
-				role: "user",
-				content: [{ type: "text", text }, ...normalized.images],
-				timestamp: Date.now(),
-			});
+			input.content = [{ type: "text", text }, ...normalized.images];
+			messages.push(input);
 		}
 		// Inject any pending "nextTurn" messages as context alongside the starting message
 		messages.push(...this._pendingNextTurnMessages);
@@ -2402,14 +2461,15 @@ export class AgentSession {
 	 * Internal: Queue a steering message (already expanded, no extension command check).
 	 */
 	private async _queueSteer(text: string, images?: ImageContent[]): Promise<void> {
-		this._steeringMessages.push(text);
-		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
 		if (images) {
 			content.push(...images);
 		}
 		const message: AgentMessage = { role: "user", content, timestamp: Date.now() };
 		if (images?.length) this._queuedMessagesWithImages.add(message);
+		this.recovery.queue("steer", message);
+		this._steeringMessages.push(text);
+		this._emitQueueUpdate();
 		this.agent.steer(message);
 	}
 
@@ -2417,14 +2477,15 @@ export class AgentSession {
 	 * Internal: Queue a follow-up message (already expanded, no extension command check).
 	 */
 	private async _queueFollowUp(text: string, images?: ImageContent[]): Promise<void> {
-		this._followUpMessages.push(text);
-		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
 		if (images) {
 			content.push(...images);
 		}
 		const message: AgentMessage = { role: "user", content, timestamp: Date.now() };
 		if (images?.length) this._queuedMessagesWithImages.add(message);
+		this.recovery.queue("followUp", message);
+		this._followUpMessages.push(text);
+		this._emitQueueUpdate();
 		this.agent.followUp(message);
 	}
 
@@ -2485,11 +2546,14 @@ export class AgentSession {
 			timestamp: Date.now(),
 		} satisfies CustomMessage<T>;
 		if (options?.deliverAs === "nextTurn") {
+			this.recovery.queue("nextTurn", appMessage);
 			this._pendingNextTurnMessages.push(appMessage);
 		} else if (this.isStreaming && options?.triggerTurn !== false) {
 			if (options?.deliverAs === "followUp") {
+				this.recovery.queue("followUp", appMessage);
 				this.agent.followUp(appMessage);
 			} else {
+				this.recovery.queue("steer", appMessage);
 				this.agent.steer(appMessage);
 			}
 		} else if (options?.triggerTurn) {
@@ -2498,11 +2562,12 @@ export class AgentSession {
 				return;
 			}
 			await this._startRun({ messageType: "custom", message: appMessage });
-		} else if (this.isStreaming) {
+		} else if (this.isStreaming || this.recovery.needsRecovery) {
 			// Appending now would put the message between an assistant tool call and its
 			// result, which providers that validate message order reject on replay. Defer
 			// to the end of the turn. Nothing is emitted yet: message events must not
 			// describe messages the session tree does not contain.
+			this.recovery.queue("context", appMessage);
 			this._pendingCustomMessages.push(appMessage);
 		} else {
 			this._appendCustomMessage(appMessage);
@@ -2510,12 +2575,15 @@ export class AgentSession {
 	}
 
 	private _appendCustomMessage(appMessage: CustomMessage): void {
+		this.recovery.claim();
 		this.sessionManager.appendCustomMessageEntry(
 			appMessage.customType,
 			appMessage.content,
 			appMessage.display,
 			appMessage.details,
+			this.recovery.inputId(appMessage),
 		);
+		this.recovery.committedInput(appMessage);
 		this._refreshFinalizedContext();
 		this._emit({ type: "message_start", message: appMessage });
 		this._emit({ type: "message_end", message: appMessage });
@@ -2586,6 +2654,7 @@ export class AgentSession {
 		this._steeringMessages = [];
 		this._followUpMessages = [];
 		this.agent.clearAllQueues();
+		this.recovery.clearInputs();
 		this._emitQueueUpdate();
 		return { steering, followUp };
 	}
@@ -2630,6 +2699,44 @@ export class AgentSession {
 			return;
 		}
 		await this._getIdleWaitPromise();
+	}
+
+	private _restoreRecoveryInputs(inputs: readonly RecoveryQueuedInput[]): void {
+		for (const input of inputs) {
+			const message = input.message;
+			if (input.mode === "nextTurn" || input.mode === "context") {
+				if (message.role !== "custom") throw new Error("Recovery queue mode requires a custom message");
+				if (input.mode === "nextTurn") this._pendingNextTurnMessages.push(message);
+				else this._pendingCustomMessages.push(message);
+			} else {
+				if (message.role === "user") {
+					const text = contentText(message.content);
+					if (input.mode === "start" || input.mode === "steer") this._steeringMessages.push(text);
+					else this._followUpMessages.push(text);
+					if (typeof message.content !== "string" && message.content.some((part) => part.type === "image"))
+						this._queuedMessagesWithImages.add(message);
+				}
+				if (input.mode === "start" || input.mode === "steer") this.agent.steer(message);
+				else this.agent.followUp(message);
+			}
+		}
+		this._emitQueueUpdate();
+		if (!this.isStreaming) this._flushPendingCustomMessages();
+	}
+
+	private async _continueRecoveredWork(): Promise<void> {
+		await this._extensionBinding;
+		const last = this._findLastAssistantMessage();
+		if (last && (last.stopReason === "aborted" || last.stopReason === "error")) this._omitRecoveryAttempt(last);
+		await this.sendCustomMessage(
+			{
+				customType: "session-recovery",
+				content:
+					"The user approved continuing interrupted work from this session's saved history. Completed tool results have been restored. Interrupted tools marked as having an unknown outcome may already have caused side effects: inspect the actual state and obtain explicit approval before repeating those operations. Continue the existing task; do not restart it from scratch.",
+				display: true,
+			},
+			{ triggerTurn: true },
+		);
 	}
 
 	// =========================================================================
@@ -2925,6 +3032,7 @@ export class AgentSession {
 		projection: SessionProjection,
 		contextTokens?: number,
 	): void {
+		if (this.recovery.isPaused) return;
 		const settings = this.settingsManager.getCompactionSettings(this.model);
 		const branch = this.sessionManager.getBranch();
 		if (
@@ -3441,6 +3549,7 @@ export class AgentSession {
 			started = true;
 			this._emit({ type: "compaction_start", reason });
 			abortController.signal.throwIfAborted();
+			await this.recovery.beforeRequest(abortController.signal);
 
 			let extensionCompaction: CompactionResult | undefined;
 			if (prepared) {
@@ -3596,6 +3705,7 @@ export class AgentSession {
 			}
 			return false;
 		} finally {
+			if (started) this.recovery.modelFinished();
 			if (this._autoCompactionAbortController === abortController) {
 				this._autoCompactionAbortController = undefined;
 			}
@@ -3617,29 +3727,36 @@ export class AgentSession {
 	}
 
 	async bindExtensions(bindings: ExtensionBindings): Promise<void> {
-		if (bindings.uiContext !== undefined) {
-			this._extensionUIContext = bindings.uiContext;
-		}
-		if (bindings.mode !== undefined) {
-			this._extensionMode = bindings.mode;
-		}
-		if (bindings.commandContextActions !== undefined) {
-			this._extensionCommandContextActions = bindings.commandContextActions;
-		}
-		if (bindings.abortHandler !== undefined) {
-			this._extensionAbortHandler = bindings.abortHandler;
-		}
-		if (bindings.shutdownHandler !== undefined) {
-			this._extensionShutdownHandler = bindings.shutdownHandler;
-		}
-		if (bindings.onError !== undefined) {
-			this._extensionErrorListener = bindings.onError;
-		}
+		const binding = Promise.withResolvers<void>();
+		this._extensionBinding = binding.promise;
+		try {
+			if (bindings.uiContext !== undefined) {
+				this._extensionUIContext = bindings.uiContext;
+			}
+			if (bindings.mode !== undefined) {
+				this._extensionMode = bindings.mode;
+			}
+			if (bindings.commandContextActions !== undefined) {
+				this._extensionCommandContextActions = bindings.commandContextActions;
+			}
+			if (bindings.abortHandler !== undefined) {
+				this._extensionAbortHandler = bindings.abortHandler;
+			}
+			if (bindings.shutdownHandler !== undefined) {
+				this._extensionShutdownHandler = bindings.shutdownHandler;
+			}
+			if (bindings.onError !== undefined) {
+				this._extensionErrorListener = bindings.onError;
+			}
 
-		this._applyExtensionBindings(this._extensionRunner);
-		await this._extensionRunner.emit(this._sessionStartEvent);
-		this._extensionRunner.reportUnhandledMcpServers();
-		await this.extendResourcesFromExtensions(this._sessionStartEvent.reason === "reload" ? "reload" : "startup");
+			this._applyExtensionBindings(this._extensionRunner);
+			await this._extensionRunner.emit(this._sessionStartEvent);
+			this._extensionRunner.reportUnhandledMcpServers();
+			await this.extendResourcesFromExtensions(this._sessionStartEvent.reason === "reload" ? "reload" : "startup");
+		} finally {
+			this._extensionBinding = undefined;
+			binding.resolve();
+		}
 	}
 
 	private async extendResourcesFromExtensions(reason: "startup" | "reload"): Promise<void> {

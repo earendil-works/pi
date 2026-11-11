@@ -124,6 +124,8 @@ export interface HarnessOptions {
 	modelsJson?: Record<string, unknown>;
 	/** Session to continue, for example to test a resume. Default: a new in-memory session. */
 	sessionManager?: SessionManager;
+	/** Share one private recovery namespace across simulated process restarts. */
+	agentDir?: string;
 }
 
 export interface Harness {
@@ -238,7 +240,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		sessionManager,
 		settingsManager,
 		cwd: tempDir,
-		agentDir: tempDir,
+		agentDir: options.agentDir ?? tempDir,
 		modelRuntime: getModelRuntime(modelRegistry),
 		resourceLoader,
 		baseToolsOverride: toolMap,

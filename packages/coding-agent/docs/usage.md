@@ -18,6 +18,12 @@ To include files or images:
 - Press `Tab` to complete a path.
 - Paste an image or drag it into a compatible terminal.
 
+Pasted text collapses into a compact block at four or more lines or more than 300 characters. Copied or dropped existing local files and images show short filename labels instead of full paths. Ordinary typing, short pastes, URLs, and `@` references stay visible. Shell-mode file arguments keep their original quoting.
+
+Press `F2` to inspect the item at the cursor, or choose an item when several are present elsewhere in the prompt. Pasted text opens for editing: `Enter` applies changes and `Escape` cancels them. Image and file previews are read-only, use the native reader's limits, and close with `Escape`. Previewing does not call the model or add session messages.
+
+Back in the prompt bar, `Enter` still sends the full pasted text and original file paths, never the compact labels. Files are not copied into the prompt merely by previewing them. Remap or disable `app.editor.preview` in [keybindings](keybindings.md).
+
 ## Follow Pi's work
 
 Pi shows each tool call and result while it works. Press `Ctrl+O` to expand or collapse tool output. Press `Ctrl+T` to show or hide thinking blocks.

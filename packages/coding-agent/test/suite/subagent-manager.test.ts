@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { type FauxResponseFactory, fauxAssistantMessage } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionManager } from "../../src/core/session-manager.ts";
@@ -433,5 +433,153 @@ describe("isolated sub-agent sessions", () => {
 		expect(manager.inspect(child.id).status).toBe("stopped");
 		expect(manager.inspect(child.id).label).toBe("Stop a title request");
 		expect(manager.inspect(child.id).labelError).toBeUndefined();
+	});
+
+	it("keeps paused running and queued children recoverable after shutdown without changing the parent log", async () => {
+		const { parent, harness, manager, createManager, role } = await fixture({
+			settings: { subagents: { maxConcurrent: 1 } },
+		});
+		const before = readFileSync(parent.getSessionFile()!, "utf8");
+		writeFileSync(join(harness.tempDir, "recovery-evidence.txt"), "PRIVATE_CHILD_RECOVERY_EVIDENCE");
+		const started = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		let requests = 0;
+		harness.setResponses([
+			async (_context, options) => {
+				requests++;
+				started.resolve();
+				options?.signal?.addEventListener("abort", () => release.resolve(), { once: true });
+				await release.promise;
+				return fauxAssistantMessage(
+					{ type: "toolCall", id: "parked-read", name: "read", arguments: { path: "recovery-evidence.txt" } },
+					{ stopReason: "toolUse" },
+				);
+			},
+		]);
+		const child = manager.start(role, "Read the private recovery evidence");
+		await started.promise;
+		const queued = manager.start(role, "Original queued recovery goal");
+		const paused = manager.pause();
+		release.resolve();
+		await paused;
+		expect(manager.list().map((agent) => agent.status)).toEqual(["paused", "paused"]);
+		expect(manager.history(child.id).text).not.toContain("PRIVATE_CHILD_RECOVERY_EVIDENCE");
+		await manager.close();
+		const restored = createManager();
+		expect(new Set(restored.recoverable().map((agent) => agent.id))).toEqual(new Set([child.id, queued.id]));
+		expect(requests).toBe(1);
+		const contexts: string[] = [];
+		harness.setResponses([
+			(context) => {
+				contexts.push(JSON.stringify(context));
+				return fauxAssistantMessage(
+					{ type: "toolCall", id: "recovered-read", name: "read", arguments: { path: "recovery-evidence.txt" } },
+					{ stopReason: "toolUse" },
+				);
+			},
+			(context) => {
+				contexts.push(JSON.stringify(context));
+				return fauxAssistantMessage("Private child evidence recovered");
+			},
+			(context) => {
+				contexts.push(JSON.stringify(context));
+				return fauxAssistantMessage("Original queued goal completed");
+			},
+		]);
+		restored.recover(child.id);
+		restored.recover(queued.id);
+		const results = await Promise.all([restored.wait(child.id), restored.wait(queued.id)]);
+		expect(results.map((result) => [result.agent.id, result.agent.run, result.agent.status, result.text])).toEqual([
+			[child.id, 1, "completed", "Private child evidence recovered"],
+			[queued.id, 1, "completed", "Original queued goal completed"],
+		]);
+		expect(contexts[0]).toContain("Read the private recovery evidence");
+		expect(contexts[1]).toContain("PRIVATE_CHILD_RECOVERY_EVIDENCE");
+		expect(contexts[2]).toContain("Original queued recovery goal");
+		expect(contexts.join("")).not.toContain("Parent-only private requirement");
+		expect(readFileSync(parent.getSessionFile()!, "utf8")).toBe(before);
+	});
+
+	it("cancels an unfinished pause when continued early without leaving a late child gate closed", async () => {
+		const { harness, manager, role } = await fixture();
+		const started = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		harness.setResponses([
+			async (_context, options) => {
+				started.resolve();
+				options?.signal?.addEventListener("abort", () => release.resolve(), { once: true });
+				await release.promise;
+				return fauxAssistantMessage("Continued before pause settled");
+			},
+		]);
+		const child = manager.start(role, "Finish the admitted response");
+		await started.promise;
+		const pausing = manager.pause();
+		manager.continuePaused();
+		release.resolve();
+		await pausing;
+		const result = await manager.wait(child.id);
+		expect(result.agent.status).toBe("completed");
+		expect(result.text).toBe("Continued before pause settled");
+	});
+
+	it("recovers a saved final answer without rerunning a task whose status publication was interrupted", async () => {
+		const { harness, manager, createManager, role, setLabelResponse } = await fixture();
+		const labelStarted = Promise.withResolvers<void>();
+		const releaseLabel = Promise.withResolvers<void>();
+		setLabelResponse(async (_context, options) => {
+			labelStarted.resolve();
+			options?.signal?.addEventListener("abort", () => releaseLabel.resolve(), { once: true });
+			await releaseLabel.promise;
+			return fauxAssistantMessage("Interrupted metadata label");
+		});
+		harness.setResponses([fauxAssistantMessage("The completed task's saved answer")]);
+		const child = manager.start(role, "Produce the final finding once");
+		await labelStarted.promise;
+		await vi.waitFor(() => expect(manager.history(child.id).text).toContain("The completed task's saved answer"));
+		const recordPath = join(dirname(child.historyPath!), "record.json");
+		const saved = readFileSync(recordPath, "utf8");
+		expect(manager.inspect(child.id).status).toBe("running");
+		await manager.close();
+		// Only status publication was lost; the child's normal completion checkpoint and answer survived.
+		writeFileSync(recordPath, saved);
+		setLabelResponse(() => fauxAssistantMessage("Recovered task label"));
+		let repeated = 0;
+		harness.setResponses([
+			() => {
+				repeated++;
+				return fauxAssistantMessage("Unexpected task replay");
+			},
+		]);
+		const restored = createManager();
+		restored.recover(child.id);
+		const result = await restored.wait(child.id);
+		expect(result.agent.status, result.agent.error).toBe("completed");
+		expect(result.text).toBe("The completed task's saved answer");
+		expect(repeated).toBe(0);
+	});
+
+	it("recovers a queued continuation rather than mistaking the previous run's answer for its result", async () => {
+		const { harness, manager, createManager, role } = await fixture();
+		harness.setResponses([fauxAssistantMessage("Previous run answer")]);
+		const child = manager.start(role, "First task");
+		await manager.wait(child.id);
+		await manager.pause();
+		manager.resume(child.id, "New queued continuation");
+		await manager.close();
+		let request = "";
+		harness.setResponses([
+			(context) => {
+				request = JSON.stringify(context);
+				return fauxAssistantMessage("Current continuation completed");
+			},
+		]);
+		const restored = createManager();
+		restored.recover(child.id);
+		const result = await restored.wait(child.id);
+		expect(result.agent.run).toBe(2);
+		expect(result.agent.status, result.agent.error).toBe("completed");
+		expect(result.text).toBe("Current continuation completed");
+		expect(request).toContain("New queued continuation");
 	});
 });

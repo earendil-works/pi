@@ -5,6 +5,7 @@ import { getAgentDir } from "../../config.ts";
 import type { ExtensionContext, ExtensionFactory } from "../../core/extensions/types.ts";
 import { parsePaneCommand } from "../../core/panes/command.ts";
 import { openPane, type PaneHandle } from "../../core/panes/host.ts";
+import { getSessionRecovery } from "../../core/session-recovery.ts";
 import { discoverAgentDefinitions } from "../../core/subagents/definitions.ts";
 import { SubagentManager } from "../../core/subagents/manager.ts";
 import { SubagentIdSchema, type SubagentResult } from "../../core/subagents/state.ts";
@@ -27,6 +28,7 @@ export function createSubagentExtension(agentDir = getAgentDir()): ExtensionFact
 		let pane: PaneHandle | undefined;
 		let opening: Promise<PaneHandle> | undefined;
 		let scheduled = false;
+		let unregisterRecovery: (() => void) | undefined;
 		const delivered = new Set<string>();
 		const observing = new Set<string>();
 		const pending = new Map<string, SubagentResult>();
@@ -44,6 +46,24 @@ export function createSubagentExtension(agentDir = getAgentDir()): ExtensionFact
 					getThinkingLevel: () => ctx.thinkingLevel ?? "off",
 					getAllowedTools: () => pi.getActiveTools(),
 					getSystemPrompt: () => context?.getSystemPrompt() ?? ctx.getSystemPrompt(),
+				});
+				const owner = manager;
+				unregisterRecovery = getSessionRecovery(ctx.sessionManager).registerPeer({
+					pause: () => owner.pause(),
+					resume: () => owner.continuePaused(),
+					pending: () => owner.recoverable().map(({ id, label }) => ({ id, label })),
+					recover: async () => {
+						await owner.pause();
+						const agents = owner.recoverable();
+						for (const agent of agents) await approveAgentDefinition(owner.definition(agent.id), context ?? ctx);
+						for (const agent of agents) {
+							owner.recover(agent.id);
+							if (agent.async) observe(agent.id, context ?? ctx);
+						}
+					},
+					discard: async () => {
+						for (const agent of owner.recoverable()) await owner.cancel(agent.id);
+					},
 				});
 				for (const entry of ctx.sessionManager.getEntries()) {
 					if (
@@ -110,7 +130,7 @@ export function createSubagentExtension(agentDir = getAgentDir()): ExtensionFact
 				.wait(id)
 				.then(
 					(result) => {
-						if (signal.aborted) return;
+						if (signal.aborted || result.agent.status === "paused") return;
 						pending.set(key, result);
 						scheduleDelivery();
 					},
@@ -155,6 +175,10 @@ export function createSubagentExtension(agentDir = getAgentDir()): ExtensionFact
 							{
 								definitions: () => discoverAgentDefinitions(ctx.cwd, agentDir),
 								start: async (name, task) => {
+									const recovery = getSessionRecovery(ctx.sessionManager);
+									if (recovery.isPaused || recovery.needsRecovery)
+										throw new Error("Continue the parent with /pause before starting another child");
+									recovery.claim();
 									const role = discoverAgentDefinitions(ctx.cwd, agentDir).agents.find(
 										(role) => role.name === name,
 									);
@@ -164,6 +188,10 @@ export function createSubagentExtension(agentDir = getAgentDir()): ExtensionFact
 									return agent;
 								},
 								resume: async (id, task) => {
+									const recovery = getSessionRecovery(ctx.sessionManager);
+									if (recovery.isPaused || recovery.needsRecovery)
+										throw new Error("Continue the parent with /pause before resuming a child");
+									recovery.claim();
 									await approveAgentDefinition(owner.definition(id), ctx);
 									const agent = owner.resume(id, task, { delivery: "async" });
 									observe(id, ctx);
@@ -212,6 +240,8 @@ export function createSubagentExtension(agentDir = getAgentDir()): ExtensionFact
 			lifetime.abort();
 			try {
 				await manager?.close();
+				unregisterRecovery?.();
+				unregisterRecovery = undefined;
 			} finally {
 				await opening?.catch(() => {});
 				await pane?.close();

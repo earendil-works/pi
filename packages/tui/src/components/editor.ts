@@ -28,11 +28,28 @@ import { SelectList, type SelectListLayoutOptions, type SelectListTheme } from "
 const graphemeSegmenter = getGraphemeSegmenter();
 const wordSegmenter = getWordSegmenter();
 
-/** Regex matching paste markers like `[paste #1 +123 lines]` or `[paste #2 1234 chars]`. */
-const PASTE_MARKER_REGEX = /\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]/g;
+/** Full content behind an atomic prompt marker; attachment text preserves its original path spelling. */
+export type EditorContent =
+	| { readonly kind: "paste"; readonly text: string }
+	| { readonly kind: "image" | "file"; readonly text: string; readonly path: string; readonly label: string };
+
+/** A currently visible content item. Its content identity is invalidated by replacement or undo. */
+export interface EditorContentItem {
+	readonly id: number;
+	readonly marker: string;
+	readonly content: EditorContent;
+}
+
+interface PasteEntry {
+	marker: string;
+	content: EditorContent;
+}
+
+/** Matches compact text pastes and file/image attachments. Only registered markers are interpreted. */
+const PASTE_MARKER_REGEX = /\[(paste|image|file) #(\d+)(?: ([^\]\r\n]*))?\]/g;
 
 /** Non-global version for single-segment testing. */
-const PASTE_MARKER_SINGLE = /^\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]$/;
+const PASTE_MARKER_SINGLE = /^\[(paste|image|file) #(\d+)(?: ([^\]\r\n]*))?\]$/;
 
 /** Check if a segment is a paste marker (i.e. was merged by segmentWithMarkers). */
 function isPasteMarker(segment: string): boolean {
@@ -44,23 +61,23 @@ function isPasteMarker(segment: string): boolean {
  * within paste markers into single atomic segments.  This makes cursor
  * movement, deletion, word-wrap, etc. treat paste markers as single units.
  *
- * Only markers whose numeric ID exists in `validIds` are merged.
+ * Only exact markers in the paste registry are merged.
  */
 function segmentWithMarkers(
 	text: string,
 	baseSegmenter: Intl.Segmenter,
-	validIds: Set<number>,
+	pastes: ReadonlyMap<number, PasteEntry>,
 ): Iterable<Intl.SegmentData> {
-	// Fast path: no paste markers in the text or no valid IDs.
-	if (validIds.size === 0 || !text.includes("[paste #")) {
+	// Avoid scanning ordinary text when no registered content can occur in it.
+	if (pastes.size === 0 || !text.includes(" #")) {
 		return baseSegmenter.segment(text);
 	}
 
-	// Find all marker spans with valid IDs.
+	// A lookalike label with another kind or suffix remains ordinary text.
 	const markers: Array<{ start: number; end: number }> = [];
 	for (const m of text.matchAll(PASTE_MARKER_REGEX)) {
-		const id = Number.parseInt(m[1]!, 10);
-		if (!validIds.has(id)) continue;
+		const id = Number.parseInt(m[2]!, 10);
+		if (pastes.get(id)?.marker !== m[0]) continue;
 		markers.push({ start: m.index, end: m.index + m[0].length });
 	}
 	if (markers.length === 0) {
@@ -225,7 +242,7 @@ interface EditorState {
 /** Undo snapshot: editor text state plus the paste registry. */
 interface EditorSnapshot {
 	state: EditorState;
-	pastes: Map<number, string>;
+	pastes: Map<number, PasteEntry>;
 	pasteCounter: number;
 }
 
@@ -339,8 +356,8 @@ export class Editor implements Component, Focusable {
 	private autocompleteStartToken: number = 0;
 	private autocompleteRequestId: number = 0;
 
-	// Paste tracking for large pastes
-	private pastes: Map<number, string> = new Map();
+	// Pasted content shares one registry so movement, deletion and undo remain atomic.
+	private pastes: Map<number, PasteEntry> = new Map();
 	private pasteCounter: number = 0;
 
 	// Bracketed paste mode buffering
@@ -372,6 +389,10 @@ export class Editor implements Component, Focusable {
 	// Undo support
 	private undoStack = new UndoStack<EditorSnapshot>();
 
+	// Yank-pop removes the displayed insertion, which may be shorter than its full payload.
+	private lastYankedText = "";
+	private lastYankedPasteId: number | undefined;
+
 	public onSubmit?: (text: string) => void;
 	public onChange?: (text: string) => void;
 	public disableSubmit: boolean = false;
@@ -386,14 +407,9 @@ export class Editor implements Component, Focusable {
 		this.autocompleteMaxVisible = Number.isFinite(maxVisible) ? Math.max(3, Math.min(20, Math.floor(maxVisible))) : 5;
 	}
 
-	/** Set of currently valid paste IDs, for marker-aware segmentation. */
-	private validPasteIds(): Set<number> {
-		return new Set(this.pastes.keys());
-	}
-
-	/** Segment text with paste-marker awareness, only merging markers with valid IDs. */
+	/** Segment text with paste-marker awareness, only merging exact registered markers. */
 	private segment(text: string, mode: "word" | "grapheme"): Iterable<Intl.SegmentData> {
-		return segmentWithMarkers(text, mode === "word" ? wordSegmenter : graphemeSegmenter, this.validPasteIds());
+		return segmentWithMarkers(text, mode === "word" ? wordSegmenter : graphemeSegmenter, this.pastes);
 	}
 
 	getPaddingX(): number {
@@ -513,6 +529,11 @@ export class Editor implements Component, Focusable {
 		// No cached state to invalidate currently
 	}
 
+	/** Number of content rows available to this editor's scrolling viewport. */
+	protected getMaxVisibleLines(terminalRows: number): number {
+		return Math.max(5, Math.floor(terminalRows * 0.3));
+	}
+
 	protected renderTopBorder(width: number, hiddenLineCount: number): string {
 		const border = hiddenLineCount > 0 ? createScrollBorder("↑", hiddenLineCount, width) : "─".repeat(width);
 		return this.borderColor(border);
@@ -538,9 +559,7 @@ export class Editor implements Component, Focusable {
 		// Layout the text
 		const layoutLines = this.layoutText(layoutWidth);
 
-		// Calculate max visible lines: 30% of terminal height, minimum 5 lines
-		const terminalRows = this.tui.terminal.rows;
-		const maxVisibleLines = Math.max(5, Math.floor(terminalRows * 0.3));
+		const maxVisibleLines = this.getMaxVisibleLines(this.tui.terminal.rows);
 
 		// Find the cursor line index in layoutLines
 		let cursorLineIndex = layoutLines.findIndex((line) => line.hasCursor);
@@ -1098,12 +1117,11 @@ export class Editor implements Component, Focusable {
 	}
 
 	private expandPasteMarkers(text: string): string {
-		let result = text;
-		for (const [pasteId, pasteContent] of this.pastes) {
-			const markerRegex = new RegExp(`\\[paste #${pasteId}( (\\+\\d+ lines|\\d+ chars))?\\]`, "g");
-			result = result.replace(markerRegex, () => pasteContent);
-		}
-		return result;
+		// Expand once: pasted content may itself contain literal marker-looking text.
+		return text.replace(PASTE_MARKER_REGEX, (marker, _kind, id) => {
+			const entry = this.pastes.get(Number(id));
+			return entry?.marker === marker ? entry.content.text : marker;
+		});
 	}
 
 	/**
@@ -1112,6 +1130,89 @@ export class Editor implements Component, Focusable {
 	 */
 	getExpandedText(): string {
 		return this.expandPasteMarkers(this.state.lines.join("\n"));
+	}
+
+	/** Return visible content items in prompt order, excluding deleted items retained for undo. */
+	getContentItems(): EditorContentItem[] {
+		const items: EditorContentItem[] = [];
+		const seen = new Set<number>();
+		for (const line of this.state.lines) {
+			for (const match of line.matchAll(PASTE_MARKER_REGEX)) {
+				const id = Number(match[2]);
+				const entry = this.pastes.get(id);
+				if (!entry || entry.marker !== match[0] || seen.has(id)) continue;
+				seen.add(id);
+				items.push({ id, marker: entry.marker, content: entry.content });
+			}
+		}
+		return items;
+	}
+
+	/** Find content at the cursor, preferring the item starting there over one ending there. */
+	getContentAtCursor(): EditorContentItem | undefined {
+		const line = this.state.lines[this.state.cursorLine]!;
+		let previous: EditorContentItem | undefined;
+		for (const match of line.matchAll(PASTE_MARKER_REGEX)) {
+			const id = Number(match[2]);
+			const entry = this.pastes.get(id);
+			if (!entry || entry.marker !== match[0]) continue;
+			const end = match.index + match[0].length;
+			if (this.state.cursorCol >= match.index && this.state.cursorCol < end) {
+				return { id, marker: entry.marker, content: entry.content };
+			}
+			if (this.state.cursorCol === end) previous = { id, marker: entry.marker, content: entry.content };
+		}
+		return previous;
+	}
+
+	/** Insert compact items and their separators as one undoable operation. */
+	insertContent(parts: readonly (string | EditorContent)[]): void {
+		if (parts.length === 0) return;
+		this.cancelAutocomplete();
+		this.exitHistoryBrowsing();
+		this.lastAction = null;
+		this.pushUndoSnapshot();
+		let text = "";
+		for (const part of parts) text += typeof part === "string" ? part : this.registerContent(part);
+		this.insertTextAtCursorInternal(text);
+	}
+
+	/** Update a visible pasted block without accepting a stale preview after undo or replacement. */
+	updatePaste(content: Extract<EditorContent, { kind: "paste" }>, text: string): boolean {
+		for (const [id, entry] of this.pastes) {
+			if (entry.content !== content || !this.state.lines.some((line) => line.includes(entry.marker))) continue;
+			this.cancelAutocomplete();
+			this.exitHistoryBrowsing();
+			this.lastAction = null;
+			this.pushUndoSnapshot();
+			const updated: EditorContent = { kind: "paste", text: this.normalizeText(text) };
+			const marker = this.contentMarker(id, updated);
+			const cursorPrefix = this.state.lines[this.state.cursorLine]!.slice(0, this.state.cursorCol);
+			this.state.lines = this.state.lines.map((line) => line.replaceAll(entry.marker, marker));
+			this.setCursorCol(cursorPrefix.replaceAll(entry.marker, marker).length);
+			this.pastes.set(id, { marker, content: updated });
+			this.onChange?.(this.getText());
+			this.tui.requestRender();
+			return true;
+		}
+		return false;
+	}
+
+	private registerContent(content: EditorContent): string {
+		const id = ++this.pasteCounter;
+		const marker = this.contentMarker(id, content);
+		this.pastes.set(id, { marker, content });
+		return marker;
+	}
+
+	private contentMarker(id: number, content: EditorContent): string {
+		if (content.kind !== "paste") {
+			// Labels cross a display boundary; control characters and brackets cannot become marker syntax.
+			return `[${content.kind} #${id} ${content.label.replace(/[\p{Cc}[\]]/gu, " ")}]`;
+		}
+		const lines = content.text.split("\n").length;
+		const size = lines > 1 ? `+${lines} lines` : `${content.text.length} chars`;
+		return `[paste #${id} ${size}]`;
 	}
 
 	getLines(): string[] {
@@ -1267,7 +1368,12 @@ export class Editor implements Component, Focusable {
 		}
 	}
 
-	private handlePaste(pastedText: string): void {
+	/** Let application editors choose when a paste becomes a compact block. */
+	protected shouldCollapsePaste(text: string, lineCount: number): boolean {
+		return lineCount > 10 || text.length > 1000;
+	}
+
+	protected handlePaste(pastedText: string): void {
 		this.cancelAutocomplete();
 		this.exitHistoryBrowsing();
 		this.lastAction = null;
@@ -1308,20 +1414,8 @@ export class Editor implements Component, Focusable {
 		// Split into lines to check for large paste
 		const pastedLines = filteredText.split("\n");
 
-		// Check if this is a large paste (> 10 lines or > 1000 characters)
-		const totalChars = filteredText.length;
-		if (pastedLines.length > 10 || totalChars > 1000) {
-			// Store the paste and insert a marker
-			this.pasteCounter++;
-			const pasteId = this.pasteCounter;
-			this.pastes.set(pasteId, filteredText);
-
-			// Insert marker like "[paste #1 +123 lines]" or "[paste #1 1234 chars]"
-			const marker =
-				pastedLines.length > 10
-					? `[paste #${pasteId} +${pastedLines.length} lines]`
-					: `[paste #${pasteId} ${totalChars} chars]`;
-			this.insertTextAtCursorInternal(marker);
+		if (this.shouldCollapsePaste(filteredText, pastedLines.length)) {
+			this.insertTextAtCursorInternal(this.registerContent({ kind: "paste", text: filteredText }));
 			return;
 		}
 
@@ -1393,49 +1487,36 @@ export class Editor implements Component, Focusable {
 
 		if (this.state.cursorCol > 0) {
 			this.pushUndoSnapshot();
-
-			// Delete grapheme before cursor (handles emojis, combining characters, etc.)
-			let line = this.state.lines[this.state.cursorLine] || "";
+			const line = this.state.lines[this.state.cursorLine] || "";
 			const beforeCursor = line.slice(0, this.state.cursorCol);
-
-			// Find the last grapheme in the text before cursor
 			const graphemes = [...this.segment(beforeCursor, "grapheme")];
-			const lastGrapheme = graphemes[graphemes.length - 1];
-			const graphemeLength = lastGrapheme ? lastGrapheme.segment.length : 1;
-			const isPastedSegmented = PASTE_MARKER_SINGLE.exec(lastGrapheme.segment);
+			const lastGrapheme = graphemes[graphemes.length - 1]!;
+			const graphemeLength = lastGrapheme.segment.length;
+			const deletedMarker = PASTE_MARKER_SINGLE.exec(lastGrapheme.segment);
 
-			if (isPastedSegmented) {
-				// This contains the id part e.g 4 from [paste #4 +123 lines]
-				const targetId = Number(isPastedSegmented[1]);
+			this.state.lines[this.state.cursorLine] =
+				line.slice(0, this.state.cursorCol - graphemeLength) + line.slice(this.state.cursorCol);
+			this.setCursorCol(this.state.cursorCol - graphemeLength);
+
+			if (deletedMarker && !this.state.lines.some((text) => text.includes(lastGrapheme.segment))) {
+				const targetId = Number(deletedMarker[2]);
 				this.pastes.delete(targetId);
 				this.pasteCounter--;
-
-				// Shift registry entries down in ascending id order, independent
-				// of marker order in the text ([paste #3] becomes [paste #2] when
-				// [paste #1] is removed).
+				const replacements = new Map<string, string>();
 				const higherIds = [...this.pastes.keys()].filter((id) => id > targetId).sort((a, b) => a - b);
 				for (const id of higherIds) {
-					this.pastes.set(id - 1, this.pastes.get(id)!);
+					const entry = this.pastes.get(id)!;
+					const marker = entry.marker.replace(/ #\d+/, ` #${id - 1}`);
+					replacements.set(entry.marker, marker);
+					this.pastes.set(id - 1, { marker, content: entry.content });
 					this.pastes.delete(id);
 				}
-
-				// Renumber markers with ids greater than the removed one.
-				this.state.lines = this.state.lines.map((line) =>
-					line.replace(PASTE_MARKER_REGEX, (fullMatch, idGroup, suffixGroup) => {
-						const x = Number(idGroup);
-						if (x <= targetId) return fullMatch;
-						return `[paste #${x - 1}${suffixGroup}]`;
-					}),
-				);
+				const renumber = (text: string) =>
+					text.replace(PASTE_MARKER_REGEX, (marker) => replacements.get(marker) ?? marker);
+				const cursorPrefix = this.state.lines[this.state.cursorLine]!.slice(0, this.state.cursorCol);
+				this.state.lines = this.state.lines.map(renumber);
+				this.setCursorCol(renumber(cursorPrefix).length);
 			}
-
-			line = this.state.lines[this.state.cursorLine] || "";
-
-			const before = line.slice(0, this.state.cursorCol - graphemeLength);
-			const after = line.slice(this.state.cursorCol);
-
-			this.state.lines[this.state.cursorLine] = before + after;
-			this.setCursorCol(this.state.cursorCol - graphemeLength);
 		} else if (this.state.cursorLine > 0) {
 			this.pushUndoSnapshot();
 
@@ -1642,7 +1723,10 @@ export class Editor implements Component, Focusable {
 
 			// Calculate text to be deleted and save to kill ring (backward deletion = prepend)
 			const deletedText = currentLine.slice(0, this.state.cursorCol);
-			this.killRing.push(deletedText, { prepend: true, accumulate: this.lastAction === "kill" });
+			this.killRing.push(this.expandPasteMarkers(deletedText), {
+				prepend: true,
+				accumulate: this.lastAction === "kill",
+			});
 			this.lastAction = "kill";
 
 			// Delete from start of line up to cursor
@@ -1677,7 +1761,10 @@ export class Editor implements Component, Focusable {
 
 			// Calculate text to be deleted and save to kill ring (forward deletion = append)
 			const deletedText = currentLine.slice(this.state.cursorCol);
-			this.killRing.push(deletedText, { prepend: false, accumulate: this.lastAction === "kill" });
+			this.killRing.push(this.expandPasteMarkers(deletedText), {
+				prepend: false,
+				accumulate: this.lastAction === "kill",
+			});
 			this.lastAction = "kill";
 
 			// Delete from cursor to end of line
@@ -1731,7 +1818,7 @@ export class Editor implements Component, Focusable {
 			this.setCursorCol(oldCursorCol);
 
 			const deletedText = currentLine.slice(deleteFrom, this.state.cursorCol);
-			this.killRing.push(deletedText, { prepend: true, accumulate: wasKill });
+			this.killRing.push(this.expandPasteMarkers(deletedText), { prepend: true, accumulate: wasKill });
 			this.lastAction = "kill";
 
 			this.state.lines[this.state.cursorLine] =
@@ -1774,7 +1861,7 @@ export class Editor implements Component, Focusable {
 			this.setCursorCol(oldCursorCol);
 
 			const deletedText = currentLine.slice(this.state.cursorCol, deleteTo);
-			this.killRing.push(deletedText, { prepend: false, accumulate: wasKill });
+			this.killRing.push(this.expandPasteMarkers(deletedText), { prepend: false, accumulate: wasKill });
 			this.lastAction = "kill";
 
 			this.state.lines[this.state.cursorLine] =
@@ -2044,7 +2131,24 @@ export class Editor implements Component, Focusable {
 	 */
 	private insertYankedText(text: string): void {
 		this.exitHistoryBrowsing();
-		const lines = text.split("\n");
+		let lines = text.split("\n");
+		let collapse = this.shouldCollapsePaste(text, lines.length);
+		if (!collapse) {
+			// Literal examples of live markers must stay opaque when restored from the kill ring.
+			for (const match of text.matchAll(PASTE_MARKER_REGEX)) {
+				if (this.pastes.get(Number(match[2]))?.marker === match[0]) {
+					collapse = true;
+					break;
+				}
+			}
+		}
+		this.lastYankedPasteId = undefined;
+		if (collapse) {
+			text = this.registerContent({ kind: "paste", text });
+			lines = [text];
+			this.lastYankedPasteId = this.pasteCounter;
+		}
+		this.lastYankedText = text;
 
 		if (lines.length === 1) {
 			// Single line - insert at cursor
@@ -2083,11 +2187,15 @@ export class Editor implements Component, Focusable {
 
 	/**
 	 * Delete the previously yanked text (used by yank-pop).
-	 * The yanked text is derived from killRing[end] since it hasn't been rotated yet.
+	 * Uses the displayed insertion rather than the full kill-ring payload.
 	 */
 	private deleteYankedText(): void {
-		const yankedText = this.killRing.peek();
-		if (!yankedText) return;
+		const yankedText = this.lastYankedText;
+		if (this.lastYankedPasteId !== undefined) {
+			this.pastes.delete(this.lastYankedPasteId);
+			this.pasteCounter--;
+			this.lastYankedPasteId = undefined;
+		}
 
 		const yankLines = yankedText.split("\n");
 
@@ -2168,6 +2276,17 @@ export class Editor implements Component, Focusable {
 
 			if (idx !== -1) {
 				this.state.cursorLine = lineIdx;
+				for (const segment of this.segment(line, "grapheme")) {
+					if (segment.index > idx) break;
+					if (
+						isPasteMarker(segment.segment) &&
+						idx >= segment.index &&
+						idx < segment.index + segment.segment.length
+					) {
+						this.setCursorCol(isForward ? segment.index + segment.segment.length : segment.index);
+						return;
+					}
+				}
 				this.setCursorCol(idx);
 				return;
 			}

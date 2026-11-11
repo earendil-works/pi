@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { contentText } from "@earendil-works/pi-ai";
 import type { ExtensionFactory } from "../../core/extensions/types.ts";
 import { generateDisplayName } from "../../core/naming.ts";
+import { getSessionRecovery } from "../../core/session-recovery.ts";
 
 const marker = "pi.auto-name";
 
@@ -25,7 +26,8 @@ export function createAutoNameExtension(): ExtensionFactory {
 			controller?.abort();
 		});
 		pi.on("agent_end", (event, ctx) => {
-			if (attempted || lifetime.signal.aborted || !ctx.model) return;
+			if (attempted || lifetime.signal.aborted || !ctx.model || getSessionRecovery(ctx.sessionManager).isPaused)
+				return;
 			const entries = ctx.sessionManager.getEntries();
 			if (
 				entries.some(

@@ -350,6 +350,7 @@ function statusDot(status: SubagentStatus): string {
 		case "interrupted":
 			return theme.fg("error", dot);
 		case "queued":
+		case "paused":
 			return theme.fg("warning", dot);
 		case "stopped":
 			return theme.fg("muted", dot);

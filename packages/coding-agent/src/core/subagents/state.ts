@@ -20,6 +20,7 @@ const StatusSchema = Type.Union([
 	Type.Literal("failed"),
 	Type.Literal("stopped"),
 	Type.Literal("interrupted"),
+	Type.Literal("paused"),
 ]);
 const RecordSchema = Type.Object({
 	id: SubagentIdSchema,

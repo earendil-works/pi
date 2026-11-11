@@ -1,5 +1,20 @@
-import { Editor, type EditorOptions, type EditorTheme, type TUI, visibleWidth } from "@earendil-works/pi-tui";
+import { statSync } from "node:fs";
+import { basename, extname } from "node:path";
+import {
+	Editor,
+	type EditorContent,
+	type EditorOptions,
+	type EditorTheme,
+	type OverlayHandle,
+	stripTerminalSequences,
+	type TUI,
+	truncateToWidth,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 import type { AppKeybinding, KeybindingsManager } from "../../../core/keybindings.ts";
+import { normalizePath } from "../../../utils/paths.ts";
+import { keyDisplayText } from "./keybinding-hints.ts";
+import { PromptContentPreview } from "./prompt-content-preview.ts";
 import type { StatusIndicator } from "./status-indicator.ts";
 
 export type CustomEditorOptions = EditorOptions & {
@@ -27,6 +42,7 @@ export class CustomEditor extends Editor {
 		super(tui, theme, options);
 		this.keybindings = keybindings;
 		this.embedWorkingStatus = options?.embedWorkingStatus ?? false;
+		this.onAction("app.editor.preview", () => this.previewContent());
 	}
 
 	setWorkingStatusIndicator(indicator: StatusIndicator | undefined): void {
@@ -76,6 +92,63 @@ export class CustomEditor extends Editor {
 			status +
 			this.borderColor("─".repeat(Math.max(0, width - prefixWidth - statusWidth)))
 		);
+	}
+
+	protected override renderBottomBorder(width: number, hiddenLineCount: number): string {
+		const key = keyDisplayText("app.editor.preview");
+		const hint = ` ${key} preview `;
+		if (!key || hiddenLineCount > 0 || width < visibleWidth(hint) + 4 || !this.getContentAtCursor()) {
+			return super.renderBottomBorder(width, hiddenLineCount);
+		}
+		return this.borderColor(`──${hint}${"─".repeat(width - visibleWidth(hint) - 2)}`);
+	}
+
+	protected override shouldCollapsePaste(text: string, lineCount: number): boolean {
+		if (/^(?:https?:\/\/\S+|@\S+)$/i.test(text.trim())) return false;
+		return lineCount >= 4 || text.length > 300;
+	}
+
+	protected override handlePaste(text: string): void {
+		if (!this.getExpandedText().trimStart().startsWith("!")) {
+			const parts = attachmentParts(text);
+			if (parts) {
+				const cursor = this.getCursor();
+				const before = this.getLines()[cursor.line]!.slice(0, cursor.col);
+				if (/^[/~.]/.test(text) && /\w$/.test(before)) parts.unshift(" ");
+				this.insertContent(parts);
+				return;
+			}
+		}
+		super.handlePaste(text);
+	}
+
+	override insertTextAtCursor(text: string): void {
+		if (!text) return;
+		// Clipboard files in shell mode are already quoted by the caller.
+		if (this.getExpandedText().trimStart().startsWith("!")) {
+			super.insertTextAtCursor(text);
+			return;
+		}
+		this.handlePaste(text);
+	}
+
+	private previewContent(): void {
+		const items = this.getContentItems();
+		if (items.length === 0) return;
+		let handle: OverlayHandle;
+		const preview = new PromptContentPreview(
+			this.tui,
+			this.keybindings,
+			this,
+			items,
+			this.getContentAtCursor(),
+			() => {
+				preview.dispose();
+				handle.hide();
+				this.tui.requestRender();
+			},
+		);
+		handle = this.tui.showOverlay(preview, { width: "90%", maxHeight: "80%", anchor: "center" });
 	}
 
 	/**
@@ -155,4 +228,99 @@ export class CustomEditor extends Editor {
 		// Pass to parent for editor handling
 		super.handleInput(data);
 	}
+}
+
+interface PathToken {
+	start: number;
+	end: number;
+	value: string;
+}
+
+/** Recognize only complete lists of existing files; prose, URLs, and @references stay text. */
+function attachmentParts(text: string): (string | EditorContent)[] | undefined {
+	const parts: (string | EditorContent)[] = [];
+	let end = 0;
+	for (const match of text.matchAll(/[^\r\n]+/g)) {
+		const line = match[0];
+		if (!line.trim()) continue;
+		const trimmed = line.trim();
+		const whole = attachmentFromPath(line, line) ?? attachmentFromPath(trimmed, trimmed);
+		if (whole) {
+			const start = match.index + (whole.text === line ? 0 : line.indexOf(trimmed));
+			parts.push(text.slice(end, start), whole);
+			end = start + whole.text.length;
+			continue;
+		}
+		const tokens = pathTokens(line);
+		if (!tokens?.length) return undefined;
+		for (const token of tokens) {
+			const raw = line.slice(token.start, token.end);
+			const attachment = attachmentFromPath(token.value, raw);
+			if (!attachment) return undefined;
+			parts.push(text.slice(end, match.index + token.start), attachment);
+			end = match.index + token.end;
+		}
+	}
+	if (parts.length === 0) return undefined;
+	parts.push(text.slice(end));
+	return parts;
+}
+
+function attachmentFromPath(value: string, text: string): EditorContent | undefined {
+	if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+		value = value.slice(1, -1);
+	}
+	if (!/^(?:[/~]|[a-z]:[\\/]|\\\\|file:\/\/)/i.test(value) || /\p{Cc}/u.test(value)) return undefined;
+	try {
+		const path = normalizePath(value);
+		if (!statSync(path).isFile()) return undefined;
+		const name = basename(path);
+		const label = /^pi-clipboard-[a-f\d-]+\./i.test(name)
+			? "clipboard"
+			: truncateToWidth(stripTerminalSequences(name).replace(/[\p{Cc}[\]]/gu, " "), 24);
+		return {
+			kind: /\.(?:png|jpe?g|gif|webp|bmp)$/i.test(extname(path)) ? "image" : "file",
+			text,
+			path,
+			label,
+		};
+	} catch {
+		return undefined;
+	}
+}
+
+/** Decode quoted/escaped OS drag-and-drop paths without executing shell syntax or expanding variables. */
+function pathTokens(line: string): PathToken[] | undefined {
+	const tokens: PathToken[] = [];
+	let index = 0;
+	while (index < line.length) {
+		while (/\s/.test(line[index] ?? "") && index < line.length) index++;
+		if (index === line.length) break;
+		const start = index;
+		let value = "";
+		let quote: "'" | '"' | undefined;
+		while (index < line.length) {
+			const char = line[index]!;
+			if (!quote && /\s/.test(char)) break;
+			if (char === quote) {
+				quote = undefined;
+			} else if (!quote && (char === "'" || char === '"')) {
+				quote = char;
+			} else if (char === "\\" && quote !== "'" && process.platform !== "win32") {
+				const next = line[index + 1];
+				if (next === undefined) return undefined;
+				if (quote === '"' && !/[\\$"`]/.test(next)) value += char;
+				else {
+					value += next;
+					index++;
+				}
+			} else {
+				value += char;
+			}
+			index++;
+		}
+		if (quote) return undefined;
+		tokens.push({ start, end: index, value });
+	}
+	return tokens;
 }

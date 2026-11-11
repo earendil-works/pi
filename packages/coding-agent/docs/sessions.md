@@ -27,6 +27,24 @@ Use `/name` or `--name` to assign a recognizable session name. Run `/session` to
 
 The session picker lets you search, rename, and delete sessions. It can also show paths, change sorting, and limit results to named sessions. See [Keybindings](keybindings.md#sessions) for its shortcuts.
 
+## Pause and recover work
+
+Run `/pause` to hold the main agent and its native sub-agents. The menu shows **Pausing** while the current response and already-started tools finish; it then shows **Paused**. New model requests and tool calls wait at execution boundaries. Nested calls belonging to an already-running tool can finish. A synchronous delegation or child-wait tool must finish before the group can pause, so a long child task can delay that boundary.
+
+Press **Enter** on Continue to continue the same live run, without submitting another prompt or repeating completed tools. **Escape** closes the menu but keeps work paused; reopen it with `/pause`. `/resume` still opens the session picker. Independently supervised background jobs keep running, including when a job view is closed.
+
+After a crash, or after exiting while paused, reopen the saved session with `--continue`, `--resume`, or `--session`. Pi offers recovery before starting work. Choose Continue saved work, Keep paused, or Discard pending work. Discard preserves conversation history and completed evidence; it does not undo filesystem or external side effects.
+
+Completed parallel tool results are saved before their ordinary ordered chat entries, so recovery can restore them even if another tool was still running. A main tool interrupted during execution is marked **outcome unknown** and requires an additional confirmation. Its original call is not replayed automatically; the continuing agent is told to inspect actual state and obtain approval before repeating an uncertain operation. Queued inputs retain their identities so an input already committed to history is not delivered twice.
+
+Each sub-agent continues in its own child JSONL and recovery namespace, with the same completed-result restoration and unknown-outcome warnings in its own history. The parent keeps only child IDs, bounded results, and status—not the child's conversation. Existing role approval and current tool restrictions still apply when recovering children.
+
+Recovery files live under `~/.pi/agent/recovery/<owner-hash>/state.json`, or the corresponding `PI_CODING_AGENT_DIR`. The owner hash binds the canonical session file path and its header timestamp. These private files contain execution metadata, pending inputs, and temporary completed-tool receipts; receipts are removed after their normal chat entry is saved. Back up the recovery directory with the main and child session files. JSONL exports, imports, or moving session files do not carry an execution checkpoint to a different path. `--no-session` recovery is memory-only and cannot survive exit.
+
+An execution lease prevents two Pi instances using the same agent directory from recovering or running the same saved session concurrently. After a hard crash, a stale lease may briefly delay recovery; wait and retry rather than deleting a live instance's lock.
+
+SDK hosts can use `session.recovery.pause()`, `resume()`, `recover()`, `discard()`, and `info()`. Recovery is explicit in print/JSON/RPC hosts; they do not silently restart interrupted work. Interactive SDK hosts can register `createRecoveryExtension()` for the menu. Drain the session lifecycle before disposal, as `AgentSessionRuntime` does.
+
 ## Automatic names
 
 The CLI gives unnamed chats a short generated title in the background after the first completed answer. It attempts this once per session, not on every turn. `/name`, `--name`, session-picker renames, and explicit name clears take precedence, including while a naming request is in flight. Session IDs and conversation messages do not change.

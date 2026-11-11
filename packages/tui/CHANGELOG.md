@@ -2,9 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added atomic `EditorContent` items for compact pasted text, files, and images, with visible-item selection and undoable in-place text updates. Editor subclasses can customize paste collapse policy and viewport height.
+
 ### Fixed
 
 - Fixed Markdown rendering HTML comments (`<!-- ... -->`) as visible text ([#11710](https://github.com/earendil-works/pi/issues/11710))
+- Fixed expanding marker-looking text inside pasted content, losing killed paste content after submission, and character jumps splitting atomic markers. Backspace renumbering now preserves cursor positions when marker IDs change digit count.
 
 ## [1.5.0] - 2026-11-02
 

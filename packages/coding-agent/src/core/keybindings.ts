@@ -60,6 +60,10 @@ const APP_KEYBINDINGS = {
 		defaultKeys: "ctrl+g",
 		description: "Open external editor",
 	},
+	"app.editor.preview": {
+		defaultKeys: "f2",
+		description: "Preview or edit compact pasted content",
+	},
 	"app.message.copy": {
 		defaultKeys: "ctrl+x",
 		description: "Copy selection or choose content from the last assistant message",

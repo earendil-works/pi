@@ -441,4 +441,32 @@ describe("native sub-agent controls", () => {
 		await harness.session.prompt("Inspect the child's original evidence in pages");
 		expect(retrieved).toContain(`${"\0".repeat(16000)}END_OF_CHILD_RESPONSE`);
 	});
+
+	it("does not deadlock group pause behind an already-running synchronous delegation tool", async () => {
+		const { parent, harness, reader } = await fixture();
+		const started = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		let mainCalls = 0;
+		queueFactory(harness, async (_context, options) => {
+			if (options?.sessionId === parent.getSessionId())
+				return ++mainCalls === 1
+					? delegate({ task: "Finish the synchronous child" })
+					: fauxAssistantMessage("Parent continued once");
+			started.resolve();
+			options?.signal?.addEventListener("abort", () => release.resolve(), { once: true });
+			await release.promise;
+			return fauxAssistantMessage("Synchronous child completed");
+		});
+		const run = harness.session.prompt("Delegate then pause safely");
+		await started.promise;
+		const pausing = harness.session.recovery.pause();
+		release.resolve();
+		await pausing;
+		expect(reader.list().map((agent) => agent.status)).toEqual(["completed"]);
+		expect(mainCalls).toBe(1);
+		harness.session.recovery.resume();
+		await run;
+		expect(mainCalls).toBe(2);
+		expect(getMessageText(getToolResult(harness, "subagent"))).toContain("Synchronous child completed");
+	});
 });

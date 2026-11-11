@@ -1177,20 +1177,27 @@ export class SessionManager {
 		);
 	}
 
+	/** Make a session with durably queued input discoverable before asynchronous run preparation. */
+	ensurePersisted(): void {
+		if (this.persist && this.sessionFile && !this.flushed) this._flushToFile(this.sessionFile);
+	}
+
+	private _flushToFile(file: string): void {
+		const fd = openSync(file, "wx");
+		try {
+			for (const entry of this.fileEntries) writeFileSync(fd, `${JSON.stringify(entry)}\n`);
+		} finally {
+			closeSync(fd);
+		}
+		this.flushed = true;
+	}
+
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
 
 		if (!this.flushed) {
 			if (!this._hasConversation()) return;
-			const fd = openSync(this.sessionFile, "wx");
-			try {
-				for (const e of this.fileEntries) {
-					writeFileSync(fd, `${JSON.stringify(e)}\n`);
-				}
-			} finally {
-				closeSync(fd);
-			}
-			this.flushed = true;
+			this._flushToFile(this.sessionFile);
 		} else {
 			appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
 		}
@@ -1219,10 +1226,12 @@ export class SessionManager {
 	 * so it is easier to find them.
 	 * These need to be appended via appendCompaction() and appendBranchSummary() methods.
 	 */
-	appendMessage(message: Message | CustomMessage | BashExecutionMessage): string {
+	appendMessage(message: Message | CustomMessage | BashExecutionMessage, reservedId?: string): string {
+		if (reservedId !== undefined && (!reservedId || this.byId.has(reservedId)))
+			throw new Error("Reserved session entry ID is empty or already used");
 		const entry: SessionMessageEntry = {
 			type: "message",
-			id: generateId(this.byId),
+			id: reservedId ?? generateId(this.byId),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			message,
@@ -1361,14 +1370,17 @@ export class SessionManager {
 		content: string | (TextContent | ImageContent)[],
 		display: boolean,
 		details?: T,
+		reservedId?: string,
 	): string {
+		if (reservedId !== undefined && (!reservedId || this.byId.has(reservedId)))
+			throw new Error("Reserved session entry ID is empty or already used");
 		const entry: CustomMessageEntry<T> = {
 			type: "custom_message",
 			customType,
 			content,
 			display,
 			details,
-			id: generateId(this.byId),
+			id: reservedId ?? generateId(this.byId),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 		};
