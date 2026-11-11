@@ -174,6 +174,34 @@ describe("remote catalog provider", () => {
 		expect(await store.read(provider.id)).toMatchObject({ lastModified: Date.parse(newerHeader) });
 	});
 
+	it("keeps the stored overlay when the catalog metadata was lost", async () => {
+		// A catalog route that answered 404/501 zeroes `lastModified` but leaves the fetched models
+		// in the store. The models were valid when stored, so they stay visible: dropping them hid a
+		// model that was still in the store, offline included.
+		const localGeneratedAt = Date.parse("2026-07-23T10:00:00.000Z");
+		const responses = [
+			new Response(JSON.stringify({ dynamic: model("dynamic") }), {
+				headers: { "content-type": "application/json", "last-modified": new Date(localGeneratedAt + 60_000).toUTCString() },
+			}),
+			new Response("not implemented", { status: 501 }),
+		];
+		vi.spyOn(globalThis, "fetch").mockImplementation(async () => responses.shift() as Response);
+		const provider = testProvider(localGeneratedAt);
+		const store = new InMemoryModelsStore();
+
+		await refreshProvider(provider, store);
+		expect(provider.getModels().map((entry) => entry.id)).toEqual(["static", "dynamic"]);
+
+		// The unavailable route zeroes the metadata and drops the etag.
+		await refreshProvider(provider, store, { force: true });
+		expect(await store.read(provider.id)).toMatchObject({ lastModified: 0 });
+		expect((await store.read(provider.id))?.models.map((entry) => entry.id)).toEqual(["dynamic"]);
+
+		// The next refresh still offers the stored model, and no network is needed to do it.
+		await refreshProvider(provider, store, { allowNetwork: false });
+		expect(provider.getModels().map((entry) => entry.id)).toEqual(["static", "dynamic"]);
+	});
+
 	it("revalidates a stored catalog with its etag and keeps the overlay on 304", async () => {
 		const responses = [
 			new Response(JSON.stringify({ dynamic: model("dynamic") }), {

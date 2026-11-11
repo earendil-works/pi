@@ -68,8 +68,19 @@ function isNewer(lastModified: number | undefined, localGeneratedAt: number | un
 	return localGeneratedAt === undefined || (lastModified !== undefined && lastModified > localGeneratedAt);
 }
 
-function remoteModels(entry: ModelsStoreEntry | undefined, localGeneratedAt: number | undefined): readonly AnyModel[] {
-	return entry && isNewer(entry.lastModified, localGeneratedAt) ? entry.models : [];
+/**
+ * The stored pi.dev overlay for a provider.
+ *
+ * An entry whose `lastModified` was lost -- zeroed after an unavailable catalog route, or written
+ * without the header -- still holds the models it was fetched with. They were valid when stored,
+ * so they stay visible until a successful fetch replaces them. Dropping them is what made a model
+ * disappear from `pi --list-models` while it was still in the store, offline included. An entry
+ * with a usable `lastModified` only counts when it is newer than the shipped model data.
+ */
+function storedModels(entry: ModelsStoreEntry | undefined, localGeneratedAt: number | undefined): readonly AnyModel[] {
+	if (!entry) return [];
+	if (entry.lastModified === undefined || entry.lastModified === 0) return entry.models;
+	return isNewer(entry.lastModified, localGeneratedAt) ? entry.models : [];
 }
 
 function requestCatalog(
@@ -120,7 +131,7 @@ export function withRemoteCatalog(
 		refreshModelsAuth: "configured",
 		refreshModels: async (context) => {
 			const stored = context.stored;
-			const restored = remoteModels(stored, localGeneratedAt).filter((model) => model.provider === provider.id);
+			const restored = storedModels(stored, localGeneratedAt).filter((model) => model.provider === provider.id);
 			if (
 				!(await context.publish({
 					update: () => {
@@ -175,7 +186,7 @@ export function withRemoteCatalog(
 			const catalog = await readCatalog(provider.id, response);
 			if (context.signal.aborted) return;
 			const entry: ModelsStoreEntry = { ...catalog, checkedAt };
-			const published = remoteModels(entry, localGeneratedAt);
+			const published = storedModels(entry, localGeneratedAt);
 			await context.publish({
 				persist: entry,
 				update: () => {
