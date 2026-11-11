@@ -19,7 +19,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-const EXIT_STDIO_GRACE: Duration = Duration::from_millis(100);
+/// After a command's program exits, output still arriving is collected until this much silence.
+const EXIT_GRACE: Duration = Duration::from_millis(100);
 /// How often a delivery waiting for the link to drain looks again.
 const UNSENT_POLL: Duration = Duration::from_millis(20);
 
@@ -28,6 +29,10 @@ pub type Groups = Arc<Mutex<HashSet<u32>>>;
 
 pub enum Message {
     Data(usize, Vec<u8>),
+    /// The stream's reader waits for the link to drain; the program's output may sit unread in the pipe meanwhile.
+    Paused(usize),
+    /// The stream's reader reads again.
+    Resumed(usize),
     Eof(usize),
     Exit(ExitStatus),
     WaitFailed(String),
@@ -310,12 +315,75 @@ pub fn spawn_reader(
         sys::read_pipe(pipe, &stop, |bytes| {
             let delivered = sender.send(Message::Data(stream, bytes.to_vec())).is_ok();
             if let Some(output) = &output {
-                output.wait_for_room(&stop);
+                wait_for_link(output, stream, &sender, &stop);
             }
             delivered
         });
         let _ = sender.send(Message::Eof(stream));
     })
+}
+
+/// Wait while too much output is unsent, telling the command's loop while the reader of `stream` waits, so that time
+/// does not count as silence after the program exits.
+pub fn wait_for_link(output: &Output, stream: usize, sender: &Sender<Message>, stop: &AtomicBool) {
+    if output.has_room() {
+        return;
+    }
+    let _ = sender.send(Message::Paused(stream));
+    output.wait_for_room(stop);
+    let _ = sender.send(Message::Resumed(stream));
+}
+
+/// When a command stops collecting output after its program ended: after `EXIT_GRACE` without output, since a
+/// descendant may hold the pipes open. A reader waiting for the link is not silence: the program's last output may
+/// still be in its pipe, which a reader that stopped would lose.
+#[derive(Default)]
+pub struct ExitGrace {
+    until: Option<Instant>,
+    paused: [bool; 2],
+}
+
+impl ExitGrace {
+    /// The program exited: collect output until `EXIT_GRACE` passes without any.
+    pub fn exited(&mut self) {
+        self.until = Some(Instant::now() + EXIT_GRACE);
+    }
+
+    /// Waiting for the program failed: stop collecting as soon as no reader waits for the link.
+    pub fn failed(&mut self) {
+        self.until = Some(Instant::now());
+    }
+
+    /// Output arrived: after the exit, the silence starts again.
+    pub fn output(&mut self) {
+        if self.until.is_some() {
+            self.exited();
+        }
+    }
+
+    /// The stream's reader waits for the link: no silence counts until it reads again.
+    pub fn paused(&mut self, stream: usize) {
+        self.paused[stream] = true;
+    }
+
+    /// The stream's reader reads again: after the exit, the silence starts again.
+    pub fn resumed(&mut self, stream: usize) {
+        self.paused[stream] = false;
+        self.output();
+    }
+
+    /// Whether to stop collecting output now.
+    pub fn over(&self, now: Instant) -> bool {
+        !self.paused.contains(&true) && self.until.is_some_and(|until| now >= until)
+    }
+
+    /// How long until `over` may hold, if it can without a message: never while a reader waits for the link.
+    pub fn wait(&self, now: Instant) -> Option<Duration> {
+        if self.paused.contains(&true) {
+            return None;
+        }
+        self.until.map(|until| until.saturating_duration_since(now))
+    }
 }
 
 fn output_frame(id: u32, stream: &str, text: String, skipped: Option<Value>) -> Frame {
@@ -453,7 +521,7 @@ pub fn run(
     };
     let mut ended = [false, false];
     let mut status: Option<Result<ExitStatus, String>> = None;
-    let mut idle_until: Option<Instant> = None;
+    let mut grace = ExitGrace::default();
     let mut timed_out = false;
     let mut aborted = false;
     let mut killed = false;
@@ -476,7 +544,7 @@ pub fn run(
         if status.is_some() && ended[0] && ended[1] {
             break;
         }
-        if idle_until.is_some_and(|idle| now >= idle) {
+        if grace.over(now) {
             // A descendant may hold the pipes open after the process exited; stop waiting for it.
             break;
         }
@@ -491,8 +559,8 @@ pub fn run(
         if let Some(deadline) = deadline.filter(|_| !timed_out) {
             wait = wait.min(deadline.saturating_duration_since(now));
         }
-        if let Some(idle) = idle_until {
-            wait = wait.min(idle.saturating_duration_since(now));
+        if let Some(idle) = grace.wait(now) {
+            wait = wait.min(idle);
         }
         if let Some(pending) = pending.as_ref().filter(|pending| !pending.is_empty()) {
             wait = wait.min(if unsent.load(Ordering::SeqCst) > 0 {
@@ -510,18 +578,18 @@ pub fn run(
                         kill(&mut killed);
                     }
                 }
-                if status.is_some() {
-                    idle_until = Some(Instant::now() + EXIT_STDIO_GRACE);
-                }
+                grace.output();
             }
+            Ok(Message::Paused(stream)) => grace.paused(stream),
+            Ok(Message::Resumed(stream)) => grace.resumed(stream),
             Ok(Message::Eof(stream)) => ended[stream] = true,
             Ok(Message::Exit(exit)) => {
                 status = Some(Ok(exit));
-                idle_until = Some(Instant::now() + EXIT_STDIO_GRACE);
+                grace.exited();
             }
             Ok(Message::WaitFailed(error)) => {
                 status = Some(Err(error));
-                idle_until = Some(Instant::now());
+                grace.failed();
             }
             Ok(Message::Cancel) => {
                 aborted = true;
@@ -575,4 +643,96 @@ pub fn run(
         result["spillPath"] = json!(path);
     }
     Ok(result)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use crate::frame;
+    use crate::output::BULK_LIMIT;
+    use crate::process::{self, ProcessRequest};
+
+    /// More than one pipe buffer: the program exits with the rest of its output still in the pipe.
+    const WRITTEN: usize = 100_000;
+
+    /// Run a command on a link that sends nothing for 500 ms, well past the exit grace, and count the output bytes
+    /// of request 1 the link then sends.
+    fn output_after_stalled_link(
+        command: impl FnOnce(&Arc<Output>) -> Result<Value, Failure> + Send + 'static,
+    ) -> (Value, usize) {
+        let output = Arc::new(Output::default());
+        // More than the bulk limit is unsent, so the reader waits after its first chunk.
+        output.bulk(
+            Frame::with_payload(EVENT, 0, json!({}), vec![0; BULK_LIMIT + 1]),
+            None,
+        );
+        let runner = {
+            let output = output.clone();
+            thread::spawn(move || command(&output))
+        };
+        thread::sleep(Duration::from_millis(500));
+        let writer = {
+            let output = output.clone();
+            thread::spawn(move || {
+                let mut sent = Vec::new();
+                output.run(&mut sent);
+                sent
+            })
+        };
+        let result = runner
+            .join()
+            .unwrap()
+            .map_err(|failure| failure.to_json())
+            .unwrap();
+        output.close();
+        let sent = writer.join().unwrap();
+        let mut input = sent.as_slice();
+        let mut bytes = 0;
+        while let Some(frame) = frame::read_frame(&mut input).unwrap() {
+            if frame.kind == EVENT && frame.id == 1 && frame.json["kind"] == "output" {
+                bytes += frame.payload.len();
+            }
+        }
+        (result, bytes)
+    }
+
+    fn writer_argv() -> Value {
+        json!(["/bin/sh", "-c", format!("head -c {WRITTEN} /dev/zero")])
+    }
+
+    #[test]
+    fn exec_keeps_the_output_left_in_the_pipe_while_the_link_is_slow() {
+        let request =
+            ExecRequest::from_json(&json!({ "argv": writer_argv(), "cwd": "/" })).unwrap();
+        let (result, bytes) = output_after_stalled_link(move |output| {
+            run(
+                1,
+                request,
+                "/tmp",
+                output,
+                &Control::default(),
+                &Groups::default(),
+            )
+        });
+        assert_eq!(result["exitCode"], 0);
+        assert_eq!(bytes, WRITTEN);
+    }
+
+    #[test]
+    fn process_keeps_the_output_left_in_the_pipe_while_the_link_is_slow() {
+        let request =
+            ProcessRequest::from_json(&json!({ "argv": writer_argv(), "cwd": "/" })).unwrap();
+        let (result, bytes) = output_after_stalled_link(move |output| {
+            process::run(
+                1,
+                request,
+                output,
+                &Control::default(),
+                &Groups::default(),
+                &process::Processes::default(),
+            )
+        });
+        assert_eq!(result["exitCode"], 0);
+        assert_eq!(bytes, WRITTEN);
+    }
 }

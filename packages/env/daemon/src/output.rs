@@ -11,7 +11,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 /// Unsent bulk bytes above which unwindowed command output waits.
-const BULK_LIMIT: usize = 4 * 1024 * 1024;
+pub const BULK_LIMIT: usize = 4 * 1024 * 1024;
 
 #[derive(Default)]
 struct Queues {
@@ -46,6 +46,12 @@ impl Output {
         }
         queues.bulk.push_back((frame, unsent));
         self.queued.notify_one();
+    }
+
+    /// Whether `wait_for_room` would return at once, `stop` aside.
+    pub fn has_room(&self) -> bool {
+        let queues = self.queues.lock().unwrap();
+        queues.bulk_bytes <= BULK_LIMIT || queues.closed
     }
 
     /// Wait while more than the bulk limit is unsent, unless `stop` is set.

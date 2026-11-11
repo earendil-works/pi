@@ -5,7 +5,7 @@
 use crate::errors::Failure;
 use crate::exec::{Control, Groups, running};
 #[cfg(unix)]
-use crate::exec::{Message, kill_group, start_waiter};
+use crate::exec::{ExitGrace, Message, kill_group, start_waiter, wait_for_link};
 #[cfg(unix)]
 use crate::frame::{EVENT, Frame};
 use crate::output::Output;
@@ -14,9 +14,6 @@ use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
-/// After the program exits, output still arriving is collected until this much silence.
-#[cfg(unix)]
-const EXIT_GRACE: std::time::Duration = std::time::Duration::from_millis(100);
 /// Largest terminal size accepted, in cells.
 const MAX_CELLS: u64 = 4096;
 
@@ -196,7 +193,7 @@ pub fn run(
             unix::read(&master, &stop, |bytes| {
                 let delivered = sender.send(Message::Data(0, bytes.to_vec())).is_ok();
                 // Like a full pipe: a program that writes faster than the link waits.
-                output.wait_for_room(&stop);
+                wait_for_link(&output, 0, &sender, &stop);
                 delivered
             });
             let _ = sender.send(Message::Eof(0));
@@ -227,7 +224,7 @@ pub fn run(
 
     let mut status = None;
     let mut ended = false;
-    let mut idle_until: Option<Instant> = None;
+    let mut grace = ExitGrace::default();
     let mut aborted = false;
     let mut killed = false;
     let kill = |killed: &mut bool| {
@@ -243,35 +240,30 @@ pub fn run(
         if status.is_some() && ended {
             break;
         }
-        let wait = match idle_until {
-            Some(idle) => {
-                let now = Instant::now();
-                if now >= idle {
-                    // A background job may keep the terminal open after the program exited.
-                    break;
-                }
-                idle - now
-            }
-            None => Duration::from_secs(3600),
-        };
+        let now = Instant::now();
+        if grace.over(now) {
+            // A background job may keep the terminal open after the program exited.
+            break;
+        }
+        let wait = grace.wait(now).unwrap_or(Duration::from_secs(3600));
         match receiver.recv_timeout(wait) {
             Ok(Message::Data(_, bytes)) => {
                 output.bulk(
                     Frame::with_payload(EVENT, id, json!({ "kind": "output" }), bytes),
                     None,
                 );
-                if status.is_some() {
-                    idle_until = Some(Instant::now() + EXIT_GRACE);
-                }
+                grace.output();
             }
+            Ok(Message::Paused(stream)) => grace.paused(stream),
+            Ok(Message::Resumed(stream)) => grace.resumed(stream),
             Ok(Message::Eof(_)) => ended = true,
             Ok(Message::Exit(exit)) => {
                 status = Some(Ok(exit));
-                idle_until = Some(Instant::now() + EXIT_GRACE);
+                grace.exited();
             }
             Ok(Message::WaitFailed(error)) => {
                 status = Some(Err(error));
-                idle_until = Some(Instant::now());
+                grace.failed();
             }
             Ok(Message::Cancel) => {
                 aborted = true;
