@@ -7,6 +7,7 @@ import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
+import { Views } from "../../plugins/views/contract.ts";
 import { ViewLinks } from "../../plugins/views/room-contract.ts";
 import type { RefIn } from "../../src/runtime/chord.ts";
 import { viewKey } from "../../src/runtime/principals.ts";
@@ -28,7 +29,7 @@ p2view.methods.offer({
 
 /** A live room: the frame's peer ID, how many peers it sees, and the messages it got. */
 const LIVE = `<!doctype html><html><head></head><body>
-<p id=me></p><p id=peers></p><p id=got></p>
+<p id=me></p><p id=peers></p><p id=got></p><p id=events></p>
 <script>
 const room = p2view.room('live');
 room.onMessage((message) => { document.getElementById('got').textContent += message.data + ';'; });
@@ -36,7 +37,9 @@ setInterval(() => {
 	document.getElementById('me').textContent = room.me;
 	document.getElementById('peers').textContent = String(room.peers.length);
 }, 100);
+room.onEvent((event) => { document.getElementById('events').textContent += event.data + ';'; });
 window.say = (text) => room.send(text);
+window.move = (y) => room.emit(y, { key: 'paddle' });
 </script></body></html>`;
 
 describe("view rooms in Chromium", { skip: !browserTests }, () => {
@@ -158,6 +161,18 @@ describe("view rooms in Chromium", { skip: !browserTests }, () => {
 			20_000,
 			"the message after the reconnect",
 		);
+		// Its event listeners moved to the new link's reference.
+		await inFrame(first, "move('moved')");
+		await poll(
+			async () =>
+				((await inFrame<string>(second, "document.getElementById('events').textContent")) ?? "").includes("moved"),
+			20_000,
+			"an event after the reconnect",
+		);
+		// The cut (what a lag eviction does) was quiet: the frame logged no error the view would show the agent.
+		await new Promise((resolve) => setTimeout(resolve, 2_000));
+		const views = await holdIn(fixture.browser(), Views, { session }, "editor");
+		assert.deepEqual(views.views.value.find((view) => view.id === "live")?.errors ?? [], []);
 	});
 
 	it("starts over when it reconnects to a new store after the old one ended", async () => {

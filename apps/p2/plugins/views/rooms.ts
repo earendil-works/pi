@@ -3,6 +3,7 @@
 // view (room-store.ts).
 import { randomBytes, randomUUID } from "node:crypto";
 import {
+	type AcceptsTable,
 	type Ctx,
 	canSend,
 	canView,
@@ -31,6 +32,12 @@ const TOKEN_TTL = 60_000;
 const MAX_TOKENS = 8;
 /** How long an editor ID is kept for a frame's reconnects since it was last used. */
 const EDITOR_TTL = 24 * 60 * 60_000;
+/**
+ * Frames of view kits built with `ViewRoom` version 1 (immutable, cached by their hash): they bind without events, and
+ * their `send` answers `null` as it did.
+ */
+const VIEW_ROOM_ACCEPTS: AcceptsTable<typeof ViewRoom> = { 1: { methods: { send: { result: () => null } } } };
+
 /** A token waiting for its link: the principal it stamps, for whom it was made, until when. */
 type Token = {
 	readonly principal: ViewPrincipal;
@@ -149,50 +156,56 @@ export function serveRooms(host: FacetHost): void {
 		});
 	});
 
-	host.serve(ViewRoom, ({ session, view, opening }, principal, self) => {
-		if (principal.kind === "worker") {
-			if (principal.session !== session) throw forbidden("this session's worker only");
+	host.serve(
+		ViewRoom,
+		({ session, view, opening }, principal, self) => {
+			if (principal.kind === "worker") {
+				if (principal.session !== session) throw forbidden("this session's worker only");
+				const store = self.get(RoomStore, { session, view, opening });
+				return {
+					variant: "worker",
+					members: { methods: (ctx) => store.methods(ctx), call: (args, ctx) => store.call(args, ctx) },
+				};
+			}
+			if (
+				principal.kind !== "view" ||
+				principal.session !== session ||
+				principal.view !== view ||
+				principal.opening !== opening
+			)
+				throw forbidden("this view's frames only");
 			const store = self.get(RoomStore, { session, view, opening });
+			const peer = principal.link;
+			const writer = principal.mode === "write";
+			/** Runs `fn` for a frame that may write; one that may only watch is refused. */
+			const writes = <T>(fn: () => Promise<T>): Promise<T> =>
+				writer ? fn() : Promise.reject(forbidden("this frame may only watch"));
 			return {
-				variant: "worker",
-				members: { methods: (ctx) => store.methods(ctx), call: (args, ctx) => store.call(args, ctx) },
-			};
-		}
-		if (
-			principal.kind !== "view" ||
-			principal.session !== session ||
-			principal.view !== view ||
-			principal.opening !== opening
-		)
-			throw forbidden("this view's frames only");
-		const store = self.get(RoomStore, { session, view, opening });
-		const peer = principal.link;
-		const writer = principal.mode === "write";
-		/** Runs `fn` for a frame that may write; one that may only watch is refused. */
-		const writes = <T>(fn: () => Promise<T>): Promise<T> =>
-			writer ? fn() : Promise.reject(forbidden("this frame may only watch"));
-		return {
-			variant: "peer",
-			members: {
-				room: store.room,
-				presence: store.presence,
-				log: store.log,
-				keyed: store.keyed,
-				join: async ({ kind }, ctx) => {
-					const { from } = await store.join({ peer, writer, ...(kind === undefined ? {} : { kind }) }, ctx);
-					return { me: peer, editor: principal.editor, from };
+				variant: "peer",
+				members: {
+					room: store.room,
+					presence: store.presence,
+					log: store.log,
+					keyed: store.keyed,
+					stream: store.stream,
+					join: async ({ kind }, ctx) => {
+						const { from } = await store.join({ peer, writer, ...(kind === undefined ? {} : { kind }) }, ctx);
+						return { me: peer, editor: principal.editor, from };
+					},
+					send: (args, ctx) => writes(() => store.send({ peer, ...args }, ctx)),
+					emit: (args, ctx) => writes(() => store.emit({ peer, ...args }, ctx)),
+					ack: ({ seq }, ctx) => store.ack({ peer, seq }, ctx),
+					history: (args, ctx) => store.history(args, ctx),
+					now: async () => Date.now(),
+					offer: (args, ctx) => writes(() => store.offer({ peer, ...args }, ctx)),
+					answer: (answer, ctx) => writes(() => store.answer({ peer, answer }, ctx)),
+					snapshot: (snapshot, ctx) => writes(() => store.snapshot({ peer, snapshot }, ctx)),
+					edit: (batch, ctx) => writes(() => store.edit({ editor: principal.editor, batch }, ctx)),
 				},
-				send: (args, ctx) => writes(() => store.send({ peer, ...args }, ctx)),
-				ack: ({ seq }, ctx) => store.ack({ peer, seq }, ctx),
-				history: (args, ctx) => store.history(args, ctx),
-				now: async () => Date.now(),
-				offer: (args, ctx) => writes(() => store.offer({ peer, ...args }, ctx)),
-				answer: (answer, ctx) => writes(() => store.answer({ peer, answer }, ctx)),
-				snapshot: (snapshot, ctx) => writes(() => store.snapshot({ peer, snapshot }, ctx)),
-				edit: (batch, ctx) => writes(() => store.edit({ editor: principal.editor, batch }, ctx)),
-			},
-		};
-	});
+			};
+		},
+		{ accepts: VIEW_ROOM_ACCEPTS },
+	);
 
 	serveRoomStore(host, { memory, dropTokens });
 }

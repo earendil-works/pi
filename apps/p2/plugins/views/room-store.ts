@@ -9,6 +9,7 @@ import {
 	type Ctx,
 	defineTypedKeyedState,
 	defineTypedState,
+	event,
 	type FacetHost,
 	forbidden,
 	invalid,
@@ -46,7 +47,10 @@ import {
 	PresenceSchema,
 	RoomKindSchema,
 	RoomSchema,
+	SentSchema,
 	SnapshotSchema,
+	type Stream,
+	StreamSchema,
 	tagged,
 	ViewBacking,
 	ViewOpenings,
@@ -56,16 +60,21 @@ import { applyEdits, editsTo, freshText, loadText, MAX_TEXT, saveText, type Text
 
 /** One room's store (server-internal): every `ViewRoom` of one opening of a view shares it. */
 export const RoomStore = local("p2.view-room-store", {
-	version: 1,
+	version: 2,
 	params: { session: param.str(), view: param.str(), opening: param.str() },
 	members: {
 		room: RoomSchema,
 		presence: PresenceSchema,
 		log: LogSchema,
 		keyed: KeyedByPeerSchema,
+		/** Motion: what `emit` sends, as events (unnumbered, never kept). */
+		stream: event(StreamSchema),
 		/** `writer`: the frame may write; only a writer changes the room's kind (a reset). */
 		join: method(obj({ peer: str(), writer: bool(), kind: opt(RoomKindSchema) }), obj({ from: int() })),
-		send: method(obj({ peer: str(), messages: OutgoingSchema, ack: opt(int()) })),
+		/** Numbers and keeps messages; their numbers, in order. */
+		send: method(obj({ peer: str(), messages: OutgoingSchema, ack: opt(int()) }), SentSchema),
+		/** Sends messages as events of `stream`, in order: no number, nothing kept or counted. */
+		emit: method(obj({ peer: str(), messages: OutgoingSchema })),
 		ack: method(obj({ peer: str(), seq: int() })),
 		history: method(HistoryArgsSchema, HistorySchema),
 		offer: method(obj({ peer: str(), methods: arr(MethodInfoSchema, { maxItems: 100 }) })),
@@ -262,11 +271,22 @@ export function serveRoomStore(host: FacetHost, { memory, dropTokens }: RoomStor
 				}
 			};
 			const peerIds = () => new Set(presence.value.peers.map((each) => each.id));
+			/**
+			 * Records that `peer` applied up to `seq`: the highest it acknowledged wins (a send's acknowledgement may arrive
+			 * after a later one, with sends pipelined), never past the room's last number.
+			 */
+			const acknowledge = (peer: string, seq: number) => {
+				const own = acks.get(peer);
+				acks.set(peer, { ...own, seq: Math.max(own?.seq ?? 0, Math.min(seq, room.value.seq)) });
+			};
+			/** Motion (`emit`): events only, outside the room's numbering, journal and budget. */
+			const stream = self.events<Stream>();
 
 			/**
 			 * Numbers `items` of `from` and publishes them in one transaction (numbers, journal and window agree whatever
 			 * else runs): keyed ones set their entry's leaves, unkeyed ones go to the journal and the window, which is
 			 * trimmed to its bounds. Charged before anything is kept; a keyed member past the link part limit is refused.
+			 * The messages' numbers, in order, from the numbering itself.
 			 */
 			const publish = (
 				from: string,
@@ -274,6 +294,7 @@ export function serveRoomStore(host: FacetHost, { memory, dropTokens }: RoomStor
 				ctx: Ctx,
 			) =>
 				charged(async (tx, ledger) => {
+					const seqs: number[] = [];
 					const numbers = await tx.draft(room);
 					const account = await tx.draft(info);
 					const window = await tx.draft(log);
@@ -281,6 +302,7 @@ export function serveRoomStore(host: FacetHost, { memory, dropTokens }: RoomStor
 					let keyedSize = account.keyed;
 					for (const { key, data, n } of items) {
 						const seq = ++numbers.seq;
+						seqs.push(seq);
 						if (key === undefined || byKey === undefined) {
 							charge(account, 2 * (data.length + from.length) + ENTRY_COST, ledger);
 							const message: Message = { seq, from, data, ...(n === undefined ? {} : { n }) };
@@ -328,6 +350,7 @@ export function serveRoomStore(host: FacetHost, { memory, dropTokens }: RoomStor
 						window.start = window.messages[drop - 1]?.seq ?? window.start;
 						window.messages.splice(0, drop);
 					}
+					return seqs;
 				}, ctx);
 
 			/**
@@ -644,6 +667,7 @@ export function serveRoomStore(host: FacetHost, { memory, dropTokens }: RoomStor
 				presence,
 				log,
 				keyed,
+				stream,
 				join: async ({ peer, writer, kind }, ctx) => {
 					const current = room.value;
 					if (kind !== undefined && current.kind !== kind) {
@@ -659,13 +683,18 @@ export function serveRoomStore(host: FacetHost, { memory, dropTokens }: RoomStor
 					return { from: room.value.seq };
 				},
 				send: async ({ peer, messages, ack }, ctx) => {
-					await publish(peer, messages, ctx);
-					if (ack !== undefined) acks.set(peer, { ...acks.get(peer), seq: ack });
+					const seqs = await publish(peer, messages, ctx);
+					if (ack !== undefined) acknowledge(peer, ack);
 					await trimLive(ctx);
+					return seqs;
+				},
+				emit: async ({ peer, messages }) => {
+					for (const { key, data } of messages)
+						stream.emit({ from: peer, ...(key === undefined ? {} : { key }), data });
 					return null;
 				},
 				ack: async ({ peer, seq }, ctx) => {
-					acks.set(peer, { ...acks.get(peer), seq: Math.min(seq, room.value.seq) });
+					acknowledge(peer, seq);
 					await trimLive(ctx);
 					return null;
 				},

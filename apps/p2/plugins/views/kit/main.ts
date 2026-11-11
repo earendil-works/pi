@@ -3,7 +3,14 @@
 import { BACKGROUND_CONTEXT as BACKGROUND } from "@earendil-works/chord/context";
 import type { Base, Peer, Presence, RoomKind } from "../room-contract.ts";
 import { loadText, type TextEdit } from "../text.ts";
-import { Connection, type Connection as ConnectionType, type Delivered, type Offered } from "./connection.ts";
+import {
+	Connection,
+	type Connection as ConnectionType,
+	type Delivered,
+	type Event,
+	type Offered,
+	type Options,
+} from "./connection.ts";
 import { type Cursor, TextClient } from "./text-client.ts";
 
 type Listeners<T extends unknown[]> = Set<(...args: T) => void>;
@@ -27,15 +34,15 @@ function listen<T extends unknown[]>(listeners: Listeners<T>, fn: (...args: T) =
 const query = new URL(location.href).searchParams;
 let connection: ConnectionType | undefined;
 /** The frame's one connection, opened on first use. */
-const connect = (): ConnectionType => {
-	connection ??= new Connection(query.get("session") ?? "", query.get("view") ?? "");
+const connect = (options?: Options): ConnectionType => {
+	connection ??= new Connection(query.get("session") ?? "", query.get("view") ?? "", options);
 	return connection;
 };
 const rooms = new Map<RoomKind, unknown>();
 
 /** A live or log room as the page's code uses it. */
-function createRoom(kind: "live" | "log") {
-	const link = connect();
+function createRoom(kind: "live" | "log", options?: Options) {
+	const link = connect(options);
 	const peers: Listeners<[readonly Peer[], string | null]> = new Set();
 	const messages: Listeners<[Delivered]> = new Set();
 	const resets: Listeners<[unknown, number]> = new Set();
@@ -84,8 +91,15 @@ function createRoom(kind: "live" | "log") {
 			if (base) fn(base.value, base.seq);
 			return listen(resets, fn);
 		},
+		/** A message every peer gets, numbered by the room, in order; resolves with its outcome (`SendOutcome`). */
 		send: (data: unknown, options?: { key?: string }) => link.send(data, options?.key),
+		/** Motion: an event to every peer bound now (unnumbered, never kept, latest-only when the link is busy). */
+		emit: (data: unknown, options?: { key?: string }) => link.emit(data, options?.key),
+		/** Calls `fn({ from, key, at, data })` with each event (own ones included); returns its removal. */
+		onEvent: (fn: (event: Event) => void) => link.onEvent(fn),
 		now: () => link.now(),
+		/** The shortest recent round trip to the server, in milliseconds. */
+		rtt: () => link.rtt(),
 		/** Log rooms, the leader: `state` is the room's state after every message applied so far. */
 		snapshot: (state: unknown) =>
 			link.call(async (ref) => {
@@ -105,8 +119,8 @@ function createRoom(kind: "live" | "log") {
 }
 
 /** A text room: the shared text, edits through it, others' cursors. */
-function createText() {
-	const link = connect();
+function createText(options?: Options) {
+	const link = connect(options);
 	const changes: Listeners<[string, "local" | "remote"]> = new Set();
 	const cursorListeners: Listeners<[readonly { peer: string; name: string; anchor: number; head: number }[]]> =
 		new Set();
@@ -207,7 +221,7 @@ function createText() {
 	const setCursor = (anchor: number, head = anchor) => {
 		if (!client) return;
 		selection = { anchor: client.cursorAt(anchor), head: client.cursorAt(head) };
-		link.send(selection, "cursor");
+		void link.send(selection, "cursor");
 	};
 	return {
 		kind: "text" as const,
@@ -222,6 +236,9 @@ function createText() {
 			return client?.doc.text ?? "";
 		},
 		now: () => link.now(),
+		rtt: () => link.rtt(),
+		emit: (data: unknown, options?: { key?: string }) => link.emit(data, options?.key),
+		onEvent: (fn: (event: Event) => void) => link.onEvent(fn),
 		set,
 		setCursor,
 		onChange: (fn: (value: string, from: "local" | "remote") => void) => {
@@ -266,12 +283,15 @@ declare global {
 }
 
 const p2view = window.p2view;
-/** The view's room of `kind` (one per frame and kind; the first call opens the frame's link). */
-p2view.room = (kind: RoomKind) => {
+/**
+ * The view's room of `kind` (one per frame and kind; the first call opens the frame's link and takes `options`:
+ * `maxInFlight`, the unanswered emits at most, default 32).
+ */
+p2view.room = (kind: RoomKind, options?: Options) => {
 	if (kind !== "live" && kind !== "log" && kind !== "text") throw new Error(`No room kind ${String(kind)}`);
 	let room = rooms.get(kind);
 	if (!room) {
-		room = kind === "text" ? createText() : createRoom(kind);
+		room = kind === "text" ? createText(options) : createRoom(kind, options);
 		rooms.set(kind, room);
 	}
 	return room;
