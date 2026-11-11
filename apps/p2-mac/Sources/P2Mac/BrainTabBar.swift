@@ -2,7 +2,7 @@
 // Tabs) drawn natively in the window's title bar row, next to the window buttons. It belongs to the window, not to a
 // page, so it stays put while the page under it changes. A click selects a tab in place, Cmd-click or the middle
 // button opens it in a window of its own, and so does dragging a tab out of the bar. The bar's empty parts drag the
-// window.
+// window, and a double click there does what the title bar's would.
 import AppKit
 
 @MainActor
@@ -22,6 +22,12 @@ final class BrainTabBar: NSView {
 
 	override var isFlipped: Bool { true }
 	override var mouseDownCanMoveWindow: Bool { true }
+
+	// AppKit drags the window for other clicks (mouseDownCanMoveWindow). In full screen there is nothing to zoom.
+	override func mouseDown(with event: NSEvent) {
+		guard event.clickCount == 2, let window, !window.styleMask.contains(.fullScreen) else { return super.mouseDown(with: event) }
+		window.titleBarDoubleClicked(event)
+	}
 
 	/// Shows `brains` as tabs, `selected` marked.
 	func update(brains: [Brain], selected: String?) {

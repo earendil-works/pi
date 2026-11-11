@@ -10,8 +10,8 @@
 //   buttons are hidden and nothing is marked.
 // - Dragging. WebKit has no `app-region`, and a webview under the title bar swallows its mouse events. So a script in
 //   its own content world reports where the interactive elements in the title bar strip are (links, buttons,
-//   inputs). A mouse-down anywhere else in the strip drags the window natively, and a double click zooms or
-//   minimizes it, as the system setting says.
+//   inputs). A mouse-down anywhere else in the strip drags the window natively, and a double click does what
+//   the title bar's would (TitleBarDoubleClick.swift).
 // - Height. An empty unified toolbar gives the window the buttons and title bar of a window with a toolbar (larger
 //   buttons, centred 26 points from the top: the middle of p2's 52-pixel `--bar`). The title bar itself is taller than
 //   p2's bars, so dragging is limited to their height.
@@ -30,11 +30,7 @@ final class ChromeWebView: WKWebView {
 			return super.mouseDown(with: event)
 		}
 		if event.clickCount == 2 {
-			switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
-			case "Minimize": window.performMiniaturize(nil)
-			case "None": break
-			default: window.performZoom(nil)
-			}
+			window.titleBarDoubleClicked(event)
 		} else {
 			window.performDrag(with: event)
 		}
