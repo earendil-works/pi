@@ -13,10 +13,10 @@ import {
 	OpenViewer,
 	openLayer,
 	openPanel,
-	routeHref,
 	SessionId,
 	Slots,
 	ToolActivities,
+	useLinkHref,
 	useObject,
 	useReadable,
 	useRoute,
@@ -47,8 +47,9 @@ function Content({ children }: { children?: ReactNode }) {
 	const item = viewerItem(top);
 	const open = (item: ViewerItem): void => openLayer(viewerLayer(item));
 	// Another tab opens the item's viewer over this conversation, without this tab's other layers and panels.
+	const linkHref = useLinkHref();
 	const href = (session: string, item: ViewerItem): string =>
-		routeHref({ session, conversation: route.conversation, layers: [viewerLayer(item)] });
+		linkHref({ session, conversation: route.conversation, layers: [viewerLayer(item)] });
 	const session = route.session;
 	return (
 		<SessionId.Provider value={session}>

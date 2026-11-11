@@ -84,6 +84,50 @@ export function routeHref(route: Route): string {
 }
 
 /**
+ * The Radius shell's URL of this brain's start page, once the shell framing this page said it (`shell-bridge.ts`), so
+ * links that open in another tab open the shell around the app, not this frame's origin; undefined otherwise (not
+ * framed, an older shell, before the shell answered).
+ */
+let linkBase: string | undefined;
+const linkBaseListeners = new Set<() => void>();
+
+/** Sets the base of link addresses (`linkHref`); only the shell bridge calls it. */
+export function setLinkBase(base: string | undefined): void {
+	if (base === linkBase) return;
+	linkBase = base;
+	for (const listener of linkBaseListeners) listener();
+}
+
+const subscribeLinkBase = (listener: () => void) => {
+	linkBaseListeners.add(listener);
+	return () => {
+		linkBaseListeners.delete(listener);
+	};
+};
+
+/**
+ * The address an in-app link to `route` carries, for a modified or middle click, "Open in new tab" and "Copy link
+ * address" (a plain click acts in the page, `inPage`): `routeHref`, under the Radius shell's URL when the app runs in
+ * its frame (`/pi/<organization>/<brain>/s/<id>…`, the shell's start page itself without a trailing `/`).
+ */
+export function linkHref(route: Route): string {
+	const href = routeHref(route);
+	if (linkBase === undefined) return href;
+	if (href === "/") return linkBase;
+	return href.startsWith("/?") ? `${linkBase}${href.slice(1)}` : `${linkBase}${href}`;
+}
+
+/** `linkHref` for a component, which renders again once the shell's base arrives. */
+export function useLinkHref(): (route: Route) => string {
+	useSyncExternalStore(
+		subscribeLinkBase,
+		() => linkBase,
+		() => linkBase,
+	);
+	return linkHref;
+}
+
+/**
  * The route a URL alone describes, for entries this module didn't create and pages loaded from a link (`search`: the
  * URL's query, which may name a viewer as `routeHref` writes it).
  */

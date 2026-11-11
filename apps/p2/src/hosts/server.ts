@@ -649,7 +649,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 					if (cookies.length) response.setHeader("Set-Cookie", cookies);
 				}
 				if (isOwner(principal) || (isGuest(principal) && (await web?.guestMayLoad(request, principal)))) {
-					if (web !== undefined) return web.handle(request, response);
+					if (web !== undefined) return web.handle(request, response, origin.relayShellOrigin);
 					response.writeHead(404, { "Content-Type": "text/plain" });
 					response.end("Not found");
 					return;

@@ -12,10 +12,10 @@ import {
 	NavMoreIcon,
 	NEW_SESSION,
 	PiLogo,
-	routePath,
 	Sidebar,
 	SideNavigation,
 	ThemeButton,
+	useLinkHref,
 } from "@p2/app/v1/web";
 import { memo, type ReactNode, useEffect, useId, useState } from "react";
 import { GlyphIcon } from "../../glyphs/GlyphIcon.tsx";
@@ -24,7 +24,7 @@ import {
 	HiddenAttention,
 	IconMarker,
 	NavRow,
-	pageHref,
+	pageRoute,
 	type RowActions,
 	SessionItem,
 	Toggle,
@@ -122,6 +122,7 @@ function GroupItem({ group, rows, actions }: { group: GroupSection; rows: RowAct
  */
 function RollupGroup({ section, rows, actions }: { section: Section; rows: RowActions; actions: HeadingActions }) {
 	const { page, onPage, onCollapse, onOptions, glyphs } = actions;
+	const linkHref = useLinkHref();
 	const listId = useId();
 	const collapsed = section.layout === "link" ? undefined : section.collapsed;
 	// A collapsed rollup lists nothing, whatever it has: "No activity" is for an open one with nothing to show.
@@ -135,7 +136,7 @@ function RollupGroup({ section, rows, actions }: { section: Section; rows: RowAc
 				selected={page === section.key}
 				className="rollup-row group-head"
 				linkClassName="group-label"
-				href={pageHref(section.key)}
+				href={linkHref(pageRoute(section.key))}
 				onActivate={() => onPage(section.key)}
 				label={section.name}
 				after={
@@ -271,6 +272,7 @@ export const SidebarView = memo(function SidebarView({
 	/** Icon buttons at the footer's end, before the theme switch (the owner's), e.g. the Settings gear. */
 	footerActions?: ReactNode;
 }) {
+	const linkHref = useLinkHref();
 	// The open session is selected in one place only: where it was opened from, else the first place it shows.
 	const openedFrom = useOpenedFrom();
 	const places = activeId === undefined ? [] : placesOf(sections, activeId);
@@ -346,7 +348,7 @@ export const SidebarView = memo(function SidebarView({
 						selected={newSession}
 						className="group-row"
 						linkClassName="new-session"
-						href={routePath(NEW_SESSION)}
+						href={linkHref(NEW_SESSION)}
 						onActivate={onNew}
 						marker={<NavAddIcon size={16} />}
 						label="New session"
