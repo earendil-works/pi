@@ -5,6 +5,7 @@
 // A store keeps an outbox only while backup is configured: the server and each worker open their store with
 // `outbox: backupConfigured(dataDir)`. Offline tools open stores without the option, keeping what is stored (an
 // outbox turned off drops its commits, which would lose what was not uploaded yet).
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { PluginError, type Store } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
@@ -73,6 +74,17 @@ export type OpenBackupTarget = {
 	readonly terminal?: (error: unknown) => boolean;
 };
 
+/**
+ * The target's own folder for upload bookmarks (`backup/<key>/` beside each store): a store's "uploaded through N" is
+ * true for one target only, so switching targets (a folder, then Radius) starts the new one from a full copy instead of
+ * resuming another's history. Computed from the environment, so the server and every worker agree.
+ */
+export function backupTargetKey(target: BackupTarget): string {
+	return target.kind === "named"
+		? target.name
+		: `folder-${createHash("sha256").update(target.path).digest("hex").slice(0, 12)}`;
+}
+
 /** Whether stores keep an outbox: backup is configured. Read where stores open (server, worker). */
 export function backupConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
 	return backupTarget(env) !== undefined;
@@ -136,8 +148,13 @@ export type BackupUploaderOptions = {
 	readonly device: string;
 	/** Where the store's slots are created: only `putBatch` (an upload never reads the remote). */
 	readonly remote: SessionSyncUploader;
-	/** The store's host directory: the last sequence the backup holds is kept in `backup/` beside its store. */
+	/**
+	 * The store's host directory: the last sequence the backup holds is kept in `backup/<target>/` beside its store
+	 * (`backupTargetKey`).
+	 */
 	readonly directory: string;
+	/** The target's bookmark folder name (`backupTargetKey`). */
+	readonly target: string;
 	readonly files: SyncFileSystem;
 	/** Where the backup stands, after each upload or failure. */
 	readonly report: (status: StoreBackupStatus) => void;
@@ -161,7 +178,7 @@ export class BackupUploader {
 
 	constructor(options: BackupUploaderOptions) {
 		this.#options = options;
-		this.#state = new FileSyncStateStore(options.files, join(options.directory, "backup"));
+		this.#state = new FileSyncStateStore(options.files, join(options.directory, "backup", options.target));
 		this.#scheduler = new FlushScheduler({
 			flush: () => this.#flush(BACKGROUND_CONTEXT),
 			setTimer: (callback, delayMs) => {
