@@ -6,7 +6,8 @@
 // kept while its object shows it live (a restart's open old attempt that binds its version, decision "Reload restarts
 // every affected object"), then unbound (`loading` or `failed`, then a fresh `bound`; a `loading` one keeps its calls
 // in flight and takes more by its old names); a version no longer bound or a removed type leaves it waiting unbound. A
-// hold of an older version follows its object's adapted members (Q10).
+// hold of an older version follows its object's adapted members (Q10). A bound hold taps its instance's event members
+// from the counter value of its `bound` (decision "Events: fire-and-forget members"), until it unbinds.
 
 import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import type { Context } from "../context/index.ts";
@@ -18,11 +19,13 @@ import {
 	type Attempt,
 	type Caller,
 	type ChordObject,
+	type EventNode,
 	type Holder,
 	type RefState,
 	type Removal,
 	retryWalk,
 	type Serving,
+	type Tap,
 	type UnboundRequest,
 } from "../host/internal.ts";
 import type { JsonValue } from "../json.ts";
@@ -110,6 +113,9 @@ type Bound = Extract<HoldState, { readonly kind: "bound" }>;
 /** What calls need of a binding: its variant's data at the hold's version and the names the wire's indexes point into. */
 type BoundNames = { readonly variant: VariantData; readonly names: VariantNames };
 
+/** No event taps: a variant without event members, a binding no longer shown live. */
+const NO_TAPS: readonly (readonly [EventNode, Tap])[] = [];
+
 const PENDING: HoldState = { kind: "pending" };
 
 const BINDING: HoldState = { kind: "binding" };
@@ -149,6 +155,12 @@ export class Hold implements Holder, UnboundRequest {
 	#touched = false;
 	/** Whether the hold counts as one of the host's references (`host.activity`): from its arrival until it ends. */
 	#counted = true;
+	/**
+	 * Its binding's taps on its instance's event members: their events go into the event flush's message; the shared
+	 * empty list for a variant without event members, and once its object no longer shows it live (state may still
+	 * follow its instance then).
+	 */
+	#taps: readonly (readonly [EventNode, Tap])[] = NO_TAPS;
 
 	constructor(id: number, provider: ProviderSide, caller: Caller, limits: Limits) {
 		this.id = id;
@@ -287,9 +299,13 @@ export class Hold implements Holder, UnboundRequest {
 		if (current.kind === "bound" || current.kind === "binding") {
 			const shown = this.#shown(object);
 			if (shown.kind === "live") return;
-			// Its instance still changes (a live failure's admitted commits, a restart's old attempt draining): it follows it
-			// on until it stopped (decision "References are the only indirection").
-			if (current.kind === "bound" && object.attachable === current.instance) return;
+			// Its instance still changes (a live failure's admitted commits, a restart's old attempt draining): its state
+			// follows it on until it stopped (decision "References are the only indirection"); its events stop now, as a
+			// reference's do: a binding not shown live gets no event (decision "Events: fire-and-forget members").
+			if (current.kind === "bound" && object.attachable === current.instance) {
+				this.#untap();
+				return;
+			}
 			this.#unbind(shown.kind === "failed" ? shown.cause.error : undefined);
 		}
 		this.#pending(object);
@@ -330,7 +346,7 @@ export class Hold implements Holder, UnboundRequest {
 	#unbind(error: ChordError | undefined): void {
 		const previous = this.#names();
 		const state = this.#state;
-		if (state.kind === "bound") unfollow(state);
+		if (state.kind === "bound") this.#unfollow(state);
 		this.#changes = [];
 		this.#failed = [];
 		this.#retired = NO_RETIRED;
@@ -412,8 +428,9 @@ export class Hold implements Holder, UnboundRequest {
 
 	/**
 	 * The hold's binding, sent when a slot is free. The snapshot of every member, as a value or failed, and the
-	 * subscription are taken in this synchronous step (race 2), so each member's next ops continue exactly from it.
-	 * Names travel as indexes into the bound version (2b). Counts one encode (`chord.link.encodes`).
+	 * subscription are taken in this synchronous step (race 2), so each member's next ops continue exactly from it, and
+	 * its event members are tapped from the counter value now: it gets only what is emitted after its `bound`. Names
+	 * travel as indexes into the bound version (2b). Counts one encode (`chord.link.encodes`).
 	 */
 	boundEntry(context: Context): BoundEntry {
 		const object = this.#object!;
@@ -448,6 +465,8 @@ export class Hold implements Holder, UnboundRequest {
 			// A constant never changes: nothing to follow.
 			if (source instanceof Source) this.#follow(state, index, source);
 		}
+		// A variant without event members taps nothing (no cost per binding for contracts without events).
+		if (state.names.events.length > 0) this.#tapEvents(state, instance, version);
 		this.#changes = [];
 		this.#failed = [];
 		this.#retired = NO_RETIRED;
@@ -502,7 +521,7 @@ export class Hold implements Holder, UnboundRequest {
 		const state = this.#state;
 		const { host } = this.#provider.link;
 		if (state.kind === "bound") {
-			unfollow(state);
+			this.#unfollow(state);
 		} else if (state.kind === "unplaced" || (state.kind === "refused" && state.cause.kind === "waiting")) {
 			host.unindex(state.request.type, this);
 		}
@@ -548,6 +567,37 @@ export class Hold implements Holder, UnboundRequest {
 		return state;
 	}
 
+	/** Stops following every member of its binding `state`, and its event members. */
+	#unfollow(state: Bound): void {
+		unfollow(state);
+		this.#untap();
+	}
+
+	/** Stops its event members (its state may still follow its instance). */
+	#untap(): void {
+		if (this.#taps === NO_TAPS) return;
+		for (const [node, tap] of this.#taps) node.untap(tap);
+		this.#taps = NO_TAPS;
+	}
+
+	/** Taps the event members of `state`'s variant (it has some) on `instance` at `version`, from the counter now. */
+	#tapEvents(state: Bound, instance: Attempt, version: number): void {
+		const names = state.names.events;
+		const boundAt = this.#provider.link.host.events.counter;
+		const taps: (readonly [EventNode, Tap])[] = [];
+		for (const [index, member] of names.entries()) {
+			const node = instance.eventNode(member, version);
+			if (node === undefined) continue;
+			const tap: Tap = {
+				boundAt,
+				deliver: (entry, flush) => this.#provider.queueEvent(this.id, index, entry, flush),
+			};
+			node.tap(tap);
+			taps.push([node, tap]);
+		}
+		this.#taps = taps;
+	}
+
 	/** A hold over a link follows its object's instances in `moved` (a fresh `bound` for a new one). */
 	retarget(): void {}
 
@@ -562,7 +612,7 @@ export class Hold implements Holder, UnboundRequest {
 	removed(removal: Removal): void {
 		const state = this.#state;
 		if (state.kind === "released" || this.#object === undefined) return;
-		if (state.kind === "bound") unfollow(state);
+		if (state.kind === "bound") this.#unfollow(state);
 		this.#changes = [];
 		this.#failed = [];
 		this.#retired = NO_RETIRED;

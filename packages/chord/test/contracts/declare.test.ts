@@ -1,5 +1,20 @@
-import { describe, expect, it } from "vitest";
-import { arr, evolve, hostKind, int, keyed, local, method, obj, remote, str } from "../../src/contracts/index.ts";
+import { describe, expect, expectTypeOf, it } from "vitest";
+import {
+	arr,
+	bytes,
+	type EventMember,
+	event,
+	evolve,
+	hostKind,
+	type Implementation,
+	int,
+	keyed,
+	local,
+	method,
+	obj,
+	remote,
+	str,
+} from "../../src/contracts/index.ts";
 import { currentVariants, LOCAL } from "../../src/contracts/internal.ts";
 
 const Note = obj({ text: str() });
@@ -308,5 +323,61 @@ describe("host-keyed keyed members", () => {
 		expect(() =>
 			local("store", { version: 1, params: {}, members: { meta: keyed(obj({}), { kind: "x" } as never) } }),
 		).toThrow("x: not a declared host kind");
+	});
+});
+
+describe('event members (decision "Events: fire-and-forget members")', () => {
+	const Paddle = obj({ peer: str(), y: int() });
+
+	it("declare events in a remote variant and with the local marker: their own kind, typed as event members", () => {
+		const Match = remote("app.match", {
+			version: 1,
+			params: {},
+			hostAddress,
+			variants: { player: { state: { score: int() }, events: { paddle: Paddle } }, watcher: { events: {} } },
+		});
+		const Store = local("app.store", { version: 1, params: {}, members: { score: int(), paddle: event(Paddle) } });
+		expect([...currentVariants(Match).get("player")!.events.keys()]).toEqual(["paddle"]);
+		const variant = currentVariants(Store).get(LOCAL)!;
+		expect([[...variant.events.keys()], [...variant.state.keys()]]).toEqual([["paddle"], ["score"]]);
+		expectTypeOf<Implementation<typeof Store>["paddle"]>().toEqualTypeOf<EventMember<{ peer: string; y: number }>>();
+	});
+
+	it("keep one kind per name across variants and the history", () => {
+		expect(() =>
+			untyped.remote("app.match", {
+				version: 1,
+				params: {},
+				hostAddress,
+				variants: { a: { state: { paddle: Paddle } }, b: { events: { paddle: Paddle } } },
+			}),
+		).toThrow('app.match.b.events.paddle: "paddle" is a state member; its kind never changes');
+		const Store = local("app.store", { version: 1, params: {}, members: { paddle: event(Paddle) } });
+		const without = evolve(Store, (e) => e.removeEvent("paddle"));
+		expect(() => evolve(without, (e) => e.addState("paddle", Paddle))).toThrow(
+			'"paddle" is an event member; its kind never changes',
+		);
+	});
+
+	it("allow an event's schema to differ per variant (redaction), and refuse bytes", () => {
+		expect(() =>
+			remote("app.match", {
+				version: 1,
+				params: {},
+				hostAddress,
+				variants: { a: { events: { paddle: Paddle } }, b: { events: { paddle: obj({ y: int() }) } } },
+			}),
+		).not.toThrow();
+		expect(() =>
+			local("app.store", { version: 1, params: {}, members: { frame: event(obj({ data: bytes() })) } }),
+		).toThrow("app.store.members.frame: an event's values are JSON only (no bytes())");
+		expect(() =>
+			untyped.remote("app.match", {
+				version: 1,
+				params: {},
+				hostAddress,
+				variants: { a: { events: { x: method() } } },
+			}),
+		).toThrow("app.match.a.events.x: expected the schema of the event's values");
 	});
 });

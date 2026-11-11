@@ -1,20 +1,38 @@
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
-import { type Contract, int, local, map, method, obj, remote } from "../../src/contracts/index.ts";
+import {
+	type Contract,
+	type EventSource,
+	event,
+	int,
+	local,
+	map,
+	method,
+	obj,
+	remote,
+} from "../../src/contracts/index.ts";
+import { ChordError } from "../../src/data/index.ts";
 import { PendingOps } from "../../src/delta/index.ts";
 import { defineState } from "../../src/documents/index.ts";
-import { type Ctx, createHost, defineFacet, type FacetHost } from "../../src/host/index.ts";
+import { type Ctx, createHost, defineFacet, type FacetHost, type Self } from "../../src/host/index.ts";
+import { ChordObject } from "../../src/host/object.ts";
 import { type Compression, memoryLinkPair, type PartLimits } from "../../src/link/index.ts";
 import { DeflatedPart, jsonPart, type Message } from "../../src/link/internal.ts";
 import { nodeCompression } from "../../src/node/compression.ts";
+import { ProviderSide } from "../../src/remote/provider.ts";
 import { constant } from "../../src/state/index.ts";
 import {
 	addNote,
 	countInflated,
 	EDITOR,
 	expectCollected,
+	failLive,
 	forEachCodec,
+	instancesOf,
+	Match,
+	type MatchProbe,
+	MatchV2,
 	metered,
 	Notes,
 	type NotesProbe,
@@ -22,8 +40,10 @@ import {
 	RAW_PEER,
 	RawPeer,
 	rawLinked,
+	Sample,
 	SERVER_ADDRESS,
 	Server,
+	serveMatch,
 	serveNotes,
 	type TestPrincipal,
 	testCodec,
@@ -74,14 +94,21 @@ const READER = wireNames(Notes, "reader");
 
 const { add, fail, wait } = EDITOR.methods as { add: number; fail: number; wait: number };
 
-/** A server serving `Notes` and a raw consumer peer stamped `child`. */
-async function notesServer(child: TestPrincipal = { kind: "owner" }, role: "child" | "parent" = "child") {
+/**
+ * A server serving `Notes` and a raw consumer peer stamped `child`, with the server's `callWindow` and the link trusted
+ * when given.
+ */
+async function notesServer(
+	child: TestPrincipal = { kind: "owner" },
+	role: "child" | "parent" = "child",
+	options: { readonly callWindow?: number; readonly trusted?: boolean } = {},
+) {
 	let probe: NotesProbe | undefined;
 	const linked = await rawLinked(
 		(h) => {
 			probe = serveNotes(h);
 		},
-		{ child, role },
+		{ child, role, ...options },
 	);
 	return { ...linked, probe: probe! };
 }
@@ -779,24 +806,22 @@ forEachCodec(() => {
 			expect(EDITOR.named(folded.holds[0]!.members).count).toEqual([["r", 4]]);
 		});
 
-		it("count calls per origin against N: 256 on each of two origins run, one more on one closes the link", async () => {
-			const { peer, errors } = await notesServer({ kind: "owner" }, "parent");
+		it("count calls per origin against N: 8 on each of two origins run, one more on one closes the link", async () => {
+			const { peer, errors } = await notesServer({ kind: "owner" }, "parent", { callWindow: 8 });
 			hold(peer, 0, Notes, { session: "S1" });
 			hold(peer, 0, Notes, { session: "S1" }, {}, 1);
 			await peer.next("bound");
 			await peer.next("bound");
-			for (let id = 0; id < 256; id++) {
+			for (let id = 0; id < 8; id++) {
 				call(peer, id, 0, wait);
 				call(peer, id, 0, wait, undefined, 1);
 			}
 			await transported();
 			expect(peer.closed).toBe(false);
-			call(peer, 256, 0, wait, undefined, 1);
+			call(peer, 8, 0, wait, undefined, 1);
 			await transported();
 			expect(peer.closed).toBe(true);
-			expect(errors).toMatchObject([
-				{ kind: "protocol_error", error: { message: "call 256: more than 256 calls" } },
-			]);
+			expect(errors).toMatchObject([{ kind: "protocol_error", error: { message: "call 8: more than 8 calls" } }]);
 		});
 
 		it("ignore a call on a hold they do not know before counting it (Q1)", async () => {
@@ -909,30 +934,59 @@ forEachCodec(() => {
 		});
 	});
 
-	describe("the call limit", () => {
+	describe('the call limit (decision "Call windows only for untrusted links")', () => {
+		/** The `calls` of the `hello` the server sent the raw peer. */
+		const announced = (peer: RawPeer) => peer.received.find((message) => message.kind === "hello")!;
+
+		it("announces the host's callWindow on a link it was not given as trusted, 10,000 by default", async () => {
+			expect(announced((await notesServer()).peer)).toMatchObject({ calls: 10_000 });
+			expect(announced((await notesServer({ kind: "owner" }, "child", { callWindow: 8 })).peer)).toMatchObject({
+				calls: 8,
+			});
+		});
+
+		it("announces no window on a trusted link (accept and connect)", async () => {
+			for (const role of ["child", "parent"] as const) {
+				const { peer } = await notesServer({ kind: "owner" }, role, { callWindow: 8, trusted: true });
+				expect(announced(peer)).not.toHaveProperty("calls");
+			}
+		});
+
 		it("closes a link whose peer sends more calls than this side announced", async () => {
-			const { peer, errors } = await notesServer();
+			const { peer, errors } = await notesServer({ kind: "owner" }, "child", { callWindow: 8 });
 			hold(peer, 0, Notes, { session: "S1" });
 			await peer.next("bound");
-			for (let id = 0; id <= 256; id++) call(peer, id, 0, wait);
+			for (let id = 0; id <= 8; id++) call(peer, id, 0, wait);
 			await transported();
 			expect(peer.closed).toBe(true);
-			expect(errors).toMatchObject([
-				{ kind: "protocol_error", error: { message: "call 256: more than 256 calls" } },
-			]);
+			expect(errors).toMatchObject([{ kind: "protocol_error", error: { message: "call 8: more than 8 calls" } }]);
+		});
+
+		it("never closes a trusted link for running calls: 300 run where the window would be 8", async () => {
+			const { peer, errors, probe } = await notesServer({ kind: "owner" }, "child", {
+				callWindow: 8,
+				trusted: true,
+			});
+			hold(peer, 0, Notes, { session: "S1" });
+			await peer.next("bound");
+			for (let id = 0; id < 300; id++) call(peer, id, 0, wait);
+			await transported();
+			expect(peer.closed).toBe(false);
+			expect(probe.waits).toHaveLength(300);
+			expect(errors).toEqual([]);
 		});
 
 		it("frees a slot per reply, cancel and release", async () => {
-			const { peer, errors } = await notesServer();
+			const { peer, errors } = await notesServer({ kind: "owner" }, "child", { callWindow: 8 });
 			hold(peer, 0, Notes, { session: "S1" });
 			await peer.next("bound");
-			for (let id = 0; id < 256; id++) call(peer, id, 0, wait);
+			for (let id = 0; id < 8; id++) call(peer, id, 0, wait);
 			peer.send({ kind: "abort", call: 0 });
-			call(peer, 256, 0, wait);
+			call(peer, 8, 0, wait);
 			peer.send({ kind: "release", hold: 0 });
 			hold(peer, 1, Notes, { session: "S1" });
 			await peer.next("bound");
-			for (let id = 300; id < 556; id++) call(peer, id, 1, wait);
+			for (let id = 300; id < 308; id++) call(peer, id, 1, wait);
 			await transported();
 			expect(peer.closed).toBe(false);
 			expect(errors).toEqual([]);
@@ -1229,5 +1283,287 @@ describe('old work from another host (decision "Reload restarts every affected o
 
 	it("runs an unmarked call from a trusted link as new work", async () => {
 		expect(await pingDuringDrain(false, true)).toEqual({ code: 2, early: false });
+	});
+});
+
+/** Every object of this file, weakly: a live failure is handed to its attempt's object. */
+const objects = instancesOf(ChordObject, "attempt");
+
+/** A host-lifetime event source, and a remote view re-exposing it. */
+const TickSource = local("app.tick-source", { version: 1, params: {}, members: { ticks: event(Sample) } });
+
+const TickView = remote("app.tick-view", {
+	version: 1,
+	params: {},
+	hostAddress: () => Server(),
+	variants: { v: { events: { ticks: Sample } } },
+});
+
+/** Every provider side sending events in this file, weakly. */
+const sides = instancesOf(ProviderSide, "sendEvents");
+
+/** The event members' wire indexes of `Match`'s player variant (sorted). */
+const EVENTS = { ball: 0, paddle: 1 } as const;
+
+/** A server serving `Match` and a raw consumer, with the server's options. */
+async function matchServer(options: Parameters<typeof rawLinked>[1] = {}) {
+	const probe: MatchProbe = { paddles: [], scores: [], selves: [] };
+	const linked = await rawLinked((h) => serveMatch(h, probe), options);
+	return { ...linked, probe };
+}
+
+/** The `event` messages a raw peer received (taken), each entry with its value parsed. */
+function takeEvents(
+	peer: RawPeer,
+): { origin?: number; events: { hold: number; member: number; at: number; y: unknown }[] }[] {
+	const taken: Extract<Message, { kind: "event" }>[] = [];
+	for (let index = 0; index < peer.received.length; ) {
+		const message = peer.received[index]!;
+		if (message.kind === "event")
+			taken.push(peer.received.splice(index, 1)[0] as Extract<Message, { kind: "event" }>);
+		else index++;
+	}
+	return taken.map(({ origin, events }) => ({
+		...(origin === undefined ? {} : { origin }),
+		events: events.map(({ hold, member, at, value }) => ({ hold, member, at, y: (partValue(value) as Sample).y })),
+	}));
+}
+
+/** The kinds of the messages a raw peer received after its hello, without acks of its own. */
+function kindsAfterHello(peer: RawPeer): string[] {
+	return peer.kinds().filter((kind) => kind !== "hello");
+}
+
+forEachCodec(() => {
+	describe('events at the provider (decision "Events: fire-and-forget members")', () => {
+		it("send a turn's events as one event message per link and origin, after the state published before the flush", async () => {
+			const { peer, probe } = await matchServer();
+			hold(peer, 0, Match, { id: 1 });
+			hold(peer, 1, Match, { id: 1 });
+			await peer.next("bound");
+			await peer.next("bound");
+			peer.received.splice(0);
+			const [paddle] = probe.paddles;
+			const before = Date.now();
+			paddle!.emit({ y: 1 });
+			probe.scores[0]!.set(1);
+			paddle!.emit({ y: 2 });
+			await transported();
+			expect(kindsAfterHello(peer)).toEqual(["state", "event"]);
+			const [message] = takeEvents(peer);
+			expect(message!.events.map(({ hold, member, y }) => [hold, member, y])).toEqual([
+				[0, EVENTS.paddle, 1],
+				[1, EVENTS.paddle, 1],
+				[0, EVENTS.paddle, 2],
+				[1, EVENTS.paddle, 2],
+			]);
+			for (const { at } of message!.events) expect(at).toBeGreaterThanOrEqual(before);
+		});
+
+		it("send one message per origin, each with its origin", async () => {
+			const { peer, probe } = await matchServer({ role: "parent" });
+			hold(peer, 0, Match, { id: 1 });
+			hold(peer, 0, Match, { id: 1 }, {}, 3);
+			await peer.next("bound");
+			await peer.next("bound");
+			probe.paddles[0]!.emit({ y: 1 });
+			await transported();
+			expect(takeEvents(peer).map(({ origin, events }) => [origin, events.length])).toEqual([
+				[undefined, 1],
+				[3, 1],
+			]);
+		});
+
+		it("send nothing to a variant without the member, and none before a bound the state window holds back", async () => {
+			const { peer, probe } = await matchServer({ ack: false, child: { kind: "owner" } });
+			hold(peer, 0, Match, { id: 1 });
+			await peer.next("bound");
+			// The window's two slots: the bound and a state, unacknowledged; a new hold's bound waits.
+			probe.scores[0]!.set(1);
+			await peer.next("state");
+			hold(peer, 1, Match, { id: 1 });
+			await transported();
+			probe.paddles[0]!.emit({ y: 1 });
+			await transported();
+			expect(takeEvents(peer).map(({ events }) => events.map(({ hold }) => hold))).toEqual([[0]]);
+			peer.ack();
+			await peer.next("bound");
+			probe.paddles[0]!.emit({ y: 2 });
+			await transported();
+			expect(takeEvents(peer).map(({ events }) => events.map(({ hold }) => hold))).toEqual([[0, 1]]);
+		});
+
+		it("send nothing for an emit its object fails after in the same turn: no event to a binding not shown live", async () => {
+			const { peer, probe } = await matchServer();
+			hold(peer, 0, Match, { id: 1 });
+			await peer.next("bound");
+			probe.paddles[0]!.emit({ y: 1 });
+			failLive(objects, probe.selves[0]!, new ChordError({ code: "unavailable", message: "boom" }));
+			await peer.next("failed");
+			await transported();
+			expect(takeEvents(peer)).toEqual([]);
+		});
+
+		it("send nothing re-exposed: an emit its source fails after in the same turn reaches no hold of the view", async () => {
+			const sources: { source: EventSource<Sample>; self: Self }[] = [];
+			const { peer } = await rawLinked((h) => {
+				h.serve(TickSource, (_, self) => {
+					const ticks = self.events<Sample>();
+					sources.push({ source: ticks, self });
+					return { ticks };
+				});
+				h.serve(TickView, (_, _principal, self) => ({
+					variant: "v",
+					members: { ticks: self.get(TickSource, {}).ticks },
+				}));
+			});
+			hold(peer, 0, TickView, {});
+			await peer.next("bound");
+			const [{ source, self }] = sources as [{ source: EventSource<Sample>; self: Self }];
+			source.emit({ y: 1 });
+			await transported();
+			expect(takeEvents(peer).map(({ events }) => events.map(({ y }) => y))).toEqual([[1]]);
+			source.emit({ y: 2 });
+			failLive(objects, self, new ChordError({ code: "unavailable", message: "boom" }));
+			await transported();
+			expect(takeEvents(peer)).toEqual([]);
+		});
+
+		it("keep state and event credits apart: events flow while the state window is full, and the reverse", async () => {
+			const { peer, probe } = await matchServer({ ack: false, eventWindow: 1 });
+			hold(peer, 0, Match, { id: 1 });
+			await peer.next("bound");
+			probe.scores[0]!.set(1);
+			await peer.next("state");
+			probe.scores[0]!.set(2);
+			// State waits for a slot; an event goes.
+			probe.paddles[0]!.emit({ y: 1 });
+			await transported();
+			expect(takeEvents(peer)).toHaveLength(1);
+			expect(kindsAfterHello(peer).filter((kind) => kind === "state")).toEqual([]);
+			// The event window is full now; state acks open the state window only.
+			peer.ack();
+			peer.ack();
+			await transported();
+			expect(kindsAfterHello(peer).filter((kind) => kind === "state")).toEqual(["state"]);
+			probe.paddles[0]!.emit({ y: 2 });
+			await transported();
+			expect(takeEvents(peer)).toEqual([]);
+			// An event ack frees the event window, not a state slot.
+			peer.send({ kind: "ack", events: 1 });
+			await transported();
+			probe.paddles[0]!.emit({ y: 3 });
+			await transported();
+			expect(takeEvents(peer).map(({ events }) => events.map(({ y }) => y))).toEqual([[3]]);
+		});
+
+		it("drop a flush's events while the event window is full, counted, and send again once acknowledged", async () => {
+			const telemetry = new InMemoryTelemetryContext();
+			const { peer, probe } = await matchServer({ eventWindow: 2, telemetry });
+			hold(peer, 0, Match, { id: 1 });
+			await peer.next("bound");
+			const counts = (): Record<string, number> => {
+				const result: Record<string, number> = {};
+				for (const { name, value, attributes } of telemetry.getMetrics()) {
+					const key = attributes?.reason === undefined ? name : `${name}.${String(attributes.reason)}`;
+					result[key] = (result[key] ?? 0) + value;
+				}
+				return result;
+			};
+			for (const y of [1, 2, 3]) {
+				probe.paddles[0]!.emit({ y });
+				probe.paddles[0]!.emit({ y: y * 10 });
+				await transported();
+			}
+			expect(takeEvents(peer).map(({ events }) => events.map(({ y }) => y))).toEqual([
+				[1, 10],
+				[2, 20],
+			]);
+			// The dropped round encoded nothing: the window is decided before a value is encoded.
+			expect(counts()).toMatchObject({
+				"chord.events.emitted": 6,
+				"chord.events.sent": 4,
+				"chord.events.dropped.window": 2,
+				"chord.events.encodes": 4,
+			});
+			peer.send({ kind: "ack", events: 2 });
+			await transported();
+			probe.paddles[0]!.emit({ y: 4 });
+			await transported();
+			expect(takeEvents(peer).map(({ events }) => events.map(({ y }) => y))).toEqual([[4]]);
+		});
+
+		it("encode each value once per representation: 1 and 10 holders, one more for a mapped version; never walked or copied", async () => {
+			const { telemetry, counts } = await metered();
+			const paddles: EventSource<{ y: number; t: number }>[] = [];
+			const { peer } = await rawLinked(
+				(h) =>
+					h.serve(
+						MatchV2,
+						(_, _principal, self) => {
+							const paddle = self.events<{ y: number; t: number }>();
+							paddles.push(paddle);
+							const score = constant(0);
+							return {
+								variant: "player",
+								members: { score, paddle, ball: self.events(), bump: async () => null },
+							};
+						},
+						{ accepts: { 1: { events: { player: { paddle: ({ y }) => ({ y }) } } } } },
+					),
+				{ telemetry },
+			);
+			const encodes = async (y: number): Promise<number> => {
+				const before = counts()["chord.events.encodes"] ?? 0;
+				paddles[0]!.emit({ y, t: 0 });
+				await transported();
+				return (counts()["chord.events.encodes"] ?? 0) - before;
+			};
+			hold(peer, 0, MatchV2, { id: 1 });
+			await peer.next("bound");
+			expect(await encodes(1)).toBe(1);
+			// Bindings waiting for a slot go out together: the holds' entries, not their messages, are counted.
+			const bound = (): number =>
+				peer.received.flatMap((message) => (message.kind === "bound" ? message.holds : [])).length;
+			for (let id = 1; id < 10; id++) hold(peer, id, MatchV2, { id: 1 });
+			await transported();
+			expect(bound()).toBe(9);
+			expect(await encodes(2)).toBe(1);
+			// An older consumer: its mapped values are a representation of their own, encoded once for all its holds.
+			hold(peer, 10, Match, { id: 1 });
+			hold(peer, 11, Match, { id: 1 });
+			await transported();
+			expect(bound()).toBe(11);
+			takeEvents(peer);
+			expect(await encodes(3)).toBe(2);
+			const [message] = takeEvents(peer);
+			expect(message!.events.filter(({ hold }) => hold >= 10).map(({ y }) => y)).toEqual([3, 3]);
+		});
+
+		it("retire a provider side's record only once its event tickets drained (GC)", async () => {
+			const { peer, probe } = await matchServer();
+			const made = sides.length;
+			hold(peer, 0, Match, { id: 1 });
+			hold(peer, 1, Match, { id: 1 });
+			await peer.next("bound");
+			await peer.next("bound");
+			probe.paddles[0]!.emit({ y: 1 });
+			await transported();
+			expect(takeEvents(peer)).toHaveLength(1);
+			// The test keeps no attempt (its source): an ended attempt kept by a test keeps its object's past.
+			probe.paddles.length = 0;
+			probe.scores.length = 0;
+			probe.selves.length = 0;
+			peer.send({ kind: "release", hold: 0 });
+			peer.send({ kind: "release", hold: 1 });
+			await transported();
+			// Nothing held, its event message unacknowledged: the side stays until its ack.
+			expect(sides.slice(made).some((side) => side.deref() !== undefined)).toBe(true);
+			const kept = sides.slice(made);
+			peer.send({ kind: "ack", events: 1 });
+			await transported();
+			await expectCollected(...kept);
+			expect(peer.closed).toBe(false);
+		});
 	});
 });

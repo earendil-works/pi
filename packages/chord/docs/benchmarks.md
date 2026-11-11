@@ -1034,3 +1034,58 @@ the derive still visits every element once by identity and `diffRevisions` compa
 A change costs O(width): the array's slots are copied (about 8 bytes per element) and a derive over it walks them. The
 documented limit: up to about 10,000 elements a list in one document stays below 0.3 ms per change with a derive; past
 that, keyed documents or a bounded window (design §12) keep commits O(change).
+
+## Events (2026-11-11)
+
+`test/bench/events.ts` (decision "Events: fire-and-forget members"), Node 24.4.1, CPU 32, medians of seven bursts of
+2,000 steps after a warm-up, two runs (equal within 0.5 µs). A step is one emit of a paddle sample (`{ peer, t, y }`) on
+the server, its event flush, and every holder's listener called; each holder is a client host over its own memory
+link (binary codec). The time includes the turn the step waits for (`setImmediate`: about 2 µs, the 0-holder row) and
+everything the holders do (decode, parse, listener, their event ack). Heap is allocated per step, including what the
+collections during a burst freed. Encodes are the emitting host's `chord.events.encodes` per emit.
+
+| Holders | Count | Per emit, delivered | Heap per emit | Encodes per emit |
+| --- | --- | --- | --- | --- |
+| current version | 0 | 2.4 µs | 0.5 KB | 0 |
+| current version | 1 | 13.0-13.1 µs | 7.0-7.3 KB | 1 |
+| current version | 10 | 63.7 µs | 15.5-16.6 KB | 1 |
+| current version | 70 | 397.5-398.5 µs | 90.2-90.7 KB | 1 |
+| an older version (one mapping per emit) | 10 | 80.7-82.0 µs | 17.3 KB | 1 |
+| through a relay (the object on a worker, the server relaying) | 10 | 132.0-132.3 µs | 39.3-39.5 KB | 0 at the relay |
+
+One event message of one sample is 67 B (kind byte, count, hold, member, `at` as varints, the value's 56 B of JSON).
+The value is encoded once per representation whatever the number of holds and links (the older version's row: its
+mapped value, encoded once for its ten holds; the current version had no holder there), a relay encodes nothing and
+parses nothing. Per holder about 5.6 µs: one `event` envelope written per link, its decode, the parse of the value at
+the consumer, the listener, and one event ack back (each emit is its own turn here, so every message is acknowledged
+alone; emits in one turn share one message and one ack). No walk, copy or validation per emit (the cost guards in
+`test/remote/provider.test.ts`, "events at the provider"). With the NOOP adapter an emit's metrics are one empty call
+each: the same bench with the provider host on the NOOP adapter (no telemetry) after the review fixes, three runs:
+
+| Holders, NOOP adapter | Per emit, delivered |
+| --- | --- |
+| 0 | 2.0-2.1 µs |
+| 1 | 10.7-11.8 µs |
+| 10 | 64.9-75.2 µs |
+
+The 1-holder row is about 2 µs under the in-memory adapter's (13.0-14.1 µs in the same runs): that is the in-memory
+adapter recording its counters. The 10-holder rows run last, after every earlier row's hosts, and vary with the
+collections of that heap (the in-memory row 61.6-64.2 µs in the same runs); their heap columns are collection noise and
+not reported.
+
+**Contracts without events** (review fix, 2026-11-11): `test/bench/state-binding.ts`, a contract with one state member
+and no event members, bursts of 5,000 steps after a warm-up, medians of seven bursts, over untrusted memory links,
+run with `--max-semi-space-size=256` (so no young collection falls in a burst), three runs each, measured at the commit before events (`8a88d13ba`, a temporary worktree
+with the same bench file) and after the review fixes:
+
+| Step | Before events | After the fixes |
+| --- | --- | --- |
+| same host: get and release | 11.96-12.45 µs, 5,286-5,291 B | 11.77-11.93 µs, 5,310-5,316 B |
+| over a link: get and release | 36.98-38.83 µs, 5,330-5,336 B | 37.11-37.26 µs, 5,429-5,468 B |
+| over a link: rebound (`loading`, then `bound`) | 12.98-13.28 µs, 11,297-11,337 B | 12.30-12.83 µs, 11,338-11,411 B |
+
+Time is unchanged. What remains is about 25 B per same-host binding and about 100-130 B per bind over a link (85 B
+with trusted links): the fields events and call windows added to objects every binding makes anyway (a reference's
+event record slot, a hold's taps slot, a remote binding's event nodes slot, per-message fields of the link's sides),
+not attributed further. Nothing event-specific is allocated: no event record, node, tap or names list per binding (`test/host/events.test.ts`, "a contract without event members costs no event bookkeeping per
+binding, here or over a link").

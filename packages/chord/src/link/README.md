@@ -53,12 +53,15 @@ tab.connect(webSocketLink(new WebSocket(url)), { principal: { kind: "server" } }
     length-prefixed bytes (decoded as views of the received message, never parsed), other JSON fields (a hold's
     address params and principal, errors) as length-prefixed JSON; a hold's optional fields behind one flags byte; a payload
     marked as carrying bytes adds its segments (count, lengths, raw bytes); `failed`'s `retryIn` as one more than it
-    (0: absent). A part's length prefix is its length doubled, plus one when the part is deflated. A hold's `chain`
+    (0: absent); `hello`'s `calls` as 0 when absent (a window is at least 1); an `event`'s entries as hold, member and
+    `at` varints and the value as a part; an event `ack` flagged in the kind byte (`0x20`, as a `call`'s `old`) with
+    its count following, so a state ack stays one byte. A part's length prefix is its length doubled, plus one when the part is deflated. A hold's `chain`
     as a count and 16 raw bytes per instance id, its `limit` as a varint. No outer length.
   - `textCodec`, for debugging: one JSON tuple per message with a short kind tag and positional fields (`["R", hold]`,
     `["c", call, hold, method, args?]`, `["b", [[hold, variant, [[member, value]…], [[member, error]…]?]…]]`, `["s",
     [[hold, [[member, ops]…], [[member, error]…]?]…]]`, `["f", hold, "t" | "b", error, retryIn?]`, `["T", hold, hops]`
-    for `retry`, `["l", hold]` for `loading`, `["a"]` ack, `["C"]` closed, `["p"]` ping, `["P"]` pong, …; a message with an origin wrapped as
+    for `retry`, `["l", hold]` for `loading`, `["a"]` ack (`["a", events]` an event ack), `["E", [[hold, member, at,
+    value]…]]` event, `["C"]` closed, `["p"]` ping, `["P"]` pong, …; a message with an origin wrapped as
     `["@", origin, tuple]`); parts are
     spliced into the tuple as their JSON text and re-serialized at decode (one parse per part per hop, accepted for a
     debugging codec); a payload marked as carrying bytes ends with its segments' lengths, the segments following the
@@ -67,13 +70,15 @@ tab.connect(webSocketLink(new WebSocket(url)), { principal: { kind: "server" } }
     `["V", revocation]` is `revoke`.
   - `describeMessage(message)`: the text tuple form of any message, for logs and tests.
 - `accept`, `connect` and a route's `resolve` take `trusted` (default `false`): a trusted link skips the `MESSAGE`
-  schema check (framing, the codec's decode and the owners' checks still run). For links to the app's own processes;
-  trust never grants a hold's principal fields (they are read only on a parent link, `remote/`).
+  schema check (framing, the codec's decode and the owners' checks still run) and announces no call window (decision
+  "Call windows only for untrusted links"; `remote/`). For links to the app's own processes; trust never grants a
+  hold's principal fields (they are read only on a parent link, `remote/`).
 
 ## For Chord's layers (`internal.ts`)
 
 - `Message` (`message.ts`): the protocol's one tagged union, from the schema `MESSAGE`: `hello { protocol,
-  incarnation, calls }` (`calls`: how many concurrent calls this side accepts per origin, its call window),
+  incarnation, calls? }` (`calls`: how many concurrent calls this side accepts per origin, its call window; absent: no
+  window, a trusted link's),
   `hold { hold, type, version, fingerprint, params, address, principal?, incarnation? }` (`address`: `{ kind, params }`
   the caller's `hostAddress` computed, it routes the hold; the provider places it by its params; `principal` and `incarnation`: whom it acts for, read only
   on a parent link; `chain?`: the instance ids of the activations waiting for the hold, at most 32, read only on a
@@ -81,8 +86,11 @@ tab.connect(webSocketLink(new WebSocket(url)), { principal: { kind: "server" } }
   caller's host, honoured only from a trusted link and dropped by a relay from one that is not; binary: `0x20` in the
   call's kind byte, text: the seventh element, after the trace carrier), `abort`, `bound { holds: [{ hold,
   variant, members: [{ member, value }], failed }] }` (one message may bind several holds: first bindings, re-holds),
-  `state { holds: [{ hold, members: [{ member, ops }], failed }] }`, `ack {}` (one per applied `bound` or `state` of
-  its origin), `closed { origin }` (a relay's downstream origin ended: its holds and calls go), `ping {}`, `pong {}`,
+  `state { holds: [{ hold, members: [{ member, ops }], failed }] }`, `ack { events? }` (without `events`, one per
+  applied `bound` or `state` of its origin; with `events`, at least 1, the `event` messages of its origin consumed
+  since the last such ack, never both), `event { events: [{ hold, member, at, value }] }` (decision "Events:
+  fire-and-forget members": `member` an index into the bound variant's event members, `at` the emitting host's
+  `Date.now()`, `value` a part; possibly without entries, a relay's filtered one), `closed { origin }` (a relay's downstream origin ended: its holds and calls go), `ping {}`, `pong {}`,
   `revoke { revocation }` (from the parent, applied with the child's own `revokedBy`; no origin), `failed { hold, cause,
   retryIn? }` (`retryIn`: the milliseconds left of the provider's backoff window, absent for a broken failure),
   `loading { hold }` (the hold's object, or a relay's upstream, starts over), `retry { hold, hops }` (the consumer
@@ -112,12 +120,13 @@ tab.connect(webSocketLink(new WebSocket(url)), { principal: { kind: "server" } }
   on the part for `openPart`; `signal`, the link's close, cancels it at once), `linkLimits(trusted, limits?)` (none on
   trusted links, 16 MiB on the wire and 64 MiB decoded otherwise). Sizes are UTF-8 bytes (a text part's counted
   without encoding it); byte segments are not parts and no part limit bounds them (the transport's cap does).
-- `Channel`: a host's end of a link. It sends `hello { protocol, incarnation, calls }` first and queues its own messages
-  until the peer's arrived. Every received message is decoded by the codec and, unless the link is trusted, checked
+- `Channel`: a host's end of a link. It sends `hello { protocol, incarnation, calls? }` first and queues its own
+  messages until the peer's arrived. Every received message is decoded by the codec and, unless the link is trusted, checked
   with `checkMessage` (the compiled `MESSAGE` schema, counted in `chord.link.checks`); a first message that is no
   `hello` of this codec ("the first message is no binary message"), another protocol version, a second `hello`, a
   failed check, or a throw while its `ChannelHandler` handles a message, is a protocol error: reported
-  (`protocol_error`), and the link closes. `peer` is the peer's incarnation, `peerCalls` its call window. A handler
+  (`protocol_error`), and the link closes. `peer` is the peer's incarnation, `peerCalls` its call window (`undefined`:
+  none announced). A handler
   that returns a promise (a message waiting for an asynchronous inflate) holds every later message, `ping` included,
   until it settles; they are then handled in order, and dropped when the link closes meanwhile; a rejection is a
   protocol error.
@@ -134,7 +143,7 @@ tab.connect(webSocketLink(new WebSocket(url)), { principal: { kind: "server" } }
   2. `checkMessage`: the envelope (kinds, ids and indexes, lists, error shapes), not the parts; skipped on a trusted
      link;
   3. the remote side (`remote/`): ids not reused while live (unknown ids ignored), indexes within the bound version,
-     `bound` before `state`, at most N concurrent calls;
+     `bound` before `state`, at most N concurrent calls (when a window was announced);
   4. owners, where a part is owned: `checkParams`, `checkArgs`, a route's address check, Delta's decoder and
      `applyImmutable` before adoption, `chordErrorFromJson`; snapshots and results are never validated.
 - Parts (`values.ts`): `jsonPart(value)` (a value's JSON text), `payloadPart(value, bytes)` (a payload's JSON, with

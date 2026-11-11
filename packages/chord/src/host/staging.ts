@@ -309,6 +309,11 @@ class RecordingSelf {
 		return INERT;
 	}
 
+	events(): never {
+		this.#assertDeclaring("events");
+		return INERT;
+	}
+
 	retryOn(...sources: readonly unknown[]): void {
 		this.#assertDeclaring("retryOn");
 		for (const source of sources) retrySource(source, this.#object.label);

@@ -55,6 +55,13 @@ slice spec's section citations are for orientation, not a reading limit (owner, 
   work finishes on old code"): the pure swap removed; old work through the call chain (`host/old-work.ts`) and
   `call.old`, a restart's readiness (`host/readiness.ts`), reload cycles (`host/reload-cycle.ts`),
   `reloadDrainTimeout`; example 64.
+- **Events and call windows by trust** (built 2026-11-11, spec `events/spec.md` §2, §3, §5, §6; decisions "Events:
+  fire-and-forget members", "Call windows only for untrusted links"): the third member kind (contracts' `events` and
+  `event(schema)`, edits, `accepts.events`), `host/events.ts` (the emit counter, the event flush, sources,
+  subscriptions), `host/reference-events.ts` (references' event members, re-exposure), event mappings in
+  `host/adapted.ts`, the `event` message and `ack.events` (both codecs), event windows and tickets in
+  `remote/provider.ts`, `useEvents`, `TuiScope.on`; `callWindow` (none announced on trusted links) and relayed calls
+  queued per upstream window; example 67; `test/bench/events.ts`.
 - **Chord's shared code** (upstream pi): `src/watch.ts` (`Watch`, `NativeWatch`, `WatchHandle`, `WatchEnd`,
   `NativeWatchable`), Delta (`track`, `diffRevisions`, `applyImmutable`, encoders, `PendingOps`, `appendText`),
   context, JSON, output, SQLite drivers.
@@ -103,6 +110,7 @@ pattern, no code. Decided cuts are noted where they apply.
 | 3 | `connect`, `accept`, memory link pair, incarnations in the handshake, protocol-version handshake | 3a |
 | 3 | host kinds, addresses, `route` (`authorize`, `resolve`), relayed holds and calls, re-resolve after a drop | 4a |
 | 3 | IPC and WebSocket links, trusted links, the ack-clocked window per origin (K unacked state messages, pending queues, call window N per origin), relays with flow control per origin (`origin`, `closed`, senders FIFO), heartbeat | 4a |
+| 3 | call windows by trust (`callWindow`, none announced on trusted links, optional `hello.calls`), relays honouring each upstream window (relayed calls queued per upstream link and origin); the event window per link and origin (`eventWindow`), event tickets, relays forwarding and filtering events without acks of their own | events |
 | 3 | timeouts: `closeTimeout`, call drain, `readyTimeout` (C13: two host timeouts) | 2 |
 | 3 | provider-side `linger` (C7: kept) | 3b |
 | 3 | park deadline (= `readyTimeout`, C13) | 3b |
@@ -115,6 +123,7 @@ pattern, no code. Decided cuts are noted where they apply.
 | 5 | version and fingerprint match at acquisition; reserved member names (`then`, `release`, `state`, `retry`) | 1 |
 | 5 | `remote` types, variants chosen by the factory (`{ variant, members }`), identity with principal key, calls checked against the binding's variant | 3a |
 | 5 | `accepts` mappings at runtime (old consumers), keyed members per key, `contract_mismatch` | 7b |
+| 5 | event members (remote `events`, local `event(schema)`), `EventMember`/`EventSource`/`EventSubscription`, the member check for event members | events |
 | 6 | lifecycle, one object per identity, lifetime from kind and params (Q-A), factory, activation, ending | 1 |
 | 6 | failure causes, backoff per identity, dependency recovery (R18) | 2 |
 | 6 | `retryOn` | 8 (first independently living source: registries) |
@@ -148,6 +157,7 @@ pattern, no code. Decided cuts are noted where they apply.
 | 11 | `NativeWatchable`, `self.writable` | 8 |
 | 11 | Durable's views as sources (`self.follow` over Durable's `observeXXX`) | 6b |
 | 11 | live queries (`self.query(table, q, limit)`: run before live, re-run per touching commit, diffed) | after 11 |
+| 11 | events: the emit counter, the event flush after published state, eligibility per binding, listeners outside the fence, re-exposure, `self.events` | events |
 | 12 | `self.derive`, failures per member, lazy when unwatched, `mapShared` | 1 |
 | 12 | container-width benchmark (R24) | 9 |
 | 13 | `self.open`, close reasons, order, restart patterns (R16) | 2 (restarts on reload: 7b) |
@@ -165,6 +175,9 @@ pattern, no code. Decided cuts are noted where they apply.
 | 22 | message format, header schema, unknown ids, one message per commit per link, consumers apply ops, plugin errors | 3a |
 | 22 | relays, size limits per part, compression at the origin, adapted bindings get diffs | 4a (relays), 4b (limits, compression), 7b |
 | 22 | trace carriers (R5) | 9 |
+| 22 | the `event` message, `ack.events`, both codecs, part limits and compression for event values | events |
+| 23 | `useEvents` (`chord/react`), `TuiScope.on` | events |
+| 27 | event edits (`event`, `addEvent`, `removeEvent`), `accepts.events`, one mapping per emit per older version (`event_mapping_failed`) | events |
 | 23 | HTTP (routes, wraps, responses as descriptions, request bodies, plugin sockets), workers; channels and chunked transfers stay owner patterns until a second user | 10 |
 | 23 | the app kit: `startServer`, `startWorker`, start-data objects, deny by default, sessions, owner link and token file, device pairing, files (with chunked transfers), export and import per address, plugin roots and "apply changes", optional users, invite and ephemeral-login plugins | 13 |
 | 23 | web and TUI: base bundles, registered plugin scripts and the combined file, `WebScripts`/`TuiScripts`, `startPage` with the connection loop and in-place reloads, React bindings, the sandboxed terminal (launcher, sandbox, `TuiScope`), themes (`Themes`, `ThemeChoice`, CSS variables, terminal colours), CSS modules | 11 |
@@ -199,14 +212,24 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
 - **Bump `PROTOCOL_VERSION`** for any message or reason change once p3 has shipped (slice 3b added `retry`, `loading`
   and `failed`'s `retryIn`; slice 4a parts, the list `bound`, `hello`'s `calls`, `ack`, `ping`, `pong`, `closed`,
   `origin` and the hold's `address`, `principal` and `incarnation`; the reload build `call`'s `old` and the
-  `unavailable` reasons `version` and `reload_cycle`; all without a bump: nothing is deployed). (Owner, slice 3b.)
+  `unavailable` reasons `version` and `reload_cycle`; the events build `event`, `ack`'s `events` and an optional
+  `hello.calls`; all without a bump: nothing is deployed). (Owner, slice 3b.)
 - **The park deadline's per-type override** is not built: a parked call waits the reference's `readyTimeout`. Build
   it only if a real case needs it. (Slice 3b spec.)
 - No CBOR; revisit only if benchmarks show encoding as a bottleneck (slice 3a's and 4a's do not). (L2 decisions.)
-- **One N on every host:** a relay forwards calls at once, so a worker announcing a smaller N than the relay's could
-  see more running calls of one origin than it accepts (a protocol error). Every host announces 256; per-link N, if
-  ever needed, must bound the relay's forwarding too. (Slice 4a rework.)
 - **The Durable conversation view's size on re-hold** is a known cost until pi #11327 (windowed view) lands. (Slice 4.)
+
+### Any slice (lifetimes)
+
+- **An ended attempt kept by plugin code keeps its object's past** (found in the events build, pre-existing): code that
+  keeps a factory's `self` (or a handle reaching it: a source, a writable) after its attempt ended keeps the attempt,
+  its object and what they reach, among them a provider side its link retired. Reproduced at the commit before the
+  events build (`8a88d13ba`): a remote type whose factory pushes `self` into an array of the test, served over
+  `rawLinked`; the raw peer holds it, gets `bound` and releases it; `expectCollected` over
+  `instancesOf(ProviderSide, "message")` fails while the array holds the `self`, and passes without it. Not covered by
+  any test: the events GC tests clear what they keep of an attempt before collecting (`test/remote/provider.test.ts`,
+  "retire a provider side's record only once its event tickets drained"). Whether an ended attempt should cut what it
+  reaches (its object, its links' records) is undecided. (Events build reviews.)
 
 ### Later: reload (when a case needs it)
 

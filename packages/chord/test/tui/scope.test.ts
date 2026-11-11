@@ -12,6 +12,7 @@ import {
 	defineFacet,
 	defineMessages,
 	defineRegistry,
+	event,
 	hostLanguage,
 	local,
 	method,
@@ -20,7 +21,11 @@ import {
 import { NO_TRANSLATIONS } from "../../src/surfaces/translations.ts";
 import { TuiScope } from "../../src/tui/scope.ts";
 
-const Notes = local("test.notes", { version: 1, params: {}, members: { text: str(), write: method(str()) } });
+const Notes = local("test.notes", {
+	version: 1,
+	params: {},
+	members: { text: str(), write: method(str()), written: event(str()) },
+});
 
 const Panels = defineRegistry<string, readonly string[]>("test.panels", { version: 1 });
 
@@ -34,10 +39,13 @@ async function host() {
 				facet: defineFacet((h, self) => {
 					h.serve(Notes, (_params, object) => {
 						const text = object.writable("first");
+						const written = object.events<string>();
 						return {
 							text: object.derive([text], ([value]) => value),
+							written,
 							write: async (next) => {
 								text.set(next);
+								written.emit(next);
 								return null;
 							},
 						};
@@ -90,6 +98,28 @@ describe("a component's scope", () => {
 		expect(read()).toBeUndefined();
 		scope.dispose();
 		await h.close(context);
+	});
+});
+
+describe('a scope\'s event subscriptions (decision "Events: fire-and-forget members")', () => {
+	it("call the listener for each event, never changed by themselves, until dispose", async () => {
+		const created = await host();
+		let changes = 0;
+		const scope = new TuiScope(created, () => changes++);
+		const notes = scope.hold(Notes, {});
+		await until(() => notes.state.value.kind === "live");
+		const seen: string[] = [];
+		scope.on(notes.written, ({ value }) => void seen.push(value));
+		const before = changes;
+		await notes.write("a", context);
+		await until(() => seen.length === 1);
+		// The event called its listener only (the text is not followed here: nothing else changed).
+		expect(changes).toBe(before);
+		scope.dispose();
+		const again = await created.get(Notes, {}, context);
+		await again.write("b", context);
+		await new Promise((resolve) => setTimeout(resolve, 5));
+		expect(seen).toEqual(["a"]);
 	});
 });
 

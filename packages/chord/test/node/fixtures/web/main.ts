@@ -2,17 +2,18 @@
 // serving `Panels` and the counter, and a React app: the panels (`useRegistry`), a draft input (component state an
 // in-place reload keeps), a counter held while shown (`useHold`, `useWatch`, `useRefState`), and a note in page state
 // (`usePageState`) whose component the "remount" button replaces by another function, as a plugin reload does, a
-// greeting in the page's language (`useMessages`), the core facet contributing its catalogs, and the plugins' parts
-// (components). The page's reports and its client's stop are left on `globalThis` for the tests.
+// greeting in the page's language (`useMessages`), the core facet contributing its catalogs, the page's beats subscribed
+// while shown (`useEvents`, its member and label switchable), and the plugins' parts (components). The page's reports and its client's stop are left on `globalThis` for the tests.
 
 import * as React from "react";
-import { createElement as h, useState } from "react";
+import { createElement as h, useLayoutEffect, useState } from "react";
 import * as jsx from "react/jsx-runtime";
 import { createRoot } from "react-dom/client";
 import { BACKGROUND_CONTEXT } from "../../../../src/context/index.ts";
 import * as chord from "../../../../src/index.ts";
 import {
 	HostProvider,
+	useEvents,
 	useHold,
 	useMessages,
 	usePageState,
@@ -38,14 +39,27 @@ const probe = globalThis as unknown as {
 	connection?: string;
 	errors: chord.ClientError[];
 	stop?: () => Promise<void>;
+	/** What the beats' listener got, as `label:value`; emits a beat of member `a` or `b`; the beats' controls. */
+	beats: string[];
+	beat?: (member: "a" | "b", value: number) => void;
+	relabel?: (label: string) => void;
+	switchBeats?: () => void;
+	toggleBeats?: () => void;
 };
 probe.loads = (probe.loads ?? 0) + 1;
 probe.errors = [];
+probe.beats = [];
 
 const core = defineFacet((host, self) => {
 	self.contribute(Translations, greetings.translations);
 	host.serve(webApi.Panels, { compose: (table) => table.map(({ value }) => value) });
 	host.serve(webApi.Parts, { compose: (table) => table.map(({ value }) => value) });
+	host.serve(webApi.Beats, (_params, self) => {
+		const a = self.events<number>();
+		const b = self.events<number>();
+		probe.beat = (member, value) => (member === "a" ? a : b).emit(value);
+		return { a, b };
+	});
 	host.serve(webApi.Counter, (_params, self) => {
 		const count = self.writable(0);
 		return {
@@ -89,6 +103,23 @@ function noteInput(key: string) {
 /** The note's component and the components replacing it: each a new function to React, as a reloaded plugin's. */
 const NOTES = [() => noteInput("note"), () => noteInput("note"), () => noteInput("other")];
 
+/**
+ * The beats: member `a` or `b` subscribed with a listener recording this render's label; a new label emits a beat of
+ * `a` from a layout effect, before the render's passive effects run (the latest listener must get it).
+ */
+function Beats() {
+	const ref = useHold(webApi.Beats, {});
+	const [label, setLabel] = useState("first");
+	const [member, setMember] = useState<"a" | "b">("a");
+	probe.relabel = setLabel;
+	probe.switchBeats = () => setMember((value) => (value === "a" ? "b" : "a"));
+	useEvents(member === "a" ? ref?.a : ref?.b, ({ value }) => void probe.beats.push(`${label}:${value}`));
+	useLayoutEffect(() => {
+		if (label !== "first") probe.beat?.("a", 1);
+	}, [label]);
+	return h("span", { id: "beats", "data-member": member, "data-state": ref?.state.value.kind }, label);
+}
+
 /** The greeting, in the page's language. */
 function Greeting() {
 	const { t, locale } = useMessages(greetings);
@@ -101,6 +132,8 @@ function App() {
 	const [draft, setDraft] = useState("");
 	const [shown, setShown] = useState(true);
 	const [note, setNote] = useState(0);
+	const [beats, setBeats] = useState(true);
+	probe.toggleBeats = () => setBeats((value) => !value);
 	return h(
 		"div",
 		null,
@@ -117,6 +150,7 @@ function App() {
 		h("button", { type: "button", id: "remount", onClick: () => setNote((value) => value + 1) }, "remount"),
 		h(NOTES[note % NOTES.length]!),
 		h(Greeting),
+		beats ? h(Beats) : null,
 	);
 }
 

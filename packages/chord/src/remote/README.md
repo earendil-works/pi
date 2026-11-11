@@ -2,7 +2,9 @@
 
 Remote objects over links (§3 hosts, links, routes, flow control and recovery, §4, §7, §22, W1; decision "Relay flow
 control per origin"): both sides of every link of a host, the paths its upstream holds take across links, relayed
-holds, the window of `bound` and `state` messages per origin, the call window, and (slice 4b) parts made and opened
+holds, the window of `bound` and `state` messages per origin, the call window (none on trusted links, relayed calls
+queued per upstream window), events (their window and tickets per origin, decision "Events: fire-and-forget members"),
+and (slice 4b) parts made and opened
 within each link's limits, compression at the origin, activation chains and revocation from the parent. Apps use them through `host.accept`, `host.connect`,
 `host.route` and references; nothing here is exported for apps.
 
@@ -13,10 +15,11 @@ within each link's limits, compression at the origin, activation chains and revo
   **origin** and one consumer side. Message kinds are directional, so each goes to its side: `hold`, `release`,
   `call`, `abort`, `retry` and `ack` to the provider side of their `origin` (0 when absent; a `hold` makes it, other
   messages for an origin without one are ignored), `closed { origin }` ends that provider side; `bound`, `state`,
-  `failed`, `loading`, `result`, `error` and `gone` to the consumer side; `revoke` to the host, from a parent link only
+  `failed`, `loading`, `result`, `error`, `gone` and `event` to the consumer side; `revoke` to the host, from a parent link only
   (`host.revoke` with this host's own `revokedBy`; anywhere else it is ignored). `origin` is honoured only on parent and route links, where a relay's messages arrive; on a child link a message
-  carrying one is a protocol error (decision "Origins only from relays"). A provider side (one per origin) goes once it
-  has no holds, no calls and nothing in flight; its origin's next hold makes a new one (origins are never reused).
+  carrying one is a protocol error (decision "Origins only from relays"). It announces the host's `callWindow` in its
+  `hello` unless it was given as trusted, then none (decision "Call windows only for untrusted links"). A provider side
+  (one per origin) goes once it has no holds, no calls, no `bound`/`state` messages and no event tickets in flight; its origin's next hold makes a new one (origins are never reused).
   Closing it, from either end, ends both sides: the provider sides release the peer's holds and abort their calls, the
   consumer side's calls reject and its path tells the holders. It makes the parts this host originates (`part`:
   deflated above 16 KiB with the host's compressor) and opens the parts it owns (`openPart`: within the limits its
@@ -49,7 +52,8 @@ within each link's limits, compression at the origin, activation chains and revo
   never reused. Messages carry it as `origin` (absent for 0) and answers carry it back.
 - `ProviderSide` (one origin of a link: the holds and calls the peer sent for it, by their ids): a message naming an id
   it does not know is ignored (Q1), one reusing a live id is a protocol error, and so are more running calls than this
-  side announced in `hello` (N = 256 per origin; a call on an unknown hold is ignored before it is counted). Its table
+  side announced in `hello` (N per origin, the host's `callWindow`; none on a trusted link, which no count closes; a
+  call on an unknown hold is ignored before it is counted, a relayed call waiting for its upstream window counts). Its table
   has two kinds of entries: `Hold` (served here) and `RelayedHold` (relayed, never hydrated). A call on a pending hold
   is answered `not_ready`, one crossing a `failed` or a removal with the cause its consumer was told; a call sent with
   the indexes of a binding its consumer has not acknowledged a newer `bound` of yet is decoded by them (another
@@ -78,6 +82,17 @@ within each link's limits, compression at the origin, activation chains and revo
     other.
   - A live object stays live until it ends, so a hold waiting for its slot never goes back to pending; slice 7's
     reload adds that.
+- **Events** (decision "Events: fire-and-forget members"): at the host's event flush each served hold's tap hands its
+  entries to its provider side (`queueEvent`). It admits an entry only while this host's event window has room
+  (`eventWindow` of its own messages unacknowledged; the window cannot change during a flush): else the entry is
+  dropped as it is visited, counted (`chord.events.dropped { reason: "window" }`), nothing encoded, built or queued.
+  An admitted value is encoded once per representation for every hold and link (the part kept on the flush's entry);
+  then `sendEvents` sends the admitted entries as one `event` message of its origin. A hold whose object no longer
+  shows it live untaps its event members at once, while its state still follows the admitted commits. Each message in flight has a ticket, `local` or the upstream link a relay
+  forwarded it from; `ack { events: n }` consumes the first n tickets: a local one frees a slot, a relayed one is
+  returned to its link (`ack { origin, events }`, summed per link; a closed link takes nothing). Event acks never touch
+  the state window or its fence. A relay forwards an upstream `event` message at once with its entries filtered as for
+  state (holds not relayed over the link it came from), also with none left, and never acknowledges one itself.
 - **At a relay** nothing is folded, dropped or reset: each upstream `bound`/`state` for an origin is forwarded at once
   and acknowledged upstream when the downstream acknowledges it. A slow tab fills only its own origin's window at each
   worker, whose pending queues fold its commits; other tabs are other origins. A tab served by W workers may have 2W
@@ -103,7 +118,9 @@ within each link's limits, compression at the origin, activation chains and revo
   stay, each answered by the instance it runs on or by the object's gate, and calls by the names it was bound with
   still arrive and wait at the gate until its fresh `bound` (decision "Calls in flight survive a `loading` unbind"). Live,
   it binds through the window (`boundEntry`: the variant and each member's value as a part, names as indexes into the
-  bound version). Its members' frames arrive as `Subscriber` calls inside the batch; at its
+  bound version); its `bound` also taps its instance's event members from the host's counter value then (an older
+  version's through the instance's mapping), untapped when it unbinds. Its members' frames arrive as `Subscriber` calls
+  inside the batch; at its
   end the hold's entry lists the members that changed with their ops, each encoded with that member's own Delta
   encoder (`entry`), or queues them (`queue`, later `pendingEntry`). Each entry counts one `chord.link.encodes`. A
   call's method is an index into the bound variant's methods; one outside them is a protocol error, its arguments are
@@ -118,8 +135,15 @@ within each link's limits, compression at the origin, activation chains and revo
   counts at its destination instead).
 - `RelayedHold` (a hold this host neither serves nor parses, `host.place` decided it): id `h` of its downstream
   origin, held with the same id on its path's current link under that origin's number, as the arriving hold's caller,
-  from its kept `hold` message (params copied once out of the received message, so no view keeps the buffer). `call`,
-  `abort`, `retry` and `release` go upstream at once; a call with no upstream link is answered `unavailable`. What
+  from its kept `hold` message (params copied once out of the received message, so no view keeps the buffer). `abort`,
+  `retry` and `release` go upstream at once; a call with no upstream link is answered `unavailable`, else it waits in
+  the upstream link's window for its origin (`relayWindow` on that link's consumer side: the upstream's N, none when it
+  announced none) and is forwarded as a slot frees (`RelayedCall`: `sent` once forwarded). A queued call of the hold is
+  rejected `unavailable` before its `loading` is forwarded and before a relayed `bound`'s `ack` goes upstream (it
+  carries the old indexes), with the cause before its `failed` or `gone`; an `abort` takes a queued one out unsent, a
+  release goes upstream first, then drops them and frees its forwarded ones' slots (so a call another hold waits with
+  reaches the upstream after that release, which ended the forwarded ones there), the upstream's drop fails them all
+  `unavailable`. What
   comes back with the origin reaches its downstream `ProviderSide` (`forward`), which sends it whole with its own
   origin, ids and parts untouched. A link answers only for what was relayed over it: an entry, notice or reply whose
   hold (or call) is not relayed over the link it came from is dropped (Q1), a `bound`/`state` left empty is
@@ -137,12 +161,19 @@ within each link's limits, compression at the origin, activation chains and revo
   `attach(holder)` holds a `RemoteObject` with a new id. A message with an origin goes to that origin's provider side
   (`host.relays`; an unknown origin is ignored). A `bound` or `state` message is prepared for every entry first (one
   that does not fit, an index outside the bound version or a member twice included, closes the link before anything
-  changed), then adopted in one batch of this host, then one `ack` is sent. A malformed reply rejects its call
+  changed), then adopted in one batch of this host, then one `ack` is sent (for a `bound`, before its references go
+  live: the calls they parked while rebinding follow the `ack`, decoded by the new binding's indexes). An `event`
+  message hands each entry to its holder and is consumed; a value nothing listens to (an unknown hold, one not live, a
+  member without subscriptions) is dropped before any inflate or parse (on a host without a compressor the rest are
+  inflated asynchronously first); the message is consumed all the same: one event `ack` per inbound turn, queued in a microtask after the
+  first, so after the event flush that delivered it. Per downstream origin it keeps the window of the calls this host
+  relays on this link (`relayWindow`, opened with the peer's `hello`, dropped with the origin's `closed`). A malformed reply rejects its call
   `unavailable` before the link closes. When it closes, calls in flight and waiting reject `unavailable` (never
   resent) and its tables are dropped: nothing of a closed link reaches the next.
-- `CallWindow` (one per consumer side): at most the peer's N calls (from its `hello`; none before it) in flight; further
-  calls wait in one FIFO queue, sent in order as replies free slots; it does not preempt running calls. A relay
-  forwards its downstream calls at once, so only this host's own calls wait here. A slot is freed once per call: its
+- `CallWindow` (one per consumer side, one per relayed origin on it): at most the peer's N calls (from its `hello`;
+  none before it, every call at once when it announced no window) in flight; further calls wait in one FIFO queue,
+  sent in order as replies free slots; it does not preempt running calls; a waiting call is taken out before a slot it
+  would get is counted free. A slot is freed once per call: its
   `result` or `error`, its `abort` (when sent), its hold's `release` or `gone`, or the link's close. A call still
   waiting when its hold gets `loading` is rejected `unavailable` (it may name a method of the old variant); one sent
   already waits for its reply.
@@ -169,7 +200,11 @@ within each link's limits, compression at the origin, activation chains and revo
   replaces the replicas in the message's batch: members it had get the snapshot as one frame `[["r", value]]` and a
   fresh decoder, members outside a new variant vanish (reads throw `invalid/member`, watches get one `failed` call and
   stay open, derives over them fail; a later binding with the member brings it back as `[["r", value]]`, as on the
-  provider's host), new members are made; then the reference goes live (its parked calls are sent). Its release sends
+  provider's host), new members are made, and new event nodes (a new binding's: its reference's subscriptions move
+  there from their counter value); then the reference goes live (its parked calls are sent). An `event` entry for its
+  hold (`event`) goes to its member's node as a host event (the receiving host's next counter value), dropped when it
+  is not live, when nothing taps the node (not even parsed) or past the link's limits (`too_large`, counted, the hold
+  stays bound); an index outside the bound version is a protocol error. Its release sends
   `release` on the current link and rejects its calls `released`; `gone` and the host's close end the reference with
   their error.
 - `Replica`: a state member on the consumer, a `Source` with its own Delta decoder: built from the snapshot, then

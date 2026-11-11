@@ -1,6 +1,8 @@
 # Events: fire-and-forget members, and call windows by trust
 
-Status: spec, second draft, 2026-11-11, by the p3 session (8b6ab5cc) at the owner's request. The first draft was
+Status: built in Chord (sections 2, 3, 5, 6; 2026-11-11, uncommitted at this writing; reviewed by Astra and Sol, their
+findings fixed), the third draft as amended below by the build. Spec by the p3 session (8b6ab5cc) at the owner's
+request. The first draft was
 reviewed by gpt-6-astra (adversarial, `/tmp/events-review-astra.md`) and gpt-6.1-sol (against the design,
 `/tmp/events-review-sol.md`); every confirmed finding is folded in (section 10). Then: a build in Chord, then in p2's
 rooms, then a new Pong view (owner: commit and deploy allowed for this work). Design sections are cited as "§n"
@@ -89,7 +91,9 @@ export const MatchStore = local("game.match-store", {
 - `EventMember<T>` (read side): `on(listener, ctx): Promise<EventSubscription>`. References expose event members as
   `EventMember<T>`, never with `emit`.
 - `EventSource<T> extends EventMember<T>` (the owner's handle): adds `emit(value: T): void`. `self.events<T>()`
-  returns one.
+  returns one. The owner's own `on` subscribes to its source directly (no reference binding): it gets the emits made
+  after its subscription, never one made before it (a reference subscribed after an emit but before the flush does get
+  it, being bound before the emit).
 - A factory implements an event member with an `EventSource<T>` of its own or an `EventMember<T>` of a reference
   (re-exposed). Activation checks that the implementation is one of those Chord-made values (the declaration boundary
   of Q14); anything else fails the object `broken` naming the member.
@@ -192,9 +196,10 @@ subscription.stop();
 
 - **Message kind** `event` (to consumer): `{ origin?, events: [{ hold, member, at, value }] }`; `member` an index into
   the bound variant's event members, sorted (as state members and methods, §22); `at` an integer; `value` a part. The
-  binary codec adds a kind byte; the text codec a tuple `[kind, origin?, [[hold, member, at, value], ...]]`.
+  binary codec adds a kind byte; the text codec a tuple `["E", [[hold, member, at, value], ...]]`, wrapped with its
+  origin as every message is (`["@", origin, ["E", ...]]`).
   `PROTOCOL_VERSION` stays 1 (nothing deployed, §22). Every bound hold receives all its variant's events (no
-  subscription message); a consumer without listeners drops them on arrival.
+  subscription message); a consumer without listeners drops them on arrival, neither inflated nor parsed.
 - **Acks:** `ack` gains `events?: int` (at least 1): the number of `event` messages of that origin the consumer
   **consumed** since its last such ack. A message is consumed once its parts are inflated (a browser's asynchronous
   inflate included) and parsed, and its entries delivered or deliberately dropped (no listener, an unknown or released
@@ -205,15 +210,16 @@ subscription.stop();
   never combined, so state's `ownSent`/`ownAcked` bookkeeping (and its variant fence) is untouched.
 - **The event window** per link and origin, at the emitting host: at most `eventWindow` `event` messages of its own
   unacknowledged (a host option, default 32). When it is full at a flush, that origin's entries of the flush are
-  **dropped** and counted; nothing is queued for later. So the provider holds no backlog for a slow consumer; what is
+  **dropped** and counted, as they are visited, before any value is encoded or an entry built for them; nothing is
+  queued for later. So the provider holds no backlog for a slow consumer; what is
   already sent may still sit in transport and proxy buffers (the window bounds it to `eventWindow` messages per
   emitting host and origin; a consumer whose path crosses W workers and the server may have (W + 1) × `eventWindow`
   in flight). Late samples are the game's to discard by its own timeline.
 - **Event tickets.** Per link and origin the provider side keeps a FIFO of the `event` messages it sent and not yet
   had acknowledged, each with its sender: `local` (this host's emits) or the upstream link it relayed it from. An
   `ack { events: n }` consumes exactly the first n tickets: a `local` one frees a slot of this host's event window, a
-  relayed one is returned to its upstream link as `ack { origin, events: 1 }` (consecutive tickets of one upstream
-  link are summed into one ack); a ticket of an upstream link that closed is consumed and returned nowhere. A
+  relayed one is returned to its upstream link as `ack { origin, events }` (the tickets of one upstream link in the
+  acknowledged prefix summed into one ack: each upstream gets exactly its consumed prefix); a ticket of an upstream link that closed is consumed and returned nowhere. A
   provider side's record is retired only when it has no holds, no calls, no state messages and no event tickets in
   flight (or its link or origin closes). Tickets are separate from the state FIFO and from its variant fence.
 - **Relays** forward an upstream `event` message at once, never dropping for congestion. As for state, a link answers
@@ -251,8 +257,8 @@ current-version holders and other versions get the event.
   mapped version one mapping while bound.
 - **Metrics** (typed in `CHORD_TELEMETRY_SCHEMA`, recorded through the host's adapter, `host.metrics`, since `emit`
   takes no context): `chord.events.emitted` (values emitted), `chord.events.sent` (entries sent, one per hold),
-  `chord.events.dropped { reason: "window" | "too_large" | "mapping" }` (entries dropped), `chord.events.encodes`
-  (value encodes). Nothing is measured or walked for them (§29).
+  `chord.events.dropped { reason: "window" | "too_large" | "mapping" }` (entries dropped; a mapping's drop counted once
+  per emit per version, as the mapping runs once for all of its bindings), `chord.events.encodes` (value encodes). Nothing is measured or walked for them (§29).
 - **Measured in the build** (§30 cost guards and `benchmarks.md`): an emit with 0, 1, 10 and 70 holders over links,
   with a mapped version, through a relay; one encode per representation, no walks or copies.
 

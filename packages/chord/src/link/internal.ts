@@ -19,6 +19,7 @@ export {
 	RETRY_HOPS,
 	type StateEntry,
 	type WireAddress,
+	type WireEvent,
 } from "./message.ts";
 export {
 	type Compression,
