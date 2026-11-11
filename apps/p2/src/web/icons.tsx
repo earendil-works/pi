@@ -280,3 +280,12 @@ export const ThinkingIcon = ({ size = 16 }: { size?: number }) => (
 		<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9V16h7v-2.1A6 6 0 0 0 12 3z" />
 	</Icon>
 );
+/** Three linked nodes: share a session. */
+export const ShareIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<circle cx="18" cy="5" r="3" />
+		<circle cx="6" cy="12" r="3" />
+		<circle cx="18" cy="19" r="3" />
+		<path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" />
+	</Icon>
+);

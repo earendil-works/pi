@@ -243,8 +243,11 @@ function useModelTarget(resources: ResourceSnapshot | undefined): ModelTarget | 
 	}
 }
 
-/** A conversation target's id, `<session>/<conversation>`; it comes back from the menu's locator, so it is checked. */
-function conversationOf(id: string): { readonly session: string; readonly conversation: number } | undefined {
+/**
+ * Parses a "conversation" target's id, `<session>/<conversation>` (`viewTarget` in web.tsx writes it); it comes back
+ * from the menu's locator, so it is checked.
+ */
+export function conversationOf(id: string): { readonly session: string; readonly conversation: number } | undefined {
 	const slash = id.lastIndexOf("/");
 	const conversation = Number(id.slice(slash + 1));
 	return slash > 0 && Number.isInteger(conversation) && conversation > 0
