@@ -10,7 +10,7 @@ import type { Component } from "@earendil-works/pi-tui";
 import { keyHint, keyText } from "../../modes/interactive/components/keybinding-hints.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { ToolRenderContext, ToolRenderers } from "../extensions/types.ts";
-import { ansiLinesToHtml } from "./ansi-to-html.ts";
+import { ansiLinesToHtml, stripAnsiEscapes } from "./ansi-to-html.ts";
 
 export interface ToolHtmlRendererDeps {
 	/** Renderers of calls to a tool, as resolved by extensions and the registered tool */
@@ -42,10 +42,8 @@ export interface ToolHtmlRenderer {
  * The renderer looks up tool definitions and invokes their renderCall/renderResult
  * methods, converting the resulting TUI Component output (ANSI) to HTML.
  */
-const ANSI_ESCAPE_REGEX = /\x1b\[[\d;]*m/g;
-
 function isBlankRenderedLine(line: string): boolean {
-	return line.replace(ANSI_ESCAPE_REGEX, "").trim().length === 0;
+	return stripAnsiEscapes(line).trim().length === 0;
 }
 
 function trimRenderedResultLines(lines: string[]): string[] {
