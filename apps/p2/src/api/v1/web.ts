@@ -47,4 +47,5 @@ export { setTheme, type ThemePreference } from "../../web/theme.ts";
 export * from "../../web/transcript.ts";
 export * from "../../web/use-chat-scroll.ts";
 export * from "../../web/Viewer.tsx";
+export * from "../../web/view-kinds.ts";
 export * from "../../web/virtual-list.ts";

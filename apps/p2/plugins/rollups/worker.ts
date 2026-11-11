@@ -66,7 +66,6 @@ function rollupsExtension(worker: () => WorkerParts) {
 				description: DESCRIPTION,
 				parameters: PARAMETERS,
 				replay: "safe",
-				origin: "owner",
 				scope: "main",
 				execute: async (args, _api, context) => {
 					const reply = (text: string, isError = false) => ({

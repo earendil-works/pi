@@ -86,7 +86,7 @@ contracts and factories are the enforcement.
 
 | Facet | Trigger | What happens |
 | --- | --- | --- |
-| Server | explicit only: Reload button, `npm run reload`, `reload_plugins` (dev mode; `docs/p2-notes.md` "Dev mode") | Chord cluster transaction with every running worker: compatible changes keep state and resources; registrations swap atomically; contract/state changes need versions or migrations; a `registry_conflict` or failure keeps the old code. `src/runtime`, `src/hosts` need a restart. No reload without `P2_DEV=1`. |
+| Server | explicit only: Reload button, `npm run reload`, `reload_plugins` (`docs/p2-notes.md` "Dev mode", docs/agent-plugins.md) | Chord cluster transaction with every running worker: compatible changes keep state and resources; registrations swap atomically; contract/state changes need versions or migrations; a `registry_conflict` or failure keeps the old code. `src/runtime`, `src/hosts` need a restart. No reload without `P2_DEV=1`. |
 | Worker | same transaction | as server; new workers spawn with the committed list. A Durable phase keeps the extension snapshot it started with (`src/runtime/durable.ts:35-41`); `ExtensionSwitches` changes apply to the next phase. |
 | Web | backend reload builds a new content-named bundle; a visible page polls `/__p2_web` every 5 seconds | Facets are installed once per page (`startWeb`, `src/hosts/web/main.tsx`); any manifest-version change reloads the page. Foregrounding checks immediately; at most two previous generations remain available for up to 60 seconds. |
 | TUI | backend reload builds a new bundle; the launcher polls the hash every second; `/reload` | Whole worker swap carrying bounded UI state (`docs/p2-notes.md` "TUI"). Within one worker: a `TuiCommands` change closes overlays (`src/runtime/tui.ts:461-465`); a changed `TuiSlots` value disposes and recreates that surface (`:471-485`). |
@@ -171,9 +171,9 @@ const extension = createPortsExtension(
 contribute(host, "p2.port-tools", (self) => self.register(Extensions, { [extension.name]: extension }));
 ```
 
-Who: tools run for whoever's input started the turn. Durable knows no principal; a tool declares what it needs
-(`P2Tool`: `origin: "owner"`, `scope: "main"`) and the worker's registry checks it before each call (`guardTool`,
-`originOf` over the run's inputs; see p2-notes **Tool requirements**). Reload: a running phase keeps its snapshot; tool code
+Who: tools run for whoever's input started the turn, with no per-turn authority. Durable knows no principal; a tool
+declares where it works (`P2Tool`: `scope: "main"`, `locked`) and the worker's registry checks it before each call
+(`guardTool`; see p2-notes **Tool requirements**). Reload: a running phase keeps its snapshot; tool code
 that must survive reload reads live resources through getters (`plugins/codemode/worker.ts:37-43`).
 
 ### 3.2 Worker registries and locals

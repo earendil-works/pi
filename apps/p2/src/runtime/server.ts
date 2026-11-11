@@ -146,6 +146,25 @@ export interface SessionWorkerControl {
 	observe(observer: FollowObserver<unknown>): FollowAttachment<Readonly<Record<string, WorkerState>>>;
 }
 
+/** What applying the user root's plugins did to one plugin. */
+export type PluginOutcome = {
+	readonly plugin: string;
+	/**
+	 * `applied` (rolled out), `removed`, `failed` (its build or a host's load; nothing rolled out on a build failure),
+	 * `refused` (unknown, or discovery: an invalid package, a name another root has).
+	 */
+	readonly outcome: "applied" | "removed" | "failed" | "refused";
+	readonly errors?: string[];
+};
+
+/** What a plugin reload did: per plugin, and the errors the server and workers logged meanwhile. */
+export type PluginApply = {
+	/** Nothing was tried: why. */
+	readonly refused?: string;
+	readonly plugins: PluginOutcome[];
+	readonly logs: string[];
+};
+
 /** The server's natives, contributed by the core facet from the start. */
 export type ServerParts = {
 	readonly resourceOptions: ServerResourceOptions;
@@ -161,6 +180,16 @@ export type ServerParts = {
 	 * test hosts without a store.
 	 */
 	readonly store?: Store;
+	/**
+	 * The user plugin root (`<data>/plugins/`, plugins the owner or the agent writes) and its apply: builds the root's
+	 * changed plugins and rolls them out to the server and every worker, with the web and TUI bundles; per plugin what
+	 * happened (`reload_plugins`, docs/agent-plugins.md).
+	 */
+	readonly plugins: {
+		readonly root: string;
+		/** Reloads `requested` (default: every dirty plugin and the user root's), per plugin what happened. */
+		reload(requested?: readonly string[]): Promise<PluginApply>;
+	};
 };
 export const ServerNatives = defineRegistry<ServerParts, ServerParts | undefined>("p2.server-natives", { version: 1 });
 

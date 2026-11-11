@@ -2,8 +2,6 @@ import { arr, bool, nul, num, obj, opt, type Static, str, union } from "@earendi
 import { literal, local, method, param, propertiesOf, remote, serverHost, sessionHost } from "@p2/app/v1";
 import { ProjectSchema } from "../projects/contract.ts";
 
-export type { ConversationOrigin } from "@p2/app/v1";
-
 /** A session ID as the tool takes it (`to`). */
 const To = str({ minLength: 1, maxLength: 200 });
 
@@ -72,25 +70,23 @@ export type Reply = Static<typeof ReplySchema>;
 
 /** Server-local broker. Sender identity comes from the authenticated worker, never the prompt text. */
 export const ConversationBroker = local("p2.conversation-broker", {
-	version: 1,
+	/** 2: no `origin`. */
+	version: 2,
 	params: {},
 	members: {
-		query: method(
-			obj({ source: str(), requestId: str(), origin: opt(literal("owner")), query: QuerySchema }),
-			ReplySchema,
-		),
+		query: method(obj({ source: str(), requestId: str(), query: QuerySchema }), ReplySchema),
 	},
 });
 
 /** Only a current worker generation can broker a root tool invocation. */
 export const Conversations = remote("p2.conversations", {
 	/**
-	 * 2: request IDs up to 500 characters (Pi Mobile's limit: nested code mode calls make long ones). 3: `origin` is the
-	 * sending turn's (`originOf`): `"owner"` or absent, no `"peer"`. 4: `create`, `stop`, `archive` and `restore`;
-	 * `list` gives each session's location and project, and the projects. Only workers hold it, and they reload with
-	 * the server: no `accepts`.
+	 * 2: request IDs up to 500 characters (Pi Mobile's limit: nested code mode calls make long ones). 3: `origin`, the
+	 * sending turn's: `"owner"` or absent. 4: `create`, `stop`, `archive` and `restore`;
+	 * `list` gives each session's location and project, and the projects. 5: no `origin` (p2 has no per-turn
+	 * authority). Only workers hold it, and they reload with the server: no `accepts`.
 	 */
-	version: 4,
+	version: 5,
 	params: {},
 	hostAddress: serverHost,
 	variants: {
@@ -100,7 +96,6 @@ export const Conversations = remote("p2.conversations", {
 					obj({
 						conversation: literal(1),
 						requestId: str({ minLength: 1, maxLength: 500 }),
-						origin: opt(literal("owner")),
 						query: QuerySchema,
 					}),
 					ReplySchema,
@@ -110,13 +105,10 @@ export const Conversations = remote("p2.conversations", {
 	},
 });
 
-/**
- * Server-to-worker ingress; the server has already authorized and attributed the sender. `origin` is the sending turn's,
- * which the recipient's entry records (`originOf`).
- */
+/** Server-to-worker ingress; the server has already authorized and attributed the sender. */
 export const PeerConversation = remote("p2.peer-conversation", {
-	/** 2: `stop`. Only the server holds it, and workers reload with it: no `accepts`. */
-	version: 2,
+	/** 2: `stop`. 3: no `origin`. Only the server holds it, and workers reload with it: no `accepts`. */
+	version: 3,
 	params: { session: param.str() },
 	hostAddress: sessionHost,
 	variants: {
@@ -129,7 +121,6 @@ export const PeerConversation = remote("p2.peer-conversation", {
 						requestId: str(),
 						message: str(),
 						followUp: opt(bool()),
-						origin: opt(literal("owner")),
 					}),
 					obj({ submissionId: num() }),
 				),

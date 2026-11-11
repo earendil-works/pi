@@ -142,7 +142,7 @@ function serversSection(servers: readonly string[], signIn: readonly string[], r
 /**
  * One MCP tool as a Durable tool (not replay-safe: an interrupted call is not repeated). Deferred either way, so the
  * `codemode` section leaves it out; for `codemode` only other tools (scripts) may call it, so `tool_search` never
- * offers it to the model either. Only turns the owner started may call it: the owner's accounts are behind the servers.
+ * offers it to the model either.
  */
 function toolRegistration(name: string, { server, tool }: ServerTool, reach: McpReach, call: McpCall): P2Tool {
 	const title = tool.title ?? tool.annotations?.title;
@@ -151,7 +151,6 @@ function toolRegistration(name: string, { server, tool }: ServerTool, reach: Mcp
 		description: tool.description?.trim() || title || `MCP tool ${tool.name} from server ${server}`,
 		parameters: normalizeMcpInputSchema(tool.inputSchema),
 		deferred: true,
-		origin: "owner",
 		...(reach === "codemode" ? { callers: ["tools" as const] } : {}),
 		...(tool.outputSchema === undefined ? {} : { structuredOutputSchema: tool.outputSchema }),
 		async execute(args, api, context) {

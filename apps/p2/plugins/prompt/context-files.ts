@@ -97,7 +97,9 @@ export function agentsCandidates(paths: Pick<PlatformPath, "join" | "dirname" | 
 
 /**
  * Instructions and skills for a session: the global `AGENTS.md` of the data directory (always local), then the
- * project's `AGENTS.md` files and skills under `<directory>/skills` and `<cwd>/.pi/skills` on the local filesystem.
+ * project's `AGENTS.md` files and skills under `<directory>/skills` and `<cwd>/.pi/skills` on the local filesystem,
+ * then the plugins' skills (`pluginSkillRoots`, given only where they are files of `files`: the server's own machine).
+ * The first skill of a name wins: the environment's and the project's before a plugin's.
  */
 export async function loadPromptResources(
 	directory: string,
@@ -105,6 +107,7 @@ export async function loadPromptResources(
 	files: PromptFiles = localFiles,
 	skillsRoot = join(directory, "skills"),
 	promptsRoot = join(directory, "prompts"),
+	pluginSkillRoots: readonly string[] = [],
 ): Promise<LoadedPrompt> {
 	const agents: { text: string; global: boolean }[] = [];
 	const fingerprint: string[] = [];
@@ -119,8 +122,12 @@ export async function loadPromptResources(
 	for (const path of agentsCandidates(files.paths, cwd))
 		if (files !== localFiles || path !== global) await read(path, files);
 	const skills = new Map<string, Skill>();
-	const globalSkills = new Set(await skillFiles(files, skillsRoot));
-	const paths = [...new Set([...globalSkills, ...(await skillFiles(files, files.paths.join(cwd, ".pi", "skills")))])];
+	const environmentSkills = await skillFiles(files, skillsRoot);
+	const projectSkills = await skillFiles(files, files.paths.join(cwd, ".pi", "skills"));
+	const pluginSkills = (await Promise.all(pluginSkillRoots.map((root) => skillFiles(files, root)))).flat();
+	// Plugins' skills count as global ones: a locked session gets them only with the global instructions.
+	const globalSkills = new Set([...environmentSkills, ...pluginSkills]);
+	const paths = [...new Set([...environmentSkills, ...projectSkills, ...pluginSkills])];
 	for (const path of paths) {
 		const content = await files.readText(path);
 		if (content === undefined) continue;

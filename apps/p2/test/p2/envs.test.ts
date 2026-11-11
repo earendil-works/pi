@@ -364,6 +364,9 @@ test(
 		assert.match(system, /REMOTE PROJECT sentinel/);
 		assert.match(system, /LOCAL GLOBAL sentinel/);
 		assert.match(system, /Remote skill sentinel/);
+		// Plugins' skills point at the server's files: a remote conversation gets the hint to write plugins there instead.
+		assert.doesNotMatch(sections.skills ?? "", /writing-p2-plugins/);
+		assert.match(sections["p2-plugins"] ?? "", /spawn a subagent with env null and cwd ".*\/plugins"/);
 		// The main agent's location tools see the environment (never its key) and where the session works.
 		await chat.send({ text: "location_envs {}", requestId: "ssh-location-envs" }, BACKGROUND_CONTEXT);
 		const listed = await until(chat.view, (view) => results(view, "location_envs").length > 0, 60000);

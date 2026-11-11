@@ -147,10 +147,15 @@ across server restarts. It is a Unix-only channel, not an HTTP route on the prox
 is printed or needed in a URL. It prints the committed plugin selection or refusal reason and exits non-zero
 on failure. This is a local filesystem capability for the account, not guest filesystem isolation.
 
-The `dev-tools` worker plugin provides **reload_plugins** (`{}` for dirty plugins, or
-`{"plugins":["chat","sessions"]}`). It declares `origin: "owner"` and `scope: "main"` (see **Tool requirements**)
-and refuses sessions not working on a local p2 checkout (or its containing repository): guests, what they start,
-subagents and remote-environment sessions are denied, and no subagent can be given it. Tool upgrades are not automatically replayed after
+The `dev-tools` plugin provides **reload_plugins** (`{}` for dirty plugins and every plugin of the user root, or
+`{"plugins":["chat","sessions"]}`), in every server mode, through the server object `PluginReload` (worker principals
+only; the server's `ServerParts.plugins.reload`). It is an ordinary tool: no requirements, so subagents (an agent
+writing plugins in `local:<data>/plugins`) can be given it, and the session's tool selection and lock govern it as
+they govern bash. It reports per plugin: applied, removed, failed (the build's esbuild errors as
+`file:line:column: message`, or a host's load error), refused (unknown, or discovery: an invalid package, a name a
+built-in has); and the server's and workers' errors logged meanwhile. A failed build rolls out nothing. In dev mode it
+updates the dev status like the Reload button. Its prompt section on p2 development shows only to sessions working on
+the p2 checkout (docs/agent-plugins.md). Tool upgrades are not automatically replayed after
 a crash. For runtime edits, use the explicit CLI `--restart` command instead. Do not invoke the owner server's
 controls from tests: use disposable data dirs and independent supervisors.
 
@@ -723,8 +728,7 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
 - **Location tools** (`plugins/locations`): `location_envs` (this device and the configured SSH environments: name,
   host, last test; never keys), `location_dirs` (`[env:]path` or `env`+`cwd`, at most 200 folders) and `location_move`.
   Every main agent has them, and so do the subagents and one-shot agents it gives them to (by default it gives all
-  its tools). All declare `origin: "owner"` (see **Tool requirements**), and the server side (`AgentLocations`) admits
-  only current worker generations. The main agent's move is deferred: it records `p2.location-move` on the main
+  its tools). The server side (`AgentLocations`) admits only current worker generations. The main agent's move is deferred: it records `p2.location-move` on the main
   conversation; the worker applies it through `SessionMoves` (the owner's Relocate) once Durable has no task or
   submission (the turn ended, no subagent work), retries a busy refusal after the next commit, records a destination
   that became invalid as `failed` (shown by `location_envs`), and applies a record left by a stopped worker after its
@@ -1003,8 +1007,7 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   `src/runtime/input.ts`); a peer session's message is a `p2.peer-message` entry, a subagent's report or `team`
   message a `p2.agent-message` entry (`src/runtime/entries.ts`). Their model message starts with a
   `<sender kind="owner|guest|session|subagent" …/>` block (`src/runtime/sender.ts`, values escaped; a subagent's
-  text follows as `[<intent>] <text>`), which the preamble explains and nothing reads back: readers and `originOf`
-  use the entry data.
+  text follows as `[<intent>] <text>`), which the preamble explains and nothing reads back: readers use the entry data.
   Stop/dequeue restore text only to its author; removing a queued input (×,
   no restore) discards it, as in Pi Mobile.
 - **Windowed conversation view** (`plugins/chat/worker.ts`, `src/web/history.ts`, `src/runtime/conversation-stats.ts`):
@@ -1454,23 +1457,21 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   arguments. Tests: `artifacts.test.ts` (details, bridge), `ui-inline-artifacts.test.ts` (browser: Markdown, SVG,
   fills the width, fitted height, 70vh cap, card opens the viewer, unavailable version, guest), `tui-p11.test.ts`
   (inline Markdown).
-- **Conversations** (`plugins/conversations`): the `conversations` tool (`origin: "owner"`, `scope: "main"`) lists
+- **Conversations** (`plugins/conversations`): the `conversations` tool (`scope: "main"`, `locked: "conversations"`) lists
   active roots without starting workers (with each one's location and project, and the projects), sends
   server-attributed peer input, reads the latest completed text answer (bounded scan, no thinking, including old
   history), creates a session at a project's place or a cwd with the message as its first peer input (its ID derived
   from the call, so a retried call finds it; the sender's model and thinking level unless it names a signed-in model;
   `SessionOperations.create`, shared with the owner's `Sessions.create`),
   stops a session's run (as Stop in the chat), and archives or restores a session (`SessionOperations`; never
-  itself). A send carries the sending turn's origin to the recipient's
-  `p2.peer-message` entry (`Conversations.query` and `PeerConversation.send` `origin`), so the recipient's turn may
-  act for the owner when the owner started the sender's. `Conversations`
+  itself). `Conversations`
   accepts only current worker generations; `PeerConversation` accepts only the parent's `{ kind: "server" }`
   principal. The server brokers the sender's ID/title from the catalog, checks archive around startup/admission
   and receipts, and scopes deduplication to sender + Durable tool task/call. Calls are short and cancellable;
   cancellation after admission does not undo remote work. Final answers never auto-forward. Owner peer labels
   navigate to roots (restoring archives); guests get plain labels. `test/p2/conversations.test.ts` covers list/send/
-  answer, peer replies from the owner's turns, restart deduplication, concurrent cross-sends, busy answers, follow-ups,
-  invalid destinations, reload, guest/forged attribution, child tool exclusion and inaccessible public ingress.
+  answer, peer replies, restart deduplication, concurrent cross-sends, busy answers, follow-ups,
+  invalid destinations, reload, guest turns, child tool exclusion and inaccessible public ingress.
 - **Familiar** (`plugins/familiar`): one long-running session above the others that keeps track of them and starts,
   steers, stops, archives and restores them. The server's `FamiliarStore` holds which session it is (persisted; the
   ID is chosen before the row is made, so a crash makes the same one); the owner's `Familiar.open` makes it on first
@@ -1505,7 +1506,7 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   work running; direct child prompts do not report to the parent. **Tools** (`resolveChoice`/`resolveTools` in
   `contract.worker.ts`, validated before any commit, shared with one-shot agents): an agent gives from its own tools
   (`api.agent()`: offered, deferred and script-callable), never more. It may give every tool its model calls except
-  `scope: "main"` ones (`subagent`, `rename_session`, `conversations`, `ports`, `reload_plugins`) and
+  `scope: "main"` ones (`subagent`, `rename_session`, `conversations`, `ports`, `sidebar_rollups`) and
   `scope: "subagent"` ones (`team`, which every subagent gets, offered from the start); `tools` names them in order,
   the default is all of them (code mode only while the main agent has it; naming a tool it lacks is refused with the
   list it may give). Deferred tools stay deferred unless named (then offered from the start). Durable enables exactly
@@ -1524,18 +1525,14 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   installed after the spawn; `tool-access.test.ts` the resolution rules; `terminal-tool.test.ts` a subagent's script
   opening a window at its own location.
 - **Tool requirements** (`src/runtime/tool-access.ts`): a plugin declares them on its tool (`P2Tool`, `defineP2Tool`):
-  `origin` (`"any"` default, or `"owner"`: only a turn the owner started) and `scope` (`"any"` default, `"main"`: only
-  top-level conversations, or `"subagent"`: given to subagents only). The worker's Durable registry wraps every tool
-  with requirements (`guardTool`, in `durableRegistry`), so no tool checks them itself. `origin: "owner"`: the location
-  tools, `reload_plugins`, `conversations`, `ports`, MCP tools (the owner's accounts are behind them). A turn's origin
-  (`originOf`, `src/runtime/origin.ts`) is the conversation's current run (`pi.live.run.inputs`, each submission's
-  entry through `tx.submission`): the owner's only if every input the run placed is (`entryOrigin`): a person's input
-  by its author in the entry data, an agent-written one by its `origin`. Agent-written inputs record the writing
-  turn's origin: subagent tasks and one-shot agents' prompts (`p2.subagent-task`), `team` messages and reports
-  (`p2.agent-message`; a report has the origin of the subagent's run that answered, `answerOrigin`: its inputs after
-  the previous run's final answer, `stop` or `length`, past mid-run error answers and compaction markers), and peer messages (`p2.peer-message`). A guest's input steered into a run takes the
-  owner's tools away for the rest of it; a guest-started chain never reaches them. Known gap: inputs of earlier runs
-  still in the context are not considered. `test/p2/inputs.test.ts`, `dev-tools.test.ts`, `tool-access.test.ts`.
+  `scope` (`"any"` default; `"main"`: only top-level conversations, for tools acting on the session as a whole:
+  `subagent`, `rename_session`, `conversations`, `ports`, `sidebar_rollups`; `"subagent"`: given to subagents only,
+  `team`) and `locked` (in a locked session: `pass` default, `never`, or a capability the owner picked: `ports`,
+  `conversations`). The worker's Durable registry wraps every tool with requirements (`guardTool`, in
+  `durableRegistry`), so no tool checks them itself. There is no per-turn authority (removed: the owner decided, as for
+  p3, that "who started this turn" is illusory against prompt injection): whoever may send input in a session may have
+  its agent use every tool it has. What a session's agents reach is decided by its tool selection (subagent and
+  one-shot `tools`), its location (a sandbox) and its lock. `test/p2/tool-access.test.ts`, `dev-tools.test.ts`.
 - **Code mode** (`plugins/codemode`): the worker facet registers Durable's `codemode` extension
   (`createCodemodeExtension`, tool `codemode`, callers `["model"]`, replay-safe) in `Extensions`. One sandbox per worker
   (`CodemodeSandbox`, 256 MiB VM heap: `CODEMODE_MEMORY_LIMIT_BYTES`, kept constant because it is part of the VM

@@ -78,7 +78,7 @@ long-lived signed cookie). Guests join through share links. Requests other
 websites make never carry owner rights. Sign out per device or all devices in the Devices sheet.
 
 **Dev mode.** A file watcher only marks plugins dirty; reloads are explicit (button, `npm run reload`, the
-owner-only `reload_plugins` tool) because a watcher can't tell when an agent has finished a multi-file edit.
+`reload_plugins` tool) because a watcher can't tell when an agent has finished a multi-file edit.
 Runtime code (`src/hosts`, `src/runtime`, workspace packages such as `packages/chord`) needs a restart; the "Server
 code changed" pill appears only when a module the server actually loaded changed.
 
