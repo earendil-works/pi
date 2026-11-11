@@ -1207,7 +1207,7 @@ describe("nested tool calls", () => {
 			{
 				callId: "c1/2",
 				status: "done",
-				summary: { isError: true, error: "Tool missing is not available" },
+				summary: { isError: true, durationMs: expect.any(Number), error: "Tool missing is not available" },
 			},
 			{ callId: "c1/3", status: "done", summary: { isError: false, durationMs: expect.any(Number), usage } },
 			{
@@ -1299,7 +1299,7 @@ describe("tool task version 1 and 2 records", () => {
 		expect((await harness.getTask(id, context))?.version).toBe(1);
 		harness.resume();
 		const settled = await harness.waitForTask(id, context);
-		expect(settled.version).toBe(3);
+		expect(settled.version).toBe(4);
 		expect(settled.input).toMatchObject({ kind: "model", callId: "c1" });
 		expect(settled.state.outcome).toMatchObject({ status: "completed", result: { kind: "model" } });
 		expect(echo.state.runs).toBe(1);
@@ -1317,7 +1317,7 @@ describe("tool task version 1 and 2 records", () => {
 		const { harness, root } = await openChat(await openNodeSqliteStorage(path), setup);
 		harness.resume();
 		const settled = await harness.waitForTask(id, context);
-		expect(settled.version).toBe(3);
+		expect(settled.version).toBe(4);
 		expect(settled.state.outcome).toMatchObject({ status: "failed", result: { kind: "model" } });
 		expect(echo.state.runs).toBe(0);
 		const [result] = results(await allEntries(root));
@@ -1327,7 +1327,7 @@ describe("tool task version 1 and 2 records", () => {
 	});
 
 	// #11043
-	it("reserves a stored version 2 task under version 3 and runs it as a model-issued call", async () => {
+	it("reserves a stored version 2 task under version 4 and runs it as a model-issued call", async () => {
 		const setup = chatSetup();
 		const echo = echoTool();
 		addTool(setup.registry, echo.registration);
@@ -1336,7 +1336,7 @@ describe("tool task version 1 and 2 records", () => {
 		expect((await harness.getTask(id, context))?.version).toBe(2);
 		harness.resume();
 		const settled = await harness.waitForTask(id, context);
-		expect(settled.version).toBe(3);
+		expect(settled.version).toBe(4);
 		expect(settled.input).toEqual({ kind: "model", assistant: expect.any(Number), callId: "c1" });
 		expect(settled.state.outcome).toMatchObject({ status: "completed", result: { kind: "model" } });
 		expect(echo.state.runs).toBe(1);

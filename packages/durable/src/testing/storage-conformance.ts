@@ -775,6 +775,49 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 			expect(await scan("running")).toEqual([running]);
 		}),
 
+		createCase(options, "round-trips sleeps on signals, any waits, and wakes", async (storage) => {
+			const rootId = await createRoot(storage);
+			const ids = [] as TaskId<JsonValue>[];
+			for (let index = 0; index < 5; index++) ids.push(await storage.mintId<TaskId<JsonValue>>());
+			const signals = [{ signal: "app.answer", key: "a" }];
+			const memos = { "pi.signal.app.answer/a": { version: 1, value: { text: "yes" } } };
+			const tasks: StoredTask[] = [
+				// A sleep without `until`, waiting only for a signal.
+				{ ...pendingTask(ids[0]!, rootId), state: { status: "sleeping", checkpoint: { phase: "next" }, signals } },
+				{
+					...pendingTask(ids[1]!, rootId),
+					state: { status: "sleeping", checkpoint: { phase: "next" }, until: 61_000, signals },
+					memos,
+				},
+				{
+					...pendingTask(ids[2]!, rootId),
+					state: { status: "waiting", checkpoint: { phase: "next" }, on: [ids[0]!, ids[1]!], policy: "any" },
+				},
+				{
+					...pendingTask(ids[3]!, rootId),
+					state: { status: "pending", checkpoint: { phase: "next" }, wake: { reason: "tasks", ended: [ids[0]!] } },
+				},
+				{
+					...pendingTask(ids[4]!, rootId),
+					state: {
+						status: "running",
+						checkpoint: { phase: "next" },
+						wake: { reason: "signal", signal: "app.answer", key: "a" },
+					},
+				},
+			];
+			await commitWrites(
+				storage,
+				tasks.map((value) => ({ type: "task", value }) as const),
+				context,
+			);
+			for (const task of tasks) expect(await storage.task(task.id, context)).toEqual(task);
+			const scan = async (status: StoredTask["state"]["status"]) =>
+				(await storage.scanTasks({ status }, 10, undefined, context)).items;
+			expect(await scan("sleeping")).toEqual([tasks[0], tasks[1]]);
+			expect(await scan("waiting")).toEqual([tasks[2]]);
+		}),
+
 		createCase(
 			options,
 			"indexes request IDs per conversation and replaces complete submission records",

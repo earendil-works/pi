@@ -6,6 +6,7 @@
 
 import type { Context } from "@earendil-works/chord/context";
 import type { Draft } from "@earendil-works/chord/delta";
+import type { JsonValue } from "@earendil-works/chord/json";
 import type { AssistantMessage, Models, ToolCall } from "@earendil-works/pi-ai";
 import {
 	type Conversation,
@@ -15,6 +16,7 @@ import {
 	createRegistry,
 	defineDoc,
 	defineExtension,
+	defineSignal,
 	defineTask,
 	defineTool,
 	type EntryId,
@@ -23,20 +25,24 @@ import {
 	type HarnessSettings,
 	type HookApi,
 	hook,
+	hookTask,
 	LiveDoc,
 	type LiveState,
 	type Session,
+	type SignalToken,
 	type Storage,
+	SubmissionSettled,
 	section,
 	type TaskId,
 	type ToolExecutionApi,
+	ToolResultEntry,
 	ToolTask,
 	type TranscriptView,
 	type Tx,
 	type UserInput,
 	wrapTool,
 } from "@earendil-works/pi-durable";
-import { obj, str } from "@earendil-works/pi-schema";
+import { bool, obj, oneOf, str } from "@earendil-works/pi-schema";
 import { expect, expectTypeOf, it } from "vitest";
 import type { ExecutionEnv } from "../src/env/index.ts";
 import { CodingTools, createBashTool, createEditTool, createReadTool } from "../src/tools/index.ts";
@@ -84,6 +90,25 @@ declare const Reporter: ReturnType<typeof defineTask<null, { phase: "report" }, 
 declare const subagentTool: ReturnType<typeof createReadTool>;
 declare const conversation: Conversation;
 declare function render(view: TranscriptView): void;
+declare function runTests(
+	env: ExecutionEnv | undefined,
+	command: string,
+	context: Context,
+): Promise<{ passed: boolean; output: string }>;
+declare function isRisky(args: ToolCall["arguments"]): boolean;
+declare function canonicalDigest(value: ToolCall["arguments"]): string;
+// The host's webhook registry ("when the webhook for `match` arrives, signal this key to this task") and a CI client.
+declare const webhooks: {
+	expect<T>(match: string, taskId: TaskId, token: SignalToken<T>, key: string, context: Context): Promise<void>;
+};
+declare const ci: {
+	trigger(
+		input: { ref: string; correlationId: string; idempotencyKey: string },
+		context: Context,
+	): Promise<{ id: string }>;
+	cancel(buildId: string, context: Context): Promise<void>;
+	cancelByKey(idempotencyKey: string, context: Context): Promise<void>;
+};
 
 /** Never called: the declared names above have no values. */
 function examples() {
@@ -164,6 +189,186 @@ function examples() {
 		],
 	});
 
+	// ─── Section 7.2: work at the end of a run ───────────────────────────────────
+
+	const RunTests = defineTask<{ command: string }, { phase: "run" }, string>({
+		name: "app.run-tests",
+		version: 1,
+		initial: () => ({ phase: "run" }),
+		phases: {
+			run: async (task, runtime, context) => {
+				// The app's helper over `ExecutionEnv.exec()`: { passed: boolean; output: string }. A rerun after a crash runs it again.
+				const result = await runTests(await runtime.env(context), task.input.command, context);
+				const handle = (await runtime.conversation(runtime.conversationId, context))!;
+				await runtime.commit(async (tx) => {
+					// Admitted in this commit, before its table writes; placed when the run ends, in queue order with other input.
+					if (!result.passed) {
+						await handle.submit(tx, {
+							type: "input",
+							content: `Tests failed:\n${result.output}`,
+							whenBusy: "followUp",
+						});
+					}
+					await tx.appendEntry(runtime.conversationId, { kind: "app.tests", data: { passed: result.passed } });
+					return { status: "terminal", outcome: { status: "completed", result: result.output } };
+				}, context);
+			},
+		},
+		abort: async (_task, runtime, context) =>
+			runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), context),
+	});
+	const TestsAfterEdits = defineExtension({
+		name: "tests-after-edits",
+		tasks: [RunTests],
+		hooks: [
+			hook(GenerationTask, {
+				afterRun: async (run, api, context) => {
+					const range = { minEntryId: run.first, maxEntryId: run.last, order: "ascending" } as const;
+					const { items } = await api.entries(range, 1000, undefined, context);
+					const edited = items.some((entry) => {
+						const message = entry.model?.[0];
+						return (
+							ToolResultEntry.is(entry) &&
+							message?.role === "toolResult" &&
+							["edit", "write"].includes(message.toolName)
+						);
+					});
+					return edited ? { tasks: [hookTask(RunTests, { command: "npm test" })] } : undefined;
+				},
+			}),
+		],
+	});
+
+	// ─── Section 7.2: gates ──────────────────────────────────────────────────────
+
+	const Approval = defineSignal({ name: "approvals.decision", version: 1, schema: obj({ allow: bool() }) });
+	const DAY = 24 * 60 * 60 * 1000;
+
+	const Approvals = defineExtension({
+		name: "approvals",
+		hooks: [
+			hook(ToolTask, {
+				beforeTool: async (call, api, context) => {
+					if (call.name !== "bash" || !isRisky(call.arguments)) return undefined;
+					const key = canonicalDigest(call.arguments); // other arguments, another question
+					const state = await api.readSignal(Approval, key, context);
+					// One deadline per question, fixed at the first pass: later passes (wakes, registry changes) keep it.
+					const until = await api.memo(`approvals.until.${key}`, api.now() + DAY, context);
+					if (state === undefined) return { sleep: { signals: [Approval.key(key)], until } };
+					if ("expired" in state) return { block: "No approval within a day" };
+					return state.value.allow ? undefined : { block: "Not approved" };
+				},
+			}),
+		],
+	});
+
+	// ─── Section 7.3: tools that park ────────────────────────────────────────────
+
+	type ResearchCheckpoint = { done: TaskId[] };
+	const ResearchParameters = obj({ x: str(), y: str() });
+
+	const research = defineTool<typeof ResearchParameters, JsonValue, ResearchCheckpoint>({
+		name: "research_both",
+		description: "Research two topics in parallel",
+		parameters: ResearchParameters,
+		replay: "safe",
+		async execute({ x, y }, api, context) {
+			const a = await api.executeTool("research", { topic: x }, context, { key: "a", wait: false });
+			const b = await api.executeTool("research", { topic: y }, context, { key: "b", wait: false });
+			const done = new Set(api.checkpoint?.done ?? []);
+			if (api.wake?.reason === "tasks") for (const id of api.wake.ended) done.add(id);
+			const open = [a, b].filter((call) => !done.has(call.taskId));
+			if (open.length > 0)
+				return {
+					wait: { checkpoint: { done: [...done] }, on: open.map((call) => call.taskId), policy: "any" },
+				};
+			const [ra, rb] = await Promise.all([a.result(context), b.result(context)]);
+			return { output: [{ type: "text", text: `${String(ra.structuredOutput)}\n${String(rb.structuredOutput)}` }] };
+		},
+	});
+
+	const HOUR = 60 * 60 * 1000;
+	const CiResult = defineSignal({
+		name: "app.ci-result",
+		version: 1,
+		schema: obj({ status: oneOf(["passed", "failed"]), logUrl: str() }),
+	});
+	const CiParameters = obj({ ref: str() });
+
+	const runCi = defineTool<typeof CiParameters, JsonValue, { buildId: string }>({
+		name: "run_ci",
+		description: "Run CI on a git ref and report the result",
+		parameters: CiParameters,
+		replay: "safe",
+		async execute({ ref }, api, context) {
+			// The result, the deadline's expiry, or nothing yet (a fresh call).
+			const state = await api.readSignal(CiResult, "done", context);
+			if (state !== undefined && "value" in state) {
+				const { status, logUrl } = state.value;
+				return { output: [{ type: "text", text: `CI ${status}: ${logUrl}` }], isError: status !== "passed" };
+			}
+			if (state !== undefined) {
+				return {
+					output: [{ type: "text", text: `CI build ${api.checkpoint?.buildId} never reported` }],
+					isError: true,
+				};
+			}
+			// The tool's own idempotency key with CI, stable across reruns (memos are first-writer-wins).
+			const runId = await api.memo("ci.run", crypto.randomUUID(), context);
+			// Registered before triggering, so a fast webhook already finds this task.
+			await webhooks.expect(runId, api.taskId, CiResult, "done", context);
+			const build = await ci.trigger({ ref, correlationId: runId, idempotencyKey: runId }, context);
+			return {
+				sleep: { checkpoint: { buildId: build.id }, signals: [CiResult.key("done")], until: api.now() + 2 * HOUR },
+			};
+		},
+		async cancel(_args, api, context) {
+			if (api.checkpoint !== undefined) await ci.cancel(api.checkpoint.buildId, context);
+			else await ci.cancelByKey((await api.memo<string>("ci.run", context))!, context);
+		},
+	});
+
+	const ParkingSubagent = defineExtension({
+		name: "parking-subagent",
+		tools: [
+			defineTool({
+				name: "subagent",
+				description: "Delegate a task to a subagent and get its answer back",
+				parameters: obj({ task: str() }),
+				replay: "safe",
+				async execute({ task }, api, context) {
+					const state = await api.readSignal(SubmissionSettled, "answered", context);
+					if (state !== undefined && "value" in state) {
+						const settled = state.value;
+						if (settled.status !== "done" || settled.type !== "input") {
+							return { output: [{ type: "text", text: `Subagent ended: ${settled.status}` }], isError: true };
+						}
+						return { output: [{ type: "text", text: await answerText(api, settled.answer, context) }] };
+					}
+					const child = await api.commit(async (tx) => {
+						const existing = (await tx.scanConversations({ ownerTaskId: api.taskId }, 1)).items[0];
+						if (existing !== undefined) return existing.id;
+						const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
+						await configure(tx, created.id, { extensions: { remove: [ParkingSubagent] } });
+						return created.id;
+					}, context);
+					const handle = (await api.conversation(child, context))!;
+					// The request ID makes a rerun find the same submission.
+					await handle.submit(
+						{
+							type: "input",
+							content: task,
+							requestId: `subagent:${api.taskId}`,
+							notify: { taskId: api.taskId, key: "answered" },
+						},
+						context,
+					);
+					return { sleep: { signals: [SubmissionSettled.key("answered")] } };
+				},
+			}),
+		],
+	});
+
 	// ─── Section 7.3: subagents ──────────────────────────────────────────────────
 
 	const Subagent = defineExtension({
@@ -234,6 +439,38 @@ function examples() {
 			await payments.cancel(task.state.checkpoint);
 			await runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted", reason: "user" } }), context);
 		},
+	});
+
+	// ─── Section 5.7: a task that asks a person ──────────────────────────────────
+
+	const Answer = defineSignal({ name: "app.answer", version: 1, schema: obj({ text: str() }) });
+
+	const AskPerson = defineTask<{ question: string }, { phase: "ask" } | { phase: "answered" }, { text?: string }>({
+		name: "app.ask-person",
+		version: 1,
+		initial: () => ({ phase: "ask" }),
+		phases: {
+			ask: (_task, runtime, context) =>
+				runtime.commit(
+					() => ({
+						status: "sleeping",
+						signals: [Answer.key("answer")],
+						until: runtime.now() + 4 * HOUR,
+						checkpoint: { phase: "answered" },
+					}),
+					context,
+				),
+			answered: async (_task, runtime, context) => {
+				const state = await runtime.readSignal(Answer, "answer", context); // { value } when answered, { expired } after the deadline
+				const text = state !== undefined && "value" in state ? state.value.text : undefined;
+				return runtime.commit(
+					() => ({ status: "terminal", outcome: { status: "completed", result: { text } } }),
+					context,
+				);
+			},
+		},
+		abort: (_task, runtime, context) =>
+			runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), context),
 	});
 
 	const Follow = defineTask<object, { phase: "follow" }, null>({
@@ -397,7 +634,7 @@ function examples() {
 			escaped!.generation = undefined; // throws: the draft was revoked
 		},
 	};
-	return { sequences, Payment };
+	return { sequences, Payment, TestsAfterEdits, Approvals, research, runCi, ParkingSubagent, AskPerson };
 }
 
 it("compiles the spec's usage examples", () => {
