@@ -105,8 +105,19 @@ export type Annotation = Static<typeof AnnotationSchema>;
 export const ArrangementSchema = obj({ layout: unsafe<JsonValue>(unknown()), stamp: num() });
 export type Arrangement = Static<typeof ArrangementSchema>;
 
-/** The session's views and annotations: the worker's `p2.views` document. */
-export type ViewsState = { views: View[]; annotations: Annotation[]; arrangement?: Arrangement };
+/**
+ * The session's views and annotations: the worker's `p2.views` document. `opened`: each custom view's opening ID
+ * (docs/rooms.md), new each time it is added; a view from before has none (its opening is `LEGACY_OPENING`).
+ */
+export type ViewsState = {
+	views: View[];
+	annotations: Annotation[];
+	arrangement?: Arrangement;
+	opened?: Record<string, string>;
+};
+
+/** The opening of a view added before openings existed. */
+export const LEGACY_OPENING = "0";
 
 /** What a person opens from the Views sheet: a Markdown file, the changes, or a view of the owner's library. */
 export const OpenSchema = union([

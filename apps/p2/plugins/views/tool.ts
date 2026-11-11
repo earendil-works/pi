@@ -16,13 +16,13 @@ import {
 	ViewKindSchema,
 } from "./contract.ts";
 import {
-	checkedState,
 	describeAnnotation,
 	freeViewId,
 	openView,
 	readViewState,
 	readViews,
 	removeView,
+	setViewState,
 	ViewStateDoc,
 	ViewsDoc,
 	viewName,
@@ -64,6 +64,13 @@ const PAGE_API = [
 	"- p2view.readOnly: true for viewers who cannot change the session; their changes are not saved.",
 	"- p2view.onDescribeRegion(fn): fn({x, y, width, height}) returns text naming what lies there (CSS pixels of the page), for drawings the person makes over it; without it, the labels and texts of the elements there (aria-label or data-label attributes help).",
 	"Keep the document's own data in the state, not only in the page: the state is what you read and change, and what a saved view keeps. Script errors the page logs show when you read the view.",
+	"",
+	"Rooms: every browser showing the view (each frame, people the session is shared with included) can share a room on the server. The first call opens the frame's own connection; pages that only render and save state need none.",
+	"- const room = p2view.room('live'): presence and messages. room.me, room.peers ([{id, name, role, mode}]; mode read: watches only), room.leader / room.isLeader (the oldest frame that may write), room.onPeers(fn(peers, leader)).",
+	"  room.send(data) delivers to every frame in one order (own messages too) through room.onMessage(fn({seq, from, key, data})). room.send(data, {key: 'cursor'}): a newer message with that key replaces an older one not yet delivered, and joiners get each frame's latest per key; use keys for replaceable state (positions, cursors, drags), never for events or edits. room.now(): the server's clock, for a shared clock (games).",
+	"- p2view.room('log'): messages since a snapshot, for turn-based games or a shared canvas. room.onReset(fn(state, seq)) gives the state to start from (the view's state at first), then onMessage the moves after it. The leader saves now and then: if (room.isLeader) room.snapshot(state) (the state after every message applied so far; it becomes the view's state). Your update of the state resets the room to it.",
+	"- const text = p2view.room('text'): one shared text the server merges (concurrent typing is safe). text.bind(textareaOrInput), or text.value / text.set(next) / text.onChange(fn(value, from)); text.onCursors(fn([{peer, name, anchor, head}])) for others' carets. The text is the view state's text field; your update of text is merged as an edit.",
+	"Methods for you: p2view.methods.offer({ zoom: { description: 'Zoom to a region', args: {type: 'object', properties: {x: {type: 'number'}}, required: ['x']}, run: async (args) => ({ zoomed: args.x }) } }). From code mode: await tools.view_methods({ view }) lists them, await tools.view_call({ view, method: 'zoom', args: { x: 2 } }) runs one in the leader's frame and returns its result (fails at once when no browser shows the view; 'uncertain' when the frame left before answering). Offer idempotent: true for methods safe to run twice.",
 ].join("\n");
 
 /** The `view` tool. */
@@ -324,8 +331,10 @@ async function update(args: Args, api: ToolExecutionApi, backend: ViewsBackend, 
 		}
 		if (args.state !== undefined || merge !== undefined) {
 			const doc = await tx.doc(ViewStateDoc, id, null);
-			doc.value = checkedState(
+			setViewState(
+				doc,
 				merge === undefined ? (args.state ?? null) : { ...(isObject(doc.value) ? doc.value : {}), ...merge },
+				"other",
 			);
 		}
 	}, context);

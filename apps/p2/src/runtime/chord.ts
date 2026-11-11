@@ -17,6 +17,7 @@ import {
 	defineRegistry,
 	defineState,
 	type FacetSelf,
+	forbidden,
 	type Held,
 	type HostError,
 	hostKind,
@@ -56,9 +57,43 @@ export type { RefIn };
 export const createHost = (options: HostOptions): Host =>
 	chordCreateHost<P2Principal, Revocation>({ principalKey, revokedBy, ...options });
 
-/** A facet of p2's hosts: factories, methods and routines see a `P2Principal`. */
+/** Remote types a view principal may hold (`forViews`); every other remote type refuses it (docs/rooms.md). */
+const viewTypes = new WeakSet<Contract>();
+
+/** Declares that view principals (a custom view's frame) may hold objects of `Type`; its factory decides the rest. */
+export function forViews<C extends Contract>(Type: C): C {
+	viewTypes.add(Type);
+	return Type;
+}
+
+/**
+ * A facet of p2's hosts: factories, methods and routines see a `P2Principal`. A remote type's factory never runs for a
+ * view principal unless the type is `forViews`: frames reach nothing by default, whatever a factory would allow.
+ */
 export const defineFacet = (setup: (host: FacetHost, self: FacetSelf) => void): Facet =>
-	chordDefineFacet<P2Principal>(setup);
+	chordDefineFacet<P2Principal>((host, self) =>
+		setup(
+			{
+				// `serve`'s two overloads (types, registries) cannot be forwarded generically: the casts pass the arguments
+				// through unchanged, wrapping only a remote type's factory.
+				serve: ((Type: Contract | Registry<unknown, unknown>, implementation: unknown, options?: unknown) => {
+					if (Type.kind !== "remote" || viewTypes.has(Type))
+						return (host.serve as (...args: unknown[]) => void)(Type, implementation, options);
+					const factory = implementation as (params: unknown, principal: P2Principal, self: unknown) => unknown;
+					return (host.serve as (...args: unknown[]) => void)(
+						Type,
+						(params: unknown, principal: P2Principal, self: unknown) => {
+							if (principal.kind === "view") throw forbidden("views reach only their room");
+							return factory(params, principal, self);
+						},
+						options,
+					);
+				}) as FacetHost["serve"],
+				references: (Type) => host.references(Type),
+			},
+			self,
+		),
+	);
 
 /** The server: one host. */
 export const Server = hostKind("server");
@@ -159,6 +194,19 @@ export function defineTypedState<T extends object>(
 ): StateDefinition<T & JsonObject, false, false> {
 	// Typed as Chord's defineState is, but for any object type `T` (see above).
 	return defineState(name, options as never) as unknown as StateDefinition<T & JsonObject, false, false>;
+}
+
+/** `defineTypedState` for many documents per object by string key (in memory). */
+export function defineTypedKeyedState<T extends object>(
+	name: string,
+	options: { readonly schema: Schema<T>; readonly version: number; readonly initial: () => NoInfer<T> },
+): StateDefinition<T & JsonObject, true, false> {
+	// Typed as Chord's defineState is, but for any object type `T` (see `deriveTyped`).
+	return defineState(name, { ...options, keyed: true } as never) as unknown as StateDefinition<
+		T & JsonObject,
+		true,
+		false
+	>;
 }
 
 const NEVER_ABORTED = new AbortController().signal;

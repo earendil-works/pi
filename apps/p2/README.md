@@ -221,7 +221,8 @@ or `>`; default "Owner") is the name your messages carry from then on; messages 
 `detail` (1 to 4, default 2) is how much of a turn the web chat shows: 1 only the answer, with the thinking, the
 agent's texts and its tool calls on one wheel per turn; 2 the texts too, thinking and calls on wheels between them;
 3 thinking too (collapsed), only runs of tool calls on wheels; 4 thinking in full and each tool call as its own row,
-no wheels.
+no wheels. `viewRoomsMemory` (MiB, default 64) bounds what custom views' rooms keep in memory together
+(`docs/rooms.md`); past it they refuse new messages until peers catch up.
 
 ### Projects
 
