@@ -11,6 +11,7 @@ import { nodeCompression } from "@earendil-works/chord/compression";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { RolloutResult } from "@earendil-works/chord/plugins";
 import { WebSocketServer } from "ws";
+import { backupConfigured } from "../runtime/backup.ts";
 import { type Ctx, createHost, type Host, type HostError, hostErrorText, Server } from "../runtime/chord.ts";
 import { envDefaultModel } from "../runtime/default-model.ts";
 import { type DevCommand, type DevResult, parseDevCommand } from "../runtime/dev-protocol.ts";
@@ -136,13 +137,13 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		throw new Error(`Another p2 server uses ${dataDir}`, { cause: error });
 	});
 	const allowedHosts = options.allowedHosts ?? parseAllowedHosts(process.env.P2_ALLOWED_HOSTS);
-	// The server's Chord store (`<data>/server/store.sqlite`): persisted documents and job runs of its host-lifetime
-	// objects (session lifecycle operations, search rebuilds) and its `Files` index. Its outbox stays off: local-only
-	// data never goes to a sync. p2's older SQLite files stay their owners' natives.
+	// The server's Chord store (`<data>/server/store.sqlite`): persisted documents, tables and job runs of its
+	// host-lifetime objects (the catalog, shares, subagents, session lifecycle operations) and its `Files` index. It keeps
+	// an outbox while backup is configured (`src/runtime/backup.ts`), which `plugins/backup` uploads.
 	let store: Awaited<ReturnType<typeof openHostStore>>;
 	try {
 		assertMigrated(dataDir);
-		store = await openHostStore(serverDirectory(dataDir), { outbox: false }, BACKGROUND_CONTEXT);
+		store = await openHostStore(serverDirectory(dataDir), { outbox: backupConfigured() }, BACKGROUND_CONTEXT);
 	} catch (error) {
 		await unlock();
 		throw error;
@@ -342,6 +343,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 							resourceOptions: options.resources ?? {},
 							workers,
 							root: (fn, context) => host.root(fn, context),
+							store,
 						}),
 					},
 					{ name: "@p2/tui-preferences", facet: tuiPreferencesFacet(dataDir) },

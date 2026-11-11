@@ -102,6 +102,9 @@ export interface SessionSyncStore {
 	getMeta(sessionId: string, context: Context): Promise<JsonObject | undefined>;
 }
 
+/** What an upload needs of a remote: creating slots (`uploadSession`). */
+export type SessionSyncUploader = Pick<SessionSyncStore, "putBatch">;
+
 /** The remote's own side: folding history into snapshots, which clients never do. */
 export interface SessionSyncMaintenance extends SessionSyncStore {
 	putSnapshot(sessionId: string, to: Seq, body: SyncBody, context: Context): Promise<void>;

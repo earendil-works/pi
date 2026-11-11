@@ -9,6 +9,7 @@ import {
 	type FollowObserver,
 	local,
 	method,
+	type Store,
 } from "@earendil-works/chord";
 import type { Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
@@ -130,6 +131,11 @@ export type ServerParts = {
 	 * cut off lifecycle steps); outside Chord calls pass the context at hand.
 	 */
 	readonly root: <T>(fn: (ctx: Ctx) => Promise<T>, context: Context) => Promise<T>;
+	/**
+	 * The server's Chord store (one writer: this process), for its backup (`plugins/backup`). Never close it. Absent in
+	 * test hosts without a store.
+	 */
+	readonly store?: Store;
 };
 export const ServerNatives = defineRegistry<ServerParts, ServerParts | undefined>("p2.server-natives", { version: 1 });
 

@@ -39,7 +39,8 @@ export function hostFiles(dir: string): string {
  */
 export async function openHostStore(
 	dir: string,
-	options: { readonly outbox: boolean },
+	/** `outbox` turns the outbox on or off; omitted, the stored setting stays (never pass false to keep it off). */
+	options: { readonly outbox?: boolean },
 	context: Context,
 ): Promise<Store> {
 	await privateDirectory(dir);
