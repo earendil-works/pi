@@ -469,6 +469,10 @@ npm start
   Host/Origin, public `X-Forwarded-*` and rewritten localhost redirects, without the relay secret. Pi's own
   port cannot be forwarded. Links appear after the owner opens Pi through Radius and survive restart;
   on-device Open uses localhost. Radius sees forwarded traffic; this is not a sandbox.
+- **Shell page and share links**: the brain keeps its page in the Radius shell, `<shell>/pi/<organization ID>/<brain>`,
+  from the relayed requests' shell origin (`radius.json` `shellPage`; one saved in the older `/pi/brains/…` form is
+  read in the current one). People a session is shared with by email get `<shell page>/s/<session>`. The shell names
+  the organization by its slug once it opens; a kept link names it by ID, which a slug change leaves valid.
 - The worker's root-only `ports` tool has `list/open/close`, fixes owner/peer attribution at its calling assistant
   entry, and denies guest/unattributed turns. It lists every forward and explicitly names all public endpoints,
   asks the model to obtain confirmation before publishing. As in Pi Mobile (67cdb4ca4) it may change or close any
