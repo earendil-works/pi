@@ -1989,7 +1989,7 @@ import { createProvider, openAICompletionsApi } from "@earendil-works/pi-ai/comp
 const provider = createProvider({
   id: "local-server",
   name: "Local Server",
-  baseUrl: "http://localhost:8080/v1",
+  baseUrl: "http://localhost:9931/v1",
   auth: {
     apiKey: {
       name: "Local server setup",
@@ -2033,11 +2033,11 @@ pi.registerProvider("my-proxy", {
 
 // Register a live llama.cpp catalog without persisting discovered models
 pi.registerProvider("llama.cpp", {
-  baseUrl: "http://localhost:8080/v1",
+  baseUrl: "http://localhost:9931/v1",
   apiKey: "local",
   api: "openai-completions",
   async refreshModels({ signal }) {
-    const response = await fetch("http://localhost:8080/v1/models", { signal });
+    const response = await fetch("http://localhost:9931/v1/models", { signal });
     const { data } = (await response.json()) as { data: Array<{ id: string }> };
     return data.map(({ id }) => ({
       id,
