@@ -169,9 +169,9 @@
 		"@earendil-works/pi-telemetry": "1.5.2"
 	},
 	"peerDependencies": {
-		"esbuild": "0.28.2",
-		"react": "19.3.0",
-		"ws": "8.21.0"
+		"esbuild": "^0.28.2",
+		"react": "^19.3.0",
+		"ws": "^8.21.0"
 	},
 	"peerDependenciesMeta": {
 		"esbuild": {
