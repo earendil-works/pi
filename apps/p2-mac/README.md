@@ -15,6 +15,14 @@ cd apps/p2-mac
 open build/Pi.app
 ```
 
+Or use the Makefile, which builds and runs the app in the foreground against this repository's `apps/p2`:
+
+```sh
+make run          # its own server, local only: port 8798, data in ~/.pi/p2-mac/local (FAKE=1: faux provider)
+make run-radius   # its own server connected to Radius: port 8799, data in ~/.pi/p2-mac/radius (signs in on first use)
+make attach       # the p2 already running on 127.0.0.1:8788 with ~/.pi/p2
+```
+
 On first launch, choose a checkout in the menu bar item (**Choose p2 Checkout…**). It can be a pi-mono root or its `apps/p2`, with dependencies installed. The app then runs `node --import ./src/source.ts src/hosts/server.ts` there.
 
 If a p2 already answers on the port, the app adopts it instead: it opens that server and can restart it when it runs in dev mode.
