@@ -24,13 +24,37 @@ interface CompactReadClassification {
 	label: string;
 }
 const COMPACT_RESOURCE_FILE_NAMES = new Set(["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]);
-type ReadRenderArgs = { path?: string; file_path?: string; offset?: unknown; limit?: unknown };
+type ReadRenderArgs = {
+	path?: string;
+	file_path?: string;
+	offset?: unknown;
+	limit?: unknown;
+	byteOffset?: unknown;
+	pages?: string;
+	format?: string;
+	strategy?: string;
+	table?: string;
+	query?: string;
+	rowOffset?: number;
+	rowLimit?: number;
+};
 function styledReadLineRange(args: ReadRenderArgs | undefined, theme: Theme): string {
+	if (args?.byteOffset !== undefined) return theme.fg("warning", ` (byte ${String(args.byteOffset)})`);
+	if (args?.pages || args?.format === "images")
+		return theme.fg("warning", ` (pages ${args.pages || "1"}, ${args.format || "text"})`);
+	if (args?.table || args?.query)
+		return theme.fg(
+			"warning",
+			` (${args.table ? `table ${args.table}` : "SQL query"}, rows ${args.rowOffset ?? 0}+${args.rowLimit ?? 100})`,
+		);
+	if (args?.strategy === "browser") return theme.fg("warning", " (browser)");
 	const range = formatReadLineRange(args?.offset, args?.limit);
 	return range ? theme.fg("warning", range) : "";
 }
 function formatReadCall(args: ReadRenderArgs | undefined, theme: Theme, cwd: string): string {
-	const pathDisplay = renderToolPath(str(args?.file_path ?? args?.path), theme, cwd);
+	const path = str(args?.file_path ?? args?.path);
+	const pathDisplay =
+		path && /^(?:artifact|https?):\/\//i.test(path) ? theme.fg("accent", path) : renderToolPath(path, theme, cwd);
 	return `${theme.fg("toolTitle", theme.bold("read"))} ${pathDisplay}${styledReadLineRange(args, theme)}`;
 }
 function trimTrailingEmptyLines(lines: string[]): string[] {
@@ -66,7 +90,8 @@ function getCompactReadClassification(
 	cwd: string,
 ): CompactReadClassification | undefined {
 	const rawPath = str(args?.file_path ?? args?.path);
-	if (!rawPath) return undefined;
+	if (!rawPath || /^(?:artifact|https?):\/\//i.test(rawPath) || args?.pages || args?.table || args?.query)
+		return undefined;
 
 	const absolutePath = resolveToCwd(rawPath, cwd);
 	const fileName = basename(absolutePath);
@@ -121,7 +146,7 @@ function formatReadResult(
 
 	const rawPath = str(args?.file_path ?? args?.path);
 	const output = getTextOutput(result, showImages);
-	const lang = !isError && rawPath ? getLanguageFromPath(rawPath) : undefined;
+	const lang = !isError && !result.details?.source && rawPath ? getLanguageFromPath(rawPath) : undefined;
 	const renderedLines = lang ? highlightCode(replaceTabs(output), lang) : output.split("\n");
 	const lines = trimTrailingEmptyLines(renderedLines);
 	const maxLines = options.expanded ? lines.length : 10;

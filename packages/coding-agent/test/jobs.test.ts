@@ -71,6 +71,43 @@ describe("persistent jobs", () => {
 		expect(manager.logs(next.id).text).toBe("replacement\n");
 	});
 
+	it("claims a generated name once and preserves a concurrent manual rename from another manager", async () => {
+		const manager = catalog();
+		const other = new JobManager(manager.directory);
+		const job = await manager.start("console.log('named job')", manager.directory, { shell });
+		const claims = await Promise.all([manager.claimName(job.id), other.claimName(job.id)]);
+		expect(claims.filter((claim) => claim !== undefined)).toHaveLength(1);
+		await other.rename(job.id, "User-selected name");
+		await manager.finishName(job.id, { status: "generated", name: "Discarded automatic name" });
+		expect(await manager.inspect(job.id)).toMatchObject({
+			name: "User-selected name",
+			naming: { status: "explicit" },
+		});
+		expect(await other.claimName(job.id)).toBeUndefined();
+	});
+
+	it("renames completed jobs without changing their logs and generates a fresh name for a restarted command", async () => {
+		const manager = catalog();
+		const job = await manager.start("console.log('original output')", manager.directory, { shell });
+		await expect.poll(async () => (await manager.inspect(job.id)).runtime.state).toBe("completed");
+		await manager.claimName(job.id);
+		await manager.finishName(job.id, { status: "generated", name: "Inspect original output" });
+		expect((await manager.inspect(job.id)).name).toBe("Inspect original output");
+		expect(manager.logs(job.id).text).toBe("original output\n");
+		const next = await manager.restart(job.id, "console.log('new output')");
+		expect(next.name).not.toBe("Inspect original output");
+		expect(next.naming).toEqual({ status: "pending" });
+		expect(next.id).not.toBe(job.id);
+	});
+
+	it("preserves explicit submission names without starting generation", async () => {
+		const manager = catalog();
+		const job = await manager.start("console.log('explicit')", manager.directory, { shell, name: "Release build" });
+		expect(await manager.claimName(job.id)).toBeUndefined();
+		const next = await manager.restart(job.id, "console.log('restarted explicit')");
+		expect(next).toMatchObject({ name: "Release build", naming: { status: "explicit" } });
+	});
+
 	it("enforces a job timeout independently of the starter", async () => {
 		const manager = catalog();
 		const job = await manager.start("setInterval(() => {}, 1000)", manager.directory, { shell, timeout: 0.05 });

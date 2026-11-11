@@ -26,6 +26,7 @@ import {
 } from "@earendil-works/pi-codemode";
 import { getCodemodeWorkerSpecifier, getQuickJSWasmPath } from "../../config.ts";
 import type { ExtensionToolContext, ToolNamespace } from "../../core/extensions/types.ts";
+import { getOutputArtifacts, type OutputArtifacts } from "../../core/output-artifacts.ts";
 import type { SessionEntry } from "../../core/session-manager.ts";
 import { formatSize, sliceHead, sliceTail } from "../../core/tools/truncate.ts";
 import { combineUsage } from "../../core/usage-totals.ts";
@@ -390,8 +391,12 @@ function formatError(result: Extract<CodemodeResult, { ok: false }>, calls: read
 }
 
 /** Write the full text output to a temp file, like bash does for truncated output. */
-async function spillOutput(text: string): Promise<{ path: string } | { error: string }> {
+async function spillOutput(
+	text: string,
+	store: OutputArtifacts | undefined,
+): Promise<{ path: string; uri?: string } | { error: string }> {
 	try {
+		if (store) return await store.save([{ type: "text", text }]);
 		return { path: await writeOutputFile("pi-codemode", ".txt", text) };
 	} catch (error) {
 		return { error: error instanceof Error ? error.message : String(error) };
@@ -449,6 +454,7 @@ async function saveImages(items: (TextContent | ImageContent)[]): Promise<(TextC
 async function truncateOutput(
 	items: (TextContent | ImageContent)[],
 	maxTokens: number,
+	store: OutputArtifacts | undefined,
 ): Promise<{ items: (TextContent | ImageContent)[]; fullOutputPath?: string }> {
 	const texts = items.filter((item): item is TextContent => item.type === "text").map((item) => item.text);
 	const combined = texts.join("\n");
@@ -460,11 +466,14 @@ async function truncateOutput(
 	const head = sliceHead(combined, headChars);
 	const tail = sliceTail(combined, tailChars);
 	let text = `Warning: truncated output (original token count: ${Math.ceil(combined.length / CHARS_PER_TOKEN)})\nTotal output lines: ${combined.split("\n").length}\n\n${head}…${Math.ceil(removed / CHARS_PER_TOKEN)} tokens truncated…${tail}`;
-	const spilled = await spillOutput(combined);
-	text +=
-		"path" in spilled
-			? `\n\n[Full output: ${spilled.path} (read with offset/limit)]`
-			: `\n\n[Could not save the full output: ${spilled.error}]`;
+	const spilled = await spillOutput(combined, store);
+	text =
+		"path" in spilled && spilled.uri
+			? `[Full captured output: ${spilled.uri}. Use read with offset/limit or byteOffset.]\n\n${text}`
+			: text +
+				("path" in spilled
+					? `\n\n[Full output: ${spilled.path} (read with offset/limit)]`
+					: `\n\n[Could not save the full output: ${spilled.error}]`);
 	return {
 		items: [{ type: "text", text }, ...items.filter((item) => item.type === "image")],
 		...("path" in spilled ? { fullOutputPath: spilled.path } : {}),
@@ -632,10 +641,15 @@ export async function executeCodemode(
 		});
 	}
 
-	const truncated = await truncateOutput(
-		joinAdjacentText(items),
-		sourceOptions.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
-	);
+	const artifacts = ctx && getOutputArtifacts(ctx.sessionManager);
+	const truncated =
+		artifacts && sourceOptions.maxOutputTokens === undefined
+			? { items: joinAdjacentText(items), fullOutputPath: undefined }
+			: await truncateOutput(
+					joinAdjacentText(items),
+					sourceOptions.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+					artifacts,
+				);
 	// After truncation, which joins the text items and moves images after them, so each path stays
 	// next to its image and is never cut.
 	const output = joinAdjacentText(await saveImages(truncated.items));

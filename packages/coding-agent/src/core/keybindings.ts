@@ -86,6 +86,14 @@ const APP_KEYBINDINGS = {
 	"app.jobs.rename": { defaultKeys: "ctrl+n", description: "Rename the selected background job" },
 	"app.jobs.editCommand": { defaultKeys: "ctrl+e", description: "Edit the command and restart the selected job" },
 	"app.jobs.delete": { defaultKeys: "ctrl+d", description: "Delete the selected finished job and its logs" },
+	"app.agents.start": { defaultKeys: "ctrl+n", description: "Start a configured sub-agent" },
+	"app.agents.message": { defaultKeys: "ctrl+e", description: "Send a message to the selected sub-agent" },
+	"app.agents.resume": { defaultKeys: "ctrl+r", description: "Resume the selected sub-agent" },
+	"app.agents.stop": { defaultKeys: "ctrl+s", description: "Stop the selected sub-agent" },
+	"app.agents.delete": {
+		defaultKeys: "ctrl+d",
+		description: "Delete the selected finished sub-agent and its history",
+	},
 	"app.tree.foldOrUp": {
 		defaultKeys: process.platform === "darwin" ? ["alt+left", "ctrl+left"] : ["ctrl+left", "alt+left"],
 		description: "Fold tree branch or move up",

@@ -416,38 +416,6 @@ describe("MCP tools", () => {
 		]);
 		expect(saved).toEqual([[Buffer.from("%PDF"), ".pdf"]]);
 	});
-
-	it("cuts the middle of model-facing text over 20KB and keeps the full result for scripts", async () => {
-		const saved: (string | Uint8Array)[] = [];
-		const saveOutput = async (data: string | Uint8Array) => {
-			saved.push(data);
-			return "/tmp/full.txt";
-		};
-		const lines = Array.from({ length: 3000 }, (_, index) => `line ${index + 1}`);
-		const full = lines.join("\n");
-		const image = { type: "image" as const, data: "AAAA", mimeType: "image/png" };
-		const result = { content: [{ type: "text" as const, text: full }, image] };
-		const converted = await convertMcpResult("docs", "snapshot", result, { saveOutput });
-		expect(converted.content).toHaveLength(2);
-		const text = (converted.content[0] as { text: string }).text;
-		// Codex's format: a header, the start and end of the text, then the file with the full text.
-		expect(text).toMatch(
-			new RegExp(
-				`^Warning: truncated output \\(original token count: ${Math.ceil(full.length / 4)}\\)\nTotal output lines: 3000\n\nline 1\nline 2\n`,
-			),
-		);
-		expect(text).toMatch(/…\d+ chars truncated…/);
-		expect(text.endsWith("line 3000\n\n[Full output: /tmp/full.txt (read it with offset/limit)]")).toBe(true);
-		expect(Buffer.byteLength(text)).toBeLessThan(21 * 1024);
-		expect(converted.content[1]).toEqual(image);
-		expect(converted.details).toEqual({ server: "docs", tool: "snapshot", fullOutputPath: "/tmp/full.txt" });
-		expect(saved).toEqual([full]);
-		expect(converted.structuredContent).toEqual(result);
-
-		// Text within the limit is not saved.
-		await convertMcpResult("docs", "small", { content: [{ type: "text", text: "ok" }] }, { saveOutput });
-		expect(saved).toHaveLength(1);
-	});
 });
 
 describe("MCP connections", () => {

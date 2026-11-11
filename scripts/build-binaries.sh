@@ -151,6 +151,9 @@ for platform in "${PLATFORMS[@]}"; do
     cp -r dist/core/export-html "$OUTPUT_DIR/$platform/"
     cp -r docs "$OUTPUT_DIR/$platform/"
     cp -r examples "$OUTPUT_DIR/$platform/"
+    cp -r dist/readers "$OUTPUT_DIR/$platform/"
+    mkdir -p "$OUTPUT_DIR/$platform/node_modules"
+    cp -r ../../node_modules/playwright-core "$OUTPUT_DIR/$platform/node_modules/"
 
     # Copy the selected architecture's native platform helpers next to the executable.
     native_platform="${platform/windows-/win32-}"

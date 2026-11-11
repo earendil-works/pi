@@ -27,6 +27,27 @@ Use `/name` or `--name` to assign a recognizable session name. Run `/session` to
 
 The session picker lets you search, rename, and delete sessions. It can also show paths, change sorting, and limit results to named sessions. See [Keybindings](keybindings.md#sessions) for its shortcuts.
 
+## Automatic names
+
+The CLI gives unnamed chats a short generated title in the background after the first completed answer. It attempts this once per session, not on every turn. `/name`, `--name`, session-picker renames, and explicit name clears take precedence, including while a naming request is in flight. Session IDs and conversation messages do not change.
+
+Unnamed background jobs use the same naming policy when submitted or restarted. An explicit `bash.name` or manual job rename is preserved; restarting an automatically named job requests a fresh name for its new command. Job IDs stay stable during renaming, and open job views—including minimized Rex pane labels—update when the name arrives. Sub-agent task labels follow the same policy using the child's selected model and role instructions.
+
+Naming requests receive the effective, already-loaded system instructions, including Markdown context files such as `AGENTS.md`. Add ordinary naming guidance there; no separate naming file is needed:
+
+```markdown
+## Naming
+Use short imperative names for chats, jobs, and delegated tasks.
+Prefer 3–5 words, sentence case, and concrete technical terms.
+Avoid emoji, generic labels, and copied command lines.
+```
+
+Each generated name uses one additional model request, with no tools or retries, a 30-second deadline, and an 80-character display limit. Chats and jobs use the active model; sub-agents use their selected child model. Delivered usage contributes to the owning session's totals; child-label usage stays in child history. Naming prompts and raw replies never become conversation messages. Failures keep the existing fallback display rather than interrupting the work.
+
+Interactive shutdown, reload, and session replacement cancel pending naming. Print/JSON modes deliver the answer first, then finish bounded naming work before exit. Temporary `/btw` conversations remain unsaved and retain their temporary-view header.
+
+SDK hosts opt in with `createAutoNameExtension()` and `createJobsExtension()` through their resource loader, and drain the `session_shutdown` lifecycle before disposal. `AgentSessionRuntime` handles that lifecycle.
+
 ## Choose how to branch
 
 Pi stores entries as a tree, so returning to an earlier point does not erase the branch you leave.

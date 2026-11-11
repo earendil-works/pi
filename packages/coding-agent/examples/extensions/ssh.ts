@@ -18,11 +18,11 @@ import { spawn } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	type BashOperations,
-	createBashTool,
+	createBashToolDefinition,
 	createEditTool,
 	createFindToolDefinition,
 	createGrepToolDefinition,
-	createReadTool,
+	createReadToolDefinition,
 	createWriteTool,
 	type EditOperations,
 	type ReadOperations,
@@ -95,8 +95,29 @@ function createRemoteBashOps(remote: string, remoteCwd: string, localCwd: string
 							child.kill();
 						}, timeout * 1000)
 					: undefined;
-				child.stdout.on("data", onData);
-				child.stderr.on("data", onData);
+				const resumeOutput = () => {
+					child.stdout.resume();
+					child.stderr.resume();
+				};
+				const failOutput = (error: unknown) => {
+					child.kill();
+					resumeOutput();
+					reject(error);
+				};
+				const handleData = (data: Buffer) => {
+					try {
+						const pending = onData(data);
+						if (pending) {
+							child.stdout.pause();
+							child.stderr.pause();
+							void pending.then(resumeOutput, failOutput);
+						}
+					} catch (error) {
+						failOutput(error);
+					}
+				};
+				child.stdout.on("data", handleData);
+				child.stderr.on("data", handleData);
 				child.on("error", (e) => {
 					if (timer) clearTimeout(timer);
 					reject(e);
@@ -118,10 +139,10 @@ export default function (pi: ExtensionAPI) {
 	pi.registerFlag("ssh", { description: "SSH remote: user@host or user@host:/path", type: "string" });
 
 	const localCwd = process.cwd();
-	const localRead = createReadTool(localCwd);
+	const localRead = createReadToolDefinition(localCwd);
 	const localWrite = createWriteTool(localCwd);
 	const localEdit = createEditTool(localCwd);
-	const localBash = createBashTool(localCwd);
+	const localBash = createBashToolDefinition(localCwd);
 	const localGrep = createGrepToolDefinition(localCwd);
 	const localFind = createFindToolDefinition(localCwd);
 
@@ -156,15 +177,16 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerTool({
 		...localRead,
-		async execute(id, params, signal, onUpdate, _ctx) {
+		async execute(id, params, signal, onUpdate, ctx) {
+			if (params.path.startsWith("artifact://")) return localRead.execute(id, params, signal, onUpdate, ctx);
 			const ssh = getSsh();
 			if (ssh) {
-				const tool = createReadTool(localCwd, {
+				const tool = createReadToolDefinition(localCwd, {
 					operations: createRemoteReadOps(ssh.remote, ssh.remoteCwd, localCwd),
 				});
-				return tool.execute(id, params, signal, onUpdate);
+				return tool.execute(id, params, signal, onUpdate, ctx);
 			}
-			return localRead.execute(id, params, signal, onUpdate);
+			return localRead.execute(id, params, signal, onUpdate, ctx);
 		},
 	});
 
@@ -198,15 +220,15 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerTool({
 		...localBash,
-		async execute(id, params, signal, onUpdate, _ctx) {
+		async execute(id, params, signal, onUpdate, ctx) {
 			const ssh = getSsh();
 			if (ssh) {
-				const tool = createBashTool(localCwd, {
+				const tool = createBashToolDefinition(localCwd, {
 					operations: createRemoteBashOps(ssh.remote, ssh.remoteCwd, localCwd),
 				});
-				return tool.execute(id, params, signal, onUpdate);
+				return tool.execute(id, params, signal, onUpdate, ctx);
 			}
-			return localBash.execute(id, params, signal, onUpdate);
+			return localBash.execute(id, params, signal, onUpdate, ctx);
 		},
 	});
 

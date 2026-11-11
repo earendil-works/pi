@@ -1,7 +1,6 @@
 // Model-facing controls for persistent jobs; creation remains explicit async bash.
 import { Type } from "typebox";
 import type { ToolDefinition } from "../extensions/types.ts";
-import { truncateHead } from "../tools/truncate.ts";
 import { JobManager } from "./manager.ts";
 import { JobInfoSchema } from "./state.ts";
 
@@ -38,11 +37,7 @@ const outputSchema = Type.Object({
 });
 
 function display(value: unknown): string {
-	const result = truncateHead(JSON.stringify(value, null, 2));
-	return (
-		result.content +
-		(result.truncated ? "\n[Display truncated; inspect a single job or read its logPath for full output.]" : "")
-	);
+	return JSON.stringify(value, null, 2);
 }
 
 /** Create controls for listing, inspecting, logging, stopping, renaming, restarting and deleting jobs. */

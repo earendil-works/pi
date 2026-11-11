@@ -1,4 +1,5 @@
 import type { InlineExtension } from "../core/extensions/types.ts";
+import autoNameExtension from "./auto-name/index.ts";
 import btwExtension from "./btw/index.ts";
 import codemodeExtension from "./codemode/index.ts";
 import jobsExtension from "./jobs/index.ts";
@@ -6,9 +7,11 @@ import llamaExtension from "./llama/index.ts";
 import mcpExtension from "./mcp/index.ts";
 import recallExtension from "./recall/index.ts";
 import rexExtension from "./rex/index.ts";
+import subagentsExtension from "./subagents/index.ts";
 import toolSearchExtension from "./tool-search/index.ts";
 
 export const builtInExtensions: InlineExtension[] = [
+	{ name: "auto-name", factory: autoNameExtension, builtin: true },
 	{ name: "llama.cpp", factory: llamaExtension, builtin: true },
 	// Replaceable: an extension that registers `codemode`, `tool_search`, or `/mcp` (such as a third-party
 	// MCP extension) takes over instead of running alongside the built-in one.
@@ -19,4 +22,5 @@ export const builtInExtensions: InlineExtension[] = [
 	{ name: "rex", factory: rexExtension, replaceable: true, builtin: true },
 	{ name: "btw", factory: btwExtension, replaceable: true, builtin: true },
 	{ name: "recall", factory: recallExtension, replaceable: true, builtin: true },
+	{ name: "subagents", factory: subagentsExtension, replaceable: true, builtin: true },
 ];

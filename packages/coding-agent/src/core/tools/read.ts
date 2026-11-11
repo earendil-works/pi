@@ -1,44 +1,87 @@
 import type { Api, ImageContent, Model, ModelImageResizeOptions, TextContent } from "@earendil-works/pi-ai";
 import { constants } from "fs";
-import { access as fsAccess, open as fsOpen, readFile as fsReadFile } from "fs/promises";
+import { access as fsAccess, open as fsOpen, readFile as fsReadFile, stat as fsStat } from "fs/promises";
 import { type Static, Type } from "typebox";
 import { TextDecoder } from "util";
+import { raceWithAbortSignal } from "../../utils/abort.ts";
 import { processImage } from "../../utils/image-process.ts";
 import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import { getOutputArtifacts } from "../output-artifacts.ts";
+import { type ArtifactPage, readArtifact } from "../read-artifact.ts";
+import { runReader } from "../readers/process.ts";
+import { type ReaderRequest, type ReaderResult, type ReaderSource, readerArguments } from "../readers/protocol.ts";
 import { resolveReadPathAsync } from "./path-utils.ts";
 import { readRenderers } from "./renderers/read.ts";
 import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
 
+/** Sniff only regular files, closing the handle even if cancellation arrives while opening it. */
+async function detectLocalDocumentKind(path: string, signal?: AbortSignal): Promise<"pdf" | "sqlite" | undefined> {
+	const stats = await fsStat(path);
+	signal?.throwIfAborted();
+	if (!stats.isFile() || stats.size < 16) return undefined;
+	const handle = await fsOpen(path, "r");
+	try {
+		signal?.throwIfAborted();
+		const header = Buffer.allocUnsafe(16);
+		const { bytesRead } = await handle.read(header, 0, header.length, 0);
+		if (bytesRead >= 5 && header.subarray(0, 5).toString() === "%PDF-") return "pdf";
+		if (bytesRead === 16 && header.toString() === "SQLite format 3\0") return "sqlite";
+		return undefined;
+	} finally {
+		await handle.close();
+	}
+}
+
 const readSchema = Type.Object({
-	path: Type.String({ description: "Path to the file to read (relative or absolute)" }),
+	path: Type.String({ description: "File path, HTTP(S) URL, or exact artifact:// URI" }),
 	offset: Type.Optional(Type.Number({ description: "Line number to start reading from (1-indexed)" })),
 	limit: Type.Optional(Type.Number({ description: "Maximum number of lines to read" })),
+	byteOffset: Type.Optional(
+		Type.Integer({
+			minimum: 0,
+			maximum: Number.MAX_SAFE_INTEGER,
+			description:
+				"For artifact:// paths only: exact byte position from a returned nextByteOffset; do not combine with offset.",
+		}),
+	),
+	...readerArguments,
 });
 
 export const readToolSystemPromptContribution = {
-	snippet: "Read file contents",
-	guidelines: ["Use read to examine files instead of cat or sed."],
+	snippet: "Read files, PDFs, web URLs, SQLite databases, and retained outputs",
+	guidelines: [
+		"Use read to examine files instead of cat or sed.",
+		"Read retained tool output using its exact artifact:// path with offset/limit. Follow nextByteOffset with byteOffset to continue inside long lines; do not rerun the producing command just to retrieve omitted output.",
+		"Read PDFs with pages (1-indexed ranges) and format:text or images; scanned pages have no OCR. Read HTTP(S) URLs directly; use strategy:browser only explicitly when needed, with an isolated installed Chromium and no inherited login.",
+		"Read SQLite paths for schema, table for paged rows, or query plus params for bounded read-only SQL. Follow nextRowOffset using rowOffset; offset/limit remain text-line selectors.",
+	],
 } as const;
 
 export type ReadToolInput = Static<typeof readSchema>;
 
 /**
- * Result for programmatic callers such as codemode scripts: the text for text files, and an image
- * block for images that codemode's `image()` accepts. `note` is the text that goes with the image,
- * such as resize hints. Property descriptions are left out so the type stays on one line in tool
- * descriptions.
+ * Programmatic text and image results. Multiple PDF pages return a document whose
+ * image blocks can each be passed to codemode's image().
  */
 const readOutputSchema = Type.Union([
 	Type.String(),
 	Type.Object({ type: Type.Literal("image"), data: Type.String(), mimeType: Type.String(), note: Type.String() }),
+	Type.Object({
+		type: Type.Literal("document"),
+		text: Type.String(),
+		images: Type.Array(Type.Object({ type: Type.Literal("image"), data: Type.String(), mimeType: Type.String() })),
+	}),
 ]);
 
 export type ReadToolOutput = Static<typeof readOutputSchema>;
 
 export interface ReadToolDetails {
 	truncation?: TruncationResult;
+	artifactPage?: ArtifactPage;
+	source?: ReaderSource;
+	status?: ReaderResult["status"];
 }
 
 /**
@@ -90,13 +133,19 @@ export interface ReadToolOptions {
 	resizeOptions?: ModelImageResizeOptions;
 	/** Custom operations for file reading. Default: local filesystem */
 	operations?: ReadOperations;
+	/** Resolve the installed Chromium override at execution time so settings changes apply immediately. */
+	getBrowserExecutablePath?: () => string | undefined;
 }
 
-/** The image block and its note, or the text for text files and images that could not be processed. */
+/** Preserve every image for document callers while retaining the existing single-image contract. */
 function toReadOutput(content: (TextContent | ImageContent)[]): ReadToolOutput {
-	const text = content.find((block) => block.type === "text")?.text ?? "";
-	const image = content.find((block) => block.type === "image");
-	return image ? { type: "image", data: image.data, mimeType: image.mimeType, note: text } : text;
+	const text = content
+		.filter((block) => block.type === "text")
+		.map((block) => block.text)
+		.join("\n");
+	const images = content.filter((block) => block.type === "image");
+	if (images.length > 1) return { type: "document", text, images };
+	return images[0] ? { type: "image", data: images[0].data, mimeType: images[0].mimeType, note: text } : text;
 }
 
 function getNonVisionImageNote(model: Model<Api> | undefined): string | undefined {
@@ -235,19 +284,90 @@ export function createReadToolDefinition(
 	return {
 		name: "read",
 		label: "read",
-		description: `Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
+		description: `Read files, PDF pages (text or images, no OCR), HTTP(S) URLs (clean Markdown/text; explicit browser strategy only), read-only SQLite schemas/rows/queries, or artifact:// output. Text offset/limit select lines; SQLite uses rowOffset/rowLimit. PDF pages are 1-indexed ranges. Oversized document snapshots are retained as artifacts in sessions. Ordinary text files default to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB. Follow artifact nextByteOffset with byteOffset for long lines. Also supports images (jpg, png, gif, webp, bmp).`,
 		promptSnippet: readToolSystemPromptContribution.snippet,
 		promptGuidelines: [...readToolSystemPromptContribution.guidelines],
 		parameters: readSchema,
 		outputSchema: readOutputSchema,
 		constrainedSampling: { type: "json_schema", strict: "prefer" },
-		async execute(
-			_toolCallId,
-			{ path, offset, limit }: { path: string; offset?: number; limit?: number },
-			signal?: AbortSignal,
-			_onUpdate?,
-			ctx?: ExtensionContext,
-		) {
+		async execute(_toolCallId, input: ReadToolInput, signal?: AbortSignal, _onUpdate?, ctx?: ExtensionContext) {
+			const { path, offset, limit, byteOffset, ...documentArgs } = input;
+			if (path.startsWith("artifact://")) {
+				if (Object.values(documentArgs).some((value) => value !== undefined))
+					throw new Error("Artifact reads accept only offset, limit, and byteOffset");
+				const store = ctx && getOutputArtifacts(ctx.sessionManager);
+				if (!store) throw new Error("Artifact reads require an owning Pi session");
+				return readArtifact(store, { path, offset, limit, byteOffset }, signal);
+			}
+			if (byteOffset !== undefined) throw new Error("byteOffset is only supported for artifact:// paths");
+			signal?.throwIfAborted();
+			const sql =
+				documentArgs.table !== undefined ||
+				documentArgs.query !== undefined ||
+				documentArgs.params !== undefined ||
+				documentArgs.rowOffset !== undefined ||
+				documentArgs.rowLimit !== undefined;
+			if (/^https?:\/\//i.test(path)) {
+				if (sql) throw new Error("SQLite arguments require a local database path");
+				if (options?.operations)
+					throw new Error(
+						"URL reads require an explicit local or remote URL adapter; custom filesystem operations do not define network routing",
+					);
+				return readDocument(
+					"web",
+					{ ...documentArgs, path, browserExecutablePath: options?.getBrowserExecutablePath?.() },
+					input,
+					options,
+					ctx,
+					signal,
+				);
+			}
+			const absolutePath = await raceWithAbortSignal(resolveReadPathAsync(path, ctx?.cwd || cwd), signal);
+			let kind: "pdf" | "sqlite" | undefined =
+				sql || (options?.operations && /\.(?:sqlite3?|db)$/i.test(path))
+					? "sqlite"
+					: /\.pdf$/i.test(path)
+						? "pdf"
+						: undefined;
+			if (!kind && !options?.operations)
+				kind = await raceWithAbortSignal(detectLocalDocumentKind(absolutePath, signal), signal);
+			if (kind) {
+				if (documentArgs.strategy !== undefined) throw new Error("strategy is only supported for HTTP(S) URLs");
+				if (
+					kind === "sqlite" &&
+					(documentArgs.pages !== undefined ||
+						documentArgs.format === "images" ||
+						documentArgs.format === "markdown" ||
+						offset !== undefined ||
+						limit !== undefined)
+				)
+					throw new Error("SQLite uses table/query and rowOffset/rowLimit, not PDF or text-line arguments");
+				if (kind === "sqlite" && options?.operations)
+					throw new Error(
+						"SQLite reads require local filesystem operations; remote database snapshots are not supported",
+					);
+				let data: string | undefined;
+				if (kind === "pdf" && options?.operations) {
+					await raceWithAbortSignal(ops.access(absolutePath), signal);
+					const buffer = await raceWithAbortSignal(ops.readFile(absolutePath), signal);
+					if (buffer.length > 64 * 1024 * 1024) throw new Error("PDF exceeds the 64 MiB input limit");
+					data = buffer.toString("base64");
+				}
+				return readDocument(
+					kind,
+					{ ...documentArgs, path: absolutePath, ...(data !== undefined ? { data } : {}) },
+					input,
+					options,
+					ctx,
+					signal,
+				);
+			}
+			if (
+				documentArgs.pages !== undefined ||
+				documentArgs.strategy !== undefined ||
+				(documentArgs.format !== undefined && documentArgs.format !== "text")
+			)
+				throw new Error("pages/format/strategy do not apply to this ordinary file");
 			return new Promise<{ content: (TextContent | ImageContent)[]; details: ReadToolDetails | undefined }>(
 				(resolve, reject) => {
 					if (signal?.aborted) {
@@ -263,7 +383,7 @@ export function createReadToolDefinition(
 
 					(async () => {
 						try {
-							const absolutePath = await resolveReadPathAsync(path, ctx?.cwd || cwd);
+							signal?.throwIfAborted();
 							if (aborted) return;
 							// Check if file exists and is readable.
 							await ops.access(absolutePath);
@@ -345,7 +465,7 @@ export function createReadToolDefinition(
 							if (aborted) return;
 							signal?.removeEventListener("abort", onAbort);
 							resolve({ content, details });
-						} catch (error: any) {
+						} catch (error) {
 							signal?.removeEventListener("abort", onAbort);
 							if (!aborted) reject(error);
 						}
@@ -355,6 +475,69 @@ export function createReadToolDefinition(
 		},
 		...readRenderers,
 	};
+}
+
+async function readDocument(
+	kind: "pdf" | "web" | "sqlite",
+	request: Omit<ReaderRequest, "pdfiumWasmPath">,
+	input: ReadToolInput,
+	options: ReadToolOptions | undefined,
+	ctx: ExtensionContext | undefined,
+	signal: AbortSignal | undefined,
+) {
+	if (input.format === "images" && (input.offset !== undefined || input.limit !== undefined))
+		throw new Error("PDF images use pages, not offset/limit");
+	// Document selectors follow artifact's declaration policy; ordinary file ranges retain their existing semantics.
+	if (
+		(input.offset !== undefined && (!Number.isSafeInteger(input.offset) || input.offset < 1)) ||
+		(input.limit !== undefined && (!Number.isSafeInteger(input.limit) || input.limit < 1))
+	)
+		throw new Error("Document offset/limit must be positive whole line numbers");
+	const result = await runReader(kind, request, signal);
+	const content: (TextContent | ImageContent)[] = [{ type: "text", text: result.text }];
+	const details: ReadToolDetails = { source: result.source, status: result.status };
+	for (const image of result.images) {
+		signal?.throwIfAborted();
+		const processed = await processImage(Buffer.from(image.data, "base64"), image.mimeType, {
+			autoResizeImages: options?.autoResizeImages ?? true,
+			resizeOptions: ctx?.model?.inputLimits?.images?.resize ?? options?.resizeOptions,
+		});
+		content.push({
+			type: "text",
+			text: `PDF page ${image.page}${processed.ok ? (processed.hints.length ? `\n${processed.hints.join("\n")}` : "") : `: ${processed.message}`}`,
+		});
+		if (processed.ok) content.push({ type: "image", data: processed.data, mimeType: processed.mimeType });
+	}
+	if (result.images.length) {
+		const note = getNonVisionImageNote(ctx?.model);
+		if (note) content.push({ type: "text", text: note });
+	}
+	if (input.offset !== undefined || input.limit !== undefined) {
+		const store = ctx && getOutputArtifacts(ctx.sessionManager);
+		if (store) {
+			const artifact = await store.save(content);
+			const page = await readArtifact(
+				store,
+				{ path: artifact.uri, offset: input.offset, limit: input.limit },
+				signal,
+			);
+			return { ...page, details: { ...details, ...page.details }, isError: result.status === "unreadable" };
+		}
+		const lines = result.text.split("\n");
+		const start = (input.offset ?? 1) - 1;
+		if (start >= lines.length)
+			throw new Error(`Offset ${input.offset} is beyond the document (${lines.length} lines)`);
+		content[0] = {
+			type: "text",
+			text:
+				lines.slice(start, input.limit === undefined ? undefined : start + input.limit).join("\n") +
+				(input.limit !== undefined && start + input.limit < lines.length
+					? `\n[More lines; use offset=${start + input.limit + 1}. Session-owned reads retain a stable artifact snapshot.]`
+					: ""),
+		};
+	}
+	signal?.throwIfAborted();
+	return { content, details, structuredContent: toReadOutput(content), isError: result.status === "unreadable" };
 }
 
 export function createReadTool(cwd: string, options?: ReadToolOptions): TypeBoxAgentTool<typeof readSchema> {

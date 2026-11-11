@@ -231,7 +231,7 @@ Tools with `codemode` or `deferred` exposure can be reached through either indir
 
 To keep `codemode` active without MCP servers, add `"defaultTools": ["+codemode"]` to [settings](settings.md#tools). To prevent automatic codemode activation, set `"autoEnableCodemode": false` beside `mcpServers`. A project value overrides the user-level value. Pi warns once when neither `codemode` nor `tool_search` is active and non-direct tools cannot be called.
 
-Text results over 20 KB reach the model with their middle removed around a `…N chars truncated…` marker. The full text is saved to a temporary file named in the result. Codemode scripts receive the complete result and can reduce it before returning output to the model.
+MCP text uses the session's [adaptive output artifact budget](settings.md#output-artifacts), not a separate 20 KB clip. Oversized returned text is retained outside chat JSONL, with an `artifact://...` reference that `read` can page. Images stay attached and binary resources still use temporary files. Codemode scripts receive the complete returned MCP result and can reduce it before returning output to the model; data already omitted by the server cannot be recovered.
 
 Codemode scripts receive the complete MCP `CallToolResult`, including `content`, `structuredContent`, and `isError`. A result with `isError` resolves inside scripts but is reported as an error for direct calls. `image(result.content[0])` forwards an image block. Server instructions are not part of any tool description; scripts read them with `describeNamespace("mcp__<server>")`, which also returns the server's tool names.
 

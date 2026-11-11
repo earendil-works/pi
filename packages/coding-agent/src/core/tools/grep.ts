@@ -1,6 +1,7 @@
 import { type Static, Type } from "typebox";
 import { createSearchJob } from "../../utils/native-search.ts";
 import type { ToolDefinition } from "../extensions/types.ts";
+import { getOutputArtifacts } from "../output-artifacts.ts";
 import { grepRenderers } from "./renderers/grep.ts";
 import { recursiveBasenameGlob, resolveSearchScope, searchResultPath } from "./search-scope.ts";
 import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -72,7 +73,8 @@ export function createGrepToolDefinition(
 	return {
 		name: "grep",
 		label: "grep",
-		description: `Search file contents using Rust regex with automatic PCRE2 fallback. Accepts multiple paths/globs, exclusions, and file line ranges. Returns up to 20 files per page with 20 matches per file, or 200 matches for a single file. Includes context; long lines retain the matching window. Input buffering is limited to 64 MiB; multiline searches buffer the full file. Output is capped at ${DEFAULT_MAX_BYTES / 1024}KB. Use skip for subsequent file pages.`,
+		description:
+			"Search file contents using native Rust regex with automatic PCRE2 fallback. Accepts multiple paths/globs, exclusions, and file line ranges. Defaults to 20 files with 20 matches per file, or 200 matches for one file. Includes context and match-centered long-line windows. Input buffering is limited to 64 MiB; multiline searches buffer the file. Use skip for subsequent file pages. Oversized returned search pages are retained as session artifacts.",
 		promptSnippet: grepToolSystemPromptContribution.snippet,
 		promptGuidelines: [...grepToolSystemPromptContribution.guidelines],
 		parameters: grepSchema,
@@ -165,6 +167,12 @@ export function createGrepToolDefinition(
 				const rawOutput =
 					outputLines.join("\n") || (skip && !scope.singleFile ? "No more results" : "No matches found");
 				let suffix = notices.length ? `\n\n[${notices.join(". ")}]` : "";
+				if (ctx && getOutputArtifacts(ctx.sessionManager)) {
+					return {
+						content: [{ type: "text", text: rawOutput + suffix }],
+						details: Object.keys(details).length ? details : undefined,
+					};
+				}
 				let truncation = truncateHead(rawOutput, {
 					maxLines: Number.MAX_SAFE_INTEGER,
 					maxBytes: DEFAULT_MAX_BYTES - Buffer.byteLength(suffix),

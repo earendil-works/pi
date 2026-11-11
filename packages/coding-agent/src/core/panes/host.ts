@@ -17,6 +17,7 @@ import {
 	type RexLocation,
 	type RexPane,
 	setRexPaneMinimized,
+	setRexPaneTitle,
 	showRexPane,
 } from "../rex.ts";
 import { PaneInputSchema } from "./protocol.ts";
@@ -30,6 +31,7 @@ export interface PaneControls {
 	invalidate(): void;
 	close(): void;
 	minimize(): Promise<void>;
+	setTitle(title: string): Promise<void>;
 }
 export interface PaneHandle {
 	readonly backend: "rex" | "tui";
@@ -128,6 +130,11 @@ function openOverlay(ctx: Pick<ExtensionContext, "ui" | "mode" | "cwd">, options
 				},
 				close: () => finish?.(),
 				minimize: handle.minimize,
+				async setTitle(title) {
+					if (stopped || options.title === title) return;
+					options.title = title;
+					if (!hidden) tui.requestRender();
+				},
 			});
 			if (options.signal?.aborted) finish();
 			ready.resolve(handle);
@@ -186,6 +193,7 @@ async function openRemotePane(
 	let stopped = false;
 	let hidden = options.minimized ?? false;
 	let renderScheduled = false;
+	let titleUpdates = Promise.resolve();
 	const sockets = new Set<Socket>();
 	const handle: PaneHandle = {
 		backend: "rex",
@@ -217,6 +225,18 @@ async function openRemotePane(
 			if (!stopped && client && view && !hidden)
 				sendPacket(client, { type: "frame", lines: frame(ctx, options, view, width, height) });
 		});
+	}
+	function setTitle(title: string): Promise<void> {
+		if (stopped || options.title === title) return titleUpdates;
+		options.title = title;
+		invalidate();
+		titleUpdates = titleUpdates
+			.catch(() => {})
+			.then(async () => {
+				// Coalesce queued label changes, preserving order if a CLI request is already in flight.
+				if (!stopped && pane && options.title === title) await setRexPaneTitle(pane, title, ctx.cwd);
+			});
+		return titleUpdates;
 	}
 	const server = createServer((socket) => {
 		sockets.add(socket);
@@ -318,7 +338,7 @@ async function openRemotePane(
 	// Construct the view only after the backend is ready: a fallback must not start a second model request.
 	try {
 		options.signal?.throwIfAborted();
-		view = options.create({ invalidate, close: abort, minimize: handle.minimize });
+		view = options.create({ invalidate, close: abort, minimize: handle.minimize, setTitle });
 		options.signal?.addEventListener("abort", abort, { once: true });
 		if (options.signal?.aborted) await handle.close();
 		else {

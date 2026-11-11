@@ -3,6 +3,7 @@ import { type Static, Type } from "typebox";
 import { raceWithAbortSignal } from "../../utils/abort.ts";
 import { createSearchJob } from "../../utils/native-search.ts";
 import type { ToolDefinition } from "../extensions/types.ts";
+import { getOutputArtifacts } from "../output-artifacts.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { findRenderers } from "./renderers/find.ts";
 import { recursiveBasenameGlob, resolveSearchScope } from "./search-scope.ts";
@@ -77,7 +78,8 @@ export function createFindToolDefinition(
 	return {
 		name: "find",
 		label: "find",
-		description: `Find paths by glob using native Rust traversal. Accepts files, directories, multiple semicolon-delimited scopes, and !exclusions. Bare '*.ts' searches recursively; 'src/*.ts' matches direct children. Respects .gitignore and includes hidden files by default. Returns the newest 200 paths by default, capped at ${DEFAULT_MAX_BYTES / 1024}KB.`,
+		description:
+			"Find paths by glob using native Rust traversal. Accepts multiple scopes and !exclusions. Bare '*.ts' searches recursively; 'src/*.ts' matches direct children. Respects .gitignore, includes hidden files, and returns the newest 200 paths by default. Oversized selected results are retained as session artifacts.",
 		promptSnippet: findToolSystemPromptContribution.snippet,
 		promptGuidelines: [...findToolSystemPromptContribution.guidelines],
 		parameters: findSchema,
@@ -132,7 +134,11 @@ export function createFindToolDefinition(
 					dispose();
 				}
 			}
-			const truncation = truncateHead(results.join("\n"), { maxLines: Number.MAX_SAFE_INTEGER });
+			const rawOutput = results.join("\n");
+			const truncation =
+				ctx && getOutputArtifacts(ctx.sessionManager)
+					? undefined
+					: truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
 			const details: FindToolDetails = {};
 			const notices: string[] = [];
 			if (resultLimitReached) {
@@ -143,7 +149,7 @@ export function createFindToolDefinition(
 						: `${limit} results limit reached. Use limit=${limit * 2} for more, or refine pattern`,
 				);
 			}
-			if (truncation.truncated) {
+			if (truncation?.truncated) {
 				details.truncation = truncation;
 				notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
 			}
@@ -151,7 +157,7 @@ export function createFindToolDefinition(
 				details.missingPaths = missingPaths;
 				notices.push(`Skipped missing paths: ${missingPaths.join("; ")}`);
 			}
-			let output = truncation.content || "No files found matching pattern";
+			let output = (truncation?.content ?? rawOutput) || "No files found matching pattern";
 			if (notices.length) output += `\n\n[${notices.join(". ")}]`;
 			return {
 				content: [{ type: "text", text: output }],

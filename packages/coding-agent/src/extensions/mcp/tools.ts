@@ -1,13 +1,10 @@
 /**
  * Adapts MCP tools to pi tool definitions.
  *
- * Results map onto pi's model-facing content (text and images). Text over 20KB keeps its start and
- * end with the middle cut out, like Codex does, and the full text is saved to a temp file the model
- * can read. Binary resources other than images are saved to temp files too, and resource links name
- * the `read_mcp_resource` tool. Codemode scripts receive the whole `CallToolResult` without `_meta`
- * (`content` blocks as sent by the server, `structuredContent`, `isError`), never truncated: it is
- * the tool's `structuredContent`, and every MCP tool declares a `CallToolResult` output schema. MCP
- * errors (`isError`) are error results for the model, but scripts still resolve to the result.
+ * Results map onto pi's model-facing text and images; the owning session retains oversized text
+ * after tool-result hooks and applies its adaptive inline budget. Binary resources other than
+ * images are saved to temp files, and resource links name the read_mcp_resource tool. Scripts
+ * receive the whole CallToolResult without _meta, including structuredContent and isError.
  */
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
@@ -15,7 +12,6 @@ import type { ImageContent, JsonValue, TextContent } from "@earendil-works/pi-ai
 import {
 	type CallToolResult,
 	type ContentBlock,
-	limitMcpContent,
 	type McpOutputSaver,
 	type McpRequestOptions,
 	type Tool as McpTool,
@@ -55,11 +51,9 @@ export { READ_MCP_RESOURCE_TOOL };
 export interface McpToolDetails {
 	server: string;
 	tool: string;
-	/** Temp file with the full text output, when the model-facing text was truncated. */
-	fullOutputPath?: string;
 }
 
-/** Saves the full text of a truncated result, or a binary resource, to a temp file and returns its path. */
+/** Saves a binary resource to a temp file and returns its path. */
 export function saveToTempFile(data: string | Uint8Array, extension: string): Promise<string> {
 	return writeOutputFile("pi-mcp", extension, data);
 }
@@ -150,7 +144,7 @@ export function createMcpResultSchema(structuredContentSchema: Record<string, un
 }
 
 export interface ConvertMcpResultOptions {
-	/** Saves truncated text and binary resources. Default: a temp file. */
+	/** Saves binary resources. Default: a temp file. */
 	saveOutput?: McpOutputSaver;
 	/** Whether the server's resources can be read with `read_mcp_resource`, which resource links then name. */
 	readableResources?: boolean;
@@ -224,11 +218,10 @@ export async function convertMcpResult(
 	if (result.isError && textOf(converted) === "") {
 		converted.push({ type: "text", text: `MCP tool ${server}/${tool} returned an error` });
 	}
-	const { content, fullOutputPath } = await limitMcpContent(converted, options.saveOutput ?? saveToTempFile);
 	const { _meta: _ignored, ...scriptResult } = result;
 	return {
-		content,
-		details: { server, tool, ...(fullOutputPath ? { fullOutputPath } : {}) },
+		content: converted,
+		details: { server, tool },
 		structuredContent: scriptResult as unknown as JsonValue,
 		...(result.isError ? { isError: true } : {}),
 	};
@@ -320,8 +313,6 @@ export function createMcpToolRenderers(label: string): ToolRenderers {
 							`${theme.fg("muted", `... (${hidden} more lines,`)} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`,
 					}),
 				);
-				const fullOutputPath = (result.details as McpToolDetails | undefined)?.fullOutputPath;
-				if (fullOutputPath) component.addChild(new Text(theme.fg("muted", `Full output: ${fullOutputPath}`), 0, 0));
 			}
 			return component;
 		},

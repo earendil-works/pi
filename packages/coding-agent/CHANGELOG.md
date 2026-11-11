@@ -9,6 +9,9 @@
 - `grep` now defaults to one context line before and three after, pages of 20 files with 20 matches per file, and 200 matches for single-file scopes. `find` now defaults to 200 paths ordered by modification time. Source builds require Rust and a C compiler for the shared search addon; published packages include prebuilds.
 - Custom UI contexts must implement `getRexSettings()`. Settings selector callers must supply `SettingsConfig.rex` and the Rex callbacks; `PaneHandle` now reports its resolved `placement`.
 - Replaced compaction's absolute `reserveTokens` trigger with configurable `prepareThreshold`/`threshold` percentages and `maxSummaryTokens`. `SettingsManager.getCompactionReserveTokens()` is removed; use `getCompactionSettings(model)`. Background `session_before_compact` hooks now run at preparation time, before context replacement.
+- MCP results no longer use a separate 20 KB clip or expose `details.fullOutputPath`; follow the model-facing `artifact://...` reference with `read`. Custom `read` overrides must forward artifact references to the built-in definition with the current tool context.
+- `BashOperations.onData` now returns `void | Promise<void>`. Streaming adapters must honor a returned promise for backpressure; callbacks must not return incidental values such as the result of `chunks.push()`.
+- `PaneControls` implementations must provide `setTitle(title)`. Direct `SubagentManager` hosts must provide `getSystemPrompt()` for instruction-aware labels; extension runtime action bindings must implement `appendUsage()`.
 
 ### Added
 
@@ -25,6 +28,10 @@
 - Added the shared chat icon to `/btw` headers, using Nerd Font `U+F075` with the Nerd preset.
 - Added default background compaction: prepare a frozen history summary at 75%, apply at 85%, and preserve every later message. Summary detail adapts to the conversation within an 8000-token cap; manual and overflow compaction retain their recent-history policy.
 - Added persisted pre-compaction checkpoints and the default `recall_context` tool for read-only, model-assisted retrieval of original messages with citations, paged tool output, private helper history, and recorded successful usage. SDK hosts can register `createRecallExtension()`.
+- Added native configurable sub-agents with built-in worker/scout/reviewer/planner roles, synchronous and asynchronous controls, configurable concurrency with queueing, and a shared `/agents` view with role icons, colored status dots, and background-generated task labels instead of costs and response previews. Child JSONL histories stay separate from the main conversation; bounded branch-aware completion results, retained resume state, local tool scoping, and shutdown draining keep delegation explicit and observable.
+- Added adaptive session-owned output artifacts for oversized tool text, streaming shell capture, and `read` line/UTF-8-safe byte pagination. Persistent captures survive restart and compaction with separate main/child namespaces; temporary side sessions can follow explicit persistent references without sharing history.
+- Extended native `read` with page-labelled PDF text and selected-page images (no OCR), bounded HTTP(S) extraction through Markdown/Readability/DOM strategies, explicitly requested isolated installed-Chromium rendering, and read-only SQLite schema/table/query pages. Document snapshots reuse artifact pagination; reader processes support cancellation and hard deadlines. Added `read.browserExecutablePath`, packaged reader/WASM assets, and multi-image structured output for codemode.
+- Added background-generated names for unnamed chats and jobs, with one chat attempt after the first answer, explicit-name protection, recorded helper usage outside conversation history, and live Rex label updates. Loaded Markdown instructions tune naming style for chats, jobs, and sub-agent task labels; SDK hosts can register `createAutoNameExtension()`.
 
 ### Changed
 
@@ -35,6 +42,7 @@
 - `/copy` and the last-response copy shortcut now open an inline picker with previews for code blocks, quotes, and the whole response. Individual blocks copy without outer code fences or quote markers; the whole response keeps its original Markdown. Active text selections and copying from `/tree` are unchanged
 - Replaced the built-in `grep` and `find` subprocess backends with one in-process Rust Node-API addon. Searches accept multiple paths/globs and exclusions; grep adds automatic PCRE2 fallback, multiline patterns, file line ranges, matching-file pagination, and match-centred long-line snippets. The existing tool names and remote-operation extension points remain available.
 - Enabled `grep` and `find` by default alongside `read`, `bash`, `edit`, and `write`. Their system-prompt guidance prefers the dedicated tools over shell searches and is omitted when the corresponding tool is disabled or hidden. Explicit tool selections and resumed sessions' recorded tool selections remain unchanged.
+- Built-ins, extensions, and MCP results now share configurable estimated-token inline budgets with a byte safety ceiling. Images and nested programmatic results remain available without model-preview clipping.
 
 ### Fixed
 
@@ -71,7 +79,7 @@
 - Enabled PCRE2 JIT when available to avoid repeated UTF-8 suffix validation in multiline searches with late line ranges.
 - Bounded shallow glob traversal without changing brace or character-class matching, and stopped missing fixed directory prefixes from widening searches. Excluded directory ancestors now also apply to independently selected nested roots.
 - Fixed explicit find scopes rejecting dangling links whose targets contain a non-directory component, and valid wildcard scopes failing when a literal wildcard-named file exists.
-- Kept grep's final text, including bounded path-bearing notices, within the 50 KiB output budget.
+- Kept standalone grep's final text, including bounded path-bearing notices, within the 50 KiB output budget.
 - Fixed Gondolin find ignoring hidden-directory filtering. Its guest search declarations now describe the existing single-root Node glob and JavaScript regex backends rather than advertising unsupported native search features.
 - Fixed PCRE2 JIT stack-limit errors on nested recursive patterns by increasing the bounded maximum stack to 10 MiB.
 - Fixed interpreter-only multiline PCRE2 searches timing out on frequent matches before a late line range. Valid UTF-8 subjects are validated once; malformed input retains the existing checked matcher.

@@ -149,6 +149,45 @@
         }
       }
     },
+    "subagents": {
+      "type": "object",
+      "properties": {
+        "maxConcurrent": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "default": 4,
+          "description": "Maximum running sub-agents per parent session; additional tasks queue."
+        }
+      }
+    },
+    "outputArtifacts": {
+      "type": "object",
+      "properties": {
+        "maxInlineTokens": {
+          "type": "integer",
+          "minimum": 128,
+          "maximum": 9007199254740991,
+          "default": 8000
+        },
+        "contextWindowFraction": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "default": 0.05
+        }
+      },
+      "additionalProperties": false
+    },
+    "read": {
+      "type": "object",
+      "properties": {
+        "browserExecutablePath": {
+          "type": "string",
+          "description": "Installed Chrome/Chromium executable for explicit read strategy:browser. Uses a fresh temporary profile; never downloads a browser."
+        }
+      }
+    },
     "compaction": {
       "type": "object",
       "properties": {

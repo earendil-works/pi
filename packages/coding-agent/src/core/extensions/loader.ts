@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Provider } from "@earendil-works/pi-ai";
+import type { Provider, Usage } from "@earendil-works/pi-ai";
 import { mcpNamespace } from "@earendil-works/pi-mcp";
 import type { KeyId } from "@earendil-works/pi-tui";
 import type { createJiti } from "jiti";
@@ -177,6 +177,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		sendMessage: notInitialized,
 		sendUserMessage: notInitialized,
 		appendEntry: notInitialized,
+		appendUsage: notInitialized,
 		setSessionName: notInitialized,
 		getSessionName: notInitialized,
 		setLabel: notInitialized,
@@ -403,6 +404,11 @@ function createExtensionAPI(
 		appendEntry(customType: string, data?: unknown): void {
 			assertActive();
 			runtime.appendEntry(customType, data);
+		},
+
+		appendUsage(kind: string, provider: string, model: string, usage: Usage, note?: string): void {
+			assertActive();
+			runtime.appendUsage(kind, provider, model, usage, note);
 		},
 
 		setSessionName(name: string): void {

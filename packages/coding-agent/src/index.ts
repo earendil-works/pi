@@ -342,6 +342,16 @@ export {
 	type SkillFrontmatter,
 } from "./core/skills.ts";
 export { createSyntheticSourceInfo } from "./core/source-info.ts";
+export { type AgentDefinition, type AgentDefinitions, discoverAgentDefinitions } from "./core/subagents/definitions.ts";
+export { type StartSubagentOptions, SubagentManager, type SubagentManagerOptions } from "./core/subagents/manager.ts";
+export type {
+	SubagentEvent,
+	SubagentHistoryPage,
+	SubagentInfo,
+	SubagentResult,
+	SubagentStatus,
+} from "./core/subagents/state.ts";
+export { createSubagentToolDefinition } from "./core/subagents/tool.ts";
 export { type EditDiffResult, generateDiffString, generateUnifiedPatch } from "./core/tools/edit-diff.ts";
 // Tools
 export {
@@ -417,8 +427,9 @@ export {
 	type VirtualModelDefinition,
 	type VirtualModelStateData,
 } from "./core/virtual-models.ts";
-export { createBtwExtension } from "./extensions/btw/index.ts";
 // Built-in extensions. The CLI loads them; SDK sessions add them to their extension factories.
+export { createAutoNameExtension } from "./extensions/auto-name/index.ts";
+export { createBtwExtension } from "./extensions/btw/index.ts";
 export { type CodemodeExtensionOptions, createCodemodeExtension } from "./extensions/codemode/index.ts";
 export type { CodemodeStoreEntryData, CodemodeToolDetails } from "./extensions/codemode/tool.ts";
 export { createJobsExtension } from "./extensions/jobs/index.ts";
@@ -426,6 +437,7 @@ export type { LoadedMcpConfig, McpExposure, McpServerConfig, McpServerEntry } fr
 export { createMcpExtension, type McpExtensionOptions, type McpTransportFactory } from "./extensions/mcp/index.ts";
 export { createRecallExtension } from "./extensions/recall/index.ts";
 export { createRexExtension, createRexToolDefinition } from "./extensions/rex/index.ts";
+export { createSubagentExtension } from "./extensions/subagents/index.ts";
 export { createToolSearchExtension } from "./extensions/tool-search/index.ts";
 // Main entry point
 export { type MainOptions, main } from "./main.ts";

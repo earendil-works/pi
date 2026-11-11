@@ -46,7 +46,8 @@ export { clearApiKeyCache } from "./provider-composer.ts";
  * Coding-agent internals use ModelRuntime directly.
  */
 export class ModelRegistry {
-	private readonly runtime: ModelRuntime;
+	/** Shared model/auth runtime; independent SDK sessions may reuse it without sharing chat state. */
+	readonly runtime: ModelRuntime;
 
 	constructor(runtime: ModelRuntime) {
 		this.runtime = runtime;

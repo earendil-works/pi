@@ -303,6 +303,26 @@
       "$ref": "#/$defs/KeybindingValue",
       "description": "Delete the selected finished job and its logs"
     },
+    "app.agents.start": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Start a configured sub-agent"
+    },
+    "app.agents.message": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Send a message to the selected sub-agent"
+    },
+    "app.agents.resume": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Resume the selected sub-agent"
+    },
+    "app.agents.stop": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Stop the selected sub-agent"
+    },
+    "app.agents.delete": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Delete the selected finished sub-agent and its history"
+    },
     "app.tree.foldOrUp": {
       "$ref": "#/$defs/KeybindingValue",
       "description": "Fold tree branch or move up"

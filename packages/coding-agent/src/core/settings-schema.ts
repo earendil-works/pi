@@ -40,6 +40,27 @@ const CompactionSettingsSchema = Type.Object({
 	),
 });
 
+/** Configurable token estimate used before retaining oversized tool text as an artifact. */
+export const OutputArtifactsSettingsSchema = Type.Object(
+	{
+		maxInlineTokens: Type.Optional(
+			Type.Integer({
+				minimum: 128,
+				maximum: Number.MAX_SAFE_INTEGER,
+				default: SETTINGS_DEFAULTS.outputArtifacts.maxInlineTokens,
+			}),
+		),
+		contextWindowFraction: Type.Optional(
+			Type.Number({
+				exclusiveMinimum: 0,
+				maximum: 1,
+				default: SETTINGS_DEFAULTS.outputArtifacts.contextWindowFraction,
+			}),
+		),
+	},
+	{ additionalProperties: false },
+);
+
 const BranchSummarySettingsSchema = Type.Object({
 	reserveTokens: Type.Optional(
 		Type.Number({
@@ -288,6 +309,29 @@ export const SettingsSchema = Type.Object(
 			}),
 		),
 		rex: Type.Optional(RexSettingsSchema),
+		subagents: Type.Optional(
+			Type.Object({
+				maxConcurrent: Type.Optional(
+					Type.Integer({
+						minimum: 1,
+						maximum: Number.MAX_SAFE_INTEGER,
+						default: SETTINGS_DEFAULTS.subagents.maxConcurrent,
+						description: "Maximum running sub-agents per parent session; additional tasks queue.",
+					}),
+				),
+			}),
+		),
+		outputArtifacts: Type.Optional(OutputArtifactsSettingsSchema),
+		read: Type.Optional(
+			Type.Object({
+				browserExecutablePath: Type.Optional(
+					Type.String({
+						description:
+							"Installed Chrome/Chromium executable for explicit read strategy:browser. Uses a fresh temporary profile; never downloads a browser.",
+					}),
+				),
+			}),
+		),
 		compaction: Type.Optional(CompactionSettingsSchema),
 		branchSummary: Type.Optional(BranchSummarySettingsSchema),
 		retry: Type.Optional(RetrySettingsSchema),

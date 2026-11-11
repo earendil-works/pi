@@ -39,6 +39,10 @@ function rebuildBashResultRenderComponent(
 	let output = getTextOutput(result as any, showImages).trim();
 	const truncation = result.details?.truncation;
 	const fullOutputPath = result.details?.fullOutputPath;
+	const artifactUri = result.details?.artifactUri;
+	if (artifactUri && output.startsWith(`[Full captured output: ${artifactUri}.`)) {
+		output = output.slice(output.indexOf("\n\n") + 2);
+	}
 	if (!options.isPartial && truncation?.truncated && fullOutputPath && output.endsWith("]")) {
 		const footerStart = output.lastIndexOf("\n\n[");
 		if (footerStart !== -1 && output.slice(footerStart).includes(fullOutputPath)) {
@@ -69,7 +73,11 @@ function rebuildBashResultRenderComponent(
 		}
 	}
 
-	if (truncation?.truncated || fullOutputPath) {
+	if (artifactUri) {
+		component.addChild(
+			new Text(`\n${theme.fg("warning", `[Captured output: ${artifactUri}. Use read to retrieve it.]`)}`, 0, 0),
+		);
+	} else if (truncation?.truncated || fullOutputPath) {
 		const warnings: string[] = [];
 		if (fullOutputPath) {
 			warnings.push(`Full output: ${fullOutputPath}`);

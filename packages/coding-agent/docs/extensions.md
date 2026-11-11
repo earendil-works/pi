@@ -1006,7 +1006,7 @@ pi.on("tool_call", async (event, ctx) => {
   }
 
   if (isToolCallEventType("read", event)) {
-    // event.input is { path: string; offset?: number; limit?: number }
+    // event.input is { path: string; offset?: number; limit?: number; byteOffset?: number }
     console.log(`Reading: ${event.input.path}`);
   }
 });
@@ -2393,23 +2393,24 @@ Built-in tool implementations:
 Built-in tools support pluggable operations for delegating to remote systems (SSH, containers, etc.):
 
 ```typescript
-import { createReadTool, type ReadOperations } from "@earendil-works/pi-coding-agent";
+import { createReadToolDefinition, type ReadOperations } from "@earendil-works/pi-coding-agent";
 
-const localRead = createReadTool(cwd);
+const localRead = createReadToolDefinition(cwd);
 
 // Register, checking the remote configuration at execution time
 pi.registerTool({
   ...localRead,
-  async execute(id, params, signal, onUpdate, _ctx) {
+  async execute(id, params, signal, onUpdate, ctx) {
+    if (params.path.startsWith("artifact://")) return localRead.execute(id, params, signal, onUpdate, ctx);
     const ssh = getSshConfig();
     if (ssh) {
       const operations: ReadOperations = {
         readFile: (path) => sshReadBuffer(ssh, path), // must resolve to a Buffer
         access: (path) => sshExec(ssh, `test -r ${path}`).then(() => {}),
       };
-      return createReadTool(cwd, { operations }).execute(id, params, signal, onUpdate);
+      return createReadToolDefinition(cwd, { operations }).execute(id, params, signal, onUpdate, ctx);
     }
-    return localRead.execute(id, params, signal, onUpdate);
+    return localRead.execute(id, params, signal, onUpdate, ctx);
   },
 });
 ```
@@ -2450,55 +2451,24 @@ See [Shell tool session environment](environment-variables.md#shell-tool-session
 
 ### Output Truncation
 
-**Tools MUST truncate their output** to avoid overwhelming the LLM context. Large outputs can cause:
-- Context overflow errors (prompt too long)
-- Compaction failures
-- Degraded model performance
-
-The built-in limit is **50KB** (~10k tokens) and **2000 lines**, whichever is hit first. Use the exported truncation utilities:
+`AgentSession` applies the shared [adaptive artifact budget](settings.md#output-artifacts) to final model-facing text from built-in, extension, and MCP tools. Return complete final text instead of discarding it merely to protect model context:
 
 ```typescript
-import {
-  truncateHead,      // Keep first N lines/bytes (good for file reads, search results)
-  truncateTail,      // Keep last N lines/bytes (good for logs, command output)
-  truncateLine,      // Truncate a single line to a character count; returns { text, wasTruncated }
-  formatSize,        // Human-readable size (e.g., "50KB", "1.5MB")
-  DEFAULT_MAX_BYTES, // 50KB
-  DEFAULT_MAX_LINES, // 2000
-} from "@earendil-works/pi-coding-agent";
-
 async execute(toolCallId, params, signal, onUpdate, ctx) {
   const output = await runCommand();
-
-  // Apply truncation
-  const truncation = truncateHead(output, {
-    maxLines: DEFAULT_MAX_LINES,
-    maxBytes: DEFAULT_MAX_BYTES,
-  });
-
-  let result = truncation.content;
-
-  if (truncation.truncated) {
-    // Write full output to temp file
-    const tempFile = writeTempFile(output);
-
-    // Inform the LLM where to find complete output
-    result += `\n\n[Output truncated: ${truncation.outputLines} of ${truncation.totalLines} lines`;
-    result += ` (${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)}).`;
-    result += ` Full output saved to: ${tempFile}]`;
-  }
-
-  return { content: [{ type: "text", text: result }], details: { truncation } };
+  return { content: [{ type: "text", text: output }], details: {} };
 }
 ```
 
-**Key points:**
-- Use `truncateHead` for content where the beginning matters (search results, file reads)
-- Use `truncateTail` for content where the end matters (logs, command output)
-- Always inform the LLM when output is truncated and where to find the full version
-- Document the truncation limits in your tool's description
+Oversized text gets a bounded preview and an `artifact://...` reference before the preview. The built-in `read` tool pages the retained text with `offset`/`limit` or a returned `byteOffset` continuation. Image attachments stay attached. Nested `ctx.executeTool()` calls retain their returned text and structured values for the calling tool; only its outer model-facing result gets the shared budget.
 
-See [examples/extensions/truncated-tool.ts](../examples/extensions/truncated-tool.ts) for a complete example wrapping `rg` (ripgrep) with proper truncation.
+For assembled results, `tool_result` transformations run before retention. Native command captures spill while the producer runs and can therefore contain text a later hook hides. Redact sensitive data at its source when it must not be written to disk. Persistent captures survive resume and compaction; treat them like sensitive session data.
+
+Custom read overrides must preserve artifact retrieval: delegate exact `artifact://...` paths to `createReadToolDefinition(...).execute(..., ctx)` before remote/guest path handling. Pass the current tool context through definition factories so captures use their owning session. The SSH and Gondolin examples demonstrate this.
+
+Custom `BashOperations` producers should honor a promise returned by `onData`: pause Node streams until it resolves, or await it while consuming an async iterable. This lets file backpressure bound pending writes. Supplied cancellation signals also carry storage failures. Keep progress updates bounded; cumulative `onUpdate` snapshots are not an append-only output stream.
+
+Direct standalone `execute()` calls have no session-owned retention, and upstream limits still apply. The exported `truncateHead`, `truncateTail`, `truncateLine`, `formatSize`, `DEFAULT_MAX_BYTES` (50 KiB), and `DEFAULT_MAX_LINES` (2000) remain available for deliberately bounded sources and standalone consumers. If a tool discards output itself, describe that limit and retain any evidence callers need; the shared layer cannot reconstruct discarded text. Full `user_bash` result replacements remain owned by the extension rather than the streaming shell executor.
 
 ### Multiple Tools
 

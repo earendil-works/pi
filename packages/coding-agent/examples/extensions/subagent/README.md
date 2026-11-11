@@ -1,6 +1,6 @@
 # Subagent Example
 
-Delegate tasks to specialized subagents with isolated context windows.
+This optional subprocess/chain example is not required for native sub-agents. The CLI now provides [`subagent` and `/agents`](../../../README.md#native-sub-agents) with separately retained child histories. Installing this example replaces the native tool: it uses `--no-session` children and keeps their complete message arrays in parent tool details. Do not install it when you want the native history-isolation and resume behavior.
 
 ## Features
 

@@ -7,6 +7,7 @@ export interface OutputAccumulatorOptions {
 	maxLines?: number;
 	maxBytes?: number;
 	tempFilePrefix?: string;
+	createOutputFile?: () => { path: string; stream: WriteStream };
 }
 
 export interface OutputSnapshot {
@@ -37,6 +38,9 @@ export class OutputAccumulator {
 	private readonly maxBytes: number;
 	private readonly maxRollingBytes: number;
 	private readonly tempFilePrefix: string;
+	private readonly createOutputFile: OutputAccumulatorOptions["createOutputFile"];
+	private readonly fileErrorController = new AbortController();
+	private tempFileError: Error | undefined;
 	private readonly decoder = new TextDecoder();
 
 	private rawChunks: Buffer[] = [];
@@ -59,6 +63,12 @@ export class OutputAccumulator {
 		this.maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
 		this.maxRollingBytes = Math.max(this.maxBytes * 2, 1);
 		this.tempFilePrefix = options.tempFilePrefix ?? "pi-output";
+		this.createOutputFile = options.createOutputFile;
+	}
+
+	/** Abort producers promptly when retained output cannot be written. */
+	get fileErrorSignal(): AbortSignal {
+		return this.fileErrorController.signal;
 	}
 
 	append(data: Buffer): void {
@@ -119,13 +129,10 @@ export class OutputAccumulator {
 	}
 
 	async closeTempFile(): Promise<void> {
-		if (!this.tempFileStream) {
-			return;
-		}
-
 		const stream = this.tempFileStream;
 		this.tempFileStream = undefined;
-
+		if (this.tempFileError) throw this.tempFileError;
+		if (!stream) return;
 		await new Promise<void>((resolve, reject) => {
 			const onError = (error: Error) => {
 				stream.off("finish", onFinish);
@@ -138,6 +145,22 @@ export class OutputAccumulator {
 			stream.once("error", onError);
 			stream.once("finish", onFinish);
 			stream.end();
+		});
+	}
+
+	/** Apply producer backpressure only when the retained file's write buffer is full. */
+	whenDrained(): Promise<void> | undefined {
+		if (this.tempFileError) return undefined;
+		const stream = this.tempFileStream;
+		if (!stream?.writableNeedDrain) return undefined;
+		return new Promise<void>((resolve) => {
+			const settle = () => {
+				stream.off("drain", settle);
+				stream.off("error", settle);
+				resolve();
+			};
+			stream.once("drain", settle);
+			stream.once("error", settle);
 		});
 	}
 
@@ -243,15 +266,26 @@ export class OutputAccumulator {
 	}
 
 	private ensureTempFile(): void {
-		if (this.tempFilePath) {
+		if (this.tempFilePath || this.tempFileError) {
 			return;
 		}
-		const { path, stream } = createOutputFileStream(this.tempFilePrefix, ".log");
-		this.tempFilePath = path;
-		this.tempFileStream = stream;
+		try {
+			const { path, stream } = this.createOutputFile?.() ?? createOutputFileStream(this.tempFilePrefix, ".log");
+			this.tempFilePath = path;
+			this.tempFileStream = stream;
+			stream.on("error", (error) => this.failFile(error));
+		} catch (error) {
+			this.failFile(error instanceof Error ? error : new Error(String(error)));
+			return;
+		}
 		for (const chunk of this.rawChunks) {
 			this.tempFileStream.write(chunk);
 		}
 		this.rawChunks = [];
+	}
+
+	private failFile(error: Error): void {
+		this.tempFileError = error;
+		this.fileErrorController.abort(error);
 	}
 }

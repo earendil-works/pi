@@ -57,6 +57,7 @@ import {
 	resetApiProviders,
 	streamSimple,
 } from "@earendil-works/pi-ai/compat";
+import { getAgentDir } from "../config.ts";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { processImage } from "../utils/image-process.ts";
@@ -128,6 +129,7 @@ import { type BashExecutionMessage, type CustomMessage, convertToLlm } from "./m
 import { ModelRegistry } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { NestedToolCallRunner } from "./nested-tool-calls.ts";
+import { configureOutputArtifacts, type OutputArtifacts } from "./output-artifacts.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import { exportSessionToJsonl } from "./session-export.ts";
@@ -276,6 +278,8 @@ export interface AgentSessionConfig {
 	sessionManager: SessionManager;
 	settingsManager: SettingsManager;
 	cwd: string;
+	/** Config directory owning durable output artifacts; defaults to the standard agent directory. */
+	agentDir?: string;
 	/** Models to cycle through with Ctrl+P (from --models flag) */
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
 	/** Resource loader for extensions, skills, prompts, themes, context files, and system prompt */
@@ -418,6 +422,7 @@ export class AgentSession {
 	readonly agent: Agent;
 	readonly sessionManager: SessionManager;
 	readonly settingsManager: SettingsManager;
+	private readonly _outputArtifacts: OutputArtifacts;
 
 	private _scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
 
@@ -535,6 +540,12 @@ export class AgentSession {
 		this._cwd = config.cwd;
 		this._modelRuntime = config.modelRuntime;
 		this._cacheWarmer = config.cacheWarmer;
+		this._outputArtifacts = configureOutputArtifacts(
+			this.sessionManager,
+			config.agentDir ?? getAgentDir(),
+			() => this.settingsManager.getSettings().outputArtifacts,
+			() => this._limitsModel()?.contextWindow,
+		);
 		if (this._cacheWarmer) {
 			this._cacheWarmer.onWarmed = (entry) => this._emit({ type: "entry_appended", entry });
 		}
@@ -754,14 +765,17 @@ export class AgentSession {
 			autoResizeImages: this.settingsManager.getImageAutoResize(),
 			...(resizeOptions ? { resizeOptions } : {}),
 		});
+		const retainedContent = parentToolCallId
+			? normalizedContent
+			: await this._outputArtifacts.limit(normalizedContent);
 
-		if (!hookResult && normalizedContent === content) {
+		if (!hookResult && retainedContent === content) {
 			return undefined;
 		}
 
 		// The hook result already dropped structured content that replaced content no longer matches.
 		return {
-			content: normalizedContent,
+			content: retainedContent,
 			details: hookResult?.details,
 			structuredContent: hookResult ? hookResult.structuredContent : result.structuredContent,
 			isError: hookResult?.isError ?? isError,
@@ -1413,6 +1427,8 @@ export class AgentSession {
 						: replacement;
 				this._replaceMessageInPlace(event.message, normalized);
 			}
+			if (event.message.role === "toolResult")
+				event.message.content = await this._outputArtifacts.limit(event.message.content);
 		} else if (event.type === "tool_execution_start") {
 			const extensionEvent: ToolExecutionStartEvent = {
 				type: "tool_execution_start",
@@ -3755,6 +3771,10 @@ export class AgentSession {
 						this._emit({ type: "entry_appended", entry });
 					}
 				},
+				appendUsage: (kind, provider, model, usage, note) => {
+					const entry = this.sessionManager.appendUsage(kind, provider, model, usage, note);
+					this._emit({ type: "entry_appended", entry });
+				},
 				setSessionName: (name) => {
 					this.setSessionName(name);
 				},
@@ -3964,7 +3984,10 @@ export class AgentSession {
 					]),
 				)
 			: createAllToolDefinitions(this._cwd, {
-					read: { autoResizeImages },
+					read: {
+						autoResizeImages,
+						getBrowserExecutablePath: () => this.settingsManager.getSettings().read?.browserExecutablePath,
+					},
 					bash: { commandPrefix: shellCommandPrefix, shellPath },
 				});
 
@@ -4216,6 +4239,7 @@ export class AgentSession {
 						this._emit({ type: "bash_execution_update", id: options?.id, delta });
 					},
 					signal: abortController.signal,
+					outputArtifacts: this._outputArtifacts,
 				},
 			);
 

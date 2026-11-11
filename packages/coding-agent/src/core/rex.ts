@@ -147,6 +147,14 @@ export async function showRexPane(pane: RexPane, cwd: string): Promise<void> {
 	else assertRexSuccess(await runRex(["--autostart=false", "focus", "--session", pane.sessionId, pane.blockId], cwd));
 }
 
+/** Update one owned pane's label without focusing it or changing its process. */
+export async function setRexPaneTitle(pane: RexPane, title: string, cwd: string): Promise<void> {
+	const label = `pi ${title.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 75)}`;
+	assertRexSuccess(
+		await runRex(["--autostart=false", "block", "rename", "--session", pane.sessionId, pane.blockId, label], cwd),
+	);
+}
+
 /** Close only the pane pi opened; independently supervised jobs are unaffected. */
 export async function closeRexPane(pane: RexPane, cwd: string): Promise<void> {
 	const result = await runRex(["--autostart=false", "block", "close", "--session", pane.sessionId, pane.blockId], cwd);

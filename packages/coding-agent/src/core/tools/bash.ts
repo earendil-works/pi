@@ -14,6 +14,7 @@ import {
 } from "../../utils/shell.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import { JobManager } from "../jobs/manager.ts";
+import { getOutputArtifacts } from "../output-artifacts.ts";
 import { OutputAccumulator } from "./output-accumulator.ts";
 import { BASH_UPDATE_THROTTLE_MS, createShellRenderers } from "./renderers/bash.ts";
 import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -87,6 +88,7 @@ export type BashToolOutput = Static<typeof bashOutputSchema>;
 export interface BashToolDetails {
 	truncation?: TruncationResult;
 	fullOutputPath?: string;
+	artifactUri?: string;
 	jobId?: string;
 	jobState?: string;
 }
@@ -108,7 +110,8 @@ export interface BashOperations {
 		command: string,
 		cwd: string,
 		options: {
-			onData: (data: Buffer) => void;
+			/** Await the returned promise before producing more output when the backend supports backpressure. */
+			onData: (data: Buffer) => void | Promise<void>;
 			signal?: AbortSignal;
 			timeout?: number;
 			env?: NodeJS.ProcessEnv;
@@ -169,6 +172,28 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 			const onAbort = () => {
 				if (child.pid) killProcessTree(child.pid);
 			};
+			let outputFailure: { error: unknown } | undefined;
+			const resumeOutput = () => {
+				child.stdout?.resume();
+				child.stderr?.resume();
+			};
+			const failOutput = (error: unknown) => {
+				outputFailure = { error };
+				onAbort();
+				resumeOutput();
+			};
+			const handleData = (data: Buffer) => {
+				try {
+					const pending = onData(data);
+					if (pending) {
+						child.stdout?.pause();
+						child.stderr?.pause();
+						void pending.then(resumeOutput, failOutput);
+					}
+				} catch (error) {
+					failOutput(error);
+				}
+			};
 
 			try {
 				// Set timeout if provided.
@@ -182,8 +207,8 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 					}, timeoutMs);
 				}
 				// Stream stdout and stderr.
-				child.stdout?.on("data", onData);
-				child.stderr?.on("data", onData);
+				child.stdout?.on("data", handleData);
+				child.stderr?.on("data", handleData);
 				// Handle abort signal by killing the entire process tree.
 				if (signal) {
 					if (signal.aborted) onAbort();
@@ -192,6 +217,7 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 				// Handle shell spawn errors and wait for the process to terminate without hanging
 				// on inherited stdio handles held by detached descendants.
 				const exitCode = await waitForChildProcess(child);
+				if (outputFailure) throw outputFailure.error;
 				if (signal?.aborted) {
 					throw new Error("aborted");
 				}
@@ -304,7 +330,7 @@ export function createShellToolDefinition(
 	return {
 		name: config.name,
 		label: config.label,
-		description: `Execute a ${config.shellName} command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first); full output is retained when truncated. Optionally provide a timeout in seconds. Local bash also accepts async:true to start a persistent background job, with an optional name; use jobs to manage it.`,
+		description: `Execute a ${config.shellName} command in the current working directory. Returns combined stdout/stderr. In a Pi session, oversized output streams to a persistent artifact and the inline preview uses an adaptive token budget. Standalone calls retain the last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB. Optionally provide a timeout in seconds. Local bash accepts async:true for persistent background jobs; use jobs to manage them.`,
 		promptSnippet: config.promptSnippet,
 		promptGuidelines: exposeSessionEnvironment && config.promptGuidelines ? [...config.promptGuidelines] : undefined,
 		parameters: bashSchema,
@@ -352,7 +378,9 @@ export function createShellToolDefinition(
 					isError: job.runtime.state === "failed",
 				};
 			}
-			const output = new OutputAccumulator({ tempFilePrefix: config.tempFilePrefix });
+			const capture = ctx ? getOutputArtifacts(ctx.sessionManager)?.capture() : undefined;
+			const output = capture?.output ?? new OutputAccumulator({ tempFilePrefix: config.tempFilePrefix });
+			const executionSignal = signal ? AbortSignal.any([signal, output.fileErrorSignal]) : output.fileErrorSignal;
 			let acceptingOutput = true;
 			let updateTimer: NodeJS.Timeout | undefined;
 			let updateDirty = false;
@@ -368,6 +396,7 @@ export function createShellToolDefinition(
 					details: {
 						truncation: snapshot.truncation.truncated ? snapshot.truncation : undefined,
 						fullOutputPath: snapshot.fullOutputPath,
+						artifactUri: capture?.artifact?.uri,
 					},
 				});
 			};
@@ -402,6 +431,7 @@ export function createShellToolDefinition(
 				if (!acceptingOutput) return;
 				output.append(data);
 				scheduleOutputUpdate();
+				return output.whenDrained();
 			};
 
 			const finishOutput = async () => {
@@ -416,10 +446,14 @@ export function createShellToolDefinition(
 
 			const formatOutput = (snapshot: Awaited<ReturnType<typeof finishOutput>>, emptyText = "(no output)") => {
 				const truncation = snapshot.truncation;
-				let text = snapshot.content || emptyText;
+				let text = snapshot.content || (capture?.artifact ? "(output retained in artifact)" : emptyText);
 				let details: BashToolDetails | undefined;
 				if (truncation.truncated) {
-					details = { truncation, fullOutputPath: snapshot.fullOutputPath };
+					details = { truncation, fullOutputPath: snapshot.fullOutputPath, artifactUri: capture?.artifact?.uri };
+					if (capture?.artifact) {
+						text = `[Full captured output: ${capture.artifact.uri}. Use read with offset/limit or byteOffset.]\n\n${text}`;
+						return { text, details };
+					}
 					const startLine = truncation.totalLines - truncation.outputLines + 1;
 					const endLine = truncation.totalLines;
 					if (truncation.lastLinePartial) {
@@ -442,7 +476,7 @@ export function createShellToolDefinition(
 				try {
 					const result = await ops.exec(spawnContext.command, spawnContext.cwd, {
 						onData: handleData,
-						signal,
+						signal: executionSignal,
 						timeout,
 						env: spawnContext.env,
 					});
@@ -463,7 +497,7 @@ export function createShellToolDefinition(
 						}
 						throw new Error(appendStatus(text, status));
 					}
-					throw err;
+					throw new Error(appendStatus(text, err instanceof Error ? err.message : String(err)), { cause: err });
 				}
 
 				const snapshot = await finishOutput();

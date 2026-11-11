@@ -6,12 +6,11 @@
  * - Direct calls from modes that need bash execution
  */
 
-import type { WriteStream } from "node:fs";
 import { splitIncompleteAnsiSuffix, stripAnsi } from "../utils/ansi.ts";
-import { createOutputFileStream } from "../utils/output-files.ts";
 import { sanitizeBinaryOutput } from "../utils/shell.ts";
+import type { OutputArtifacts } from "./output-artifacts.ts";
 import type { BashOperations } from "./tools/bash.ts";
-import { DEFAULT_MAX_BYTES, truncateTail } from "./tools/truncate.ts";
+import { OutputAccumulator } from "./tools/output-accumulator.ts";
 
 // ============================================================================
 // Types
@@ -22,6 +21,8 @@ export interface BashExecutorOptions {
 	onChunk?: (chunk: string) => void;
 	/** AbortSignal for cancellation */
 	signal?: AbortSignal;
+	/** Session-owned retention and adaptive inline budget when executing through Pi. */
+	outputArtifacts?: OutputArtifacts;
 }
 
 export interface BashResult {
@@ -51,98 +52,52 @@ export async function executeBashWithOperations(
 	operations: BashOperations,
 	options?: BashExecutorOptions,
 ): Promise<BashResult> {
-	const outputChunks: string[] = [];
-	let outputBytes = 0;
-	let discardedOutput = false;
-	const maxOutputBytes = DEFAULT_MAX_BYTES * 2;
-
-	let tempFilePath: string | undefined;
-	let tempFileStream: WriteStream | undefined;
-	let totalBytes = 0;
-
-	const ensureTempFile = () => {
-		if (tempFilePath) {
-			return;
-		}
-		({ path: tempFilePath, stream: tempFileStream } = createOutputFileStream("pi-bash", ".log"));
-		for (const chunk of outputChunks) {
-			tempFileStream.write(chunk);
-		}
-	};
-
+	const capture = options?.outputArtifacts?.capture();
+	const output = capture?.output ?? new OutputAccumulator({ tempFilePrefix: "pi-bash" });
+	const signal = options?.signal ? AbortSignal.any([options.signal, output.fileErrorSignal]) : output.fileErrorSignal;
 	const decoder = new TextDecoder();
-	// Unfinished escape sequence at the end of the previous chunk, completed by the next chunk.
 	let pendingAnsi = "";
-
-	const appendText = (rawText: string) => {
-		// Sanitize: strip ANSI, replace binary garbage, normalize newlines
-		const text = sanitizeBinaryOutput(stripAnsi(rawText)).replace(/\r/g, "");
-		if (!text) {
-			return;
-		}
-
-		// Start writing to temp file if exceeds threshold
-		if (totalBytes > DEFAULT_MAX_BYTES) {
-			ensureTempFile();
-		}
-
-		if (tempFileStream) {
-			tempFileStream.write(text);
-		}
-
-		// Keep rolling buffer
-		outputChunks.push(text);
-		outputBytes += text.length;
-		while (outputBytes > maxOutputBytes && outputChunks.length > 1) {
-			const removed = outputChunks.shift()!;
-			outputBytes -= removed.length;
-			discardedOutput = true;
-		}
-
-		// Stream to callback
-		if (options?.onChunk) {
-			options.onChunk(text);
-		}
+	let acceptingOutput = true;
+	const appendText = (raw: string) => {
+		const text = sanitizeBinaryOutput(stripAnsi(raw)).replace(/\r/g, "");
+		if (!text) return;
+		output.append(Buffer.from(text));
+		options?.onChunk?.(text);
 	};
-
 	const onData = (data: Buffer) => {
-		totalBytes += data.length;
+		if (!acceptingOutput) return;
 		const { complete, pending } = splitIncompleteAnsiSuffix(pendingAnsi + decoder.decode(data, { stream: true }));
 		pendingAnsi = pending;
 		appendText(complete);
+		return output.whenDrained();
 	};
-
-	const flushOutput = () => {
-		const rest = pendingAnsi + decoder.decode();
-		pendingAnsi = "";
-		appendText(rest);
-	};
-
 	let exitCode: number | null = null;
+	let failure: { error: unknown } | undefined;
 	try {
-		({ exitCode } = await operations.exec(command, cwd, { onData, signal: options?.signal }));
-	} catch (err) {
-		// An aborted command still returns the output it produced so far
-		if (!options?.signal?.aborted) {
-			tempFileStream?.end();
-			throw err;
-		}
+		({ exitCode } = await operations.exec(command, cwd, { onData, signal }));
+	} catch (error) {
+		if (!options?.signal?.aborted) failure = { error };
+	} finally {
+		acceptingOutput = false;
 	}
-
-	flushOutput();
-	const fullOutput = outputChunks.join("");
-	const truncationResult = truncateTail(fullOutput);
-	if (truncationResult.truncated) {
-		ensureTempFile();
+	appendText(pendingAnsi + decoder.decode());
+	output.finish();
+	await output.closeTempFile();
+	const snapshot = output.snapshot();
+	let text = snapshot.content;
+	if (capture?.artifact)
+		text = `[Full captured output: ${capture.artifact.uri}. Use read with offset/limit or byteOffset.]\n\n${text}`;
+	if (failure) {
+		if (!capture?.artifact) throw failure.error;
+		const message = failure.error instanceof Error ? failure.error.message : String(failure.error);
+		throw new Error(`${text}\n\n${message}`, { cause: failure.error });
 	}
-	tempFileStream?.end();
 	const cancelled = options?.signal?.aborted ?? false;
-
 	return {
-		output: truncationResult.truncated ? truncationResult.content : fullOutput,
+		output: text,
 		exitCode: cancelled ? undefined : (exitCode ?? undefined),
 		cancelled,
-		truncated: discardedOutput || truncationResult.truncated,
-		fullOutputPath: tempFilePath,
+		truncated: snapshot.truncation.truncated,
+		fullOutputPath: snapshot.fullOutputPath,
 	};
 }

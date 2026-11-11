@@ -1,10 +1,12 @@
 // Built-in job controls, live views, and completion notices for independently supervised work.
+import { contentText } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { Compile } from "typebox/compile";
 import type { ExtensionContext, ExtensionFactory } from "../../core/extensions/types.ts";
 import { JobManager } from "../../core/jobs/manager.ts";
 import { createJobsToolDefinition } from "../../core/jobs/tool.ts";
 import { JobsView } from "../../core/jobs/view.ts";
+import { generateDisplayName } from "../../core/naming.ts";
 import { parsePaneCommand } from "../../core/panes/command.ts";
 import { openPane, type PaneHandle, type PaneOptions } from "../../core/panes/host.ts";
 import { getRexLocation } from "../../core/rex.ts";
@@ -20,6 +22,7 @@ export function createJobsExtension(manager = new JobManager()): ExtensionFactor
 		const panes = new Map<string, PaneHandle>();
 		const openings = new Map<string, Promise<PaneHandle>>();
 		const observers = new Map<string, () => void>();
+		const namings = new Set<Promise<void>>();
 		pi.registerTool(createJobsToolDefinition(process.cwd(), manager));
 
 		async function present(
@@ -58,6 +61,7 @@ export function createJobsExtension(manager = new JobManager()): ExtensionFactor
 								if (submitted.runtime.state === "running" || submitted.runtime.state === "starting")
 									observe(submitted.id, ctx);
 								presentSubmitted(submitted.id, ctx);
+								nameSubmitted(submitted.id, ctx);
 							},
 							id,
 						),
@@ -95,6 +99,50 @@ export function createJobsExtension(manager = new JobManager()): ExtensionFactor
 				},
 			);
 		}
+		function nameSubmitted(jobId: string, ctx: ExtensionContext): void {
+			if (lifetime.signal.aborted || !ctx.model) return;
+			const model = ctx.model;
+			const owner = lifetime;
+			const sessionId = ctx.sessionManager.getSessionId();
+			const sessionFile = ctx.sessionManager.getSessionFile();
+			const naming = (async () => {
+				const job = await manager.claimName(jobId);
+				if (job?.naming?.status !== "running") return;
+				const request = ctx.sessionManager
+					.getBranch()
+					.findLast((entry) => entry.type === "message" && entry.message.role === "user");
+				const intent =
+					request?.type === "message" && request.message.role === "user"
+						? contentText(request.message.content).slice(0, 6000)
+						: "";
+				const result = await generateDisplayName(ctx.modelRegistry.runtime, model, {
+					kind: "job",
+					subject: JSON.stringify({ command: job.command.slice(0, 6000), request: intent }),
+					instructions: ctx.getSystemPrompt(),
+					sessionId: `name:job:${job.id}`,
+					signal: owner.signal,
+				});
+				if (
+					result.response &&
+					ctx.sessionManager.getSessionId() === sessionId &&
+					ctx.sessionManager.getSessionFile() === sessionFile
+				) {
+					const response = result.response;
+					pi.appendUsage("job_name", response.provider, response.model, response.usage, job.id);
+				}
+				await manager.finishName(
+					jobId,
+					owner.signal.aborted ? { status: "failed", error: "Name generation canceled" } : result,
+				);
+			})().catch((error: unknown) => {
+				// Deleting a finished job also discards its pending name.
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT" && !owner.signal.aborted)
+					ctx.ui.notify(`Cannot name job ${jobId}: ${String(error)}`, "warning");
+			});
+			namings.add(naming);
+			void naming.then(() => namings.delete(naming));
+		}
+
 		pi.registerCommand("jobs", {
 			description: "List and view persistent jobs: /jobs [--tui|--rex] [--split|--floating] [--minimized] [job ID]",
 			handler: async (args, ctx) => {
@@ -196,13 +244,18 @@ export function createJobsExtension(manager = new JobManager()): ExtensionFactor
 			const { jobId, jobState } = event.details;
 			if (!event.isError && (jobState === "running" || jobState === "starting")) observe(jobId, ctx);
 			const submitted = event.toolName === "bash" ? event.input.async === true : event.input.action === "restart";
-			if (submitted) presentSubmitted(jobId, ctx);
+			if (submitted && !event.isError) {
+				presentSubmitted(jobId, ctx);
+				nameSubmitted(jobId, ctx);
+			}
 		});
 		pi.on("session_shutdown", async (_event, ctx) => {
+			if (ctx.mode === "print" || ctx.mode === "json") await Promise.all(namings);
 			lifetime.abort();
 			for (const stop of observers.values()) stop();
 			observers.clear();
 			ctx.ui.setStatus("jobs", undefined);
+			await Promise.all(namings);
 			await Promise.allSettled([...openings.values()]);
 			await Promise.all(
 				[...panes.values()].map((pane) =>

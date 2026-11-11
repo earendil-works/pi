@@ -193,3 +193,17 @@ Used inside the scoped models selector (opened via `/scoped-models`).
 | `app.models.toggleProvider` | `ctrl+p` | Toggle all models for the current provider |
 | `app.models.reorderUp` | `alt+up` | Move the selected model up in the cycle order |
 | `app.models.reorderDown` | `alt+down` | Move the selected model down in the cycle order |
+
+### Native sub-agents
+
+Used inside `/agents`; these bindings do not change the main editor's actions.
+
+| Keybinding id | Default | Description |
+|---|---|---|
+| `app.agents.start` | `ctrl+n` | Choose a role and submit a new task |
+| `app.agents.message` | `ctrl+e` | Send steering input to the selected active child |
+| `app.agents.resume` | `ctrl+r` | Continue a saved child in its own history |
+| `app.agents.stop` | `ctrl+s` | Stop the selected queued or running child |
+| `app.agents.delete` | `ctrl+d` | Delete the selected finished child's history |
+
+The view also uses `tui.select.*` for selection, history paging, and back/close, plus `app.pane.minimize` for shared Rex views.

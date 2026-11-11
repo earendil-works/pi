@@ -121,6 +121,8 @@ export class JobsView implements PaneView {
 			lines.push(singleLine(`$ ${job.command}`, width), singleLine(`Directory: ${job.cwd}`, width));
 			if (job.progress?.message) lines.push(singleLine(job.progress.message, width));
 			if (job.progressError) lines.push(theme.fg("warning", singleLine(job.progressError, width)));
+			if (job.naming?.status === "failed")
+				lines.push(theme.fg("warning", singleLine(`Name generation failed: ${job.naming.error}`, width)));
 			if (job.runtime.state === "failed" || job.runtime.state === "lost" || job.runtime.state === "unreachable") {
 				if (job.runtime.error) lines.push(theme.fg("error", singleLine(job.runtime.error, width)));
 			}
@@ -265,11 +267,29 @@ export class JobsView implements PaneView {
 				return;
 			}
 			this.detailJob = detailJob;
+			void this.controls
+				.setTitle(detailJob ? `Job ${detailJob.id.slice(0, 8)} — ${detailJob.name}` : "Background jobs")
+				.catch((error: unknown) => {
+					if (!this.disposed) {
+						this.error = String(error);
+						this.controls.invalidate();
+					}
+				});
 			if (!id) {
 				this.jobs = jobs;
 				this.selected = Math.max(0, Math.min(this.selected, jobs.length - 1));
 			}
-			const wanted = new Set(jobs.filter((job) => isActiveJob(job) || job.id === this.detail).map((job) => job.id));
+			const wanted = new Set(
+				jobs
+					.filter(
+						(job) =>
+							isActiveJob(job) ||
+							job.id === this.detail ||
+							job.naming?.status === "pending" ||
+							job.naming?.status === "running",
+					)
+					.map((job) => job.id),
+			);
 			for (const [id, stop] of this.watches)
 				if (!wanted.has(id)) {
 					stop();

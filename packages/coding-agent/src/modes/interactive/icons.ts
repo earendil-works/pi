@@ -1,9 +1,41 @@
 export type IconPreset = "unicode" | "nerd";
-export type IconName = "code" | "quote" | "copy" | "chat";
+export type IconName =
+	| "code"
+	| "quote"
+	| "copy"
+	| "chat"
+	| "agent"
+	| "agentWorker"
+	| "agentScout"
+	| "agentReviewer"
+	| "agentPlanner"
+	| "statusDot";
 
 const ICONS: Record<IconPreset, Record<IconName, string>> = {
-	unicode: { code: "</>", quote: "❯", copy: "⧉", chat: "?" },
-	nerd: { code: "\uf44f", quote: "\uf10e", copy: "\u{f09a8}", chat: "\uf075" },
+	unicode: {
+		code: "</>",
+		quote: "❯",
+		copy: "⧉",
+		chat: "?",
+		agent: "@",
+		agentWorker: "</>",
+		agentScout: "?",
+		agentReviewer: "✓",
+		agentPlanner: "≡",
+		statusDot: "\u2022",
+	},
+	nerd: {
+		code: "\uf44f",
+		quote: "\uf10e",
+		copy: "\u{f09a8}",
+		chat: "\uf075",
+		agent: "\uf007",
+		agentWorker: "\uf0ad",
+		agentScout: "\uf002",
+		agentReviewer: "\uf132",
+		agentPlanner: "\uf0ae",
+		statusDot: "\u2022",
+	},
 };
 
 // Extensions loaded through jiti must see the same preset as the main interactive runtime.

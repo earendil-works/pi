@@ -73,7 +73,7 @@ describe("temporary read-only side conversations", () => {
 		);
 		expect(JSON.stringify(harness.sessionManager.getEntries())).toBe(before);
 		expect(JSON.stringify(harness.session.messages)).toBe(mainMessages);
-		const view = new SideChatView(side, { invalidate() {}, close() {}, async minimize() {} });
+		const view = new SideChatView(side, { invalidate() {}, close() {}, async minimize() {}, async setTitle() {} });
 		await view.dispose();
 		expect(side.state.messages).toEqual([]);
 		expect(side.peekQueuedMessages()).toEqual([]);

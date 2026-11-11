@@ -1,8 +1,6 @@
 /**
- * Output files: files pi writes so the model can use output it was not shown in full, such as the
- * full text of truncated tool output, binary MCP resources, and images shown by codemode scripts.
- * Every output file is created here, so where they are stored can change in one place. Today they
- * go to the OS temp directory.
+ * Temporary output assets for standalone tools, binary MCP resources, and codemode images.
+ * Session-owned text retention uses core/output-artifacts.ts instead.
  */
 
 import { randomBytes } from "node:crypto";

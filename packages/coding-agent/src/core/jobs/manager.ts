@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { connect } from "node:net";
 import { join, resolve } from "node:path";
+import { lock } from "proper-lockfile";
 import { Compile } from "typebox/compile";
 import { getAgentDir, getInternalInvocation } from "../../config.ts";
 import { getShellConfig, getShellEnv, type ShellConfig } from "../../utils/shell.ts";
@@ -57,6 +58,7 @@ export class JobManager {
 		const spec: JobSpec = {
 			id,
 			name: options.name ?? command.split("\n", 1)[0].slice(0, 128),
+			naming: options.name === undefined ? { status: "pending" } : { status: "explicit" },
 			command,
 			cwd: resolve(cwd),
 			createdAt: Date.now(),
@@ -199,6 +201,7 @@ export class JobManager {
 		return {
 			id,
 			name: spec.name,
+			naming: spec.naming,
 			command: spec.command,
 			cwd: spec.cwd,
 			createdAt: spec.createdAt,
@@ -242,9 +245,29 @@ export class JobManager {
 
 	/** Rename metadata without changing the running process or racing worker-owned status writes. */
 	async rename(id: string, name: string): Promise<JobInfo> {
-		const directory = this.jobDirectory(id);
-		writeJobRecord(directory, "spec.json", { ...readJobSpec(directory), name });
+		await this.updateSpec(id, (spec) => ({ ...spec, name, naming: { status: "explicit" } }));
 		return this.inspect(id);
+	}
+
+	/** Claim an unnamed job once; explicit and already-attempted names are never regenerated. */
+	async claimName(id: string): Promise<JobInfo | undefined> {
+		const claimed = await this.updateSpec(id, (spec) =>
+			spec.naming?.status === "pending" ? { ...spec, naming: { status: "running" } } : undefined,
+		);
+		return claimed ? this.inspect(id) : undefined;
+	}
+
+	/** Publish a naming result only while its claim is current; a manual rename always wins. */
+	async finishName(
+		id: string,
+		result: { status: "generated"; name: string } | { status: "failed"; error: string },
+	): Promise<void> {
+		await this.updateSpec(id, (spec) => {
+			if (spec.naming?.status !== "running") return;
+			return result.status === "generated"
+				? { ...spec, name: result.name, naming: { status: "generated" } }
+				: { ...spec, naming: { status: "failed", error: result.error } };
+		});
 	}
 
 	/** Stop a live job and start a new job ID, optionally with a replacement command. */
@@ -252,7 +275,7 @@ export class JobManager {
 		const spec = readJobSpec(this.jobDirectory(id));
 		await this.stop(id);
 		return this.start(command ?? spec.command, spec.cwd, {
-			name: spec.name,
+			...(!spec.naming || spec.naming.status === "explicit" ? { name: spec.name } : {}),
 			shell: spec.shell,
 			timeout: spec.timeout,
 			sessionId: spec.sessionId,
@@ -297,6 +320,23 @@ export class JobManager {
 		});
 		watcher.on("error", () => changed(undefined));
 		return () => watcher.close();
+	}
+
+	private async updateSpec(id: string, update: (spec: JobSpec) => JobSpec | undefined): Promise<boolean> {
+		const directory = this.jobDirectory(id);
+		// Rex viewers and other pi processes can rename the same job while generation is in flight.
+		const release = await lock(join(directory, "spec.json"), {
+			realpath: false,
+			retries: { retries: 4, minTimeout: 10, maxTimeout: 50 },
+		});
+		try {
+			const next = update(readJobSpec(directory));
+			if (!next) return false;
+			writeJobRecord(directory, "spec.json", next);
+			return true;
+		} finally {
+			await release();
+		}
 	}
 
 	private jobDirectory(id: string): string {

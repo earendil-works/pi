@@ -59,6 +59,40 @@ This replaces `bash` with `powershell` and enables `ls`: `["-bash", "+powershell
 
 CLI tool options override this setting for one invocation. `--tools` with only `+name` and `-name` entries changes the resolved `defaultTools` selection instead, for example `pi --tools +codemode`. On `/reload`, these entries apply to the reloaded setting too, so a tool removed with `-name` stays removed. See [Command Line](cli.md#tools).
 
+## Document reading
+
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| `read.browserExecutablePath` | string | Auto-discover installed Chromium | Trusted Chrome/Chromium-family executable for explicit `read` calls with `strategy:"browser"`. Prefer an absolute path. |
+
+No browser runs for ordinary URL reads or as an automatic extraction fallback. Browser reads use a fresh temporary profile and context, without your logged-in browser session, and never download a browser. The executable override is read at tool execution time. Both fetching and browser rendering honor inherited HTTP/HTTPS proxy settings. See [document and web reading](../README.md#document-and-web-reading) for arguments, limits, SQLite safety, and artifact snapshots.
+
+## Output artifacts
+
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| `outputArtifacts.maxInlineTokens` | positive safe integer | `8000` | Maximum estimated tokens of inline text per tool result. |
+| `outputArtifacts.contextWindowFraction` | number, greater than 0 and at most 1 | `0.05` | Further bound each result by this fraction of the selected model's context window. |
+
+The effective budget is the smaller of these limits, with a 128-token floor for references and navigation. Estimation uses four UTF-16 characters per token, not a provider tokenizer; a separate 64 KiB UTF-8 byte ceiling applies. Reference and navigation text consume the same budget. Image attachments are preserved separately.
+
+Oversized text from built-ins, extensions, and MCP tools is retained and replaced with an `artifact://...` reference plus a bounded preview. Use `read` with the exact reference and ordinary 1-indexed `offset`/`limit` line arguments. Pages also report a 0-indexed `byteOffset` continuation, so even a single very long line can be retrieved without gaps. Do not supply `offset` and `byteOffset` together.
+
+Native shell captures spill while producing output, with backpressure and storage errors propagated to the producer. Assembled results are saved when the tool returns. Nested programmatic calls keep their full returned text and structured values; the outer result shown to the model gets the shared budget. Existing query, source-file read, and upstream-tool limits still apply: artifacts cannot restore data discarded before it reaches this layer.
+
+Persistent artifacts live under `<agent-dir>/artifacts/`, outside session JSONL, and survive resume and compaction. Main and child sessions have separate namespaces. Temporary-session artifacts use `artifact://temporary/...` references valid only in the originating process and are removed on normal process exit. References can be read explicitly across main and side sessions without merging their histories; SDK hosts should use the same configured agent directory for related sessions.
+
+On POSIX, new files and directories use owner-only permissions; Windows inherits directory ACLs. Captures are not encrypted and can contain credentials or other sensitive output. Streaming command captures can retain text later hidden by result hooks. Persistent captures have no automatic expiration or quota: preserve the artifact store alongside session backups, and remove only files no retained session, fork, or checkpoint needs. See [Session storage](session-format.md#output-artifacts).
+
+## Sub-agents
+
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| `subagents.maxConcurrent` | positive safe integer | `4` | Maximum active children per parent manager; additional tasks queue until a slot is available. |
+
+Role definitions, descriptions, local tool selections, and optional model/thinking overrides use Markdown files in `<agent-dir>/agents/` or the nearest project `.pi/agents/`, not inline settings objects. See [Native sub-agents](../README.md#native-sub-agents) for the format, trust checks, controls, and history isolation.
+
+
 ## Sessions and context
 
 | Setting | Type | Default | Description |
@@ -168,9 +202,11 @@ Resource paths in user settings resolve from the agent directory. Paths in proje
 
 Resource arrays support glob exclusions with `!pattern`, exact inclusion with `+path`, and exact exclusion with `-path`. Pi loads resources listed in both user-level and project settings.
 
-The built-in extensions are named `builtin:mcp`, `builtin:llama.cpp`, `builtin:codemode`, and `builtin:tool-search` in `extensions`. They load by default; `-builtin:mcp` disables one. A `+builtin:<name>` or `-builtin:<name>` entry in project settings overrides the user setting. `pi config` lists them under Built-in. `--no-extensions` disables them too, and `-e builtin:<name>` loads one explicitly.
+Built-in extensions include `builtin:mcp`, `builtin:llama.cpp`, `builtin:codemode`, and `builtin:tool-search` in `extensions`. They load by default; `-builtin:mcp` disables one. A `+builtin:<name>` or `-builtin:<name>` entry in project settings overrides the user setting. `pi config` lists them under Built-in. `--no-extensions` disables them too, and `-e builtin:<name>` loads one explicitly.
 
 `builtin:recall` enables the default `recall_context` checkpoint-retrieval tool. Use `-builtin:recall` to disable it without disabling compaction.
+
+`builtin:subagents` enables the native `subagent` tool and `/agents` view by default. Use `-builtin:subagents` to disable both. An installed extension that replaces `subagent` or `/agents` can supersede the native implementation; remove that replacement to use native controls and isolated retained histories.
 
 ## Updates, telemetry, and warnings
 

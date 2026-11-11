@@ -1,8 +1,8 @@
 // General Rex CLI access for the agent, independent of pi's job and view implementations.
 import { Type } from "typebox";
+import { execCommand } from "../../core/exec.ts";
 import type { ExtensionFactory, ToolDefinition } from "../../core/extensions/types.ts";
-import { runRex } from "../../core/rex.ts";
-import { truncateHead } from "../../core/tools/truncate.ts";
+import { getOutputArtifacts } from "../../core/output-artifacts.ts";
 
 const parameters = Type.Object({
 	args: Type.Array(Type.String(), {
@@ -41,17 +41,30 @@ export function createRexToolDefinition(cwd: string): ToolDefinition<typeof para
 			code: Type.Number(),
 			killed: Type.Boolean(),
 			truncated: Type.Boolean(),
+			artifact: Type.Optional(
+				Type.Object({
+					uri: Type.String(),
+					path: Type.String(),
+					preview: Type.String(),
+				}),
+			),
 		}),
 		async execute(_id, params, signal, _onUpdate, ctx) {
-			const structuredContent = await runRex(params.args, ctx?.cwd ?? cwd, signal, (params.timeout ?? 10) * 1000);
-			const output = [structuredContent.stdout, structuredContent.stderr].filter(Boolean).join("\n");
-			const truncated = truncateHead(output);
+			const structuredContent = await execCommand("rex", params.args, ctx?.cwd ?? cwd, {
+				signal,
+				timeout: (params.timeout ?? 10) * 1000,
+				maxBuffer: 512 * 1024,
+				outputArtifacts: ctx && getOutputArtifacts(ctx.sessionManager),
+			});
 			let text =
-				truncated.content ||
-				(structuredContent.killed ? "Rex CLI did not finish" : `Rex exited with code ${structuredContent.code}`);
-			if (truncated.truncated)
-				text += "\n[Display truncated; narrow the Rex query or request help for a specific method]";
-			if (structuredContent.truncated)
+				structuredContent.artifact?.preview ??
+				([structuredContent.stdout, structuredContent.stderr].filter(Boolean).join("\n") ||
+					(structuredContent.killed
+						? "Rex CLI did not finish"
+						: `Rex exited with code ${structuredContent.code}`));
+			if (structuredContent.artifact)
+				text = `[Full captured output: ${structuredContent.artifact.uri}. Use read with offset/limit or byteOffset.]\n\n${text}`;
+			else if (structuredContent.truncated)
 				text += "\n[Captured Rex output exceeded its byte limit; results are incomplete]";
 			if (structuredContent.killed)
 				text +=
@@ -60,7 +73,10 @@ export function createRexToolDefinition(cwd: string): ToolDefinition<typeof para
 				content: [{ type: "text", text }],
 				details: {},
 				structuredContent: { ...structuredContent },
-				isError: structuredContent.code !== 0 || structuredContent.killed || structuredContent.truncated,
+				isError:
+					structuredContent.code !== 0 ||
+					structuredContent.killed ||
+					(structuredContent.truncated && !structuredContent.artifact),
 			};
 		},
 	};

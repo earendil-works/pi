@@ -692,7 +692,9 @@ describe("Coding Agent Tools", () => {
 			const command = `name='World'; echo "Hello, ${nameExpansion}!"; count=3; for i in $(seq 1 ${countExpansion}); do echo "Iteration ${iExpansion} of ${countExpansion}"; done`;
 
 			const result = await ops.exec(command, testDir, {
-				onData: (data) => chunks.push(data),
+				onData: (data) => {
+					chunks.push(data);
+				},
 			});
 
 			expect(result.exitCode).toBe(0);
@@ -813,7 +815,9 @@ describe("Coding Agent Tools", () => {
 			const chunks: Buffer[] = [];
 
 			const result = await ops.exec("echo $TEST_LOCAL_BASH_OPS", testDir, {
-				onData: (data) => chunks.push(data),
+				onData: (data) => {
+					chunks.push(data);
+				},
 				env: { ...process.env, TEST_LOCAL_BASH_OPS: "from-local-ops" },
 			});
 

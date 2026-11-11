@@ -24,12 +24,12 @@ import { RealFSProvider, VM } from "@earendil-works/gondolin";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	type BashOperations,
-	createBashTool,
+	createBashToolDefinition,
 	createEditTool,
 	createFindTool,
 	createGrepTool,
 	createLsTool,
-	createReadTool,
+	createReadToolDefinition,
 	createWriteTool,
 	DEFAULT_MAX_BYTES,
 	type EditOperations,
@@ -397,7 +397,7 @@ function createGondolinBashOps(vm: VM, localCwd: string, shellPath: string): Bas
 					stdout: "pipe",
 					stderr: "pipe",
 				});
-				for await (const chunk of proc.output()) onData(chunk.data);
+				for await (const chunk of proc.output()) await onData(chunk.data);
 				const result = await proc;
 				return { exitCode: result.exitCode };
 			} catch (error) {
@@ -414,10 +414,10 @@ function createGondolinBashOps(vm: VM, localCwd: string, shellPath: string): Bas
 
 export default function (pi: ExtensionAPI) {
 	const localCwd = process.cwd();
-	const localRead = createReadTool(localCwd);
+	const localRead = createReadToolDefinition(localCwd);
 	const localWrite = createWriteTool(localCwd);
 	const localEdit = createEditTool(localCwd);
-	const localBash = createBashTool(localCwd);
+	const localBash = createBashToolDefinition(localCwd);
 	const localGrep = createGrepTool(localCwd);
 	const localFind = createFindTool(localCwd);
 	const localLs = createLsTool(localCwd);
@@ -493,11 +493,12 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		...localRead,
 		async execute(id, params, signal, onUpdate, ctx) {
+			if (params.path.startsWith("artifact://")) return localRead.execute(id, params, signal, onUpdate, ctx);
 			const activeVm = await ensureVm(ctx);
-			const tool = createReadTool(GUEST_WORKSPACE, {
+			const tool = createReadToolDefinition(GUEST_WORKSPACE, {
 				operations: createGondolinReadOps(activeVm, localCwd),
 			});
-			return tool.execute(id, params, signal, onUpdate);
+			return tool.execute(id, params, signal, onUpdate, ctx);
 		},
 	});
 
@@ -527,10 +528,10 @@ export default function (pi: ExtensionAPI) {
 		...localBash,
 		async execute(id, params, signal, onUpdate, ctx) {
 			const activeVm = await ensureVm(ctx);
-			const tool = createBashTool(GUEST_WORKSPACE, {
+			const tool = createBashToolDefinition(GUEST_WORKSPACE, {
 				operations: createGondolinBashOps(activeVm, localCwd, shellPath),
 			});
-			return tool.execute(id, params, signal, onUpdate);
+			return tool.execute(id, params, signal, onUpdate, ctx);
 		},
 	});
 

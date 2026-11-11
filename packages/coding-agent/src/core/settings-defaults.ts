@@ -12,6 +12,13 @@ export const SETTINGS_DEFAULTS = {
 		mode: "floating",
 		minimizedJobs: true,
 	},
+	subagents: {
+		maxConcurrent: 4,
+	},
+	outputArtifacts: {
+		maxInlineTokens: 8000,
+		contextWindowFraction: 0.05,
+	},
 	compaction: {
 		enabled: true,
 		prepareThreshold: 75,

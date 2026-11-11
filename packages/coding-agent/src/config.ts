@@ -447,6 +447,57 @@ export function getInternalInvocation(kind: "job-worker" | "pane-client"): { exe
 	return { executable: process.execPath, args: [join(root, "dist", "core", folder, "entry.js")] };
 }
 
+/** Resolve isolated document readers and their WASM asset across supported distributions. */
+export function getReaderInvocation(kind: "pdf" | "web" | "sqlite"): {
+	executable: string;
+	args: string[];
+	wasmPath: string;
+	bunBinary: boolean;
+} {
+	const root = getPackageDir();
+	if (isBunBinary)
+		return {
+			executable: process.execPath,
+			args: [
+				"--no-env-file",
+				"--no-install",
+				`--config=${join(root, "readers", "bunfig.toml")}`,
+				join(root, "readers", `${kind}-entry.js`),
+			],
+			wasmPath: join(root, "readers", "pdfium.wasm"),
+			bunBinary: true,
+		};
+	if (__filename.endsWith(".ts") && !isBundledNode) {
+		const entry = join(root, "src", "core", "readers", `${kind}-entry.ts`);
+		return {
+			executable: process.execPath,
+			args: isBunRuntime
+				? [
+						"--no-env-file",
+						"--no-install",
+						`--config=${join(root, "src", "core", "readers", "bunfig.toml")}`,
+						"--tsconfig-override",
+						resolve(root, "../..", "tsconfig.json"),
+						entry,
+					]
+				: ["--import", join(root, "src", "experimental", "source-resolver.ts"), entry],
+			wasmPath: createRequire(import.meta.url).resolve("@hyzyla/pdfium/pdfium.wasm"),
+			bunBinary: false,
+		};
+	}
+	return {
+		executable: process.execPath,
+		args: [
+			...(isBunRuntime
+				? ["--no-env-file", "--no-install", `--config=${join(root, "dist", "readers", "bunfig.toml")}`]
+				: []),
+			join(root, "dist", "readers", `${kind}-entry.js`),
+		],
+		wasmPath: join(root, "dist", "readers", "pdfium.wasm"),
+		bunBinary: false,
+	};
+}
+
 /** Resolve the native search addon in source checkouts, npm installs, and standalone releases. */
 export function getNativeSearchPath(): string {
 	let platform = `${process.platform}-${process.arch}`;

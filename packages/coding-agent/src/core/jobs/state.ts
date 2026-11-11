@@ -5,9 +5,18 @@ import { join } from "node:path";
 import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
 
+const JobNamingSchema = Type.Union([
+	Type.Object({ status: Type.Literal("explicit") }),
+	Type.Object({ status: Type.Literal("pending") }),
+	Type.Object({ status: Type.Literal("running") }),
+	Type.Object({ status: Type.Literal("generated") }),
+	Type.Object({ status: Type.Literal("failed"), error: Type.String() }),
+]);
+
 export const JobSpecSchema = Type.Object({
 	id: Type.String({ pattern: "^[a-f0-9-]{36}$" }),
 	name: Type.String(),
+	naming: Type.Optional(JobNamingSchema),
 	command: Type.String(),
 	cwd: Type.String(),
 	createdAt: Type.Number(),
@@ -61,6 +70,7 @@ export const JobReplySchema = Type.Object({ proof: Type.String(), runtime: JobRu
 export const JobInfoSchema = Type.Object({
 	id: Type.String(),
 	name: Type.String(),
+	naming: Type.Optional(JobNamingSchema),
 	command: Type.String(),
 	cwd: Type.String(),
 	createdAt: Type.Number(),

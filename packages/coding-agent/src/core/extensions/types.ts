@@ -1798,6 +1798,9 @@ export interface ExtensionAPI {
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
 	appendEntry<T = unknown>(customType: string, data?: T): void;
 
+	/** Record model-attributed helper usage without adding a conversation message. */
+	appendUsage(kind: string, provider: string, model: string, usage: Usage, note?: string): void;
+
 	// =========================================================================
 	// Session Metadata
 	// =========================================================================
@@ -2164,6 +2167,8 @@ export type SendUserMessageHandler = (
 
 export type AppendEntryHandler = <T = unknown>(customType: string, data?: T) => void;
 
+export type AppendUsageHandler = (kind: string, provider: string, model: string, usage: Usage, note?: string) => void;
+
 export type SetSessionNameHandler = (name: string) => void;
 
 export type GetSessionNameHandler = () => string | undefined;
@@ -2242,6 +2247,7 @@ export interface ExtensionActions {
 	sendMessage: SendMessageHandler;
 	sendUserMessage: SendUserMessageHandler;
 	appendEntry: AppendEntryHandler;
+	appendUsage: AppendUsageHandler;
 	setSessionName: SetSessionNameHandler;
 	getSessionName: GetSessionNameHandler;
 	setLabel: SetLabelHandler;

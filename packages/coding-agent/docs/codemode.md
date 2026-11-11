@@ -12,10 +12,10 @@ A script may start with an options line. It must be the first line; an options l
 // @options: {"max_output_tokens": 2000, "timeout_ms": 60000}
 ```
 
-- `max_output_tokens` (default 10000) limits the output. Longer output keeps its start and end, and the full text is written to a temp file whose path is included in the result. A script fails when its output passes 16777216 characters of text and base64 image data or 100000 `text()`, `image()`, and `console` calls; write large data to a file with a tool instead.
+- `max_output_tokens` optionally imposes a script-specific output cap. Longer output keeps its start and end, and the full text is retained as a session artifact. Without an explicit cap, the session's [adaptive artifact budget](settings.md#output-artifacts) applies to the final model-facing result. Standalone codemode tools without a session retain their 10000-token default and OS-temporary spill files. A script fails when its output passes 16777216 characters of text and base64 image data or 100000 `text()`, `image()`, and `console` calls; write large data to a file with a tool instead.
 - `timeout_ms` is a hard deadline for the whole script, including any wait for a free worker. It is unset by default. Image generation can take minutes, so do not set a short deadline for scripts that generate images.
 
-The result starts with `Script completed` or `Script failed`, the wall time, and the output. Text and image items appear in order, each on its own line. When the output has more than one text item (from `text()` or `return`), each starts with a `==> text N/M <==` line. `console` calls follow in one `<console_output>` block with one line per call. A failed script keeps its partial output, followed by `Script error:` and the error. Tool calls are real: calls made before a failure are not undone. Calls still running when the script ends are cancelled, and unawaited promises are discarded.
+An unspilled result starts with `Script completed` or `Script failed`, the wall time, and the output. Retained results put an artifact reference before the bounded preview. Text and image items appear in order, each on its own line. When the output has more than one text item (from `text()` or `return`), each starts with a `==> text N/M <==` line. `console` calls follow in one `<console_output>` block with one line per call. A failed script keeps its partial output, followed by `Script error:` and the error. Tool calls are real: calls made before a failure are not undone. Calls still running when the script ends are cancelled, and unawaited promises are discarded.
 
 ## Globals
 
@@ -40,9 +40,10 @@ Every tool the session can call is a method of `tools`, named by its identifier:
 
 What a call resolves to depends on the tool:
 
-- Tools with an output schema resolve to a structured value. `bash` resolves to `{ output, truncated, full_output_path?, exit_code, wall_time_seconds }`, also for non-zero exit codes. Its `output` is not limited to the 2000 lines or 50KB the model sees: it holds up to 1 MiB, and longer output keeps its first and last 512 KiB around an omission marker, with `truncated` set and the full output in `full_output_path`.
+- Tools with an output schema resolve to a structured value. `bash` resolves to `{ output, truncated, full_output_path?, exit_code, wall_time_seconds }`, also for non-zero exit codes. Its `output` is independent of the bounded model preview: it holds up to 1 MiB, and longer output keeps its first and last 512 KiB around an omission marker, with `truncated` set and the full output in `full_output_path`.
 - MCP tools resolve to their `CallToolResult`, including `isError` and `structuredContent`.
-- `read` resolves to the file's text, or for an image to an image block `{ type: "image", data, mimeType, note }` that `image()` shows. `data` is the base64 image the model would see and `note` the text that goes with it, such as resize hints.
+- `read` resolves to the selected text, including artifact page bodies without their navigation footer, or for an image to an image block `{ type: "image", data, mimeType, note }` that `image()` shows. `data` is the base64 image the model would see and `note` the text that goes with it, such as resize hints.
+- Multiple PDF page images resolve to `{ type: "document", text, images }`. Each entry of `images` is an image block; use `for (const page of result.images) image(page)`, not `text(result)` or `return result`, to avoid printing base64. A single page retains the ordinary single-image shape. PDF text, extracted web content, and SQLite JSON text resolve as strings. See [document reads](../README.md#document-and-web-reading) for the explicit arguments.
 - Other tools, such as `edit` and `write`, resolve to their text output.
 
 A call that fails, is blocked, or gets invalid arguments rejects with an `Error` that carries the tool's error text. Use `Promise.allSettled()` to keep the results of the calls that succeed.

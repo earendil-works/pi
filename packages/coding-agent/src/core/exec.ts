@@ -6,6 +6,7 @@ import { constants as bufferConstants } from "node:buffer";
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { waitForChildProcess } from "../utils/child-process.ts";
+import type { OutputArtifact, OutputArtifacts } from "./output-artifacts.ts";
 
 const DEFAULT_EXEC_MAX_BUFFER = Math.min(256 * 1024 * 1024, bufferConstants.MAX_STRING_LENGTH);
 const FORCE_KILL_DELAY_MS = 5000;
@@ -21,10 +22,13 @@ export interface ExecOptions {
 	/** Working directory */
 	cwd?: string;
 	/**
-	 * Combined stdout/stderr byte limit; exceeding it terminates the command with `truncated: true`.
+	 * Combined stdout/stderr byte limit. Without artifact capture, overflow terminates the command.
+	 * With artifact capture, strings are bounded but the full output streams to disk and execution continues.
 	 * Nonnegative integer up to the runtime string limit. Default: 256 MiB, capped by that limit.
 	 */
 	maxBuffer?: number;
+	/** Retain oversized command output in the owning session instead of terminating on buffer overflow. */
+	outputArtifacts?: OutputArtifacts;
 }
 
 /**
@@ -36,8 +40,9 @@ export interface ExecResult {
 	code: number;
 	/** The command was terminated by pi: timeout, abort, or output over `maxBuffer`. */
 	killed: boolean;
-	/** Output exceeded `maxBuffer`; stdout and stderr are incomplete and `code` is nonzero. */
+	/** stdout/stderr exceeded maxBuffer; inspect artifact when capture was enabled. */
 	truncated: boolean;
+	artifact?: OutputArtifact & { preview: string };
 }
 
 /**
@@ -55,6 +60,12 @@ export async function execCommand(
 		throw new RangeError(`maxBuffer must be an integer between 0 and ${bufferConstants.MAX_STRING_LENGTH} bytes`);
 	}
 
+	const capture = options?.outputArtifacts?.capture(maxBuffer);
+	const signal = capture
+		? options?.signal
+			? AbortSignal.any([options.signal, capture.output.fileErrorSignal])
+			: capture.output.fileErrorSignal
+		: options?.signal;
 	const proc = spawn(command, args, {
 		cwd,
 		shell: false,
@@ -85,12 +96,9 @@ export async function execCommand(
 		}, FORCE_KILL_DELAY_MS);
 	};
 
-	if (options?.signal) {
-		if (options.signal.aborted) {
-			killProcess();
-		} else {
-			options.signal.addEventListener("abort", killProcess, { once: true });
-		}
+	if (signal) {
+		if (signal.aborted) killProcess();
+		else signal.addEventListener("abort", killProcess, { once: true });
 	}
 
 	if (options?.timeout && options.timeout > 0) {
@@ -108,18 +116,36 @@ export async function execCommand(
 			return data;
 		}
 		truncated = true;
-		proc.stdout?.destroy();
-		proc.stderr?.destroy();
-		killProcess();
+		if (!capture) {
+			proc.stdout?.destroy();
+			proc.stderr?.destroy();
+			killProcess();
+		}
 		return remaining > 0 ? data.subarray(0, remaining) : undefined;
 	};
 
+	const captureChunk = (data: Buffer) => {
+		if (!capture) return;
+		capture.output.append(data);
+		const pending = capture.output.whenDrained();
+		if (pending) {
+			proc.stdout?.pause();
+			proc.stderr?.pause();
+			void pending.then(() => {
+				proc.stdout?.resume();
+				proc.stderr?.resume();
+			});
+		}
+	};
+
 	proc.stdout?.on("data", (data: Buffer) => {
+		captureChunk(data);
 		const chunk = takeWithinCap(data);
 		if (chunk) stdout += stdoutDecoder.write(chunk);
 	});
 
 	proc.stderr?.on("data", (data: Buffer) => {
+		captureChunk(data);
 		const chunk = takeWithinCap(data);
 		if (chunk) stderr += stderrDecoder.write(chunk);
 	});
@@ -136,7 +162,7 @@ export async function execCommand(
 	} finally {
 		clearTimeout(timeoutId);
 		clearTimeout(forceKillId);
-		options?.signal?.removeEventListener("abort", killProcess);
+		signal?.removeEventListener("abort", killProcess);
 	}
 
 	// On truncation, discard any incomplete UTF-8 suffix buffered by either decoder.
@@ -145,14 +171,19 @@ export async function execCommand(
 		stdout += stdoutDecoder.end();
 		stderr += stderrDecoder.end();
 	}
+	if (capture) {
+		capture.output.finish();
+		await capture.output.closeTempFile();
+	}
 
 	const exitCode = code ?? 0;
 	return {
 		stdout,
 		stderr,
-		// A truncated result must never read as success.
-		code: truncated && exitCode === 0 ? 1 : exitCode,
+		// Unretained overflow remains a failed execution; captured output does not stop the producer.
+		code: truncated && !capture && exitCode === 0 ? 1 : exitCode,
 		killed,
 		truncated,
+		...(capture?.artifact ? { artifact: { ...capture.artifact, preview: capture.output.snapshot().content } } : {}),
 	};
 }

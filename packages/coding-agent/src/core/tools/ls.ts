@@ -2,6 +2,7 @@ import { readdir as fsReaddir, stat as fsStat } from "node:fs/promises";
 import nodePath from "path";
 import { type Static, Type } from "typebox";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import { getOutputArtifacts } from "../output-artifacts.ts";
 import { pathExists, resolveToCwd } from "./path-utils.ts";
 import { lsRenderers } from "./renderers/ls.ts";
 import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -58,7 +59,7 @@ export function createLsToolDefinition(
 	return {
 		name: "ls",
 		label: "ls",
-		description: `List directory contents. Returns entries sorted alphabetically, with '/' suffix for directories. Includes dotfiles. Output is truncated to ${DEFAULT_LIMIT} entries or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
+		description: `List directory contents alphabetically, with '/' suffix for directories. Includes dotfiles. Returns ${DEFAULT_LIMIT} entries by default; oversized selected output is retained as a session artifact.`,
 		promptSnippet: lsToolSystemPromptContribution.snippet,
 		parameters: lsSchema,
 		async execute(
@@ -138,8 +139,11 @@ export function createLsToolDefinition(
 
 						const rawOutput = results.join("\n");
 						// Apply byte truncation. There is no separate line limit because entry count is already capped.
-						const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
-						let output = truncation.content;
+						const truncation =
+							ctx && getOutputArtifacts(ctx.sessionManager)
+								? undefined
+								: truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
+						let output = truncation?.content ?? rawOutput;
 						const details: LsToolDetails = {};
 						// Build actionable notices for truncation and entry limits.
 						const notices: string[] = [];
@@ -147,7 +151,7 @@ export function createLsToolDefinition(
 							notices.push(`${effectiveLimit} entries limit reached. Use limit=${effectiveLimit * 2} for more`);
 							details.entryLimitReached = effectiveLimit;
 						}
-						if (truncation.truncated) {
+						if (truncation?.truncated) {
 							notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
 							details.truncation = truncation;
 						}

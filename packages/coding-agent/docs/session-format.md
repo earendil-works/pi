@@ -13,6 +13,31 @@ For programmatic creation, persistence, and tree navigation, see the [`SessionMa
 
 By default, `<session-id>` is a UUID. Callers can supply a custom ID through the SDK or `--session-id`. For `<path>`, Pi removes the leading path separator and replaces `/`, `\\`, and `:` with `-`.
 
+## Output artifacts
+
+Oversized model-facing tool text is stored at `<agent-dir>/artifacts/<owner-namespace>/<artifact-id>.txt`. The namespace is the SHA-256 hash of the absolute owning session file path, not the public session ID. Main and child session files therefore cannot collide even when callers reuse custom IDs.
+
+The corresponding tool-result content contains a bounded preview and an `artifact://<owner-namespace>/<artifact-id>` reference. No transcript arrays or extra artifact index entries are added to the main JSONL. Existing tool metadata and structured-result contracts are unchanged except where documented by the tool.
+
+The built-in `read` tool retrieves line pages or UTF-8-safe byte continuations. Reads use the exact namespace in the reference, so a fork or in-memory side conversation can explicitly retrieve referenced original evidence without importing its owner's chat history. References are storage locations, not an access-control sandbox.
+
+Compaction and session deletion do not delete persistent artifacts. Keep `<agent-dir>/artifacts/` with session backups; copying or sharing a JSONL alone does not copy its captured output. Forks and checkpoints can still reference another session's artifacts, so removing an original JSONL is not proof that its captures are unused.
+
+Non-persisted sessions use separate private namespaces in a process-owned OS temporary directory. Their `artifact://temporary/...` references work only in that process; normal exit removes the temporary store. A crashed process may leave temporary files for OS cleanup. Persistent files use mode `0600` and new storage directories mode `0700` on POSIX; Windows inherits directory ACLs. Captures may contain sensitive text and are not automatically expired.
+
+## Native sub-agent history
+
+Native children are not branches or embedded transcript arrays in the main session. Each has a separate `SessionManager` and standard JSONL file at `<agent-dir>/subagents/<parent-file-hash>/<child-id>/session.jsonl`. The SHA-256 namespace uses the absolute parent file path, so custom parent IDs cannot redirect storage or collide across separate files. Children stay outside the main `sessions/` directory and its resume picker.
+
+The child header references the parent file; a `custom` entry with `customType: "pi.subagent"` identifies the parent session and role. Adjacent private `record.json` state retains the captured role, effective tools, model/thinking selection, latest task, run number, status, and cumulative usage. A live child log has one exclusive writer. Finished or interrupted children resume their own history through the original parent's `subagent resume` or `/agents` controls, without replaying that history into the main agent.
+
+Generated task labels and label errors are stored in the private metadata. Label generation writes `UsageEntry` records with `kind: "subagent_label"` into the child's own JSONL; these count toward cumulative child usage without entering model context. Label prompts and raw replies are not saved as conversation messages. Only the normalized label is exposed in bounded catalog metadata and completion notices.
+
+Optional frozen context is stored only in the child. The main file receives ordinary bounded tool results or `subagent-result` custom messages containing the child ID/run/status/usage, not its message arrays or tool details. Explicit `history` requests can add selected original text pages to main context. Async completion stays pending while the user is on a branch unrelated to its launch; delivery is deduplicated per child/run.
+
+Closing a view does not delete or stop a child. Pi lifecycle shutdown stops and drains owned work; logs remain until explicitly deleted through the child controls. Deleting a main JSONL does not recursively delete child logs. Child storage is associated with the parent file path, so moving that file does not move or re-associate its child namespace. A non-persisted parent (`--no-session`) keeps its child histories and state in memory only.
+
+
 ## Deleting Sessions
 
 Sessions can be removed by deleting their `.jsonl` files under `~/.pi/agent/sessions/`.
@@ -120,6 +145,8 @@ Records model-attributed usage that is not an assistant message and does not par
 
 Usage entries contribute to session token and cost totals. Pi hides them from the conversation tree. Consumers should treat unknown `kind` values as normal usage rather than rejecting them.
 
+Automatic chat and job naming use `"chat_name"` and `"job_name"` usage kinds in the parent session; a job entry's optional `note` is its job ID. `"subagent_label"` usage belongs only to the child log. Extensions can record their own non-conversational model work with `pi.appendUsage(kind, provider, model, usage, note?)`.
+
 ### CompactionEntry
 
 Created when context is compacted. Stores a summary of earlier messages and a complete system prompt/tool checkpoint.
@@ -175,6 +202,8 @@ Extension state persistence. Does NOT participate in LLM context.
 Use `customType` to identify your extension's entries on reload. Interactive mode can render custom entries via `pi.registerEntryRenderer(customType, renderer)`, but they still do not participate in LLM context.
 
 Pi stores [virtual model](virtual-models.md) router state as custom entries with `customType` `pi.virtual-model-state` and `data` `{ provider, modelId, state }`.
+
+Automatic chat naming uses `customType: "pi.auto-name"` for attempt status and failure metadata, so resume/reload does not repeat a naming request. The resulting title uses a normal `SessionInfoEntry`; no naming prompt or raw reply is stored as a conversation message.
 
 Pre-compaction history checkpoints use `customType: "context_checkpoint"`. The marker's `parentId` identifies its frozen original branch; no transcript copy or context message is added. An applied `CompactionEntry.checkpointId` links to it. A marker can also remain after failed or discarded preparation. Checkpoint recall reads original messages up to that parent, including older messages hidden by compaction, and remains available after resume while the session entries exist.
 
