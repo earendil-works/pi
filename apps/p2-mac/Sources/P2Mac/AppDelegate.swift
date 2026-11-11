@@ -5,8 +5,10 @@ import AppKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 	private(set) var server: ServerController!
+	private(set) var directory: BrainDirectory!
+	private(set) var radius: RadiusAccount!
 	private var statusItem: NSStatusItem!
-	private var windows: [BrainWindowController] = []
+	private var windows: [PiWindowController] = []
 	private var found: [FoundServer] = []
 	private let serverMenu = NSMenu()
 	// One item for the submenu, re-added on every rebuild: a submenu belongs to one item for good.
@@ -20,6 +22,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
 	func applicationDidFinishLaunching(_ notification: Notification) {
 		NSApp.mainMenu = MainMenu.build()
+		NotificationCenter.default.addObserver(forName: BrainDirectory.changed, object: nil, queue: .main) { notification in
+			MainActor.assumeIsolated {
+				if let directory = notification.object as? BrainDirectory { MainMenu.updateBrains(directory.brains) }
+			}
+		}
 		// Ctrl-C in a terminal or a plain kill quits like the Quit command, so the app's own server stops too.
 		for number in [SIGINT, SIGTERM] {
 			signal(number, SIG_IGN)
@@ -74,7 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 			}
 			for window in windows { window.close() }
 			watch(ServerController(config: config))
-			openWindow(Brain.local(config), path: "/")
+			openPi(nil)
 			await server.poll()
 			if server.phase == .stopped && server.canStart { await server.start() }
 		}
@@ -83,6 +90,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 	private func watch(_ controller: ServerController) {
 		server = controller
 		controller.onChange = { [weak self] in self?.serverChanged() }
+		if let radius {
+			radius.server = controller
+		} else {
+			radius = RadiusAccount(server: controller)
+			if radius.headless { signInToRadius() }
+		}
+		if let directory { directory.server = controller } else { directory = BrainDirectory(server: controller, radius: radius) }
+		MainMenu.updateBrains(directory.brains)
 	}
 
 	@objc private func useFound(_ sender: NSMenuItem) {
@@ -98,46 +113,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
 	// MARK: - Windows
 
-	/// Opens `path` of `brain` in a new window.
-	func openWindow(_ brain: Brain, path: String) {
-		let controller = BrainWindowController(brain: brain, path: path, app: self)
-		let previous = windows.last(where: { $0.brain == brain })?.window
+	/// Opens `path` of brain `id` in a new window.
+	func openWindow(_ id: String, path: String) {
+		let controller = PiWindowController(app: self, brain: id, path: path)
+		let previous = windows.last?.window
 		windows.append(controller)
 		if let window = controller.window {
 			if let previous {
 				window.setFrame(previous.frame, display: false)
 				window.setFrameTopLeftPoint(window.cascadeTopLeft(from: NSPoint(x: previous.frame.minX, y: previous.frame.maxY)))
 			} else {
-				window.setFrameAutosaveName("Pi.\(brain.id)")
-				if !window.setFrameUsingName("Pi.\(brain.id)") { window.center() }
+				window.setFrameAutosaveName("Pi.main")
+				if !window.setFrameUsingName("Pi.main") { window.center() }
 			}
 		}
 		NSApp.setActivationPolicy(.regular)
 		controller.showWindow(nil)
 		NSApp.activate()
-		if server != nil { controller.serverChanged() }
 	}
 
-	func windowClosed(_ controller: BrainWindowController) {
+	func windowClosed(_ controller: PiWindowController) {
 		windows.removeAll { $0 === controller }
 		if windows.isEmpty { NSApp.setActivationPolicy(.accessory) }
 	}
 
+	/// Brings up a window: the frontmost one, else a new one on this Mac's brain.
 	@objc func openPi(_ sender: Any?) {
-		if let existing = windows.last(where: { $0.brain == Brain.local(server.config) }) {
+		if let existing = windows.last {
 			existing.showWindow(nil)
 			NSApp.activate()
-		} else {
-			openWindow(Brain.local(server.config), path: "/")
+		} else if let brain = directory.local ?? directory.brains.first {
+			openWindow(brain.id, path: "/")
 		}
 	}
 
 	@objc func newWindow(_ sender: Any?) {
-		openWindow(Brain.local(server.config), path: "/")
+		let current = (NSApp.keyWindow?.delegate as? PiWindowController)?.selected
+		if let id = current ?? directory.local?.id { openWindow(id, path: "/") }
 	}
 
 	private func serverChanged() {
 		statusItem.button?.appearsDisabled = server.phase != .running
+		directory.rebuild()
 		for window in windows { window.serverChanged() }
 	}
 
@@ -167,6 +184,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 			menu.addItem(item("Show Server Log", #selector(showLog)))
 		}
 		menu.addItem(.separator())
+		if directory.fixture {
+			menu.addItem(disabled("Radius: brains from P2MAC_BRAINS"))
+		} else if radius.signedIn {
+			menu.addItem(disabled("Signed in to Radius · with this Mac's Pi"))
+			menu.addItem(item("Sign Out of Radius", #selector(signOutOfRadius)))
+		} else {
+			menu.addItem(item("Sign In to Radius…", #selector(signInToRadius)))
+		}
 		fillServerMenu()
 		menu.addItem(serverItem)
 		menu.addItem(.separator())
@@ -215,6 +240,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 			detail += DevControl.available(dataDir: config.dataDir) ? " · run elsewhere (dev)" : " · run elsewhere"
 		}
 		return detail
+	}
+
+	@objc func signInToRadius() {
+		Task {
+			do {
+				try await radius.signIn()
+			} catch is CancellationError {
+			} catch {
+				NSApp.activate()
+				let alert = NSAlert()
+				alert.messageText = "Could not sign in to Radius"
+				alert.informativeText = error.localizedDescription
+				alert.runModal()
+			}
+			NSApp.activate()
+		}
+	}
+
+	/// Removes the shared credential: this Mac's Pi disconnects too.
+	@objc private func signOutOfRadius() {
+		radius.signOut()
 	}
 
 	@objc private func startServer() { Task { await server.start() } }

@@ -1,5 +1,6 @@
-// The window's chrome drawn inside the page: the webview fills the whole window under a transparent title bar, so
-// p2's own bars are the title bar and its background runs to the top edge.
+// The window's chrome drawn inside the page, for windows without a tab bar (not signed in to Radius): the webview
+// fills the whole window under a transparent title bar, so p2's own bars are the title bar and its background runs to
+// the top edge. With a tab bar (BrainTabBar.swift) the bar is the title bar and pages start below it.
 //
 // Three parts make that work:
 // - Inset. The window buttons sit over the page's top-left corner. Which bar is there depends on the layout: the
@@ -21,9 +22,11 @@ import WebKit
 final class ChromeWebView: WKWebView {
 	/// Interactive rectangles in the strip, in CSS pixels from the page's top left, as the page last reported them.
 	var interactive: [CGRect] = []
+	/// The page is the window's top edge (no tab bar above it).
+	var dragsWindow = false
 
 	override func mouseDown(with event: NSEvent) {
-		guard let window, !window.styleMask.contains(.fullScreen), inDragStrip(event) else {
+		guard dragsWindow, let window, !window.styleMask.contains(.fullScreen), inDragStrip(event) else {
 			return super.mouseDown(with: event)
 		}
 		if event.clickCount == 2 {

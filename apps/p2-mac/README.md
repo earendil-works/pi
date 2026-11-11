@@ -61,6 +61,24 @@ Ctrl-C quits it like the Quit command, which also stops its server. A checkout u
 
 ## How it works
 
+- **Windows and brain tabs** (`PiWindowController.swift`, `BrainTabBar.swift`, `BrainDirectory.swift`):
+  - While the app is signed in to Radius, every window has a native tab bar in its title bar row. It shows the Radius shell's brain tabs: the same set, order, labels, organization prefixes, "Shared · …" and dimming of away brains, styled like Elanor's tabs.
+  - The bar belongs to the window and never reloads; under it, each brain has its own page (`BrainPage.swift`), and a window keeps its recent ones alive.
+  - A click switches in place, and so do ⌘1–9 (Window menu). Cmd-click, the middle button or dragging a tab out of the bar opens that brain in a new window.
+  - This Mac's brain (matched by the server ID in its data directory's `radius.json`) loads directly and is marked with a laptop. Other brains load Radius's page for them.
+  - Not signed in: no tab bar; the window shows this Mac's brain under the window buttons.
+- **Radius** (`RadiusAccount.swift`, `OAuthLoopback.swift`): Radius provides the list of Pis and the grants that open remote ones; the app loads no Radius pages.
+  - **One credential, shared 1:1 with this Mac's Pi:** `<P2_DATA_DIR>/radius.json` on disk, no Keychain. The Pi connects to Radius with it; the app lists the tabs with it.
+  - **Sign In to Radius…** in the menu bar item signs in as the Pi's own `radius:login` does (client `pi-gateway`, scope `gateway offline_access`), but through the system browser (PKCE S256, a loopback redirect on a free port; never in a webview). The credential goes into radius.json, keeping the Pi's server ID for the same gateway, and the Pi connects within 30 seconds.
+  - **Refresh:** Radius does not rotate refresh tokens, so the app and the Pi refresh independently. The app reads the file before every call and writes a refreshed token back.
+  - **The tabs:** the app polls `GET /v1/pi/servers` every 5 seconds (any gateway bearer; the token's organization only). `404 pi_shell_not_enabled` means no tab bar. Cloud Pis get no tab yet.
+  - **Other Pis** load from their forwarded origin (`https://<label>.rdtun.com`) as the tab's page. A one-minute grant from `POST /v1/pi/servers/{org}/{server}/open?path=` (requested from Radius, not built there yet) turns into a view cookie. When it expires, the origin sends the tab to Radius's `/pi/forward`, and the app gets a fresh grant instead of loading that page.
+  - **Sign Out of Radius** deletes radius.json, which also disconnects this Mac's Pi.
+  - The gateway is the credential's (new sign-ins: `PI_RADIUS_GATEWAY`, default `https://radius.pi.dev`). `/v1/pi/servers` is new in Radius and not deployed yet.
+- **Development without Radius:**
+  - `P2MAC_BRAINS=<file>` names a JSON file in the shape of `/v1/pi/servers` (`{ "servers": [...] }`) and counts as signed in.
+  - `P2MAC_SIGN_IN=headless`, for a fake gateway, signs in at launch without opening the browser.
+
 - **Sign-in** (`LocalSignIn.swift`): the app reads `<data>/owner-key` and answers p2's local owner challenge (`/owner/local/challenge`, then `/owner/local/claim`), as the TUI does. It puts the `p2_owner_<port>` cookie into the brain's own `WKWebsiteDataStore(forIdentifier:)`, then loads `http://127.0.0.1:<port>`. The result is a full local owner, with nothing to paste.
 - **Server** (`ServerController.swift`):
   - It probes `/health` every 1.5 s.
@@ -73,8 +91,8 @@ Ctrl-C quits it like the Quit command, which also stops its server. A checkout u
   - The page gets `data-shell="macos"` and `--shell-inset-start` (the window buttons' width). The script marks the bars at the window's top-left corner `data-shell-corner`, found by geometry because the layout decides which bars are there: the sidebar header, the top bar, a full-window viewer, a views pane. p2's CSS starts a marked bar's content after the buttons (`apps/p2/src/web/style.css`, end; on main). In full screen nothing is marked.
   - The marks are set in an animation-frame callback, so a bar is indented before it is painted. WebKit pauses those callbacks in a hidden window, where a timer does the marking instead. Dragging covers p2's bar height (52 points), not the whole title bar, which is taller.
   - WebKit has no `app-region`, so a script in its own content world samples the title bar strip for interactive elements and reports their rectangles. A mouse-down anywhere else in the strip drags the window, and a double click zooms or minimizes it, as the system setting says.
-  - Native tabs are off, because their tab bar would cover the page's bars.
-- **Window** (`BrainWindowController.swift`):
+  - Native macOS window tabs are off: brain tabs replace them.
+- **Pages** (`BrainPage.swift`):
   - **Links:** Cmd-click, middle-click and `target=_blank` on the brain's origin open a new window. Every other origin opens in the default browser.
   - **Native handling:** downloads go to ~/Downloads; `<input type=file>` gets a file panel; `alert`, `confirm` and `prompt` are sheets; the microphone is allowed for the brain origin only; the page reloads when the web process crashes.
   - **Placeholder:** while there is no page, a native view shows the server's state with Start Pi or Try Again.
@@ -92,6 +110,8 @@ These were checked by scripted runs:
 
 - Clicks in the title bar strip reach the webview, and only the window buttons are above it (a hit test at three points). The page reports its controls there, and p2's sidebar header starts after the window buttons (85 px).
 - The server list finds the live p2 on 8788 with its data directory and checkout, and a trial server with its temporary ones.
+
+- Radius against a fake gateway (sign-in, refresh, polling): the requests had the expected client, scope and PKCE; the app wrote radius.json (0600) and the Pi connected and refreshed with the same credential; the tabs matched the shell's order.
 
 These still need a person at the keyboard: dragging the window by the bars, Cmd-click windows, file drop on the composer, the file picker, downloads, the microphone, and keyboard handling in p2's terminal.
 

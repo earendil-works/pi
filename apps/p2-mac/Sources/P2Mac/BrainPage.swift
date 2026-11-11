@@ -1,25 +1,43 @@
-// One window on a brain: a WKWebView with the brain's own cookie store, filling the window under a transparent title
-// bar (WindowChrome.swift), with native link, download, file panel, dialog and permission handling, and a native
-// placeholder while the server is not reachable.
+// One brain's page in a window: a WKWebView with native link, download, file panel, dialog and permission handling.
+// This Mac's brain loads directly and signs in with the owner key, behind a native placeholder while its server is not
+// reachable. Other Pis load from Radius's forwarded origin for them (`https://<label>.rdtun.com`), as the page itself,
+// through a grant the app gets with the shared Radius credential; when the origin's view cookie has expired it sends
+// the page to Radius's `/pi/forward`, and the app gets a fresh grant instead. A window keeps the pages of its recent
+// brains (PiWindowController), so switching tabs is instant.
 import AppKit
 import WebKit
 
 @MainActor
-final class BrainWindowController: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate,
-	WKDownloadDelegate
-{
+final class BrainPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
 	let brain: Brain
 	let webView: ChromeWebView
-	private unowned let app: AppDelegate
+	/// The webview and the placeholder over it.
+	let view = NSView()
+	private unowned let host: PiWindowController
 	private let placeholder = Placeholder()
-	private var path: String
+	private(set) var path: String
 	private var loaded = false
 	private var connecting = false
+	private var signInWithToken = false
+	/// A remote Pi's forwarded origin, learned from its first grant URL.
+	private var remoteOrigin: URL?
+	private var urlObservation: NSKeyValueObservation?
 
-	init(brain: Brain, path: String, app: AppDelegate) {
+	/// The page is directly under the window buttons (no tab bar): it gets their inset and drags the window.
+	var bare = false {
+		didSet {
+			webView.dragsWindow = bare
+			updateInset()
+		}
+	}
+
+	private var window: NSWindow? { host.window }
+	var app: AppDelegate { host.app }
+
+	init(brain: Brain, path: String, host: PiWindowController) {
 		self.brain = brain
 		self.path = path
-		self.app = app
+		self.host = host
 		let configuration = WKWebViewConfiguration()
 		configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: brain.dataStoreID)
 		configuration.applicationNameForUserAgent = "PiMac/0.0.1"
@@ -30,53 +48,62 @@ final class BrainWindowController: NSWindowController, NSWindowDelegate, WKNavig
 		webView.isInspectable = true
 		webView.allowsBackForwardNavigationGestures = true
 		webView.allowsMagnification = true
-
-		let window = NSWindow(
-			contentRect: NSRect(x: 0, y: 0, width: 1280, height: 860),
-			styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-			backing: .buffered,
-			defer: false
-		)
-		window.title = brain.title
-		window.titleVisibility = .hidden
-		window.titlebarAppearsTransparent = true
-		let toolbar = NSToolbar(identifier: "pi-window")
-		toolbar.showsBaselineSeparator = false
-		window.toolbar = toolbar
-		window.toolbarStyle = .unified
-		// Native tabs would put a tab bar over the page's own bars: new windows instead.
-		window.tabbingMode = .disallowed
-		window.minSize = NSSize(width: 420, height: 360)
-		window.isReleasedWhenClosed = false
-		super.init(window: window)
-		window.delegate = self
-		ChromeScript.install(in: configuration.userContentController) { [weak webView] rects in
-			webView?.interactive = rects
+		super.init()
+		if brain.isDirect {
+			ChromeScript.install(in: configuration.userContentController) { [weak webView] rects in
+				webView?.interactive = rects
+			}
 		}
-
-		let content = NSView()
-		for view in [webView, placeholder] as [NSView] {
-			view.translatesAutoresizingMaskIntoConstraints = false
-			content.addSubview(view)
+		for subview in [webView, placeholder] as [NSView] {
+			subview.translatesAutoresizingMaskIntoConstraints = false
+			view.addSubview(subview)
 			NSLayoutConstraint.activate([
-				view.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-				view.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-				view.topAnchor.constraint(equalTo: content.topAnchor),
-				view.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+				subview.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+				subview.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+				subview.topAnchor.constraint(equalTo: view.topAnchor),
+				subview.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 			])
 		}
-		window.contentView = content
 		webView.navigationDelegate = self
 		webView.uiDelegate = self
+		// The address follows the page, including p2's own history changes (it replaces its URL without loading), so a
+		// window can reopen where it was.
+		urlObservation = webView.observe(\.url) { [weak self] webView, _ in
+			MainActor.assumeIsolated {
+				guard let self, let url = webView.url, self.owns(url) else { return }
+				self.path = Self.path(of: url)
+			}
+		}
 		placeholder.onAction = { [weak self] in self?.placeholderAction() }
+		if case .remote = brain.route {
+			loaded = true
+			Task { await openRemote() }
+		}
 	}
 
-	@available(*, unavailable)
-	required init?(coder: NSCoder) { fatalError("not used") }
+	/// Whether `url` is this Pi's own page: its loopback origin, or its forwarded origin.
+	private func owns(_ url: URL) -> Bool {
+		if brain.isDirect { return brain.route.contains(url) }
+		guard let remoteOrigin else { return false }
+		return url.scheme == remoteOrigin.scheme && url.host == remoteOrigin.host
+	}
 
-	/// Follows the server: connects once it runs, shows why not otherwise.
-	func serverChanged() {
-		let server = app.server!
+	/// Opens `path` on a remote Pi through a fresh grant.
+	private func openRemote() async {
+		guard case .remote(let organization, let server) = brain.route else { return }
+		placeholder.show(title: "Opening \(brain.name)…", detail: nil, action: nil)
+		do {
+			let url = try await host.app.radius.openURL(organization: organization, server: server, path: path)
+			remoteOrigin = URL(string: "\(url.scheme!)://\(url.host!)\(url.port.map { ":\($0)" } ?? "")")
+			webView.load(URLRequest(url: url))
+		} catch {
+			placeholder.show(title: "Cannot open \(brain.name)", detail: error.localizedDescription, action: "Try Again")
+		}
+	}
+
+	/// Follows this Mac's server: connects once it runs, shows why not otherwise.
+	func serverChanged(_ server: ServerController) {
+		guard brain.isDirect else { return }
 		if server.phase == .running {
 			if !loaded { Task { await connect() } }
 			return
@@ -88,15 +115,15 @@ final class BrainWindowController: NSWindowController, NSWindowDelegate, WKNavig
 	// MARK: - Loading
 
 	private func connect() async {
-		guard !connecting, !loaded else { return }
+		guard !connecting, !loaded, case .direct(let origin, let dataDir) = brain.route else { return }
 		connecting = true
 		defer { connecting = false }
 		placeholder.show(title: "Signing in…", detail: nil, action: nil)
 		do {
-			let cookie = try await LocalSignIn.cookie(origin: brain.origin, dataDir: app.server.config.dataDir)
+			let cookie = try await LocalSignIn.cookie(origin: origin, dataDir: dataDir)
 			await webView.configuration.websiteDataStore.httpCookieStore.setCookie(cookie)
 			loaded = true
-			webView.load(URLRequest(url: brain.url(path)))
+			webView.load(URLRequest(url: brain.route.url(path)))
 		} catch {
 			// Another data directory, or no key: p2's own sign-in page takes a pasted token instead.
 			placeholder.show(title: "Cannot sign in automatically", detail: error.localizedDescription, action: "Sign In with a Token")
@@ -104,14 +131,14 @@ final class BrainWindowController: NSWindowController, NSWindowDelegate, WKNavig
 		}
 	}
 
-	private var signInWithToken = false
-
 	private func placeholderAction() {
-		let server = app.server!
-		if signInWithToken {
+		let server = host.app.server!
+		if case .remote = brain.route {
+			Task { await openRemote() }
+		} else if signInWithToken {
 			signInWithToken = false
 			loaded = true
-			webView.load(URLRequest(url: brain.url(path)))
+			webView.load(URLRequest(url: brain.route.url(path)))
 		} else if server.canStart {
 			Task { await server.start() }
 		} else {
@@ -119,15 +146,15 @@ final class BrainWindowController: NSWindowController, NSWindowDelegate, WKNavig
 		}
 	}
 
-	@objc func reloadPage(_ sender: Any?) {
+	func reload() {
+		if case .remote = brain.route, webView.url == nil {
+			Task { await openRemote() }
+			return
+		}
 		if loaded { webView.reload() } else { Task { await connect() } }
 	}
 
-	@objc func zoomIn(_ sender: Any?) { setZoom(min(webView.pageZoom + 0.1, 3)) }
-	@objc func zoomOut(_ sender: Any?) { setZoom(max(webView.pageZoom - 0.1, 0.5)) }
-	@objc func actualSize(_ sender: Any?) { setZoom(1) }
-
-	private func setZoom(_ zoom: CGFloat) {
+	func setZoom(_ zoom: CGFloat) {
 		webView.pageZoom = zoom
 		updateInset()
 	}
@@ -140,13 +167,23 @@ final class BrainWindowController: NSWindowController, NSWindowDelegate, WKNavig
 		if ["about", "blob", "data"].contains(url.scheme) { return .allow }
 		// Frames inside the page (artifact previews) are the page's business; its CSP limits them.
 		if let frame = action.targetFrame, !frame.isMainFrame { return .allow }
-		guard brain.contains(url) else {
+		// The forwarded origin's view cookie expired: it asks Radius for a new grant, the app gets one itself.
+		if case .remote = brain.route, url.path == "/pi/forward" {
+			if let wanted = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "path" })?.value,
+				wanted.hasPrefix("/")
+			{
+				path = wanted
+			}
+			Task { await openRemote() }
+			return .cancel
+		}
+		guard owns(url) else {
 			NSWorkspace.shared.open(url)
 			return .cancel
 		}
 		let modified = action.modifierFlags.contains(.command) || action.buttonNumber == 2
 		if action.navigationType == .linkActivated && (modified || action.targetFrame == nil) {
-			app.openWindow(brain, path: Self.path(of: url))
+			host.app.openWindow(brain.id, path: Self.path(of: url))
 			return .cancel
 		}
 		return .allow
@@ -171,7 +208,6 @@ final class BrainWindowController: NSWindowController, NSWindowDelegate, WKNavig
 	}
 
 	func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-		if let url = webView.url, brain.contains(url) { path = Self.path(of: url) }
 		Diagnostics.pageFinished(self)
 	}
 
@@ -192,8 +228,9 @@ final class BrainWindowController: NSWindowController, NSWindowDelegate, WKNavig
 		windowFeatures: WKWindowFeatures
 	) -> WKWebView? {
 		guard let url = action.request.url, url.scheme != "about" else { return nil }
-		if brain.contains(url) {
-			app.openWindow(brain, path: Self.path(of: url))
+		// A brain's own page opens in a window on that brain; everything else (a Radius link too) in the browser.
+		if owns(url) {
+			host.app.openWindow(brain.id, path: Self.path(of: url))
 		} else {
 			NSWorkspace.shared.open(url)
 		}
@@ -233,8 +270,9 @@ final class BrainWindowController: NSWindowController, NSWindowDelegate, WKNavig
 		_ webView: WKWebView, decideMediaCapturePermissionsFor origin: WKSecurityOrigin, initiatedBy frame: WKFrameInfo,
 		type: WKMediaCaptureType
 	) async -> WKPermissionDecision {
-		origin.protocol == brain.origin.scheme && origin.host == brain.origin.host && origin.port == (brain.origin.port ?? 0)
-			? .grant : .deny
+		let page: URL? = brain.isDirect ? brain.route.url("/") : remoteOrigin
+		guard let page else { return .deny }
+		return origin.protocol == page.scheme && origin.host == page.host && origin.port == (page.port ?? 0) ? .grant : .deny
 	}
 
 	private func alert(_ message: String, buttons: [String], accessory: NSView? = nil) async -> NSApplication.ModalResponse {
@@ -269,16 +307,10 @@ final class BrainWindowController: NSWindowController, NSWindowDelegate, WKNavig
 
 	// MARK: - Window
 
-	func windowWillClose(_ notification: Notification) {
-		app.windowClosed(self)
-	}
-
-	func windowWillEnterFullScreen(_ notification: Notification) { ChromeScript.setInset(0, in: webView) }
-	func windowDidExitFullScreen(_ notification: Notification) { updateInset() }
-
-	/// Tells the page how much of its top-left corner the window buttons take.
-	private func updateInset() {
-		guard let window, !window.styleMask.contains(.fullScreen),
+	/// Tells the page how much of its top-left corner the window buttons take: none under a tab bar or in full screen.
+	func updateInset() {
+		guard brain.isDirect else { return }
+		guard bare, let window, !window.styleMask.contains(.fullScreen),
 			let zoom = window.standardWindowButton(.zoomButton), let frame = zoom.superview?.convert(zoom.frame, to: nil)
 		else { return ChromeScript.setInset(0, in: webView) }
 		ChromeScript.setInset((frame.maxX + 12) / (webView.pageZoom * webView.magnification), in: webView)
