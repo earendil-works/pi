@@ -15,7 +15,7 @@ import type { Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
 import type { CredentialStore, ModelsStore } from "@earendil-works/pi-ai";
 import type { MutableModels } from "@earendil-works/pi-ai/models";
-import { arr, bool, num, obj, opt, type Static, str } from "@earendil-works/pi-schema";
+import { arr, bool, nul, num, obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
 import { Access } from "./access.ts";
 import {
 	type Ctx,
@@ -28,8 +28,11 @@ import {
 	type Self,
 	serveKeyed,
 } from "./chord.ts";
+import { processLogs } from "./logs.ts";
 import { isGuest, isOwner, type P2Principal } from "./principals.ts";
 import { record } from "./schema.ts";
+import { ServerNameSettings } from "./server-name.ts";
+import { deviceName, normalizeServerName, readChosenServerName, writeChosenServerName } from "./server-name-file.ts";
 
 export const ServerInfoSchema = obj({
 	/** The p2 app directory (`apps/p2`): its sources, docs and vendored files, for facets that start or describe them. */
@@ -61,6 +64,28 @@ export const Server = local("p2.server", {
 		 * (`viewKey`), or one frame's link.
 		 */
 		revokeFrames: method(obj({ view: opt(str()), link: opt(str()) })),
+	},
+});
+
+const Name = union([str(), nul()]);
+
+/**
+ * What the server calls itself (src/runtime/server-name-file.ts): the owner's name for it, else the device's. Plugins
+ * that show the server elsewhere follow `name` (Radius keeps a copy for its shell); the owner's Settings change it
+ * through `ServerNameSettings`.
+ */
+export const ServerName = local("p2.server-name", {
+	version: 1,
+	params: {},
+	members: {
+		/** `chosen`, else `device`; null when neither has one. */
+		name: Name,
+		/** The owner's name for the server; null: none, the device's name stands. */
+		chosen: Name,
+		/** The device's name as of the server's start; null when the device has none. */
+		device: Name,
+		/** Names the server `name` (normalized), or back to the device's name for null or nothing left. */
+		rename: method(obj({ name: union([str({ maxLength: 1024 }), nul()]) })),
 	},
 });
 
@@ -313,8 +338,8 @@ export function serveServerRegistries(facet: FacetHost): void {
 }
 
 /**
- * The server's core facet: its start data and revocation (`Server`), its natives, the base registries, the workers'
- * states (`Hosts`) and who the caller is (`Access`).
+ * The server's core facet: its start data and revocation (`Server`), its name (`ServerName`, `ServerNameSettings`), its
+ * natives, the base registries, the workers' states (`Hosts`) and who the caller is (`Access`).
  */
 export function serverCore(host: Host, info: ServerInfo, parts: ServerParts): Facet {
 	return defineFacet((facet, self) => {
@@ -341,6 +366,57 @@ export function serverCore(host: Host, info: ServerInfo, parts: ServerParts): Fa
 				return null;
 			},
 		}));
+		facet.serve(ServerName, (_params, self) => {
+			const chosen = self.writable<string | null>(null);
+			const device = self.writable<string | null>(null);
+			self.open(
+				async () => {
+					device.set((await deviceName()) ?? null);
+					try {
+						chosen.set((await readChosenServerName(info.dataDir)) ?? null);
+					} catch (error) {
+						// A label must never keep the server from starting: the device's name stands until a rename replaces the file.
+						const reason = error instanceof Error ? error.message : String(error);
+						processLogs.notice(
+							"server",
+							`identity.json is not usable (${reason}); the server goes by the device's name`,
+						);
+					}
+				},
+				() => {},
+			);
+			// Renames save one at a time, so the name shown is always the one saved last.
+			let saving = Promise.resolve();
+			return {
+				name: self.derive([chosen, device], ([own, fallback]) => own ?? fallback),
+				chosen: self.derive([chosen], ([value]) => value),
+				device: self.derive([device], ([value]) => value),
+				rename: async ({ name }) => {
+					const next = name === null ? undefined : normalizeServerName(name);
+					const saved = saving.then(async () => {
+						await writeChosenServerName(info.dataDir, next);
+						chosen.set(next ?? null);
+					});
+					// This rename's caller gets its failure; the next rename runs either way.
+					saving = saved.catch(() => {});
+					await saved;
+					return null;
+				},
+			};
+		});
+		facet.serve(ServerNameSettings, (_params, principal, self) => {
+			if (!isOwner(principal)) throw forbidden("the server's name is the owner's");
+			const source = self.get(ServerName, {});
+			return {
+				variant: "owner",
+				members: {
+					name: self.derive([source.name], ([value]) => value),
+					chosen: self.derive([source.chosen], ([value]) => value),
+					device: self.derive([source.device], ([value]) => value),
+					rename: (args, ctx) => source.rename(args, ctx),
+				},
+			};
+		});
 		facet.serve(Hosts, (_params, self) => {
 			// The workers component's state, followed: never copied into a document of this object.
 			const workers = self.follow(async (observer) => parts.workers.observe(observer));

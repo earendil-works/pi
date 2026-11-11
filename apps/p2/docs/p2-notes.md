@@ -461,6 +461,11 @@ npm start
   a per-resource secret checked by the plugin's `RequestResolvers` contribution; the host stamps an owner
   principal with `access: "relay"`, a remote origin, and normal same-origin checks. They may sign in to model providers,
   but cannot mint local tokens or receive a local owner cookie. Credentials never reach web state.
+- **Server name** (core: `ServerName` in `src/runtime/server.ts`, `ServerNameSettings` for Settings, General): the
+  owner's name in `identity.json` while one is set, else the device's name read at start. The server owns it; Radius
+  keeps a copy for its shell: `?name=` on every host connect and `PUT /v1/servers/<id>/name` on a rename while
+  connected, so a rename never reconnects (which would drop every channel). A failed or offline rename goes with the
+  next connect; Radius never changes the name. Project places still name the machine by `os.hostname()`.
 - **Ports** (`plugins/ports`): server-owned `forwards.json` registry; owner **Envs → Ports** lists/adds/removes
   forwards and confirms public opt-in. Every forward is private by default and has an isolated
   `https://fwd--<brain label>--<random id>.rdtun.com/` address. Public forwards additionally have

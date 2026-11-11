@@ -68,7 +68,8 @@ npm test                     # full suite; TUI tests need Node 26, browser tests
 ```
 
 Environment variables: `docs/p2-notes.md` (Running). Configuration in the data dir: `models.json`, `settings.json`
-(incl. `codemode`, default on in p2), `envs.json`, `projects.json`, `mcp.json`, `auth.json`, `radius.json`, `forwards.json`.
+(incl. `codemode`, default on in p2), `envs.json`, `projects.json`, `mcp.json`, `auth.json`, `radius.json`, `forwards.json`,
+`identity.json` (the server's name, only while the owner set one).
 
 **Sign-in.** Loopback alone is nobody (shared machines). A browser on the host signs in once per profile with the
 token the server prints at startup (pasted into the sign-in page); the TUI and scripts sign in with the data directory's owner key (README, Signing

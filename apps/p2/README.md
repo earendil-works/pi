@@ -224,6 +224,12 @@ agent's texts and its tool calls on one wheel per turn; 2 the texts too, thinkin
 no wheels. `viewRoomsMemory` (MiB, default 64) bounds what custom views' rooms keep in memory together
 (`docs/rooms.md`); past it they refuse new messages until peers catch up.
 
+**Server name.** The server goes by the device's name (on macOS the computer name, else the host name), read again at
+every start. Settings, General, **Server name** gives it a name of its own (one line, at most 63 characters), kept in
+`<P2_DATA_DIR>/identity.json` (`{ "name": "Studio" }`); clearing the field removes the file and the device's name
+stands again. Radius shows the server under this name: a copy the server sends on every connect and at once on a
+rename. Radius never changes it.
+
 ### Projects
 
 A project is one codebase in several places, one per environment. `<P2_DATA_DIR>/projects.json` lists them:

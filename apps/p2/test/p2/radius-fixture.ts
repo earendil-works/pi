@@ -63,7 +63,20 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 		});
 	};
 	const shares: string[][] = [];
+	const names: string[] = [];
 	const server = createServer((request, response) => {
+		if (/^\/v1\/servers\/[^/]+\/name$/.test(request.url ?? "") && request.method === "PUT") {
+			let body = "";
+			request.on("data", (chunk: Buffer) => {
+				body += chunk.toString("utf8");
+			});
+			request.on("end", () => {
+				names.push((JSON.parse(body) as { name: string }).name);
+				response.writeHead(204);
+				response.end();
+			});
+			return;
+		}
 		const shared = /^\/v1\/servers\/[^/]+\/shares$/.test(request.url ?? "") && request.method === "PUT";
 		if (shared) {
 			let body = "";
@@ -147,6 +160,8 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 		gateway: `http://127.0.0.1:${address.port}`,
 		/** Every set of emails the brain reported, in order. */
 		shares,
+		/** Every name the brain sent on a rename, in order. */
+		names,
 		hostReady,
 		controls,
 		frames,

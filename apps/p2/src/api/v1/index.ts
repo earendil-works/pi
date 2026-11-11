@@ -86,6 +86,7 @@ export * from "../../runtime/refs.ts";
 export * from "../../runtime/schema.ts";
 export * from "../../runtime/schemas.ts";
 export * from "../../runtime/sender.ts";
+export * from "../../runtime/server-name.ts";
 export * from "../../runtime/session-lock.ts";
 export * from "../../runtime/session-worker.ts";
 export * from "../../runtime/shell.ts";
