@@ -67,7 +67,7 @@ export async function migrateCatalog(dataDir: string, work: string, dryRun: bool
  * transaction when the table is empty (`"kept"` when it held rows already), and answers the rows it holds.
  */
 async function withCatalog(serverDir: string, rows: readonly SessionRow[]): Promise<SessionRow[] | "kept"> {
-	const store = await openHostStore(serverDir, { outbox: false }, context);
+	const store = await openHostStore(serverDir, {}, context);
 	const errors: unknown[] = [];
 	const host = createHost({ principal: HOST, store, onError: (error) => errors.push(error) });
 	let kept = false;
