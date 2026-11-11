@@ -64,20 +64,29 @@ room.changeMine((draft) => { draft.cursor = { x, y }; });
 room.peerState(id);
 room.onPeerState((id, value) => ...);      // value undefined: that peer left
 
-// intents: calls to the leader's methods (the agent's view_call uses the same path)
-p2view.methods.offer({ drop: { description, args, run: async ({ col }) => room.change((d) => play(d, col)) } });
-await room.call("drop", { col: 3 });       // runs in the leader's frame; its result, or a failure
+// intents: methods, declared once by every view (same code); a call runs in the leader's view
+const { drop } = room.methods({
+  drop: {
+    description: "Drop a piece into a column",                       // the agent sees it (view_methods)
+    args: { type: "object", properties: { col: { type: "integer" } }, required: ["col"] },
+    run: async ({ col }) => room.change((d) => play(d, col)),        // runs only in the leader's view
+  },
+});
+await drop({ col: 3 });                    // the leader: runs locally; others: a call to the leader
 
 // events, clock: as today
 room.emit(value); room.onEvent(({ from, at, value }) => ...);
 room.now(); room.rtt();
 ```
 
-- **Outcomes** of `change`, `changeMine` and `call` are tagged as `send`'s are today: `applied`, `refused` (with the
+- **Methods without strings** (owner, 2026-11-11: `xyz(obj)`, not `call("xyz", obj)`): `room.methods(declarations)`
+  returns one function per declaration; the leader's declarations are what the room offers (the agent's
+  `view_methods`/`view_call` see them, unchanged); a follower's only make its callables. `p2view.methods.offer` goes.
+- **Outcomes** of `change`, `changeMine` and a method's call are tagged as `send`'s are today: `applied`, `refused` (with the
   error), `uncertain` (the link closed before the answer; never resent by the kit).
 - **Granularity:** only what the draft changes travels. The docs say: change in place (`draft.board[3][2] = "red"`),
   never rebuild (`draft.board = next` sends the whole board).
-- Read-only views get presence, state, peer state and events; `change`, `changeMine`, `emit`, `call` refuse them.
+- Read-only views get presence, state, peer state and events; `change`, `changeMine`, `emit` and methods refuse them.
 - `onState(state)` has no author: one notification may fold several commits (both reviews).
 
 ## 5. The server
@@ -87,7 +96,7 @@ room.now(); room.rtt();
 `ViewRoom` version 3, variant `peer`: state members `facts` (store incarnation, the leader's term, the writers'
 confirmed batch numbers, section 5.3), `shared` (the shared state's envelope; `state` is reserved by Chord, both
 reviews), `peers` (peer states by peer ID), `presence`; events `stream`; methods `join`, `change({ term, n, ops })`,
-`changeMine({ n, ops })`, `emit`, `call({ method, args })` (a view's intent, pinned to the leader like the agent's),
+`changeMine({ n, ops })`, `emit`, `call({ method, args })` (what a follower's method function sends, pinned to the leader like the agent's call),
 `offer`, `answer`, `now`. Variant `worker` as today (`methods`, `call`) plus `update({ state } | { merge })` for the
 agent (section 5.4). Old kits: the release breaks open sketches on the old kit until the view is closed and opened
 again (a new opening reloads the frame); accepted for the playground, written in `rooms.md`; no `accepts` (Sol 7,
@@ -196,7 +205,7 @@ room store (10 s), and the existing `CALL_TIMEOUT` (60 s), `TOKEN_TTL` (60 s), `
 
 Chord: `applyOps` (every verb on a draft, strictness, a valid op then an invalid one with the transaction discarded,
 publication equal to the hand-written mutations, cost guards). p2: contract v3; single writer (a follower's `change`
-refused, its `call` applied by the leader); confirmation (state before the answer, a folded message confirming
+refused, its method call applied by the leader; `room.methods` returns callables, the leader's declarations offered to the agent); confirmation (state before the answer, a folded message confirming
 several batches, a refused batch and its dependents, uncertain after a disconnect, a leader change and the old
 leader's late batch refused); peer-state prefixing and `r` mapping, a departed peer's in-flight change refused; stable
 peer identity across a reconnect (no leader change, no side swap); the agent's update and merge through the room
