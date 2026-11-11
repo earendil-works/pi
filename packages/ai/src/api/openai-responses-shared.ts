@@ -1,5 +1,8 @@
 import type OpenAI from "openai";
 import type {
+	CustomTool,
+	FunctionTool,
+	NamespaceTool,
 	Tool as OpenAITool,
 	ResponseConfigurationUpdateItemParam,
 	ResponseCreateParamsStreaming,
@@ -130,6 +133,8 @@ export interface ConvertResponsesMessagesOptions {
 	supportsMidConvoSystemMessages?: boolean;
 	supportsAdditionalTools?: boolean;
 	supportsToolSearch?: boolean;
+	/** Namespaces of tools declared in this request, including calls replayed from other models. */
+	toolNamespaces?: ReadonlyMap<string, string>;
 	toolOptions?: ConvertResponsesToolsOptions;
 	/**
 	 * Effort for the reply being generated. When set, the thinking level is sent as
@@ -148,6 +153,8 @@ export interface ConvertResponsesToolsOptions {
 	supportsStrictMode?: boolean;
 	supportsOpenAIGrammarTools?: boolean;
 	toolSearchResult?: boolean;
+	deferredToolNames?: ReadonlySet<string>;
+	namespaces?: ReadonlyMap<string, string>;
 }
 
 // =============================================================================
@@ -362,6 +369,8 @@ export function convertResponsesMessages<TApi extends Api>(
 					const toolCall = block as ToolCall;
 					const [callId, itemIdRaw] = toolCall.id.split("|");
 					const customInputProperty = options?.grammarToolInputProperties?.get(toolCall.name);
+					const namespace =
+						(isSameModel ? toolCall.namespace : undefined) ?? options?.toolNamespaces?.get(toolCall.name);
 					let itemId: string | undefined = itemIdRaw;
 
 					// For different-model messages, set id to undefined to avoid pairing validation.
@@ -384,7 +393,7 @@ export function convertResponsesMessages<TApi extends Api>(
 							input: sanitizeSurrogates(
 								getGrammarToolInput(toolCall.name, toolCall.arguments, customInputProperty),
 							),
-							...(isSameModel && toolCall.namespace !== undefined ? { namespace: toolCall.namespace } : {}),
+							...(namespace === undefined ? {} : { namespace }),
 						} satisfies ResponseOutputItem);
 					} else {
 						output.push({
@@ -393,7 +402,7 @@ export function convertResponsesMessages<TApi extends Api>(
 							call_id: callId,
 							name: toolCall.name,
 							arguments: JSON.stringify(toolCall.arguments),
-							...(isSameModel && toolCall.namespace !== undefined ? { namespace: toolCall.namespace } : {}),
+							...(namespace === undefined ? {} : { namespace }),
 						});
 					}
 				}
@@ -436,12 +445,40 @@ export function convertResponsesMessages<TApi extends Api>(
 // Tool conversion
 // =============================================================================
 
+/** Group deferred tools by their first name segment, avoiding eager-tool and truncated-name collisions. */
+export function getResponsesToolNamespaces(
+	tools: readonly Tool[],
+	deferred: ReadonlySet<string>,
+): ReadonlyMap<string, string> {
+	const used = new Set(tools.filter((tool) => !deferred.has(tool.name)).map((tool) => tool.name));
+	const prefixes = new Map<string, string>();
+	const namespaces = new Map<string, string>();
+	for (const tool of tools) {
+		if (!deferred.has(tool.name)) continue;
+		const prefix = /^([A-Za-z0-9]+)(?:__|[._-])/.exec(tool.name)?.[1] ?? "tools";
+		let namespace = prefixes.get(prefix);
+		if (namespace === undefined) {
+			namespace = prefix.slice(0, 64);
+			let collision = 0;
+			while (used.has(namespace)) {
+				const suffix = collision++ === 0 ? "_tools" : `_tools${collision}`;
+				namespace = `${prefix.slice(0, 64 - suffix.length)}${suffix}`;
+			}
+			used.add(namespace);
+			prefixes.set(prefix, namespace);
+		}
+		namespaces.set(tool.name, namespace);
+	}
+	return namespaces;
+}
+
 export function convertResponsesTools(tools: readonly Tool[], options?: ConvertResponsesToolsOptions): OpenAITool[] {
 	const defaultStrict = options?.strict === undefined ? false : options.strict;
 	const supportsStrictMode = options?.supportsStrictMode ?? true;
 	const supportsOpenAIGrammarTools = options?.supportsOpenAIGrammarTools ?? false;
 
-	return tools.map((tool) => {
+	const converted = tools.map((tool): FunctionTool | CustomTool => {
+		const deferLoading = options?.toolSearchResult || options?.deferredToolNames?.has(tool.name);
 		const grammar = resolveGrammarConstrainedSampling(tool, supportsOpenAIGrammarTools);
 		if (grammar) {
 			return {
@@ -453,7 +490,7 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 					syntax: grammar.format,
 					definition: grammar.definition,
 				},
-				...(options?.toolSearchResult ? { defer_loading: true } : {}),
+				...(deferLoading ? { defer_loading: true } : {}),
 			} satisfies OpenAITool;
 		}
 
@@ -466,13 +503,36 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 			name: tool.name,
 			description: tool.description,
 			parameters: getJsonSchemaToolParameters(tool, strict === true) as Record<string, unknown>,
-			...(options?.toolSearchResult ? { defer_loading: true } : {}),
+			...(deferLoading ? { defer_loading: true } : {}),
 		};
 		if (supportsStrictMode) {
 			functionTool.strict = strict;
 		}
-		return functionTool as OpenAITool;
+		return functionTool as FunctionTool;
 	});
+	if (!options?.namespaces?.size) return converted;
+	const result: OpenAITool[] = [];
+	const groups = new Map<string, NamespaceTool>();
+	for (const tool of converted) {
+		const name = options.namespaces.get(tool.name);
+		if (name === undefined) {
+			result.push(tool);
+			continue;
+		}
+		let group = groups.get(name);
+		if (!group) {
+			group = {
+				type: "namespace",
+				name,
+				description: `${name} tools. Use tool search to load the tools needed.`,
+				tools: [],
+			};
+			groups.set(name, group);
+			result.push(group);
+		}
+		group.tools.push(tool);
+	}
+	return result;
 }
 
 // =============================================================================

@@ -604,6 +604,27 @@ const patchTool: Tool = {
 };
 ```
 
+### Hosted Tool Search on OpenAI Responses
+
+On a Responses endpoint that supports server-hosted tool search, opt in through the provider-specific `complete()` or `stream()` options:
+
+```typescript
+import { hasApi } from '@earendil-works/pi-ai';
+
+if (hasApi(model, 'openai-responses')) {
+  const response = await models.complete(model, context, {
+    toolSearch: {
+      deferredTools: ['records_get', 'records_list', 'chat_send'],
+      namespace: 'prefix'
+    }
+  });
+}
+```
+
+Keep the complete tool catalog in `context.tools` on every request. Pi sends a hosted `tool_search` declaration and marks the selected functions or grammar tools with `defer_loading`. `namespace: 'prefix'` groups deferred tools by the first segment before `__`, `_`, `.`, or `-`: `records_get` and `records_list` share `records`. Unprefixed names share `tools`. Namespace names stay within 64 characters and avoid collisions with eager tool names. Full function names and schemas are preserved, and replayed calls retain their namespace.
+
+Omit `namespace` for flat deferred functions. Omit `toolSearch` to retain ordinary tool handling. Hosted search sends the current catalog at the top level instead of synthetic client search or `additional_tools` items. Only opt in for endpoints and models that support it.
+
 ### Handling Tool Calls
 
 Tool results use content blocks and can include both text and images:

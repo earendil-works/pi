@@ -28,6 +28,7 @@ import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import {
 	convertResponsesMessages,
 	convertResponsesTools,
+	getResponsesToolNamespaces,
 	getResponsesToolSupport,
 	processResponsesStream,
 } from "./openai-responses-shared.ts";
@@ -147,6 +148,13 @@ export interface OpenAIResponsesOptions extends StreamOptions {
 	reasoningSummary?: "auto" | "detailed" | "concise" | null;
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
 	toolChoice?: ResponseCreateParamsStreaming["tool_choice"];
+	/**
+	 * Opt in to server-hosted tool search. Sends the current tool catalog once, marking
+	 * these tools deferred. With namespace: "prefix", groups them by the first name
+	 * segment before __, _, ., or -; unprefixed names share the "tools" namespace.
+	 * Requires a Responses endpoint/model supporting hosted tool search.
+	 */
+	toolSearch?: { deferredTools: readonly string[]; namespace?: "prefix" };
 }
 
 /**
@@ -345,12 +353,22 @@ function buildParams(
 	grammarToolInputProperties: ReadonlyMap<string, string>,
 	configurationUpdateEffort: string | undefined,
 ) {
-	const transcriptTools = resolveTranscriptTools(context.messages, getResponsesToolSupport(compat));
+	// Hosted search discovers from a stable top-level catalog rather than client-side tool additions.
+	const transcriptTools = resolveTranscriptTools(
+		context.messages,
+		options?.toolSearch ? "none" : getResponsesToolSupport(compat),
+	);
+	const deferredToolNames = options?.toolSearch ? new Set(options.toolSearch.deferredTools) : undefined;
+	const toolNamespaces =
+		options?.toolSearch?.namespace === "prefix" && deferredToolNames
+			? getResponsesToolNamespaces(transcriptTools.requestTools, deferredToolNames)
+			: undefined;
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
 		grammarToolInputProperties,
 		supportsMidConvoSystemMessages: compat.supportsMidConvoSystemMessages,
-		supportsAdditionalTools: compat.supportsAdditionalTools,
-		supportsToolSearch: compat.supportsToolSearch,
+		supportsAdditionalTools: options?.toolSearch ? false : compat.supportsAdditionalTools,
+		supportsToolSearch: options?.toolSearch ? false : compat.supportsToolSearch,
+		toolNamespaces,
 		toolOptions: {
 			supportsStrictMode: compat.supportsStrictMode,
 			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
@@ -388,7 +406,12 @@ function buildParams(
 		params.tools = convertResponsesTools(transcriptTools.requestTools, {
 			supportsStrictMode: compat.supportsStrictMode,
 			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
+			deferredToolNames,
+			namespaces: toolNamespaces,
 		});
+		if (transcriptTools.requestTools.some((tool) => deferredToolNames?.has(tool.name))) {
+			params.tools.unshift({ type: "tool_search" });
+		}
 	}
 
 	if (options?.toolChoice !== undefined) {
