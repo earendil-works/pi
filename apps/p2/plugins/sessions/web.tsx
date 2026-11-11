@@ -1,24 +1,39 @@
-// The mobile drawer's component tree, with catalog/status/subagent/search handles supplying its data, and the owner's
-// session actions on its rows.
+// The sidebar and its list pages (sidebar/: the rollups' rules and their views) with the catalog, status, subagent,
+// search, project and settings handles supplying their data, the owner's session actions on the rows, the session
+// and rollup sheets, and the sessions' command menu commands (commands.tsx).
 
-import { Access, BACKGROUND_CONTEXT, contribute, defineFacet, type HeldIn, keptIn, liveIn, whenLive } from "@p2/app/v1";
 import {
+	Access,
+	BACKGROUND_CONTEXT,
+	contribute,
+	defineFacet,
+	type HeldIn,
+	keptIn,
+	LOCAL,
+	liveIn,
+	whenLive,
+} from "@p2/app/v1";
+import {
+	CommandPages,
+	CommandSearches,
+	Commands,
 	closeLayers,
-	conversationRoute,
-	Drawer,
 	MoreIcon,
+	NEW_SESSION,
 	navigate,
 	openLayer,
+	openPage,
+	PiLogo,
 	rememberMains,
-	type SessionSummary,
+	Slot,
 	SlotList,
 	Slots,
+	startNewSession,
 	toggleSidebar,
 	useComposerState,
 	useConnected,
 	useHost,
 	useNavigation,
-	useNewSessionState,
 	useObject,
 	useOptimisticCall,
 	useOwner,
@@ -29,14 +44,38 @@ import {
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Envs } from "../envs/contract.ts";
 import { directoryPickerLayer } from "../envs/contract.web.tsx";
-import { Search, SessionReads } from "../search/contract.ts";
+import { Projects, placeOn } from "../projects/contract.ts";
+import { SidebarRollups } from "../rollups/contract.ts";
+import { Search, type SearchResults, SessionReads } from "../search/contract.ts";
 import { SessionStatus } from "../status/contract.ts";
 import { Subagents } from "../subagents/contract.ts";
 import { SessionTree } from "../tree/contract.ts";
 import { BranchSheet } from "./BranchSheet.tsx";
-import { type Operation, type Session, Sessions } from "./contract.ts";
+import { SESSION_COMMANDS, SESSION_PAGES, SESSION_SEARCH } from "./commands.tsx";
+import { type Operation, type Session, Sessions, SidebarSettings, type SidebarWindow } from "./contract.ts";
 import { type DrawerRows, DrawerRowsContext } from "./contract.web.tsx";
 import { SessionSheet } from "./SessionSheet.tsx";
+import { customKey, customRollup } from "./sidebar/custom.ts";
+import { ListPage } from "./sidebar/ListPage.tsx";
+import {
+	ARCHIVE,
+	glyphsOf,
+	listPageOf,
+	moved,
+	type NewTarget,
+	ordered,
+	ROLLUPS,
+	type Rollup,
+	type RollupContext,
+	type SidebarRow,
+	sectionsOf,
+	type View,
+	type Wanting,
+	wantingOf,
+} from "./sidebar/model.ts";
+import { type CodeSource, RollupSheet } from "./sidebar/RollupSheet.tsx";
+import { folderName } from "./sidebar/Row.tsx";
+import { SidebarView, useNow } from "./sidebar/Sidebar.tsx";
 
 const subscribeVisibility = (listener: () => void) => {
 	document.addEventListener("visibilitychange", listener);
@@ -45,10 +84,13 @@ const subscribeVisibility = (listener: () => void) => {
 /** Whether the page is shown (not a background tab or a hidden app). */
 const usePageVisible = () => useSyncExternalStore(subscribeVisibility, () => document.visibilityState === "visible");
 
-/** Entries above the folders, e.g. the Familiar's. */
-const head = <SlotList prefix="drawer-head" />;
+/** The owner's sidebar header start: the Pi logo, unless a plugin puts its own there (the Familiar's). */
+const brand = <Slot name="drawer-brand" fallback={<PiLogo compact />} />;
 /** Icon buttons at the footer's end, before the theme switch (`sidebar-actions:<name>`, e.g. the Settings gear). */
 const actions = <SlotList prefix="sidebar-actions" />;
+
+/** The sidebar's New session: the new-session screen, without the project or model chosen before. */
+const newSession = () => startNewSession();
 
 /** What a row says about a lifecycle operation (`Sessions.operations`), by kind: running, and failed. */
 const OPERATION_LABELS: Record<Operation["kind"], { running: string; failed: string }> = {
@@ -66,7 +108,7 @@ function operationOf(
 	operations: readonly Operation[],
 	session: string,
 	dismiss: (operation: string) => void,
-): SessionSummary["operation"] {
+): SidebarRow["operation"] {
 	const failed = operations.find((operation) => operation.phase === "failed" && operation.session === session);
 	if (failed?.phase === "failed")
 		return { label: OPERATION_LABELS[failed.kind].failed, error: failed.error, dismiss: () => dismiss(failed.id) };
@@ -83,20 +125,67 @@ type RowGuess = { readonly id: string; readonly change: Partial<Session> };
 const applyRow = (rows: Session[] | undefined, { id, change }: RowGuess): Session[] | undefined =>
 	rows?.map((row) => (row.id === id ? { ...row, ...change } : row));
 
+/** The owner's sidebar settings (`SidebarSettings`): the rollups' order and windows, collapsed rollups and groups. */
+type Settings = {
+	readonly order: readonly string[];
+	readonly windows: Readonly<Record<string, SidebarWindow>>;
+	readonly collapsed: Readonly<Record<string, boolean>>;
+};
+const applySettings = (state: Settings, change: Partial<Settings>): Settings => ({ ...state, ...change });
+const NO_SETTINGS: Settings = { order: [], windows: {}, collapsed: {} };
+
+/** What a rollup's or a group's list page shows and acts with: the sidebar's data, published by the sidebar. */
+type PageData = {
+	readonly rows: readonly SidebarRow[];
+	readonly rollups: readonly Rollup[];
+	readonly context: RollupContext;
+	readonly view: View;
+	/** The sessions (or, for a project's list, the projects) are not known yet. */
+	readonly loading: (page: string) => boolean;
+	readonly connected: boolean;
+	readonly onOpen: (id: string, conversation?: number) => void;
+	readonly onRestore: (id: string, conversation?: number) => void;
+	readonly onSearch?: (query: string, archived: boolean, sessions: readonly string[]) => Promise<SearchResults>;
+	readonly onNewIn?: (target: NewTarget) => void;
+};
+
+// The sidebar is always mounted (docked, or in the drawer) and holds the one copy of the data, with its edits shown at
+// once; a list page in the main area renders from it, so both show the same rows, offline too.
+const pageListeners = new Set<() => void>();
+let pageData: PageData | undefined;
+const subscribePage = (listener: () => void) => {
+	pageListeners.add(listener);
+	return () => pageListeners.delete(listener);
+};
+function publishPage(next: PageData): void {
+	pageData = next;
+	for (const listener of pageListeners) listener();
+}
+
+// What the other sessions want from the owner, for the menu button's badge (`MenuBadge`), which the top bars render
+// outside the sidebar; published by the sidebar, which holds the rows. A new value only when it changed.
+const wantingListeners = new Set<() => void>();
+let wanting: Wanting = { count: 0, failed: false };
+const subscribeWanting = (listener: () => void) => {
+	wantingListeners.add(listener);
+	return () => wantingListeners.delete(listener);
+};
+function publishWanting(next: Wanting): void {
+	if (next.count === wanting.count && next.failed === wanting.failed) return;
+	wanting = next;
+	for (const listener of wantingListeners) listener();
+}
+
 /**
- * The drawer, and the owner's session actions on its rows: rename, pin, archive and restore (the Session sheet is
- * rendered here, opened from the top bar's button), switching and renaming `/tree` branches. Each action shows its
- * effect on the rows at once (`useOptimisticCall`); a refused one rolls back and the toast says why. Reads use
- * `keptIn`: while the connection is down the rows stay as last seen; actions need the live catalog.
+ * The sessions as the sidebar and its list pages show them, and what they act with: the catalog's rows (with a row's
+ * edit shown at once), their state (working, unread, failed, an operation), what the rollups collect from (projects),
+ * the owner's settings, opening and restoring a session. Reads use `keptIn`: while the connection is down the rows
+ * stay as last seen; actions need the live objects.
  */
-function Sidebar() {
-	const connected = useConnected();
+function useSidebarData() {
 	const route = useRoute();
-	const nav = useNavigation();
 	const service = useObject(Sessions, {});
 	const catalog = liveIn(service, "owner");
-	const access = useObject(Access, {});
-	const guest = useReadable(keptIn(access, "guest")?.grant);
 	// As the server last said (kept across starts): unread marks and search hold without waiting for Access.
 	const owner = useOwner();
 	const status = keptIn(useObject(SessionStatus, {}), "reader");
@@ -105,9 +194,6 @@ function Sidebar() {
 	const [list, edit] = useOptimisticCall(useReadable(keptIn(service, "owner", "guest")?.sessions), applyRow, fail);
 	const statuses = useReadable(status?.statuses);
 	const children = useReadable(agents?.children);
-	useEffect(() => {
-		if (list) rememberMains(list);
-	}, [list]);
 	// Unread answers are the owner's (any device); guests see none and mark nothing.
 	const marks = useObject(SessionReads, owner ? {} : undefined);
 	const answers = useReadable(marks?.answers);
@@ -124,9 +210,9 @@ function Sidebar() {
 		},
 		[catalog, dismissing],
 	);
-	const sessions = useMemo(
+	const rows = useMemo(
 		() =>
-			(list ?? []).map((session) => {
+			(list ?? []).map((session): SidebarRow => {
 				const busy = statuses?.[session.id]?.busy ?? [];
 				return {
 					...session,
@@ -142,46 +228,58 @@ function Sidebar() {
 			}),
 		[list, statuses, children, answers, reads, operations, dismiss],
 	);
-	// Sessions a `drawer-head` entry shows are left out of the folders.
-	const [apart, setApart] = useState<Readonly<Record<string, readonly string[]>>>({});
-	const listApart = useCallback(
-		(key: string, ids: readonly string[]) => setApart((current) => ({ ...current, [key]: ids })),
-		[],
-	);
-	const rows = useMemo<DrawerRows>(() => ({ sessions, listApart }), [sessions, listApart]);
-	const folders = useMemo(() => {
-		const hidden = new Set(Object.values(apart).flat());
-		return hidden.size ? sessions.filter((session) => !hidden.has(session.id)) : sessions;
-	}, [sessions, apart]);
-	// The open session's main conversation, shown on a visible page, is read through its latest answer.
-	const visible = usePageVisible();
-	const viewed = list?.find((session) => session.id === route.session);
-	const shown = visible && route.conversation === viewed?.main ? route.session : undefined;
-	const latest = shown ? (answers?.[shown] ?? 0) : 0;
-	const read = shown ? (reads?.[shown] ?? 0) : 0;
-	useEffect(() => {
-		if (shown && marks && latest > read)
-			void marks.markRead({ session: shown, through: latest }, BACKGROUND_CONTEXT).catch(() => {});
-	}, [marks, shown, latest, read]);
-	// Sandboxed groups show a lock; only the owner reads environments.
+	// The projects rollup reads projects.json and the sessions' projects (`Projects`, from the projects plugin).
+	const projectsHeld = useObject(Projects, owner ? {} : undefined);
+	const projectsKept = keptIn(projectsHeld, "owner");
+	const projects = useReadable(projectsKept?.projects);
+	const memberships = useReadable(projectsKept?.sessions);
+	const localLabel = useReadable(projectsKept?.local);
+	// Folders on a sandbox environment show a lock; only the owner reads environments.
 	const envs = useReadable(useObject(Envs, owner ? {} : undefined)?.envs);
-	const sandboxes = useMemo(
-		() => new Set((envs ?? []).flatMap((env) => (env.config.type === "gondolin" ? [env.name] : []))),
-		[envs],
+	const context = useMemo(
+		(): RollupContext => ({
+			projects: projects ?? [],
+			memberships: memberships ?? {},
+			folderName,
+			sandboxes: new Set((envs ?? []).flatMap((env) => (env.config.type === "gondolin" ? [env.name] : []))),
+		}),
+		[projects, memberships, envs],
 	);
-	const search = liveIn(useObject(Search, owner ? {} : undefined), "owner");
-	// A rebuild shows as running at once; it is long work (a job), so the sheet shows it running until it is done.
-	const [rebuilds, reindex] = useOptimisticCall(
-		useReadable(search?.rebuilds) ?? [],
-		(list, session: string) => [
-			...list.filter((each) => each.session !== session),
-			{ session, phase: "running" as const },
-		],
+	const settingsHeld = useObject(SidebarSettings, owner ? {} : undefined);
+	const settingsKept = keptIn(settingsHeld, "owner");
+	const order = useReadable(settingsKept?.order);
+	const windows = useReadable(settingsKept?.windows);
+	const collapsed = useReadable(settingsKept?.collapsed);
+	const [settings, guessSettings] = useOptimisticCall<Settings, Partial<Settings>>(
+		useMemo(
+			() => (order ? { order, windows: windows ?? {}, collapsed: collapsed ?? {} } : NO_SETTINGS),
+			[order, windows, collapsed],
+		),
+		applySettings,
 		fail,
 	);
-	const onSearch = useCallback(
-		(query: string, archived: boolean) => search!.search({ query, archived }, BACKGROUND_CONTEXT),
-		[search],
+	/** Shows `change` at once and calls `call` with the live settings; offline the call fails, rolling it back. */
+	const changeSettings = useCallback(
+		(change: Partial<Settings>, call: (live: HeldIn<typeof SidebarSettings, "owner">) => Promise<unknown>) =>
+			guessSettings(change, async () => {
+				const live = liveIn(settingsHeld, "owner");
+				if (!live) throw new Error("Not connected");
+				await call(live);
+			}),
+		[guessSettings, settingsHeld],
+	);
+	// Rollups made from code (plugins/rollups), before the Archive until the owner moves them.
+	const rollupsHeld = useObject(SidebarRollups, owner ? {} : undefined);
+	const entries = useReadable(keptIn(rollupsHeld, "owner")?.rollups);
+	const rollups = useMemo(() => {
+		const custom = (entries ?? []).map(customRollup);
+		const archive = ROLLUPS.filter((rollup) => rollup.key === ARCHIVE);
+		return ordered([...ROLLUPS.filter((rollup) => rollup.key !== ARCHIVE), ...custom, ...archive], settings.order);
+	}, [entries, settings.order]);
+	const now = useNow();
+	const view = useMemo(
+		() => ({ windows: settings.windows, collapsed: settings.collapsed, now, open: route.session }),
+		[settings, now, route.session],
 	);
 	// A session opens at its main conversation; `/s/<id>` would open conversation 1, which redirects there.
 	const onOpen = useCallback(
@@ -199,6 +297,99 @@ function Sidebar() {
 			});
 		},
 		[catalog, edit, onOpen],
+	);
+	const searchHeld = useObject(Search, owner ? {} : undefined);
+	const search = liveIn(searchHeld, "owner");
+	// The owner's lists keep their search field while offline; a search waits for the connection (the page skips it).
+	const onSearch = useMemo(
+		() =>
+			searchHeld &&
+			((query: string, archived: boolean, sessions: readonly string[]) => {
+				const live = liveIn(searchHeld, "owner");
+				if (!live) return Promise.reject(new Error("Not connected"));
+				return live.search({ query, archived, sessions: [...sessions] }, BACKGROUND_CONTEXT);
+			}),
+		[searchHeld],
+	);
+	return {
+		route,
+		catalog,
+		owner,
+		fail,
+		list,
+		edit,
+		rows,
+		answers,
+		reads,
+		marks,
+		search,
+		onSearch,
+		projects,
+		projectsHeld,
+		localLabel,
+		context,
+		settings,
+		changeSettings,
+		rollups,
+		rollupsHeld,
+		entries,
+		view,
+		onOpen,
+		onRestore,
+	};
+}
+
+/**
+ * The sidebar, and the owner's actions on it: the session actions on the rows (rename, pin, archive and restore: the
+ * Session sheet is rendered here, opened from the top bar's button), switching and renaming `/tree` branches, a group's
+ * "+", a rollup's options and collapsing rollups and groups. Each action shows its effect at once
+ * (`useOptimisticCall`); a refused one rolls back and the toast says why.
+ */
+function Sidebar() {
+	const connected = useConnected();
+	const nav = useNavigation();
+	const data = useSidebarData();
+	const { route, catalog, owner, fail, list, edit, rows, answers, reads, marks, search, settings, changeSettings } =
+		data;
+	const { rollups, rollupsHeld, entries, context, view, onOpen, onRestore } = data;
+	// Project glyphs for groups and the sessions of flat lists; the owner's only (guests read no projects).
+	const glyphs = useMemo(() => (owner ? glyphsOf(context) : undefined), [owner, context]);
+	// Sessions a plugin's sidebar entry shows (the Familiar's, in `drawer-brand`) are left out of the rollups.
+	const [apart, setApart] = useState<Readonly<Record<string, readonly string[]>>>({});
+	const listApart = useCallback(
+		(key: string, ids: readonly string[]) => setApart((current) => ({ ...current, [key]: ids })),
+		[],
+	);
+	const drawerRows = useMemo<DrawerRows>(() => ({ sessions: rows, listApart }), [rows, listApart]);
+	const rolledUp = useMemo(() => {
+		const hidden = new Set(Object.values(apart).flat());
+		return hidden.size ? rows.filter((row) => !hidden.has(row.id)) : rows;
+	}, [rows, apart]);
+	const sections = useMemo(() => sectionsOf(rollups, rolledUp, context, view), [rollups, rolledUp, context, view]);
+	const { onSearch, projects } = data;
+	const access = useObject(Access, {});
+	const guest = useReadable(keptIn(access, "guest")?.grant);
+	useEffect(() => {
+		if (list) rememberMains(list);
+	}, [list]);
+	// The open session's main conversation, shown on a visible page, is read through its latest answer.
+	const visible = usePageVisible();
+	const viewed = list?.find((session) => session.id === route.session);
+	const shown = visible && route.conversation === viewed?.main ? route.session : undefined;
+	const latest = shown ? (answers?.[shown] ?? 0) : 0;
+	const read = shown ? (reads?.[shown] ?? 0) : 0;
+	useEffect(() => {
+		if (shown && marks && latest > read)
+			void marks.markRead({ session: shown, through: latest }, BACKGROUND_CONTEXT).catch(() => {});
+	}, [marks, shown, latest, read]);
+	// A rebuild shows as running at once; it is long work (a job), so the sheet shows it running until it is done.
+	const [rebuilds, reindex] = useOptimisticCall(
+		useReadable(search?.rebuilds) ?? [],
+		(list, session: string) => [
+			...list.filter((each) => each.session !== session),
+			{ session, phase: "running" as const },
+		],
+		fail,
 	);
 	// A branch's switch or rename: a reference of its own (the change also reaches the session row).
 	const host = useHost();
@@ -244,40 +435,145 @@ function Sidebar() {
 			() => withTree(session.id, (tree) => tree.rename({ conversation, label }, BACKGROUND_CONTEXT)),
 		);
 	const sessionSheet = useSheet("session");
-	const { setChoice, setLocation } = useNewSessionState();
-	const onNew = useCallback(() => {
-		setChoice(undefined);
-		navigate({});
-		setTimeout(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus(), 50);
-	}, [setChoice]);
-	// A folder's "+": the new session starts in that folder's location.
+	const { projectsHeld, localLabel } = data;
+	/**
+	 * A group's "+": a folder's new session starts in the folder; a project's joins the project (once it exists) and
+	 * starts at its place on the machine of its most recently active session, else at its first place.
+	 */
 	const onNewIn = useCallback(
-		(env: string | null, cwd: string) => {
-			setLocation({ env, cwd });
-			onNew();
+		(target: NewTarget) => {
+			if (target.kind === "folder") return startNewSession({ location: { env: target.env, cwd: target.cwd } });
+			const latest = rows
+				.filter((row) => !row.archivedAt && context.memberships[row.id] === target.project.name)
+				.toSorted((a, b) => b.updatedAt - a.updatedAt)[0];
+			const place =
+				(latest && placeOn(target.project, latest.env ?? LOCAL, localLabel ?? "")) ?? target.project.places[0];
+			startNewSession({
+				...(place ? { location: { env: place.env, cwd: place.path } } : {}),
+				join: {
+					label: target.project.name,
+					// The page is connected (the session was just created): wait for the projects to be live too.
+					run: async (session) => {
+						if (!projectsHeld) throw new Error("Only the owner has projects");
+						await whenLive(projectsHeld);
+						const live = liveIn(projectsHeld, "owner");
+						if (!live) throw new Error("Only the owner has projects");
+						await live.assign({ session, project: target.project.name }, BACKGROUND_CONTEXT);
+					},
+				},
+			});
 		},
-		[setLocation, onNew],
+		[rows, context, localLabel, projectsHeld],
 	);
+	const onCollapse = useCallback(
+		(key: string, collapsed: boolean) =>
+			changeSettings({ collapsed: { ...settings.collapsed, [key]: collapsed } }, (live) =>
+				live.setCollapsed({ key, collapsed }, BACKGROUND_CONTEXT),
+			),
+		[changeSettings, settings.collapsed],
+	);
+	const onOptions = useCallback(
+		(key: string) => openLayer({ kind: "sheet", name: "sidebar-rollup", locator: key }, { fromDrawer: true }),
+		[],
+	);
+	const ownerNewIn = owner ? onNewIn : undefined;
+	useEffect(() => publishWanting(wantingOf(rows, route.session)), [rows, route.session]);
+	useEffect(
+		() =>
+			publishPage({
+				rows: rolledUp,
+				rollups,
+				context,
+				view,
+				// A project's list waits for the projects too, a rollup made from code for the rollups: before them it would
+				// say the list is gone.
+				loading: (page) =>
+					!list ||
+					(page.startsWith("project:") && projects === undefined) ||
+					(page.startsWith("rollup:") && entries === undefined),
+				connected,
+				onOpen,
+				onRestore,
+				...(onSearch ? { onSearch } : {}),
+				...(ownerNewIn ? { onNewIn: ownerNewIn } : {}),
+			}),
+		[rolledUp, rollups, context, view, list, projects, entries, connected, onOpen, onRestore, onSearch, ownerNewIn],
+	);
+	const rollupSheet = useSheet("sidebar-rollup");
+	const optionsOf = rollupSheet && sections.find((section) => section.key === rollupSheet.locator);
+	const [refreshing, setRefreshing] = useState<string>();
+	/** The options of a rollup made from code: its refresh, last check and failure, and Refresh now while connected. */
+	const codeOf = (key: string): CodeSource | undefined => {
+		const entry = entries?.find((each) => customKey(each.definition.key) === key);
+		if (!entry) return undefined;
+		const live = liveIn(rollupsHeld, "owner");
+		const refresh = () => {
+			if (!live) return;
+			setRefreshing(key);
+			void live
+				.refresh({ key: entry.definition.key }, BACKGROUND_CONTEXT)
+				.catch(fail)
+				.finally(() => setRefreshing(undefined));
+		};
+		return {
+			refresh: entry.definition.refresh,
+			checkedAt: entry.checkedAt,
+			error: entry.error,
+			refreshing: refreshing === key,
+			...(live ? { onRefresh: refresh } : {}),
+		};
+	};
+	/** A rollup's options: its window, and moving it among the rollups. */
+	const rollupActions = (key: string) => {
+		const at = rollups.findIndex((rollup) => rollup.key === key);
+		const move = (by: -1 | 1) => () => {
+			const order = moved(rollups, key, by);
+			changeSettings({ order }, (live) => live.setOrder({ order }, BACKGROUND_CONTEXT));
+		};
+		return {
+			onWindow: (window: SidebarWindow) =>
+				changeSettings({ windows: { ...settings.windows, [key]: window } }, (live) =>
+					live.setWindow({ key, window }, BACKGROUND_CONTEXT),
+				),
+			onMove: { ...(at > 0 ? { up: move(-1) } : {}), ...(at < rollups.length - 1 ? { down: move(1) } : {}) },
+		};
+	};
 	return (
-		<DrawerRowsContext.Provider value={rows}>
-			<Drawer
-				sessions={folders}
+		<DrawerRowsContext.Provider value={drawerRows}>
+			<SidebarView
+				rows={rows}
+				sections={sections}
+				now={view.now}
+				page={route.page}
+				newSession={route.newSession === true}
+				brand={brand}
 				guest={guest}
-				sandboxes={sandboxes}
 				activeId={route.session}
 				conversationId={route.conversation}
 				connected={connected}
 				onOpen={onOpen}
 				onBranch={catalog ? onBranch : undefined}
 				onRenameBranch={catalog ? onRenameBranch : undefined}
-				onNew={onNew}
-				onNewIn={owner ? onNewIn : undefined}
-				onCollapse={toggleSidebar}
-				onSearch={search ? onSearch : undefined}
 				onRestore={onRestore}
-				head={head}
-				actions={actions}
+				onNew={newSession}
+				onNewIn={ownerNewIn}
+				glyphs={glyphs}
+				onOptions={owner ? onOptions : undefined}
+				onCollapse={owner ? onCollapse : undefined}
+				onPage={openPage}
+				onCollapseSidebar={toggleSidebar}
+				footerActions={actions}
 			/>
+			{optionsOf && (
+				<RollupSheet
+					key={optionsOf.key}
+					section={optionsOf}
+					code={codeOf(optionsOf.key)}
+					now={view.now}
+					{...rollupActions(optionsOf.key)}
+					onClose={closeLayers}
+				/>
+			)}
 			{renamed && branch && (
 				<BranchSheet
 					title={renamed.title}
@@ -310,7 +606,7 @@ function Sidebar() {
 					}
 					onArchive={() => {
 						closeLayers();
-						void nav.replace(conversationRoute(route, undefined));
+						void nav.replace(NEW_SESSION);
 						edit({ id: viewed.id, change: { archivedAt: Date.now() } }, () =>
 							catalog.archive({ id: viewed.id }, BACKGROUND_CONTEXT),
 						);
@@ -318,6 +614,52 @@ function Sidebar() {
 				/>
 			)}
 		</DrawerRowsContext.Provider>
+	);
+}
+
+/** A rollup's or a group's list in the main area (`Route.page`), from the sidebar's data (`publishPage`). */
+function SectionPage() {
+	const route = useRoute();
+	const data = useSyncExternalStore(subscribePage, () => pageData);
+	const page = route.page;
+	const list = useMemo(
+		() => data && page !== undefined && listPageOf(page, data.rollups, data.rows, data.context, data.view),
+		[data, page],
+	);
+	if (!data || page === undefined) return null;
+	return (
+		<ListPage
+			key={page}
+			page={page}
+			data={list || undefined}
+			loading={data.loading(page)}
+			connected={data.connected}
+			actions={{
+				conversationId: route.conversation,
+				now: data.view.now,
+				onOpen: data.onOpen,
+				onRestore: data.onRestore,
+			}}
+			{...(data.onSearch ? { onSearch: data.onSearch } : {})}
+			{...(data.onNewIn ? { onNewIn: data.onNewIn } : {})}
+		/>
+	);
+}
+
+/**
+ * The menu button's badge (the `menu-badge` slot): how many other sessions want the owner (a failure or an unread
+ * answer), in the error colour when one failed, else the unread blue. Steady: only working moves in the sidebar.
+ */
+function MenuBadge() {
+	const { count, failed } = useSyncExternalStore(subscribeWanting, () => wanting);
+	if (count === 0) return null;
+	return (
+		<span
+			className={`menu-badge ${failed ? "failed" : ""}`}
+			title={failed ? `${count} want you, a failure among them` : `${count} with a new answer`}
+		>
+			{count}
+		</span>
 	);
 }
 
@@ -341,6 +683,14 @@ function SessionOptions() {
 
 export default defineFacet((host) => {
 	contribute(host, "p2.web-sessions", (self) => {
-		self.contribute(Slots, { sidebar: Sidebar, "session-options": SessionOptions });
+		self.contribute(Slots, {
+			sidebar: Sidebar,
+			page: SectionPage,
+			"session-options": SessionOptions,
+			"menu-badge": MenuBadge,
+		});
+		self.contribute(Commands, SESSION_COMMANDS);
+		self.contribute(CommandPages, SESSION_PAGES);
+		self.contribute(CommandSearches, { sessions: SESSION_SEARCH });
 	});
 });

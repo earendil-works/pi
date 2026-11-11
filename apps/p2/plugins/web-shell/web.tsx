@@ -7,7 +7,6 @@ import {
 	closeLayers,
 	getNavigation,
 	NavigationContext,
-	NewSessionState,
 	Slots,
 	startNavigation,
 } from "@p2/app/v1/web";
@@ -37,11 +36,9 @@ function App() {
 	}, [nav]);
 	return (
 		<NavigationContext.Provider value={nav}>
-			<NewSessionState>
-				<ComposerState>
-					<AppLayout />
-				</ComposerState>
-			</NewSessionState>
+			<ComposerState>
+				<AppLayout />
+			</ComposerState>
 		</NavigationContext.Provider>
 	);
 }

@@ -27,6 +27,7 @@ import type {
 	DocumentReader,
 	ToolExecutionApi,
 	ToolExecutionResult,
+	ToolPark,
 } from "@earendil-works/pi-durable";
 import { Connection, localDaemon, RemoteExecutionEnv } from "@earendil-works/pi-env";
 import { compile } from "@earendil-works/pi-schema";
@@ -196,7 +197,7 @@ const infos: EnvInfo[] = [
 	{ name: "slayer", type: "ssh", host: "slayer.example" },
 	{ name: "box1", type: "gondolin", host: "slayer" },
 ];
-const text = (result: ToolExecutionResult) =>
+const text = (result: ToolExecutionResult | ToolPark) =>
 	(result.output ?? []).map((part) => (part.type === "text" ? part.text : "")).join("");
 
 test("location tools keep a sandboxed conversation in its sandbox", async () => {

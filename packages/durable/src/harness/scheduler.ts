@@ -20,6 +20,7 @@ import { errorMessage, ReadOnlySession } from "../errors.ts";
 import { ALL_KEYS, conversationKey, INTENT_KEY, ownedKey, ROOTS_KEY, taskKey } from "../session/keys.ts";
 import type { ObservedCommit, SessionImpl } from "../session/session.ts";
 import type { Transaction } from "../session/transaction.ts";
+import { checkSleep, readSignal, type SignalToken, sleepDue, sleepWake } from "../signals.ts";
 import type { Timers } from "../timers.ts";
 import type {
 	CommitOptions,
@@ -43,9 +44,11 @@ import type {
 	TaskRecord,
 	TaskRuntime,
 	TaskState,
+	WakeReason,
 } from "../types.ts";
 import { agentHooks, DEFAULT_RESTART_LIMIT } from "./agent.ts";
 import { advanceRange, type ContextRange, rangeEntry, readContextFrom } from "./context.ts";
+import { providerSessionsByRuntime } from "./provider.ts";
 import { DURABLE_TELEMETRY_SCHEMA } from "./telemetry.ts";
 import type {
 	Agent,
@@ -141,6 +144,8 @@ type Reservation = {
 	readonly invocation: Invocation;
 	readonly task: AnyTask;
 	readonly snapshot: RegistrySnapshot;
+	/** Registry publications seen when `snapshot` was taken (`#publications`). */
+	readonly publication: number;
 };
 
 /** Replacement definition already reported as unable to take over, per invocation. */
@@ -240,6 +245,16 @@ export type TaskSchedulerOptions = {
 	 * built-in tasks, from `TaskRecord.restarts`); the scheduler ends a task of any other kind `faulted` instead.
 	 */
 	readonly limitsRestarts: (kind: string) => boolean;
+	/**
+	 * Whether the `abandonOnRestart` children of `owner` are kept after a restart (spec suspendable §2.5): its record
+	 * says it was not cut off while running, as a tool call parked or not started yet. Wins over the child's flag.
+	 */
+	readonly keepsAbandoned: (owner: AnyTaskRecord) => boolean;
+	/**
+	 * Whether a sleeping task is parked at gates its phase asks again on every wake (spec suspendable §5.2), as a tool
+	 * call before its intent: a registry publication, open, and a sleep committed under an outdated snapshot wake it.
+	 */
+	readonly gated: (record: AnyTaskRecord) => boolean;
 	/** Harness cleanup staged in the commit that makes an outcome the scheduler wrote itself terminal. */
 	readonly settleOutcome: (tx: Transaction, record: AnyTaskRecord, outcome: SchedulerOutcome) => Promise<void>;
 	/** Withdraw a conversation's queued inputs, for conversation abort and abort cascades. */
@@ -263,8 +278,11 @@ export type TaskSchedulerOptions = {
 interface ReservationPlan {
 	readonly dropped: readonly TaskId[];
 	readonly cascade: boolean;
-	readonly ready: readonly RunnableTaskRecord[];
+	readonly ready: readonly { readonly record: RunnableTaskRecord; readonly woke: Woke | undefined }[];
 }
+
+/** How a reservation in run mode ends a wait or a sleep: its wake, and the signal memos it marks consumed or expired. */
+type Woke = { readonly wake: WakeReason; readonly memos: Readonly<Record<string, JsonValue>> };
 
 /**
  * Durable task scheduler of one Harness.
@@ -296,6 +314,7 @@ interface ReservationPlan {
  * the memberships its task changes alter (`membershipKeys()`), so a walk that a pending commit would change waits.
  */
 export class TaskScheduler {
+	readonly providerSessionIds = new Set<string>();
 	readonly #telemetry: NonNullable<HarnessOptions["telemetry"]>;
 	readonly #activeMetric;
 	readonly #durationMetric;
@@ -314,6 +333,8 @@ export class TaskScheduler {
 	readonly #report: (error: unknown, info: ReportInfo, context?: Context) => void;
 	readonly #settleOutcome: TaskSchedulerOptions["settleOutcome"];
 	readonly #limitsRestarts: TaskSchedulerOptions["limitsRestarts"];
+	readonly #keepsAbandoned: TaskSchedulerOptions["keepsAbandoned"];
+	readonly #parkedAtGate: TaskSchedulerOptions["gated"];
 	readonly #withdrawInputs: TaskSchedulerOptions["withdrawInputs"];
 	readonly #conversation: TaskSchedulerOptions["conversation"];
 	readonly #context: Context;
@@ -392,6 +413,10 @@ export class TaskScheduler {
 	readonly #abandoned = new Set<TaskId>();
 	/** Sleeping live tasks, due or not: the candidates of `#wakeDue()`. */
 	readonly #sleeping = new Set<TaskId>();
+	/** Registry publications so far: a phase that took its snapshot at an older count ran under a replaced registry. */
+	#publications = 0;
+	/** Sleeping calls parked at a gate that the registry or open wakes before their time (`#wakeGate()`). */
+	readonly #gateWakes = new Set<TaskId>();
 	/** Timer for the earliest sleep, without `onWake` while scheduling runs. */
 	#timer: { readonly at: number; readonly disarm: () => void } | undefined;
 	/** Last value given to `onWake`, so an unchanged one is not repeated. */
@@ -416,6 +441,8 @@ export class TaskScheduler {
 	#enabled = false;
 	readonly #readOnly: boolean;
 	#closing = false;
+	/** Aborted at the seal: cancels the cleanups an abort must not cancel (`closeSignal()`). */
+	readonly #closed = new AbortController();
 	#dirty = false;
 	#draining = false;
 
@@ -438,6 +465,8 @@ export class TaskScheduler {
 		this.#report = options.report;
 		this.#settleOutcome = options.settleOutcome;
 		this.#limitsRestarts = options.limitsRestarts;
+		this.#keepsAbandoned = options.keepsAbandoned;
+		this.#parkedAtGate = options.gated;
 		this.#withdrawInputs = options.withdrawInputs;
 		this.#conversation = options.conversation;
 		this.#context = options.context;
@@ -453,7 +482,10 @@ export class TaskScheduler {
 		this.#session.followCommits((publication) => this.#observe(publication));
 		this.#session.subscribeClose(() => this.#seal());
 		this.#unsubscribeRegistry = this.#registry.subscribe(() => {
+			this.#publications++;
 			this.#notifyBlocked();
+			// Calls parked at a gate are asked again: the gates installed now decide (spec suspendable §5.2).
+			for (const id of this.#sleeping) this.#wakeGate(this.#live.get(id)!);
 			this.#kick();
 		});
 		await this.#session.commitWith(async (tx) => {
@@ -468,11 +500,12 @@ export class TaskScheduler {
 					this.#track(undefined, record);
 					this.#resumed.add(record.id);
 					if (this.#readOnly) continue;
+					// The registry may differ from the one a call parked at its gates under.
+					this.#wakeGate(record);
 					if (record.abandonOnRestart === true) this.#abandoned.add(record.id);
 					if (record.state.status === "running") {
 						const restarts = (record.restarts ?? 0) + 1;
-						const pending = withState(record, { status: "pending", checkpoint: record.state.checkpoint });
-						tx.setTask({ ...pending, restarts } as AnyTaskRecord);
+						tx.setTask({ ...pendingAgain(record, record.state), restarts } as AnyTaskRecord);
 					}
 					if (record.state.status === "waiting" && record.state.policy === "failFast") {
 						this.#failFastChecks.add(record.id);
@@ -538,13 +571,13 @@ export class TaskScheduler {
 		// recovery. A process that dies before it lands must be woken again. A pass with nothing to do is not.
 		const active =
 			this.#invocations.size > 0 || this.#reconcilingWork > 0 || this.#reconcileWork() || this.#runsNow(now);
-		// The earliest sleep not yet due: only `#sleeping` holds sleeping tasks, so no pass visits every live task.
+		// The earliest sleep not yet due: only `#sleeping` holds sleeping tasks, so no pass visits every live task. A sleep
+		// without `until` waits only for signals, which a delivery's commit wakes.
 		let at: number | undefined;
 		for (const id of this.#sleeping) {
-			const record = this.#live.get(id);
-			const state = record?.state;
-			if (state?.status === "sleeping" && !record!.abortRequested && state.until > now) {
-				at = at === undefined ? state.until : Math.min(at, state.until);
+			const record = this.#live.get(id)!;
+			if (this.#asleep(record, now) && record.state.until !== undefined) {
+				at = at === undefined ? record.state.until : Math.min(at, record.state.until);
 			}
 		}
 		return at === undefined ? { active } : { active, at };
@@ -557,9 +590,8 @@ export class TaskScheduler {
 		for (const record of this.#live.values()) {
 			const state = record.state;
 			if (state.status === "completing") continue;
-			if (state.status === "waiting" && !record.abortRequested && state.on.some((id) => this.#live.has(id)))
-				continue;
-			if (state.status === "sleeping" && !record.abortRequested && state.until > now) continue;
+			if (state.status === "waiting" && !record.abortRequested && this.#waitingOn(record, true).length > 0) continue;
+			if (this.#asleep(record, now)) continue;
 			// An abort invocation waits for the live work below it, which counts itself.
 			if (record.abortRequested && this.#waitingOn(record, true).length > 0) continue;
 			// A task no definition can take waits for a registry change, except an abort-marked one, which is orphaned.
@@ -596,8 +628,7 @@ export class TaskScheduler {
 			stopped.flatMap((invocation) => {
 				const record = this.#live.get(invocation.taskId);
 				if (record?.state.status !== "running") return [];
-				const value = withState(record, { status: "pending", checkpoint: record.state.checkpoint });
-				return [{ type: "task", value } as const];
+				return [{ type: "task", value: pendingAgain(record, record.state) } as const];
 			}),
 		).catch(() => {});
 	}
@@ -802,9 +833,11 @@ export class TaskScheduler {
 			const previous = this.#live.get(record.id);
 			if (failedOutcome(record) && (previous === undefined || !failedOutcome(previous))) failed.push(record.id);
 			this.#track(previous, record);
-			// Idleness counts live tasks, so only a task that became live or ended can change it. Collected before `#sweep()`,
-			// which may forget the chain of a task that ended.
-			const liveness = previous === undefined || record.state.status === "terminal";
+			// Idleness counts live tasks, so only a task that became live or ended can change it, and the inactivity of kept
+			// contexts also a task that parked or woke. Collected before `#sweep()`, which may forget the chain of a task
+			// that ended.
+			const liveness =
+				previous === undefined || record.state.status === "terminal" || parked(previous) !== parked(record);
 			if (liveness && dirty !== undefined && !this.#addScopesAbove(record, dirty)) dirty = undefined;
 			if (record.state.status === "terminal") {
 				this.#failedMigrations.delete(record.id);
@@ -944,7 +977,7 @@ export class TaskScheduler {
 		for (const conversationId of all ? [...this.#contexts.keys()] : scopes) {
 			const kept = this.#contexts.get(conversationId);
 			if (kept === undefined) continue;
-			if (!this.#idle(conversationId)) {
+			if (!this.#inactive(conversationId)) {
 				if (kept.idleSince === undefined) continue;
 				kept.idleSince = undefined;
 				this.#idleOrder.delete(conversationId);
@@ -1457,6 +1490,7 @@ export class TaskScheduler {
 			const node = nodeOf(record);
 			this.#live.delete(id);
 			this.#sleeping.delete(id);
+			this.#gateWakes.delete(id);
 			this.#intent.delete(id);
 			this.#runnable.delete(id);
 			this.#finalizeChecks.delete(id);
@@ -1484,7 +1518,10 @@ export class TaskScheduler {
 		}
 		if (record.state.status === "waiting") for (const on of record.state.on) addTo(this.#waiters, on, id);
 		if (record.state.status === "sleeping") this.#sleeping.add(id);
-		else this.#sleeping.delete(id);
+		else {
+			this.#sleeping.delete(id);
+			this.#gateWakes.delete(id);
+		}
 	}
 
 	/** The nearest live task above ended ordinary work may be free now: one holding its outcome, or an aborting one. */
@@ -1756,6 +1793,7 @@ export class TaskScheduler {
 		for (const record of this.#live.values()) this.#countActive(-1, record.kind);
 		this.#resumed.clear();
 		this.#closing = true;
+		this.#closed.abort(closedError(this.#session));
 		try {
 			this.#unsubscribeRegistry();
 		} catch (error) {
@@ -1817,11 +1855,30 @@ export class TaskScheduler {
 		this.#timer = { at, disarm };
 	}
 
+	/** A sleeping record that cannot wake yet (`asleep()`), unless a gate wake runs it before its time. */
+	#asleep(
+		record: AnyTaskRecord,
+		now: number,
+	): record is AnyTaskRecord & {
+		readonly state: Extract<TaskState<JsonValue, JsonValue>, { readonly status: "sleeping" }>;
+	} {
+		return asleep(record, now) && !this.#gateWakes.has(record.id);
+	}
+
+	/**
+	 * Wake a call parked at a gate, so its gates are asked again; a sleep whose deadline passed takes the deadline path
+	 * when reserved (`#woke()`). Other records are left alone.
+	 */
+	#wakeGate(record: AnyTaskRecord): void {
+		if (!this.#parkedAtGate(record)) return;
+		this.#gateWakes.add(record.id);
+		this.#runnable.add(record.id);
+	}
+
 	/** Make every sleeping task whose time has come a reservation candidate. */
 	#wakeDue(): void {
 		for (const id of this.#sleeping) {
-			const record = this.#live.get(id);
-			if (record !== undefined && !this.#notDue(record)) this.#runnable.add(id);
+			if (!this.#asleep(this.#live.get(id)!, this.#now())) this.#runnable.add(id);
 		}
 	}
 
@@ -1870,14 +1927,6 @@ export class TaskScheduler {
 		}
 	}
 
-	/** A sleep whose `until` the clock has not reached; an abort mark ends a sleep. */
-	#notDue(
-		record: AnyTaskRecord,
-	): record is AnyTaskRecord & { readonly state: { readonly status: "sleeping"; readonly until: number } } {
-		const state = record.state;
-		return state.status === "sleeping" && !record.abortRequested && state.until > this.#now();
-	}
-
 	#kick(): void {
 		this.#scheduleWake();
 		this.#dirty = true;
@@ -1919,7 +1968,11 @@ export class TaskScheduler {
 					const unmarked = await this.#region(() =>
 						ids
 							.map((id) => this.#liveRecord(id))
-							.filter((record) => record !== undefined && !record.abortRequested),
+							.filter((record) => {
+								if (record === undefined || record.abortRequested) return false;
+								const owner = record.owner === undefined ? undefined : this.#liveRecord(record.owner);
+								return owner === undefined || !this.#keepsAbandoned(owner);
+							}),
 					);
 					for (const record of unmarked) tx.setTask(withAbortMark(record!, "restart"));
 					abandoned = ids;
@@ -1929,7 +1982,7 @@ export class TaskScheduler {
 				// Every pass picks up sleeps whose time has come: a pass started by any change may be the first to run after
 				// a deadline, and the wake it schedules no longer keeps a timer for a due sleep.
 				this.#wakeDue();
-				const plan = await this.#planCandidates();
+				const plan = await this.#planCandidates(this.#now());
 				// Work below an owner with cancellation intent waits for its cascade mark instead of running a phase; schedule
 				// the cascade, which may not have run yet.
 				if (plan.cascade) {
@@ -1938,7 +1991,8 @@ export class TaskScheduler {
 				}
 				// Taken once per pass, and only when some task is a candidate.
 				let snapshot: RegistrySnapshot | undefined;
-				for (const record of plan.ready) {
+				let publication = 0;
+				for (const { record, woke } of plan.ready) {
 					const id = record.id;
 					const mode = record.abortRequested ? "abort" : "run";
 					// Work cut off `restartLimit` times in a row would run forever: an abort handler, or a phase of a kind that
@@ -1957,7 +2011,10 @@ export class TaskScheduler {
 						faulted.push({ record, message });
 						continue;
 					}
-					snapshot ??= this.#registry.snapshot();
+					if (snapshot === undefined) {
+						publication = this.#publications;
+						snapshot = this.#registry.snapshot();
+					}
 					const resolution = this.#resolve(record, snapshot);
 					if (resolution.kind === "blocked") {
 						// An abandoned task waits for its definition, so its abort handler can clean up.
@@ -1967,18 +2024,13 @@ export class TaskScheduler {
 						continue;
 					}
 					if (resolution.record !== record || record.state.status !== "running") {
-						tx.setTask(
-							withState(resolution.record, {
-								status: "running",
-								checkpoint: resolution.record.state.checkpoint,
-							}),
-						);
+						tx.setTask(reserved(resolution.record, woke));
 					}
 					// Registered on the line, so marks and later reservations see it and close joins it; `#end` makes it a
 					// candidate again.
 					this.#runnable.delete(id);
 					const invocation = this.#createInvocation(record, mode, installerOf(snapshot, resolution.task));
-					reservations.push({ invocation, task: resolution.task, snapshot });
+					reservations.push({ invocation, task: resolution.task, snapshot, publication });
 				}
 			}, this.#context);
 		} catch (error) {
@@ -2007,12 +2059,12 @@ export class TaskScheduler {
 	 * meanwhile, such as a waiter whose last task ended, lands in the fresh set, so the pass's decision to drop it cannot
 	 * erase that. The candidates not dropped go back in front of the fresh set, unless they ended or hold meanwhile.
 	 */
-	async #planCandidates(): Promise<ReservationPlan> {
+	async #planCandidates(now: number): Promise<ReservationPlan> {
 		const candidates = this.#runnable;
 		this.#runnable = new Set();
 		let dropped: ReadonlySet<TaskId> = new Set();
 		try {
-			const plan = await this.#region(() => this.#planReservation(candidates), this.#reloadScopes);
+			const plan = await this.#region(() => this.#planReservation(candidates, now), this.#reloadScopes);
 			dropped = new Set(plan.dropped);
 			return plan;
 		} finally {
@@ -2032,9 +2084,9 @@ export class TaskScheduler {
 	 * keyed: a pass that misses a task a pending commit makes runnable only delays it, as does skipping one with an
 	 * invocation without reading its record, or a waiter's check whether what it waits on is still live.
 	 */
-	#planReservation(candidates: ReadonlySet<TaskId>): ReservationPlan {
+	#planReservation(candidates: ReadonlySet<TaskId>, now: number): ReservationPlan {
 		const dropped: TaskId[] = [];
-		const ready: RunnableTaskRecord[] = [];
+		const ready: ReservationPlan["ready"][number][] = [];
 		let cascade = false;
 		for (const id of candidates) {
 			if (this.#invocations.has(id)) {
@@ -2048,7 +2100,7 @@ export class TaskScheduler {
 				record === undefined ||
 				record.state.status === "completing" ||
 				this.#waitingOn(record, true).length > 0 ||
-				this.#notDue(record)
+				this.#asleep(record, now)
 			) {
 				dropped.push(id);
 				continue;
@@ -2057,20 +2109,39 @@ export class TaskScheduler {
 				cascade = true;
 				continue;
 			}
-			ready.push(record as RunnableTaskRecord);
+			ready.push({ record: record as RunnableTaskRecord, woke: this.#woke(record, now) });
 		}
 		return { dropped, cascade, ready };
 	}
 
 	/**
+	 * How a run-mode reservation ends a record's wait or sleep (spec suspendable §2.4): a wait's wake names the terminal
+	 * tasks of its `on` (all of them unless `any`), read as task records; a sleep's, the key that woke it, consumed, or
+	 * its deadline, with the keys that hold nothing expired. None for an abort, or for a record that neither waits nor
+	 * sleeps.
+	 */
+	#woke(record: AnyTaskRecord, now: number): Woke | undefined {
+		const state = record.state;
+		if (record.abortRequested) return undefined;
+		if (state.status === "waiting") {
+			const ended = state.policy === "any" ? state.on.filter((id) => this.#liveRecord(id) === undefined) : state.on;
+			return { wake: { reason: "tasks", ended }, memos: {} };
+		}
+		// Not asleep: due, or woken at its gates, which needs no wake unless its deadline passed.
+		return state.status === "sleeping" ? sleepWake(state, record.memos, now) : undefined;
+	}
+
+	/**
 	 * Live tasks a task waits for before its next invocation: its live ordinary owned work when abort-marked, since
-	 * abort runs bottom-up, otherwise the live part of the `on` of a wait.
+	 * abort runs bottom-up, otherwise the live part of the `on` of a wait; none for an `any` wait one of whose tasks ended.
 	 */
 	#waitingOn(record: AnyTaskRecord, first = false): readonly TaskId[] {
 		if (record.abortRequested) return this.#ownedLive(record.id, { first });
 		if (record.state.status !== "waiting") return [];
-		if (!first) return record.state.on.filter((id) => this.#live.has(id));
-		const live = record.state.on.find((id) => this.#live.has(id));
+		const on = record.state.on;
+		if (record.state.policy === "any" && !on.every((id) => this.#live.has(id))) return [];
+		if (!first) return on.filter((id) => this.#live.has(id));
+		const live = on.find((id) => this.#live.has(id));
 		return live === undefined ? [] : [live];
 	}
 
@@ -2127,7 +2198,7 @@ export class TaskScheduler {
 
 	/**
 	 * The kept contexts' idle state, for tests (a diagnostic, computed on demand): how many are kept and how many are
-	 * idle, how many disagree with a full recompute (an idle period without `#idle()`, or `#idle()` without one; an
+	 * idle, how many disagree with a full recompute (an idle period without `#inactive()`, or `#inactive()` without one; an
 	 * expiry order that differs from the idle periods, or is not sorted), and how many idle checks covered every scope.
 	 */
 	get idleState(): Readonly<Record<"contexts" | "idleContexts" | "idleMismatches" | "fullIdleChecks", number>> {
@@ -2135,7 +2206,7 @@ export class TaskScheduler {
 		let idle = 0;
 		for (const [conversationId, kept] of this.#contexts) {
 			if (kept.idleSince !== undefined) idle++;
-			if ((kept.idleSince !== undefined) !== this.#idle(conversationId)) mismatches++;
+			if ((kept.idleSince !== undefined) !== this.#inactive(conversationId)) mismatches++;
 			if (this.#idleOrder.get(conversationId) !== kept.idleSince) mismatches++;
 		}
 		let previous = Number.NEGATIVE_INFINITY;
@@ -2172,7 +2243,10 @@ export class TaskScheduler {
 		if (record.state.status === "completing") return { kind: "completing" };
 		const on = this.#waitingOn(record);
 		if (on.length > 0) return { kind: "waiting", on };
-		if (this.#notDue(record)) return { kind: "sleeping", until: record.state.until };
+		if (this.#asleep(record, this.#now())) {
+			const until = record.state.until;
+			return until === undefined ? { kind: "sleeping" } : { kind: "sleeping", until };
+		}
 		const fit = this.#fit(record, snapshot.task(record.kind));
 		if ("reason" in fit) return { kind: "blocked", ...fit };
 		if (fit.migrates && fit.task.definition.migrate === undefined) {
@@ -2226,7 +2300,12 @@ export class TaskScheduler {
 	/** Run phase handlers, each preceded by a step that decides on the line whether the invocation continues. */
 	async #run(reservation: Reservation): Promise<void> {
 		const invocation = reservation.invocation;
-		const state = { task: reservation.task, snapshot: reservation.snapshot, reported: undefined as ReportedTask };
+		const state = {
+			task: reservation.task,
+			snapshot: reservation.snapshot,
+			publication: reservation.publication,
+			reported: undefined as ReportedTask,
+		};
 		const phase: Phase = { snapshot: () => state.snapshot, task: () => state.task, agent: undefined };
 		const runtime = this.#runtime(invocation, phase);
 		const progress = (tx: Transaction, current: ErasedRunningTask) =>
@@ -2247,6 +2326,13 @@ export class TaskScheduler {
 				}
 				return this.#step(invocation, (next) => this.#rules(next, previous), progress);
 			});
+		}
+		// A gate's sleep committed under a snapshot the registry has since replaced: the phase could not take a fresh one,
+		// so it is woken as a publication would have woken it.
+		const record = this.#live.get(invocation.taskId);
+		if (record !== undefined && this.#publications !== state.publication) {
+			this.#wakeGate(record);
+			this.#kick();
 		}
 	}
 
@@ -2345,15 +2431,16 @@ export class TaskScheduler {
 	#progress(
 		tx: Transaction,
 		current: ErasedRunningTask,
-		state: { task: AnyTask; snapshot: RegistrySnapshot; reported: ReportedTask },
+		state: { task: AnyTask; snapshot: RegistrySnapshot; publication: number; reported: ReportedTask },
 		extension: string | undefined,
 		context: Context,
 	): boolean {
+		state.publication = this.#publications;
 		state.snapshot = this.#registry.snapshot();
 		const next = state.snapshot.task(current.kind);
 		if (next === state.task) return true;
 		if (next !== undefined && canReserve(next, current)) {
-			tx.setTask(withState(current, { status: "pending", checkpoint: current.state.checkpoint }));
+			tx.setTask(pendingAgain(current, current.state));
 			return false;
 		}
 		if (state.reported === undefined || state.reported.task !== next) {
@@ -2476,7 +2563,7 @@ export class TaskScheduler {
 		next: NextTaskState<Checkpoint, JsonValue>,
 	): Promise<void> {
 		if (next.status === "waiting") await this.#validateWait(tx, invocation, current, next.on, next.policy);
-		if (next.status === "sleeping") validateSleep(invocation, current.id, next.until);
+		if (next.status === "sleeping") validateSleep(invocation, current, next);
 		if (next.status === "terminal") {
 			const overlay = overlayOf(tx);
 			await this.#loadScopes(false);
@@ -2487,9 +2574,11 @@ export class TaskScheduler {
 			}
 		}
 		// A state the task committed that differs from its current one is progress: its restart count starts over. The
-		// same checkpoint committed again, for example as intent before an effect, is not.
-		const same = jsonEqual(current.state as unknown as JsonValue, next as unknown as JsonValue);
-		tx.setTask(withState(same ? current : progressed(current), next));
+		// same checkpoint committed again, for example as intent before an effect, is not, and keeps the wake.
+		const { wake: _wake, ...was } = current.state;
+		const same = jsonEqual(was as unknown as JsonValue, next as unknown as JsonValue);
+		const state = same ? current.state : next;
+		tx.setTask(withState(same ? current : progressed(current), state));
 	}
 
 	/**
@@ -2627,6 +2716,19 @@ export class TaskScheduler {
 
 	/** No live non-background task in the scope; a task whose owner edges are not loaded yet counts as inside. */
 	#idle(conversationId: ConversationId | undefined): boolean {
+		return this.#quiet(conversationId, () => true);
+	}
+
+	/**
+	 * Whether a kept context's conversation is inactive (spec suspendable §8): idle, or with all its live work parked
+	 * (`parked()`), which holds no invocation however long it waits.
+	 */
+	#inactive(conversationId: ConversationId): boolean {
+		return this.#quiet(conversationId, (record) => !parked(record));
+	}
+
+	/** No live non-background task in the scope that `counts`; one whose owner edges are not loaded yet counts as inside. */
+	#quiet(conversationId: ConversationId | undefined, counts: (record: AnyTaskRecord) => boolean): boolean {
 		const scope: Scope = conversationId === undefined ? { roots: true } : { conversation: conversationId };
 		// In a decision region, global idle reads the roots it starts from.
 		if (conversationId === undefined) this.#record(ROOTS_KEY);
@@ -2634,13 +2736,19 @@ export class TaskScheduler {
 		// decides otherwise.
 		for (const id of this.#unloaded) {
 			const record = this.#live.get(id);
-			if (record !== undefined && !record.background && this.#inScope(parentOf(record), scope) !== false)
+			if (
+				record !== undefined &&
+				!record.background &&
+				counts(record) &&
+				this.#inScope(parentOf(record), scope) !== false
+			) {
 				return false;
+			}
 		}
 		const starts = conversationId === undefined ? this.#roots : [conversationId];
 		for (const start of starts) {
 			for (const { node, live } of this.#walkDown(conversationNode(start))) {
-				if (live !== undefined && !node.background) return false;
+				if (live !== undefined && !node.background && counts(live)) return false;
 			}
 		}
 		return true;
@@ -2679,7 +2787,7 @@ export class TaskScheduler {
 		};
 		const settings = this.#settings;
 		const models = this.#models;
-		return {
+		const runtime: ErasedRuntime = {
 			taskId: invocation.taskId as TaskId<JsonValue>,
 			conversationId: invocation.conversationId,
 			signal: invocation.controller.signal,
@@ -2764,6 +2872,10 @@ export class TaskScheduler {
 					rest[1] as Context,
 				);
 			}) as ErasedRuntime["memo"],
+			readSignal: ((token: SignalToken<unknown>, key: string, _context: Context) =>
+				this.#read(invocation, async () =>
+					readSignal(this.#live.get(invocation.taskId)?.memos, token, key),
+				)) as ErasedRuntime["readSignal"],
 			sleepUntil: (until, checkpoint, context) =>
 				this.#gated(
 					invocation,
@@ -2893,7 +3005,7 @@ export class TaskScheduler {
 						(kept === undefined || kept.range.bounds.tail <= range.bounds.tail)
 					) {
 						// A read of another, idle conversation starts or continues its retention period.
-						if (!this.#idle(conversationId)) {
+						if (!this.#inactive(conversationId)) {
 							this.#contexts.set(conversationId, { range, idleSince: undefined });
 							this.#idleOrder.delete(conversationId);
 						} else if (this.#contextRetentionMs() > 0) {
@@ -2942,6 +3054,9 @@ export class TaskScheduler {
 				);
 			},
 		};
+		providerSessionsByRuntime.set(runtime, this.providerSessionIds);
+		closeSignals.set(runtime, this.#closed.signal);
+		return runtime;
 	}
 
 	/**
@@ -3003,6 +3118,17 @@ export class TaskScheduler {
 		void watch.closed.then(() => invocation.watches.delete(watch));
 		return watch;
 	}
+}
+
+/** The signal of the Harness's close, by task runtime (`closeSignal()`). */
+const closeSignals = new WeakMap<object, AbortSignal>();
+
+/**
+ * Aborted once the Harness running `runtime`'s task closes, or its Session fails, unlike the runtime's own signal, which
+ * an abort mark aborts too: for cleanup a run does after its own abort mark, such as a tool's `cancel`.
+ */
+export function closeSignal(runtime: object): AbortSignal {
+	return closeSignals.get(runtime)!;
 }
 
 const REGISTRY: ReportInfo = { kind: "host_error", callback: "registry" };
@@ -3171,12 +3297,61 @@ function canReserve(task: AnyTask, record: AnyTaskRecord): boolean {
 	);
 }
 
-/** A sleep's `until` is a time on the Harness clock; an abort handler cannot sleep. */
-function validateSleep(invocation: Invocation, task: TaskId, until: number): void {
-	if (invocation.mode === "abort") throw new Error(`Abort handler of task ${task} cannot sleep`);
-	if (typeof until !== "number" || !Number.isFinite(until) || until < 0) {
-		throw new Error(`Task ${task} cannot sleep until ${until}: not a time in milliseconds`);
+/**
+ * A sleep's `until`, when set, is a time on the Harness clock; it waits for `until` or a non-empty `signals`, none of
+ * whose keys served a wait (`checkSleep()`); an abort handler cannot sleep.
+ */
+function validateSleep(
+	invocation: Invocation,
+	current: AnyTaskRecord,
+	next: Extract<TaskState<JsonValue, JsonValue>, { readonly status: "sleeping" }>,
+): void {
+	if (invocation.mode === "abort") throw new Error(`Abort handler of task ${current.id} cannot sleep`);
+	const until = next.until;
+	if (until !== undefined && (typeof until !== "number" || !Number.isFinite(until) || until < 0)) {
+		throw new Error(`Task ${current.id} cannot sleep until ${until}: not a time in milliseconds`);
 	}
+	checkSleep(next, current.memos, current.id);
+}
+
+/** A live task that holds no invocation while it waits: sleeping, waiting, or holding its outcome. */
+function parked(record: AnyTaskRecord): boolean {
+	const status = record.state.status;
+	return status === "sleeping" || status === "waiting" || status === "completing";
+}
+
+/** A sleeping record that cannot wake yet: no abort mark, no listed key with an unused value, `until` not reached. */
+function asleep(
+	record: AnyTaskRecord,
+	now: number,
+): record is AnyTaskRecord & {
+	readonly state: Extract<TaskState<JsonValue, JsonValue>, { readonly status: "sleeping" }>;
+} {
+	const state = record.state;
+	return state.status === "sleeping" && !record.abortRequested && !sleepDue(state, record.memos, now);
+}
+
+/**
+ * The record a reservation writes: `running` at the checkpoint, with the wake that ends its wait or sleep and the signal
+ * memos it marks; a task written back as `pending` keeps the wake it woke with.
+ */
+function reserved(record: RunnableTaskRecord, woke: Woke | undefined): AnyTaskRecord {
+	const state = record.state;
+	if (woke !== undefined) {
+		const woken = { ...record, memos: { ...record.memos, ...woke.memos } } as AnyTaskRecord;
+		return withState(woken, { status: "running", checkpoint: state.checkpoint, wake: woke.wake });
+	}
+	if (state.status === "pending" || state.status === "running")
+		return withState(record, { ...state, status: "running" });
+	return withState(record, { status: "running", checkpoint: state.checkpoint });
+}
+
+/** The record written back as `pending` (open, close, handover): its checkpoint, and the wake it woke with, if any. */
+function pendingAgain(
+	record: AnyTaskRecord,
+	running: Extract<TaskState<JsonValue, JsonValue>, { readonly status: "running" }>,
+): AnyTaskRecord {
+	return withState(record, { ...running, status: "pending" });
 }
 
 /** Structural equality of two JSON values; object key order is ignored. */

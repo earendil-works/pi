@@ -132,6 +132,7 @@ The same instinct applies to loading: hold what a view needs in parallel, from v
 - `test/p2/tui-optimistic.test.ts`: in the terminal, a session rename and pin shown while their calls are held open
   and a refused rename rolled back with its error; a sent message shown at once and returned to the editor when
   refused; a running operation marking its row, a failure announced and dismissed.
-- `ui-drawer.test.ts` (a new session shows its first message and attachment at once; a folder's "+"),
+- `ui-drawer.test.ts` (a new session shows its first message and attachment at once), `ui-sidebar.test.ts` (a folder's
+  and a project's "+"),
   `session-start.test.ts` (one ID across retries), `tui-location.test.ts` and `tui-p4.test.ts` (`/new` opens the
   client-chosen session), `tui-fork.test.ts` (`/fork`, `/clone` open the copy).

@@ -50,6 +50,14 @@ export function ThinkingControl({
 	);
 }
 
+/** Picking `model`: the thinking level stays `thinking` where the model has it, else off. */
+export function modelChoice(model: Summary, thinking: ModelThinkingLevel | undefined): ModelChoice {
+	return {
+		model: { provider: model.provider, modelId: model.modelId },
+		thinkingLevel: thinking !== undefined && model.thinkingLevels.includes(thinking) ? thinking : "off",
+	};
+}
+
 export function matchingModels(resources: ResourceSnapshot | undefined, query: string): Summary[] {
 	const signedIn = new Set(resources?.credentials.map((credential) => credential.providerId));
 	const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -95,13 +103,6 @@ export function ModelPicker({
 		saved?.defaultModel?.provider === value.model.provider &&
 		saved.defaultModel.modelId === value.model.modelId &&
 		saved.thinkingLevel === value.thinkingLevel;
-	const choose = (model: Summary) => {
-		const thinking = value?.thinkingLevel ?? "off";
-		onChange({
-			model: { provider: model.provider, modelId: model.modelId },
-			thinkingLevel: model.thinkingLevels.includes(thinking) ? thinking : "off",
-		});
-	};
 	return (
 		<Sheet title="Model" onClose={onClose}>
 			<div className="sheet-sticky">
@@ -143,7 +144,7 @@ export function ModelPicker({
 									type="button"
 									key={`${model.provider}/${model.modelId}`}
 									className={`model-row ${selected ? "selected" : ""}`}
-									onClick={() => choose(model)}
+									onClick={() => onChange(modelChoice(model, value?.thinkingLevel))}
 								>
 									<span>
 										<strong>{model.name}</strong>

@@ -103,6 +103,9 @@ describe("foreign browser requests", () => {
 			const page = await http(port, "/", { headers: { ...navigate, Cookie: device } });
 			assert.notEqual(page.status, 401, `${site} navigation with the cookie opens the app`);
 			assert.ok(cookieOf(page.headers, `p2_owner_${port}`), "and renews the owner's local session");
+			// A sidebar list's address is an app page too (`/list/<key>`).
+			const list = await http(port, "/list/folder%3AW251bGwsIi93Il0", { headers: { ...navigate, Cookie: device } });
+			assert.notEqual(list.status, 401, `${site} navigation to a list with the cookie opens the app`);
 			const signIn = await http(port, `/s/${session}`, { headers: navigate });
 			assert.equal(signIn.status, 401, `${site} navigation without a cookie signs in`);
 			assert.match(signIn.body, /if\(!location\.hash\)location\.replace\(location\.href\);/, "after one reload");

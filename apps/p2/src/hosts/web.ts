@@ -40,8 +40,16 @@ export function isPublicFile(path: string): boolean {
 	return publicFile(path) !== undefined;
 }
 
-/** A page path of the app: `/`, a session, or one of its conversations. */
-const PAGE = /^\/s\/[0-9a-f-]+(?:\/c\/[1-9]\d*)?$/;
+/**
+ * A page path of the app: `/`, a session, or one of its conversations; for the owner also a list (`/list/<key>`) and
+ * the new-session screen (`/new`).
+ */
+const PAGE = /^\/(?:s\/[0-9a-f-]+(?:\/c\/[1-9]\d*)?|list\/[^/]+|new)$/;
+
+/** Whether `path` is one of the app's pages (where a browser loads the app). */
+export function isAppPage(path: string): boolean {
+	return path === "/" || PAGE.test(path);
+}
 
 /** A page path of `guest`'s sessions: `/`, a session shared with it, or one of its conversations. */
 function guestPage(path: string, guest: GuestPrincipal): boolean {
@@ -142,7 +150,7 @@ export function createWeb(options: {
 			response.end("Not found");
 			return;
 		}
-		if (path === "/" || PAGE.test(path)) {
+		if (isAppPage(path)) {
 			const html = page(options.nonce, webManifest(await options.bundle()));
 			response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
 			response.end(head ? undefined : html);

@@ -160,7 +160,9 @@ describe("transcript stability", { skip: !browserTests }, () => {
 	});
 
 	it("renders only the new and changed rows, and keeps the others' DOM, while turns arrive and stream", async () => {
-		const session = await seeded("Long", bigSessionEntries(800, 400));
+		// Long, yet well below the faux model's compaction threshold (128k less the reserve): a blocking compaction
+		// would hold the streamed answer back. 800 entries came within 450 tokens of it.
+		const session = await seeded("Long", bigSessionEntries(760, 400));
 		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
 		const stop = follow(chat.view, () => {});
 		try {

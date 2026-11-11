@@ -1,4 +1,5 @@
 import { createContext, type RefObject, useContext, useLayoutEffect, useSyncExternalStore } from "react";
+import { panelsFor, rememberPanels } from "./session-panels.ts";
 // Adapted from Pi Mobile: independent browser-only navigation, no app imports.
 // Plugins own named modal locators; the runtime owns the stack and Back behavior.
 export type Layer = { kind: "drawer" } | { kind: "sheet" | "viewer"; name: string; locator?: string };
@@ -14,8 +15,19 @@ export type WorkspaceRoute = {
 	startTerminal?: boolean;
 };
 export type WorkspaceLocation = WorkspaceRoute;
+/**
+ * Where the app is. Without `session`, `page` and `newSession` it is home (`/`): what a plugin's `home` slot shows (the
+ * Familiar's session), else the new-session screen.
+ */
 export type Route = {
 	session?: string;
+	/**
+	 * A sidebar rollup's or group's list in the main area instead of a conversation (the owner's), by its key
+	 * (plugins/sessions/sidebar/model.ts). Never together with `session`.
+	 */
+	page?: string;
+	/** The new-session screen (`/new`). Never together with `session` or `page`. */
+	newSession?: true;
 	conversation: number;
 	layers: Layer[];
 	workspace?: WorkspaceLocation;
@@ -29,29 +41,39 @@ export type Route = {
 
 export const HOME: Route = { conversation: 1, layers: [] };
 
+/** The new-session screen. */
+export const NEW_SESSION: Route = { newSession: true, conversation: 1, layers: [] };
+
 /**
- * Another conversation, with no modal layers. An open workspace panel (docked beside the
- * chat on wide screens) stays open on the same tab, at the new working tree's root; an open
- * terminal panel stays open on the session's terminals, without starting one.
+ * Another conversation, with no modal layers, and with its session's panels (session-panels.ts): within the open
+ * session the open ones stay (the workspace on the same tab at the new working tree's root, the same terminal); another
+ * session gets the panels it last had on this device, none if it never had any. A terminal never starts on its own.
  */
 export function conversationRoute(current: Route, session: string | undefined, conversation = 1): Route {
-	const sameSession = session === current.session;
 	return {
-		...(session ? { session } : {}),
+		...(session ? { session, ...panelsFor(current, session, conversation) } : {}),
 		conversation,
 		layers: [],
-		...(current.workspace && session ? { workspace: { tab: current.workspace.tab, directory: "" } } : {}),
-		...(current.terminal !== undefined && session ? { terminal: sameSession ? current.terminal : "" } : {}),
 	};
 }
 
 export function routePath(route: Route): string {
+	if (route.page !== undefined) return `/list/${encodeURIComponent(route.page)}`;
+	if (route.newSession) return "/new";
 	if (!route.session) return "/";
 	return `/s/${route.session}${route.conversation === 1 ? "" : `/c/${route.conversation}`}`;
 }
 
 /** The route a URL alone describes, for entries this module didn't create. */
 export function pathRoute(path: string): Route {
+	if (path === "/new") return NEW_SESSION;
+	const page = /^\/list\/([^/]+)$/.exec(path)?.[1];
+	if (page !== undefined)
+		try {
+			return { ...HOME, page: decodeURIComponent(page) };
+		} catch {
+			return HOME;
+		}
 	const match = /^\/s\/([^/]+)(?:\/c\/([1-9]\d*))?$/.exec(path);
 	const conversation = Number(match?.[2] ?? 1);
 	return match?.[1] && Number.isSafeInteger(conversation) ? { session: match[1], conversation, layers: [] } : HOME;
@@ -256,6 +278,7 @@ function resumeRoute(): Route | undefined {
 		return undefined;
 	}
 }
+
 const SCROLL_STORAGE = "p2-navigation-scroll";
 
 function entry(value: unknown): Entry | undefined {
@@ -303,8 +326,11 @@ export class Navigation {
 		this.doc = current?.doc ?? crypto.randomUUID();
 		this.index = current?.index ?? 0;
 		// A fresh launch at home (no state of this tab: not a reload, not Back) reopens the last conversation if recent.
-		this.route =
+		// A page load without state of its own (a link, a typed address, a launch) opens with the session's panels.
+		const start =
 			current?.route ?? (location.pathname === "/" ? resumeRoute() : undefined) ?? pathRoute(location.pathname);
+		this.route =
+			current || !start.session ? start : { ...start, ...panelsFor(HOME, start.session, start.conversation) };
 		this.trail = [];
 		try {
 			const saved = JSON.parse(sessionStorage.getItem(STORAGE) ?? "null") as {
@@ -484,6 +510,7 @@ export class Navigation {
 			this.index = current.index;
 			this.route = current.route;
 			this.trail[this.index] = this.route;
+			rememberPanels(this.route);
 		} else {
 			// An entry from before this module (or another document): derive it from the URL.
 			this.index = Math.max(0, this.index - 1);
@@ -500,6 +527,7 @@ export class Navigation {
 
 	private write(mode: "push" | "replace"): void {
 		this.trail[this.index] = this.route;
+		rememberPanels(this.route);
 		const state: Entry = { p2: true, doc: this.doc, index: this.index, route: this.route };
 		if (mode === "push" && this.mode === "history") history.pushState(state, "", routePath(this.route));
 		else history.replaceState(state, "", routePath(this.route));

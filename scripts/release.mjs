@@ -7,7 +7,7 @@
  *   node scripts/release.mjs <x.y.z>
  *
  * Steps:
- * 1. Check for uncommitted changes
+ * 1. Check the npm version and for uncommitted changes
  * 2. Verify every public workspace package is registered on npm,
  *    pin the newest model catalog for Nix, and build with it
  * 3. Bump version via npm run version:xxx or set an explicit version
@@ -23,7 +23,6 @@
 import { execSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { findPackageDirectories } from "./package-workspaces.mjs";
 import { getPublicWorkspacePackages } from "./release-packages.mjs";
 import { hydrateModelCatalogBytes, updateModelCatalogPin } from "./update-model-catalog-pin.mjs";
 
@@ -196,7 +195,7 @@ function bumpOrSetVersion(target) {
 		}
 
 		console.log(`Setting explicit version (${target})...`);
-		run(`npm version ${target} --workspaces --no-git-tag-version --no-workspaces-update && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts`);
+		run(`npm version ${target} --workspace packages --no-git-tag-version --no-workspaces-update && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts`);
 	}
 
 	// npm version can temporarily install the previous workspace versions before
@@ -209,8 +208,8 @@ function bumpOrSetVersion(target) {
 }
 
 function getChangelogs() {
-	return findPackageDirectories()
-		.map((directory) => join(directory, "CHANGELOG.md"))
+	return getPublicWorkspacePackages()
+		.map(({ directory }) => join(directory, "CHANGELOG.md"))
 		.filter((path) => existsSync(path));
 }
 
@@ -255,7 +254,18 @@ function addUnreleasedSection() {
 // Main flow
 console.log("\n=== Release Script ===\n");
 
-// 1. Check for uncommitted changes
+// 1. Check the npm version and for uncommitted changes
+// The release rewrites package-lock.json. npm 10 (bundled with Node 22) drops the `libc`
+// fields that tell npm which native packages are glibc and which are musl builds.
+console.log("Checking npm version...");
+const npmVersion = run("npm --version", { silent: true }).trim();
+if (Number(npmVersion.split(".")[0]) < 11) {
+	console.error(`Error: the release needs npm 11 or newer to write package-lock.json; found npm ${npmVersion}.`);
+	console.error("Run `npm install -g npm@11` or use a Node version that bundles npm 11 or newer.");
+	process.exit(1);
+}
+console.log(`  npm ${npmVersion}\n`);
+
 console.log("Checking for uncommitted changes...");
 const status = run("git status --porcelain", { silent: true });
 if (status && status.trim()) {

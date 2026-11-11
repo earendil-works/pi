@@ -247,3 +247,36 @@ export const HideIcon = () => (
 		<path d="M6 9l6 6 6-6" />
 	</Icon>
 );
+/** A box with a lid: archive a session. */
+export const ArchiveIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<rect x="3" y="4" width="18" height="4" rx="1" />
+		<path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4" />
+	</Icon>
+);
+/** An arrow out of the archive box: restore an archived session. */
+export const RestoreIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<rect x="3" y="4" width="18" height="4" rx="1" />
+		<path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M12 17v-6M9.5 13.5 12 11l2.5 2.5" />
+	</Icon>
+);
+/** Lines with bullets: a list to pick from (Switch session…). */
+export const ListIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01" />
+	</Icon>
+);
+/** A chip: a model. */
+export const ModelIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<rect x="6" y="6" width="12" height="12" rx="2" />
+		<path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4" />
+	</Icon>
+);
+/** A light bulb: the thinking level. */
+export const ThinkingIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9V16h7v-2.1A6 6 0 0 0 12 3z" />
+	</Icon>
+);

@@ -40,29 +40,33 @@ describe("search, viewers, artifacts and cost parity", { skip: !browserTests }, 
 		await chat.send({ text: "Unique search needle", requestId: "needle" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => JSON.stringify(view?.entries).includes("Echo: Unique search needle"));
 		await browser.metrics(1280, 900);
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${id}`);
+		// Recents' list page searches its sessions' titles and messages.
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/list/recent`);
 		await browser.wait(
-			`document.querySelector('input[aria-label="Search sessions and messages"]')&&!document.querySelector('.offline')`,
+			`document.querySelector('.list-page input[aria-label="Search sessions and messages"]')&&!document.querySelector('.offline')`,
 		);
 		await browser.evaluate(input('input[aria-label="Search sessions and messages"]', "Search fixture"));
-		await browser.wait(`[...document.querySelectorAll('.session-title')].some(e=>e.textContent==='Search fixture')`);
+		await browser.wait(
+			`[...document.querySelectorAll('.list-page .session-title')].map(e=>e.textContent).join()==='Search fixture'`,
+		);
 		await browser.evaluate(input('input[aria-label="Search sessions and messages"]', "Unique search needle"));
-		await browser.wait(`document.querySelector('.hit')?.textContent.includes('Unique search needle')`);
+		await browser.wait(`document.querySelector('.list-page .hit')?.textContent.includes('Unique search needle')`);
 		await sessions.archive({ id: session.id }, BACKGROUND_CONTEXT);
-		// Refresh the submitted query, as mobile does on an edit; toggles then query the archive scope.
+		// Refresh the submitted query, as mobile does on an edit: the archived session is no longer in Recents.
 		await browser.evaluate(input('input[aria-label="Search sessions and messages"]', "Unique search needle "));
-		await browser.wait(`!document.querySelector('.hit')`);
-		await browser.click(".drawer-foot .foot-button");
-		await browser.wait(`document.querySelector('.hit')?.textContent.includes('Unique search needle')`);
+		await browser.wait(`!document.querySelector('.list-page .hit')`);
+		// The Archive's list page searches the archive.
+		await browser.click(".sidebar-section[data-key=archive] .group-label");
+		await browser.wait(`location.pathname==='/list/archive' && document.querySelector('.list-page input')`);
+		await browser.evaluate(input('input[aria-label="Search sessions and messages"]', "Unique search needle"));
+		await browser.wait(`document.querySelector('.list-page .hit')?.textContent.includes('Unique search needle')`);
 		assert(
 			(await search.search({ query: "Unique search needle", archived: true }, BACKGROUND_CONTEXT)).messages.length >
 				0,
 		);
-		await browser.click(".hit");
+		await browser.click(".list-page .hit");
 		await browser.wait(`location.pathname==='/s/${session.id}'`);
 		await until(sessions.sessions, (rows) => rows?.find((row) => row.id === session.id)?.archivedAt === null);
-		await browser.evaluate(input('input[aria-label="Search sessions and messages"]', ""));
-		await browser.click(".drawer-foot .foot-button");
 	});
 	it("lists every immutable artifact version newest first, opens only on a click and returns with Back", async () => {
 		const owner = fixture.browser(),

@@ -1159,10 +1159,10 @@ Requests are debounced (~80 ms), aborted when superseded, and inserted as `@path
 | Web feature | Source | TUI exposure |
 | --- | --- | --- |
 | Shell, navigation, drawer | `P2/plugins/web-shell/web.tsx`, `P2/src/web/AppLayout.tsx`, `P2/src/web/navigation.ts` | Screens + overlays; Ctrl+R and `/resume` instead of a sidebar |
-| Sessions grouped by env:cwd, pinned, busy, children | `P2/src/web/Drawer.tsx` | Session selector (1.9, 1.17) |
+| Sessions grouped by env:cwd, pinned, busy, children | `P2/plugins/sessions/sidebar/` | Session selector (1.9, 1.17) |
 | New session (env + directory browser, model, first prompt) | `P2/src/web/new-session.tsx`, `P2/plugins/envs/DirectoryPicker.tsx` | `/new` overlay (`Envs.envs`, `Envs.listDirectory`) |
 | Session options (rename, pin, archive/restore, relocate) | `P2/plugins/sessions/web.tsx` (Session sheet) | `/name`, `sessions.pin`, `sessions.archive`, `sessions.relocate` |
-| Search, archived | `P2/plugins/search`, `P2/src/web/Drawer.tsx` | Session selector (1.17) |
+| Search, archived | `P2/plugins/search`, `P2/plugins/sessions/sidebar/ListPage.tsx` | Session selector (1.17) |
 | Transcript, tool cards | `P2/src/web/Chat.tsx`, `P2/src/web/Markdown.tsx`, `P2/src/web/Code.tsx` | 1.3, 1.4 |
 | Composer (steer/follow-up, stop, queue edit, attachments, drag/drop) | `P2/plugins/chat/web.tsx:83-200`, `P2/src/web/composer-state.tsx` | Editor, pending area, attachments via **L:pasteImage/attach** shown as chips in a `composer:attachments` widget |
 | Model/thinking sheet | `P2/src/web/ModelPicker.tsx` | 1.7 |

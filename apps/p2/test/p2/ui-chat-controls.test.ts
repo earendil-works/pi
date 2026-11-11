@@ -36,7 +36,7 @@ describe("chat control parity", { skip: !browserTests }, () => {
 			await browser.evaluate<string[]>(
 				`[...document.querySelectorAll('.topbar>button')].map(e=>e.getAttribute('aria-label'))`,
 			),
-			["Sessions", "Terminal", "Workspace files and changes", "Session options"],
+			["Sessions", "Annotate", "Terminal", "Workspace files and changes", "Session options"],
 		);
 		await browser.click('button[aria-label="Model and thinking"]');
 		await browser.wait(`document.querySelector('[role=dialog][aria-label=Model]')`);
@@ -83,7 +83,7 @@ describe("chat control parity", { skip: !browserTests }, () => {
 		await browser.wait(`document.querySelector('.attachment-name')?.textContent==='kept.txt'`);
 		await browser.click(".new-session");
 		await browser.wait(
-			`location.pathname==='/' && document.querySelector('.new-session-view .composer textarea') && document.querySelector('.attachment-name')`,
+			`location.pathname==='/new' && document.querySelector('.new-session-view .composer textarea') && document.querySelector('.attachment-name')`,
 		);
 		assert.equal(
 			await browser.evaluate<string>(`document.querySelector('.composer textarea').value`),

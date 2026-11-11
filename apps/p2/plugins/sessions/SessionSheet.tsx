@@ -62,7 +62,7 @@ export function SessionSheet({
 					<ChevronIcon />
 				</button>
 				<button type="button" className="row-button" onClick={onPin}>
-					<span>{session.pinned ? "Unpin" : "Pin to top"}</span>
+					<span>{session.pinned ? "Unpin" : "Pin"}</span>
 				</button>
 				{onReindex && (
 					<button type="button" className="row-button" disabled={reindex?.phase === "running"} onClick={onReindex}>
