@@ -83,7 +83,7 @@ interface AiGatewayModel {
 }
 
 export interface AiGatewayCatalog {
-	chat: Model<"anthropic-messages">[];
+	chat: Model<"anthropic-messages" | "openai-responses">[];
 	classifiers: ClassifierModel<"typesafe-system-one">[];
 }
 
@@ -125,12 +125,16 @@ export async function fetchAiGatewayCatalog(): Promise<AiGatewayCatalog> {
 		chat.push({
 			id: model.id,
 			name: model.name || model.id,
-			api: "anthropic-messages",
-			baseUrl: AI_GATEWAY_BASE_URL,
+			...(model.id.startsWith("openai/")
+				? { api: "openai-responses" as const, baseUrl: `${AI_GATEWAY_BASE_URL}/v1` }
+				: {
+						api: "anthropic-messages" as const,
+						baseUrl: AI_GATEWAY_BASE_URL,
+						compat: { allowEmptySignature: true },
+					}),
 			provider: "vercel-ai-gateway",
 			reasoning: tags.includes("reasoning"),
 			input: tags.includes("vision") ? ["text", "image"] : ["text"],
-			compat: { allowEmptySignature: true },
 			cost: getAiGatewayCost(model.pricing),
 			contextWindow: model.context_window || 4096,
 			maxTokens: model.max_tokens || 4096,
