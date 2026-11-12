@@ -536,9 +536,6 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 subscriptions, while the existing provider retains its broader catalog for backward compatibility.
 `qwen-token-plan-individual-cn` applies the same Individual catalog to the China endpoint and
 `QWEN_TOKEN_PLAN_CN_API_KEY`.
-The international providers use QwenCloud's `token-plan.maas.qwencloudapi.com`; the China providers
-use Qianwen AI Platform's `token-plan.maas.qianwenaiapi.com`. Keys come from
-[QwenCloud](https://home.qwencloud.com/api-keys) and [Qianwen AI Platform](https://platform.qianwenai.com/home/api-keys).
 Stored credentials remain provider-scoped, so save the key under the provider ID you register.
 
 Amazon Bedrock resolves ambient AWS credentials (`AWS_PROFILE`, access key pairs, `AWS_BEARER_TOKEN_BEDROCK`, ECS task roles, web identity tokens); its provider-owned login flow supports bearer tokens, AWS profiles, and the existing credential chain. Vertex AI resolves either an explicit key or gcloud Application Default Credentials plus project/location, with a provider-owned login flow for API keys, ADC, and service-account files.
