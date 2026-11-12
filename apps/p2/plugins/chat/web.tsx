@@ -126,6 +126,7 @@ import { placeSeed } from "../projects/glyph-seed.ts";
 import { type Session, Sessions } from "../sessions/contract.ts";
 import { SessionMetrics, SessionStatus, WorkerControl } from "../status/contract.ts";
 import { type Child, conversationLocation, SubagentControl, Subagents } from "../subagents/contract.ts";
+import { openMain } from "../subagents/contract.web.ts";
 import { SessionTree } from "../tree/contract.ts";
 import { MODEL_COMMANDS, MODEL_PAGES } from "./commands.tsx";
 import { Chat, ChatCosts, conversationTargetId, TranscriptEntries } from "./contract.ts";
@@ -623,8 +624,6 @@ function TopBar({
 	moving?: boolean;
 }) {
 	const connected = useConnected();
-	const nav = useNavigation();
-	const route = useRoute();
 	// Only the owner reads environments (`PageObjects.envs`): guests see the location without the sandbox lock.
 	const objects = usePageObjects();
 	const envs = useReadable(objects.envs?.envs);
@@ -656,11 +655,7 @@ function TopBar({
 						<h1>
 							<span className="sub-tag">{child.kind === "agent" ? "agent" : "subagent"}</span> {child.name}
 						</h1>
-						<button
-							type="button"
-							className="crumb"
-							onClick={() => session && void nav.backOrPush(conversationRoute(route, session.id, session.main))}
-						>
+						<button type="button" className="crumb" onClick={() => session && openMain(session.id, session.main)}>
 							← {session?.title}
 						</button>
 					</>

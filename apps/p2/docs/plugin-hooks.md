@@ -238,7 +238,6 @@ self.register(SendRouters, {
 | `sidebar-actions:*` | `plugins/sessions/web.tsx` (`SlotList`) | list: icon buttons before the theme switch | settings |
 | `envs-actions:*` | `plugins/envs/EnvsPanel.tsx:524` (`SlotList`) | list | ports |
 | `workspace-terminal` | `src/web/Workspace.tsx:730` | single | terminals |
-| `chat-parent` | **nowhere** | — | subagents registers it (`plugins/subagents/web.tsx:22`) |
 | `workbench` | `src/web/AppLayout.tsx` | wrapper (gets the `main` slot as `children`) | views |
 | `view-actions` | chat top bar, `plugins/chat/web.tsx` | single | views |
 
@@ -381,8 +380,8 @@ actions can be requested; `K` actions fire on the visitor's own key and may ask 
 5. **Naming.** TUI registries are `Tui*`; web ones are unprefixed (`Slots`, `ComposerExpanders`); `TranscriptEntries`
    lives in the chat plugin but is used by both UIs; worker `SendRouters` lives in chat, `ReadOnlyConversations`
    in the runtime, `SessionArchived` in sessions. Ordered registries are marked only by convention in key strings.
-6. **Slot lists that are not lists.** `footer:*` in the TUI renders only the first entry. `chat-parent`
-   is registered and rendered nowhere. Wrapper slots (`chat-content`, `chat-attribution`) admit one plugin each.
+6. **Slot lists that are not lists.** `footer:*` in the TUI renders only the first entry. Wrapper slots
+   (`chat-content`, `chat-attribution`) admit one plugin each.
 7. **Slots as lifecycle.** TUI plugins register invisible `service:*` / `widget-above:*` slots to get a per-runtime
    object, then find it with `ctx.surface(name)` (`plugins/prompt/tui.ts:74-80`, `plugins/models/tui.ts:116-118`).
    The designed `widget-above`/`widget-below` rendering (`docs/p2-tui-port.md` §7.2) does not exist.
@@ -442,8 +441,7 @@ Ordered by value; each keeps one name and one shape across surfaces.
    shared); give registries an explicit `ordered: true` option (or an `order` field in values) instead of key
    conventions; make `SlotList` key-ordered like the TUI. Move shared registries (`TranscriptEntries`) to
    `src/runtime` or a neutral contract module.
-5. **Real lists.** TUI `footer:*` as an ordered list; delete or render `chat-parent`; make
-   wrapper slots chains (`chat-content:*`).
+5. **Real lists.** TUI `footer:*` as an ordered list; make wrapper slots chains (`chat-content:*`).
 6. **A TUI service registry.** `TuiServices` (`name → (runtime) => { dispose() }`) for per-runtime holders, and
    render `widget-above:*`/`widget-below:*` as designed; replace `ctx.surface("chat") instanceof ChatSurface` with a
    `ctx.chat` interface (editor text, tool views, replies) and expose the same on the web instead of

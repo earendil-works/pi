@@ -2,7 +2,7 @@
 // words), how its last run ended, or since when it is idle. No React: the row renders what these return.
 import type { ToolActivity } from "@p2/app/v1/web";
 import type { Work } from "../../status/contract.ts";
-import type { Child } from "../../subagents/contract.ts";
+import { type Child, shortModelName } from "../../subagents/contract.ts";
 
 /**
  * Where a subagent is: working (`work` says on what, once its worker reported it), its last run failed (Durable's
@@ -59,7 +59,7 @@ export function stepWords(work: Work | undefined, tools: Tools): string {
  */
 export function subagentTitle(agent: Child, state: SubagentState, location: string | undefined): string {
 	return [
-		`${agent.model.split("/").pop()} · ${agent.thinkingLevel}`,
+		`${shortModelName(agent.model)} · ${agent.thinkingLevel}`,
 		location === undefined ? "Follows the session" : `Works in ${location}`,
 		...endInFull(state),
 	].join("\n");

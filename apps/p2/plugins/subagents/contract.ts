@@ -59,6 +59,13 @@ export function modelRefOf(text: string): { provider: string; modelId: string } 
 	return slash > 0 ? { provider: text.slice(0, slash), modelId: text.slice(slash + 1) } : undefined;
 }
 
+/** A model's short name: the part of its text (`provider/modelId`, or a model ID) after the last slash. */
+export const shortModelName = (text: string): string => text.slice(text.lastIndexOf("/") + 1);
+
+/** The order subagents are listed in (the sidebar, the command menu): the most recently active first. */
+export const byRecentActivity = (a: Child, b: Child): number =>
+	b.lastEntryId - a.lastEntryId || b.conversationId - a.conversationId;
+
 /** Where a conversation works: a child's own location, else the session's (the main conversation's). */
 export const conversationLocation = (
 	session: { readonly cwd: string; readonly env?: string | null } | undefined,

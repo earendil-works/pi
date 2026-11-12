@@ -1,13 +1,17 @@
-// What the command menu's session commands share, here and in other plugins (workspace, terminals): the session a
-// command acts on, opening a panel in it, and the wrapper that hides a command while its session is archived.
+// What the command menu's session commands share, here and in other plugins (workspace, terminals, subagents): the
+// session a command acts on, opening a panel in it, opening a conversation from a menu row, and the wrapper that hides
+// a command while its session is archived.
 import { keptIn } from "@p2/app/v1";
 import {
 	type CommandTarget,
 	conversationRoute,
 	getNavigation,
 	knownMain,
+	navigate,
 	type Route,
+	useCommandMenu,
 	useCommandTarget,
+	useComposerState,
 	useObject,
 	useReadable,
 	useRoute,
@@ -32,6 +36,21 @@ export function openPanelIn(session: string, change: (route: Route) => Route): v
 	const nav = getNavigation();
 	if (nav.route.session === session) void nav.push(change(nav.route));
 	else void nav.closeThenPush((route) => change(conversationRoute(route, session, knownMain(session))));
+}
+
+/** Closes the menu, then opens the conversation with its composer focused. */
+export function useOpenFromMenu(): (target: {
+	readonly session: string;
+	readonly conversation: number;
+}) => Promise<void> {
+	const { close } = useCommandMenu();
+	const { focusWhenOpen } = useComposerState();
+	return async (target) => {
+		await close();
+		// After close(), which returns focus to where the menu opened: the opened conversation's composer takes it.
+		focusWhenOpen(target);
+		navigate(target);
+	};
 }
 
 /**

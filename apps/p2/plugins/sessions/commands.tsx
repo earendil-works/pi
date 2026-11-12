@@ -36,7 +36,7 @@ import {
 import { type ReactNode, useMemo, useState } from "react";
 import { DIRECTORY_PICKER } from "../envs/contract.web.tsx";
 import { branchSheetLayer } from "./BranchSheet.tsx";
-import { commandSession, NotArchived, useCommandSession, useSessions } from "./command-session.tsx";
+import { commandSession, NotArchived, useCommandSession, useOpenFromMenu, useSessions } from "./command-session.tsx";
 import { type Session, Sessions } from "./contract.ts";
 import { FOLDERS, type NewTarget } from "./sidebar/model.ts";
 import { usePageData } from "./sidebar/page-data.ts";
@@ -232,21 +232,14 @@ function SessionResults() {
  * is); it opens at its main conversation.
  */
 function SessionRow({ session, now }: { session: Session; now: number }) {
-	const { close } = useCommandMenu();
-	const { focusWhenOpen } = useComposerState();
-	const open = useRoute().session === session.id;
+	const open = useOpenFromMenu();
+	const shown = useRoute().session === session.id;
 	return (
 		<CommandMenu.Row
 			title={session.title}
 			suffix={`${folderName(session.env ?? null, session.cwd, 1)} · ${ago(session.updatedAt, now)}`}
-			checked={open}
-			onSelect={async () => {
-				await close();
-				// After the close, which gives the focus back to where the menu opened from: the composer takes it from there.
-				const target = { session: session.id, conversation: session.main };
-				focusWhenOpen(target);
-				navigate(target);
-			}}
+			checked={shown}
+			onSelect={() => open({ session: session.id, conversation: session.main })}
 		/>
 	);
 }

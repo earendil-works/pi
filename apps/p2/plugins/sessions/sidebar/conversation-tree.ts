@@ -2,7 +2,7 @@
 // forked from, with connector guides), then its subagents as a plain list, archived ones behind their own row. The one
 // place deciding which rows there are, in which order, how deep and with which guides. No React: the rows render what
 // this returns.
-import type { Child } from "../../subagents/contract.ts";
+import { byRecentActivity, type Child } from "../../subagents/contract.ts";
 import type { Branch } from "../contract.ts";
 
 /**
@@ -67,7 +67,7 @@ export type RowsInput = {
  * ones are the rows of the last row, "N archived".
  */
 export function conversationRows({ branches, subagents }: RowsInput): ConversationItem[] {
-	const recent = subagents.toSorted((a, b) => b.lastEntryId - a.lastEntryId || b.conversationId - a.conversationId);
+	const recent = subagents.toSorted(byRecentActivity);
 	const archived = recent.filter((agent) => agent.archived).map((agent) => subagentItem(agent, 2));
 	return [
 		...branchTree(branches),
