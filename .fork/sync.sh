@@ -2,15 +2,15 @@
 # Keep this fork's integration branch `next` consistent with `main` and the branches in `branches`.
 #
 #   .fork/sync.sh --status             show where main, every branch and next stand; exit 1 if next is stale or
-#                                      has stray commits, a branch is not on main, or main has commits upstream lacks
+#                                      has stray commits, a branch is not on main, or main differs from upstream
 #   .fork/sync.sh --align              reset main, the branches and next to origin when nothing local would be lost
 #   .fork/sync.sh --rebuild-only       rebuild next from the current branch tips (no fetch, no rebase)
 #   .fork/sync.sh                      fetch upstream, fast-forward main, rebase every branch, rebuild next
 #   .fork/sync.sh --upstream-rev REV   like the full sync but fast-forward main to REV instead of upstream/main
 #   .fork/sync.sh --offline            full sync without fetching
 #   .fork/sync.sh --offline --resume   resume after resolving a rebase conflict; old next contains replaced commits
-#   .fork/sync.sh --hold-on-conflict   when a branch does not rebase cleanly onto the new main, abort, keep main where
-#                                      it was, rebase the branches onto that main and rebuild next (the workflow's mode)
+#   .fork/sync.sh --hold-on-conflict   when branches do not rebase cleanly onto the new main, restore every pre-sync
+#                                      ref, report every conflict, and exit 1 before rebuilding or pushing (workflow mode)
 #   .fork/sync.sh --no-check           skip .fork/check.sh focused after the rebuild
 #   .fork/sync.sh --push               push main, next, the branches and the pre-sync tags with --force-with-lease.
 #                                      GitHub Actions only (fork-sync.yml): refused on any other machine
@@ -122,9 +122,11 @@ status() {
 		return 1
 	fi
 	if git rev-parse -q --verify upstream/main >/dev/null; then
-		printf '  %-30s %s  upstream/main has %s commit(s) main lacks\n' main "$(short main)" "$(count main..upstream/main)"
+		local ahead behind
+		behind="$(count main..upstream/main)"
+		printf '  %-30s %s  upstream/main has %s commit(s) main lacks\n' main "$(short main)" "$behind"
+		if [[ "$behind" -gt 0 ]]; then rc=1; fi
 		# main mirrors upstream: a commit upstream lacks would ride into next under every branch.
-		local ahead
 		ahead="$(count upstream/main..main)"
 		if [[ "$ahead" -gt 0 ]]; then
 			printf '  %-30s %s  NOT A MIRROR: %s commit(s) upstream lacks\n' main "$(short main)" "$ahead"
@@ -240,10 +242,10 @@ report_hold() {
 	if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
 		{
 			echo "### Upstream held at main $(short main)"
-			echo "These branches do not rebase cleanly onto \`$upstream_rev\` ($(short "$upstream_rev")); next was rebuilt on the held main."
+			echo "These branches do not rebase cleanly onto \`$upstream_rev\` ($(short "$upstream_rev")). Pre-sync refs were restored; next was not rebuilt or pushed."
 			for line in "${conflicts[@]}"; do echo "- $line"; done
 			echo
-			echo "Fix: on each branch, \`git fetch upstream && git rebase upstream/main\`, resolve, test, \`git push --force-with-lease origin <branch>\`. The push starts this workflow."
+			echo "Fix: on each branch, \`git fetch upstream && git rebase upstream/main\`, resolve, test, \`git push --force-with-lease origin <branch>\`. Then dispatch fork-sync.yml; a fork/tooling push starts it automatically."
 		} >> "$GITHUB_STEP_SUMMARY"
 	fi
 }
@@ -357,14 +359,9 @@ case "$mode" in
 		if [[ ${#conflicts[@]} -gt 0 ]]; then
 			restore_tips
 			report_hold
-			# A branch pushed on an older main still has to sit on the held main to be released.
-			rebase_branches
-			if [[ ${#conflicts[@]} -gt 0 ]]; then
-				printf 'branch does not rebase onto the held main either: %s\n' "${conflicts[@]}" >&2
-				exit 1
-			fi
+			exit 1
 		fi
-		# Held at an unchanged main with no branch moved: the old next is still exact, and its release stands.
+		# An unchanged main and current next need no rebuild; the existing release stands.
 		if [[ -z "$(missing_from_next)" && "$(stray_on_next)" -eq 0 ]]; then
 			git checkout -q next
 			echo "next $(short next) already contains every branch tip; nothing to rebuild"

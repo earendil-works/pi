@@ -71,10 +71,14 @@ jobs:
           .fork/sync.sh --align
 
       - name: Sync with upstream
-        # sync.sh rebuilds next and runs the focused checks only when upstream or a branch moved. A branch
-        # that does not rebase onto the new upstream holds main back (a warning names it) instead of failing.
+        # sync.sh rebuilds next and runs the focused checks only when upstream or a branch moved. Any rebase
+        # conflict restores the pre-sync refs, reports every conflicting branch, and fails before push or release.
         run: |
           if [ "$PUBLISH" = "true" ]; then .fork/sync.sh --hold-on-conflict --push; else echo "dry run: no push"; .fork/sync.sh --hold-on-conflict; fi
+
+      - name: Require every branch on current upstream
+        # The release gate for every pusher: current main, every branch on it, and no stale or stray commits on next.
+        run: .fork/sync.sh --status
 
       - name: Decide whether next needs a release
         id: release
@@ -90,21 +94,6 @@ jobs:
           else
             echo "needed=true" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Fail manual sync when upstream is held back with nothing to release
-        if: github.event_name == 'workflow_dispatch' && steps.release.outputs.needed == 'false'
-        run: |
-          behind="$(git rev-list --count main..upstream/main)"
-          if [ "$behind" -gt 0 ]; then
-            echo "Upstream sync held back ($behind upstream commit(s) unmerged due to rebase conflict) and next has no new release to publish." >&2
-            exit 1
-          fi
-
-      - name: Require next to be exactly the merge of the branches
-        # The release gate for every pusher: no commits on next outside the branches in .fork/branches,
-        # every branch on main, and main a mirror of upstream.
-        if: steps.release.outputs.needed == 'true'
-        run: .fork/sync.sh --status
 
       - name: Build
         # sync.sh already prepared the workspace when it rebuilt next; these guards cover a run that did not.

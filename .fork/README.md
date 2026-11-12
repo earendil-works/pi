@@ -24,9 +24,9 @@ installed, the same layout as pi's own installer.
 
 `.github/workflows/fork-sync.yml` runs daily, on every push to `fork/tooling`, and on demand (Actions tab, "Sync fork and release next", Run workflow; untick "push" for a
 dry run). It is the only pusher of `next` and `main`: people and agents push only their owning branch. GitHub runs push workflows only from the pushed branch, so a push to `feat/**` or `fix/**` does not start it; run `gh workflow run fork-sync.yml --repo JangMan-J/pi` afterwards. It runs the full `sync.sh --hold-on-conflict --push`: fast-forward `main` from upstream,
-rebase every branch, rebuild `next`, focused checks, push. A branch that does not rebase onto the new upstream
-holds `main` back; the run names it in a warning and rebuilds `next` on the held `main` until its owner rebases
-it. Then, when the `next` commit has no release yet, it builds, runs `npm run check` and
+rebase every branch, rebuild `next`, focused checks, push. If any branch does not rebase onto the new upstream,
+the run restores every pre-sync ref, names all conflicting branches in warnings and the run summary, and fails
+before pushing or releasing. The owner rebases those branches by hand. Then, when the `next` commit has no release yet, it builds, runs `npm run check` and
 `check.sh focused`, packs with `pack-release.sh`, and publishes the release. It releases only when
 `sync.sh --status` is clean (`next` is exactly the merge of the branches, `main` mirrors upstream). A
 failed check or a rebase conflict publishes nothing. Commits and tags are signed by the `fork-sync bot` key (repo secret

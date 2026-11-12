@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Checks for the fork's integration branch.
 #
-#   .fork/check.sh focused   provider payload tests touched by the fork (fast, no network)
+#   .fork/check.sh focused   sync regression and provider payload tests touched by the fork (fast, no network)
 #   .fork/check.sh all       npm run check (biome, tsc, pinned deps) and the full ./test.sh
 set -euo pipefail
 
@@ -28,6 +28,7 @@ esac
 
 case "${1:-focused}" in
 	focused)
+		"$here/test-sync.sh"
 		ai_tests=(
 			antigravity-native antigravity-images antigravity-catalog antigravity-oauth
 			anthropic-oauth-payload anthropic-model-generation anthropic-oauth-security anthropic-oauth-system-prompt
