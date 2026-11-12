@@ -67,7 +67,12 @@ import { copySessionDirectory, removeSessionCopy } from "./copy.ts";
 import { serveLocks } from "./locks.ts";
 import { serveSidebarSettings } from "./sidebar-settings.ts";
 
-/** A row as `Sessions` v4 and `Catalog` v3 consumers read it: a null branch label is the session title. */
+/** A row as `Sessions` v5 and v6 and `Catalog` v4 consumers read it: branches without their `parent`. */
+function sessionV5(row: Session) {
+	return { ...row, branches: row.branches.map(({ conversation, label }) => ({ conversation, label })) };
+}
+
+/** A row as `Sessions` v4 and `Catalog` v3 consumers read it: a null branch label is the session title, no `parent`. */
 function sessionV4(row: Session) {
 	return {
 		...row,
@@ -99,22 +104,36 @@ const CATALOG_ACCEPTS: AcceptsTable<typeof Catalog> = {
 			update: { args: (old) => old, result: sessionV4 },
 		},
 	},
+	4: {
+		state: { sessions: (rows) => rows.map(sessionV5) },
+		methods: {
+			get: { result: sessionV5 },
+			create: { result: sessionV5 },
+			update: { args: (old) => old, result: sessionV5 },
+		},
+	},
 };
+
+/** `Sessions`' state for an older version: every variant's rows as `as` maps them. */
+function stateAs<T>(as: (row: Session) => T) {
+	return {
+		owner: { sessions: (rows: readonly Session[]) => rows.map(as) },
+		guest: { sessions: (rows: readonly Session[]) => rows.map(as) },
+		worker: { session: (row: Session | null) => (row === null ? null : as(row)) },
+	};
+}
 
 /** Older arguments of `create`, `clone` and `fork` are a subset of the current ones (no chosen IDs). */
 const SAME_ARGS = { args: <T>(old: T) => old };
 
 /**
  * Older `Sessions` consumers (a page or TUI loaded before a deploy, a worker not restarted yet) read rows mapped
- * back; v4's `treeSelf` labels are text, which the current version takes as it is. None of them sees `operations`.
+ * back; their `treeSelf` branches (v4's labels are text, none has a `parent`) are taken as they are. Before 6 none sees
+ * `operations`.
  */
 const SESSIONS_ACCEPTS: AcceptsTable<typeof Sessions> = {
 	3: {
-		state: {
-			owner: { sessions: (rows) => rows.map(sessionV3) },
-			guest: { sessions: (rows) => rows.map(sessionV3) },
-			worker: { session: (row) => (row === null ? null : sessionV3(row)) },
-		},
+		state: stateAs(sessionV3),
 		methods: {
 			create: { ...SAME_ARGS, result: sessionV3 },
 			clone: { ...SAME_ARGS, result: sessionV3 },
@@ -122,11 +141,7 @@ const SESSIONS_ACCEPTS: AcceptsTable<typeof Sessions> = {
 		},
 	},
 	4: {
-		state: {
-			owner: { sessions: (rows) => rows.map(sessionV4) },
-			guest: { sessions: (rows) => rows.map(sessionV4) },
-			worker: { session: (row) => (row === null ? null : sessionV4(row)) },
-		},
+		state: stateAs(sessionV4),
 		methods: {
 			create: { ...SAME_ARGS, result: sessionV4 },
 			clone: { ...SAME_ARGS, result: sessionV4 },
@@ -134,7 +149,24 @@ const SESSIONS_ACCEPTS: AcceptsTable<typeof Sessions> = {
 			treeSelf: SAME_ARGS,
 		},
 	},
-	5: { methods: { create: SAME_ARGS, clone: SAME_ARGS, fork: SAME_ARGS } },
+	5: {
+		state: stateAs(sessionV5),
+		methods: {
+			create: { ...SAME_ARGS, result: sessionV5 },
+			clone: { ...SAME_ARGS, result: sessionV5 },
+			fork: { ...SAME_ARGS, result: sessionV5 },
+			treeSelf: SAME_ARGS,
+		},
+	},
+	6: {
+		state: stateAs(sessionV5),
+		methods: {
+			create: { result: sessionV5 },
+			clone: { result: sessionV5 },
+			fork: { result: sessionV5 },
+			treeSelf: SAME_ARGS,
+		},
+	},
 };
 
 const cleanTitle = (title: string): string => title.replace(/\s+/g, " ").trim();

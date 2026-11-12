@@ -2,9 +2,21 @@
 // show them through the sessions plugin's contract (`contract.web.tsx`) with nothing but React.
 import type { SidebarRow } from "./model.ts";
 
-/** A conversation running a turn where its row has no icon: a small spinner (a still ¾ ring with reduced motion). */
+/**
+ * A run's mark where its row has no icon: a hollow ring while idle (decoration: the row says its state in words), a
+ * spinner in the same box while it works (a still ¾ ring with reduced motion), so nothing moves as it starts or ends.
+ */
+export function RunMark({ state }: { state: "idle" | "working" }) {
+	return state === "working" ? (
+		<span className="run-mark" data-state="working" role="img" aria-label="Working" title="Working" />
+	) : (
+		<span className="run-mark" data-state="idle" aria-hidden="true" />
+	);
+}
+
+/** A conversation running a turn where its row has no icon: the spinner. */
 export function WorkingMark() {
-	return <span className="working-mark" role="img" aria-label="Working" title="Working" />;
+	return <RunMark state="working" />;
 }
 
 /** An answer the owner has not read: a steady blue dot. */

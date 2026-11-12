@@ -489,8 +489,9 @@ export function openSidebar(): void {
 	else setDrawer(true);
 }
 
+/** Whether the phone drawer is open: its layer is on the route, also under a sheet or the menu opened over it. */
 export function useDrawer(): boolean {
-	return useRoute().layers.at(-1)?.kind === "drawer";
+	return useRoute().layers.some((layer) => layer.kind === "drawer");
 }
 
 /** The top layer when it is the sheet (or viewer) `name`, with its locator; undefined otherwise. */

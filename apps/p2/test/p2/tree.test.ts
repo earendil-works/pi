@@ -117,8 +117,9 @@ describe("/tree (fake provider)", () => {
 			(rows) => rows.find((row) => row.id === session.id)?.main === switched.conversation,
 		);
 		// Labelled at once with the message the owner chose to edit (not the answer before it); conversation 1 has none.
+		// Its row names conversation 1 as the conversation it was forked from (its Durable record's parent).
 		assert.deepEqual(await branchesWhen((branches) => branches.length === 2), [
-			{ conversation: switched.conversation, label: "second" },
+			{ conversation: switched.conversation, label: "second", parent: 1 },
 			{ conversation: 1, label: null },
 		]);
 		// The branch holds the history before "second" and goes on from there.
@@ -279,7 +280,7 @@ describe("/tree (fake provider)", () => {
 		const switched = await ref.navigate({ entry: answer.entry }, BACKGROUND_CONTEXT);
 		assert.equal(switched.text, null);
 		const branches = await branchesWhen((list) => list.length === 4);
-		assert.deepEqual(branches[0], { conversation: switched.conversation, label: "Echo: first" });
+		assert.deepEqual(branches[0], { conversation: switched.conversation, label: "Echo: first", parent: 1 });
 		// The nodes name the branch storing them: the fork's first message shows its label.
 		await send(switched.conversation, "after the answer");
 		const after = await ref.tree(BACKGROUND_CONTEXT);
@@ -371,13 +372,14 @@ describe("/tree (fake provider)", () => {
 		const ref = await treeRef();
 		await ref.tree(BACKGROUND_CONTEXT);
 		// Fork points: the answer before "second" (Edit forked there), none (before the first message: its first own
-		// user message), "Echo: first". Conversation 1 keeps null: the session title.
+		// user message), "Echo: first". Conversation 1 keeps null: the session title. The forks name their source; the
+		// branch from before the first message has none.
 		assert.deepEqual(
 			await branchesWhen((list) => list.find((branch) => branch.conversation === empty)?.label !== "first"),
 			[
-				{ conversation: answer, label: "Echo: first" },
+				{ conversation: answer, label: "Echo: first", parent: 1 },
 				{ conversation: empty, label: "fresh" },
-				{ conversation: edit, label: "Echo: first" },
+				{ conversation: edit, label: "Echo: first", parent: 1 },
 				{ conversation: 1, label: null },
 			],
 		);

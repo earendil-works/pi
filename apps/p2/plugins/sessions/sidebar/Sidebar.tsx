@@ -224,7 +224,6 @@ export const SidebarView = memo(function SidebarView({
 	connected,
 	onOpen,
 	onBranch,
-	onRenameBranch,
 	onRestore,
 	onNew,
 	onNewIn,
@@ -254,8 +253,6 @@ export const SidebarView = memo(function SidebarView({
 	onOpen: (id: string, conversationId?: number) => void;
 	/** Switches a session to one of its `/tree` branches (the owner's). */
 	onBranch?: (id: string, conversationId: number) => void;
-	/** Asks for a new label of one of a session's `/tree` branches (the owner's). */
-	onRenameBranch?: (id: string, conversationId: number) => void;
 	onRestore: (id: string, conversationId?: number) => void;
 	onNew: () => void;
 	/** Starts a new session in a group; absent: groups have no "+". */
@@ -285,7 +282,6 @@ export const SidebarView = memo(function SidebarView({
 		now,
 		onOpen,
 		onBranch,
-		onRenameBranch,
 		onRestore,
 	};
 	const headings: HeadingActions = { page, connected, onPage, onCollapse, onOptions, onNewIn, glyphs };

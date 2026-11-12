@@ -2,8 +2,9 @@
 // `Catalog`, `Envs`, `SessionStatus` and `Subagents` still bind the versions released before, through their `accepts`,
 // and map the current state, arguments and results between versions. The old contracts below are copied verbatim from
 // the releases that bundled them (`Sessions` v3 and `Catalog` v2 from 0a730c8a7, `Sessions` v4, `Catalog` v3 and
-// `SessionTree` v1 from e88525506, `Sessions` v5 from 9ff0ebfd0, `Envs` v1 from 2a32a605a and v2 from d07548004,
-// `SessionStatus` v1 and `Subagents` v2 from 6e11a00a0), so their fingerprints are the ones old bundles send.
+// `SessionTree` v1 from e88525506, `Sessions` v5 from 9ff0ebfd0, `Catalog` v4 from 0a180b049, `Sessions` v6 from
+// 20d86c365, `Envs` v1 from 2a32a605a and v2 from d07548004, `SessionStatus` v1 and `Subagents` v2 from 6e11a00a0), so
+// their fingerprints are the ones old bundles send.
 
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
@@ -178,6 +179,47 @@ const SessionsV5 = remote("p2.sessions", {
 	},
 });
 
+/** 20d86c365's `SessionIdSchema`, `CreateArgsSchema` and `OperationSchema`. */
+const SessionIdSchemaV6 = str({ pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" });
+const CreateArgsSchemaV6 = obj({ ...propertiesOf(CreateSchema), id: opt(SessionIdSchemaV6) });
+const OperationKindSchemaV6 = union([literal("relocate"), literal("clone"), literal("fork"), literal("archive")]);
+const OperationSchemaV6 = union([
+	obj({
+		phase: literal("running"),
+		id: str(),
+		kind: OperationKindSchemaV6,
+		session: str(),
+		target: union([str(), nul()]),
+		copying: bool(),
+	}),
+	obj({
+		phase: literal("failed"),
+		id: str(),
+		kind: OperationKindSchemaV6,
+		session: str(),
+		target: union([str(), nul()]),
+		error: str(),
+	}),
+]);
+
+/** `Sessions` as 20d86c365 declared it. */
+const SessionsV6 = evolve(SessionsV5, (e) =>
+	e
+		.args("create", CreateArgsSchemaV6)
+		.args("clone", obj({ id: str(), copy: opt(SessionIdSchemaV6) }))
+		.args(
+			"fork",
+			obj({
+				id: str(),
+				conversation: int({ minimum: 1 }),
+				before: int({ minimum: 1 }),
+				copy: opt(SessionIdSchemaV6),
+			}),
+		)
+		.addState("owner", "operations", arr(OperationSchemaV6))
+		.addMethod("owner", "dismissOperation", obj({ operation: str() }), nul()),
+);
+
 /** `Catalog` as 0a730c8a7 declared it. */
 const CatalogV2 = local("p2.catalog", {
 	version: 2,
@@ -251,6 +293,30 @@ const CatalogV3 = local("p2.catalog", {
 		),
 	},
 });
+
+/** `Catalog` as 0a180b049 declared it: a branch's label may be null. */
+const CatalogV4 = evolve(CatalogV3, (e) =>
+	e
+		.state("sessions", arr(SessionSchemaV5))
+		.result("get", SessionSchemaV5)
+		.result("create", SessionSchemaV5)
+		.method(
+			"update",
+			obj({
+				id: str(),
+				cwd: opt(str()),
+				env: opt(union([str(), nul()])),
+				title: opt(str()),
+				pinned: opt(bool()),
+				archived: opt(bool()),
+				model: opt(ModelRefSchema),
+				thinkingLevel: opt(ThinkingLevelSchema),
+				main: opt(int({ minimum: 1 })),
+				branches: opt(arr(BranchSchemaV5)),
+			}),
+			SessionSchemaV5,
+		),
+);
 
 /** `SessionTree` as e88525506 declared it. */
 const SessionTreeV1 = remote("p2.tree", {
@@ -485,7 +551,7 @@ describe("older contract versions against the current server (fake provider)", (
 			return generation;
 		}, BACKGROUND_CONTEXT);
 
-	it("binds Sessions v5: rows as they are, create answered with its row", async () => {
+	it("binds Sessions v5: rows without a branch's parent, create answered with its row", async () => {
 		const ref = await boundIn(owner, SessionsV5, {}, "owner");
 		const rows = await until(ref.sessions, (list) => list.some((row) => row.id === session.id));
 		assert.equal(rows.find((each) => each.id === session.id)?.main, branch);
@@ -640,5 +706,47 @@ describe("older contract versions against the current server (fake provider)", (
 			label: "Versions",
 		});
 		v3.release();
+	});
+
+	it("binds Sessions v6, v5 and Catalog v4: branches without the conversation they were forked from", async () => {
+		// A fork of the edited branch after its first answer: its row names the branch as its parent.
+		const tree = await holdIn(owner, SessionTree, { session: session.id }, "owner");
+		const answer = (await tree.tree(BACKGROUND_CONTEXT)).nodes.find(
+			(node) => node.conversation === branch && node.role === "assistant",
+		)!;
+		const fork = (await tree.navigate({ entry: answer.entry }, BACKGROUND_CONTEXT)).conversation;
+		tree.release();
+		const current = await holdIn(owner, Sessions, {}, "owner");
+		const rows = await until(current.sessions, (list) =>
+			Boolean(list?.find((row) => row.id === session.id)?.branches.some((each) => each.conversation === fork)),
+		);
+		const branches = rows.find((row) => row.id === session.id)!.branches;
+		assert.deepEqual(
+			branches.map((each) => [each.conversation, each.parent]),
+			[
+				[fork, branch],
+				// Edited before the first message: a new conversation, forked from none.
+				[branch, undefined],
+				[1, undefined],
+			],
+		);
+		const withoutParents = branches.map(({ conversation, label }) => ({ conversation, label }));
+		const ref = await boundIn(owner, SessionsV6, {}, "owner");
+		const old = await until(ref.sessions, (list) =>
+			Boolean(list?.find((row) => row.id === session.id)?.branches.length === 3),
+		);
+		assert.deepEqual(old.find((row) => row.id === session.id)!.branches, withoutParents);
+		assert(Array.isArray(await until(ref.operations, (list) => list !== undefined)));
+		ref.release();
+		const v5 = await boundIn(owner, SessionsV5, {}, "owner");
+		const listed = await until(v5.sessions, (list) =>
+			Boolean(list?.find((row) => row.id === session.id)?.branches.length === 3),
+		);
+		assert.deepEqual(listed.find((row) => row.id === session.id)!.branches, withoutParents);
+		v5.release();
+		current.release();
+		const v4 = await bound(fixture.server.host.hold(CatalogV4, {}, BACKGROUND_CONTEXT));
+		assert.deepEqual((await v4.get({ id: session.id }, BACKGROUND_CONTEXT)).branches, withoutParents);
+		v4.release();
 	});
 });

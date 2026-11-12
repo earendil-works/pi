@@ -15,6 +15,7 @@ import { Sessions } from "../../plugins/sessions/contract.ts";
 import { type Child, Subagents } from "../../plugins/subagents/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
 import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type BaselineOffset, baselineOffsets } from "./sidebar-baselines.ts";
 
 /** What a subagent's row shows: its end's text, its failure mark's title, and the row's tooltip. */
 type Shown = { end: string; mark: string | null; tooltip: string };
@@ -96,6 +97,13 @@ describe("subagent rows in the sidebar", { skip: !browserTests }, () => {
 			`[${row("helper")}.closest('.session-row').querySelector('.session-header .session-time'), ${row("helper")}.querySelector('.session-time')].map(e=>Math.round(e.getBoundingClientRect().right))`,
 		);
 		assert.equal(edges[0], edges[1], "the subagent's time ends where the session's does");
+		// The subagents are a list one level below the session: no tree guides (those are the branches').
+		assert.deepEqual(
+			await browser.evaluate<string[]>(
+				`[...${row("helper")}.closest('.conversation-items').querySelectorAll('.conversation-row')].map(e=>getComputedStyle(e).getPropertyValue('--depth')+':'+[...e.querySelectorAll(':scope > .tree-guide')].map(g=>g.dataset.guide+g.style.getPropertyValue('--level')).join(' '))`,
+			),
+			["1:", "1:"],
+		);
 	});
 
 	it("shows a provider error as Failed, its text in the tooltip", async () => {
@@ -114,8 +122,33 @@ describe("subagent rows in the sidebar", { skip: !browserTests }, () => {
 			{ session, conversation: helper().conversationId },
 			"participant",
 		);
+		// Idle its marker is a ring; working, the spinner in the same box of its row (which may move up), so the mark
+		// does not move: the same centre and layout size (a turning spinner's bounds are wider).
+		const mark = (selector: string) =>
+			browser.evaluate<string>(
+				`(() => { const e = ${row("helper")}; const o = e.getBoundingClientRect(); const m = e.querySelector('.nav-marker ${selector}'); const r = m.getBoundingClientRect(); return [(r.left + r.right) / 2 - o.left, (r.top + r.bottom) / 2 - o.top, m.offsetWidth, m.offsetHeight].join(); })()`,
+			);
+		const ring = await mark(".run-mark[data-state=idle]");
+		assert.deepEqual(
+			await browser.evaluate<unknown>(
+				`(() => { const m = ${row("helper")}.querySelector('.nav-marker > .run-mark'); return [m.dataset.state, m.getAttribute('aria-hidden'), m.getAttribute('role')]; })()`,
+			),
+			["idle", "true", null],
+		);
 		await sub.send({ text: "slow rows", requestId: "slow" }, BACKGROUND_CONTEXT);
 		await browser.wait(`${row("helper")}.querySelector('.subagent-step')?.textContent === 'Thinking'`);
+		assert.equal(await mark(".run-mark[data-state=working]"), ring);
+		assert.equal(
+			await browser.evaluate<boolean>(`${row("helper")}.querySelector('.run-mark[data-state=idle]') === null`),
+			true,
+		);
+		// One mark in both states: the idle ring is decoration (the row's end says the state), the spinner says "Working".
+		assert.deepEqual(
+			await browser.evaluate<unknown>(
+				`(() => { const m = ${row("helper")}.querySelectorAll('.nav-marker > .run-mark'); return [m.length, m[0].getAttribute('role'), m[0].getAttribute('aria-label'), m[0].title]; })()`,
+			),
+			[1, "img", "Working", "Working"],
+		);
 		assert.equal((await shown("helper")).tooltip, "faux-1 · off\nFollows the session");
 		await sub.stop(BACKGROUND_CONTEXT);
 		await browser.wait(`${row("helper")}.querySelector('.subagent-step')?.textContent === 'Stopped'`);
@@ -127,5 +160,49 @@ describe("subagent rows in the sidebar", { skip: !browserTests }, () => {
 		// The failed one keeps its failure while the other one works and stops.
 		assert.equal((await shown("failing")).end, "Failed");
 		sub.release();
+	});
+
+	it("keeps each end text on its label's baseline, the warning sign centred on its word, on a phone and in RTL", async () => {
+		const item = `${row("failing")}.closest('.session-row')`;
+		const check = async (where: string) => {
+			for (const dir of ["ltr", "rtl"]) {
+				await browser.evaluate(`document.documentElement.dir=${JSON.stringify(dir)}`);
+				const offsets = await browser.evaluate<BaselineOffset[]>(
+					baselineOffsets(
+						`[${item}.querySelector('.session-header'), ...${item}.querySelectorAll('.conversation-row')]`,
+					),
+				);
+				assert.deepEqual(
+					offsets.map((each) => [each.kind, each.end]),
+					[
+						["session", "now"],
+						["subagent", "Stopped"],
+						["subagent", "Failed"],
+					],
+				);
+				for (const { label, end, offset } of offsets)
+					assert(Math.abs(offset) < 0.5, `${label}'s "${end}" is ${offset}px off its baseline (${where}, ${dir})`);
+				// The warning sign's centre on its word's (the word's line box, wrapped for the measure).
+				const apart = await browser.evaluate<number>(
+					`(() => { const m = ${row("failing")}.querySelector('.failed-mark'); const text = [...m.childNodes].find((n) => n.nodeType === 3); const wrap = document.createElement('span'); text.replaceWith(wrap); wrap.append(text); const w = wrap.getBoundingClientRect(); wrap.replaceWith(text); const i = m.querySelector('svg').getBoundingClientRect(); return (i.top + i.bottom) / 2 - (w.top + w.bottom) / 2; })()`,
+				);
+				assert(Math.abs(apart) < 1, `the warning sign is ${apart}px off its word (${where}, ${dir})`);
+			}
+			await browser.evaluate(`document.documentElement.removeAttribute('dir')`);
+		};
+		await check("desktop");
+		await browser.metrics(390, 844);
+		await browser.call("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session}`);
+		await browser.click(".topbar button[aria-label=Sessions]");
+		await browser.wait(`document.querySelector('.app.drawer-open')`);
+		const toggle = `document.querySelector('.sidebar-section[data-key=recent] .session-header.has-subagents .subagent-toggle')`;
+		await browser.wait(toggle);
+		if ((await browser.evaluate<string>(`${toggle}.getAttribute('aria-expanded')`)) === "false")
+			await browser.evaluate(`${toggle}.click()`);
+		await browser.wait(`${row("helper")} && ${row("failing")}`);
+		await check("phone");
+		await browser.call("Emulation.setTouchEmulationEnabled", { enabled: false });
+		await browser.metrics(1280, 800);
 	});
 });

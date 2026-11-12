@@ -98,7 +98,7 @@ describe("unread answers", () => {
 				const chat = await holdIn(owner, Chat, { session: target.id, conversation: 1 }, "participant");
 				await chat.send({ text: "slow-tool", requestId: "slow" }, BACKGROUND_CONTEXT);
 				// Working: a frame around the row's glyph (a spinner where it has none).
-				const working = ".working-frame, .working-mark";
+				const working = ".working-frame, .run-mark[data-state=working]";
 				await browser.wait(`Boolean(${row}?.querySelector('${working}'))`);
 				await browser.wait(`Boolean(${row}?.querySelector('.unread-dot')) && !${row}?.querySelector('${working}')`);
 				assert.equal(

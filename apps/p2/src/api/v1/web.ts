@@ -17,7 +17,9 @@ export {
 } from "../../web/command-menu/context.ts";
 export { useCommandMatches } from "../../web/command-menu/match.ts";
 export {
+	type CommandMenuRow,
 	type CommandTargetRow,
+	useCommandMenuRow,
 	useCommandRouteTarget,
 	useCommandTargetRow,
 } from "../../web/command-menu/targets.ts";

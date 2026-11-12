@@ -119,11 +119,25 @@ export default defineFacet((host) => {
 	);
 });
 
-/** Tells the catalog the current main conversation and the branches, newest first (it ignores an unchanged report). */
+/**
+ * Tells the catalog the current main conversation and the branches, newest first, each with the conversation it was
+ * forked from: its Durable record's parent (records are table reads, one commit per report; reports are rare: at start
+ * and per change of `p2.main`). The catalog ignores an unchanged report.
+ */
 async function reportTree(durable: Harness, ctx: Ctx): Promise<void> {
 	const state = await durable.snapshot(MainDoc, ctx);
 	const main = state?.conversation ?? ROOT_CONVERSATION_ID;
-	const branches: Branch[] = (state?.branches ?? [{ conversation: ROOT_CONVERSATION_ID, label: null }]).toReversed();
+	const parents = new Map(
+		(await topLevelRecords(durable, ctx)).flatMap((record): [number, number][] =>
+			record.parent ? [[record.id, record.parent.conversationId]] : [],
+		),
+	);
+	const branches: Branch[] = (state?.branches ?? [{ conversation: ROOT_CONVERSATION_ID, label: null }])
+		.map(({ conversation, label }) => {
+			const parent = parents.get(conversation);
+			return parent === undefined ? { conversation, label } : { conversation, label, parent };
+		})
+		.toReversed();
 	await expectVariant(await ctx.get(Sessions, {}), "worker").treeSelf({ main, branches }, ctx);
 }
 

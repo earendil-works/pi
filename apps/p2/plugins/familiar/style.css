@@ -20,7 +20,7 @@
 		background: var(--hover);
 	}
 }
-.familiar-entry > .working-mark,
+.familiar-entry > .run-mark,
 .familiar-entry > .unread-dot {
 	position: absolute;
 	top: var(--s1);

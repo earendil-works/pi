@@ -228,10 +228,12 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 			"participant",
 		);
 		await childChat.send({ text: "slow child", requestId: "drawer-busy" }, BACKGROUND_CONTEXT);
-		await browser.wait(`document.querySelector('.session-header.has-subagents :is(.working-frame, .working-mark)')`);
+		await browser.wait(
+			`document.querySelector('.session-header.has-subagents :is(.working-frame, .run-mark[data-state=working])')`,
+		);
 		await browser.click(".session-header.has-subagents .subagent-toggle");
 		await browser.wait(
-			`!${conversations}.hidden && document.querySelector('.nav-row:has(> .subagent-row) .working-mark')`,
+			`!${conversations}.hidden && document.querySelector('.nav-row:has(> .subagent-row) .run-mark[data-state=working]')`,
 		);
 		// While it works, its row ends with its step: the model's answer streams.
 		await browser.wait(`${subagentRow}.querySelector('.subagent-step')?.textContent === 'Thinking'`);

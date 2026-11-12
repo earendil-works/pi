@@ -8,6 +8,7 @@ import {
 	columnOpt,
 	columnStr,
 	defineTable,
+	evolveTable,
 	hostColumn,
 	jsonColumn,
 	ModelRefSchema,
@@ -18,10 +19,10 @@ import {
 	type TableOf,
 	type Tx,
 } from "@p2/app/v1";
-import { BranchSchema, type Session } from "./contract.ts";
+import { type Branch, BranchSchema, BranchSchemaV5, type Session } from "./contract.ts";
 
 /** One row per session: its place, title, model and level, pin and archive, and its `/tree` branches. */
-export const SessionRows = defineTable("sessions", {
+const SessionRowsV1 = defineTable("sessions", {
 	version: 1,
 	columns: {
 		session: hostColumn(SessionHost),
@@ -38,10 +39,19 @@ export const SessionRows = defineTable("sessions", {
 		thinkingLevel: columnStr(),
 		/** The current main conversation: 1, or the `/tree` branch the session continues in (`docs/tree.md`). */
 		main: columnInt(),
-		branches: jsonColumn(arr(BranchSchema), { version: 1 }),
+		branches: jsonColumn(arr(BranchSchemaV5), { version: 1 }),
 	},
 	key: ["session"],
 });
+
+/** 2: a branch's `parent`; version 1's branches have none, so they read as they are. */
+export const SessionRows = evolveTable(SessionRowsV1, (t) =>
+	t.json(
+		"branches",
+		// A version 1 cell is a valid version 2 one: `parent` is optional (the column checks the result).
+		jsonColumn(arr(BranchSchema), { version: 2, migrate: (old) => old as Branch[] }),
+	),
+);
 export type SessionTable = TableOf<typeof SessionRows>;
 export type SessionRow = SessionTable extends Table<infer C, readonly string[]> ? RowOf<C> : never;
 

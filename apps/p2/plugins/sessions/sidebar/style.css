@@ -8,7 +8,8 @@
    bar's buttons show their glyphs (--nav-edge in from the row: a 16px glyph centred in a --control box). A row's
    controls are square boxes as tall as the row, wider than their glyph, so a trailing one reaches past that line by
    the difference (--nav-glyph-inset). A label starts after the marker column and its gap (--nav-label-start). Nothing
-   is indented: every session's activity dot, in a group or not, is in one column. */
+   is indented: every session's activity dot, in a group or not, is in one column. p2's 24-grid icons draw within 3 to
+   21 of their 24 units, so --nav-icon-inset of a --nav-icon box stays free at each side. */
 .sidebar-root,
 .list-page {
 	--nav-row: calc(
@@ -17,9 +18,14 @@
 		2 *
 		var(--semantic-dimension-space-control-padding-block-small)
 	);
-	--nav-glyph-inset: calc((var(--nav-row) - 16px) / 2);
-	--nav-edge: calc((var(--control) - 16px) / 2);
-	--nav-label-start: calc(var(--nav-edge) + 16px + 2 * var(--s1));
+	--nav-icon: 16px;
+	--nav-glyph-inset: calc((var(--nav-row) - var(--nav-icon)) / 2);
+	--nav-edge: calc((var(--control) - var(--nav-icon)) / 2);
+	--nav-label-start: calc(var(--nav-edge) + var(--nav-icon) + 2 * var(--s1));
+	--working-frame-outset: 3px;
+	--nav-label-min: 4em;
+	--nav-icon-inset: calc(var(--nav-icon) * 3 / 24);
+	--ring-size: calc(var(--nav-icon) - 2 * var(--nav-icon-inset));
 }
 
 /* Elanor's sidebar fills p2's drawer column (its width, border and resizing are the layout's). */
@@ -69,16 +75,31 @@
 	margin-block-start: var(--semantic-dimension-space-gap-small);
 }
 
-/* A row: one control from the leading edge to the trailing one, its glyphs and trailing text on the icon line. */
+/* A row: one control from the leading edge to the trailing one, its glyphs and trailing text on the icon line. Its
+   texts sit on the label's baseline (centring would put a smaller detail's baseline up to 1px off the label's): the
+   label's line (1lh) fills the row between paddings that centre it (--nav-row-pad), and the marks and controls are
+   centred on that line. */
+@property --nav-row-pad {
+	syntax: "<length>";
+	inherits: true;
+	initial-value: 0px;
+}
 .nav-row {
+	/* Registered as a length, so 1lh resolves here, with the row's own line height, and children inherit the length. */
+	--nav-row-pad: calc((var(--nav-row) - 1lh) / 2);
 	position: relative;
 	display: flex;
-	align-items: center;
+	align-items: baseline;
 	gap: var(--s1);
-	min-height: var(--nav-row);
+	/* A detail larger than the label (a rollup's count) would grow a baseline-aligned row. */
+	block-size: var(--nav-row);
+	padding-block: var(--nav-row-pad);
 	padding-inline: var(--nav-edge);
 	border-radius: var(--semantic-dimension-radius-small);
 	color: var(--text);
+}
+.nav-row > :is(.nav-marker, .nav-control) {
+	align-self: center;
 }
 @media (hover: hover) {
 	.nav-row:hover {
@@ -89,13 +110,15 @@
 .nav-row.selected {
 	background: var(--semantic-color-background-fill-ghost-neutral-active);
 }
-/* The marker column: a session's working mark or a group's icon, as wide as the icon; kept when empty. */
+/* The marker column: a session's working mark or a group's icon, as wide as the icon; kept when empty. One --nav-icon
+   box whatever it holds, so an icon, a ring and a spinner share their centre. */
 .nav-marker {
 	display: inline-flex;
 	flex: none;
 	align-items: center;
 	justify-content: center;
-	width: 16px;
+	inline-size: var(--nav-icon);
+	block-size: var(--nav-icon);
 	color: var(--semantic-color-icon-secondary);
 }
 .nav-marker + .nav-link {
@@ -105,9 +128,9 @@
    where it has none. Wanting the owner is steady and at the row's end: a blue dot (an unread answer; the title is bold),
    a warning sign with "Failed". Each state has its own shape, so none depends on telling colours apart. */
 
-/* A row's icon (IconMarker), framed while working. The frame sits 3px outside the 16px icon, clear of a glyph's corner
-   cells, inside the marker column's gaps. Not positioned above the row: the row's hit area covers it, so a click opens
-   the session and hovering shows the row's tooltip (the path). */
+/* A row's icon (IconMarker), framed while working. The frame sits --working-frame-outset outside the icon, clear of a
+   glyph's corner cells, inside the marker column's gaps. Not positioned above the row: the row's hit area covers it,
+   so a click opens the session and hovering shows the row's tooltip (the path). */
 .nav-icon {
 	position: relative;
 	display: inline-flex;
@@ -118,9 +141,9 @@
 }
 .working-frame {
 	position: absolute;
-	inset: -3px;
-	width: 22px;
-	height: 22px;
+	inset: calc(-1 * var(--working-frame-outset));
+	width: calc(var(--nav-icon) + 2 * var(--working-frame-outset));
+	height: calc(var(--nav-icon) + 2 * var(--working-frame-outset));
 	overflow: visible;
 	pointer-events: none;
 }
@@ -142,26 +165,48 @@
 		stroke-dashoffset: -100;
 	}
 }
-/* Working where the row has no icon (a group's sessions, a session's conversations, a collapsed rollup, the
-   Familiar's logo): a spinner, rotating on the compositor. */
-.working-mark {
+/* A run's mark where the row has no icon (RunMark): a hollow ring while idle, a spinner rotating on the compositor
+   while it works, in one box with one stroke, so nothing moves when it starts or stops. Working on its own (a group's
+   sessions, a collapsed rollup, the Familiar's logo) it is the spinner alone. How a run ended is in the row's end. */
+.run-mark {
 	flex: none;
 	width: 10px;
 	height: 10px;
-	border: 2px solid color-mix(in srgb, var(--working) 28%, transparent);
+	border: 2px solid var(--semantic-color-icon-secondary);
+	border-radius: 50%;
+}
+.run-mark[data-state="working"] {
+	border-color: color-mix(in srgb, var(--working) 28%, transparent);
 	border-block-start-color: var(--working);
 	border-inline-end-color: var(--working);
-	border-radius: 50%;
-	animation: working-mark 1s linear infinite;
+	animation: run-mark 1s linear infinite;
 }
-@keyframes working-mark {
+@keyframes run-mark {
 	to {
 		rotate: 360deg;
 	}
 }
+/* A conversation row's mark has its visible centre --mark-mid below its marker's top, where the row's twig (the
+   marker's ::before) meets it. An icon is centred in its marker, on the row's centre. A run mark is --ring-size, the
+   area an icon draws in, centred on the label's x-height midline (0.5ex above its baseline, in the label's font): the
+   marker takes part in the row's baseline alignment with the mark's bottom on the baseline, and the mark moves up to
+   the midline (a translate, so the spinner keeps turning about its own centre). */
+.conversation-row > .nav-marker {
+	--mark-mid: calc(var(--nav-icon) / 2);
+}
+.conversation-row > .nav-marker:has(> .run-mark) {
+	--mark-mid: calc(var(--ring-size) - 0.5ex);
+	align-self: baseline;
+	align-items: baseline;
+}
+.conversation-row > .nav-marker > .run-mark {
+	width: var(--ring-size);
+	height: var(--ring-size);
+	translate: 0 calc(var(--mark-mid) - var(--ring-size) / 2);
+}
 /* Without motion working keeps a shape of its own: a still ¾ ring, a dashed frame. */
 @media (prefers-reduced-motion: reduce) {
-	.working-mark {
+	.run-mark[data-state="working"] {
 		border-color: var(--working);
 		border-inline-start-color: transparent;
 		animation: none;
@@ -174,15 +219,25 @@
 		animation: none;
 	}
 }
+/* Forced colours paint every border in one colour, which would make the spinner a full ring like the idle one: it keeps
+   a quarter clear, so it still reads as a turning ¾ ring. */
+@media (forced-colors: active) {
+	.run-mark[data-state="working"] {
+		forced-color-adjust: none;
+		border-color: CanvasText;
+		border-inline-start-color: transparent;
+	}
+}
 /* The phone's drawer stays rendered off screen while closed: its marks stop there. */
 @media (max-width: 899px) {
-	.app:not(.drawer-open) .drawer :is(.working-mark, .working-frame-dash) {
+	.app:not(.drawer-open) .drawer :is(.run-mark, .working-frame-dash) {
 		animation-play-state: paused;
 	}
 }
 /* An unread answer: a steady dot before the time, and the session's title in bold. */
 .unread-dot {
 	flex: none;
+	align-self: center;
 	width: 8px;
 	height: 8px;
 	border-radius: 50%;
@@ -192,13 +247,17 @@
 	font-weight: var(--fw-strong);
 }
 /* A failure that wants the owner: a warning sign and a word or a count, in the error colour. */
+/* Its word carries its baseline (for the row's details); the warning sign is centred on the word. */
 .failed-mark {
 	display: inline-flex;
 	flex: none;
-	align-items: center;
+	align-items: baseline;
 	gap: 2px;
 	color: var(--bad);
 	font-weight: var(--fw-medium);
+}
+.failed-mark > svg {
+	align-self: center;
 }
 /* How many sessions a collapsed group or rollup hides have an unread answer; the menu button's badge (the other
    sessions that want the owner, red when one failed). */
@@ -250,10 +309,11 @@
 	text-align: left;
 	text-decoration: none;
 }
+/* Its corners are the row's, so the focus ring follows the row's highlight. */
 .nav-row > .nav-link::after {
 	position: absolute;
 	inset: 0;
-	border-radius: inherit;
+	border-radius: var(--semantic-dimension-radius-small);
 	content: "";
 }
 /* On touch, a row's and its controls' hit areas reach half the list gap above and below, as Elanor's compact controls
@@ -317,11 +377,12 @@
 .nav-row > .nav-toggle {
 	margin-inline-start: calc(-1 * var(--nav-glyph-inset));
 }
-/* Details: information after the label, the time last so it never moves. */
+/* Details: information after the label, the time last so it never moves; a mark without text (the unread dot) is
+   centred on the line. */
 .nav-details {
 	display: flex;
 	flex: none;
-	align-items: center;
+	align-items: baseline;
 	gap: var(--s2);
 	color: var(--muted);
 	font-size: var(--semantic-typography-ui-secondary-font-size);
@@ -338,6 +399,10 @@
 	height: var(--nav-row);
 	border-radius: var(--semantic-dimension-radius-small);
 	color: var(--semantic-color-icon-secondary);
+}
+/* As tall as the row, it reaches into the row's paddings, so it does not grow the row's line. */
+.nav-row > .nav-control {
+	margin-block: calc(-1 * var(--nav-row-pad));
 }
 .nav-row > .nav-control:last-child {
 	margin-inline-end: calc(-1 * var(--nav-glyph-inset));
@@ -409,13 +474,96 @@
 .conversation-row.selected {
 	color: var(--text);
 }
-/* A subagent's step or how its last run ended, in its session's time column (right-aligned to the same edge): a word
-   or two, cut with "…" rather than squeezing its name away. */
+/* A session's conversations (conversation-tree.ts): each level is one marker box plus --tree-mark-gap further in, the
+   first under the session row's label; a branch row's guides reach up through the list gap (--tree-gap), so their
+   lines are unbroken. */
+.conversation-items {
+	--tree-mark-gap: calc(var(--s2) - var(--nav-icon-inset));
+	--tree-first: calc(var(--nav-label-start) - var(--nav-edge));
+	--tree-indent: calc(var(--nav-icon) + var(--tree-mark-gap));
+	--tree-twig-gap: var(--s1);
+	--tree-gap: var(--semantic-dimension-space-gap-small);
+	--tree-line: 1px;
+	--tree-curve: var(--radius);
+	/* Deeper rows stay at this depth's place, so a deep chain never pushes a row's end out of a narrow sidebar. */
+	--tree-depth-max: 5;
+}
+.conversation-row {
+	--shown-depth: min(var(--depth), var(--tree-depth-max));
+	--inset: min(
+		var(--shown-depth) *
+		var(--tree-first),
+		var(--tree-first) +
+		(var(--shown-depth) - 1) *
+		var(--tree-indent)
+	);
+	padding-inline-start: calc(var(--nav-edge) + var(--inset));
+}
+.conversation-row > .nav-marker + .nav-link {
+	margin-inline-start: calc(var(--tree-mark-gap) - var(--s1));
+}
+/* A level's span: from where its parent's marker starts (--from) to where its own does (--to). */
+.tree-guide,
+.conversation-row:has(> .tree-guide) > .nav-marker::before {
+	--shown-level: min(var(--level), var(--tree-depth-max));
+	--from: min(
+		(var(--shown-level) - 1) *
+		var(--tree-first),
+		var(--tree-first) +
+		(var(--shown-level) - 2) *
+		var(--tree-indent)
+	);
+	--to: min(var(--shown-level) * var(--tree-first), var(--tree-first) + (var(--shown-level) - 1) * var(--tree-indent));
+}
+/* A level's trunk: a line through its parent's marker centre, from the row above (through the list gap) to the row's
+   bottom; an elbow's (the last child's) stops where its arm curves away. */
+.tree-guide {
+	position: absolute;
+	inset-block: calc(-1 * var(--tree-gap)) 0;
+	inset-inline-start: calc(var(--nav-edge) + var(--from) + var(--nav-icon) / 2 - var(--tree-line) / 2);
+	border-inline-start: var(--tree-line) solid var(--line);
+	pointer-events: none;
+}
+/* The row's centre less the curve: no mark's centre is above the row's centre, so the twig's curve starts at or below
+   this point, and the twig draws the line on from above it. */
+.tree-guide[data-guide="elbow"] {
+	inset-block-end: calc(50% + var(--tree-curve));
+}
+/* A row's twig: from its trunk, a curve into an arm whose line is centred on the mark's visible centre
+   (--mark-mid), ending --tree-twig-gap before the marker. It is drawn from the marker, whose top is where the row's
+   baseline puts it (the static position of an absolute box in it), and laid out across the row (its containing block)
+   like the guides. Its upright part overlaps the trunk's end in the same colour, so the line is unbroken. */
+.conversation-row:has(> .tree-guide) > .nav-marker::before {
+	--level: var(--depth);
+	position: absolute;
+	align-self: start;
+	box-sizing: border-box;
+	inset-inline-start: calc(var(--nav-edge) + var(--from) + var(--nav-icon) / 2 - var(--tree-line) / 2);
+	inline-size: calc(var(--to) - var(--from) - var(--nav-icon) / 2 + var(--tree-line) / 2 - var(--tree-twig-gap));
+	block-size: calc(var(--mark-mid) + var(--tree-line) / 2);
+	border: 0 solid var(--line);
+	border-inline-start-width: var(--tree-line);
+	border-block-end-width: var(--tree-line);
+	border-end-start-radius: var(--tree-curve);
+	content: "";
+	pointer-events: none;
+}
+/* Forced colours: the guides in the text colour. */
+@media (forced-colors: active) {
+	.tree-guide,
+	.conversation-row:has(> .tree-guide) > .nav-marker::before {
+		border-color: CanvasText;
+	}
+}
+/* Where a conversation's row is short, only the label gives way, down to --nav-label-min: the end is a word or two and
+   keeps its width and its end edge. */
+.conversation-row > .nav-link {
+	min-inline-size: var(--nav-label-min);
+}
+/* A subagent's or a branch's step or how its last run ended, in its session's time column. */
 .subagent-step {
-	max-width: 9em;
-	overflow: hidden;
-	text-align: right;
-	text-overflow: ellipsis;
+	flex: none;
+	text-align: end;
 	white-space: nowrap;
 }
 .session-operation {
@@ -440,29 +588,28 @@
 	white-space: nowrap;
 }
 
-/* A branch's mark at the trailing end (where a subagent shows its step). With a fine pointer the rename pencil takes
-   its place on hover or focus; on touch both show, the pencil after the mark. */
-.branch-mark {
-	display: inline-flex;
-	color: var(--semantic-color-icon-secondary);
+/* A branch row opens the command menu on a long press: no link preview or text selection there. */
+@media (any-pointer: coarse) {
+	.branch-nav-row {
+		-webkit-touch-callout: none;
+		user-select: none;
+	}
 }
-@media not all and (pointer: coarse) {
-	.branch-rename {
-		display: none;
-	}
-	.nav-row:focus-within > .branch-rename {
-		display: inline-flex;
-	}
-	.nav-row:has(> .branch-rename):focus-within .branch-mark {
-		display: none;
-	}
+/* A branch row's rename pencil: with a fine pointer, on hover or keyboard focus, over the row's end (hidden behind it),
+   so nothing moves when it appears; touch has the row's long-press menu instead. */
+.nav-row > .nav-control.branch-rename {
+	position: absolute;
+	inset-block-start: 0;
+	inset-inline-end: calc(var(--nav-edge) - var(--nav-glyph-inset));
+	display: none;
+	margin: 0;
 }
 @media (hover: hover) and (not (pointer: coarse)) {
-	.nav-row:hover > .branch-rename {
+	.nav-row:is(:hover, :focus-within) > .nav-control.branch-rename {
 		display: inline-flex;
 	}
-	.nav-row:has(> .branch-rename):hover .branch-mark {
-		display: none;
+	.nav-row:is(:hover, :focus-within):has(> .branch-rename) > .nav-details {
+		visibility: hidden;
 	}
 }
 

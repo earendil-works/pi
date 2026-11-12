@@ -301,7 +301,15 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		await chat.send({ text: "slow-tool", requestId: "working" }, BACKGROUND_CONTEXT);
 		// Working: a frame around a Recents row's glyph, a spinner on a group's session row (it has no glyph).
 		await browser.wait(`Boolean(${inRecents}.querySelector('.nav-icon.working > .working-frame'))`);
-		await browser.wait(`Boolean(document.querySelector(${JSON.stringify(`${group} .session-row .working-mark`)}))`);
+		const spinner = `document.querySelector(${JSON.stringify(`${group} .session-row .run-mark[data-state=working]`)})`;
+		await browser.wait(`Boolean(${spinner})`);
+		// The spinner outside a conversation's rows keeps its 10px box, named "Working".
+		assert.deepEqual(
+			await browser.evaluate<unknown>(
+				`[${spinner}.offsetWidth, ${spinner}.offsetHeight, ${spinner}.getAttribute('role'), ${spinner}.getAttribute('aria-label'), ${spinner}.title]`,
+			),
+			[10, 10, "img", "Working", "Working"],
+		);
 		// A collapsed group frames its own icon while a session it hides works.
 		await settings.setCollapsed({ key: folderKey(null, work), collapsed: true }, BACKGROUND_CONTEXT);
 		await browser.wait(`Boolean(document.querySelector(${JSON.stringify(`${group} .group-row .working-frame`)}))`);

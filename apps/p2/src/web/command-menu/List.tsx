@@ -82,9 +82,9 @@ const RECENT = "Recent";
 
 /**
  * The root's groups: without a query the Recent group, then the groups with commands for the target, then the others
- * (each by `order`, then heading), commands for the target first inside a group and those in Recent left out of it;
- * with a query the same groups in the same order, holding the matching commands best first and the searches, which
- * match on their own.
+ * (each by `order`, then heading), commands for the target first inside a group and those in Recent left out of it
+ * (the target's own group keeps its commands for the target); with a query the same groups in the same order, holding
+ * the matching commands best first and the searches, which match on their own.
  */
 function rootGroups(input: {
 	readonly commands: ReadonlyMap<string, Command>;
@@ -115,7 +115,10 @@ function rootGroups(input: {
 		for (const [key, search] of searches)
 			(groups.get(search.group) ?? groupOf(search.group, search.order)).searches.push([key, search]);
 	const byId = new Map(shown);
-	const recent = typing ? [] : recents.filter((id) => byId.has(id));
+	// A command for the target in the target's own group (headed by its kind: "Branch", "Session") stays there, at the
+	// top, used or not: a row's menu leads with what it does to that row.
+	const own = (command: Command) => command.target !== undefined && command.group === target?.kind;
+	const recent = typing ? [] : recents.filter((id) => byId.has(id) && !own(byId.get(id)!));
 	const listed = typing
 		? rankBy(shown, ([, command]) => commandScore(query, command))
 		: shown

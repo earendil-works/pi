@@ -12,7 +12,7 @@ import type { Session, SidebarWindow } from "../contract.ts";
 
 /** A session as the sidebar shows it: its catalog row with its subagents, its worker's state and an operation. */
 export type SidebarRow = Session & {
-	subagents: Child[];
+	subagents: readonly Child[];
 	/**
 	 * `work`: what each busy conversation does, by conversation ID. `unread`: a finished answer the owner has not read on
 	 * any device (see `SessionReads`).

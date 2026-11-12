@@ -44,11 +44,21 @@ const SessionSchemaV3 = obj(SESSION_FIELDS);
 const BranchSchemaV4 = obj({ conversation: int({ minimum: 1 }), label: str() });
 const SessionSchemaV4 = obj({ ...SESSION_FIELDS, main: int({ minimum: 1 }), branches: arr(BranchSchemaV4) });
 
+/** `Sessions` v5 and v6, `Catalog` v4: a branch's label may be null (the session title). */
+export const BranchSchemaV5 = obj({ conversation: int({ minimum: 1 }), label: union([str(), nul()]) });
+const SessionSchemaV5 = obj({ ...SESSION_FIELDS, main: int({ minimum: 1 }), branches: arr(BranchSchemaV5) });
+
 /**
- * A `/tree` branch as the sidebar lists it: its conversation and its stored label (`MainDoc`); null shows the session
- * title (conversation 1 until it is renamed).
+ * A `/tree` branch as the sidebar lists it: its conversation, its stored label (`MainDoc`; null shows the session
+ * title: conversation 1 until it is renamed) and `parent`, the top-level conversation it was forked from (its Durable
+ * conversation record's). Absent for conversation 1, for a branch started before the first message (a new conversation,
+ * no fork), and in rows reported before it was.
  */
-export const BranchSchema = obj({ conversation: int({ minimum: 1 }), label: union([str(), nul()]) });
+export const BranchSchema = obj({
+	conversation: int({ minimum: 1 }),
+	label: union([str(), nul()]),
+	parent: opt(int({ minimum: 1 })),
+});
 export type Branch = Static<typeof BranchSchema>;
 
 export const SessionSchema = obj({
@@ -121,10 +131,10 @@ export type Operation = Static<typeof OperationSchema>;
 
 /**
  * Every session's catalog row by its id (server, host-internal): built once per catalog write, so each worker's view
- * of its own row (`Sessions`, worker variant) is a lookup, not a scan of the rows.
+ * of its own row (`Sessions`, worker variant) is a lookup, not a scan of the rows. 2: a branch's `parent`.
  */
 export const SessionIndex = local("p2.session-index", {
-	version: 1,
+	version: 2,
 	params: {},
 	members: { byId: record(SessionSchema) },
 });
@@ -192,11 +202,24 @@ const CatalogV3 = evolve(CatalogV2, (e) =>
 		),
 );
 
+/** 4: a branch's label may be null (the session title). */
+const CatalogV4 = evolve(CatalogV3, (e) =>
+	e
+		.state("sessions", arr(SessionSchemaV5))
+		.result("get", SessionSchemaV5)
+		.result("create", SessionSchemaV5)
+		.method(
+			"update",
+			obj({ ...UPDATE_FIELDS, main: opt(int({ minimum: 1 })), branches: opt(arr(BranchSchemaV5)) }),
+			SessionSchemaV5,
+		),
+);
+
 /**
- * The session catalog (server, the server store's table keyed by each session's address): every session, archived ones included. Host-internal. 4: a branch's label may
- * be null (the session title). The provider still serves 2 and 3 (its `accepts`).
+ * The session catalog (server, the server store's table keyed by each session's address): every session, archived
+ * ones included. Host-internal. 5: a branch's `parent`. The provider still serves 2, 3 and 4 (its `accepts`).
  */
-export const Catalog = evolve(CatalogV3, (e) =>
+export const Catalog = evolve(CatalogV4, (e) =>
 	e
 		.state("sessions", arr(SessionSchema))
 		.result("get", SessionSchema)
@@ -286,30 +309,23 @@ const SessionsV4 = evolve(SessionsV3, (e) =>
 /** 5: a branch's label may be null (the session title). */
 const SessionsV5 = evolve(SessionsV4, (e) =>
 	e
-		.state("owner", "sessions", arr(SessionSchema))
-		.state("guest", "sessions", arr(SessionSchema))
-		.state("worker", "session", union([SessionSchema, nul()]))
-		.result("create", SessionSchema)
-		.result("clone", SessionSchema)
-		.result("fork", SessionSchema)
-		.args("treeSelf", obj({ main: int({ minimum: 1 }), branches: arr(BranchSchema) })),
+		.state("owner", "sessions", arr(SessionSchemaV5))
+		.state("guest", "sessions", arr(SessionSchemaV5))
+		.state("worker", "session", union([SessionSchemaV5, nul()]))
+		.result("create", SessionSchemaV5)
+		.result("clone", SessionSchemaV5)
+		.result("fork", SessionSchemaV5)
+		.args("treeSelf", obj({ main: int({ minimum: 1 }), branches: arr(BranchSchemaV5) })),
 );
 
 /**
- * Sessions as a principal sees them. The owner lists and manages all; a guest sees its own session; a worker sees
- * and renames only its own session (its principal names it). The provider still serves 3, 4 and 5 (its `accepts`):
- * pages and TUIs loaded before a deploy keep working.
- *
  * 6, client-chosen IDs and lifecycle operations as jobs: `create` takes the new session's `id`, `clone` and `fork` the
  * copy's (`copy`), so a page navigates at once. `clone`, `fork`, `relocate` and `archive` answer once their effect is
  * visible (the copy's row, the archived row) or started (a move), and their long part runs as a job, shown in
  * `operations` (running, then gone or failed with its error) until `dismissOperation`. A `relocate` the worker
  * refuses (busy) is a failed operation.
- *
- * The worker's `treeSelf`: the session's main conversation or its branches changed (a `/tree` switch or fork, a branch
- * renamed), or the worker started; the catalog entry follows, so clients open the main one and list the branches.
  */
-export const Sessions = evolve(SessionsV5, (e) =>
+const SessionsV6 = evolve(SessionsV5, (e) =>
 	e
 		.args("create", CreateArgsSchema)
 		.args("clone", obj({ id: str(), copy: opt(SessionIdSchema) }))
@@ -324,6 +340,26 @@ export const Sessions = evolve(SessionsV5, (e) =>
 		)
 		.addState("owner", "operations", arr(OperationSchema))
 		.addMethod("owner", "dismissOperation", obj({ operation: str() }), nul()),
+);
+
+/**
+ * Sessions as a principal sees them. The owner lists and manages all; a guest sees its own session; a worker sees
+ * and renames only its own session (its principal names it). The provider still serves 3, 4, 5 and 6 (its
+ * `accepts`): pages and TUIs loaded before a deploy keep working. 7: a branch's `parent` (the sidebar's tree), in rows
+ * and in `treeSelf`.
+ *
+ * The worker's `treeSelf`: the session's main conversation or its branches changed (a `/tree` switch or fork, a branch
+ * renamed), or the worker started; the catalog entry follows, so clients open the main one and list the branches.
+ */
+export const Sessions = evolve(SessionsV6, (e) =>
+	e
+		.state("owner", "sessions", arr(SessionSchema))
+		.state("guest", "sessions", arr(SessionSchema))
+		.state("worker", "session", union([SessionSchema, nul()]))
+		.result("create", SessionSchema)
+		.result("clone", SessionSchema)
+		.result("fork", SessionSchema)
+		.args("treeSelf", obj({ main: int({ minimum: 1 }), branches: arr(BranchSchema) })),
 );
 
 const Location = obj({ id: str(), cwd: str({ minLength: 1 }), env: union([str(), nul()]) });

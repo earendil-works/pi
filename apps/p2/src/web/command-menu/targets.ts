@@ -1,7 +1,10 @@
 // Where the command menu finds its target when it opens: the row under the mouse, else the focused row, else what the
-// main area shows. Rows and views write them as plain fields (nothing re-renders); Cmd+K reads them once.
-import { createContext, use, useEffect } from "react";
+// main area shows. Rows and views write them as plain fields (nothing re-renders); Cmd+K reads them once. A row can
+// also open the menu on itself with a long press on touch.
+import { createContext, type MouseEvent, use, useEffect } from "react";
 import type { CommandTarget } from "../../runtime/web-core.ts";
+import { type LongPressHandlers, useLongPress } from "../long-press.ts";
+import { pushMenu } from "./layers.ts";
 
 /** The candidates, written by target rows and the main area's view; read only when the menu opens. */
 export type TargetSources = { hovered?: CommandTarget; focused?: CommandTarget; route?: CommandTarget };
@@ -61,6 +64,29 @@ export function useCommandTargetRow(target: CommandTarget): CommandTargetRow {
 		},
 		onBlur: () => {
 			if (same(sources.focused, type, id)) sources.focused = undefined;
+		},
+	};
+}
+
+/** The handlers a row spreads to be the menu's target and to open the menu on itself with a long press. */
+export type CommandMenuRow = CommandTargetRow &
+	LongPressHandlers & { readonly onContextMenu: (event: MouseEvent) => void };
+
+/**
+ * Makes a row the menu's target while hovered or focused (`useCommandTargetRow`), and opens the menu on it with a long
+ * press on touch. Android also fires a context menu event during a long press: whichever comes first opens the menu,
+ * once, and the browser's own menu stays closed then. A mouse's right-click keeps the browser's menu.
+ */
+export function useCommandMenuRow(target: CommandTarget): CommandMenuRow {
+	const row = useCommandTargetRow(target);
+	const press = useLongPress(() => pushMenu(target));
+	return {
+		...row,
+		...press.handlers,
+		onContextMenu: (event) => {
+			if (!press.touching()) return;
+			event.preventDefault();
+			press.fire();
 		},
 	};
 }

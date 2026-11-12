@@ -3,7 +3,6 @@ import {
 	type CSSProperties,
 	createContext,
 	memo,
-	type PointerEvent,
 	type ReactNode,
 	useContext,
 	useEffect,
@@ -37,6 +36,7 @@ import {
 	UsersIcon,
 } from "./icons.tsx";
 import { imageSize } from "./image-size.ts";
+import { useLongPress } from "./long-press.ts";
 import { Markdown } from "./Markdown.tsx";
 import { RowEstimator, type RowFeatures } from "./row-estimate.ts";
 import { Time } from "./Time.tsx";
@@ -175,34 +175,23 @@ export function jumpToEntry(entryId: number): boolean {
 }
 
 /**
- * How to start a reply to one message: a button that shows on hover (hidden for coarse pointers), and a long press
- * (half a second, without moving) on touch screens. Nothing when replies are off or the item has no entry yet.
+ * How to start a reply to one message: a button that shows on hover (hidden for coarse pointers), and a long press on
+ * touch screens. Nothing when replies are off or the item has no entry yet.
  */
 function useReply(entryId: number | undefined, name: string) {
 	const reply = useContext(ReplyTo);
-	const press = useRef<ReturnType<typeof setTimeout>>(undefined);
+	const press = useLongPress(() => {
+		if (reply && entryId !== undefined) reply({ entryId, name });
+	});
 	if (!reply || entryId === undefined) return { button: null, gesture: {} };
 	const start = () => reply({ entryId, name });
-	const cancel = () => clearTimeout(press.current);
 	return {
 		button: (
 			<button type="button" className="reply-button" aria-label={`Reply to ${name}`} onClick={start}>
 				<ReplyIcon />
 			</button>
 		),
-		gesture: {
-			onPointerDown: (event: PointerEvent) => {
-				if (event.pointerType !== "touch") return;
-				cancel();
-				press.current = setTimeout(() => {
-					navigator.vibrate?.(10);
-					start();
-				}, 500);
-			},
-			onPointerUp: cancel,
-			onPointerCancel: cancel,
-			onPointerMove: cancel,
-		},
+		gesture: press.handlers,
 	};
 }
 
