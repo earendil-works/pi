@@ -43,14 +43,22 @@ P2_FAKE=1 npm start          # http://127.0.0.1:8788, data in ~/.pi/p2
   the background; failures produce an owner notice and page loads return 500 until a build succeeds. Plugin reload
   builds the web and TUI candidates before committing the backend, so a failed build preserves the old code and
   bundles. A custom esbuild loader records the exact app-source bytes it supplies for dev
-  change tracking. Visible pages poll every 5 seconds and reload on any manifest-version change; foregrounding checks
-  immediately. At most two previous generations remain available for up to 60 seconds. This polling is temporary
+  change tracking. Pages poll every 5 seconds, hidden ones too (browsers slow their timers down), and reload on any
+  manifest-version change; foregrounding checks immediately. A page's link names its bundle (`/chord?web=<version>`):
+  the server refuses one naming another version at once (close code 4001, `src/runtime/stale-page.ts`), the page
+  reloads (a second such reload within 15 s waits, so a kept older page from the service worker cannot loop), and the
+  owner gets a notice (source `stale-pages`) naming who it was: the owner's access or device, or the guest, the
+  browser and its address. Links naming no version are not asked: the TUI, Cloud Brain's pages and pages from before
+  2026-11-12. Those older pages reload once shown; until then their links re-hold types removed since (e.g.
+  `p2.artifact-list`), which wait on the session worker and are reported there as `unbound_long` at each start: refusing
+  them at once, and naming who asked in that report, needs Chord (a host's retired type names; `UnboundLong` with the
+  request's principal and link). At most two previous generations remain available for up to 60 seconds. This polling is temporary
   until loader model D provides scoped, per-facet `ClientBundle` pushes (`docs/plugin-loading.md` 5.3 and 12.2 step
   4). The TUI launcher separately polls `/__p2_tui`. There is no Vite, source-module server or `index.html`.
 - **Bundles for Radius Cloud Brain:** after CI passes on main, `.github/workflows/p2-cloud-bundle.yml` builds this
   web bundle with `scripts/cloud-bundle.ts` and uploads it to the R2 bucket `pi-ui` under the commit's full SHA, which
-  Radius serves under `/pi/ui/`. The script patches the built script's Chord socket URL, version poll and `/__p2_web/`
-  asset prefix, and fails when one is missing: changing those in `src/hosts/web/main.tsx` or `WEB_BUNDLE_PATH` means
+  Radius serves under `/pi/ui/`. The script patches the built script's Chord socket URL (dropping its `?web=`: a Cloud
+  Brain page names no p2 bundle), version poll and `/__p2_web/` asset prefix, and fails when one is missing: changing those in `src/hosts/web/main.tsx` or `WEB_BUNDLE_PATH` means
   updating it.
 - `npm run dev` also watches plugins and supervises runtime restarts; see **Dev mode** below. Under `npm start`,
   code changes (web included) take effect only after a restart.

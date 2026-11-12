@@ -40,10 +40,11 @@ await writeFile(join(dir, "manifest.json"), `${JSON.stringify(manifest, null, 2)
 console.log(`built ${dir}`);
 
 function patchScript(script: string): string {
+	// The socket names p2's own bundle version (`?web=`, so p2 refuses a stale page); a Cloud Brain page is no p2-served
+	// page and names none. The version's variable is minified, hence a pattern.
 	script = patch(
 		script,
-		// biome-ignore lint/suspicious/noTemplateCurlyInString: the built script's exact text, not a template.
-		'new WebSocket(`${location.protocol==="https:"?"wss":"ws"}://${location.host}/chord`)',
+		/new WebSocket\(`\$\{location\.protocol==="https:"\?"wss":"ws"\}:\/\/\$\{location\.host\}\/chord\?web=\$\{encodeURIComponent\([\w$]+\)\}`\)/g,
 		'new WebSocket(JSON.parse(document.getElementById("root").dataset.piBootstrap).chordUrl)',
 	);
 	script = patch(
@@ -55,7 +56,9 @@ function patchScript(script: string): string {
 	return script;
 }
 
-function patch(source: string, from: string, to: string): string {
-	if (!source.includes(from)) throw new Error(`patch target not found: ${from}`);
-	return source.replaceAll(from, to);
+function patch(source: string, from: string | RegExp, to: string): string {
+	if (typeof from === "string" ? !source.includes(from) : !from.test(source))
+		throw new Error(`patch target not found: ${from}`);
+	if (typeof from !== "string") from.lastIndex = 0;
+	return typeof from === "string" ? source.replaceAll(from, to) : source.replace(from, to);
 }

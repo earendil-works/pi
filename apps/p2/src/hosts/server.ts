@@ -45,6 +45,7 @@ import {
 	Upgrades,
 	WorkerInitValues,
 } from "../runtime/server.ts";
+import { STALE_PAGE_CODE, STALE_PAGE_REASON } from "../runtime/stale-page.ts";
 import { WorkerBoundary, type WorkerInit } from "../runtime/worker.ts";
 import {
 	type BundleInput,
@@ -121,6 +122,22 @@ export type P2Server = {
 	reload(plugins: readonly string[]): Promise<RolloutResult>;
 	close(): Promise<void>;
 };
+
+/** Who a principal is, for the owner's notices: the owner's access (and device) or a guest's name and ID. */
+function principalText(principal: P2Principal): string {
+	switch (principal.kind) {
+		case "owner":
+			return principal.access === "device"
+				? `the owner's device ${principal.device}`
+				: `the owner (${principal.access})`;
+		case "guest":
+			return `guest ${principal.name} (${principal.id})`;
+		case "worker":
+			return `session ${principal.session}'s worker`;
+		default:
+			return principal.kind;
+	}
+}
 
 export async function startServer(options: ServerOptions = {}): Promise<P2Server> {
 	// As Pi Mobile: a half-set default model from the environment refuses to start (before taking any lock).
@@ -209,6 +226,14 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 			.catch(() => undefined)
 			.then(async (principal) => {
 				if (path === "/chord" && principal !== undefined) {
+					const stale = await stalePage(request);
+					if (stale) {
+						// Its link would re-hold what its code holds, types removed since included (each waiting on the
+						// worker and reported there at every start): it reloads onto the current bundle instead.
+						reportStalePage(request, principal, stale);
+						sockets.handleUpgrade(request, socket, head, (ws) => ws.close(STALE_PAGE_CODE, STALE_PAGE_REASON));
+						return;
+					}
 					upgraded.set(request, principal);
 					sockets.handleUpgrade(request, socket, head, (ws) => sockets.emit("connection", ws, request));
 				} else if (principal !== undefined) {
@@ -814,6 +839,35 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		}, BACKGROUND_CONTEXT);
 	};
 	const upgraded = new WeakMap<IncomingMessage, P2Principal>();
+	/**
+	 * A page's link from a bundle other than the current one: its `web` query names the version it runs. Links naming
+	 * none are not asked: the TUI, Cloud Brain's pages (built elsewhere: scripts/cloud-bundle.ts) and pages from before
+	 * 2026-11-12 (they reload when shown; their requests for removed types still wait, see docs/p2-notes.md).
+	 */
+	const stalePage = async (request: IncomingMessage): Promise<{ sent: string; current: string } | undefined> => {
+		const sent = new URL(request.url ?? "/", "http://localhost").searchParams.get("web");
+		if (!serveWeb || sent === null) return undefined;
+		const current = await getWebBundle().then(
+			(bundle) => bundle.version,
+			() => undefined,
+		);
+		return current !== undefined && sent !== current ? { sent, current } : undefined;
+	};
+	/** Stale pages already reported, by who and which version: each is told the owner once per server run. */
+	const staleReported = new Set<string>();
+	const reportStalePage = (
+		request: IncomingMessage,
+		principal: P2Principal,
+		{ sent, current }: { sent: string; current: string },
+	): void => {
+		const who = principalText(principal);
+		const agent = String(request.headers["user-agent"] ?? "unknown browser").slice(0, 200);
+		const text = `A page running an older p2 (web bundle ${sent}, current ${current}) tried to connect and was told to reload: ${who}, ${agent}, from ${request.socket.remoteAddress ?? "unknown address"} (WebSocket /chord).`;
+		const key = `${who}\n${agent}\n${sent}`;
+		if (staleReported.has(key)) return;
+		staleReported.add(key);
+		processLogs.notice("stale-pages", text);
+	};
 	// Mobile's limits: frames up to 1 MiB, 4 MiB unsent output (socket-limits.ts); Chord queues calls behind its window.
 	sockets.on("connection", (socket, request: IncomingMessage) => {
 		const principal = upgraded.get(request);
