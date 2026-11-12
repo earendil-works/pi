@@ -21,7 +21,7 @@ import {
 	localOwnerProof,
 	localOwnerSignIn,
 } from "../../src/runtime/local-owner.ts";
-import { clientHost, expectChord, holdIn, http, poll, startFixture, until, webBundle } from "./helpers.ts";
+import { clientHost, expectChord, holdIn, http, poll, startFixture, until, webAssets } from "./helpers.ts";
 
 const TUNNEL = { Host: "owner.test", Origin: "https://owner.test" };
 const requestWith = (cookie: string) => ({ headers: { cookie } }) as IncomingMessage;
@@ -124,7 +124,7 @@ test("Devices plugin signs in a remote owner over HTTP/WS, never grants remote o
 		const cookie = setCookie.split(";")[0]!;
 		const headers = { ...TUNNEL, Cookie: cookie };
 		assert.equal((await http(port, "/", { headers })).status, 200);
-		assert.equal((await http(port, (await webBundle(port, headers)).script, { headers })).status, 200);
+		assert.equal((await http(port, (await webAssets(port, headers)).script, { headers })).status, 200);
 		assert.equal((await http(port, "/owner-token", { headers })).status, 403);
 		const localOwner = { Cookie: fixture.owner.cookie };
 		assert.equal((await http(port, "/owner-token")).status, 403, "loopback without a credential is nobody");

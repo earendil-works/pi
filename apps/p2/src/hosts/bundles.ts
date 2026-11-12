@@ -1,8 +1,8 @@
-// Downloaded code: the TUI and the web UI are each one esbuild build of the selected plugins' facets, named by content.
-// Browser code compiles with one set of options (`browser`), shared with test component fixtures.
+// Downloaded code: the TUI is one esbuild build of the selected plugins' facets, named by content (the web is Chord's
+// web surface, server.ts). Test component fixtures compile as browser scripts (`buildBrowserScript`).
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
+import { dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type BuildOptions, build, type Loader, type Plugin } from "esbuild";
 import { type FacetKind, listRoots } from "./plugins.ts";
@@ -129,7 +129,7 @@ export async function buildTuiBundle(
 	};
 }
 
-/** Options of all browser code: the web bundle and anything compiled like it (test component fixtures). */
+/** Options of browser code compiled here: test component fixtures. */
 const browser = {
 	...common,
 	platform: "browser",
@@ -149,10 +149,7 @@ const assetUrls: Plugin = {
 	},
 };
 
-/**
- * One browser script (an IIFE) from `entry`, compiled exactly like the web bundle. Tests use it to run component
- * fixtures (`test/fixtures/`) in an open page.
- */
+/** One browser script (an IIFE) from `entry`. Tests use it to run component fixtures (`test/fixtures/`) in an open page. */
 export async function buildBrowserScript(entry: string): Promise<string> {
 	const result = await build({
 		...browser,
@@ -165,99 +162,3 @@ export async function buildBrowserScript(entry: string): Promise<string> {
 	if (!script) throw new Error(`${entry} compiled to no script`);
 	return script.text;
 }
-
-/** Where the page loads the web bundle's files from. */
-export const WEB_BUNDLE_PATH = "/__p2_web/";
-/** The largest web bundle a build may produce, source maps excluded: JavaScript, CSS and assets (the TUI's cap). */
-export const MAX_WEB_BUNDLE = 8 * 1024 * 1024;
-
-export type WebManifest = { readonly version: string; readonly script: string; readonly style: string | null };
-export type WebFile = { readonly body: Uint8Array; readonly type: string };
-export type WebBundle = {
-	/** Hash over the names of all files, which carry their own content hashes. */
-	readonly version: string;
-	/** By file name (`app-<hash>.js`), served under WEB_BUNDLE_PATH. */
-	readonly files: ReadonlyMap<string, WebFile>;
-	/** The entry script and its stylesheet, as file names. */
-	readonly script: string;
-	readonly style: string | undefined;
-	readonly inputs: readonly BundleInput[];
-};
-
-const TYPES: Readonly<Record<string, string>> = {
-	".js": "text/javascript; charset=utf-8",
-	".css": "text/css; charset=utf-8",
-	".map": "application/json",
-	".wasm": "application/wasm",
-	".woff2": "font/woff2",
-};
-
-/**
- * The browser host plus the web facets of the selected plugins. Every output file is named by its content, so a page
- * can cache it forever, and an unchanged build has the same names (and version) on any machine.
- */
-export async function buildWebBundle(
-	plugins: readonly string[],
-	directory: PluginRoots = pluginsDirectory,
-): Promise<WebBundle> {
-	const entries = facetFiles("web", plugins, directory);
-	const captured = captureBundleInputs();
-	// Imports relative to the app root: the entry's text reaches the source map, whose content names the files, so an
-	// absolute path would give every checkout location its own names.
-	const specifier = (file: string) => JSON.stringify(`./${relative(root, file).split(sep).join("/")}`);
-	const entry = [
-		`import { startWeb } from ${specifier(join(root, "src/hosts/web/main.tsx"))};`,
-		...entries.map(([, file], index) => `import facet${index} from ${specifier(file)};`),
-		`startWeb([${entries.map(([name], index) => `[${JSON.stringify(name)}, facet${index}]`).join(",")}]);`,
-	].join("\n");
-	const result = await build({
-		...browser,
-		entryPoints: { app: "p2-web-entry" },
-		outdir: join(root, ".p2-web"),
-		entryNames: "[name]-[hash]",
-		assetNames: "[name]-[hash]",
-		publicPath: WEB_BUNDLE_PATH,
-		plugins: [
-			{
-				name: "p2-web-entry",
-				setup(builder) {
-					builder.onResolve({ filter: /^p2-web-entry$/ }, () => ({ path: "p2-web-entry", namespace: "p2-web" }));
-					builder.onLoad({ filter: /.*/, namespace: "p2-web" }, () => ({
-						contents: entry,
-						resolveDir: root,
-						loader: "ts",
-					}));
-				},
-			},
-			assetUrls,
-			captured.plugin,
-		],
-		sourcemap: "linked",
-	});
-	const files = new Map<string, WebFile>();
-	for (const output of result.outputFiles) {
-		const name = basename(output.path);
-		files.set(name, { body: output.contents, type: TYPES[extname(name)] ?? "application/octet-stream" });
-	}
-	const script = [...files.keys()].find((name) => name.startsWith("app-") && name.endsWith(".js"));
-	if (!script) throw new Error("The web bundle has no entry script");
-	let size = 0;
-	for (const [name, file] of files) if (!name.endsWith(".map")) size += file.body.byteLength;
-	if (size > MAX_WEB_BUNDLE) throw new Error("Web bundle exceeds 8 MiB");
-	return {
-		version: createHash("sha256")
-			.update([...files.keys()].sort().join("\n"))
-			.digest("hex"),
-		files,
-		script,
-		style: [...files.keys()].find((name) => name.startsWith("app-") && name.endsWith(".css")),
-		inputs: captured.inputs(),
-	};
-}
-
-/** The web bundle manifest pages poll: its version and its files' addresses. */
-export const webManifest = (bundle: WebBundle): WebManifest => ({
-	version: bundle.version,
-	script: `${WEB_BUNDLE_PATH}${bundle.script}`,
-	style: bundle.style === undefined ? null : `${WEB_BUNDLE_PATH}${bundle.style}`,
-});

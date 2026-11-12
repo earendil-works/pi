@@ -4,7 +4,7 @@
 // apply, arrows move and Escape closes, ahead of send and stop. Keys during IME composition are ignored and the popover
 // never opens mid-composition. `@pi` (chat mode's agent mention) is never completed as a file; in chat mode a
 // synthetic "@pi — mention Pi" item comes first.
-import { BACKGROUND_CONTEXT } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { type KeyboardEvent, type RefObject, useEffect, useRef, useState } from "react";
 import {
 	applyFileCompletion,

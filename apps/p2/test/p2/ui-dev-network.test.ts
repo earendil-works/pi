@@ -205,10 +205,10 @@ describe("clients through a public-origin proxy", { skip: !browserTests }, () =>
 		await browser.wait(
 			`document.querySelector('nav[aria-label="Shared session"]') && !document.querySelector('.offline')`,
 		);
-		// Let the version poll and any late request happen inside the observed window.
+		// Let any late request happen inside the observed window.
 		await new Promise((resolve) => setTimeout(resolve, 1500));
 		assertPublicOnly(requests, websockets);
-		assert(requests.some((url) => new URL(url).pathname.startsWith("/__p2_web/app-")));
+		assert(requests.some((url) => new URL(url).pathname.startsWith("/_chord/web/base.")));
 		assert.equal(await browser.evaluate<string>('getComputedStyle(document.querySelector(".app")).display'), "flex");
 	});
 	it("a signed-out visitor gets only the sign-in page, never the app or a connection", async () => {
@@ -217,7 +217,7 @@ describe("clients through a public-origin proxy", { skip: !browserTests }, () =>
 		await browser.wait('document.querySelector("#sign-in #token")');
 		assertPublicOnly(requests, websockets);
 		assert.equal(websockets.length, 0);
-		assert(!requests.some((url) => new URL(url).pathname.startsWith("/__p2_web/")));
+		assert(!requests.some((url) => new URL(url).pathname.startsWith("/_chord/web/")));
 	});
 	it("a proxied owner loads the app with same-origin requests only, Providers included", async () => {
 		const { browser, requests, websockets } = await startBrowser(ownerCookie);

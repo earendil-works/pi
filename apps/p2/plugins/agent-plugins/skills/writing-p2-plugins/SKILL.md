@@ -56,6 +56,11 @@ a file of its own plugin.
   The pane gets `PaneProps` (`session`, `item` (the view's item: what it shows, e.g. a board's ID), `inline` (true
   in the transcript, false beside it), `view` (beside the transcript), `editable`, `select`, `annotations`) and holds
   objects with `useObject(Contract, params)`, `liveIn(ref, variant)`, `useReadable(member)`.
+- **One script per plugin:** each plugin's web facet is built into a script of its own, and a file it imports from
+  another plugin is copied into it. Never share module state (a `Map`, a `let`, a store, a React context) through such
+  a file: the other plugin's copy is another instance. Use a registry the owning plugin serves, or
+  `sharedContext(name, initial)` from `@p2/app/v1/web` for a React context. A plugin's web change applies in open pages
+  in place (no reload).
 - **Listable items** (`web.tsx`, optional): a plugin keeping several items per session (boards, games) contributes
   an artifact kind, `self.contribute(ArtifactKinds, { <kind>: { title, icon, useItems, useCount, view, useRemove? } })`
   (`ArtifactKinds` from `@p2/app/v1/web`): the artifacts button counts them, its sheet lists them, and a row opens

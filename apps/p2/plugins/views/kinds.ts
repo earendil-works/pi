@@ -1,16 +1,9 @@
 // The web's view kinds (the registry itself is the API's, `src/web/view-kinds.ts`, so any plugin's web facet can add
 // a kind), and what the annotation layer asks of panes that are frames of their own.
 
-export { type PaneProps, ViewKinds } from "@p2/app/v1/web";
+import type { FrameHandle } from "./contract.web.ts";
 
-/**
- * What the annotation layer asks a pane that is a frame of its own (an html artifact): the text the person selected in it,
- * and what lies in a rectangle of it (frame pixels). Panes in the page itself need none: the layer reads the page.
- */
-export type FrameHandle = {
-	readonly selection: () => string;
-	readonly describe: (rect: { x: number; y: number; width: number; height: number }) => Promise<string>;
-};
+export { type PaneProps, ViewKinds } from "@p2/app/v1/web";
 
 /** The frame handles of the panes on screen, by view ID. */
 export const frameHandles = new Map<string, FrameHandle>();

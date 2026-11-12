@@ -20,9 +20,7 @@ import {
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { NativeWatchable, Watchable } from "@earendil-works/chord/watch";
 import { WebSocket as NodeWebSocket } from "ws";
-import type { WebManifest } from "../../src/hosts/bundles.ts";
 import { type P2Server, type ServerOptions, startServer } from "../../src/hosts/server.ts";
-import { WEB_MANIFEST_PATH } from "../../src/hosts/web.ts";
 import {
 	type Ctx,
 	createHost,
@@ -591,9 +589,23 @@ export function http(port: number, path: string, options: HttpOptions = {}): Pro
 	});
 }
 
-/** The server's current web bundle manifest, as `headers` (a cookie or tunnel Host) may read it. */
-export async function webBundle(port: number, headers: Record<string, string> = {}): Promise<WebManifest> {
-	const response = await http(port, WEB_MANIFEST_PATH, { headers });
+/** What the app page loads now (the web surface's): its base hash, base script, combined plugins file, stylesheets. */
+export type WebAssets = {
+	readonly base: string;
+	readonly script: string;
+	readonly plugins: string;
+	readonly styles: readonly string[];
+};
+
+/** What the app page at `/` loads now, as `headers` (a cookie or tunnel Host) may read it. */
+export async function webAssets(port: number, headers: Record<string, string> = {}): Promise<WebAssets> {
+	const response = await http(port, "/", { headers });
 	assert.equal(response.status, 200, response.body);
-	return JSON.parse(response.body) as WebManifest;
+	const base = /data-web-version="([0-9a-f]+)"/.exec(response.body)?.[1];
+	const scripts = [...response.body.matchAll(/<script defer src="([^"]+)"/g)].map(([, src]) => src!);
+	const styles = [...response.body.matchAll(/<link rel="stylesheet" href="([^"]+)"/g)].map(([, href]) => href!);
+	const plugins = scripts.find((src) => src.includes("/plugins."));
+	const script = scripts.find((src) => src.includes("/base."));
+	assert(base && plugins && script, response.body);
+	return { base, script, plugins, styles };
 }

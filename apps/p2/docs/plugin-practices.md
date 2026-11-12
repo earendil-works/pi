@@ -134,6 +134,13 @@ page. One assistant message re-sent all sessions to every client.
 If the logic exists (the first user message as a title is search's), import it from where it lives, or move it to a
 shared module both import. A second copy drifts.
 
+A plugin's web script must not share module state with another plugin's files. Each plugin's web facet is built into
+a script of its own, and a file it imports from another plugin is copied into it: a `Map`, a `let`, a store or a React
+context in that file is a second instance there, which the other plugin never sees. Reach another plugin's page state
+through a registry it serves (the views plugin's `ViewsPages`, `plugins/views/contract.web.ts`), and share a React
+context with `sharedContext(name, initial)` from `@p2/app/v1/web` (one per name, kept by the page's core). Pure
+functions, types and components without state may be imported as before.
+
 ## 10. Comments are claims: check them
 
 A comment that says "the catalog ignores an unchanged report" when the code rewrites the row and re-pushes the list

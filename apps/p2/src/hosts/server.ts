@@ -6,11 +6,12 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { homedir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { isChordError, type PluginFacet, webSocketLink } from "@earendil-works/chord";
+import { isChordError, localeChoiceFacet, type PluginFacet, webSocketLink } from "@earendil-works/chord";
 import { filesFacet } from "@earendil-works/chord/app/files";
 import { nodeCompression } from "@earendil-works/chord/compression";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { RolloutResult } from "@earendil-works/chord/plugins";
+import { webSurface } from "@earendil-works/chord/surfaces";
 import { WebSocketServer } from "ws";
 import { backupConfigured } from "../runtime/backup.ts";
 import { type Ctx, createHost, type Host, type HostError, hostErrorText, Server } from "../runtime/chord.ts";
@@ -47,14 +48,7 @@ import {
 } from "../runtime/server.ts";
 import { STALE_PAGE_CODE, STALE_PAGE_REASON } from "../runtime/stale-page.ts";
 import { WorkerBoundary, type WorkerInit } from "../runtime/worker.ts";
-import {
-	type BundleInput,
-	buildTuiBundle,
-	buildWebBundle,
-	type TuiBundle,
-	tuiManifest,
-	type WebBundle,
-} from "./bundles.ts";
+import { type BundleInput, buildTuiBundle, type TuiBundle, tuiManifest } from "./bundles.ts";
 import { devControl } from "./dev.ts";
 import { readDevCommand, sendDevCommand, serveDevChannel } from "./dev-channel.ts";
 import { LoadedModules, loadedModuleHashes, loadedPluginFiles } from "./dev-modules.ts";
@@ -109,9 +103,6 @@ export type ServerOptions = {
 	readonly facets?: readonly PluginFacet<P2Principal>[];
 };
 
-/** Old content-named files remain briefly so HTML returned just before a reload can finish loading. */
-const WEB_BUNDLE_GRACE_MS = 60_000;
-
 export type P2Server = {
 	readonly host: Host;
 	readonly port: number;
@@ -122,6 +113,9 @@ export type P2Server = {
 	reload(plugins: readonly string[]): Promise<RolloutResult>;
 	close(): Promise<void>;
 };
+
+/** The pages' start code: the web surface's base bundle entry (it calls `startP2Page`). */
+const WEB_ENTRY = fileURLToPath(new URL("./web/entry.ts", import.meta.url));
 
 /** Who a principal is, for the owner's notices: the owner's access (and device) or a guest's name and ID. */
 function principalText(principal: P2Principal): string {
@@ -208,6 +202,14 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		userRoot,
 	);
 	const { plugins: chordPlugins } = p2Plugins;
+	const serveWeb = options.web ?? true;
+	/**
+	 * The pages' code (Chord's web surface): the base bundle built from src/hosts/web/entry.ts after the listen, the
+	 * plugins' web facets as scripts that apply in place; served by `web.ts` with p2's own access rules (no routes).
+	 */
+	const surface = serveWeb
+		? webSurface(host, { plugins: chordPlugins, entry: WEB_ENTRY, conditions: ["source"], routes: false })
+		: undefined;
 	// Listen first so plugins see the actual port, but capture requests/upgrades BEFORE listening.
 	// A reconnect can arrive while plugins load: without an upgrade listener Node treats it as
 	// a normal HTTP request, loses it, and leaves the browser waiting forever for its handshake.
@@ -299,7 +301,6 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 	);
 	// Capture before plugin resources open (e.g. provider SDK startup), not only after the logs facet activates.
 	const stopLogs = captureProcessLogs("server");
-	const serveWeb = options.web ?? true;
 	/** Source files of the last built bundles, by bundle (dev watcher: which plugin saves affect downloaded code). */
 	const bundleInputs = new Map<"tui" | "web", readonly string[]>();
 	/**
@@ -324,8 +325,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 	};
 	/** Records a built bundle only once it is current (after a successful reload commit). */
 	const adoptTui = (bundle: TuiBundle): void => recordInputs("tui", bundle.inputs);
-	const adoptWeb = (bundle: WebBundle): void => recordInputs("web", bundle.inputs);
-	// Both bundles build once, on first use, and again only when a plugin reload commits. A late lazy build may not
+	// The TUI bundle builds once, on first use, and again only when a plugin reload commits. A late lazy build may not
 	// overwrite the input baseline installed by a newer reload.
 	let tuiBundle: Promise<TuiBundle> | undefined;
 	const getTuiBundle = (): Promise<TuiBundle> => {
@@ -344,31 +344,6 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		tuiBundle = current;
 		return current;
 	};
-	let webBundle: Promise<WebBundle> | undefined;
-	const retainedWebBundles: { readonly bundle: Promise<WebBundle>; readonly expires: number }[] = [];
-	const getWebBundle = (): Promise<WebBundle> => {
-		if (webBundle) return webBundle;
-		let current!: Promise<WebBundle>;
-		current = buildWebBundle(plugins, roots).then(
-			(bundle) => {
-				if (webBundle === current) adoptWeb(bundle);
-				return bundle;
-			},
-			(error: unknown) => {
-				if (webBundle === current) webBundle = undefined;
-				throw error;
-			},
-		);
-		webBundle = current;
-		return current;
-	};
-	const previousWebBundles = async (): Promise<readonly WebBundle[]> => {
-		const now = Date.now();
-		for (let index = retainedWebBundles.length - 1; index >= 0; index--)
-			if (retainedWebBundles[index]!.expires <= now) retainedWebBundles.splice(index, 1);
-		const settled = await Promise.allSettled(retainedWebBundles.map(({ bundle }) => bundle));
-		return settled.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
-	};
 	const stopDevEvents = dev
 		? workers.subscribe(({ session, running, generation, pid }) =>
 				process.send?.({
@@ -382,7 +357,10 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		: undefined;
 	/** Script nonce of the page CSP (one per server, written into the page's inline scripts). */
 	const nonce = randomUUID();
-	const web = serveWeb ? createWeb({ nonce, bundle: getWebBundle, previousBundles: previousWebBundles }) : undefined;
+	const web =
+		surface === undefined
+			? undefined
+			: createWeb({ nonce, surface, root: (fn) => host.root(fn, BACKGROUND_CONTEXT) });
 	try {
 		await chordPlugins.load(
 			host,
@@ -402,6 +380,13 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 					{ name: "@p2/tui-preferences", facet: tuiPreferencesFacet(dataDir) },
 					// The server's files (the kit's `Files`): `<data>/server/files/`.
 					{ name: "chord.app.files", facet: filesFacet(hostFiles(serverDirectory(dataDir))) },
+					// The pages' code, and the user's locale pick that a page's language follows (Chord's page holds it).
+					...(surface === undefined
+						? []
+						: [
+								{ name: "chord.web", facet: surface.facet },
+								{ name: "chord.locale.choice", facet: localeChoiceFacet<P2Principal>() },
+							]),
 					...(options.facets ?? []),
 				],
 				modules: SERVER_PACKAGES,
@@ -422,9 +407,9 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 
 	let reloading = false;
 	/**
-	 * Builds `requested` (and plugins added since), then the TUI and web bundles of the new selection, then rolls the
-	 * build out to the server and every running worker and adopts the bundles. Stops before the rollout at the first
-	 * failed build (a facet's, or a bundle's): nothing changes then.
+	 * Builds `requested` (and plugins added since), web facets included, then the TUI bundle of the new selection, then
+	 * rolls the build out to the server, every running worker and the pages (the web surface), and adopts the TUI bundle.
+	 * Stops before the rollout at the first failed build (a facet's, or the TUI bundle's): nothing changes then.
 	 */
 	const rebuild = async (requested: readonly string[]): Promise<Rebuilt> => {
 		const built = await chordPlugins.build(requested, BACKGROUND_CONTEXT);
@@ -434,31 +419,26 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		if (failed.length) return { kind: "failed", failed };
 		const next = currentSelection();
 		processLogs.append("server", "event", `Reloading plugins: ${requested.join(", ")}`);
-		// Prepare downloaded code before the backend commit; publish only a successfully committed selection.
+		// Prepare the TUI's downloaded code before the backend commit; publish only a successfully committed selection.
+		// Web facets are among `built`: the web surface's step publishes them to pages after the server and workers.
 		let nextTuiBundle: TuiBundle;
-		let nextWebBundle: WebBundle | undefined;
 		try {
 			nextTuiBundle = await buildTuiBundle(next, options.tuiDirectory ?? roots);
-			nextWebBundle = serveWeb ? await buildWebBundle(next, roots) : undefined;
 		} catch (error) {
 			return { kind: "failed", failed: bundleFailures(error, roots) };
 		}
 		const result = await chordPlugins.rollout(
-			[chordPlugins.step("server", host), workers.workers.step("workers")],
+			[
+				chordPlugins.step("server", host),
+				workers.workers.step("workers"),
+				...(surface === undefined ? [] : [surface.step("web")]),
+			],
 			built,
 			BACKGROUND_CONTEXT,
 		);
 		plugins = next;
 		tuiBundle = Promise.resolve(nextTuiBundle);
 		adoptTui(nextTuiBundle);
-		if (nextWebBundle) {
-			if (webBundle) {
-				retainedWebBundles.unshift({ bundle: webBundle, expires: Date.now() + WEB_BUNDLE_GRACE_MS });
-				retainedWebBundles.splice(2);
-			}
-			webBundle = Promise.resolve(nextWebBundle);
-			adoptWeb(nextWebBundle);
-		}
 		const changed = [...new Set(built.facets.map((facet) => facet.plugin))].sort();
 		for (const notice of processLogs.notices())
 			if (notice.source === "server" && notice.message.startsWith("Reload refused:"))
@@ -467,8 +447,8 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		return { kind: "rolled", built, result, changed };
 	};
 	/**
-	 * Builds `requested` (and plugins added since), then rolls them out to the server and every running worker; the TUI
-	 * and web bundles are rebuilt first (a failed build keeps the old code and bundles). A plugin whose build or
+	 * Builds `requested` (and plugins added since), then rolls them out to the server, every running worker and the
+	 * pages; the TUI bundle is rebuilt first (a failed build keeps the old code and bundles). A plugin whose build or
 	 * evaluation fails keeps its old code (an added one stays out), reported in the result.
 	 */
 	const performReload = async (
@@ -846,11 +826,8 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 	 */
 	const stalePage = async (request: IncomingMessage): Promise<{ sent: string; current: string } | undefined> => {
 		const sent = new URL(request.url ?? "/", "http://localhost").searchParams.get("web");
-		if (!serveWeb || sent === null) return undefined;
-		const current = await getWebBundle().then(
-			(bundle) => bundle.version,
-			() => undefined,
-		);
+		if (surface === undefined || sent === null) return undefined;
+		const current = await surface.base();
 		return current !== undefined && sent !== current ? { sent, current } : undefined;
 	};
 	/** Stale pages already reported, by who and which version: each is told the owner once per server run. */
@@ -889,18 +866,21 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 					process.send?.({ type: "dev-worker", sessionId: session, running: false });
 				});
 	}
-	// Build the web UI in the background, so the first page load rarely waits for it. A superseded lazy build neither
-	// changes the current baseline nor reports a stale failure after a newer reload committed.
-	if (serveWeb) {
-		const startupWebBundle = getWebBundle();
-		void startupWebBundle.catch((error: unknown) => {
-			if (webBundle === undefined || webBundle === startupWebBundle)
-				processLogs.notice(
-					"server",
-					`Web UI build failed: ${error instanceof Error ? error.message : String(error)}`,
-				);
-		});
-	}
+	// Build the pages' base bundle in the background, so the first page load rarely waits for it; its files are the
+	// web's base code (a save of one asks for a restart in dev mode).
+	void surface?.build().then((built) => {
+		if (built.kind === "built")
+			recordInputs(
+				"web",
+				// Packages change by an install, which restarts anyway (the old bundle recorded none either).
+				[...built.inputs].flatMap(([file, hash]) => (file.includes("/node_modules/") ? [] : [{ file, hash }])),
+			);
+		else
+			processLogs.notice(
+				"server",
+				`Web UI build failed: ${built.error instanceof Error ? built.error.message : String(built.error)}`,
+			);
+	});
 	markLoaded();
 	if (supervised) process.send?.({ type: "dev-ready" });
 	let closing: Promise<void> | undefined;

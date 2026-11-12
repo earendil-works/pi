@@ -43,6 +43,7 @@ export * from "../../web/SessionStats.tsx";
 export * from "../../web/SettingsNav.tsx";
 export * from "../../web/SidePanel.tsx";
 export * from "../../web/Switch.tsx";
+export * from "../../web/shared-context.ts";
 export * from "../../web/sidebar.ts";
 export * from "../../web/ThemeButton.tsx";
 export { setTheme, type ThemePreference } from "../../web/theme.ts";

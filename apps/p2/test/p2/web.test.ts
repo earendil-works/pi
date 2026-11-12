@@ -1,10 +1,11 @@
-// The server serves the web UI (one content-named esbuild bundle) and the chord2 WebSocket to the local owner only.
+// The server serves the web UI (Chord's web surface: the base bundle, the plugins' scripts, all named by content) and
+// the chord2 WebSocket to the local owner only.
 import assert from "node:assert/strict";
 import { createServer, type IncomingHttpHeaders, request } from "node:http";
 import { after, before, describe, it } from "node:test";
 import { WebSocket as NodeWebSocket } from "ws";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, startFixture, webBundle } from "./helpers.ts";
+import { type Fixture, startFixture, webAssets } from "./helpers.ts";
 
 function get(
 	port: number,
@@ -36,21 +37,26 @@ describe("web host", () => {
 	/** The local owner's cookie (its browser's), with `headers`. */
 	const owner = (headers: Record<string, string> = {}) => ({ Cookie: fixture.owner.cookie, ...headers });
 
-	it("serves the app page naming the current bundle, whose files never change", async () => {
+	it("serves the app page naming the current base bundle and plugins, whose files never change", async () => {
 		const port = fixture.server.port;
-		const bundle = await webBundle(port, owner());
-		assert.equal((await get(port, "/__p2_web", owner())).headers["cache-control"], "no-store");
+		const assets = await webAssets(port, owner());
+		const base = await get(port, "/_chord/web/base", {});
+		assert.equal(base.status, 200, "an outdated page asks it, signed in or not");
+		assert.equal(base.headers["cache-control"], "no-store");
+		assert.equal(JSON.parse(base.body), assets.base);
 		for (const path of ["/", "/s/0b9f3a52-6a39-4d43-9d55-1a0f4ea4f1a2"]) {
 			const page = await get(port, path, owner());
 			assert.equal(page.status, 200);
-			assert(page.body.includes(`data-web-version="${bundle.version}"`), page.body);
-			assert(page.body.includes(`<script type="module" src="${bundle.script}"></script>`), page.body);
-			assert(page.body.includes(`<link rel="stylesheet" href="${bundle.style}" />`), page.body);
+			assert(page.body.includes(`data-web-version="${assets.base}"`), page.body);
+			assert(page.body.includes(`<script defer src="${assets.script}"></script>`), page.body);
+			assert(page.body.includes(`<script defer src="${assets.plugins}"></script>`), page.body);
 		}
-		const script = await get(port, bundle.script, owner());
-		assert.equal(script.status, 200);
-		assert.match(String(script.headers["content-type"]), /^text\/javascript/);
-		assert.equal(script.headers["cache-control"], "private, max-age=31536000, immutable");
+		for (const file of [assets.script, assets.plugins]) {
+			const script = await get(port, file, owner());
+			assert.equal(script.status, 200);
+			assert.match(String(script.headers["content-type"]), /^text\/javascript/);
+			assert.equal(script.headers["cache-control"], "private, max-age=31536000, immutable");
+		}
 	});
 
 	it("sends a CSP refusing every framer, and the loopback owner only to its own origin's requests", async () => {
@@ -72,7 +78,7 @@ describe("web host", () => {
 			{ "Sec-Fetch-Site": "same-site", "Sec-Fetch-Dest": "iframe" },
 			{ "Sec-Fetch-Site": "same-site", "Sec-Fetch-Dest": "empty" },
 		]) {
-			for (const path of ["/", (await webBundle(port, owner())).script, "/__p2_web", "/__p2_tui", "/__p2_dev"]) {
+			for (const path of ["/", (await webAssets(port, owner())).script, "/__p2_tui", "/__p2_dev"]) {
 				const response = await get(port, path, owner(headers));
 				assert.ok(response.status === 401 || response.status === 403, `${path} ${JSON.stringify(headers)}`);
 				assert.match(String(response.headers["content-security-policy"]), /frame-ancestors 'none'$/);
@@ -91,7 +97,7 @@ describe("web host", () => {
 				await get(
 					port,
 					(
-						await webBundle(port, owner())
+						await webAssets(port, owner())
 					).script,
 					owner({ "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Dest": "script" }),
 				)
@@ -121,7 +127,7 @@ describe("web host", () => {
 		assert.equal(worker.status, 200);
 		assert.equal(worker.headers["cache-control"], "no-cache");
 		// Nothing else without signing in.
-		for (const path of ["/", "/__p2_web", "/icons/other.png", "/manifest.webmanifest/x", "/__proto__"])
+		for (const path of ["/", "/_chord/web/plugins.0.js", "/icons/other.png", "/manifest.webmanifest/x", "/__proto__"])
 			assert.notEqual((await get(port, path, remote)).status, 200, path);
 		// Another site's page may not load them: an icon that loads would tell it a p2 runs at that address.
 		for (const headers of [

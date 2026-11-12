@@ -56,7 +56,7 @@ describe("the app without its server", { skip: !browserTests }, () => {
 		await browser.wait(`(async () => {
 			const shell = await (await caches.open('p2-app-shell')).match('/');
 			if (!shell) return false;
-			const script = /src="(\\/__p2_web\\/[^"]+)"/.exec(await shell.text())?.[1];
+			const script = /src="(\\/_chord\\/web\\/base\\.[^"]+)"/.exec(await shell.text())?.[1];
 			return Boolean(script && (await caches.match(script)));
 		})()`);
 		await new Promise((resolve) => setTimeout(resolve, 1_500));

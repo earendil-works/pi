@@ -14,7 +14,7 @@ import { SessionStatus } from "../../plugins/status/contract.ts";
 import type { Host } from "../../src/runtime/chord.ts";
 import type { DevCommand, DevStatus } from "../../src/runtime/dev-protocol.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { clientHost, holdIn, http, type LocalOwner, localOwner, poll, until, webBundle } from "./helpers.ts";
+import { clientHost, holdIn, http, type LocalOwner, localOwner, poll, until, webAssets } from "./helpers.ts";
 
 /** Local owner sessions of a dev server by port (each restart listens on a new one), signed in on first use. */
 function localOwners(dataDir: string): (port: number) => Promise<LocalOwner> {
@@ -303,8 +303,8 @@ test(
 			assert.deepEqual((await devState()).dirty, []);
 			assert.equal(await workerProbe.label(BACKGROUND_CONTEXT), "after-refusal");
 			assert.equal(await serverProbe.label(BACKGROUND_CONTEXT), "after-refusal");
-			// A broken web facet refuses the whole reload too: no backend change commits and the old bundle stays served.
-			const servedBundle = await webBundle(port, await local(port));
+			// A broken web facet refuses the whole reload too: no backend change commits and the pages' code stays.
+			const servedAssets = await webAssets(port, await local(port));
 			await writeFile(join(probeDirectory, "nested/label.ts"), 'export const label = "after-web-refusal";');
 			await writeFile(join(probeDirectory, "web.tsx"), `${webFacet}\nthis is broken TypeScript !!!`);
 			await poll(async () => (await devState()).dirty.includes("dev-probe"));
@@ -313,8 +313,8 @@ test(
 			assert.match(webRefusal.output, /Reload refused/);
 			assert.equal(await serverProbe.label(BACKGROUND_CONTEXT), "after-refusal");
 			assert.equal(await workerProbe.label(BACKGROUND_CONTEXT), "after-refusal");
-			assert.deepEqual(await webBundle(port, await local(port)), servedBundle);
-			assert.equal((await http(port, servedBundle.script, { headers: await local(port) })).status, 200);
+			assert.deepEqual(await webAssets(port, await local(port)), servedAssets);
+			assert.equal((await http(port, servedAssets.plugins, { headers: await local(port) })).status, 200);
 			await writeFile(join(probeDirectory, "nested/label.ts"), 'export const label = "after-refusal";');
 			await writeFile(join(probeDirectory, "web.tsx"), webFacet);
 			assert.equal((await cli(["dev-probe"])).code, 0);
@@ -337,7 +337,7 @@ test(
 			assert.equal(associated.status, 200);
 			const cookie = String(associated.headers["set-cookie"]).split(";")[0]!;
 			const headers = { Host: "dev.p2.test", "X-P2-Proxy-Secret": "1", Cookie: cookie };
-			const original = (await webBundle(port, headers)).script;
+			const original = (await webAssets(port, headers)).plugins;
 			assert.equal((await http(port, "/__p2_dev", { headers: { Host: "dev.p2.test" } })).status, 403);
 			assert.equal(
 				(
@@ -368,8 +368,8 @@ test(
 			await poll(async () => (await devState()).restartFiles.includes("src/web/style.css"));
 			await writeFile(style, styleContent);
 			await poll(async () => !(await devState()).restartNeeded);
-			// A plugin's web edit marks it dirty; its reload makes a new bundle current, retains old files for in-flight
-			// pages, and an open page polls the manifest and reloads onto the new one.
+			// A plugin's web edit marks it dirty; its reload publishes the plugin's new script (the old files stay served
+			// for pages loading them), and an open page applies it in place: no reload.
 			if (browserTests) {
 				page = await Browser.start();
 				await page.signIn(await ownerOf(port));
@@ -379,28 +379,24 @@ test(
 			}
 			await appendFile(join(probeDirectory, "web.tsx"), "\nconsole.log('web edit');\n");
 			await poll(async () => (await devState()).dirty.includes("dev-probe"));
-			assert.equal((await webBundle(port, headers)).script, original, "Saving does not rebuild");
+			assert.equal((await webAssets(port, headers)).plugins, original, "Saving does not rebuild");
 			assert.equal((await button({ action: "reload" })).status, 200);
-			const updated = (await webBundle(port, headers)).script;
-			assert.notEqual(updated, original);
+			const updated = await webAssets(port, headers);
+			assert.notEqual(updated.plugins, original);
 			assert.equal((await http(port, original, { headers })).status, 200);
 			await page?.wait(
-				`window.beforeReload === undefined && document.querySelector('script[type=module]')?.getAttribute('src') === ${JSON.stringify(updated)}`,
+				`performance.getEntriesByType('resource').some((entry) => entry.name.includes('/_chord/web/plugin/dev-probe.')) && window.beforeReload === true`,
 			);
 
-			// CSS is a separate output: its edit keeps the script name but changes the complete manifest version, which
-			// must still reload an open page.
-			const beforeCss = await webBundle(port, headers);
-			await page?.evaluate(`window.beforeCssReload = true`);
+			// CSS is the plugin's own stylesheet: its edit applies in the open page too, without a reload, the base kept.
 			await writeFile(join(probeDirectory, "style.css"), ":root { --dev-probe: 2; }");
 			await poll(async () => (await devState()).dirty.includes("dev-probe"));
 			assert.equal((await button({ action: "reload" })).status, 200);
-			const afterCss = await webBundle(port, headers);
-			assert.notEqual(afterCss.version, beforeCss.version);
-			assert.equal(afterCss.script, beforeCss.script);
-			assert.notEqual(afterCss.style, beforeCss.style);
+			const afterCss = await webAssets(port, headers);
+			assert.equal(afterCss.base, updated.base);
+			assert.notDeepEqual(afterCss.styles, updated.styles);
 			await page?.wait(
-				`window.beforeCssReload === undefined && document.documentElement.dataset.webVersion === ${JSON.stringify(afterCss.version)}`,
+				`getComputedStyle(document.documentElement).getPropertyValue('--dev-probe').trim() === '2' && window.beforeReload === true`,
 			);
 			await page?.close();
 			page = undefined;

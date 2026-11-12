@@ -19,7 +19,7 @@ import { expectVariant, type Host, type RefIn, type VariantOf } from "../../src/
 import { senderText } from "../../src/runtime/sender.ts";
 import { buildTranscript } from "../../src/web/transcript.ts";
 import { wholeView } from "../fixtures/whole-view.ts";
-import { expectChord, type Fixture, holdIn, http, poll, startFixture, until, webBundle } from "./helpers.ts";
+import { expectChord, type Fixture, holdIn, http, poll, startFixture, until, webAssets } from "./helpers.ts";
 
 const TUNNEL = { Host: "share.test", Origin: "https://share.test" };
 const live = (view: ConversationView | null | undefined): LiveState | undefined =>
@@ -163,14 +163,15 @@ describe("sharing (fake provider)", () => {
 	it("serves guests the app, never other sessions, sources or data", async () => {
 		for (const path of ["/", `/s/${session.id}`, `/s/${session.id}/c/2`])
 			assert.equal((await tunnel(path, alice.cookie)).status, 200, path);
-		// The guest can poll the same manifest as the owner and fetch the current bundle's files.
-		const bundle = await webBundle(fixture.server.port, { ...TUNNEL, Cookie: alice.cookie });
-		for (const file of [bundle.script, bundle.style ?? ""])
+		// The guest loads the same page code as the owner: the base bundle, the plugins, the stylesheets.
+		const assets = await webAssets(fixture.server.port, { ...TUNNEL, Cookie: alice.cookie });
+		for (const file of [assets.script, assets.plugins, ...assets.styles])
 			assert.equal((await tunnel(file, alice.cookie)).status, 200, file);
+		// The web surface's files are code, the same for everyone: one that does not exist is not found.
+		assert.equal((await tunnel("/_chord/web/plugin/unknown.0.js", alice.cookie)).status, 404);
 		// Everything else is refused, one guard for all: other sessions, files outside the bundle, data, traversals.
 		for (const path of [
 			`/s/${other.id}`,
-			"/__p2_web/app-UNKNOWN.js",
 			"/src/hosts/server.ts",
 			`/@fs${fixture.dataDir}/server/store.sqlite`,
 			"/src/hosts/web/%2e%2e%2fserver.ts",

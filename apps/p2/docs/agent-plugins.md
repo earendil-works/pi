@@ -27,8 +27,8 @@ built-in plugins could be changed, only by owner-started turns, and only in dev 
    - `requested`, else every dirty plugin plus every plugin of the user root (an unchanged one keeps its digest, so
      its hosts keep it as it is: an apply never depends on the watcher having seen the last write; a directory not
      discovered yet is waited for once);
-   - one `rebuild`: Chord's build, then the TUI and web bundles. Any failure stops before the rollout, so the old code
-     and bundles stay;
+   - one `rebuild`: Chord's build (web facets included), then the TUI bundle. Any failure stops before the rollout, so
+     the old code stays; the rollout ends with the web surface's step, which pages apply in place;
    - per plugin: `applied`, `removed`, `failed` (the build's esbuild errors as `<kind>: file:line:column: message`,
      or a host's load error), `refused` (unknown, or a discovery problem: an invalid `package.json`, a built-in's
      name), plus the server's and workers' errors logged since the apply began (`processLogs`);
@@ -67,7 +67,7 @@ built-in plugins could be changed, only by owner-started turns, and only in dev 
 ## Tests
 
 `test/p2/agent-plugins.test.ts`: a subagent at `local:<root>` copies the example with `bash` and applies it with
-`reload_plugins` (server object, event, presence, the code-mode tool and its namespace in the prompt, the view kind, the web bundle);
+`reload_plugins` (server object, event, presence, the code-mode tool and its namespace in the prompt, the view kind, the web script in the pages' combined file);
 an edit reloads in place; build errors with file and line, refusals (a built-in's name, an unknown plugin);
 `pluginFile` in the user root and its skills listed after the project's; a subagent given other tools cannot reload;
 a guest's turn uses `reload_plugins` and the view tools; in Chromium, an unknown kind's pane becomes the plugin's after the

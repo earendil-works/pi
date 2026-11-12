@@ -19,7 +19,7 @@ one, step by step: Chord's [tutorial](../../../packages/chord/docs/tutorial/). T
 | --- | --- | --- | --- |
 | Server | `plugins/<name>/server.ts` or `server.tsx` | Chord `nodeLoader` via `PluginRuntime.loader` (`src/hosts/plugins.ts`), alphabetical order | server host, `host.name === "server"` |
 | Worker | `plugins/<name>/worker.ts` or `worker.tsx` | same, in every session worker, from the list in its init (`src/hosts/worker.ts`) | `session:<id>` host |
-| Web | `plugins/<name>/web.ts` or `web.tsx` | `buildWebBundle` bundles selected facets; `startWeb` installs them (`src/hosts/bundles.ts`, `src/hosts/web/main.tsx`) | browser client host |
+| Web | `plugins/<name>/web.ts` or `web.tsx` | Chord's plugin build (kind `web`), served by Chord's web surface as one script per plugin (the set as one combined file); `startPage` loads them (`src/hosts/server.ts`, `src/hosts/web/main.tsx`). A web script must not share module state with another plugin's files (`plugin-practices.md`) | browser client host |
 | TUI | `plugins/<name>/tui.ts` or `tui.tsx` | `buildTuiBundle` bundles selected facets; `setupTui` installs them with the core facet (`src/hosts/bundles.ts`, `src/hosts/tui-worker-runtime.ts`) | locked-down worker on the visitor's machine |
 
 A facet is `defineFacet((host) => …)`. There is no manifest and no derived dependency list: a plugin needs what it
@@ -88,7 +88,7 @@ contracts and factories are the enforcement.
 | --- | --- | --- |
 | Server | explicit only: Reload button, `npm run reload`, `reload_plugins` (`docs/p2-notes.md` "Dev mode", docs/agent-plugins.md) | Chord cluster transaction with every running worker: compatible changes keep state and resources; registrations swap atomically; contract/state changes need versions or migrations; a `registry_conflict` or failure keeps the old code. `src/runtime`, `src/hosts` need a restart. No reload without `P2_DEV=1`. |
 | Worker | same transaction | as server; new workers spawn with the committed list. A Durable phase keeps the extension snapshot it started with (`src/runtime/durable.ts:35-41`); `ExtensionSwitches` changes apply to the next phase. |
-| Web | backend reload builds a new content-named bundle; a visible page polls `/__p2_web` every 5 seconds | Facets are installed once per page (`startWeb`, `src/hosts/web/main.tsx`); any manifest-version change reloads the page. Foregrounding checks immediately; at most two previous generations remain available for up to 60 seconds. |
+| Web | the reload's web surface step publishes the changed plugins' scripts (`WebScripts`) | An open page fetches them and applies them in place (`host.reload` in the page, each plugin's stylesheet swapped with its code): scroll and other panes stay, the reloaded plugin's components remount. Base code changes need a restart; a page reloads onto the new base. The last four sets' files stay served. |
 | TUI | backend reload builds a new bundle; the launcher polls the hash every second; `/reload` | Whole worker swap carrying bounded UI state (`docs/p2-notes.md` "TUI"). Within one worker: a `TuiCommands` change closes overlays (`src/runtime/tui.ts:461-465`); a changed `TuiSlots` value disposes and recreates that surface (`:471-485`). |
 
 ## 2. Server facets
@@ -126,7 +126,7 @@ self.register(Authenticators, {
 ```
 
 Reserved host endpoints are `/health`, `/__p2_dev`, `/__p2_tui[/<hash>.mjs]` and the `/chord` WebSocket upgrade
-(`src/hosts/server.ts`). Plugin `Routes` run before the web host, so they can shadow app pages, `/__p2_web[/…]` and
+(`src/hosts/server.ts`). Plugin `Routes` run before the web host, so they can shadow app pages, `/_chord/web/…` and
 `public/` files.
 
 ### 2.3 Dev, logs, notices

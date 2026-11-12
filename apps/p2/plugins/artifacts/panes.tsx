@@ -9,10 +9,12 @@ import {
 	useComposerState,
 	useObject,
 	useReadable,
+	useRegistry,
 	useStatus,
 } from "@p2/app/v1/web";
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { excerpt, frameHandles, noteSelection, usePaneSelection } from "../views/pane-kit.tsx";
+import { ViewsPages } from "../views/contract.web.ts";
+import { excerpt, usePaneSelection } from "../views/pane-kit.tsx";
 import { VIEW_CHANNEL } from "./bridge.ts";
 import { ArtifactPage, type EvalResult, MAX_ARTIFACT_STATE } from "./contract.ts";
 import { InlineSizeContext } from "./inline-size.ts";
@@ -165,9 +167,10 @@ export function HtmlPane({ session, item, inline, view, editable, select, annota
 	}, [live, post]);
 
 	// Beside the transcript the annotation layer asks the frame what is selected and what lies under a drawing.
+	const viewsPage = useRegistry(ViewsPages).get("views");
 	useEffect(() => {
-		if (!view) return;
-		frameHandles.set(view.id, {
+		if (!view || !viewsPage) return;
+		return viewsPage.frame(view.id, {
 			selection: () => lastSelection.current,
 			describe: (rect) =>
 				new Promise((resolve) => {
@@ -183,10 +186,7 @@ export function HtmlPane({ session, item, inline, view, editable, select, annota
 					post({ type: "describe", id: request, rect });
 				}),
 		});
-		return () => {
-			frameHandles.delete(view.id);
-		};
-	}, [view, post]);
+	}, [view, viewsPage, post]);
 
 	useEffect(() => {
 		const save = () => {
@@ -260,7 +260,7 @@ export function HtmlPane({ session, item, inline, view, editable, select, annota
 				case "text-selection": {
 					const text = typeof message.text === "string" ? message.text.slice(0, 4000) : "";
 					lastSelection.current = text;
-					noteSelection(paneKey, text);
+					viewsPage?.noteSelection(paneKey, text);
 					break;
 				}
 				case "region": {
@@ -299,7 +299,7 @@ export function HtmlPane({ session, item, inline, view, editable, select, annota
 			reported.current.timer = undefined;
 			flush();
 		};
-	}, [editable, writer, live, select, sendState, post, quotesJson, fail, paneKey, inlineSize]);
+	}, [editable, writer, live, select, sendState, post, quotesJson, fail, paneKey, inlineSize, viewsPage]);
 
 	// A new version is a new page: it says hello again.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: runs for each version of the page.

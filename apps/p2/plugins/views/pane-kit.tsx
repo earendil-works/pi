@@ -1,13 +1,10 @@
-// What panes share, in the views plugin and in other plugins' panes (an html artifact's frame): the person's text
-// selection reported as the view's selection, the frame handles the annotation layer asks a pane that is a frame of its
-// own, and the newest selection Comment and Remove mark up. Imports only this plugin's files, so other plugins' web
-// facets may import it.
+// What panes share, in the views plugin and in other plugins' panes (an html artifact's): the person's text selection
+// reported as the view's selection. Other plugins' web facets import it (copied into their scripts), so it holds no state
+// of its own: the views plugin's page state is reached through `ViewsPages` (contract.web.ts).
 import type { JsonValue } from "@p2/app/v1";
-import type { PaneProps } from "@p2/app/v1/web";
+import { type PaneProps, useRegistry } from "@p2/app/v1/web";
 import { type RefObject, useEffect, useRef } from "react";
-import { annotateMode } from "./layout-store.ts";
-
-export { type FrameHandle, frameHandles, noteSelection } from "./kinds.ts";
+import { ViewsPages } from "./contract.web.ts";
 
 /** How long a selection rests before it is reported (a drag selects many times). */
 const SELECTION_PAUSE = 600;
@@ -21,14 +18,15 @@ export function usePaneSelection(
 	describe: (quote: string, element: Element | null) => { summary: string; data: JsonValue },
 	select: PaneProps["select"],
 ): void {
-	const latest = useRef({ describe, select });
-	latest.current = { describe, select };
+	const page = useRegistry(ViewsPages).get("views");
+	const latest = useRef({ describe, select, page });
+	latest.current = { describe, select, page };
 	useEffect(() => {
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let reported = "";
 		const changed = () => {
 			const selection = getSelection();
-			if (annotateMode() !== "off" || !selection?.rangeCount || selection.isCollapsed) return;
+			if (latest.current.page?.annotating() !== false || !selection?.rangeCount || selection.isCollapsed) return;
 			const node = selection.getRangeAt(0).commonAncestorContainer;
 			const element = node instanceof Element ? node : node.parentElement;
 			if (!body.current?.contains(element)) return;

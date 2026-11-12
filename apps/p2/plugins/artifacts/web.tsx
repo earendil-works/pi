@@ -34,7 +34,7 @@ import {
 } from "@p2/app/v1/web";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Views } from "../views/contract.ts";
-import { openView } from "../views/sheet.tsx";
+import { ViewsPages } from "../views/contract.web.ts";
 import { ARTIFACT_ACTIVITIES } from "./activity.tsx";
 import { ARTIFACT_COMMANDS, ARTIFACT_PAGES, ARTIFACT_SEARCH } from "./commands.tsx";
 import { HtmlPane, MdPane } from "./panes.tsx";
@@ -175,6 +175,7 @@ function KindSection({
 	const items = kind.useItems(session);
 	const remove = kind.useRemove?.(session);
 	const views = useObject(Views, { session }, { variant: "editor" });
+	const viewsPage = useRegistry(ViewsPages).get("views");
 	const { fail } = useComposerState();
 	const count = items?.length ?? 0;
 	useEffect(() => onCount(count), [count, onCount]);
@@ -182,8 +183,9 @@ function KindSection({
 	const Icon = kind.icon;
 	const Row = kind.Row;
 	const open = (item: ArtifactItem) =>
-		views
-			? openView(views, session, { kind: kind.view, item: item.id, title: item.title.slice(0, 120) })
+		views && viewsPage
+			? viewsPage
+					.open(views, session, { kind: kind.view, item: item.id, title: item.title.slice(0, 120) })
 					.then(() => closePanel())
 					.catch(fail)
 			: showLocally(session, { kind: kind.view, id: item.id, title: item.title });

@@ -20,7 +20,7 @@ import { Views } from "../../plugins/views/contract.ts";
 import type { Host, RefIn } from "../../src/runtime/chord.ts";
 import { ServerNatives } from "../../src/runtime/server.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { APP, type Fixture, failureOf, holdIn, http, poll, startFixture, until } from "./helpers.ts";
+import { APP, type Fixture, failureOf, holdIn, http, poll, startFixture, until, webAssets } from "./helpers.ts";
 
 /** The skill's example plugin. */
 const EXAMPLE = join(APP, "plugins/agent-plugins/skills/writing-p2-plugins/example/counter");
@@ -200,8 +200,8 @@ describe("the agent's plugins", () => {
 		);
 		const views = await holdIn(owner, Views, { session }, "editor");
 		await until(views.views, (value) => value.some((view) => view.kind === "counter"));
-		const manifest = JSON.parse((await fixture.http("/__p2_web")).body) as { script: string };
-		assert.match((await fixture.http(manifest.script)).body, /counter\.web/);
+		const assets = await webAssets(fixture.server.port, { Cookie: fixture.owner.cookie });
+		assert.match((await fixture.http(assets.plugins)).body, /counter\.web/);
 	});
 
 	it("reloads an edited plugin in place: the objects held go on with the new code", async () => {

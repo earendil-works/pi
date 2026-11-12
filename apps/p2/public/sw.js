@@ -4,16 +4,19 @@
 // - the page (`/`, `/s/…`, `/list/…`; one shell for all of them): from the network first, the last one kept when the
 //   network fails or has not answered within PAGE_WAIT. Only an app page is kept (it names its bundle version), never a
 //   sign-in page or an error. A kept page with older code is replaced by the page's own version check, as always.
-// - the web bundle's files (`/__p2_web/<content hash>.…`): named by their content, so a kept file is never stale; from
-//   the cache first. The files of the newest two bundle versions are kept.
-// - everything else (the bundle manifest, the WebSocket, uploads, routes): the network, untouched.
+// - the web surface's files (`/_chord/web/…`: the base bundle, the combined plugins file, plugin scripts, stylesheets and
+//   assets): named by their content, so a kept file is never stale; from the cache first. The files of the newest two
+//   base versions are kept. Not `/_chord/web/base`, the server's current base hash, which an outdated page asks.
+// - everything else (the base hash, the WebSocket, uploads, routes): the network, untouched.
 //
 // Pi Mobile had no service worker because one would have kept stale code across Vite's hot reloads and restarts. p2
 // serves no source modules: every file it would keep is content-named, and the page is never preferred to the network.
 
 const PREFIX = "p2-app-";
 const SHELL = `${PREFIX}shell`;
-const BUNDLE = "/__p2_web/";
+const BUNDLE = "/_chord/web/";
+/** The server's current base hash: always the network's. */
+const BASE = "/_chord/web/base";
 const PAGE_WAIT = 3000;
 const VERSIONS = 2;
 
@@ -38,7 +41,7 @@ async function keepPage(response) {
 	if (!version) return;
 	await (await caches.open(SHELL)).put("/", response.clone());
 	const cache = await caches.open(bundleCache(version));
-	const files = [...html.matchAll(/(?:src|href)="(\/__p2_web\/[^"]+)"/g)].map((match) => match[1]);
+	const files = [...html.matchAll(/(?:src|href)="(\/_chord\/web\/[^"]+)"/g)].map((match) => match[1]);
 	await Promise.all(
 		files.map(async (file) => {
 			if (await cache.match(file)) return;
@@ -106,5 +109,5 @@ self.addEventListener("fetch", (event) => {
 	if (url.origin !== self.location.origin) return;
 	if (request.mode === "navigate" && request.destination === "document" && isPage(url.pathname))
 		event.respondWith(page(event));
-	else if (url.pathname.startsWith(BUNDLE)) event.respondWith(bundleFile(request));
+	else if (url.pathname.startsWith(BUNDLE) && url.pathname !== BASE) event.respondWith(bundleFile(request));
 });

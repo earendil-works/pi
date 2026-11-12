@@ -36,30 +36,35 @@ P2_FAKE=1 npm start          # http://127.0.0.1:8788, data in ~/.pi/p2
 | `PI_RADIUS_GATEWAY` | production Radius | gateway selected by `npm run radius:login` |
 | `P2_TERMINAL_DAEMON` | unset | optional local pi-env daemon binary; otherwise use packages/env release/development builds |
 
-- **Web UI:** `buildWebBundle` (`src/hosts/bundles.ts`) bundles `src/hosts/web/main.tsx` with the selected plugins'
-  web facets. Content-named JS, CSS, assets and source maps are served from memory under `/__p2_web/`; `GET
-  /__p2_web` returns the no-store `{ version, script, style }` manifest, and `src/hosts/web.ts` renders the page.
-  Builds are deterministic across checkout locations and capped at 8 MiB excluding source maps. Startup builds in
-  the background; failures produce an owner notice and page loads return 500 until a build succeeds. Plugin reload
-  builds the web and TUI candidates before committing the backend, so a failed build preserves the old code and
-  bundles. A custom esbuild loader records the exact app-source bytes it supplies for dev
-  change tracking. Pages poll every 5 seconds, hidden ones too (browsers slow their timers down), and reload on any
-  manifest-version change; foregrounding checks immediately. A page's link names its bundle (`/chord?web=<version>`):
-  the server refuses one naming another version at once (close code 4001, `src/runtime/stale-page.ts`), the page
-  reloads (a second such reload within 15 s waits, so a kept older page from the service worker cannot loop), and the
-  owner gets a notice (source `stale-pages`) naming who it was: the owner's access or device, or the guest, the
-  browser and its address. Links naming no version are not asked: the TUI, Cloud Brain's pages and pages from before
-  2026-11-12. Those older pages reload once shown; until then their links re-hold types removed since (e.g.
-  `p2.artifact-list`), which wait on the session worker and are reported there as `unbound_long` at each start: refusing
-  them at once, and naming who asked in that report, needs Chord (a host's retired type names; `UnboundLong` with the
-  request's principal and link). At most two previous generations remain available for up to 60 seconds. This polling is temporary
-  until loader model D provides scoped, per-facet `ClientBundle` pushes (`docs/plugin-loading.md` 5.3 and 12.2 step
-  4). The TUI launcher separately polls `/__p2_tui`. There is no Vite, source-module server or `index.html`.
-- **Bundles for Radius Cloud Brain:** after CI passes on main, `.github/workflows/p2-cloud-bundle.yml` builds this
-  web bundle with `scripts/cloud-bundle.ts` and uploads it to the R2 bucket `pi-ui` under the commit's full SHA, which
-  Radius serves under `/pi/ui/`. The script patches the built script's Chord socket URL (dropping its `?web=`: a Cloud
-  Brain page names no p2 bundle), version poll and `/__p2_web/` asset prefix, and fails when one is missing: changing those in `src/hosts/web/main.tsx` or `WEB_BUNDLE_PATH` means
-  updating it.
+- **Web UI** (Chord's web surface, slice 11; `src/hosts/server.ts`, `src/hosts/web.ts`): `webSurface` with
+  `routes: false` builds the pages' base bundle from `src/hosts/web/entry.ts` (`main.tsx`: Chord's `startPage` with
+  p2's API modules, core facet, React root, connection state and error reports; `themes: false`, p2 styles itself)
+  right after the listen (`conditions: ["source"]`: workspace packages from source, as the server runs them); the
+  plugins' web facets are Chord plugin builds of kind `web` (host packages `src/hosts/web/packages.ts`: the API's
+  kind-neutral and web modules, React, react-dom, pi-schema), served as scripts that register themselves, the current
+  set as one combined file. `web.ts` serves them with p2's access rules: the page (p2's template with `pageScripts`,
+  `data-web-version` the base hash), `/_chord/web/…` files (named by content, `immutable`; guests too: it is the
+  app's code), and `/_chord/web/base` (public, `no-store`). A failed base build is an owner notice and pages answer
+  503. A plugin reload rolls web facets out with the server's and workers' (the surface's step last): an open page
+  fetches the changed scripts and applies them in place (`host.reload` in the page; each plugin's stylesheet swapped
+  with its code), so the transcript's scroll and the other panes stay; only base code (the entry, `src/web`,
+  `src/runtime`, the API, Chord, React) needs a restart, and pages reload onto the new base: before reconnecting a
+  page asks `/_chord/web/base`, another one reloads it. No polling. A page's link names its base
+  (`/chord?web=<base>`): the server refuses one naming another at once (close code 4001, `src/runtime/stale-page.ts`)
+  and the owner gets a notice (source `stale-pages`) naming who it was: the owner's access or device, or the guest,
+  the browser and its address. Links naming no base are not asked: the TUI, Cloud Brain's pages and pages from before
+  2026-11-12 (those reload once shown; until then their links re-hold types removed since, which wait on the session
+  worker and are reported there as `unbound_long` at each start: refusing them at once, and naming who asked in that
+  report, needs Chord). The last four plugin sets' files stay served. Web facets must not share module state with
+  another plugin's files (each plugin's script holds its own copy of a file it imports from another plugin):
+  `plugin-practices.md`. The TUI launcher still polls `/__p2_tui` (p2's own TUI bundle). There is no Vite,
+  source-module server or `index.html`.
+- **Radius Cloud Brain** (`scripts/cloud-bundle.ts`, `.github/workflows/p2-cloud-bundle.yml` after CI passes on main;
+  the R2 bucket `pi-ui` under the commit's full SHA, served by Radius under `/pi/ui/`): a static page built with
+  Chord's builders as a p2 page is (`buildBase`, the plugins' web scripts registered with `registeredSource`,
+  `pageBootstrap`), written as one script (the bootstrap, the plugins, the base bundle) and one stylesheet, assets
+  under `/pi/ui/<sha>/assets/`. `main.tsx` sees Radius's `data-pi-bootstrap` on `#root`: it connects to its Chord URL
+  and starts static (`startPage({ follow: false })`: no updates, never outdated). Test: `ui-cloud-bundle.test.ts`.
 - `npm run dev` also watches plugins and supervises runtime restarts; see **Dev mode** below. Under `npm start`,
   code changes (web included) take effect only after a restart.
 - **Data report** (`scripts/data-report.ts`, read-only, beside a live server): per session its title, location,
@@ -123,8 +128,8 @@ Use a temporary `P2_DATA_DIR` and a different `PORT` for experiments.
   `GET /__p2_dev`. All triggers publish a shared owner notice, such as **Reloaded chat, sessions** or
   **Reload refused: …**. **Show logs** opens the Logs plugin when loaded; otherwise the message stands alone.
 - **Plugin reloads:** an explicit reload builds exactly the named (or dirty) plugins (Chord's `plugins.build`), then
-  rolls them out to the server and every running worker (`plugins.rollout([server step, workers step])`) and rebuilds
-  the TUI and web bundles. A plugin whose build fails keeps its old code (an added one stays out) and the reload is
+  rolls them out to the server, every running worker and the pages (`plugins.rollout([server step, workers step, web
+  surface step])`) and rebuilds the TUI bundle. A plugin whose build fails keeps its old code (an added one stays out) and the reload is
   refused; a plugin that is not loaded cannot be reloaded. Compatible changes keep objects, streams and references
   (Chord swaps them in place); added plugins' objects activate; a removed plugin's objects end (their holders see
   them end). Dirty marks come from Chord's plugin watcher
@@ -451,7 +456,8 @@ p2 runs on Chord v2 (`packages/chord`, `docs/design.md` there); the port's notes
   ones (`serveServerRegistries`, `serveWorkerRegistries`, `tuiCoreFacet`, `webCoreFacet`), a plugin serves its own
   (`serveKeyed`). One contribution per registry per object or facet.
 - **Plugins:** see **Plugin layout** and **Plugin reloads**; the server loads its facets with `createPlugins`, workers
-  get theirs from the workers component, the TUI and web bundles load theirs with `host.load`.
+  get theirs from the workers component, pages from the web surface (`startPage`), the TUI bundle loads its own with
+  `host.load`.
 - **Protocol versions:** a page or TUI reloads when the server speaks a newer link protocol (`newerPeerProtocol`).
 - **Contract versions:** pages and TUIs keep the contracts they were built with until they reload, so a deploy that
   bumps a contract a client holds must keep serving the old version: write the history with `evolve` (the released
@@ -1102,7 +1108,7 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   `src/web/elanor.css` loads the fonts (Mallos Serif, Commit Mono), the pi brand's tokens and the components' styles,
   before `style.css`. Cascade layers: `p2-reset` (p2's element resets in `style.css`), then `elanor` (all of
   Elanor's styles), then p2's unlayered rules. The tokens follow `<html data-color-scheme>`, set with `data-theme`
-  (`theme.ts`, and the page's inline script). Fonts are files of the web bundle (`.woff2`, `font/woff2`).
+  (`theme.ts`, and the page's inline script). Fonts are files of the base bundle's assets (`.woff2`, `font/woff2`).
 - **Markdown in Elanor's components** (`src/web/ElanorMarkdown.tsx`): `Markdown.tsx` renders through a component map
   (`MarkdownComponents`, `MarkdownComponentsContext`; `{}` renders plain elements), Elanor's by default: `Prose` with
   its flow spacing, `Text`, `Heading`, `List`, `Link`, `Table`, `CodeSnippet` with Copy, a read-only `Checkbox` for
@@ -1111,7 +1117,8 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   code font; the streaming dot and a marker's spacing are there too.
 - **Service worker** (`public/sw.js`, served at `/sw.js` with `no-cache`): the app starts without the network once it
   was opened. App pages come from the network first and fall back to the last app page kept (on failure, or after 3
-  seconds); the web bundle's content-named files come from the cache first (the newest two bundle versions are kept);
+  seconds); the web surface's content-named files (`/_chord/web/…`, not `/_chord/web/base`) come from the cache first (the newest
+  two base versions are kept);
   everything else goes to the network untouched. Pi Mobile had none because it would have kept stale code across Vite
   HMR and restarts; p2 serves no source modules (dev mode included), so every kept file is content-named and the page
   never wins over the network. Signing out deletes its caches.

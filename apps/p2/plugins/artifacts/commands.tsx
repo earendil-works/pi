@@ -23,7 +23,7 @@ import {
 } from "@p2/app/v1/web";
 import { type ReactNode, useEffect, useState } from "react";
 import { Views } from "../views/contract.ts";
-import { openView } from "../views/sheet.tsx";
+import { ViewsPages } from "../views/contract.web.ts";
 import { PANEL, showLocally } from "./local-item.ts";
 
 /** The commands, by id. */
@@ -138,6 +138,7 @@ function ArtifactResults() {
 function Rows({ session, limit }: { session: string; limit: number | undefined }) {
 	const host = useHost();
 	const editor = liveIn(useObject(Views, { session }), "editor");
+	const viewsPage = useRegistry(ViewsPages).get("views");
 	const { close } = useCommandMenu();
 	const { fail } = useComposerState();
 	const { entries, collectors } = useEntries(session);
@@ -156,13 +157,17 @@ function Rows({ session, limit }: { session: string; limit: number | undefined }
 							onSelect={async () => {
 								await close();
 								// A reader who may not change the session's views looks at it in the side panel.
-								if (!editor) {
+								if (!editor || !viewsPage) {
 									showLocally(session, { kind: kind.view, id: item.id, title: item.title });
 									openPanel(PANEL);
 									return;
 								}
 								await withHeld(host.hold(Views, { session }, BACKGROUND_CONTEXT), "editor", (held) =>
-									openView(held, session, { kind: kind.view, item: item.id, title: item.title.slice(0, 120) }),
+									viewsPage.open(held, session, {
+										kind: kind.view,
+										item: item.id,
+										title: item.title.slice(0, 120),
+									}),
 								).catch(fail);
 							}}
 						/>

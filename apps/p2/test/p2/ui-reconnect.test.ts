@@ -155,7 +155,7 @@ export default defineFacet((host) => host.serve(Delay, (_params, self) => {
 			const originalFetch=window.fetch.bind(window);window.fetch=async(url,options)=>{const response=await originalFetch(url,options);if(String(url)==='/__p2_dev' && options?.method!=='POST')window.devNoticeReads++;return response;};
 			window.WebSocket=new Proxy(window.WebSocket,{construct(Target,args){
 				const socket=Reflect.construct(Target,args);
-				if(String(args[0]).endsWith('/chord'))socket.addEventListener('open',()=>window.reconnectOpens++);
+				if(new URL(String(args[0])).pathname==='/chord')socket.addEventListener('open',()=>window.reconnectOpens++);
 				return socket;
 			}});
 		`,
