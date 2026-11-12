@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { getModels, streamSimple } from "../src/compat.ts";
-import { findEnvKeys } from "../src/env-api-keys.ts";
+import { findEnvKeys, getEnvApiKey } from "../src/env-api-keys.ts";
+import { createModels } from "../src/models.ts";
+import { qwenTokenPlanProvider } from "../src/providers/qwen-token-plan.ts";
+import { qwenTokenPlanCnProvider } from "../src/providers/qwen-token-plan-cn.ts";
+import { qwenTokenPlanIndividualProvider } from "../src/providers/qwen-token-plan-individual.ts";
+import { qwenTokenPlanIndividualCnProvider } from "../src/providers/qwen-token-plan-individual-cn.ts";
 
 vi.mock("openai", () => {
 	class FakeOpenAI {
@@ -38,6 +43,13 @@ vi.mock("openai", () => {
 
 	return { default: FakeOpenAI };
 });
+
+const QWEN_PROVIDERS = {
+	"qwen-token-plan": qwenTokenPlanProvider,
+	"qwen-token-plan-cn": qwenTokenPlanCnProvider,
+	"qwen-token-plan-individual": qwenTokenPlanIndividualProvider,
+	"qwen-token-plan-individual-cn": qwenTokenPlanIndividualCnProvider,
+};
 
 const TEXT_MODELS = [
 	"MiniMax-M2.5",
@@ -135,12 +147,6 @@ describe("Qwen Token Plan models", () => {
 		expect(modelIds).toEqual([...INDIVIDUAL_TEXT_MODELS].sort());
 	});
 
-	it("reuses the international Token Plan environment variable", () => {
-		expect(findEnvKeys("qwen-token-plan-individual", { QWEN_TOKEN_PLAN_API_KEY: "test" })).toEqual([
-			"QWEN_TOKEN_PLAN_API_KEY",
-		]);
-	});
-
 	it("exposes exactly the documented Individual text models on the China endpoint", () => {
 		const modelIds = getModels("qwen-token-plan-individual-cn")
 			.map((model) => model.id)
@@ -149,10 +155,33 @@ describe("Qwen Token Plan models", () => {
 		expect(modelIds).toEqual([...INDIVIDUAL_TEXT_MODELS].sort());
 	});
 
-	it("uses the China Token Plan environment variable", () => {
-		expect(findEnvKeys("qwen-token-plan-individual-cn", { QWEN_TOKEN_PLAN_CN_API_KEY: "test" })).toEqual([
-			"QWEN_TOKEN_PLAN_CN_API_KEY",
-		]);
+	// #11773
+	it.each([
+		["qwen-token-plan", "QWEN_TOKEN_PLAN_TEAM_API_KEY", "QWEN_TOKEN_PLAN_API_KEY"],
+		["qwen-token-plan-cn", "QWEN_TOKEN_PLAN_TEAM_CN_API_KEY", "QWEN_TOKEN_PLAN_CN_API_KEY"],
+		["qwen-token-plan-individual", "QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY", "QWEN_TOKEN_PLAN_API_KEY"],
+		["qwen-token-plan-individual-cn", "QWEN_TOKEN_PLAN_INDIVIDUAL_CN_API_KEY", "QWEN_TOKEN_PLAN_CN_API_KEY"],
+	] as const)(
+		"prefers the per-plan key on %s and falls back to the shared one",
+		async (provider, planVar, sharedVar) => {
+			const resolve = async (env: Record<string, string>) => {
+				const models = createModels({
+					authContext: { env: async (name) => env[name], fileExists: async () => false },
+				});
+				models.setProvider(QWEN_PROVIDERS[provider]());
+				return (await models.getAuth(provider))?.auth.apiKey;
+			};
+
+			expect(await resolve({ [planVar]: "plan", [sharedVar]: "shared" })).toBe("plan");
+			expect(await resolve({ [sharedVar]: "shared" })).toBe("shared");
+			expect(getEnvApiKey(provider, { [planVar]: "plan", [sharedVar]: "shared" })).toBe("plan");
+			expect(getEnvApiKey(provider, { [sharedVar]: "shared" })).toBe("shared");
+		},
+	);
+
+	it("keeps a per-plan key away from the other plan", () => {
+		expect(findEnvKeys("qwen-token-plan", { QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY: "test" })).toBeUndefined();
+		expect(findEnvKeys("qwen-token-plan-individual-cn", { QWEN_TOKEN_PLAN_TEAM_CN_API_KEY: "test" })).toBeUndefined();
 	});
 
 	it.each(["qwen-token-plan", "qwen-token-plan-cn"] as const)("exposes all text models on %s", (provider) => {

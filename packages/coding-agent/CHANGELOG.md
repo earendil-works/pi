@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `deepseek-v4.1-flash` and `deepseek-v4.1-flash-1017` to `qwen-token-plan-individual` and `qwen-token-plan-individual-cn`, matching the current Token Plan Personal model lists ([#11773](https://github.com/earendil-works/pi/issues/11773))
+- Added per-plan API key variables for Qwen Token Plan: `QWEN_TOKEN_PLAN_TEAM_API_KEY`, `QWEN_TOKEN_PLAN_TEAM_CN_API_KEY`, `QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY`, and `QWEN_TOKEN_PLAN_INDIVIDUAL_CN_API_KEY`. With a per-plan variable set, only that plan's provider is configured, so Individual subscribers no longer see Team-only models. `QWEN_TOKEN_PLAN_API_KEY` and `QWEN_TOKEN_PLAN_CN_API_KEY` keep working as a fallback for both plans ([#11773](https://github.com/earendil-works/pi/issues/11773))
+
+### Changed
+
+- Qwen Token Plan providers now default to the current gateways: `token-plan.maas.qwencloudapi.com` (QwenCloud, international) and `token-plan.maas.qianwenaiapi.com` (Qianwen AI Platform, China). Provider IDs are unchanged; the former `token-plan.{ap-southeast-1,cn-beijing}.maas.aliyuncs.com` hosts route to the same gateways, so configurations that still name them keep working ([#11773](https://github.com/earendil-works/pi/issues/11773))
+- Renamed the `qwen-token-plan` and `qwen-token-plan-cn` providers to "Qwen Token Plan Team" and "Qwen Token Plan Team CN": their catalogs are the Token Plan Team model lists. Provider IDs are unchanged ([#11773](https://github.com/earendil-works/pi/issues/11773))
+
 ### Fixed
 
 - Fixed MCP tools loaded by `tool_search` being dropped on resume and `/reload` when an extension deactivates only its own tool at `session_start`, as pi-web-access and pi-subagents do in `toolActivation: "auto"` mode ([#11996](https://github.com/earendil-works/pi/issues/11996))
@@ -15,6 +25,10 @@
 - Fixed the bash tool returning no output, with a footer like `[Showing lines 3-2 of 2]`, when the output ends in one line longer than about 100KB, such as a `grep` match in a minified file; it now shows the end of that line ([#12062](https://github.com/earendil-works/pi/issues/12062))
 - Fixed provider errors reading "Connection closed." not triggering automatic retries ([#12064](https://github.com/earendil-works/pi/issues/12064))
 - Fixed `/resume` sometimes selecting an unrelated session while the list reloads after deleting or renaming a session ([#12106](https://github.com/earendil-works/pi/issues/12106))
+
+### Removed
+
+- Removed `deepseek-v3.2` and `deepseek-v4-flash` from `qwen-token-plan` and `qwen-token-plan-cn`: they are no longer on the Token Plan model lists, and models.dev marks them deprecated. Use `deepseek-v4-flash-0731` or `deepseek-v4.1-flash` instead ([#11773](https://github.com/earendil-works/pi/issues/11773))
 
 ## [1.5.2] - 2026-11-10
 

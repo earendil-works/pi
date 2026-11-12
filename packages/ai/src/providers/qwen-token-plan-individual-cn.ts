@@ -8,7 +8,12 @@ export function qwenTokenPlanIndividualCnProvider(): Provider<"openai-completion
 		id: "qwen-token-plan-individual-cn",
 		name: "Qwen Token Plan Individual CN",
 		baseUrl: "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1",
-		auth: { apiKey: envApiKeyAuth("Qwen Token Plan Individual CN API key", ["QWEN_TOKEN_PLAN_CN_API_KEY"]) },
+		auth: {
+			apiKey: envApiKeyAuth("Qwen Token Plan Individual CN API key", [
+				"QWEN_TOKEN_PLAN_INDIVIDUAL_CN_API_KEY",
+				"QWEN_TOKEN_PLAN_CN_API_KEY",
+			]),
+		},
 		models: Object.values(QWEN_TOKEN_PLAN_INDIVIDUAL_CN_MODELS),
 		api: openAICompletionsApi(),
 	});
