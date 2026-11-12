@@ -24,6 +24,7 @@
 - Fixed provider errors reading "Connection closed." not triggering automatic retries ([#12064](https://github.com/earendil-works/pi/issues/12064))
 - Fixed `/resume` sometimes selecting an unrelated session while the list reloads after deleting or renaming a session ([#12106](https://github.com/earendil-works/pi/issues/12106))
 - Fixed `enabledModels`/`--models` warnings such as `No models match pattern "github-copilot/nope"` being written over the interactive TUI on every `/new`, `/resume` and `/fork`, which left stale lines in fullscreen mode. The warnings are now shown once at startup, in the chat in interactive mode and on stderr in other modes; RPC mode no longer repeats them on stderr for each `new_session`, `switch_session` or `fork` ([#11264](https://github.com/earendil-works/pi/issues/11264))
+- Fixed an unreadable `CHANGELOG.md` (pi's own or an extension package's) printing `Warning: Could not parse changelog` over the interactive TUI; it now shows no changelog notes ([#11264](https://github.com/earendil-works/pi/issues/11264))
 
 ### Removed
 

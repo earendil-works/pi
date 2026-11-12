@@ -161,8 +161,9 @@ export function parseChangelog(changelogPath: string): ChangelogEntry[] {
 		}
 
 		return entries;
-	} catch (error) {
-		console.error(`Warning: Could not parse changelog: ${error}`);
+	} catch {
+		// Shown in the TUI (startup notes, /changelog), where printing would draw over the screen. An unreadable
+		// changelog shows no notes instead.
 		return [];
 	}
 }
