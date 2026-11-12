@@ -100,7 +100,7 @@ jobs:
         if: steps.release.outputs.needed == 'true'
         run: |
           [ -d node_modules ] || npm ci --ignore-scripts
-          node .fork/catalog-snapshot.mjs hydrate
+          npm run hydrate:model-data
           npm run build:offline
 
       - name: Check

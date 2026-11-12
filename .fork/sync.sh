@@ -256,8 +256,8 @@ prepare_for_check() {
 	if [[ ! -d node_modules ]] || [[ -n "$(git diff --name-only "$prev" next -- package.json package-lock.json 'packages/*/package.json' 'apps/*/package.json')" ]]; then
 		npm ci --ignore-scripts
 	fi
-	# Always from the pinned snapshot, never live sources: checks and releases must not move with external data.
-	node "$repo/.fork/catalog-snapshot.mjs" hydrate
+	# Always from live sources (models.dev, OpenRouter, ...), so a release carries the current model list.
+	npm run hydrate:model-data
 }
 
 align_refs() {
