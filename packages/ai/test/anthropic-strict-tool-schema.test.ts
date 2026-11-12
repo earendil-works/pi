@@ -79,6 +79,7 @@ describe("Anthropic strict tool schemas", () => {
 			type: "object",
 			properties: legacyParameters.properties,
 			required: legacyParameters.required,
+			additionalProperties: false,
 		});
 
 		const strictTool = await captureFirstTool(
