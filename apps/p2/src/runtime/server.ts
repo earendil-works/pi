@@ -16,6 +16,7 @@ import type { JsonValue } from "@earendil-works/chord/json";
 import type { CredentialStore, ModelsStore } from "@earendil-works/pi-ai";
 import type { MutableModels } from "@earendil-works/pi-ai/models";
 import { arr, bool, nul, num, obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
+import type { TelemetryStore } from "@earendil-works/pi-telemetry";
 import { Access } from "./access.ts";
 import {
 	type Ctx,
@@ -175,6 +176,12 @@ export type ServerParts = {
 	 * test hosts without a store.
 	 */
 	readonly store?: Store;
+	/**
+	 * The telemetry store's reads (`<data>/telemetry.sqlite`, docs/p2-notes.md "Telemetry"): the owner's traces and metrics,
+	 * which `plugins/telemetry` serves to the owner and to agents of sessions neither shared nor locked. Absent in test
+	 * hosts without one.
+	 */
+	readonly telemetry?: TelemetryStore;
 	/**
 	 * The user plugin root (`<data>/plugins/`, plugins the owner or the agent writes) and its apply: builds the root's
 	 * changed plugins and rolls them out to the server and every worker, with the web and TUI bundles; per plugin what

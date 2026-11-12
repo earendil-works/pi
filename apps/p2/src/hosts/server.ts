@@ -388,6 +388,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 							workers,
 							root: (fn, context) => host.root(fn, context),
 							store,
+							telemetry: telemetry.telemetry,
 							plugins: { root: userRoot, reload: (requested) => applyPlugins(requested) },
 						}),
 					},

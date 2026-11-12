@@ -682,7 +682,17 @@ page's call, the server's relay and the worker's method into one trace; React's 
 traces. What a span records about its principal is `principalAttributes` (`src/runtime/principals.ts`):
 `p2.principal` (`owner:<access>`, `guest`, `worker`, `server`, `host`) and a guest's id or a worker's session,
 never a name or an email. Read with `node --import ./src/source.ts scripts/traces.ts [--name] [--attr k=v]
-[--errors] [--since <minutes>] [--limit]` (read-only, safe while the server runs). Cost: Chord's (§30): a span per
+[--errors] [--since <minutes>] [--limit]` (read-only, safe while the server runs), or in the page and by the agent
+(`plugins/telemetry`): `Traces` (server) reads the store (`ServerParts.telemetry`) with bounds (50 traces a page,
+2000 spans a trace, 1000 metric rows, 8 attribute filters); variant `owner` for owners, `agent` for a session's worker,
+refused at every call while that session is shared (any link, guest or person: viewers read what the agent finds) or
+locked; anyone else `forbidden`. The Traces view kind (a pane: search by the first span's name, attributes, errors and
+a window; traces newest first, more by cursor; one trace as a span tree on its timeline with attributes, events and
+links that open their trace; list or trace on narrow panes, side by side from 620px), also a Settings section (a trace
+a layer of the sheet) and the command "Show traces" (owners). The agent's code-mode tools, namespace `telemetry`
+(`telemetry_find_traces`, `telemetry_get_trace`: `renderTrace` text and the spans, `telemetry_find_metrics`;
+`locked: "never"`; deferred: the code-mode section names the namespace only, `describeNamespace("telemetry")` gives
+the declarations, so they take no place from the tools the agent uses all the time). Test: `telemetry-traces.test.ts`. Cost: Chord's (§30): a span per
 call, hold, method, relay and activation; nothing is measured or walked for it. The TUI records nothing. Test:
 `telemetry.test.ts`.
 
