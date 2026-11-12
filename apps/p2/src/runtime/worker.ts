@@ -14,6 +14,7 @@ import {
 	type DocumentReader,
 	type Conversation as DurableConversation,
 	Harness as DurableHarness,
+	type HarnessOptions,
 	type HarnessSettings,
 	ROOT_CONVERSATION_ID,
 } from "@earendil-works/pi-durable";
@@ -405,6 +406,8 @@ export function workerCore(
 	location: SessionLocation,
 	store: Store,
 	root: WorkerParts["root"],
+	/** The worker host's telemetry adapter, the Harness's too (its `pi.durable.*` and pi-ai's spans); none in tests. */
+	telemetry: HarnessOptions["telemetry"],
 ): Facet {
 	return defineFacet((host, self) => {
 		serveWorkerRegistries(host);
@@ -415,7 +418,7 @@ export function workerCore(
 		self.contribute(WorkerProcess, { init, liveness, location, root, copyFilesTo, store });
 		host.serve(HarnessNative, { compose: (table) => table[0]?.value });
 		host.serve(HarnessHost, (_params, self) => {
-			self.contribute(HarnessNative, openHarness(self, init, location, store));
+			self.contribute(HarnessNative, openHarness(self, init, location, store, telemetry));
 			return {};
 		});
 		host.serve(WorkerBoundary, (_params, principal, self) => {
@@ -672,7 +675,13 @@ async function followSession(
  * with the root conversation created from the session's model and cwd. Scheduling starts with `resume()` once the
  * worker's plugins are loaded (the worker entry). Returns the contribution: the natives, read at each use.
  */
-function openHarness(self: Self, init: WorkerInit, location: SessionLocation, store: Store): HarnessParts {
+function openHarness(
+	self: Self,
+	init: WorkerInit,
+	location: SessionLocation,
+	store: Store,
+	telemetry: HarnessOptions["telemetry"],
+): HarnessParts {
 	const { values } = init;
 	const session = values.session;
 	const config = self.registry(HarnessConfig);
@@ -742,6 +751,7 @@ function openHarness(self: Self, init: WorkerInit, location: SessionLocation, st
 				storage,
 				{
 					models,
+					...(telemetry === undefined ? {} : { telemetry }),
 					registry: durableRegistry(extensions, switches, durableContext(observing.signal)),
 					settings,
 					// The conversation's location, not its agent cwd alone: a subagent's own may be on another machine.

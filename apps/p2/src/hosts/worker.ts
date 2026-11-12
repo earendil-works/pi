@@ -1,12 +1,15 @@
 // Session worker host: one process per running session, forked by the server's workers component. Its host sits at the
 // session's address on the session's Chord store (`<data>/sessions/<id>/store.sqlite`), connected to the server over
 // IPC, and loads the worker facets the server shipped beside the core facet, which owns the session's Durable Harness
-// (its records in that store), and the kit's `Files` over the session's files.
+// (its records in that store), and the kit's `Files` over the session's files. It records telemetry in memory (its host's,
+// Durable's and pi-ai's spans and metrics) and sends it to the server's store every second, as Chord's kit worker does.
 
+import { setTimeout as sleep } from "node:timers/promises";
 import { isChordError } from "@earendil-works/chord";
 import { filesFacet } from "@earendil-works/chord/app/files";
 import { nodeCompression } from "@earendil-works/chord/compression";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { sendWorkerTelemetry, TelemetryRecorder } from "@earendil-works/chord/telemetry-ingest";
 import { workerMain } from "@earendil-works/chord/workers/child";
 import { registerLazyBedrockProvider } from "@earendil-works/pi-ai/lazy-bedrock-provider";
 import { registerLazyOAuthFlows } from "@earendil-works/pi-ai/lazy-oauth";
@@ -15,7 +18,7 @@ import { createHost, hostErrorText } from "../runtime/chord.ts";
 import { configureFetch } from "../runtime/fetch.ts";
 import { hostFiles, openHostStore, sessionDirectory } from "../runtime/host-dirs.ts";
 import { captureProcessLogs, processLogs } from "../runtime/logs.ts";
-import { HOST, SERVER } from "../runtime/principals.ts";
+import { HOST, principalAttributes, SERVER } from "../runtime/principals.ts";
 import { follow } from "../runtime/refs.ts";
 import {
 	HarnessHost,
@@ -35,6 +38,12 @@ configureFetch();
 registerLazyOAuthFlows();
 registerLazyBedrockProvider();
 
+/** How many settled spans a worker keeps while it cannot send (past it new ones are dropped), as Chord's kit worker. */
+const TELEMETRY_QUEUE = 10_000;
+
+/** How often a worker sends what it recorded, as Chord's kit worker. */
+const TELEMETRY_SEND_MS = 1000;
+
 workerMain(
 	async ({ address, start, parent, plugins, onClose }, context) => {
 		const init = start as unknown as WorkerInit;
@@ -48,10 +57,14 @@ workerMain(
 		const dir = sessionDirectory(init.dataDir, init.values.session.id);
 		const store = await openHostStore(dir, { outbox: backupConfigured() }, context);
 		onClose(() => store.close(BACKGROUND_CONTEXT));
+		const scope = crypto.randomUUID();
+		const recorder = new TelemetryRecorder(() => scope, TELEMETRY_QUEUE);
 		const host = createHost({
 			address,
 			principal: HOST,
 			store,
+			telemetry: recorder,
+			principalAttributes,
 			// Large parts (a conversation's view) leave deflated; the server relays them as they are.
 			compression: nodeCompression,
 			onError: (error) => {
@@ -76,7 +89,14 @@ workerMain(
 				core: [
 					{
 						name: "@p2/core",
-						facet: workerCore(init, liveness, location, store, (fn, rootContext) => host.root(fn, rootContext)),
+						facet: workerCore(
+							init,
+							liveness,
+							location,
+							store,
+							(fn, rootContext) => host.root(fn, rootContext),
+							recorder,
+						),
 					},
 					// The session's files (the kit's `Files`): `<data>/sessions/<id>/files/`.
 					{ name: "chord.app.files", facet: filesFacet(hostFiles(dir)) },
@@ -84,6 +104,16 @@ workerMain(
 			},
 			context,
 		);
+		// Held after the load (a host holds nothing before). Closers run in reverse: this one before the host closes, the
+		// last spans and partial metrics sent while the link is up, for at most a second.
+		const sender = sendWorkerTelemetry(host, recorder, context);
+		const timer = setInterval(() => void sender.send(false), TELEMETRY_SEND_MS);
+		timer.unref();
+		onClose(async () => {
+			clearInterval(timer);
+			await Promise.race([sender.send(true), sleep(TELEMETRY_SEND_MS, undefined, { ref: false })]);
+			sender.stop();
+		});
 		// A Harness that cannot open fails the worker (its error, with Retry), as an unknown root model does: at its first
 		// failed attempt (`get` would retry it until its ready timeout, the start meanwhile hanging).
 		const harnessHost = host.hold(HarnessHost, {}, context);

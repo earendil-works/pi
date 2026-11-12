@@ -8,7 +8,7 @@ import { posix } from "node:path";
 import type { HttpResponse } from "@earendil-works/chord/http";
 import { type PageAssets, pageScripts, WEB_PREFIX, type WebSurface } from "@earendil-works/chord/surfaces";
 import type { Ctx } from "../runtime/chord.ts";
-import type { GuestPrincipal, P2Principal } from "../runtime/principals.ts";
+import { type GuestPrincipal, isOwner, type P2Principal } from "../runtime/principals.ts";
 
 /** What an outdated page asks before reconnecting (another one: it reloads), signed in or not. */
 const BASE_PATH = `${WEB_PREFIX}base`;
@@ -67,9 +67,11 @@ const escapeAttribute = (value: string): string =>
 /**
  * The app page. The inline style and theme script run before any CSS so the first paint has the right background;
  * the surface's bootstrap, stylesheets and deferred scripts (`pageScripts`) follow them, so the stylesheets' rules win.
- * `data-web-version` names the base bundle (the service worker keeps the page's files under it).
+ * `data-web-version` names the base bundle (the service worker keeps the page's files under it); `#root`'s
+ * `data-p2-telemetry` makes an owner's page record its telemetry (src/hosts/web/main.tsx; the server admits owners only).
  */
-function page(nonce: string, base: string, assets: PageAssets, shellOrigin: string | undefined): string {
+function page(nonce: string, base: string, assets: PageAssets, viewer: Viewer): string {
+	const { shellOrigin } = viewer;
 	return `<!doctype html>
 <html lang="en" data-web-version="${base}">
 	<head>
@@ -115,7 +117,7 @@ function page(nonce: string, base: string, assets: PageAssets, shellOrigin: stri
 		${pageScripts(assets, nonce).replaceAll("\n", "\n\t\t")}
 	</head>
 	<body>
-		<div id="root"></div>
+		<div id="root"${isOwner(viewer.principal) ? ' data-p2-telemetry="on"' : ""}></div>
 	</body>
 </html>
 `;
@@ -159,6 +161,12 @@ async function send(response: ServerResponse, file: HttpResponse, head: boolean,
 	response.end(Buffer.concat(chunks));
 }
 
+/**
+ * Who loads an app page: its principal, and the Radius shell that frames a relayed request
+ * (`RequestOrigin.relayShellOrigin`), named in app pages for the shell bridge.
+ */
+export type Viewer = { readonly principal: P2Principal; readonly shellOrigin: string | undefined };
+
 /** A scope of the server's host for reads that need one (`host.root`). */
 type Root = (fn: (ctx: Ctx) => Promise<void>) => Promise<void>;
 
@@ -185,11 +193,8 @@ export function createWeb(options: {
 		return guestPage(path, guest) || isPublicFile(path) || path.startsWith(WEB_PREFIX);
 	}
 
-	/**
-	 * `shellOrigin`: the Radius shell that frames a relayed request (`RequestOrigin.relayShellOrigin`), named in app
-	 * pages for the shell bridge.
-	 */
-	async function handle(request: IncomingMessage, response: ServerResponse, shellOrigin?: string): Promise<void> {
+	/** Serves `request`; `viewer`: who loads it, for app pages (public files are served without one). */
+	async function handle(request: IncomingMessage, response: ServerResponse, viewer?: Viewer): Promise<void> {
 		const path = new URL(request.url ?? "/", "http://localhost").pathname;
 		const head = request.method === "HEAD";
 		if (request.method !== "GET" && !head) {
@@ -197,10 +202,10 @@ export function createWeb(options: {
 			response.end("Not found");
 			return;
 		}
-		if (isAppPage(path)) {
+		if (isAppPage(path) && viewer !== undefined) {
 			const [assets, base] = await Promise.all([surface.pageAssets(), surface.base()]);
 			if (assets === undefined || base === undefined) return unavailable(response);
-			const html = page(options.nonce, base, assets, shellOrigin);
+			const html = page(options.nonce, base, assets, viewer);
 			response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
 			response.end(head ? undefined : html);
 			return;
@@ -231,9 +236,9 @@ export function createWeb(options: {
 	}
 
 	return {
-		/** Serves `request`; a failed build answers 500. `shellOrigin`: see the inner `handle`. */
-		handle: (request: IncomingMessage, response: ServerResponse, shellOrigin?: string): void => {
-			handle(request, response, shellOrigin).catch((error: unknown) => {
+		/** Serves `request`; a failed build answers 500. `viewer`: see the inner `handle`. */
+		handle: (request: IncomingMessage, response: ServerResponse, viewer?: Viewer): void => {
+			handle(request, response, viewer).catch((error: unknown) => {
 				console.error("p2 web:", error);
 				if (!response.headersSent) response.writeHead(500, { "Content-Type": "text/plain" });
 				response.end("Could not load the UI");

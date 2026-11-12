@@ -8,6 +8,7 @@ import { openStore, type Store, sqliteBackend } from "@earendil-works/chord";
 import { privateDirectory, privateStore } from "@earendil-works/chord/app/files";
 import type { Context } from "@earendil-works/chord/context";
 import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
+import { createSqliteTelemetry, type SqliteTelemetry } from "@earendil-works/chord/telemetry-sqlite";
 
 /** A session id as a directory name: the catalog's UUIDs (anything else would name another directory). */
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
@@ -54,6 +55,36 @@ export async function openHostStore(
 	await privateDirectory(dir);
 	await privateStore(hostStore(dir));
 	return openStore(sqliteBackend(await openNodeSqliteDatabase(hostStore(dir))), context, options);
+}
+
+/**
+ * The server's telemetry store (`<data>/telemetry.sqlite`, mode 0600): its own file, not the server's Chord store (high
+ * volume, 7 days, never in the outbox or a backup; Chord's decision "The server is the one place telemetry is stored").
+ */
+export function telemetryStore(dataDir: string): string {
+	return join(dataDir, "telemetry.sqlite");
+}
+
+/**
+ * Opens the server's telemetry store with Chord's defaults (7 days, a queue of 10,000 spans, a flush every second):
+ * the server records to it and is its only writer (pages and workers send theirs over their links). `close` drains it.
+ */
+export async function openTelemetry(
+	dataDir: string,
+): Promise<{ readonly telemetry: SqliteTelemetry; close(): Promise<void> }> {
+	await privateStore(telemetryStore(dataDir));
+	const db = await openNodeSqliteDatabase(telemetryStore(dataDir));
+	const telemetry = await createSqliteTelemetry(db).catch(async (error: unknown) => {
+		await db.close();
+		throw error;
+	});
+	return {
+		telemetry,
+		close: async () => {
+			await telemetry.close();
+			await db.close();
+		},
+	};
 }
 
 /**

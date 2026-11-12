@@ -122,7 +122,7 @@ async function worker(t: test.TestContext, start: Location, machines: Record<str
 		values: { session: { id: "s1", ...start, model: MODEL, thinkingLevel: "off" } },
 	};
 	const location = new SessionLocation(start);
-	const core = workerCore(init, new Liveness(), location, store, (fn) => host.root(fn, BACKGROUND_CONTEXT));
+	const core = workerCore(init, new Liveness(), location, store, (fn) => host.root(fn, BACKGROUND_CONTEXT), undefined);
 	await host.load(
 		[
 			{ name: "@p2/core", facet: core },

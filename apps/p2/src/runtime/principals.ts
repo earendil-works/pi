@@ -1,5 +1,7 @@
 // Principals of p2 (browser-safe). Links stamp them; plugins check them in factories and methods.
 
+import type { PrincipalAttributes } from "@earendil-works/chord";
+
 /** The person running this p2 (one today). */
 export type OwnerPrincipal =
 	/**
@@ -65,6 +67,24 @@ export function revokedBy(principal: P2Principal): Revocation[] {
 export const HOST: HostPrincipal = { kind: "host" };
 /** What a worker's parent (the server) acts as when its own code calls the worker (`connect`). */
 export const SERVER: ServerPrincipal = { kind: "server" };
+
+/**
+ * What telemetry records about a principal (every host's `principalAttributes`; Chord's "Who a span was for"): its
+ * kind, the owner's access, a guest's id and a worker's session; never a name or an email (a guest's principal key
+ * would carry both, kept 7 days).
+ */
+export const principalAttributes: PrincipalAttributes<P2Principal> = (principal) => {
+	switch (principal.kind) {
+		case "owner":
+			return { "p2.principal": `owner:${principal.access}` };
+		case "guest":
+			return { "p2.principal": "guest", "p2.guest": principal.id };
+		case "worker":
+			return { "p2.principal": "worker", "p2.session": principal.session };
+		default:
+			return { "p2.principal": principal.kind };
+	}
+};
 
 // `undefined`: no principal (a request nobody authenticated).
 export const isOwner = (principal: P2Principal | undefined): principal is OwnerPrincipal => principal?.kind === "owner";

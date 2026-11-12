@@ -62,7 +62,7 @@ test("afterResponse hooks find the request that produced their message, once", a
 		values: { session: { id: "s1", cwd: dataDir, env: null, model: MODEL, thinkingLevel: "off" } },
 	};
 	const location = new SessionLocation({ cwd: dataDir, env: null });
-	const core = workerCore(init, new Liveness(), location, store, (fn) => host.root(fn, BACKGROUND_CONTEXT));
+	const core = workerCore(init, new Liveness(), location, store, (fn) => host.root(fn, BACKGROUND_CONTEXT), undefined);
 	await host.load(
 		[
 			{ name: "@p2/core", facet: core },

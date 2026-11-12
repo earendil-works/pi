@@ -84,6 +84,9 @@ export function startP2Page(): void {
 		modules: MODULES,
 		core: [{ name: "@p2/web-core", facet: webCoreFacet }],
 		themes: false,
+		// An owner's page (the server marks it: it admits owners' telemetry only) records its spans and sends them to the
+		// server's store every 3 s and when hidden.
+		...(element.dataset.p2Telemetry === "on" ? { telemetry: true } : {}),
 		...(cloud === undefined ? {} : { follow: false }),
 		canRetry: async () => {
 			if (!guest || !(await shareHasEnded())) return true;

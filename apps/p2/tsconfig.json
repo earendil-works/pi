@@ -19,6 +19,8 @@
 			"@earendil-works/chord/sqlite/node": ["../../packages/chord/src/sqlite/node.ts"],
 			"@earendil-works/chord/sqlite/cloudflare": ["../../packages/chord/src/sqlite/cloudflare.ts"],
 			"@earendil-works/chord/telemetry-sqlite": ["../../packages/chord/src/telemetry-sqlite/index.ts"],
+			"@earendil-works/chord/telemetry-sqlite/node": ["../../packages/chord/src/telemetry-sqlite/node.ts"],
+			"@earendil-works/chord/telemetry-ingest": ["../../packages/chord/src/telemetry-ingest/index.ts"],
 			"@earendil-works/chord/http": ["../../packages/chord/src/node/http/index.ts"],
 			"@earendil-works/chord/workers": ["../../packages/chord/src/node/workers/index.ts"],
 			"@earendil-works/chord/compression": ["../../packages/chord/src/node/compression.ts"],

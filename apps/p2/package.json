@@ -30,6 +30,7 @@
 		"@earendil-works/pi-env": "1.5.2",
 		"@earendil-works/pi-mcp": "1.5.2",
 		"@earendil-works/pi-schema": "1.5.2",
+		"@earendil-works/pi-telemetry": "1.5.2",
 		"@earendil-works/pi-tui": "1.5.2",
 		"diff": "8.0.4",
 		"discord.js": "14.28.1",
