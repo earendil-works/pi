@@ -14,6 +14,7 @@
 - Fixed `/export` HTML showing raw terminal hyperlink escape codes around links in custom tool output; links are now clickable ([#12003](https://github.com/earendil-works/pi/issues/12003))
 - Fixed the bash tool returning no output, with a footer like `[Showing lines 3-2 of 2]`, when the output ends in one line longer than about 100KB, such as a `grep` match in a minified file; it now shows the end of that line ([#12062](https://github.com/earendil-works/pi/issues/12062))
 - Fixed provider errors reading "Connection closed." not triggering automatic retries ([#12064](https://github.com/earendil-works/pi/issues/12064))
+- Fixed `/resume` sometimes selecting an unrelated session while the list reloads after deleting or renaming a session ([#12106](https://github.com/earendil-works/pi/issues/12106))
 
 ## [1.5.2] - 2026-11-10
 
