@@ -158,7 +158,9 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		const rowOf = (label: string) =>
 			`[...document.querySelectorAll('.sidebar-section[data-key=recent] .nav-row:has(> .branch-row)')].find(e=>e.querySelector('.session-title').textContent===${JSON.stringify(label)})`;
 		const pencilOf = (label: string) => `${rowOf(label)}.querySelector('.branch-rename')`;
-		const shown = (label: string) => `getComputedStyle(${pencilOf(label)}).display !== 'none'`;
+		// Laid out at rest with a fine pointer (so Shift+Tab reaches it), but invisible.
+		const shown = (label: string) =>
+			`(s => s.display !== "none" && s.opacity === "1")(getComputedStyle(${pencilOf(label)}))`;
 		const key = async (event: { key: string; code: string; windowsVirtualKeyCode: number; modifiers?: number }) => {
 			await browser.call("Input.dispatchKeyEvent", { type: "rawKeyDown", ...event });
 			await browser.call("Input.dispatchKeyEvent", { type: "keyUp", ...event });
@@ -227,12 +229,19 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		await sessions.rename({ id, title: "Renamed" }, BACKGROUND_CONTEXT);
 		await browser.wait(`${rowOf("Renamed")}`);
 		assert.equal(await rows(), "Renamed|Second try");
-		// The keyboard: focus on a row shows its pencil, Tab reaches it, Enter opens the sheet.
+		// The keyboard: focus on a row shows its pencil, Tab reaches it, and Shift+Tab from the next row too (the pencil
+		// stays in the tab order while hidden); Enter opens the sheet.
 		await browser.call("Input.dispatchMouseEvent", { type: "mouseMoved", x: 900, y: 500 });
-		await browser.evaluate(`${rowOf("Renamed")}.querySelector('.branch-row').focus()`);
+		// Keyboard focus (`focusVisible`, as a Tab gives it); focus from a click does not show it.
+		await browser.evaluate(`${rowOf("Renamed")}.querySelector('.branch-row').focus({ focusVisible: true })`);
 		await browser.wait(shown("Renamed"));
 		await key({ key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
 		await browser.wait(`document.activeElement === ${pencilOf("Renamed")}`);
+		await key({ key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
+		await browser.wait(`document.activeElement === ${rowOf("Second try")}.querySelector('.branch-row')`);
+		await browser.wait(`!(${shown("Renamed")})`);
+		await key({ key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, modifiers: 8 });
+		await browser.wait(`document.activeElement === ${pencilOf("Renamed")} && ${shown("Renamed")}`);
 		// A key down with its text, as a key press activates a button.
 		await browser.call("Input.dispatchKeyEvent", {
 			type: "keyDown",
@@ -329,7 +338,7 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		if ((await browser.evaluate<string>(`${desktopToggle}.getAttribute('aria-expanded')`)) === "false")
 			await browser.evaluate(`${desktopToggle}.click()`);
 		await browser.wait(`${rowOf("Main line")}`);
-		await browser.evaluate(`${rowOf("Main line")}.querySelector('.branch-row').focus()`);
+		await browser.evaluate(`${rowOf("Main line")}.querySelector('.branch-row').focus({ focusVisible: true })`);
 		await browser.wait(shown("Main line"));
 		await browser.evaluate(`${pencilOf("Main line")}.click()`);
 		await sheetOn("Main line");
