@@ -39,7 +39,9 @@ P2_FAKE=1 npm start          # http://127.0.0.1:8788, data in ~/.pi/p2
 - **Web UI** (Chord's web surface, slice 11; `src/hosts/server.ts`, `src/hosts/web.ts`): `webSurface` with
   `routes: false` builds the pages' base bundle from `src/hosts/web/entry.ts` (`main.tsx`: Chord's `startPage` with
   p2's API modules, core facet, React root, connection state and error reports; `themes: false`, p2 styles itself)
-  right after the listen (`conditions: ["source"]`: workspace packages from source, as the server runs them); the
+  right after the listen, resolving workspace packages through p2's tsconfig `paths` as the server's source resolver
+  does (`src/hosts/web/base.ts`, Chord's `tsconfig`): their sources, never a `dist/` (pi-ai's `./utils/*` exports
+  only `dist/`, which the phone never builds; `web-sources.test.ts` fails on any `dist/` input); the
   plugins' web facets are Chord plugin builds of kind `web` (host packages `src/hosts/web/packages.ts`: the API's
   kind-neutral and web modules, React, react-dom, pi-schema), served as scripts that register themselves, the current
   set as one combined file. `web.ts` serves them with p2's access rules: the page (p2's template with `pageScripts`,
@@ -50,12 +52,11 @@ P2_FAKE=1 npm start          # http://127.0.0.1:8788, data in ~/.pi/p2
   with its code), so the transcript's scroll and the other panes stay; only base code (the entry, `src/web`,
   `src/runtime`, the API, Chord, React) needs a restart, and pages reload onto the new base: before reconnecting a
   page asks `/_chord/web/base`, another one reloads it. No polling. A page's link names its base
-  (`/chord?web=<base>`): the server refuses one naming another at once (close code 4001, `src/runtime/stale-page.ts`)
+  (`/chord?web=<base>`); every other client names itself (`?client=tui`, `cloud`, `script` for scripts and tests;
+  `src/runtime/stale-page.ts`). The server refuses a link naming another base, or neither a base nor a known client (a
+  page from before 2026-11-12, which would re-hold types removed since), at once (close code 4001; the page reloads)
   and the owner gets a notice (source `stale-pages`) naming who it was: the owner's access or device, or the guest,
-  the browser and its address. Links naming no base are not asked: the TUI, Cloud Brain's pages and pages from before
-  2026-11-12 (those reload once shown; until then their links re-hold types removed since, which wait on the session
-  worker and are reported there as `unbound_long` at each start: refusing them at once, and naming who asked in that
-  report, needs Chord). The last four plugin sets' files stay served. Web facets must not share module state with
+  the browser and its address. A TUI launcher from before the marker is refused too (it retries until updated). The last four plugin sets' files stay served. Web facets must not share module state with
   another plugin's files (each plugin's script holds its own copy of a file it imports from another plugin):
   `plugin-practices.md`. The TUI launcher still polls `/__p2_tui` (p2's own TUI bundle). There is no Vite,
   source-module server or `index.html`.
@@ -64,7 +65,7 @@ P2_FAKE=1 npm start          # http://127.0.0.1:8788, data in ~/.pi/p2
   Chord's builders as a p2 page is (`buildBase`, the plugins' web scripts registered with `registeredSource`,
   `pageBootstrap`), written as one script (the bootstrap, the plugins, the base bundle) and one stylesheet, assets
   under `/pi/ui/<sha>/assets/`. `main.tsx` sees Radius's `data-pi-bootstrap` on `#root`: it connects to its Chord URL
-  and starts static (`startPage({ follow: false })`: no updates, never outdated). Test: `ui-cloud-bundle.test.ts`.
+  (adding `client=cloud`; the brain forwards the relayed path with its query) and starts static (`startPage({ follow: false })`: no updates, never outdated). Test: `ui-cloud-bundle.test.ts`.
 - `npm run dev` also watches plugins and supervises runtime restarts; see **Dev mode** below. Under `npm start`,
   code changes (web included) take effect only after a restart.
 - **Data report** (`scripts/data-report.ts`, read-only, beside a live server): per session its title, location,

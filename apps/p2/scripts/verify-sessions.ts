@@ -20,6 +20,7 @@ import { createHost, type Host } from "../src/runtime/chord.ts";
 import { dataDirectory, localOwnerSignIn } from "../src/runtime/local-owner.ts";
 import { SERVER } from "../src/runtime/principals.ts";
 import { follow, type HeldIn, whenLive } from "../src/runtime/refs.ts";
+import { clientLinkPath } from "../src/runtime/stale-page.ts";
 import { type DataReport, dataReport, type SessionReport } from "./data-report.ts";
 
 /** How many of the most recently active sessions are checked besides those with subagents or shares. */
@@ -32,7 +33,7 @@ export async function verifySessions(url: string, report: DataReport, dataDir: s
 		throw new Error("Use a loopback URL (the owner)");
 	const signIn = await localOwnerSignIn(origin, dataDir);
 	if (signIn.kind === "unavailable") throw new Error(signIn.message);
-	const socket = new WebSocket(new URL("/chord", origin.href.replace(/^http/, "ws")), {
+	const socket = new WebSocket(new URL(clientLinkPath("script"), origin.href.replace(/^http/, "ws")), {
 		headers: { Origin: origin.origin, Cookie: signIn.cookie },
 	});
 	const host = createHost({ onError: () => {} });

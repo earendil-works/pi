@@ -45,6 +45,7 @@ import {
 	type SessionWorkerControl,
 	serveServerRegistries,
 } from "../../src/runtime/server.ts";
+import { clientLinkPath } from "../../src/runtime/stale-page.ts";
 import { webCoreFacet } from "../../src/runtime/web-core.ts";
 import {
 	HarnessHost,
@@ -96,7 +97,9 @@ export async function localOwner(server: Pick<P2Server, "port" | "dataDir">): Pr
 export function clientHost(target: LocalOwner | ClientSocket, facets: readonly PluginFacet<P2Principal>[] = []): Host {
 	const socket =
 		"cookie" in target
-			? new NodeWebSocket(`ws://127.0.0.1:${target.port}/chord`, { headers: { Cookie: target.cookie } })
+			? new NodeWebSocket(`ws://127.0.0.1:${target.port}${clientLinkPath("script")}`, {
+					headers: { Cookie: target.cookie },
+				})
 			: target;
 	const host = createHost({ onError: reportTo() });
 	// Both sockets have the subset of the WebSocket API the link uses; the types differ in their event signatures.
@@ -166,7 +169,7 @@ export async function startFixture(options: ServerOptions = {}): Promise<Fixture
 			return browser;
 		},
 		client: (headers) => {
-			const socket = new NodeWebSocket(`ws://127.0.0.1:${server.port}/chord`, { headers });
+			const socket = new NodeWebSocket(`ws://127.0.0.1:${server.port}${clientLinkPath("script")}`, { headers });
 			const client = clientHost(socket);
 			browsers.push(client);
 			return { host: client, socket };

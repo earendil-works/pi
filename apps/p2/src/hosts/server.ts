@@ -46,7 +46,7 @@ import {
 	Upgrades,
 	WorkerInitValues,
 } from "../runtime/server.ts";
-import { STALE_PAGE_CODE, STALE_PAGE_REASON } from "../runtime/stale-page.ts";
+import { isLinkClient, STALE_PAGE_CODE, STALE_PAGE_REASON } from "../runtime/stale-page.ts";
 import { WorkerBoundary, type WorkerInit } from "../runtime/worker.ts";
 import { type BundleInput, buildTuiBundle, type TuiBundle, tuiManifest } from "./bundles.ts";
 import { devControl } from "./dev.ts";
@@ -72,6 +72,7 @@ import {
 import { SessionWorkers } from "./session-workers.ts";
 import { limitedSocket, MAX_CLIENT_FRAME } from "./socket-limits.ts";
 import { tuiPreferencesFacet } from "./tui-preferences.ts";
+import { WEB_ENTRY, WEB_RESOLUTION } from "./web/base.ts";
 import { createWeb, isAppPage, isPublicFile } from "./web.ts";
 
 /** The p2 app directory (`apps/p2`), told to facets as `Server.info.app` and `WorkerInit.app`. */
@@ -114,8 +115,8 @@ export type P2Server = {
 	close(): Promise<void>;
 };
 
-/** The pages' start code: the web surface's base bundle entry (it calls `startP2Page`). */
-const WEB_ENTRY = fileURLToPath(new URL("./web/entry.ts", import.meta.url));
+/** A page's refused link: the base bundle it names (`null`: none, a page from older code) and the server's. */
+type StalePage = { readonly sent: string | null; readonly current: string | undefined };
 
 /** Who a principal is, for the owner's notices: the owner's access (and device) or a guest's name and ID. */
 function principalText(principal: P2Principal): string {
@@ -208,7 +209,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 	 * plugins' web facets as scripts that apply in place; served by `web.ts` with p2's own access rules (no routes).
 	 */
 	const surface = serveWeb
-		? webSurface(host, { plugins: chordPlugins, entry: WEB_ENTRY, conditions: ["source"], routes: false })
+		? webSurface(host, { plugins: chordPlugins, entry: WEB_ENTRY, ...WEB_RESOLUTION, routes: false })
 		: undefined;
 	// Listen first so plugins see the actual port, but capture requests/upgrades BEFORE listening.
 	// A reconnect can arrive while plugins load: without an upgrade listener Node treats it as
@@ -820,26 +821,24 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 	};
 	const upgraded = new WeakMap<IncomingMessage, P2Principal>();
 	/**
-	 * A page's link from a bundle other than the current one: its `web` query names the version it runs. Links naming
-	 * none are not asked: the TUI, Cloud Brain's pages (built elsewhere: scripts/cloud-bundle.ts) and pages from before
-	 * 2026-11-12 (they reload when shown; their requests for removed types still wait, see docs/p2-notes.md).
+	 * A page's link from code other than the current: its `web` query names another base bundle, or it names neither a
+	 * base nor a client (`client`: the TUI, Cloud Brain's pages, scripts), a page from before pages named their base
+	 * (src/runtime/stale-page.ts). Without the web surface no page is served here and none is asked.
 	 */
-	const stalePage = async (request: IncomingMessage): Promise<{ sent: string; current: string } | undefined> => {
-		const sent = new URL(request.url ?? "/", "http://localhost").searchParams.get("web");
-		if (surface === undefined || sent === null) return undefined;
+	const stalePage = async (request: IncomingMessage): Promise<StalePage | undefined> => {
+		const query = new URL(request.url ?? "/", "http://localhost").searchParams;
+		const sent = query.get("web");
+		if (surface === undefined || (sent === null && isLinkClient(query.get("client")))) return undefined;
 		const current = await surface.base();
+		if (sent === null) return { sent, current };
 		return current !== undefined && sent !== current ? { sent, current } : undefined;
 	};
 	/** Stale pages already reported, by who and which version: each is told the owner once per server run. */
 	const staleReported = new Set<string>();
-	const reportStalePage = (
-		request: IncomingMessage,
-		principal: P2Principal,
-		{ sent, current }: { sent: string; current: string },
-	): void => {
+	const reportStalePage = (request: IncomingMessage, principal: P2Principal, { sent, current }: StalePage): void => {
 		const who = principalText(principal);
 		const agent = String(request.headers["user-agent"] ?? "unknown browser").slice(0, 200);
-		const text = `A page running an older p2 (web bundle ${sent}, current ${current}) tried to connect and was told to reload: ${who}, ${agent}, from ${request.socket.remoteAddress ?? "unknown address"} (WebSocket /chord).`;
+		const text = `A page running an older p2 (web bundle ${sent ?? "unnamed: from before 2026-11-12"}, current ${current ?? "not built"}) tried to connect and was told to reload: ${who}, ${agent}, from ${request.socket.remoteAddress ?? "unknown address"} (WebSocket /chord).`;
 		const key = `${who}\n${agent}\n${sent}`;
 		if (staleReported.has(key)) return;
 		staleReported.add(key);

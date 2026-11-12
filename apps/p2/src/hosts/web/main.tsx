@@ -18,6 +18,7 @@ import { Access } from "../../runtime/access.ts";
 import type { Host } from "../../runtime/chord.ts";
 import type { P2Principal } from "../../runtime/principals.ts";
 import { whenLive } from "../../runtime/refs.ts";
+import type { LinkClient } from "../../runtime/stale-page.ts";
 import { getNavigation, HostContext, Slot, setConnected, setShareEnded, webCoreFacet } from "../../runtime/web.tsx";
 import { AppBoundary, reportClientError, startErrorReports } from "../../web/app-boundary.tsx";
 import { startShellBridge } from "../../web/shell-bridge.ts";
@@ -45,13 +46,18 @@ const shareHasEnded = (): Promise<boolean> =>
 		() => false,
 	);
 
-/** Radius Cloud Brain's page: the Chord URL Radius gives it (`#root`'s `data-pi-bootstrap`); none on p2's own pages. */
+/**
+ * Radius Cloud Brain's page: the Chord URL Radius gives it (`#root`'s `data-pi-bootstrap`), naming this client (p2
+ * refuses a link naming neither its base bundle nor its client: src/runtime/stale-page.ts); none on p2's own pages.
+ */
 function cloudChordUrl(): string | undefined {
 	const given = document.getElementById("root")?.dataset.piBootstrap;
 	if (given === undefined) return undefined;
 	const { chordUrl } = JSON.parse(given) as { chordUrl?: unknown };
 	if (typeof chordUrl !== "string") throw new Error("Radius gave this page no Chord URL");
-	return chordUrl;
+	const url = new URL(chordUrl, location.href);
+	url.searchParams.set("client", "cloud" satisfies LinkClient);
+	return url.href;
 }
 
 /** Starts the page. */

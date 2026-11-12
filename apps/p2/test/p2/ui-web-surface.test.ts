@@ -15,7 +15,7 @@ import { LogNotices } from "../../plugins/logs/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Views } from "../../plugins/views/contract.ts";
 import { type P2Server, startServer } from "../../src/hosts/server.ts";
-import { STALE_PAGE_CODE } from "../../src/runtime/stale-page.ts";
+import { LINK_CLIENTS, STALE_PAGE_CODE } from "../../src/runtime/stale-page.ts";
 import { Browser, browserTests } from "./browser.ts";
 import { clientHost, holdIn, type LocalOwner, localOwner, until, webAssets } from "./helpers.ts";
 
@@ -136,7 +136,7 @@ describe("pages on the web surface", { skip: !browserTests }, () => {
 		}
 	});
 
-	it("refuses a link naming another base at once, and tells the owner which device", async () => {
+	it("refuses a link naming another base or nothing at once, and tells the owner which device", async () => {
 		await browser.open(`http://127.0.0.1:${port}/`);
 		await browser.wait("document.documentElement.dataset.webVersion");
 		const closeOf = (query: string) =>
@@ -145,17 +145,21 @@ describe("pages on the web surface", { skip: !browserTests }, () => {
 				socket.onclose = (event) => resolve(event.code);
 				setTimeout(() => resolve(-1), 5000);
 			})`);
-		assert.equal(await closeOf("?web=0123abcd"), STALE_PAGE_CODE);
-		// A link naming no base (the TUI, a Cloud Brain page) is not asked.
-		assert.equal(await closeOf(""), -1);
 		const host = clientHost(owner);
 		try {
 			const notices = await holdIn(host, LogNotices, {}, "owner");
-			await until(notices.notices, (value) => value.some((each) => each.source === "stale-pages"));
-			assert.match(
-				notices.notices.value.find((each) => each.source === "stale-pages")?.message ?? "",
-				/web bundle 0123abcd.*the owner \(local\).*Chrome.*from 127\.0\.0\.1 \(WebSocket \/chord\)/,
-			);
+			/** The owner's newest notice about stale pages once it matches `pattern`. */
+			const told = (pattern: RegExp) =>
+				until(notices.notices, (value) =>
+					value.some((each) => each.source === "stale-pages" && pattern.test(each.message)),
+				);
+			assert.equal(await closeOf("?web=0123abcd"), STALE_PAGE_CODE);
+			await told(/web bundle 0123abcd.*the owner \(local\).*Chrome.*from 127\.0\.0\.1 \(WebSocket \/chord\)/);
+			// A page from before pages named their base names nothing: refused too. Other clients name themselves.
+			assert.equal(await closeOf(""), STALE_PAGE_CODE);
+			await told(/web bundle unnamed: from before/);
+			assert.equal(await closeOf("?client=nobody"), STALE_PAGE_CODE);
+			for (const client of LINK_CLIENTS) assert.equal(await closeOf(`?client=${client}`), -1, client);
 		} finally {
 			await host.close(BACKGROUND_CONTEXT);
 		}

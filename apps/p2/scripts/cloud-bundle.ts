@@ -10,16 +10,14 @@
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { registeredSource } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { buildBase, pageBootstrap } from "@earendil-works/chord/surfaces";
 import { createP2Plugins } from "../src/hosts/plugins.ts";
+import { WEB_ENTRY, WEB_RESOLUTION } from "../src/hosts/web/base.ts";
 
 /** The plugins Cloud Brain serves. `web-shell` registers the "app" slot; without it the page stays on "Loading…". */
 const PLUGINS = ["web-shell", "artifacts", "chat", "drafts", "models", "sessions", "status", "subagents", "workspace"];
-
-const ENTRY = fileURLToPath(new URL("../src/hosts/web/entry.ts", import.meta.url));
 
 /** A script's inline source map comment (the bundle is served publicly: no sources). */
 const SOURCE_MAP = /\n\/\/# sourceMappingURL=[^\n]*/g;
@@ -31,7 +29,7 @@ const prefix = `/pi/ui/${sha}/`;
 const dir = join(out, sha);
 await mkdir(join(dir, "assets"), { recursive: true });
 
-const base = await buildBase(ENTRY, "browser", prefix, ["source"]);
+const base = await buildBase(WEB_ENTRY, "browser", prefix, WEB_RESOLUTION);
 const p2Plugins = createP2Plugins(
 	PLUGINS,
 	(error) => console.error("cloud-bundle:", error),

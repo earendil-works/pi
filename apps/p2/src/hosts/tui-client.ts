@@ -1,6 +1,7 @@
 // Trusted launcher transport. Downloaded code sees opaque chord frames, not the socket, URL or sign-in cookie.
 import { createHash } from "node:crypto";
 import type { ProgramStatus, Terminal } from "@earendil-works/pi-tui";
+import { clientLinkPath } from "../runtime/stale-page.ts";
 import type { TuiLocalPreferences } from "../tui/preferences.ts";
 import type { TuiCredentials } from "./tui-config.ts";
 import { MAX_TERMINAL_FRAME } from "./tui-filter.ts";
@@ -330,7 +331,7 @@ export async function startTuiClient(options: {
 	const connect = (attempt = 0): void => {
 		if (closed) return;
 		let opened = false;
-		const current: TuiSocket = transport.socket("/chord", {
+		const current: TuiSocket = transport.socket(clientLinkPath("tui"), {
 			open: () => {
 				if (closed || socket !== current) {
 					current.terminate();
