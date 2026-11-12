@@ -48,7 +48,7 @@ import { AuthStorage, ReadOnlyAuthStorage } from "./core/auth-storage.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
-import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.ts";
+import { resolveCliModel, resolveModelScopeWithDiagnostics, type ScopedModel } from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
@@ -869,10 +869,15 @@ export async function main(args: string[], options?: MainOptions) {
 		];
 
 		const modelPatterns = parsed.models ?? settingsManager.getEnabledModels();
-		const scopedModels =
+		const { scopedModels, diagnostics: modelScopeDiagnostics } =
 			modelPatterns && modelPatterns.length > 0
-				? await resolveModelScope(modelPatterns, modelRuntime, { signal: AbortSignal.timeout(15_000) })
-				: [];
+				? await resolveModelScopeWithDiagnostics(modelPatterns, modelRuntime, {
+						signal: AbortSignal.timeout(15_000),
+					})
+				: { scopedModels: [], diagnostics: [] };
+		// Returned as diagnostics instead of printed: this factory runs again on /new, /resume and /fork,
+		// while the interactive TUI draws on the terminal (#11264).
+		diagnostics.push(...modelScopeDiagnostics);
 		const {
 			options: sessionOptions,
 			cliThinkingFromModel,
