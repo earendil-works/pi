@@ -6,6 +6,7 @@
 
 - Fixed fullscreen Kitty images disappearing after a full redraw such as a window resize. Clearing the screen made Kitty free the cached image data that the redraw then tried to reuse ([#12010](https://github.com/earendil-works/pi/issues/12010))
 - Fixed text after a multi-row inline image in Markdown drawing over the image when the image's rows were joined with hard line breaks ([#12017](https://github.com/earendil-works/pi/issues/12017))
+- Fixed Kitty and iTerm2 images covering overlays drawn over them. An image that an overlay overlaps by row and column is now removed while the overlay is open and drawn again when it closes. Images beside an overlay, such as a sidebar, stay visible ([#11584](https://github.com/earendil-works/pi/issues/11584))
 
 ## [1.5.2] - 2026-11-10
 
