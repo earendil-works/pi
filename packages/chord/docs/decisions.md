@@ -2357,7 +2357,13 @@ validation and copies the v2 kernel added around Delta.
   `startPage({ follow: false })` (and `startClient`'s `follow`): a static page that loads its combined plugins and
   never follows the scripts object nor asks the server's base, for a page built offline and served elsewhere, whose
   server publishes scripts it cannot load; built with `buildBase` and `pageBootstrap` (exported for it), its plugin
-  scripts registered by `registeredSource`.
+  scripts registered by `registeredSource`. (4) (owner, 2026-11-12: "make the surface's base and plugin builds resolve
+  exactly like the server process does (source, no dist needed)") `webSurface`'s and `tuiSurface`'s `tsconfig` (and
+  `buildBase`'s `BaseResolution`): the base resolves through that tsconfig.json's `paths`, for a server whose loader
+  resolves workspace packages through them (p2's source resolver). Conditions alone missed a package whose `exports`
+  name only `dist/` (pi-ai's `./utils/*`): a checkout that never builds `dist/` (p2 on a phone) failed its base. Without
+  `tsconfig` every tsconfig.json stays ignored. Plugin builds need nothing: they bundle a plugin's own `dependencies`
+  only, the app's packages being host packages.
 - **`chord.plugins` is a package's manifest of plugins, as pi's (owner, 2026-11-01: "yes"; slice 12 review, Opus H1;
   refines "The plugin model ... imports and builds" (Imports) and `slice-12.md` §2, §5):** a package (npm, git, local)
   declares the plugins it provides in its `package.json`, `"chord": { "plugins": ["./notes", "./search"] }` (globs and

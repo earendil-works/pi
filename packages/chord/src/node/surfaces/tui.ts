@@ -20,6 +20,8 @@ export type TuiSurfaceOptions = {
 	readonly entry: string;
 	/** The conditions the base bundle's packages resolve with: the server process's by default (`processConditions`). */
 	readonly conditions?: readonly string[];
+	/** A tsconfig.json whose `paths` the base bundle's packages resolve through, as the server's loader does (`BaseResolution`). */
+	readonly tsconfig?: string;
 };
 
 /** What a launcher downloads at its start (`GET /_chord/tui/start`): the base bundle and the combined plugin file. */
@@ -46,8 +48,12 @@ export const TUI_PREFIX = "/_chord/tui/";
  * the base bundle (503 when it failed). The build is not started here.
  */
 export function tuiSurface<P extends Principal>(server: Host<P>, options: TuiSurfaceOptions): TuiSurface<P> {
-	const { kind = "tui", entry, conditions, plugins } = options;
-	const building = new SurfaceBuild<P>("tui", "sandbox", TUI_PREFIX, { kind, entry, conditions, plugins }, server);
+	const { kind = "tui", entry, conditions, tsconfig, plugins } = options;
+	const resolution = {
+		...(conditions === undefined ? {} : { conditions }),
+		...(tsconfig === undefined ? {} : { tsconfig }),
+	};
+	const building = new SurfaceBuild<P>("tui", "sandbox", TUI_PREFIX, { kind, entry, resolution, plugins }, server);
 	const serve = async (request: HttpRequest): Promise<HttpResponse> => building.file(request.path);
 	const facet = defineFacet<P>((host, self) => {
 		scriptsFacet<P>("tui", building).setup(host, self);

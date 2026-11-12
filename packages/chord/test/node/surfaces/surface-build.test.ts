@@ -36,7 +36,7 @@ async function surface(entry: string) {
 		"web",
 		"browser",
 		WEB_PREFIX,
-		{ kind: "web", entry, conditions: [], plugins },
+		{ kind: "web", entry, resolution: { conditions: [] }, plugins },
 		server,
 	);
 	await server.load([{ name: "chord.web", facet: scriptsFacet<Principal>("web", building) }], context);

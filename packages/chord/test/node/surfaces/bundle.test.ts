@@ -1,6 +1,6 @@
 // Tests of base bundles' resolution (p3 step 0a): packages resolve with the given conditions (a source checkout's
 // source, not its `dist/`), by default the server process's (`--conditions`/`-C` of its flags and of a quoted
-// `NODE_OPTIONS`), a browser build keeping its `module` condition and `browser` field, every file read recorded
+// `NODE_OPTIONS`), through a given tsconfig's `paths` (none read otherwise), a browser build keeping its `module` condition and `browser` field, every file read recorded
 // with its bytes' hash, and the fonts and images its stylesheet names collected as assets.
 
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
@@ -50,14 +50,39 @@ describe("conditions", () => {
 	it("resolves with the given conditions: the source as input, not dist/, each with its bytes' hash", async () => {
 		const dir = await project(CHORDISH, ["chordish"]);
 		for (const platform of ["browser", "sandbox"] as const) {
-			const bundle = await buildBase(join(dir, "main.ts"), platform, "/p/", ["source"]);
+			const bundle = await buildBase(join(dir, "main.ts"), platform, "/p/", { conditions: ["source"] });
 			const source = join(dir, "workspace", "chordish", "src", "index.ts");
 			expect([...bundle.inputs.keys()].sort()).toEqual([join(dir, "main.ts"), source].sort());
 			expect(bundle.inputs.get(source)).toBe(contentHash(await readFile(source)));
 			expect(scriptOf(bundle)).toContain('"source"');
 		}
-		const plain = await buildBase(join(dir, "main.ts"), "browser", "/p/", []);
+		const plain = await buildBase(join(dir, "main.ts"), "browser", "/p/", { conditions: [] });
 		expect([...plain.inputs.keys()]).toContain(join(dir, "workspace", "chordish", "dist", "index.js"));
+	});
+
+	it("resolves through a given tsconfig's paths, a package exporting only an unbuilt dist/; else ignores tsconfigs", async () => {
+		const dir = await project(
+			{
+				"workspace/aiish/package.json": JSON.stringify({
+					name: "aiish",
+					type: "module",
+					exports: { "./utils/*": { import: "./dist/utils/*.js" } },
+				}),
+				"workspace/aiish/src/utils/estimate.ts": 'export const from: string = "paths";\n',
+				"tsconfig.json": JSON.stringify({
+					compilerOptions: { paths: { "aiish/*": ["./workspace/aiish/src/*.ts"] } },
+				}),
+				"main.ts": 'import { from } from "aiish/utils/estimate";\nconsole.log(from);\n',
+			},
+			["aiish"],
+		);
+		const source = join(dir, "workspace", "aiish", "src", "utils", "estimate.ts");
+		const bundle = await buildBase(join(dir, "main.ts"), "browser", "/p/", { tsconfig: join(dir, "tsconfig.json") });
+		expect([...bundle.inputs.keys()].sort()).toEqual([join(dir, "main.ts"), source].sort());
+		expect(scriptOf(bundle)).toContain('"paths"');
+		await expect(buildBase(join(dir, "main.ts"), "browser", "/p/", { conditions: [] })).rejects.toThrow(
+			'Could not resolve "aiish/utils/estimate"',
+		);
 	});
 
 	it("takes the server process's conditions by default: its flags and a quoted NODE_OPTIONS", async () => {
@@ -70,7 +95,7 @@ describe("conditions", () => {
 		expect(processConditions([], undefined)).toEqual([]);
 		const dir = await project(CHORDISH, ["chordish"]);
 		process.env.NODE_OPTIONS = '--conditions "source"';
-		const bundle = await buildBase(join(dir, "main.ts"), "browser", "/p/", undefined);
+		const bundle = await buildBase(join(dir, "main.ts"), "browser", "/p/", {});
 		expect(scriptOf(bundle)).toContain('"source"');
 	});
 
@@ -95,7 +120,7 @@ describe("conditions", () => {
 			},
 			["dual", "fielded"],
 		);
-		const script = scriptOf(await buildBase(join(dir, "main.ts"), "browser", "/p/", ["source"]));
+		const script = scriptOf(await buildBase(join(dir, "main.ts"), "browser", "/p/", { conditions: ["source"] }));
 		expect(script).toContain('"module"');
 		expect(script).toContain('"browser"');
 		expect(script).not.toContain('"node"');
@@ -111,7 +136,7 @@ describe("assets", () => {
 			"body.woff2": "font bytes",
 			"logo.png": "png bytes",
 		});
-		const base = await buildBase(join(dir, "main.ts"), "browser", "/_chord/web/", []);
+		const base = await buildBase(join(dir, "main.ts"), "browser", "/_chord/web/", { conditions: [] });
 		const assets = [...base.files.keys()].filter((path) => path.startsWith("/_chord/web/assets/")).sort();
 		expect(assets).toEqual([
 			expect.stringMatching(/^\/_chord\/web\/assets\/body-[A-Z0-9]+\.woff2$/),

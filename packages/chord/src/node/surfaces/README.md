@@ -48,6 +48,10 @@ const built = await web.build();      // { kind: "built", base, inputs } | { kin
   404, 503 when the build failed), the page with `pageAssets()` (and `pageScripts`) and `base()` (the hash an outdated
   page asks) itself, with its own access rules and CSP. `buildBase` and `pageBootstrap` build a page offline (a static
   page, `startPage({ follow: false })`).
+- **Resolution** (`BaseResolution`): a base's packages resolve with the server process's conditions, or the given
+  ones; a server whose loader resolves workspace packages through a tsconfig's `paths` (p2's source resolver, a
+  checkout without `dist/`) passes `tsconfig`, and the base resolves through the same `paths`. Otherwise no
+  tsconfig.json is read.
 - **Terminal routes** (`tui.ts`): `GET /_chord/tui/start` (`TuiStart`: base hash, script, combined; signed in), `GET
   /_chord/tui/base` (public), the files (signed in).
 

@@ -27,6 +27,8 @@ export type WebSurfaceOptions = {
 	readonly entry: string;
 	/** The conditions the base bundle's packages resolve with: the server process's by default (`processConditions`). */
 	readonly conditions?: readonly string[];
+	/** A tsconfig.json whose `paths` the base bundle's packages resolve through, as the server's loader does (`BaseResolution`). */
+	readonly tsconfig?: string;
 } & (WebRoutesOptions | { readonly routes: false });
 
 /** The surface's routes (`Http` contributions): the page through the app's template, the files, the base hash. */
@@ -81,8 +83,12 @@ export const WEB_PREFIX = "/_chord/web/";
  * (503 when it failed). The build is not started here.
  */
 export function webSurface<P extends Principal>(server: Host<P>, options: WebSurfaceOptions): WebSurface<P> {
-	const { kind = "web", entry, conditions, plugins } = options;
-	const building = new SurfaceBuild<P>("web", "browser", WEB_PREFIX, { kind, entry, conditions, plugins }, server);
+	const { kind = "web", entry, conditions, tsconfig, plugins } = options;
+	const resolution = {
+		...(conditions === undefined ? {} : { conditions }),
+		...(tsconfig === undefined ? {} : { tsconfig }),
+	};
+	const building = new SurfaceBuild<P>("web", "browser", WEB_PREFIX, { kind, entry, resolution, plugins }, server);
 	const facet = defineFacet<P>((host, self) => {
 		scriptsFacet<P>("web", building).setup(host, self);
 		if (options.routes === false) return;

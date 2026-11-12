@@ -2,8 +2,9 @@
 // esbuild from the app's entry (its start code, its API with the kind's module, Chord, React: inlined once), named by
 // the hash of everything it is made of, served forever. A page's is a browser script with its stylesheet and assets;
 // a terminal's one CommonJS script the sandbox evaluates with its own `require` (its allowed builtins only). Packages
-// resolve with the server process's conditions (`--conditions`), so a base reads the same package files as the server
-// runs; every file it read is recorded with its bytes' hash (`BaseInputs`).
+// resolve as the server process resolves them, so a base reads the same package files as the server runs: with its
+// conditions (`--conditions`), and through a tsconfig's `paths` for a server that resolves through them; every file it
+// read is recorded with its bytes' hash (`BaseInputs`).
 
 import { createHash } from "node:crypto";
 import { basename, extname } from "node:path";
@@ -28,20 +29,27 @@ export type BaseBundle = {
 export type BasePlatform = "browser" | "sandbox";
 
 /**
+ * How a base bundle's packages resolve, as the server process resolves them: `conditions` (by default the server
+ * process's, `processConditions`), and `tsconfig`, a tsconfig.json whose `paths` map packages to files, for a server
+ * whose loader resolves through them (a source checkout without `dist/`). Without `tsconfig` every tsconfig.json is
+ * ignored.
+ */
+export type BaseResolution = { readonly conditions?: readonly string[]; readonly tsconfig?: string };
+
+/**
  * Builds the base bundle of `entry` for `platform`, its files under `prefix` (`/_chord/web/`): the script
  * `base.<hash>.js`, the stylesheet `base.<hash>.css` when it imports CSS, assets under `assets/` by their own hashes.
- * Packages resolve with `conditions`, by default the server process's (`processConditions`). Rejects with esbuild's
- * failure.
+ * Packages resolve by `resolution`. Rejects with esbuild's failure.
  */
 export async function buildBase(
 	entry: string,
 	platform: BasePlatform,
 	prefix: string,
-	conditions: readonly string[] | undefined,
+	resolution: BaseResolution,
 ): Promise<BaseBundle> {
 	const browser = platform === "browser";
 	const inputs = new Map<string, string>();
-	const resolving = conditions ?? processConditions(process.execArgv, process.env.NODE_OPTIONS);
+	const resolving = resolution.conditions ?? processConditions(process.execArgv, process.env.NODE_OPTIONS);
 	const result = await build({
 		entryPoints: [entry],
 		outdir: "/",
@@ -55,8 +63,9 @@ export async function buildBase(
 		target: browser ? "es2022" : "node22",
 		minify: true,
 		legalComments: "none",
-		// Ignore any tsconfig.json: TypeScript is stripped, JSX compiled with the automatic React runtime.
-		tsconfigRaw: "{}",
+		// The given tsconfig for every file (its `paths` are how the server resolves); else none: TypeScript is stripped,
+		// JSX compiled with the automatic React runtime.
+		...(resolution.tsconfig === undefined ? { tsconfigRaw: "{}" } : { tsconfig: resolution.tsconfig }),
 		jsx: "automatic",
 		define: { "process.env.NODE_ENV": '"production"' },
 		// Custom conditions drop esbuild's default `module`, which a browser build keeps; the platform stays its own.
