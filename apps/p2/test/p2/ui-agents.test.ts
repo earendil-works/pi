@@ -108,6 +108,26 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 		);
 	});
 
+	it("focuses no composer when a sidebar row opens a read-only conversation, and the next writable one's", async () => {
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session}`);
+		await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
+		// Any focus of a composer counts, also one gone in the next render (the previous screen's).
+		await browser.evaluate(
+			`window.composerFocused = false; document.addEventListener('focusin', (e) => { if (e.target.matches('.composer textarea')) window.composerFocused = true; }, true)`,
+		);
+		const header = ".sidebar-section[data-key=recent] .session-header.has-subagents";
+		await browser.click(`${header} .subagent-toggle`);
+		await browser.click(`.sidebar-section[data-key=recent] a.agent-row[href$="/c/${agent.conversationId}"]`);
+		await browser.wait(
+			`location.pathname.endsWith('/c/${agent.conversationId}') && document.querySelector('.subagent-wrap .subagent-bar')`,
+		);
+		assert.equal(await browser.evaluate<boolean>(`window.composerFocused`), false);
+		await browser.click(`${header} a.session-main`);
+		await browser.wait(
+			`location.pathname === '/s/${session}' && document.activeElement === document.querySelector('.composer textarea')`,
+		);
+	});
+
 	it("stops a working one-shot agent from its bar", async () => {
 		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
 		await chat.send(

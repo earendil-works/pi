@@ -19,6 +19,7 @@ import {
 } from "@p2/app/v1/web";
 import { memo, type ReactNode, useEffect, useId, useState } from "react";
 import { GlyphIcon } from "../../glyphs/GlyphIcon.tsx";
+import { WorkingMark } from "./marks.tsx";
 import type { Glyphs, GroupSection, NewTarget, Section, SidebarRow } from "./model.ts";
 import {
 	HiddenAttention,
@@ -29,7 +30,6 @@ import {
 	SessionItem,
 	Toggle,
 	useOpenedFrom,
-	WorkingMark,
 } from "./Row.tsx";
 import "./style.css";
 

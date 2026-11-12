@@ -219,7 +219,8 @@ export const markdownPath = (text: string): string => text.trim().replace(/^\.\/
 export function describe(view: View): string {
 	if (view.kind === "markdown") return `Markdown · ${view.path ?? ""}`;
 	if (view.kind === "changes") return view.path ? `Changes · ${view.path}` : "Changes";
-	return view.selection && !view.selection.sent ? "Custom · selection waiting" : "Custom";
+	const kind = view.kind === "custom" ? "Custom" : `Plugin · ${view.kind}`;
+	return view.selection && !view.selection.sent ? `${kind} · selection waiting` : kind;
 }
 
 /** In the composer: the selections and annotations the next message carries, which the person may drop. */

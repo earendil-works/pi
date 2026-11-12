@@ -22,16 +22,23 @@ FAKE ?=
 # launch only: it lands in the argument domain of the user defaults, which is never persisted.
 OWN_ENV = P2MAC_CHECKOUT="$(CHECKOUT)" P2MAC_FAKE="$(FAKE)"
 
-.PHONY: build run run-radius radius-login attach clean
+.PHONY: build run run-radius radius-login attach clean checkout-ready
 
 build:
 	./scripts/build-app.sh
 
-run: build
+# A fresh worktree has no dependencies: its server would exit at once (ERR_MODULE_NOT_FOUND) behind "Pi is not running".
+REPO_ROOT = $(abspath $(CHECKOUT)/../..)
+checkout-ready:
+	@test -d "$(REPO_ROOT)/node_modules" && test -d "$(REPO_ROOT)/packages/ai/src/providers/data" || { \
+		echo "$(REPO_ROOT) is not ready to run p2. Run there:"; \
+		echo "  npm install --ignore-scripts && npm run hydrate:model-data"; exit 1; }
+
+run: build checkout-ready
 	mkdir -p -m 700 "$(LOCAL_DATA_DIR)"
 	$(OWN_ENV) P2MAC_PORT=$(LOCAL_PORT) P2MAC_DATA_DIR="$(LOCAL_DATA_DIR)" $(APP_BIN) -source own
 
-run-radius: build
+run-radius: build checkout-ready
 	@test -f "$(RADIUS_DATA_DIR)/radius.json" || $(MAKE) radius-login
 	$(OWN_ENV) P2MAC_PORT=$(RADIUS_PORT) P2MAC_DATA_DIR="$(RADIUS_DATA_DIR)" $(APP_BIN) -source own
 

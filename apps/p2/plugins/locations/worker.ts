@@ -23,13 +23,9 @@ export default defineFacet((host) => {
 		const harness = self.registry(HarnessNative);
 		const extension = createLocationExtension({
 			server: {
-				envs: (context) =>
-					worker().root(async (ctx) => (await (await server(ctx)).envs({ origin: "owner" }, ctx)).envs, context),
+				envs: (context) => worker().root(async (ctx) => (await (await server(ctx)).envs(ctx)).envs, context),
 				directories: (env, path, context) =>
-					worker().root(
-						async (ctx) => (await server(ctx)).directories({ origin: "owner", env, path }, ctx),
-						context,
-					),
+					worker().root(async (ctx) => (await server(ctx)).directories({ env, path }, ctx), context),
 			},
 			locate: (id, read, context) => locateConversation(harness, id, context, read),
 		});
@@ -75,7 +71,7 @@ export default defineFacet((host) => {
 					}
 					let failure: string | undefined;
 					try {
-						const { refused } = await (await server(ctx)).move({ origin: "owner", ...pending }, ctx);
+						const { refused } = await (await server(ctx)).move(pending, ctx);
 						if (refused !== null) {
 							// Work started meanwhile: once it ends.
 							await Promise.race([

@@ -115,11 +115,10 @@ exactly what the owner picked:
 
 - **MCP servers:** only the picked servers of `mcp.json`; the project's `.pi/mcp.json` servers only when picked.
 - **Instructions:** the global AGENTS.md, skills and prompt templates only when picked (the project's own always).
-- **Capabilities:** `ports` (forwarding) and `conversations` (messaging other sessions) only when picked;
-  `reload_plugins` never. Other owner-only tools pass: what they reach is already confined (location tools by the
-  sandbox).
+- **Capabilities:** `ports` (forwarding) and `conversations` (messaging other sessions) only when picked. Other
+  tools pass: what they reach is already confined (location tools, bash and `reload_plugins` by the sandbox).
 
-In a locked session the lock replaces the "a turn the owner started" check, for the owner too. Unlinking lifts it.
+The lock holds for everyone, the owner too (p2 has no per-turn authority). Unlinking lifts it.
 
 ## State
 

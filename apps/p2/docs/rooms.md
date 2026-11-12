@@ -24,6 +24,11 @@ type ViewPrincipal = {
   redemption unless its opening is the view's current one, and a room whose opening stops being current (closed, or
   closed and reopened) revokes its frames. Revocation is edge-triggered in Chord (no deny list), so nothing relies on
   watching a boolean: a fold of "closed, reopened" into one change still shows another opening ID.
+- **A closed view's objects.** Closing retires the view's state and room documents. `ViewState` and `ViewBacking`
+  held after that (a page that has not seen the close, another device, a reconnect; the server's room lingering after
+  its frames were revoked, held again on a restarted worker) activate cleanly: they read the documents' initial value,
+  as earlier holders of the retired documents do, and their writes are refused (`ViewState.set`: no view; the
+  backing's `write`: false). Nothing about a closed view fails an activation, so it never shows up as an owner notice.
 - **Token.** The page asks `ViewLinks { session }` (server, remote, variant `viewer`) for `token({ view })`, which answers `{ token, opening }` (the opening read from `ViewOpenings` in a server root; no
 current opening: refused). Its factory
   admits `canView(principal, session)`; the `token` method then awaits `mayReach` for guests (factories are
@@ -144,7 +149,9 @@ then has its own dependencies on the worker, its own line, and its own end.
   between. Tested over a link that holds back the server's messages (so the frame's acknowledgements stop and the
   server's window fills): fifty 2 KB updates reach it as about 6 KB (the two messages in its window and one folded
   update). A peer's keyed messages go when it leaves. **Live:** `log` keeps messages until every present peer
-  acknowledged them (`ack({ seq })`, or `send`'s `ack`; the kit acknowledges what it applied, at most every 100 ms).
+  acknowledged them (`ack({ seq })`, or `send`'s `ack`; the kit acknowledges what it applied, at most every 100 ms:
+  with the window delivered and the keyed messages taken, that is the room's number, keyed messages included, so a
+  room that sends keyed messages only never leaves a peer behind a later joiner and its links are not cut).
   No size limits; a peer that never acknowledges holds the log while connected (a writer could equally flood).
 - **Base** (log and text): `{ seq, epoch, value }`. A joiner (or a peer that fell behind a trim) resets from it, then
   applies `log` entries after `base.seq`. **Log:** `log` keeps messages since the base; the leader's
@@ -248,7 +255,8 @@ untrusted input: any write peer may answer.
 
 `test/p2/rooms.test.ts` (each case its own session): the token path over a real socket (a bad Host with a valid token,
 reuse, cookie-only, `Origin: null` on `/chord` and on routes other than the kit, two redemptions at once); a view
-principal's reach; a closed and reopened view; a revoked guest grant; presence and leader handover; keyed folding over
+principal's reach; a closed and reopened view; a closed view's state and backing held again (a late page, a restarted
+worker under the lingering room) without an activation failure; a revoked guest grant; presence and leader handover; keyed folding over
 a stalled link, joiners' keyed snapshot, the keyed member's part limit; a read-only frame cannot change or reset the
 room; flat append cost with 22,000 kept messages, paged history; the memory budget charging empty messages; unkeyed
 order and acknowledgement trimming; log snapshots (stale term, overtaken snapshot) and reset; text convergence,
@@ -261,6 +269,8 @@ goes on; the agent's call runs in the leader's frame.
 
 ## 7. Open
 
-- Not tested: the lag eviction (5a), a cost test of encodes with many peers.
+- Not tested: the lag eviction (5a) itself (that a frame which keeps acknowledging is not evicted is tested:
+  `rooms-events.test.ts`, two frames of a keyed-only room past the lag limit, one over a slow path, no reconnect), a
+  cost test of encodes with many peers.
 - Radius (decision 4). The TUI shows no views, so no rooms.
 - A paged keyed snapshot for joiners (now a keyed send past the link part limit is refused).

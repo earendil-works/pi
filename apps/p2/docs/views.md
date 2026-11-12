@@ -14,10 +14,18 @@ arranges the panes as they like. Their selections and annotations reach the agen
 - **View kinds**:
   - `markdown`: a workspace file, rendered and rendered again when the working tree changes.
   - `changes`: the working tree's diffs, optionally only below a path.
-  - `custom`: a whole HTML page in a sandboxed frame, with its own JSON state.
+  - `custom`: a whole HTML page in a sandboxed frame, with its own JSON state. For single-player artifacts.
+  - **A plugin's kind**: any other well-formed name (`ViewKindNameSchema`, lowercase, up to 64 characters). Its
+    plugin's web facet contributes the pane to `ViewKinds` (`@p2/app/v1/web`, `src/web/view-kinds.ts`), which gets the
+    view (with whatever state the view keeps) as `PaneProps`. The tool refuses `path`, `html` and `artifact` for it,
+    and it stays out of the library (`save`). The worker accepts any name: a kind no loaded plugin registers shows
+    "Unknown view kind" until one does (the page reloads onto a new bundle by itself). Multiplayer or persistent things
+    are plugins (docs/agent-plugins.md).
 
-  Pane components come from the web registry `ViewKinds` (`kinds.ts`). Another plugin can add a kind there. The
-  worker's schema still lists only these three.
+  Each plugin pane renders inside an error boundary (`PaneBoundary` in `Workbench.tsx`): a pane that throws shows its
+  error in its own pane instead of taking the page down, and a reloaded plugin's new component starts afresh. `Views`
+  is at version 2 (kind names beyond the built-ins); its `accepts` (`VIEWS_ACCEPTS`) shows pages built with version 1
+  only the views of built-in kinds.
 - **Layout** (`layout.ts`, `Workbench.tsx`): areas of tabs inside splits.
   - On wide screens, a tab can be dragged into another area's tab strip or to one of its sides, and splitters resize
     areas.
@@ -37,7 +45,8 @@ arranges the panes as they like. Their selections and annotations reach the agen
   the person's text, with a note (entry kind `p2.view-input`, `TranscriptEntries`). The composer's chip shows what will
   go along; its × drops it. In chat mode, the chat-mode router takes the message first, so no context goes along.
 - **Library**: `save` keeps a view (kind, path, HTML, state) in `<data>/views/<name>.json`. `load` or the Views sheet
-  opens it in any session. Owner only.
+  opens it in any session. The owner's library: the sheet is the owner's; the tool serves whoever's turn it is (p2 has
+  no per-turn authority).
 
 ## Who owns what
 

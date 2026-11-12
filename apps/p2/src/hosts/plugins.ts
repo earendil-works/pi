@@ -43,9 +43,18 @@ export const SERVER_PACKAGES = {
 	...SHARED_PACKAGES,
 };
 
-/** A directory listing, alphabetical: every subdirectory with at least one facet file is a plugin. */
+/** The plugins of `roots`, alphabetical; the first root that has a name wins it. */
+export function listRoots(roots: readonly string[]): PluginListing {
+	const plugins = new Map<PluginName, PluginFacets>();
+	for (const root of roots)
+		for (const [name, facets] of listPlugins(root)) if (!plugins.has(name)) plugins.set(name, facets);
+	return new Map([...plugins].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+}
+
+/** A directory listing, alphabetical: every subdirectory with at least one facet file is a plugin (none: no directory). */
 export function listPlugins(directory: string = PLUGINS_DIRECTORY): PluginListing {
 	const plugins = new Map<PluginName, PluginFacets>();
+	if (!existsSync(directory)) return plugins;
 	for (const entry of readdirSync(directory, { withFileTypes: true })) {
 		if (!entry.isDirectory()) continue;
 		const facets: Partial<Record<FacetKind, string>> = {};
@@ -71,18 +80,20 @@ export function selectPlugins(listing: PluginListing, requested?: readonly strin
 export type P2Plugins = { readonly plugins: Plugins; readonly directory: string; close(): void };
 
 /**
- * p2's plugins: every plugin of plugins/, or exactly `selection` (tests). A selection is a copy of plugins/ in which the
- * other plugins keep only their non-facet files: their contracts stay importable, their facets are gone.
+ * p2's plugins: every plugin of plugins/, or exactly `selection` (tests), and every plugin of the user root `user`
+ * (after them: a built-in wins a name, the clash reported). A selection is a copy of plugins/ in which the other
+ * plugins keep only their non-facet files: their contracts stay importable, their facets are gone.
  */
 export function createP2Plugins(
 	selection: readonly string[] | undefined,
 	onError: (error: PluginsError) => void,
 	context: Context = BACKGROUND_CONTEXT,
+	user?: string,
 ): P2Plugins {
 	const directory = selection === undefined ? PLUGINS_DIRECTORY : selectedCopy(selection);
 	const plugins = createPlugins(
 		{
-			roots: [{ path: directory, required: true }],
+			roots: [{ path: directory, required: true }, ...(user === undefined ? [] : [user])],
 			api: API,
 			base: [BASE_DIRECTORY],
 			kinds: {

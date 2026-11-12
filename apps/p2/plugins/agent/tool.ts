@@ -17,7 +17,7 @@ import { arr, compile, obj, opt, str, unknown, type Validator } from "@earendil-
 import { formats } from "@earendil-works/pi-schema/formats";
 import type { JsonValue } from "@p2/app/v1";
 import { record, SUBAGENT_TASK_ENTRY } from "@p2/app/v1";
-import { defineP2Tool, isTopLevel, originOf, type P2Tool } from "@p2/app/v1/worker";
+import { defineP2Tool, isTopLevel, type P2Tool } from "@p2/app/v1/worker";
 import { InheritedLocation, resolveChoice, Subagents } from "../subagents/contract.worker.ts";
 import { ownLocation } from "../subagents/tools.ts";
 
@@ -119,8 +119,6 @@ export function createAgentExtension(models: Models, access: () => ReadonlyMap<s
 			}, context);
 			const child = await api.conversation(conversationId, context);
 			if (!child) return fail("The agent's conversation is gone.");
-			// The agent's turn may act for the owner if the script's may.
-			const origin = await originOf(api, context);
 			let message = args.prompt;
 			let problem = "";
 			for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
@@ -128,7 +126,7 @@ export function createAgentExtension(models: Models, access: () => ReadonlyMap<s
 					{
 						type: "input",
 						content: message,
-						entry: { kind: SUBAGENT_TASK_ENTRY, data: origin ? { origin } : {} },
+						entry: { kind: SUBAGENT_TASK_ENTRY, data: {} },
 						whenBusy: "followUp",
 						requestId: `agent:${attempt}`,
 					},

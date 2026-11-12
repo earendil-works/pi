@@ -1,6 +1,7 @@
 // Which project glyph a place shows: the project's when the place belongs to one, so a project, its folders and its
-// sessions look alike (the sidebar, the chat's top bar). Browser-safe.
-import { below, type Project } from "../projects/contract.ts";
+// sessions look alike (the sidebar, the chat's top bar; the glyphs plugin draws them). Browser-safe; in the projects
+// plugin because it reads projects alone, so other plugins' web facets import it with nothing else.
+import { below, type Project } from "./contract.ts";
 
 /** A project's glyph seed: its first place's path (its name without places). */
 export const projectSeed = (project: Project): string => project.places[0]?.path ?? project.name;

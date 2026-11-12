@@ -23,6 +23,7 @@ import {
 } from "@p2/app/v1/web";
 import { type ReactNode, useEffect, useId, useState, useSyncExternalStore } from "react";
 import { GlyphIcon } from "../../glyphs/GlyphIcon.tsx";
+import { UnreadMark, WorkingMark } from "./marks.tsx";
 import type { Activity, GlyphSeed, SidebarRow } from "./model.ts";
 import {
 	failureWords,
@@ -37,23 +38,6 @@ import {
 // icon, or a spinner where it has none; the only motion in the sidebar. The end of the row says whether it wants the
 // owner: a bold title and a blue dot for an unread answer, "Failed" for a failed worker. Every state has its own shape,
 // not only its own colour.
-
-/** A conversation running a turn where its row has no icon: a small spinner (a still ¾ ring with reduced motion). */
-export function WorkingMark() {
-	return <span className="working-mark" role="img" aria-label="Working" title="Working" />;
-}
-
-/** An answer the owner has not read: a steady blue dot. */
-export function UnreadMark() {
-	return <span className="unread-dot" role="img" aria-label="New answer" title="New answer" />;
-}
-
-/** The Familiar's corner mark: working (the spinner), else an unread answer (the dot), else nothing. */
-export function SessionDot({ worker }: { worker: SidebarRow["worker"] }) {
-	if (worker.busy.length) return <WorkingMark />;
-	if (worker.unread) return <UnreadMark />;
-	return null;
-}
 
 /**
  * A row's 16px icon (a project glyph, a folder, a lock), framed while `working`: a rounded frame just outside the icon,

@@ -8,11 +8,17 @@ import { join, relative, resolve } from "node:path";
 import { test } from "node:test";
 import { buildFacet, discoverPlugins } from "@earendil-works/chord/plugins";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
+import { WORKER_PACKAGES } from "../../src/hosts/host-packages.ts";
+import { SERVER_PACKAGES } from "../../src/hosts/plugins.ts";
 import { APP } from "./helpers.ts";
 
 const KINDS = ["server", "worker", "tui", "web"] as const;
 
-/** The packages a facet shares with its host as instances (never bundled), besides the API. */
+/**
+ * The packages a TUI or web facet shares with its host as instances (never bundled), besides the API. Server and worker
+ * facets get exactly what their hosts supply (`SERVER_PACKAGES`, `WORKER_PACKAGES`), so this test cannot drift from
+ * them.
+ */
 const SHARED = [
 	"@earendil-works/pi-ai",
 	"@earendil-works/pi-ai/api/anthropic-messages.lazy",
@@ -41,12 +47,12 @@ const SHARED = [
 	"yaml",
 ];
 
-/** The API modules each kind may import. */
-const API: Record<(typeof KINDS)[number], readonly string[]> = {
-	server: ["@p2/app/v1", "@p2/app/v1/node", "@p2/app/v1/server", "discord.js"],
-	worker: ["@p2/app/v1", "@p2/app/v1/node", "@p2/app/v1/worker"],
-	tui: ["@p2/app/v1", "@p2/app/v1/tui"],
-	web: ["@p2/app/v1", "@p2/app/v1/web", "react", "react/jsx-runtime"],
+/** The host packages each kind may import: React and React DOM in the page (docs/plugin-loading.md, host packages). */
+const HOST_PACKAGES: Record<(typeof KINDS)[number], readonly string[]> = {
+	server: Object.keys(SERVER_PACKAGES),
+	worker: Object.keys(WORKER_PACKAGES),
+	tui: ["@p2/app/v1", "@p2/app/v1/tui", ...SHARED],
+	web: ["@p2/app/v1", "@p2/app/v1/web", "react", "react/jsx-runtime", "react-dom", ...SHARED],
 };
 
 test("every plugin directory is a package named after it", async () => {
@@ -73,7 +79,7 @@ test("every server, worker, TUI and web facet builds against the plugin API alon
 				plugin,
 				kind,
 				{
-					hostPackages: [...API[kind], ...SHARED],
+					hostPackages: [...HOST_PACKAGES[kind]],
 					platform: kind === "web" ? "browser" : "node",
 					api: { name: "@p2/app", versions: ["v1"] },
 					kinds: KINDS,

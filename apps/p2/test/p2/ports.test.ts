@@ -159,12 +159,13 @@ test(
 		});
 		const guest = fixture.client({ ...headers, Cookie: String(joined.headers["set-cookie"]).split(";")[0]! }).host;
 		const guestChat = await holdIn(guest, Chat, { session: session.id, conversation: 1 }, "participant");
-		assert.match(text(await call({ action: "open", port: 8080 }, guestChat)), /needs a turn the owner started/);
+		// No per-turn authority: a guest's turn uses the tool; the guest itself cannot hold the registry.
+		assert.doesNotMatch(text(await call({ action: "list" }, guestChat)), /owner started/);
 		await expectChord(whenLive(guest.hold(Ports, {}, BACKGROUND_CONTEXT)), "forbidden");
 		// `query` is the worker's: the owner calling it anyway is refused.
 		await expectChord(
 			(ports as unknown as { query: (...args: unknown[]) => Promise<unknown> }).query(
-				{ conversation: 1, origin: "owner", query: { action: "list" } },
+				{ conversation: 1, query: { action: "list" } },
 				BACKGROUND_CONTEXT,
 			),
 			"invalid",

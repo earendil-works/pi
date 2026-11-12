@@ -10,7 +10,6 @@ import {
 	TRANSCRIPT,
 	VIEW_ID,
 	type View,
-	type ViewKind,
 	type ViewsState,
 } from "./contract.ts";
 
@@ -69,7 +68,7 @@ export async function readViewState(read: DocumentReader, id: string, context: C
 }
 
 /** A free view ID made from `title` (or `kind`): its slug, numbered when taken. */
-export function freeViewId(state: Readonly<ViewsState>, title: string, kind: ViewKind): string {
+export function freeViewId(state: Readonly<ViewsState>, title: string, kind: string): string {
 	const slug =
 		title
 			.toLowerCase()
@@ -93,7 +92,8 @@ export function checkedState(value: JsonValue): JsonValue {
 /** What opening a view sets: a new view, or the one with its ID updated and brought to the front. */
 export type ViewSpec = {
 	readonly id: string;
-	readonly kind: ViewKind;
+	/** A built-in kind, or a plugin's. */
+	readonly kind: string;
 	readonly title: string;
 	readonly path?: string;
 	readonly source?: number;
