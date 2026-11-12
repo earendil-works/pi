@@ -1,7 +1,7 @@
 import { FinishReason } from "@google/genai";
 import { describe, expect, it, vi } from "vitest";
 import { streamSimple as streamGoogleGenerativeAI } from "../src/api/google-generative-ai.ts";
-import { mapStopReason, mapStopReasonString } from "../src/api/google-shared.ts";
+import { mapStopReason } from "../src/api/google-shared.ts";
 import { streamSimple as streamGoogleVertex } from "../src/api/google-vertex.ts";
 import type { Api, FetchFunction, Model } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
@@ -29,7 +29,6 @@ describe("Google CONTINUATION finish reason", () => {
 	// #12097: @google/genai 2.32.0, needed for httpOptions.fetch, adds FinishReason.CONTINUATION.
 	it("maps CONTINUATION to length, like MAX_TOKENS", () => {
 		expect(mapStopReason(FinishReason.CONTINUATION)).toBe("length");
-		expect(mapStopReasonString("CONTINUATION")).toBe("length");
 	});
 
 	// #12097: the SDK continues automatically by default; the adapters turn that off.

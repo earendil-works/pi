@@ -530,21 +530,6 @@ export function mapStopReason(reason: FinishReason): StopReason {
 }
 
 /**
- * Map string finish reason to our StopReason (for raw API responses).
- */
-export function mapStopReasonString(reason: string): StopReason {
-	switch (reason) {
-		case "STOP":
-			return "stop";
-		case "MAX_TOKENS":
-		case "CONTINUATION":
-			return "length";
-		default:
-			return "error";
-	}
-}
-
-/**
  * Run a Google GenAI SDK request with the shared provider retry policy
  * (408/409/429/5xx with backoff, honoring retry-after), mirroring how the
  * Anthropic and OpenAI adapters wrap their initial request in
