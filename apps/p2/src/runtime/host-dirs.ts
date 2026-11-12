@@ -17,6 +17,14 @@ export function serverDirectory(dataDir: string): string {
 	return join(dataDir, "server");
 }
 
+/**
+ * The user plugin root, `<data>/plugins/`: plugins the owner or an agent writes (docs/agent-plugins.md), loaded after the
+ * built-ins (a built-in wins a name), kept across p2 updates, never in the checkout.
+ */
+export function userPluginsDirectory(dataDir: string): string {
+	return join(dataDir, "plugins");
+}
+
 /** The directory of session `id`; refused for an id that is no plain name. */
 export function sessionDirectory(dataDir: string, id: string): string {
 	if (!SESSION_ID.test(id)) throw new Error(`Invalid session id ${JSON.stringify(id)}`);
@@ -39,7 +47,8 @@ export function hostFiles(dir: string): string {
  */
 export async function openHostStore(
 	dir: string,
-	options: { readonly outbox: boolean },
+	/** `outbox` turns the outbox on or off; omitted, the stored setting stays (never pass false to keep it off). */
+	options: { readonly outbox?: boolean },
 	context: Context,
 ): Promise<Store> {
 	await privateDirectory(dir);

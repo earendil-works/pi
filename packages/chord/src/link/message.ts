@@ -83,8 +83,9 @@ export const CAUSE_KINDS: ["transient", "broken", "waiting"] = ["transient", "br
 
 /** The protocol's messages, one tagged union. Parts are opaque here (the owners parse them). */
 const MESSAGE = union([
-	// `calls`: how many concurrent calls this side accepts (the call window).
-	obj({ kind: lit("hello"), protocol: int({ min: 0 }), incarnation, calls: int({ min: 1 }) }),
+	// `calls`: how many concurrent calls of one origin this side accepts (the call window); absent: no window (a link
+	// this side was given as trusted, decision "Call windows only for untrusted links").
+	obj({ kind: lit("hello"), protocol: int({ min: 0 }), incarnation, calls: opt(int({ min: 1 })) }),
 	obj({
 		kind: lit("hold"),
 		origin: opt(origin),
@@ -135,8 +136,10 @@ const MESSAGE = union([
 		// mechanism"); a `bound` snapshot carries no flag.
 		holds: arr(obj({ hold: id, members: arr(obj({ member: index, ops: part })), failed, retired: arr(index) })),
 	}),
-	// One per applied `bound` or `state` message of its origin (the window).
-	obj({ kind: lit("ack"), origin: opt(origin) }),
+	// One per applied `bound` or `state` message of its origin (the window); with `events`, none of those: the number of
+	// `event` messages of the origin consumed since the last such ack (the event window, decision "Events:
+	// fire-and-forget members").
+	obj({ kind: lit("ack"), origin: opt(origin), events: opt(int({ min: 1 })) }),
 	// A relay's downstream link closed: the origin's holds are released and its calls aborted.
 	obj({ kind: lit("closed"), origin }),
 	// A revocation from the parent, applied with this host's own `revokedBy` (no origin).
@@ -158,6 +161,14 @@ const MESSAGE = union([
 	obj({ kind: lit("result"), origin: opt(origin), call: id, value: opt(part), segments }),
 	obj({ kind: lit("error"), origin: opt(origin), call: id, error: wireError }),
 	obj({ kind: lit("gone"), origin: opt(origin), hold: id, error: wireError }),
+	// Events of bound holds (decision "Events: fire-and-forget members"): `member` an index into the bound variant's event
+	// members, `at` the emitting host's `Date.now()` at the emit, `value` a part; one message per flush per link and
+	// origin, possibly without entries (a relay forwards what is left after filtering).
+	obj({
+		kind: lit("event"),
+		origin: opt(origin),
+		events: arr(obj({ hold: id, member: index, at: int({ min: 0 }), value: part })),
+	}),
 ]);
 
 /**
@@ -187,8 +198,11 @@ export type ProviderMessage = Extract<
 /** A message for a consumer side: the direction from the provider. */
 export type ConsumerMessage = Extract<
 	Message,
-	{ readonly kind: "bound" | "state" | "failed" | "loading" | "result" | "error" | "gone" }
+	{ readonly kind: "bound" | "state" | "failed" | "loading" | "result" | "error" | "gone" | "event" }
 >;
+
+/** One entry of an `event` message. */
+export type WireEvent = Extract<Message, { readonly kind: "event" }>["events"][number];
 
 /** One hold's entry of a `bound` message. */
 export type BoundEntry = Extract<Message, { readonly kind: "bound" }>["holds"][number];

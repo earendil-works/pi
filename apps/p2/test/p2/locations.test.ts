@@ -1,6 +1,7 @@
 // The location tools (plugins/locations): every main agent lists environments and directories and moves its session
 // (after its turn); a subagent gets them only when its main agent chose them, and then moves only itself. The main agent
-// places subagents with spawn/configure. Only turns the owner started may use them.
+// places subagents with spawn/configure. Guests' turns use them too (no per-turn authority); guests cannot hold the
+// server object.
 
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
@@ -50,7 +51,7 @@ test("location tools: schemas and defaults", () => {
 });
 
 test(
-	"main agents list and move; subagents are placed, and move only with the tool; guests are refused",
+	"main agents list and move; subagents are placed, and move only with the tool; guests' turns list",
 	{ timeout: 180_000 },
 	async (t) => {
 		const fixture = await startFixture({ allowedHosts: ["share.test"] });
@@ -177,25 +178,9 @@ test(
 		});
 		const guest = fixture.client({ ...headers, Cookie: String(joined.headers["set-cookie"]).split(";")[0]! }).host;
 		const guestChat = await holdIn(guest, Chat, { session, conversation: 1 }, "participant");
-		const [denied] = await call("location_envs {}", guestChat);
-		assert.equal(denied?.isError, true);
-		assert.match(text(denied), /needs a turn the owner started/);
-		const [noMove] = await call(`location_move ${JSON.stringify({ location: start })}`, guestChat);
-		assert.equal(noMove?.isError, true);
-		// Nor through a subagent, nor by placing one on another environment.
-		const moves = results(mover.view.value, "location_move").length;
-		await call(
-			`subagent ${JSON.stringify({ action: "send", name: "placed", message: `location_move ${JSON.stringify({ location: own })}` })}`,
-			guestChat,
-		);
-		const guestMove = await until(mover.view, (value) => results(value, "location_move").length > moves);
-		assert.equal(results(guestMove, "location_move").at(-1)?.isError, true);
-		assert.equal((await child("placed"))?.location?.cwd, other);
-		const [elsewhere] = await call(
-			`subagent ${JSON.stringify({ action: "spawn", name: "far", message: "hi", env: "box", cwd: "/" })}`,
-			guestChat,
-		);
-		assert.match(text(elsewhere), /Another environment needs a turn the owner started/);
+		// No per-turn authority: a guest's turn uses the tools; the guest itself cannot hold the server object.
+		const [listed] = await call("location_envs {}", guestChat);
+		assert.equal(listed?.isError, false, text(listed));
 		await expectChord(whenLive(guest.hold(AgentLocations, {}, BACKGROUND_CONTEXT)), "forbidden");
 		await expectChord(whenLive(owner.hold(AgentLocations, {}, BACKGROUND_CONTEXT)), "forbidden");
 		assert.equal((await until(sessions.sessions, Boolean))?.find((row) => row.id === session)?.cwd, next);

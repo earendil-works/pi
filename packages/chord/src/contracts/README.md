@@ -22,10 +22,11 @@ export const Notes = evolve(NotesV1, (e) => e.args("add", obj({ text: str(), tag
 type NotesProvider = Implementation<typeof Notes>; // { variant: "editor"; members: { notes, add(args, context), clear(context) } } | { variant: "reader"; ... }
 ```
 
-- `remote(name, { version, params, hostAddress, variants })`: per-principal variants, each with `state` (schemas) and `methods`
-  (`method(args?, result?)`; an omitted side is `null`, and a method whose arguments are `null` omits them:
-  `clear(context)`). `local(name, { version, params, members })`: one flat map,
-  where a schema is state and `method(...)` a method.
+- `remote(name, { version, params, hostAddress, variants })`: per-principal variants, each with `state` (schemas),
+  `methods` (`method(args?, result?)`; an omitted side is `null`, and a method whose arguments are `null` omits them:
+  `clear(context)`) and `events` (schemas of the JSON values the object emits, decision "Events: fire-and-forget
+  members"). `local(name, { version, params, members })`: one flat map, where a schema is state, `method(...)` a
+  method, `keyed(schema)` a keyed member and `event(schema)` an event member.
 - `hostAddress(params) => Address` (remote only, required; a declaration error without it): the address of the host that serves the object for these
   params (`host/`'s routing table). The caller computes it and sends it with its hold, so a relay routes by the address
   alone. It is not part of the normal form or the fingerprint and `evolve` carries it.
@@ -41,18 +42,23 @@ type NotesProvider = Implementation<typeof Notes>; // { variant: "editor"; membe
   non-enumerable key (a TypeBox schema's metadata) is refused. `format` is an annotation: it is part of the normal form
   and the fingerprint, but no format is checked.
 - `evolve(previous, (e) => e...)`: the next version from structured edits (`state`, `addState`, `removeState`, `args`,
-  `result`, `method`, `addMethod`, `removeMethod`); it must return the editor it was given.
-- Types: `Contract`, `Implementation<C, X>` (what a factory returns: for `local` a `Watchable` per state member and a
-  function per method, `(args, context)` or `(context)` without arguments; for `remote` one variant, `{ variant,
+  `result`, `method`, `addMethod`, `removeMethod`, `keyed`, `addKeyed`, `removeKeyed`, `event`, `addEvent`,
+  `removeEvent`; local ones without the variant); it must return the editor it was given.
+- Types: `Contract`, `Implementation<C, X>` (what a factory returns: for `local` a `Watchable` per state member, an
+  `EventMember` per event member (an `EventSource` of its own or a reference's member) and a function per method,
+  `(args, context)` or `(context)` without arguments; for `remote` one variant, `{ variant,
   members }`; `X` is the context type the methods get), `ParamsOf<C>`, `AcceptsTable<C>` (the older versions a provider serves, with their mappings),
-  `HostKind`, `Address<K>`, `KindShape` and `ParamsOfKind<K>`.
+  `HostKind`, `Address<K>`, `KindShape` and `ParamsOfKind<K>`; for events `EventMember<T>` (`on(listener, ctx)`, what
+  references expose), `EventSource<T>` (adds `emit`, what `self.events<T>()` returns), `EventSubscription` (`stop`) and
+  `EventDeclaration` (the local marker's type).
 
 Rules:
 
 - Declarations are checked once and fail with an `Error` naming the path (`notes.editor.methods.add.args`). A contract
   keeps its own copies of its schemas: changing a schema object after declaring it changes nothing.
-- A member name has one kind (state or method) in every variant and for the whole history; a method has one
-  signature in every variant. State schemas may differ per variant.
+- A member name has one kind (state, keyed, method or event) in every variant and for the whole history; a method has
+  one signature in every variant. State and event schemas may differ per variant. Event schemas are JSON only (no
+  `bytes()` leaf: refused at declaration).
 - `then`, `release`, `variant`, `state` and `retry` are refused as member names: a reference has them (`then` would
   make an awaited reference thenable).
 - `$bytes` is reserved only in the values of a method whose argument or result schema has a `bytes()` leaf: there it
@@ -63,7 +69,10 @@ Rules:
 - Params are required `str()`, `int()`, `bool()` or `oneOf(...)` of strings. Params and the variant set never change by
   evolution: changing them is a new history base, a new declaration with no accepted older versions.
 - Mappings in an `AcceptsTable` are direct (old version to current); when a version is added, update every accepted
-  version's mappings. A mapping is required per edit after the accepted version, even for a no-op edit.
+  version's mappings. A mapping is required per edit after the accepted version, even for a no-op edit. A changed event
+  member maps each current value back (`events`, by variant then member for a remote contract, flat for a local one)
+  or refuses that version's binding (`"refuse"`); a removed or an added one needs none (an older consumer receives none
+  of a removed one).
 - Contracts are branded: a spread or hand-built copy is refused everywhere.
 
 ## For Chord's layers (`internal.ts`)
@@ -75,11 +84,12 @@ Rules:
   `LOCAL`. Type-level helpers: `ShapeOf`, `CurrentVariants`, `ContractShape`, `Params` and `Method`.
 - `currentVariants(contract)`: the current version's variants (a local contract has the one variant `LOCAL`);
   `takesNoArgs(method)`: whether its argument schema is `null`, so references and implementations omit the argument;
-  `VariantImplementation` is one variant's members as a type; `variantNames` and `variantOrder`: the names the wire's
-  indexes point into.
+  `VariantImplementation` is one variant's members as a type; `variantNames` (state members, methods and event
+  members, each sorted) and `variantOrder`: the names the wire's indexes point into.
 - A method's `args.bytes` and `result.bytes`: whether the schema has a `bytes()` leaf, decided once at declaration (a
   link then encodes the method's values with byte segments).
 - `kindParams(kind)`: a declared host kind's `ParamsData` (a route checks addresses with it).
 - `NORMAL_FORM_VERSION`: changing the normal form changes it and the fingerprints; it is a link-protocol change.
-  Fingerprints are a portable hash, not a security boundary.
+  Fingerprints are a portable hash, not a security boundary. Each member is a node of its kind (`{ state }`, `{ args,
+  result }`, `{ keyed }`, `{ event }`): a contract without keyed or event members keeps its fingerprint.
 - Nothing in L1 is frozen: Chord-owned data is immutable by convention.

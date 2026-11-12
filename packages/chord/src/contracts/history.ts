@@ -2,12 +2,14 @@
 
 import type { Method, Schema } from "./schema.ts";
 
-/** One variant's members at one version: state schemas and method signatures. */
+/** One variant's members at one version: state schemas, method signatures and event schemas. */
 export type VariantShape = {
 	readonly state: { readonly [member: string]: Schema };
 	readonly methods: { readonly [member: string]: Method };
 	/** A local contract's keyed state members (slice 6a §12). */
 	readonly keyed?: { readonly [member: string]: Schema };
+	/** Event members: the schemas of the values the object emits (decision "Events: fire-and-forget members"). */
+	readonly events?: { readonly [member: string]: Schema };
 };
 
 /** Variants by name. A local contract has the single variant `members`. */
@@ -15,9 +17,9 @@ export type Variants = { readonly [variant: string]: VariantShape };
 
 /**
  * What one edit changed: one side of one member in one variant (a union of variants when it changed several); `keyed`
- * for a local contract's keyed member (slice 7b).
+ * for a local contract's keyed member (slice 7b), `event` for an event member.
  */
-export type Change = readonly [variant: string, member: string, side: "state" | "args" | "result" | "keyed"];
+export type Change = readonly [variant: string, member: string, side: "state" | "args" | "result" | "keyed" | "event"];
 
 /** One version: its number as digits, its variants, and the changes that produced it (`never` for a base). */
 type Step = { readonly version: string; readonly variants: Variants; readonly changes: Change };

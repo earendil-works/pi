@@ -3,5 +3,6 @@
 import { CommandBlock, parsedArgs, stringOf, type ToolActivity } from "@p2/app/v1/web";
 
 export const powershellActivity: ToolActivity = {
+	brief: "Running",
 	CallInput: ({ call }) => <CommandBlock command={stringOf(parsedArgs(call.args).command)} />,
 };

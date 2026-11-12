@@ -2,7 +2,8 @@
 // `useHold` holds while mounted and releases on unmount, `useWatch` re-renders on change, `useRefState` follows the
 // reference's state, `useRegistry` the registry (the panels), `usePageState` keeps a value across a remount by another
 // component function and starts a new key fresh, `useMessages` re-renders in a language chosen while the page runs,
-// half-typed inputs kept.
+// half-typed inputs kept, `useEvents` calls the latest listener (also between a commit and its passive effects),
+// follows a member change and stops at unmount.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
@@ -90,6 +91,36 @@ describe.skipIf(CHROMIUM === undefined)("React bindings", () => {
 			expect(await browser.evaluate<string>('document.getElementById("draft").value')).toBe("oat");
 			expect(await browser.evaluate<string>('document.getElementById("note").value')).toBe("mi");
 			expect(await browser.evaluate<boolean>('document.getElementById("draft") === globalThis.marked')).toBe(true);
+		} finally {
+			await app.close(context);
+		}
+	}, 120_000);
+
+	it("calls the latest listener of useEvents, follows its member and stops at unmount", async () => {
+		const { app } = await webApp(await versionedEntry("1"), await freePort());
+		try {
+			await signIn(browser, app.ownerLink());
+			await browser.wait('document.getElementById("beats")?.dataset.state === "live"');
+			const beats = () => browser.evaluate<string[]>("globalThis.beats");
+			await browser.evaluate('globalThis.beat("a", 0)');
+			await browser.wait("globalThis.beats.length === 1");
+			// A new render's layout effect emits: delivered before its passive effects, to that render's listener. A
+			// timer's update is not flushed synchronously, so its passive effects run in a later task.
+			await browser.evaluate('void setTimeout(() => globalThis.relabel("second"))');
+			await browser.wait("globalThis.beats.length === 2");
+			expect(await beats()).toEqual(["first:0", "second:1"]);
+			// Another member: the first one's subscription stopped.
+			await browser.evaluate("globalThis.switchBeats()");
+			await browser.wait('document.getElementById("beats").dataset.member === "b"');
+			await browser.evaluate('globalThis.beat("a", 2); globalThis.beat("b", 3)');
+			await browser.wait("globalThis.beats.length === 3");
+			expect((await beats()).at(-1)).toBe("second:3");
+			// Unmounted: nothing more.
+			await browser.evaluate("globalThis.toggleBeats()");
+			await browser.wait('document.getElementById("beats") === null');
+			await browser.evaluate('globalThis.beat("b", 4)');
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(await beats()).toEqual(["first:0", "second:1", "second:3"]);
 		} finally {
 			await app.close(context);
 		}

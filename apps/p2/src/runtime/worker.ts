@@ -114,8 +114,8 @@ export class SessionLocation {
 }
 
 /**
- * Whether `env` runs on this machine (not an SSH environment): p2's private data directory is denied there. Decided
- * from the environment, not from `SessionLocation.value`, which lags behind the environments during a move.
+ * Whether `env` runs on this machine (not an SSH environment; attachments need no copy there). Decided from the
+ * environment, not from `SessionLocation.value`, which lags behind the environments during a move.
  */
 export const isLocalEnvironment = (env: ExecutionEnv): boolean => !(env instanceof RemoteExecutionEnv);
 
@@ -295,6 +295,11 @@ export type WorkerParts = {
 	 * `session`, which must not exist yet: a fork, whose worker waits while it copies. The session goes on meanwhile.
 	 */
 	readonly copyFilesTo: (session: string, context: Context) => Promise<void>;
+	/**
+	 * The session's Chord store (one writer: this worker), for its backup (`plugins/backup`). Never close it. Absent in
+	 * test hosts without a store.
+	 */
+	readonly store?: Store;
 };
 
 /**
@@ -407,7 +412,7 @@ export function workerCore(
 		const own = sessionDirectory(init.dataDir, init.values.session.id);
 		const copyFilesTo = (session: string, context: Context) =>
 			copyFiles({ store, files: hostFiles(own) }, sessionDirectory(init.dataDir, session), context);
-		self.contribute(WorkerProcess, { init, liveness, location, root, copyFilesTo });
+		self.contribute(WorkerProcess, { init, liveness, location, root, copyFilesTo, store });
 		host.serve(HarnessNative, { compose: (table) => table[0]?.value });
 		host.serve(HarnessHost, (_params, self) => {
 			self.contribute(HarnessNative, openHarness(self, init, location, store));

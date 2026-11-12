@@ -24,6 +24,11 @@ type ViewPrincipal = {
   redemption unless its opening is the view's current one, and a room whose opening stops being current (closed, or
   closed and reopened) revokes its frames. Revocation is edge-triggered in Chord (no deny list), so nothing relies on
   watching a boolean: a fold of "closed, reopened" into one change still shows another opening ID.
+- **A closed view's objects.** Closing retires the view's state and room documents. `ViewState` and `ViewBacking`
+  held after that (a page that has not seen the close, another device, a reconnect; the server's room lingering after
+  its frames were revoked, held again on a restarted worker) activate cleanly: they read the documents' initial value,
+  as earlier holders of the retired documents do, and their writes are refused (`ViewState.set`: no view; the
+  backing's `write`: false). Nothing about a closed view fails an activation, so it never shows up as an owner notice.
 - **Token.** The page asks `ViewLinks { session }` (server, remote, variant `viewer`) for `token({ view })`, which answers `{ token, opening }` (the opening read from `ViewOpenings` in a server root; no
 current opening: refused). Its factory
   admits `canView(principal, session)`; the `token` method then awaits `mayReach` for guests (factories are
@@ -61,17 +66,48 @@ is a host package of server facets (`src/hosts/plugins.ts`), as plugins cannot b
 extends `window.p2view`:
 
 ```js
-const room = p2view.room("live" | "log" | "text");      // one room per view; the first call opens the socket
+const room = p2view.room("live" | "log" | "text", { maxInFlight });   // one room per view; the first call opens the socket
 room.me; room.peers; room.leader; room.isLeader; room.onPeers(fn)
-room.send(data, { key })   // key: newer replaces undelivered older (here and on the server), kept for joiners
+room.emit(data, { key })   // motion: an event to every frame there now; unnumbered, never kept, latest-only when busy
+room.onEvent(fn)           // fn({ from, key, at, data }) per event, own ones included; returns the removal
+room.send(data, { key })   // numbered (key: newer replaces undelivered older, kept for joiners); resolves its outcome
 room.onMessage(fn)         // fn({ seq, from, key, data }), in seq order, own messages included
-room.now()                 // server clock (offset from round trips of now())
+room.now(); room.rtt()     // server clock (re-sampled every 10 s), the shortest recent round trip
 room.onReset(fn); room.snapshot(state)       // log: fn(state, seq) on join and reset; the leader snapshots
 const text = p2view.room("text"); text.bind(textarea); text.value; text.onChange(fn); text.onCursors(fn)
 p2view.methods.offer({ name: { description, args /* JSON Schema */, run: async (args) => result } })
 ```
 
+Which to use: events for motion (a sample is worthless a moment later), keyed messages for what a joiner needs (the
+newest per key), unkeyed sends (log rooms) for commands every frame must get in one order.
+
+- **Motion outbox** (`kit/outbox.ts`, `Motion`): while the room is joined, an emit leaves at once as an `emit` call,
+  at most `maxInFlight` (default 32) unanswered; past it a keyed emit replaces the waiting one with its key (at most one
+  waits per key; they leave together when an answer frees a slot) and an unkeyed one is dropped. Not joined
+  (connecting, reconnecting, the reference loading): dropped, never queued or replayed. Leaving joined (the link
+  closes) empties it and retires its generation: an answer of an earlier generation's emit changes nothing of the new
+  count, and nothing sent before is sent again. The room's event listeners belong to the connection: each new
+  reference (every rejoin) subscribes them, the released old one ends its subscription.
+- **Reliable sends** (`Sends`): `send` waits until the room is joined (the first join of a log or text room starts it
+  over at a new base, which would pass over a command sent ahead of it; after a reconnect, until the rejoin): messages
+  sent in one turn leave in one batch, batches in
+  order without waiting for earlier answers (Chord keeps a link's calls in order; the room numbers in that order).
+  Outcome: `{ kind: "sent", seq }` (the number from the numbering transaction), `"superseded"` (a keyed message
+  replaced in the outbox before it left), `"refused"` with the error (the budget, a frame that may only watch), or
+  `"uncertain"` (its link closed before the answer: it may or may not have been numbered). Nothing is replayed by
+  itself; a lockstep game dedupes resends by its own command IDs. A connection closed for good (`close`) resolves what waits, and
+  every later send, `uncertain`.
+- **Clock:** a few samples of `now()` at the first join, then one every 10 s; the shortest round trip of the last six
+  (measured with `performance.now()`) sets the offset and `rtt()`.
+- **Quiet reconnects:** a call rejected because the frame's own link closed (a reconnect, a lag eviction: revoked
+  `{ link }`) is not logged; a refused token (a revoked grant, a closed view) still is, and that is what reports them.
+
 ## 3. Rooms (server, in memory)
+
+**Contract versions.** `ViewRoom` version 2 adds the `peer` variant's event member `stream` (`{ from, key?, data }`)
+and the method `emit({ messages })` (writers only), and `send` answers the numbers it gave. Version 1 (`ViewRoomV1`,
+verbatim as 682c7b93c released it: the kits built then are cached by hash and keep it) is served through `accepts`:
+its frames bind without events, and their `send` answers `null`.
 
 `ViewRoom { session, view, opening }` (server, remote, `forViews`): variant `peer` for view principals of that opening,
 variant `worker` for the session's worker (which passes the current opening). Both share one `RoomStore { session,
@@ -113,7 +149,9 @@ then has its own dependencies on the worker, its own line, and its own end.
   between. Tested over a link that holds back the server's messages (so the frame's acknowledgements stop and the
   server's window fills): fifty 2 KB updates reach it as about 6 KB (the two messages in its window and one folded
   update). A peer's keyed messages go when it leaves. **Live:** `log` keeps messages until every present peer
-  acknowledged them (`ack({ seq })`, or `send`'s `ack`; the kit acknowledges what it applied, at most every 100 ms).
+  acknowledged them (`ack({ seq })`, or `send`'s `ack`; the kit acknowledges what it applied, at most every 100 ms:
+  with the window delivered and the keyed messages taken, that is the room's number, keyed messages included, so a
+  room that sends keyed messages only never leaves a peer behind a later joiner and its links are not cut).
   No size limits; a peer that never acknowledges holds the log while connected (a writer could equally flood).
 - **Base** (log and text): `{ seq, epoch, value }`. A joiner (or a peer that fell behind a trim) resets from it, then
   applies `log` entries after `base.seq`. **Log:** `log` keeps messages since the base; the leader's
@@ -138,6 +176,14 @@ then has its own dependencies on the worker, its own line, and its own end.
   written, and the base and the trim of the journal it replaces are one transaction: a snapshot the room cannot take
   writes nothing (tested).
 - **Clock:** `now()` returns the server's `Date.now()`.
+- **Events** (`emit`, `stream`): the store's `stream` is an event source (Chord events, `packages/chord/docs/events`),
+  re-exposed by every peer's `ViewRoom`; `emit` emits each message in order as `{ from: peer, key?, data }`. Events
+  take no room number and touch no journal, acknowledgement, trim, base, watermark or memory budget; a peer bound when
+  the event flushes gets it (read-only peers too), a joiner gets none from before, and a peer that cannot keep up
+  (Chord's event window, 32 messages per link) loses some. Only writers emit.
+- **Monotonic acknowledgements:** the room keeps each peer's acknowledgement as the highest it saw (`ack`, a send's
+  piggybacked `ack`), never past its last number: with sends pipelined, a delayed send's older acknowledgement cannot
+  move it back.
 - **A text room's text is saved from its documents.** The room's accounting document records the message that last
   changed the text and the one written last; the save routine follows that difference, so after a plugin reload the
   new attempt writes at once what the old one had not (tested: edit, reload, the text reaches the view's state). A
@@ -209,7 +255,8 @@ untrusted input: any write peer may answer.
 
 `test/p2/rooms.test.ts` (each case its own session): the token path over a real socket (a bad Host with a valid token,
 reuse, cookie-only, `Origin: null` on `/chord` and on routes other than the kit, two redemptions at once); a view
-principal's reach; a closed and reopened view; a revoked guest grant; presence and leader handover; keyed folding over
+principal's reach; a closed and reopened view; a closed view's state and backing held again (a late page, a restarted
+worker under the lingering room) without an activation failure; a revoked guest grant; presence and leader handover; keyed folding over
 a stalled link, joiners' keyed snapshot, the keyed member's part limit; a read-only frame cannot change or reset the
 room; flat append cost with 22,000 kept messages, paged history; the memory budget charging empty messages; unkeyed
 order and acknowledgement trimming; log snapshots (stale term, overtaken snapshot) and reset; text convergence,
@@ -222,6 +269,8 @@ goes on; the agent's call runs in the leader's frame.
 
 ## 7. Open
 
-- Not tested: the lag eviction (5a), a cost test of encodes with many peers.
+- Not tested: the lag eviction (5a) itself (that a frame which keeps acknowledging is not evicted is tested:
+  `rooms-events.test.ts`, two frames of a keyed-only room past the lag limit, one over a slow path, no reconnect), a
+  cost test of encodes with many peers.
 - Radius (decision 4). The TUI shows no views, so no rooms.
 - A paged keyed snapshot for joiners (now a keyed send past the link part limit is refused).

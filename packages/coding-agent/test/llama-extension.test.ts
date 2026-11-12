@@ -54,7 +54,7 @@ describe("llama.cpp extension", () => {
 	});
 
 	it("normalizes management and inference URLs", () => {
-		expect(normalizeLlamaServerUrl("http://127.0.0.1:8080/v1/")).toBe("http://127.0.0.1:8080");
+		expect(normalizeLlamaServerUrl("http://127.0.0.1:9931/v1/")).toBe("http://127.0.0.1:9931");
 		expect(normalizeLlamaServerUrl("https://example.com/prefix/v1")).toBe("https://example.com/prefix");
 		expect(() => normalizeLlamaServerUrl("file:///tmp/llama")).toThrow("http or https");
 	});
@@ -86,20 +86,20 @@ describe("llama.cpp extension", () => {
 				{ id: "unloaded", status: { value: "unloaded" } },
 				{ id: "loading", status: { value: "loading" } },
 			],
-			"http://localhost:8080",
+			"http://localhost:9931",
 		);
 
 		expect(controller.provider.getModels()).toEqual([
 			expect.objectContaining({
 				id: "loaded",
-				baseUrl: "http://localhost:8080/v1",
+				baseUrl: "http://localhost:9931/v1",
 				contextWindow: 65536,
 				maxTokens: 65536,
 				input: ["text", "image"],
 			}),
 			expect.objectContaining({
 				id: "sleeping",
-				baseUrl: "http://localhost:8080/v1",
+				baseUrl: "http://localhost:9931/v1",
 			}),
 		]);
 	});
@@ -551,7 +551,7 @@ describe("llama.cpp extension", () => {
 					architecture: { output_modalities: ["text", "decisions"] },
 				},
 			],
-			"http://localhost:8080",
+			"http://localhost:9931",
 		);
 		expect(controller.provider.getModels().map((model) => model.id)).toEqual(["hybrid"]);
 		expect(

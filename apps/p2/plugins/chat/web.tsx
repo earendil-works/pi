@@ -1,4 +1,5 @@
-// Main view: the transcript of the open session with its composer, or the new-session screen.
+// Main view: the transcript of the open session with its composer, or the new-session screen; the model commands of
+// the command menu (commands.tsx).
 
 import {
 	Access,
@@ -20,9 +21,13 @@ import {
 	buildTranscript,
 	ChevronIcon,
 	CloseIcon,
+	CommandPages,
+	Commands,
+	type CommandTarget,
 	ContextUsage,
 	CostPanel,
 	closeLayers,
+	conversationKey,
 	conversationRoute,
 	type Detail,
 	DownIcon,
@@ -79,6 +84,7 @@ import {
 	transcriptOf,
 	transcriptRows,
 	useChatScroll,
+	useCommandRouteTarget,
 	useComposerState,
 	useConnected,
 	useFileCompletion,
@@ -113,15 +119,17 @@ import { Drafts } from "../drafts/contract.ts";
 import { Envs } from "../envs/contract.ts";
 import { DirectoryPicker, directoryPickerLayer } from "../envs/contract.web.tsx";
 import { GlyphIcon } from "../glyphs/GlyphIcon.tsx";
-import { placeSeed } from "../glyphs/seed.ts";
 import { Models } from "../models/contract.ts";
 import type { ResourceSnapshot } from "../models/resources.ts";
 import { Projects } from "../projects/contract.ts";
+import { placeSeed } from "../projects/glyph-seed.ts";
 import { type Session, Sessions } from "../sessions/contract.ts";
 import { SessionMetrics, SessionStatus, WorkerControl } from "../status/contract.ts";
 import { type Child, conversationLocation, SubagentControl, Subagents } from "../subagents/contract.ts";
 import { SessionTree } from "../tree/contract.ts";
-import { Chat, ChatCosts, TranscriptEntries } from "./contract.ts";
+import { MODEL_COMMANDS, MODEL_PAGES } from "./commands.tsx";
+import { Chat, ChatCosts, conversationTargetId, TranscriptEntries } from "./contract.ts";
+import { newSessionChoice, thinkingLevelOf } from "./model-choice.ts";
 import { type Outgoing, outboxOf } from "./outbox.ts";
 import { sessionStart } from "./session-start.ts";
 
@@ -350,9 +358,17 @@ function Composer({
 	// The draft straight from the app's composer state, not through the screen's dock content: that arrives a layout
 	// effect after a keystroke, so the controlled textarea rendered the previous text first, which put the caret at the
 	// end on every keystroke and broke a phone keyboard's composition (its first tap on Send only closed the keyboard).
-	const { draft, setDraft } = useComposerState();
+	const { draft, setDraft, registerTextarea } = useComposerState();
 	const ownRef = useRef<HTMLTextAreaElement>(null);
 	const textarea = textareaRef ?? ownRef;
+	// The app's composer state focuses it on request (`focus`): opening a session, a reply, restored text.
+	const ref = useCallback(
+		(element: HTMLTextAreaElement | null) => {
+			textarea.current = element;
+			registerTextarea(element);
+		},
+		[textarea, registerTextarea],
+	);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: resizing follows the rendered draft, as in Pi Mobile.
 	useLayoutEffect(() => {
 		const element = textarea.current;
@@ -403,7 +419,7 @@ function Composer({
 			)}
 			{completion && <FileCompletionPopover completion={completion} />}
 			<textarea
-				ref={textarea}
+				ref={ref}
 				rows={1}
 				value={draft}
 				placeholder={busy ? (steer ? "Steer the current run…" : "Queue a follow-up…") : "Message Pi…"}
@@ -503,6 +519,8 @@ type ComposerProps = Omit<Parameters<typeof Composer>[0], "textareaRef">;
  * and its footer. Absent: nothing below the bar above (a one-shot agent's view).
  */
 type DockContent = {
+	/** The screen's key (`conversationKey`): an open's focus request goes to the composer of its own screen. */
+	readonly screen: string;
 	readonly above?: ReactNode;
 	readonly composer?: { readonly toBottom?: ReactNode } & (
 		| { readonly bar: ReactNode }
@@ -567,6 +585,11 @@ function useFrame(): Frame {
 function Dock({ frame, dockRef }: { frame: Frame; dockRef: (element: HTMLDivElement | null) => void }) {
 	const content = useSyncExternalStore(frame.contents.subscribe, frame.contents.snapshot);
 	const composer = content?.composer;
+	const { screenShown } = useComposerState();
+	// After the commit that put the screen's composer, or none, in place: the textarea is the one this screen shows.
+	useLayoutEffect(() => screenShown(content?.screen), [content, screenShown]);
+	// A list page replaces the chat: no chat screen shows, so opening the one shown before waits for it again.
+	useLayoutEffect(() => () => screenShown(undefined), [screenShown]);
 	return (
 		<div className="dock" ref={dockRef}>
 			{content?.above}
@@ -739,6 +762,28 @@ function useRestoredDrafts(
 	}, [drafts, pending, restore]);
 }
 
+/**
+ * What the command menu acts on while a conversation shows: a subagent's conversation, else the session while its own
+ * conversation shows; nothing for a one-shot agent (read-only) or before the session and its subagents are known.
+ */
+function viewTarget(
+	session: Session | undefined,
+	conversation: number,
+	child: Child | undefined,
+): CommandTarget | undefined {
+	if (!session || child?.kind === "agent") return undefined;
+	if (child)
+		return {
+			type: "conversation",
+			id: conversationTargetId(session.id, conversation),
+			kind: "Conversation",
+			label: child.name,
+		};
+	return session.main === conversation
+		? { type: "session", id: session.id, kind: "Session", label: session.title }
+		: undefined;
+}
+
 function SessionChat({ sessionId, conversationId }: { sessionId: string; conversationId: number }) {
 	const nav = useNavigation();
 	const openConversation = useCallback(
@@ -806,6 +851,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	const child = children?.[sessionId]?.find((entry) => entry.conversationId === conversationId);
 	// A code mode script's one-shot agent: read-only, opened from the script's tool card.
 	const oneShot = child?.kind === "agent";
+	useCommandRouteTarget(viewTarget(session, conversationId, child));
 	// Where the viewed conversation works: a subagent may have its own location (e.g. a git worktree, or another machine).
 	const viewLocation = conversationLocation(session, child);
 	const viewCwd = viewLocation?.cwd;
@@ -900,6 +946,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 		setReplyTo,
 		canReply,
 		mentionName,
+		focus,
 	} = composer;
 	// `/tree` from a message (docs/tree.md): the owner, in the main conversation. A reference of its own, as the switch
 	// reaches the session row (whose `main` moves this view) before its result; a user message's text fills the composer.
@@ -926,9 +973,9 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	const startReply = useCallback(
 		(target: { entryId: number; name: string }) => {
 			setReplyTo(target);
-			document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus();
+			focus();
 		},
-		[setReplyTo],
+		[setReplyTo, focus],
 	);
 	// Kept while reconnecting, as the composer is (`canWrite`).
 	const replying = canWrite && canReply ? replyTo : undefined;
@@ -954,9 +1001,9 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 		(texts: readonly string[], after = false) => {
 			if (!texts.length) return;
 			setDraft((current) => (after ? joinDraft(current, ...texts) : joinDraft(...texts, current)));
-			document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus();
+			focus();
 		},
-		[setDraft],
+		[setDraft, focus],
 	);
 	// Who may write is known before the chat object is live (`canWrite`): drafts hold at once.
 	useRestoredDrafts(sessionId, conversationId, canWrite, restore);
@@ -1213,8 +1260,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 		session
 			? {
 					model: agentModel ?? session.model,
-					thinkingLevel:
-						transcript?.agent.thinkingLevel ?? (session.thinkingLevel as ModelChoice["thinkingLevel"]),
+					thinkingLevel: transcript?.agent.thinkingLevel ?? thinkingLevelOf(session.thinkingLevel),
 				}
 			: undefined,
 		(_, next) => next,
@@ -1381,6 +1427,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	);
 	const place = useChatScreen(
 		{
+			screen: conversationKey({ session: sessionId, conversation: conversationId }),
 			above: subagentBar,
 			// A one-shot agent's view has no composer: its bar above has the Stop.
 			...(oneShot && canWrite
@@ -1547,6 +1594,9 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	);
 }
 
+/** The new-session screen as the command menu's target: a model change there applies to the session about to start. */
+const NEW_SESSION_TARGET: CommandTarget = { type: "new-session", id: "new", kind: "New session", label: "" };
+
 function NewSession() {
 	const connected = useConnected();
 	const host = useHost();
@@ -1567,10 +1617,8 @@ function NewSession() {
 	} = useNewSessionState();
 	const location =
 		selectedLocation ?? (recent[0] ? { env: recent[0].env ?? null, cwd: recent[0].cwd } : { env: null, cwd: "~" });
-	const fallback = resources?.settings.defaultModel ?? recent[0]?.model;
-	const choice: ModelChoice | undefined =
-		selectedChoice ??
-		(fallback ? { model: fallback, thinkingLevel: resources?.settings.thinkingLevel ?? "high" } : undefined);
+	const choice = newSessionChoice(selectedChoice, resources, recent[0]);
+	useCommandRouteTarget(NEW_SESSION_TARGET);
 	const contextWindow = resources?.models.find(
 		(entry) => entry.provider === choice?.model.provider && entry.modelId === choice?.model.modelId,
 	)?.contextWindow;
@@ -1677,6 +1725,7 @@ function NewSession() {
 	}, [start]);
 	const place = useChatScreen(
 		{
+			screen: conversationKey(NEW_SESSION),
 			composer: owner
 				? {
 						props: { busy: false, steer, setSteer, disabled: false, onSend: send, attaching },
@@ -1846,4 +1895,6 @@ export default defineFacet((host, self) => {
 	// The chat plugin defines the transcript's entry displays (chat-mode adds its own): served on the page too.
 	serveKeyed(host, TranscriptEntries);
 	self.contribute(Slots, { main: Main });
+	self.contribute(Commands, MODEL_COMMANDS);
+	self.contribute(CommandPages, MODEL_PAGES);
 });

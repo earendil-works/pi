@@ -5,6 +5,7 @@ import {
 	arr,
 	bool,
 	int,
+	nul,
 	nullable,
 	num,
 	obj,
@@ -16,6 +17,7 @@ import {
 	unknown,
 } from "@earendil-works/pi-schema";
 import {
+	evolve,
 	forViews,
 	type JsonValue,
 	literal,
@@ -140,54 +142,72 @@ export const EditBatchSchema = obj({ n: int({ minimum: 1 }), edits: arr(TextEdit
 export const CallArgsSchema = obj({ method: Name, args: Json });
 
 /**
- * A view's room (server): `peer` for the frames of one opening of the view (view principals), `worker` for the
- * session's worker (the agent's `view_methods` and `view_call`). In memory; it ends a little after its last peer.
+ * A view's room (server), version 1 as 682c7b93c released it: the contract the view kits built then hold. Version 2
+ * (`ViewRoom`) serves it through its `accepts` (`rooms.ts`); kept verbatim, as its fingerprint must not change.
  */
-export const ViewRoom = forViews(
-	remote("p2.view-room", {
-		version: 1,
-		params: { session: param.str(), view: ViewId, opening: param.str() },
-		hostAddress: serverHost,
-		variants: {
-			peer: {
-				state: {
-					room: RoomSchema,
-					presence: PresenceSchema,
-					log: LogSchema,
-					keyed: KeyedByPeerSchema,
-				},
-				methods: {
-					/**
-					 * Joins (as a room of `kind`, if given: the first one present decides it): the caller's peer and editor
-					 * IDs, and the last number before it joined (a live room's joiner takes messages after it; keyed ones
-					 * all). A frame that only offers methods joins without a kind.
-					 */
-					join: method(obj({ kind: opt(RoomKindSchema) }), JoinedSchema),
-					/** Numbers and adds messages; `ack`: the last number the caller applied. */
-					send: method(obj({ messages: OutgoingSchema, ack: opt(int()) })),
-					ack: method(obj({ seq: int() })),
-					/** Journal messages after `after`, at most `limit`; `more`: there are newer ones before the window. */
-					history: method(HistoryArgsSchema, HistorySchema),
-					/** The server's clock, in milliseconds since the epoch. */
-					now: method(undefined, num()),
-					offer: method(obj({ methods: arr(MethodInfoSchema, { maxItems: 100 }) })),
-					answer: method(AnswerSchema),
-					/** Log rooms, the leader: `value` is the room's state after message `seq`. */
-					snapshot: method(SnapshotSchema),
-					/** Text rooms: a batch of edits, number `n` of the caller's editor. */
-					edit: method(EditBatchSchema),
-				},
+export const ViewRoomV1 = remote("p2.view-room", {
+	version: 1,
+	params: { session: param.str(), view: ViewId, opening: param.str() },
+	hostAddress: serverHost,
+	variants: {
+		peer: {
+			state: {
+				room: RoomSchema,
+				presence: PresenceSchema,
+				log: LogSchema,
+				keyed: KeyedByPeerSchema,
 			},
-			worker: {
-				methods: {
-					/** The methods the leader offers; fails `not_open` while no frame that may write shows the view. */
-					methods: method(undefined, arr(MethodInfoSchema)),
-					/** Runs a method in the leader's frame; its result. */
-					call: method(CallArgsSchema, Json),
-				},
+			methods: {
+				join: method(obj({ kind: opt(RoomKindSchema) }), JoinedSchema),
+				send: method(obj({ messages: OutgoingSchema, ack: opt(int()) })),
+				ack: method(obj({ seq: int() })),
+				history: method(HistoryArgsSchema, HistorySchema),
+				now: method(undefined, num()),
+				offer: method(obj({ methods: arr(MethodInfoSchema, { maxItems: 100 }) })),
+				answer: method(AnswerSchema),
+				snapshot: method(SnapshotSchema),
+				edit: method(EditBatchSchema),
 			},
 		},
-	}),
+		worker: {
+			methods: {
+				methods: method(undefined, arr(MethodInfoSchema)),
+				call: method(CallArgsSchema, Json),
+			},
+		},
+	},
+});
+
+/** A message of a room's stream (an event): its sender (a peer ID), its key if any, its data as JSON text. */
+export const StreamSchema = obj({ from: str(), key: opt(str()), data: str() });
+export type Stream = Static<typeof StreamSchema>;
+
+/** The numbers a send's messages were given, in their order. */
+export const SentSchema = arr(int());
+
+/**
+ * A view's room (server): `peer` for the frames of one opening of the view (view principals), `worker` for the
+ * session's worker (the agent's `view_methods` and `view_call`). In memory; it ends a little after its last peer.
+ *
+ * - `join`: joins (as a room of `kind`, if given: the first one present decides it); the caller's peer and editor IDs,
+ *   and the last number before it joined (a live room's joiner takes messages after it; keyed ones all). A frame that
+ *   only offers methods joins without a kind.
+ * - `send`: numbers and adds messages, answering their numbers in order; `ack`: the last number the caller applied
+ *   (the room keeps the highest it saw).
+ * - `emit` and `stream` (version 2): motion. An emit's messages go to every peer bound now, as events of `stream`,
+ *   unnumbered, never kept, dropped for a peer that cannot keep up.
+ * - `history`: journal messages after `after`; `now`: the server's clock; `offer` and `answer`: methods for the agent;
+ *   `snapshot`: a log room's leader saves the state after message `seq`; `edit`: a text room's batch of edits.
+ *
+ * 2: `stream`, `emit`, and `send` answers the numbers it gave (version 1's frames get `null`).
+ */
+export const ViewRoom = forViews(
+	evolve(ViewRoomV1, (e) =>
+		e
+			.addEvent("peer", "stream", StreamSchema)
+			.addMethod("peer", "emit", obj({ messages: OutgoingSchema }), nul())
+			.result("send", SentSchema),
+	),
 );
 
 /** A page's way to a frame's link: a token for one view of the session, for people who may view it. */

@@ -214,7 +214,7 @@ async function withTables<T extends object>(
 	activate: (ctx: Ctx) => Promise<unknown>,
 	rows: T | undefined,
 ): Promise<T | "kept"> {
-	const store = await openHostStore(serverDir, { outbox: false }, context);
+	const store = await openHostStore(serverDir, {}, context);
 	const errors: unknown[] = [];
 	const host = createHost({ principal: HOST, store, onError: (error) => errors.push(error) });
 	let owned: Owned<T> | undefined;

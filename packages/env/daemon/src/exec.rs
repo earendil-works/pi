@@ -4,7 +4,7 @@
 use crate::decode::StreamDecoder;
 use crate::errors::Failure;
 use crate::frame::{EVENT, Frame};
-use crate::output::Output;
+use crate::output::{Gate, Output};
 use crate::sys;
 use crate::window::{Pending, Window};
 use serde_json::{Map, Value, json};
@@ -19,8 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-/// After a command's program exits, output still arriving is collected until this much silence.
-const EXIT_GRACE: Duration = Duration::from_millis(100);
+const EXIT_STDIO_GRACE: Duration = Duration::from_millis(100);
 /// How often a delivery waiting for the link to drain looks again.
 const UNSENT_POLL: Duration = Duration::from_millis(20);
 
@@ -29,10 +28,6 @@ pub type Groups = Arc<Mutex<HashSet<u32>>>;
 
 pub enum Message {
     Data(usize, Vec<u8>),
-    /// The stream's reader waits for the link to drain; the program's output may sit unread in the pipe meanwhile.
-    Paused(usize),
-    /// The stream's reader reads again.
-    Resumed(usize),
     Eof(usize),
     Exit(ExitStatus),
     WaitFailed(String),
@@ -302,88 +297,25 @@ pub fn running<T>(
         .ok_or_else(|| Failure::new("EBADF", format!("no running {what} with this id")))
 }
 
-/// Read one pipe on its own thread until it ends or `stop` is set. With `output`, reading waits while too much output
-/// is unsent.
+/// Read one pipe on its own thread until it ends or `stop` is set. With `gate`, reading waits while too much output is
+/// unsent.
 pub fn spawn_reader(
     stream: usize,
     pipe: impl sys::Pipe + Send + 'static,
     sender: Sender<Message>,
     stop: Arc<AtomicBool>,
-    output: Option<Arc<Output>>,
+    gate: Option<Gate>,
 ) -> std::io::Result<JoinHandle<()>> {
     thread::Builder::new().spawn(move || {
         sys::read_pipe(pipe, &stop, |bytes| {
-            let delivered = sender.send(Message::Data(stream, bytes.to_vec())).is_ok();
-            if let Some(output) = &output {
-                wait_for_link(output, stream, &sender, &stop);
+            let deliver = || sender.send(Message::Data(stream, bytes.to_vec())).is_ok();
+            match &gate {
+                Some(gate) => gate.pass(&stop, deliver),
+                None => deliver(),
             }
-            delivered
         });
         let _ = sender.send(Message::Eof(stream));
     })
-}
-
-/// Wait while too much output is unsent, telling the command's loop while the reader of `stream` waits, so that time
-/// does not count as silence after the program exits.
-pub fn wait_for_link(output: &Output, stream: usize, sender: &Sender<Message>, stop: &AtomicBool) {
-    if output.has_room() {
-        return;
-    }
-    let _ = sender.send(Message::Paused(stream));
-    output.wait_for_room(stop);
-    let _ = sender.send(Message::Resumed(stream));
-}
-
-/// When a command stops collecting output after its program ended: after `EXIT_GRACE` without output, since a
-/// descendant may hold the pipes open. A reader waiting for the link is not silence: the program's last output may
-/// still be in its pipe, which a reader that stopped would lose.
-#[derive(Default)]
-pub struct ExitGrace {
-    until: Option<Instant>,
-    paused: [bool; 2],
-}
-
-impl ExitGrace {
-    /// The program exited: collect output until `EXIT_GRACE` passes without any.
-    pub fn exited(&mut self) {
-        self.until = Some(Instant::now() + EXIT_GRACE);
-    }
-
-    /// Waiting for the program failed: stop collecting as soon as no reader waits for the link.
-    pub fn failed(&mut self) {
-        self.until = Some(Instant::now());
-    }
-
-    /// Output arrived: after the exit, the silence starts again.
-    pub fn output(&mut self) {
-        if self.until.is_some() {
-            self.exited();
-        }
-    }
-
-    /// The stream's reader waits for the link: no silence counts until it reads again.
-    pub fn paused(&mut self, stream: usize) {
-        self.paused[stream] = true;
-    }
-
-    /// The stream's reader reads again: after the exit, the silence starts again.
-    pub fn resumed(&mut self, stream: usize) {
-        self.paused[stream] = false;
-        self.output();
-    }
-
-    /// Whether to stop collecting output now.
-    pub fn over(&self, now: Instant) -> bool {
-        !self.paused.contains(&true) && self.until.is_some_and(|until| now >= until)
-    }
-
-    /// How long until `over` may hold, if it can without a message: never while a reader waits for the link.
-    pub fn wait(&self, now: Instant) -> Option<Duration> {
-        if self.paused.contains(&true) {
-            return None;
-        }
-        self.until.map(|until| until.saturating_duration_since(now))
-    }
 }
 
 fn output_frame(id: u32, stream: &str, text: String, skipped: Option<Value>) -> Frame {
@@ -460,7 +392,7 @@ pub fn run(
     let stop = Arc::new(AtomicBool::new(false));
     // Without a window, output is not coalesced; reading then waits for the link.
     let gate = if request.window.is_none() {
-        Some(output.clone())
+        Some(Gate::new(output))
     } else {
         None
     };
@@ -480,7 +412,7 @@ pub fn run(
         return Err(abandon(child, error));
     }
     let stderr = child.stderr.take().unwrap();
-    if let Err(error) = spawn_reader(1, stderr, sender.clone(), stop.clone(), gate) {
+    if let Err(error) = spawn_reader(1, stderr, sender.clone(), stop.clone(), gate.clone()) {
         return Err(abandon(child, error));
     }
     if let Err((child, error)) = start_waiter(child, None, sender.clone()) {
@@ -521,7 +453,7 @@ pub fn run(
     };
     let mut ended = [false, false];
     let mut status: Option<Result<ExitStatus, String>> = None;
-    let mut grace = ExitGrace::default();
+    let mut idle_until: Option<Instant> = None;
     let mut timed_out = false;
     let mut aborted = false;
     let mut killed = false;
@@ -544,9 +476,14 @@ pub fn run(
         if status.is_some() && ended[0] && ended[1] {
             break;
         }
-        if grace.over(now) {
-            // A descendant may hold the pipes open after the process exited; stop waiting for it.
-            break;
+        if idle_until.is_some_and(|idle| now >= idle) {
+            // Silence while the link holds a reader up is not the end of the output: the pipe may hold more.
+            if gate.as_ref().is_some_and(Gate::held) {
+                idle_until = Some(now + EXIT_STDIO_GRACE);
+            } else {
+                // A descendant may hold the pipes open after the process exited; stop waiting for it.
+                break;
+            }
         }
         if let Some(pending) = &mut pending
             && !pending.is_empty()
@@ -559,8 +496,8 @@ pub fn run(
         if let Some(deadline) = deadline.filter(|_| !timed_out) {
             wait = wait.min(deadline.saturating_duration_since(now));
         }
-        if let Some(idle) = grace.wait(now) {
-            wait = wait.min(idle);
+        if let Some(idle) = idle_until {
+            wait = wait.min(idle.saturating_duration_since(now));
         }
         if let Some(pending) = pending.as_ref().filter(|pending| !pending.is_empty()) {
             wait = wait.min(if unsent.load(Ordering::SeqCst) > 0 {
@@ -578,18 +515,18 @@ pub fn run(
                         kill(&mut killed);
                     }
                 }
-                grace.output();
+                if status.is_some() {
+                    idle_until = Some(Instant::now() + EXIT_STDIO_GRACE);
+                }
             }
-            Ok(Message::Paused(stream)) => grace.paused(stream),
-            Ok(Message::Resumed(stream)) => grace.resumed(stream),
             Ok(Message::Eof(stream)) => ended[stream] = true,
             Ok(Message::Exit(exit)) => {
                 status = Some(Ok(exit));
-                grace.exited();
+                idle_until = Some(Instant::now() + EXIT_STDIO_GRACE);
             }
             Ok(Message::WaitFailed(error)) => {
                 status = Some(Err(error));
-                grace.failed();
+                idle_until = Some(Instant::now());
             }
             Ok(Message::Cancel) => {
                 aborted = true;

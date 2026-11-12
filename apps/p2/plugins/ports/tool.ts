@@ -72,7 +72,6 @@ export function createPortsExtension(
 				),
 				// Every action is idempotent: opening twice returns the same forward, closing twice reports it closed.
 				replay: "safe",
-				origin: "owner",
 				locked: "ports",
 				scope: "main",
 				execute: async (args, _api, context) => {

@@ -27,8 +27,8 @@ type ChannelOptions = {
 	readonly codec: Codec;
 	/** This host's incarnation, sent in `hello`. */
 	readonly incarnation: string;
-	/** How many concurrent calls this side accepts, sent in `hello`. */
-	readonly calls: number;
+	/** How many concurrent calls of one origin this side accepts, sent in `hello`; `undefined`: no window. */
+	readonly calls: number | undefined;
 	/** Skips the `MESSAGE` check (framing, the codec's decode and the owners' checks still run). */
 	readonly trusted: boolean;
 	/** Where protocol errors go. */
@@ -44,15 +44,15 @@ const RECEIVED = { direction: "received" } as const;
 
 /**
  * Where a channel stands: `greeting` until the peer's `hello`, with what this end sent meanwhile; `open` with the
- * peer's incarnation and call window.
+ * peer's incarnation and call window (`undefined`: it announced none).
  */
 type ChannelState =
 	| { readonly kind: "greeting"; readonly queued: Uint8Array[] }
-	| { readonly kind: "open"; readonly peer: string; readonly calls: number }
+	| { readonly kind: "open"; readonly peer: string; readonly calls: number | undefined }
 	| { readonly kind: "closed" };
 
 /**
- * One end of a link. It sends `hello { protocol, incarnation, calls }` first and nothing else until the peer's arrived
+ * One end of a link. It sends `hello { protocol, incarnation, calls? }` first and nothing else until the peer's arrived
  * (its own messages wait). Every message is decoded by the link's codec and, unless the link is trusted, checked
  * against the message schema; a first message that is no `hello` of this codec, a second `hello`, another protocol
  * version, or a message failing a check closes the link and is reported. The heartbeat: every received message
@@ -92,11 +92,12 @@ export class Channel {
 		this.#report = options.report;
 		this.#trusted = options.trusted;
 		this.#context = context;
+		const { incarnation, calls } = options;
 		this.#hello = this.#codec.encode({
 			kind: "hello",
 			protocol: PROTOCOL_VERSION,
-			incarnation: options.incarnation,
-			calls: options.calls,
+			incarnation,
+			...(calls === undefined ? {} : { calls }),
 		});
 	}
 
@@ -116,9 +117,12 @@ export class Channel {
 		return this.#state.kind === "open" ? this.#state.peer : "";
 	}
 
-	/** How many concurrent calls the peer accepts, from its `hello`; 0 before it arrived. */
-	get peerCalls(): number {
-		return this.#state.kind === "open" ? this.#state.calls : 0;
+	/**
+	 * How many concurrent calls of one origin the peer accepts, from its `hello`: `undefined` when it announced no window;
+	 * read once the channel is open (`opened`).
+	 */
+	get peerCalls(): number | undefined {
+		return this.#state.kind === "open" ? this.#state.calls : undefined;
 	}
 
 	get opened(): boolean {

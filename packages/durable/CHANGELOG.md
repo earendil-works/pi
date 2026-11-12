@@ -21,6 +21,12 @@
 - Hooks that start tasks: `afterTools` and `onYield` hooks may return `{ tasks }`, run as the generation's children. An `afterTools` task ends the run with `{ terminate: true }` (`AfterToolsDecision`) or answers it with a steer; `onYield` tasks decide whether an answer stands while the run's inputs stay open (`pi.live.run.yield`): once all are terminal, the first in creation order that completed with a valid `{ continue }` (`YieldDecision`) continues the run, unless a user message or a reset was queued meanwhile.
 - Examples 38-46: signals, asking a person, a tool that waits for a webhook, a tool that polls, parallel nested calls, a subagent that waits, an approval gate, a review on yield, and an `afterTools` task that ends the run.
 
+### Fixed
+
+- `NodeExecutionEnv.listDir()` leaves out an entry removed between enumeration and `lstat` instead of failing, so a read-only JSONL open beside a live writer no longer rejects with `JSONL directory listing failed: ENOENT` when the writer renames a `.reclaim` file over a sidecar during the listing. Names that are not valid UTF-8, which `lstat` also reports as missing, are now left out the same way instead of failing the listing, as the directory readers already did ([#11994](https://github.com/earendil-works/pi/issues/11994))
+- Fixed `Submission.wait()` and `waitForTask()` leaving an unhandled promise rejection when the wait was cancelled or the Harness closed after the wait was checked but before its result reached the caller, as when a host shuts down while earlier commits are still being published. The caller still gets the rejection ([#11963](https://github.com/earendil-works/pi/issues/11963), [#11820](https://github.com/earendil-works/pi/issues/11820))
+- Fixed task changes deep in a long ownership chain costing time proportional to the chain's depth: finding the conversations whose idleness a change can affect walked every owner task up to the conversation, so creating or ending a chain of n tasks cost O(n²). A child task lives in its owner's conversation, so the walk now starts there
+
 ## [1.5.2] - 2026-11-10
 
 ## [1.5.1] - 2026-11-09

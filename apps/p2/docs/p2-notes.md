@@ -147,10 +147,15 @@ across server restarts. It is a Unix-only channel, not an HTTP route on the prox
 is printed or needed in a URL. It prints the committed plugin selection or refusal reason and exits non-zero
 on failure. This is a local filesystem capability for the account, not guest filesystem isolation.
 
-The `dev-tools` worker plugin provides **reload_plugins** (`{}` for dirty plugins, or
-`{"plugins":["chat","sessions"]}`). It declares `origin: "owner"` and `scope: "main"` (see **Tool requirements**)
-and refuses sessions not working on a local p2 checkout (or its containing repository): guests, what they start,
-subagents and remote-environment sessions are denied, and no subagent can be given it. Tool upgrades are not automatically replayed after
+The `dev-tools` plugin provides **reload_plugins** (`{}` for dirty plugins and every plugin of the user root, or
+`{"plugins":["chat","sessions"]}`), in every server mode, through the server object `PluginReload` (worker principals
+only; the server's `ServerParts.plugins.reload`). It is an ordinary tool: no requirements, so subagents (an agent
+writing plugins in `local:<data>/plugins`) can be given it, and the session's tool selection and lock govern it as
+they govern bash. It reports per plugin: applied, removed, failed (the build's esbuild errors as
+`file:line:column: message`, or a host's load error), refused (unknown, or discovery: an invalid package, a name a
+built-in has); and the server's and workers' errors logged meanwhile. A failed build rolls out nothing. In dev mode it
+updates the dev status like the Reload button. Its prompt section on p2 development shows only to sessions working on
+the p2 checkout (docs/agent-plugins.md). Tool upgrades are not automatically replayed after
 a crash. For runtime edits, use the explicit CLI `--restart` command instead. Do not invoke the owner server's
 controls from tests: use disposable data dirs and independent supervisors.
 
@@ -461,6 +466,11 @@ npm start
   a per-resource secret checked by the plugin's `RequestResolvers` contribution; the host stamps an owner
   principal with `access: "relay"`, a remote origin, and normal same-origin checks. They may sign in to model providers,
   but cannot mint local tokens or receive a local owner cookie. Credentials never reach web state.
+- **Server name** (core: `ServerName` in `src/runtime/server.ts`, `ServerNameSettings` for Settings, General): the
+  owner's name in `identity.json` while one is set, else the device's name read at start. The server owns it; Radius
+  keeps a copy for its shell: `?name=` on every host connect and `PUT /v1/servers/<id>/name` on a rename while
+  connected, so a rename never reconnects (which would drop every channel). A failed or offline rename goes with the
+  next connect; Radius never changes the name. Project places still name the machine by `os.hostname()`.
 - **Ports** (`plugins/ports`): server-owned `forwards.json` registry; owner **Envs → Ports** lists/adds/removes
   forwards and confirms public opt-in. Every forward is private by default and has an isolated
   `https://fwd--<brain label>--<random id>.rdtun.com/` address. Public forwards additionally have
@@ -469,6 +479,10 @@ npm start
   Host/Origin, public `X-Forwarded-*` and rewritten localhost redirects, without the relay secret. Pi's own
   port cannot be forwarded. Links appear after the owner opens Pi through Radius and survive restart;
   on-device Open uses localhost. Radius sees forwarded traffic; this is not a sandbox.
+- **Shell page and share links**: the brain keeps its page in the Radius shell, `<shell>/pi/<organization ID>/<brain>`,
+  from the relayed requests' shell origin (`radius.json` `shellPage`; one saved in the older `/pi/brains/…` form is
+  read in the current one). People a session is shared with by email get `<shell page>/s/<session>`. The shell names
+  the organization by its slug once it opens; a kept link names it by ID, which a slug change leaves valid.
 - The worker's root-only `ports` tool has `list/open/close`, fixes owner/peer attribution at its calling assistant
   entry, and denies guest/unattributed turns. It lists every forward and explicitly names all public endpoints,
   asks the model to obtain confirmation before publishing. As in Pi Mobile (67cdb4ca4) it may change or close any
@@ -510,6 +524,27 @@ sidebar rollup's or group's list (`page`). Only the top modal shows. The stack a
 tab's sessionStorage; URLs identify conversations (`/s/<id>` and `/s/<id>/c/<conversation>`) and section lists
 (`/list/<key>`), not modal payloads. Restored locators may be unavailable.
 
+- **Links that open in another tab.** In-app destinations are real `<a href>` links whose click handler is
+  `inPage(act)`: a plain primary click acts in the page; Cmd/Ctrl/Shift/Alt clicks, the middle button and "Open in
+  new tab" stay the browser's. Links take their address from `useLinkHref()` (`linkHref`): `routeHref`, which adds
+  the top layer when it is a viewer (`/s/<id>?viewer=<name>&at=<locator>`); sidebar rows and list pages have none, so
+  theirs is `routePath`.
+  A page loading such an address starts with that viewer over the conversation (`pathRoute(path, search)`); the
+  address bar then shows the conversation's path again. Only viewers are linkable: they only show content, and every
+  content fetch is authorized by its route, so a link (also another site's) cannot open a sheet that acts. Not yet
+  links: the "Back to main conversation" and parent-session buttons, peer-message attributions, Discord's bound
+  sessions.
+- **Framed by the Radius shell** (`src/web/shell-bridge.ts`). Through Radius the app runs in a frame of the shell
+  (`radius.earendil.com/pi/<organization>/<brain>`) on the brain's origin. The page names the shell's origin
+  (`<meta name="p2-shell-origin">`, relayed requests only), and the bridge speaks the frame's side of the shell's
+  `pi-shell` channel: `ready` on load, the route's `routeHref` as `location` after every navigation, and the shell's
+  `hello` base becomes the base of `linkHref`, so a link opened in another tab, or copied, is the shell's URL
+  (`…/pi/acme/<brain>/s/<id>`), not the frame's. The shell only replaces its URL with each report; the app's history
+  entries stay the tab's, so Back moves the frame. Messages go to the shell's origin only; nothing is posted when the
+  page is not framed or not relayed. The shell's side and the contract: Radius,
+  `client/src/views/pi-shell/frame-bridge.ts`. `test/p2/shell-bridge.test.ts` (origins, reports, base) and
+  `test/p2/ui-shell-frame.test.ts` (the real bundle framed by a stand-in shell on another site: mirrored URL, links,
+  one history entry per step, Back and Forward).
 - `push`: one step at the tap; `replace`: lateral changes and server/startup corrections. A correction can pass
   its captured route as `replace(next, expected)` so it cannot overwrite a later queued destination.
 - `close`: whole-modal ×/scrim/Escape, or a sheet/file parent; `reset`: workspace tabs, dropping visited files/commits.
@@ -693,8 +728,7 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
 - **Location tools** (`plugins/locations`): `location_envs` (this device and the configured SSH environments: name,
   host, last test; never keys), `location_dirs` (`[env:]path` or `env`+`cwd`, at most 200 folders) and `location_move`.
   Every main agent has them, and so do the subagents and one-shot agents it gives them to (by default it gives all
-  its tools). All declare `origin: "owner"` (see **Tool requirements**), and the server side (`AgentLocations`) admits
-  only current worker generations. The main agent's move is deferred: it records `p2.location-move` on the main
+  its tools). The server side (`AgentLocations`) admits only current worker generations. The main agent's move is deferred: it records `p2.location-move` on the main
   conversation; the worker applies it through `SessionMoves` (the owner's Relocate) once Durable has no task or
   submission (the turn ended, no subagent work), retries a busy refusal after the next commit, records a destination
   that became invalid as `failed` (shown by `location_envs`), and applies a record left by a stopped worker after its
@@ -765,8 +799,8 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
     closed). A subagent's own location keeps its environment, on its machine.
   - **Plugins** read `location.value` at each use instead of `init.values.session` (which stays the spawn
     location). Between the switch and the commit, `location.value` still names the old place while
-    `Harness.environments` resolves on the new machine: whether p2's private data directory is denied is decided from
-    the environment (`isLocalEnvironment`), never from the location (workspace, file index, attachments). What is
+    `Harness.environments` resolves on the new machine: what depends on the machine is decided from the environment
+    (`isLocalEnvironment`), never from the location (attachments). What is
     kept for a location is keyed by `location.version` (bumped at each commit): prompt resources load anew from the
     new cwd/machine (superseded loads publish nothing), workspace backends reopen their watch (subscribed before
     their first open; a failed reopen is retried at the next use, superseded watches closed) and bump `changes`, the
@@ -784,7 +818,7 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
     its failing start, a failing update/cancel/prepare, an exit while fencing, a client arriving meanwhile, a
     cross-machine move accepted under the fence with an own location, a crash before the move, a move past its
     bound, caller aborts, fences, a busy refusal leaving no fence), `relocate-worker.test.ts` (one worker host with
-    the real Harness: dev-tools and PowerShell after real moves, the private directory decided by the environment, a
+    the real Harness: PowerShell after real moves, a
     move during workspace activation, a transient reopen failure, the session moving to another machine while a
     subagent's own location stays with its tools, workspace and file index, concurrent commands on two machines with
     one connection each and closing only unused machines), `harness-cwd.test.ts` (version 1 registry placement),
@@ -899,7 +933,7 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   for cells and shapes (fan, leaf, drop, dome, wedge, circle, diamond, square). It is the "Tiles, 3x3" generator of
   the project-glyphs prototype (Radius artifact) with its recommended settings, and draws the same glyphs. Mirror
   axes only (vertical, horizontal, both diagonals): every glyph is mirror-symmetric, so none is a pinwheel (a
-  swastika); 3x3 cannot hold one anyway. `seed.ts` decides which glyph a place shows (`placeSeed`): a project's is
+  swastika); 3x3 cannot hold one anyway. `plugins/projects/glyph-seed.ts` decides which glyph a place shows (`placeSeed`, kept with the projects it reads so other plugins' web facets can import it alone): a project's is
   seeded by its first place's path, and a folder or a session inside one of its places (a session also by membership)
   shows the project's; any other place its own path's. `GlyphIcon.tsx` draws one inline (the sidebar's groups and
   Recents, the chat's top bar before the location; the chat page holds `Projects` once for it, owner only);
@@ -973,8 +1007,7 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   `src/runtime/input.ts`); a peer session's message is a `p2.peer-message` entry, a subagent's report or `team`
   message a `p2.agent-message` entry (`src/runtime/entries.ts`). Their model message starts with a
   `<sender kind="owner|guest|session|subagent" …/>` block (`src/runtime/sender.ts`, values escaped; a subagent's
-  text follows as `[<intent>] <text>`), which the preamble explains and nothing reads back: readers and `originOf`
-  use the entry data.
+  text follows as `[<intent>] <text>`), which the preamble explains and nothing reads back: readers use the entry data.
   Stop/dequeue restore text only to its author; removing a queued input (×,
   no restore) discards it, as in Pi Mobile.
 - **Windowed conversation view** (`plugins/chat/worker.ts`, `src/web/history.ts`, `src/runtime/conversation-stats.ts`):
@@ -1166,7 +1199,7 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
 - **File index** (`plugins/file-index`): `FileIndex({ session, conversation })` (participants, as `Workspace`) answers
   `@` completion (`complete`, ranked like pi's `@`) and Tab completion (`list`, one directory) for the TUI and the web
   composer. A worker-local cache per conversation (`FileIndexCache`) builds from `WorkspaceBackend`'s `files` query
-  (git ls-files or the bounded walk, private paths excluded, `truncated` surfaced), derives directories from paths,
+  (git ls-files or the bounded walk, `truncated` surfaced), derives directories from paths,
   and rebuilds lazily when `changes` advanced (at most once a second). Cwd-relative only (`~`, absolute and `..`
   complete nothing). Text handling shared by both UIs: `src/runtime/completion.ts`. p2-tui-port.md sections 8, 10.2.
 - **Workspace** (`plugins/workspace`): owner/read-write-guest `Workspace({ session, conversation })` queries a
@@ -1182,7 +1215,9 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   exact same-origin Origin), then checks the destination is free before renaming. Worker upload writes serialize
   across conversations to prevent competing uploads from overwriting each other; external filesystem races remain
   the ExecutionEnv's confinement/rename limitation, not a sandbox. Every HTTP request rechecks current access;
-  read-only guests and cross-session guests are denied. Private data and `.git` paths cannot be opened.
+  read-only guests and cross-session guests are denied. `.git` paths and paths out of the working directory cannot
+  be opened. p2's data directory is a workspace like any other (sessions work in `<data>/plugins`, docs/agent-plugins.md):
+  the panel, the file index and the watch neither refuse nor hide it.
   Web: route-owned sheet with Files (tree, fuzzy filter, uploads), Changes (working tree, paged branch commits),
   Search (literal text and include/exclude globs), File/Changes/Preview views, and Comments. Review drafts and open
   editors persist in localStorage per conversation; Send/Send all use ordinary attributed Chat input. Integration
@@ -1395,7 +1430,8 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   which replaces it; a sheet on phones). Dragging a docked side panel's left edge resizes it; every side panel shares
   that width, kept per browser (`p2-side-panel-width`; `useDragSize` in `src/web/drag-size.ts`, which the sidebar,
   workspace and terminal use too). The viewer is a named `Route.layers` entry (Back and sessionStorage restoration);
-  picking an artifact pushes a viewer above the list.
+  picking an artifact pushes a viewer above the list. Cards and list rows are links to the viewer (`ViewerHref`,
+  Browser navigation), so a modified or middle click opens it in another tab.
   HTML/SVG use a sandboxed iframe, Markdown/text render safely,
   sent files use the conservative file preview. Nothing opens from a server update. `test/p2/artifacts.test.ts`
   covers fake-provider publication, versions, independent index, reload/restart, CSP, HEAD, guest isolation and
@@ -1423,23 +1459,21 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   arguments. Tests: `artifacts.test.ts` (details, bridge), `ui-inline-artifacts.test.ts` (browser: Markdown, SVG,
   fills the width, fitted height, 70vh cap, card opens the viewer, unavailable version, guest), `tui-p11.test.ts`
   (inline Markdown).
-- **Conversations** (`plugins/conversations`): the `conversations` tool (`origin: "owner"`, `scope: "main"`) lists
+- **Conversations** (`plugins/conversations`): the `conversations` tool (`scope: "main"`, `locked: "conversations"`) lists
   active roots without starting workers (with each one's location and project, and the projects), sends
   server-attributed peer input, reads the latest completed text answer (bounded scan, no thinking, including old
   history), creates a session at a project's place or a cwd with the message as its first peer input (its ID derived
   from the call, so a retried call finds it; the sender's model and thinking level unless it names a signed-in model;
   `SessionOperations.create`, shared with the owner's `Sessions.create`),
   stops a session's run (as Stop in the chat), and archives or restores a session (`SessionOperations`; never
-  itself). A send carries the sending turn's origin to the recipient's
-  `p2.peer-message` entry (`Conversations.query` and `PeerConversation.send` `origin`), so the recipient's turn may
-  act for the owner when the owner started the sender's. `Conversations`
+  itself). `Conversations`
   accepts only current worker generations; `PeerConversation` accepts only the parent's `{ kind: "server" }`
   principal. The server brokers the sender's ID/title from the catalog, checks archive around startup/admission
   and receipts, and scopes deduplication to sender + Durable tool task/call. Calls are short and cancellable;
   cancellation after admission does not undo remote work. Final answers never auto-forward. Owner peer labels
   navigate to roots (restoring archives); guests get plain labels. `test/p2/conversations.test.ts` covers list/send/
-  answer, peer replies from the owner's turns, restart deduplication, concurrent cross-sends, busy answers, follow-ups,
-  invalid destinations, reload, guest/forged attribution, child tool exclusion and inaccessible public ingress.
+  answer, peer replies, restart deduplication, concurrent cross-sends, busy answers, follow-ups,
+  invalid destinations, reload, guest turns, child tool exclusion and inaccessible public ingress.
 - **Familiar** (`plugins/familiar`): one long-running session above the others that keeps track of them and starts,
   steers, stops, archives and restores them. The server's `FamiliarStore` holds which session it is (persisted; the
   ID is chosen before the row is made, so a crash makes the same one); the owner's `Familiar.open` makes it on first
@@ -1474,7 +1508,7 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   work running; direct child prompts do not report to the parent. **Tools** (`resolveChoice`/`resolveTools` in
   `contract.worker.ts`, validated before any commit, shared with one-shot agents): an agent gives from its own tools
   (`api.agent()`: offered, deferred and script-callable), never more. It may give every tool its model calls except
-  `scope: "main"` ones (`subagent`, `rename_session`, `conversations`, `ports`, `reload_plugins`) and
+  `scope: "main"` ones (`subagent`, `rename_session`, `conversations`, `ports`, `sidebar_rollups`) and
   `scope: "subagent"` ones (`team`, which every subagent gets, offered from the start); `tools` names them in order,
   the default is all of them (code mode only while the main agent has it; naming a tool it lacks is refused with the
   list it may give). Deferred tools stay deferred unless named (then offered from the start). Durable enables exactly
@@ -1493,18 +1527,14 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   installed after the spawn; `tool-access.test.ts` the resolution rules; `terminal-tool.test.ts` a subagent's script
   opening a window at its own location.
 - **Tool requirements** (`src/runtime/tool-access.ts`): a plugin declares them on its tool (`P2Tool`, `defineP2Tool`):
-  `origin` (`"any"` default, or `"owner"`: only a turn the owner started) and `scope` (`"any"` default, `"main"`: only
-  top-level conversations, or `"subagent"`: given to subagents only). The worker's Durable registry wraps every tool
-  with requirements (`guardTool`, in `durableRegistry`), so no tool checks them itself. `origin: "owner"`: the location
-  tools, `reload_plugins`, `conversations`, `ports`, MCP tools (the owner's accounts are behind them). A turn's origin
-  (`originOf`, `src/runtime/origin.ts`) is the conversation's current run (`pi.live.run.inputs`, each submission's
-  entry through `tx.submission`): the owner's only if every input the run placed is (`entryOrigin`): a person's input
-  by its author in the entry data, an agent-written one by its `origin`. Agent-written inputs record the writing
-  turn's origin: subagent tasks and one-shot agents' prompts (`p2.subagent-task`), `team` messages and reports
-  (`p2.agent-message`; a report has the origin of the subagent's run that answered, `answerOrigin`: its inputs after
-  the previous run's final answer, `stop` or `length`, past mid-run error answers and compaction markers), and peer messages (`p2.peer-message`). A guest's input steered into a run takes the
-  owner's tools away for the rest of it; a guest-started chain never reaches them. Known gap: inputs of earlier runs
-  still in the context are not considered. `test/p2/inputs.test.ts`, `dev-tools.test.ts`, `tool-access.test.ts`.
+  `scope` (`"any"` default; `"main"`: only top-level conversations, for tools acting on the session as a whole:
+  `subagent`, `rename_session`, `conversations`, `ports`, `sidebar_rollups`; `"subagent"`: given to subagents only,
+  `team`) and `locked` (in a locked session: `pass` default, `never`, or a capability the owner picked: `ports`,
+  `conversations`). The worker's Durable registry wraps every tool with requirements (`guardTool`, in
+  `durableRegistry`), so no tool checks them itself. There is no per-turn authority (removed: the owner decided, as for
+  p3, that "who started this turn" is illusory against prompt injection): whoever may send input in a session may have
+  its agent use every tool it has. What a session's agents reach is decided by its tool selection (subagent and
+  one-shot `tools`), its location (a sandbox) and its lock. `test/p2/tool-access.test.ts`, `dev-tools.test.ts`.
 - **Code mode** (`plugins/codemode`): the worker facet registers Durable's `codemode` extension
   (`createCodemodeExtension`, tool `codemode`, callers `["model"]`, replay-safe) in `Extensions`. One sandbox per worker
   (`CodemodeSandbox`, 256 MiB VM heap: `CODEMODE_MEMORY_LIMIT_BYTES`, kept constant because it is part of the VM

@@ -42,7 +42,29 @@ type VersionMappings<K extends Kind, Old extends Variants, Current extends Varia
 	K extends "local" ? StateMappings<Old[Local], Current[Local], Local, C> : RemoteStateMappings<Old, Current, C>
 > &
 	Section<"methods", MethodMappings<Old, Current, C>> &
-	Section<"keyed", K extends "local" ? KeyedMappings<Old[Local], Current[Local], C> : Record<never, never>>;
+	Section<"keyed", K extends "local" ? KeyedMappings<Old[Local], Current[Local], C> : Record<never, never>> &
+	Section<
+		"events",
+		K extends "local" ? EventMappings<Old[Local], Current[Local], Local, C> : RemoteEventMappings<Old, Current, C>
+	>;
+
+type RemoteEventMappings<Old extends Variants, Current extends Variants, C extends Change> = OmitNever<{
+	[X in keyof Old & keyof Current]: [keyof EventMappings<Old[X], Current[X], X, C>] extends [never]
+		? never
+		: EventMappings<Old[X], Current[X], X, C>;
+}>;
+
+/**
+ * Event members (decision "Events: fire-and-forget members"): a changed one maps each current value back, or refuses
+ * the version's binding; a removed one needs nothing (an older consumer receives none of it), nor an added one.
+ */
+type EventMappings<Old extends VariantShape, Current extends VariantShape, X, C extends Change> = OmitNever<{
+	[S in keyof NonNullable<Old["events"]>]: S extends keyof NonNullable<Current["events"]>
+		? [X, S, "event"] extends C
+			? ((current: Static<NonNullable<Current["events"]>[S]>) => Static<NonNullable<Old["events"]>[S]>) | "refuse"
+			: never
+		: never;
+}>;
 
 /**
  * A local contract's keyed members (slice 7b): a changed one maps each document of the current version back, or
@@ -160,6 +182,8 @@ type Needs = {
 	readonly methods: ReadonlyMap<string, MethodNeed>;
 	/** Per keyed member (local contracts). */
 	readonly keyed: ReadonlyMap<string, KeyedNeed>;
+	/** Per variant, per event member still declared and changed since: a mapping or `"refuse"`. */
+	readonly events: ReadonlyMap<string, ReadonlyMap<string, "changed">>;
 };
 
 type StateNeed = "changed" | "removed";
@@ -179,8 +203,15 @@ function needs(data: ContractData, index: number): Needs {
 	const state = new Map<string, Map<string, StateNeed>>();
 	const methods = new Map<string, { removed: boolean; args: boolean; result: boolean }>();
 	const keyed = new Map<string, KeyedNeed>();
-	for (const [variant, { state: oldState, methods: oldMethods, keyed: oldKeyed }] of old.variants) {
+	const events = new Map<string, Map<string, "changed">>();
+	for (const [variant, { state: oldState, methods: oldMethods, keyed: oldKeyed, events: oldEvents }] of old.variants) {
 		const now = current.variants.get(variant)!;
+		// A removed event needs no mapping: an older consumer receives none of it.
+		const eventNeeds = new Map<string, "changed">();
+		for (const member of oldEvents.keys()) {
+			if (now.events.has(member) && changed(variant, member, "event")) eventNeeds.set(member, "changed");
+		}
+		if (eventNeeds.size > 0) events.set(variant, eventNeeds);
 		for (const [member, { key }] of oldKeyed) {
 			const current = now.keyed.get(member);
 			if (current === undefined) keyed.set(member, "removed");
@@ -206,7 +237,7 @@ function needs(data: ContractData, index: number): Needs {
 		if (removed) methodNeeds.set(member, { kind: "removed" });
 		else if (args || result) methodNeeds.set(member, { kind: "changed", args, result });
 	}
-	return { state, methods: methodNeeds, keyed };
+	return { state, methods: methodNeeds, keyed, events };
 }
 
 function changeKey(change: Change): string {
@@ -214,17 +245,25 @@ function changeKey(change: Change): string {
 }
 
 function checkMappings(mappings: unknown, needs: Needs, kind: Kind, path: string): void {
-	checkKeys(mappings, ["state", "methods", "keyed"], path);
-	const { state, methods, keyed } = mappings as {
+	checkKeys(mappings, ["state", "methods", "keyed", "events"], path);
+	const { state, methods, keyed, events } = mappings as {
 		readonly state?: unknown;
 		readonly methods?: unknown;
 		readonly keyed?: unknown;
+		readonly events?: unknown;
 	};
 	const checkVariant = (variantMappings: unknown, variantNeeds: ReadonlyMap<string, StateNeed>, at: string) =>
 		checkSection(variantMappings, variantNeeds, at, checkStateMapping);
-	// A local table is flat: its state section is the one variant's.
-	if (kind === "local") checkVariant(state, needs.state.get(LOCAL) ?? new Map(), `${path}.state`);
-	else checkSection(state, needs.state, `${path}.state`, checkVariant);
+	const checkEvents = (variantMappings: unknown, variantNeeds: ReadonlyMap<string, "changed">, at: string) =>
+		checkSection(variantMappings, variantNeeds, at, checkEventMapping);
+	// A local table is flat: its state and events sections are the one variant's.
+	if (kind === "local") {
+		checkVariant(state, needs.state.get(LOCAL) ?? new Map(), `${path}.state`);
+		checkEvents(events, needs.events.get(LOCAL) ?? new Map(), `${path}.events`);
+	} else {
+		checkSection(state, needs.state, `${path}.state`, checkVariant);
+		checkSection(events, needs.events, `${path}.events`, checkEvents);
+	}
 	checkSection(methods, needs.methods, `${path}.methods`, checkMethodMapping);
 	checkSection(keyed, needs.keyed, `${path}.keyed`, checkKeyedMapping);
 }
@@ -247,6 +286,11 @@ function checkSection<N>(
 function checkStateMapping(mapping: unknown, need: StateNeed, path: string): void {
 	if (typeof mapping === "function" || (need === "removed" && mapping === "refuse")) return;
 	throw new Error(`${path}: expected ${need === "removed" ? 'a function or "refuse"' : "a function"}`);
+}
+
+function checkEventMapping(mapping: unknown, _need: "changed", path: string): void {
+	if (typeof mapping !== "function" && mapping !== "refuse")
+		throw new Error(`${path}: expected a function or "refuse"`);
 }
 
 function checkKeyedMapping(mapping: unknown, need: KeyedNeed, path: string): void {

@@ -84,7 +84,11 @@ test(
 		};
 		// The owner's terminal panel: its byte channel hears the session's terminals change.
 		const view = await holdIn(owner, Terminals, { session: session.id, view: randomUUID() }, "owner");
-		const bytes = await byteChannel(fixture.server.port, (await view.channel({}, BACKGROUND_CONTEXT)).token);
+		const bytes = await byteChannel(
+			fixture.server.port,
+			fixture.owner.cookie,
+			(await view.channel({}, BACKGROUND_CONTEXT)).token,
+		);
 		t.after(() => bytes.socket.terminate());
 		await view.list({}, BACKGROUND_CONTEXT);
 		const listed = () =>
@@ -238,7 +242,11 @@ test(
 		await t.test("archiving the session closes its terminals", async () => {
 			await sessions.archive({ id: session.id }, BACKGROUND_CONTEXT);
 			const service = (await fixture.server.host.registry(TerminalServices, BACKGROUND_CONTEXT)).value!.service;
-			assert.deepEqual(await service.call({ op: "list", sessionId: session.id }), { kind: "list", windows: [] });
+			// The archive's job closes them after `archive` answers (`ArchiveJob` runs the `SessionArchived` hooks).
+			await poll(async () => {
+				const listing = await service.call({ op: "list", sessionId: session.id });
+				return listing.kind === "list" && listing.windows.length === 0;
+			});
 			await poll(() => listed().length === 0);
 		});
 
@@ -262,8 +270,11 @@ test(
 	},
 );
 
-async function byteChannel(port: number, token: string) {
-	const socket = new WebSocket(`ws://127.0.0.1:${port}/terminal?${new URLSearchParams({ token })}`);
+/** The owner's byte channel: the grant admits it together with the owner's credentials (`cookie`). */
+async function byteChannel(port: number, cookie: string, token: string) {
+	const socket = new WebSocket(`ws://127.0.0.1:${port}/terminal?${new URLSearchParams({ token })}`, {
+		headers: { Cookie: cookie },
+	});
 	const events: TerminalEvent[] = [];
 	socket.on("message", (data, binary) => {
 		if (!binary) {

@@ -5,40 +5,39 @@
 // them on a click of its row.
 import {
 	BranchIcon,
+	type CommandTargetRow,
 	HOME,
+	inPage,
 	locationLabel,
 	NavDisclosureIcon,
 	NavEditIcon,
 	NavWarningIcon,
 	PinIcon,
-	routePath,
+	type Route,
 	SideNavigation,
+	shortPath,
+	ToolActivities,
+	useCommandTargetRow,
+	useLinkHref,
+	useRegistry,
 } from "@p2/app/v1/web";
-import { type MouseEvent, type ReactNode, useEffect, useId, useState, useSyncExternalStore } from "react";
+import { type ReactNode, useEffect, useId, useState, useSyncExternalStore } from "react";
 import { GlyphIcon } from "../../glyphs/GlyphIcon.tsx";
+import { UnreadMark, WorkingMark } from "./marks.tsx";
 import type { Activity, GlyphSeed, SidebarRow } from "./model.ts";
+import {
+	failureWords,
+	type SubagentState,
+	stepWords,
+	subagentState,
+	subagentTitle,
+	type Tools,
+} from "./subagent-state.ts";
 
 // A row says two things in two places. Its marker says whether the session runs: a frame whose dash travels around its
 // icon, or a spinner where it has none; the only motion in the sidebar. The end of the row says whether it wants the
 // owner: a bold title and a blue dot for an unread answer, "Failed" for a failed worker. Every state has its own shape,
 // not only its own colour.
-
-/** A conversation running a turn where its row has no icon: a small spinner (a still ¾ ring with reduced motion). */
-export function WorkingMark() {
-	return <span className="working-mark" role="img" aria-label="Working" title="Working" />;
-}
-
-/** An answer the owner has not read: a steady blue dot. */
-export function UnreadMark() {
-	return <span className="unread-dot" role="img" aria-label="New answer" title="New answer" />;
-}
-
-/** The Familiar's corner mark: working (the spinner), else an unread answer (the dot), else nothing. */
-export function SessionDot({ worker }: { worker: SidebarRow["worker"] }) {
-	if (worker.busy.length) return <WorkingMark />;
-	if (worker.unread) return <UnreadMark />;
-	return null;
-}
 
 /**
  * A row's 16px icon (a project glyph, a folder, a lock), framed while `working`: a rounded frame just outside the icon,
@@ -90,6 +89,23 @@ export function HiddenAttention({ activity }: { activity: Activity }) {
 	);
 }
 
+/**
+ * The end of a subagent's row, in its session's time column: its step while busy, "Failed" or "Stopped", or how long
+ * ago it was last active.
+ */
+function SubagentEnd({ state, tools, now }: { state: SubagentState; tools: Tools; now: number }) {
+	switch (state.kind) {
+		case "busy":
+			return <span className="subagent-step">{stepWords(state.work, tools)}</span>;
+		case "failed":
+			return <FailedMark label="Failed" title={state.detail ?? failureWords(state.reason)} />;
+		case "stopped":
+			return <span className="subagent-step">Stopped</span>;
+		case "idle":
+			return state.since === undefined ? null : <span className="session-time">{ago(state.since, now)}</span>;
+	}
+}
+
 /** How long ago `time` was, in the sidebar's short form. */
 export function ago(time: number, now: number): string {
 	const seconds = Math.max(0, (now - time) / 1000);
@@ -101,17 +117,17 @@ export function ago(time: number, now: number): string {
 }
 
 /**
- * A click handler for a link that acts in the page (`act`) on a plain primary click; any other click (a modifier, the
- * middle button, "Open in new tab") is the browser's, so the target opens in another tab or window.
+ * A folder's name in the sidebar: its last `segments` path segments, with its environment; its row's title has the
+ * whole path.
  */
-export const inPage = (act: () => void) => (event: MouseEvent<HTMLAnchorElement>) => {
-	if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-	event.preventDefault();
-	act();
-};
+export function folderName(env: string | null, cwd: string, segments: number): string {
+	const path = shortPath(cwd).split(/[\\/]/).filter(Boolean);
+	const base = path.slice(-segments).join("/") || cwd;
+	return env ? `${base} · ${env}` : base;
+}
 
-/** The address of a rollup's or a group's list page. */
-export const pageHref = (page: string): string => routePath({ ...HOME, page });
+/** The route of a rollup's or a group's list page, for its link (`useLinkHref`). */
+export const pageRoute = (page: string): Route => ({ ...HOME, page });
 
 const SCOPES_KEY = "p2-sidebar-opened-from";
 const scopeListeners = new Set<() => void>();
@@ -162,7 +178,8 @@ export const useOpenedFrom = (): Readonly<Record<string, string>> =>
  * trailing end. The label is a link to `href`, an action without one, or with `expanded`, the control that shows or
  * hides what is below the row (its chevron right after the label). The whole row is one control: its hover and selected
  * background spans it, and the label's hit area covers it (the controls stay above it). `after`: a control right after
- * the label (a rollup's or a session's chevron, `Toggle`).
+ * the label (a rollup's or a session's chevron, `Toggle`). `target`: the command menu's target while the row is hovered
+ * or has focus (`useCommandTargetRow`).
  */
 export function NavRow({
 	selected = false,
@@ -178,6 +195,7 @@ export function NavRow({
 	after,
 	details,
 	controls,
+	target,
 }: {
 	selected?: boolean;
 	className?: string;
@@ -198,10 +216,11 @@ export function NavRow({
 	details?: ReactNode;
 	/** Buttons at the trailing end. */
 	controls?: ReactNode;
+	target?: CommandTargetRow;
 }) {
 	const link = `nav-link ${linkClassName} ${selected ? "active" : ""}`;
 	return (
-		<div className={`nav-row ${selected ? "selected" : ""} ${className}`}>
+		<div className={`nav-row ${selected ? "selected" : ""} ${className}`} {...target}>
 			{marker !== undefined && <span className="nav-marker">{marker}</span>}
 			{href === undefined ? (
 				<button
@@ -309,6 +328,7 @@ export function SessionItem({
 	actions: RowActions;
 	glyph?: GlyphSeed;
 }) {
+	const linkHref = useLinkHref();
 	const {
 		activeId,
 		activeScope,
@@ -357,11 +377,12 @@ export function SessionItem({
 		if (showsNested) setExpanded(true);
 	}, [showsNested]);
 	const listId = useId();
+	const tools = useRegistry(ToolActivities);
 	const conversationRow = (item: Conversation) => {
 		// The main conversation is selected on the session's row.
 		const selected = active && conversationId === item.conversation && item.conversation !== session.main;
 		const busy = session.worker.busy.includes(item.conversation) ? <WorkingMark /> : null;
-		const href = routePath({ session: session.id, conversation: item.conversation, layers: [] });
+		const href = linkHref({ session: session.id, conversation: item.conversation, layers: [] });
 		if (item.kind === "branch") {
 			const main = item.conversation === session.main;
 			return (
@@ -382,7 +403,7 @@ export function SessionItem({
 						}}
 						marker={busy}
 						label={<span className="session-title">{item.label}</span>}
-						// Where a subagent shows its model, a branch shows its kind; the pencil takes its place on hover.
+						// Where a subagent shows its step, a branch shows its kind; the pencil takes its place on hover.
 						details={
 							<span className="branch-mark" title="Branch">
 								<BranchIcon size={16} />
@@ -406,6 +427,7 @@ export function SessionItem({
 			);
 		}
 		const { agent } = item;
+		const state = subagentState(agent, busy !== null, session.worker.work[item.conversation]);
 		return (
 			<SideNavigation.Item key={`s${item.conversation}`}>
 				<NavRow
@@ -413,25 +435,16 @@ export function SessionItem({
 					className="conversation-row"
 					linkClassName={`subagent-row ${agent.kind === "agent" ? "agent-row" : ""}`}
 					href={href}
-					title={
-						agent.location
-							? `Works in ${locationLabel(agent.location.env, agent.location.cwd)}`
-							: `Follows the session: ${locationLabel(session.env, session.cwd)}`
-					}
+					// Its model and where it works, for a pointer that rests on it; its view shows them too.
+					title={subagentTitle(
+						agent,
+						state,
+						agent.location && locationLabel(agent.location.env, agent.location.cwd),
+					)}
 					onActivate={() => onOpen(item.conversation)}
 					marker={busy}
 					label={<span className="session-title">{agent.name}</span>}
-					details={
-						<>
-							{/* A subagent with its own location shows it: it stays there when the session moves. */}
-							{agent.location && (
-								<span className="subagent-location">
-									{locationLabel(agent.location.env, agent.location.cwd)}
-								</span>
-							)}
-							<span className="subagent-model">{agent.model.split("/").pop()}</span>
-						</>
-					}
+					details={<SubagentEnd state={state} tools={tools} now={now} />}
 				/>
 			</SideNavigation.Item>
 		);
@@ -460,6 +473,7 @@ export function SessionItem({
 	) : working ? (
 		<WorkingMark />
 	) : null;
+	const target = useCommandTargetRow({ type: "session", id: session.id, kind: "Session", label: session.title });
 	return (
 		<SideNavigation.Item className={`session-row ${aged ? "aged" : ""}`}>
 			<NavRow
@@ -470,7 +484,7 @@ export function SessionItem({
 					? { title: "Restore and open" }
 					: {
 							title: glyph?.title,
-							href: routePath({ session: session.id, conversation: session.main, layers: [] }),
+							href: linkHref({ session: session.id, conversation: session.main, layers: [] }),
 						})}
 				onActivate={() => {
 					if (archived) {
@@ -481,6 +495,7 @@ export function SessionItem({
 				}}
 				marker={marker}
 				label={title}
+				target={target}
 				after={
 					nested && (
 						<Toggle

@@ -1,7 +1,8 @@
 // An object held over a link (§7): what one remote reference is bound to on the consumer, across the links of its path
 // (the parent, or a route address). Its state, the replicas of its last bound variant (kept while its link is down),
-// its hold on the path's current link and calls through it: its hold in a `chord.hold` span until bound, each call in a
-// `chord.call` span, their carriers on the wire (slice 9).
+// the nodes its binding's events arrive at (decision "Events: fire-and-forget members"), its hold on the path's
+// current link and calls through it: its hold in a `chord.hold` span until bound, each call in a `chord.call` span,
+// their carriers on the wire (slice 9).
 
 import type { TelemetryCarrier, TelemetryContext, TelemetrySpan } from "@earendil-works/pi-telemetry";
 import { BACKGROUND_CONTEXT, type Context, withTelemetry } from "../context/index.ts";
@@ -13,7 +14,7 @@ import {
 	variantNames,
 	variantOrder,
 } from "../contracts/internal.ts";
-import { ChordError } from "../data/index.ts";
+import { ChordError, isChordError } from "../data/index.ts";
 import { asChordError, invalid } from "../data/internal.ts";
 import {
 	type AnyHost,
@@ -22,6 +23,7 @@ import {
 	type Caller,
 	type CheckedParams,
 	type ChordObject,
+	EventNode,
 	type Followed,
 	LIVE,
 	LOADING,
@@ -36,6 +38,7 @@ import {
 	errorFromWire,
 	jsonPart,
 	type Message,
+	type Part,
 	parsePart,
 	type StateEntry,
 	type WireAddress,
@@ -48,13 +51,31 @@ import type { HostLink } from "./host-link.ts";
 import type { Path } from "./path.ts";
 import { type MemberSnapshot, Replica } from "./replica.ts";
 
-/** The last binding: its variant, methods, the bound version's names (the wire's indexes) and a replica per member. */
+/**
+ * The last binding: its variant, methods, the bound version's names (the wire's indexes), a replica per member, and a
+ * node per event member, at which the events arriving for this binding go out (a new binding has new nodes, so its
+ * reference's subscriptions move there from its counter value: nothing of an earlier binding reaches them).
+ */
 type Bound = {
 	readonly variant: string;
 	readonly methods: ReadonlyMap<string, MethodData>;
 	readonly names: VariantNames;
 	readonly replicas: ReadonlyMap<string, Replica>;
+	/** Event member `member`'s node (its reference binds at its own version: the provider mapped what arrives). */
+	eventNode(member: string): EventNode | undefined;
 };
+
+/**
+ * The event nodes of a new binding with event members `members` (new nodes: nothing of an earlier binding reaches its
+ * reference's subscriptions); one shared lookup without nodes for a variant without event members.
+ */
+function eventNodes(members: readonly string[]): (member: string) => EventNode | undefined {
+	if (members.length === 0) return NO_EVENT_NODES;
+	const nodes = new Map(members.map((member) => [member, new EventNode()]));
+	return (member) => nodes.get(member);
+}
+
+const NO_EVENT_NODES = (): undefined => undefined;
 
 /**
  * One remote reference's object, owned by its host across the links of its path. It is `loading` until a link's hold
@@ -402,7 +423,7 @@ export class RemoteObject implements Target {
 			const previous = this.#bound?.replicas;
 			const replicas = new Map<string, Replica>();
 			// First: a derive recomputing in this batch reads the new variant through its reference.
-			this.#bound = { variant, methods: data.methods, names, replicas };
+			this.#bound = { variant, methods: data.methods, names, replicas, eventNode: eventNodes(names.events) };
 			for (const [member, state] of members) {
 				const replica = previous?.get(member);
 				if (replica === undefined) {
@@ -488,6 +509,42 @@ export class RemoteObject implements Target {
 				for (const target of retirements) if (!changed.has(target)) target.retireAlone();
 			}
 		};
+	}
+
+	/**
+	 * Where an event of member `member` (an index into the bound version's event members) of its hold goes: its live
+	 * binding's node for it, when something taps it; `undefined` when the value is to be dropped unopened (not live, no
+	 * listener). Throws on an index outside the bound version (a protocol error).
+	 */
+	eventNode(member: number): EventNode | undefined {
+		const bound = this.#bound;
+		if (this.#state.kind !== "live" || bound === undefined) return undefined;
+		const name = bound.names.events[member];
+		if (name === undefined) throw new Error(`${this.label}: no event member ${member}`);
+		// A name of the bound variant's event members has its node.
+		const node = bound.eventNode(name)!;
+		return node.tapped ? node : undefined;
+	}
+
+	/**
+	 * One entry of an `event` message for its hold: the value of event member `member` stamped `at`, taking this host's
+	 * next counter value, at the node its reference's subscriptions tap (`eventNode`: dropped unopened when it is not
+	 * live or nothing listens); dropped past the link's limits (`too_large`, counted; the hold stays bound).
+	 */
+	event(member: number, at: number, value: Part, link: HostLink): void {
+		const node = this.eventNode(member);
+		if (node === undefined) return;
+		const { events } = this.#host;
+		let json: string | Uint8Array;
+		try {
+			json = link.openPart(value, link.limits, link.context);
+		} catch (error) {
+			if (!isChordError(error, "too_large")) throw error;
+			events.metrics.counter("chord.events.dropped").add(1, { reason: "too_large" });
+			return;
+		}
+		// Fresh JSON from the link: event values are never validated (as state, §30).
+		events.push(node, parsePart(json) as JsonValue, at);
 	}
 
 	/**

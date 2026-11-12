@@ -19,6 +19,16 @@ describe("the call window", () => {
 		expect(sent).toEqual(["a", "b", "c"]);
 	});
 
+	it("sends every call at once to a peer that announced no window (a trusted link's), after its hello", () => {
+		const sent: string[] = [];
+		const window = new CallWindow();
+		window.submit(callOf("early", sent));
+		expect(sent).toEqual([]);
+		window.opened(undefined);
+		for (let call = 0; call < 300; call++) window.submit(callOf(`${call}`, sent));
+		expect(sent).toHaveLength(301);
+	});
+
 	it("sends waiting calls in order as slots free", () => {
 		const sent: string[] = [];
 		const window = new CallWindow();

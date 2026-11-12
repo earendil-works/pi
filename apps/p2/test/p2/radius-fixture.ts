@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
-import { createServer, type IncomingMessage } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Duplex } from "node:stream";
@@ -30,7 +30,64 @@ type Frame = { id: string; type: number; payload: Buffer };
  * `Bearer fixture-token` and as another user otherwise; their upgrade fails with 403 when the brain refuses the channel.
  * Never contacts Radius.
  */
+/**
+ * The session-sync routes as Radius serves them (`/v1/servers/<id>/sync/sessions/…`, radius#295), in memory: slots
+ * created once at the head, the authenticated server's ID recorded as their device, the bodies kept for downloads.
+ * `refuse` answers every upload with that status instead (403: the `session_sync` feature off).
+ */
+type SyncSlot = { readonly after: number; readonly to: number; readonly device: string; readonly archive?: true };
+export type FakeSync = {
+	readonly stores: Map<string, { slots: SyncSlot[]; bodies: Map<number, Buffer> }>;
+	refuse?: number;
+	readonly tokens: string[];
+};
+
+async function handleSync(sync: FakeSync, request: IncomingMessage, response: ServerResponse): Promise<boolean> {
+	const url = new URL(request.url ?? "/", "http://radius.test");
+	const match = /^\/v1\/servers\/([^/]+)\/sync\/sessions\/([^/]+)(?:\/batches\/(\d+))?$/.exec(url.pathname);
+	if (match === null) return false;
+	const serverId = match[1] ?? "";
+	const store = match[2] ?? "";
+	const after = match[3];
+	sync.tokens.push(String(request.headers.authorization));
+	const json = (status: number, body: unknown): true => {
+		response.writeHead(status, { "content-type": "application/json" });
+		response.end(JSON.stringify(body));
+		return true;
+	};
+	const entry = sync.stores.get(store) ?? { slots: [], bodies: new Map<number, Buffer>() };
+	if (after === undefined) {
+		if (!sync.stores.has(store)) return json(404, { error: { message: "The session is not synced" } });
+		return json(200, { batches: entry.slots, snapshots: [] });
+	}
+	if (request.method === "GET") {
+		const body = entry.bodies.get(Number(after));
+		if (body === undefined) return json(404, { error: { message: "No batch starts there" } });
+		response.writeHead(200, { "content-type": "application/gzip" });
+		response.end(body);
+		return true;
+	}
+	const chunks: Buffer[] = [];
+	for await (const chunk of request) chunks.push(Buffer.from(chunk));
+	if (sync.refuse !== undefined) return json(sync.refuse, { error: { message: "Session sync is not enabled" } });
+	const at = Number(after);
+	const to = Number(url.searchParams.get("to"));
+	const taken = entry.slots.find((slot) => slot.after === at);
+	if (taken !== undefined)
+		return json(409, {
+			error: { code: "slot_taken", message: "taken", details: { to: taken.to, device: taken.device } },
+		});
+	const head = entry.slots.reduce((end, slot) => Math.max(end, slot.to), 0);
+	if (at !== head) return json(409, { error: { code: "not_head", message: "not head", details: { head } } });
+	const archive = url.searchParams.get("archive") === "1";
+	entry.slots.push({ after: at, to, device: serverId, ...(archive ? { archive: true as const } : {}) });
+	entry.bodies.set(at, Buffer.concat(chunks));
+	sync.stores.set(store, entry);
+	return json(201, { created: true });
+}
+
 export async function fakeRadius(options: { channels?: boolean; rejectChannels?: boolean } = {}) {
+	const sync: FakeSync = { stores: new Map(), tokens: [] };
 	const version = options.channels ? "pi-server.host.v5" : "pi-server.host.v4";
 	const sockets = new WebSocketServer({
 		noServer: true,
@@ -63,7 +120,28 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 		});
 	};
 	const shares: string[][] = [];
+	const names: string[] = [];
 	const server = createServer((request, response) => {
+		if (request.url?.includes("/sync/sessions/")) {
+			void handleSync(sync, request, response).then((handled) => {
+				if (handled) return;
+				response.writeHead(404);
+				response.end();
+			});
+			return;
+		}
+		if (/^\/v1\/servers\/[^/]+\/name$/.test(request.url ?? "") && request.method === "PUT") {
+			let body = "";
+			request.on("data", (chunk: Buffer) => {
+				body += chunk.toString("utf8");
+			});
+			request.on("end", () => {
+				names.push((JSON.parse(body) as { name: string }).name);
+				response.writeHead(204);
+				response.end();
+			});
+			return;
+		}
 		const shared = /^\/v1\/servers\/[^/]+\/shares$/.test(request.url ?? "") && request.method === "PUT";
 		if (shared) {
 			let body = "";
@@ -145,8 +223,12 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 	};
 	return {
 		gateway: `http://127.0.0.1:${address.port}`,
+		/** The session-sync store: every store's slots and bodies, and the tokens its requests carried. */
+		sync,
 		/** Every set of emails the brain reported, in order. */
 		shares,
+		/** Every name the brain sent on a rename, in order. */
+		names,
 		hostReady,
 		controls,
 		frames,
@@ -176,6 +258,7 @@ export async function radiusFixture(
 	t: TestContext,
 	content = Buffer.from("body"),
 	relay: Parameters<typeof fakeRadius>[0] = {},
+	options: { web?: boolean } = {},
 ) {
 	const directory = await mkdtemp(join(tmpdir(), "p2-radius-"));
 	const radius = await fakeRadius(relay);
@@ -221,7 +304,7 @@ export async function radiusFixture(
 		dataDir: directory,
 		port: 0,
 		fake: true,
-		web: false,
+		web: options.web ?? false,
 		facets: [{ name: "radius-probe", facet: probe }],
 	});
 	t.after(() => server.close());

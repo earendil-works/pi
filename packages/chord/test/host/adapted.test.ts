@@ -4,10 +4,22 @@
 
 import { describe, expect, it } from "vitest";
 import { type Context, BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
-import { arr, evolve, int, keyed, local, method, obj, str } from "../../src/contracts/index.ts";
+import {
+	arr,
+	type EventSource,
+	event,
+	evolve,
+	int,
+	keyed,
+	local,
+	method,
+	obj,
+	str,
+} from "../../src/contracts/index.ts";
 import { defineState } from "../../src/documents/index.ts";
 import { AdaptedMembers } from "../../src/host/adapted.ts";
-import { createHost, defineFacet, type FacetHost, type Host } from "../../src/host/index.ts";
+import { EventNode } from "../../src/host/events.ts";
+import { createHost, defineFacet, type FacetHost, type Host, type HostError } from "../../src/host/index.ts";
 import { constant } from "../../src/state/index.ts";
 import {
 	changesOf,
@@ -1497,3 +1509,136 @@ describe("keyed mappings per member (final review)", () => {
 		await host.close(context);
 	});
 });
+
+describe('events of an older consumer (decision "Events: fire-and-forget members")', () => {
+	const Sample = obj({ y: int() });
+
+	/** v1: one event member; v2 adds a sample time to its values and a second member. */
+	const TickerV1 = local("app.ticker", { version: 1, params: {}, members: { ticks: event(Sample) } });
+
+	const TickerV2 = evolve(TickerV1, (e) => e.event("ticks", obj({ y: int(), t: int() })).addEvent("extra", Sample));
+
+	/** Serves v2 accepting v1 with `ticks` mapped by `mapping` (counted in `calls`), or refused; its sources in `sources`. */
+	async function ticker(mapping: ((current: { y: number; t: number }) => { y: number }) | "refuse") {
+		const sources: EventSource<{ y: number; t: number }>[] = [];
+		const errors: HostError[] = [];
+		const host = createHost({ onError: (error) => errors.push(error) });
+		const facet = defineFacet((h) =>
+			h.serve(
+				TickerV2,
+				(_, self) => {
+					const ticks = self.events<{ y: number; t: number }>();
+					sources.push(ticks);
+					return { ticks, extra: self.events() };
+				},
+				{ accepts: { 1: { events: { ticks: mapping } } } },
+			),
+		);
+		await host.load([{ name: "@test/app", facet }], context);
+		return { host, errors, emit: (y: number) => sources.at(-1)!.emit({ y, t: y * 10 }) };
+	}
+
+	it("get each value mapped by their version's mapping, once per emit for all of them", async () => {
+		let calls = 0;
+		const { host, emit } = await ticker(({ y }) => {
+			calls++;
+			return { y };
+		});
+		const seen: unknown[] = [];
+		for (let reference = 0; reference < 3; reference++) {
+			const old = await host.get(TickerV1, {}, context);
+			await old.ticks.on(({ value }) => void seen.push(value), context);
+		}
+		const current = await host.get(TickerV2, {}, context);
+		await current.ticks.on(({ value }) => void seen.push(value), context);
+		emit(1);
+		await flushed();
+		expect(seen).toEqual([{ y: 1 }, { y: 1 }, { y: 1 }, { y: 1, t: 10 }]);
+		expect(calls).toBe(1);
+	});
+
+	it("drop an emit only for their version when the mapping throws, reported once per failure episode, tried again next", async () => {
+		const { host, emit, errors } = await ticker(({ y }) => {
+			if (y < 0) throw new Error(`no ${y}`);
+			return { y };
+		});
+		const old: unknown[] = [];
+		const current: unknown[] = [];
+		await (await host.get(TickerV1, {}, context)).ticks.on(({ value }) => void old.push(value.y), context);
+		await (await host.get(TickerV2, {}, context)).ticks.on(({ value }) => void current.push(value.y), context);
+		for (const y of [-1, -2, 3, -4]) {
+			emit(y);
+			await flushed();
+		}
+		expect(old).toEqual([3]);
+		expect(current).toEqual([-1, -2, 3, -4]);
+		expect(errors).toMatchObject([
+			{
+				kind: "event_mapping_failed",
+				object: "app.ticker",
+				member: "ticks",
+				version: 1,
+				error: { message: "no -1" },
+			},
+			{ kind: "event_mapping_failed", member: "ticks", version: 1, error: { message: "no -4" } },
+		]);
+	});
+
+	it("are refused their binding when the provider refuses a changed event member", async () => {
+		const { host } = await ticker("refuse");
+		expect(await rejection(host.get(TickerV1, {}, context, { readyTimeout: 20 }))).toMatchObject({
+			code: "contract_mismatch",
+		});
+		expect((await host.get(TickerV2, {}, context)).ticks).toBeDefined();
+	});
+
+	it("bind with a removed event member and receive none of it, the unchanged ones as they are", async () => {
+		const PulseV1 = local("app.pulse", {
+			version: 1,
+			params: {},
+			members: { beat: event(Sample), old: event(Sample) },
+		});
+		const PulseV2 = evolve(PulseV1, (e) => e.removeEvent("old"));
+		const beats: EventSource<{ y: number }>[] = [];
+		const host = createHost({ onError: () => {} });
+		const facet = defineFacet((h) =>
+			h.serve(
+				PulseV2,
+				(_, self) => {
+					const beat = self.events<{ y: number }>();
+					beats.push(beat);
+					return { beat };
+				},
+				{ accepts: { 1: {} } },
+			),
+		);
+		await host.load([{ name: "@test/app", facet }], context);
+		const older = await host.get(PulseV1, {}, context);
+		const seen: string[] = [];
+		await older.beat.on(({ value }) => void seen.push(`beat ${value.y}`), context);
+		await older.old.on(({ value }) => void seen.push(`old ${value.y}`), context);
+		beats.at(-1)!.emit({ y: 1 });
+		await flushed();
+		expect(seen).toEqual(["beat 1"]);
+		expect(older.state.value).toEqual({ kind: "live" });
+	});
+
+	it("keep no mapping once their version's last reference left (GC)", async () => {
+		const { host, emit } = await ticker(({ y }) => ({ y }));
+		const made = clearedNodes.length;
+		const old = await host.get(TickerV1, {}, context);
+		await old.ticks.on(() => {}, context);
+		emit(1);
+		await flushed();
+		old.release();
+		await flushed();
+		const dropped = clearedNodes.slice(made);
+		expect(dropped.length).toBeGreaterThan(0);
+		await expectCollected(...dropped);
+		emit(2);
+		await flushed();
+	});
+});
+
+/** Every event node cleared in this file (a mapping dropped, an instance ended), weakly. */
+const clearedNodes = instancesOf(EventNode, "clear");

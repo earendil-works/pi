@@ -274,7 +274,7 @@ describe("fingerprintOf", () => {
 			{
 				...facts([session("late", { createdAt: 9 }), session("early", { createdAt: 3 }), session("familiar")]),
 				familiar: "familiar",
-				statuses: { late: { running: true, tasks: 1, busy: [1] } },
+				statuses: { late: { running: true, tasks: 1, busy: [1], work: {} } },
 				answers: { early: 4 },
 				reads: { early: 2 },
 				memberships: { early: "pi" },

@@ -3,6 +3,7 @@
 // or the archived sessions, each restored on a click. Its search finds sessions and messages within the list only.
 import {
 	ErrorToast,
+	inPage,
 	MenuIcon,
 	NavAddIcon,
 	openPage,
@@ -11,12 +12,13 @@ import {
 	SearchIcon,
 	SideNavigation,
 	Slot,
+	useLinkHref,
 	useScrollMemory,
 } from "@p2/app/v1/web";
 import { useEffect, useRef, useState } from "react";
 import type { SearchResults } from "../../search/contract.ts";
 import { type ListEntry, type ListPageData, type NewTarget, WINDOWS } from "./model.ts";
-import { inPage, pageHref, type RowActions, SessionItem } from "./Row.tsx";
+import { pageRoute, type RowActions, SessionItem } from "./Row.tsx";
 
 /** What the page says under its title: the window, or what the archive holds. */
 function subtitle(data: ListPageData | undefined): string {
@@ -119,6 +121,7 @@ export function ListPage({
 	/** Starts a new session in a group (the owner's). */
 	onNewIn?: (target: NewTarget) => void;
 }) {
+	const linkHref = useLinkHref();
 	const archived = data?.archived ?? false;
 	const [query, setQuery] = useState(() => storedQuery(page));
 	const body = useRef<HTMLDivElement>(null);
@@ -190,7 +193,7 @@ export function ListPage({
 										{/* A group's own list: the sidebar's group rows show or hide their sessions instead. */}
 										<a
 											className="list-group-link"
-											href={pageHref(group.key)}
+											href={linkHref(pageRoute(group.key))}
 											onClick={inPage(() => openPage(group.key))}
 										>
 											{group.name}

@@ -356,6 +356,80 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		}
 	});
 
+	it("focuses the composer of a session opened with a mouse or a key, not by a touch", async () => {
+		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const first = await sessions.create({ cwd: fixture.workspace, title: "Focus first" }, BACKGROUND_CONTEXT);
+		const second = await sessions.create({ cwd: fixture.workspace, title: "Focus second" }, BACKGROUND_CONTEXT);
+		const focused = `document.activeElement === document.querySelector('.composer textarea')`;
+		const row = (scope: string, session: string) => `${scope} a.session-main[href="/s/${session}"]`;
+		const arrive = async (session: string) => {
+			await browser.wait(`location.pathname === '/s/${session}' && document.querySelector('.composer textarea')`);
+		};
+		const click = async (scope: string, session: string) => {
+			await browser.evaluate(`document.activeElement?.blur()`);
+			await browser.click(row(scope, session));
+			await arrive(session);
+		};
+		const point = (expression: string) =>
+			browser.evaluate<{ x: number; y: number }>(
+				`(() => { const r = (${expression}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`,
+			);
+		const tap = async (scope: string, session: string) => {
+			await browser.evaluate(`document.activeElement?.blur()`);
+			const { x, y } = await point(`document.querySelector(${JSON.stringify(row(scope, session))})`);
+			await browser.call("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
+			await browser.call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+			await arrive(session);
+		};
+		try {
+			await browser.metrics(1280, 900);
+			await browser.open(url(`/s/${first.id}`));
+			await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
+			// Opening a page focuses nothing; selecting a session in the sidebar focuses the composer the dock keeps.
+			assert.equal(await browser.evaluate<boolean>(focused), false);
+			await click(".drawer", second.id);
+			await browser.wait(focused);
+			// From a list page, which has no composer, opened in the page: the session shown before it opens with its
+			// composer focused once it shows again.
+			await browser.click(".drawer .sidebar-section[data-key=recent] a.group-label");
+			await browser.wait(`document.querySelector(${JSON.stringify(row(".list-page", second.id))})`);
+			await click(".list-page", second.id);
+			await browser.wait(focused);
+			// Enter on a focused row: the keyboard's click.
+			await browser.evaluate(`document.querySelector(${JSON.stringify(row(".drawer", first.id))}).focus()`);
+			const enter = { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 };
+			await browser.call("Input.dispatchKeyEvent", { type: "keyDown", text: "\r", ...enter });
+			await browser.call("Input.dispatchKeyEvent", { type: "keyUp", ...enter });
+			await arrive(first.id);
+			await browser.wait(focused);
+			// Restoring an archived session opens it once the server has it, its composer focused then.
+			const archived = await sessions.create(
+				{ cwd: fixture.workspace, title: "Focus archived" },
+				BACKGROUND_CONTEXT,
+			);
+			await sessions.archive({ id: archived.id }, BACKGROUND_CONTEXT);
+			await browser.open(url("/list/archive"));
+			const restore = `[...document.querySelectorAll('.list-page button.session-main')].find((e) => e.textContent.includes('Focus archived'))`;
+			await browser.wait(`${restore} && !document.querySelector('.offline')`);
+			const { x, y } = await point(restore);
+			await browser.clickPoint(x, y);
+			await arrive(archived.id);
+			await browser.wait(focused);
+			// A finger on a touch laptop (a fine primary pointer) leaves the keyboard closed: a tap on the composer opens it.
+			await browser.call("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+			await browser.call("Emulation.setEmulatedMedia", { features: [{ name: "pointer", value: "fine" }] });
+			await tap(".drawer", second.id);
+			assert.equal(await browser.evaluate<boolean>(focused), false);
+			// A trackpad on a tablet (a coarse primary pointer) focuses it, as a mouse does.
+			await browser.call("Emulation.setEmulatedMedia", { features: [{ name: "pointer", value: "coarse" }] });
+			await click(".drawer", first.id);
+			await browser.wait(focused);
+		} finally {
+			await browser.call("Emulation.setEmulatedMedia", { features: [] });
+			await browser.call("Emulation.setTouchEmulationEnabled", { enabled: false });
+		}
+	});
+
 	it("keeps the reader's scroll position after sending review comments from the workspace", async () => {
 		const repo = join(fixture.workspace, "review-repo");
 		mkdirSync(repo, { recursive: true });

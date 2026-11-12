@@ -13,8 +13,12 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { type DirectoryListing, Envs } from "./contract.ts";
 
+/** The picker at the location its view passes (`env`, `value`): the session's, or the new session's. */
+export const DIRECTORY_PICKER = { kind: "sheet", name: "cwd" } as const;
+
+/** The picker at `path` on `env`. */
 export function directoryPickerLayer(env: string | null, path: string) {
-	return { kind: "sheet" as const, name: "cwd", locator: JSON.stringify({ env, path }) };
+	return { ...DIRECTORY_PICKER, locator: JSON.stringify({ env, path }) };
 }
 function locationLabel(env: string | null, cwd: string): string {
 	return env ? `${env}:${cwd}` : shortPath(cwd);
@@ -140,6 +144,7 @@ export function DirectoryPicker({
 	const leaves = moves && sandboxHost(moving.env) !== undefined;
 	const [leaving, setLeaving] = useState<string>();
 	const target = listing ? listingKey(env, listing.path) : undefined;
+	const use = listing && `${moves ? "Move session to" : "Use"} ${locationLabel(env, listing.path)}`;
 
 	return (
 		<Sheet title="Working directory" onClose={onClose}>
@@ -228,10 +233,11 @@ export function DirectoryPicker({
 						<button
 							type="button"
 							className="button primary block directory-use"
+							title={use}
 							disabled={loading}
 							onClick={() => (leaves ? setLeaving(target) : onChange(env, listing.path))}
 						>
-							{moves ? "Move session to" : "Use"} {locationLabel(env, listing.path)}
+							<span className="directory-path">{use}</span>
 						</button>
 					))}
 				{moves && (
@@ -271,7 +277,7 @@ export function DirectoryPicker({
 					{listing.directories.map((path) => (
 						<button type="button" key={path} className="row-button mono" onClick={() => browse(path)}>
 							<span>
-								<FolderIcon /> {name(path)}
+								<FolderIcon /> <span className="directory-path">{name(path)}</span>
 							</span>
 							<ChevronIcon />
 						</button>
@@ -286,9 +292,15 @@ export function DirectoryPicker({
 					{recent(env)
 						.slice(0, 8)
 						.map((path) => (
-							<button type="button" key={path} className="row-button mono" onClick={() => browse(path)}>
+							<button
+								type="button"
+								key={path}
+								className="row-button mono"
+								title={locationLabel(env, path)}
+								onClick={() => browse(path)}
+							>
 								<span>
-									<FolderIcon /> {locationLabel(env, path)}
+									<FolderIcon /> <span className="directory-path">{locationLabel(env, path)}</span>
 								</span>
 								<ChevronIcon />
 							</button>

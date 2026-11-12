@@ -51,6 +51,25 @@ enum MainMenu {
 		return main
 	}
 
+	/// The Window menu's brains, in tab order: ⌘1–9 select the first nine in the key window.
+	static func updateBrains(_ brains: [Brain]) {
+		guard let menu = NSApp.windowsMenu else { return }
+		for item in menu.items where item.action == NSSelectorFromString("selectBrain:") || item.tag == brainSeparatorTag {
+			menu.removeItem(item)
+		}
+		guard brains.count > 1 else { return }
+		let separator = NSMenuItem.separator()
+		separator.tag = brainSeparatorTag
+		menu.insertItem(separator, at: 0)
+		for (index, brain) in brains.prefix(9).enumerated().reversed() {
+			let entry = item(brain.label, "selectBrain:", String(index + 1))
+			entry.tag = index
+			menu.insertItem(entry, at: 0)
+		}
+	}
+
+	private static let brainSeparatorTag = 9_999
+
 	private static func submenu(_ title: String, _ items: [NSMenuItem]) -> NSMenuItem {
 		let menu = NSMenu(title: title)
 		for item in items { menu.addItem(item) }

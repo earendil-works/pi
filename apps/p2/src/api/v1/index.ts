@@ -14,8 +14,13 @@ export {
 	defineRegistry,
 	defineState,
 	defineTable,
+	type EventMember,
+	type EventSource,
+	type EventSubscription,
 	eq,
+	event,
 	evolve,
+	evolveTable,
 	type HandleOf,
 	host as hostColumn,
 	int as columnInt,
@@ -81,6 +86,7 @@ export * from "../../runtime/refs.ts";
 export * from "../../runtime/schema.ts";
 export * from "../../runtime/schemas.ts";
 export * from "../../runtime/sender.ts";
+export * from "../../runtime/server-name.ts";
 export * from "../../runtime/session-lock.ts";
 export * from "../../runtime/session-worker.ts";
 export * from "../../runtime/shell.ts";

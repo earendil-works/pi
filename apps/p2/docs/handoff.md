@@ -68,7 +68,8 @@ npm test                     # full suite; TUI tests need Node 26, browser tests
 ```
 
 Environment variables: `docs/p2-notes.md` (Running). Configuration in the data dir: `models.json`, `settings.json`
-(incl. `codemode`, default on in p2), `envs.json`, `projects.json`, `mcp.json`, `auth.json`, `radius.json`, `forwards.json`.
+(incl. `codemode`, default on in p2), `envs.json`, `projects.json`, `mcp.json`, `auth.json`, `radius.json`, `forwards.json`,
+`identity.json` (the server's name, only while the owner set one).
 
 **Sign-in.** Loopback alone is nobody (shared machines). A browser on the host signs in once per profile with the
 token the server prints at startup (pasted into the sign-in page); the TUI and scripts sign in with the data directory's owner key (README, Signing
@@ -77,7 +78,7 @@ long-lived signed cookie). Guests join through share links. Requests other
 websites make never carry owner rights. Sign out per device or all devices in the Devices sheet.
 
 **Dev mode.** A file watcher only marks plugins dirty; reloads are explicit (button, `npm run reload`, the
-owner-only `reload_plugins` tool) because a watcher can't tell when an agent has finished a multi-file edit.
+`reload_plugins` tool) because a watcher can't tell when an agent has finished a multi-file edit.
 Runtime code (`src/hosts`, `src/runtime`, workspace packages such as `packages/chord`) needs a restart; the "Server
 code changed" pill appears only when a module the server actually loaded changed.
 

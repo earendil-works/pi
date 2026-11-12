@@ -1,14 +1,17 @@
 // The owner's Settings window, opened from the gear beside the sidebar's theme switch: a list of sections beside a
-// pane (on phones the list, then a section). Its own sections edit settings.json; the plugins' sections (Providers,
+// pane (on phones the list, then a section). Its own sections edit settings.json (General also the server's name, which
+// the server keeps beside it: src/runtime/server-name-file.ts); the plugins' sections (Providers,
 // Envs, ...) are their sheets, shown as pages of the window (`SettingsSections`, src/web/SettingsNav.tsx). Each
 // change of settings.json is saved at once (text and number fields when they lose focus or on Enter) and shown before
-// the save returns.
-import { BACKGROUND_CONTEXT, contribute, defineFacet } from "@p2/app/v1";
+// the save returns. The command menu opens it at a section (commands.tsx).
+import { BACKGROUND_CONTEXT, contribute, defineFacet, MAX_SERVER_NAME_LENGTH, ServerNameSettings } from "@p2/app/v1";
 import {
+	CommandPages,
+	CommandSearches,
+	Commands,
 	closeLayers,
 	ModalSheet,
-	openLayer,
-	SETTINGS_LAYER,
+	openSettings,
 	SettingsIcon,
 	SettingsNavItem,
 	SettingsPane,
@@ -26,7 +29,9 @@ import {
 } from "@p2/app/v1/web";
 import { type ReactNode, useCallback, useId, useState } from "react";
 import { Models } from "../models/contract.ts";
+import { SETTINGS_COMMANDS, SETTINGS_PAGES, SETTINGS_SEARCH } from "./commands.tsx";
 import { type MobileSettings, Settings } from "./contract.ts";
+import { OWN_SECTIONS, type OwnSection } from "./sections.ts";
 import "./settings.css";
 
 /** A change of top-level settings: each one's new value, `undefined` back to its default (removed from the file). */
@@ -56,16 +61,6 @@ function patched<T extends object>(group: T | undefined, change: T): T | undefin
 const numberText = (value: number | undefined) => (value === undefined ? "" : String(value));
 const textNumber = (text: string) => (text === "" ? undefined : Number(text));
 
-/** The window's own sections, over settings.json, in the list's order. */
-const OWN_SECTIONS = [
-	{ id: "general", label: "General" },
-	{ id: "models", label: "Models" },
-	{ id: "agent", label: "Agent" },
-	{ id: "requests", label: "Requests" },
-	{ id: "compaction", label: "Compaction" },
-] as const;
-type OwnSection = (typeof OWN_SECTIONS)[number]["id"];
-
 function GearButton() {
 	const owner = useOwner();
 	const open = useSettingsSection() !== undefined;
@@ -75,7 +70,7 @@ function GearButton() {
 			<button
 				type="button"
 				className="icon-button settings-open"
-				onClick={() => openLayer({ kind: "sheet", name: SETTINGS_LAYER }, { fromDrawer: true })}
+				onClick={() => openSettings()}
 				aria-label="Settings"
 				title="Settings"
 			>
@@ -175,6 +170,7 @@ function SettingsSection({ id }: { id: OwnSection }) {
 					keeps the settings it started with.
 				</p>
 
+				<ServerNameSetting onError={onError} />
 				<TextSetting
 					label="Your name on your messages"
 					value={settings.ownerName ?? ""}
@@ -417,6 +413,34 @@ function SettingsSection({ id }: { id: OwnSection }) {
 	);
 }
 
+/**
+ * The server's name, as Radius and the other places that show this server name it. Empty is the device's name (the
+ * placeholder, as of the server's start).
+ */
+function ServerNameSetting({ onError }: { onError: (reason: unknown) => void }) {
+	const service = useObject(ServerNameSettings, {});
+	const loaded = useReadable(service?.chosen);
+	const device = useReadable(service?.device);
+	const [chosen, guess] = useOptimisticCall<string | null | undefined, string | null>(
+		loaded,
+		(_value, next) => next,
+		onError,
+	);
+	if (!service || chosen === undefined) return null;
+	return (
+		<TextSetting
+			label="Server name"
+			value={chosen ?? ""}
+			placeholder={device ?? "This device's name"}
+			maxLength={MAX_SERVER_NAME_LENGTH}
+			onSave={(text) => {
+				const name = text.trim() ? text.trim() : null;
+				guess(name, () => service.rename({ name }, BACKGROUND_CONTEXT));
+			}}
+		/>
+	);
+}
+
 function Group({ title, children }: { title: string; children: ReactNode }) {
 	return (
 		<section className="settings-group">
@@ -555,5 +579,8 @@ function NumberSetting({
 export default defineFacet((host) => {
 	contribute(host, "p2.web-settings", (self) => {
 		self.contribute(Slots, { "sidebar-actions:settings": GearButton });
+		self.contribute(Commands, SETTINGS_COMMANDS);
+		self.contribute(CommandPages, SETTINGS_PAGES);
+		self.contribute(CommandSearches, { settings: SETTINGS_SEARCH });
 	});
 });

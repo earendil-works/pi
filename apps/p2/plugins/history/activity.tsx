@@ -94,6 +94,7 @@ function HistoryDetail({ step }: { step: Step }) {
 const looked = () => "looked through the history";
 
 const historySearch: ToolActivity = {
+	brief: "Searching history",
 	describe(step) {
 		const details = detailsOf(step.tool);
 		const hits = Array.isArray(details.hits) ? details.hits.length : 0;
@@ -143,6 +144,7 @@ function describeRead(step: Step): Described {
 }
 
 const historyRead: ToolActivity = {
+	brief: "Reading history",
 	describe: describeRead,
 	running: (step) => ({ ...describeRead(step).label, verb: "Reading the history" }),
 	argument: (tool) => stringOf(tool.args.mode),
@@ -160,6 +162,7 @@ function HandoffDetail({ step }: { step: Step }) {
 }
 
 const historyHandoff: ToolActivity = {
+	brief: "Handing off",
 	describe: (step) => ({
 		label: { kind: "handoff", verb: "Handed off to a new context" },
 		description: failureOf(step) ?? (plainText(sentence(stringOf(step.tool.args.text))) || undefined),

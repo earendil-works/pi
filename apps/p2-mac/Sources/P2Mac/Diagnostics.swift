@@ -41,8 +41,8 @@ enum Diagnostics {
 		"""
 
 	/// What receives a click in the title bar strip, the strip's height, and the page's interactive rectangles there.
-	private static func chrome(_ controller: BrainWindowController) -> [String: Any] {
-		guard let window = controller.window, let frame = window.contentView?.superview else { return [:] }
+	private static func chrome(_ controller: BrainPage) -> [String: Any] {
+		guard let window = controller.webView.window, let frame = window.contentView?.superview else { return [:] }
 		let height = window.frame.height
 		var hits: [String: String] = [:]
 		for (name, x) in [("left", 40.0), ("middle", window.frame.width / 2), ("right", window.frame.width - 30)] {
@@ -56,9 +56,20 @@ enum Diagnostics {
 		]
 	}
 
-	/// Records the page of `controller` once it has had time to boot and connect.
-	static func pageFinished(_ controller: BrainWindowController) {
+	private static var toOpen = (ProcessInfo.processInfo.environment["P2MAC_DIAG_OPEN"] ?? "").split(separator: ",").map(String.init)
+
+	/// Records the page of `controller` once it has had time to boot and connect. With P2MAC_DIAG_OPEN=<brain IDs>
+	/// (comma-separated; P2MAC_DIAG_PATH for the address), each page load opens a window on the next of them a few
+	/// seconds later, standing in for clicks on their tabs.
+	static func pageFinished(_ controller: BrainPage) {
 		guard let directory else { return }
+		if !toOpen.isEmpty {
+			let id = toOpen.removeFirst()
+			let app = controller.app
+			DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+				app.openWindow(id, path: ProcessInfo.processInfo.environment["P2MAC_DIAG_PATH"] ?? "/")
+			}
+		}
 		count += 1
 		let index = count
 		DispatchQueue.main.asyncAfter(deadline: .now() + 5) {

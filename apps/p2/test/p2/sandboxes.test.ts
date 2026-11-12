@@ -632,7 +632,10 @@ test(
 		// A terminal opens in the VM too.
 		const terminals = owner.hold(Terminals, { session, view: crypto.randomUUID() }, BACKGROUND_CONTEXT);
 		const { token } = await terminals.channel({}, BACKGROUND_CONTEXT);
-		const socket = new WebSocket(`ws://127.0.0.1:${fixture.server.port}/terminal?${new URLSearchParams({ token })}`);
+		// The grant admits the byte channel together with the owner's credentials (docs/p2-notes.md, terminals).
+		const socket = new WebSocket(`ws://127.0.0.1:${fixture.server.port}/terminal?${new URLSearchParams({ token })}`, {
+			headers: { Cookie: fixture.owner.cookie },
+		});
 		const events: TerminalEvent[] = [];
 		const screen: Buffer[] = [];
 		socket.on("message", (bytes, binary) => {

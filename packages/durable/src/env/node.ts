@@ -1125,6 +1125,8 @@ export class NodeExecutionEnv implements ExecutionEnv {
 					const info = fileInfoFromStats(entryPath, await lstat(entryPath));
 					if (info.ok) infos.push(info.value);
 				} catch (error) {
+					// Removed between enumeration and lstat: not part of the listing any more.
+					if (isNodeError(error) && error.code === "ENOENT") continue;
 					return err(toFileError(error, entryPath));
 				}
 			}

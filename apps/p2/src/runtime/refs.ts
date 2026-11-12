@@ -135,6 +135,26 @@ export function whenLive(ref: HeldRef): Promise<void> {
 	});
 }
 
+/**
+ * Calls `action` with `ref`, held for this one call (by a command or a menu row: no view of theirs outlives the call),
+ * once it is live in `variant`, then releases it. Rejects when the reference ends, fails broken or binds in another
+ * variant (the principal may not).
+ */
+export async function withHeld<R extends HeldRef & { readonly variant: unknown }, const V extends HeldVariants<R>, T>(
+	ref: R,
+	variant: V,
+	action: (live: Extract<R, { readonly variant: V | undefined }> & { readonly variant: V }) => Promise<T>,
+): Promise<T> {
+	try {
+		await whenLive(ref);
+		const live = liveIn(ref, variant);
+		if (!live) throw new Error(`Not allowed as ${variant}`);
+		return await action(live);
+	} finally {
+		ref.release();
+	}
+}
+
 /** The error of a failed or ended reference, if any. */
 export function errorOf(ref: HeldRef): Error | undefined {
 	const state = ref.state.value;

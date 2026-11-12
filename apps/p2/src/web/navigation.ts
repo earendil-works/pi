@@ -1,4 +1,11 @@
-import { createContext, type RefObject, useContext, useLayoutEffect, useSyncExternalStore } from "react";
+import {
+	createContext,
+	type MouseEvent,
+	type RefObject,
+	useContext,
+	useLayoutEffect,
+	useSyncExternalStore,
+} from "react";
 import { panelsFor, rememberPanels } from "./session-panels.ts";
 // Adapted from Pi Mobile: independent browser-only navigation, no app imports.
 // Plugins own named modal locators; the runtime owns the stack and Back behavior.
@@ -64,8 +71,77 @@ export function routePath(route: Route): string {
 	return `/s/${route.session}${route.conversation === 1 ? "" : `/c/${route.conversation}`}`;
 }
 
-/** The route a URL alone describes, for entries this module didn't create. */
-export function pathRoute(path: string): Route {
+/**
+ * The address a link to `route` carries, so another tab opens it (`pathRoute` reads it back): its path, and its top
+ * layer when that is a viewer (`?viewer=<name>&at=<locator>`). Viewers only show content, so a link may open one; the
+ * address bar keeps showing `routePath` (URLs identify conversations).
+ */
+export function routeHref(route: Route): string {
+	const top = route.layers.at(-1);
+	if (top?.kind !== "viewer") return routePath(route);
+	const query = new URLSearchParams({ viewer: top.name, ...(top.locator === undefined ? {} : { at: top.locator }) });
+	return `${routePath(route)}?${query}`;
+}
+
+/**
+ * The Radius shell's URL of this brain's start page, once the shell framing this page said it (`shell-bridge.ts`), so
+ * links that open in another tab open the shell around the app, not this frame's origin; undefined otherwise (not
+ * framed, an older shell, before the shell answered).
+ */
+let linkBase: string | undefined;
+const linkBaseListeners = new Set<() => void>();
+
+/** Sets the base of link addresses (`linkHref`); only the shell bridge calls it. */
+export function setLinkBase(base: string | undefined): void {
+	if (base === linkBase) return;
+	linkBase = base;
+	for (const listener of linkBaseListeners) listener();
+}
+
+const subscribeLinkBase = (listener: () => void) => {
+	linkBaseListeners.add(listener);
+	return () => {
+		linkBaseListeners.delete(listener);
+	};
+};
+
+/**
+ * The address an in-app link to `route` carries, for a modified or middle click, "Open in new tab" and "Copy link
+ * address" (a plain click acts in the page, `inPage`): `routeHref`, under the Radius shell's URL when the app runs in
+ * its frame (`/pi/<organization>/<brain>/s/<id>…`, the shell's start page itself without a trailing `/`).
+ */
+export function linkHref(route: Route): string {
+	const href = routeHref(route);
+	if (linkBase === undefined) return href;
+	if (href === "/") return linkBase;
+	return href.startsWith("/?") ? `${linkBase}${href.slice(1)}` : `${linkBase}${href}`;
+}
+
+/** `linkHref` for a component, which renders again once the shell's base arrives. */
+export function useLinkHref(): (route: Route) => string {
+	useSyncExternalStore(
+		subscribeLinkBase,
+		() => linkBase,
+		() => linkBase,
+	);
+	return linkHref;
+}
+
+/**
+ * The route a URL alone describes, for entries this module didn't create and pages loaded from a link (`search`: the
+ * URL's query, which may name a viewer as `routeHref` writes it).
+ */
+export function pathRoute(path: string, search = ""): Route {
+	const route = basePathRoute(path);
+	const query = new URLSearchParams(search);
+	const name = query.get("viewer");
+	if (!name) return route;
+	const locator = query.get("at");
+	return { ...route, layers: [{ kind: "viewer", name, ...(locator === null ? {} : { locator }) }] };
+}
+
+/** The route of a URL's path alone. */
+function basePathRoute(path: string): Route {
 	if (path === "/new") return NEW_SESSION;
 	const page = /^\/list\/([^/]+)$/.exec(path)?.[1];
 	if (page !== undefined)
@@ -78,6 +154,16 @@ export function pathRoute(path: string): Route {
 	const conversation = Number(match?.[2] ?? 1);
 	return match?.[1] && Number.isSafeInteger(conversation) ? { session: match[1], conversation, layers: [] } : HOME;
 }
+
+/**
+ * A link's click handler that acts in the page (`act`) on a plain primary click; any other click (a modifier, the
+ * middle button, "Open in new tab") is the browser's, so the link's target opens in another tab or window.
+ */
+export const inPage = (act: () => void) => (event: MouseEvent<HTMLAnchorElement>) => {
+	if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+	event.preventDefault();
+	act();
+};
 
 export function sameRoute(a: Route, b: Route): boolean {
 	return routeKey(a) === routeKey(b);
@@ -328,7 +414,9 @@ export class Navigation {
 		// A fresh launch at home (no state of this tab: not a reload, not Back) reopens the last conversation if recent.
 		// A page load without state of its own (a link, a typed address, a launch) opens with the session's panels.
 		const start =
-			current?.route ?? (location.pathname === "/" ? resumeRoute() : undefined) ?? pathRoute(location.pathname);
+			current?.route ??
+			(location.pathname === "/" ? resumeRoute() : undefined) ??
+			pathRoute(location.pathname, location.search);
 		this.route =
 			current || !start.session ? start : { ...start, ...panelsFor(HOME, start.session, start.conversation) };
 		this.trail = [];
@@ -514,7 +602,7 @@ export class Navigation {
 		} else {
 			// An entry from before this module (or another document): derive it from the URL.
 			this.index = Math.max(0, this.index - 1);
-			this.route = pathRoute(location.pathname);
+			this.route = pathRoute(location.pathname, location.search);
 			this.write("replace");
 		}
 		this.save();

@@ -4,7 +4,18 @@
 // owns all of it; the layout of the panes is each device's own (web.tsx).
 
 import { arr, int, nullable, num, obj, oneOf, opt, type Static, str, union, unknown } from "@earendil-works/pi-schema";
-import { type JsonValue, literal, method, param, remote, serverHost, sessionHost, unsafe } from "@p2/app/v1";
+import {
+	evolve,
+	type JsonValue,
+	literal,
+	method,
+	param,
+	propertiesOf,
+	remote,
+	serverHost,
+	sessionHost,
+	unsafe,
+} from "@p2/app/v1";
 
 /** A view's ID: a lowercase slug, unique in its session. */
 export const VIEW_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -20,9 +31,20 @@ export const MAX_ANNOTATIONS = 200;
 export const VIEW_SOURCES = "views";
 
 const Id = str({ pattern: VIEW_ID.source });
-/** The kinds of views: a Markdown file of the workspace rendered, the working tree's changes, a custom HTML view. */
+/** The built-in kinds of views: a Markdown file of the workspace rendered, the working tree's changes, a custom HTML view. */
 export const ViewKindSchema = oneOf(["markdown", "changes", "custom"] as const);
 export type ViewKind = Static<typeof ViewKindSchema>;
+/** The built-in kinds. */
+export const BUILT_IN_KINDS: readonly string[] = ["markdown", "changes", "custom"];
+
+/** Whether `kind` is a built-in one. */
+export const isBuiltInKind = (kind: string): kind is ViewKind => BUILT_IN_KINDS.includes(kind);
+
+/**
+ * A view's kind: a built-in one or the name a plugin's web facet registered its pane under (`ViewKinds`, e.g. a plugin
+ * the agent wrote); a page that has no pane for it says so.
+ */
+export const ViewKindNameSchema = str({ pattern: "^[a-z0-9][a-z0-9._-]{0,63}$" });
 
 /**
  * What the person selected in a view, as the view describes it: a summary the agent reads with their next message,
@@ -35,8 +57,8 @@ export const SelectionSchema = obj({
 });
 export type Selection = Static<typeof SelectionSchema>;
 
-/** One view of a session. */
-export const ViewSchema = obj({
+/** One view of a session, as `Views` version 1 has it: built-in kinds only. */
+export const ViewSchemaV1 = obj({
 	id: Id,
 	kind: ViewKindSchema,
 	title: str({ minLength: 1, maxLength: 120 }),
@@ -51,6 +73,10 @@ export const ViewSchema = obj({
 	focus: num(),
 	created: num(),
 });
+export type ViewV1 = Static<typeof ViewSchemaV1>;
+
+/** One view of a session: a built-in kind, or a plugin's. */
+export const ViewSchema = obj({ ...propertiesOf(ViewSchemaV1), kind: ViewKindNameSchema });
 export type View = Static<typeof ViewSchema>;
 
 /** A stroke of a drawing: x, y pairs as fractions of the pane's width and height at the time it was drawn. */
@@ -129,26 +155,27 @@ export const OpenSchema = union([
 	obj({ kind: literal("changes"), path: opt(str({ maxLength: 4096 })), title: opt(str({ maxLength: 120 })) }),
 	obj({ saved: str({ pattern: VIEW_ID.source }) }),
 ]);
+export type OpenInput = Static<typeof OpenSchema>;
 
 /**
  * A session's views and annotations as anyone who may view the session sees them; people who may send there also open,
  * close and select in views, annotate, and drop what their next message would carry.
  */
-export const Views = remote("p2.views", {
+export const ViewsV1 = remote("p2.views", {
 	version: 1,
 	params: { session: param.str() },
 	hostAddress: sessionHost,
 	variants: {
 		reader: {
 			state: {
-				views: arr(ViewSchema),
+				views: arr(ViewSchemaV1),
 				annotations: arr(AnnotationSchema),
 				arrangement: nullable(ArrangementSchema),
 			},
 		},
 		editor: {
 			state: {
-				views: arr(ViewSchema),
+				views: arr(ViewSchemaV1),
 				annotations: arr(AnnotationSchema),
 				arrangement: nullable(ArrangementSchema),
 			},
@@ -169,6 +196,14 @@ export const Views = remote("p2.views", {
 		},
 	},
 });
+
+/**
+ * The session's views and annotations (see `ViewsV1`). 2: a view's kind may be a plugin's (`ViewKindNameSchema`); pages
+ * built with version 1 get the built-in kinds' views only.
+ */
+export const Views = evolve(ViewsV1, (e) =>
+	e.state("reader", "views", arr(ViewSchema)).state("editor", "views", arr(ViewSchema)),
+);
 
 /** One view's JSON state (null until something sets it): everyone who may view reads it, people who may send set it. */
 export const ViewState = remote("p2.view-state", {

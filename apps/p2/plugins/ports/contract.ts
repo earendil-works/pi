@@ -57,7 +57,7 @@ export const ForwardsNative = defineRegistry<
 >("p2.forwards", { version: 1 });
 /** Owner management and worker tool calls share one registry; worker identity fixes its session. */
 export const Ports = remote("p2.ports", {
-	/** 2: the worker's query has no `origin`: only turns the owner started reach the tool (its `origin: "owner"`). */
+	/** 2: the worker's query has no `origin`. */
 	version: 2,
 	params: {},
 	hostAddress: serverHost,

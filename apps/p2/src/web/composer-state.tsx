@@ -11,6 +11,7 @@ import {
 	useState,
 } from "react";
 import { errorText, useRoute } from "../runtime/web.tsx";
+import { ComposerFocus, conversationKey } from "./composer-focus.ts";
 export type PickedFile = { key: string; file: File; preview?: string; uploaded?: string; session?: string };
 /** The message the next send answers: an entry of the current conversation, and whose it is (for display only). */
 export type ReplyTarget = { entryId: number; name: string };
@@ -37,6 +38,14 @@ type State = {
 	/** The agent's name to mention here (chat-mode's setting, "Pi" by default), offered as `@name` with replies. */
 	mentionName: string;
 	setMentionName: Dispatch<SetStateAction<string>>;
+	/** Focuses the composer now, for an action in the conversation shown (a reply, restored text, dropped files). */
+	focus: ComposerFocus["focus"];
+	/** Focuses an opened conversation's composer when it shows, unless a touch opened it (`ComposerFocus`). */
+	focusWhenOpen: ComposerFocus["focusWhenOpen"];
+	/** The composer's textarea, as its callback ref. */
+	registerTextarea: ComposerFocus["register"];
+	/** The chat's dock tells which screen it shows, after the commit that put its composer in place. */
+	screenShown: ComposerFocus["shown"];
 };
 const Context = createContext<State | undefined>(undefined);
 export function ComposerState({ children }: { children: ReactNode }) {
@@ -51,7 +60,10 @@ export function ComposerState({ children }: { children: ReactNode }) {
 	const [replyTo, setReplyTo] = useState<ReplyTarget>();
 	const [canReply, setCanReply] = useState(false);
 	const [mentionName, setMentionName] = useState("Pi");
-	const key = route.session ? `${route.session}:${route.conversation}` : "new";
+	const [composerFocus] = useState(() => new ComposerFocus());
+	// Whether the person's last press was a touch, for the opens that focus a composer.
+	useEffect(() => composerFocus.listen(), [composerFocus]);
+	const key = conversationKey(route);
 	// A reply target is an entry of one conversation: switching conversations drops it.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: runs when the conversation changes.
 	useEffect(() => setReplyTo(undefined), [key]);
@@ -110,6 +122,10 @@ export function ComposerState({ children }: { children: ReactNode }) {
 				setCanReply,
 				mentionName,
 				setMentionName,
+				focus: composerFocus.focus,
+				focusWhenOpen: composerFocus.focusWhenOpen,
+				registerTextarea: composerFocus.register,
+				screenShown: composerFocus.shown,
 			}}
 		>
 			{children}

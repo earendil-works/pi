@@ -124,6 +124,21 @@ describe("Markdown component", () => {
 		});
 	});
 
+	describe("Images", () => {
+		it("keeps hard breaks after an inline image as separate rows", () => {
+			setCapabilities({ images: "kitty", trueColor: false, hyperlinks: false });
+			const image = "\x1b_Ga=T,f=100,q=2,c=20,r=3,C=1;AAAA\x1b\\";
+			const markdown = new Markdown(`\`${image}\`  \n\` \`  \n\` \`\n\n- one`, 0, 0, defaultMarkdownTheme);
+			const lines = markdown.render(80);
+			assert.ok(lines.every((line) => !line.includes("\n")));
+			assert.ok(lines[0].includes(image));
+			assert.deepStrictEqual(
+				lines.slice(1).map((line) => stripAnsi(line).trim()),
+				["", "", "", "- one"],
+			);
+		});
+	});
+
 	describe("Lists", () => {
 		it("should render simple nested list", () => {
 			const markdown = new Markdown(

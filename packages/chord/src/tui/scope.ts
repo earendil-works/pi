@@ -1,13 +1,14 @@
 // `TuiScope` (slice 11 §4, decision "Slice 11, P9"; p2's `TuiScope`): a terminal component's Chord resources, the
 // counterpart of the React bindings for terminal UI libraries. It holds references, follows watchables and registries,
-// calls one `changed` callback (the app's redraw) on every change, and releases everything at `dispose`. Its page state
+// calls one `changed` callback (the app's redraw) on every change, subscribes to event members, and releases everything
+// at `dispose`. Its page state
 // is the host's, shared by every scope (React's `usePageState`): a scope opened again after a plugin reload finds it.
 // Its messages render in the host's language, and a change of the locale or a translation redraws. A reader can show
 // an optimistic value while a call is pending (React's `useOptimistic`).
 // References wait and rebind by themselves (no retry loop, unlike p2's); no terminal library dependency.
 
 import { BACKGROUND_CONTEXT, withAbortSignal } from "../context/index.ts";
-import type { Contract, ParamsOf } from "../contracts/index.ts";
+import type { Contract, EventMember, ParamsOf } from "../contracts/index.ts";
 import type { Principal } from "../data/index.ts";
 import type { Held, Host } from "../host/index.ts";
 import type { Registry } from "../registries/index.ts";
@@ -61,6 +62,15 @@ export class TuiScope<P extends Principal = Principal> {
 				return undefined;
 			}
 		};
+	}
+
+	/**
+	 * Subscribes `listener` to event member `member` (a reference's, decision "Events: fire-and-forget members") until
+	 * `dispose`. Events call `listener` only, never `changed`: the listener decides what redraws.
+	 */
+	on<T>(member: EventMember<T>, listener: (event: { readonly value: T; readonly at: number }) => void): void {
+		// Rejected only once released or disposed: nothing to follow then.
+		member.on(listener, this.#context()).catch(() => {});
 	}
 
 	/** Registry `R`'s composed value, followed until `dispose`; a reader, `undefined` until it is usable. */

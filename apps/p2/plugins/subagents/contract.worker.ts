@@ -19,6 +19,7 @@ import {
 } from "@earendil-works/pi-durable";
 import type { Context, Location } from "@p2/app/v1";
 import type { P2Tool } from "@p2/app/v1/worker";
+import { modelRefOf } from "./contract.ts";
 
 export const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 export const TEAM_TOOL = "team";
@@ -120,13 +121,7 @@ export async function resolveChoice(
 ): Promise<({ model: ModelRef; thinkingLevel: ModelThinkingLevel } & ToolChoice) | string> {
 	const own = await api.agent(context);
 	const text = choice.model ?? current?.model;
-	const slash = text?.indexOf("/") ?? -1;
-	const ref =
-		text === undefined
-			? own.model
-			: slash > 0
-				? { provider: text.slice(0, slash), modelId: text.slice(slash + 1) }
-				: undefined;
+	const ref = text === undefined ? own.model : modelRefOf(text);
 	const model = ref ? models.getModel(ref.provider, ref.modelId) : undefined;
 	if (!ref || !model)
 		return `Unknown model ${choice.model ?? "(none)"}. Use the subagent tool's models action to list them.`;

@@ -1188,6 +1188,39 @@ describe("TuiAltScreen", () => {
 		}
 	});
 
+	it("keeps uploaded Kitty images across a full redraw", async () => {
+		// Regression test for #12010: Kitty frees image data without placements on ED 2, so a full redraw
+		// that deleted placements and then cleared the screen left placement-only reuse pointing at nothing.
+		let tui: TuiAltScreen | undefined;
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		try {
+			const terminal = new RecordingTerminal(20, 6);
+			const imageId = 12010;
+			const imageLine = encodeKitty("AAAA", { columns: 2, rows: 3, imageId, moveCursor: false });
+			registerKittyImageMetadata({ imageId, columns: 2, rows: 3, widthPx: 100, heightPx: 100 });
+			tui = new TuiAltScreen(terminal);
+			tui.setLayoutRoot({ render: () => ["before", imageLine, "", "", "after"], invalidate: () => {} });
+			tui.start();
+			await terminal.waitForRender();
+			const eventCount = terminal.events.length;
+
+			terminal.resize(20, 8);
+			await terminal.waitForRender();
+			const redrawWrites = terminal.events
+				.slice(eventCount)
+				.filter((event): event is { type: "write"; data: string } => event.type === "write")
+				.map((event) => event.data)
+				.join("");
+			assert.ok(redrawWrites.includes("\x1b_Ga=p,q=2"));
+			assert.ok(!redrawWrites.includes("\x1b_Ga=T"));
+			assert.ok(!redrawWrites.includes("\x1b[2J"));
+			assert.ok(terminal.getViewport().some((line) => line.trimEnd() === "after"));
+		} finally {
+			tui?.stop();
+			resetCapabilitiesCache();
+		}
+	});
+
 	it("draws Kitty images after clearing the rows they cover", async () => {
 		// Regression test for #11835: Orca's xterm.js image addon stores images in cells, so clearing
 		// the covered rows after the placement erased all but the first image row.

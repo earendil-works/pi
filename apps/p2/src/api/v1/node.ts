@@ -1,10 +1,12 @@
 // p2's plugin API, version 1, for Node facets (`@p2/app/v1/node`: server and worker): configuration files, logs,
 // Durable contexts, a session's files (the kit's `Files`, its spaces and downloads) and environment helpers. Files a plugin's server and worker facets share import this.
+
+export * from "../../runtime/backup.ts";
 export * from "../../runtime/config-json.ts";
 export * from "../../runtime/default-model.ts";
 export * from "../../runtime/durable.ts";
 export * from "../../runtime/environments.ts";
-export { sessionDirectory } from "../../runtime/host-dirs.ts";
+export { serverDirectory, sessionDirectory, userPluginsDirectory } from "../../runtime/host-dirs.ts";
 export * from "../../runtime/locked-file.ts";
 export * from "../../runtime/logs.ts";
 export * from "../../runtime/observe.ts";

@@ -1,12 +1,23 @@
 // The view kit's connection (docs/rooms.md): a minimal Chord client host in the frame, its own WebSocket to the
 // server's `/chord/view` with a token the page gets for it (asked through the bridge), and the frame's reference to
-// its view's room: the room's members as the kit follows them, its numbered messages delivered in order, sending in
-// order (one call in flight), acknowledgements, the agent's calls the leader runs, and the server's clock.
-import { createHost, type RefIn, type WebSocketLike, webSocketLink } from "@earendil-works/chord";
+// its view's room: the room's members as the kit follows them, its numbered messages delivered in order, its events
+// (motion) to the room's listeners, the two outboxes (`outbox.ts`), acknowledgements, the agent's calls the leader
+// runs, and the server's clock.
+import { createHost, isChordError, type RefIn, type WebSocketLike, webSocketLink } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
 import { VIEW_CHANNEL } from "../bridge.ts";
 import { type Base, type Message, type Presence, type Room, type RoomKind, ViewRoom } from "../room-contract.ts";
+import { Motion, type SendOutcome, Sends } from "./outbox.ts";
+
+/** An event of the room's stream as the kit delivers it: its sender, key, emitting time (the server's), and data. */
+export type Event = { readonly from: string; readonly key?: string; readonly at: number; readonly data: unknown };
+
+/** The kit's settings, from the page's first `p2view.room(kind, options)`. */
+export type Options = {
+	/** Unanswered emits at most (default 32): past it, a keyed emit replaces the waiting one, an unkeyed one is dropped. */
+	readonly maxInFlight?: number;
+};
 
 /** A message as the kit delivers it: its number, sender, key (keyed ones), and data. */
 export type Delivered = { readonly seq: number; readonly from: string; readonly key?: string; readonly data: unknown };
@@ -32,6 +43,12 @@ export type Listener = {
 	reconnected?(): void;
 };
 
+/** Unanswered emits at most, by default. */
+const MAX_IN_FLIGHT = 32;
+/** How often the clock is sampled again. */
+const CLOCK_EVERY = 10_000;
+/** How many recent clock samples the estimate chooses from. */
+const CLOCK_SAMPLES = 6;
 /** How long acknowledgements wait to be sent together. */
 const ACK_PAUSE = 100;
 /** How long the frame waits for its page's token. */
@@ -54,7 +71,20 @@ export class Connection {
 	#editor: string | undefined;
 	#me = "";
 	#kind: RoomKind | undefined;
+	/** Joined once with a kind (a live room's first join starts its numbering at the join). */
 	#joined = false;
+	/** The current link's number (each socket a new one), and whether it is open. */
+	#link = 0;
+	#linkOpen = false;
+	readonly #sends = new Sends();
+	readonly #motion: Motion;
+	readonly #eventListeners = new Set<(event: Event) => void>();
+	/** Recent clock samples: round trip (ms) and the server clock's offset from this one. */
+	#samples: { rtt: number; offset: number }[] = [];
+	#clockStarted = false;
+	/** The socket of the current link, and whether the frame closed its connection (`close`). */
+	#socket: WebSocket | undefined;
+	#closed = false;
 	#listener: Listener | undefined;
 	#applied = 0;
 	#epoch = -1;
@@ -64,19 +94,17 @@ export class Connection {
 	#paging = false;
 	#acked = 0;
 	#ackTimer: ReturnType<typeof setTimeout> | undefined;
-	#outbox: { key?: string; data: string }[] = [];
-	#sending = false;
 	#offered: Readonly<Record<string, Offered>> = {};
 	readonly #running = new Set<string>();
-	#offset = 0;
 	readonly #tokens = new Map<
 		string,
 		(answer: { token?: string; opening?: string; editor?: string; error?: string }) => void
 	>();
 
-	constructor(session: string, view: string) {
+	constructor(session: string, view: string, options: Options = {}) {
 		this.#session = session;
 		this.#view = view;
+		this.#motion = new Motion(options.maxInFlight ?? MAX_IN_FLIGHT);
 		addEventListener("message", (event) => {
 			if (event.source !== parent) return;
 			const message: unknown = event.data;
@@ -98,9 +126,21 @@ export class Connection {
 		return this.#editor ?? "";
 	}
 
-	/** The server's clock, as estimated from round trips. */
+	/** The server's clock, as estimated from round trips (the shortest recent one wins). */
 	now(): number {
-		return Date.now() + this.#offset;
+		return Date.now() + (this.#best()?.offset ?? 0);
+	}
+
+	/** The shortest recent round trip to the server, in milliseconds (undefined before the first sample). */
+	rtt(): number | undefined {
+		return this.#best()?.rtt;
+	}
+
+	/** The sample with the shortest round trip. */
+	#best(): { rtt: number; offset: number } | undefined {
+		let best: { rtt: number; offset: number } | undefined;
+		for (const sample of this.#samples) if (!best || sample.rtt < best.rtt) best = sample;
+		return best;
 	}
 
 	/** The room's facts, presence, window and keyed messages now (undefined before the reference is live). */
@@ -115,7 +155,10 @@ export class Connection {
 		this.#listener = listener;
 		const ref = await this.#reference();
 		await this.#join(ref);
-		void this.#clock(ref);
+		if (!this.#clockStarted) {
+			this.#clockStarted = true;
+			void this.#clock();
+		}
 	}
 
 	/** Offers `methods` (again after a reconnect); joins first, so the frame knows its peer ID and runs its calls. */
@@ -126,15 +169,38 @@ export class Connection {
 		await this.#offer(ref);
 	}
 
-	/** Sends a message (keyed: a newer one with its key replaces this one while it waits here). */
-	send(data: unknown, key?: string): void {
+	/**
+	 * Sends a message the room numbers (keyed: a newer one with its key replaces this one while it waits here); its
+	 * outcome.
+	 */
+	send(data: unknown, key?: string): Promise<SendOutcome> {
 		const text = JSON.stringify(data ?? null);
-		if (key !== undefined) {
-			const at = this.#outbox.findIndex((each) => each.key === key);
-			if (at >= 0) this.#outbox.splice(at, 1);
-		}
-		this.#outbox.push(key === undefined ? { data: text } : { key, data: text });
-		void this.#flush();
+		return this.#sends.send(key === undefined ? { data: text } : { key, data: text });
+	}
+
+	/** Emits motion: an event to every peer now, unnumbered, never kept (see `Motion`). */
+	emit(data: unknown, key?: string): void {
+		const text = JSON.stringify(data ?? null);
+		this.#motion.emit(key === undefined ? { data: text } : { key, data: text });
+	}
+
+	/** Calls `fn` with each event of the room's stream (own ones included); returns its removal. */
+	onEvent(fn: (event: Event) => void): () => void {
+		this.#eventListeners.add(fn);
+		return () => this.#eventListeners.delete(fn);
+	}
+
+	/** Ends the connection for good: no more links, its host closed (the frame goes away). */
+	async close(): Promise<void> {
+		this.#closed = true;
+		this.#sends.close();
+		this.#socket?.close();
+		await this.#host.close(BACKGROUND_CONTEXT);
+	}
+
+	/** Unanswered emits now. */
+	get emitsInFlight(): number {
+		return this.#motion.inFlight;
 	}
 
 	/** Runs `fn` with the room's reference (opening the link first if needed). */
@@ -161,6 +227,21 @@ export class Connection {
 			const changed = async () => {
 				if ((await this.#ref) === ref) this.#update(ref);
 			};
+			// The room's listeners follow the newest reference (the old one is released, its subscription with it).
+			await ref.stream.on(({ value, at }) => {
+				const event: Event = {
+					from: value.from,
+					at,
+					data: parse(value.data),
+					...(value.key === undefined ? {} : { key: value.key }),
+				};
+				for (const listener of [...this.#eventListeners])
+					try {
+						listener(event);
+					} catch (error) {
+						console.error(error);
+					}
+			}, BACKGROUND_CONTEXT);
 			void ref.room.watch(BACKGROUND_CONTEXT).then((watch) => watch.start(changed));
 			void ref.presence.watch(BACKGROUND_CONTEXT).then((watch) => watch.start(changed));
 			void ref.log.watch(BACKGROUND_CONTEXT).then((watch) => watch.start(changed));
@@ -214,7 +295,7 @@ export class Connection {
 	async #keepConnected(token: string): Promise<void> {
 		let next: string | undefined = token;
 		let backoff = 500;
-		for (let first = true; ; first = false) {
+		for (let first = true; !this.#closed; first = false) {
 			try {
 				const current: string =
 					next ??
@@ -227,9 +308,18 @@ export class Connection {
 				url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
 				next = undefined;
 				const socket = new WebSocket(url);
+				this.#socket = socket;
+				const link = ++this.#link;
+				// Registered before the link's own listeners: calls the closing link rejects find it closed already.
 				const opened = new Promise<boolean>((resolve) => {
-					socket.addEventListener("open", () => resolve(true));
-					socket.addEventListener("close", () => resolve(false));
+					socket.addEventListener("open", () => {
+						if (link === this.#link) this.#linkOpen = true;
+						resolve(true);
+					});
+					socket.addEventListener("close", () => {
+						if (link === this.#link) this.#left();
+						resolve(false);
+					});
 				});
 				this.#host.connect(
 					webSocketLink(socket as unknown as WebSocketLike),
@@ -249,6 +339,7 @@ export class Connection {
 				}
 				await new Promise<void>((resolve) => socket.addEventListener("close", () => resolve()));
 			} catch (error) {
+				// A refused token (a revoked grant, a closed view) is reported; it is not the link's own closing.
 				console.error("p2 view kit:", error);
 			}
 			await new Promise((resolve) => setTimeout(resolve, backoff));
@@ -256,19 +347,54 @@ export class Connection {
 		}
 	}
 
-	/** After a reconnect: join and offer again (a new link is a new peer), then resend what waits. */
+	/** The link closed: the room is not joined; motion empties, sends wait for the next link. */
+	#left(): void {
+		this.#linkOpen = false;
+		this.#motion.detach();
+		this.#sends.detach();
+	}
+
+	/** Whether link `link` is not the open one any more. */
+	#linkClosed(link: number): boolean {
+		return link !== this.#link || !this.#linkOpen;
+	}
+
+	/**
+	 * Logs a failed call, unless it failed because its link closed (a reconnect, a lag eviction: the frame joins again
+	 * by itself; a refused token is what reports a revoked grant or a closed view).
+	 */
+	#report(error: unknown, link: number): void {
+		if (!this.#lost(error, link)) console.error("p2 view kit:", error);
+	}
+
+	/**
+	 * Whether a call over link `link` failed with the link: it closed, or its failure is one a closing link gives (the
+	 * frame's room revoked with its link, the link gone, the call cut off).
+	 */
+	#lost(error: unknown, link: number): boolean {
+		if (this.#linkClosed(link)) return true;
+		if (isChordError(error, "unavailable") || isChordError(error, "released")) return true;
+		return isChordError(error, "forbidden") && error.reason === "revoked";
+	}
+
+	/** After a reconnect: join and offer again (a new link is a new peer); waiting sends leave on the new link. */
 	async #rejoin(): Promise<void> {
-		const ref = await this.#reference();
-		const offers = Object.keys(this.#offered).length > 0;
-		if (this.#kind !== undefined || offers) await this.#join(ref);
-		if (offers) await this.#offer(ref);
-		this.#listener?.reconnected?.();
-		void this.#flush();
+		const link = this.#link;
+		try {
+			const ref = await this.#reference();
+			const offers = Object.keys(this.#offered).length > 0;
+			if (this.#kind !== undefined || offers) await this.#join(ref);
+			if (offers) await this.#offer(ref);
+			this.#listener?.reconnected?.();
+		} catch (error) {
+			this.#report(error, link);
+		}
 	}
 
 	/** Joins (with the room's kind, once the page asked for one; a frame that only offers methods without). */
 	async #join(ref: PeerRef): Promise<void> {
 		const kind = this.#kind;
+		const link = this.#link;
 		const joined = await ref.join(kind === undefined ? {} : { kind }, BACKGROUND_CONTEXT);
 		this.#me = joined.me;
 		if (kind === undefined) return;
@@ -276,6 +402,22 @@ export class Connection {
 		if (!this.#joined && kind === "live") this.#applied = joined.from;
 		this.#joined = true;
 		this.#update(ref);
+		if (this.#linkClosed(link)) return;
+		// Joined on the open link: motion leaves from now on (a new generation of the outbox), and so do sends. Not
+		// before: the first join of a log or text room starts it over (a new base), which would pass over a command sent
+		// ahead of it.
+		this.#motion.attach({
+			emit: (messages) => ref.emit({ messages: [...messages] }, BACKGROUND_CONTEXT),
+			report: (error) => this.#report(error, link),
+		});
+		this.#sends.attach({
+			send: (messages) => {
+				const ack = this.#applied > this.#acked ? this.#applied : undefined;
+				if (ack !== undefined) this.#acked = ack;
+				return ref.send({ messages: [...messages], ...(ack === undefined ? {} : { ack }) }, BACKGROUND_CONTEXT);
+			},
+			lost: (error) => this.#lost(error, link),
+		});
 	}
 
 	async #offer(ref: PeerRef): Promise<void> {
@@ -293,16 +435,23 @@ export class Connection {
 		this.#update(ref);
 	}
 
-	/** Estimates the server clock's offset: the round trip with the shortest time wins. */
-	async #clock(ref: PeerRef): Promise<void> {
-		let best = Number.POSITIVE_INFINITY;
-		for (let sample = 0; sample < 5; sample++) {
-			const sent = Date.now();
-			const server = await ref.now(BACKGROUND_CONTEXT);
-			const received = Date.now();
-			if (received - sent < best) {
-				best = received - sent;
-				this.#offset = server - (sent + received) / 2;
+	/**
+	 * Samples the server's clock: a few round trips at once, then one every `CLOCK_EVERY`; the recent sample with the
+	 * shortest round trip (measured with `performance.now()`) sets the offset.
+	 */
+	async #clock(): Promise<void> {
+		for (let round = 0; !this.#closed; round++) {
+			if (round >= 5) await new Promise((resolve) => setTimeout(resolve, CLOCK_EVERY));
+			const link = this.#link;
+			try {
+				const ref = await this.#reference();
+				const wall = Date.now();
+				const sent = performance.now();
+				const server = await ref.now(BACKGROUND_CONTEXT);
+				const rtt = performance.now() - sent;
+				this.#samples = [...this.#samples.slice(1 - CLOCK_SAMPLES), { rtt, offset: server - (wall + rtt / 2) }];
+			} catch (error) {
+				this.#report(error, link);
 			}
 		}
 	}
@@ -351,6 +500,11 @@ export class Connection {
 				out.push({ seq: entry.seq, from: peer, key, data: parse(entry.data.slice(1)) });
 			}
 		for (const message of log.messages) if (message.seq > this.#applied) this.#applied = message.seq;
+		// A live room numbers its keyed messages too, and a peer that left takes its keyed ones along: with the window
+		// delivered and the keyed messages taken (one transaction publishes a number with its message), this frame has
+		// everything up to the room's number. Acknowledging only the window would leave a frame of a room that sends
+		// keyed messages only behind every later joiner for good, and the room would cut its link every 30 s.
+		if (room.kind === "live" && room.seq > this.#applied) this.#applied = room.seq;
 		out.sort((a, b) => a.seq - b.seq);
 		if (out.length) this.#listener.deliver(out);
 		this.#scheduleAck(ref);
@@ -378,36 +532,16 @@ export class Connection {
 		this.#update(ref);
 	}
 
+	/** Acknowledges what this frame applied, a little later (sends carry it along meanwhile; the room keeps the highest). */
 	#scheduleAck(ref: PeerRef): void {
 		if (this.#ackTimer || this.#applied <= this.#acked) return;
 		this.#ackTimer = setTimeout(() => {
 			this.#ackTimer = undefined;
-			if (this.#sending || this.#applied <= this.#acked) return;
+			if (this.#applied <= this.#acked) return;
 			this.#acked = this.#applied;
-			ref.ack({ seq: this.#acked }, BACKGROUND_CONTEXT).catch((error: unknown) =>
-				console.error("p2 view kit:", error),
-			);
+			const link = this.#link;
+			ref.ack({ seq: this.#acked }, BACKGROUND_CONTEXT).catch((error: unknown) => this.#report(error, link));
 		}, ACK_PAUSE);
-	}
-
-	/** Sends what waits, one call at a time, so the room numbers this frame's messages in order. */
-	async #flush(): Promise<void> {
-		if (this.#sending || !this.#outbox.length) return;
-		this.#sending = true;
-		const ref = await this.#reference();
-		try {
-			while (this.#outbox.length) {
-				const messages = this.#outbox;
-				this.#outbox = [];
-				const ack = this.#applied > this.#acked ? this.#applied : undefined;
-				if (ack !== undefined) this.#acked = ack;
-				await ref.send({ messages, ...(ack === undefined ? {} : { ack }) }, BACKGROUND_CONTEXT);
-			}
-		} catch (error) {
-			console.error("p2 view kit:", error);
-		} finally {
-			this.#sending = false;
-		}
 	}
 
 	/** The leader runs the calls given to it, once each. */
@@ -426,7 +560,8 @@ export class Connection {
 			} catch (error) {
 				answer = { id: call.id, error: String(error instanceof Error ? error.message : error).slice(0, 4000) };
 			}
-			await ref.answer(answer, BACKGROUND_CONTEXT).catch((error: unknown) => console.error("p2 view kit:", error));
+			const link = this.#link;
+			await ref.answer(answer, BACKGROUND_CONTEXT).catch((error: unknown) => this.#report(error, link));
 		}
 	}
 }

@@ -5,15 +5,18 @@ import { readFile } from "node:fs/promises";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type BuildOptions, build, type Loader, type Plugin } from "esbuild";
-import { type FacetKind, listPlugins } from "./plugins.ts";
+import { type FacetKind, listRoots } from "./plugins.ts";
 import { MAX_TUI_BUNDLE } from "./tui-sandbox.ts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const pluginsDirectory = join(root, "plugins");
 
+/** Where plugins are found: one root, or several in order (the first one with a name wins it). */
+export type PluginRoots = string | readonly string[];
+
 /** The selected plugins' facet files of one kind, alphabetical by plugin (the load order). */
-function facetFiles(kind: FacetKind, plugins: readonly string[], directory: string): [name: string, file: string][] {
-	return [...listPlugins(directory)].flatMap(([name, facets]) => {
+function facetFiles(kind: FacetKind, plugins: readonly string[], roots: PluginRoots): [name: string, file: string][] {
+	return [...listRoots(typeof roots === "string" ? [roots] : roots)].flatMap(([name, facets]) => {
 		const file = facets[kind];
 		return plugins.includes(name) && file ? [[name, file] as [string, string]] : [];
 	});
@@ -28,6 +31,8 @@ const common = {
 	legalComments: "none",
 	absWorkingDir: root,
 	tsconfig: join(root, "tsconfig.json"),
+	// Plugins of the user root (in the data directory) find the app's packages (react) as the built-ins do.
+	nodePaths: [join(root, "node_modules"), join(root, "../../node_modules")],
 	logLevel: "silent",
 } as const satisfies BuildOptions;
 
@@ -82,7 +87,10 @@ export const tuiManifest = (bundle: TuiBundle): TuiManifest => ({
 });
 
 /** Every loaded plugin's TUI facet. Built ONLY on the server; no plugin file names or source resolver reach the launcher. */
-export async function buildTuiBundle(plugins: readonly string[], directory = pluginsDirectory): Promise<TuiBundle> {
+export async function buildTuiBundle(
+	plugins: readonly string[],
+	directory: PluginRoots = pluginsDirectory,
+): Promise<TuiBundle> {
 	const entries = facetFiles("tui", plugins, directory);
 	const captured = captureBundleInputs();
 	const entry = [
@@ -188,7 +196,10 @@ const TYPES: Readonly<Record<string, string>> = {
  * The browser host plus the web facets of the selected plugins. Every output file is named by its content, so a page
  * can cache it forever, and an unchanged build has the same names (and version) on any machine.
  */
-export async function buildWebBundle(plugins: readonly string[], directory = pluginsDirectory): Promise<WebBundle> {
+export async function buildWebBundle(
+	plugins: readonly string[],
+	directory: PluginRoots = pluginsDirectory,
+): Promise<WebBundle> {
 	const entries = facetFiles("web", plugins, directory);
 	const captured = captureBundleInputs();
 	// Imports relative to the app root: the entry's text reaches the source map, whose content names the files, so an

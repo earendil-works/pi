@@ -377,6 +377,34 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 			description: "How long a link origin's state waited for a slot of its window.",
 			attributes: {},
 		},
+		"chord.events.emitted": {
+			kind: "counter",
+			description: "Event values this host's sources emitted.",
+			attributes: {},
+		},
+		"chord.events.sent": {
+			kind: "counter",
+			description: "Event entries this host sent of its own in `event` messages (one per hold).",
+			attributes: {},
+		},
+		"chord.events.dropped": {
+			kind: "counter",
+			description:
+				"Event entries dropped: an origin's event window full at a flush (`window`, at the emitting host), a value past a part limit where parsed (`too_large`), an older version's mapping that threw (`mapping`, one per emit and version).",
+			attributes: {
+				reason: {
+					type: "string",
+					required: true,
+					values: ["window", "too_large", "mapping"],
+					description: "Why it was dropped.",
+				},
+			},
+		},
+		"chord.events.encodes": {
+			kind: "counter",
+			description: "Event values encoded for links: once per representation (the current version, each mapped one).",
+			attributes: {},
+		},
 	},
 });
 

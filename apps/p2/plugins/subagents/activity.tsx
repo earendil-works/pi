@@ -73,6 +73,7 @@ function SubagentDetail({ step }: { step: Step }) {
 }
 
 export const subagentActivity: ToolActivity = {
+	brief: "Asking subagent",
 	describe: (step) => ({
 		label: {
 			kind: "agent",

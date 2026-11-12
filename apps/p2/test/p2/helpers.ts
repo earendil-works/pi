@@ -423,6 +423,7 @@ export async function testHost(options: {
 				resourceOptions: {},
 				workers: NO_WORKERS,
 				root: (fn, context) => host.root(fn, context),
+				plugins: { root: "", reload: async () => ({ refused: "no plugins here", plugins: [], logs: [] }) },
 				...options.server,
 			});
 		}

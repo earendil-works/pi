@@ -2,6 +2,7 @@
 
 export {
 	HostProvider,
+	useEvents,
 	useHold,
 	useHost,
 	useMessages,

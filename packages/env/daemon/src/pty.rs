@@ -5,15 +5,20 @@
 use crate::errors::Failure;
 use crate::exec::{Control, Groups, running};
 #[cfg(unix)]
-use crate::exec::{ExitGrace, Message, kill_group, start_waiter, wait_for_link};
+use crate::exec::{Message, kill_group, start_waiter};
 #[cfg(unix)]
 use crate::frame::{EVENT, Frame};
+#[cfg(unix)]
+use crate::output::Gate;
 use crate::output::Output;
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
+/// After the program exits, output still arriving is collected until this much silence.
+#[cfg(unix)]
+const EXIT_GRACE: std::time::Duration = std::time::Duration::from_millis(100);
 /// Largest terminal size accepted, in cells.
 const MAX_CELLS: u64 = 4096;
 
@@ -184,17 +189,18 @@ pub fn run(
         groups.lock().unwrap().remove(&pid);
         Failure::new("spawn_error", error.to_string())
     };
+    // Like a full pipe: a program that writes faster than the link waits.
+    let gate = Gate::new(output);
     let started = {
         let master = master.clone();
         let sender = sender.clone();
         let stop = stop.clone();
-        let output = output.clone();
+        let gate = gate.clone();
         thread::Builder::new().spawn(move || {
             unix::read(&master, &stop, |bytes| {
-                let delivered = sender.send(Message::Data(0, bytes.to_vec())).is_ok();
-                // Like a full pipe: a program that writes faster than the link waits.
-                wait_for_link(&output, 0, &sender, &stop);
-                delivered
+                gate.pass(&stop, || {
+                    sender.send(Message::Data(0, bytes.to_vec())).is_ok()
+                })
             });
             let _ = sender.send(Message::Eof(0));
         })
@@ -224,7 +230,7 @@ pub fn run(
 
     let mut status = None;
     let mut ended = false;
-    let mut grace = ExitGrace::default();
+    let mut idle_until: Option<Instant> = None;
     let mut aborted = false;
     let mut killed = false;
     let kill = |killed: &mut bool| {
@@ -240,30 +246,40 @@ pub fn run(
         if status.is_some() && ended {
             break;
         }
-        let now = Instant::now();
-        if grace.over(now) {
-            // A background job may keep the terminal open after the program exited.
-            break;
-        }
-        let wait = grace.wait(now).unwrap_or(Duration::from_secs(3600));
+        let wait = match idle_until {
+            Some(idle) => {
+                let now = Instant::now();
+                if now < idle {
+                    idle - now
+                } else if gate.held() {
+                    // Silence while the link holds the reader up is not the end of the output.
+                    idle_until = Some(now + EXIT_GRACE);
+                    EXIT_GRACE
+                } else {
+                    // A background job may keep the terminal open after the program exited.
+                    break;
+                }
+            }
+            None => Duration::from_secs(3600),
+        };
         match receiver.recv_timeout(wait) {
             Ok(Message::Data(_, bytes)) => {
                 output.bulk(
                     Frame::with_payload(EVENT, id, json!({ "kind": "output" }), bytes),
                     None,
                 );
-                grace.output();
+                if status.is_some() {
+                    idle_until = Some(Instant::now() + EXIT_GRACE);
+                }
             }
-            Ok(Message::Paused(stream)) => grace.paused(stream),
-            Ok(Message::Resumed(stream)) => grace.resumed(stream),
             Ok(Message::Eof(_)) => ended = true,
             Ok(Message::Exit(exit)) => {
                 status = Some(Ok(exit));
-                grace.exited();
+                idle_until = Some(Instant::now() + EXIT_GRACE);
             }
             Ok(Message::WaitFailed(error)) => {
                 status = Some(Err(error));
-                grace.failed();
+                idle_until = Some(Instant::now());
             }
             Ok(Message::Cancel) => {
                 aborted = true;
