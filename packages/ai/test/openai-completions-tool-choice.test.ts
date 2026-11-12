@@ -1806,6 +1806,14 @@ describe("openai-completions tool_choice", () => {
 		expect(response.usage.output).toBe(40);
 	});
 
+	// #12019
+	it("sends reasoning_effort for GitHub Copilot completions models with effort levels", async () => {
+		const model = getModel("github-copilot", "gemini-4-argon")!;
+
+		expect((await captureSimpleParams(model, "low")).reasoning_effort).toBe("low");
+		expect((await captureSimpleParams(model, "high")).reasoning_effort).toBe("high");
+	});
+
 	it("uses OpenRouter reasoning object instead of reasoning_effort", async () => {
 		const model = getModel("openrouter", "deepseek/deepseek-r1-0528")!;
 		let payload: unknown;
