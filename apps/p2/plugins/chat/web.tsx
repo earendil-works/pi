@@ -119,16 +119,16 @@ import { Drafts } from "../drafts/contract.ts";
 import { Envs } from "../envs/contract.ts";
 import { DirectoryPicker, directoryPickerLayer } from "../envs/contract.web.tsx";
 import { GlyphIcon } from "../glyphs/GlyphIcon.tsx";
-import { placeSeed } from "../glyphs/seed.ts";
 import { Models } from "../models/contract.ts";
 import type { ResourceSnapshot } from "../models/resources.ts";
 import { Projects } from "../projects/contract.ts";
+import { placeSeed } from "../projects/glyph-seed.ts";
 import { type Session, Sessions } from "../sessions/contract.ts";
 import { SessionMetrics, SessionStatus, WorkerControl } from "../status/contract.ts";
 import { type Child, conversationLocation, SubagentControl, Subagents } from "../subagents/contract.ts";
 import { SessionTree } from "../tree/contract.ts";
 import { MODEL_COMMANDS, MODEL_PAGES } from "./commands.tsx";
-import { Chat, ChatCosts, TranscriptEntries } from "./contract.ts";
+import { Chat, ChatCosts, conversationTargetId, TranscriptEntries } from "./contract.ts";
 import { newSessionChoice, thinkingLevelOf } from "./model-choice.ts";
 import { type Outgoing, outboxOf } from "./outbox.ts";
 import { sessionStart } from "./session-start.ts";
@@ -773,7 +773,12 @@ function viewTarget(
 ): CommandTarget | undefined {
 	if (!session || child?.kind === "agent") return undefined;
 	if (child)
-		return { type: "conversation", id: `${session.id}/${conversation}`, kind: "Conversation", label: child.name };
+		return {
+			type: "conversation",
+			id: conversationTargetId(session.id, conversation),
+			kind: "Conversation",
+			label: child.name,
+		};
 	return session.main === conversation
 		? { type: "session", id: session.id, kind: "Session", label: session.title }
 		: undefined;

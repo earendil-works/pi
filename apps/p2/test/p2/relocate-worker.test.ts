@@ -215,26 +215,6 @@ test("PowerShell detects again after a real move", async (t) => {
 	}, BACKGROUND_CONTEXT);
 });
 
-// The location lags behind the environments during a move: the private data directory is denied by what the
-// environment is (here a "remote" location whose environment runs on this machine), never by the location's name.
-test("the private data directory is denied by the environment, not the location", async (t) => {
-	const machines = { box: { os: "linux", gate: Promise.resolve(), failures: 0 } };
-	const parent = mkdtempSync(join(tmpdir(), "p2-relocate-parent-"));
-	t.after(() => rmSync(parent, { recursive: true, force: true }));
-	const w = await worker(t, { cwd: parent, env: null }, machines);
-	// The session works in the directory holding p2's data directory, on a location named as another machine.
-	await w.relocate({ cwd: w.root, env: "box" });
-	await w.host.root(async (ctx) => {
-		const backend = await ctx.get(WorkspaceBackend, { conversation: 1 });
-		await assert.rejects(backend.query({ kind: "list", path: "data" }, ctx), /private/);
-		const index = await ctx.get(FileIndexCache, { conversation: 1 });
-		const all = await index.complete({ query: "", limit: 100 }, ctx);
-		assert(!all.items.some((item) => item.path === "data" || item.path.startsWith("data/")));
-		index.release();
-		backend.release();
-	}, BACKGROUND_CONTEXT);
-});
-
 test("a workspace follows a move made while it activates, and retries a failed reopen", async (t) => {
 	let open = () => {};
 	const blocked: Machine = {

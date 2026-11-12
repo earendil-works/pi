@@ -799,8 +799,8 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
     closed). A subagent's own location keeps its environment, on its machine.
   - **Plugins** read `location.value` at each use instead of `init.values.session` (which stays the spawn
     location). Between the switch and the commit, `location.value` still names the old place while
-    `Harness.environments` resolves on the new machine: whether p2's private data directory is denied is decided from
-    the environment (`isLocalEnvironment`), never from the location (workspace, file index, attachments). What is
+    `Harness.environments` resolves on the new machine: what depends on the machine is decided from the environment
+    (`isLocalEnvironment`), never from the location (attachments). What is
     kept for a location is keyed by `location.version` (bumped at each commit): prompt resources load anew from the
     new cwd/machine (superseded loads publish nothing), workspace backends reopen their watch (subscribed before
     their first open; a failed reopen is retried at the next use, superseded watches closed) and bump `changes`, the
@@ -818,7 +818,7 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
     its failing start, a failing update/cancel/prepare, an exit while fencing, a client arriving meanwhile, a
     cross-machine move accepted under the fence with an own location, a crash before the move, a move past its
     bound, caller aborts, fences, a busy refusal leaving no fence), `relocate-worker.test.ts` (one worker host with
-    the real Harness: dev-tools and PowerShell after real moves, the private directory decided by the environment, a
+    the real Harness: PowerShell after real moves, a
     move during workspace activation, a transient reopen failure, the session moving to another machine while a
     subagent's own location stays with its tools, workspace and file index, concurrent commands on two machines with
     one connection each and closing only unused machines), `harness-cwd.test.ts` (version 1 registry placement),
@@ -933,7 +933,7 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   for cells and shapes (fan, leaf, drop, dome, wedge, circle, diamond, square). It is the "Tiles, 3x3" generator of
   the project-glyphs prototype (Radius artifact) with its recommended settings, and draws the same glyphs. Mirror
   axes only (vertical, horizontal, both diagonals): every glyph is mirror-symmetric, so none is a pinwheel (a
-  swastika); 3x3 cannot hold one anyway. `seed.ts` decides which glyph a place shows (`placeSeed`): a project's is
+  swastika); 3x3 cannot hold one anyway. `plugins/projects/glyph-seed.ts` decides which glyph a place shows (`placeSeed`, kept with the projects it reads so other plugins' web facets can import it alone): a project's is
   seeded by its first place's path, and a folder or a session inside one of its places (a session also by membership)
   shows the project's; any other place its own path's. `GlyphIcon.tsx` draws one inline (the sidebar's groups and
   Recents, the chat's top bar before the location; the chat page holds `Projects` once for it, owner only);
@@ -1199,7 +1199,7 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
 - **File index** (`plugins/file-index`): `FileIndex({ session, conversation })` (participants, as `Workspace`) answers
   `@` completion (`complete`, ranked like pi's `@`) and Tab completion (`list`, one directory) for the TUI and the web
   composer. A worker-local cache per conversation (`FileIndexCache`) builds from `WorkspaceBackend`'s `files` query
-  (git ls-files or the bounded walk, private paths excluded, `truncated` surfaced), derives directories from paths,
+  (git ls-files or the bounded walk, `truncated` surfaced), derives directories from paths,
   and rebuilds lazily when `changes` advanced (at most once a second). Cwd-relative only (`~`, absolute and `..`
   complete nothing). Text handling shared by both UIs: `src/runtime/completion.ts`. p2-tui-port.md sections 8, 10.2.
 - **Workspace** (`plugins/workspace`): owner/read-write-guest `Workspace({ session, conversation })` queries a
@@ -1215,7 +1215,9 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   exact same-origin Origin), then checks the destination is free before renaming. Worker upload writes serialize
   across conversations to prevent competing uploads from overwriting each other; external filesystem races remain
   the ExecutionEnv's confinement/rename limitation, not a sandbox. Every HTTP request rechecks current access;
-  read-only guests and cross-session guests are denied. Private data and `.git` paths cannot be opened.
+  read-only guests and cross-session guests are denied. `.git` paths and paths out of the working directory cannot
+  be opened. p2's data directory is a workspace like any other (sessions work in `<data>/plugins`, docs/agent-plugins.md):
+  the panel, the file index and the watch neither refuse nor hide it.
   Web: route-owned sheet with Files (tree, fuzzy filter, uploads), Changes (working tree, paged branch commits),
   Search (literal text and include/exclude globs), File/Changes/Preview views, and Comments. Review drafts and open
   editors persist in localStorage per conversation; Send/Send all use ordinary attributed Chat input. Integration

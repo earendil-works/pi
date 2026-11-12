@@ -17,8 +17,9 @@ import { TextClient } from "../../plugins/views/kit/text-client.ts";
 import { ViewLinks, ViewRoom } from "../../plugins/views/room-contract.ts";
 import { loadText } from "../../plugins/views/text.ts";
 import { createHost, type Host, type RefIn } from "../../src/runtime/chord.ts";
+import { processLogs } from "../../src/runtime/logs.ts";
 import { type P2Principal, revokedBy, SERVER, type ViewPrincipal, viewKey } from "../../src/runtime/principals.ts";
-import { Server } from "../../src/runtime/server.ts";
+import { Server, ServerNatives } from "../../src/runtime/server.ts";
 import {
 	clientHost,
 	expectChord,
@@ -248,6 +249,42 @@ describe("view rooms", () => {
 		);
 		assert.equal(await refused(viewSocket(stale.token)), true);
 		assert.notEqual((await token(id)).opening, stale.opening);
+	});
+
+	it("lets a closed view's state and backing be held again without failing (pages and rooms catching up)", async () => {
+		const { id, chat } = await session();
+		const { room } = await frame(id);
+		const pane = await holdIn(owner, ViewState, { session: id, view: "room" }, "editor");
+		await prompt(chat, "view", `view ${JSON.stringify({ action: "close", id: "room" })}`);
+		assert.equal((await failureOf(room)).code, "forbidden");
+		// A page that has not seen the close yet holds the pane's state anew (another device, a reconnect): it reads
+		// what a closed view's state reads, and cannot write it.
+		pane.release();
+		const late = await holdIn(fixture.browser(), ViewState, { session: id, view: "room" }, "editor");
+		assert.equal(late.value.value, null);
+		await assert.rejects(late.set({ value: { stale: true } }, TEST), /No view "room"/);
+		late.release();
+		// The server's room lingers after its last frame left (holding the view's backing); a restart of the session's
+		// worker meanwhile has it hold the backing again on the new worker.
+		const workers = await fixture.server.host.root(
+			async (ctx) => (await fixture.server.host.registry(ServerNatives, ctx)).value?.workers,
+			TEST,
+		);
+		assert.ok(workers);
+		await workers.pause(
+			id,
+			async () => undefined,
+			async () => {},
+			"testing",
+		);
+		await new Promise((resolve) => setTimeout(resolve, 2_000));
+		assert.deepEqual(
+			processLogs
+				.notices()
+				.filter((notice) => notice.source === `session:${id}`)
+				.map((notice) => notice.message),
+			[],
+		);
 	});
 
 	it("ends a frame's room when its viewer's grant is revoked", async () => {

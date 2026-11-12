@@ -114,8 +114,8 @@ export class SessionLocation {
 }
 
 /**
- * Whether `env` runs on this machine (not an SSH environment): p2's private data directory is denied there. Decided
- * from the environment, not from `SessionLocation.value`, which lags behind the environments during a move.
+ * Whether `env` runs on this machine (not an SSH environment; attachments need no copy there). Decided from the
+ * environment, not from `SessionLocation.value`, which lags behind the environments during a move.
  */
 export const isLocalEnvironment = (env: ExecutionEnv): boolean => !(env instanceof RemoteExecutionEnv);
 

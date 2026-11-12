@@ -318,7 +318,10 @@ function followViews(self: Self) {
 
 /**
  * View `id`'s document of family `family`, followed; created when absent if the views document has a view `id` that
- * `admits` accepts, else the activation fails.
+ * `admits` accepts. A view that is gone (closed, or reopened as another opening) reads the family's initial value, as
+ * its retired document reads for those who held it before the close: a page or the server's room that has not caught
+ * up with the close yet holds it cleanly instead of failing its activation, and nothing writes it (the methods check
+ * the views document in their commit).
  */
 function followViewDoc<T extends JsonObject>(
 	self: Self,
@@ -330,7 +333,8 @@ function followViewDoc<T extends JsonObject>(
 	return self.follow(async (observer, ctx) => {
 		const durable = harness().durable;
 		const views = await readViews(durable, ctx);
-		if (!views.views.some((view) => view.id === id) || !admits(views)) throw invalid("params", `No view "${id}"`);
+		if (!views.views.some((view) => view.id === id) || !admits(views))
+			return { value: family.definition.initial(null), detach: () => {} };
 		const observed = await durable.observeDoc(family, id, observer, ctx);
 		if (observed !== undefined) return observed;
 		await durable.commit(async (tx) => {

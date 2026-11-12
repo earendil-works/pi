@@ -31,7 +31,7 @@ test("search without git grep -m keeps per-file limits and propagates other erro
 				}
 				return exec(argv, options, executing);
 			};
-			const workspace = new Workspace(env, []);
+			const workspace = new Workspace(env);
 			const result = await workspace.query({ kind: "search", path: "", text: "needle" }, context);
 			assert(result.kind === "search");
 			assert.equal(rejected, 1);
@@ -68,7 +68,7 @@ test("a linked git worktree's index and HEAD are watched", { timeout: 60_000 }, 
 		git(root, "add", "a.txt");
 		git(root, "commit", "-q", "-m", "init");
 		git(root, "worktree", "add", "-q", "-b", "side", linked);
-		const workspace = new Workspace(new NodeExecutionEnv({ cwd: linked }), []);
+		const workspace = new Workspace(new NodeExecutionEnv({ cwd: linked }));
 		await writeFile(join(linked, "new.txt"), "x\n");
 		let changes = 0;
 		const watcher = await workspace.watch(() => changes++, context);
@@ -87,7 +87,7 @@ test("a linked git worktree's index and HEAD are watched", { timeout: 60_000 }, 
 });
 
 test(
-	"the watch leaves out a private directory inside the root, and a large tree watches its root only",
+	"the watch covers the root recursively, and a large tree watches its root only",
 	{
 		timeout: 60_000,
 	},
@@ -101,18 +101,14 @@ test(
 		try {
 			const root = join(directory, "small");
 			await mkdir(join(root, "a/b"), { recursive: true });
-			await mkdir(join(root, "home/private"), { recursive: true });
 			await mkdir(join(root, "home/other"), { recursive: true });
-			const workspace = new Workspace(new NodeExecutionEnv({ cwd: root }), [join(root, "home/private")]);
+			const workspace = new Workspace(new NodeExecutionEnv({ cwd: root }));
 			let changes = 0;
 			const watcher = await workspace.watch(() => changes++, context);
 			assert(watcher);
 			try {
-				await writeFile(join(root, "home/private/log"), "x\n");
-				await settle(1000);
-				assert.equal(changes, 0, "a change in the private directory is not reported");
 				await writeFile(join(root, "home/other/file"), "x\n");
-				assert(await until(() => changes > 0), "a sibling of the private directory is watched");
+				assert(await until(() => changes > 0), "a nested folder is watched");
 				changes = 0;
 				await writeFile(join(root, "a/b/file"), "x\n");
 				assert(await until(() => changes > 0), "other folders are watched recursively");
@@ -122,7 +118,7 @@ test(
 
 			const large = join(directory, "large");
 			for (let index = 0; index <= 2000; index++) await mkdir(join(large, `d${index}`), { recursive: true });
-			const big = new Workspace(new NodeExecutionEnv({ cwd: large }), []);
+			const big = new Workspace(new NodeExecutionEnv({ cwd: large }));
 			let bigChanges = 0;
 			const bigWatcher = await big.watch(() => bigChanges++, context);
 			assert(bigWatcher);
@@ -159,7 +155,7 @@ test("a root inside a repository lists changes and commits relative to itself, a
 		await writeFile(join(directory, "apps/web/a.txt"), "after\n");
 		await writeFile(join(directory, "apps/web/new.txt"), "new\n");
 		await writeFile(join(directory, "outside.txt"), "after\n");
-		const workspace = new Workspace(new NodeExecutionEnv({ cwd: join(directory, "apps/web") }), []);
+		const workspace = new Workspace(new NodeExecutionEnv({ cwd: join(directory, "apps/web") }));
 		const status = await workspace.query({ kind: "status" }, context);
 		assert(status.kind === "status" && status.repo);
 		assert.deepEqual(status.changes.map((change) => change.path).sort(), ["a.txt", "new.txt"]);

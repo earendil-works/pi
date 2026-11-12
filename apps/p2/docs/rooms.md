@@ -24,6 +24,11 @@ type ViewPrincipal = {
   redemption unless its opening is the view's current one, and a room whose opening stops being current (closed, or
   closed and reopened) revokes its frames. Revocation is edge-triggered in Chord (no deny list), so nothing relies on
   watching a boolean: a fold of "closed, reopened" into one change still shows another opening ID.
+- **A closed view's objects.** Closing retires the view's state and room documents. `ViewState` and `ViewBacking`
+  held after that (a page that has not seen the close, another device, a reconnect; the server's room lingering after
+  its frames were revoked, held again on a restarted worker) activate cleanly: they read the documents' initial value,
+  as earlier holders of the retired documents do, and their writes are refused (`ViewState.set`: no view; the
+  backing's `write`: false). Nothing about a closed view fails an activation, so it never shows up as an owner notice.
 - **Token.** The page asks `ViewLinks { session }` (server, remote, variant `viewer`) for `token({ view })`, which answers `{ token, opening }` (the opening read from `ViewOpenings` in a server root; no
 current opening: refused). Its factory
   admits `canView(principal, session)`; the `token` method then awaits `mayReach` for guests (factories are
@@ -250,7 +255,8 @@ untrusted input: any write peer may answer.
 
 `test/p2/rooms.test.ts` (each case its own session): the token path over a real socket (a bad Host with a valid token,
 reuse, cookie-only, `Origin: null` on `/chord` and on routes other than the kit, two redemptions at once); a view
-principal's reach; a closed and reopened view; a revoked guest grant; presence and leader handover; keyed folding over
+principal's reach; a closed and reopened view; a closed view's state and backing held again (a late page, a restarted
+worker under the lingering room) without an activation failure; a revoked guest grant; presence and leader handover; keyed folding over
 a stalled link, joiners' keyed snapshot, the keyed member's part limit; a read-only frame cannot change or reset the
 room; flat append cost with 22,000 kept messages, paged history; the memory budget charging empty messages; unkeyed
 order and acknowledgement trimming; log snapshots (stale term, overtaken snapshot) and reset; text convergence,

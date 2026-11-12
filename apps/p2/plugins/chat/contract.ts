@@ -299,3 +299,18 @@ export type EntryDisplay = {
  */
 export const TranscriptEntries =
 	keyedRegistry<(data: unknown) => EntryDisplay | undefined>("p2.chat-transcript-entries");
+
+/**
+ * A subagent's conversation as a command target's id, `<session>/<conversation>` (the chat page's "conversation"
+ * target; other plugins' commands act on it too).
+ */
+export const conversationTargetId = (session: string, conversation: number): string => `${session}/${conversation}`;
+
+/** Parses a "conversation" target's id (`conversationTargetId`); it comes back from the menu's locator, so it is checked. */
+export function conversationOf(id: string): { readonly session: string; readonly conversation: number } | undefined {
+	const slash = id.lastIndexOf("/");
+	const conversation = Number(id.slice(slash + 1));
+	return slash > 0 && Number.isInteger(conversation) && conversation > 0
+		? { session: id.slice(0, slash), conversation }
+		: undefined;
+}

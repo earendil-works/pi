@@ -17,7 +17,7 @@ import {
 	useRoute,
 } from "@p2/app/v1/web";
 import { type ReactNode, useMemo } from "react";
-import { conversationOf } from "../chat/commands.tsx";
+import { conversationOf } from "../chat/contract.ts";
 import { Sessions } from "../sessions/contract.ts";
 import { type ArtifactInfo, ArtifactList } from "./contract.ts";
 import { viewerLayer } from "./viewer.ts";
