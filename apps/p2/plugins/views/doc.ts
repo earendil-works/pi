@@ -7,6 +7,7 @@ import {
 	type AnnotationInput,
 	liveViews,
 	MAX_ANNOTATIONS,
+	type SelectInlineInput,
 	TRANSCRIPT,
 	VIEW_ID,
 	type View,
@@ -150,7 +151,13 @@ export type Carried = {
 	readonly text: string;
 	readonly annotations: readonly string[];
 	readonly selections: readonly { readonly view: string; readonly summary: string }[];
+	/** Selections in items shown in the transcript, by `inlineKey`. */
+	readonly inline: readonly { readonly key: string; readonly summary: string }[];
 };
+
+/** An item shown in the transcript, as `inline` selections are keyed: its kind and ID. */
+export const inlineKey = (selection: { readonly kind: string; readonly item: string }): string =>
+	`${selection.kind}:${selection.item}`;
 
 /**
  * What a person's next message carries to the agent: the selections and annotations it has not carried yet, as one
@@ -158,12 +165,17 @@ export type Carried = {
  */
 export function viewContext(state: Readonly<ViewsState>): Carried | undefined {
 	const selections = state.views.filter((view) => view.selection && !view.selection.sent);
+	const inline = (state.inline ?? []).filter((each) => !each.selection.sent);
 	const annotations = state.annotations.filter((annotation) => !annotation.sent);
-	if (!selections.length && !annotations.length) return undefined;
+	if (!selections.length && !inline.length && !annotations.length) return undefined;
 	const text = [
 		"<views>",
 		"From the views beside the transcript (code mode's view_* tools list and change them):",
 		...selections.map((view) => `Selected in ${viewName(state.views, view.id)}: ${view.selection?.summary ?? ""}`),
+		...inline.map(
+			(each) =>
+				`Selected in ${each.kind} "${each.item}" ("${each.title}") shown in the transcript: ${each.selection.summary}`,
+		),
 		...(annotations.length
 			? [
 					"Annotations the person made:",
@@ -178,6 +190,7 @@ export function viewContext(state: Readonly<ViewsState>): Carried | undefined {
 		text,
 		annotations: annotations.map((annotation) => annotation.id),
 		selections: selections.map((view) => ({ view: view.id, summary: view.selection?.summary ?? "" })),
+		inline: inline.map((each) => ({ key: inlineKey(each), summary: each.selection.summary })),
 	};
 }
 
@@ -192,4 +205,30 @@ export function markSent(draft: ViewsState, carried: Carried): void {
 		const selection = draft.views.find((each) => each.id === view)?.selection;
 		if (selection?.summary === summary) selection.sent = true;
 	}
+	for (const { key, summary } of carried.inline) {
+		const selection = draft.inline?.find((each) => inlineKey(each) === key)?.selection;
+		if (selection?.summary === summary) selection.sent = true;
+	}
+}
+
+/** Sets (or with `null` clears) the person's selection in an item shown in the transcript. */
+export function selectInline(draft: ViewsState, input: SelectInlineInput): void {
+	const key = inlineKey(input);
+	const others = (draft.inline ?? []).filter((each) => inlineKey(each) !== key);
+	const { selection } = input;
+	draft.inline =
+		selection === null
+			? others
+			: [
+					...others,
+					{
+						kind: input.kind,
+						item: input.item,
+						title: input.title,
+						selection: {
+							summary: selection.summary,
+							...(selection.data !== undefined ? { data: selection.data } : {}),
+						},
+					},
+				];
 }

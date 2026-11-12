@@ -37,7 +37,9 @@ Their selections and annotations reach the agent with their next message. Plugin
   - Panes render as siblings in a fixed order (transcript first, then the session's views) and are only positioned.
     Rearranging never remounts them: a moved frame would reload, and the chat would lose its place.
 - **Selections**: a text selection in a pane (`usePaneSelection` in `pane-kit.tsx`), or an html artifact's own
-  `p2view.select(summary, data)`, becomes the view's selection.
+  `p2view.select(summary, data)`, becomes the view's selection. In an item shown in the transcript (an artifact a
+  script showed) no view holds it: `selectInline` keeps it in the document's `inline` list, one per item (kind and
+  ID), carried and listed as the views' are (`view_list` gives it with `view: "transcript"`).
 - **Annotations** (`annotate.tsx`): the top bar's pencil turns on the annotation layer.
   - *Comment* and *Remove* mark the selected text in any pane, the transcript included.
   - *Draw* takes strokes over any pane. Each drawing is saved with the text found under it. An html page's frame
@@ -63,8 +65,9 @@ Their selections and annotations reach the agent with their next message. Plugin
 People who may send in the session (the owner, full guests) open and close views, select and annotate. Viewers read
 everything; a read-only guest opens artifacts in the artifacts side panel on their own device instead (docs/artifacts.md).
 
-`Views` is at version 3 (`View.item` in place of `path`; no view state, no library, no `report`); its `accepts`
-(`VIEWS_ACCEPTS`) serves pages built with versions 1 and 2 (`item` shown to them as `path`). Stored views of the removed
+`Views` is at version 4 (3: `View.item` in place of `path`, no view state, no library, no `report`; 4: `inline` and
+`selectInline`); its `accepts` (`VIEWS_ACCEPTS`) serves pages built with versions 1 to 3 (`item` shown to 1 and 2 as
+`path`). Stored views of the removed
 `custom` kind stay in old sessions' documents and are not listed (`liveViews`).
 
 The layout is per device because a phone and a desktop want different arrangements. A device's `focus` stamps track

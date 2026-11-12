@@ -60,8 +60,11 @@ const ListedViewSchema = obj({ id: str(), kind: str(), item: opt(str()), title: 
 const ListSchema = obj({
 	views: arr(ListedViewSchema),
 	arrangement: opt(ArrangementSchema),
-	/** The person's selection in each view that has one, with the view's data. */
-	selections: arr(obj({ view: str(), ...propertiesOf(SelectionSchema) })),
+	/**
+	 * The person's selection in each view that has one, with the view's data; in an item shown in the transcript, `view`
+	 * is `transcript` with the item's kind and ID.
+	 */
+	selections: arr(obj({ view: str(), kind: opt(str()), item: opt(str()), ...propertiesOf(SelectionSchema) })),
 	/** The annotations nobody resolved, each with a line describing it. */
 	annotations: arr(obj({ ...propertiesOf(AnnotationSchema), text: str() }, { open: true })),
 });
@@ -124,9 +127,15 @@ export function createViewsExtension() {
 							title,
 						})),
 						...(state.arrangement ? { arrangement: state.arrangement } : {}),
-						selections: state.views.flatMap((view) =>
-							view.selection ? [{ view: view.id, ...view.selection }] : [],
-						),
+						selections: [
+							...state.views.flatMap((view) => (view.selection ? [{ view: view.id, ...view.selection }] : [])),
+							...(state.inline ?? []).map(({ kind, item, selection }) => ({
+								view: TRANSCRIPT,
+								kind,
+								item,
+								...selection,
+							})),
+						],
 						annotations: state.annotations.map((annotation) => ({
 							...annotation,
 							text: describeAnnotation(state.views, annotation),

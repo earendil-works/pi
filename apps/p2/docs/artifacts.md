@@ -19,7 +19,8 @@ side panel. Plugin: `plugins/artifacts`. Decision: "Artifacts and views" in `app
   message as an `<artifact-errors>` block (the views plugin's `MessageContexts`), once.
 - **In the transcript** (`activity.tsx`): `artifact_show`, called from a script, places the artifact's pane in place
   after the script (`hasResult` "inline"; nested code-mode calls place results as top-level calls do,
-  `src/web/activity/model.ts`). The pane mounts only near the screen, with hysteresis so a card at the edge never
+  `src/web/activity/model.ts`). It works as beside the chat: people who may send change it (an html page saves its
+  state) and select in it (the selection goes with their next message through `Views.selectInline`); viewers read it. The pane mounts only near the screen, with hysteresis so a card at the edge never
   flips: it mounts within one viewport of the transcript's scroller and unmounts only past two (two
   `IntersectionObserver`s rooted at the scroller). The card keeps the height its pane last had (`inline-size.ts`,
   remembered per artifact for the page's host) while the pane is away and while a remounted pane settles: an html
@@ -82,7 +83,8 @@ There is no migration: artifacts written before 2026-11-12 stay in the session's
 - `test/p2/artifacts.test.ts`: the tools; the frame route; a page's state whole for page and agent; code run in an open
   page; errors with the next message, once; a read-only guest reads; export and delete carry the data.
 - `test/p2/ui-inline-artifacts.test.ts`: Chromium. Markdown and html in place, fitted and capped at 70vh, for a guest
-  too; a page scrolled out and back in keeps its height and the reader's place; a deleted artifact.
+  too; a page scrolled out and back in keeps its height and the reader's place; an inline counter page changed and
+  selected by the owner (saved, carried) and read-only for a guest; a deleted artifact.
 - `test/p2/ui-views.test.ts`: the glyph-editor-style page's state and selection round trip.
 - `test/p2/ui-viewers-search.test.ts`, `ui-command-menu-sharing.test.ts`: the side panel, the commands, a reader
   opening one in the side panel.

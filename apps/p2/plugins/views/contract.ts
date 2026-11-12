@@ -3,7 +3,20 @@
 // item it shows, and the person's selection in it; annotations (comments, removals, drawings) mark up any view or the
 // transcript. The session's worker owns all of it; the layout of the panes is each device's own (web.tsx).
 
-import { arr, int, nullable, num, obj, oneOf, opt, type Static, str, union, unknown } from "@earendil-works/pi-schema";
+import {
+	arr,
+	int,
+	nul,
+	nullable,
+	num,
+	obj,
+	oneOf,
+	opt,
+	type Static,
+	str,
+	union,
+	unknown,
+} from "@earendil-works/pi-schema";
 import {
 	type AcceptsTable,
 	type Ctx,
@@ -137,6 +150,27 @@ export const ArrangementSchema = obj({ layout: unsafe<JsonValue>(unknown()), sta
 export type Arrangement = Static<typeof ArrangementSchema>;
 
 /**
+ * What the person selected in an item shown in the transcript (an artifact a script showed there): no view holds it,
+ * so the session keeps it by the item's kind and ID, one per item.
+ */
+export const InlineSelectionSchema = obj({
+	kind: ViewKindNameSchema,
+	item: ViewItemSchema,
+	title: str({ minLength: 1, maxLength: 120 }),
+	selection: SelectionSchema,
+});
+export type InlineSelection = Static<typeof InlineSelectionSchema>;
+
+/** What `selectInline` takes: the item and its selection (`null` clears it). */
+export const SelectInlineSchema = obj({
+	kind: ViewKindNameSchema,
+	item: ViewItemSchema,
+	title: str({ minLength: 1, maxLength: 120 }),
+	selection: nullable(SelectionSchema),
+});
+export type SelectInlineInput = Static<typeof SelectInlineSchema>;
+
+/**
  * The session's views and annotations: the worker's `p2.views` document. Views of the removed `custom` kind may still
  * be stored there (no migration): `liveViews` leaves them out.
  */
@@ -144,6 +178,8 @@ export type ViewsState = {
 	views: View[];
 	annotations: Annotation[];
 	arrangement?: Arrangement;
+	/** Selections in items shown in the transcript (absent in documents written before). */
+	inline?: InlineSelection[];
 };
 
 /** The views of `state` that still exist: every kind but the removed `custom` one. */
@@ -213,17 +249,26 @@ const ViewsV2 = evolve(ViewsV1, (e) =>
 	e.state("reader", "views", arr(ViewSchemaV2)).state("editor", "views", arr(ViewSchemaV2)),
 );
 
-/**
- * The session's views and annotations (see `ViewsV1`). 2: a view's kind may be a plugin's. 3: a view shows an `item`
- * (`path` before); the custom kind, its source and errors, saved views and `report` are gone. Pages built with 1 and 2
- * get what they can show (`VIEWS_ACCEPTS`).
- */
-export const Views = evolve(ViewsV2, (e) =>
+/** Version 3: a view shows an `item` (`path` before); the custom kind, its source and errors, saved views and `report` are gone. */
+const ViewsV3 = evolve(ViewsV2, (e) =>
 	e
 		.state("reader", "views", arr(ViewSchema))
 		.state("editor", "views", arr(ViewSchema))
 		.args("open", OpenSchema)
 		.removeMethod("report"),
+);
+
+/**
+ * The session's views and annotations (see `ViewsV1`). 2: a view's kind may be a plugin's. 3: a view shows an `item`
+ * (`path` before); the custom kind, its source and errors, saved views and `report` are gone. 4: selections in items
+ * shown in the transcript (`inline`, `selectInline`). Pages built with 1 to 3 get what they can show (`VIEWS_ACCEPTS`).
+ */
+export const Views = evolve(ViewsV3, (e) =>
+	e
+		.addState("reader", "inline", arr(InlineSelectionSchema))
+		.addState("editor", "inline", arr(InlineSelectionSchema))
+		/** Sets (or with `null` clears) the person's selection in an item shown in the transcript. */
+		.addMethod("editor", "selectInline", SelectInlineSchema, nul()),
 );
 
 /** A view as versions 1 and 2 have it: its item as `path` (only the built-in kinds had one). */
@@ -251,6 +296,7 @@ export const VIEWS_ACCEPTS: AcceptsTable<typeof Views> = {
 		// Custom views and their errors are gone: what an older page reports changes nothing.
 		methods: { open: { args: openOfV2 }, report: { call: async () => null } },
 	},
+	3: {},
 };
 
 /** An older page's open: a Markdown file or the changes (saved views are gone). */

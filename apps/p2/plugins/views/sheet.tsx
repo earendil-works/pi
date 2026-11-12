@@ -186,8 +186,12 @@ export function ContextChip() {
 	const editor = liveIn(views, "editor");
 	const list = useReadable(views?.views) ?? [];
 	const notes = useReadable(views?.annotations) ?? [];
+	const inline = useReadable(views?.inline) ?? [];
 	const { fail } = useComposerState();
-	const selections = list.filter((view) => view.selection && !view.selection.sent);
+	const selections = [
+		...list.filter((view) => view.selection && !view.selection.sent),
+		...inline.filter((each) => !each.selection.sent),
+	];
 	const pending = notes.filter((annotation) => !annotation.sent).length;
 	if (!editor || (!selections.length && !pending)) return null;
 	const words = [

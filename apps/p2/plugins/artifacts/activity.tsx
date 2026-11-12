@@ -1,6 +1,8 @@
 // How the artifact tools show in the chat (nested in code mode's card): what each did with which artifact, and for
 // `artifact_show` the artifact itself in place, right after the call (its pane, inline), mounted only while it is on
 // screen so a long transcript runs no more pages than the person sees.
+
+import { BACKGROUND_CONTEXT, type JsonValue } from "@p2/app/v1";
 import {
 	detailsOf,
 	failureOf,
@@ -9,11 +11,14 @@ import {
 	stringOf,
 	type ToolActivity,
 	type ToolView,
+	useComposerState,
 	useHost,
+	useObject,
 	useRegistry,
 	ViewKinds,
 } from "@p2/app/v1/web";
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { Views } from "../views/contract.ts";
 import { type InlineSize, InlineSizeContext, inlineHeights } from "./inline-size.ts";
 import { useArtifacts } from "./use-artifacts.ts";
 
@@ -50,7 +55,9 @@ function ShownArtifact({ tool }: { tool: ToolView; inline: boolean }) {
 }
 
 /**
- * The pane of artifact `id` in the transcript, mounted only near the screen. Hysteresis keeps a card at the edge from
+ * The pane of artifact `id` in the transcript, as beside the chat: people who may send change it (an html page saves
+ * its state) and select in it (`Views.selectInline`: it goes with their next message); viewers read it. It is mounted
+ * only near the screen. Hysteresis keeps a card at the edge from
  * flipping: it mounts within a viewport of the screen and unmounts only past two. The card keeps the height its pane
  * last had (`inlineHeights`) while the pane is away and while a remounted pane settles, until the pane reports its real
  * height or `SETTLE_MS` pass, so scrolling back never collapses it under the reader.
@@ -63,8 +70,11 @@ export function InlineArtifact({ session, id }: { session: string; id: string })
 	const [mounted, setMounted] = useState(false);
 	const [settled, setSettled] = useState(false);
 	const isMounted = useRef(false);
-	const { list } = useArtifacts(session);
+	const { list, editor } = useArtifacts(session);
 	const kinds = useRegistry(ViewKinds);
+	// People who may send change it here as beside the chat; their selection goes with their next message.
+	const views = useObject(Views, editor ? { session } : undefined, { variant: "editor" });
+	const { fail } = useComposerState();
 	useEffect(() => {
 		const element = box.current;
 		if (!element) return;
@@ -126,6 +136,18 @@ export function InlineArtifact({ session, id }: { session: string; id: string })
 	);
 	const summary = list?.find((each) => each.id === id);
 	const Pane = summary ? kinds.get(summary.kind)?.Pane : undefined;
+	const select = useCallback(
+		(selection: { summary: string; data?: JsonValue } | null) => {
+			if (!views || !summary) return;
+			views
+				.selectInline(
+					{ kind: summary.kind, item: id, title: summary.title.slice(0, 120), selection },
+					BACKGROUND_CONTEXT,
+				)
+				.catch(fail);
+		},
+		[views, summary, id, fail],
+	);
 	const reserved = mounted && settled ? undefined : heights.get(key);
 	return (
 		<div
@@ -138,7 +160,14 @@ export function InlineArtifact({ session, id }: { session: string; id: string })
 				<p className="empty-note">No artifact "{id}" (it was deleted).</p>
 			) : mounted && Pane ? (
 				<InlineSizeContext.Provider value={size}>
-					<Pane session={session} item={id} inline editable={false} select={() => {}} annotations={[]} />
+					<Pane
+						session={session}
+						item={id}
+						inline
+						editable={editor !== undefined}
+						select={select}
+						annotations={[]}
+					/>
 				</InlineSizeContext.Provider>
 			) : null}
 		</div>

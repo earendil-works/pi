@@ -158,6 +158,35 @@ describe("views (fake provider)", () => {
 		await until(views.annotations, (value) => value.every((annotation) => annotation.sent));
 	});
 
+	it("carries a selection in an item shown in the transcript, once, and lists it", async () => {
+		await views.selectInline(
+			{ kind: "html", item: "counter", title: "Counter", selection: { summary: "count 42", data: { count: 42 } } },
+			BACKGROUND_CONTEXT,
+		);
+		await until(views.inline, (value) => value.length === 1 && !value[0]?.selection.sent);
+		await chat.send({ text: "what did I pick", requestId: "inline-1" }, BACKGROUND_CONTEXT);
+		const view = await until(chat.view, (value) =>
+			(value?.entries ?? []).some(
+				(entry) => entry.kind === VIEW_INPUT && (entry.data as { text?: string }).text === "what did I pick",
+			),
+		);
+		const entry = view?.entries.findLast((each) => each.kind === VIEW_INPUT);
+		const model = (entry?.model?.[0] as UserMessage | undefined)?.content;
+		const sentText = Array.isArray(model)
+			? model.map((part) => (part.type === "text" ? part.text : "")).join("")
+			: "";
+		assert.match(sentText, /Selected in html "counter" \("Counter"\) shown in the transcript: count 42/);
+		await until(views.inline, (value) => value[0]?.selection.sent === true);
+		await until(chat.view, idle);
+		const list = (await run("return await tools.view_list({});")) as {
+			selections: { view: string; kind?: string; item?: string; summary: string }[];
+		};
+		assert.deepEqual(
+			list.selections.filter((each) => each.item === "counter"),
+			[{ view: "transcript", kind: "html", item: "counter", summary: "count 42", data: { count: 42 }, sent: true }],
+		);
+	});
+
 	it("arranges the person's panes and refuses layouts that name no view", async () => {
 		await run(
 			'return await tools.view_arrange({ layout: { column: ["notes", { tabs: ["transcript"] }], sizes: [2, 1] } });',

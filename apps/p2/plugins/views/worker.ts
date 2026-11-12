@@ -25,7 +25,17 @@ import { Conversation, SendRouters } from "../chat/contract.ts";
 import { Attachments, MAX_ATTACHMENTS } from "../files/contract.ts";
 import { WorkerModels } from "../models/contract.ts";
 import { liveViews, type MessageContext, MessageContexts, VIEW_INPUT, VIEWS_ACCEPTS, Views } from "./contract.ts";
-import { addAnnotation, freeViewId, markSent, openView, readViews, removeView, ViewsDoc, viewContext } from "./doc.ts";
+import {
+	addAnnotation,
+	freeViewId,
+	markSent,
+	openView,
+	readViews,
+	removeView,
+	selectInline,
+	ViewsDoc,
+	viewContext,
+} from "./doc.ts";
 import { createViewsExtension } from "./tool.ts";
 
 /** The most a selection's data may hold, as JSON: the agent reads it with `view_list`. */
@@ -70,7 +80,7 @@ export default defineFacet((host) => {
 					text,
 					attachments: files.map(({ id, name }) => ({ id, name })),
 					views: {
-						selections: carried?.selections.length ?? 0,
+						selections: (carried?.selections.length ?? 0) + (carried?.inline.length ?? 0),
 						annotations: carried?.annotations.length ?? 0,
 						...(others.length ? { notes: others.map((other) => other.note) } : {}),
 					},
@@ -105,8 +115,9 @@ export default defineFacet((host) => {
 			const views = deriveTyped(self, [index], ([value]) => liveViews(value));
 			const annotations = deriveTyped(self, [index], ([value]) => value.annotations);
 			const arrangement = deriveTyped(self, [index], ([value]) => value.arrangement ?? null);
+			const inline = deriveTyped(self, [index], ([value]) => value.inline ?? []);
 			if (!canSend(principal, session) || (!isOwner(principal) && !isGuest(principal)))
-				return { variant: "reader", members: { views, annotations, arrangement } };
+				return { variant: "reader", members: { views, annotations, arrangement, inline } };
 			const person = principal;
 			const settings = self.get(WorkerModels, {});
 			const author = (): Author => authorOf(person, settings.settings.value.ownerName ?? DEFAULT_OWNER_NAME);
@@ -120,6 +131,7 @@ export default defineFacet((host) => {
 					views,
 					annotations,
 					arrangement,
+					inline,
 					open: ({ kind, item, title: given }, ctx) =>
 						call(async () => {
 							if (kind === "markdown" && !item) throw invalid("args", "A markdown view needs a file");
@@ -153,6 +165,12 @@ export default defineFacet((host) => {
 						}, ctx);
 						return null;
 					},
+					selectInline: async (input, ctx) => {
+						if (JSON.stringify(input.selection?.data ?? null).length > MAX_SELECTION_DATA)
+							throw invalid("args", "Selection data is too large");
+						await commit((draft) => selectInline(draft, input), ctx);
+						return null;
+					},
 					annotate: async (input, ctx) => {
 						const id = await commit((draft) => addAnnotation(draft, input, author().name, Date.now()), ctx);
 						return { id };
@@ -168,6 +186,7 @@ export default defineFacet((host) => {
 						await commit((draft) => {
 							draft.annotations = draft.annotations.filter((each) => each.sent);
 							for (const view of draft.views) if (view.selection) view.selection.sent = true;
+							for (const each of draft.inline ?? []) each.selection.sent = true;
 						}, ctx);
 						return null;
 					},

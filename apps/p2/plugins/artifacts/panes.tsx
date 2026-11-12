@@ -43,7 +43,7 @@ export function MdPane({ session, item, inline, select }: PaneProps) {
 	usePaneSelection(
 		body,
 		(quote) => ({ summary: `${excerpt(quote)} in artifact ${id}`, data: { text: quote, artifact: id } }),
-		inline ? () => {} : select,
+		select,
 	);
 	return (
 		<div className={`views-doc artifact-md ${inline ? "inline" : ""}`} ref={body}>
@@ -252,7 +252,7 @@ export function HtmlPane({ session, item, inline, view, editable, select, annota
 					break;
 				}
 				case "select": {
-					if (!editable || inline) return;
+					if (!editable) return;
 					const summary = typeof message.summary === "string" ? message.summary.trim().slice(0, 2000) : "";
 					select(summary ? { summary, data: (message.data ?? null) as JsonValue } : null);
 					break;
@@ -299,7 +299,7 @@ export function HtmlPane({ session, item, inline, view, editable, select, annota
 			reported.current.timer = undefined;
 			flush();
 		};
-	}, [editable, inline, writer, live, select, sendState, post, quotesJson, fail, paneKey, inlineSize]);
+	}, [editable, writer, live, select, sendState, post, quotesJson, fail, paneKey, inlineSize]);
 
 	// A new version is a new page: it says hello again.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: runs for each version of the page.
