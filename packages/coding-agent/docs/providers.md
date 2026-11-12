@@ -43,6 +43,7 @@ This table covers providers with a single primary API-key variable. Providers th
 | xAI | `XAI_API_KEY` |
 | OpenRouter | `OPENROUTER_API_KEY` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` |
+| Neon AI Gateway | `NEON_AI_GATEWAY_TOKEN` + `NEON_AI_GATEWAY_BASE_URL` |
 | ZAI Coding Plan (Global) | `ZAI_API_KEY` |
 | ZAI Coding Plan (China) | `ZAI_CODING_CN_API_KEY` |
 | OpenCode Zen and Go | `OPENCODE_API_KEY` |
@@ -210,6 +211,17 @@ export CLOUDFLARE_GATEWAY_ID=...
 The account and gateway IDs can come from the process environment or the credential's `env` object in `auth.json`.
 
 `CLOUDFLARE_API_KEY` authenticates Pi to the gateway. Upstream access can use Cloudflare unified billing, credentials stored in the gateway, or an `Authorization` header configured for the provider in `models.json`.
+
+### Neon AI Gateway
+
+The gateway requires a token with the `ai_gateway:invoke` scope and the branch host:
+
+```bash
+export NEON_AI_GATEWAY_TOKEN=...
+export NEON_AI_GATEWAY_BASE_URL=https://br-...-api.ai....aws.neon.tech
+```
+
+The branch host can come from the process environment or the credential's `env` object in `auth.json`.
 
 ### Cloudflare Workers AI
 

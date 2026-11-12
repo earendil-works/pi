@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added the `neon-ai-gateway` provider for Neon AI Gateway, configured with `NEON_AI_GATEWAY_TOKEN` and `NEON_AI_GATEWAY_BASE_URL`. Models come from models.dev and use the gateway's Anthropic Messages, OpenAI Responses, Gemini and Chat Completions endpoints.
+
 ### Changed
 
 - Anthropic message threads are now on by default for any provider whose baseUrl is on api.anthropic.com, not only the `anthropic` provider ([#11987](https://github.com/earendil-works/pi/issues/11987))

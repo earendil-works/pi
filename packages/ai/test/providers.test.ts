@@ -23,6 +23,7 @@ import { cloudflareAIGatewayProvider } from "../src/providers/cloudflare-ai-gate
 import { cloudflareWorkersAIProvider } from "../src/providers/cloudflare-workers-ai.ts";
 import { fauxAssistantMessage, fauxProvider } from "../src/providers/faux.ts";
 import { googleVertexProvider } from "../src/providers/google-vertex.ts";
+import { neonAIGatewayProvider } from "../src/providers/neon-ai-gateway.ts";
 import type {
 	Api,
 	DeferredCancelOptions,
@@ -402,6 +403,26 @@ describe("builtin providers", () => {
 		expect(result?.env).toEqual({
 			CLOUDFLARE_ACCOUNT_ID: "account-id",
 			CLOUDFLARE_GATEWAY_ID: "gateway-id",
+		});
+	});
+
+	it("requires the Neon AI Gateway token and branch host and sends bearer auth", async () => {
+		const missingHost = createModels({ authContext: fakeAuthContext({ NEON_AI_GATEWAY_TOKEN: "neon-token" }) });
+		missingHost.setProvider(neonAIGatewayProvider());
+		const model = missingHost.getModels("neon-ai-gateway")[0];
+		expect(await missingHost.getAuth(model.provider)).toBeUndefined();
+
+		const configured = createModels({
+			authContext: fakeAuthContext({
+				NEON_AI_GATEWAY_TOKEN: "neon-token",
+				NEON_AI_GATEWAY_BASE_URL: "https://br-example-api.ai.c-1.us-east-2.aws.neon.tech",
+			}),
+		});
+		configured.setProvider(neonAIGatewayProvider());
+		const result = await configured.getAuth(model.provider);
+		expect(result?.auth).toEqual({ apiKey: "neon-token", headers: { Authorization: "Bearer neon-token" } });
+		expect(result?.env).toEqual({
+			NEON_AI_GATEWAY_BASE_URL: "https://br-example-api.ai.c-1.us-east-2.aws.neon.tech",
 		});
 	});
 

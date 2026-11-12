@@ -506,6 +506,7 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | Cerebras | `CEREBRAS_API_KEY` |
 | Cloudflare AI Gateway | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_GATEWAY_ID` |
 | Cloudflare Workers AI | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` |
+| Neon AI Gateway | `NEON_AI_GATEWAY_TOKEN` + `NEON_AI_GATEWAY_BASE_URL` (the branch host) |
 | xAI | `XAI_API_KEY` |
 | Fireworks | `FIREWORKS_API_KEY` |
 | Together AI | `TOGETHER_API_KEY` |

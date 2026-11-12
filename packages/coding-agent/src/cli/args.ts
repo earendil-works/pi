@@ -448,6 +448,8 @@ ${chalk.bold("Environment Variables:")}
   CLOUDFLARE_API_KEY               - Cloudflare API token (Workers AI and AI Gateway)
   CLOUDFLARE_ACCOUNT_ID            - Cloudflare account id (required for both)
   CLOUDFLARE_GATEWAY_ID            - Cloudflare AI Gateway slug (required for AI Gateway)
+  NEON_AI_GATEWAY_TOKEN            - Neon AI Gateway token
+  NEON_AI_GATEWAY_BASE_URL         - Neon AI Gateway branch host (required for Neon AI Gateway)
   QWEN_TOKEN_PLAN_API_KEY          - Qwen Token Plan API key (international region)
   QWEN_TOKEN_PLAN_CN_API_KEY       - Qwen Token Plan API key (China region)
   XIAOMI_API_KEY                   - Xiaomi MiMo API key (api.xiaomimimo.com billing)

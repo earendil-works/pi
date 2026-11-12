@@ -52,6 +52,7 @@ export const defaultModelPerProvider: Partial<Record<KnownProvider, string>> = {
 	meta: "muse-spark-1.3",
 	"cloudflare-workers-ai": "@cf/moonshotai/kimi-k2.7-code",
 	"cloudflare-ai-gateway": "workers-ai/@cf/moonshotai/kimi-k2.7-code",
+	"neon-ai-gateway": "claude-opus-5-5",
 	"qwen-token-plan": "qwen3.8-max",
 	"qwen-token-plan-cn": "qwen3.8-max",
 	"qwen-token-plan-individual": "qwen3.8-max",
