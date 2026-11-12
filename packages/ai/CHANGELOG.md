@@ -12,6 +12,10 @@
 - Fixed provider errors reading "Connection closed." not being retried ([#12064](https://github.com/earendil-works/pi/issues/12064))
 - Fixed non-strict Anthropic tool schemas dropping the root `additionalProperties`, so the model was not told that extra arguments are forbidden ([#12067](https://github.com/earendil-works/pi/issues/12067))
 
+### Removed
+
+- Removed the unused `mapStopReasonString` export from `@earendil-works/pi-ai/api/google-shared`
+
 ## [1.5.2] - 2026-11-10
 
 ### Fixed
