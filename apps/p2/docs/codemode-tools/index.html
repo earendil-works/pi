@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Code mode with many tools</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A design proposal · for Armin · 2026-11-12</div>
+  <h1>Code Mode<br>Many Tools</h1>
+  <p class="subtitle">What the model sees of the tools it can script, why it breaks past a few dozen tools, and what we want instead</p>
+  <div class="cover-stats"><div class="stat"><b>3,000</b><span>tokens for every declaration today</span></div><div class="stat"><b>~150–300</b><span>tokens per tool, as declared now</span></div><div class="stat"><b>~25</b><span>tokens per tool, as proposed</span></div><div class="stat"><b>4</b><span>models from 3 families asked</span></div></div>
+  <div class="cover-note"><p>Based on <code>packages/durable/src/codemode/{describe,codemode}.ts</code> at <code>origin/main</code> (after 5e24c6b1f, namespaces
+declared by extensions), <code>packages/coding-agent/src/extensions/{codemode,mcp,tool-search}/</code>, the prompt of a p2
+session after the artifacts deploy, and answers from GPT-6 Astra, GPT-6.1 Sol, Gemini Pro and Claude Opus 5.5 to
+the same brief. Nothing in the suggested state is built. Mario and I want your read on it before we build it in
+Durable, and then in the coding agent, which has the same design.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#current">I. What the model sees now</a></li>
+<li><a href="#problems">II. Where it breaks</a></li>
+<li><a href="#survey">III. What other models want</a></li>
+<li><a href="#suggested">IV. The suggested section</a></li>
+<li><a href="#mcp">V. MCP, before and after</a></li>
+<li><a href="#open-questions">Open Questions</a></li>
+<li><a href="#reference">Appendix A: Reference</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">Last night p2 gained an artifacts plugin with twelve tools, all callable only from code mode, grouped in a namespace
+called <code>artifact</code>. The first thing the agent tried was to write an artifact. The prompt listed nine of the twelve
+tools with full declarations; <code>artifact_write</code>, the tool that creates an artifact, was not among them, and nothing said
+anything was missing. The agent found it only because it suspected a gap and called <code>ALL_TOOLS</code>. A model that trusts
+the list would have concluded that artifacts cannot be created and written an HTML file with <code>bash</code> instead.</p>
+<p>This is not a bug in one plugin. Code mode lists tools under a fixed budget of 3,000 estimated tokens, each tool as a
+full TypeScript declaration with a doc comment per field. That fits about twenty tools. Past that, whatever loses the
+budget round disappears silently. p2 sessions now have about sixty callable tools; with a few MCP servers, hundreds.</p>
+<h3 id="seven-things-to-know">Seven things to know</h3>
+<ol class="findings">
+<li><strong>The listing is a prompt section, not the tool description.</strong> The code mode tool&#39;s description is fixed; the
+<code>codemode</code> section lists callable tools and changes only when tools are added or removed.</li>
+<li><strong>Each tool costs 150–300 tokens there.</strong> Full declarations with per-field comments and schema constraints.</li>
+<li><strong>What does not fit vanishes without a trace.</strong> Inside a namespace there is no hint; ungrouped tools get one
+generic line.</li>
+<li><strong>Discovery returns text, not contracts.</strong> <code>searchTools</code> returns descriptions and <code>describeNamespace</code> returns
+names, so finding a tool usually costs a second round trip before the real script.</li>
+<li><strong>Round trips cost more than tokens.</strong> A cached prompt token costs about a tenth of an uncached one; a round trip
+costs a model turn. All four models we asked said so first.</li>
+<li><strong>Proposal: one line per tool, full types, no comments.</strong> About 25 tokens a tool, so a hundred tools fit; field
+docs on demand; an explicit &quot;+N more&quot; when anything is left out; key tools first.</li>
+<li><strong>MCP stays cache-stable.</strong> A server is a namespace card built from configuration, identical whether connected
+or not; its tools are found through discovery calls that return signatures.</li>
+</ol>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p><strong>Code mode</strong> is the tool through which the model runs a JavaScript script that calls other tools as <code>await tools.&lt;name&gt;(args)</code>. A <strong>callable tool</strong> is one scripts may call (<code>callers</code> includes <code>&quot;tools&quot;</code>). The <strong>codemode
+section</strong> is the system prompt section listing callable tools. A <strong>namespace</strong> groups tools: since 5e24c6b1f an
+extension declares <code>namespace: { name, description, instructions? }</code> and its tools belong to it. A <strong>deferred</strong> tool is
+callable but never listed, only found by search (MCP tools, which appear when a server connects). The <strong>budget</strong> is
+<code>inlineBudget</code>, 3,000 estimated tokens (characters / 4) for the listed declarations. A <strong>round trip</strong> is one model turn
+spent on a script whose only purpose is to learn something before the real script.</p>
+</section>
+
+<section class="chapter" id="current"><header class="opener"><div class="numeral">I</div><h2>What the model sees now</h2><p class="lede">The codemode section today, verbatim, and the rules that build it.</p></header>
+<p class="dropcap">The model sees two things about code mode. The code mode tool&#39;s description is fixed for every conversation: the
+sandbox, the globals, the discovery functions. The codemode section, rendered by <code>codemodeSection</code> in
+<code>packages/durable/src/codemode/describe.ts</code>, lists the callable tools. The coding agent has the same design in
+<code>packages/coding-agent/src/extensions/codemode/tool.ts</code>, with the same default budget and the same round-robin.</p>
+<h3 id="one-tool-as-listed">One tool, as listed</h3>
+<p>Every listed tool is its description followed by its full declaration, with a comment per field and the schema&#39;s
+constraints as JSDoc tags:</p>
+<pre class="plain"><code>### `artifact_list`
+The session's artifacts (id, kind, title, newest version, updated), the newest first.
+
+codemode tool declaration:</code></pre>
+<pre><code><span class="tk-k">declare</span> <span class="tk-k">const</span> tools: { <span class="tk-f">artifact_list</span>(args: { kind?: <span class="tk-s">"html"</span> | <span class="tk-s">"md"</span>; }): <span class="tk-t">Promise</span>&lt;{ artifacts: <span class="tk-t">Array</span>&lt;{
+  <span class="tk-c">// @pattern ^[a-z0-9][a-z0-9_-]{0,63}$</span>
+  id: string;
+  kind: <span class="tk-s">"html"</span> | <span class="tk-s">"md"</span>;
+  <span class="tk-c">// @minLength 1 @maxLength 200</span>
+  title: string;
+  updated: number;
+  <span class="tk-c">// @integer @minimum 1</span>
+  version: number;
+}&gt;; }&gt;; };</code></pre>
+<p>That is about 130 tokens for a small tool. <code>bash</code> with its result type is about 200; <code>view_list</code>, whose result
+carries annotations, is over 300.</p>
+<h3 id="the-whole-section-as-a-p2-session-sees-it">The whole section, as a p2 session sees it</h3>
+<p>Abridged only where marked; this is the section of the session that wrote this book:</p>
+<pre class="plain"><code>Tools scripts can call (`await tools.&lt;name&gt;(args)`):
+
+Some tools are not listed: find them with `searchTools()`.
+
+### `agent`        … full declaration …
+### `read`         … full declaration …
+### `write`        … full declaration …
+### `bash`         … full declaration …
+### `reload_plugins`, `history_search`, `location_envs`, `location_dirs`, `location_move`, `send_file`  … each in full …
+    (edit, history_read, ports, rename_session and others: not listed)
+
+## artifact
+Artifacts (html, md) of this session: write, edit, show inline or beside the chat.
+
+### `artifact_list`, `artifact_read`, `artifact_show`, `artifact_open`, `artifact_delete`,
+    `artifact_html_errors`, `artifact_html_eval`, `artifact_html_state`, `artifact_html_set_state`  … each in full …
+    (artifact_write, artifact_edit, artifact_html_logs: not listed, no hint)
+
+## mcp__radius
+Tools of the MCP server "radius" (find them with searchTools()). It needs the user's sign-in: if it has no tools, ask
+the user to sign in from the MCP panel in p2's sidebar or at /mcp/sign-in/radius on p2.
+
+## view
+Views: panes beside the transcript every viewer of the session sees …: list, open, close, arrange, resolve annotations.
+
+### `view_list`, `view_open`, `view_close`, `view_arrange`, `view_resolve`  … each in full …</code></pre>
+<h3 id="how-the-budget-is-spent">How the budget is spent</h3>
+<p><code>selectCatalog</code> groups tools: ungrouped tools first, then namespaces by name. In each round every group places its
+cheapest remaining tool; a group whose next tool does not fit drops out while the others go on. Headings and
+namespace descriptions are outside the budget. Deferred tools are left out entirely.</p>
+<p>The round-robin is fair between groups and blind to importance. <code>artifact_write</code> takes more tokens than
+<code>artifact_show</code>, so it comes late in its group&#39;s queue, and the budget ran out first.</p>
+<h3 id="discovery-today">Discovery today</h3>
+<p>Scripts have four globals for what the section does not list:</p>
+<pre><code>ALL_TOOLS: { name: string; ... }[]                       <span class="tk-c">// every callable tool</span>
+<span class="tk-f">searchTools</span>(query, { limit?, namespace? }): { name, description }[]   <span class="tk-c">// BM25; description = description + declaration</span>
+<span class="tk-f">describeTool</span>(name): string                               <span class="tk-c">// description + declaration</span>
+<span class="tk-f">describeNamespace</span>(name): { name, description?, instructions?, tools: string[] }   <span class="tk-c">// names only</span></code></pre>
+<p><code>searchTools</code> does return declarations inside its text, so search is one round trip. <code>describeNamespace</code> returns
+names, so browsing a namespace is two: names, then <code>describeTool</code> per tool.</p>
+<h3 id="mcp-today">MCP today</h3>
+<p>In p2 each MCP server is an extension whose namespace is the server (<code>mcp__radius</code>); its tools are deferred, so its
+heading and description are listed and none of its tools. The description says how to reach them and carries the
+sign-in hint. The coding agent instead has a separate <code>mcp_servers</code> section listing every configured server with its
+reach (<code>codemode</code> or <code>tool_search</code>) and a one-line summary from its configured description or the server&#39;s
+<code>instructions</code> once connected; without code mode, <code>tool_search</code> loads matching tools into the model&#39;s tool list for
+the next call.</p>
+<p>Both keep the prompt byte-stable when a server connects: what is listed comes from configuration, never from what is
+connected. That property is worth keeping in any change.</p>
+</section>
+
+<section class="chapter" id="problems"><header class="opener"><div class="numeral">II</div><h2>Where it breaks</h2><p class="lede">Five failures, each seen in practice or named by every model we asked.</p></header>
+<p class="dropcap">All four models we asked put the same failure first, and it is the one we hit.</p>
+<h3 id="a-cut-list-looks-complete">A cut list looks complete</h3>
+<p>When a namespace shows nine tools in full detail, the model reads them as the namespace&#39;s API. It does not suspect a
+tenth. The generic line &quot;Some tools are not listed&quot; appears only for ungrouped tools, at the top, far from the
+namespace. Gemini&#39;s trace of the same case: it would conclude the nine are complete, skip search, and try to make
+<code>artifact_edit</code> create an artifact. Opus: &quot;When a list is cut without saying so, I am wrong with full confidence.
+That is worse than having no list at all.&quot;</p>
+<h3 id="twenty-tools-is-not-many">Twenty tools is not many</h3>
+<p>At 150–300 tokens a tool, 3,000 tokens list about twenty. A p2 session has about sixty callable tools before MCP. The
+comments that fill each declaration (<code>// Path to the file to read (relative or absolute)</code>, <code>// @minLength 1</code>) are
+what makes the budget small, and the model needs few of them to call a tool correctly: names, optionality, literal
+unions and the result shape carry almost all of it.</p>
+<h3 id="importance-is-invisible">Importance is invisible</h3>
+<p>The round-robin cannot know that <code>artifact_write</code> matters more than <code>artifact_html_set_state</code>. Nothing in a
+namespace&#39;s declaration says which tools are the core.</p>
+<h3 id="discovery-costs-round-trips">Discovery costs round trips</h3>
+<p>Every discovery call that returns names forces another script before the work. <code>describeNamespace</code> returns names;
+<code>describeTool</code> takes one name at a time. A model that needs three tools from a namespace spends two round trips before
+the one that does the job. All four models put round trips above tokens: a cached prompt token costs about a tenth of
+an uncached one and adds no latency; a round trip costs a full model turn.</p>
+<h3 id="instructions-are-easy-to-miss">Instructions are easy to miss</h3>
+<p>A namespace&#39;s <code>instructions</code> (the how-to: write before show, check errors after each edit) come only from
+<code>describeNamespace</code>. A model that finds a tool by search never sees them.</p>
+</section>
+
+<section class="chapter" id="survey"><header class="opener"><div class="numeral">III</div><h2>What other models want</h2><p class="lede">Four models from three families, one brief, mostly the same answer.</p></header>
+<p class="dropcap">We gave GPT-6 Astra, GPT-6.1 Sol, Gemini Pro and Claude Opus 5.5 the current design and two proposals (one line per
+tool; or namespaces only, then a call to list a namespace&#39;s tool names) and asked for the ideal design at 10, 100,
+1,000 and 10,000 tools, from the side of the model that uses it. The full answers are in
+<code>/tmp/tools-design-*.md</code> on slayer.</p>
+<h3 id="where-all-four-agree">Where all four agree</h3>
+<ul>
+<li><strong>Never truncate silently.</strong> Every list says whether it is complete; anything left out ends with &quot;+N more&quot; and the
+call that lists it.</li>
+<li><strong>Discovery returns contracts, not names.</strong> A names-only step is dead weight: names do not separate similar tools,
+so a describe round trip follows anyway. The list call should return signature lines.</li>
+<li><strong>Priority, not round-robin.</strong> The author declares the core tools of a namespace; they are always listed. Core tools
+and the session&#39;s own namespaces get a reserved share that MCP servers cannot eat.</li>
+<li><strong>Result types matter as much as arguments.</strong> Chaining calls in one script depends on <code>r.id</code> versus
+<code>r.artifact.id</code>.</li>
+<li><strong>The prompt is a function of configuration only.</strong> No connection state, no live counts, no usage-based ordering.</li>
+<li><strong>TypeScript, not JSON Schema.</strong> <code>title?: string</code> puts optionality on the field; literal unions are written out.</li>
+</ul>
+<h3 id="good-ideas-from-one-or-two">Good ideas from one or two</h3>
+<ul>
+<li><strong>Errors as discovery</strong> (Opus, Gemini): an unknown tool or field throws with the nearest correct signatures, so a
+wrong guess costs one retry with the fix in hand.</li>
+<li><strong>Namespace instructions travel with every contract</strong> (Sol, Astra, Gemini): search and describe include the
+instructions of each namespace they return tools from.</li>
+<li><strong>Batched discovery</strong> (all but Gemini, which wants it too in another form): <code>describeTool([&quot;a&quot;, &quot;b&quot;])</code>,
+<code>searchTools([&quot;send mail&quot;, &quot;gmail draft&quot;])</code>.</li>
+<li><strong>Shared types once per namespace</strong> (Gemini): <code>type Artifact = {…}</code> once, instead of the same object in every line.</li>
+<li><strong>Do not advertise <code>ALL_TOOLS</code></strong> (Sol, Astra, Gemini): it invites substring filtering instead of search.</li>
+</ul>
+<h3 id="where-they-disagree">Where they disagree</h3>
+<p>Opus and Gemini want one-line signatures for every listed tool. Sol and Astra warn that a shortened signature looks
+like a complete contract while hiding constraints; they would list complete contracts for a few pinned tools and only
+name and purpose for the rest. Our proposal keeps full types on the line and drops only comments and constraints,
+which answers most of the warning; the rest is an open question below.</p>
+</section>
+
+<section class="chapter" id="suggested"><header class="opener"><div class="numeral">IV</div><h2>The suggested section</h2><p class="lede">One line per tool with full types, tiers instead of silence, discovery that returns signatures.</p></header>
+<p class="dropcap">The section keeps its place and role. What changes is what each tool costs, what happens when the budget runs out, and
+what discovery returns.</p>
+<h3 id="one-tool-as-proposed">One tool, as proposed</h3>
+<pre class="plain"><code>artifact_list(args: { kind?: "html" | "md" }): { artifacts: Artifact[] }  // The session's artifacts, newest first.</code></pre>
+<p>Rendered from the schema: parameter names, <code>?</code> for optional, literal unions, nested objects and the result type in
+full (shared types hoisted, below); then the tool&#39;s <code>summary</code>, or the first sentence of its description. Field
+comments and constraints (<code>@pattern</code>, <code>@maxLength</code>) are left out; <code>describeTool</code> has them. Depth past one nested
+level, or a union of more than six members, renders as <code>{…}</code> with the full form in <code>describeTool</code>, so one tool cannot
+eat the budget.</p>
+<h3 id="the-whole-section-as-proposed">The whole section, as proposed</h3>
+<p>The same session, same tools:</p>
+<pre class="plain"><code>Scripts call `await tools.&lt;name&gt;(args)` and return a value. Signatures are TypeScript; `?` marks an optional field.
+A list is complete unless it ends in "+N more". A wrong tool name or field throws with the right signature.
+Discovery: listTools(ns) → signature lines · searchTools(query | queries, { namespace?, limit? }) → signature lines
+and namespace instructions · describeTool(name | names) → full declarations with field docs.
+
+agent(args: { prompt: string; schema: object; model?: string; thinkingLevel?: string; tools?: string[]; label?: string }): unknown  // One-shot subagent; its answer is validated against schema.
+read(args: { path: string; offset?: number; limit?: number }): string | Image  // Read a file (2,000 lines / 50 KB).
+write(args: { path: string; content: string }): string  // Create or overwrite a file.
+edit(args: { path: string; edits: { oldText: string; newText: string }[] }): string  // Exact replacements in a file.
+bash(args: { command: string; timeout?: number }): { exitCode: number; output: string; truncated: boolean; fullOutputPath?: string }  // Run a shell command.
+history_search(args: { query: string; before?: number; limit?: number }): string  // Search this conversation's history.
++6 more: history_read, reload_plugins, location_envs, location_dirs, location_move, send_file (describeTool(name))
+
+## artifact: Artifacts (html, md) of this session: write, edit, show inline or beside the chat.
+type Artifact = { id: string; kind: "html" | "md"; title: string; version: number; updated: number }
+artifact_write(args: { id?: string; kind: "html" | "md"; title: string; content: string }): { id: string; version: number }  // New artifact, or a new version of id.
+artifact_edit(args: { id: string; edits: { old: string; new: string }[] }): { version: number }  // Exact replacements in the newest version.
+artifact_read(args: { id: string; version?: number }): Artifact &amp; { content: string }
+artifact_list(args: { kind?: "html" | "md" }): { artifacts: Artifact[] }  // Newest first.
+artifact_show(args: { id: string }): { id: string; kind: string }  // In the transcript, for everyone.
+artifact_open(args: { id: string }): { view: string }  // Beside the chat.
++6 more: artifact_delete, artifact_html_errors, artifact_html_logs, artifact_html_eval, artifact_html_state, artifact_html_set_state (listTools("artifact"))
+
+## view: Panes beside the transcript: list, open, close, arrange, resolve annotations.
+view_open(args: { kind: string; item?: string; title?: string; id?: string }): { id: string }  // markdown (item: a file), changes, or a plugin's kind.
+view_list(args: {}): { views: { id: string; kind: string; item?: string; title: string }[]; selections: {…}[]; annotations: {…}[] }
++3 more: view_close, view_arrange, view_resolve (listTools("view"))
+
+## mcp__radius: MCP server "radius": organization artifacts and knowledge. Tools: listTools("mcp__radius").</code></pre>
+<p>The &quot;+N more&quot; lines here are only for illustration: at about 25 tokens a line, every one of these sixty tools fits in
+3,000 tokens with room to spare. They appear when the budget is genuinely exceeded.</p>
+<h3 id="tiers-instead-of-silence">Tiers instead of silence</h3>
+<p>When tools do not fit, each group degrades in three steps:</p>
+<ol>
+<li><strong>Signature lines</strong> for as many tools as fit, the group&#39;s key tools first.</li>
+<li><strong>Names</strong> for the rest: <code>+6 more: a, b, c (listTools(&quot;artifact&quot;))</code>. A name costs two to five tokens and tells the
+model the tool exists.</li>
+<li><strong>A count</strong> when even the names do not fit: <code>+40 more (listTools(&quot;mcp__github&quot;))</code>.</li>
+</ol>
+<p>Headings and descriptions of every namespace are placed first, outside the budget. The counts and names come from
+the declared tools, so they change only when tools are added or removed by configuration or a reload, as today.</p>
+<h3 id="priority">Priority</h3>
+<p>A namespace declares its key tools; tools may declare a short <code>summary</code> that separates them from their siblings:</p>
+<pre><code><span class="tk-c">// packages/durable/src/harness/types.ts (proposed additions)</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">ToolNamespace</span> = {
+	<span class="tk-k">readonly</span> name: string;
+	<span class="tk-k">readonly</span> description: string;
+	<span class="tk-k">readonly</span> instructions?: string;
+	<span class="tk-c">/** The namespace's core tools, listed first and always with their signature while the namespace is shown. */</span>
+	<span class="tk-k">readonly</span> primary?: <span class="tk-k">readonly</span> string[];
+};
+
+<span class="tk-c">// on a tool registration</span>
+<span class="tk-k">readonly</span> summary?: string;   <span class="tk-c">// one clause that tells it apart from its siblings; default: first sentence of description</span></code></pre>
+<p>The budget is spent in this order: the ungrouped tools (the core: <code>read</code>, <code>edit</code>, <code>bash</code>), then every namespace&#39;s
+primary tools, then the rest in proportion to each namespace&#39;s size instead of one tool per round.</p>
+<h3 id="shared-types">Shared types</h3>
+<p>A namespace whose tools pass the same object around gets it once as a <code>type</code> line under its heading, rendered from
+schemas that are equal (<code>artifact_read</code> and <code>artifact_list</code> both return the artifact summary). This halves the
+artifact namespace&#39;s lines and tells the model which results feed which arguments.</p>
+<h3 id="discovery-that-returns-signatures">Discovery that returns signatures</h3>
+<pre><code><span class="tk-f">listTools</span>(ns: string): string
+  <span class="tk-c">// every tool of ns as signature lines, primary first, with the namespace's types; the same format as the prompt</span>
+<span class="tk-f">searchTools</span>(query: string | string[], options?: { namespace?: string; limit?: number }):
+  { name: string; namespace: string | <span class="tk-k">null</span>; line: string }[] &amp; { instructions: <span class="tk-t">Record</span>&lt;string, string&gt; }
+  <span class="tk-c">// BM25 over names, summaries, descriptions, parameter names and namespace descriptions; several queries merged;</span>
+  <span class="tk-c">// the instructions of every namespace a result comes from</span>
+<span class="tk-f">describeTool</span>(name: string | string[]): string
+  <span class="tk-c">// full declarations with field comments, constraints and the namespace's instructions; several at once</span>
+<span class="tk-f">describeNamespace</span>(ns: string): { description: string; instructions: string; lines: string }
+  <span class="tk-c">// instructions plus every signature line</span></code></pre>
+<p>A typical cold use is then two scripts, never three: one that searches or lists and returns signatures, and the one
+that does the work. When the model already knows the namespace, it can list and work in one script, since the
+signatures arrive as data it can read in the next turn anyway.</p>
+<p><code>ALL_TOOLS</code> stays available but is no longer advertised in the tool description.</p>
+<h3 id="errors-that-carry-the-fix">Errors that carry the fix</h3>
+<pre class="plain"><code>Unknown tool artifact_create. Did you mean:
+  artifact_write(args: { id?: string; kind: "html" | "md"; title: string; content: string }): { id: string; version: number }
+artifact_write: unknown field "text"; expected
+  artifact_write(args: { id?: string; kind: "html" | "md"; title: string; content: string }): { id: string; version: number }</code></pre>
+<p>The script&#39;s error already reaches the model; adding the nearest signatures turns a failed guess into a retry with
+the answer attached.</p>
+</section>
+
+<section class="chapter" id="mcp"><header class="opener"><div class="numeral">V</div><h2>MCP, before and after</h2><p class="lede">Servers stay cards built from configuration; their tools come through discovery.</p></header>
+<p class="dropcap">The cache rule decides this chapter: nothing that depends on whether a server is connected may enter the prompt.</p>
+<h3 id="before-in-p2">Before, in p2</h3>
+<pre class="plain"><code>## mcp__radius
+Tools of the MCP server "radius" (find them with searchTools()). It needs the user's sign-in: if it has no tools, ask
+the user to sign in from the MCP panel in p2's sidebar or at /mcp/sign-in/radius on p2.</code></pre>
+<p>Its tools are deferred: never listed, found only by <code>searchTools</code>, which returns descriptions with declarations
+inside.</p>
+<h3 id="before-in-the-coding-agent">Before, in the coding agent</h3>
+<pre class="plain"><code>MCP servers whose tools are not declared to you. Call the tools of `codemode` servers from codemode scripts.
+- mcp__github (codemode): GitHub issues, pull requests and repositories
+- mcp__linear (tool_search): Linear issues and projects</code></pre>
+<p>Plus the <code>tool_search</code> tool for servers not reached through code mode, which loads matching tools into the model&#39;s
+tool list for the next call.</p>
+<h3 id="after">After</h3>
+<pre class="plain"><code>## mcp__radius: MCP server "radius": organization artifacts and knowledge. Needs the user's sign-in (MCP panel). Tools: listTools("mcp__radius").
+## mcp__github: MCP server "github": issues, pull requests, repositories. Tools: listTools("mcp__github").</code></pre>
+<ul>
+<li><strong>The card is built from configuration</strong>: the server&#39;s name, its configured description (or the first line of its
+<code>instructions</code>, once known and then fixed for the configuration), and a static sign-in hint when the server uses
+OAuth. It is byte-identical whether the server is connected or not.</li>
+<li><strong>Its tools stay deferred</strong>: never in the prompt, not even by name, since their names arrive with the connection.</li>
+<li><strong><code>listTools(&quot;mcp__radius&quot;)</code></strong> returns the server&#39;s signature lines when connected, and <code>not connected: sign in from the MCP panel</code> when not, never an empty list that reads as &quot;no tools&quot;.</li>
+<li><strong><code>searchTools</code></strong> covers connected servers&#39; tools and returns their signature lines, with the server&#39;s instructions.</li>
+<li><strong>The coding agent&#39;s <code>mcp_servers</code> section</strong> becomes these cards in the codemode section. <code>tool_search</code> for
+sessions without code mode stays as it is.</li>
+</ul>
+</section>
+
+<section class="chapter epilogue" id="open-questions"><header class="opener"><div class="numeral">∴</div><h2>Open Questions</h2><p class="lede">What we would like your view on before building it.</p></header>
+<p class="dropcap">The proposal changes one renderer and the discovery globals in Durable, adds <code>primary</code> and <code>summary</code> to the
+declarations, and then needs the same change in the coding agent, whose code mode has the same design. It does not
+change how scripts run.</p>
+<h3 id="needs-a-decision">Needs a decision</h3>
+<ul>
+<li><strong>One-line signatures for every listed tool, or complete contracts for a few pinned tools and name plus purpose for
+the rest?</strong> Opus and Gemini want the first, Sol and Astra the second. We lean to the first with full types on the
+line; the risk is a constraint the line hides (a slug pattern, 1-based indices). A middle way: keep field comments
+under about 40 characters inline.</li>
+<li><strong>Freeze the section per conversation?</strong> Opus suggests rendering it once and announcing later tool changes as a
+transcript note (<code>[tools changed] added: …</code>), so a plugin reload mid-conversation never breaks the prefix cache.
+Today a reload changes the section.</li>
+<li><strong>Errors with signatures</strong>: in Durable&#39;s nested-call path for unknown tools, and in schema validation for unknown
+fields. Both are trust-boundary checks that exist; only the message changes.</li>
+<li><strong>The budget</strong>: keep 3,000 with the cheaper lines, or make it proportional to the model&#39;s context.</li>
+<li><strong>Same change in the coding agent</strong>, with its <code>mcp_servers</code> section folded into the cards, or keep that section
+there.</li>
+</ul>
+</section>
+
+<section class="chapter appendix" id="reference"><header class="opener"><div class="numeral">A</div><h2>Reference</h2></header>
+<h3 id="files">Files</h3>
+<table>
+<thead>
+<tr>
+<th>What</th>
+<th>Where</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Section renderer, budget, round-robin</td>
+<td><code>packages/durable/src/codemode/describe.ts</code> (<code>codemodeSection</code>, <code>selectCatalog</code>)</td>
+</tr>
+<tr>
+<td>Discovery globals</td>
+<td><code>packages/durable/src/codemode/codemode.ts</code> (<code>searchTools</code>, <code>describeTool</code>, <code>describeNamespace</code>)</td>
+</tr>
+<tr>
+<td>Namespaces by extension</td>
+<td><code>packages/durable/src/harness/types.ts</code> (<code>Extension.namespace</code>, <code>ToolNamespace</code>), 5e24c6b1f</td>
+</tr>
+<tr>
+<td>p2&#39;s MCP extensions</td>
+<td><code>apps/p2/plugins/mcp/tools.ts</code></td>
+</tr>
+<tr>
+<td>Coding agent&#39;s code mode</td>
+<td><code>packages/coding-agent/src/extensions/codemode/tool.ts</code></td>
+</tr>
+<tr>
+<td>Coding agent&#39;s MCP and tool search</td>
+<td><code>packages/coding-agent/src/extensions/mcp/index.ts</code>, <code>extensions/tool-search/tool.ts</code></td>
+</tr>
+<tr>
+<td>The four models&#39; answers</td>
+<td><code>/tmp/tools-design-*.md</code> on slayer</td>
+</tr>
+</tbody></table>
+<h3 id="glossary">Glossary</h3>
+<ul>
+<li><strong>Budget</strong>: <code>inlineBudget</code>, estimated tokens (characters / 4) for listed tools; default 3,000.</li>
+<li><strong>Callable tool</strong>: a tool scripts may call (<code>callers</code> includes <code>&quot;tools&quot;</code>).</li>
+<li><strong>Card</strong>: a namespace&#39;s heading line with its description, always listed.</li>
+<li><strong>Deferred tool</strong>: callable, never listed; found by discovery.</li>
+<li><strong>Primary tools</strong>: a namespace&#39;s declared core tools, always listed with signatures (proposed).</li>
+<li><strong>Round trip</strong>: a model turn spent only to learn something before the real script.</li>
+<li><strong>Signature line</strong>: one tool as <code>name(args: {…}): Result  // summary</code>.</li>
+</ul>
+</section>
+
+<p class="colophon">Code mode with many tools · first edition · 2026-11-12 · Durable and coding agent at origin/main</p>
+</div></div>
+
+</body></html>
