@@ -1,35 +1,42 @@
-// Views in Chromium: the agent's views show beside the transcript; a custom view's frame gets its state, saves the
-// person's changes and selection (the composer's chip shows what the next message carries) and follows the agent's
-// changes; comments, removals and drawings mark up panes; a tab drags beside another area; phones show one pane at a
-// time. Fake provider (`view <json>`), a disposable session.
+// Views in Chromium: the agent's views show beside the transcript; an html artifact's page (a glyph editor, written
+// against `window.p2view` as Max's is) gets its state, saves the person's changes (`setState` with a function) and
+// selection (the composer's chip shows what the next message carries) and follows the agent's state; comments,
+// removals and drawings mark up panes; a tab drags beside another area; phones show one pane at a time. Fake provider
+// (`codemode <script>`), a disposable session.
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
+import { ArtifactPage } from "../../plugins/artifacts/contract.ts";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
-import { ViewState, Views } from "../../plugins/views/contract.ts";
+import { Views } from "../../plugins/views/contract.ts";
 import type { RefIn } from "../../src/runtime/chord.ts";
 import { Browser, browserTests } from "./browser.ts";
 import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
 
-/** A small editor: three points; clicking one selects it (state and selection), the agent's state redraws it. */
+/**
+ * A small glyph editor: three points; clicking one selects it (`setState` with a function, and `select`), the agent's
+ * state redraws it; `from` of the last state it got is in `window.lastFrom`.
+ */
 const EDITOR = `<!doctype html><html><head><style>body{margin:0;padding:12px;font-family:sans-serif}</style></head><body>
 <p id=title></p><div id=points></div>
 <script>
+const P2 = window.p2view || null;
 let state;
 const draw = () => {
 	document.getElementById('title').textContent = 'Glyph ' + state.glyph;
 	document.getElementById('points').innerHTML = state.points.map((p, i) => '<button data-i="' + i + '">' + (state.selected === i ? '*' : '') + 'point ' + i + '</button>').join('');
 };
-p2view.onState((value) => { state = value || { glyph: 'a', points: [[0, 0], [1, 1], [2, 0]] }; draw(); });
+P2.onState((value, from) => { window.lastFrom = from; state = value || { glyph: 'a', points: [[0, 0], [1, 1], [2, 0]] }; draw(); });
 document.getElementById('points').addEventListener('click', (event) => {
 	const i = Number(event.target.dataset.i);
+	if (P2.readOnly) return;
+	P2.setState((current) => ({ ...(current || state), selected: i }));
 	state = { ...state, selected: i };
-	p2view.setState(state);
-	p2view.select('point ' + i + ' of glyph ' + state.glyph, { point: i });
+	P2.select('point ' + i + ' of glyph ' + state.glyph, { point: i });
 	draw();
 });
 </script></body></html>`;
@@ -45,17 +52,25 @@ describe("views in Chromium", { skip: !browserTests }, () => {
 	let views: RefIn<typeof Views, "editor">;
 	let calls = 0;
 
-	const tool = async (args: Record<string, unknown>) => {
+	/** Runs `script` in code mode as the agent, and waits for its turn to end. */
+	const script = async (code: string) => {
 		calls++;
-		await chat.send({ text: `view ${JSON.stringify(args)}`, requestId: `view-${calls}` }, BACKGROUND_CONTEXT);
-		await until(chat.view, (value) => {
+		await chat.send({ text: `codemode ${code}`, requestId: `script-${calls}` }, BACKGROUND_CONTEXT);
+		const results = await until(chat.view, (value) => {
 			const done = (value?.entries ?? []).flatMap((entry) =>
 				(entry.model ?? []).filter(
-					(message): message is ToolResultMessage => message.role === "toolResult" && message.toolName === "view",
+					(message): message is ToolResultMessage =>
+						message.role === "toolResult" && message.toolName === "codemode",
 				),
 			);
 			return done.length === calls && !(value?.docs["pi.live"] as { run?: unknown })?.run;
 		});
+		const result = (results?.entries ?? [])
+			.flatMap((entry) => entry.model ?? [])
+			.filter((message): message is ToolResultMessage => message.role === "toolResult")
+			.at(-1);
+		assert.equal(result?.isError, false, JSON.stringify(result?.content));
+		return result;
 	};
 	const mouse = (type: string, x: number, y: number) =>
 		browser.call("Input.dispatchMouseEvent", {
@@ -75,8 +90,13 @@ describe("views in Chromium", { skip: !browserTests }, () => {
 		session = (await sessions.create({ cwd: fixture.workspace, title: "Views" }, BACKGROUND_CONTEXT)).id;
 		chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
 		views = await holdIn(owner, Views, { session }, "editor");
-		await tool({ action: "open", kind: "markdown", title: "Plan", path: "notes.md" });
-		await tool({ action: "open", kind: "custom", title: "Glyph editor", id: "glyph", html: EDITOR });
+		await script(`await tools.view_open({ kind: "markdown", title: "Plan", item: "notes.md", id: "plan" });`);
+		await script(
+			[
+				`await tools.artifact_write({ id: "glyph", kind: "html", title: "Glyph editor", content: ${JSON.stringify(EDITOR)} });`,
+				`await tools.view_open({ kind: "html", item: "glyph", title: "Glyph editor", id: "glyph" });`,
+			].join("\n"),
+		);
 		browser = await Browser.start();
 		await browser.signIn(fixture.owner);
 	});
@@ -108,34 +128,54 @@ describe("views in Chromium", { skip: !browserTests }, () => {
 		);
 	});
 
-	it("gives a custom view its state, saves the person's changes and selection, and follows the agent's", async () => {
+	it("gives an html page its state, saves the person's changes and selection, and follows the agent's", async () => {
 		await browser.wait(`document.querySelector('.views-frame')`);
+		const frame = (expression: string) => browser.evaluateInFrame<string>("/artifact-frame", expression);
 		await poll(
 			() =>
-				browser
-					.evaluateInFrame<string>("/view-frame", "document.getElementById('title').textContent")
+				frame("document.getElementById('title').textContent")
 					.then((title) => title === "Glyph a")
 					.catch(() => false),
 			20_000,
 			"the frame drew its initial state",
 		);
-		await browser.evaluateInFrame("/view-frame", `document.querySelector('[data-i="1"]').click()`);
-		const state = await holdIn(fixture.browser(), ViewState, { session, view: "glyph" }, "editor");
-		await until(state.value, (value) => (value as { selected?: number } | null)?.selected === 1);
+		assert.equal(await frame("window.lastFrom"), "init");
+		await browser.evaluateInFrame("/artifact-frame", `document.querySelector('[data-i="1"]').click()`);
+		const page = await holdIn(fixture.browser(), ArtifactPage, { session, id: "glyph" }, "editor");
+		await until(page.value, (value) => (value as { selected?: number } | null)?.selected === 1);
 		await browser.wait(`document.querySelector('.views-chip')?.textContent.includes('Selection in Glyph editor')`);
-		// Dropped from the next message (the chip's ×): the fake provider reads the message as the tool's call.
+		const [view] = (await until(views.views, (list) => list.some((each) => each.selection))).filter(
+			(each) => each.selection,
+		);
+		assert.deepEqual([view?.id, view?.selection?.summary], ["glyph", "point 1 of glyph a"]);
+		// Dropped from the next message (the chip's ×): the fake provider reads the message as the script.
 		await browser.click(".views-chip > button");
 		await browser.wait(`!document.querySelector('.views-chip')`);
-		await tool({ action: "update", id: "glyph", merge: { glyph: "b" } });
+		// The agent reads the whole state as an object and replaces it: the page draws it.
+		const result = await script(
+			[
+				`const { state } = await tools.artifact_html_state({ id: "glyph" });`,
+				`await tools.artifact_html_set_state({ id: "glyph", state: { ...state, glyph: "b" } });`,
+				"return state.selected;",
+			].join("\n"),
+		);
+		assert.match(JSON.stringify(result?.content), /1/);
 		await poll(
-			() =>
-				browser
-					.evaluateInFrame<string>("/view-frame", "document.getElementById('title').textContent")
-					.then((title) => title === "Glyph b"),
+			() => frame("document.getElementById('title').textContent").then((title) => title === "Glyph b"),
 			20_000,
 			"the frame drew the agent's state",
 		);
-		state.release();
+		assert.equal(await frame("window.lastFrom"), "update");
+		assert.deepEqual(page.value.value, {
+			glyph: "b",
+			points: [
+				[0, 0],
+				[1, 1],
+				[2, 0],
+			],
+			selected: 1,
+		});
+		page.release();
 	});
 
 	it("comments on selected text and draws over a pane", async () => {
@@ -203,7 +243,7 @@ describe("views in Chromium", { skip: !browserTests }, () => {
 	it("adopts the agent's arrangement", async () => {
 		// The notes would go with the next message, which the fake provider reads as the tool's call.
 		await views.discard(BACKGROUND_CONTEXT);
-		await tool({ action: "arrange", layout: { column: ["plan", { row: ["transcript", "glyph"] }] } });
+		await script(`await tools.view_arrange({ layout: { column: ["plan", { row: ["transcript", "glyph"] }] } });`);
 		await browser.wait(
 			`(() => { const box = (id) => document.querySelector('[data-view-pane="' + id + '"]').getBoundingClientRect(); return box('plan').bottom <= box('transcript').top && box('transcript').right <= box('glyph').left; })()`,
 		);

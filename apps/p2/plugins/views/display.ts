@@ -2,7 +2,7 @@
 // note of what came along.
 import type { EntryDisplay } from "../chat/contract.ts";
 
-/** The note on a `p2.view-input` entry: how many selections and annotations it carried. */
+/** The note on a `p2.view-input` entry: how many selections and annotations it carried, and other plugins' notes. */
 export function viewInputDisplay(data: unknown): EntryDisplay | undefined {
 	const views = data !== null && typeof data === "object" && "views" in data ? data.views : undefined;
 	if (views === null || typeof views !== "object") return undefined;
@@ -12,9 +12,12 @@ export function viewInputDisplay(data: unknown): EntryDisplay | undefined {
 	};
 	const selections = count("selections");
 	const annotations = count("annotations");
+	const notes = (views as Record<string, unknown>).notes;
 	const parts = [
 		selections ? `${selections} selection${selections === 1 ? "" : "s"}` : "",
 		annotations ? `${annotations} annotation${annotations === 1 ? "" : "s"}` : "",
 	].filter(Boolean);
-	return parts.length ? { note: `with ${parts.join(" and ")} from views` } : undefined;
+	const others = Array.isArray(notes) ? notes.filter((note): note is string => typeof note === "string") : [];
+	const said = [...(parts.length ? [`${parts.join(" and ")} from views`] : []), ...others];
+	return said.length ? { note: `with ${said.join(", ")}` } : undefined;
 }

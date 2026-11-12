@@ -9,7 +9,6 @@ import { createReadStream, existsSync, readdirSync, readFileSync, statSync } fro
 import { join } from "node:path";
 import type { Ctx, Ref } from "../src/runtime/chord.ts";
 import {
-	ARTIFACTS,
 	DOWNLOADS,
 	type Files,
 	MAX_DOWNLOAD_BYTES,
@@ -17,6 +16,9 @@ import {
 	UPLOADS,
 	writeChunks,
 } from "../src/runtime/session-files.ts";
+
+/** The `Files` space artifacts had before they moved to the artifacts plugin's store (they stay there unused). */
+const ARTIFACTS = "artifacts";
 
 /** What a session's file migration moved. */
 export type FileCounts = {

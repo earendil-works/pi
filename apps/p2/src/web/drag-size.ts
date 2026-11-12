@@ -26,8 +26,9 @@ export function useDragSize(key: string, variable: string): DragSize {
 			return undefined;
 		}
 	});
-	// The handle captures its pointer, so the drag goes on off the handle. During the drag only the CSS variable
-	// changes; React renders the panel once at the end.
+	// The handle captures its pointer, so the drag goes on off the handle; frames (pages shown in place, views) take no
+	// pointer events meanwhile, since a frame in another process may get them despite the capture. During the drag only
+	// the CSS variable changes; React renders the panel once at the end.
 	const drag = useCallback<DragSize["drag"]>(
 		(event, element, sizeAt) => {
 			if (event.pointerType === "mouse" && event.button !== 0) return;
@@ -35,6 +36,7 @@ export function useDragSize(key: string, variable: string): DragSize {
 			const handle = event.currentTarget;
 			const pointer = event.pointerId;
 			handle.setPointerCapture(pointer);
+			document.documentElement.classList.add("resizing");
 			let last: number | undefined;
 			const move = (moved: PointerEvent) => {
 				if (moved.pointerId !== pointer) return;
@@ -46,6 +48,7 @@ export function useDragSize(key: string, variable: string): DragSize {
 				handle.removeEventListener("pointermove", move);
 				handle.removeEventListener("pointerup", end);
 				handle.removeEventListener("pointercancel", end);
+				document.documentElement.classList.remove("resizing");
 				if (last === undefined) return;
 				setSize(last);
 				try {

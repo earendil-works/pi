@@ -188,7 +188,6 @@ function outgoingItem(
 const outgoingTranscript = (messages: readonly Outgoing[]): Transcript => ({
 	items: messages.map((message) => message.item),
 	earlier: false,
-	artifacts: [],
 	busy: false,
 	working: false,
 	compactions: [],

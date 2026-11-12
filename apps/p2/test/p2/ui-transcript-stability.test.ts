@@ -252,7 +252,7 @@ describe("transcript stability", { skip: !browserTests }, () => {
 					// The turn's rows after the person's message: the artifact where it was made, between the two wheels.
 					assert.deepEqual(
 						await browser.evaluate<string[]>(
-							`(() => { const rows=[...document.querySelectorAll('[data-row]')]; const at=rows.findIndex((row)=>row.dataset.row===${message}); return rows.slice(at+1).map((row)=>row.querySelector('[data-testid=activity]')?'activity':row.querySelector('.inline-artifact')?'inline':row.querySelector('.assistant')?'answer':row.dataset.row); })()`,
+							`(() => { const rows=[...document.querySelectorAll('[data-row]')]; const at=rows.findIndex((row)=>row.dataset.row===${message}); return rows.slice(at+1).map((row)=>row.querySelector('[data-testid=activity]')?'activity':row.querySelector('.artifact-inline')?'inline':row.querySelector('.assistant')?'answer':row.dataset.row); })()`,
 						),
 						["activity", "inline", "activity", "answer"],
 					);

@@ -1,27 +1,47 @@
-// The bridge between a custom view's sandboxed frame and the page (data only: the server injects the script, the web
-// facet speaks its messages). The frame has an opaque origin and no app identity: everything it posts is untrusted,
-// and all it gets is its own view's state.
+// The bridge between an html artifact's sandboxed frame and the page (data only: the server injects the script, the
+// web facet speaks its messages). The frame has an opaque origin and no app identity: everything it posts is untrusted,
+// and all it gets is its own artifact's state. Custom views' pages run unchanged: `window.p2view` is theirs, the state
+// is the artifact's.
 
 /** The `channel` field of every bridge message, both ways. */
 export const VIEW_CHANNEL = "p2-view";
 
 /**
- * The script injected at the top of a custom view's HTML: `window.p2view`, the view's side of the bridge.
+ * The script injected at the top of an html artifact's page: `window.p2view`, the page's side of the bridge.
  *
- * - `p2view.onState(fn)`: calls `fn(state, from)` with the view's state now (`from`: "init") and at each change made
- *   elsewhere (`from`: "update": the agent or another device); returns an unsubscribe function.
+ * - `p2view.onState(fn)`: calls `fn(state, from)` with the artifact's state now (`from`: "init") and at each change
+ *   made elsewhere (`from`: "update": the agent or another device); returns an unsubscribe function.
  * - `p2view.state`: the state last received (undefined before the first).
- * - `p2view.setState(next)`: saves the view's state (a JSON value, or a function of the current one); saved after a
- *   short pause, so call it freely while the person edits.
- * - `p2view.select(summary, data)`, `p2view.clearSelection()`: the person's selection; `summary` is what the agent reads
- *   with their next message, `data` what it finds when it reads the view.
+ * - `p2view.setState(next)`: saves the state (a JSON value, or a function of the current one); saved after a short
+ *   pause, so call it freely while the person edits.
+ * - `p2view.select(summary, data)`, `p2view.clearSelection()`: the person's selection in the view showing the page;
+ *   `summary` is what the agent reads with their next message, `data` what `view_list` shows.
  * - `p2view.readOnly`: true for people who may only view the session (their changes are not saved).
  * - `p2view.onDescribeRegion(fn)`: `fn({ x, y, width, height })` returns what lies in that rectangle (CSS pixels of the
  *   frame) as text, for drawings the person makes over the view; by default the texts and labels of the elements there.
+ *
+ * The page's console lines (`log`, `info`, `debug`; errors and warnings come with the diagnostics) go to the page, and
+ * the agent's code (`artifact_html_eval`) runs here as an async function body; its returned value comes back as JSON.
  */
 export const VIEW_BRIDGE_SCRIPT = `(() => {
 	const channel = ${JSON.stringify(VIEW_CHANNEL)};
 	const post = (message) => { try { parent.postMessage({ channel, ...message }, "*"); } catch {} };
+	const text = (args) => args.map((value) => { try { return typeof value === "string" ? value : JSON.stringify(value); } catch { return String(value); } }).join(" ").slice(0, 4000);
+	for (const level of ["log", "info", "debug"]) {
+		const original = console[level];
+		console[level] = (...args) => { post({ type: "log", level, text: text(args) }); original.apply(console, args); };
+	}
+	const AsyncFunction = (async () => {}).constructor;
+	const run = async (id, code) => {
+		try {
+			const value = await new AsyncFunction(code)();
+			let json = null;
+			try { json = value === undefined ? null : JSON.parse(JSON.stringify(value)); } catch { json = String(value); }
+			post({ type: "eval-result", id, ok: true, value: json });
+		} catch (error) {
+			post({ type: "eval-result", id, ok: false, error: String((error && error.stack) || error).slice(0, 4000) });
+		}
+	};
 	const listeners = new Set();
 	let state, received = false, readOnly = true, describe;
 	const notify = (from) => { for (const fn of [...listeners]) { try { fn(state, from); } catch (error) { console.error(error); } } };
@@ -108,6 +128,8 @@ export const VIEW_BRIDGE_SCRIPT = `(() => {
 			post({ type: "region", id: message.id, text: String(text).slice(0, 4000) });
 		} else if (message.type === "highlight") {
 			try { highlight(Array.isArray(message.quotes) ? message.quotes : []); } catch {}
+		} else if (message.type === "eval" && typeof message.code === "string") {
+			void run(message.id, message.code);
 		}
 	});
 	post({ type: "hello" });

@@ -98,12 +98,12 @@ describe("subagents (fake provider)", () => {
 
 	it("configures tools and opens a child's independent transcript", async () => {
 		await chat.send({ text: "subagent-configure", requestId: "configure" }, BACKGROUND_CONTEXT);
-		await until(children.children, (value) => value?.[session]?.[0]?.tools.join() === "bash,artifact");
+		await until(children.children, (value) => value?.[session]?.[0]?.tools.join() === "bash,read");
 		const sub = await holdIn(owner, Chat, { session, conversation: child.conversationId }, "participant");
 		const view = await until(sub.view, (value) => texts(value).includes("Echo: hello helper"));
 		// The sidebar lists the chosen tools; the agent also has `team` (`scope: "subagent"`), offered from the start.
 		const agent = view?.docs["pi.agent"] as { tools: string[]; modelTools: { add: string[] } };
-		assert.deepEqual(agent.tools, ["bash", "artifact", "team"]);
+		assert.deepEqual(agent.tools, ["bash", "read", "team"]);
 		assert.deepEqual(agent.modelTools.add, ["team"]);
 		await sub.configure({ model: { provider: "faux", modelId: "faux-1" }, thinkingLevel: "off" }, BACKGROUND_CONTEXT);
 		await until(children.children, (value) => value?.[session]?.[0]?.thinkingLevel === "off");

@@ -1,5 +1,6 @@
-// The counter's tool for the session's agent: `counter_add`, deferred and for code mode only (scripts call it as
-// `tools.counter_add({ by })`), as every plugin tool is by default.
+// The counter's tool for the session's agent: `counter_add`, for code mode only (scripts call it as
+// `tools.counter_add({ by })`), in the code-mode namespace `counter` its extension declares: the prompt lists the
+// namespace with its description, `describeNamespace("counter")` gives its instructions and tools.
 import { defineExtension } from "@earendil-works/pi-durable";
 import { int, obj } from "@earendil-works/pi-schema";
 import { contribute, defineFacet, expectVariant } from "@p2/app/v1";
@@ -11,14 +12,18 @@ export default defineFacet((host) => {
 		const worker = workerOf(self);
 		const extension = defineExtension<P2Tool>({
 			name: "counter",
+			namespace: {
+				name: "counter",
+				description: "The session's shared counter (the Counter view).",
+				instructions: "counter_add changes the count for everyone in the session; open the view with view_open.",
+			},
 			tools: [
 				defineP2Tool({
 					name: "counter_add",
 					description: "Adds `by` to the session's shared counter (the Counter view); returns the new count.",
 					parameters: obj({ by: int({ minimum: -100, maximum: 100 }) }),
 					replay: "unsafe",
-					// Out of the model's tool list: code mode's scripts call it. Leave both out to offer it to the model.
-					deferred: true,
+					// Out of the model's tool list: code mode's scripts call it. Leave it out to offer it to the model too.
 					callers: ["tools"],
 					execute: async ({ by }, _api, context) => {
 						const count = await worker().root(async (ctx) => {

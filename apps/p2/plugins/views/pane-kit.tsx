@@ -1,0 +1,55 @@
+// What panes share, in the views plugin and in other plugins' panes (an html artifact's frame): the person's text
+// selection reported as the view's selection, the frame handles the annotation layer asks a pane that is a frame of its
+// own, and the newest selection Comment and Remove mark up. Imports only this plugin's files, so other plugins' web
+// facets may import it.
+import type { JsonValue } from "@p2/app/v1";
+import type { PaneProps } from "@p2/app/v1/web";
+import { type RefObject, useEffect, useRef } from "react";
+import { annotateMode } from "./layout-store.ts";
+
+export { type FrameHandle, frameHandles, noteSelection } from "./kinds.ts";
+
+/** How long a selection rests before it is reported (a drag selects many times). */
+const SELECTION_PAUSE = 600;
+
+/**
+ * Reports the person's text selection inside `body`, described by `describe`, after it rests; not while they annotate
+ * (that selection is what a comment or removal quotes).
+ */
+export function usePaneSelection(
+	body: RefObject<HTMLElement | null>,
+	describe: (quote: string, element: Element | null) => { summary: string; data: JsonValue },
+	select: PaneProps["select"],
+): void {
+	const latest = useRef({ describe, select });
+	latest.current = { describe, select };
+	useEffect(() => {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let reported = "";
+		const changed = () => {
+			const selection = getSelection();
+			if (annotateMode() !== "off" || !selection?.rangeCount || selection.isCollapsed) return;
+			const node = selection.getRangeAt(0).commonAncestorContainer;
+			const element = node instanceof Element ? node : node.parentElement;
+			if (!body.current?.contains(element)) return;
+			const quote = selection.toString().trim().slice(0, 4000);
+			clearTimeout(timer);
+			timer = setTimeout(() => {
+				if (!quote || quote === reported) return;
+				reported = quote;
+				latest.current.select(latest.current.describe(quote, element));
+			}, SELECTION_PAUSE);
+		};
+		document.addEventListener("selectionchange", changed);
+		return () => {
+			document.removeEventListener("selectionchange", changed);
+			clearTimeout(timer);
+		};
+	}, [body]);
+}
+
+/** A quote as a selection's summary shows it: one line in quotation marks, cut at 300 characters. */
+export const excerpt = (text: string) => {
+	const line = text.replace(/\s+/g, " ").trim();
+	return `“${line.length > 300 ? `${line.slice(0, 300)}…` : line}”`;
+};

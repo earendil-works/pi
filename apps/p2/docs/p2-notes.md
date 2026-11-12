@@ -29,7 +29,7 @@ P2_FAKE=1 npm start          # http://127.0.0.1:8788, data in ~/.pi/p2
 | --- | --- | --- |
 | `P2_DATA_DIR` | `~/.pi/p2` | data directory: `server/` and `sessions/<id>/` (see **Host stores and files**), `settings.json`, `models.json`, `envs.json`, `projects.json`, `mcp.json`, `mcp-auth.json`, `auth.json`, `radius.json`, `forwards.json` |
 | `PORT` | `8788` | listen port (loopback only), so p2 never collides with pi-mobile on 8787 |
-| `P2_FAKE` | unset | `1`: the faux provider (`faux/faux-1`, echoes the prompt; `slow …` streams long; `rename-session <title>` calls the tool; `subagent`, `subagent-bad`, `subagent-answer`, `subagent-configure`, `subagent-send`, `subagent-archive`, `subagent-status` exercise subagents, `subagent <json>` calls the tool with those arguments, as do `team <json>`, `history_search|read|handoff <json>`, `location_envs|dirs|move <json>`, `tool_search <json>`, `terminal <json>` and `mcp__<server>__<tool> <json>`; `codemode` runs a script calling bash and read, `codemode-restart` one whose slow middle call a restart interrupts, `codemode <script>` runs that script; `artifact <json>` calls the artifact tool with those arguments; `steps` makes a turn of thinking, calls and words, `inline-steps` one with an inline artifact between two calls; `json <text>` answers exactly `<text>`; a one-shot agent whose task is not `json …`/`slow…` answers a small value matching its schema) |
+| `P2_FAKE` | unset | `1`: the faux provider (`faux/faux-1`, echoes the prompt; `slow …` streams long; `rename-session <title>` calls the tool; `subagent`, `subagent-bad`, `subagent-answer`, `subagent-configure`, `subagent-send`, `subagent-archive`, `subagent-status` exercise subagents, `subagent <json>` calls the tool with those arguments, as do `team <json>`, `history_search|read|handoff <json>`, `location_envs|dirs|move <json>`, `tool_search <json>`, `terminal <json>` and `mcp__<server>__<tool> <json>`; `codemode` runs a script calling bash and read, `codemode-restart` one whose slow middle call a restart interrupts, `codemode <script>` runs that script; `artifact` runs a script writing the html artifact `demo` and showing it; `view_<name> <json>` and `artifact_<name> <json>` call those tools directly (refused: they are code mode only); `steps` makes a turn of thinking, calls and words, `inline-steps` one with an inline artifact between two calls; `json <text>` answers exactly `<text>`; a one-shot agent whose task is not `json …`/`slow…` answers a small value matching its schema) |
 | `P2_IDLE_MS` | `300000` | idle time before a session worker stops |
 | `P2_PROVIDER`, `P2_MODEL` | unset | default model for new sessions after settings.json's `defaultModel` (both or neither; Pi Mobile's `PI_MOBILE_PROVIDER`/`PI_MOBILE_MODEL` work too) |
 | `P2_RADIUS` | unset | `0`: disable the outbound Radius brain connection even when signed in |
@@ -259,7 +259,7 @@ pi's defaults (rebindable in pi's `keybindings.json` or p2 prefs; `/hotkeys` lis
 
 **Side panel.** `ctx.panel.open(id, content, title)` shows one component to the right of the screen's body (about 40%
 of the width, behind a bar; the dock stays full width), in a `ScrollView` the runtime owns. Plugins open it (Enter in
-`/artifacts` shows an artifact there when the terminal fits it; it follows new versions through `ArtifactList`). The editor keeps
+`/artifacts` shows an artifact there when the terminal fits it; it follows new versions through `Artifacts`). The editor keeps
 the focus; F2 (`p2.panel.focus`) moves it into the panel, where the runtime sets pi-tui's `capturesViewportInput` and
 scrolls the panel with the viewport and select keys, keeps other keys from the editor and returns the focus on Escape.
 Search stays on the transcript (the primary scroll view). Hidden below 100 columns; closed on navigation to another
@@ -364,20 +364,21 @@ p2 runs on Chord v2 (`packages/chord`, `docs/design.md` there); the port's notes
   `filesFacet` from `@earendil-works/chord/app/files`); a session's Durable runs on its store through `StoreStorage`
   under the owner name `p2.durable` (`src/runtime/session-store.ts`), beside `Files`' tables. Plugins reach `Files`
   with `self.get(Files, {})` / `ctx.get(Files, {})` (`@p2/app/v1/node`), never a path; a session's spaces are
-  `artifacts`, `uploads` and `downloads` (`src/runtime/session-files.ts`).
+  `uploads` and `downloads` (`src/runtime/session-files.ts`; artifacts written before 2026-11-12 stay in a space
+  `artifacts`, unused: the artifacts plugin keeps them on the server now, docs/artifacts.md).
   The session catalog (`Catalog`) is the server store's table `p2.catalog:sessions`, one row per session keyed by its
   address (`host(Session)`, decision "Documents and table rows can belong to a host"): everything about a session needed
   while its worker is off (place, title, model and level, pin, archive, `/tree` branches), so a session's export,
-  import and delete carry it. Share links and grants and each session's subagents are likewise rows keyed by the session (guests are
+  import and delete carry it. Share links and grants, each session's subagents and its artifacts are likewise rows
+  or documents keyed by the session (guests are
   per person, keyed by their own ID). A data directory with a `catalog.sqlite`, `shares.sqlite` or `subagents.sqlite`
   from before is refused at start: `npm run
   migrate-data` moves it (below). Clone copies the whole session directory
   while its worker is stopped (blobs hard-linked); fork copies only the source's files, through its worker
   (`SessionTransfer.copyFiles`, the kit's `copyFiles`), and seeds its history into a fresh store; a failed copy's
-  directory is removed. Each change of a space is pushed by the worker, inside the method that made it, to the server's
-  mirror `FileSummaries` (by session and space; the owner's `of`), for lists that must not start a worker: none uses it
-  yet (the artifact picker and transcript cards are on an open session's worker); a session row's file counts or a
-  drive of an idle session could. A data directory in the older layout (`server.sqlite`, `sessions/<id>.sqlite`,
+  directory is removed; plugins copy what they keep on the server through `SessionCopied` (projects, artifacts). The
+  server's mirror of the spaces' summaries (`FileSummaries`) is gone: nothing used it. A data directory in the older
+  layout (`server.sqlite`, `sessions/<id>.sqlite`,
   `artifacts/`, `downloads/`) is refused at start: `npm run migrate-data` moves it (below).
 - **Migration** (`npm run migrate-data -- [--dry-run] [--data <dir>]`, `scripts/migrate-data.ts`): offline (refused
   while a server holds the data directory's lock, which it takes). The server's store is copied to `server/store.sqlite`
@@ -676,7 +677,7 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   - **Chat version 3** (P3): `compact`, `abortCompaction`, `reset` (owner) and `dequeueOwn`, and the guest-safe `model`
     state, used by the TUI; the web UI is unchanged.
 
-- **Durable names are p2's.** Documents `p2.subagents`, `p2.agent-run`, `p2.artifacts`; tasks
+- **Durable names are p2's.** Documents `p2.subagents`, `p2.agent-run`, `p2.views`; tasks
   `p2.subagent-anchor`, `p2.subagent-reporter`; entries `p2.input`, `p2.peer-message`; extensions `p2-artifacts`, `p2-downloads` (and the
   unprefixed `subagent-tools`, which subagent conversations store in their agent state). No `mobile.*` name is read.
   p2 sessions created before the rename (with `mobile.*` documents) are not migrated: their subagent registry,
@@ -1410,55 +1411,30 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   execution environment and saving immutable snapshots into the session's files (space `downloads`, `source: "agent"`).
   Directory sources and files over 25 MiB fail. The existing authorized `/download` route serves snapshots even
   after source deletion or plugin reload. `test/p2/send-file.test.ts` and the files integration tests cover it.
-  The artifacts plugin supplies the shared viewer.
+  The artifacts plugin supplies the file viewer.
 - **Views** (`plugins/views`, `docs/views.md`): panes beside the transcript that the person and the agent share
-  (a workspace Markdown file, the working tree's changes, custom HTML views with JSON state and a `window.p2view`
-  bridge), laid out per device (tabs, splits, drag and drop; one pane at a time on phones), with an annotation layer
-  (comments, removals, drawings on any pane, the transcript included). Selections and annotations go with the person's
-  next message (send router `views`, entry kind `p2.view-input`); the agent's `view` tool reads and changes views;
-  the owner's library keeps saved views in `<data>/views/`. Core: `AppLayout` wraps `main` in the `workbench` slot,
-  the chat's top bar has `view-actions`.
-- **Artifacts and viewer** (`plugins/artifacts`): owns its native artifact tool; versions live in the session's
-  files (space `artifacts`, path = the name, Files versions = artifact versions, never reused; title and type in
-  `meta`; 2 MiB UTF-8). The `/artifact` route reads through the worker's `ArtifactSource` (server only). `ArtifactList` follows the conversation's latest-only `ArtifactDoc`, independently of
-  transcript paging, compaction and reset, and validates the conversation during activation. `/artifact?session=&name=&version=` rechecks authorization for owner/guest, rejects cross-site reads,
-  and serves the preview with a CSP sandbox (no same-origin privilege, forms, child frames or objects). Only
-  previews receive the diagnostics bridge; `download=1` returns the original source. HEAD describes the same
-  representation as GET. The chat-content slot supplies the shared transcript card contexts and explicit-click
-  file/artifact viewers; a top-bar counter toggles a list of every version, newest first, in the side panel
-  (`SidePanel`, `Route.panel` "artifacts": docked on the right from 700px like a run's activity, which it replaces and
-  which replaces it; a sheet on phones). Dragging a docked side panel's left edge resizes it; every side panel shares
-  that width, kept per browser (`p2-side-panel-width`; `useDragSize` in `src/web/drag-size.ts`, which the sidebar,
-  workspace and terminal use too). The viewer is a named `Route.layers` entry (Back and sessionStorage restoration);
-  picking an artifact pushes a viewer above the list. Cards and list rows are links to the viewer (`ViewerHref`,
-  Browser navigation), so a modified or middle click opens it in another tab.
-  HTML/SVG use a sandboxed iframe, Markdown/text render safely,
-  sent files use the conservative file preview. Nothing opens from a server update. `test/p2/artifacts.test.ts`
-  covers fake-provider publication, versions, independent index, reload/restart, CSP, HEAD, guest isolation and
-  byte limits; `ui-viewers-search.test.ts` the picker and viewers.
-- **Inline artifacts** (`artifact` tool, `inline: true`): the call's version also renders in the chat, below its
-  card in the turn's results, so agents can show diagrams (e.g. SVG sequence diagrams) and small visual results in the chat
-  instead of ASCII. `inline` travels only in the result's details (`ArtifactDetails`, `{ ...info, inline: true }`);
-  the index, the stored version and every Chord contract are unchanged, so no contract version moved. The web
-  (`InlineArtifact` in `plugins/artifacts/preview.tsx`, provided to `Chat.tsx` through `InlineArtifactView`) renders
-  that version, never "latest": Markdown with the viewer's `Markdown` component, text as wrapped `pre` (both at most
-  70vh, scrolling), HTML/SVG in the viewer's sandboxed frame (opaque origin, same route and CSP). The preview's
-  diagnostics bridge also posts the document's content height (level `size`, again on every resize), and the frame
-  takes that height up to 70vh. Drawings fill the frame's width: an SVG document with a `viewBox` (or an absolute
-  width and height, which become its `viewBox`) is set to 100% wide and high, so it scales with its aspect and
-  reports the `viewBox` height at its width, leaving no blank space; an HTML document whose body is only a `viewBox`
-  SVG or an image gets it 100% wide at height auto (zero specificity, so any author rule wins), and is measured
-  without its scrollbar (a too-short frame's scrollbar would otherwise stay). This applies in the viewer too. Past 70vh, HTML scrolls inside the frame and an SVG scales down to fit (giving the SVG root an explicit
-  CSS height instead, to make it scroll, broke its rendering in Chromium's out-of-process frame);
-  reported heights are kept per URL so a remounted row keeps its size. A version the route cannot serve shows
-  "Artifact unavailable" (HEAD first for HTML/SVG). Tapping the card still opens the full viewer. **Who sees it:**
-  every viewer of the session, guests included, HTML and SVG too, without a tap (owner decision, option (a): the
-  sandbox and CSP are the protection, as for an opened preview). The TUI renders inline Markdown (rendered) and text
-  in full; HTML/SVG keep the card line. SVG previews carry the bridge in CDATA (the script's `&&` broke the XML
-  before); an empty `<svg/>` root is served without it. Fake provider: `artifact <json>` calls the tool with those
-  arguments. Tests: `artifacts.test.ts` (details, bridge), `ui-inline-artifacts.test.ts` (browser: Markdown, SVG,
-  fills the width, fitted height, 70vh cap, card opens the viewer, unavailable version, guest), `tui-p11.test.ts`
-  (inline Markdown).
+  (a workspace Markdown file, the working tree's changes, artifacts, plugin kinds; `View.item` says what a view shows),
+  laid out per device (tabs, splits, drag and drop; one pane at a time on phones), with an annotation layer (comments,
+  removals, drawings on any pane, the transcript included). Selections and annotations go with the person's next
+  message (send router `views`, entry kind `p2.view-input`; other plugins add blocks through `MessageContexts`); the
+  agent's code-mode tools `view_list`, `view_open`, `view_close`, `view_arrange`, `view_resolve` (namespace `view`)
+  open and arrange them. Core: `AppLayout` wraps `main` in the `workbench` slot, the chat's top bar has
+  `view-actions`; `ViewKinds` (`{ Pane }`) and `ArtifactKinds` are the web registries. Custom views, view state, the
+  library, rooms and view principals were removed on 2026-11-12 (docs/glyph-editor-port.md).
+- **Artifacts** (`plugins/artifacts`, `docs/artifacts.md`): html pages and Markdown documents the agent writes with
+  code-mode tools (namespace `artifact`), kept on the server per session (documents and a version table keyed by the
+  session's host address, so export, import and delete carry them; clone and fork copy them through `SessionCopied`).
+  `artifact_show` renders the artifact's pane in place in the transcript (mounted only while on screen); views of kind
+  `html` and `md` show one beside the chat; the top bar's counter toggles the side panel listing every `ArtifactKinds`
+  item (`SidePanel`, `Route.panel` "artifacts": docked on the right from 700px like a run's activity, which it replaces
+  and which replaces it; a sheet on phones), where a row opens the item as a view, or for a read-only guest shows it in
+  the panel. Dragging a docked side panel's left edge resizes it; every side panel shares that width, kept per browser
+  (`p2-side-panel-width`; `useDragSize` in `src/web/drag-size.ts`, which the sidebar, workspace and terminal use too;
+  frames take no pointer events during the drag). Html pages run in a sandboxed frame from `/artifact-frame` with the
+  `window.p2view` bridge (state per artifact, selection, regions, console lines, the agent's code); new page errors go
+  with the next message. The chat-content slot still supplies the transcript's card contexts and the sent-file viewer
+  (`FilePanel`, a named `Route.layers` entry). Artifacts written before 2026-11-12 (the session's files, space
+  `artifacts`) are not migrated.
 - **Conversations** (`plugins/conversations`): the `conversations` tool (`scope: "main"`, `locked: "conversations"`) lists
   active roots without starting workers (with each one's location and project, and the projects), sends
   server-attributed peer input, reads the latest completed text answer (bounded scan, no thinking, including old
@@ -1596,8 +1572,12 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   does). The worker object (`p2.mcp-worker`) sends `setLocations` with every location its conversations work at (the
   session's, active subagents' own) at start, after moves and subagent commits, and whenever the view re-activates (a
   refusal because a newer generation runs ends it), and
-  contributes one Durable extension `mcp` (a `self.writable`, rebuilt only when the tool list changes): deferred tools
-  named by `createMcpToolName` (every tool of a colliding name gets the hash suffix, as in pi), results through
+  contributes one Durable extension per configured server, `mcp:<server>` with the code-mode namespace `mcp__<server>`
+  (`createMcpExtensions`, a `self.writable`, rebuilt only when the tool list changes). The namespace's description
+  comes from the configuration only (and the sign-in hint for OAuth servers), so the prompt's code-mode section is the
+  same before and after a server connects (the KV cache holds); a server's `instructions` (`Mcp` version 3, the
+  instance's `instructions`) are reachable through `describeNamespace()`. There is no `mcp_servers` section. Deferred
+  tools named by `createMcpToolName` (every tool of a colliding name gets the hash suffix, as in pi), results through
   `toLlmContent` and `limitMcpContent`, `structuredOutput` only for tools with an output schema. Without code mode,
   `tool_search` is installed by the worker's registry (`durableRegistry`: once, while code mode is off and any extension
   has a deferred tool the model may call; MCP's and the terminal tool share it). Tests: `mcp.test.ts` (manager and views on a bare host with `test/fixtures/mcp-server.mjs` and
@@ -1708,8 +1688,7 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   gaps) are one turn (`chatItems` in `model.ts`). Its thinking blocks and texts stay in the transcript in their order
   ("Thought ›" opens in place; text as prose); each run of consecutive tool calls between them is one **activity row**;
   the turn's last text is its **answer** (Copy, Branch, Reply and the time it began; a stop, an error or the length
-  limit below it), followed by its **results** (artifact and sent-file cards, an inline artifact below its card, an
-  opened port's links).
+  limit below it), followed by its **results** (sent-file cards, an artifact a script showed, an opened port's links).
   The activity row is a wheel of the run's calls: while the agent works the newest call faces the reader in the present
   tense ("Running npm test") and breathes, a failed one is red, and the run's time counts (until the next response
   begins); when it ends the wheel rolls to a summary ("Read 3 files, ran 2 commands · 6 steps") and the total time. The
@@ -1758,7 +1737,7 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   icon, tool and argument, state), opening its detail alone; no wheels (a waiting wheel still stands for a run before
   its first call). `chatItems`' `detail` merges what goes on the wheels into the runs of calls (`wheels` in `model.ts`,
   `WheelEntry`); the summary of a wheel with thinking leads with "Thought". A result its tool shows in place (an
-  inline artifact, `hasResult` "inline") stays in place at 2, 3 and 4 (between wheels, or after its call's row at 4;
+  artifact `artifact_show` showed, `hasResult` "inline") stays in place at 2, 3 and 4 (between wheels, or after its call's row at 4;
   the wheel after it is the row that waited there); at 1 it joins the results after the answer, drawn in full, so the
   turn keeps its one wheel. `activity-model.test.ts` covers the levels, `ui-detail.test.ts` the transcript and the
   sheet as the setting changes live, and the answer arriving once.
@@ -1770,7 +1749,9 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
   summary as a function of the count (tools sharing the function count together: write and edit), its `Detail`, the
   calls it made (`nestedCalls`) and how it words repeats of them (`repeated`), a nested call's `CallInput` and
   `CallDetail`, and a `Result` with `hasResult` saying where: after the answer, or inline, right after its call (an
-  artifact with `inline: true`; the run of calls splits around it; at detail 1 after the answer). Writing one:
+  artifact `artifact_show` showed; the run of calls splits around it; at detail 1 after the answer). A script's
+  nested calls place their results as top-level calls do (`withResults` in `model.ts`, from the nested call's name,
+  arguments and status: it has no result of its own). Writing one:
   `docs/tool-ui.md`. A detail shows everything at once (no
   "Show all" inside it; long output scrolls with the sheet) and follows a running call live; the one cap kept is a
   script's calls: the newest eight, the rest behind "Show all", as the transcript's card had them. Owners: `coding-tools` (bash, read, write, edit), `terminals`, `codemode`, `powershell`,

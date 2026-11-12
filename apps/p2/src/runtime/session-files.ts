@@ -1,5 +1,5 @@
 // A session's files in its worker's `Files` (the app kit's, one per host; brief "per-host stores", Part C): the spaces
-// p2 writes (artifacts, uploads, downloads), whole reads of a version, chunked writes from a reader, and the download
+// p2 writes (uploads, downloads), whole reads of a version, chunked writes from a reader, and the download
 // snapshots producers (send_file) save. Node: the server and the session worker; plugins reach `Files` through
 // `self.get(Files, {})` or `ctx.get(Files, {})` on the session's worker, never a path.
 import { randomUUID } from "node:crypto";
@@ -8,9 +8,6 @@ import type { Ctx, Ref } from "./chord.ts";
 import { type DownloadInfo, safeFileName } from "./files.ts";
 
 export { type FileInfo, Files, FilesFolder, type SpaceSummary } from "@earendil-works/chord/app/files";
-
-/** The space of a session's artifacts: path = the artifact's name, Files versions = its versions. */
-export const ARTIFACTS = "artifacts";
 
 /** The space of a session's uploads (POST /upload): path `<id>-<name>`, key = the upload's id. */
 export const UPLOADS = "uploads";

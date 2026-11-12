@@ -4,7 +4,7 @@
 export { type PaneProps, ViewKinds } from "@p2/app/v1/web";
 
 /**
- * What the annotation layer asks a pane that is a frame of its own (a custom view): the text the person selected in it,
+ * What the annotation layer asks a pane that is a frame of its own (an html artifact): the text the person selected in it,
  * and what lies in a rectangle of it (frame pixels). Panes in the page itself need none: the layer reads the page.
  */
 export type FrameHandle = {

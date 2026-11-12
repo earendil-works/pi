@@ -211,7 +211,7 @@ self.register(SendRouters, {
   the web (`src/web/transcript.ts:506-512`) and need a `TuiEntryRenderers` entry in the TUI.
 - **Documents:** `defineDoc` from `@earendil-works/pi-durable`; write in `harness.commit(tx => tx.doc(Doc, id))`,
   read with `harness.snapshot(Doc, id)` or in tools/hooks via their API. Conversation docs reach clients in
-  `Chat.view.docs`. Examples: `p2.subagents`, `p2.agent-run`, `p2.artifacts`, chat-mode's `ChatModeDoc`
+  `Chat.view.docs`. Examples: `p2.subagents`, `p2.agent-run`, `p2.views`, chat-mode's `ChatModeDoc`
   (`plugins/chat-mode/worker.ts:25`). Change signals: `CommitSignal` (`src/runtime/commits.ts:4`), `watchSource`
   (`src/runtime/durable.ts:113`).
 - **Environments:** tools use `api.env`; plugins use `Harness.environment` / `environments.at(cwd)`. Only one remote
@@ -233,7 +233,7 @@ self.register(SendRouters, {
 | `artifact-actions`, `terminal-actions`, `workspace-actions`, `session-options`, `session-actions` | chat top bar, `plugins/chat/web.tsx:327-331` | single each | artifacts, terminals, workspace, sessions, sharing |
 | `composer:*` | `plugins/chat/web.tsx:925` (`SlotList`) | list | chat-mode |
 | `chat-bottom` | `plugins/chat/web.tsx:934` | single | terminals |
-| `chat-content` | `plugins/chat/web.tsx:1133` | wrapper (gets `children`) | artifacts (viewer contexts) |
+| `chat-content` | `plugins/chat/web.tsx:1133` | wrapper (gets `children`) | artifacts (card contexts, the sent-file viewer, the artifacts side panel) |
 | `chat-attribution` | `plugins/chat/web.tsx:1134` | wrapper | conversations |
 | `sidebar-actions:*` | `plugins/sessions/web.tsx` (`SlotList`) | list: icon buttons before the theme switch | settings |
 | `envs-actions:*` | `plugins/envs/EnvsPanel.tsx:524` (`SlotList`) | list | ports |
@@ -356,7 +356,7 @@ actions can be requested; `K` actions fire on the visitor's own key and may ask 
 | `attach` | C | `{path?}` → uploaded file | no |
 | `copy` | C | `{text, label?}` | no |
 | `openUrl` | C | `{kind: "external", url}` (https) or `{kind: "origin", path}` | no |
-| `download` | C | `{kind: "file" \| "artifact", session, …}` | no |
+| `download` | C | `{kind: "file", session, id, name?}` | no |
 | `savePrefs` | C | `{patch}` for `prefs.json` | no |
 | `devCommand` | C | `{action: "reload" \| "restart"}` | yes |
 | `signOut` | C | `{all}` | yes |

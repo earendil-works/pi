@@ -1,9 +1,9 @@
 // Copies a session's data to a new session ID (`Sessions.clone`, `Sessions.fork`; p2-tui-port.md section 10.8): a clone
 // copies the whole session directory (`sessions/<id>/`: its store, copied while the session's worker is stopped so the
 // SQLite file and its WAL belong together, and its files, whose immutable blobs are hard-linked), so the copy's
-// artifact cards, attachments and downloads resolve under the new ID. Nothing is overwritten; directories are 0700,
-// files 0600, links skipped. A fork's files are copied by the source's worker (`SessionTransfer.copyFiles`), its
-// history seeded into a fresh store.
+// attachments and downloads resolve under the new ID (plugins copy what they keep on the server through
+// `SessionCopied`, e.g. artifacts). Nothing is overwritten; directories are 0700, files 0600, links skipped. A fork's
+// files are copied by the source's worker (`SessionTransfer.copyFiles`), its history seeded into a fresh store.
 import { constants } from "node:fs";
 import { chmod, copyFile, link, lstat, mkdir, readdir, rm } from "node:fs/promises";
 import { join, sep } from "node:path";

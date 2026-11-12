@@ -145,7 +145,6 @@ async function mcpHost(
 					info: constant({ app: APP, dataDir, fake: true, allowedHosts: [], port: 0 }),
 					revokeOwners: () => {},
 					revokeGuests: () => {},
-					revokeFrames: () => {},
 				},
 			],
 			[

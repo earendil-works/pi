@@ -10,7 +10,7 @@ import type { UserMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
-import { DownloadStore, FileSummaries, type Uploaded } from "../../plugins/files/contract.ts";
+import { DownloadStore, type Uploaded } from "../../plugins/files/contract.ts";
 import { type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import type { RefIn } from "../../src/runtime/chord.ts";
@@ -75,7 +75,7 @@ describe("files (fake provider)", () => {
 		await fixture?.close();
 	});
 
-	it("stores uploads in the session's files, same-origin only; the server mirrors their summary", async () => {
+	it("stores uploads in the session's files, same-origin only", async () => {
 		assert.equal((await upload(session.id, "a.txt", "x", {})).status, 403, "no Origin");
 		assert.equal((await upload(session.id, "a.txt", "x", { Origin: "https://evil.test" })).status, 403);
 		assert.equal((await upload("missing", "a.txt", "x")).status, 400);
@@ -85,12 +85,6 @@ describe("files (fake provider)", () => {
 		const text = JSON.parse(response.body) as Uploaded;
 		assert.deepEqual(text, { id: text.id, name: "evil_notes.txt", size: 18 });
 		assert.deepEqual(await readdir(fixture.workspace), [], "nothing is written into the project");
-		// The worker pushed the space's summary to the server before the upload answered.
-		const mirror = await holdIn(fixture.browser(), FileSummaries, {}, "owner");
-		const spaces = await mirror.of({ session: session.id }, BACKGROUND_CONTEXT);
-		assert.equal(spaces.uploads?.files, 1);
-		assert.equal(spaces.uploads?.newest[0]?.source, "owner");
-		assert.equal(spaces.uploads?.newest[0]?.key, text.id);
 	});
 
 	it("attaches uploads to messages by ID, materialized on this machine: paths listed, images inline", async () => {
@@ -191,7 +185,7 @@ describe("files (fake provider)", () => {
 			"participant",
 		);
 		await archivedChat.send({ text: "artifact", requestId: "archived-artifact" }, BACKGROUND_CONTEXT);
-		const artifact = `/artifact?${new URLSearchParams({ session: archived.id, name: "demo", version: "1" })}`;
+		const artifact = `/artifact-frame?${new URLSearchParams({ session: archived.id, id: "demo", version: "1" })}`;
 		await poll(async () => (await fixture.http(artifact)).status === 200, 30_000, "the artifact is saved");
 		archivedChat.release();
 		const source = join(fixture.dataDir, "archived.txt");
@@ -202,14 +196,15 @@ describe("files (fake provider)", () => {
 		await sessions.archive({ id: archived.id }, BACKGROUND_CONTEXT);
 		await until(sessions.sessions, (rows) => rows?.find((row) => row.id === archived.id)?.archivedAt !== null);
 		const started = Date.now();
-		assert.equal((await fixture.http(artifact)).status, 404);
+		// Artifacts are the server's: an archived session's pages still show, without its worker.
+		assert.equal((await fixture.http(artifact)).status, 200);
 		assert.equal((await fixture.http(download)).status, 404);
 		assert.equal((await fixture.http(download, { method: "HEAD" })).status, 404);
 		assert.equal((await upload(archived.id, "late.txt", "x")).status, 409);
 		const unknown = randomUUID();
 		assert.equal((await fixture.http(`/download?session=${unknown}&id=${sent.id}`)).status, 404);
 		assert.equal(
-			(await fixture.http(`/artifact?${new URLSearchParams({ session: unknown, name: "demo", version: "1" })}`))
+			(await fixture.http(`/artifact-frame?${new URLSearchParams({ session: unknown, id: "demo", version: "1" })}`))
 				.status,
 			404,
 		);

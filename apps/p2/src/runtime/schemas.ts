@@ -1,7 +1,6 @@
 // Schemas several plugins' contracts share (browser-safe). A contract imports only the API and its own plugin's files,
 // so what two contracts both use lives here: attachments (files, chat), model references and thinking levels (sessions,
-// chat), pages of a conversation's entries (chat, the clients' transcripts), directory listings (envs, locations) and
-// artifact descriptions (artifacts, the transcript).
+// chat), pages of a conversation's entries (chat, the clients' transcripts) and directory listings (envs, locations).
 
 import type { EntryRecord } from "@earendil-works/pi-durable";
 import { arr, bool, int, nul, num, obj, opt, type Static, str, union, unknown } from "@earendil-works/pi-schema";
@@ -70,12 +69,3 @@ export const DirectoryListingSchema = obj({
 	truncated: bool(),
 });
 export type DirectoryListing = Static<typeof DirectoryListingSchema>;
-
-/** One version of an artifact: the artifact tool's result details and the artifacts plugin's index entries. */
-export const ArtifactInfoSchema = obj({
-	name: str({ pattern: "^[a-z0-9][a-z0-9_-]{0,63}$" }),
-	title: str(),
-	type: union([literal("html"), literal("svg"), literal("markdown"), literal("text")]),
-	version: int({ minimum: 1 }),
-});
-export type ArtifactInfo = Static<typeof ArtifactInfoSchema>;

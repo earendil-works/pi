@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { ArtifactList } from "../../plugins/artifacts/contract.ts";
+import { Artifacts } from "../../plugins/artifacts/contract.ts";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
@@ -22,7 +22,7 @@ describe("panels per session", { skip: !browserTests }, () => {
 			ids[title] = (await sessions.create({ cwd: fixture.workspace, title }, BACKGROUND_CONTEXT)).id;
 		const session = ids["Artifacts here"] as string;
 		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
-		const list = owner.hold(ArtifactList, { session, conversation: 1 }, BACKGROUND_CONTEXT);
+		const list = await holdIn(owner, Artifacts, { session }, "editor");
 		await chat.send({ text: "artifact", requestId: "artifact" }, BACKGROUND_CONTEXT);
 		await until(list.artifacts, (artifacts) => artifacts?.length === 1);
 		list.release();

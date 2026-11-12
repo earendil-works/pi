@@ -1,14 +1,16 @@
-// Archived/search, explicit versioned previews and cost charts use only disposable fake-provider sessions.
+// Archived/search, artifacts (the list, views, in place), file viewers and cost charts use only disposable fake-provider
+// sessions.
 
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { ArtifactList } from "../../plugins/artifacts/contract.ts";
+import { Artifacts } from "../../plugins/artifacts/contract.ts";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Search } from "../../plugins/search/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
+import { Views } from "../../plugins/views/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
 import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
 
@@ -68,110 +70,62 @@ describe("search, viewers, artifacts and cost parity", { skip: !browserTests }, 
 		await browser.wait(`location.pathname==='/s/${session.id}'`);
 		await until(sessions.sessions, (rows) => rows?.find((row) => row.id === session.id)?.archivedAt === null);
 	});
-	it("lists every immutable artifact version newest first, opens only on a click and returns with Back", async () => {
+	it("lists the session's artifacts, opens one as a view only on a click", async () => {
 		const owner = fixture.browser(),
 			chat = await holdIn(owner, Chat, { session: id, conversation: 1 }, "participant"),
-			list = owner.hold(ArtifactList, { session: id, conversation: 1 }, BACKGROUND_CONTEXT);
+			list = await holdIn(owner, Artifacts, { session: id }, "editor");
 		for (let version = 1; version <= 2; version++) {
 			await chat.send({ text: "artifact", requestId: `v-${version}` }, BACKGROUND_CONTEXT);
-			await until(list.artifacts, (artifacts) => artifacts?.length === version);
+			await until(list.artifacts, (artifacts) => artifacts?.[0]?.version === version);
 			await until(chat.view, (view) => !(view?.docs["pi.live"] as { run?: unknown })?.run);
 		}
 		await browser.metrics(390, 844);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${id}`);
-		await browser.wait(`document.querySelector('button[aria-label="Artifacts (2)"]')`);
-		assert.equal(await browser.evaluate<number>(`document.querySelectorAll('.viewer-panel').length`), 0);
-		await browser.click('button[aria-label="Artifacts (2)"]');
-		await browser.wait(`document.querySelectorAll('.artifact-row').length===2`);
-		assert.deepEqual(
-			await browser.evaluate<string[]>(
-				`[...document.querySelectorAll('.artifact-row>small')].map(e=>e.textContent)`,
-			),
-			["html · v2", "html · v1"],
+		await browser.wait(`document.querySelector('button[aria-label="Artifacts (1)"]')`);
+		assert.equal(await browser.evaluate<number>(`document.querySelectorAll('.views-pane.kind-html').length`), 0);
+		await browser.click('button[aria-label="Artifacts (1)"]');
+		await browser.wait(`document.querySelectorAll('.artifact-row').length===1`);
+		assert.match(
+			await browser.evaluate<string>(`document.querySelector('.artifact-row').textContent`),
+			/Demo artifact/,
 		);
 		await browser.click(".artifact-row");
 		await browser.wait(
-			`document.querySelector('.viewer-panel iframe') && document.querySelector('.artifact-diagnostics')`,
+			`document.querySelector('.views-pane.kind-html iframe') && !document.querySelector('[data-testid=artifact-panel]')`,
 		);
 		assert.equal(
-			await browser.evaluate<string>(`document.querySelector('.viewer-panel iframe').getAttribute('sandbox')`),
+			await browser.evaluate<string>(
+				`document.querySelector('.views-pane.kind-html iframe').getAttribute('sandbox')`,
+			),
 			"allow-scripts allow-modals allow-pointer-lock",
 		);
 		assert.match(
-			await browser.evaluate<string>(`document.querySelector('.viewer-head').textContent`),
-			/html · version 2/,
+			await browser.evaluate<string>(`document.querySelector('.views-pane.kind-html iframe').getAttribute('src')`),
+			/id=demo&version=2/,
 		);
-		await browser.evaluate(
-			`window.dispatchEvent(new MessageEvent('message',{source:window,data:{channel:'p2-artifact-diagnostic',level:'error',message:'Wrong frame'}}))`,
-		);
-		assert.equal(
-			await browser.evaluate<boolean>(
-				`document.querySelector('.artifact-diagnostics').textContent.includes('Wrong frame')`,
-			),
-			false,
-		);
-		await browser.evaluate("history.back()");
-		await browser.wait(
-			`document.querySelectorAll('.artifact-row').length===2 && !document.querySelector('.viewer-panel')`,
-		);
-		await browser.click("[role=dialog] button[aria-label=Close]");
+		// The later cases work beside the bare chat.
+		const views = await holdIn(owner, Views, { session: id }, "editor");
+		for (const view of views.views.value) await views.close({ id: view.id }, BACKGROUND_CONTEXT);
+		await browser.wait(`!document.querySelector('.views-pane.kind-html')`);
+		views.release();
+		await browser.evaluate("localStorage.clear()");
 	});
-	it("links artifacts to their viewer: a modified click is the browser's, the link address opens the viewer", async () => {
+	it("shows an artifact the agent showed in place in the transcript, its page mounted once on screen", async () => {
 		await browser.metrics(1280, 900);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${id}`);
-		await browser.wait(`document.querySelector('a[aria-label="Open Demo artifact"]')`);
-		const card = await browser.evaluate<string>(
-			`document.querySelector('a[aria-label="Open Demo artifact"]').getAttribute('href')`,
-		);
-		assert(card.startsWith(`/s/${id}?viewer=artifacts&at=`), card);
-		await browser.click('button[aria-label="Artifacts (2)"]');
-		await browser.wait(`document.querySelectorAll('a.artifact-row').length===2`);
-		const row = await browser.evaluate<string>(`document.querySelector('a.artifact-row').getAttribute('href')`);
-		assert(row.startsWith(`/s/${id}?viewer=artifacts&at=`), row);
-		// Cmd (macOS), Ctrl, Shift or the middle button: the browser opens the link elsewhere; this page stays.
-		const point = await browser.evaluate<{ x: number; y: number }>(
-			`(()=>{const r=document.querySelector('a.artifact-row').getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`,
-		);
-		for (const [button, modifiers] of [
-			["left", process.platform === "darwin" ? 4 : 2],
-			["left", 8],
-			["middle", 0],
-		] as const) {
-			await browser.call("Input.dispatchMouseEvent", {
-				type: "mousePressed",
-				...point,
-				button,
-				modifiers,
-				clickCount: 1,
-			});
-			await browser.call("Input.dispatchMouseEvent", {
-				type: "mouseReleased",
-				...point,
-				button,
-				modifiers,
-				clickCount: 1,
-			});
-		}
-		await new Promise((resolve) => setTimeout(resolve, 300));
-		assert.equal(await browser.evaluate<number>(`document.querySelectorAll('.viewer-panel').length`), 0);
-		assert.equal(await browser.evaluate<string>("location.pathname+location.search"), `/s/${id}`);
-		// A new tab at the row's address opens that version's viewer over the conversation; the address bar shows the
-		// conversation, and closing the viewer stays there.
-		await browser.open(`http://127.0.0.1:${fixture.server.port}${row}`);
-		await browser.wait(`document.querySelector('.viewer-panel iframe')`);
+		// Both calls showed it, each card the newest version; a card's page mounts once it is (nearly) on screen.
+		const cards = `[...document.querySelectorAll('.artifact-inline[data-artifact=demo]')]`;
+		await browser.wait(`${cards}.length === 2 && ${cards}.at(-1).querySelector('iframe.artifact-frame')`);
 		assert.match(
-			await browser.evaluate<string>(`document.querySelector('.viewer-head').textContent`),
-			/Demo artifact.*html · version 2/,
+			await browser.evaluate<string>(`${cards}.at(-1).querySelector('iframe').getAttribute('src')`),
+			/id=demo&version=2/,
 		);
-		assert.equal(await browser.evaluate<string>("location.pathname+location.search"), `/s/${id}`);
-		await browser.click('button[aria-label="Close viewer"]');
-		await browser.wait(
-			`!document.querySelector('.viewer-panel') && document.querySelector('a[aria-label="Open Demo artifact"]')`,
-		);
+		await browser.evaluate(`${cards}[0].scrollIntoView()`);
+		await browser.wait(`${cards}[0].querySelector('iframe.artifact-frame')`);
 	});
-	it("docks the artifact list on the right on wide screens, under its viewer, and toggles it from the top bar", async () => {
-		const button = 'button[aria-label="Artifacts (2)"]';
-		const docked = "document.querySelectorAll('#side-dock [data-testid=artifact-panel] .artifact-row').length===2";
+	it("docks the artifact list on the right on wide screens and toggles it from the top bar", async () => {
+		const button = 'button[aria-label="Artifacts (1)"]';
+		const docked = "document.querySelectorAll('#side-dock [data-testid=artifact-panel] .artifact-row').length===1";
 		await browser.metrics(1280, 900);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${id}`);
 		await browser.wait(`document.querySelector('${button}')`);
@@ -200,17 +154,15 @@ describe("search, viewers, artifacts and cost parity", { skip: !browserTests }, 
 		await browser.wait(`Math.abs(Number(localStorage.getItem('p2-side-panel-width'))-560)<=3`);
 		const dragged = await width();
 		assert.equal(String(dragged), await browser.evaluate<string>("localStorage.getItem('p2-side-panel-width')"));
-		// A version opens its viewer above the list; Back returns to the list, still docked.
-		await browser.click("#side-dock .artifact-row");
-		await browser.wait(`document.querySelector('.viewer-panel iframe') && ${docked}`);
-		await browser.evaluate("history.back()");
-		await browser.wait(`!document.querySelector('.viewer-panel') && ${docked}`);
 		await browser.click(button);
 		await browser.wait("!document.querySelector('#side-dock [data-testid=artifact-panel]')");
 		await browser.click(button);
 		await browser.wait(docked);
 		// One thing at a time: a run's activity replaces the list, the list replaces the activity.
-		await browser.click("[data-testid=activity]");
+		// The newest run's (the earlier ones sit above the pages shown in place, out of view).
+		await browser.evaluate(
+			`(() => { const a = [...document.querySelectorAll('[data-testid=activity]')].at(-1); a.scrollIntoView({ block: 'center' }); a.querySelector('button').click(); })()`,
+		);
 		await browser.wait(
 			"document.querySelector('#side-dock .activity-panel') && !document.querySelector('[data-testid=artifact-panel]')",
 		);

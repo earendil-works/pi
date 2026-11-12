@@ -150,13 +150,13 @@ test("Radius-relayed artifact previews may sit below the Radius shell's frame", 
 	await chat.send({ text: "artifact", requestId: "artifact" }, BACKGROUND_CONTEXT);
 	await until(chat.view, (view) =>
 		(view?.entries ?? []).some((entry) =>
-			(entry.model ?? []).some((message) => message.role === "toolResult" && message.toolName === "artifact"),
+			(entry.model ?? []).some((message) => message.role === "toolResult" && message.toolName === "codemode"),
 		),
 	);
 	chat.release();
 	// The relayed app is framed by the shell, and `frame-ancestors` checks every ancestor: `'self'` alone showed
 	// Chrome's blocked-frame page instead of every inline preview.
-	const id = f.open(`/artifact?${new URLSearchParams({ session, name: "demo", version: "1" })}`);
+	const id = f.open(`/artifact-frame?${new URLSearchParams({ session, id: "demo", version: "1" })}`);
 	const response = await f.radius.response(id);
 	assert.equal(response.status, 200);
 	const csp = (response.headers as [string, string][]).find(

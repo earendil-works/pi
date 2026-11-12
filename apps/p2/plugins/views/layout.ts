@@ -211,7 +211,7 @@ export function arrange(
 }
 
 /**
- * Why an agent's arrangement (the `view` tool's `arrange`) is no layout of the views `known` (the transcript included),
+ * Why an agent's arrangement (`view_arrange`) is no layout of the views `known` (the transcript included),
  * or undefined when it is one. A node is a view's ID, `{ tabs: [IDs], active? }`, or `{ row | column: [nodes],
  * sizes? }`; each view at most once.
  */

@@ -1,5 +1,6 @@
 // MCP tools in a session worker, end to end with the fake provider: the worker leases the owner's servers at the
-// session's location with the project `.pi/mcp.json` it read there, the `mcp_servers` section lists them, a code mode
+// session's location with the project `.pi/mcp.json` it read there, the `codemode` section lists each server's namespace
+// with its description, `describeNamespace()` describes it, a code mode
 // script's call returns the server's answer (the model is not offered the tools, as in pi), a relocation moves the
 // lease, a subagent's own location is leased while it is not archived, and with code mode off `tool_search` loads the
 // tools for the model.
@@ -106,10 +107,16 @@ test(
 			return scriptOutput(result);
 		};
 		assert.equal(await echo("hello"), "echo: hello");
-		assert.equal(
-			sections(await until(chat.view, Boolean)).mcp_servers,
-			"<mcp_servers>\nMCP servers whose tools are not declared to you. Call the tools of `codemode` servers from codemode scripts.\n- mcp__files (codemode)\n- mcp__lint (codemode)\n</mcp_servers>",
+		const listing = sections(await until(chat.view, Boolean));
+		assert.equal(listing.mcp_servers, undefined);
+		assert.match(
+			listing.codemode ?? "",
+			/## mcp__files\nTools of the MCP server "files" \(find them with searchTools\(\)\)\.\n\n## mcp__lint\nTools of the MCP server "lint"/,
 		);
+		// The deferred MCP tools are never declared inline.
+		assert.doesNotMatch(listing.codemode ?? "", /mcp__files__echo/);
+		const described = await call('codemode return await describeNamespace("mcp__files");');
+		assert.match(text(described), /"tools":\[[^\]]*"mcp__files__echo"/);
 		assert.equal((await call(`mcp__files__echo ${JSON.stringify({ text: "hello" })}`)).isError, true);
 		assert.equal((await call(`tool_search ${JSON.stringify({ query: "echo" })}`)).isError, true);
 		// The session moves in place: the worker leases the new location (no project there) and gives up the old one.
@@ -145,10 +152,6 @@ test(
 		}
 		assert.equal(found?.isError, false, text(found));
 		assert.match(text(found), /mcp__files__echo/);
-		assert.match(
-			sections(await until(chat.view, Boolean)).mcp_servers ?? "",
-			/- mcp__files \(tool_search\)\n<\/mcp_servers>$/,
-		);
 		const echoed = await call(`mcp__files__echo ${JSON.stringify({ text: "hello" })}`);
 		assert.equal(echoed.isError, false, text(echoed));
 		assert.equal(text(echoed), "echo: hello");

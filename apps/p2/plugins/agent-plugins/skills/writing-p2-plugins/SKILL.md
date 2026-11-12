@@ -1,6 +1,6 @@
 ---
 name: writing-p2-plugins
-description: Write, apply and show a p2 plugin (shared or persistent views, multiplayer games, boards, editors several people use, server-side objects, tools for the agent). Use when the user wants something multiplayer, persistent or with rules inside p2; custom HTML views are for single-player artifacts.
+description: Write, apply and show a p2 plugin (shared or persistent views, multiplayer games, boards, editors several people use, server-side objects, tools for the agent). Use when the user wants something multiplayer, persistent or with rules inside p2; html artifacts are for single-player pages.
 ---
 
 # Writing p2 plugins
@@ -10,7 +10,7 @@ the page. Plugins you write live in the **user plugin root**, `<data>/plugins/` 
 directory this skill's subagent works in). They survive p2 updates; a built-in plugin wins a name clash.
 
 Use a plugin for anything multiplayer, persistent or with rules: games, shared boards, editors several people use.
-A custom view (the `view` tool's `custom` kind, HTML you write) is for single-player artifacts.
+An html artifact (`artifact_write` with kind `html`, a page you write) is for single-player pages.
 
 ## Where to work
 
@@ -48,17 +48,24 @@ a file of its own plugin.
   store served once (`local(name, { version, params: {}, members })` with
   `self.state(defineState(name, { schema, version, initial, keyed?, persist: true, checkpointWhen }))`, changed with
   `handle.change(key, draft => ..., ctx)`); each person's object reaches it with `self.get(Store, {})` and shows
-  derives (`self.derive([sources], fn)`). Events: `self.events<T>()`, `.emit(value)`; listening to a reference's
+  derives (`self.derive([sources], fn)`). Data that belongs to one session is keyed by the session's address
+  (`keyed: Session` from `@p2/app/v1`, keys `Session({ id })`): a session's export, import and delete carry it. Events: `self.events<T>()`, `.emit(value)`; listening to a reference's
   event member: `await ref.member.on(listener, ctx)`. Presence: `host.references(Contract)` lists who holds which
   object now.
-- **Pane** (`web.tsx`): `contribute(host, "<name>.web", (self) => self.contribute(ViewKinds, { <kind>: Pane }))`.
-  The pane gets `PaneProps` (`session`, `view` with its `state`, `editable`, `select`, `annotations`) and holds
+- **Pane** (`web.tsx`): `contribute(host, "<name>.web", (self) => self.contribute(ViewKinds, { <kind>: { Pane } }))`.
+  The pane gets `PaneProps` (`session`, `item` (the view's item: what it shows, e.g. a board's ID), `inline` (true
+  in the transcript, false beside it), `view` (beside the transcript), `editable`, `select`, `annotations`) and holds
   objects with `useObject(Contract, params)`, `liveIn(ref, variant)`, `useReadable(member)`.
-- **Tools** (`worker.ts`): `defineExtension({ name, tools: [defineP2Tool({...})] })` contributed to `Extensions`.
-  A plugin's tool is **deferred and code-mode only by default**: give it `deferred: true, callers: ["tools"]`, so it
-  stays out of the model's tool list and scripts call it (`await tools.<name>(args)` in `codemode`). To offer a tool
-  in the main list instead, leave out both `deferred` and `callers`; do that only for a tool the agent needs in most
-  turns.
+- **Listable items** (`web.tsx`, optional): a plugin keeping several items per session (boards, games) contributes
+  an artifact kind, `self.contribute(ArtifactKinds, { <kind>: { title, icon, useItems, useCount, view, useRemove? } })`
+  (`ArtifactKinds` from `@p2/app/v1/web`): the artifacts button counts them, its sheet lists them, and a row opens
+  the item as a view of kind `view` with the item's ID.
+- **Tools** (`worker.ts`): `defineExtension({ name, namespace, tools: [defineP2Tool({...})] })` contributed to
+  `Extensions`. A plugin's tool is **code-mode only by default**: give it `callers: ["tools"]`, so it stays out of
+  the model's tool list and scripts call it (`await tools.<name>(args)` in `codemode`). The extension's `namespace`
+  (`{ name, description, instructions? }`) groups its tools in code mode: the prompt lists the namespace's name and
+  one-line description, and `describeNamespace(name)` gives its instructions and tools. To offer a tool in the main
+  list instead, leave out `callers`; do that only for a tool the agent needs in most turns.
 - **Skills**: a worker facet contributes its plugin's skills directory:
   `self.contribute(PluginSkills, { <name>: { dir: pluginFile("skills") } })` (`PluginSkills` from
   `@p2/app/v1/worker`). Agents on the server's machine see them in `<available_skills>` after the environment's and
@@ -71,13 +78,14 @@ a file of its own plugin.
    themselves). It reports per plugin: `applied`, `removed`, `failed` with the errors as `file:line:column: message`,
    or `refused` with the reason (an invalid `package.json`, a built-in's name), and errors logged meanwhile. A failed
    build applies nothing; the old code keeps running. Fix and reload again.
-2. Show the pane: `view` `open` with `kind` (the name your web facet registered), `title` and an optional `state`.
-   A kind no loaded plugin registers shows "Unknown view kind".
+2. Show the pane: in code mode, `await tools.view_open({ kind, title, item? })` (`kind` the name your web facet
+   registered, `item` what it shows). A kind no loaded plugin registers shows "Unknown view kind".
 
 Edits reload in place: objects people hold go on with the new code.
 
 ## Complete example
 
 `example/counter/` next to this file is a complete, tested plugin: a shared counter with presence (who has the pane
-open), a wave event, a pane and a code-mode tool. Copy it to `<root>/counter/` (`cp -r`), run `reload_plugins`, then
-`view` `open` `{ "kind": "counter", "title": "Counter" }`. Read its files before writing your own.
+open), a wave event, a pane and a code-mode tool in its namespace. Copy it to `<root>/counter/` (`cp -r`), run
+`reload_plugins`, then in code mode `await tools.view_open({ kind: "counter", title: "Counter" })`. Read its files
+before writing your own.

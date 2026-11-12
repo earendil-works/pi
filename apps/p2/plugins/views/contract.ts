@@ -1,18 +1,20 @@
 // Views: panes beside the transcript that the person and the agent share (docs/views.md). A view has a kind (a Markdown
-// file, the working tree's changes, or a custom HTML view the agent wrote), its own JSON state and the person's
-// selection in it; annotations (comments, removals, drawings) mark up any view or the transcript. The session's worker
-// owns all of it; the layout of the panes is each device's own (web.tsx).
+// file, the working tree's changes, or a kind a plugin's web facet registers, such as an html or md artifact) and the
+// item it shows, and the person's selection in it; annotations (comments, removals, drawings) mark up any view or the
+// transcript. The session's worker owns all of it; the layout of the panes is each device's own (web.tsx).
 
 import { arr, int, nullable, num, obj, oneOf, opt, type Static, str, union, unknown } from "@earendil-works/pi-schema";
 import {
+	type AcceptsTable,
+	type Ctx,
 	evolve,
 	type JsonValue,
+	keyedRegistry,
 	literal,
 	method,
 	param,
 	propertiesOf,
 	remote,
-	serverHost,
 	sessionHost,
 	unsafe,
 } from "@p2/app/v1";
@@ -21,30 +23,23 @@ import {
 export const VIEW_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 /** The transcript's ID where annotations name the view they mark up: it is no view of its own, but takes notes too. */
 export const TRANSCRIPT = "transcript";
-/** The largest state a view keeps, as JSON. */
-export const MAX_VIEW_STATE = 256 * 1024;
-/** The largest custom view's HTML, as UTF-8. */
-export const MAX_VIEW_HTML = 2 * 1024 * 1024;
 /** How many annotations a session keeps at once. */
 export const MAX_ANNOTATIONS = 200;
-/** Where a custom view's HTML versions live in the session's files (path: the view's ID). */
-export const VIEW_SOURCES = "views";
 
 const Id = str({ pattern: VIEW_ID.source });
-/** The built-in kinds of views: a Markdown file of the workspace rendered, the working tree's changes, a custom HTML view. */
-export const ViewKindSchema = oneOf(["markdown", "changes", "custom"] as const);
-export type ViewKind = Static<typeof ViewKindSchema>;
-/** The built-in kinds. */
-export const BUILT_IN_KINDS: readonly string[] = ["markdown", "changes", "custom"];
-
-/** Whether `kind` is a built-in one. */
-export const isBuiltInKind = (kind: string): kind is ViewKind => BUILT_IN_KINDS.includes(kind);
+/** The kinds `Views` version 1 knew. */
+const ViewKindSchemaV1 = oneOf(["markdown", "changes", "custom"] as const);
+/** The built-in kinds: a Markdown file of the workspace rendered, the working tree's changes. */
+export const BUILT_IN_KINDS: readonly string[] = ["markdown", "changes"];
 
 /**
- * A view's kind: a built-in one or the name a plugin's web facet registered its pane under (`ViewKinds`, e.g. a plugin
- * the agent wrote); a page that has no pane for it says so.
+ * A view's kind: a built-in one or the name a plugin's web facet registered its pane under (`ViewKinds`: `html` and
+ * `md` artifacts, a plugin the agent wrote); a page that has no pane for it says so.
  */
 export const ViewKindNameSchema = str({ pattern: "^[a-z0-9][a-z0-9._-]{0,63}$" });
+
+/** What a view shows: a Markdown file's path, the path changes are shown below, a plugin's item ID (an artifact's). */
+export const ViewItemSchema = str({ minLength: 1, maxLength: 4096 });
 
 /**
  * What the person selected in a view, as the view describes it: a summary the agent reads with their next message,
@@ -57,26 +52,36 @@ export const SelectionSchema = obj({
 });
 export type Selection = Static<typeof SelectionSchema>;
 
-/** One view of a session, as `Views` version 1 has it: built-in kinds only. */
-export const ViewSchemaV1 = obj({
+/** One view of a session, as `Views` version 1 has it. */
+const ViewSchemaV1 = obj({
 	id: Id,
-	kind: ViewKindSchema,
+	kind: ViewKindSchemaV1,
 	title: str({ minLength: 1, maxLength: 120 }),
-	/** `markdown`: the file, relative to the workspace; `changes`: only changes below this path. */
 	path: opt(str({ maxLength: 4096 })),
-	/** `custom`: the version of its HTML in the session's files (`VIEW_SOURCES`). */
 	source: opt(int({ minimum: 1 })),
 	selection: opt(SelectionSchema),
-	/** The custom view's last script errors in the browser, newest last: what the agent sees when it reads the view. */
 	errors: opt(arr(str({ maxLength: 1000 }), { maxItems: 10 })),
+	focus: num(),
+	created: num(),
+});
+type ViewV1 = Static<typeof ViewSchemaV1>;
+
+/** One view of a session, as `Views` version 2 has it: a plugin's kind too. */
+const ViewSchemaV2 = obj({ ...propertiesOf(ViewSchemaV1), kind: ViewKindNameSchema });
+type ViewV2 = Static<typeof ViewSchemaV2>;
+
+/** One view of a session: what it is (its kind and the item it shows), its title and the person's selection. */
+export const ViewSchema = obj({
+	id: Id,
+	kind: ViewKindNameSchema,
+	/** `markdown`: the file, relative to the workspace; `changes`: only changes below this path; a plugin's item ID. */
+	item: opt(ViewItemSchema),
+	title: str({ minLength: 1, maxLength: 120 }),
+	selection: opt(SelectionSchema),
 	/** When the agent last asked to show it: devices bring it to the front (and show it again) when this grows. */
 	focus: num(),
 	created: num(),
 });
-export type ViewV1 = Static<typeof ViewSchemaV1>;
-
-/** One view of a session: a built-in kind, or a plugin's. */
-export const ViewSchema = obj({ ...propertiesOf(ViewSchemaV1), kind: ViewKindNameSchema });
 export type View = Static<typeof ViewSchema>;
 
 /** A stroke of a drawing: x, y pairs as fractions of the pane's width and height at the time it was drawn. */
@@ -132,21 +137,28 @@ export const ArrangementSchema = obj({ layout: unsafe<JsonValue>(unknown()), sta
 export type Arrangement = Static<typeof ArrangementSchema>;
 
 /**
- * The session's views and annotations: the worker's `p2.views` document. `opened`: each custom view's opening ID
- * (docs/rooms.md), new each time it is added; a view from before has none (its opening is `LEGACY_OPENING`).
+ * The session's views and annotations: the worker's `p2.views` document. Views of the removed `custom` kind may still
+ * be stored there (no migration): `liveViews` leaves them out.
  */
 export type ViewsState = {
 	views: View[];
 	annotations: Annotation[];
 	arrangement?: Arrangement;
-	opened?: Record<string, string>;
 };
 
-/** The opening of a view added before openings existed. */
-export const LEGACY_OPENING = "0";
+/** The views of `state` that still exist: every kind but the removed `custom` one. */
+export const liveViews = (state: Readonly<ViewsState>): View[] => state.views.filter((view) => view.kind !== "custom");
 
-/** What a person opens from the Views sheet: a Markdown file, the changes, or a view of the owner's library. */
-export const OpenSchema = union([
+/** What a person opens from the Views sheet or the artifacts sheet: a Markdown file, the changes, a plugin's item. */
+export const OpenSchema = obj({
+	kind: ViewKindNameSchema,
+	item: opt(ViewItemSchema),
+	title: opt(str({ minLength: 1, maxLength: 120 })),
+});
+export type OpenInput = Static<typeof OpenSchema>;
+
+/** What version 2's editors opened: a Markdown file, the changes, or a saved view (gone). */
+const OpenSchemaV2 = union([
 	obj({
 		kind: literal("markdown"),
 		path: str({ minLength: 1, maxLength: 4096 }),
@@ -155,7 +167,6 @@ export const OpenSchema = union([
 	obj({ kind: literal("changes"), path: opt(str({ maxLength: 4096 })), title: opt(str({ maxLength: 120 })) }),
 	obj({ saved: str({ pattern: VIEW_ID.source }) }),
 ]);
-export type OpenInput = Static<typeof OpenSchema>;
 
 /**
  * A session's views and annotations as anyone who may view the session sees them; people who may send there also open,
@@ -180,7 +191,7 @@ export const ViewsV1 = remote("p2.views", {
 				arrangement: nullable(ArrangementSchema),
 			},
 			methods: {
-				open: method(OpenSchema, obj({ id: Id })),
+				open: method(OpenSchemaV2, obj({ id: Id })),
 				/** Removes the view, its state and its annotations. */
 				close: method(obj({ id: Id })),
 				/** Sets (or with `null` clears) the person's selection in a view. */
@@ -197,84 +208,75 @@ export const ViewsV1 = remote("p2.views", {
 	},
 });
 
-/**
- * The session's views and annotations (see `ViewsV1`). 2: a view's kind may be a plugin's (`ViewKindNameSchema`); pages
- * built with version 1 get the built-in kinds' views only.
- */
-export const Views = evolve(ViewsV1, (e) =>
-	e.state("reader", "views", arr(ViewSchema)).state("editor", "views", arr(ViewSchema)),
+/** Version 2: a view's kind may be a plugin's. */
+const ViewsV2 = evolve(ViewsV1, (e) =>
+	e.state("reader", "views", arr(ViewSchemaV2)).state("editor", "views", arr(ViewSchemaV2)),
 );
 
-/** One view's JSON state (null until something sets it): everyone who may view reads it, people who may send set it. */
-export const ViewState = remote("p2.view-state", {
-	version: 1,
-	params: { session: param.str(), view: param.str() },
-	hostAddress: sessionHost,
-	variants: {
-		reader: { state: { value: unsafe<JsonValue>(unknown()) } },
-		editor: {
-			state: { value: unsafe<JsonValue>(unknown()) },
-			methods: { set: method(obj({ value: unsafe<JsonValue>(unknown()) })) },
-		},
-	},
-});
-
-/** A custom view's HTML for the server's `/view-frame` route (the worker owns the bytes; the route authorizes). */
-export const ViewSource = remote("p2.view-source", {
-	version: 1,
-	params: { session: param.str() },
-	hostAddress: sessionHost,
-	variants: {
-		server: {
-			methods: {
-				read: method(obj({ view: Id, version: int({ minimum: 1 }) }), obj({ title: str(), html: str() })),
-			},
-		},
-	},
-});
-
-/** A view in the owner's library: what opening it in any session starts from. */
-export const SavedViewSchema = obj({
-	name: Id,
-	title: str({ minLength: 1, maxLength: 120 }),
-	description: opt(str({ maxLength: 2000 })),
-	kind: ViewKindSchema,
-	path: opt(str({ maxLength: 4096 })),
-	/** `custom`: its HTML. */
-	html: opt(str()),
-	state: unsafe<JsonValue>(unknown()),
-	saved: num(),
-});
-export type SavedView = Static<typeof SavedViewSchema>;
-/** A saved view without its HTML and state, for lists. */
-export const SavedInfoSchema = obj({
-	name: Id,
-	title: str(),
-	description: opt(str()),
-	kind: ViewKindSchema,
-	saved: num(),
-});
-export type SavedInfo = Static<typeof SavedInfoSchema>;
-
 /**
- * The owner's library of saved views (`<data>/views/<name>.json`, server): the owner lists and removes them; session
- * workers list, read and save them for their agent's `view` tool and for the owner's Views sheet.
+ * The session's views and annotations (see `ViewsV1`). 2: a view's kind may be a plugin's. 3: a view shows an `item`
+ * (`path` before); the custom kind, its source and errors, saved views and `report` are gone. Pages built with 1 and 2
+ * get what they can show (`VIEWS_ACCEPTS`).
  */
-export const SavedViews = remote("p2.saved-views", {
-	version: 1,
-	params: {},
-	hostAddress: serverHost,
-	variants: {
-		owner: { state: { saved: arr(SavedInfoSchema) }, methods: { remove: method(obj({ name: Id })) } },
-		worker: {
-			methods: {
-				list: method(undefined, arr(SavedInfoSchema)),
-				get: method(obj({ name: Id }), nullable(SavedViewSchema)),
-				save: method(SavedViewSchema, SavedInfoSchema),
+export const Views = evolve(ViewsV2, (e) =>
+	e
+		.state("reader", "views", arr(ViewSchema))
+		.state("editor", "views", arr(ViewSchema))
+		.args("open", OpenSchema)
+		.removeMethod("report"),
+);
+
+/** A view as versions 1 and 2 have it: its item as `path` (only the built-in kinds had one). */
+const asV2 = (view: View): ViewV2 => {
+	const { item, ...rest } = view;
+	return { ...rest, ...(item !== undefined && BUILT_IN_KINDS.includes(view.kind) ? { path: item } : {}) };
+};
+
+/** What pages built with older versions of `Views` see and send. */
+export const VIEWS_ACCEPTS: AcceptsTable<typeof Views> = {
+	1: {
+		state: {
+			reader: {
+				views: (views) => views.map(asV2).filter((view): view is ViewV1 => BUILT_IN_KINDS.includes(view.kind)),
+			},
+			editor: {
+				views: (views) => views.map(asV2).filter((view): view is ViewV1 => BUILT_IN_KINDS.includes(view.kind)),
 			},
 		},
+		// Custom views and their errors are gone: what an older page reports changes nothing.
+		methods: { open: { args: openOfV2 }, report: { call: async () => null } },
 	},
-});
+	2: {
+		state: { reader: { views: (views) => views.map(asV2) }, editor: { views: (views) => views.map(asV2) } },
+		// Custom views and their errors are gone: what an older page reports changes nothing.
+		methods: { open: { args: openOfV2 }, report: { call: async () => null } },
+	},
+};
+
+/** An older page's open: a Markdown file or the changes (saved views are gone). */
+function openOfV2(old: Static<typeof OpenSchemaV2>): OpenInput {
+	if ("saved" in old) throw new Error("Saved views are gone");
+	return {
+		kind: old.kind,
+		...(old.path ? { item: old.path } : {}),
+		...(old.title ? { title: old.title } : {}),
+	};
+}
 
 /** The entry kind of a person's message that carried view context (selections, annotations) to the agent. */
 export const VIEW_INPUT = "p2.view-input";
+
+/**
+ * Context another plugin adds to a person's next message, beside the views' selections and annotations (the html
+ * artifacts' new page errors): a text block the model reads, a short note the transcript shows, and what to mark once
+ * the message carried it.
+ */
+export type MessageContext = {
+	readonly text: string;
+	readonly note: string;
+	readonly carried: (ctx: Ctx) => Promise<void>;
+};
+
+/** Worker registry of message contexts, by plugin: each says what is new for the next message (undefined: nothing). */
+export const MessageContexts =
+	keyedRegistry<(ctx: Ctx) => Promise<MessageContext | undefined>>("p2.views-message-contexts");

@@ -134,3 +134,14 @@ and its working rules are in `handoff.md`.
   single-player artifacts. Dropped: the generic room (p2 rooms v1 stays as a playground), the rooms v2 leader design
   and the rooms v3 sequenced model (`apps/p2/docs/rooms-v3/`, kept as the record of the use cases), view principals for
   sketches, and views.md's two-tier decision for agent-made views. First built in p2.
+- **Artifacts and views (owner, 2026-11-12; p2 builds it first, p3 takes the same structure with rough edges sanded
+  down):** each plugin owns its per-session data, keyed by the session's host address on the server (export, import and
+  delete carry it; versions are the plugin's business). A web registry `ArtifactKinds` (title, icon, live
+  `useItems`/`useCount`, optional `Row` and removal, the view kind that opens an item) collects listable items for the
+  artifacts sheet and button; `ViewKinds` only gives panes (`PaneProps` `item`, `inline`). Inline artifacts are a tool
+  card rendering the item's pane, mounted only while visible. Plugin tools are code-mode only, grouped by the code-mode
+  namespace their extension declares (description in the prompt, instructions on demand); the prompt lists namespaces
+  from configuration so it stays stable when servers connect. Supersedes "A view's frame is a Chord client with a view
+  principal" and drops rooms and the view library. As built in p2: html artifacts keep the custom views' page API
+  (`window.p2view`, state per artifact); a reader who may not change the session's views opens an item in the
+  artifacts side panel on their own device; a session's clone and fork copy its artifacts.

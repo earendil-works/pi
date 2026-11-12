@@ -200,7 +200,6 @@ async function signInHost(
 					info: constant({ app: APP, dataDir, fake: true, allowedHosts: [], port: 0 }),
 					revokeOwners: () => {},
 					revokeGuests: () => {},
-					revokeFrames: () => {},
 				},
 			],
 			[Hosts, { workers: constant({ s1: { running: true, generation: 1 } }), stop: () => {} }],

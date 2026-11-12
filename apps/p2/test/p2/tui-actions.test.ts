@@ -105,10 +105,11 @@ test("openUrl: https externals and allowlisted origin paths only, never with cre
 	for (const url of ["http://provider.test", "https://user:pass@provider.test", "javascript:alert(1)", "file:///etc"])
 		assert(!ok({ kind: "external", url }), url);
 	assert(ok({ kind: "origin", path: `/s/${OTHER}` }));
-	assert(ok({ kind: "origin", path: `/artifact?session=${SESSION}&name=chart&version=2` }));
+	assert(ok({ kind: "origin", path: `/artifact-frame?session=${SESSION}&id=chart&version=2` }));
 	assert(ok({ kind: "origin", path: `/download?session=${SESSION}&id=${FILE}` }));
 	for (const path of [
-		`/artifact?session=${OTHER}&name=chart&version=2`,
+		`/artifact-frame?session=${OTHER}&id=chart&version=2`,
+		`/artifact-frame?session=${SESSION}&id=../x&version=2`,
 		`/download?session=${SESSION}&id=${FILE}&cookie=1`,
 		"/owner",
 		"/__p2_dev",
@@ -188,9 +189,9 @@ test("download: fixed route, the launcher's cookie, bounded, sanitized, never ov
 	mode = "redirect";
 	await assert.rejects(download.run(payload, context()));
 	assert.equal(readdirSync(folder).length, 2, "failed downloads leave nothing behind");
+	// Only sent files download: artifacts are pages, opened in the browser.
 	const artifact = { kind: "artifact", session: SESSION, name: "chart", version: 3 };
-	assert(download.consent(artifact, { origin: url, target }));
-	assert.equal(download.consent({ ...artifact, name: "../x" }, { origin: url, target }), undefined);
+	assert.equal(download.consent(artifact, { origin: url, target }), undefined);
 	assert.equal(safeFileName("..\\..\\secret"), "secret");
 	assert.equal(safeFileName(""), "download");
 });

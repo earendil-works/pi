@@ -1,18 +1,27 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	rmSync,
+	symlinkSync,
+	truncateSync,
+	writeFileSync,
+} from "node:fs";
 import { createServer } from "node:http";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { VirtualTerminal } from "../../../../packages/tui/test/virtual-terminal.ts";
-import { FileSummaries } from "../../plugins/files/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { launcherActions, localPath, openLocalFile, uploadName } from "../../src/hosts/tui-actions.ts";
 import { startTuiClient } from "../../src/hosts/tui-client.ts";
 import { Grants, type LauncherAction, type LauncherActionContext } from "../../src/hosts/tui-grants.ts";
 import { TrustedUi } from "../../src/hosts/tui-trusted-ui.ts";
+import { hostFiles, sessionDirectory } from "../../src/runtime/host-dirs.ts";
 import { holdIn, poll, startFixture } from "./helpers.ts";
 
 const supported = Number(process.versions.node.split(".")[0]) >= 26;
@@ -123,16 +132,13 @@ test("uploads: the bound session, fixed route and Origin, confirmation first, no
 	assert.match(denied.shown[0]!, /notes\.txt/);
 	assert.match(denied.shown[0]!, /12 B/);
 	assert.match(denied.shown[0]!, new RegExp(session.id));
-	// The session's uploads, as the server mirrors them.
-	const mirror = await holdIn(fixture.browser(), FileSummaries, {}, "owner");
-	const uploads = async () => (await mirror.of({ session: session.id }, BACKGROUND_CONTEXT)).uploads;
-	assert.equal(await uploads(), undefined, "nothing uploaded without confirmation");
+	// The session's stored files: their blobs in its files directory.
+	const blobs = join(hostFiles(sessionDirectory(fixture.server.dataDir, session.id)), "blobs");
+	const stored = () => (existsSync(blobs) ? readdirSync(blobs, { recursive: true }).length : 0);
+	assert.equal(stored(), 0, "nothing uploaded without confirmation");
 	const uploaded = (await attach.run({ path: file }, context(session.id, true))) as { id: string; name: string };
 	assert.equal(uploaded.name, "notes.txt");
-	assert.deepEqual(
-		(await uploads())?.newest.map(({ path, key }) => [path, key]),
-		[[`${uploaded.id}-notes.txt`, uploaded.id]],
-	);
+	assert(stored() > 0, "the upload is stored in the session's files");
 	await assert.rejects(attach.run({ path: directory }, context(session.id, true)), /regular file/);
 
 	// A redirecting or slow server: refused, and a cancelled grant aborts the upload.

@@ -1,12 +1,12 @@
-// The views' Durable documents (session scope, worker) and the changes and texts the `view` tool, the `Views` object
+// The views' Durable document (session scope, worker) and the changes and texts the `view_*` tools, the `Views` object
 // and the send router share: adding and removing views, annotations, and the context a person's message carries.
-import { type DocumentReader, defineDoc, defineDocFamily, type Tx } from "@earendil-works/pi-durable";
-import type { Context, JsonValue } from "@p2/app/v1";
+import { type DocumentReader, defineDoc, type Tx } from "@earendil-works/pi-durable";
+import type { Context } from "@p2/app/v1";
 import {
 	type Annotation,
 	type AnnotationInput,
+	liveViews,
 	MAX_ANNOTATIONS,
-	MAX_VIEW_STATE,
 	TRANSCRIPT,
 	VIEW_ID,
 	type View,
@@ -22,49 +22,10 @@ export const ViewsDoc = defineDoc<ViewsState>({
 	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 32,
 });
 
-/**
- * Each view's JSON state, keyed by the view's ID; retired with the view. `revision` grows with every write and `by`
- * says whose it was (a view's room, or anyone else): a room writes only over the revision it saw (docs/rooms.md).
- */
-export type ViewStateValue = { value: JsonValue; revision?: number; by?: "room" | "other" };
-export const ViewStateDoc = defineDocFamily<ViewStateValue, null>({
-	kind: "p2.view-state",
-	version: 1,
-	scope: "session",
-	family: true,
-	initial: () => ({ value: null }),
-	// A state change replaces the whole value: a delta is as large as a base.
-	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 8,
-});
-
-/**
- * A text room's own state (docs/rooms.md: the text, its IDs, the editors' watermarks), keyed by the view's ID; written
- * only by its room through `ViewBacking`, retired with the view.
- */
-export const ViewRoomDoc = defineDocFamily<{ value: JsonValue }, null>({
-	kind: "p2.view-room",
-	version: 1,
-	scope: "session",
-	family: true,
-	initial: () => ({ value: null }),
-	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 8,
-});
-
-/** Sets view state `doc` to `value`, written by `by`: the revision grows. */
-export function setViewState(doc: ViewStateValue, value: JsonValue, by: "room" | "other"): void {
-	doc.value = checkedState(value);
-	doc.revision = (doc.revision ?? 0) + 1;
-	doc.by = by;
-}
-
-/** The session's views and annotations as committed (empty before the first view). */
+/** The session's live views and annotations as committed (empty before the first view). */
 export async function readViews(read: DocumentReader, context: Context): Promise<Readonly<ViewsState>> {
-	return (await read.snapshot(ViewsDoc, context)) ?? { views: [], annotations: [] };
-}
-
-/** A view's state as committed (null when nothing set it). */
-export async function readViewState(read: DocumentReader, id: string, context: Context): Promise<JsonValue> {
-	return (await read.snapshot(ViewStateDoc, id, context))?.value ?? null;
+	const state = await read.snapshot(ViewsDoc, context);
+	return state ? { ...state, views: liveViews(state) } : { views: [], annotations: [] };
 }
 
 /** A free view ID made from `title` (or `kind`): its slug, numbered when taken. */
@@ -82,63 +43,46 @@ export function freeViewId(state: Readonly<ViewsState>, title: string, kind: str
 	for (let n = 2; ; n++) if (!taken.has(`${base}-${n}`)) return `${base}-${n}`;
 }
 
-/** A state value as JSON, refused past `MAX_VIEW_STATE`. */
-export function checkedState(value: JsonValue): JsonValue {
-	const size = JSON.stringify(value)?.length ?? 0;
-	if (size > MAX_VIEW_STATE) throw new Error(`View state is ${size} characters of JSON; at most ${MAX_VIEW_STATE}`);
-	return value;
-}
-
 /** What opening a view sets: a new view, or the one with its ID updated and brought to the front. */
 export type ViewSpec = {
 	readonly id: string;
 	/** A built-in kind, or a plugin's. */
 	readonly kind: string;
 	readonly title: string;
-	readonly path?: string;
-	readonly source?: number;
-	readonly state?: JsonValue;
+	readonly item?: string;
 };
 
 /**
- * Opens a view: adds it, or updates the one with its ID (same kind; its selection, errors and unset fields stay) and
- * brings it to the front. `state` replaces its state.
+ * Opens a view: adds it, or updates the one with its ID (same kind; its selection and unset fields stay) and brings it
+ * to the front.
  */
 export async function openView(tx: Tx, spec: ViewSpec, now: number): Promise<View> {
 	const draft = await tx.doc(ViewsDoc);
+	// A stored view of the removed custom kind under this ID is replaced, as if it were gone.
 	const at = draft.views.findIndex((each) => each.id === spec.id);
-	const existing = at < 0 ? undefined : draft.views[at];
+	const existing = at < 0 || draft.views[at]?.kind === "custom" ? undefined : draft.views[at];
 	if (existing && existing.kind !== spec.kind) throw new Error(`View "${spec.id}" is a ${existing.kind} view`);
 	const view: View = {
-		...existing,
 		id: spec.id,
 		kind: spec.kind,
 		title: spec.title,
 		focus: now,
 		created: existing?.created ?? now,
-		...(spec.path !== undefined ? { path: spec.path } : {}),
-		...(spec.source !== undefined ? { source: spec.source } : {}),
+		...(spec.item !== undefined ? { item: spec.item } : existing?.item !== undefined ? { item: existing.item } : {}),
+		...(existing?.selection ? { selection: existing.selection } : {}),
 	};
-	if (spec.source !== undefined) delete view.errors;
-	if (at < 0) {
-		draft.views.push(view);
-		// A new opening: tokens, frames and rooms of an earlier view under this ID never reach this one.
-		draft.opened = { ...draft.opened, [spec.id]: crypto.randomUUID() };
-	} else draft.views[at] = view;
-	if (spec.state !== undefined) setViewState(await tx.doc(ViewStateDoc, spec.id, null), spec.state, "other");
+	if (at < 0) draft.views.push(view);
+	else draft.views[at] = view;
 	return view;
 }
 
-/** Removes view `id` with its state and annotations; false when there is none. */
+/** Removes view `id` with its annotations; false when there is none. */
 export async function removeView(tx: Tx, id: string): Promise<boolean> {
 	const draft = await tx.doc(ViewsDoc);
 	const at = draft.views.findIndex((view) => view.id === id);
 	if (at < 0) return false;
 	draft.views.splice(at, 1);
 	draft.annotations = draft.annotations.filter((annotation) => annotation.view !== id);
-	if (draft.opened) delete draft.opened[id];
-	await tx.retireDoc(ViewStateDoc, id);
-	await tx.retireDoc(ViewRoomDoc, id);
 	return true;
 }
 
@@ -158,7 +102,7 @@ export function viewName(views: readonly View[], id: string): string {
 	if (id === TRANSCRIPT) return "the transcript";
 	const view = views.find((each) => each.id === id);
 	if (!view) return `view "${id}" (closed)`;
-	const where = view.path ? ` ${view.path}` : "";
+	const where = view.item ? ` ${view.item}` : "";
 	return `view "${id}" (${view.kind}${where}, "${view.title}")`;
 }
 
@@ -218,7 +162,7 @@ export function viewContext(state: Readonly<ViewsState>): Carried | undefined {
 	if (!selections.length && !annotations.length) return undefined;
 	const text = [
 		"<views>",
-		"From the views beside the transcript (the view tool reads and changes them):",
+		"From the views beside the transcript (code mode's view_* tools list and change them):",
 		...selections.map((view) => `Selected in ${viewName(state.views, view.id)}: ${view.selection?.summary ?? ""}`),
 		...(annotations.length
 			? [

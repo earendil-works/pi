@@ -167,6 +167,8 @@ class Connection {
 	#status: Instance["status"] = "starting";
 	#failure: Failure | undefined;
 	#tools: readonly McpTool[];
+	/** The server's instructions from its last `initialize`, kept while it reconnects. */
+	#instructions: string | undefined;
 	#delayMs: number;
 
 	constructor(
@@ -211,6 +213,7 @@ class Connection {
 				? {}
 				: { error: failure.stderr ? `${failure.message} (stderr: ${failure.stderr})` : failure.message }),
 			tools: [...this.#tools],
+			...(this.#instructions === undefined ? {} : { instructions: this.#instructions }),
 		};
 	}
 
@@ -307,6 +310,7 @@ class Connection {
 			if (this.#state !== state) return;
 			this.#state = { kind: "connected", client, since: Date.now() };
 			this.#tools = tools.map(toolOf);
+			this.#instructions = client.instructions?.trim() || undefined;
 			this.#show("connected", undefined);
 		} catch (error) {
 			await client.close().catch(() => {});
