@@ -10,6 +10,7 @@ import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
 import { flushRawStdout, waitForRawStdoutBackpressure, writeRawStdout } from "../core/output-guard.ts";
 import { killTrackedDetachedChildren } from "../utils/shell.ts";
+import { writeDiagnosticsToStderr } from "./diagnostics-stderr.ts";
 import { toJsonEvent } from "./json-event.ts";
 
 /**
@@ -76,6 +77,7 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 
 	runtimeHost.setRebindSession(async () => {
 		await rebindSession();
+		writeDiagnosticsToStderr(runtimeHost.takeUnreportedDiagnostics());
 	});
 
 	const rebindSession = async (): Promise<void> => {

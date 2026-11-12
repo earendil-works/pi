@@ -24,6 +24,7 @@
 - Fixed provider errors reading "Connection closed." not triggering automatic retries ([#12064](https://github.com/earendil-works/pi/issues/12064))
 - Fixed `/resume` sometimes selecting an unrelated session while the list reloads after deleting or renaming a session ([#12106](https://github.com/earendil-works/pi/issues/12106))
 - Fixed `enabledModels`/`--models` warnings such as `No models match pattern "github-copilot/nope"` being written over the interactive TUI on every `/new`, `/resume` and `/fork`, which left stale lines in fullscreen mode. The warnings are now shown once at startup, in the chat in interactive mode and on stderr in other modes; RPC mode no longer repeats them on stderr for each `new_session`, `switch_session` or `fork` ([#11264](https://github.com/earendil-works/pi/issues/11264))
+- Fixed problems found when replacing the session with `/new`, `/resume`, `/fork` or RPC `new_session`, `switch_session` and `fork` never being shown, for example a project extension that fails to load after `/resume` into another project, or an `enabledModels` pattern that matches nothing after a settings change. Interactive mode now shows them in the chat and print, JSON and RPC modes write them to stderr; a problem already reported is not repeated. `AgentSessionRuntime.takeUnreportedDiagnostics()` returns them for SDK hosts
 
 ### Removed
 

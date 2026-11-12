@@ -645,6 +645,7 @@ export class InteractiveMode {
 		this.runtimeHost.setRebindSession(async () => {
 			await this.rebindCurrentSession({ renderBeforeBind: true });
 			this.themeController.applyFromSettings();
+			this.showRuntimeDiagnostics(this.runtimeHost.takeUnreportedDiagnostics());
 		});
 		this.version = VERSION;
 		this.renderer = createInteractiveTui({
@@ -1235,15 +1236,7 @@ export class InteractiveMode {
 			initialMessages,
 		} = this.options;
 
-		for (const diagnostic of startupDiagnostics ?? []) {
-			if (diagnostic.type === "error") {
-				this.showError(diagnostic.message);
-			} else if (diagnostic.type === "warning") {
-				this.showWarning(diagnostic.message);
-			} else {
-				this.showStatus(diagnostic.message);
-			}
-		}
+		this.showRuntimeDiagnostics(startupDiagnostics ?? []);
 
 		if (migratedProviders && migratedProviders.length > 0) {
 			this.showWarning(`Migrated credentials to auth.json: ${migratedProviders.join(", ")}`);
@@ -2211,6 +2204,18 @@ export class InteractiveMode {
 		if (this.editor !== this.defaultEditor) {
 			this.editor.setPaddingX?.(editorPaddingX);
 			this.editor.setAutocompleteMaxVisible?.(autocompleteMaxVisible);
+		}
+	}
+
+	private showRuntimeDiagnostics(diagnostics: readonly AgentSessionRuntimeDiagnostic[]): void {
+		for (const diagnostic of diagnostics) {
+			if (diagnostic.type === "error") {
+				this.showError(diagnostic.message);
+			} else if (diagnostic.type === "warning") {
+				this.showWarning(diagnostic.message);
+			} else {
+				this.showStatus(diagnostic.message);
+			}
 		}
 	}
 
