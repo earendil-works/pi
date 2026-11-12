@@ -85,7 +85,8 @@ set +e
 output="$(GITHUB_ACTIONS=true GITHUB_STEP_SUMMARY="$tmp/summary.md" .fork/sync.sh --hold-on-conflict --no-check --push 2>&1)"
 rc=$?
 set -e
-printf '%s\n' "$output"
+# Keep intentional fixture conflicts out of the real workflow's annotations.
+printf '%s\n' "${output//::warning/expected warning}"
 [[ $rc -ne 0 ]] || fail "a sync with rebase conflicts exited successfully"
 for branch in feat/a feat/b; do
 	[[ "$output" == *"$branch:"* ]] || fail "conflict report omitted $branch"
