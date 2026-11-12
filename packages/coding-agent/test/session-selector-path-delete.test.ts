@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setKeybindings } from "@earendil-works/pi-tui";
@@ -354,5 +354,47 @@ describe("session selector path/delete interactions", () => {
 
 		expect(confirmationChanges).toEqual([]);
 		expect(errorMessage).toBe("Cannot delete the currently active session");
+	});
+
+	it("keeps the next session selected when a progressive reload after delete starts with another session", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pi-session-selector-"));
+		tempDirs.push(dir);
+		const sessions = [1, 2, 3, 4, 5].map((i) => {
+			const path = join(dir, `s${i}.jsonl`);
+			writeFileSync(path, "session\n");
+			return makeSession({ id: `s${i}`, path, modified: new Date(10_000 - i * 1000) });
+		});
+
+		const selector = new SessionSelectorComponent(
+			async (onProgress) => {
+				const remaining = sessions.filter((session) => existsSync(session.path));
+				// The first partial list holds only the file that finished loading first, here the oldest
+				onProgress?.(1, remaining.length, [remaining[remaining.length - 1]!]);
+				onProgress?.(remaining.length, remaining.length, remaining);
+				return remaining;
+			},
+			async () => [],
+			() => {},
+			() => {},
+			() => {},
+			() => {},
+			{ keybindings },
+		);
+		await flushPromises();
+
+		const list = selector.getSessionList();
+		list.handleInput("\x1b[B");
+		list.handleInput("\x1b[A");
+		expect(list.getSelectedSessionPath()).toBe(sessions[0]!.path);
+
+		list.handleInput(CTRL_D);
+		list.handleInput("\r");
+		for (let i = 0; i < 10 && existsSync(sessions[0]!.path); i++) {
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		await flushPromises();
+
+		expect(existsSync(sessions[0]!.path)).toBe(false);
+		expect(list.getSelectedSessionPath()).toBe(sessions[1]!.path);
 	});
 });
