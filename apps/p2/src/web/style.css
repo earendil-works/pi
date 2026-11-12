@@ -1368,6 +1368,10 @@ audio.file-media {
 .side-panel-resize:active {
 	background: var(--line);
 }
+/* While a panel is resized, frames do not take the pointer (drag-size.ts). */
+.resizing iframe {
+	pointer-events: none;
+}
 /* Fingers get a wider target; the visible line stays thin. */
 @media (pointer: coarse) {
 	.workspace-resize,

@@ -13,10 +13,7 @@ import type {
 	TranscriptView,
 } from "@earendil-works/pi-durable";
 
-type ArtifactState = { artifacts: ArtifactInfo[] };
-
 import { type AgentMessage, agentMessage, peerMessage } from "../runtime/entries.ts";
-import type { ArtifactInfo } from "../runtime/schemas.ts";
 
 type ConversationPeer = { id: string; title: string };
 
@@ -110,7 +107,6 @@ export type Transcript = {
 	items: Item[];
 	/** More entries exist before the first item (`TranscriptStore.loadEarlier`). */
 	earlier: boolean;
-	artifacts: ArtifactInfo[];
 	busy: boolean;
 	working: boolean;
 	retry?: { at: number; error: string };
@@ -147,22 +143,6 @@ function resultTool(result: ToolResultMessage, name = result.toolName): ToolView
 		...(typeof result.durationMs === "number" ? { durationMs: result.durationMs } : {}),
 		at: result.timestamp - (result.durationMs ?? 0),
 	};
-}
-
-function artifactInfo(value: unknown): ArtifactInfo | undefined {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return;
-	const details = value as Record<string, unknown>;
-	if (
-		typeof details.name !== "string" ||
-		!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(details.name) ||
-		typeof details.title !== "string" ||
-		!["html", "svg", "markdown", "text"].includes(String(details.type)) ||
-		typeof details.version !== "number" ||
-		!Number.isSafeInteger(details.version) ||
-		details.version <= 0
-	)
-		return;
-	return details as ArtifactInfo;
 }
 
 /**
@@ -320,7 +300,6 @@ export function buildTranscript(
 	const compactionFailure = live?.compactionFailure;
 	const compactionError = compactionFailure ? `Compaction failed: ${compactionFailure.error}` : undefined;
 	const inbox = view.docs["pi.inbox"] as unknown as InboxState | undefined;
-	const artifactState = view.docs["p2.artifacts"] as unknown as ArtifactState | undefined;
 	const busy = Boolean(live?.run);
 	const results = new Map<string, ToolResultMessage>();
 	let latest: EntryRecord | undefined;
@@ -551,9 +530,6 @@ export function buildTranscript(
 	return {
 		items,
 		earlier: view.items[0]?.kind === "earlier",
-		artifacts: Array.isArray(artifactState?.artifacts)
-			? artifactState.artifacts.flatMap((artifact) => artifactInfo(artifact) ?? []).toReversed()
-			: [],
 		busy,
 		// Keep one stable activity signal through thinking, text, tools and compaction.
 		// It disappears only when the viewed conversation is actually idle.

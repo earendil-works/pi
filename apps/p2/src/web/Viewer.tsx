@@ -1,16 +1,14 @@
 import { createContext, type ReactNode, useEffect, useRef, useState } from "react";
 import { type DownloadInfo, filePreview } from "../runtime/files.ts";
-import type { ArtifactInfo } from "../runtime/schemas.ts";
 import { useScrollMemory, useShownModal } from "../runtime/web.tsx";
 import { CodeBlock } from "./Code.tsx";
 import { CloseIcon, DownloadIcon } from "./icons.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { inPage } from "./navigation.ts";
 
-// One full-screen viewer for everything a conversation hands the user: versioned
-// artifacts and sent files today, workspace files later. Each content type keeps
-// its own policy; only artifacts ever execute, and only in a sandboxed iframe.
-export type ViewerItem = { kind: "artifact"; artifact: ArtifactInfo } | { kind: "file"; file: DownloadInfo };
+// One full-screen viewer for what a conversation hands the user: sent files today. It never executes anything (html
+// artifacts run in their own panes, plugins/artifacts).
+export type ViewerItem = { kind: "file"; file: DownloadInfo };
 /** Opens an item explicitly; tool updates and reconnects never open the viewer. */
 export const OpenViewer = createContext<(item: ViewerItem) => void>(() => {});
 /**
@@ -33,16 +31,6 @@ export function fileMeta(file: DownloadInfo): string {
 
 export function fileUrl(sessionId: string, file: DownloadInfo): string {
 	return `/download?${new URLSearchParams({ session: sessionId, id: file.id })}`;
-}
-
-export function artifactUrls(sessionId: string, artifact: ArtifactInfo) {
-	const query = new URLSearchParams({ session: sessionId, name: artifact.name, version: String(artifact.version) });
-	const extension = artifact.type === "markdown" ? "md" : artifact.type === "text" ? "txt" : artifact.type;
-	return {
-		view: `/artifact?${query}`,
-		download: `/artifact?${query}&download=1`,
-		filename: `${artifact.name}.${extension}`,
-	};
 }
 
 /**

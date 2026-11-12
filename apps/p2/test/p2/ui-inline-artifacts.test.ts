@@ -1,15 +1,13 @@
-// Inline artifacts (`artifact` with `inline: true`) in Chromium: the call's version renders below its card, in place
-// (right after its call's wheel, before the answer), Markdown as in the viewer, SVG and HTML drawings filling the
-// sandboxed frame's width, the frame fitted to the content height they report (capped at 70vh), for the owner and for
-// a guest alike; the card still opens the full viewer; a version the route cannot serve says so. Fake provider
-// (`artifact <json>`), disposable sessions.
+// Inline artifacts (`artifact_show`, called from a code-mode script) in Chromium: the artifact's pane renders in place
+// (right after its script's wheel, before the answer), Markdown as in Markdown views, an html page in its sandboxed
+// frame fitted to the content height it reports (capped at 70vh), for the owner and for a guest alike; a deleted
+// artifact says so. Fake provider (`codemode <script>`), disposable sessions.
 
 import assert from "node:assert/strict";
-import { readdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
+import { ArtifactPage } from "../../plugins/artifacts/contract.ts";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
@@ -17,39 +15,51 @@ import type { RefIn } from "../../src/runtime/chord.ts";
 import { Browser, browserTests } from "./browser.ts";
 import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
 
-type Call = { name: string; title: string; type: "html" | "svg" | "markdown" | "text"; content: string };
+type Shown = { id: string; title: string; kind: "html" | "md"; content: string };
+
+/** A counter page written against `window.p2view`: +1 saves the count (with a function) and selects it. */
+const COUNTER = `<!doctype html><html><body style='margin:0'><button id=add>+1</button><p id=n></p><script>
+const P2 = window.p2view;
+let state = { count: 0 };
+const draw = () => { document.getElementById('n').textContent = 'count ' + state.count; };
+P2.onState((value) => { state = value || state; draw(); });
+document.getElementById('add').addEventListener('click', () => {
+	if (P2.readOnly) return;
+	P2.setState((current) => ({ ...(current || state), count: (current || state).count + 1 }));
+	state = { ...state, count: state.count + 1 };
+	draw();
+	P2.select('count ' + state.count, { count: state.count });
+});
+</script></body></html>`;
 
 const setInput = (selector: string, value: string) =>
 	`(() => { const input=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true})); })()`;
-const frame = (name: string) => `document.querySelector('.inline-artifact[data-artifact="${name}:1"] iframe')`;
-
-/** The drawing's rendered size inside an SVG preview (its viewBox through the root's scale) and the frame's. */
-type Drawn = { width: number; height: number; frameWidth: number; frameHeight: number };
-const DRAWN =
-	"(()=>{const root=document.documentElement,box=root.viewBox.baseVal,scale=root.getScreenCTM().a;return {width:box.width*scale,height:box.height*scale,frameWidth:innerWidth,frameHeight:innerHeight}})()";
-
-const DIAGRAM =
-	"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 200'><rect width='400' height='200' fill='#eef'/><line x1='100' y1='40' x2='100' y2='190' stroke='#333'/><line x1='300' y1='40' x2='300' y2='190' stroke='#333'/><text x='100' y='30' text-anchor='middle'>Client</text><text x='300' y='30' text-anchor='middle'>Server</text><path d='M100 80 H300' stroke='#06c' marker-end='url(#a)'/><defs><marker id='a' markerWidth='8' markerHeight='8' refX='8' refY='4' orient='auto'><path d='M0 0 L8 4 L0 8 z' fill='#06c'/></marker></defs></svg>";
+const card = (id: string) => `document.querySelector('.artifact-inline[data-artifact="${id}"]')`;
+const frame = (id: string) => `${card(id)}?.querySelector('iframe')`;
 
 describe("inline artifacts in Chromium", { skip: !browserTests }, () => {
 	let fixture: Fixture;
 	let browser: Browser;
 	let sessions: RefIn<typeof Sessions, "owner">;
 
-	/** A new session whose agent publishes `calls` with `inline: true`, each to the end of its run. */
-	const publish = async (title: string, calls: Call[]): Promise<string> => {
+	/** A new session whose agent writes and shows each of `shown`, a script each, and then runs `then` if given. */
+	const publish = async (title: string, shown: Shown[], then?: string): Promise<string> => {
 		const id = (await sessions.create({ cwd: fixture.workspace, title }, BACKGROUND_CONTEXT)).id;
 		const chat = await holdIn(fixture.browser(), Chat, { session: id, conversation: 1 }, "participant");
-		for (const [index, call] of calls.entries()) {
-			await chat.send(
-				{ text: `artifact ${JSON.stringify({ ...call, inline: true })}`, requestId: `${call.name}-${index}` },
-				BACKGROUND_CONTEXT,
-			);
+		const scripts = [
+			...shown.map(
+				(each) =>
+					`await tools.artifact_write(${JSON.stringify(each)});\nawait tools.artifact_show({ id: ${JSON.stringify(each.id)} });`,
+			),
+			...(then ? [then] : []),
+		];
+		for (const [index, code] of scripts.entries()) {
+			await chat.send({ text: `codemode ${code}`, requestId: `script-${index}` }, BACKGROUND_CONTEXT);
 			await until(chat.view, (view) => {
 				const done = (view?.entries ?? []).flatMap((entry) =>
 					(entry.model ?? []).filter(
 						(message): message is ToolResultMessage =>
-							message.role === "toolResult" && message.toolName === "artifact",
+							message.role === "toolResult" && message.toolName === "codemode" && !message.isError,
 					),
 				);
 				return done.length === index + 1 && !(view?.docs["pi.live"] as { run?: unknown })?.run;
@@ -57,32 +67,6 @@ describe("inline artifacts in Chromium", { skip: !browserTests }, () => {
 		}
 		chat.release();
 		return id;
-	};
-
-	/**
-	 * Waits until the drawing inside a preview frame (`expression` gives its rendered size and the frame's viewport, read
-	 * inside the frame) fills the frame's width and height, and the iframe element on the page has that size too. The
-	 * frame's own viewport follows the element's size a moment later (another process).
-	 */
-	const fitsFrame = async (url: string, expression: string, element: string): Promise<void> => {
-		let last: { drawn?: Drawn; box?: { width: number; height: number } } = {};
-		await poll(
-			async () => {
-				const drawn = await browser.evaluateInFrame<Drawn>(url, expression);
-				const box = await browser.evaluate<{ width: number; height: number }>(
-					`(({width,height})=>({width,height}))(${element}.getBoundingClientRect())`,
-				);
-				last = { drawn, box };
-				return (
-					Math.abs(drawn.width - box.width) <= 2 &&
-					Math.abs(drawn.height - box.height) <= 2 &&
-					Math.abs(drawn.frameWidth - box.width) <= 2 &&
-					Math.abs(drawn.frameHeight - box.height) <= 2
-				);
-			},
-			10_000,
-			`${url}: the drawing fills its frame`,
-		).catch(() => assert.fail(`${url}: the drawing fills its frame, got ${JSON.stringify(last)}`));
 	};
 
 	before(async () => {
@@ -96,143 +80,193 @@ describe("inline artifacts in Chromium", { skip: !browserTests }, () => {
 		await fixture?.close();
 	});
 
-	it("renders inline Markdown with the viewer's Markdown component, without a tap", async () => {
+	it("renders inline Markdown as Markdown views do, in place, without a tap", async () => {
 		const id = await publish("Inline Markdown", [
-			{ name: "notes", title: "Notes", type: "markdown", content: "# Inline heading\n\nSome **bold** text" },
+			{ id: "notes", title: "Notes", kind: "md", content: "# Inline heading\n\nSome **bold** text" },
 		]);
 		await browser.metrics(390, 844);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${id}`);
-		await browser.wait(
-			`document.querySelector('.inline-artifact[data-artifact="notes:1"] .elanor-markdown h3')?.textContent==='Inline heading'`,
-		);
-		assert.equal(
-			await browser.evaluate<string>(
-				`document.querySelector('.inline-artifact[data-artifact="notes:1"] .elanor-markdown strong').textContent`,
-			),
-			"bold",
-		);
-		// Below its card, which stays.
-		assert.equal(
-			await browser.evaluate<boolean>(
-				`document.querySelector('[data-testid=results] .file-card + .inline-artifact')?.dataset.artifact==='notes:1'`,
-			),
-			true,
-		);
-		// Where it was made: right after its call's wheel, before the answer (at the default detail, 2, the answer's
-		// thinking is on a wheel of its own after the artifact).
+		await browser.wait(`${card("notes")}?.querySelector('.elanor-markdown strong')?.textContent==='bold'`);
+		assert.match(await browser.evaluate<string>(`${card("notes")}.textContent`), /Inline heading/);
+		// Where it was shown: right after its script's wheel, before the answer.
 		assert.deepEqual(
 			await browser.evaluate<string[]>(
-				`[...document.querySelectorAll('[data-row]')].map((row)=>row.querySelector('[data-testid=activity]')?'activity':row.querySelector('.inline-artifact')?'inline':row.textContent.includes('Echo:')?'answer':'').filter(Boolean)`,
+				`[...document.querySelectorAll('[data-row]')].map((row)=>row.querySelector('[data-testid=activity]')?'activity':row.querySelector('.artifact-inline')?'inline':row.textContent.includes('Echo:')?'answer':'').filter(Boolean)`,
 			),
 			["activity", "inline", "activity", "answer"],
 		);
-		assert.equal(await browser.evaluate<number>(`document.querySelectorAll('.viewer-panel').length`), 0);
 	});
 
-	it("fills the frame's width with an inline SVG drawing, fits the frame to it, and the card opens the viewer", async () => {
-		const id = await publish("Inline SVG", [
-			{ name: "flow", title: "Flow", type: "svg", content: DIAGRAM },
-			// No viewBox, a small absolute size: scaled up to the width all the same.
+	it("runs an html page in its sandboxed frame, fitted to its content and capped at 70vh", async () => {
+		const id = await publish("Inline HTML", [
 			{
-				name: "badge",
-				title: "Badge",
-				type: "svg",
+				id: "page",
+				title: "Page",
+				kind: "html",
 				content:
-					"<svg xmlns='http://www.w3.org/2000/svg' width='200' height='80'><rect width='200' height='80' fill='#cde'/><text x='10' y='50'>badge</text></svg>",
+					"<!doctype html><html><head><title>Page</title></head><body style='margin:0'><div style='height:240px;background:#09c'>HTML inline</div></body></html>",
 			},
 		]);
 		await browser.metrics(390, 844);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${id}`);
-		await browser.wait(`${frame("flow")} && ${frame("badge")}`);
-		const flow = frame("flow");
+		await browser.wait(`${frame("page")}?.getBoundingClientRect().height===240`);
 		assert.equal(
-			await browser.evaluate<string>(`${flow}.getAttribute('sandbox')`),
+			await browser.evaluate<string>(`${frame("page")}.getAttribute('sandbox')`),
 			"allow-scripts allow-modals allow-pointer-lock",
 		);
 		assert.equal(
-			await browser.evaluate<string>(`${flow}.getAttribute('src')`),
-			`/artifact?session=${id}&name=flow&version=1`,
+			await browser.evaluate<string>(`${frame("page")}.getAttribute('src')`),
+			`/artifact-frame?session=${id}&id=page&version=1`,
 		);
 		// An opaque origin: the page cannot reach into the frame.
-		assert.equal(await browser.evaluate<boolean>(`${flow}.contentDocument===null`), true);
-		for (const [name, aspect] of [
-			["flow", 0.5],
-			["badge", 0.4],
-		] as const) {
-			await browser.evaluate(`${frame(name)}.scrollIntoView({ block: "center" })`);
-			await browser.wait(
-				`Math.abs(${frame(name)}.getBoundingClientRect().height-${frame(name)}.clientWidth*${aspect})<=2`,
-			);
-			await fitsFrame(`session=${id}&name=${name}&`, DRAWN, frame(name));
-		}
-		await browser.evaluate(`document.querySelector('a[aria-label="Open Flow"]').scrollIntoView({ block: "center" })`);
-		await browser.click('a[aria-label="Open Flow"]');
-		await browser.wait(`document.querySelector('.viewer-panel iframe')`);
-		assert.match(
-			await browser.evaluate<string>(`document.querySelector('.viewer-head').textContent`),
-			/svg · version 1/,
-		);
-		await browser.click('button[aria-label="Close viewer"]');
-		await browser.wait(`!document.querySelector('.viewer-panel')`);
-	});
-
-	it("fills the width with an HTML page's only SVG and caps tall drawings at 70vh", async () => {
-		const id = await publish("Inline HTML and tall SVG", [
+		assert.equal(await browser.evaluate<boolean>(`${frame("page")}.contentDocument===null`), true);
+		// Taller content stops at 70vh.
+		const tall = await publish("Inline tall HTML", [
 			{
-				name: "page",
-				title: "Page",
-				type: "html",
-				content: `<!doctype html><html><head><title>Page</title></head><body style="margin:0">${DIAGRAM}</body></html>`,
-			},
-			{
-				name: "tall",
+				id: "tall",
 				title: "Tall",
-				type: "svg",
-				content:
-					"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 1000'><rect width='100' height='1000'/></svg>",
+				kind: "html",
+				content: "<!doctype html><html><body style='margin:0'><div style='height:3000px'>tall</div></body></html>",
 			},
 		]);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${tall}`);
+		await browser.wait(`Math.abs(${frame("tall")}?.getBoundingClientRect().height-${Math.round(844 * 0.7)})<=1`);
+	});
+
+	it("keeps an inline page's height when it is scrolled out and back in, and the reader's place", async () => {
+		const id = await publish("Inline scrolled", [
+			{
+				id: "tall-page",
+				title: "Tall page",
+				kind: "html",
+				content:
+					"<!doctype html><html><body style='margin:0'><div style='height:500px;background:#09c'>tall page</div></body></html>",
+			},
+		]);
+		// Enough transcript below it to scroll it far out of view (beyond the cards' two-viewport margin).
+		const chat = await holdIn(fixture.browser(), Chat, { session: id, conversation: 1 }, "participant");
+		for (let index = 0; index < 8; index++) {
+			await chat.send(
+				{ text: `filler ${index} ${"words to fill the screen ".repeat(120)}`, requestId: `filler-${index}` },
+				BACKGROUND_CONTEXT,
+			);
+			await until(chat.view, (view) => JSON.stringify(view?.entries ?? []).includes(`Echo: filler ${index}`));
+		}
+		chat.release();
 		await browser.metrics(390, 844);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${id}`);
-		await browser.wait(`${frame("page")} && ${frame("tall")}`);
-		await browser.evaluate(`${frame("page")}.scrollIntoView({ block: "center" })`);
-		await browser.wait(`Math.abs(${frame("page")}.getBoundingClientRect().height-${frame("page")}.clientWidth/2)<=2`);
-		await fitsFrame(
-			`session=${id}&name=page&`,
-			`(()=>{const r=document.querySelector('svg').getBoundingClientRect();return {width:r.width,height:r.height,frameWidth:innerWidth,frameHeight:innerHeight}})()`,
-			frame("page"),
+		const scroller = "document.querySelector('.scroller.transcript')";
+		await browser.wait(`document.querySelector('.rows')?.textContent.includes('Echo: filler 7')`);
+		// It opens at the bottom: up to the card (the transcript draws the rows near the reader).
+		await browser.evaluate(`(() => { const s = ${scroller}; s.scrollTop = 0; })()`);
+		await browser.wait(`${card("tall-page")}`);
+		await browser.evaluate(`${card("tall-page")}.scrollIntoView({ block: "start" })`);
+		await browser.wait(`${frame("tall-page")}?.getBoundingClientRect().height === 500`);
+		// Where the card sits in the transcript's content, and 100px above it: where the test puts the reader.
+		const place = await browser.evaluate<number>(
+			`(() => { const s = ${scroller}; return Math.round(${card("tall-page")}.getBoundingClientRect().top - s.getBoundingClientRect().top + s.scrollTop - 100); })()`,
 		);
-		// Taller content stops at 70vh.
-		const tall = frame("tall");
-		await browser.wait(`parseFloat(${tall}.style.height)>=${tall}.clientWidth*10-2`);
-		const box = await browser.evaluate<number>(`${tall}.getBoundingClientRect().height`);
-		assert.ok(Math.abs(box - 844 * 0.7) <= 1, `capped at 70vh, got ${box}`);
+		for (let round = 0; round < 3; round++) {
+			await browser.evaluate(`(() => { const s = ${scroller}; s.scrollTop = s.scrollHeight; })()`);
+			// Far out of view: the page goes (its card may go with its row).
+			await browser.wait(`!${frame("tall-page")}`);
+			// Back to it, then watch every frame for a while: the card never shrinks, the reader's place never moves.
+			const seen = await browser.evaluate<{ heights: number[]; tops: number[] }>(`(async () => {
+				const s = ${scroller};
+				s.scrollTop = ${place};
+				const heights = [], tops = [];
+				const until = performance.now() + 2500;
+				while (performance.now() < until) {
+					await new Promise((resolve) => requestAnimationFrame(resolve));
+					const box = ${card("tall-page")};
+					if (box) heights.push(Math.round(box.getBoundingClientRect().height));
+					tops.push(Math.round(s.scrollTop));
+				}
+				return { heights, tops };
+			})()`);
+			assert.ok(seen.heights.length > 0, `round ${round}: the card is drawn again`);
+			assert.ok(Math.min(...seen.heights) >= 499, `round ${round}: heights ${[...new Set(seen.heights)]}`);
+			assert.deepEqual([...new Set(seen.tops)], [place], `round ${round}: the reader's place`);
+			await browser.wait(`${frame("tall-page")}?.getBoundingClientRect().height === 500`);
+		}
 	});
 
-	it("says when the call's version is unavailable", async () => {
-		const id = await publish("Inline gone", [
-			{ name: "gone", title: "Gone", type: "svg", content: DIAGRAM },
-			{ name: "lost", title: "Lost", type: "markdown", content: "# Lost" },
-		]);
-		// Their bytes gone from the session's files (the session has only these two).
-		const blobs = join(fixture.dataDir, "sessions", id, "files", "blobs");
-		for (const blob of readdirSync(blobs)) rmSync(join(blobs, blob), { force: true });
+	it("lets people who may send change an inline page and select in it; a read-only guest's is read-only", async () => {
+		const id = await publish(
+			"Inline counter",
+			[{ id: "counter", title: "Counter", kind: "html", content: COUNTER }],
+			'await tools.artifact_html_set_state({ id: "counter", state: { count: 41 } });',
+		);
 		await browser.metrics(1280, 900);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${id}`);
-		for (const name of ["gone", "lost"])
-			await browser.wait(
-				`document.querySelector('.inline-artifact[data-artifact="${name}:1"] .notice.error')?.textContent==='Artifact unavailable'`,
+		const inFrame = (page: Browser, expression: string) => page.evaluateInFrame<string>(`id=counter&`, expression);
+		const shows = (page: Browser, text: string) =>
+			poll(
+				() =>
+					inFrame(page, "document.getElementById('n').textContent")
+						.then((shown) => shown === text)
+						.catch(() => false),
+				20_000,
+				`the page shows ${text}`,
 			);
-		assert.equal(await browser.evaluate<number>(`document.querySelectorAll('.inline-artifact iframe').length`), 0);
+		await shows(browser, "count 41");
+		assert.equal(await inFrame(browser, "String(window.p2view.readOnly)"), "false");
+		await inFrame(browser, "document.getElementById('add').click()");
+		// Saved as beside the chat, and the selection goes with the next message (the composer's chip says so).
+		const page = await holdIn(fixture.browser(), ArtifactPage, { session: id, id: "counter" }, "editor");
+		await until(page.value, (value) => (value as { count?: number } | null)?.count === 42);
+		await browser.wait(`document.querySelector('.views-chip')?.textContent.includes('Selection in Counter')`);
+		const chat = await holdIn(fixture.browser(), Chat, { session: id, conversation: 1 }, "participant");
+		await chat.send({ text: "what did I pick", requestId: "pick" }, BACKGROUND_CONTEXT);
+		await until(chat.view, (view) =>
+			JSON.stringify(view?.entries ?? []).includes(
+				'Selected in html \\"counter\\" (\\"Counter\\") shown in the transcript: count 42',
+			),
+		);
+		chat.release();
+		await browser.wait(`!document.querySelector('.views-chip')`);
+		// A read-only guest: the page runs, but is read-only and saves nothing.
+		const sharing = fixture.browser().hold(Sharing, { session: id }, BACKGROUND_CONTEXT);
+		await sharing.link({ mode: "view" }, BACKGROUND_CONTEXT);
+		const links = await until(sharing.links, (value) => value?.length === 1);
+		const guest = await Browser.start();
+		try {
+			await guest.metrics(1280, 900);
+			await guest.open(`http://127.0.0.1:${fixture.server.port}${new URL(links![0]!.url).pathname}`);
+			await guest.wait(`document.querySelector('#join #name') && document.querySelector('#join button')`);
+			await guest.evaluate(setInput("#name", "Reader"));
+			await guest.click("#join button");
+			await guest.wait(`document.querySelector('.subagent-bar')?.textContent.includes('Joined as Reader')`);
+			await shows(guest, "count 42");
+			assert.equal(await inFrame(guest, "String(window.p2view.readOnly)"), "true");
+			await inFrame(guest, "document.getElementById('add').click()");
+			await new Promise((resolve) => setTimeout(resolve, 1500));
+			assert.deepEqual(page.value.value, { count: 42 });
+		} finally {
+			await guest.close();
+			sharing.release();
+			page.release();
+		}
 	});
 
-	it("renders inline SVG and HTML for a guest too, without a tap", async () => {
+	it("says when the artifact was deleted", async () => {
+		const id = await publish(
+			"Inline gone",
+			[{ id: "gone", title: "Gone", kind: "md", content: "# Gone" }],
+			'await tools.artifact_delete({ id: "gone" });',
+		);
+		await browser.metrics(1280, 900);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${id}`);
+		await browser.wait(`${card("gone")}?.textContent.includes('No artifact "gone" (it was deleted)')`);
+	});
+
+	it("renders inline html and Markdown for a read-only guest too, without a tap", async () => {
 		const id = await publish("Inline for guests", [
-			{ name: "flow", title: "Flow", type: "svg", content: DIAGRAM },
+			{ id: "notes", title: "Notes", kind: "md", content: "Some **bold** text" },
 			{
-				name: "page",
+				id: "page",
 				title: "Page",
-				type: "html",
+				kind: "html",
 				content:
 					"<!doctype html><html><head><title>Page</title></head><body style='margin:0'><div style='height:240px;background:#09c'>HTML inline</div></body></html>",
 			},
@@ -249,17 +283,10 @@ describe("inline artifacts in Chromium", { skip: !browserTests }, () => {
 			await guest.evaluate(setInput("#name", "Reader"));
 			await guest.click("#join button");
 			await guest.wait(`document.querySelector('.subagent-bar')?.textContent.includes('Joined as Reader')`);
-			// Both report their content height: their scripts ran in the frame, so they rendered.
-			await guest.wait(
-				`Math.abs(${frame("flow")}?.getBoundingClientRect().height-${frame("flow")}?.clientWidth/2)<=2`,
-			);
+			// The page reports its content height: its scripts ran in the frame, so it rendered.
+			await guest.evaluate(`${card("page")}?.scrollIntoView({ block: "center" })`);
 			await guest.wait(`${frame("page")}?.getBoundingClientRect().height===240`);
-			assert.equal(
-				await guest.evaluate<boolean>(
-					`[...document.querySelectorAll('.inline-artifact button')].some((button)=>/show/i.test(button.textContent))`,
-				),
-				false,
-			);
+			await guest.wait(`${card("notes")}?.querySelector('.elanor-markdown strong')?.textContent==='bold'`);
 		} finally {
 			await guest.close();
 			sharing.release();

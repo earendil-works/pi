@@ -6,6 +6,9 @@ import { defineFacet, expectVariant, local, untilAborted } from "@p2/app/v1";
 import {
 	BackupUploader,
 	backupFiles,
+	backupTarget,
+	backupTargetKey,
+	isTerminalBackupError,
 	isUrgentCommit,
 	processLogs,
 	sessionDirectory,
@@ -25,7 +28,8 @@ export default defineFacet((host) => {
 		const remote = self.get(BackupRemote, {});
 		self.onLive(async (ctx) => {
 			const device = expectVariant(remote, "worker").device.value;
-			if (device === null) return;
+			const target = backupTarget();
+			if (device === null || target === undefined) return;
 			const { init, store, root } = worker();
 			if (store === undefined) return;
 			const session = init.values.session.id;
@@ -39,7 +43,11 @@ export default defineFacet((host) => {
 					root(async (inner) => fn(expectVariant(await inner.get(BackupRemote, {}), "worker"), inner), context),
 				),
 				directory: sessionDirectory(init.dataDir, session),
+				// The server's target (the worker inherits its environment): bookmarks are per target.
+				target: backupTargetKey(target),
 				files: backupFiles(init.dataDir),
+				// What the server's target refuses for good crosses as `BACKUP_TERMINAL`: stop, as the server does.
+				terminal: isTerminalBackupError,
 				// A status the server misses is replaced by the next one; the failure goes to the session's log.
 				report: (status) =>
 					void root(

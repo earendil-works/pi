@@ -7,7 +7,7 @@ import { Catalog, SessionMoves } from "../sessions/contract.ts";
 import { AgentLocations, type EnvInfo } from "./contract.ts";
 
 export default defineFacet((host) => {
-	// Only a current worker generation, for its own session; the worker checked that the owner started the turn.
+	// Only a current worker generation, for its own session.
 	host.serve(AgentLocations, (_params, principal, self) => {
 		if (!isWorker(principal)) throw forbidden("location tools are for session workers");
 		const { session, generation } = principal;

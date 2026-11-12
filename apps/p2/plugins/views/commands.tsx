@@ -1,9 +1,8 @@
 // The views' part of the command menu, for the open session: Show view… and Hide view… (this device's layout), Add
-// changes view, Add Markdown view… and Open saved view… (as the Views sheet adds them), and Annotate / Stop annotating
-// (the top bar's switch); with their pages.
+// changes view and Add Markdown view… (as the Views sheet adds them), and Annotate / Stop annotating (the top bar's
+// switch); with their pages.
 import { BACKGROUND_CONTEXT, type Host, liveIn, withHeld } from "@p2/app/v1";
 import {
-	BookmarkIcon,
 	type Command,
 	type CommandContext,
 	CommandMenu,
@@ -21,12 +20,11 @@ import {
 	useComposerState,
 	useHost,
 	useObject,
-	useOwner,
 	useReadable,
 	useRoute,
 } from "@p2/app/v1/web";
 import type { ReactNode } from "react";
-import { type OpenInput, type SavedInfo, SavedViews, type View, Views } from "./contract.ts";
+import { type OpenInput, type View, Views } from "./contract.ts";
 import { viewsIn } from "./layout.ts";
 import { hide, setAnnotateMode, show, useAnnotateMode, useLayout } from "./layout-store.ts";
 import { describe, markdownPath, openView } from "./sheet.tsx";
@@ -73,17 +71,6 @@ export const VIEW_COMMANDS: Readonly<Record<string, Command>> = {
 		Shown: CanEdit,
 		action: { kind: "page", page: "views-markdown" },
 	},
-	"views.open-saved": {
-		title: "Open saved view…",
-		group: "Views",
-		order: 60,
-		icon: BookmarkIcon,
-		keywords: ["library"],
-		target: ["session"],
-		owner: true,
-		Shown: CanEdit,
-		action: { kind: "page", page: "views-saved" },
-	},
 	"views.annotate": {
 		title: "Annotate",
 		group: "Views",
@@ -115,12 +102,6 @@ export const VIEW_PAGES: Readonly<Record<string, CommandPage>> = {
 		placeholder: "File, e.g. docs/notes.md…",
 		empty: "Type the file's path in the workspace",
 		Body: MarkdownPage,
-	},
-	"views-saved": {
-		label: "Saved views",
-		placeholder: "Search saved views…",
-		empty: "No saved views. Ask the agent to save one.",
-		Body: SavedPage,
 	},
 };
 
@@ -259,39 +240,9 @@ function MarkdownPage() {
 				icon={FileIcon}
 				onSelect={async () => {
 					await close();
-					await open(host, session, { kind: "markdown", path }).catch(fail);
+					await open(host, session, { kind: "markdown", item: path }).catch(fail);
 				}}
 			/>
-		</CommandMenu.Group>
-	);
-}
-
-const NO_SAVED: readonly SavedInfo[] = [];
-const savedText = (saved: SavedInfo): string => `${saved.title} ${saved.name} ${saved.description ?? ""}`;
-
-/** The owner's saved views, the newest first; picking one opens it in the open session. */
-function SavedPage() {
-	const host = useHost();
-	const { close } = useCommandMenu();
-	const { fail } = useComposerState();
-	const session = useSession();
-	const owner = useOwner();
-	const saved = useReadable(liveIn(useObject(SavedViews, owner ? {} : undefined), "owner")?.saved);
-	const matches = useCommandMatches(saved ?? NO_SAVED, savedText);
-	if (session === undefined) return null;
-	return (
-		<CommandMenu.Group heading="Saved views">
-			{matches.map((each) => (
-				<CommandMenu.Row
-					key={each.name}
-					title={each.title}
-					suffix={`${each.kind} · ${each.name}`}
-					onSelect={async () => {
-						await close();
-						await open(host, session, { saved: each.name }).catch(fail);
-					}}
-				/>
-			))}
 		</CommandMenu.Group>
 	);
 }

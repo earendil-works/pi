@@ -1,34 +1,25 @@
 // Uploads (POST /upload) and download snapshots (GET /download) of a session's files, which live in the session's
 // worker (its `Files`): the routes check who may upload or view and stream the bytes through `SessionFiles` as the
-// server. The server's mirror of each session's file summaries (`FileSummaries`), pushed by the worker.
+// server.
 import { once } from "node:events";
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename } from "node:path";
-import { map, obj, type Static, str } from "@earendil-works/pi-schema";
 import {
 	type Ctx,
 	canSend,
 	canView,
 	contribute,
 	defineFacet,
-	defineState,
 	filePreview,
-	forbidden,
-	isOwner,
-	isWorker,
-	type JsonValue,
-	local,
-	method,
 	signalOf,
-	unsafe,
 	withAbortSignal,
 } from "@p2/app/v1";
 import { DownloadError, FILE_CHUNK, MAX_DOWNLOAD_BYTES } from "@p2/app/v1/node";
 import { fromOrigin, type RequestAccess, Routes, sendJson, serverOf } from "@p2/app/v1/server";
 import { Catalog } from "../sessions/contract.ts";
-import { DownloadStore, FileSummaries, SessionFiles, SpaceSummarySchema } from "./contract.ts";
+import { DownloadStore, SessionFiles } from "./contract.ts";
 import { MAX_UPLOAD_BYTES, UploadError } from "./uploads.ts";
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
@@ -48,65 +39,7 @@ function byteRange(header: string | undefined, size: number): { start: number; e
 	return { start, end: Math.min(end, size - 1) };
 }
 
-/** A space summary as the mirror stores it: checked by its schema, kept as the JSON it is. */
-type StoredSummary = Static<typeof SpaceSummarySchema>;
-
-/** Every session's file summaries, by session (persisted: they show while the session's worker is stopped). */
-const Summaries = defineState("p2.file-summaries", {
-	// The summary's optional fields are absent, never undefined: JSON, which pi-schema's types cannot say.
-	schema: obj({ spaces: map(unsafe<JsonValue>(SpaceSummarySchema)) }),
-	version: 1,
-	initial: () => ({ spaces: {} }),
-	keyed: true,
-	persist: true,
-	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 20,
-});
-
-/** The mirror's store (server, host-internal): one document per session. */
-const SummaryIndex = local("p2.file-summary-index", {
-	version: 1,
-	params: {},
-	members: {
-		push: method(obj({ session: str(), space: str(), summary: SpaceSummarySchema })),
-		of: method(obj({ session: str() }), map(SpaceSummarySchema)),
-	},
-});
-
 export default defineFacet((host) => {
-	host.serve(SummaryIndex, (_params, self) => {
-		const summaries = self.state(Summaries);
-		return {
-			push: async ({ session, space, summary }, ctx) => {
-				await summaries.change(
-					session,
-					(draft) => {
-						// A summary is JSON (see `Summaries`).
-						draft.spaces[space] = summary as JsonValue;
-					},
-					ctx,
-				);
-				return null;
-			},
-			// Stored by `push`, checked by `SpaceSummarySchema`.
-			of: async ({ session }, ctx) =>
-				((await summaries.get(session, ctx))?.spaces ?? {}) as Record<string, StoredSummary>,
-		};
-	});
-
-	host.serve(FileSummaries, (_params, principal, self) => {
-		const index = self.get(SummaryIndex, {});
-		// A worker pushes its own session's only: the session comes from its principal, never from arguments.
-		if (isWorker(principal)) {
-			const { session } = principal;
-			return {
-				variant: "worker",
-				members: { push: ({ space, summary }, ctx) => index.push({ session, space, summary }, ctx) },
-			};
-		}
-		if (!isOwner(principal)) throw forbidden("file summaries are for the owner and session workers");
-		return { variant: "owner", members: { of: (args, ctx) => index.of(args, ctx) } };
-	});
-
 	host.serve(DownloadStore, (_params, self) => {
 		const catalog = self.get(Catalog, {});
 		return {

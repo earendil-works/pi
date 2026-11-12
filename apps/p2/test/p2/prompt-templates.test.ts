@@ -139,9 +139,13 @@ test("PromptResources on the worker: participants only, live templates, expand w
 	assert.equal(resources.variant, "participant");
 	const templates = await until(resources.templates, (value) => Boolean(value?.length));
 	assert.deepEqual(templates, [{ name: "greet", description: "Greets", source: "global" }]);
-	assert.deepEqual(await until(resources.skills, (value) => Boolean(value?.length)), [
-		{ name: "deploy", description: "Deploys the app." },
-	]);
+	// The environment's skill, then the built-in plugins' (agent-plugins' guide: a session on the server's machine).
+	const skills = await until(resources.skills, (value) => (value?.length ?? 0) >= 2);
+	assert.deepEqual(
+		skills.map((each) => each.name),
+		["deploy", "writing-p2-plugins"],
+	);
+	assert.equal(skills[0]?.description, "Deploys the app.");
 	assert.deepEqual(await resources.expand({ text: "/greet world" }, BACKGROUND_CONTEXT), { text: "Hello world!" });
 	const skill = await resources.expand({ text: "/skill:deploy go" }, BACKGROUND_CONTEXT);
 	assert.equal(skill.skill?.name, "deploy");

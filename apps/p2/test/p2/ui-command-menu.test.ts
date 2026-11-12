@@ -500,6 +500,17 @@ describe("command menu", { skip: !browserTests }, () => {
 			await openMenu();
 			await run("quokka", "Quokka notes");
 			await browser.wait(`${CLOSED} && location.pathname==='/s/${to}'`);
+			// Its composer takes the focus, also when the menu opened from a list page's search field, which goes, for the
+			// session shown before the list page.
+			await browser.wait(`document.activeElement === document.querySelector('.composer textarea')`);
+			const search = 'input[aria-label="Search sessions and messages"]';
+			await browser.click(".sidebar-section[data-key=recent] a.group-label");
+			await browser.wait(`document.querySelector(${JSON.stringify(search)})`);
+			await browser.evaluate(`document.querySelector(${JSON.stringify(search)}).focus()`);
+			await openMenu();
+			await run("quokka", "Quokka notes");
+			await browser.wait(`${CLOSED} && location.pathname==='/s/${to}'`);
+			await browser.wait(`document.activeElement === document.querySelector('.composer textarea')`);
 		});
 
 		it("lists the sessions a query matches under Sessions, after the commands, the open one checked", async () => {

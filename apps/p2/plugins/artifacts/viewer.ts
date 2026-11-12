@@ -1,10 +1,9 @@
-// The artifacts plugin's viewer layer: the route layer that shows an artifact version or a file over the chat, written
-// by the cards, the side panel's list and the command menu, read back from the route by the chat's content slot.
-import { compile, obj, union } from "@earendil-works/pi-schema";
+// The artifacts plugin's viewer layer: the route layer that shows a sent file over the chat (send_file's cards write it),
+// read back from the route by the chat's content slot.
+import { compile, obj } from "@earendil-works/pi-schema";
 import { literal } from "@p2/app/v1";
 import type { Layer, ViewerItem } from "@p2/app/v1/web";
 import { DownloadInfoSchema } from "../files/contract.ts";
-import { ArtifactInfoSchema } from "./contract.ts";
 
 /** The layer showing `item`. */
 export const viewerLayer = (item: ViewerItem): Layer => ({
@@ -18,10 +17,7 @@ export function viewerItem(top: Layer | undefined): ViewerItem | undefined {
 	return top?.kind === "viewer" && top.name === "artifacts" ? parse(top.locator) : undefined;
 }
 
-const ViewerSchema = union([
-	obj({ kind: literal("file"), file: DownloadInfoSchema }, { open: true }),
-	obj({ kind: literal("artifact"), artifact: ArtifactInfoSchema }, { open: true }),
-]);
+const ViewerSchema = obj({ kind: literal("file"), file: DownloadInfoSchema }, { open: true });
 const isViewer = compile(ViewerSchema).check;
 
 /** Untrusted URL metadata is only a locator. HTTP routes authorize every content fetch. */

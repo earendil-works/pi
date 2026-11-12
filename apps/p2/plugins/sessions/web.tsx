@@ -161,7 +161,7 @@ function useSidebarData() {
 	const owner = useOwner();
 	const status = keptIn(useObject(SessionStatus, {}), "reader");
 	const agents = keptIn(useObject(Subagents, {}), "reader");
-	const { fail } = useComposerState();
+	const { fail, focusWhenOpen } = useComposerState();
 	const [list, edit] = useOptimisticCall(useReadable(keptIn(service, "owner", "guest")?.sessions), applyRow, fail);
 	const statuses = useReadable(status?.statuses);
 	const children = useReadable(agents?.children);
@@ -254,21 +254,40 @@ function useSidebarData() {
 		[settings, now, route.session],
 	);
 	// A session opens at its main conversation; `/s/<id>` would open conversation 1, which redirects there.
-	const onOpen = useCallback(
-		(session: string, conversation?: number) =>
-			navigate({ session, conversation: conversation ?? list?.find((each) => each.id === session)?.main ?? 1 }),
+	const targetOf = useCallback(
+		(session: string, conversation?: number) => ({
+			session,
+			conversation: conversation ?? list?.find((each) => each.id === session)?.main ?? 1,
+		}),
 		[list],
+	);
+	// The opened composer takes the focus, unless a touch opened it: that would open the keyboard, which a tap on the
+	// composer does.
+	const onOpen = useCallback(
+		(session: string, conversation?: number) => {
+			const target = targetOf(session, conversation);
+			focusWhenOpen(target);
+			navigate(target);
+		},
+		[targetOf, focusWhenOpen],
 	);
 	// The restored row is back at once; the session opens once the server has it (an archived one would bounce).
 	const onRestore = useCallback(
 		(id: string, conversation?: number) => {
 			if (!catalog) return;
+			const target = targetOf(id, conversation);
+			const cancel = focusWhenOpen(target);
 			edit({ id, change: { archivedAt: null } }, async () => {
-				await catalog.restore({ id }, BACKGROUND_CONTEXT);
-				onOpen(id, conversation);
+				try {
+					await catalog.restore({ id }, BACKGROUND_CONTEXT);
+				} catch (error) {
+					cancel();
+					throw error;
+				}
+				navigate(target);
 			});
 		},
-		[catalog, edit, onOpen],
+		[catalog, edit, targetOf, focusWhenOpen],
 	);
 	const searchHeld = useObject(Search, owner ? {} : undefined);
 	const search = liveIn(searchHeld, "owner");
@@ -324,6 +343,7 @@ function Sidebar() {
 	const { route, catalog, owner, fail, list, edit, rows, answers, reads, marks, search, settings, changeSettings } =
 		data;
 	const { rollups, rollupsHeld, entries, context, view, onOpen, onRestore } = data;
+	const { focusWhenOpen } = useComposerState();
 	// Project glyphs for groups and the sessions of flat lists; the owner's only (guests read no projects).
 	const glyphs = useMemo(() => (owner ? glyphsOf(context) : undefined), [owner, context]);
 	// Sessions a plugin's sidebar entry shows (the Familiar's, in `drawer-brand`) are left out of the rollups.
@@ -380,12 +400,19 @@ function Sidebar() {
 	);
 	// The row marks the chosen branch at once; the view follows once the session's main conversation moved.
 	const onBranch = useCallback(
-		(session: string, conversation: number) =>
+		(session: string, conversation: number) => {
+			const cancel = focusWhenOpen({ session, conversation });
 			edit({ id: session, change: { main: conversation } }, async () => {
-				await withTree(session, (tree) => tree.select({ conversation }, BACKGROUND_CONTEXT));
+				try {
+					await withTree(session, (tree) => tree.select({ conversation }, BACKGROUND_CONTEXT));
+				} catch (error) {
+					cancel();
+					throw error;
+				}
 				navigate({ session, conversation });
-			}),
-		[withTree, edit],
+			});
+		},
+		[withTree, edit, focusWhenOpen],
 	);
 	const [renaming, setRenaming] = useState<{ session: string; conversation: number }>();
 	const onRenameBranch = useCallback(

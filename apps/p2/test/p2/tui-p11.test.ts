@@ -9,7 +9,7 @@ import {
 	ROOT_CONVERSATION_ID,
 } from "@earendil-works/pi-durable";
 import type { JsonValue } from "@p2/app/v1";
-import { ArtifactContent, ArtifactList } from "../../plugins/artifacts/contract.ts";
+import { Artifacts } from "../../plugins/artifacts/contract.ts";
 import artifactsTui from "../../plugins/artifacts/tui.ts";
 import { Chat, type ModelMeta } from "../../plugins/chat/contract.ts";
 import chatTui from "../../plugins/chat/tui.ts";
@@ -999,32 +999,6 @@ function contentStubs(calls: Calls): Stub[] {
 	};
 	return [
 		[
-			ArtifactList,
-			(_input, _principal, self) => ({
-				variant: "reader",
-				artifacts: self.state([
-					{ name: "notes", title: "Notes", type: "markdown", version: 2 },
-					{ name: "page", title: "Page", type: "html", version: 1 },
-				]),
-			}),
-		],
-		[
-			ArtifactContent,
-			() => ({
-				variant: "reader",
-				read: ({ name, version }: { name: string; version: number }) => {
-					record("readArtifact", { name, version });
-					return name === "notes"
-						? {
-								info: { name, title: "Notes", type: "markdown", version },
-								content: "# Heading\n\nSome **bold** text\x1b]52;c;evil\x07",
-								truncated: false,
-							}
-						: { info: { name, title: "Page", type: "html", version }, content: "<h1>Page</h1>", truncated: true };
-				},
-			}),
-		],
-		[
 			SentFiles,
 			() => ({
 				variant: "reader",
@@ -1037,155 +1011,99 @@ function contentStubs(calls: Calls): Stub[] {
 	];
 }
 
-test("artifacts: the card previews text, /artifacts shows Markdown inline when narrow, opens in the browser and downloads", async (t) => {
+type Summary = { id: string; kind: "html" | "md"; title: string; version: number; updated: number };
+
+/** The session's artifacts on the server, with what `read` gives for each (and records it). */
+function artifactStubs(
+	calls: Calls,
+	summaries: Summary[],
+	content: (id: string, version: number) => string,
+	onList?: (list: Cell<Summary[]>) => void,
+): Stub[] {
+	return [
+		[
+			Artifacts,
+			(_input, _principal, self) => {
+				const list = self.state(summaries);
+				onList?.(list);
+				return {
+					variant: "reader",
+					artifacts: list,
+					read: ({ id, version }: { id: string; version: number }) => {
+						calls.readArtifact = [...(calls.readArtifact ?? []), { id, version }];
+						const summary = list.value.find((each) => each.id === id)!;
+						return { summary, version, content: content(id, version) };
+					},
+				};
+			},
+		],
+	];
+}
+
+test("artifacts: /artifacts shows Markdown over the chat when narrow, a page as source, and opens a page in the browser", async (t) => {
 	const calls: Calls = {};
-	const lines = Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\n");
 	const { screen, send, runtime, terminal } = await setup(t, {
 		calls,
-		worker: contentStubs(calls),
+		server: artifactStubs(
+			calls,
+			[
+				{ id: "notes", kind: "md", title: "Notes", version: 2, updated: 2 },
+				{ id: "page", kind: "html", title: "Page", version: 1, updated: 1 },
+			],
+			(id) => (id === "notes" ? "# Heading\n\nSome **bold** text\x1b]52;c;evil\x07" : "<h1>Page</h1>"),
+		),
 		facets: [tuiCoreFacet, chatTui, statusTui, artifactsTui],
-		views: () =>
-			viewOf([
-				callEntry(1, "a1", "artifact", { name: "notes", title: "Notes", type: "markdown", content: lines }),
-				resultEntry(2, "a1", "artifact", { name: "notes", title: "Notes", type: "markdown", version: 2 }, "Saved"),
-			]),
 	});
 	const grants: [string, unknown][] = [];
 	runtime.onGrant = async (action, payload) => {
 		grants.push([action, payload]);
-		return { ok: true, value: action === "download" ? { saved: true } : null };
+		return { ok: true, value: null };
 	};
-	await poll(async () => (await screen()).includes("Notes · MARKDOWN · version 2 · /artifacts opens"));
-	assert.match(await screen(), /line 8\s*\n\s*\.\.\. \(4 more lines/);
-	assert(!(await screen()).includes("line 9"));
 	runtime.ctx.commands.run("p2.artifacts");
 	await poll(async () => (await screen()).includes("Artifacts (2)"));
 	assert.match(await screen(), /the browser needs its own sign-in/);
 	// Too narrow for the side panel: Enter shows an artifact over the chat.
 	terminal.resize(80, 24);
 	send(ENTER);
-	await poll(
-		async () => (await screen()).includes("Notes · MARKDOWN · version 2") && (await screen()).includes("Heading"),
-	);
+	await poll(async () => (await screen()).includes("Notes · MD · v2") && (await screen()).includes("Heading"));
 	const shown = await screen();
 	assert(!shown.includes("# Heading"), "Markdown is rendered");
 	assert(!shown.includes("**bold**"));
 	assert(!shown.includes("52;c;evil"), "control sequences are stripped");
-	assert.deepEqual(calls.readArtifact, [{ name: "notes", version: 2 }]);
+	assert.deepEqual(calls.readArtifact, [{ id: "notes", version: 2 }]);
 	send(ESC);
 	await poll(async () => (await screen()).includes("Artifacts (2)"));
 	send(DOWN);
 	send(ENTER);
 	await poll(async () => (await screen()).includes("Source only"));
-	assert.match(await screen(), /<h1>Page<\/h1>[\s\S]*truncated/);
+	assert.match(await screen(), /<h1>Page<\/h1>/);
 	send(ESC);
 	await poll(async () => (await screen()).includes("Artifacts (2)"));
 	send("\x02"); // Ctrl+B
 	await poll(() => grants.length === 1);
-	assert.deepEqual(grants[0], ["openUrl", { kind: "origin", path: "/artifact?session=s&name=page&version=1" }]);
-	send("\x13"); // Ctrl+S
-	await poll(() => grants.length === 2);
-	assert.deepEqual(grants[1], ["download", { kind: "artifact", session: "s", name: "page", version: 1 }]);
-	await poll(() => runtime.notices.some((notice) => notice.text === "Downloaded Page"));
-});
-
-test("artifacts: an inline call renders all of its Markdown in the transcript; inline SVG keeps the card line", async (t) => {
-	const calls: Calls = {};
-	const markdown = [
-		"# Inline heading",
-		"",
-		"Some **bold** text",
-		...Array.from({ length: 10 }, (_, i) => `- item ${i + 1}`),
-	];
-	const svg = "<svg xmlns='http://www.w3.org/2000/svg'><text>svg-source</text></svg>";
-	const { screen, terminal } = await setup(t, {
-		calls,
-		worker: contentStubs(calls),
-		facets: [tuiCoreFacet, chatTui, statusTui, artifactsTui],
-		views: () =>
-			viewOf([
-				callEntry(1, "a1", "artifact", {
-					name: "notes",
-					title: "Notes",
-					type: "markdown",
-					content: markdown.join("\n"),
-					inline: true,
-				}),
-				resultEntry(
-					2,
-					"a1",
-					"artifact",
-					{ name: "notes", title: "Notes", type: "markdown", version: 3, inline: true },
-					"Saved",
-				),
-				callEntry(3, "a2", "artifact", { name: "flow", title: "Flow", type: "svg", content: svg, inline: true }),
-				resultEntry(
-					4,
-					"a2",
-					"artifact",
-					{ name: "flow", title: "Flow", type: "svg", version: 1, inline: true },
-					"Saved",
-				),
-			]),
-	});
-	terminal.resize(100, 50);
-	await poll(async () => {
-		const text = await screen();
-		return text.includes("Flow · SVG · version 1 · /artifacts opens") && text.includes("Notes · MARKDOWN");
-	});
-	const shown = await screen();
-	assert.match(shown, /Notes · MARKDOWN · version 3/);
-	assert(shown.includes("Inline heading") && !shown.includes("# Inline heading"), "Markdown is rendered");
-	assert(shown.includes("bold") && !shown.includes("**bold**"));
-	assert(shown.includes("item 10"), "all of it, not the collapsed preview");
-	assert(!shown.includes("more lines"));
-	assert(!shown.includes("svg-source"), "HTML and SVG run only in a browser");
-	assert.equal(calls.readArtifact, undefined, "the call's own content, no read");
+	assert.deepEqual(grants[0], ["openUrl", { kind: "origin", path: "/artifact-frame?session=s&id=page&version=1" }]);
 });
 
 test("artifacts: Enter shows one in the side panel, which follows new versions, scrolls when focused and hides when narrow", async (t) => {
 	const calls: Calls = {};
-	let list: Cell<{ name: string; title: string; type: string; version: number }[]> | undefined;
+	let list: Cell<Summary[]> | undefined;
 	const rows = Array.from({ length: 60 }, (_, index) => `row ${index + 1}`).join("\n\n");
 	const { screen, send, runtime, terminal } = await setup(t, {
 		calls,
-		worker: [
-			[
-				ArtifactList,
-				(_input, _principal, self) => {
-					// One entry per version, as the worker lists them.
-					list = self.state([
-						{ name: "notes", title: "Notes", type: "markdown", version: 1 },
-						{ name: "notes", title: "Notes", type: "markdown", version: 2 },
-					]);
-					return { variant: "reader", artifacts: list };
-				},
-			],
-			[
-				ArtifactContent,
-				() => ({
-					variant: "reader",
-					read: ({ name, version }: { name: string; version: number }) => {
-						calls.readArtifact = [...(calls.readArtifact ?? []), { name, version }];
-						const heading = version === 2 ? "Version two" : "Version three";
-						return {
-							info: { name, title: "Notes", type: "markdown", version },
-							content: `# ${heading}\n\n${rows}`,
-							truncated: false,
-						};
-					},
-				}),
-			],
-		],
+		server: artifactStubs(
+			calls,
+			[{ id: "notes", kind: "md", title: "Notes", version: 2, updated: 2 }],
+			(_id, version) => `# ${version === 2 ? "Version two" : "Version three"}\n\n${rows}`,
+			(cell) => {
+				list = cell;
+			},
+		),
 		facets: [tuiCoreFacet, chatTui, statusTui, artifactsTui],
 	});
 	runtime.ctx.commands.run("p2.artifacts");
-	await poll(async () => (await screen()).includes("Artifacts (2)"));
-	send(DOWN); // the second row: version 2 of the same artifact
+	await poll(async () => (await screen()).includes("Artifacts (1)"));
 	send(ENTER);
-	await poll(
-		async () => (await screen()).includes("Notes · MARKDOWN · v2") && (await screen()).includes("Version two"),
-	);
+	await poll(async () => (await screen()).includes("Notes · MD · v2") && (await screen()).includes("Version two"));
 	assert.equal(runtime.ctx.panel.current, "artifact:notes");
 	assert(runtime.contexts().has("panel"));
 	// Beside the chat, behind its bar; the editor keeps the focus.
@@ -1206,24 +1124,24 @@ test("artifacts: Enter shows one in the side panel, which follows new versions, 
 	assert.equal(runtime.ctx.panel.current, "artifact:notes", "Escape only gives the focus back");
 
 	// A new version replaces the shown one.
-	list!.replace(null, [...list!.value, { name: "notes", title: "Notes", type: "markdown", version: 3 }]);
-	await poll(async () => (await screen()).includes("Notes · MARKDOWN · v3"));
+	list!.replace(null, [{ id: "notes", kind: "md", title: "Notes", version: 3, updated: 3 }]);
+	await poll(async () => (await screen()).includes("Notes · MD · v3"));
 	assert.deepEqual(calls.readArtifact, [
-		{ name: "notes", version: 2 },
-		{ name: "notes", version: 3 },
+		{ id: "notes", version: 2 },
+		{ id: "notes", version: 3 },
 	]);
 
 	// Too narrow for a split: hidden, and it cannot take the focus.
 	terminal.resize(80, 24);
-	await poll(async () => !(await screen()).includes("Notes · MARKDOWN · v3"));
+	await poll(async () => !(await screen()).includes("Notes · MD · v3"));
 	assert(!runtime.contexts().has("panel"));
 	send(F2);
 	assert.equal(runtime.ctx.panel.focused, false);
 	terminal.resize(100, 24);
-	await poll(async () => (await screen()).includes("Notes · MARKDOWN · v3"));
+	await poll(async () => (await screen()).includes("Notes · MD · v3"));
 
 	runtime.ctx.commands.run("p2.panel.close");
-	await poll(async () => !(await screen()).includes("Notes · MARKDOWN · v3"));
+	await poll(async () => !(await screen()).includes("Notes · MD · v3"));
 	assert.equal(runtime.ctx.panel.current, undefined);
 });
 

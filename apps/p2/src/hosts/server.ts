@@ -1,9 +1,10 @@
 // Server host: HTTP + WebSocket accept, routes `session:` hosts to session workers, loads the server facets.
 import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isChordError, type PluginFacet, webSocketLink } from "@earendil-works/chord";
 import { filesFacet } from "@earendil-works/chord/app/files";
@@ -16,7 +17,13 @@ import { type Ctx, createHost, type Host, type HostError, hostErrorText, Server 
 import { envDefaultModel } from "../runtime/default-model.ts";
 import { type DevCommand, type DevResult, parseDevCommand } from "../runtime/dev-protocol.ts";
 import { configureFetch } from "../runtime/fetch.ts";
-import { assertMigrated, hostFiles, openHostStore, serverDirectory } from "../runtime/host-dirs.ts";
+import {
+	assertMigrated,
+	hostFiles,
+	openHostStore,
+	serverDirectory,
+	userPluginsDirectory,
+} from "../runtime/host-dirs.ts";
 import { fromOrigin, sendJson } from "../runtime/http.ts";
 import { captureProcessLogs, processLogs } from "../runtime/logs.ts";
 import { mintOwnerLink } from "../runtime/owner-link.ts";
@@ -26,8 +33,9 @@ import { takeProcessLock } from "../runtime/process-lock.ts";
 import {
 	Authenticators,
 	findRoute,
-	LinkTokens,
 	PageCookies,
+	type PluginApply,
+	type PluginOutcome,
 	type RequestAccess,
 	type RequestOrigin,
 	RequestResolvers,
@@ -37,6 +45,7 @@ import {
 	Upgrades,
 	WorkerInitValues,
 } from "../runtime/server.ts";
+import { STALE_PAGE_CODE, STALE_PAGE_REASON } from "../runtime/stale-page.ts";
 import { WorkerBoundary, type WorkerInit } from "../runtime/worker.ts";
 import {
 	type BundleInput,
@@ -49,7 +58,15 @@ import {
 import { devControl } from "./dev.ts";
 import { readDevCommand, sendDevCommand, serveDevChannel } from "./dev-channel.ts";
 import { LoadedModules, loadedModuleHashes, loadedPluginFiles } from "./dev-modules.ts";
-import { createP2Plugins, listPlugins, PLUGINS_DIRECTORY, SERVER_PACKAGES, selectPlugins } from "./plugins.ts";
+import {
+	createP2Plugins,
+	listPlugins,
+	listRoots,
+	type P2Plugins,
+	PLUGINS_DIRECTORY,
+	SERVER_PACKAGES,
+	selectPlugins,
+} from "./plugins.ts";
 import {
 	contentSecurityPolicy,
 	foreignBrowserRequest,
@@ -92,12 +109,6 @@ export type ServerOptions = {
 	readonly facets?: readonly PluginFacet<P2Principal>[];
 };
 
-/** The view kit's path, the one route a sandboxed frame's `Origin: null` request reaches (docs/rooms.md). */
-const VIEW_KIT = /^\/view-kit\/[0-9a-f]{64}\.js$/;
-
-/** A token link's path: `/chord/<kind>` (docs/rooms.md). */
-const TOKEN_LINK = /^\/chord\/([a-z][a-z0-9-]{0,31})$/;
-
 /** Old content-named files remain briefly so HTML returned just before a reload can finish loading. */
 const WEB_BUNDLE_GRACE_MS = 60_000;
 
@@ -112,6 +123,22 @@ export type P2Server = {
 	close(): Promise<void>;
 };
 
+/** Who a principal is, for the owner's notices: the owner's access (and device) or a guest's name and ID. */
+function principalText(principal: P2Principal): string {
+	switch (principal.kind) {
+		case "owner":
+			return principal.access === "device"
+				? `the owner's device ${principal.device}`
+				: `the owner (${principal.access})`;
+		case "guest":
+			return `guest ${principal.name} (${principal.id})`;
+		case "worker":
+			return `session ${principal.session}'s worker`;
+		default:
+			return principal.kind;
+	}
+}
+
 export async function startServer(options: ServerOptions = {}): Promise<P2Server> {
 	// As Pi Mobile: a half-set default model from the environment refuses to start (before taking any lock).
 	envDefaultModel();
@@ -120,9 +147,22 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 	const resume: unknown = dev ? JSON.parse(process.env.P2_DEV_RESUME ?? "[]") : [];
 	if (!Array.isArray(resume) || !resume.every((id: unknown) => typeof id === "string"))
 		throw new Error("Invalid dev resume list");
-	// The selection: every plugin of plugins/, or exactly the requested ones (tests).
-	let plugins = selectPlugins(listPlugins(PLUGINS_DIRECTORY), options.plugins);
 	const dataDir = options.dataDir ?? process.env.P2_DATA_DIR ?? join(homedir(), ".pi", "p2");
+	// The user plugin root (`<data>/plugins/`): created here, so the plugin watcher watches it from the start.
+	const userRoot = userPluginsDirectory(dataDir);
+	mkdirSync(userRoot, { recursive: true, mode: 0o700 });
+	/** Where plugins are found, in order: the built-ins win a name. */
+	const roots = [PLUGINS_DIRECTORY, userRoot];
+	/**
+	 * The selection: every plugin of plugins/, or exactly the requested ones (tests), and every plugin of the user root
+	 * whose name no built-in has, alphabetical.
+	 */
+	const currentSelection = (): string[] => {
+		const builtIns = listPlugins(PLUGINS_DIRECTORY);
+		const user = [...listPlugins(userRoot).keys()].filter((name) => !builtIns.has(name));
+		return [...selectPlugins(builtIns, options.plugins), ...user].sort();
+	};
+	let plugins = currentSelection();
 	const devModules = dev
 		? new LoadedModules(loadedModuleHashes, loadedPluginFiles, join(dataDir, "dev-modules"))
 		: undefined;
@@ -161,7 +201,12 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 			console.error("p2 server:", error);
 		},
 	});
-	const p2Plugins = createP2Plugins(options.plugins, (error) => console.error("p2 plugins:", error));
+	const p2Plugins = createP2Plugins(
+		options.plugins,
+		(error) => console.error("p2 plugins:", error),
+		BACKGROUND_CONTEXT,
+		userRoot,
+	);
 	const { plugins: chordPlugins } = p2Plugins;
 	// Listen first so plugins see the actual port, but capture requests/upgrades BEFORE listening.
 	// A reconnect can arrive while plugins load: without an upgrade listener Node treats it as
@@ -176,13 +221,19 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 	});
 	http.on("upgrade", (request, socket, head) => {
 		const path = new URL(request.url ?? "/", "http://localhost").pathname;
-		/** `/chord/<kind>`: a link admitted by a token alone (`LinkTokens`). */
-		const tokenKind = TOKEN_LINK.exec(path)?.[1];
 		void loaded
-			.then(() => (tokenKind === undefined ? upgradePrincipal(request) : tokenPrincipal(request, tokenKind)))
+			.then(() => upgradePrincipal(request))
 			.catch(() => undefined)
 			.then(async (principal) => {
-				if ((path === "/chord" || tokenKind !== undefined) && principal !== undefined) {
+				if (path === "/chord" && principal !== undefined) {
+					const stale = await stalePage(request);
+					if (stale) {
+						// Its link would re-hold what its code holds, types removed since included (each waiting on the
+						// worker and reported there at every start): it reloads onto the current bundle instead.
+						reportStalePage(request, principal, stale);
+						sockets.handleUpgrade(request, socket, head, (ws) => ws.close(STALE_PAGE_CODE, STALE_PAGE_REASON));
+						return;
+					}
 					upgraded.set(request, principal);
 					sockets.handleUpgrade(request, socket, head, (ws) => sockets.emit("connection", ws, request));
 				} else if (principal !== undefined) {
@@ -243,7 +294,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 	devModules?.set(
 		"worker-base",
 		[...workers.baseInputs]
-			.filter(([file]) => !file.startsWith(PLUGINS_DIRECTORY))
+			.filter(([file]) => !file.startsWith(PLUGINS_DIRECTORY) && !file.startsWith(userRoot))
 			.map(([file, hash]) => ({ file, hash })),
 	);
 	// Capture before plugin resources open (e.g. provider SDK startup), not only after the logs facet activates.
@@ -264,6 +315,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		if (!devModules) return;
 		const plugin = (file: string) =>
 			file.startsWith(PLUGINS_DIRECTORY) ||
+			file.startsWith(userRoot) ||
 			(options.tuiDirectory !== undefined && file.startsWith(options.tuiDirectory));
 		devModules.set(
 			`${bundle}-bundle`,
@@ -279,7 +331,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 	const getTuiBundle = (): Promise<TuiBundle> => {
 		if (tuiBundle) return tuiBundle;
 		let current!: Promise<TuiBundle>;
-		current = buildTuiBundle(plugins, options.tuiDirectory).then(
+		current = buildTuiBundle(plugins, options.tuiDirectory ?? roots).then(
 			(bundle) => {
 				if (tuiBundle === current) adoptTui(bundle);
 				return bundle;
@@ -297,7 +349,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 	const getWebBundle = (): Promise<WebBundle> => {
 		if (webBundle) return webBundle;
 		let current!: Promise<WebBundle>;
-		current = buildWebBundle(plugins).then(
+		current = buildWebBundle(plugins, roots).then(
 			(bundle) => {
 				if (webBundle === current) adoptWeb(bundle);
 				return bundle;
@@ -344,6 +396,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 							workers,
 							root: (fn, context) => host.root(fn, context),
 							store,
+							plugins: { root: userRoot, reload: (requested) => applyPlugins(requested) },
 						}),
 					},
 					{ name: "@p2/tui-preferences", facet: tuiPreferencesFacet(dataDir) },
@@ -369,6 +422,51 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 
 	let reloading = false;
 	/**
+	 * Builds `requested` (and plugins added since), then the TUI and web bundles of the new selection, then rolls the
+	 * build out to the server and every running worker and adopts the bundles. Stops before the rollout at the first
+	 * failed build (a facet's, or a bundle's): nothing changes then.
+	 */
+	const rebuild = async (requested: readonly string[]): Promise<Rebuilt> => {
+		const built = await chordPlugins.build(requested, BACKGROUND_CONTEXT);
+		const failed = built.facets.flatMap((facet) =>
+			facet.kind === "failed" ? [{ plugin: facet.plugin, kind: facet.facet, errors: facet.errors }] : [],
+		);
+		if (failed.length) return { kind: "failed", failed };
+		const next = currentSelection();
+		processLogs.append("server", "event", `Reloading plugins: ${requested.join(", ")}`);
+		// Prepare downloaded code before the backend commit; publish only a successfully committed selection.
+		let nextTuiBundle: TuiBundle;
+		let nextWebBundle: WebBundle | undefined;
+		try {
+			nextTuiBundle = await buildTuiBundle(next, options.tuiDirectory ?? roots);
+			nextWebBundle = serveWeb ? await buildWebBundle(next, roots) : undefined;
+		} catch (error) {
+			return { kind: "failed", failed: bundleFailures(error, roots) };
+		}
+		const result = await chordPlugins.rollout(
+			[chordPlugins.step("server", host), workers.workers.step("workers")],
+			built,
+			BACKGROUND_CONTEXT,
+		);
+		plugins = next;
+		tuiBundle = Promise.resolve(nextTuiBundle);
+		adoptTui(nextTuiBundle);
+		if (nextWebBundle) {
+			if (webBundle) {
+				retainedWebBundles.unshift({ bundle: webBundle, expires: Date.now() + WEB_BUNDLE_GRACE_MS });
+				retainedWebBundles.splice(2);
+			}
+			webBundle = Promise.resolve(nextWebBundle);
+			adoptWeb(nextWebBundle);
+		}
+		const changed = [...new Set(built.facets.map((facet) => facet.plugin))].sort();
+		for (const notice of processLogs.notices())
+			if (notice.source === "server" && notice.message.startsWith("Reload refused:"))
+				processLogs.dismissNotice(notice.id);
+		processLogs.append("server", "event", `Reloaded plugins: ${changed.join(", ")}`);
+		return { kind: "rolled", built, result, changed };
+	};
+	/**
 	 * Builds `requested` (and plugins added since), then rolls them out to the server and every running worker; the TUI
 	 * and web bundles are rebuilt first (a failed build keeps the old code and bundles). A plugin whose build or
 	 * evaluation fails keeps its old code (an added one stays out), reported in the result.
@@ -379,8 +477,8 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		if (reloading) throw new Error("A p2 plugin reload is already running");
 		reloading = true;
 		try {
-			const listing = listPlugins(PLUGINS_DIRECTORY);
-			const next = selectPlugins(listing, options.plugins);
+			const listing = listRoots(roots);
+			const next = currentSelection();
 			// A loaded plugin whose directory is gone is removed by the reload.
 			for (const name of requested) {
 				if (next.includes(name) || (plugins.includes(name) && !listing.has(name))) continue;
@@ -388,49 +486,110 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 					listing.has(name) ? `Cannot reload unloaded p2 plugin: ${name}` : `Unknown p2 plugin: ${name}`,
 				);
 			}
-			const built = await chordPlugins.build(requested, BACKGROUND_CONTEXT);
-			const failed = built.facets.filter((facet) => facet.kind === "failed");
-			if (failed.length)
+			const rebuilt = await rebuild(requested);
+			if (rebuilt.kind === "failed")
 				throw new Error(
-					failed
-						.map(
-							(facet) =>
-								`${facet.plugin} (${facet.facet}): ${facet.kind === "failed" ? facet.errors.join("; ") : ""}`,
-						)
-						.join(". "),
+					rebuilt.failed.map((facet) => `${facet.plugin} (${facet.kind}): ${facet.errors.join("; ")}`).join(". "),
 				);
-			processLogs.append("server", "event", `Reloading plugins: ${requested.join(", ")}`);
-			// Prepare downloaded code before the backend commit; publish only a successfully committed selection.
-			const nextTuiBundle = await buildTuiBundle(next, options.tuiDirectory);
-			const nextWebBundle = serveWeb ? await buildWebBundle(next) : undefined;
-			const result = await chordPlugins.rollout(
-				[chordPlugins.step("server", host), workers.workers.step("workers")],
-				built,
-				BACKGROUND_CONTEXT,
-			);
-			plugins = next;
-			tuiBundle = Promise.resolve(nextTuiBundle);
-			adoptTui(nextTuiBundle);
-			if (nextWebBundle) {
-				if (webBundle) {
-					retainedWebBundles.unshift({ bundle: webBundle, expires: Date.now() + WEB_BUNDLE_GRACE_MS });
-					retainedWebBundles.splice(2);
-				}
-				webBundle = Promise.resolve(nextWebBundle);
-				adoptWeb(nextWebBundle);
-			}
-			const changed = [...new Set(built.facets.map((facet) => facet.plugin))].sort();
-			for (const notice of processLogs.notices())
-				if (notice.source === "server" && notice.message.startsWith("Reload refused:"))
-					processLogs.dismissNotice(notice.id);
-			processLogs.append("server", "event", `Reloaded plugins: ${changed.join(", ")}`);
-			return { plugins: changed, value: result };
+			return { plugins: rebuilt.changed, value: rebuilt.result };
 		} catch (error) {
 			processLogs.notice("server", `Reload refused: ${error instanceof Error ? error.message : String(error)}`);
 			throw error;
 		} finally {
 			reloading = false;
 		}
+	};
+	/**
+	 * Reloads plugins for `reload_plugins` (any root): `requested`, else every dirty plugin, every plugin of the user
+	 * root and every loaded plugin no longer on disk (an unchanged one keeps its digest, so its hosts keep it as it is).
+	 * Named plugins are discovered again when the watcher has not reported their change yet (`Plugins.build`), so an
+	 * agent's apply never depends on the watcher's timing: a plugin written just before is applied, one deleted just
+	 * before is removed. Says per plugin what happened: applied, removed, failed with the build's or
+	 * the hosts' errors (a failed build applies nothing), or refused (unknown, or an invalid package); and the errors
+	 * logged meanwhile.
+	 */
+	const applyPlugins = async (requested?: readonly string[]): Promise<PluginApply> => {
+		if (reloading)
+			return { refused: "Another plugin reload is running; try again in a moment.", plugins: [], logs: [] };
+		reloading = true;
+		const since = Date.now();
+		try {
+			const listed = listRoots(roots);
+			const builtIns = listPlugins(PLUGINS_DIRECTORY);
+			const state = chordPlugins.state.value;
+			const wanted =
+				requested ??
+				[
+					...new Set([
+						...state.dirty,
+						...state.install,
+						...[...listPlugins(userRoot).keys()].filter((name) => !builtIns.has(name)),
+						...plugins.filter((name) => !listed.has(name)),
+					]),
+				].sort();
+			const unknown = wanted.filter((name) => !listed.has(name) && !plugins.includes(name));
+			const names = wanted.filter((name) => !unknown.includes(name));
+			const rebuilt = await rebuild(names);
+			// After the build, which discovered the roots anew.
+			const refusals = [
+				...unknown.map((plugin) => ({ plugin, outcome: "refused" as const, errors: ["No such plugin"] })),
+				...(await discoveryProblems()),
+			];
+			const result: PluginApply =
+				rebuilt.kind === "failed"
+					? {
+							plugins: [
+								...rebuilt.failed.map(({ plugin, kind, errors }) => ({
+									plugin,
+									outcome: "failed" as const,
+									errors: errors.map((error) => `${kind}: ${error}`),
+								})),
+								...refusals,
+							],
+							logs: [],
+						}
+					: { plugins: [...rolledOutcomes(rebuilt), ...refusals], logs: [] };
+			watcher?.notify({
+				ok: result.plugins.every((each) => each.outcome === "applied" || each.outcome === "removed"),
+				message: result.plugins.map((each) => `${each.plugin}: ${each.outcome}`).join(", ") || "No dirty plugins",
+				plugins: result.plugins.map((each) => each.plugin),
+			});
+			return { ...result, logs: recentErrors(since) };
+		} finally {
+			reloading = false;
+		}
+	};
+	/** A rollout's outcome per plugin: applied, removed, or failed with the hosts' errors. */
+	const rolledOutcomes = (rebuilt: Extract<Rebuilt, { kind: "rolled" }>): PluginOutcome[] => {
+		const hostFailures = new Map<string, string[]>();
+		const fail = (plugin: string, text: string) =>
+			hostFailures.set(plugin, [...(hostFailures.get(plugin) ?? []), text]);
+		for (const step of rebuilt.result.steps)
+			for (const each of step.hosts) {
+				if ("report" in each)
+					for (const { plugin, error } of each.report.failed) fail(plugin, `${each.host}: ${errorText(error)}`);
+				else if ("error" in each)
+					for (const plugin of rebuilt.changed) fail(plugin, `${each.host}: ${errorText(each.error)}`);
+			}
+		return [
+			...Object.keys(rebuilt.built.plugins).map((plugin) => {
+				const errors = hostFailures.get(plugin);
+				return errors ? { plugin, outcome: "failed" as const, errors } : { plugin, outcome: "applied" as const };
+			}),
+			...rebuilt.built.removed.map((plugin) => ({ plugin, outcome: "removed" as const })),
+		];
+	};
+	/** Discovery's problems (an invalid or missing `package.json`, a name another root has), as refusals. */
+	const discoveryProblems = async (): Promise<PluginOutcome[]> => {
+		const reals = await Promise.all(roots.map((root) => realpath(root).catch(() => root)));
+		return chordPlugins.discovery.problems.map((problem) => {
+			const root = reals.find((each) => problem.path.startsWith(each + sep));
+			return {
+				plugin: root === undefined ? problem.path : relative(root, problem.path).split(sep)[0] || problem.path,
+				outcome: "refused" as const,
+				errors: [problem.error],
+			};
+		});
 	};
 	const watcher = dev
 		? devControl({
@@ -439,7 +598,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 				runtimeDirectory: APP,
 				loadedModules: devModules,
 				setChanges: () => {
-					const next = selectPlugins(listPlugins(PLUGINS_DIRECTORY), options.plugins);
+					const next = currentSelection();
 					return [
 						...next.filter((name) => !plugins.includes(name)),
 						...plugins.filter((name) => !next.includes(name)),
@@ -563,19 +722,12 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 					// The Radius shell frames the relayed UI; X-Frame-Options cannot name another origin.
 					if (access.origin.relayShellOrigin !== undefined) response.removeHeader("X-Frame-Options");
 				}
-				// A sandboxed frame (an opaque origin: Chrome sends `Origin: null` even for its scripts) may load the view
-				// kit (views plugin, docs/rooms.md), and only that, as nobody: no cookie reaches the route.
-				const anonymous =
-					request.headers.origin === "null" &&
-					(request.method === "GET" || request.method === "HEAD") &&
-					VIEW_KIT.test(path);
-				if (access === undefined || (!anonymous && !sameOrigin(request, access.origin))) {
+				if (access === undefined || !sameOrigin(request, access.origin)) {
 					response.writeHead(403, { "Content-Type": "text/plain" });
 					response.end(access === undefined ? "Localhost only" : "Invalid origin");
 					return;
 				}
-				const { origin } = access;
-				const principal = anonymous ? undefined : access.principal;
+				const { principal, origin } = access;
 				// Unauthenticated readiness (Pi Mobile's /health, polled by launchers); known Hosts only.
 				if (path === "/health" && (request.method === "GET" || request.method === "HEAD")) {
 					response.writeHead(200, { "Content-Type": "application/json" });
@@ -686,27 +838,36 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 			return access !== undefined && sameOrigin(request, access.origin) ? access.principal : undefined;
 		}, BACKGROUND_CONTEXT);
 	};
-	/**
-	 * The principal of a token link (`/chord/<kind>?token=…`), or undefined to refuse it. Its caller may be a sandboxed
-	 * frame: `Origin` may be `null` (or this server's own), and its cookies are never read. The Host must be one this
-	 * server answers (loopback, an allowed tunnel, a relay's): DNS rebinding is refused as for every request.
-	 */
-	const tokenPrincipal = async (request: IncomingMessage, kind: string): Promise<P2Principal | undefined> =>
-		host.root(async (ctx) => {
-			let origin: RequestOrigin | undefined;
-			for (const resolve of (await host.registry(RequestResolvers, ctx)).value.values()) {
-				origin = resolve(request, ctx)?.origin;
-				if (origin !== undefined) break;
-			}
-			origin ??= requestOrigin(request, allowedHosts);
-			const from = request.headers.origin;
-			if (origin === undefined || (from !== undefined && from !== "null" && from !== origin.origin))
-				return undefined;
-			const token = new URL(request.url ?? "/", "http://localhost").searchParams.get("token");
-			const admit = (await host.registry(LinkTokens, ctx)).value.get(kind);
-			return token && admit ? admit(token, ctx) : undefined;
-		}, BACKGROUND_CONTEXT);
 	const upgraded = new WeakMap<IncomingMessage, P2Principal>();
+	/**
+	 * A page's link from a bundle other than the current one: its `web` query names the version it runs. Links naming
+	 * none are not asked: the TUI, Cloud Brain's pages (built elsewhere: scripts/cloud-bundle.ts) and pages from before
+	 * 2026-11-12 (they reload when shown; their requests for removed types still wait, see docs/p2-notes.md).
+	 */
+	const stalePage = async (request: IncomingMessage): Promise<{ sent: string; current: string } | undefined> => {
+		const sent = new URL(request.url ?? "/", "http://localhost").searchParams.get("web");
+		if (!serveWeb || sent === null) return undefined;
+		const current = await getWebBundle().then(
+			(bundle) => bundle.version,
+			() => undefined,
+		);
+		return current !== undefined && sent !== current ? { sent, current } : undefined;
+	};
+	/** Stale pages already reported, by who and which version: each is told the owner once per server run. */
+	const staleReported = new Set<string>();
+	const reportStalePage = (
+		request: IncomingMessage,
+		principal: P2Principal,
+		{ sent, current }: { sent: string; current: string },
+	): void => {
+		const who = principalText(principal);
+		const agent = String(request.headers["user-agent"] ?? "unknown browser").slice(0, 200);
+		const text = `A page running an older p2 (web bundle ${sent}, current ${current}) tried to connect and was told to reload: ${who}, ${agent}, from ${request.socket.remoteAddress ?? "unknown address"} (WebSocket /chord).`;
+		const key = `${who}\n${agent}\n${sent}`;
+		if (staleReported.has(key)) return;
+		staleReported.add(key);
+		processLogs.notice("stale-pages", text);
+	};
 	// Mobile's limits: frames up to 1 MiB, 4 MiB unsent output (socket-limits.ts); Chord queues calls behind its window.
 	sockets.on("connection", (socket, request: IncomingMessage) => {
 		const principal = upgraded.get(request);
@@ -771,6 +932,58 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 			return closing;
 		},
 	};
+}
+
+/** What a rebuild did: stopped at failed builds, or rolled out (its build, the rollout, the plugins it changed). */
+type Rebuilt =
+	| {
+			readonly kind: "failed";
+			readonly failed: readonly { plugin: string; kind: string; errors: readonly string[] }[];
+	  }
+	| {
+			readonly kind: "rolled";
+			readonly built: Awaited<ReturnType<P2Plugins["plugins"]["build"]>>;
+			readonly result: RolloutResult;
+			readonly changed: readonly string[];
+	  };
+
+/** A bundle build's failure as failed facets: esbuild's errors with their files and lines, by plugin where it can tell. */
+function bundleFailures(
+	error: unknown,
+	roots: readonly string[],
+): { plugin: string; kind: string; errors: string[] }[] {
+	// esbuild's build failure (its `errors`); anything else is one message.
+	const messages = (
+		error as { errors?: { text: string; location?: { file: string; line: number; column: number } | null }[] }
+	).errors;
+	if (!Array.isArray(messages)) return [{ plugin: "bundle", kind: "web", errors: [errorText(error)] }];
+	const byPlugin = new Map<string, string[]>();
+	for (const { text, location } of messages) {
+		const file = location ? resolve(APP, location.file) : undefined;
+		const root = roots.find((each) => file?.startsWith(`${each}${sep}`));
+		// A plugin's file is named from its root (`counter/web.tsx`), as the plugin tools name it.
+		const path = file && root ? relative(root, file) : location?.file;
+		const plugin = path && root ? (path.split(sep)[0] ?? "bundle") : "bundle";
+		const where = location ? `${path}:${location.line}:${location.column}: ` : "";
+		byPlugin.set(plugin, [...(byPlugin.get(plugin) ?? []), `${where}${text}`]);
+	}
+	return [...byPlugin].map(([plugin, errors]) => ({ plugin, kind: "web", errors }));
+}
+
+/** An error's message. */
+const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/** Error lines of the server's and the workers' logs since `since` (the last few). */
+function recentErrors(since: number): string[] {
+	const lines: { time: number; text: string }[] = [];
+	for (const { id } of processLogs.sources())
+		for (const line of processLogs.lines(id))
+			if (line.time >= since && (line.level === "error" || line.level === "stderr"))
+				lines.push({ time: line.time, text: `${id}: ${line.text}` });
+	return lines
+		.sort((a, b) => a.time - b.time)
+		.slice(-20)
+		.map((line) => line.text.slice(0, 2000));
 }
 
 /**

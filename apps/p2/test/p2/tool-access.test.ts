@@ -49,29 +49,30 @@ describe("tool requirements", () => {
 		assert.equal(guardTool(subagentOnly), subagentOnly);
 	});
 
-	it("refuses an owner-only tool in a turn the owner did not start, and a main-only tool outside the main conversation", async () => {
-		const owned = guardTool(tool("ports", { origin: "owner", scope: "main" }));
-		assert.equal(text(await owned.execute({}, api(1, owner), context)), "ports ran");
-		assert.match(text(await owned.execute({}, api(1, guest), context)) ?? "", /needs a turn the owner started/);
+	it("refuses a main-only tool outside the main conversation, whoever started the turn", async () => {
+		const main = guardTool(tool("ports", { scope: "main" }));
+		assert.equal(text(await main.execute({}, api(1, owner), context)), "ports ran");
+		assert.equal(text(await main.execute({}, api(1, guest), context)), "ports ran", "no per-turn authority");
 		// Conversation 2 is no top-level conversation (no `/tree` branches): a subagent's.
-		assert.match(text(await owned.execute({}, api(2, owner), context)) ?? "", /works only in the session's main/);
-		const anywhere = guardTool(tool("location_envs", { origin: "owner" }));
-		assert.equal(text(await anywhere.execute({}, api(2, owner), context)), "location_envs ran");
+		assert.match(text(await main.execute({}, api(2, owner), context)) ?? "", /works only in the session's main/);
+		const anywhere = tool("location_envs");
+		assert.equal(guardTool(anywhere), anywhere);
 	});
 
-	it("in a locked session, the lock decides an owner-only tool for everyone, the owner too", async () => {
+	it("in a locked session, the lock decides a tool with a lock rule, for everyone", async () => {
 		const lock: SessionLock = { mcp: [], projectMcp: false, instructions: false, capabilities: ["ports"] };
-		const ports = guardTool(tool("ports", { origin: "owner", locked: "ports" }));
-		const conversations = guardTool(tool("conversations", { origin: "owner", locked: "conversations" }));
-		const reload = guardTool(tool("reload_plugins", { origin: "owner", locked: "never" }));
-		const location = guardTool(tool("location_envs", { origin: "owner" }));
+		const ports = guardTool(tool("ports", { locked: "ports" }));
+		const conversations = guardTool(tool("conversations", { locked: "conversations" }));
+		const never = guardTool(tool("never", { locked: "never" }));
 		assert.equal(text(await ports.execute({}, api(1, guest, lock), context)), "ports ran", "picked: guests too");
 		assert.match(
 			text(await conversations.execute({}, api(1, owner, lock), context)) ?? "",
 			/not among the resources/,
 		);
-		assert.match(text(await reload.execute({}, api(1, owner, lock), context)) ?? "", /not available in a locked/);
-		assert.equal(text(await location.execute({}, api(1, guest, lock), context)), "location_envs ran", "pass");
+		assert.match(text(await never.execute({}, api(1, owner, lock), context)) ?? "", /not available in a locked/);
+		// Unlocked, the rules are no restriction.
+		assert.equal(text(await never.execute({}, api(1, guest), context)), "never ran");
+		assert.equal(text(await conversations.execute({}, api(1, guest), context)), "conversations ran");
 	});
 });
 
@@ -81,7 +82,7 @@ describe("tools given to agents", () => {
 		tool("bash"),
 		tool("codemode", { callers: ["model"] }),
 		tool("agent", { callers: ["tools"] }),
-		tool("mcp__files__echo", { callers: ["tools"], deferred: true, origin: "owner" }),
+		tool("mcp__files__echo", { callers: ["tools"], deferred: true }),
 		tool("powershell", { deferred: true }),
 		tool("subagent", { scope: "main" }),
 		tool("rename_session", { scope: "main" }),

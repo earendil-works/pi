@@ -123,3 +123,25 @@ and its working rules are in `handoff.md`.
   a case. Details: `views.md` §4a.
 - **Read-only sharing (owner, 2026-11-11: "we obv want read-only sharing"; merged.md §4 question 2):** a session can be
   shared with a viewer who reads everything and sends nothing (`mayView` without `maySend`), besides full participation.
+- **The agent writes plugins; sketches stay single-player (owner, 2026-11-11: "radical idea: this is all fucking
+  stupid. what if the agent had a tool to write/edit the contents of plugins directly"):** anything an agent builds that
+  is multiplayer, persistent or needs rules (games, shared boards, Max's glyph editor) is a plugin the agent writes and
+  applies itself, with a server object, typed contracts and Chord state and events, whatever environment the agent
+  otherwise works in. The trust boundary is access to the server; prompt injection through ingested content is an
+  accepted risk (it already applies when the agent works on the server machine), and a guest who may send can already
+  have the agent run `bash` there. The plugin tools are ordinary tools in the session's selection: a locked-down
+  session does not get them, as it does not get `bash`; no extra apply gate. Sandboxed HTML views remain only as
+  single-player artifacts. Dropped: the generic room (p2 rooms v1 stays as a playground), the rooms v2 leader design
+  and the rooms v3 sequenced model (`apps/p2/docs/rooms-v3/`, kept as the record of the use cases), view principals for
+  sketches, and views.md's two-tier decision for agent-made views. First built in p2.
+- **Artifacts and views (owner, 2026-11-12; p2 builds it first, p3 takes the same structure with rough edges sanded
+  down):** each plugin owns its per-session data, keyed by the session's host address on the server (export, import and
+  delete carry it; versions are the plugin's business). A web registry `ArtifactKinds` (title, icon, live
+  `useItems`/`useCount`, optional `Row` and removal, the view kind that opens an item) collects listable items for the
+  artifacts sheet and button; `ViewKinds` only gives panes (`PaneProps` `item`, `inline`). Inline artifacts are a tool
+  card rendering the item's pane, mounted only while visible. Plugin tools are code-mode only, grouped by the code-mode
+  namespace their extension declares (description in the prompt, instructions on demand); the prompt lists namespaces
+  from configuration so it stays stable when servers connect. Supersedes "A view's frame is a Chord client with a view
+  principal" and drops rooms and the view library. As built in p2: html artifacts keep the custom views' page API
+  (`window.p2view`, state per artifact); a reader who may not change the session's views opens an item in the
+  artifacts side panel on their own device; a session's clone and fork copy its artifacts.

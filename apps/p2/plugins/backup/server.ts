@@ -1,14 +1,31 @@
 // The server's backup (`src/runtime/backup.ts`): holds the backup remote, uploads the server's own store, gives each
 // session's worker the remote for its own store (`BackupRemote`: slot bodies streamed through here in chunks), and
-// keeps every store's last reported status. Inert while backup is not configured (`P2_BACKUP_DIR`).
+// keeps every store's last reported status. Inert while backup is not configured (`P2_BACKUP_DIR` for a folder,
+// `P2_BACKUP=<name>` for a plugin's target such as `radius`, `BackupTargets`).
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { type Context, defineFacet, forbidden, isWorker, nativeOf, serveNative, withoutAbortSignal } from "@p2/app/v1";
 import {
+	type Context,
+	defineFacet,
+	forbidden,
+	isWorker,
+	type NativeWatchable,
+	nativeOf,
+	PluginError,
+	serveKeyed,
+	serveNative,
+	withoutAbortSignal,
+} from "@p2/app/v1";
+import {
+	BACKUP_TERMINAL,
+	type BackupTarget,
 	BackupUploader,
+	backupFiles,
 	backupTarget,
+	backupTargetKey,
 	LockedFile,
-	openBackupRemote,
+	type OpenBackupTarget,
+	openFolderRemote,
 	type PutBatchResult,
 	processLogs,
 	SERVER_STORE,
@@ -18,7 +35,14 @@ import {
 	sessionStoreName,
 } from "@p2/app/v1/node";
 import { Server, serverOf } from "@p2/app/v1/server";
-import { Backup, BackupNative, BackupRemote, type BackupStatus, type BackupUploads } from "./contract.ts";
+import {
+	Backup,
+	BackupNative,
+	BackupRemote,
+	type BackupStatus,
+	BackupTargets,
+	type BackupUploads,
+} from "./contract.ts";
 
 /** An upload whose worker sends nothing for this long is dropped (its body was abandoned). */
 const UPLOAD_IDLE_MS = 60_000;
@@ -139,11 +163,79 @@ export class StreamedUpload {
 	}
 }
 
+/** How long a named target may take to be offered (its plugin's object activating after this one) before the open fails. */
+const TARGET_WAIT_MS = 30_000;
+
+type Offered = ReadonlyMap<string, { open(): Promise<OpenBackupTarget> }>;
+
+/**
+ * The open target: a folder's remote and this instance's device, or the named plugin's target. A plugin's object may
+ * activate after the backup's: the open waits for its target (up to `TARGET_WAIT_MS`), then fails `transient` with why
+ * (the plugin is not loaded); a later offer retries it at once (`retryOn`).
+ */
+async function openTarget(
+	target: BackupTarget,
+	dataDir: string,
+	targets: NativeWatchable<Offered>,
+	context: Context,
+): Promise<OpenBackupTarget> {
+	if (target.kind === "folder")
+		return { remote: openFolderRemote(target.path, dataDir), device: await deviceId(dataDir), server: SERVER_STORE };
+	const offered = targets.value.get(target.name) ?? (await offeredWithin(targets, target.name, context));
+	// Not signed in or not reachable yet: the open fails `transient` and Chord retries it with backoff.
+	return offered.open();
+}
+
+/** The target `name` once offered, or a rejection naming what is offered after `TARGET_WAIT_MS`. */
+async function offeredWithin(
+	targets: NativeWatchable<Offered>,
+	name: string,
+	context: Context,
+): Promise<{ open(): Promise<OpenBackupTarget> }> {
+	const watch = await targets.watch(context);
+	try {
+		return await new Promise((resolve, reject) => {
+			const timer = setTimeout(
+				() =>
+					reject(
+						new Error(
+							`P2_BACKUP=${name}: no loaded plugin offers this backup target (offered: ${[...watch.value.keys()].join(", ") || "none"})`,
+						),
+					),
+				TARGET_WAIT_MS,
+			);
+			timer.unref();
+			const found = watch.value.get(name);
+			if (found !== undefined) {
+				clearTimeout(timer);
+				resolve(found);
+				return;
+			}
+			watch.start(async (call) => {
+				if (call.kind !== "value") return;
+				const offer = call.value.get(name);
+				if (offer === undefined) return;
+				clearTimeout(timer);
+				resolve(offer);
+			});
+		});
+	} finally {
+		await watch.stop();
+	}
+}
+
+const describe = (target: BackupTarget): string => (target.kind === "folder" ? target.path : target.name);
+
 /**
  * The slot uploads of the open backup: `remote` the backup's, `device` this instance's. Each upload's remote call runs
  * under `context` (the backup's own, not a caller's: it outlives the call that began it).
  */
-function openUploads(remote: SessionSyncStore, device: string, context: Context): BackupUploads & { close(): void } {
+function openUploads(
+	remote: SessionSyncStore,
+	device: string,
+	context: Context,
+	terminal: ((error: unknown) => boolean) | undefined,
+): BackupUploads & { close(): void } {
 	const uploads = new Map<string, StreamedUpload>();
 	/** The upload `id` of `store`: a store never reaches another store's. */
 	const of = (store: string, id: string): StreamedUpload => {
@@ -154,7 +246,13 @@ function openUploads(remote: SessionSyncStore, device: string, context: Context)
 	return {
 		begin: async (store, { after, to, archive }) => {
 			const started = new StreamedUpload(store, (body) =>
-				remote.putBatch(store, after, to, device, body, context, archive === true ? { archive } : {}),
+				remote
+					.putBatch(store, after, to, device, body, context, archive === true ? { archive } : {})
+					.catch((error: unknown) => {
+						// The worker stops on it too: its own uploader retries anything else.
+						if (terminal?.(error) === true) throw new PluginError(BACKUP_TERMINAL, text(error));
+						throw error;
+					}),
 			);
 			await started.ready;
 			// Answered without the body (the slot is taken, the history ends elsewhere), or failed before asking for it.
@@ -188,6 +286,7 @@ function openUploads(remote: SessionSyncStore, device: string, context: Context)
 
 export default defineFacet((host) => {
 	serveNative(host, BackupNative);
+	serveKeyed(host, BackupTargets);
 	host.serve(Backup, (_params, self) => {
 		const server = self.get(Server, {});
 		const natives = serverOf(self);
@@ -202,24 +301,26 @@ export default defineFacet((host) => {
 		};
 		// The remote, this instance's device, the uploads workers stream through it, and the server store's uploader (its
 		// outbox is on while backup is configured: the server opens the store so).
+		const targets = self.registry(BackupTargets);
 		const backup = self.open(
 			async (context) => {
 				const target = backupTarget();
 				const store = natives().store;
 				if (target === undefined || store === undefined) return undefined;
 				const { dataDir } = server.info.value;
-				const { remote, files } = openBackupRemote(target, dataDir);
-				const id = await deviceId(dataDir);
-				device.set(id);
-				const uploads = openUploads(remote, id, withoutAbortSignal(context));
+				const opened = await openTarget(target, dataDir, targets, context);
+				device.set(opened.device);
+				const uploads = openUploads(opened.remote, opened.device, withoutAbortSignal(context), opened.terminal);
 				const uploader = new BackupUploader({
 					store,
-					name: SERVER_STORE,
-					device: id,
-					remote,
+					name: opened.server,
+					device: opened.device,
+					remote: opened.remote,
 					directory: serverDirectory(dataDir),
-					files,
+					target: backupTargetKey(target),
+					files: backupFiles(dataDir),
 					report: (status) => report(SERVER_STORE, status),
+					...(opened.terminal === undefined ? {} : { terminal: opened.terminal }),
 				});
 				// The server's store is written by many objects: the store tells of every commit. Uploading writes nothing
 				// to the store (its bookmark is a file, its outbox trim no commit), so this never wakes itself.
@@ -227,7 +328,7 @@ export default defineFacet((host) => {
 					() => uploader.committed(false),
 					(error) => processLogs.append("backup:server", "event", `following commits failed: ${text(error)}`),
 				);
-				processLogs.append("backup", "event", `Backing up to ${target.path} as device ${id}`);
+				processLogs.append("backup", "event", `Backing up to ${describe(target)} as device ${opened.device}`);
 				return { uploads, uploader, stopWatching };
 			},
 			async (opened) => {
@@ -238,6 +339,8 @@ export default defineFacet((host) => {
 				await opened.uploader.close().catch((error: unknown) => report(SERVER_STORE, failed(error)));
 			},
 		);
+		// A target offered (its plugin's object activated, loaded or reloaded) after a failed open: try at once.
+		self.retryOn(targets);
 		self.contribute(BackupNative, {
 			get uploads() {
 				return backup.value?.uploads;

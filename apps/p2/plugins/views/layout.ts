@@ -211,7 +211,7 @@ export function arrange(
 }
 
 /**
- * Why an agent's arrangement (the `view` tool's `arrange`) is no layout of the views `known` (the transcript included),
+ * Why an agent's arrangement (`view_arrange`) is no layout of the views `known` (the transcript included),
  * or undefined when it is one. A node is a view's ID, `{ tabs: [IDs], active? }`, or `{ row | column: [nodes],
  * sizes? }`; each view at most once.
  */
@@ -287,6 +287,15 @@ export function arrangedTree(value: unknown, known: ReadonlySet<string>): Layout
 	return viewsIn(tree).includes(CHAT) ? tree : normalize(split("row", [area([CHAT]), tree], [0.4, 0.6]));
 }
 
+/** The view IDs an arrangement names, as stored (any version may have written it). */
+function namedViews(value: unknown, depth = 0): string[] {
+	if (depth > 8) return [];
+	if (typeof value === "string") return [value];
+	if (!isRecord(value)) return [];
+	const children = [value.tabs, value.row, value.column].find(Array.isArray) ?? [];
+	return children.flatMap((child) => namedViews(child, depth + 1));
+}
+
 /**
  * `layout` with an agent's arrangement adopted: its tree, the session's other views hidden here (the Views sheet shows
  * them again), and its stamp, so a device adopts each arrangement once and the person may change it afterwards.
@@ -296,8 +305,13 @@ export function adopt(
 	arrangement: { layout: unknown; stamp: number },
 	views: readonly string[],
 ): Layout {
-	const tree = arrangedTree(arrangement.layout, new Set([CHAT, ...views]));
-	if (!tree) return { ...layout, arranged: arrangement.stamp };
+	const known = new Set([CHAT, ...views]);
+	const tree = arrangedTree(arrangement.layout, known);
+	// An arrangement whose views are all gone (closed since, or of a removed kind) arranges nothing: it does not hide
+	// the views the session has now.
+	const named = namedViews(arrangement.layout).filter((id) => id !== CHAT);
+	if (!tree || (named.length > 0 && !named.some((id) => known.has(id))))
+		return { ...layout, arranged: arrangement.stamp };
 	const placed = new Set(viewsIn(tree));
 	return {
 		...layout,

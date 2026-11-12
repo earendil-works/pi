@@ -1,6 +1,7 @@
 // MCP tools as Durable tools (plugins/mcp/tools.ts): pi's names, with the hash suffix for every colliding name whatever
-// the order, pi's exposures (code mode only by default, `tool_search` without code mode) with the `mcp_servers` section,
-// structured output only for tools with an output schema (error results included), and error results with text.
+// the order, pi's exposures (code mode only by default, `tool_search` without code mode), one extension per server with
+// its code-mode namespace, structured output only for tools with an output schema (error results included), and error
+// results with text.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ToolExecutionApi, ToolRegistration } from "@earendil-works/pi-durable";
@@ -8,10 +9,10 @@ import type { CallToolResult } from "@earendil-works/pi-mcp";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import type { McpTool } from "../../plugins/mcp/contract.ts";
 import {
-	createMcpExtension,
-	MCP_SERVERS_SECTION,
+	createMcpExtensions,
 	type McpCall,
 	type McpReach,
+	type OfferedServer,
 	type ServerTool,
 } from "../../plugins/mcp/tools.ts";
 
@@ -20,14 +21,22 @@ const tool = (name: string, extra: Partial<McpTool> = {}): McpTool => ({
 	inputSchema: { type: "object" },
 	...extra,
 });
-const names = (tools: readonly ServerTool[]) =>
-	(createMcpExtension(offer(tools), async () => ({ content: [] })).tools ?? []).map(
-		(registration) => registration.name,
-	);
+/** The registration of each of `tools`, in order: from its server's extension, where the tools keep their order. */
+const registrations = (tools: readonly ServerTool[], reach: McpReach = "codemode"): ToolRegistration[] => {
+	const extensions = createMcpExtensions(offer(tools, reach), async () => ({ content: [] }));
+	return tools.map((entry, index) => {
+		const before = tools.slice(0, index).filter((other) => other.server === entry.server).length;
+		return extensions[`mcp:${entry.server}`]!.tools![before]!;
+	});
+};
+const names = (tools: readonly ServerTool[]) => registrations(tools).map((registration) => registration.name);
 
-/** What the worker offers for `tools`: their servers, reached from code mode unless `reach` says otherwise. */
+/** What the worker offers for `tools`: their servers (without OAuth), reached from code mode unless `reach` says so. */
 function offer(tools: readonly ServerTool[], reach: McpReach = "codemode") {
-	return { servers: [...new Set(tools.map((entry) => entry.server))].sort(), signIn: [], tools, reach };
+	const servers: OfferedServer[] = [...new Set(tools.map((entry) => entry.server))]
+		.sort()
+		.map((name) => ({ name, oauth: false }));
+	return { servers, tools, reach };
 }
 
 test("tool names: pi's, and every tool of a colliding name gets the hash suffix whatever the order", () => {
@@ -74,49 +83,49 @@ test("tool names: a collision across servers suffixes both tools too", () => {
 
 test("exposure: as pi's default, code mode only, deferred so the codemode section leaves the tools out", async () => {
 	const tools = [{ server: "docs", tool: tool("search") }];
-	const codemode = createMcpExtension(offer(tools), async () => ({ content: [] }));
-	const [scripted] = codemode.tools as ToolRegistration[];
+	const [scripted] = registrations(tools);
 	assert.deepEqual([scripted!.deferred, scripted!.callers], [true, ["tools"]]);
 	// Without code mode (pi's fallback), `tool_search` loads them for the model.
-	const searched = createMcpExtension(offer(tools, "tool_search"), async () => ({ content: [] }));
-	const [loaded] = searched.tools as ToolRegistration[];
+	const [loaded] = registrations(tools, "tool_search");
 	assert.deepEqual([loaded!.deferred, loaded!.callers], [true, undefined]);
 });
 
-test("the mcp_servers section names each server's namespace and how its tools are reached, as pi's", async () => {
-	const render = async (extension: ReturnType<typeof createMcpExtension>) => {
-		const [listing] = extension.sections ?? [];
-		assert.equal(listing?.key, MCP_SERVERS_SECTION);
-		// The section renders a constant: it reads nothing of its input.
-		return listing!.render(undefined as never, BACKGROUND_CONTEXT);
-	};
-	const tools = [
-		{ server: "my-docs", tool: tool("search") },
-		{ server: "app", tool: tool("read") },
-	];
-	assert.equal(
-		await render(createMcpExtension(offer(tools), async () => ({ content: [] }))),
-		"MCP servers whose tools are not declared to you. Call the tools of `codemode` servers from codemode scripts.\n- mcp__app (codemode)\n- mcp__my_docs (codemode)",
-	);
-	assert.equal(
-		await render(createMcpExtension(offer(tools, "tool_search"), async () => ({ content: [] }))),
-		"MCP servers whose tools are not declared to you. Load the tools of `tool_search` servers with `tool_search`.\n- mcp__app (tool_search)\n- mcp__my_docs (tool_search)",
-	);
-	// A server still connecting has no tools yet, and is listed; without servers there is no section.
-	const starting = createMcpExtension({ servers: ["slow"], signIn: [], tools: [], reach: "codemode" }, async () => ({
-		content: [],
-	}));
-	assert.match(String(await render(starting)), /- mcp__slow \(codemode\)$/);
-	// A server waiting for a sign-in is listed with the link the user signs in with.
-	const locked = createMcpExtension(
-		{ servers: ["my-docs"], signIn: ["my-docs"], tools: [], reach: "codemode" },
+test("one extension per server with its namespace: a description from the configuration, instructions from the server", () => {
+	const extensions = createMcpExtensions(
+		{
+			servers: [
+				{ name: "app", oauth: false, instructions: "Read before you write." },
+				{ name: "my-docs", oauth: true },
+				{ name: "slow", oauth: false },
+			],
+			tools: [
+				{ server: "app", tool: tool("read") },
+				{ server: "my-docs", tool: tool("search") },
+			],
+			reach: "codemode",
+		},
 		async () => ({ content: [] }),
 	);
-	assert.match(
-		String(await render(locked)),
-		/- mcp__my_docs \(codemode; needs a sign-in, no tools yet: the user signs in from the MCP panel in p2's sidebar or at \/mcp\/sign-in\/my-docs on p2\)$/,
+	assert.deepEqual(Object.keys(extensions), ["mcp:app", "mcp:my-docs", "mcp:slow"]);
+	const app = extensions["mcp:app"]!;
+	assert.deepEqual(app.namespace, {
+		name: "mcp__app",
+		description: 'Tools of the MCP server "app" (find them with searchTools()).',
+		instructions: "Read before you write.",
+	});
+	assert.deepEqual(
+		app.tools?.map((registration) => registration.name),
+		["mcp__app__read"],
 	);
-	assert.deepEqual(createMcpExtension(offer([]), async () => ({ content: [] })).sections, []);
+	// An OAuth server says how the user signs in, whether it is signed in now or not (the prompt must not change).
+	assert.match(
+		extensions["mcp:my-docs"]!.namespace!.description,
+		/sign in from the MCP panel in p2's sidebar or at \/mcp\/sign-in\/my-docs on p2/,
+	);
+	// A server still connecting has its extension and namespace, without tools yet.
+	assert.deepEqual(extensions["mcp:slow"]!.tools, []);
+	assert.equal(extensions["mcp:slow"]!.namespace!.name, "mcp__slow");
+	assert.equal(extensions["mcp:slow"]!.sections, undefined);
 });
 
 /** The registration of `mcpTool` calling a server that answers `result`, and what it was called with. */
@@ -126,7 +135,7 @@ function registration(mcpTool: McpTool, result: CallToolResult) {
 		calls.push(request);
 		return result;
 	};
-	const [registered] = createMcpExtension(offer([{ server: "docs", tool: mcpTool }]), call)
+	const [registered] = createMcpExtensions(offer([{ server: "docs", tool: mcpTool }]), call)["mcp:docs"]!
 		.tools as ToolRegistration[];
 	// The tool reads only the conversation ID and the reader from the API.
 	const api = { conversationId: 1 } as unknown as ToolExecutionApi;

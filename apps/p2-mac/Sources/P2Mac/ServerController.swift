@@ -34,6 +34,9 @@ final class ServerController {
 	private var launched: Process?
 	private let pidFile: URL
 	private var startedAt: Date?
+	/// `start` is between its first line and the launch (reading the login environment): no second start, and no poll
+	/// may report the not yet launched server as stopped.
+	private var launching = false
 	private var restartAfterExit = false
 	private var restartingExternal = false
 	private var polling = false
@@ -52,7 +55,7 @@ final class ServerController {
 	}
 
 	var canStart: Bool {
-		config.source == .own && config.checkout != nil && child == nil && ownership != .external
+		config.source == .own && config.checkout != nil && child == nil && !launching && ownership != .external
 			&& (phase == .stopped || phase == .checking || isFailed)
 	}
 
@@ -90,7 +93,9 @@ final class ServerController {
 
 	/// Runs the configured checkout's server as a child process.
 	func start() async {
-		guard config.source == .own, child == nil, ownership != .external, let checkout = config.checkout else { return }
+		guard config.source == .own, child == nil, !launching, ownership != .external, let checkout = config.checkout else { return }
+		launching = true
+		defer { launching = false }
 		set(.starting, .managed)
 		if environment == nil { environment = await LoginEnvironment.capture() }
 		var environment = environment ?? [:]
@@ -113,7 +118,9 @@ final class ServerController {
 			process.standardError = log
 			process.terminationHandler = { [weak self] ended in
 				let status = ended.terminationStatus
-				Task { @MainActor in self?.exited(status: status) }
+				let pid = ended.processIdentifier
+				// Only the current server's exit: a stale handler must not forget a server started after it.
+				Task { @MainActor in if self?.child == pid { self?.exited(status: status) } }
 			}
 			try process.run()
 		} catch {
@@ -172,6 +179,7 @@ final class ServerController {
 	}
 
 	private func update(healthy: Bool) {
+		if launching { return }
 		// A server found through the pid file has no termination handler: notice its exit here.
 		if launched == nil, child != nil, !childRunning { return exited(status: 0) }
 		if childRunning {

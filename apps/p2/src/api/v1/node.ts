@@ -6,7 +6,7 @@ export * from "../../runtime/config-json.ts";
 export * from "../../runtime/default-model.ts";
 export * from "../../runtime/durable.ts";
 export * from "../../runtime/environments.ts";
-export { serverDirectory, sessionDirectory } from "../../runtime/host-dirs.ts";
+export { serverDirectory, sessionDirectory, userPluginsDirectory } from "../../runtime/host-dirs.ts";
 export * from "../../runtime/locked-file.ts";
 export * from "../../runtime/logs.ts";
 export * from "../../runtime/observe.ts";

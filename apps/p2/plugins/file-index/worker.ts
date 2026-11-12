@@ -1,9 +1,9 @@
 import type { ConversationId } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { type Ctx, canSend, defineFacet, FileIndex, FileIndexCache, type FileItem, forbidden } from "@p2/app/v1";
-import { conversationEnvironment, harnessOf, isLocalEnvironment, workerOf } from "@p2/app/v1/worker";
+import { conversationEnvironment, harnessOf, workerOf } from "@p2/app/v1/worker";
 import { WorkspaceBackend, workspacePath } from "../workspace/contract.ts";
-import { inside, listIndex } from "./listing.ts";
+import { listIndex } from "./listing.ts";
 import { rankFiles, withDirectories } from "./rank.ts";
 
 /** A rebuild at most this often while files keep changing: completion may lag a burst of writes by this much. */
@@ -25,8 +25,8 @@ export default defineFacet((host) => {
 			let unsupported: ExecutionEnv | undefined;
 			/**
 			 * The environment's own listing, with the workspace's confinement (workspace/worker.ts: the conversation's
-			 * location, canonical root, p2's private data directory for local sessions). `undefined` falls back to the
-			 * workspace's index, which also reports a private or unavailable working directory.
+			 * location, canonical root). `undefined` falls back to the workspace's index, which also reports an
+			 * unavailable working directory.
 			 */
 			const listed = async (ctx: Ctx) => {
 				try {
@@ -41,12 +41,7 @@ export default defineFacet((host) => {
 						}
 						const root = await env.canonicalPath(env.cwd, ctx);
 						if (!root.ok) return undefined;
-						const init = worker().init;
-						// Decided from the environment, not the location, which lags behind it during a move.
-						const privatePath = isLocalEnvironment(env) ? await env.canonicalPath(init.dataDir, ctx) : undefined;
-						const denied = privatePath === undefined ? [] : [privatePath.ok ? privatePath.value : init.dataDir];
-						if (denied.some((directory) => inside(directory, root.value))) return undefined;
-						const result = await listIndex(env, root.value, denied, ctx);
+						const result = await listIndex(env, root.value, ctx);
 						if (result === undefined) unsupported = env;
 						return result;
 					});

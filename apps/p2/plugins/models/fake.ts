@@ -20,11 +20,12 @@ const SCRIPTED: Record<string, () => ReturnType<typeof fauxToolCall>> = {
 	bash: () => fauxToolCall("bash", { command: "pwd" }),
 	"send-file": () => fauxToolCall("send_file", { path: "created.txt" }),
 	artifact: () =>
-		fauxToolCall("artifact", {
-			name: "demo",
-			title: "Demo artifact",
-			type: "html",
-			content: "<!doctype html><title>Demo</title><h1>Artifact demo</h1>",
+		fauxToolCall("codemode", {
+			code: [
+				'const { id } = await tools.artifact_write({ id: "demo", kind: "html", title: "Demo artifact", content: "<!doctype html><title>Demo</title><h1>Artifact demo</h1>" });',
+				"await tools.artifact_show({ id });",
+				"return id;",
+			].join("\n"),
 		}),
 	subagent: () =>
 		fauxToolCall("subagent", {
@@ -40,7 +41,7 @@ const SCRIPTED: Record<string, () => ReturnType<typeof fauxToolCall>> = {
 			name: "helper",
 			model: "faux/faux-1",
 			thinkingLevel: "high",
-			tools: ["bash", "artifact"],
+			tools: ["bash", "read"],
 		}),
 	"subagent-second": () =>
 		fauxToolCall("subagent", { action: "spawn", name: "second", message: "hello second", tools: ["read"] }),
@@ -204,12 +205,11 @@ export function createFakeModels(options: CreateModelsOptions = {}) {
 						const steps = [
 							() => fauxToolCall("read", { path: "fixture.txt" }),
 							() =>
-								fauxToolCall("artifact", {
-									name: "steps",
-									title: "Steps",
-									type: "markdown",
-									content: "# Between the calls\n\nShown where it was made.",
-									inline: true,
+								fauxToolCall("codemode", {
+									code: [
+										'await tools.artifact_write({ id: "steps", kind: "md", title: "Steps", content: "# Between the calls\\n\\nShown where it was made." });',
+										'await tools.artifact_show({ id: "steps" });',
+									].join("\n"),
 								}),
 							() => fauxToolCall("read", { path: "fixture.txt" }),
 						];
@@ -235,7 +235,7 @@ export function createFakeModels(options: CreateModelsOptions = {}) {
 												? fauxToolCall("subagent", JSON.parse(text.slice("subagent ".length)))
 												: text.startsWith("team ")
 													? fauxToolCall("team", JSON.parse(text.slice("team ".length)))
-													: /^(artifact|view|history_(search|read|handoff)|location_(envs|dirs|move)|tool_search|terminal|sidebar_rollups|mcp__\w+) /.test(
+													: /^(view_\w+|artifact_\w+|bash|read|write|edit|reload_plugins|history_(search|read|handoff)|location_(envs|dirs|move)|tool_search|terminal|sidebar_rollups|mcp__\w+) /.test(
 																text,
 															)
 														? fauxToolCall(

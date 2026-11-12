@@ -9,7 +9,9 @@ import { Access } from "../../runtime/access.ts";
 import { createHost, type Facet, hostErrorText, newerPeerProtocol } from "../../runtime/chord.ts";
 import { SERVER } from "../../runtime/principals.ts";
 import { whenLive } from "../../runtime/refs.ts";
+import { STALE_PAGE_CODE } from "../../runtime/stale-page.ts";
 import { getNavigation, HostContext, Slot, setConnected, setShareEnded, webCoreFacet } from "../../runtime/web.tsx";
+import { AppBoundary, startErrorReports } from "../../web/app-boundary.tsx";
 import { browserEnvironment, keepConnected } from "../../web/reconnect.ts";
 import { startShellBridge } from "../../web/shell-bridge.ts";
 import { startTheme } from "../../web/theme.ts";
@@ -24,6 +26,23 @@ const shareHasEnded = (): Promise<boolean> =>
 		(response) => response.status === 401 || response.status === 403,
 		() => false,
 	);
+
+/** How soon after a stale page's reload another one waits: a kept older page (public/sw.js) must not reload in a loop. */
+const RELOAD_PAUSE = 15_000;
+
+/**
+ * Reloads onto the server's current bundle; within `RELOAD_PAUSE` of the last such reload, after a pause (the service
+ * worker may have answered with its kept page, which it replaces once the network's arrives).
+ */
+function reloadOntoCurrent(): void {
+	let last = 0;
+	try {
+		last = Number(sessionStorage.getItem("p2-stale-reload")) || 0;
+		sessionStorage.setItem("p2-stale-reload", String(Date.now()));
+	} catch {}
+	const wait = Math.max(0, last + RELOAD_PAUSE - Date.now());
+	setTimeout(() => location.reload(), wait);
+}
 
 /** Starts the page with the web facets the server selected, in plugin load order. */
 export function startWeb(facets: readonly (readonly [string, Facet])[]): void {
@@ -44,6 +63,9 @@ export function startWeb(facets: readonly (readonly [string, Facet])[]): void {
 	});
 	/** Whether this page is a guest's (from its Access object); a guest's ended share stops the reconnects. */
 	let guest = false;
+	// The web bundle this page runs: its links name it, so the server refuses (and this page reloads) once it is stale.
+	const running = document.documentElement.dataset.webVersion;
+	if (!running) throw new Error("Missing web bundle version");
 
 	/**
 	 * Connects (and after a drop, reconnects) upstream; remote references re-hold over the new link. A server on
@@ -51,10 +73,18 @@ export function startWeb(facets: readonly (readonly [string, Facet])[]): void {
 	 */
 	keepConnected({
 		open: (events) => {
-			const socket = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/chord`);
+			const socket = new WebSocket(
+				`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/chord?web=${encodeURIComponent(running)}`,
+			);
 			socket.addEventListener("open", () => events.opened());
 			socket.addEventListener("message", () => events.received());
-			socket.addEventListener("close", (event) => events.closed(event.code, event.reason, event.wasClean));
+			socket.addEventListener("close", (event) => {
+				if (event.code === STALE_PAGE_CODE) {
+					outdated = true;
+					reloadOntoCurrent();
+				}
+				events.closed(event.code, event.reason, event.wasClean);
+			});
 			const link = webSocketLink(socket as unknown as WebSocketLike);
 			host.connect(link, { principal: SERVER }, BACKGROUND_CONTEXT);
 			// The link's own close listener is the host's: the reconnect loop hears the socket's close instead.
@@ -90,10 +120,10 @@ export function startWeb(facets: readonly (readonly [string, Facet])[]): void {
 		() => {},
 	);
 
-	// One web bundle is current. While visible, poll its no-store manifest; another complete manifest version (including
-	// a CSS-only change) means a plugin reload or restart with changed code, so replace the whole page.
-	const running = document.documentElement.dataset.webVersion;
-	if (!running) throw new Error("Missing web bundle version");
+	// One web bundle is current. Poll its no-store manifest (hidden pages too: browsers slow their timers down, and a
+	// page left open in the background must not go on with old code); another complete manifest version (including a
+	// CSS-only change) means a plugin reload or restart with changed code, so replace the whole page. After a restart
+	// the server also refuses this page's link while it is stale (`STALE_PAGE_CODE` above).
 	let checkingBundle = false;
 	const reloadIfStale = async (): Promise<void> => {
 		if (checkingBundle) return;
@@ -109,16 +139,14 @@ export function startWeb(facets: readonly (readonly [string, Facet])[]): void {
 				typeof manifest.version === "string" &&
 				manifest.version !== running
 			)
-				location.reload();
+				reloadOntoCurrent();
 		} catch {
 			// Offline or restarting: the Chord link handles reconnection, and the next poll tries again.
 		} finally {
 			checkingBundle = false;
 		}
 	};
-	setInterval(() => {
-		if (document.visibilityState === "visible") void reloadIfStale();
-	}, 5000);
+	setInterval(() => void reloadIfStale(), 5000);
 	document.addEventListener("visibilitychange", () => {
 		if (document.visibilityState === "visible") void reloadIfStale();
 	});
@@ -131,9 +159,12 @@ export function startWeb(facets: readonly (readonly [string, Facet])[]): void {
 	startShellBridge(getNavigation());
 	const element = document.getElementById("root");
 	if (!element) throw new Error("Missing application root");
+	startErrorReports();
 	createRoot(element).render(
-		<HostContext.Provider value={host}>
-			<Slot name="app" fallback={<div className="hero">Loading…</div>} />
-		</HostContext.Provider>,
+		<AppBoundary>
+			<HostContext.Provider value={host}>
+				<Slot name="app" fallback={<div className="hero">Loading…</div>} />
+			</HostContext.Provider>
+		</AppBoundary>,
 	);
 }

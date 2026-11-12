@@ -42,7 +42,7 @@ import { EnvManagers, EnvService } from "../envs/contract.ts";
 import { Catalog, type Session, SessionLocks } from "../sessions/contract.ts";
 import { type Child, ChildStore } from "../subagents/contract.ts";
 import { type OwnerConfig, OwnerConfigFile, type OwnerConfigState, type OwnerServer } from "./config.ts";
-import { type Instance, InstanceSchema, Mcp, McpManager, type ProjectFile } from "./contract.ts";
+import { type Instance, InstanceSchema, MCP_ACCEPTS, Mcp, McpManager, type ProjectFile } from "./contract.ts";
 import { McpCredentials } from "./credentials.ts";
 import type { ConnectEnv } from "./environments.ts";
 import { type ClientInfo, Instances, RECONNECT } from "./instances.ts";
@@ -83,7 +83,7 @@ export default mcpServerFacet(VIEW_LINGER_MS, sshEnvironments);
 export function mcpServerFacet(viewLingerMs: number, connector: EnvConnector): Facet {
 	return defineFacet((host) => {
 		host.serve(McpManager, managerFactory(connector));
-		host.serve(Mcp, view, { linger: viewLingerMs });
+		host.serve(Mcp, view, { linger: viewLingerMs, accepts: MCP_ACCEPTS });
 		contribute(host, "p2.mcp-routes", signInRoutes);
 	});
 }

@@ -78,7 +78,7 @@ long-lived signed cookie). Guests join through share links. Requests other
 websites make never carry owner rights. Sign out per device or all devices in the Devices sheet.
 
 **Dev mode.** A file watcher only marks plugins dirty; reloads are explicit (button, `npm run reload`, the
-owner-only `reload_plugins` tool) because a watcher can't tell when an agent has finished a multi-file edit.
+`reload_plugins` tool) because a watcher can't tell when an agent has finished a multi-file edit.
 Runtime code (`src/hosts`, `src/runtime`, workspace packages such as `packages/chord`) needs a restart; the "Server
 code changed" pill appears only when a module the server actually loaded changed.
 
@@ -115,8 +115,9 @@ verifying an agent's files on their own before committing. Node 24: `~/node-v24.
   (`docs/p2-notes.md`, Agent locations and Relocation).
 - **Durable** (`packages/durable`) runs the agent: conversations, inputs as custom entries (`p2.input`,
   `chat.mention`), display-only writes placed immediately, code mode (QuickJS sandbox; scripts call tools as
-  `tools.<name>`, one-shot agents via `tools.agent`), compaction with visible failures, deferred tools and
-  `tool_search` (MCP tools are for code mode scripts, as in pi; `tool_search` loads them only while code mode is off).
+  `tools.<name>`, one-shot agents via `tools.agent`, tools grouped by the namespaces their extensions declare),
+  compaction with visible failures, deferred tools and `tool_search` (MCP tools are for code mode scripts, as in pi;
+  `tool_search` loads them only while code mode is off).
 
 ## The TUI
 
@@ -164,7 +165,9 @@ From `AGENTS.md` and this project's history:
    decide one behavior each.
 4. **MCP:** `plugins/mcp` (WP6-8 of `docs/mcp-durable.md`: owner `mcp.json`, host stdio and HTTP, code mode
    tools (`tool_search` without code mode), servers on environments, project `.pi/mcp.json`, OAuth sign-in); code mode
-   namespaces (WP9) are open, and whether Radius sends its cookie on a sign-in's redirect back is unverified.
+   namespaces are done (one extension per server, namespace `mcp__<server>`, described from configuration so the
+   prompt stays the same when servers connect; the `mcp_servers` section is gone); whether Radius sends its cookie on a
+   sign-in's redirect back is unverified.
 5. **npm:** deprecate `@earendil-works/pi-client`, `pi-protocol` and `pi-server` (1.1.0), which no longer exist.
 6. `docs/p2-notes.md` TODO: the TypeScript 5.9.3 pin (Termux), an isolating plugin loader, sandboxing third-party
    facets.
@@ -184,6 +187,8 @@ From `AGENTS.md` and this project's history:
 | `docs/tool-ui.md` | how a plugin shows its tool (web and TUI registrations), with a complete example plugin |
 | `docs/workflows.md` | code mode workflows with one-shot agents |
 | `docs/tree.md` | `/tree`: branches of the main conversation as Durable forks |
-| `docs/views.md` | views beside the transcript (Markdown, changes, custom HTML views), layouts, annotations, saved views |
+| `docs/views.md` | views beside the transcript (Markdown, changes, artifacts, plugin kinds), layouts, annotations |
+| `docs/artifacts.md` | html and Markdown artifacts: tools, pages and `window.p2view`, inline cards, the side panel |
+| `docs/glyph-editor-port.md` | moving Max's glyph editor from a custom view to an html artifact |
 | `docs/remote-envs.md` | SSH environments |
 | `packages/chord/docs/` | Chord v2's design, slices and guides; `tutorial/` for writing plugins |

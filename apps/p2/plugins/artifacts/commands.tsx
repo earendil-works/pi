@@ -1,26 +1,30 @@
-// The artifacts plugin's part of the command menu: Open artifact… on a session (its main conversation) or a subagent's
-// conversation, with the page listing that conversation's artifacts, and the artifacts the root's query matches by
-// title while their conversation is on screen. Picking one opens the viewer, as the side panel's list does.
-import { keptIn } from "@p2/app/v1";
+// The artifacts plugin's part of the command menu, for the open session: Open artifact… (while it has items) with the
+// page listing every artifact kind's items (ArtifactKinds), and the items the root's query matches by title. Picking
+// one opens it as a view beside the chat, or for a reader in the side panel, as the side panel's rows do.
+import { BACKGROUND_CONTEXT, liveIn, withHeld } from "@p2/app/v1";
 import {
 	ArtifactIcon,
+	type ArtifactItem,
+	type ArtifactKind,
+	ArtifactKinds,
 	type Command,
 	CommandMenu,
 	type CommandPage,
 	type CommandSearch,
-	openLayerIn,
+	openPanel,
 	useCommandMatches,
 	useCommandMenu,
 	useCommandTarget,
+	useComposerState,
+	useHost,
 	useObject,
-	useReadable,
+	useRegistry,
 	useRoute,
 } from "@p2/app/v1/web";
-import { type ReactNode, useMemo } from "react";
-import { conversationOf } from "../chat/commands.tsx";
-import { Sessions } from "../sessions/contract.ts";
-import { type ArtifactInfo, ArtifactList } from "./contract.ts";
-import { viewerLayer } from "./viewer.ts";
+import { type ReactNode, useEffect, useState } from "react";
+import { Views } from "../views/contract.ts";
+import { openView } from "../views/sheet.tsx";
+import { PANEL, showLocally } from "./local-item.ts";
 
 /** The commands, by id. */
 export const ARTIFACT_COMMANDS: Readonly<Record<string, Command>> = {
@@ -30,8 +34,8 @@ export const ARTIFACT_COMMANDS: Readonly<Record<string, Command>> = {
 		order: 50,
 		icon: ArtifactIcon,
 		keywords: ["show artifacts", "view artifact"],
-		target: ["session", "conversation"],
-		Shown: HasArtifacts,
+		target: ["session"],
+		Shown: HasItems,
 		action: { kind: "page", page: "artifacts" },
 	},
 };
@@ -41,116 +45,130 @@ export const ARTIFACT_PAGES: Readonly<Record<string, CommandPage>> = {
 	artifacts: {
 		label: "Artifacts",
 		placeholder: "Search artifacts…",
-		empty: "No artifacts in this conversation",
+		empty: "No artifacts in this session",
 		Body: ArtifactsPage,
 	},
 };
 
-/**
- * The artifacts the root's query matches, in the Artifacts group (the command's, so they sit where it does; on their
- * own past the Sessions search when the command is not shown).
- */
+/** The items the root's query matches, in the Artifacts group. */
 export const ARTIFACT_SEARCH: CommandSearch = { group: "Artifacts", order: 1010, Results: ArtifactResults };
 
-/** A conversation: where its artifacts are listed and the viewer opens over. */
-type At = { readonly session: string; readonly conversation: number };
+/** How many items the root's results show: the best matches; the page has the rest. */
+const SEARCH_ROWS = 5;
 
-/**
- * The conversation the target names: a subagent's conversation, or a session's main one while the session is not
- * archived (its worker does not start, so its list never arrives).
- */
-function useTargetConversation(): At | undefined {
+/** The open session the menu's target is, if it is one (artifacts open as views beside its chat). */
+function useSession(): string | undefined {
 	const target = useCommandTarget();
-	const sessions = useReadable(keptIn(useObject(Sessions, {}), "owner", "guest")?.sessions);
-	if (target?.type === "conversation") return conversationOf(target.id);
-	if (target?.type !== "session") return undefined;
-	const session = sessions?.find((each) => each.id === target.id);
-	return session?.archivedAt === null ? { session: session.id, conversation: session.main } : undefined;
+	const session = useRoute().session;
+	return target?.type === "session" && target.id === session ? session : undefined;
 }
 
-/** Whether `at` is the conversation on screen. */
-function useOnScreen(at: At | undefined): boolean {
-	const route = useRoute();
-	return at !== undefined && route.session === at.session && route.conversation === at.conversation;
+/** Renders `children` while the open session has items. */
+function HasItems({ children }: { children: ReactNode }) {
+	const session = useSession();
+	if (session === undefined) return null;
+	return <Counted session={session}>{children}</Counted>;
 }
 
-/** Every version in `at`, the newest first, as the side panel lists them (undefined until the list arrives). */
-function useArtifacts(at: At | undefined): readonly ArtifactInfo[] | undefined {
-	const artifacts = useReadable(useObject(ArtifactList, at)?.artifacts);
-	return useMemo(() => artifacts?.toReversed(), [artifacts]);
-}
-
-/**
- * Renders `children` while the target conversation has artifacts. Its list is held here only while it is on screen
- * (the top bar's button holds it already); for another session the command shows unconditionally, so opening the menu
- * over a sidebar row never starts that session's worker: the page holds the list once the reader opens it.
- */
-function HasArtifacts({ children }: { children: ReactNode }) {
-	const at = useTargetConversation();
-	const onScreen = useOnScreen(at);
-	const artifacts = useArtifacts(onScreen ? at : undefined);
-	if (at === undefined) return null;
-	return !onScreen || artifacts?.length ? children : null;
-}
-
-const textOf = (artifact: ArtifactInfo): string => `${artifact.title} ${artifact.name}`;
-
-/** The target conversation's artifacts, every version; picking one opens it in the viewer. */
-function ArtifactsPage() {
-	const at = useTargetConversation();
-	const matches = useCommandMatches(useArtifacts(at) ?? NONE, textOf);
-	if (at === undefined) return null;
+/** Renders `children` while `session` has items of some kind. */
+function Counted({ session, children }: { session: string; children: ReactNode }) {
+	const { entries, collectors } = useEntries(session);
 	return (
-		<CommandMenu.Group heading="Artifacts">
-			{matches.map((artifact) => (
-				<ArtifactRow key={`${artifact.name}:${artifact.version}`} at={at} artifact={artifact} />
-			))}
-		</CommandMenu.Group>
+		<>
+			{collectors}
+			{entries.length > 0 && children}
+		</>
 	);
 }
 
-const NONE: readonly ArtifactInfo[] = [];
+/** One kind's item, with what opens it. */
+type Entry = { readonly kind: ArtifactKind; readonly item: ArtifactItem };
 
-/** How many artifacts the root's results show: the best matches; the page has the rest. */
-const SEARCH_ROWS = 5;
+const textOf = (entry: Entry): string => `${entry.item.title} ${entry.item.id} ${entry.kind.title}`;
 
-/**
- * The latest version of each artifact of the target conversation the root's query matches, while that conversation is
- * on screen: typing never holds another session's list (nor starts its worker).
- */
-function ArtifactResults() {
-	const at = useTargetConversation();
-	const onScreen = useOnScreen(at);
-	const artifacts = useArtifacts(onScreen ? at : undefined);
-	const latest = useMemo(() => latestVersions(artifacts ?? NONE), [artifacts]);
-	const matches = useCommandMatches(latest, textOf);
-	if (at === undefined || !onScreen) return null;
-	return matches
-		.slice(0, SEARCH_ROWS)
-		.map((artifact) => <ArtifactRow key={`${artifact.name}:${artifact.version}`} at={at} artifact={artifact} />);
-}
-
-/** The first version of each name in `artifacts` (newest first: the latest). */
-function latestVersions(artifacts: readonly ArtifactInfo[]): readonly ArtifactInfo[] {
-	const seen = new Set<string>();
-	return artifacts.filter((artifact) => {
-		if (seen.has(artifact.name)) return false;
-		seen.add(artifact.name);
-		return true;
-	});
-}
-
-/** An artifact version: its title, type and version, as the side panel's row; it opens over its conversation. */
-function ArtifactRow({ at, artifact }: { at: At; artifact: ArtifactInfo }) {
-	const { close } = useCommandMenu();
-	return (
-		<CommandMenu.Row
-			title={artifact.title}
-			suffix={`${artifact.type} · v${artifact.version}`}
-			onSelect={async () => {
-				await close();
-				openLayerIn(at.session, at.conversation, viewerLayer({ kind: "artifact", artifact }));
-			}}
+/** Every kind's items of `session`, the newest first (each kind's hook in a component of its own). */
+function useEntries(session: string): { entries: readonly Entry[]; collectors: ReactNode } {
+	const kinds = useRegistry(ArtifactKinds);
+	const [found, setFound] = useState<Record<string, readonly Entry[]>>({});
+	const collectors = [...kinds].map(([name, kind]) => (
+		<Collect
+			key={`${session}:${name}`}
+			session={session}
+			kind={kind}
+			onItems={(entries) => setFound((before) => ({ ...before, [name]: entries }))}
 		/>
+	));
+	const entries = Object.values(found)
+		.flat()
+		.sort((a, b) => b.item.updated - a.item.updated);
+	return { entries, collectors };
+}
+
+/** Reports one kind's items. */
+function Collect({
+	session,
+	kind,
+	onItems,
+}: {
+	session: string;
+	kind: ArtifactKind;
+	onItems: (entries: readonly Entry[]) => void;
+}) {
+	const items = kind.useItems(session);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: reports when the items change, not when the callback does.
+	useEffect(() => onItems((items ?? []).map((item) => ({ kind, item }))), [items, kind]);
+	return null;
+}
+
+/** Every item; picking one opens it as a view. */
+function ArtifactsPage() {
+	const session = useSession();
+	if (session === undefined) return null;
+	return <Rows session={session} limit={undefined} />;
+}
+
+/** The best matches of the root's query. */
+function ArtifactResults() {
+	const session = useSession();
+	if (session === undefined) return null;
+	return <Rows session={session} limit={SEARCH_ROWS} />;
+}
+
+/** The matching items of `session`, at most `limit`. */
+function Rows({ session, limit }: { session: string; limit: number | undefined }) {
+	const host = useHost();
+	const editor = liveIn(useObject(Views, { session }), "editor");
+	const { close } = useCommandMenu();
+	const { fail } = useComposerState();
+	const { entries, collectors } = useEntries(session);
+	const matches = useCommandMatches(entries, textOf).slice(0, limit);
+	return (
+		<>
+			{collectors}
+			{matches.length > 0 && (
+				<CommandMenu.Group heading="Artifacts">
+					{matches.map(({ kind, item }) => (
+						<CommandMenu.Row
+							key={`${kind.view}:${item.id}`}
+							title={item.title}
+							icon={kind.icon}
+							suffix={kind.title}
+							onSelect={async () => {
+								await close();
+								// A reader who may not change the session's views looks at it in the side panel.
+								if (!editor) {
+									showLocally(session, { kind: kind.view, id: item.id, title: item.title });
+									openPanel(PANEL);
+									return;
+								}
+								await withHeld(host.hold(Views, { session }, BACKGROUND_CONTEXT), "editor", (held) =>
+									openView(held, session, { kind: kind.view, item: item.id, title: item.title.slice(0, 120) }),
+								).catch(fail);
+							}}
+						/>
+					))}
+				</CommandMenu.Group>
+			)}
+		</>
 	);
 }

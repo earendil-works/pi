@@ -1,27 +1,10 @@
-// The web's view kinds: how each kind of view renders in its pane, contributed by web facets (this plugin's for its
-// built-in kinds), keyed by kind.
+// The web's view kinds (the registry itself is the API's, `src/web/view-kinds.ts`, so any plugin's web facet can add
+// a kind), and what the annotation layer asks of panes that are frames of their own.
 
-import { keyedRegistry } from "@p2/app/v1";
-import type { ComponentType } from "react";
-import type { Annotation, Selection, View } from "./contract.ts";
-
-/** What a pane gets: its view, whether the person may change it, and its annotations. */
-export type PaneProps = {
-	readonly session: string;
-	readonly view: View;
-	/** The person may send in the session: their selections and changes are saved. */
-	readonly editable: boolean;
-	/** Sets (null: clears) the person's selection in this view. */
-	readonly select: (selection: Pick<Selection, "summary" | "data"> | null) => void;
-	/** The annotations on this view. */
-	readonly annotations: readonly Annotation[];
-};
-
-/** The pane component of each view kind. */
-export const ViewKinds = keyedRegistry<ComponentType<PaneProps>>("p2.view-kinds");
+export { type PaneProps, ViewKinds } from "@p2/app/v1/web";
 
 /**
- * What the annotation layer asks a pane that is a frame of its own (a custom view): the text the person selected in it,
+ * What the annotation layer asks a pane that is a frame of its own (an html artifact): the text the person selected in it,
  * and what lies in a rectangle of it (frame pixels). Panes in the page itself need none: the layer reads the page.
  */
 export type FrameHandle = {

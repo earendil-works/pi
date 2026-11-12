@@ -1,19 +1,17 @@
 // Browser: the command menu's app commands at 1280×800 (macOS keys): Show sidebar and Hide sidebar, Close side panel,
 // Change theme…, Open settings… with its page and the root's settings search, and the views' commands (Show view…,
-// Hide view…, Add changes view, Add Markdown view…, Open saved view…, Annotate, Stop annotating), for the owner and a
+// Hide view…, Add changes view, Add Markdown view…, Annotate, Stop annotating), for the owner and a
 // guest. Fake provider; disposable data, every test makes its own sessions.
 
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import type { ToolResultMessage } from "@earendil-works/pi-ai";
-import type { ConversationView } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
-import { SavedViews, Views } from "../../plugins/views/contract.ts";
+import { Views } from "../../plugins/views/contract.ts";
 import type { Host, RefIn } from "../../src/runtime/chord.ts";
 import { Browser, browserTests } from "./browser.ts";
 import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
@@ -36,13 +34,6 @@ const KEYS: Record<string, { code: string; keyCode: number }> = {
 	Enter: { code: "Enter", keyCode: 13 },
 	Escape: { code: "Escape", keyCode: 27 },
 };
-
-const viewResults = (view: ConversationView | null | undefined): ToolResultMessage[] =>
-	(view?.entries ?? []).flatMap((entry) =>
-		(entry.model ?? []).filter(
-			(message): message is ToolResultMessage => message.role === "toolResult" && message.toolName === "view",
-		),
-	);
 
 describe("command menu: app and views commands", { skip: !browserTests }, () => {
 	let fixture: Fixture;
@@ -276,36 +267,8 @@ describe("command menu: app and views commands", { skip: !browserTests }, () => 
 				`document.querySelector('.command-menu .empty-note')?.textContent==="Type the file's path in the workspace"`,
 			);
 			await run("./notes.md", "Open “notes.md”");
-			await until(views.views, (list) => list.some((view) => view.kind === "markdown" && view.path === "notes.md"));
+			await until(views.views, (list) => list.some((view) => view.kind === "markdown" && view.item === "notes.md"));
 			await browser.wait(`${CLOSED} && ${front("notes.md")}`);
-			views.release();
-		});
-
-		it("opens a view saved in the owner's library", async () => {
-			const id = await create("Views saved");
-			const views = await holdIn(owner, Views, { session: id }, "editor");
-			const { id: view } = await views.open({ kind: "changes", title: "Saved changes" }, BACKGROUND_CONTEXT);
-			const chat = await holdIn(owner, Chat, { session: id, conversation: 1 }, "participant");
-			await chat.send(
-				{
-					text: `view ${JSON.stringify({ action: "save", id: view, name: "menu-saved" })}`,
-					requestId: "menu-save",
-				},
-				BACKGROUND_CONTEXT,
-			);
-			await until(chat.view, (value) => viewResults(value).length === 1);
-			chat.release();
-			const library = await holdIn(owner, SavedViews, {}, "owner");
-			await until(library.saved, (saved) => saved.some((each) => each.name === "menu-saved"));
-			await views.close({ id: view }, BACKGROUND_CONTEXT);
-			await openSession(id, "Views saved");
-			await openMenu();
-			await run("saved view", "Open saved view…");
-			await browser.wait(`${TITLES}.includes('Saved changes')`);
-			await run("saved changes", "Saved changes");
-			await until(views.views, (list) => list.some((each) => each.title === "Saved changes"));
-			await browser.wait(`${CLOSED} && ${front("Saved changes")}`);
-			await library.remove({ name: "menu-saved" }, BACKGROUND_CONTEXT);
 			views.release();
 		});
 
@@ -339,7 +302,7 @@ describe("command menu: app and views commands", { skip: !browserTests }, () => 
 			);
 			await browser.wait(`${TITLES}.includes('Rename session…')`);
 			const titles = await browser.evaluate<string[]>(TITLES);
-			for (const title of ["Annotate", "Add changes view", "Add Markdown view…", "Open saved view…"])
+			for (const title of ["Annotate", "Add changes view", "Add Markdown view…"])
 				assert.ok(!titles.includes(title), `${title}: ${titles}`);
 			await closeMenu();
 			await browser.call("Input.dispatchMouseEvent", { type: "mouseMoved", x: 900, y: 300 });
@@ -376,7 +339,7 @@ describe("command menu: app and views commands", { skip: !browserTests }, () => 
 			await guest.wait(OPEN);
 			await guest.wait(`${TITLES}.includes('Change theme…') && ${TITLES}.includes('Show view…')`);
 			const titles = await guest.evaluate<string[]>(TITLES);
-			for (const title of ["Open settings…", "Add changes view", "Add Markdown view…", "Open saved view…"])
+			for (const title of ["Open settings…", "Add changes view", "Add Markdown view…"])
 				assert.ok(!titles.includes(title), `guest sees ${title}: ${titles}`);
 			// The settings search is the owner's too.
 			await guest.call("Input.insertText", { text: "providers" });

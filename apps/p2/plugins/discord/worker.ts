@@ -30,7 +30,7 @@ import {
 import { DOWNLOADS, displayName, durableContext, FILE_CHUNK, Files, findDownload, UPLOADS } from "@p2/app/v1/node";
 import { Extensions, harnessOf, isTopLevel, mainConversation } from "@p2/app/v1/worker";
 import { Conversation } from "../chat/contract.ts";
-import { Attachments, FilesMirror } from "../files/contract.ts";
+import { Attachments } from "../files/contract.ts";
 import { offeredBy } from "../send-file/contract.ts";
 import { mirrorLock } from "../sessions/lock-worker.ts";
 import { Subagents } from "../subagents/contract.worker.ts";
@@ -101,7 +101,6 @@ export default defineFacet((host) => {
 		const harness = harnessOf(self);
 		const files = self.get(Files, {});
 		const attachments = self.get(Attachments, {});
-		const mirror = self.get(FilesMirror, {});
 		return {
 			variant: "server",
 			members: {
@@ -120,8 +119,6 @@ export default defineFacet((host) => {
 						const id = await download(files, file, ctx);
 						if (id) ids.push({ id, name: file.name });
 					}
-					// The Files sheet lists them as it lists the composer's uploads.
-					if (ids.length) await mirror.push(UPLOADS, ctx);
 					const resolved = ids.length
 						? await attachments.resolve({ ids: ids.map((entry) => entry.id), conversation: target }, ctx)
 						: [];

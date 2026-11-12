@@ -390,6 +390,15 @@ export class RadiusBrain {
 		return this.#shellPage;
 	}
 
+	/**
+	 * What a request to this brain's gateway on its own behalf needs (session sync, `plugins/sync`): the gateway, this
+	 * brain's server ID and a current access token, refreshed as the connection refreshes it. Rejects while not signed in.
+	 */
+	async syncAccess(): Promise<{ readonly gateway: string; readonly serverId: string; readonly token: string }> {
+		const config = await this.#currentConfig();
+		return { gateway: config.gateway, serverId: config.serverId, token: config.credential.access };
+	}
+
 	close(): void {
 		this.#closed = true;
 		this.#abort.abort();

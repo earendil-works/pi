@@ -5,6 +5,7 @@
 import { BACKGROUND_CONTEXT, liveIn } from "@p2/app/v1";
 import {
 	CloseIcon,
+	reportClientError,
 	useComposerState,
 	useObject,
 	useReadable,
@@ -14,6 +15,7 @@ import {
 	useWide,
 } from "@p2/app/v1/web";
 import {
+	Component,
 	type CSSProperties,
 	type ReactNode,
 	type PointerEvent as ReactPointerEvent,
@@ -282,7 +284,7 @@ export function Workbench({ children }: { children?: ReactNode }) {
 				viewList.map((view) => {
 					const pane = panes.get(view.id);
 					if (!pane) return null;
-					const Kind = kinds.get(view.kind);
+					const Kind = kinds.get(view.kind)?.Pane;
 					return (
 						<div
 							key={view.id}
@@ -291,17 +293,23 @@ export function Workbench({ children }: { children?: ReactNode }) {
 							{...paneAttributes(pane)}
 						>
 							{Kind ? (
-								<Kind
-									session={session}
-									view={view}
-									editable={editor !== undefined}
-									annotations={notesOf(annotations, view.id)}
-									select={(selection) =>
-										void editor?.select({ id: view.id, selection }, BACKGROUND_CONTEXT).catch(fail)
-									}
-								/>
+								<PaneBoundary key={`${view.kind}:${kindsVersion(Kind)}`}>
+									<Kind
+										session={session}
+										{...(view.item === undefined ? {} : { item: view.item })}
+										inline={false}
+										view={view}
+										editable={editor !== undefined}
+										annotations={notesOf(annotations, view.id)}
+										select={(selection) =>
+											void editor?.select({ id: view.id, selection }, BACKGROUND_CONTEXT).catch(fail)
+										}
+									/>
+								</PaneBoundary>
 							) : (
-								<div className="empty-note">This page cannot show {view.kind} views.</div>
+								<div className="empty-note">
+									Unknown view kind "{view.kind}": no plugin of this page shows it (yet).
+								</div>
 							)}
 							<InkLayer annotations={notesOf(annotations, view.id)} />
 						</div>
@@ -349,3 +357,39 @@ const titleOf = (id: string, views: ReadonlyMap<string, View>) => (id === CHAT ?
 
 const notesOf = (annotations: readonly Annotation[], view: string) =>
 	annotations.filter((annotation) => annotation.view === view);
+
+/**
+ * Keeps a pane's failure in its pane: a plugin's component that throws (an agent-written one, say) shows its error
+ * instead of taking the page down. A new component for the kind (its plugin reloaded) starts it afresh.
+ */
+class PaneBoundary extends Component<{ children: ReactNode }, { error?: string }> {
+	override state: { error?: string } = {};
+
+	static getDerivedStateFromError(error: unknown): { error: string } {
+		return { error: error instanceof Error ? error.message : String(error) };
+	}
+
+	override componentDidCatch(error: unknown): void {
+		reportClientError(error, "view pane");
+	}
+
+	override render() {
+		return this.state.error === undefined ? (
+			this.props.children
+		) : (
+			<div className="empty-note">This view failed: {this.state.error}</div>
+		);
+	}
+}
+
+/** A number per pane component: a reloaded plugin's new component remounts its panes' boundaries. */
+const kindNumbers = new WeakMap<object, number>();
+let kindsSeen = 0;
+
+function kindsVersion(kind: object): number {
+	const known = kindNumbers.get(kind);
+	if (known !== undefined) return known;
+	const number = ++kindsSeen;
+	kindNumbers.set(kind, number);
+	return number;
+}

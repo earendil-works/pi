@@ -496,8 +496,20 @@ export type Wrap<Tool extends ToolRegistration = ToolRegistration> =
 	| { readonly section: string; wrap(section: PromptSection<Tool>): PromptSection<Tool> };
 
 /** Named bundle of code; installed in a registry and selected by conversations by name. */
+/**
+ * A named group of tools for code mode: the extension that brings the tools declares it. `description` is one line,
+ * shown in the `codemode` prompt section; `instructions` is the longer how-to, returned only by `describeNamespace()`;
+ * `searchTools()` searches both.
+ */
+export type ToolNamespace = { readonly name: string; readonly description: string; readonly instructions?: string };
+
 export interface Extension<Tool extends ToolRegistration = ToolRegistration> {
 	readonly name: string;
+	/**
+	 * The code-mode namespace of this extension's tools (a tool named by several extensions belongs to the first). The
+	 * `codemode` section lists it while the extension is selected, also before it has any tools.
+	 */
+	readonly namespace?: ToolNamespace;
 	readonly tools?: readonly Tool[];
 	readonly sections?: readonly PromptSection<Tool>[];
 	readonly hooks?: readonly HookRegistration[];

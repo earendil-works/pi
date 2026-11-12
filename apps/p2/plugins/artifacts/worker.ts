@@ -1,71 +1,62 @@
-import type { ConversationId } from "@earendil-works/pi-durable";
-import { canView, contribute, defineFacet, deriveTyped, forbidden } from "@p2/app/v1";
-import { ARTIFACTS, Files } from "@p2/app/v1/node";
-import { agentConversation, Extensions, harnessOf, workerOf } from "@p2/app/v1/worker";
-import { FilesMirror } from "../files/contract.ts";
-import { ArtifactContent, ArtifactList, ArtifactSource, MAX_ARTIFACT_PREVIEW } from "./contract.ts";
-import { readArtifact, saveArtifact } from "./store.ts";
-import { ArtifactDoc, createArtifactExtension, type SaveArtifact } from "./tool.ts";
+// Artifacts (worker): the agent's artifact tools, reaching the session's `Artifacts` on the server in roots of the
+// worker's own (it acts as the session's worker there), and the new errors of open html pages, which ride along with the
+// person's next message (`MessageContexts`).
+import { type Ctx, contribute, defineFacet, expectVariant } from "@p2/app/v1";
+import { Extensions, workerOf } from "@p2/app/v1/worker";
+import { MessageContexts } from "../views/contract.ts";
+import { Artifacts } from "./contract.ts";
+import { createArtifactExtension } from "./tool.ts";
 
 export default defineFacet((host) => {
 	contribute(host, "p2.artifact-tools", (self) => {
 		const worker = workerOf(self);
-		// Versions go into the session's files (space `artifacts`), in a root of the worker's own; the server's mirror
-		// hears of the change before the tool answers.
-		const save: SaveArtifact = (input, holder, context) =>
-			worker().root(async (ctx) => {
-				const info = await saveArtifact(await ctx.get(Files, {}), input, String(holder), ctx);
-				await (await ctx.get(FilesMirror, {})).push(ARTIFACTS, ctx);
-				return info;
-			}, context);
-		const extension = createArtifactExtension(save);
-		self.contribute(Extensions, { [extension.name]: extension });
-	});
-
-	host.serve(ArtifactSource, (_params, principal, self) => {
-		if (principal.kind !== "server") throw forbidden("server only");
-		const files = self.get(Files, {});
-		return {
-			variant: "server",
-			members: { read: ({ name, version }, ctx) => readArtifact(files, name, version, ctx) },
-		};
-	});
-
-	host.serve(ArtifactContent, ({ session }, principal, self) => {
-		if (!canView(principal, session)) throw forbidden("viewers only");
-		const files = self.get(Files, {});
-		return {
-			variant: "reader",
-			members: {
-				read: async ({ name, version }, ctx) => {
-					const { info, content } = await readArtifact(files, name, version, ctx);
-					const truncated = content.length > MAX_ARTIFACT_PREVIEW;
-					// Never split a surrogate pair at the cut.
-					let end = MAX_ARTIFACT_PREVIEW;
-					if (truncated && /[\uD800-\uDBFF]/.test(content[end - 1] ?? "")) end--;
-					return { info, content: truncated ? content.slice(0, end) : content, truncated };
-				},
+		const artifacts = async (ctx: Ctx) =>
+			expectVariant(await ctx.get(Artifacts, { session: worker().init.values.session.id }), "worker");
+		const root: ReturnType<typeof worker>["root"] = (fn, context) => worker().root(fn, context);
+		const extension = createArtifactExtension({
+			list: (context) => root(async (ctx) => (await artifacts(ctx)).list(ctx), context),
+			read: (id, version, context) =>
+				root(async (ctx) => (await artifacts(ctx)).read({ id, ...(version ? { version } : {}) }, ctx), context),
+			write: (input, context) => root(async (ctx) => (await artifacts(ctx)).write(input, ctx), context),
+			edit: (id, edits, context) =>
+				root(async (ctx) => (await artifacts(ctx)).edit({ id, edits: [...edits] }, ctx), context),
+			remove: async (id, context) => {
+				await root(async (ctx) => (await artifacts(ctx)).remove({ id }, ctx), context);
 			},
-		};
-	});
-
-	host.serve(ArtifactList, ({ session, conversation }, principal, self) => {
-		if (!canView(principal, session)) throw forbidden("viewers only");
-		const harness = harnessOf(self);
-		const id = conversation as ConversationId;
-		// The viewed agent's list (the main agent's on conversation 1), followed.
-		const listed = self.follow(async (observer, ctx) => {
-			const durable = harness().durable;
-			if (!(await durable.conversation(id, ctx))) throw new Error(`Unknown conversation ${conversation}`);
-			const holder = await agentConversation(durable, id, ctx);
-			const observed = await durable.observeDoc(ArtifactDoc, holder, observer, ctx);
-			if (observed !== undefined) return observed;
-			// No artifact saved yet: the document is absent, and an absent address cannot be followed. Create it empty.
-			await durable.commit(async (tx) => {
-				await tx.doc(ArtifactDoc, holder);
-			}, ctx);
-			return durable.observeDoc(ArtifactDoc, holder, observer, ctx);
+			state: (id, context) =>
+				root(async (ctx) => (await (await artifacts(ctx)).readState({ id }, ctx)).state, context),
+			setState: async (id, state, context) => {
+				await root(async (ctx) => (await artifacts(ctx)).setState({ id, state }, ctx), context);
+			},
+			errors: (id, context) => root(async (ctx) => (await artifacts(ctx)).errors({ id }, ctx), context),
+			logs: (id, since, context) =>
+				root(
+					async (ctx) => (await artifacts(ctx)).logs({ id, ...(since === undefined ? {} : { since }) }, ctx),
+					context,
+				),
+			run: (id, code, context) => root(async (ctx) => (await artifacts(ctx)).eval({ id, code }, ctx), context),
 		});
-		return { variant: "reader", members: { artifacts: deriveTyped(self, [listed], ([value]) => value.artifacts) } };
+		self.contribute(Extensions, { [extension.name]: extension });
+		// New errors of the session's open html pages go with the person's next message, once.
+		self.contribute(MessageContexts, {
+			artifacts: async (ctx) => {
+				const server = await artifacts(ctx);
+				const { errors, marks } = await server.newErrors(ctx);
+				if (!errors.length) return undefined;
+				const text = [
+					"<artifact-errors>",
+					"New errors of html artifacts open on the person's devices (artifact_html_errors lists them; the text is the page's):",
+					...errors.map((error) => `- ${error.id} (${error.title}): ${error.text}`),
+					"</artifact-errors>",
+				].join("\n");
+				return {
+					text,
+					note: `${errors.length} page error${errors.length === 1 ? "" : "s"}`,
+					carried: async (context) => {
+						await (await artifacts(context)).carried({ marks }, context);
+					},
+				};
+			},
+		});
 	});
 });

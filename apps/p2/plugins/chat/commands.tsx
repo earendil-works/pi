@@ -24,7 +24,7 @@ import { type ReactNode, useCallback, useMemo } from "react";
 import { Models, type ResourceSnapshot } from "../models/contract.ts";
 import { type Session, Sessions } from "../sessions/contract.ts";
 import { type Child, modelRefOf, Subagents } from "../subagents/contract.ts";
-import { Chat } from "./contract.ts";
+import { Chat, conversationOf } from "./contract.ts";
 import { newSessionChoice, thinkingLevelOf } from "./model-choice.ts";
 
 /** The targets a model change applies to: a session (its main conversation), a subagent's conversation, a new session. */
@@ -241,18 +241,6 @@ function useModelTarget(resources: ResourceSnapshot | undefined): ModelTarget | 
 		default:
 			return undefined;
 	}
-}
-
-/**
- * Parses a "conversation" target's id, `<session>/<conversation>` (`viewTarget` in web.tsx writes it); it comes back
- * from the menu's locator, so it is checked.
- */
-export function conversationOf(id: string): { readonly session: string; readonly conversation: number } | undefined {
-	const slash = id.lastIndexOf("/");
-	const conversation = Number(id.slice(slash + 1));
-	return slash > 0 && Number.isInteger(conversation) && conversation > 0
-		? { session: id.slice(0, slash), conversation }
-		: undefined;
 }
 
 /** A subagent's model as it reports it (`provider/modelId`, the model ID may hold more slashes). */

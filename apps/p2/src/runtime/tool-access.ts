@@ -1,26 +1,25 @@
-// Who may make the agent call a tool, and where (worker): each tool declares it with its registration, and the
-// worker's Durable registry checks it before every call, so no tool repeats the checks.
+// Where a tool works (worker): each tool declares it with its registration, and the worker's Durable registry checks it
+// before every call, so no tool repeats the checks. There is no per-turn authority: whoever may send input in a session
+// may have its agent call every tool it has; what a session's agents may reach is decided by its tool selection, its
+// location (a sandbox) and its lock.
 import type { Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
 import type { Extension, ToolExecutionResult, ToolPark, ToolRegistration } from "@earendil-works/pi-durable";
 import { isTopLevel } from "./main-conversation.ts";
-import { originOf } from "./origin.ts";
 import type { LockCapability } from "./session-lock.ts";
 import { sessionLock } from "./session-lock-doc.ts";
 
-/** A tool's requirements; both default to `"any"`. */
+/** A tool's requirements; both default to no restriction. */
 export type ToolAccess = {
-	/** Whose turn may call it: anyone's, or only a turn the owner started (`originOf`). */
-	readonly origin?: "any" | "owner";
 	/**
 	 * Where it works: anywhere; only in the session's top-level conversations (`main`: the main conversation and its
-	 * `/tree` branches, never a subagent or one-shot agent); or offered only to subagents, which get it without choosing.
+	 * `/tree` branches, never a subagent or one-shot agent, for tools acting on the session itself); or offered only to
+	 * subagents, which get it without choosing.
 	 */
 	readonly scope?: "any" | "main" | "subagent";
 	/**
-	 * In a locked session (`SessionLock`) the lock replaces the origin check of an `origin: "owner"` tool, whoever's turn
-	 * it is: `pass` (the default: what it reaches is limited by the lock elsewhere, MCP servers by their leases, location
-	 * tools by the sandbox), `never`, or only when the owner picked the capability.
+	 * In a locked session (`SessionLock`): `pass` (the default: what it reaches is limited by the lock elsewhere, MCP
+	 * servers by their leases, location tools by the sandbox), `never`, or only when the owner picked the capability.
 	 */
 	readonly locked?: "pass" | "never" | LockCapability;
 };
@@ -41,21 +40,18 @@ export function defineP2Tool<TParameters extends object, TDetails extends JsonVa
 
 /** `tool` as Durable runs it: unchanged without requirements, else refusing calls that do not meet them. */
 export function guardTool(tool: P2Tool): P2Tool {
-	if (tool.origin !== "owner" && tool.scope !== "main") return tool;
+	const rule = tool.locked ?? "pass";
+	if (rule === "pass" && tool.scope !== "main") return tool;
 	return {
 		...tool,
 		execute: async (args, api, context: Context): Promise<ToolExecutionResult | ToolPark> => {
 			if (tool.scope === "main" && !(await isTopLevel(api, api.conversationId, context)))
 				return refusal(`${tool.name} works only in the session's main conversation.`);
-			if (tool.origin === "owner") {
+			if (rule !== "pass") {
 				const lock = await sessionLock(api, context);
-				if (lock) {
-					const rule = tool.locked ?? "pass";
-					if (rule === "never") return refusal(`${tool.name} is not available in a locked session.`);
-					if (rule !== "pass" && !lock.capabilities.includes(rule))
-						return refusal(`${tool.name} is not among the resources the owner picked for this session.`);
-				} else if ((await originOf(api, context)) !== "owner")
-					return refusal(`${tool.name} needs a turn the owner started; guests and what they start cannot use it.`);
+				if (lock && rule === "never") return refusal(`${tool.name} is not available in a locked session.`);
+				if (lock && rule !== "never" && !lock.capabilities.includes(rule))
+					return refusal(`${tool.name} is not among the resources the owner picked for this session.`);
 			}
 			return tool.execute(args, api, context);
 		},

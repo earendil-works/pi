@@ -1,6 +1,6 @@
 // The views' controls outside the workbench: the top bar's Annotate switch and Views sheet (the session's views, shown
-// or hidden on this device, adding one, the owner's saved views), and the composer's chip for what the next message
-// carries; opening a view and describing one, shared with the views' commands (commands.tsx).
+// or hidden on this device, adding one), and the composer's chip for what the next message carries; opening a view and
+// describing one, shared with the views' commands (commands.tsx).
 import { BACKGROUND_CONTEXT, type HeldIn, liveIn } from "@p2/app/v1";
 import {
 	closeLayers,
@@ -10,14 +10,13 @@ import {
 	Sheet,
 	useComposerState,
 	useObject,
-	useOwner,
 	useReadable,
 	useRoute,
 	useSheet,
 	useStatus,
 } from "@p2/app/v1/web";
 import { type FormEvent, useState } from "react";
-import { type OpenInput, SavedViews, type View, Views } from "./contract.ts";
+import { type OpenInput, type View, Views } from "./contract.ts";
 import { viewsIn } from "./layout.ts";
 import { hide, setAnnotateMode, show, useAnnotateMode, useLayout } from "./layout-store.ts";
 
@@ -67,10 +66,6 @@ function ViewsSheet({ session }: { session: string }) {
 	const editor = liveIn(views, "editor");
 	const list = useReadable(views?.views) ?? [];
 	const layout = useLayout(session);
-	const owner = useOwner();
-	const library = useObject(SavedViews, owner ? {} : undefined);
-	useStatus(library);
-	const saved = useReadable(liveIn(library, "owner")?.saved) ?? [];
 	const { fail } = useComposerState();
 	const [path, setPath] = useState("");
 	const [closing, setClosing] = useState<string>();
@@ -84,7 +79,7 @@ function ViewsSheet({ session }: { session: string }) {
 	const openMarkdown = (event: FormEvent) => {
 		event.preventDefault();
 		const file = markdownPath(path);
-		if (file) void open({ kind: "markdown", path: file });
+		if (file) void open({ kind: "markdown", item: file });
 	};
 
 	return (
@@ -158,46 +153,6 @@ function ViewsSheet({ session }: { session: string }) {
 					</div>
 				</>
 			)}
-			{owner && (
-				<>
-					<h3 className="views-sheet-head">Saved</h3>
-					{saved.length ? (
-						<ul className="views-list">
-							{saved.map((each) => (
-								<li key={each.name}>
-									<div className="views-list-title">
-										<span>{each.title}</span>
-										<span className="muted">
-											{each.kind} · {each.name}
-											{each.description ? ` · ${each.description}` : ""}
-										</span>
-									</div>
-									{editor && (
-										<button
-											type="button"
-											className="text-action"
-											onClick={() => void open({ saved: each.name })}
-										>
-											Open
-										</button>
-									)}
-									<button
-										type="button"
-										className="text-action"
-										onClick={() =>
-											liveIn(library, "owner")?.remove({ name: each.name }, BACKGROUND_CONTEXT).catch(fail)
-										}
-									>
-										Remove
-									</button>
-								</li>
-							))}
-						</ul>
-					) : (
-						<p className="empty-note">No saved views. Ask the agent to save one.</p>
-					)}
-				</>
-			)}
 		</Sheet>
 	);
 }
@@ -217,9 +172,10 @@ export const markdownPath = (text: string): string => text.trim().replace(/^\.\/
 
 /** What a view shows, in a few words. */
 export function describe(view: View): string {
-	if (view.kind === "markdown") return `Markdown · ${view.path ?? ""}`;
-	if (view.kind === "changes") return view.path ? `Changes · ${view.path}` : "Changes";
-	return view.selection && !view.selection.sent ? "Custom · selection waiting" : "Custom";
+	if (view.kind === "markdown") return `Markdown · ${view.item ?? ""}`;
+	if (view.kind === "changes") return view.item ? `Changes · ${view.item}` : "Changes";
+	const kind = view.kind === "html" || view.kind === "md" ? `Artifact · ${view.kind}` : `Plugin · ${view.kind}`;
+	return view.selection && !view.selection.sent ? `${kind} · selection waiting` : kind;
 }
 
 /** In the composer: the selections and annotations the next message carries, which the person may drop. */
@@ -230,8 +186,12 @@ export function ContextChip() {
 	const editor = liveIn(views, "editor");
 	const list = useReadable(views?.views) ?? [];
 	const notes = useReadable(views?.annotations) ?? [];
+	const inline = useReadable(views?.inline) ?? [];
 	const { fail } = useComposerState();
-	const selections = list.filter((view) => view.selection && !view.selection.sent);
+	const selections = [
+		...list.filter((view) => view.selection && !view.selection.sent),
+		...inline.filter((each) => !each.selection.sent),
+	];
 	const pending = notes.filter((annotation) => !annotation.sent).length;
 	if (!editor || (!selections.length && !pending)) return null;
 	const words = [

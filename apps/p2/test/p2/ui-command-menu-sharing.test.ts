@@ -2,14 +2,14 @@
 // target): Share session… opens the share sheet over the open session in one step, over a hovered session after opening
 // it (Back closes the sheet, then returns); Copy read-only and Copy read/write link make the link and copy it; Reset
 // share link… (only while a link exists) replaces one; none of them for an archived session or a guest. Artifacts:
-// Open artifact… (only while the open conversation has some) lists every version and opens one in the viewer, also
-// over a hovered session's main conversation; the root's query finds the latest version by title. Fake provider;
-// disposable data, every test makes its own sessions.
+// Open artifact… (only while the open session has some) lists them and opens one as a view beside the chat; the root's
+// query finds one by title; a read-only guest opens one in the side panel instead (it may not change the session's
+// views). Fake provider; disposable data, every test makes its own sessions.
 
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { ArtifactList } from "../../plugins/artifacts/contract.ts";
+import { Artifacts } from "../../plugins/artifacts/contract.ts";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
@@ -77,14 +77,14 @@ describe("command menu: sharing and artifacts", { skip: !browserTests }, () => {
 	const create = async (title: string) =>
 		(await sessions.create({ cwd: fixture.workspace, title }, BACKGROUND_CONTEXT)).id;
 
-	/** Saves the fake provider's `artifact` call (name "demo", "Demo artifact") `versions` times in `session`. */
+	/** Writes the fake provider's `artifact` script (id "demo", "Demo artifact") `versions` times in `session`. */
 	const makeArtifacts = async (session: string, versions: number) => {
 		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
-		const list = owner.hold(ArtifactList, { session, conversation: 1 }, BACKGROUND_CONTEXT);
+		const list = await holdIn(owner, Artifacts, { session }, "editor");
 		try {
 			for (let version = 1; version <= versions; version++) {
 				await chat.send({ text: "artifact", requestId: `artifact-${session}-${version}` }, BACKGROUND_CONTEXT);
-				await until(list.artifacts, (value) => value?.length === version, 30_000);
+				await until(list.artifacts, (value) => value?.[0]?.version === version, 30_000);
 			}
 		} finally {
 			chat.release();
@@ -277,7 +277,7 @@ describe("command menu: sharing and artifacts", { skip: !browserTests }, () => {
 	});
 
 	describe("artifacts", () => {
-		it("lists the open conversation's artifacts, every version, and opens one in the viewer in one step", async () => {
+		it("lists the open session's artifacts and opens one as a view in one step", async () => {
 			const id = await create("With artifacts");
 			await makeArtifacts(id, 2);
 			await openSession(id, "With artifacts");
@@ -286,28 +286,18 @@ describe("command menu: sharing and artifacts", { skip: !browserTests }, () => {
 			await run("open artifact", "Open artifact…");
 			await browser.wait(`document.querySelector('.command-menu .command-crumb')?.textContent === 'Artifacts'`);
 			await listed("Demo artifact");
-			assert.deepEqual((await menu())?.groups, [
-				[
-					"Artifacts",
-					[
-						["Demo artifact", "html · v2"],
-						["Demo artifact", "html · v1"],
-					],
-				],
-			]);
+			assert.deepEqual((await menu())?.groups, [["Artifacts", [["Demo artifact", "Pages"]]]]);
 			await press("Enter");
-			await browser.wait(`${CLOSED} && document.querySelector('.viewer-panel')`);
-			assert.deepEqual(await where(), { path: `/s/${id}`, sheet: false, viewer: "Demo artifact" });
+			await browser.wait(`${CLOSED} && document.querySelector('.views-pane.kind-html iframe.artifact-frame')`);
 			assert.match(
-				await browser.evaluate<string>(`document.querySelector('.viewer-panel').textContent`),
-				/version 2/,
+				await browser.evaluate<string>(
+					`document.querySelector('.views-pane.kind-html iframe').getAttribute('src')`,
+				),
+				/version=2/,
 			);
-			await back();
-			await browser.wait(`!document.querySelector('.viewer-panel')`);
-			assert.equal((await where()).path, `/s/${id}`);
 		});
 
-		it("offers Open artifact… only while the open conversation has artifacts", async () => {
+		it("offers Open artifact… only while the open session has artifacts", async () => {
 			const id = await create("First artifact");
 			await openSession(id, "First artifact");
 			await openMenu();
@@ -324,52 +314,20 @@ describe("command menu: sharing and artifacts", { skip: !browserTests }, () => {
 			await browser.wait(CLOSED);
 		});
 
-		it("finds the latest version of an artifact at the root by its title", async () => {
+		it("finds an artifact at the root by its title", async () => {
 			const id = await create("Artifact search");
-			await makeArtifacts(id, 2);
+			await makeArtifacts(id, 1);
 			await openSession(id, "Artifact search");
 			await browser.wait(`document.querySelector('.artifact-button')`);
 			await openMenu();
 			await type("demo art");
 			await browser.wait(
-				`[...document.querySelectorAll('.command-menu .command-group')].some((g) => g.querySelector('.command-heading').textContent === 'Artifacts' && g.querySelector('[role=option] .command-suffix-text')?.textContent === 'html · v2')`,
-			);
-			const artifacts = (await menu())?.groups.find(([heading]) => heading === "Artifacts");
-			// The latest version only, beside the command whose group it joins.
-			assert.deepEqual(
-				artifacts?.[1].filter(([title]) => title === "Demo artifact"),
-				[["Demo artifact", "html · v2"]],
+				`[...document.querySelectorAll('.command-menu .command-group')].some((g) => g.querySelector('.command-heading').textContent === 'Artifacts' && [...g.querySelectorAll('[role=option] .command-title')].some((t) => t.textContent === 'Demo artifact'))`,
 			);
 			await browser.evaluate(
-				`[...document.querySelectorAll('.command-menu [role=option]')].find((o) => o.querySelector('.command-suffix-text')?.textContent === 'html · v2').click()`,
+				`[...document.querySelectorAll('.command-menu [role=option]')].find((o) => o.querySelector('.command-title')?.textContent === 'Demo artifact').click()`,
 			);
-			await browser.wait(`${CLOSED} && document.querySelector('.viewer-panel')`);
-			assert.match(
-				await browser.evaluate<string>(`document.querySelector('.viewer-panel').textContent`),
-				/version 2/,
-			);
-		});
-
-		it("opens a hovered session's artifact over its main conversation: Back closes the viewer, then returns", async () => {
-			const open = await create("Artifact from here");
-			const hovered = await create("Artifact over there");
-			await makeArtifacts(hovered, 1);
-			await openSession(open, "Artifact from here");
-			await hover(sidebarRow(hovered));
-			await openMenu();
-			assert.equal((await menu())?.chip, "Session · Artifact over there");
-			await listed("Open artifact…");
-			await run("open artifact", "Open artifact…");
-			await listed("Demo artifact");
-			await press("Enter");
-			await browser.wait(
-				`${CLOSED} && document.querySelector('.viewer-panel') && location.pathname === '/s/${hovered}'`,
-			);
-			await back();
-			await browser.wait(`!document.querySelector('.viewer-panel')`);
-			assert.equal((await where()).path, `/s/${hovered}`);
-			await back();
-			await browser.wait(`location.pathname === '/s/${open}'`);
+			await browser.wait(`${CLOSED} && document.querySelector('.views-pane.kind-html iframe.artifact-frame')`);
 		});
 	});
 
@@ -397,6 +355,17 @@ describe("command menu: sharing and artifacts", { skip: !browserTests }, () => {
 			const shown = await guest.evaluate<string[]>(TITLES);
 			for (const title of ["Share session…", "Copy read-only link", "Copy read/write link", "Reset share link…"])
 				assert.ok(!shown.includes(title), `guest sees ${title}: ${shown}`);
+			// A reader cannot open views of the session: the artifact shows in the side panel, on this device only.
+			await guest.evaluate(
+				`[...document.querySelectorAll('.command-menu [role=option]')].find((o) => o.querySelector('.command-title')?.textContent === 'Open artifact…').click()`,
+			);
+			await guest.wait(`${TITLES}.includes('Demo artifact')`);
+			await guest.evaluate(
+				`[...document.querySelectorAll('.command-menu [role=option]')].find((o) => o.querySelector('.command-title')?.textContent === 'Demo artifact').click()`,
+			);
+			await guest.wait(
+				`${CLOSED} && document.querySelector('[data-testid=artifact-panel] .artifact-local iframe.artifact-frame') && !document.querySelector('.views-pane.kind-html')`,
+			);
 		} finally {
 			await guest.close();
 			sharing.release();

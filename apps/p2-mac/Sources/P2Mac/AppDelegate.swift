@@ -103,12 +103,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 	@objc private func useFound(_ sender: NSMenuItem) {
 		guard let found = sender.representedObject as? FoundServerBox else { return }
 		ServerConfig.saveAttached(port: found.server.port, dataDir: found.server.dataDir)
-		use(.load())
+		use(ServerConfig.own().attached(port: found.server.port, dataDir: found.server.dataDir))
 	}
 
 	@objc private func useOwn(_ sender: NSMenuItem) {
 		ServerConfig.saveOwn()
-		use(.load())
+		use(.own())
 	}
 
 	// MARK: - Windows
@@ -289,7 +289,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		}
 		ServerConfig.saveCheckout(p2)
 		ServerConfig.saveOwn()
-		use(.load())
+		use(.own())
 	}
 
 	private func item(_ title: String, _ action: Selector, key: String = "", target: AnyObject? = nil) -> NSMenuItem {

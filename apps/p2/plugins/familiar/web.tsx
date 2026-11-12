@@ -35,13 +35,16 @@ function OwnerBrand() {
 	const row = sessions.find((each) => each.id === session);
 	const route = useRoute();
 	const connected = useConnected();
-	const { fail } = useComposerState();
+	const { fail, focusWhenOpen } = useComposerState();
 	const [opening, setOpening] = useState(false);
 	useEffect(() => listApart("familiar", session === null ? [] : [session]), [listApart, session]);
 	const open = () => {
-		// A live row opens at once; otherwise the server makes or restores it first.
+		// A live row opens at once, its composer focused as a session row's; otherwise the server makes or restores it
+		// first, and which session it is shows only then.
 		if (row && row.archivedAt === null) {
-			navigate({ session: row.id, conversation: row.main });
+			const target = { session: row.id, conversation: row.main };
+			focusWhenOpen(target);
+			navigate(target);
 			return;
 		}
 		if (!familiar) return;

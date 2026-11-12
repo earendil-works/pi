@@ -24,7 +24,7 @@ function Layout() {
 		collapsed = useSidebarCollapsed();
 	// Files dropped go to the composer: a list page (`Route.page`) has none.
 	const canDrop = useCanWrite(route.session) && route.page === undefined;
-	const { addFiles } = useComposerState();
+	const { addFiles, focus } = useComposerState();
 	const [draggingFiles, setDraggingFiles] = useState(false);
 	const dragDepth = useRef(0);
 	const swipe = useDrawerSwipe();
@@ -89,7 +89,7 @@ function Layout() {
 					dragDepth.current = 0;
 					setDraggingFiles(false);
 					addFiles([...event.dataTransfer.files]);
-					document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus();
+					focus();
 				}}
 			>
 				{draggingFiles && <div className="drop-overlay">Drop files to attach</div>}

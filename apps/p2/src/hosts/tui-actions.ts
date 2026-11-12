@@ -184,10 +184,10 @@ export function originPath(url: URL, path: unknown): URL | undefined {
 	if (/^\/s\/[0-9a-f-]{36}$/i.test(target.pathname) && UUID.test(target.pathname.slice(3)) && query.length === 0)
 		return target;
 	if (
-		target.pathname === "/artifact" &&
-		only("session", "name", "version", "download") &&
+		target.pathname === "/artifact-frame" &&
+		only("session", "id", "version") &&
 		UUID.test(session) &&
-		ARTIFACT.test(target.searchParams.get("name") ?? "") &&
+		ARTIFACT.test(target.searchParams.get("id") ?? "") &&
 		/^\d{1,6}$/.test(target.searchParams.get("version") ?? "")
 	)
 		return target;
@@ -521,7 +521,7 @@ export function launcherActions(options: LauncherActionOptions): Record<string, 
 				return null;
 			},
 		},
-		/** C: `{kind: "file", session, id, name?}` (sent files) or `{kind: "artifact", session, name, version}`. */
+		/** C: `{kind: "file", session, id, name?}` (sent files). */
 		download: {
 			kind: "C",
 			consent: (payload, { target }) => {
@@ -741,20 +741,6 @@ export function launcherActions(options: LauncherActionOptions): Record<string, 
 				label: value.name,
 				fallback: typeof value.name === "string" ? value.name : undefined,
 			};
-		}
-		if (
-			value.kind === "artifact" &&
-			typeof value.name === "string" &&
-			ARTIFACT.test(value.name) &&
-			typeof value.version === "number" &&
-			Number.isInteger(value.version) &&
-			value.version >= 0 &&
-			value.version < 1_000_000
-		) {
-			query.set("name", value.name);
-			query.set("version", String(value.version));
-			query.set("download", "1");
-			return { path: `/artifact?${query}`, label: `${value.name} v${value.version}`, fallback: value.name };
 		}
 		return undefined;
 	}
