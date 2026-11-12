@@ -444,18 +444,14 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 			/** A branch row (it draws guides) or not, and how many guides it draws. */
 			branch: boolean;
 			guides: number;
-			/**
-			 * The label's x-height midline: its baseline (a zero-size inline-block probe on its line) less half an "x" of
-			 * its computed font (canvas measureText).
-			 */
-			midline: number;
+			/** The label's cap-height midline: its baseline (an inline-block probe) less half an "H" in its font (measureText). */
+			capMidline: number;
 			depth: number;
 			/** The row's vertical centre. */
 			mid: number;
-			/** The marker column's start, centre (x), vertical centre and size. */
+			/** The marker column's start, centre (x) and size. */
 			marker: number;
 			markerCentre: number;
-			markerMid: number;
 			markerSize: number[];
 			/** The mark in the column (an icon, a ring, a spinner): its kind, centre and vertical centre. */
 			mark: { kind: string; centre: number; mid: number } | null;
@@ -491,7 +487,7 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		};
 		const geometry = () =>
 			browser.evaluate<Measured[]>(
-				`(() => { const rtl = document.documentElement.dir === 'rtl'; const start = (r) => rtl ? r.right : r.left; const end = (r) => rtl ? r.left : r.right; const mid = (r) => (r.top + r.bottom) / 2; const centre = (r) => (r.left + r.right) / 2; const header = ${item}.querySelector('.session-header'); const rows = [header, ...${item}.querySelectorAll('.conversation-row')]; return rows.map((e, i) => { const box = e.getBoundingClientRect(); const m = e.querySelector('.nav-marker').getBoundingClientRect(); const mark = e.querySelector('.nav-marker > .run-mark, .nav-marker > .nav-icon'); const k = mark?.getBoundingClientRect(); const g = e.querySelector(':scope > .tree-guide:not([data-guide=pipe])'); const j = g?.getBoundingClientRect(); const tw = g ? (() => { const s = getComputedStyle(e.querySelector(':scope > .nav-marker'), '::before'); const top = box.top + e.clientTop + parseFloat(s.top); const x = rtl ? box.right - e.clientLeft - parseFloat(s.right) : box.left + e.clientLeft + parseFloat(s.left); const w = parseFloat(s.width); return { top, end: x + (rtl ? -w : w), mid: top + parseFloat(s.height) - parseFloat(s.borderBlockEndWidth) / 2, curve: parseFloat(s.borderEndStartRadius) }; })() : null; const f = e.querySelector('.nav-marker .working-frame')?.getBoundingClientRect(); const t = e.querySelector('.session-time')?.getBoundingClientRect(); const l = e.querySelector('.session-title'); const above = rows[i - 1]?.getBoundingClientRect(); return { name: l.textContent, branch: Boolean(e.querySelector(':scope > .branch-row')), guides: e.querySelectorAll(':scope > .tree-guide').length, midline: (() => { const p = document.createElement('span'); p.style.cssText = 'display:inline-block;width:0;height:0;vertical-align:baseline'; l.append(p); const base = p.getBoundingClientRect().bottom; p.remove(); const cs = getComputedStyle(l); const c = document.createElement('canvas').getContext('2d'); c.font = cs.fontStyle + ' ' + cs.fontWeight + ' ' + cs.fontSize + ' ' + cs.fontFamily; return base - c.measureText('x').actualBoundingBoxAscent / 2; })(), depth: i === 0 ? 0 : Number(getComputedStyle(e).getPropertyValue('--depth')), mid: mid(box), marker: start(m), markerCentre: centre(m), markerMid: mid(m), markerSize: [m.width, m.height], mark: k ? { kind: mark.classList.contains('nav-icon') ? 'icon' : mark.dataset.state === 'idle' ? 'ring' : 'spinner', centre: centre(k), mid: mid(k) } : null, label: mid(l.getBoundingClientRect()), labelStart: start(e.querySelector('.nav-label').getBoundingClientRect()), ink: (() => { const svg = e.querySelector('.nav-marker .nav-icon > svg:not(.working-frame)'); if (svg) { const r = svg.getBoundingClientRect(), b = svg.getBBox(), k = r.width / 24, w = parseFloat(getComputedStyle(svg).strokeWidth) / 2; const box = { left: r.left + (b.x - w) * k, right: r.left + (b.x + b.width + w) * k }; return { start: start(box), end: end(box) }; } const ring = e.querySelector('.nav-marker > .run-mark'); if (!ring) return null; const c = ring.getBoundingClientRect(), x = (c.left + c.right) / 2, half = ring.offsetWidth / 2; const box = { left: x - half, right: x + half }; return { start: start(box), end: end(box) }; })(), trunk: j ? centre(j) : NaN, top: j ? j.top : NaN, trunkEnd: j ? j.bottom : NaN, twigTop: tw ? tw.top : NaN, arm: tw ? tw.end : NaN, armMid: tw ? tw.mid : NaN, joint: g ? g.dataset.guide : null, curve: tw ? tw.curve : NaN, above: above ? above.bottom : NaN, bottom: box.bottom, frame: f ? start(f) : null, outset: parseFloat(getComputedStyle(e).getPropertyValue('--working-frame-outset')), time: t ? Math.round(end(t)) : null }; }); })()`,
+				`(() => { const rtl = document.documentElement.dir === 'rtl'; const start = (r) => rtl ? r.right : r.left; const end = (r) => rtl ? r.left : r.right; const mid = (r) => (r.top + r.bottom) / 2; const centre = (r) => (r.left + r.right) / 2; const header = ${item}.querySelector('.session-header'); const rows = [header, ...${item}.querySelectorAll('.conversation-row')]; return rows.map((e, i) => { const box = e.getBoundingClientRect(); const m = e.querySelector('.nav-marker').getBoundingClientRect(); const mark = e.querySelector('.nav-marker > .run-mark, .nav-marker > .nav-icon'); const k = mark?.getBoundingClientRect(); const g = e.querySelector(':scope > .tree-guide:not([data-guide=pipe])'); const j = g?.getBoundingClientRect(); const tw = g ? (() => { const s = getComputedStyle(e.querySelector(':scope > .nav-marker'), '::before'); const moved = parseFloat(s.translate.split(' ')[1]); const top = box.top + e.clientTop + parseFloat(s.top) + parseFloat(s.marginTop) + moved; const x = rtl ? box.right - e.clientLeft - parseFloat(s.right) : box.left + e.clientLeft + parseFloat(s.left); const w = parseFloat(s.width); return { top, end: x + (rtl ? -w : w), mid: top + parseFloat(s.height) - parseFloat(s.borderBlockEndWidth) / 2, curve: parseFloat(s.borderEndStartRadius) }; })() : null; const f = e.querySelector('.nav-marker .working-frame')?.getBoundingClientRect(); const t = e.querySelector('.session-time')?.getBoundingClientRect(); const l = e.querySelector('.session-title'); const above = rows[i - 1]?.getBoundingClientRect(); return { name: l.textContent, branch: Boolean(e.querySelector(':scope > .branch-row')), guides: e.querySelectorAll(':scope > .tree-guide').length, capMidline: (() => { const p = document.createElement('span'); p.style.cssText = 'display:inline-block;width:0;height:0;vertical-align:baseline'; l.append(p); const base = p.getBoundingClientRect().bottom; p.remove(); const cs = getComputedStyle(l); const c = document.createElement('canvas').getContext('2d'); c.font = cs.fontStyle + ' ' + cs.fontWeight + ' ' + cs.fontSize + ' ' + cs.fontFamily; return base - c.measureText('H').actualBoundingBoxAscent / 2; })(), depth: i === 0 ? 0 : Number(getComputedStyle(e).getPropertyValue('--depth')), mid: mid(box), marker: start(m), markerCentre: centre(m), markerSize: [m.width, m.height], mark: k ? { kind: mark.classList.contains('nav-icon') ? 'icon' : mark.dataset.state === 'idle' ? 'ring' : 'spinner', centre: centre(k), mid: mid(k) } : null, label: mid(l.getBoundingClientRect()), labelStart: start(e.querySelector('.nav-label').getBoundingClientRect()), ink: (() => { const svg = e.querySelector('.nav-marker .nav-icon > svg:not(.working-frame)'); if (svg) { const r = svg.getBoundingClientRect(), b = svg.getBBox(), k = r.width / 24, w = parseFloat(getComputedStyle(svg).strokeWidth) / 2; const box = { left: r.left + (b.x - w) * k, right: r.left + (b.x + b.width + w) * k }; return { start: start(box), end: end(box) }; } const ring = e.querySelector('.nav-marker > .run-mark'); if (!ring) return null; const c = ring.getBoundingClientRect(), x = (c.left + c.right) / 2, half = ring.offsetWidth / 2; const box = { left: x - half, right: x + half }; return { start: start(box), end: end(box) }; })(), trunk: j ? centre(j) : NaN, top: j ? j.top : NaN, trunkEnd: j ? j.bottom : NaN, twigTop: tw ? tw.top : NaN, arm: tw ? tw.end : NaN, armMid: tw ? tw.mid : NaN, joint: g ? g.dataset.guide : null, curve: tw ? tw.curve : NaN, above: above ? above.bottom : NaN, bottom: box.bottom, frame: f ? start(f) : null, outset: parseFloat(getComputedStyle(e).getPropertyValue('--working-frame-outset')), time: t ? Math.round(end(t)) : null }; }); })()`,
 			);
 		const near = (a: number, b: number, within: number) => Math.abs(a - b) < within;
 		const checkGeometry = async (sign: 1 | -1) => {
@@ -512,22 +508,16 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 				if (labels.has(depth))
 					assert(near(row.labelStart, labels.get(depth)!, 0.5), `${name}'s label is in its depth's column`);
 				else labels.set(depth, row.labelStart);
-				// One 16px box holds the mark, centred in the column; an icon on the row's centre, a ring or a spinner on
-				// the label's x-height midline.
 				assert.deepEqual(row.markerSize, [16, 16], `${name}'s marker is one 16px box`);
-				const ring = row.mark !== null && row.mark.kind !== "icon";
-				if (!ring) assert(near(row.markerMid, row.mid, 0.5), `${name}'s marker is on the row's centre`);
 				if (row.mark) {
 					assert(
 						near(row.mark.centre, row.markerCentre, 0.5),
 						`${name}'s ${row.mark.kind} is centred in its column`,
 					);
-					if (ring)
-						assert(
-							near(row.mark.mid, row.midline, 0.5),
-							`${name}'s ${row.mark.kind} is ${row.mark.mid - row.midline}px off the label's midline`,
-						);
-					else assert(near(row.mark.mid, row.mid, 0.5), `${name}'s icon is on the row's centre`);
+					assert(
+						near(row.mark.mid, row.capMidline, 0.25),
+						`${name}'s ${row.mark.kind} is ${row.mark.mid - row.capMidline}px off the cap-height midline`,
+					);
 				}
 				const x = row.mark?.centre ?? row.markerCentre;
 				if (axis.has(depth)) assert(near(x, axis.get(depth)!, 0.5), `${name}'s mark is on depth ${depth}'s axis`);
@@ -555,10 +545,8 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 				// Every arm ends as far from its mark's ink, an icon's or a ring's: --s1 and an icon's inset (6px).
 				if (row.ink)
 					assert(near(sign * (row.ink.start - row.arm), 6, 0.5), `${name}'s arm ends 6px before its mark`);
-				// The arm's line meets its own mark's visible centre: an icon's on the row's centre, a ring's or a
-				// spinner's on the label's midline.
 				assert(
-					near(row.armMid, row.mark?.mid ?? row.mid, 0.5),
+					near(row.armMid, row.mark?.mid ?? row.mid, 0.25),
 					`${name}'s arm is ${row.armMid - (row.mark?.mid ?? row.mid)}px off its mark's centre`,
 				);
 				assert(near(row.top, row.above, 1), `${name}'s guide reaches the row above`);

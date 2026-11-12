@@ -186,23 +186,35 @@
 		rotate: 360deg;
 	}
 }
-/* A conversation row's mark has its visible centre --mark-mid below its marker's top, where the row's twig (the
-   marker's ::before) meets it. An icon is centred in its marker, on the row's centre. A run mark is --ring-size, the
-   area an icon draws in, centred on the label's x-height midline (0.5ex above its baseline, in the label's font): the
-   marker takes part in the row's baseline alignment with the mark's bottom on the baseline, and the mark moves up to
-   the midline (a translate, so the spinner keeps turning about its own centre). */
-.conversation-row > .nav-marker {
-	--mark-mid: calc(var(--nav-icon) / 2);
+/* A conversation row's mark (an icon or a run mark) is centred on its label's cap-height midline, as text icons are.
+   The marker is baseline-aligned with the mark's bottom on the baseline, and a translate lifts the mark by
+   --mark-rise, so a spinner still turns about its own centre. --mark-mid is the mark's centre below the marker's top,
+   where the twig meets it. */
+.conversation-row {
+	--mark-rise: 0.5cap;
 }
-.conversation-row > .nav-marker:has(> .run-mark) {
-	--mark-mid: calc(var(--ring-size) - 0.5ex);
+@supports not (block-size: 1cap) {
+	.conversation-row {
+		--mark-rise: 0.5ex;
+	}
+}
+.conversation-row > .nav-marker {
+	--mark-size: var(--nav-icon);
+	--mark-mid: calc(var(--mark-size) - var(--mark-rise));
 	align-self: baseline;
 	align-items: baseline;
+	/* The mark takes no space above the baseline, so the label alone sets the row's height. */
+	margin-block-start: calc(-1 * var(--nav-icon));
+}
+.conversation-row > .nav-marker:has(> .run-mark) {
+	--mark-size: var(--ring-size);
+}
+.conversation-row > .nav-marker > * {
+	translate: 0 calc(var(--mark-mid) - var(--mark-size) / 2);
 }
 .conversation-row > .nav-marker > .run-mark {
 	width: var(--ring-size);
 	height: var(--ring-size);
-	translate: 0 calc(var(--mark-mid) - var(--ring-size) / 2);
 }
 /* Without motion working keeps a shape of its own: a still ¾ ring, a dashed frame. */
 @media (prefers-reduced-motion: reduce) {
@@ -524,15 +536,13 @@
 	border-inline-start: var(--tree-line) solid var(--line);
 	pointer-events: none;
 }
-/* The row's centre less the curve: no mark's centre is above the row's centre, so the twig's curve starts at or below
-   this point, and the twig draws the line on from above it. */
+/* The trunk ends between the top of the twig's upright part and its curve, so the two join without a gap. */
 .tree-guide[data-guide="elbow"] {
-	inset-block-end: calc(50% + var(--tree-curve));
+	inset-block-end: calc(50% + var(--ring-size) / 2);
 }
-/* A row's twig: from its trunk, a curve into an arm whose line is centred on the mark's visible centre
-   (--mark-mid), ending --tree-twig-gap before the marker. It is drawn from the marker, whose top is where the row's
-   baseline puts it (the static position of an absolute box in it), and laid out across the row (its containing block)
-   like the guides. Its upright part overlaps the trunk's end in the same colour, so the line is unbroken. */
+/* A row's twig: from its trunk, a curve into an arm that meets the mark's centre and ends --tree-twig-gap before the
+   marker. An absolute box of the marker, laid out across the row like the guides. It gets the mark's box and
+   translate, so both round to device pixels alike. */
 .conversation-row:has(> .tree-guide) > .nav-marker::before {
 	--level: var(--depth);
 	position: absolute;
@@ -540,7 +550,9 @@
 	box-sizing: border-box;
 	inset-inline-start: calc(var(--nav-edge) + var(--from) + var(--nav-icon) / 2 - var(--tree-line) / 2);
 	inline-size: calc(var(--to) - var(--from) - var(--nav-icon) / 2 + var(--tree-line) / 2 - var(--tree-twig-gap));
-	block-size: calc(var(--mark-mid) + var(--tree-line) / 2);
+	margin-block-start: calc(var(--mark-size) / -2);
+	block-size: calc(var(--mark-size) + var(--tree-line));
+	translate: 0 calc(var(--mark-mid) - var(--mark-size) / 2 - var(--tree-line) / 2);
 	border: 0 solid var(--line);
 	border-inline-start-width: var(--tree-line);
 	border-block-end-width: var(--tree-line);
