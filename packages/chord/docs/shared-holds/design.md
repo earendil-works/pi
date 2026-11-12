@@ -1,266 +1,268 @@
 # References sharing one wire hold
 
-Status: design, third draft (2026-11-12): the second answered the reviews by GPT-6 Astra (adversarial, probes) and GPT-6.1 Sol
-(against design.md), the third adds the goal that nothing changes on the surface (§2, §6); the first draft is
-502f79e3e. Owner agreed to the change on 2026-11-09 (p3 `efficiency.md` §3:
-"sounds ok") and asked for it now (2026-11-12). Sections cited: design §3 (holds, routes, flow control), §5 (event
-eligibility), §7 (references), §19 (presence), §21 (reload), §22 (wire), §29 (telemetry), §30 (cost), §31 (rejected);
-`src/remote/README.md`; decisions D8 (no consumer-side linger), R1 (relays), Q5 (activation chains), "A reloaded UI
-part shows its loading state", "Shared work".
+Status: design, fourth draft (2026-11-12). Drafts 1–3 (502f79e3e, 20a6e09dc, 7a1c1f61e) shared one hold among
+references and patched what that lost (an event fence, a reference count); two review rounds by GPT-6 Astra
+(adversarial, with probes) and GPT-6.1 Sol (against design.md) showed that a shared request cannot be made
+indistinguishable from separate ones. This draft keeps **one request per reference** at every hop and shares only the
+state stream underneath it (the join model). Owner, 2026-11-12: "this needs to be water tight; on the surface nothing
+should change at all"; the two differences in §2 are accepted ("that sounds fine"; "that's the whole point").
+
+Sections cited are design.md's unless marked: §3 (holds, routes, relays, flow control), §4 (principals), §7
+(references), §11 (state, watches), §19 (presence), §21 (reload), §22 (wire), §29 (telemetry), §30 (cost); the events
+spec (`docs/events/spec.md`) §2.4 (eligibility) and §2.6 (wire, windows); decisions D8, R1, Q1, Q5.
 
 ## 1. Problem
 
-Every remote reference is its own `RemoteObject` with its own hold on the link (`host.bind` creates one per
-`Binding`; `RemoteObject.hold(binding)` takes "its one reference"). N references to the same remote object on one host
-cost N `hold` messages, N snapshots, N hold entries with N delta encoders at the provider and N decoders here, and N
-holders in the provider's presence. The provider's window counts messages, not holds: waiting bindings already leave
-together in one `bound` per freed slot (`ProviderSide.#slotFreed`), so duplicates cost snapshots and encoding more
-than window slots.
+Every remote reference holds its object separately: N references to one object on one host cost N snapshots (encoded
+at the provider, sent, parsed here), N delta encoders at the provider and N decoders and replicas here, and every
+commit encoded N times. In p2 a page holds `p2.views` 3 times, `p2.chat` and `p2.chat-mode` twice, and one artifacts
+store per Markdown pane (measured 2026-11-12); a React page normally has several components showing one object.
+Local references already share their object (one `ChordObject` per identity, every `Binding` one of its holders).
 
-Measured in p2 (2026-11-12, Chromium at phone size, 4x CPU, 150 ms round trip; switching back to a session with three
-Markdown artifact views): the page sends about 40 holds; `p2.views` is held 3 times, `p2.chat` and `p2.chat-mode`
-twice each, the artifacts store once per Markdown pane. The visible view showed at 693 ms, all panes at 966 ms; server
-and worker work under 1 ms per hold. Components holding an object other components already hold is the normal shape
-of a React page; its cost should not depend on how many do.
+What this change saves: snapshots, encoding, bytes and parsing for every reference after the first. What it does not
+change: when a reference binds. Each reference's request still takes its turn in the provider's window (K = 2), so
+the time to first value of a session switch is unchanged by this design; that is §12's separate question.
 
-Local references already share their object: a host has one `ChordObject` per identity (type, params, principal key),
-and every `Binding` is one of its holders. Remote references should behave the same.
+## 2. Goal and the two accepted differences
 
-## 2. Goal: nothing changes on the surface
+Every observable behaviour stays as it is today, for the reference (its state and the order of its transitions, its
+values, readiness of `host.get`, calls, their order, their errors and the provider's cancellation reasons, parked
+calls, events and their eligibility, retries, release, error codes, `host.activity`) and at the provider
+(`host.references` entries, their order and timing, `host.activity`, `ctx.principal` and `ctx.incarnation` of calls,
+variants, revocation, keep-alive, reload). Telemetry is not surface.
 
-Owner, 2026-11-12: "this needs to be water tight; on the surface nothing should change at all." Sharing is an
-implementation of today's semantics, not a new one: every observable behaviour of a reference (its state, values,
-calls, events, failures, retries, release) and every observable behaviour at the provider (`host.references`,
-`host.activity`, calls, variants, revocation) is what it is with one hold per reference, up to timing that is already
-nondeterministic today (a joining reference may go live sooner than a new hold would bind; a local reference to a live
-object is live at once too). Telemetry is not surface: spans may differ. Where sharing would change an observable
-behaviour, the design adds what keeps it (the event fence and the reference count, §6); where it cannot, it does not
-share.
+Accepted differences (owner, 2026-11-12):
 
-## 3. Decision
+1. **Part limits apply to the parts a request receives.** A joined reference receives no snapshot, so a value that
+   grew past a link's part limit through small deltas does not fail a new reference with `too_large/part`, as a fresh
+   snapshot would. Delta parts are encoded per carrier, so their sizes may differ slightly from what a separate hold's
+   encoder would make; a part past the limit fails every reference sharing it.
+2. **References sharing a stream share values.** Two references read the same replica: `a.member.value ===
+   b.member.value` is `true` where separate snapshots parsed two copies. Values are immutable by convention.
 
-A host shares one `RemoteObject`, and with it one wire hold, one snapshot and one replica per member, among its
-references that would send the same `hold`: same path, same type, version and fingerprint, same params, same computed
-address, same caller (principal and incarnation). Each `host.get`, `host.hold`, `ctx.get` and `self.get` still returns
-its own reference with its own `Binding`: its own release, state, watches, event subscriptions, parked calls and calls.
-The `RemoteObject` ends, and its hold is released on the link, when its last binding releases or ends.
+## 3. The model
 
-The address is part of the key because `hostAddress` is not in the contract fingerprint (design §3, §5): two contract tokens
-of one name, version and fingerprint (old and new code during a reload, or copied contracts) may place the same params
-at different addresses over the same parent path, and each such hold must reach its own provider and placement check
-(`invalid/host_address`). The contract token itself is not part of the key: equal contracts bundled separately share.
+- **A request** is what one reference sends: today's hold, with its own id, principal, incarnation, placement,
+  admission, presence entry, activity count, calls, notices (`failed`, `loading`, `gone`), retry and release. Every
+  reference has exactly one, at every hop, as today.
+- **A carrier** is a request that also carries the state stream: its `bound` brings the snapshot, its subscription
+  brings deltas and events. Today every request is a carrier.
+- **A join** is a request that names a carrier it would share a stream with. Every hop places, admits and records it
+  as the hold it is. The provider answers it with `joined` instead of `bound` when, and only when, it can prove the
+  join would have seen exactly the carrier's stream: same object instance, same variant, same version. Any hop that
+  cannot prove it treats the join as an ordinary hold, and its `bound` makes it a carrier of its own. So the fallback
+  of every case is today's behaviour.
+- **A group** on the consumer is one carrier and the joins confirmed against it: one set of replicas, read by every
+  member's binding.
 
-Not shared:
+## 4. Consumer
 
-- **`self.get` references**, activating or not: their holds carry the dependent's activation chain (Q5), and two
-  dependents have two chains. They stay one `RemoteObject` each, as today, also on re-holds.
-- **Relayed holds:** a relay forwards each downstream hold as its own upstream hold (R1 stays), also two downstream
-  holds of one origin and caller.
-- **A reference made after the last binding ended**, even in the same turn: the hold is released at once and a new one
-  made. Keeping a hold past its last reference is consumer-side linger (D8, §31).
-- **A reference that retries after `too_large/part`** (§5): it gets a private remote object, as its own hold today.
-
-## 4. The sharing key
-
-One table per path (`WeakMap<Path, Map<string, RemoteObject>>`; one `Path` per path: the parent, or a route address's
-path). The key is an injective encoding of the tuple, built with Chord's existing escaped key join (`joinKey`, the one
-local identities use), with an explicit tag for the principal's absence:
+**Groups.** A host keeps per path (`WeakMap<Path, Map<string, Group>>`) the groups of its references by key:
 
 ```ts
-key = joinKey([
-	Type.name, String(Type.version), Type.fingerprint,
-	params.key,                                   // CheckedParams' identity key
-	address.key,                                  // the Address hostAddress computed (`session|S1`), from the placement
-	caller.principal === undefined ? "-" : `+${principalKey(caller.principal, context, host's principalKey)}`,
-	caller.incarnation,
-]);
+key = joinKey([Type.name, String(Type.version), Type.fingerprint, params.key, addressKey, callerKey, caller.incarnation])
+// addressKey: joinKey([address.kind, canonical JSON of address.params]) of the placement's WireAddress
+// callerKey: "-" without a principal, else "+" + the principal's canonical JSON (cached per principal object, WeakMap)
 ```
 
-- `joinKey` escapes its separator and backslash in every part, so params with any characters (NUL included) and any
-  custom principal key stay distinct; "no principal" and a principal whose custom key is `""` differ by the tag.
-- The caller decides on every link kind: on a route link it is what the hold's `principal`/`incarnation` fields carry
-  (`actingFor`); on a parent link no fields are sent, but a worker's `ctx.get` for two callers still keeps two holds,
-  so a provider serving per-principal variants is never asked once for two.
-- Entries are owned: an entry is removed only by the `RemoteObject` it maps to (`if (table.get(key) === this)
-  table.delete(key)`), when it ends (last release, `gone`, revocation, host close) or leaves its path (`tooLarge`
-  moves it to `unplaced`).
+`joinKey` escapes every part, so params and principals of any content cannot collide. The key only decides which
+carrier a new reference names; correctness never depends on it, because every hop checks the join itself (§3).
+`self.get` references (activation chains, Q5) never join and are never named as carriers.
 
-Cost: one key string per remote reference made (its parts exist already), one map lookup; nothing per message.
+**Making a reference.** `host.bind` places it as today (`Destination.reference`: routes, `authorize` on this host).
+Then:
 
-## 5. Behaviour
+- no group for the key, or the group has no carrier request on the current link: the reference sends a plain `hold`
+  and becomes the group's carrier (a new group if none);
+- otherwise it sends `hold` with `carrier: <the carrier's hold id>` on the same link, in order with everything else it
+  sends (so its request precedes its later calls, exactly as a hold does today).
 
-| Event | Today (one hold per reference) | Shared |
-| --- | --- | --- |
-| a second reference with the same key | new `RemoteObject`, new `hold` | joins the existing `RemoteObject`; no message. Live: its binding is live in the same turn, reading the replicas. Loading or failed (any cause): it sees that state |
-| a join while the path's route failed to resolve and has no link | the new reference's `attach` makes the route resolve again | the join tells the path a new request arrived (`path.requested()`): a route treats it as it treats an attach (resolve now unless suspended or resolving), so a new `get` still recovers the address; no second hold |
-| a reference releases, others remain | `release` sent, the hold's calls end hold-wide | no `release`. Its watches and subscriptions end; its calls reject `released`: its queued calls leave the call queue unsent first, all of them, then its sent calls are aborted (`abort`, freeing their slots at the provider); other bindings' calls go on |
-| the last reference releases | `release` sent | `release` sent, entry removed |
-| `failed`, `loading`, `bound` (rebind, another variant), `gone`, host close | told to its one binding | told to every binding: all retarget in one batch, then each is told (`moved()`), as a local object tells its holders; each binding ends exactly once |
-| a call | over its hold | over the shared hold, from its own binding (parked per binding while loading, as today) |
-| `ref.retry()` | `retry` on its hold | `retry` on the shared hold, from any binding |
-| `too_large/part` on a snapshot or state part | that reference fails broken, moves to `unplaced` | every binding of the group fails broken (they share the member); the group leaves the table. A `retry` from one binding takes **that binding alone** out into a private remote object, placed anew as its own hold (today only the retrying reference is held again); the others stay failed until they retry. A private object never rejoins or replaces a table entry; a new reference meanwhile makes a new group |
-| revocation of the principal on this host | each reference ends | the group ends, every binding with it |
-| link drop, re-hold on the next link | each `RemoteObject` re-holds | one re-hold for the group |
-| events | per binding: the events emitted at the provider after its hold's `bound` was sent there (the provider's counter, events spec §2.4) | the same rule, kept by the event fence (§6): a joining binding gets the events the provider emitted after it learned of the join |
-| presence and activity at the provider (`host.references`, `host.activity`) | one entry and one count per consumer reference | the same: the hold carries how many references share it (§6), and the provider lists and counts each |
+Until its own `joined` or `bound` arrives the reference is `loading`, as today, whatever its group shows.
 
-## 6. What keeps the surface
+**`joined { hold, carrier, cutoff }`** (an entry of a `bound` message, below): the reference becomes a member of the
+carrier's group and goes live in that message's batch, reading the group's replicas. It records:
 
-Two behaviours depend on the provider seeing each reference; sharing keeps them with two small protocol additions.
-Neither changes a message that exists.
+- **which members it has seen**: members that are failed or that the bound variant lacks at this point are "not seen"
+  for this binding: a watch opened on one rejects with its error, as on a fresh failed snapshot; a later value makes
+  it seen. (A fresh snapshot carries no history; Sol's trace: a joiner must not see a failed member's last value.)
+- **its event cutoff**: the provider's emit counter `cutoff` at the moment its `joined` was sent. It receives the
+  carrier's event entries with `n > cutoff` (events spec §2.4: entries after its binding was sent).
 
-**The event fence.** Today a binding gets the events its provider emits after the binding's `bound` was sent (events
-spec §2.4: the provider's emit counter at that moment). A reference joining a group whose hold was already sent must
-not get an event emitted before the provider knew of it, even one still in transit or being inflated when it joins
-(Astra's trace: the provider emits E, delivery is delayed, B joins, E arrives: with its own hold B never gets E). So:
+**`bound` for a join** (a hop could not confirm it): the reference leaves the group it named and becomes a carrier of
+a new group with its own replicas, exactly as a separate hold.
 
-- A join to a group with event members whose hold is sent on the current link sends `mark { origin?, hold, mark }`
-  (consumer to provider, a control message; `mark` a counter per hold). The joining binding gets no events until the
-  matching `marked`.
-- The provider, handling `mark`, takes its emit counter `c`. If its event list holds no entry for that hold with
-  `n <= c` (nothing waiting for the flush), it sends `marked { origin?, hold, mark }` at once; otherwise it sends it
-  right after the flush's `event` message that carries those entries. A dropped entry (full event window) is dropped
-  for every binding, as today.
-- Links and relays keep order per direction, and a relay forwards `marked` as it forwards `event` (at once, envelope
-  only), so every event emitted before `c` arrives before `marked` and every one after arrives after it. The consumer
-  starts the joining binding's eligibility at the first event entry after `marked`.
-- A join before the hold is sent (no link, or the group is new in this turn) needs no fence: the hold goes out once,
-  and its `bound` starts every binding's eligibility at the same provider counter, as holds sent in one flush do today.
-  A re-hold after a link drop is one hold; all bindings start at its `bound`.
-- Contracts without event members never send `mark`.
+**Per request, as today:** `failed`, `loading`, `gone`, `result`, `error` address the request's own id and change only
+its own binding. Calls go over the reference's own id. `ref.retry()` retries its own request; after `too_large/part`
+it is placed anew as a plain `hold`. Releasing sends `release` for its own id (the provider cancels its calls with
+`released`, as today), with one exception:
 
-**The reference count.** Today the provider lists one `host.references` entry per consumer reference and counts each
-in `host.activity`. A shared hold carries the count: `hold` gains `refs?` (absent: 1), and `refs { origin?, hold, n }`
-(consumer to provider, control) reports a change. The provider lists the hold's entry `n` times (each is the same
-tuple, as two references of one caller are today) and counts `n`. A join or a non-last release sends `refs` with the
-new count (coalesced per hold within a turn: several joins in one render send one); the last release sends `release`
-as today. A relay forwards `refs` and `mark` unchanged, as it forwards `retry`.
+**The carrier's reference releases while members remain:** it sends `leave { hold }` instead. The provider treats it
+as a release of the request (presence entry and activity count removed, its calls cancelled with `released`, its
+`chord.hold` ended) but keeps the carrier's subscription for the members. The consumer keeps the left carrier as the
+group's stream until the last member releases, then sends `release` for it.
 
-Both cost nothing on the common path of a page: one small control message per join or release of a shared group,
-none for a group of one.
+**Link drop.** Every request re-holds on the next link, as today: the group's first live reference sends a plain
+`hold` (the new carrier; a left carrier is not re-held), the others `hold` with `carrier` naming it.
 
-## 7. What changes in the design
+**`too_large/part` on a carrier's part:** every request of the group fails broken `too_large/part`, each released at
+the provider (a separate hold receives the same part today); the group is removed from the table.
 
-- **§7 References**, after "Members": "Remote references share (decision "References share one wire hold"). A host
-  keeps one remote object per (path, type, version, fingerprint, params, address, caller); references made with that
-  key bind to it and share its hold, snapshot, replicas and state; each keeps its own release, watches, subscriptions
-  and calls. Releasing one rejects its own calls (queued ones leave unsent, sent ones are aborted); the hold ends with
-  the last reference. `self.get` references are never shared (their holds carry an activation chain), nor a group a
-  `too_large/part` pushed out."
-- **§7 event members and the events spec §2.4:** unchanged rule; add "a binding joining a shared remote object starts
-  at its event fence (`marked`)".
-- **§3:** "Every reference is a request" stays for the consumer (each reference is one holder of its object, the
-  shared remote object); add "a remote object shared by references (§7) is one hold". "Failure and re-resolve": add
-  "a reference joining a remote object on a route path that failed to resolve counts as a new request (it resolves
-  again unless suspended)".
-- **§19 Presence:** unchanged rule; add "a hold shared by n references (§7) is listed n times (its `refs` count)".
-- **§22 Wire:** the control messages `mark`/`marked` and `refs`, and `hold.refs?` (§6); `PROTOCOL_VERSION` stays 1
-  until p3 ships (§22's rule).
-- **§21** "What a user sees during a reload", the web or terminal plugin row: "a remounted component's new remote
-  reference is live at once when it joins a group another component still holds, as a local reference to a live
-  object is; otherwise it loads as before. Nothing is kept across the last release." This is the one visible timing
-  difference (§2).
-- **decisions.md:** "A reloaded UI part shows its loading state" refined: it shows its loading state unless its new
-  reference joins a held group; its rejected borrowed references and leases stay rejected. **§31:** sharing one wire
-  hold among references held at the same time is allowed; keeping one past the last release, leases and borrowed
-  references are not.
-- **§29 Telemetry:** the shared hold is shared work: its `chord.hold` span is a root on the host's adapter, linked to
-  its first trigger (the first reference's context), and every getter waiting on it links to it while it is open
-  (decision "Shared work"); calls keep their own `chord.call` spans. The span description "a remote reference's hold"
-  becomes "a remote object's hold (shared by its references)".
-- **§30 Cost:** per binding: its watches, subscriptions, calls and one key lookup; per shared remote object: its
-  replicas and decoders; per wire hold: the hold, snapshot and per-member encoder at the provider. §22's per-hold
-  encoder and the two-tab rule stay.
-- **`src/remote/README.md`:** `RemoteObject` "one per remote reference" becomes "one per sharing key (§7)"; the rule
-  "two references from one host are two holds" becomes "references from one host with the same key are one hold; two
-  downstream holds a relay forwards are two holds"; `ConsumerSide`: cancelling one binding's calls, `mark` and `refs` (below); `ProviderSide`: the fence and the count.
-- **decisions.md** new entry "References share one wire hold (owner, 2026-11-09 and 2026-11-12)": §2 with its
-  exceptions, the event fence and the reference count.
+**Table hygiene.** A group is removed (by identity: `if (table.get(key) === group)`) when its last request ends, when
+it leaves its path, or when it fails broken; a later reference makes a new group.
 
-## 8. Build
+## 5. Provider
 
-- **`src/host/host.ts` `bind`:** for a `path` placement without a dependent, compute the key and look it up in the
-  path's table: join the `RemoteObject` found (and, if it is failed waiting on an unlinked path, call
-  `path.requested()`), else create it, attach it to the path and store it. With a dependent, as today.
-- **`src/remote/path.ts` and `src/host/route.ts`:** `Path.requested()` tells its owner a request arrived without a new
-  holder; a route handles it like `attached` (resolve if not linked, not suspended, not resolving).
-- **`src/remote/remote-object.ts`:** a set of bindings; `hold` adds (a live object retargets and tells the new binding
-  at once), `unhold` removes: not the last, cancels that binding's calls on the current hold (below); the last,
-  `release` as today. `#move`, `lost`, `revoke`, `tooLarge`, `#end` tell every binding (retarget all in one batch,
-  then `moved()` each). `#end` and `tooLarge` remove the table entry by identity (a callback the host gives).
-  `tooLarge` marks the group private: `#place` after a retry attaches it without registering it.
-- **`src/remote/consumer.ts`:** calls remember the binding that made them (an owner token passed with `call`);
-  `cancelCalls(hold, owner, error)` first takes every queued call of that owner out of the call window's queue
-  (rejected, unsent), then aborts its sent calls (each `abort` frees its slot), so no queued call of the releasing
-  binding leaves while others are freed. Relayed calls are unaffected (relays share nothing).
-- **Telemetry:** the shared hold's span as in §5 (§29); a joining getter links to the open span; nothing when bound.
-- **`src/remote/consumer.ts` and `provider.ts`:** `mark`/`marked` (consumer: per hold a mark counter and, per joining
-  binding, eligibility from the first entry after its `marked`; provider: the counter check against its pending event
-  list, `marked` after the flush that carries older entries); `refs` (consumer: coalesced per hold per turn; provider:
-  the hold's count, listed and counted `n` times in `host.references` and `host.activity`). Relays forward both.
-- **`src/link/message.ts` and both codecs:** the three control messages and `hold.refs?`.
-- No change to the window or to existing message kinds.
+A `hold` with `carrier` is a hold: placed, admitted, refused, retried, listed, counted and called exactly as one
+(`ProviderSide`, `Hold`). Only its binding differs:
 
-## 9. Tests (one file per source file, per the Chord code style)
+- When the join's object goes live for it (the moment a `bound` would be sent), the provider answers `joined` instead
+  of `bound` if the named carrier is a hold of the same `ProviderSide` (link and origin), bound or binding in this
+  same message to the same object instance, variant and version, and still subscribed. Otherwise it sends `bound`, as
+  for any hold.
+- `joined` is an entry of the `bound` message (`bound.joined?: [{ hold, carrier, cutoff }]`), so it takes the window
+  exactly as the `bound` it replaces: the reference binds at the same moment a separate hold would. Before a `bound`
+  message with `joined` entries, the provider sends the carriers' waiting state (as before a call's answer, §3 "a
+  call's answer follows its state"), so the group's replicas show at least what a snapshot taken now would show.
+- `cutoff` is the host's emit counter when the message is sent, the value a separate hold's binding records (events
+  spec §2.4).
+- A joined hold has no subscription and no encoder: its state is the carrier's. Its `failed`, `loading` and `gone`
+  notices are sent to it as to any hold. A rebind (a restart, another variant) sends the carrier `bound` and each
+  member `joined` again, in the same message, under the same rule.
+- Event entries carry the emitting host's counter value: `event.events[i].n` (present on links whose peer announced
+  `joins`). An entry for a carrier is sent when some request of its group is eligible (`n` above the lowest cutoff
+  among the carrier and its joined holds); the consumer filters per binding. (Re-exposed events keep the counter of
+  the host that sent them, as `at`.)
+- `leave { hold }`: the request ends (presence, activity, calls with `released`, telemetry), its subscription stays
+  while joined holds name it; once none do and the consumer releases it, it goes as any hold.
+- A carrier that ends for a reason of its own (released, revoked, gone) while joined holds remain cannot happen
+  without `leave` (the consumer leaves, never releases, a carrier with members); revocation and `gone` end the object
+  or the principal's requests, joins included. If it happens anyway (a misbehaving peer), each remaining join gets a
+  fresh `bound` and becomes a carrier.
 
-Sharing and keys:
-- Two `host.hold`s of one remote object: one `hold`, one snapshot; both live; a commit at the provider reaches both in
-  one batch.
-- Separate holds for a different principal, incarnation, version, fingerprint, params, address or path.
-- Key collisions: params with NUL, separators and backslashes against principal keys built to collide; an absent
-  principal against one whose custom key is `""`: separate holds.
-- Two contract tokens with one name, version and fingerprint whose `hostAddress` places the same params at different
-  addresses over the parent path: two holds, each reaching its own provider (a misplaced one refused there).
-- `self.get` while activating, after, and on a re-hold: never shared.
-- Two downstream holds of one origin and caller through a relay: two upstream holds.
+## 6. Relays
 
-Joining and releasing:
-- A join while loading, failed transient (with `retryAt`), failed broken, failed waiting, and live (live in the same
-  turn, values readable at once).
-- Releasing one: no `release`; the other keeps receiving. Releasing the last: one `release`. A reference after it: a
-  new `hold` (no linger), also in the same turn.
-- A getter timing out or aborted (before and after the first binding) releases only its own binding.
-- Non-last release with a finite call window and interleaved calls (A1 sent, A2 and B1 queued): the wire carries
-  `abort(A1)`, never `call(A2)`; B1 is sent; the provider's handler for A1 is cancelled and its slot reused. Direct and
-  relayed providers, asserting exact wire messages.
-- Calls through two references both answered; parked calls per reference sent in order when live.
+A relay places every hold it receives by its address, as today (`host.place`, routes, `authorize`), joins included:
 
-State changes:
-- Rebind to another variant: every binding moves in one batch; a member the new variant lacks fails for all.
-- Provider type removed and served again: both references wait and come back, no new consumer hold.
-- Reload at the provider (§21): both follow the restart; a version no longer accepted unbinds both.
-- `gone` and host close: every binding ends exactly once (watches, subscriptions, calls); the entry is gone; a later
-  reference makes a new hold.
-- Revocation: both end. Link drop: one re-hold, both live again.
-- Route recovery: A on a route whose resolve failed stays held; a second `get` with the same key makes the route
-  resolve again; both go live (and none while suspended).
-- `too_large/part`: all fail broken; a new reference C makes a new group; `retry` from A1 takes A1 alone into a
-  private hold (A2 stays failed until it retries); ending the old group, A1's and C's in any order leaves the table
-  right (C's entry untouched); a later reference joins C's group if C lives.
+- A join placed on the same upstream link as its carrier's relayed hold (same origin) is forwarded with `carrier`
+  unchanged (relayed holds keep their ids, §3 "Relays"). Placed elsewhere, or with a carrier the relay did not relay,
+  or upstream that did not announce `joins`, it is forwarded without `carrier`: the provider binds it fully and the
+  consumer makes it a carrier.
+- A join refused at the relay (`authorize`, invalid params, the route failed) gets its own `failed`, as a hold does;
+  route recovery runs for it as for any new hold (it is attached to the route's path).
+- `leave` is forwarded like `release` but the relayed hold stays for the stream; on an upstream re-hold a left carrier
+  is not re-held, and joins naming it go without `carrier`.
+- `bound` with `joined` entries and `event` entries with `n` are forwarded unchanged (envelope only).
 
-Events:
-- Two references subscribed to one event member each get every event once; stopping one's subscription leaves the
-  other's.
-- The fence: A live and subscribed; the provider emits E1, E1's delivery is delayed (a slow link, a pending inflate);
-  B joins; E1 arrives: A gets it, B does not; E2 emitted after the provider handled `mark` reaches both. Also: an entry
-  waiting in the provider's event list at `mark` (sent after it, `marked` after that message); a join before the hold
-  was sent (no `mark`); a contract without event members (no `mark`); through a relay.
+## 7. Wire
 
-Presence, telemetry, memory, cost:
-- Presence and activity at the provider: two references sharing one hold are two entries and two counts, as two
-  holds are today; a non-last release takes one away; several joins in one turn send one `refs`.
-- Telemetry: the shared `chord.hold` root linked to the first trigger; a joining getter's link while it is open;
-  an untraced first getter followed by a traced joiner; the NOOP path.
-- GC (`WeakRef` probes, as for the other caches): no `RemoteObject` in the table after the last release while the path
-  lives; a released binding is not retained by a live sibling group; a released reference kept by the app does not
-  retain the group; a dropped route path takes its table.
-- Cost guard: two references, one hold: `chord.link.encodes` counts one encode per commit.
-- An example, `test/examples/NN-shared-holds.ts`: three components holding one remote object over a link, the hold
-  count printed.
+| Change | Where |
+| --- | --- |
+| `hello.joins?: true` | both sides: this side handles `carrier`, `joined`, `n` and `leave`. A side sends `carrier` and `leave` only to a peer that announced it, and `joined` and `n` only to a consumer that announced it; to any other peer it sends what it sends today |
+| `hold.carrier?: id` | to provider: the hold this request would share a stream with (an id of the same origin on this link) |
+| `bound.joined?: [{ hold, carrier, cutoff }]` | to consumer, in the same message and batch as `bound.holds` |
+| `event.events[i].n?: int` | to consumer: the emitting host's emit counter value of the entry |
+| `leave { origin?, hold }` | to provider: the request ends, its stream stays for its joins |
 
-## 10. Not decided here: first bindings and the window
+- Codecs: `hold`'s optional-field flags gain `carrier`; `bound` gains a trailing count and entries (absent: 0); event
+  entries gain `n` behind a flag in the message header; `leave` takes an unused kind byte (binary) and tag (text).
+  Each exact layout is fixed in `link/binary.ts` and `link/text.ts` with round-trip tests, existing layouts unchanged.
+- `MESSAGE` gains the fields and kind; checks by layer as §22. Q1: a `carrier` naming an id the provider does not know
+  as a hold of that side is a plain hold (bound fully); a `joined` naming an unknown hold or carrier is ignored; a
+  `leave` for an unknown id is ignored, for a hold with no joins it is a `release`.
+- Resources: a join is a hold (one presence entry, one activity count, the same checks), so it adds no amplification.
+- `PROTOCOL_VERSION` stays 1: peers that did not announce `joins` see today's messages only.
 
-The provider's window (K = 2 `bound`/`state` messages per origin) sends every binding waiting at a freed slot in one
-`bound` message. Holds that become ready after a slot was taken wait for the next `ack`. Whether first bindings
-should be exempt is a separate question, decided after a trace with p2's telemetry, once sharing is built, shows the
-message and ack boundaries of a session switch.
+## 8. Why each observable stays the same
+
+| Observable | Why it is unchanged |
+| --- | --- |
+| a reference's states and their order | its own request gets every notice, as a hold does; it goes live at its `joined`, which takes the window as its `bound` would |
+| its first values | its `joined` follows the carrier's waiting state, so the replicas show at least the provider's state when `joined` was sent, as a snapshot taken then; members failed or missing then are "not seen" for it |
+| later values and their batches | one `state` message per commit per link and origin already carries every touched hold; the group's replicas apply the carrier's entry in that batch, as each hold's would |
+| `host.get` readiness | live at `joined`, the moment a separate `bound` would have been sent |
+| calls, their order, `ctx.principal`, errors, cancellation reason | over its own request id, sent in order after its `hold`; release cancels them at the provider with `released` |
+| events and eligibility | its cutoff is the counter value its own binding would have had; `n` on each entry decides per binding, also within one flush |
+| retry, refusals, `too_large` retry | per request; a refused or retried join is placed and checked on its own |
+| route admission and recovery, at this host and at relays | every join is placed and authorized at every hop as a hold |
+| reload (a version no longer accepted) | each join is checked against the served contract as a hold; one refused gets `failed` |
+| `host.references` entries, order, timing; `host.activity` | one provider hold per reference, made when it arrives and removed at its own `release` or `leave` |
+| revocation, `gone` | per request and per object, as today |
+| peers without the feature | they never see a new field or message |
+
+## 9. What changes in the design
+
+- **§7 References:** add after "Members": "References share their state stream (decision "References share one
+  stream"): a reference to a remote object another reference of this host already holds (same type, version,
+  fingerprint, params, address, principal and incarnation) is its own request naming that hold as its carrier; the
+  provider confirms it with `joined`, and it reads the carrier's replicas. A request the provider cannot confirm binds
+  fully. `self.get` references never share."
+- **§3:** holds may name a carrier (`hold.carrier`), relays forward it when they place the join on the carrier's link;
+  `leave`; `hello.joins`. "Every reference is a request" stays as it is.
+- **§22:** the message table rows and codec notes of §7.
+- **Events spec §2.4:** entries carry `n` on links that announced `joins`; a joined binding's counter is its `cutoff`.
+- **§30 Cost:** a snapshot, encoder and decoder per carrier, not per reference; a request per reference as before.
+- **§2 accepted differences** in §22 (part limits apply to received parts) and §7 (shared values are identical).
+- **`src/remote/README.md`:** groups, carriers, joins, `leave`.
+- **decisions.md:** "References share one stream (owner, 2026-11-09 and 2026-11-12)": the model, the accepted
+  differences, and that drafts 1–3's shared requests were rejected because a shared request cannot keep each
+  reference's admission, presence, principal, cancellation and event boundary.
+
+## 10. Build
+
+- `link/message.ts`, `link/binary.ts`, `link/text.ts`: the fields and kind of §7.
+- `remote/host-link.ts`: `hello.joins`; dispatch of `leave` and of `bound.joined`.
+- `remote/consumer.ts`: holds with `carrier`; `bound.joined` (batch with the message's `bound` entries, then the ack);
+  `bound` for a join (split); event entries filtered per binding by `n`.
+- `remote/remote-object.ts`: split into the request (one per reference: id, state, calls, path attachment, re-hold)
+  and the group (replicas, event nodes, carrier); `leave`; split on `bound`; per-binding seen members.
+- `host/host.ts` `bind`: the group table and key; `host/reference.ts` and `reference-source.ts`: a binding's seen
+  members and its event cutoff.
+- `remote/provider.ts` and `remote/hold.ts`: `joined` instead of `bound` under §5's rule; the carriers' waiting state
+  before such a message; `n` on event entries; `leave`; rebind re-joins.
+- `remote/relay.ts`: carrier forwarding or stripping; `leave`; re-holds without left carriers.
+- `host/events.ts`: entries keep their counter value for the wire.
+
+## 11. Tests (one file per source file, per the Chord code style)
+
+Each of Astra's and Sol's traces, asserting today's outcome:
+
+- Custom principal keys equal, principal data different: two carriers (key), and with equal keys forced, calls report
+  each reference's own `ctx.principal`.
+- Relay `authorize` turns false: a new reference is refused, the existing one stays; turns true again: the new one
+  binds while the old one stays failed.
+- Readiness: a commit completed at the provider before `get`, delivery held: the joiner's first value includes it.
+- A reference made and called in one turn: the provider's method sees both references in `host.references`.
+- Presence order X1, Y, X2: releasing X1 leaves [Y, X2]; releasing X2 leaves [X1, Y].
+- Non-last release with a call running: the provider's handler is aborted with `released`; with a finite call window,
+  queued calls of the released reference never reach the wire; the sibling's calls go on.
+- Two references to an unserved type: retrying one moves only it (`loading` → `failed`); the other has no transition.
+- Event entries around a join within one flush (E1 before, E2 after the `joined` send): the joiner gets E2, not E1;
+  two joins in one flush; a full state window delaying a join's `joined` while the carrier receives events: the joiner
+  gets none of them, then those after its `joined`.
+- A joiner on a live object with a failed member: its watch rejects with the error (no last value), as with a fresh
+  snapshot; a member the current variant lacks: likewise.
+- Reload dropping the version while the old attempt drains: a new join is refused `contract_mismatch` while the old
+  reference stays live.
+- Route recovery on this host and through a relay: a new join re-resolves.
+- Relay reconnect: joins re-hold with the new carrier; a left carrier is not re-held; its joins bind fully.
+- Old peers: a consumer or relay whose peer did not announce `joins` sends plain holds; a provider without the
+  feature never receives `carrier`; mixed builds over two relays.
+- `leave`: the carrier's reference released while members remain: its presence entry goes, its calls are cancelled
+  with `released`, members keep receiving; the last member's release releases the carrier.
+- Fallback: a join whose carrier the provider cannot confirm (another instance, variant, version, unknown id) gets a
+  `bound` and its own replicas.
+- `too_large/part` on a carrier part: every reference of the group fails broken; a new reference makes a new group.
+- The accepted differences, asserted as documented: a value grown past the limit by deltas does not fail a joiner;
+  `a.value === b.value`.
+- Codecs: round trips of every new field and kind, both codecs, with origins; existing layouts byte-identical.
+- GC (`WeakRef` probes): no group in the table after its last reference ends while the path lives; a released binding
+  retained by no group; a dropped route path takes its table; per-binding seen sets and cutoffs gone with the binding.
+- Cost guard: two references, one carrier: one snapshot and one encode per commit (`chord.link.encodes`).
+- An example, `test/examples/NN-shared-streams.ts`: three components holding one remote object over a link; snapshots
+  and encodes printed.
+
+## 12. Not decided here: first bindings and the window
+
+Each request still waits for the provider's window (K = 2 `bound`/`state` messages per origin) as today; every binding
+waiting at a freed slot leaves in one `bound` message. Whether first bindings should be exempt (the main cost of p2's
+session switch) is a separate decision, to be traced with p2's telemetry once this is built.
