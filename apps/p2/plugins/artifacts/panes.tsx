@@ -11,10 +11,11 @@ import {
 	useReadable,
 	useStatus,
 } from "@p2/app/v1/web";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { excerpt, frameHandles, noteSelection, usePaneSelection } from "../views/pane-kit.tsx";
 import { VIEW_CHANNEL } from "./bridge.ts";
 import { ArtifactPage, type EvalResult, MAX_ARTIFACT_STATE } from "./contract.ts";
+import { InlineSizeContext } from "./inline-size.ts";
 import { useArtifacts } from "./use-artifacts.ts";
 
 /** How long a frame's state rests before it is saved. */
@@ -33,6 +34,12 @@ export function MdPane({ session, item, inline, select }: PaneProps) {
 	const id = item ?? "";
 	const text = useArtifactText(session, id);
 	const body = useRef<HTMLDivElement>(null);
+	const inlineSize = useContext(InlineSizeContext);
+	// Inline, the drawn document's height is the card's real height (an error's too).
+	useLayoutEffect(() => {
+		const element = body.current;
+		if (inlineSize && element && (text.value !== undefined || text.error)) inlineSize.report(element.offsetHeight);
+	}, [inlineSize, text.value, text.error]);
 	usePaneSelection(
 		body,
 		(quote) => ({ summary: `${excerpt(quote)} in artifact ${id}`, data: { text: quote, artifact: id } }),
@@ -86,7 +93,9 @@ export function HtmlPane({ session, item, inline, view, editable, select, annota
 	const writer = liveIn(page, "editor");
 	const live = writer ?? liveIn(page, "viewer");
 	const { fail } = useComposerState();
-	const [height, setHeight] = useState<number>();
+	const inlineSize = useContext(InlineSizeContext);
+	// Inline, the frame starts at the height it last had (the page reports its own once it loads).
+	const [height, setHeight] = useState<number | undefined>(inlineSize?.initial);
 	/** The JSON the frame last saved: coming back from the server, it is not sent to the frame again. */
 	const own = useRef<string | undefined>(undefined);
 	const ready = useRef(false);
@@ -212,8 +221,10 @@ export function HtmlPane({ session, item, inline, view, editable, select, annota
 			if (message.channel === "p2-artifact-diagnostic") {
 				const level = typeof message.level === "string" ? message.level : "";
 				const text = typeof message.message === "string" ? message.message : "";
-				if (level === "size" && typeof message.height === "number") setHeight(message.height);
-				else if (level === "error" || level === "csp" || level === "webgl") note("errors", { level, text });
+				if (level === "size" && typeof message.height === "number") {
+					setHeight(message.height);
+					inlineSize?.report(Math.min(message.height, Math.round(window.innerHeight * INLINE_MAX)));
+				} else if (level === "error" || level === "csp" || level === "webgl") note("errors", { level, text });
 				else if (level === "warn") note("logs", { level, text });
 				return;
 			}
@@ -288,7 +299,7 @@ export function HtmlPane({ session, item, inline, view, editable, select, annota
 			reported.current.timer = undefined;
 			flush();
 		};
-	}, [editable, inline, writer, live, select, sendState, post, quotesJson, fail, paneKey]);
+	}, [editable, inline, writer, live, select, sendState, post, quotesJson, fail, paneKey, inlineSize]);
 
 	// A new version is a new page: it says hello again.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: runs for each version of the page.

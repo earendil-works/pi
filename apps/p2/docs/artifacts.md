@@ -19,9 +19,13 @@ side panel. Plugin: `plugins/artifacts`. Decision: "Artifacts and views" in `app
   message as an `<artifact-errors>` block (the views plugin's `MessageContexts`), once.
 - **In the transcript** (`activity.tsx`): `artifact_show`, called from a script, places the artifact's pane in place
   after the script (`hasResult` "inline"; nested code-mode calls place results as top-level calls do,
-  `src/web/activity/model.ts`). The pane mounts only while the card is on screen (an `IntersectionObserver`, 200px
-  margin), keeping its last height while it is not, so a long transcript runs only the pages the person sees. A card
-  shows the artifact's newest version; a deleted artifact says so.
+  `src/web/activity/model.ts`). The pane mounts only near the screen, with hysteresis so a card at the edge never
+  flips: it mounts within one viewport of the transcript's scroller and unmounts only past two (two
+  `IntersectionObserver`s rooted at the scroller). The card keeps the height its pane last had (`inline-size.ts`,
+  remembered per artifact for the page's host) while the pane is away and while a remounted pane settles: an html
+  frame starts at that height, and the reserve holds until the pane reports its real one (the page's size message, a
+  document drawn) or 1.5 s pass, so scrolling back never shrinks the card under the reader. A card shows the
+  artifact's newest version; a deleted artifact says so.
 - **Beside the chat**: view kinds `html` and `md` (`panes.tsx`), with `item` the artifact's ID.
 - **The side panel** (`web.tsx`): the top bar's button counts every artifact kind's items (`ArtifactKinds`, this
   plugin's html and md and any plugin's), the side panel lists them, newest first. A row opens the item as a view of
@@ -78,7 +82,7 @@ There is no migration: artifacts written before 2026-11-12 stay in the session's
 - `test/p2/artifacts.test.ts`: the tools; the frame route; a page's state whole for page and agent; code run in an open
   page; errors with the next message, once; a read-only guest reads; export and delete carry the data.
 - `test/p2/ui-inline-artifacts.test.ts`: Chromium. Markdown and html in place, fitted and capped at 70vh, for a guest
-  too; a deleted artifact.
+  too; a page scrolled out and back in keeps its height and the reader's place; a deleted artifact.
 - `test/p2/ui-views.test.ts`: the glyph-editor-style page's state and selection round trip.
 - `test/p2/ui-viewers-search.test.ts`, `ui-command-menu-sharing.test.ts`: the side panel, the commands, a reader
   opening one in the side panel.

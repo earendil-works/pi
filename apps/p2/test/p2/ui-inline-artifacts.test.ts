@@ -117,6 +117,64 @@ describe("inline artifacts in Chromium", { skip: !browserTests }, () => {
 		await browser.wait(`Math.abs(${frame("tall")}?.getBoundingClientRect().height-${Math.round(844 * 0.7)})<=1`);
 	});
 
+	it("keeps an inline page's height when it is scrolled out and back in, and the reader's place", async () => {
+		const id = await publish("Inline scrolled", [
+			{
+				id: "tall-page",
+				title: "Tall page",
+				kind: "html",
+				content:
+					"<!doctype html><html><body style='margin:0'><div style='height:500px;background:#09c'>tall page</div></body></html>",
+			},
+		]);
+		// Enough transcript below it to scroll it far out of view (beyond the cards' two-viewport margin).
+		const chat = await holdIn(fixture.browser(), Chat, { session: id, conversation: 1 }, "participant");
+		for (let index = 0; index < 8; index++) {
+			await chat.send(
+				{ text: `filler ${index} ${"words to fill the screen ".repeat(120)}`, requestId: `filler-${index}` },
+				BACKGROUND_CONTEXT,
+			);
+			await until(chat.view, (view) => JSON.stringify(view?.entries ?? []).includes(`Echo: filler ${index}`));
+		}
+		chat.release();
+		await browser.metrics(390, 844);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${id}`);
+		const scroller = "document.querySelector('.scroller.transcript')";
+		await browser.wait(`document.querySelector('.rows')?.textContent.includes('Echo: filler 7')`);
+		// It opens at the bottom: up to the card (the transcript draws the rows near the reader).
+		await browser.evaluate(`(() => { const s = ${scroller}; s.scrollTop = 0; })()`);
+		await browser.wait(`${card("tall-page")}`);
+		await browser.evaluate(`${card("tall-page")}.scrollIntoView({ block: "start" })`);
+		await browser.wait(`${frame("tall-page")}?.getBoundingClientRect().height === 500`);
+		// Where the card sits in the transcript's content, and 100px above it: where the test puts the reader.
+		const place = await browser.evaluate<number>(
+			`(() => { const s = ${scroller}; return Math.round(${card("tall-page")}.getBoundingClientRect().top - s.getBoundingClientRect().top + s.scrollTop - 100); })()`,
+		);
+		for (let round = 0; round < 3; round++) {
+			await browser.evaluate(`(() => { const s = ${scroller}; s.scrollTop = s.scrollHeight; })()`);
+			// Far out of view: the page goes (its card may go with its row).
+			await browser.wait(`!${frame("tall-page")}`);
+			// Back to it, then watch every frame for a while: the card never shrinks, the reader's place never moves.
+			const seen = await browser.evaluate<{ heights: number[]; tops: number[] }>(`(async () => {
+				const s = ${scroller};
+				s.scrollTop = ${place};
+				const heights = [], tops = [];
+				const until = performance.now() + 2500;
+				while (performance.now() < until) {
+					await new Promise((resolve) => requestAnimationFrame(resolve));
+					const box = ${card("tall-page")};
+					if (box) heights.push(Math.round(box.getBoundingClientRect().height));
+					tops.push(Math.round(s.scrollTop));
+				}
+				return { heights, tops };
+			})()`);
+			assert.ok(seen.heights.length > 0, `round ${round}: the card is drawn again`);
+			assert.ok(Math.min(...seen.heights) >= 499, `round ${round}: heights ${[...new Set(seen.heights)]}`);
+			assert.deepEqual([...new Set(seen.tops)], [place], `round ${round}: the reader's place`);
+			await browser.wait(`${frame("tall-page")}?.getBoundingClientRect().height === 500`);
+		}
+	});
+
 	it("says when the artifact was deleted", async () => {
 		const id = await publish(
 			"Inline gone",

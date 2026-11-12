@@ -9,10 +9,12 @@ import {
 	stringOf,
 	type ToolActivity,
 	type ToolView,
+	useHost,
 	useRegistry,
 	ViewKinds,
 } from "@p2/app/v1/web";
-import { useContext, useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { type InlineSize, InlineSizeContext, inlineHeights } from "./inline-size.ts";
 import { useArtifacts } from "./use-artifacts.ts";
 
 /** The artifact a call names: its ID from its arguments or its result. */
@@ -47,44 +49,112 @@ function ShownArtifact({ tool }: { tool: ToolView; inline: boolean }) {
 	return <InlineArtifact session={session} id={id} />;
 }
 
-/** The pane of artifact `id` in the transcript, mounted only while visible (its height kept while it is not). */
+/**
+ * The pane of artifact `id` in the transcript, mounted only near the screen. Hysteresis keeps a card at the edge from
+ * flipping: it mounts within a viewport of the screen and unmounts only past two. The card keeps the height its pane
+ * last had (`inlineHeights`) while the pane is away and while a remounted pane settles, until the pane reports its real
+ * height or `SETTLE_MS` pass, so scrolling back never collapses it under the reader.
+ */
 export function InlineArtifact({ session, id }: { session: string; id: string }) {
 	const box = useRef<HTMLDivElement>(null);
-	const [visible, setVisible] = useState(false);
-	const [height, setHeight] = useState<number>();
+	const host = useHost();
+	const heights = inlineHeights(host);
+	const key = `${session}/${id}`;
+	const [mounted, setMounted] = useState(false);
+	const [settled, setSettled] = useState(false);
+	const isMounted = useRef(false);
 	const { list } = useArtifacts(session);
 	const kinds = useRegistry(ViewKinds);
 	useEffect(() => {
 		const element = box.current;
 		if (!element) return;
-		const observer = new IntersectionObserver(
-			([entry]) => {
-				if (!entry) return;
-				// Leaving the screen keeps the pane's last height, so the transcript does not jump.
-				if (!entry.isIntersecting) setHeight(element.getBoundingClientRect().height || undefined);
-				setVisible(entry.isIntersecting);
+		const root = scrollRoot(element);
+		let near = false;
+		let far = false;
+		const decide = () => {
+			const next = near || (isMounted.current && far);
+			if (next === isMounted.current) return;
+			// Unmounting: what the card shows now is what it reserves until the pane is back.
+			if (!next) {
+				const height = element.getBoundingClientRect().height;
+				if (height > 0) heights.set(key, height);
+			}
+			isMounted.current = next;
+			if (next) setSettled(false);
+			setMounted(next);
+		};
+		const watch = (margin: string, set: (inside: boolean) => void) =>
+			new IntersectionObserver(
+				(entries) => {
+					const entry = entries.at(-1);
+					if (!entry) return;
+					set(entry.isIntersecting);
+					decide();
+				},
+				{ root, rootMargin: `${margin} 0px` },
+			);
+		const mount = watch("100%", (inside) => {
+			near = inside;
+		});
+		const keep = watch("200%", (inside) => {
+			far = inside;
+		});
+		mount.observe(element);
+		keep.observe(element);
+		return () => {
+			mount.disconnect();
+			keep.disconnect();
+		};
+	}, [heights, key]);
+	// A pane that never reports (an empty page, a deleted artifact) gives the reserve up after a while.
+	useEffect(() => {
+		if (!mounted || settled) return;
+		const timer = setTimeout(() => setSettled(true), SETTLE_MS);
+		return () => clearTimeout(timer);
+	}, [mounted, settled]);
+	// A new reserve each time the pane mounts again: `mounted` marks a new mount.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: see above.
+	const size = useMemo<InlineSize>(
+		() => ({
+			initial: heights.get(key),
+			report: (height) => {
+				if (height > 0) heights.set(key, height);
+				setSettled(true);
 			},
-			{ rootMargin: "200px 0px" },
-		);
-		observer.observe(element);
-		return () => observer.disconnect();
-	}, []);
+		}),
+		[heights, key, mounted],
+	);
 	const summary = list?.find((each) => each.id === id);
 	const Pane = summary ? kinds.get(summary.kind)?.Pane : undefined;
+	const reserved = mounted && settled ? undefined : heights.get(key);
 	return (
 		<div
 			ref={box}
 			className="artifact-inline"
 			data-artifact={id}
-			style={visible || height === undefined ? undefined : { minHeight: height }}
+			style={reserved === undefined ? undefined : { minHeight: reserved }}
 		>
 			{list && !summary ? (
 				<p className="empty-note">No artifact "{id}" (it was deleted).</p>
-			) : visible && Pane ? (
-				<Pane session={session} item={id} inline editable={false} select={() => {}} annotations={[]} />
+			) : mounted && Pane ? (
+				<InlineSizeContext.Provider value={size}>
+					<Pane session={session} item={id} inline editable={false} select={() => {}} annotations={[]} />
+				</InlineSizeContext.Provider>
 			) : null}
 		</div>
 	);
+}
+
+/** How long a remounted pane may take to report its height before its card gives up the reserved one. */
+const SETTLE_MS = 1500;
+
+/** The nearest scrolling ancestor of `element` (the transcript's scroller), or the viewport. */
+function scrollRoot(element: HTMLElement): HTMLElement | null {
+	for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+		const overflow = getComputedStyle(parent).overflowY;
+		if (overflow === "auto" || overflow === "scroll" || overflow === "overlay") return parent;
+	}
+	return null;
 }
 
 /** The artifact tools' activities, by tool name. */
