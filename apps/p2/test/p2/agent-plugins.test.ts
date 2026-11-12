@@ -5,7 +5,7 @@
 // user root, whose skills a local conversation lists; tool selections and guests' turns. Each case has its own server
 // and data directory (the plugin root is the data directory's).
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
@@ -18,8 +18,9 @@ import { Sharing } from "../../plugins/sharing/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
 import { Views } from "../../plugins/views/contract.ts";
 import type { Host, RefIn } from "../../src/runtime/chord.ts";
+import { ServerNatives } from "../../src/runtime/server.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { APP, type Fixture, holdIn, http, poll, startFixture, until } from "./helpers.ts";
+import { APP, type Fixture, failureOf, holdIn, http, poll, startFixture, until } from "./helpers.ts";
 
 /** The skill's example plugin. */
 const EXAMPLE = join(APP, "plugins/agent-plugins/skills/writing-p2-plugins/example/counter");
@@ -213,6 +214,40 @@ describe("the agent's plugins", () => {
 		assert.match(textOf(await call(chat, "reload_plugins", {})), /^counter: applied$/m);
 		await board.add({ by: 1 }, BACKGROUND_CONTEXT);
 		await until(board.count, (value) => value === 11);
+	});
+
+	it("reports a deleted plugin as removed, named or not, and its objects end", async () => {
+		const { fixture, owner, session, chat, root } = await start();
+		assert.match(await applyExample(chat, root), /^counter: applied$/m);
+		const board = await holdIn(owner, Counter, { session }, "player");
+		rmSync(join(root, "counter"), { recursive: true });
+		const named = textOf(await call(chat, "reload_plugins", { plugins: ["counter"] }));
+		assert.match(named, /^counter: removed$/m, named);
+		assert.doesNotMatch(named, /counter: applied/);
+		await failureOf(board);
+		// Copied and removed again, unnamed: every plugin of the root, and the gone one.
+		assert.match(await applyExample(chat, root), /^counter: applied$/m);
+		rmSync(join(root, "counter"), { recursive: true });
+		const unnamed = textOf(await call(chat, "reload_plugins", {}));
+		assert.match(unnamed, /^counter: removed$/m, unnamed);
+		assert.doesNotMatch(unnamed, /counter: applied/);
+		// Deleted and reloaded in one tick, before the watcher can report it (a phone's file events lag): removed all the
+		// same, named or not.
+		const natives = await fixture.server.host.root(
+			async (ctx) => (await fixture.server.host.registry(ServerNatives, ctx)).value,
+			BACKGROUND_CONTEXT,
+		);
+		assert.ok(natives);
+		for (const requested of [["counter"], undefined]) {
+			assert.match(await applyExample(chat, root), /^counter: applied$/m);
+			rmSync(join(root, "counter"), { recursive: true });
+			const result = await natives.plugins.reload(requested);
+			assert.deepEqual(
+				result.plugins.filter((each) => each.plugin === "counter"),
+				[{ plugin: "counter", outcome: "removed" }],
+				JSON.stringify(result),
+			);
+		}
 	});
 
 	it("reports build errors with file and line, and refusals with the reason; a failed build applies nothing", async () => {

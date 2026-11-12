@@ -1,6 +1,6 @@
 // Skill frontmatter/prompt conventions adapted from earendil-works/pi (MIT).
 // See third-party/pi.LICENSE. This host uses only global and cwd-local skill roots.
-import { readdir } from "node:fs/promises";
+import { readdir, realpath } from "node:fs/promises";
 import { basename, dirname, join, type PlatformPath, resolve } from "node:path";
 import { optionalText, stripBom } from "@p2/app/v1/node";
 import { type PromptTemplate, parseFrontmatter, parseTemplate, type SkillFile } from "./templates.ts";
@@ -30,6 +30,8 @@ type Skill = { name: string; description: string; path: string; disabled: boolea
  */
 export type PromptFiles = {
 	readonly paths: Pick<PlatformPath, "join" | "dirname" | "resolve" | "basename">;
+	/** Files of this machine (not an SSH environment's): the global `AGENTS.md` may be among the project's ones. */
+	readonly local: boolean;
 	readText(path: string): Promise<string | undefined>;
 	/** Entries of a directory, without following symbolic links. */
 	entries(path: string): Promise<{ name: string; kind: "file" | "directory" | "other" }[] | undefined>;
@@ -38,6 +40,7 @@ export type PromptFiles = {
 /** The local filesystem. */
 export const localFiles: PromptFiles = {
 	paths: { join, dirname, resolve, basename },
+	local: true,
 	readText: optionalText,
 	async entries(path) {
 		try {
@@ -118,9 +121,12 @@ export async function loadPromptResources(
 	};
 	const global = join(directory, "AGENTS.md");
 	await read(global, localFiles, true);
-	// The same path on a remote environment is another file: only a local session skips the global one it read.
+	// On this machine the global file is also a project's when the session works in p2's data directory (or below it,
+	// `<data>/plugins`), maybe by another path (a symbolic link): read once, compared by canonical path. The same path
+	// on a remote environment is another file.
+	const globalFile = files.local ? await canonical(global) : undefined;
 	for (const path of agentsCandidates(files.paths, cwd))
-		if (files !== localFiles || path !== global) await read(path, files);
+		if (globalFile === undefined || (await canonical(path)) !== globalFile) await read(path, files);
 	const skills = new Map<string, Skill>();
 	const environmentSkills = await skillFiles(files, skillsRoot);
 	const projectSkills = await skillFiles(files, files.paths.join(cwd, ".pi", "skills"));
@@ -211,3 +217,6 @@ export async function loadPromptResources(
 	};
 	return { ...assemble(true), fingerprint: fingerprint.join("\n\0\n"), project: assemble(false) };
 }
+
+/** `path` with symbolic links resolved on this machine; itself when it does not exist (nothing to read there). */
+const canonical = (path: string): Promise<string> => realpath(path).catch(() => path);

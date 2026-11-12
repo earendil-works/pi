@@ -112,9 +112,6 @@ export type ServerOptions = {
 /** The view kit's path, the one route a sandboxed frame's `Origin: null` request reaches (docs/rooms.md). */
 const VIEW_KIT = /^\/view-kit\/[0-9a-f]{64}\.js$/;
 
-/** How long an apply waits for the plugin watcher to see a plugin directory written just before. */
-const WATCH_SETTLE_MS = 300;
-
 /** A token link's path: `/chord/<kind>` (docs/rooms.md). */
 const TOKEN_LINK = /^\/chord\/([a-z][a-z0-9-]{0,31})$/;
 
@@ -487,9 +484,11 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		}
 	};
 	/**
-	 * Reloads plugins for `reload_plugins` (any root): `requested`, else every dirty plugin and every plugin of the user
-	 * root (an unchanged one keeps its digest, so its hosts keep it as it is: an agent's apply never depends on the
-	 * watcher having seen its last write). Says per plugin what happened: applied, removed, failed with the build's or
+	 * Reloads plugins for `reload_plugins` (any root): `requested`, else every dirty plugin, every plugin of the user
+	 * root and every loaded plugin no longer on disk (an unchanged one keeps its digest, so its hosts keep it as it is).
+	 * Named plugins are discovered again when the watcher has not reported their change yet (`Plugins.build`), so an
+	 * agent's apply never depends on the watcher's timing: a plugin written just before is applied, one deleted just
+	 * before is removed. Says per plugin what happened: applied, removed, failed with the build's or
 	 * the hosts' errors (a failed build applies nothing), or refused (unknown, or an invalid package); and the errors
 	 * logged meanwhile.
 	 */
@@ -499,14 +498,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		reloading = true;
 		const since = Date.now();
 		try {
-			// A plugin directory written just before may not be discovered yet: waited for once.
-			const listing = () => listRoots(roots);
-			const undiscovered = () =>
-				[...listing().keys()].filter(
-					(name) => !chordPlugins.discovery.plugins.some((plugin) => plugin.name === name),
-				);
-			if (undiscovered().length) await new Promise((resolve) => setTimeout(resolve, WATCH_SETTLE_MS));
-			const listed = listing();
+			const listed = listRoots(roots);
 			const builtIns = listPlugins(PLUGINS_DIRECTORY);
 			const state = chordPlugins.state.value;
 			const wanted =
@@ -516,6 +508,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 						...state.dirty,
 						...state.install,
 						...[...listPlugins(userRoot).keys()].filter((name) => !builtIns.has(name)),
+						...plugins.filter((name) => !listed.has(name)),
 					]),
 				].sort();
 			const unknown = wanted.filter((name) => !listed.has(name) && !plugins.includes(name));

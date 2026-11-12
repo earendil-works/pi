@@ -3,6 +3,7 @@ import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Observer } from "@p2/app/v1/node";
+import { isLocalEnvironment } from "@p2/app/v1/worker";
 import { agentsCandidates, type LoadedPrompt, loadPromptResources, type PromptFiles } from "./context-files.ts";
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
@@ -17,6 +18,7 @@ const SKILL_EXCLUDES = { hidden: true, names: ["node_modules"] };
 export function envFiles(env: ExecutionEnv, paths: PlatformPath): PromptFiles {
 	return {
 		paths,
+		local: isLocalEnvironment(env),
 		async readText(path) {
 			const result = await env.readTextFile(path, context);
 			if (result.ok) return result.value;

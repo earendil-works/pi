@@ -121,7 +121,9 @@ await plugins.rollout([plugins.step("server", server), workers.step("workers")],
     then updated only by what ships the kind (a rollout step of that kind, a direct `reload`): what a worker starts
     with. `build` never changes it.
   - `load(host, { kind, core, modules }, ctx)`: `kind`'s current set loaded with the runtime.
-  - `build(names, ctx)`: discovers again when the plugin set or a plugin's `package.json` changed, builds every facet
+  - `build(names, ctx)`: discovers again when the plugin set or a plugin's `package.json` changed, or when a named
+    plugin is unknown to discovery or a file discovery found for it is gone (the watcher's events can lag behind the
+    files: a plugin deleted or written just before a build of it is removed or added all the same), builds every facet
     of `names` and of plugins discovered since: `{ facets, plugins, removed }`, plain data (`plugins`: the built
     plugins as discovered, by name; a clone reloads the same).
   - `reload(host, built, ctx)`: applies `built` to the current set of the host's kind (its removed plugins and those
