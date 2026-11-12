@@ -54,7 +54,7 @@ export const readToolSystemPromptContribution = {
 	guidelines: [
 		"Use read to examine files instead of cat or sed.",
 		"Read retained tool output using its exact artifact:// path with offset/limit. Follow nextByteOffset with byteOffset to continue inside long lines; do not rerun the producing command just to retrieve omitted output.",
-		"Read PDFs with pages (1-indexed ranges) and format:text or images; scanned pages have no OCR. Read HTTP(S) URLs directly; use strategy:browser only explicitly when needed, with an isolated installed Chromium and no inherited login.",
+		"Read PDFs with pages (1-indexed ranges) and format:text or images; scanned pages have no OCR. Read HTTP(S) URLs directly; use strategy:browser only explicitly when needed. Browser reads share a persistent Pi-owned profile per project, not your personal browser or login.",
 		"Read SQLite paths for schema, table for paged rows, or query plus params for bounded read-only SQL. Follow nextRowOffset using rowOffset; offset/limit remain text-line selectors.",
 	],
 } as const;
@@ -133,7 +133,7 @@ export interface ReadToolOptions {
 	resizeOptions?: ModelImageResizeOptions;
 	/** Custom operations for file reading. Default: local filesystem */
 	operations?: ReadOperations;
-	/** Resolve the installed Chromium override at execution time so settings changes apply immediately. */
+	/** Resolve the installed Chromium override at execution time; active project browsers reject conflicting settings. */
 	getBrowserExecutablePath?: () => string | undefined;
 }
 
@@ -315,7 +315,12 @@ export function createReadToolDefinition(
 					);
 				return readDocument(
 					"web",
-					{ ...documentArgs, path, browserExecutablePath: options?.getBrowserExecutablePath?.() },
+					{
+						...documentArgs,
+						path,
+						browserExecutablePath: options?.getBrowserExecutablePath?.(),
+						browserProjectDir: ctx?.cwd || cwd,
+					},
 					input,
 					options,
 					ctx,

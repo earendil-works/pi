@@ -12,7 +12,7 @@ const require = createRequire(join(directory, "package.json"));
 mkdirSync(outdir, { recursive: true });
 await build({
 	absWorkingDir: directory,
-	entryPoints: ["pdf", "web", "sqlite"].map((kind) => `src/core/readers/${kind}-entry.ts`),
+	entryPoints: ["pdf", "web", "sqlite", "browser"].map((kind) => `src/core/readers/${kind}-entry.ts`),
 	outdir,
 	bundle: true,
 	format: "esm",

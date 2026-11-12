@@ -5,6 +5,7 @@ import { stripVTControlCharacters } from "node:util";
 import { runInNewContext } from "node:vm";
 import type { TUI } from "@earendil-works/pi-tui";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { getReadmePath } from "../src/config.ts";
 import { exportFromFile } from "../src/core/export-html/index.ts";
 import {
 	CURRENT_SESSION_VERSION,
@@ -71,6 +72,31 @@ describe("read line range display", () => {
 		for (const [offset, limit, range] of cases) {
 			expect(formatReadLineRange(offset, limit), `${offset}, ${limit}`).toBe(range);
 		}
+	});
+
+	it.each([
+		{ args: { path: "notes.txt", byteOffset: null }, expected: "read notes.txt" },
+		{ args: { path: "notes.txt", byteOffset: null, offset: 25, limit: 13 }, expected: "read notes.txt:25-37" },
+		{ args: { path: "report.pdf", byteOffset: null, pages: "3-5", format: "text" }, expected: "(pages 3-5, text)" },
+		{ args: { path: "https://example.com", byteOffset: null, strategy: "browser" }, expected: "(browser)" },
+		{ args: { path: "data.db", byteOffset: null, table: "events" }, expected: "(table events, rows 0+100)" },
+		{ args: { path: getReadmePath(), byteOffset: null, offset: 25, limit: 13 }, expected: "README.md:25-37" },
+		{ args: { path: "artifact://example/output", byteOffset: 0 }, expected: "(byte 0)" },
+		{ args: { path: "artifact://example/output", byteOffset: 17 }, expected: "(byte 17)" },
+	])("renders read arguments without treating null as a byte offset: $expected", ({ args, expected }) => {
+		const tool = new ToolExecutionComponent(
+			"read",
+			"call",
+			args,
+			{},
+			createReadToolDefinition(tempDir),
+			// The renderer only needs requestRender from the TUI host.
+			{ requestRender() {} } as TUI,
+			tempDir,
+		);
+		const rendered = stripVTControlCharacters(tool.render(160).join("\n"));
+		expect(rendered).toContain(expected);
+		expect(rendered).not.toContain("byte null");
 	});
 
 	it("shows string ranges in the TUI, session tree, and HTML export", async () => {

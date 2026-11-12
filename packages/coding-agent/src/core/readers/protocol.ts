@@ -1,5 +1,6 @@
 // Shared wire contracts for isolated PDF, web, and SQLite reads.
 import { type Static, Type } from "typebox";
+import { ProjectBrowserConnectionSchema } from "./browser-protocol.ts";
 
 export const readerArguments = {
 	pages: Type.Optional(
@@ -13,7 +14,7 @@ export const readerArguments = {
 	strategy: Type.Optional(
 		Type.Union([Type.Literal("auto"), Type.Literal("browser")], {
 			description:
-				"URLs only. browser explicitly runs an installed Chromium in a fresh temporary profile; never downloads one.",
+				"URLs only. browser explicitly uses installed Chromium with a persistent Pi-owned project profile; never your personal browser or a downloaded browser.",
 		}),
 	),
 	table: Type.Optional(
@@ -57,6 +58,8 @@ export const ReaderRequestSchema = Type.Object(
 		path: Type.String(),
 		...readerArguments,
 		browserExecutablePath: Type.Optional(Type.String()),
+		browserProjectDir: Type.Optional(Type.String()),
+		browserConnection: Type.Optional(ProjectBrowserConnectionSchema),
 		pdfiumWasmPath: Type.String(),
 		data: Type.Optional(Type.String()),
 	},

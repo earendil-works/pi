@@ -1,29 +1,52 @@
-// Own each bounded reader process and any Chromium process group it explicitly reports.
+// Own bounded extraction helpers; the project broker, not a one-shot reader, owns persistent Chromium.
 import { spawn } from "node:child_process";
-import { Type } from "typebox";
 import { Compile } from "typebox/compile";
 import { getReaderInvocation } from "../../config.ts";
 import { killProcessTree, trackDetachedChildPid, untrackDetachedChildPid } from "../../utils/shell.ts";
+import { borrowProjectBrowser } from "./browser-client.ts";
 import { type ReaderRequest, ReaderResponseSchema, type ReaderResult } from "./protocol.ts";
 
 const responseValidator = Compile(ReaderResponseSchema);
-const browserEventValidator = Compile(
-	Type.Object(
-		{
-			event: Type.Union([Type.Literal("browser"), Type.Literal("browser-closed")]),
-			pid: Type.Integer({ minimum: 1 }),
-		},
-		{ additionalProperties: false },
-	),
-);
 
-/** Run one reader with a 30-second deadline and process-tree cleanup on completion or cancellation. */
+/** Run one read with a shared 30-second deadline, including project-browser startup and tab acquisition. */
 export async function runReader(
 	kind: "pdf" | "web" | "sqlite",
 	input: Omit<ReaderRequest, "pdfiumWasmPath">,
 	signal?: AbortSignal,
 ): Promise<ReaderResult> {
 	signal?.throwIfAborted();
+	const deadline = AbortSignal.timeout(30_000);
+	const operation = signal ? AbortSignal.any([signal, deadline]) : deadline;
+	const timeoutMessage = "Reader exceeded its 30-second deadline; narrow the document pages or SQL query";
+	let tab: Awaited<ReturnType<typeof borrowProjectBrowser>> | undefined;
+	try {
+		if (kind === "web" && input.strategy === "browser") {
+			if (input.pages || input.format === "images")
+				throw new Error("Browser strategy extracts HTML; use auto for PDF URLs");
+			tab = await borrowProjectBrowser(
+				input.browserProjectDir ?? process.cwd(),
+				input.browserExecutablePath,
+				operation,
+			);
+		}
+		operation.throwIfAborted();
+		return await runReaderProcess(kind, { ...input, browserConnection: tab?.connection }, operation, () =>
+			deadline.aborted ? new Error(timeoutMessage) : new Error("Read operation aborted"),
+		);
+	} catch (error) {
+		if (deadline.aborted) throw new Error(timeoutMessage);
+		throw error;
+	} finally {
+		tab?.release();
+	}
+}
+
+function runReaderProcess(
+	kind: "pdf" | "web" | "sqlite",
+	input: Omit<ReaderRequest, "pdfiumWasmPath">,
+	signal: AbortSignal,
+	abortError: () => Error,
+): Promise<ReaderResult> {
 	const invocation = getReaderInvocation(kind);
 	return new Promise((resolve, reject) => {
 		const child = spawn(invocation.executable, invocation.args, {
@@ -33,11 +56,8 @@ export async function runReader(
 			serialization: "advanced",
 			env: invocation.bunBinary ? { ...process.env, BUN_BE_BUN: "1" } : process.env,
 		});
-		const browserPids = new Set<number>();
 		if (child.pid) trackDetachedChildPid(child.pid);
 		let settled = false;
-		let stopping: Error | undefined;
-		let forced: ReturnType<typeof setTimeout> | undefined;
 		let diagnostic = "";
 		child.stderr?.on("data", (chunk: Buffer) => {
 			if (diagnostic.length < 8192) diagnostic += chunk.toString("utf8").slice(0, 8192 - diagnostic.length);
@@ -45,13 +65,7 @@ export async function runReader(
 		const finish = (error?: Error, result?: ReaderResult) => {
 			if (settled) return;
 			settled = true;
-			clearTimeout(deadline);
-			clearTimeout(forced);
-			signal?.removeEventListener("abort", abort);
-			for (const pid of browserPids) {
-				killProcessTree(pid);
-				untrackDetachedChildPid(pid);
-			}
+			signal.removeEventListener("abort", abort);
 			if (child.pid) {
 				killProcessTree(child.pid);
 				untrackDetachedChildPid(child.pid);
@@ -59,50 +73,21 @@ export async function runReader(
 			if (error) reject(error);
 			else resolve(result!);
 		};
-		const stop = (error: Error) => {
-			if (settled || stopping) return;
-			stopping = error;
-			// Playwright installs SIGTERM cleanup before launching Chromium. Give it time to
-			// remove its temporary profile, including cancellation during browser startup.
-			if (kind === "web" && input.strategy === "browser") {
-				child.kill("SIGTERM");
-				forced = setTimeout(() => finish(error), 5000);
-			} else finish(error);
-		};
-		const abort = () => stop(new Error("Read operation aborted"));
-		const deadline = setTimeout(
-			() => stop(new Error("Reader exceeded its 30-second deadline; narrow the document pages or SQL query")),
-			30_000,
-		);
-		signal?.addEventListener("abort", abort, { once: true });
+		const abort = () => finish(abortError());
+		signal.addEventListener("abort", abort, { once: true });
 		child.once("error", (error) => finish(error));
 		child.once("exit", (code, exitSignal) =>
 			finish(
-				stopping ??
-					new Error(
-						`Reader exited before returning a result (${exitSignal ?? code})${diagnostic.trim() ? `: ${diagnostic.trim()}` : ""}`,
-					),
+				new Error(
+					`Reader exited before returning a result (${exitSignal ?? code})${diagnostic.trim() ? `: ${diagnostic.trim()}` : ""}`,
+				),
 			),
 		);
 		child.on("message", (message: unknown) => {
-			// Child IPC is a wire boundary, including separately detached browser process IDs.
-			if (browserEventValidator.Check(message)) {
-				if (settled) {
-					if (message.event === "browser") killProcessTree(message.pid);
-					return;
-				}
-				if (message.event === "browser") {
-					browserPids.add(message.pid);
-					trackDetachedChildPid(message.pid);
-				} else {
-					browserPids.delete(message.pid);
-					untrackDetachedChildPid(message.pid);
-				}
-				return;
-			}
-			if (stopping || settled) return;
+			if (settled) return;
+			// The isolated helper's IPC response is a wire boundary.
 			if (!responseValidator.Check(message)) {
-				stop(new Error("Invalid reader response"));
+				finish(new Error("Invalid reader response"));
 				return;
 			}
 			if (message.ok) finish(undefined, message.result);
@@ -111,6 +96,6 @@ export async function runReader(
 		child.send({ ...input, pdfiumWasmPath: invocation.wasmPath }, (error) => {
 			if (error) finish(error);
 		});
-		if (signal?.aborted) abort();
+		if (signal.aborted) abort();
 	});
 }

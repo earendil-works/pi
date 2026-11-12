@@ -39,7 +39,8 @@ type ReadRenderArgs = {
 	rowLimit?: number;
 };
 function styledReadLineRange(args: ReadRenderArgs | undefined, theme: Theme): string {
-	if (args?.byteOffset !== undefined) return theme.fg("warning", ` (byte ${String(args.byteOffset)})`);
+	if (args?.byteOffset !== undefined && args.byteOffset !== null)
+		return theme.fg("warning", ` (byte ${String(args.byteOffset)})`);
 	if (args?.pages || args?.format === "images")
 		return theme.fg("warning", ` (pages ${args.pages || "1"}, ${args.format || "text"})`);
 	if (args?.table || args?.query)

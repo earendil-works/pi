@@ -65,7 +65,7 @@ CLI tool options override this setting for one invocation. `--tools` with only `
 |---|---|---|---|
 | `read.browserExecutablePath` | string | Auto-discover installed Chromium | Trusted Chrome/Chromium-family executable for explicit `read` calls with `strategy:"browser"`. Prefer an absolute path. |
 
-No browser runs for ordinary URL reads or as an automatic extraction fallback. Browser reads use a fresh temporary profile and context, without your logged-in browser session, and never download a browser. The executable override is read at tool execution time. Both fetching and browser rendering honor inherited HTTP/HTTPS proxy settings. See [document and web reading](../README.md#document-and-web-reading) for arguments, limits, SQLite safety, and artifact snapshots.
+No browser runs for ordinary URL reads or as an automatic extraction fallback. Explicit browser reads reuse a persistent Pi-owned profile and browser per canonical project working directory, shared by Pi processes using the same agent directory. Your personal browser and login are never attached. Cookies and site storage acquired inside Pi persist under `<agent-dir>/browser/<project-hash>/`; see [document and web reading](../README.md#document-and-web-reading) for retention and reset instructions. Chromium sandboxing remains enabled, and Pi never downloads a browser. Both fetching and browser rendering honor inherited HTTP/HTTPS proxy settings. The executable override is checked at execution time; a running project browser rejects conflicting executable/proxy settings, so close Pi processes using the project before changing them.
 
 ## Output artifacts
 

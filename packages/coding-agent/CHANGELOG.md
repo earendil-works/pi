@@ -4,6 +4,7 @@
 
 ### Breaking Changes
 
+- Explicit `read strategy:browser` calls now share a persistent Pi-owned browser/profile per project working directory instead of a fresh profile per read. Cookies and site storage acquired inside Pi persist under `<agent-dir>/browser/<project-hash>/` across restarts; personal browser profiles remain untouched. Close Pi processes using a project before changing its browser/proxy settings or resetting its profile.
 - Removed `readFile` from `GrepOperations`. Local grep obtains context during the search instead of rereading matched files. To search a remote system, override grep's `execute()`; see [Remote Execution](docs/extensions.md#remote-execution) ([#9276](https://github.com/earendil-works/pi/issues/9276))
 - `SettingsSelectorComponent` callers must now provide `SettingsConfig.iconPreset` and `SettingsCallbacks.onIconPresetChange` for the shared icon preference
 - `grep` now defaults to one context line before and three after, pages of 20 files with 20 matches per file, and 200 matches for single-file scopes. `find` now defaults to 200 paths ordered by modification time. Source builds require Rust and a C compiler for the shared search addon; published packages include prebuilds.
@@ -93,6 +94,9 @@
 - Fixed ordinary streaming grep losing final UTF-16 replacement characters at decoder buffer boundaries without buffering the whole file.
 - Fixed Gondolin find reporting no files for an explicitly selected guest file.
 - Fixed Node CLI bundling when LinkeDOM's optional native Canvas dependency is installed.
+- Improved URL reads with one browser User-Agent retry on HTTP 403, one bounded `Retry-After` retry on HTTP 429 without identity rotation, a shared network deadline, and actionable bot-protection diagnostics. Recognized HTTP 200 challenge pages are unreadable rather than successful documents; browser execution remains explicit.
+- Fixed read call labels showing `(byte null)` for unused byte offsets and hiding line ranges or document/browser labels.
+- Browser reads now reuse a project-owned Chromium process across Pi processes, lease separate tabs per read, and preserve sandboxing and explicit-only browser execution. Cancellation closes only the cancelled tab; the browser exits after the last owning Pi process disconnects.
 
 ## [1.5.0] - 2026-11-02
 

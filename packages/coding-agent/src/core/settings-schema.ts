@@ -327,7 +327,7 @@ export const SettingsSchema = Type.Object(
 				browserExecutablePath: Type.Optional(
 					Type.String({
 						description:
-							"Installed Chrome/Chromium executable for explicit read strategy:browser. Uses a fresh temporary profile; never downloads a browser.",
+							"Installed Chrome/Chromium executable for explicit read strategy:browser. Reuses a persistent Pi-owned project profile, never your personal browser or a downloaded browser.",
 					}),
 				),
 			}),

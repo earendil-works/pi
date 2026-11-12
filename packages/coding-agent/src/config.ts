@@ -447,8 +447,8 @@ export function getInternalInvocation(kind: "job-worker" | "pane-client"): { exe
 	return { executable: process.execPath, args: [join(root, "dist", "core", folder, "entry.js")] };
 }
 
-/** Resolve isolated document readers and their WASM asset across supported distributions. */
-export function getReaderInvocation(kind: "pdf" | "web" | "sqlite"): {
+/** Resolve document readers, the project-browser broker, and the WASM asset across supported distributions. */
+export function getReaderInvocation(kind: "pdf" | "web" | "sqlite" | "browser"): {
 	executable: string;
 	args: string[];
 	wasmPath: string;

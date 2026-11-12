@@ -1,10 +1,10 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { PNG } from "pngjs";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createReadToolDefinition, type ReadToolInput } from "../src/core/tools/read.ts";
 
 const directory = mkdtempSync(join(tmpdir(), "pi-document-test-"));
@@ -125,15 +125,29 @@ describe("document reads", () => {
 		const unavailable = createReadToolDefinition(directory, {
 			getBrowserExecutablePath: () => join(directory, "missing-chromium"),
 		});
-		await expect(
-			unavailable.execute(
-				"read",
-				{ path: `${baseUrl}/article`, strategy: "browser" },
-				undefined,
-				undefined,
-				undefined as never,
-			),
-		).rejects.toThrow("missing-chromium");
+		// Persistent profiles created by the failure path must stay inside the test fixture, not ~/.pi.
+		vi.stubEnv("PI_CODING_AGENT_DIR", join(directory, "agent"));
+		try {
+			await expect(
+				unavailable.execute(
+					"read",
+					{ path: `${baseUrl}/article`, strategy: "browser" },
+					undefined,
+					undefined,
+					undefined as never,
+				),
+			).rejects.toThrow("missing-chromium");
+			await vi.waitFor(
+				() => {
+					const profiles = join(directory, "agent", "browser");
+					const files = existsSync(profiles) ? readdirSync(profiles, { recursive: true }) : [];
+					expect(files.filter((path) => String(path).endsWith("broker.json"))).toEqual([]);
+				},
+				{ timeout: 5000 },
+			);
+		} finally {
+			vi.unstubAllEnvs();
+		}
 	});
 
 	it("browses schema and row pages without losing integer precision, blob bytes, or quoted names", async () => {
