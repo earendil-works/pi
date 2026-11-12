@@ -1,12 +1,13 @@
 // The server's telemetry ingest (decisions "Telemetry from browser pages", "The server is the one place telemetry is
 // stored", "Who a span was for"): a facet serving `PageTelemetry` and `WorkerTelemetry`, whose `ingest(batch)` writes
-// what pages and workers recorded to the server's store. A page is untrusted: its spans must carry its own ids
-// (`browser:<its incarnation>:...`), are capped per page and minute, marked `chord.host: browser` and stamped with the
-// principal of the link they came over; a worker's are written as they are, stamped with its host.
+// what pages and workers recorded to the server's store. A page is untrusted: only principals the app admits may send
+// (`admit`), its spans must carry its own ids (`browser:<its incarnation>:...`), are capped per page and minute, marked
+// `chord.host: browser` and stamped with the principal of the link they came over; a worker's are written as they are,
+// stamped with its host.
 
 import type { SpanAttributes, StoredSpan } from "@earendil-works/pi-telemetry";
 import type { Static } from "../contracts/index.ts";
-import type { Principal } from "../data/index.ts";
+import { forbidden, type Principal } from "../data/index.ts";
 import { defineFacet, type Facet } from "../host/index.ts";
 import { type PageBatch, PageTelemetry, WorkerTelemetry } from "./batch.ts";
 import type { TelemetryBatch } from "./recorder.ts";
@@ -17,6 +18,11 @@ export type TelemetryIngestTarget = { ingest(batch: TelemetryBatch): number };
 /** What the ingest facet takes. */
 export type TelemetryIngestOptions<P extends Principal> = {
 	readonly target: TelemetryIngestTarget;
+	/**
+	 * Whose pages may send their spans (`PageTelemetry`; a refused principal's hold fails `forbidden`): the per-page
+	 * budget bounds one page, not one principal, who may open many pages (links), so an app admits whom it trusts.
+	 */
+	readonly admit: (principal: P) => boolean;
 	/** The address key of the worker whose link stamps `principal`; `undefined` for any other principal. */
 	readonly workerHost: (principal: P) => string | undefined;
 	/** The attributes a page's spans record for the principal of their link (the server host's `principalAttributes`). */
@@ -37,6 +43,7 @@ export function telemetryIngestFacet<P extends Principal>(options: TelemetryInge
 		host.serve(
 			PageTelemetry,
 			(_params, principal) => {
+				if (!options.admit(principal)) throw forbidden("chord.telemetry.page: not admitted");
 				// Per span, as for every span Chord records with a principal: caching is the hook's own.
 				const who = () => options.principalAttributes(principal);
 				const budgets = new PageBudgets();

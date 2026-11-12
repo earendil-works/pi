@@ -30,6 +30,7 @@ async function sending(principal: Principal, scope: (incarnation: string) => str
 				return batch.spans.length;
 			},
 		},
+		admit: () => true,
 		workerHost: (who) => (who.kind === "worker" ? "project|p1" : undefined),
 		principalAttributes: () => ({}),
 	});

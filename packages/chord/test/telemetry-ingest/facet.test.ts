@@ -1,6 +1,6 @@
 // Tests of the server's telemetry ingest (decisions "Telemetry from browser pages", "The server is the one place
-// telemetry is stored", "Who a span was for"): a page's batch is checked by its schema (size, every field, no control
-// characters), its spans must carry the page's own ids, are capped per page and minute, marked `chord.host: browser`
+// telemetry is stored", "Who a span was for"): only admitted principals' pages send; a page's batch is checked by its
+// schema (size, every field, no control characters), its spans must carry the page's own ids, are capped per page and minute, marked `chord.host: browser`
 // and stamped with the link's principal; a worker's batch is written as it is, stamped with its host; nobody else
 // gets the worker's `ingest`; the calls record no span of their own.
 
@@ -31,6 +31,7 @@ async function ingesting(
 		"chord.principal": JSON.stringify(who),
 		"user.name": "Ada",
 	}),
+	admit: (who: Principal) => boolean = () => true,
 ) {
 	const batches: TelemetryBatch[] = [];
 	const telemetry = new InMemoryTelemetryContext();
@@ -42,6 +43,7 @@ async function ingesting(
 				return batch.spans.length;
 			},
 		},
+		admit,
 		workerHost: (who) => workers[JSON.stringify(who)],
 		principalAttributes,
 	});
@@ -78,6 +80,18 @@ async function ingest(client: Host, spans: StoredSpan[]) {
 	const page = await client.get(PageTelemetry, {}, context);
 	return page.ingest({ spans }, context);
 }
+
+describe("admitting pages", () => {
+	it("refuses the page of a principal the app does not admit: its hold fails forbidden, nothing is written", async () => {
+		const owner = (who: Principal) => who.kind === "owner";
+		const { client, batches } = await ingesting({ kind: "guest" }, {}, undefined, owner);
+		const refused = await ingest(client, [span(client, 1)]).catch((error: unknown) => error);
+		expect(isChordError(refused, "forbidden")).toBe(true);
+		expect(batches).toEqual([]);
+		const { client: admitted } = await ingesting({ kind: "owner" }, {}, undefined, owner);
+		expect(await ingest(admitted, [span(admitted, 1)])).toEqual({ written: 1, dropped: 0 });
+	});
+});
 
 describe("a page's batches", () => {
 	it("writes its own spans marked `chord.host: browser` with its link's principal, no attribute of its overriding", async () => {

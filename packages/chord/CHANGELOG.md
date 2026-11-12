@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- `telemetryIngestFacet` requires `admit(principal)`: only the pages of principals it admits may send their spans to `PageTelemetry`; a refused principal's hold fails `forbidden`. The app kit admits every signed-in page. Migration: pass `admit` (`() => true` keeps the old behaviour).
+
+### Added
+
+- `@earendil-works/chord/telemetry-ingest`: the telemetry recorder, the page and worker batches and objects, the ingest facet and the senders, for an app wiring telemetry into hosts of its own.
+
 ### Fixed
 
 - The optional peer dependencies on `react`, `ws` and `esbuild` are ranges (`^19.3.0`, `^8.21.0`, `^0.28.2`), not exact versions: npm no longer refuses to install Chord in a project with another patch release of them, such as react 19.3.1 ([#12008](https://github.com/earendil-works/pi/issues/12008)).

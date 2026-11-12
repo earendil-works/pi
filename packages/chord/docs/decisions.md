@@ -2349,6 +2349,14 @@ validation and copies the v2 kernel added around Delta.
   `watch` and `registry`, releasing everything on dispose, calling one `changed` callback the app wires to its redraw
   (one line with pi-tui; any library works). p2's retry with backoff for gone references is not carried over (v2
   references wait and rebind by themselves). No pi-tui dependency.
+- **Admitting pages' telemetry (owner, 2026-11-12: "`telemetryIngestFacet({ admit(principal) })` (refused:
+  forbidden)"; p2 wiring telemetry; refines "Telemetry from browser pages"):** the ingest facet takes `admit(principal)`,
+  required: `PageTelemetry` serves a principal it admits, and a refused principal's hold fails `forbidden` (no contract
+  change, nothing written). Why: the budget of 1,200 spans per minute is per page (incarnation), and one principal may
+  open up to 1,000 pages' worth of links, so a guest could fill the store's queue for its whole retention; an app admits
+  whom it trusts (p2: owners only). The kit admits every page (its links are signed in). Its entry points are public for
+  an app with its own hosts: `@earendil-works/chord/telemetry-ingest` (the recorder, the batches and objects, the facet,
+  the senders).
 - **Surfaces for an app with its own HTTP stack and styling (owner, 2026-11-12: "Chord 1: yes", "Chord 2: yes", "Cloud:
   (b)"; p2's move onto the web surface):** (1) `webSurface(server, { ..., routes: false })` contributes no `Http`
   routes; the surface gives `file(path)`, `pageAssets()` and `base()`, and the app serves them through its own HTTP
@@ -2557,7 +2565,8 @@ validation and copies the v2 kernel added around Delta.
   instance exists"; a per-binding view is possible later, the blip is cosmetic). Carry-over: calls surviving a
   `loading` unbind (slices.md, "Later: reload").
 - **Telemetry from browser pages (owner, 2026-11-04: "I just need this implemented"; "it couldn't really fuck the
-  server up"; tutorial gap):** a page records spans in memory (the click and the calls it makes, carriers on its calls
+  server up"; tutorial gap; (**superseded in part** by "Admitting pages' telemetry": an app admits pages by principal
+  through a hook, not "anonymous pages")):** a page records spans in memory (the click and the calls it makes, carriers on its calls
   as any client) and sends finished spans in batches every few seconds and when hidden, over its existing Chord link,
   to a telemetry object on the server (`ingest(batch)`): sign-in, principals, part limits and flow control apply as for
   any call; an app may admit anonymous pages. The server treats them as untrusted, best effort: batch size and rate

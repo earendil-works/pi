@@ -390,6 +390,8 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 	if (telemetry !== undefined) {
 		const facet = telemetryIngestFacet<P>({
 			target: telemetry,
+			// Every link of the kit's server is signed in: its pages are the app's own people's.
+			admit: () => true,
 			workerHost: (principal) => workerHosts.get(principalKey(principal, context)),
 			principalAttributes: (principal) => host.principalAttributes(principal, context),
 		});

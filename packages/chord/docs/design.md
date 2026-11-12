@@ -3232,7 +3232,9 @@ Chord reports traces, events and metrics through `@earendil-works/pi-telemetry`;
   (`ingest(batch)`), served by the kit when `startServer` has a telemetry store (`TelemetryContext` with the store's
   `ingest`). A worker sends every second (and its last spans and partial metrics when it closes), written as they are,
   stamped with its host (`chord.host`: its address key, known from the principal its link stamps). A page records
-  when `startPage({ telemetry: true })` and sends spans only, every 3 s and when hidden; the server treats it as
+  when `startPage({ telemetry: true })` and sends spans only, every 3 s and when hidden, if the app admits its
+  principal (`telemetryIngestFacet({ admit(principal) })`, a refused page's hold fails `forbidden`: the per-page budget
+  bounds one page, not one principal, who may open many; the kit admits every signed-in page); the server treats it as
   untrusted: the batch schema bounds everything (100 spans; names 128 characters; 32 attributes, keys 64, values 256
   characters or numbers or booleans; 16 events; 8 links; error messages 500; ids printable ASCII; no control
   characters anywhere), a span counts only when its id, trace and parent are under the page's own prefix
