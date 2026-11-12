@@ -17,9 +17,22 @@ import { Workspace } from "../workspace/contract.ts";
 import type { WorkspaceChange } from "../workspace/protocol.ts";
 import { excerpt, usePaneSelection } from "./pane-kit.tsx";
 
-/** A Markdown file of the workspace, rendered, and again whenever the working tree changes. */
+/**
+ * A Markdown file of the workspace, rendered, and again whenever the working tree changes. A view naming no file (one
+ * stored before views had items, which kept it in `path`) says so instead of loading forever.
+ */
 export function MarkdownPane({ session, item, select }: PaneProps) {
-	const path = item ?? "";
+	if (!item)
+		return (
+			<div className="views-doc">
+				<div className="notice error">This view has no file</div>
+			</div>
+		);
+	return <MarkdownFile session={session} path={item} select={select} />;
+}
+
+/** The Markdown file `path` of the workspace, rendered (`MarkdownPane`). */
+function MarkdownFile({ session, path, select }: Pick<PaneProps, "session" | "select"> & { readonly path: string }) {
 	const text = useWorkspaceText(session, path);
 	const body = useRef<HTMLDivElement>(null);
 	usePaneSelection(
