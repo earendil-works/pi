@@ -154,9 +154,13 @@ function App() {
 	);
 }
 
-/** Starts the page (Chord's package is free of side effects for bundlers: the entry calls this). */
-export function start(): void {
+/**
+ * Starts the page (Chord's package is free of side effects for bundlers: the entry calls this), with `options` among
+ * `startPage`'s (`themes: false`).
+ */
+export function start(options: { readonly themes?: false } = {}): void {
 	const started = startPage({
+		...options,
 		connect: () => new WebSocket(`${location.origin.replace(/^http/, "ws")}/chord`),
 		modules: { "@test/app/v1": chord, "@test/app/v1/web": webApi, react: React, "react/jsx-runtime": jsx },
 		core: [{ name: "@test/core", facet: core }],

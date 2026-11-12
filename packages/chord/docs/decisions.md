@@ -2349,6 +2349,15 @@ validation and copies the v2 kernel added around Delta.
   `watch` and `registry`, releasing everything on dispose, calling one `changed` callback the app wires to its redraw
   (one line with pi-tui; any library works). p2's retry with backoff for gone references is not carried over (v2
   references wait and rebind by themselves). No pi-tui dependency.
+- **Surfaces for an app with its own HTTP stack and styling (owner, 2026-11-12: "Chord 1: yes", "Chord 2: yes", "Cloud:
+  (b)"; p2's move onto the web surface):** (1) `webSurface(server, { ..., routes: false })` contributes no `Http`
+  routes; the surface gives `file(path)`, `pageAssets()` and `base()`, and the app serves them through its own HTTP
+  stack with its own access rules and page template (`pageScripts`). (2) `startPage({ themes: false })` loads no
+  `Themes` provider and writes no theme on `:root`: an app with its own stylesheet keeps its variables. (3)
+  `startPage({ follow: false })` (and `startClient`'s `follow`): a static page that loads its combined plugins and
+  never follows the scripts object nor asks the server's base, for a page built offline and served elsewhere, whose
+  server publishes scripts it cannot load; built with `buildBase` and `pageBootstrap` (exported for it), its plugin
+  scripts registered by `registeredSource`.
 - **`chord.plugins` is a package's manifest of plugins, as pi's (owner, 2026-11-01: "yes"; slice 12 review, Opus H1;
   refines "The plugin model ... imports and builds" (Imports) and `slice-12.md` §2, §5):** a package (npm, git, local)
   declares the plugins it provides in its `package.json`, `"chord": { "plugins": ["./notes", "./search"] }` (globs and

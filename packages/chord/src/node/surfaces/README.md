@@ -43,6 +43,11 @@ const built = await web.build();      // { kind: "built", base, inputs } | { kin
   `public`). CSP additions: `style-src 'self'`, `img-src 'self' data:`, `font-src 'self'`. Scripts only from `/_chord/web/` (the HTTP component's `scripts`: `script-src` is that path of the request's origin
   and the nonce, so no other same-origin response runs as a script). `PageAssets` (`bootstrap`,
   `script`, `plugins`, `styles`) and `pageScripts(assets, nonce)` for the app's template.
+- **Without routes** (`routes: false`, decision "Surfaces for an app with its own HTTP stack and styling"): the
+  surface's facet serves the scripts objects only; the app serves `file(path)` (an `HttpResponse`: the file forever,
+  404, 503 when the build failed), the page with `pageAssets()` (and `pageScripts`) and `base()` (the hash an outdated
+  page asks) itself, with its own access rules and CSP. `buildBase` and `pageBootstrap` build a page offline (a static
+  page, `startPage({ follow: false })`).
 - **Terminal routes** (`tui.ts`): `GET /_chord/tui/start` (`TuiStart`: base hash, script, combined; signed in), `GET
   /_chord/tui/base` (public), the files (signed in).
 

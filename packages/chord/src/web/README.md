@@ -40,6 +40,9 @@ startPage<P>({
   dependency): during that restart its old UI can show unstyled (its classes' rules are gone). The browser test
   `styles.test.ts` keeps this visible. Contribute UI from facets to avoid it.
 - An outdated page reloads.
+- `themes: false`: no `Themes` provider, nothing written on `:root` (an app styling its pages itself). `follow: false`:
+  a static page (built offline with `buildBase` and `pageBootstrap`, served elsewhere): its combined plugins only, no
+  updates, never outdated.
 - With `telemetry: true` the page's host records in memory (`TelemetryRecorder`, span ids `browser:<incarnation>:<n>`)
   and sends finished spans to the server's `PageTelemetry` every 3 s and when the page is hidden; a click is a trace of
   its own with `host.root(fn, ctx, { trace: { name } })`. The kit's server serves the object when it has a store.

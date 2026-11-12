@@ -2,13 +2,17 @@
 // forever, rebuilt at each start), plugin scripts as registered scripts and one combined file, `WebScripts` updated by
 // a rollout, the page through the app's template with the baseline's CSP, signed in unless public.
 
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
+import { hostKind } from "../../../src/contracts/index.ts";
+import { createHost } from "../../../src/host/index.ts";
 import { WebScripts } from "../../../src/index.ts";
 import { Sessions } from "../../../src/node/app/index.ts";
-import { pageScripts } from "../../../src/node/surfaces/index.ts";
+import { createHttp } from "../../../src/node/http/index.ts";
+import { createPlugins } from "../../../src/node/plugins/index.ts";
+import { pageBootstrap, pageScripts, webSurface } from "../../../src/node/surfaces/index.ts";
 import { tempDir, testApp } from "../app/support.ts";
 import { send } from "../http/support.ts";
 
@@ -216,5 +220,65 @@ describe("plugin scripts", () => {
 		}
 		scripts.release();
 		await app.close(context);
+	});
+});
+
+describe("an app serving the surface itself (routes: false)", () => {
+	it("contributes no routes, and gives the files, the page's assets and the base hash", async () => {
+		const root = join(await tempDir(), "plugins");
+		await mkdir(join(root, "notes"), { recursive: true });
+		await writeFile(join(root, "notes", "package.json"), '{ "name": "notes" }');
+		await writeFile(join(root, "notes", "web.ts"), "export default { setup() {} };\n");
+		const server = createHost<{ readonly kind: "server" }>({
+			address: hostKind("server")(),
+			principal: { kind: "server" },
+			onError: () => {},
+		});
+		const plugins = createPlugins(
+			{ roots: [root], kinds: { web: { platform: "browser", hostPackages: [] } }, onError: () => {} },
+			context,
+		);
+		const web = webSurface(server, { plugins, entry: await entry(), routes: false });
+		const http = createHttp(server, { onError: () => {} }, context);
+		try {
+			await server.load(
+				[
+					{ name: "chord.http", facet: http.facet },
+					{ name: "chord.web", facet: web.facet },
+				],
+				context,
+			);
+			expect((await web.build()).kind).toBe("built");
+			// The surface's public route of every app serving it through the HTTP component: none here.
+			const asked = await http.fetch(
+				new Request("http://127.0.0.1/_chord/web/base", { headers: { host: "127.0.0.1" } }),
+				{
+					localAddress: "127.0.0.1",
+					localPort: 80,
+					remoteAddress: "127.0.0.1",
+				},
+			);
+			expect(asked.status).toBe(404);
+			const base = await web.base();
+			expect(base).toMatch(/^[0-9a-f]{16}$/);
+			const assets = await web.pageAssets();
+			const scripts = await server.get(WebScripts, {}, context);
+			const set = scripts.set.value;
+			expect(set.plugins.map(({ name }) => name)).toEqual(["notes"]);
+			expect(assets).toEqual({
+				bootstrap: pageBootstrap(base!, set),
+				script: `/_chord/web/base.${base}.js`,
+				plugins: set.combined,
+				styles: [`/_chord/web/base.${base}.css`],
+			});
+			const file = await web.file(set.combined);
+			expect(file.kind).toBe("bytes");
+			expect((await web.file("/_chord/web/none.js")).kind).toBe("error");
+			scripts.release();
+		} finally {
+			await http.close(context);
+			await server.close(context);
+			plugins.close();
+		}
 	});
 });

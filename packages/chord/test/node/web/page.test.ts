@@ -1,6 +1,7 @@
 // Tests of a page (slice 11 §2, §4b) in a real browser (Chromium; skipped without one): `startPage` loads the plugins
 // of the combined file, keeps its link, applies a plugin edit in place keeping a component's state, writes the active
-// theme as CSS variables following the colour scheme, and reloads when the server's base bundle changed.
+// theme as CSS variables following the colour scheme (none with `themes: false`), and reloads when the server's base
+// bundle changed.
 
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -61,6 +62,22 @@ describe.skipIf(CHROMIUM === undefined)("a page", () => {
 				'getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() === "#0b62d6"',
 			);
 			expect(await browser.evaluate<string>("getComputedStyle(document.documentElement).colorScheme")).toBe("light");
+		} finally {
+			await app.close(context);
+		}
+	}, 120_000);
+
+	it("writes no theme on :root with themes: false, so the app's own variables stand", async () => {
+		const { app } = await webApp(await versionedEntry("1", undefined, "{ themes: false }"), await freePort(), {
+			plugins: { notes: panelPlugin("Notes", "#123456") },
+		});
+		try {
+			await signIn(browser, app.ownerLink());
+			await browser.wait('document.querySelector(".panel")?.textContent === "Notes"');
+			expect(await browser.evaluate<string>("document.documentElement.style.cssText")).toBe("");
+			expect(
+				await browser.evaluate<string>('getComputedStyle(document.documentElement).getPropertyValue("--accent")'),
+			).toBe("");
 		} finally {
 			await app.close(context);
 		}

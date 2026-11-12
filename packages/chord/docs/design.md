@@ -2779,6 +2779,11 @@ Decision "Slice 11's points", "Slice 11, P3" to "P9", and "Tutorial gaps" (1) (p
   registers itself (no eval); new scripts apply in place (`host.reload` in the page), their stylesheets (named by their
   content) loaded before and each plugin left with the stylesheet of the code it runs; pages learn of them through an
   object the web component serves (the current set); a base code change reloads the page.
+- An app with an HTTP stack of its own (p2) serves the surface's files itself (`webSurface(..., { routes: false })`:
+  the surface contributes no `Http` routes and gives `file`, `pageAssets` and `base`); a page styling itself turns the
+  kit's themes off (`startPage({ themes: false })`); a page built offline and served elsewhere (p2's Cloud Brain page)
+  is static (`startPage({ follow: false })`: its combined plugins only, no updates, never outdated). Decision "Surfaces
+  for an app with its own HTTP stack and styling".
 - `chord/react`: `HostProvider`, `useHold`, `useWatch`, `useRegistry`, `useRefState`, `useEvents(member, listener)`
   (an event member subscribed while mounted, below "Channels"), and `usePageState(key, initial)`:
   `useState`'s pair kept by the page's host under a key, so a component remounted by a plugin reload (a new function)

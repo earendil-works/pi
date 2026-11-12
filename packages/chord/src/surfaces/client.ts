@@ -69,6 +69,11 @@ export type ClientOptions<P extends Principal> = {
 	 * first span, after the host was made).
 	 */
 	readonly telemetry?: (incarnation: () => string) => TelemetryContext;
+	/**
+	 * Whether the client follows the scripts object (new sets applied, another base `outdated`, the server's base asked
+	 * before each reconnect): yes by default; `false` for a static client (a page built offline and served elsewhere).
+	 */
+	readonly follow?: boolean;
 	readonly onError: (error: ClientError) => void;
 };
 
@@ -106,10 +111,13 @@ export async function startClient<P extends Principal>(options: ClientOptions<P>
 	const { loaded, report } = await LoadedFacets.load(host, options.core, entries, context);
 	if (report.failed.length > 0) options.onError({ kind: "plugins", failed: report.failed });
 	const updates = new Updates(host, loaded, new Set(report.failed.map(({ plugin }) => plugin)), options);
-	const loop = connect(host, options, (state) => {
-		if (state === "connected") updates.reconnected(context);
+	const follow = options.follow !== false;
+	// A static client asks no base: it never learns it is outdated.
+	const serverBase = follow ? options.serverBase : async () => undefined;
+	const loop = connect(host, options, serverBase, (state) => {
+		if (follow && state === "connected") updates.reconnected(context);
 	});
-	await updates.follow(context);
+	if (follow) await updates.follow(context);
 	return {
 		host,
 		stop: async (ctx) => {
@@ -127,6 +135,7 @@ export async function startClient<P extends Principal>(options: ClientOptions<P>
 function connect<P extends Principal>(
 	host: Host<P>,
 	options: ClientOptions<P>,
+	serverBase: () => Promise<string | undefined>,
 	onState: (state: ConnectionState) => void,
 ): { stop(): void } {
 	return keepConnected({
@@ -142,7 +151,7 @@ function connect<P extends Principal>(
 			onState(state);
 		},
 		canRetry: async () => {
-			const base = await options.serverBase();
+			const base = await serverBase();
 			if (base !== undefined && base !== options.base) {
 				options.outdated();
 				return false;

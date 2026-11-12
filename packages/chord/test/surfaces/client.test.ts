@@ -70,7 +70,12 @@ type ManualTimer = { readonly ms: number; readonly fire: () => void };
 async function setup(
 	initial: readonly RegisteredScript[],
 	available: readonly RegisteredScript[] = [],
-	more: { readonly failing?: number; readonly manual?: ManualTimer[]; readonly styles?: ClientStyles } = {},
+	more: {
+		readonly failing?: number;
+		readonly manual?: ManualTimer[];
+		readonly styles?: ClientStyles;
+		readonly follow?: false;
+	} = {},
 ) {
 	let failing = more.failing ?? 0;
 	const server = createHost<TestPrincipal>({
@@ -87,6 +92,7 @@ async function setup(
 	const outdated: string[] = [];
 	const sockets: { events: SocketEvents; link: chordNext.Link }[] = [];
 	let serverBase = "B1";
+	const asked: string[] = [];
 	const client = await startClient<TestPrincipal>({
 		scripts: WebScripts,
 		base: "B1",
@@ -112,9 +118,13 @@ async function setup(
 			if (found === undefined) throw new Error(`no ${entry.url}`);
 			return found;
 		},
-		serverBase: async () => serverBase,
+		serverBase: async () => {
+			asked.push(serverBase);
+			return serverBase;
+		},
 		outdated: () => outdated.push("outdated"),
 		...(more.styles === undefined ? {} : { styles: more.styles }),
+		...(more.follow === undefined ? {} : { follow: more.follow }),
 		environment: {
 			now: () => Date.now(),
 			after: (ms, callback) => {
@@ -141,6 +151,7 @@ async function setup(
 		errors,
 		outdated,
 		sockets,
+		asked,
 		setServerBase: (base: string) => {
 			serverBase = base;
 		},
@@ -329,6 +340,34 @@ describe("outdated clients", () => {
 		await until(() => outdated.length === 1);
 		await new Promise((resolve) => setTimeout(resolve, 400));
 		expect(sockets).toHaveLength(1);
+		await client.stop(context);
+		await server.close(context);
+	});
+});
+
+describe("a static client (follow: false)", () => {
+	it("applies no new set and is never outdated by one", async () => {
+		const one = script("notes", "d1", "one");
+		const { client, server, fetched, outdated } = await setup([one], [script("notes", "d2", "two")], {
+			follow: false,
+		});
+		await publishTo(server, "web", setOf("B1", [script("notes", "d2", "two")]), context);
+		await publishTo(server, "web", setOf("B2", []), context);
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		expect([fetched, outdated]).toEqual([[], []]);
+		const greeting = await client.host.get(Greeting, {}, context);
+		expect(greeting.text.value).toBe("one");
+		greeting.release();
+		await client.stop(context);
+		await server.close(context);
+	});
+
+	it("reconnects without asking the server's base", async () => {
+		const { client, server, outdated, sockets, asked, setServerBase } = await setup([], [], { follow: false });
+		setServerBase("B2");
+		sockets[0]!.link.close();
+		await until(() => sockets.length === 2);
+		expect([asked, outdated]).toEqual([[], []]);
 		await client.stop(context);
 		await server.close(context);
 	});

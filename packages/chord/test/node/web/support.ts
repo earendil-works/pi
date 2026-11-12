@@ -29,10 +29,10 @@ export function panelPlugin(title: string, accent: string): Record<string, strin
 	};
 }
 
-/** A web entry in a new directory importing the fixture's with `version`: its path. */
-export async function versionedEntry(version: string, dir?: string): Promise<string> {
+/** A web entry in a new directory importing the fixture's with `version` (`start(options)`, a literal): its path. */
+export async function versionedEntry(version: string, dir?: string, options = ""): Promise<string> {
 	const at = dir ?? (await tempDir());
-	const text = `import { start } from ${JSON.stringify(MAIN)};\n(globalThis as Record<string, unknown>).version = ${JSON.stringify(version)};\nstart();\n`;
+	const text = `import { start } from ${JSON.stringify(MAIN)};\n(globalThis as Record<string, unknown>).version = ${JSON.stringify(version)};\nstart(${options});\n`;
 	await writeFile(join(at, "main.ts"), text);
 	return join(at, "main.ts");
 }

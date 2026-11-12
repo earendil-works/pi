@@ -2,7 +2,8 @@
 // from the app's entry after the server's start (`build`; the page and the surface's files wait for it, and answer 503
 // when it failed), the plugins' web scripts published as registered scripts and one combined file,
 // `WebScripts` showing the current set, and the page through the app's own template; everything as `Http`
-// contributions of the surface's facet, which the app puts among the server's core facets. The app keeps its HTML,
+// contributions of the surface's facet, which the app puts among the server's core facets, or (`routes: false`) served
+// by an app with an HTTP stack of its own through `file`, `pageAssets` and `base`. The app keeps its HTML,
 // CSS, components and themes.
 
 import type { Principal } from "../../data/index.ts";
@@ -14,21 +15,29 @@ import type { BaseBundle } from "./bundle.ts";
 import { scriptsFacet } from "./current.ts";
 import { SurfaceBuild, type SurfaceBuilt } from "./surface-build.ts";
 
-/** What `webSurface` takes. */
+/**
+ * What `webSurface` takes: the surface's routes as `Http` contributions with the app's page template, or none
+ * (`routes: false`) for an app with an HTTP stack of its own, which serves `file`, `pageAssets` and `base` itself.
+ */
 export type WebSurfaceOptions = {
 	/** The web facet kind: `web` by default. */
 	readonly kind?: string;
 	readonly plugins: Plugins;
 	/** The app's web start code (it calls `startPage`): the base bundle's entry. */
 	readonly entry: string;
+	/** The conditions the base bundle's packages resolve with: the server process's by default (`processConditions`). */
+	readonly conditions?: readonly string[];
+} & (WebRoutesOptions | { readonly routes: false });
+
+/** The surface's routes (`Http` contributions): the page through the app's template, the files, the base hash. */
+export type WebRoutesOptions = {
+	readonly routes?: true;
 	/** The page's HTML: the app's template, given the request (its `nonce`) and the assets to include. */
 	readonly page: (request: HttpRequest, assets: PageAssets) => string | Promise<string>;
 	/** The paths serving the page: `["/"]` by default (patterns, `/*` for a page with its own routing). */
 	readonly paths?: readonly string[];
 	/** Whether the page and its scripts are served without a principal (a public app); signed in only by default. */
 	readonly public?: boolean;
-	/** The conditions the base bundle's packages resolve with: the server process's by default (`processConditions`). */
-	readonly conditions?: readonly string[];
 };
 
 /**
@@ -56,6 +65,12 @@ export type WebSurface<P extends Principal> = {
 	build(): Promise<SurfaceBuilt>;
 	/** How the build ended, once it did. */
 	readonly built: SurfaceBuilt | undefined;
+	/** A file of the surface (`path` under `WEB_PREFIX`), served forever; 404 for none, 503 when the build failed. */
+	file(path: string): Promise<HttpResponse>;
+	/** What a page includes now (its bootstrap, scripts and stylesheets); `undefined` when the build failed. */
+	pageAssets(): Promise<PageAssets | undefined>;
+	/** The base bundle's hash now (what an outdated page compares); `undefined` when the build failed. */
+	base(): Promise<string | undefined>;
 };
 
 /** Where the web surface's files live. */
@@ -70,6 +85,7 @@ export function webSurface<P extends Principal>(server: Host<P>, options: WebSur
 	const building = new SurfaceBuild<P>("web", "browser", WEB_PREFIX, { kind, entry, conditions, plugins }, server);
 	const facet = defineFacet<P>((host, self) => {
 		scriptsFacet<P>("web", building).setup(host, self);
+		if (options.routes === false) return;
 		self.contribute(Http, {
 			routes: webRoutes(options, building),
 			csp: { "style-src": ["'self'"], "img-src": ["'self'", "data:"], "font-src": ["'self'"] },
@@ -84,6 +100,12 @@ export function webSurface<P extends Principal>(server: Host<P>, options: WebSur
 		get built() {
 			return building.built;
 		},
+		file: (path) => building.file(path),
+		pageAssets: async () => {
+			const parts = await building.parts();
+			return parts === undefined ? undefined : pageAssets(parts.base, parts.published);
+		},
+		base: async () => (await building.parts())?.base.hash,
 	};
 }
 
@@ -92,7 +114,7 @@ export function webSurface<P extends Principal>(server: Host<P>, options: WebSur
  * hash (public), and the page.
  */
 function webRoutes<P extends Principal>(
-	options: WebSurfaceOptions,
+	options: WebRoutesOptions,
 	building: SurfaceBuild<P>,
 ): Record<string, HttpRouteOptions> {
 	const access = options.public === true ? { public: true as const } : {};
@@ -133,16 +155,17 @@ function pageAssets(base: BaseBundle, published: { readonly set: ScriptSet }): P
 		...(base.style === undefined ? [] : [base.style]),
 		...set.plugins.flatMap(({ css }) => (css === undefined ? [] : [css])),
 	];
-	return { bootstrap: bootstrap(base.hash, set), script: base.script, plugins: set.combined, styles };
+	return { bootstrap: pageBootstrap(base.hash, set), script: base.script, plugins: set.combined, styles };
 }
 
 /**
  * The page's inline bootstrap: the base hash and each plugin's stylesheet (`set`'s, the combined file's) for
  * `startPage`; how each stylesheet's load ended (`links`, by `href`: `load` or `error`, from a capturing listener the
  * page's start removes: a failed load still has a `sheet`, empty); and the `chordFacet` the combined file's scripts
- * call before the base bundle runs (they queue; `startPage` takes them).
+ * call before the base bundle runs (they queue; `startPage` takes them). Also what a page built offline runs first
+ * (a static page: `startPage({ follow: false })`).
  */
-function bootstrap(hash: string, set: ScriptSet): string {
+export function pageBootstrap(hash: string, set: ScriptSet): string {
 	const styles = Object.fromEntries(set.plugins.flatMap(({ name, css }) => (css === undefined ? [] : [[name, css]])));
 	// Inside a script element: no `<` (a `</script>` in a name would end it).
 	const page = JSON.stringify({ base: hash, styles, links: {}, queued: [] }).replaceAll("<", "\\u003c");

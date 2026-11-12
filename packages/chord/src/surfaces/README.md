@@ -29,7 +29,8 @@ from `@earendil-works/chord`.
   failed one's old script), so a set showing what the client runs reloads nothing, and a reconnect re-applies the newest
   set when a plugin kept its old code (the scripts object shows an unchanged set no second time); a set with another
   `base` calls `outdated`. Before each reconnect it asks the server's base (`serverBase`): another one also calls
-  `outdated` (a new link protocol comes with a new base bundle, Chord being in it), and the loop stops.
+  `outdated` (a new link protocol comes with a new base bundle, Chord being in it), and the loop stops. A static client
+  (`follow: false`) neither follows the scripts object nor asks the server's base.
 - **Themes** (`themes.ts`, `theme-choice.ts`, `active-theme.ts`): `Theme` (`{ id, name, mode, colors, web?, tui? }`; the
   base roles `accent`, `bg`, `fg`, `muted`, `error`, `warning`, `success`, apps add roles), the `Themes` registry
   (version 1; a later role is a version bump mapping old entries from the fallback theme), `themesFacet` serving it on a

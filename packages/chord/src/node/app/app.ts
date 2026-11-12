@@ -43,6 +43,7 @@ import {
 	type TuiSurfaceOptions,
 	tuiSurface,
 	WEB_PREFIX,
+	type WebRoutesOptions,
 	type WebSurface,
 	type WebSurfaceOptions,
 	webSurface,
@@ -214,7 +215,7 @@ export type AppTimeouts = {
 };
 
 /** The kit's web surface options (`webSurface`'s, its kind `web` and plugins the kit's). */
-export type AppWeb = Pick<WebSurfaceOptions, "entry" | "page" | "paths" | "public" | "conditions">;
+export type AppWeb = Pick<WebSurfaceOptions, "entry" | "conditions"> & Omit<WebRoutesOptions, "routes">;
 
 /** The plugins of a running app, for its "apply changes" control and its installs. */
 export type AppPlugins = {
