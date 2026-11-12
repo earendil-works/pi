@@ -25,9 +25,10 @@ and every `Binding` is one of its holders. Remote references should behave the s
 ## 2. Decision
 
 A host shares one `RemoteObject`, and with it one wire hold and one replica per member, among its references that
-would send the same `hold`: same path, same type, version and fingerprint, same params (by params key), same caller
-(principal and incarnation). The address needs no part of its own: `hostAddress` is a function of the type's
-params. Each `host.get`, `host.hold`, `ctx.get` and `self.get` still returns its own
+would send the same `hold`: same path, same type, version and fingerprint, same params (by params key), same address, same caller
+(principal and incarnation). The address is part of the key: `hostAddress` is not in the fingerprint (§3, §5), so two
+contract tokens of one name, version and fingerprint (old and new code during a reload) may place the same params at
+different addresses, and each hold must reach the provider's own placement check (`invalid/host_address`). Each `host.get`, `host.hold`, `ctx.get` and `self.get` still returns its own
 reference with its own `Binding`: its own release, state, watches, event subscriptions, parked calls and calls. The
 `RemoteObject` ends, and its hold is released on the link, when its last binding releases or ends.
 
@@ -48,13 +49,14 @@ Not shared:
 ```ts
 // host.bind, for a placement on a path (Destination.reference gave { kind: "path", path, address })
 // one table per path (a WeakMap<Path, Map<string, RemoteObject>>, so a path that goes keeps nothing)
-key = `${Type.name}\u0000${Type.version}\u0000${Type.fingerprint}\u0000${params.key}\u0000${callerKey(caller)}`
+key = `${Type.name}\u0000${Type.version}\u0000${Type.fingerprint}\u0000${params.key}\u0000${address.key}\u0000${callerKey(caller)}`
 callerKey(caller) = `${caller.principal === undefined ? "" : principalKey(caller.principal, context, host's principalKey)}\u0000${caller.incarnation}`
 ```
 
 - `params.key` is the identity key `CheckedParams` already carries (the same key local objects share by).
-- The table is the path's: the parent, or a route address's path (one `Path` object per path). The address needs no
-  part of the key: on one path, the same type and params give the same address.
+- The table is the path's: the parent, or a route address's path (one `Path` object per path).
+- `address.key`: the key of the address `hostAddress` computed (an `Address`'s identity key, as `session|S1`), from
+  the placement `Destination.reference` returns.
 - `callerKey`: the principal as the host's identity uses it (§4 principal key) and the incarnation the hold would act
   for (`actingFor`, `src/remote/README.md`). Two callers whose holds would carry different `principal`/`incarnation`
   fields never share; on a parent link (no fields sent) the caller still decides: a worker's `ctx.get` on behalf of
@@ -88,7 +90,7 @@ one its siblings see; references never see different variants of one shared obje
 ## 5. What changes in the design
 
 - **§7 References:** add after "Members": "Remote references share. A host keeps one remote object per (path, type,
-  version, fingerprint, params, caller); references made with the same key bind to it and share its hold,
+  version, fingerprint, params, address, caller); references made with the same key bind to it and share its hold,
   replicas and state; each keeps its own release, watches, subscriptions and calls. The hold ends with the last
   reference. A `self.get` reference is never shared (its holds carry an activation chain)."
 - **§3** "Every reference is a request" stays as it is for the consumer: each reference is one holder of its object
@@ -125,7 +127,9 @@ one its siblings see; references never see different variants of one shared obje
   both in one batch.
 - Releasing one: no `release` sent, the other keeps receiving; releasing the last: one `release`.
 - A reference after the last release: a new `hold` (no linger).
-- Different principal, incarnation, version, fingerprint or params, or another path: separate holds.
+- Different principal, incarnation, version, fingerprint, params or address, or another path: separate holds.
+- Two contract tokens with one name, version and fingerprint whose `hostAddress` places the same params at different
+  addresses on the parent path (old and new code): two holds, each checked by the provider.
 - `self.get` while activating and after: never shared.
 - A joining reference while loading, while failed (transient with `retryAt`, broken), while live (live in the same
   turn, its values readable at once).
