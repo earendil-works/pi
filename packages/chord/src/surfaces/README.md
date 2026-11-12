@@ -26,7 +26,9 @@ from `@earendil-works/chord`.
   the new stylesheets without applying them (`prepare`; a stop removes what it prepared), reloads the host in place
   (failures reported, kept old), then has them settled (`settle`: a plugin whose new code was adopted gets its new
   stylesheet applied, one that kept its old code keeps its old stylesheet); it records per plugin the script it runs (a
-  failed one's old script), so a set showing what the client runs reloads nothing, and a reconnect re-applies the newest
+  failed one's old script), so a set showing what the client runs reloads nothing; the client follows the scripts
+  object in the background (it starts, a page renders, offline too) and applies the set it shows when following
+  begins as well as later ones, and a reconnect re-applies the newest
   set when a plugin kept its old code (the scripts object shows an unchanged set no second time); a set with another
   `base` calls `outdated`. Before each reconnect it asks the server's base (`serverBase`): another one also calls
   `outdated` (a new link protocol comes with a new base bundle, Chord being in it), and the loop stops. A static client

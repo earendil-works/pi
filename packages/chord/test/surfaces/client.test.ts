@@ -75,6 +75,10 @@ async function setup(
 		readonly manual?: ManualTimer[];
 		readonly styles?: ClientStyles;
 		readonly follow?: false;
+		/** The server never answers: the client's sockets never open. */
+		readonly offline?: true;
+		/** The set the server shows from the start (default: `initial`'s). */
+		readonly shown?: readonly RegisteredScript[];
 	} = {},
 ) {
 	let failing = more.failing ?? 0;
@@ -84,7 +88,7 @@ async function setup(
 		onError: () => {},
 	});
 	await server.load(
-		[{ name: "chord.web", facet: scriptsFacet<TestPrincipal>("web", { set: setOf("B1", initial) }) }],
+		[{ name: "chord.web", facet: scriptsFacet<TestPrincipal>("web", { set: setOf("B1", more.shown ?? initial) }) }],
 		context,
 	);
 	const fetched: string[] = [];
@@ -103,8 +107,9 @@ async function setup(
 		],
 		open: (events) => {
 			const [mine, theirs] = memoryLinkPair();
-			server.accept(theirs, { principal: { kind: "user", id: "u" } }, context);
 			sockets.push({ events, link: mine });
+			if (more.offline === true) return mine;
+			server.accept(theirs, { principal: { kind: "user", id: "u" } }, context);
 			queueMicrotask(() => events.opened());
 			return mine;
 		},
@@ -177,7 +182,30 @@ describe("loading", () => {
 	});
 });
 
+describe("starting offline", () => {
+	it("starts with its initial scripts while the server does not answer", async () => {
+		const { client, server, sockets } = await setup([script("notes", "d1", "one")], [], { offline: true });
+		expect(sockets.length).toBeGreaterThan(0);
+		const greeting = await client.host.get(Greeting, {}, context);
+		expect(greeting.text.value).toBe("one");
+		greeting.release();
+		await client.stop(context);
+		await server.close(context);
+	});
+});
+
 describe("applying a new set in place", () => {
+	it("applies the set the server shows when it starts following, though no frame brought it", async () => {
+		const a1 = script("@test/a", "d1", "hello");
+		const a2 = script("@test/a", "d2", "hello again");
+		const { client, fetched, server } = await setup([a1], [a2], { shown: [a2] });
+		const greeting = await client.host.get(Greeting, {}, context);
+		await until(() => greeting.text.value === "hello again");
+		expect(fetched).toEqual(["/@test/a.d2.js"]);
+		await client.stop(context);
+		await server.close(context);
+	});
+
 	it("fetches only changed scripts, reloads the host, keeps an unchanged plugin's facet", async () => {
 		const a1 = script("@test/a", "d1", "hello");
 		const a2 = script("@test/a", "d2", "hello again");

@@ -99,7 +99,10 @@ export type ClientStyles = {
 /** A running client: its host, once its plugins are loaded, and its stop. */
 export type Client<P extends Principal> = { readonly host: Host<P>; stop(context: Context): Promise<void> };
 
-/** Starts a client: its host loaded with the initial scripts, its link kept, its plugins kept current. */
+/**
+ * Starts a client: its host loaded with the initial scripts, its link kept, its plugins kept current from the scripts
+ * object once the server answers (resolving before: a client starts offline).
+ */
 export async function startClient<P extends Principal>(options: ClientOptions<P>): Promise<Client<P>> {
 	const context = BACKGROUND_CONTEXT;
 	let made: Host<P> | undefined;
@@ -117,7 +120,9 @@ export async function startClient<P extends Principal>(options: ClientOptions<P>
 	const loop = connect(host, options, serverBase, (state) => {
 		if (follow && state === "connected") updates.reconnected(context);
 	});
-	if (follow) await updates.follow(context);
+	// In the background: the scripts object is the server's, and a client starts (a page renders) without it, offline too.
+	if (follow)
+		void updates.follow(context).catch((error: unknown) => options.onError({ kind: "update_failed", error }));
 	return {
 		host,
 		stop: async (ctx) => {
@@ -253,15 +258,20 @@ class Updates<P extends Principal> {
 		const held = this.#host.hold(this.#options.scripts, {}, context);
 		this.#release = () => held.release();
 		const watch = await held.set.watch(withAbortSignal(this.#abort.signal, context));
+		// The set shown when the watch began (a set published before it, while the client started, is no frame).
+		void this.#take(watch.value as ScriptSet, context);
 		watch.start(async (call, ctx) => {
-			if (call.kind !== "value") return;
-			const set = call.value as ScriptSet;
-			this.#latest = set;
-			this.#retry?.cancel();
-			this.#retry = undefined;
-			this.#pause = 0;
-			await this.#queue(set, ctx);
+			if (call.kind === "value") await this.#take(call.value as ScriptSet, ctx);
 		});
+	}
+
+	/** Takes `set` as the newest: a pending retry of an older one is dropped, `set` applied in turn. */
+	#take(set: ScriptSet, context: Context): Promise<void> {
+		this.#latest = set;
+		this.#retry?.cancel();
+		this.#retry = undefined;
+		this.#pause = 0;
+		return this.#queue(set, context);
 	}
 
 	/**
