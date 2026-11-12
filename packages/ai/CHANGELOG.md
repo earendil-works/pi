@@ -6,6 +6,10 @@
 
 - Anthropic message threads are now on by default for any provider whose baseUrl is on api.anthropic.com, not only the `anthropic` provider ([#11987](https://github.com/earendil-works/pi/issues/11987))
 
+### Fixed
+
+- Fixed tools with `strict: "prefer"` constrained sampling being sent in strict mode when their schema contains a node without a `type` (such as `items: {}`, `Type.Unknown()`, or a bare `const`), which OpenAI rejects with a 400 error; these tools now fall back to non-strict mode, and `strict: "require"` fails locally. Nodes with only an `enum` stay strict ([#12049](https://github.com/earendil-works/pi/issues/12049))
+
 ## [1.5.2] - 2026-11-10
 
 ### Fixed
