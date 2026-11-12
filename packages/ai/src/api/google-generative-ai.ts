@@ -2,12 +2,14 @@ import {
 	type GenerateContentConfig,
 	type GenerateContentParameters,
 	GoogleGenAI,
+	type HttpOptions,
 	type ThinkingConfig,
 } from "@google/genai";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
 import type {
 	Api,
 	AssistantMessage,
+	FetchFunction,
 	Model,
 	ProviderHeaders,
 	SimpleStreamOptions,
@@ -84,14 +86,11 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 		};
 
 		try {
-			if (options?.fetch && options.fetch !== globalThis.fetch) {
-				throw new Error("Custom fetch is not supported by the Google Generative AI adapter");
-			}
 			const apiKey = options?.apiKey;
 			if (!apiKey) {
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
-			const client = createClient(model, apiKey, options?.headers, options?.identity);
+			const client = createClient(model, apiKey, options?.headers, options?.identity, options?.fetch);
 			let params = buildParams(model, normalizedContext, options);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
@@ -344,8 +343,9 @@ function createClient(
 	apiKey?: string,
 	optionsHeaders?: ProviderHeaders,
 	identity?: ClientIdentity,
+	fetch?: FetchFunction,
 ): GoogleGenAI {
-	const httpOptions: { baseUrl?: string; apiVersion?: string; headers?: Record<string, string> } = {};
+	const httpOptions: HttpOptions = {};
 	if (model.baseUrl) {
 		httpOptions.baseUrl = model.baseUrl;
 		httpOptions.apiVersion = ""; // baseUrl already includes version path, don't append
@@ -353,6 +353,9 @@ function createClient(
 	const headers = providerHeadersToRecord(getIdentityHeaders(model, identity), model.headers, optionsHeaders);
 	if (headers) {
 		httpOptions.headers = headers;
+	}
+	if (fetch) {
+		httpOptions.fetch = fetch;
 	}
 
 	return new GoogleGenAI({
