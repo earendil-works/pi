@@ -2,8 +2,8 @@
 // native) and every store's status (`Backup`); each session's worker uploads its own store through `BackupRemote`, a
 // slot's body streamed through the server in chunks.
 import { bool, bytes, int, nul, num, obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
-import { defineRegistry, literal, local, method, record, remote, serverHost } from "@p2/app/v1";
-import type { PutBatchResult } from "@p2/app/v1/node";
+import { defineRegistry, keyedRegistry, literal, local, method, record, remote, serverHost } from "@p2/app/v1";
+import type { OpenBackupTarget, PutBatchResult } from "@p2/app/v1/node";
 
 /** At most this much of a body crosses in one `append`. */
 export const CHUNK_BYTES = 1024 * 1024;
@@ -101,3 +101,10 @@ export const BackupRemote = remote("p2.backup-remote", {
 		},
 	},
 });
+
+/**
+ * Backup targets plugins offer, by name (`P2_BACKUP=<name>`): `radius` from the Radius plugin. `open` gives the target
+ * once it can be used, or throws why it cannot (not signed in): the backup retries it, slowly. The backup plugin owns
+ * the registry; a plugin that is not loaded offers nothing.
+ */
+export const BackupTargets = keyedRegistry<{ open(): Promise<OpenBackupTarget> }>("p2.backup-targets");
