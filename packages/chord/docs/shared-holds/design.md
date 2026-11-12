@@ -1,6 +1,6 @@
 # References sharing one wire hold
 
-Status: design, fourth draft (2026-11-12). Drafts 1–3 (502f79e3e, 20a6e09dc, 7a1c1f61e) shared one hold among
+Status: design, fourth draft (2026-11-12), `joined` as a control message (owner: timing is not surface). Drafts 1–3 (502f79e3e, 20a6e09dc, 7a1c1f61e) shared one hold among
 references and patched what that lost (an event fence, a reference count); two review rounds by GPT-6 Astra
 (adversarial, with probes) and GPT-6.1 Sol (against design.md) showed that a shared request cannot be made
 indistinguishable from separate ones. This draft keeps **one request per reference** at every hop and shares only the
@@ -19,13 +19,15 @@ commit encoded N times. In p2 a page holds `p2.views` 3 times, `p2.chat` and `p2
 store per Markdown pane (measured 2026-11-12); a React page normally has several components showing one object.
 Local references already share their object (one `ChordObject` per identity, every `Binding` one of its holders).
 
-What this change saves: snapshots, encoding, bytes and parsing for every reference after the first. What it does not
-change: when a reference binds. Each reference's request still takes its turn in the provider's window (K = 2), so
-the time to first value of a session switch is unchanged by this design; that is §12's separate question.
+What this change saves: snapshots, encoding, bytes and parsing for every reference after the first, and the wait in
+the provider's window (K = 2) for every reference after the first: a join's `joined` is a control message, answered
+one round trip after it arrives, never queued behind snapshots. In p2's session switch the second and third
+`p2.views`, the second `p2.chat` and `p2.chat-mode` go live after one round trip instead of waiting their turn.
 
 ## 2. Goal and the two accepted differences
 
-Every observable behaviour stays as it is today, for the reference (its state and the order of its transitions, its
+Every observable behaviour stays as it is today, up to timing that is nondeterministic today (when a reference
+binds relative to other references depends on activation and acks already; a joiner may bind sooner), for the reference (its state and the order of its transitions, its
 values, readiness of `host.get`, calls, their order, their errors and the provider's cancellation reasons, parked
 calls, events and their eligibility, retries, release, error codes, `host.activity`) and at the provider
 (`host.references` entries, their order and timing, `host.activity`, `ctx.principal` and `ctx.incarnation` of calls,
@@ -79,8 +81,8 @@ Then:
 
 Until its own `joined` or `bound` arrives the reference is `loading`, as today, whatever its group shows.
 
-**`joined { hold, carrier, cutoff }`** (an entry of a `bound` message, below): the reference becomes a member of the
-carrier's group and goes live in that message's batch, reading the group's replicas. It records:
+**`joined { origin?, hold, carrier, cutoff }`** (a control message, below): the reference becomes a member of the
+carrier's group and goes live in a batch of its own, reading the group's replicas. It records:
 
 - **which members it has seen**: members that are failed or that the bound variant lacks at this point are "not seen"
   for this binding: a watch opened on one rejects with its error, as on a fresh failed snapshot; a later value makes
@@ -119,15 +121,16 @@ A `hold` with `carrier` is a hold: placed, admitted, refused, retried, listed, c
   of `bound` if the named carrier is a hold of the same `ProviderSide` (link and origin), bound or binding in this
   same message to the same object instance, variant and version, and still subscribed. Otherwise it sends `bound`, as
   for any hold.
-- `joined` is an entry of the `bound` message (`bound.joined?: [{ hold, carrier, cutoff }]`), so it takes the window
-  exactly as the `bound` it replaces: the reference binds at the same moment a separate hold would. Before a `bound`
-  message with `joined` entries, the provider sends the carriers' waiting state (as before a call's answer, §3 "a
-  call's answer follows its state"), so the group's replicas show at least what a snapshot taken now would show.
-- `cutoff` is the host's emit counter when the message is sent, the value a separate hold's binding records (events
+- `joined` is a control message: it takes no window slot and is not acknowledged, so a join never waits behind
+  snapshots. Before it the provider sends the carrier's waiting state, past the window if it is full (as before a
+  call's answer, §3 "a call's answer follows its state"), so the group's replicas show at least what a snapshot taken
+  now would show. A carrier whose own `bound` still waits for a slot makes the join wait with it: `joined` goes right
+  after that `bound` is sent.
+- `cutoff` is the host's emit counter when `joined` is sent, the value a separate hold's binding records (events
   spec §2.4).
 - A joined hold has no subscription and no encoder: its state is the carrier's. Its `failed`, `loading` and `gone`
   notices are sent to it as to any hold. A rebind (a restart, another variant) sends the carrier `bound` and each
-  member `joined` again, in the same message, under the same rule.
+  member `joined` again right after it, under the same rule.
 - Event entries carry the emitting host's counter value: `event.events[i].n` (present on links whose peer announced
   `joins`). An entry for a carrier is sent when some request of its group is eligible (`n` above the lowest cutoff
   among the carrier and its joined holds); the consumer filters per binding. (Re-exposed events keep the counter of
@@ -159,12 +162,12 @@ A relay places every hold it receives by its address, as today (`host.place`, ro
 | --- | --- |
 | `hello.joins?: true` | both sides: this side handles `carrier`, `joined`, `n` and `leave`. A side sends `carrier` and `leave` only to a peer that announced it, and `joined` and `n` only to a consumer that announced it; to any other peer it sends what it sends today |
 | `hold.carrier?: id` | to provider: the hold this request would share a stream with (an id of the same origin on this link) |
-| `bound.joined?: [{ hold, carrier, cutoff }]` | to consumer, in the same message and batch as `bound.holds` |
+| `joined { origin?, hold, carrier, cutoff }` | to consumer: control (no window slot, no ack); after the carrier's waiting state |
 | `event.events[i].n?: int` | to consumer: the emitting host's emit counter value of the entry |
 | `leave { origin?, hold }` | to provider: the request ends, its stream stays for its joins |
 
-- Codecs: `hold`'s optional-field flags gain `carrier`; `bound` gains a trailing count and entries (absent: 0); event
-  entries gain `n` behind a flag in the message header; `leave` takes an unused kind byte (binary) and tag (text).
+- Codecs: `hold`'s optional-field flags gain `carrier`; event entries gain `n` behind a flag in the message header;
+  `joined` and `leave` take unused kind bytes (binary) and tags (text).
   Each exact layout is fixed in `link/binary.ts` and `link/text.ts` with round-trip tests, existing layouts unchanged.
 - `MESSAGE` gains the fields and kind; checks by layer as §22. Q1: a `carrier` naming an id the provider does not know
   as a hold of that side is a plain hold (bound fully); a `joined` naming an unknown hold or carrier is ignored; a
@@ -176,10 +179,10 @@ A relay places every hold it receives by its address, as today (`host.place`, ro
 
 | Observable | Why it is unchanged |
 | --- | --- |
-| a reference's states and their order | its own request gets every notice, as a hold does; it goes live at its `joined`, which takes the window as its `bound` would |
+| a reference's states and their order | its own request gets every notice, as a hold does; it goes live at its `joined` (sooner than a `bound` waiting for a slot: timing, §2) |
 | its first values | its `joined` follows the carrier's waiting state, so the replicas show at least the provider's state when `joined` was sent, as a snapshot taken then; members failed or missing then are "not seen" for it |
 | later values and their batches | one `state` message per commit per link and origin already carries every touched hold; the group's replicas apply the carrier's entry in that batch, as each hold's would |
-| `host.get` readiness | live at `joined`, the moment a separate `bound` would have been sent |
+| `host.get` readiness | live at `joined`, with values at least as new as a snapshot taken when it was sent |
 | calls, their order, `ctx.principal`, errors, cancellation reason | over its own request id, sent in order after its `hold`; release cancels them at the provider with `released` |
 | events and eligibility | its cutoff is the counter value its own binding would have had; `n` on each entry decides per binding, also within one flush |
 | retry, refusals, `too_large` retry | per request; a refused or retried join is placed and checked on its own |
@@ -210,8 +213,8 @@ A relay places every hold it receives by its address, as today (`host.place`, ro
 ## 10. Build
 
 - `link/message.ts`, `link/binary.ts`, `link/text.ts`: the fields and kind of §7.
-- `remote/host-link.ts`: `hello.joins`; dispatch of `leave` and of `bound.joined`.
-- `remote/consumer.ts`: holds with `carrier`; `bound.joined` (batch with the message's `bound` entries, then the ack);
+- `remote/host-link.ts`: `hello.joins`; dispatch of `leave` and `joined`.
+- `remote/consumer.ts`: holds with `carrier`; `joined` (its own batch, no ack);
   `bound` for a join (split); event entries filtered per binding by `n`.
 - `remote/remote-object.ts`: split into the request (one per reference: id, state, calls, path attachment, re-hold)
   and the group (replicas, event nodes, carrier); `leave`; split on `bound`; per-binding seen members.
@@ -237,8 +240,9 @@ Each of Astra's and Sol's traces, asserting today's outcome:
   queued calls of the released reference never reach the wire; the sibling's calls go on.
 - Two references to an unserved type: retrying one moves only it (`loading` → `failed`); the other has no transition.
 - Event entries around a join within one flush (E1 before, E2 after the `joined` send): the joiner gets E2, not E1;
-  two joins in one flush; a full state window delaying a join's `joined` while the carrier receives events: the joiner
-  gets none of them, then those after its `joined`.
+  two joins in one flush; a full state window: `joined` still goes at once (after the carrier's waiting state), the
+  joiner gets the events after its cutoff.
+- Speed: with the window full (acks withheld), a join to a live carrier goes live after one round trip.
 - A joiner on a live object with a failed member: its watch rejects with the error (no last value), as with a fresh
   snapshot; a member the current variant lacks: likewise.
 - Reload dropping the version while the old attempt drains: a new join is refused `contract_mismatch` while the old
@@ -261,8 +265,8 @@ Each of Astra's and Sol's traces, asserting today's outcome:
 - An example, `test/examples/NN-shared-streams.ts`: three components holding one remote object over a link; snapshots
   and encodes printed.
 
-## 12. Not decided here: first bindings and the window
+## 12. Not decided here: carriers and the window
 
-Each request still waits for the provider's window (K = 2 `bound`/`state` messages per origin) as today; every binding
-waiting at a freed slot leaves in one `bound` message. Whether first bindings should be exempt (the main cost of p2's
-session switch) is a separate decision, to be traced with p2's telemetry once this is built.
+Carriers still wait for the provider's window (K = 2 `bound`/`state` messages per origin); every binding waiting at a
+freed slot leaves in one `bound` message. Whether first bindings of carriers should be exempt is a separate decision,
+traced with p2's telemetry once this is built.
