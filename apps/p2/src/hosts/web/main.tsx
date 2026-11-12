@@ -10,6 +10,7 @@ import { createHost, type Facet, hostErrorText, newerPeerProtocol } from "../../
 import { SERVER } from "../../runtime/principals.ts";
 import { whenLive } from "../../runtime/refs.ts";
 import { getNavigation, HostContext, Slot, setConnected, setShareEnded, webCoreFacet } from "../../runtime/web.tsx";
+import { AppBoundary, startErrorReports } from "../../web/app-boundary.tsx";
 import { browserEnvironment, keepConnected } from "../../web/reconnect.ts";
 import { startShellBridge } from "../../web/shell-bridge.ts";
 import { startTheme } from "../../web/theme.ts";
@@ -131,9 +132,12 @@ export function startWeb(facets: readonly (readonly [string, Facet])[]): void {
 	startShellBridge(getNavigation());
 	const element = document.getElementById("root");
 	if (!element) throw new Error("Missing application root");
+	startErrorReports();
 	createRoot(element).render(
-		<HostContext.Provider value={host}>
-			<Slot name="app" fallback={<div className="hero">Loading…</div>} />
-		</HostContext.Provider>,
+		<AppBoundary>
+			<HostContext.Provider value={host}>
+				<Slot name="app" fallback={<div className="hero">Loading…</div>} />
+			</HostContext.Provider>
+		</AppBoundary>,
 	);
 }

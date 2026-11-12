@@ -1,6 +1,6 @@
 // The right-hand panels each session had open on this device (the workspace, the terminal, the side panel), so a
 // session opens with its own panels instead of the ones the previous session had open.
-import type { Route } from "./navigation.ts";
+import type { Route, WorkspaceTab } from "./navigation.ts";
 
 /** The parts of a route that are a session's panels. */
 export type SessionPanels = Pick<Route, "workspace" | "terminal" | "panel" | "activity">;
@@ -75,23 +75,48 @@ function panelsOf(from: SessionPanels, conversation: number, shown: number): Ses
 	};
 }
 
-// The stored list is device data any version of the page may have written: entries that are not as expected are
-// dropped, not trusted.
+// The stored list is device data any version of the page may have written: entries and fields that are not as this
+// version expects are dropped, not trusted.
 function read(): [string, Kept][] {
 	try {
 		const value: unknown = JSON.parse(localStorage.getItem(STORAGE) ?? "[]");
 		if (!Array.isArray(value)) return [];
-		return value.filter(
-			(entry): entry is [string, Kept] =>
-				Array.isArray(entry) &&
-				typeof entry[0] === "string" &&
-				typeof entry[1] === "object" &&
-				entry[1] !== null &&
-				typeof entry[1].conversation === "number",
-		);
+		return value.flatMap((entry): [string, Kept][] => {
+			if (!Array.isArray(entry) || typeof entry[0] !== "string") return [];
+			const kept = keptOf(entry[1]);
+			return kept ? [[entry[0], kept]] : [];
+		});
 	} catch {
 		return [];
 	}
+}
+
+const TABS: readonly string[] = ["files", "changes", "search", "comments", "terminal"];
+
+/** A stored entry's panels, each field kept only when it has this version's shape. */
+function keptOf(value: unknown): Kept | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	const { conversation, workspace, terminal, panel, activity } = value as Record<string, unknown>;
+	if (typeof conversation !== "number") return undefined;
+	const tab = (workspace as { tab?: unknown } | null | undefined)?.tab;
+	const shell = (workspace as { terminal?: unknown } | null | undefined)?.terminal;
+	const row = (activity as { row?: unknown } | null | undefined)?.row;
+	const step = (activity as { step?: unknown } | null | undefined)?.step;
+	return {
+		conversation,
+		...(typeof tab === "string" && TABS.includes(tab)
+			? {
+					workspace: {
+						tab: tab as WorkspaceTab,
+						directory: "",
+						...(typeof shell === "string" ? { terminal: shell } : {}),
+					},
+				}
+			: {}),
+		...(typeof terminal === "string" ? { terminal } : {}),
+		...(typeof panel === "string" ? { panel } : {}),
+		...(typeof row === "string" ? { activity: { row, ...(typeof step === "string" ? { step } : {}) } } : {}),
+	};
 }
 
 function write(entries: [string, Kept][]): void {

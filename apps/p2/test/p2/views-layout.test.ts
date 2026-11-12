@@ -141,6 +141,16 @@ describe("arrangements", () => {
 		// Seen views stay where the arrangement put them.
 		assert.equal(shape(settle(layout, views(["plan", 1], ["glyph", 2])).tree), "row([*transcript] [*glyph])");
 	});
+
+	it("ignores an arrangement whose views are all gone (e.g. of the removed custom kind), hiding nothing", () => {
+		const before = settle(initialLayout(), views(["plan", 1], ["notes", 2]));
+		const layout = adopt(before, { layout: { row: [CHAT, "glyph"] }, stamp: 9 }, ["plan", "notes"]);
+		assert.equal(shape(layout.tree), shape(before.tree));
+		assert.deepEqual([layout.hidden, layout.arranged], [[], 9]);
+		// The transcript alone, named on purpose, still hides the rest.
+		const alone = adopt(before, { layout: CHAT, stamp: 10 }, ["plan", "notes"]);
+		assert.deepEqual(alone.hidden, ["plan", "notes"]);
+	});
 });
 
 describe("parseLayout", () => {

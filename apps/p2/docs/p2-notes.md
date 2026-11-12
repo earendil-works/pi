@@ -607,6 +607,15 @@ the session) and answers with the outcome: once the worker runs, or rejecting `w
 start, so the button shows pending and then the result; drafts and attachments stay intact. Creating a session
 navigates to its view before awaiting the worker, so a failed first start also has a visible recovery screen.
 
+**The page never goes blank** (`src/web/app-boundary.tsx`): the React root renders inside `AppBoundary`, which shows
+a failure with **Reload** and **Reset this device's saved state for this session** (localStorage keys naming the
+session, its panels, its cached conversations, the tab's navigation and draft, the service worker's kept page).
+Render failures, uncaught errors and rejections, and failures a view pane's boundary catches are reported to
+`POST /client-error` (logs plugin; same-origin, owner or guest, a bounded body; at most 20 per page load and 60 a
+minute on the server): an owner's page becomes a notice of source `web`, a guest's only a log line. Persisted client
+state is device data an older page may have written: the layout (`parseLayout`) and the session panels (each field
+checked) drop what does not fit. Test: `ui-recovery.test.ts`.
+
 Host `onError`, refused reloads and worker failures publish bounded, redacted owner notices (`LogNotices`), with
 Show logs and Dismiss. Notices keep the latest error per source (at most 50 sources); normal shutdown/abort
 messages do not become worker-failure notices. Archived-session admission refusals are not cached as crashes,

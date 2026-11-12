@@ -5,6 +5,7 @@
 import { BACKGROUND_CONTEXT, liveIn } from "@p2/app/v1";
 import {
 	CloseIcon,
+	reportClientError,
 	useComposerState,
 	useObject,
 	useReadable,
@@ -366,6 +367,10 @@ class PaneBoundary extends Component<{ children: ReactNode }, { error?: string }
 
 	static getDerivedStateFromError(error: unknown): { error: string } {
 		return { error: error instanceof Error ? error.message : String(error) };
+	}
+
+	override componentDidCatch(error: unknown): void {
+		reportClientError(error, "view pane");
 	}
 
 	override render() {

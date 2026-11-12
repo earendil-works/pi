@@ -55,11 +55,15 @@ async function keepPage(response) {
 const isAppPage = (response) =>
 	response.ok && response.type === "basic" && (response.headers.get("Content-Type") ?? "").startsWith("text/html");
 
-async function page(request) {
+async function page(event) {
+	const request = event.request;
 	const network = fetch(request).then(async (response) => {
 		if (isAppPage(response)) await keepPage(response).catch(() => {});
 		return response;
 	});
+	// When the kept page answers first, the worker stays alive until the network's page is kept too: the next start
+	// gets the current version, instead of the kept one again whenever the network is slower than PAGE_WAIT.
+	event.waitUntil(network.catch(() => {}));
 	const kept = () => caches.open(SHELL).then((cache) => cache.match("/"));
 	const waited = new Promise((resolve) => setTimeout(resolve, PAGE_WAIT, "waited"));
 	try {
@@ -101,6 +105,6 @@ self.addEventListener("fetch", (event) => {
 	const url = new URL(request.url);
 	if (url.origin !== self.location.origin) return;
 	if (request.mode === "navigate" && request.destination === "document" && isPage(url.pathname))
-		event.respondWith(page(request));
+		event.respondWith(page(event));
 	else if (url.pathname.startsWith(BUNDLE)) event.respondWith(bundleFile(request));
 });
