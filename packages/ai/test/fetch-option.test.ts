@@ -144,6 +144,26 @@ describe("fetch stream option", () => {
 		expect(globalThis.fetch).toBe(fallback);
 	});
 
+	// #12097: without a fetch, @google/genai adds a per-request dispatcher that disables the
+	// global dispatcher's header and body timeouts.
+	it("keeps the global dispatcher for Google adapters when no fetch is given", async () => {
+		const ambient = vi.fn<FetchFunction>(
+			async () =>
+				new Response(JSON.stringify({ error: { message: "upstream rejected request" } }), {
+					status: 401,
+					headers: { "content-type": "application/json" },
+				}),
+		);
+		vi.stubGlobal("fetch", ambient);
+		await streamGoogleGenerativeAI(createModel("google-generative-ai"), context, { apiKey: "test-key" }).result();
+		await streamGoogleVertex(createModel("google-vertex"), context, { apiKey: "test-key" }).result();
+
+		expect(ambient).toHaveBeenCalledTimes(2);
+		for (const [, init] of ambient.mock.calls) {
+			expect(init).not.toHaveProperty("dispatcher");
+		}
+	});
+
 	it("allows Google adapters to receive globalThis.fetch explicitly", async () => {
 		const ambient = vi.fn<FetchFunction>(
 			async () =>

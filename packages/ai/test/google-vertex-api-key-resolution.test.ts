@@ -157,6 +157,7 @@ describe("google-vertex api key resolution", () => {
 
 		expect(googleGenAiMock.constructorCalls).toHaveLength(1);
 		expect(googleGenAiMock.constructorCalls[0]?.httpOptions).toEqual({
+			fetch: globalThis.fetch,
 			headers: { "User-Agent": PI_USER_AGENT },
 		});
 	});
@@ -172,6 +173,7 @@ describe("google-vertex api key resolution", () => {
 
 		expect(googleGenAiMock.constructorCalls).toHaveLength(1);
 		expect(googleGenAiMock.constructorCalls[0]?.httpOptions).toEqual({
+			fetch: globalThis.fetch,
 			headers: { "User-Agent": "custom-agent" },
 		});
 	});

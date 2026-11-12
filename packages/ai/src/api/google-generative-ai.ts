@@ -345,7 +345,9 @@ function createClient(
 	identity?: ClientIdentity,
 	fetch?: FetchFunction,
 ): GoogleGenAI {
-	const httpOptions: HttpOptions = {};
+	// Always pass fetch: without one, @google/genai adds a per-request dispatcher that disables
+	// undici's header and body timeouts, bypassing the idle timeouts of the global dispatcher.
+	const httpOptions: HttpOptions = { fetch: fetch ?? globalThis.fetch };
 	if (model.baseUrl) {
 		httpOptions.baseUrl = model.baseUrl;
 		httpOptions.apiVersion = ""; // baseUrl already includes version path, don't append
@@ -354,14 +356,8 @@ function createClient(
 	if (headers) {
 		httpOptions.headers = headers;
 	}
-	if (fetch) {
-		httpOptions.fetch = fetch;
-	}
 
-	return new GoogleGenAI({
-		apiKey,
-		httpOptions: Object.keys(httpOptions).length > 0 ? httpOptions : undefined,
-	});
+	return new GoogleGenAI({ apiKey, httpOptions });
 }
 
 function buildParams(
@@ -396,6 +392,9 @@ function buildParams(
 		...(functionCallingMode !== undefined && {
 			toolConfig: { functionCallingConfig: { mode: functionCallingMode } },
 		}),
+		// Off for now, until we have evaluated the implications of the SDK's automatic continuation
+		// (extra requests and stream resumes inside the SDK). A CONTINUATION finish ends the turn as "length".
+		automaticContinuation: false,
 	};
 
 	if (options.thinking?.enabled && model.reasoning) {

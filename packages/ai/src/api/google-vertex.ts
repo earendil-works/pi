@@ -394,8 +394,10 @@ function buildHttpOptions(
 	optionsHeaders?: ProviderHeaders,
 	identity?: ClientIdentity,
 	fetch?: FetchFunction,
-): HttpOptions | undefined {
-	const httpOptions: HttpOptions = {};
+): HttpOptions {
+	// Always pass fetch: without one, @google/genai adds a per-request dispatcher that disables
+	// undici's header and body timeouts, bypassing the idle timeouts of the global dispatcher.
+	const httpOptions: HttpOptions = { fetch: fetch ?? globalThis.fetch };
 	const baseUrl = resolveCustomBaseUrl(model.baseUrl);
 	if (baseUrl) {
 		httpOptions.baseUrl = baseUrl;
@@ -409,11 +411,8 @@ function buildHttpOptions(
 	if (headers) {
 		httpOptions.headers = headers;
 	}
-	if (fetch) {
-		httpOptions.fetch = fetch;
-	}
 
-	return Object.keys(httpOptions).length > 0 ? httpOptions : undefined;
+	return httpOptions;
 }
 
 function resolveCustomBaseUrl(baseUrl: string): string | undefined {
@@ -503,6 +502,9 @@ function buildParams(
 		...(functionCallingMode !== undefined && {
 			toolConfig: { functionCallingConfig: { mode: functionCallingMode } },
 		}),
+		// Off for now, until we have evaluated the implications of the SDK's automatic continuation
+		// (extra requests and stream resumes inside the SDK). A CONTINUATION finish ends the turn as "length".
+		automaticContinuation: false,
 	};
 
 	if (options.thinking?.enabled && model.reasoning) {
