@@ -4920,10 +4920,16 @@ recorded in the start data, so a resumed script maps results as it began.
 
 The tool's description is fixed: the script environment and its globals. The
 extension's `codemode` prompt section lists the agent's `callable` tools as
-TypeScript declarations, grouped by `namespaces` (a tool belongs to the one with
-the longest matching name prefix), within an inline budget of 3000 estimated
-tokens: every namespace places its cheapest tool before any places a second,
-and what does not fit is said so and found with `searchTools()`. Scripts find
+TypeScript declarations, ungrouped tools first, then every namespace a selected
+extension declares (`Extension.namespace`; a tool several extensions name belongs
+to the first one's), by name, as `## <name>` and its one-line description, listed
+also while it has no tools (an MCP server waiting for sign-in) and without tool
+counts, so the section changes only with the declared tools. Deferred tools are
+never declared there. Declarations fit an inline budget of 3000 estimated tokens:
+every namespace places its cheapest tool before any places a second, and what does
+not fit is said so and found with `searchTools()`. A namespace's `instructions`
+are returned by `describeNamespace()` only; `searchTools()` searches its name,
+description and instructions. Scripts find
 tools with `ALL_TOOLS`, `searchTools(query, { limit?, namespace? })` (BM25),
 `describeTool(name)`, and `describeNamespace(name)`, answered from the start
 data and journaled like other globals. The result's content is a
