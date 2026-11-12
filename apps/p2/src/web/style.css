@@ -2474,6 +2474,51 @@ button.diff-number:hover {
 	color: var(--text);
 	font-weight: var(--fw-strong);
 }
+/* Send's ways to send (steer or follow-up while busy; idle, a new branch), from a long press on it: a list opening
+   upwards over Send. Send's long press shows no callout or selection on iOS. */
+.composer-bar {
+	position: relative;
+}
+.send {
+	-webkit-touch-callout: none;
+	user-select: none;
+}
+.send-options {
+	position: absolute;
+	right: 0;
+	bottom: calc(100% + var(--s1));
+	z-index: 5;
+	display: flex;
+	flex-direction: column;
+	min-width: 240px;
+	padding: var(--s1) 0;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg);
+}
+.send-options > button {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--s3);
+	min-height: var(--control);
+	padding: 0 var(--s3);
+	text-align: left;
+	font-size: var(--fs-sm);
+}
+.send-options kbd {
+	color: var(--muted);
+	font-family: inherit;
+	font-size: var(--fs-xs);
+}
+.send-options > button:active {
+	background: var(--hover);
+}
+@media (hover: hover) {
+	.send-options > button:hover {
+		background: var(--hover);
+	}
+}
 .to-bottom {
 	position: absolute;
 	top: calc(-1 * (var(--control) + var(--s2)));
@@ -3513,8 +3558,13 @@ button.history-edge:disabled {
 	.segments button,
 	.detail-more,
 	.queued > div,
-	.file-completion > [role="option"] {
+	.file-completion > [role="option"],
+	.send-options > button {
 		min-height: var(--row);
+	}
+	/* No keyboard to press them with. */
+	.send-options kbd {
+		display: none;
 	}
 	.foot-button {
 		height: var(--row);

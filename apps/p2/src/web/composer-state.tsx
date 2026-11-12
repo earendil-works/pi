@@ -20,8 +20,6 @@ type State = {
 	setDraft: Dispatch<SetStateAction<string>>;
 	files: PickedFile[];
 	setFiles: Dispatch<SetStateAction<PickedFile[]>>;
-	steer: boolean;
-	setSteer: Dispatch<SetStateAction<boolean>>;
 	error: string | undefined;
 	setError: Dispatch<SetStateAction<string | undefined>>;
 	/** Shows a failed call's error in the app's toast (an optimistic guess rolled back, an action refused). */
@@ -52,7 +50,6 @@ export function ComposerState({ children }: { children: ReactNode }) {
 	const route = useRoute();
 	const [draft, setDraft] = useState("");
 	const [files, setFiles] = useState<PickedFile[]>([]);
-	const [steer, setSteer] = useState(true);
 	const [error, setError] = useState<string>();
 	const fail = useCallback((failure: unknown) => setError(errorText(failure)), []);
 	const [stopped, setStopped] = useState<State["stopped"]>();
@@ -107,8 +104,6 @@ export function ComposerState({ children }: { children: ReactNode }) {
 				setDraft,
 				files,
 				setFiles,
-				steer,
-				setSteer,
 				error,
 				setError,
 				fail,

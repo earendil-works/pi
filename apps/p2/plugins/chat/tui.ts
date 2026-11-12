@@ -780,6 +780,60 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 		this.runtime.perform(this.sending({ id: sent.id, text, mode, files }, delivered));
 	}
 
+	/**
+	 * `app.message.followUp` (Alt+Enter): while a run is busy (or before the transcript says), a follow-up; idle, the
+	 * owner's message in the main conversation goes to a new branch (`sendInBranch`); elsewhere it is sent as Enter does.
+	 */
+	sendAlternate(): void {
+		const session = this.session;
+		if (!this.current || this.current.busy) this.send("followUp");
+		else if (
+			session &&
+			this.runtime.role === "owner" &&
+			this.conversation === this.runtime.mainOf(session) &&
+			this.view?.entries.length
+		)
+			this.sendInBranch(session);
+		else this.send("steer");
+	}
+
+	/**
+	 * Sends the editor's message in a new branch (docs/tree.md): the worker forks this conversation at its end and makes
+	 * the fork the main one (`SessionTree.branch`, labelled with the message); the message and its attachments move to
+	 * the fork, which is shown, and are sent there. This conversation keeps ending where it did. The editor keeps the
+	 * message until the fork exists, so a refused branch leaves it there.
+	 */
+	private sendInBranch(session: string): void {
+		const identity = this.identity;
+		const draft = this.editor.getExpandedText();
+		const files = identity ? (this.attachments.get(identity) ?? []) : [];
+		if ((!draft.trim() && !files.length) || !identity) return;
+		const runtime = this.runtime;
+		const from = this.conversation;
+		const held = this.sessionTree(session);
+		runtime.perform(
+			(async () => {
+				await whenLive(held);
+				const owner = liveIn(held, "owner");
+				if (!owner) throw new Error("Only the owner branches the session");
+				const label = draft.trim() || files.map((file) => file.name).join(", ");
+				const { conversation } = await owner.branch({ conversation: from, label }, BACKGROUND_CONTEXT);
+				const target = identityKey(session, conversation);
+				runtime.drafts.set(target, draft);
+				this.attachments.set(target, files);
+				this.attachments.set(identity, []);
+				if (this.identity === identity) this.editor.setText("");
+				runtime.drafts.set(identity, "");
+				runtime.navigate("chat", session, conversation);
+				// The fork is shown (the session row's new `main`, pushed before this answer, may have switched to it with an
+				// empty editor): it is sent there. Else it waits in that conversation's editor.
+				if (this.disposed || this.identity !== target) return;
+				this.editor.setText(draft);
+				this.send("steer");
+			})(),
+		);
+	}
+
 	private restore(identity: string, texts: string[]): void {
 		if (!texts.length) return;
 		const draft = [...texts, this.runtime.drafts.get(identity) ?? ""].filter(Boolean).join("\n\n");
@@ -884,13 +938,7 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 		const session = this.session;
 		if (!session) return;
 		const title = () => this.rows.find((row) => row.id === session)?.title ?? "";
-		// One reference per viewed session: opening `/tree` again and each action reuse it.
-		if (this.tree?.session !== session) {
-			this.tree?.scope.dispose();
-			const scope = new TuiScope(runtime);
-			this.tree = { session, scope, ref: scope.watch(SessionTree, { session }, () => {}) };
-		}
-		const held = this.tree.ref;
+		const held = this.sessionTree(session);
 		runtime.perform(
 			(async () => {
 				await whenLive(held);
@@ -928,6 +976,16 @@ export class ChatSurface implements TuiSurface, ChatSurfaceApi {
 				const overlay = runtime.ctx.overlay("tree", selector, { width: "100%", anchor: "bottom-center" });
 			})(),
 		);
+	}
+
+	/** The session's `SessionTree`: one reference per viewed session, which `/tree`, its actions and branching reuse. */
+	private sessionTree(session: string): Held<typeof SessionTree> {
+		if (this.tree?.session !== session) {
+			this.tree?.scope.dispose();
+			const scope = new TuiScope(this.runtime);
+			this.tree = { session, scope, ref: scope.watch(SessionTree, { session }, () => {}) };
+		}
+		return this.tree.ref;
 	}
 
 	/**

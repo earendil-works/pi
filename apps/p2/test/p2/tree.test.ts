@@ -1,7 +1,7 @@
 // `/tree` (docs/tree.md) on the real server and session worker with the fake provider: the tree of the main
 // conversation and its branches, switching (forking, reusing a branch, before the first message), the session row's
 // `main`, read-only earlier branches, main-only tools in a branch, switching while busy, branch labels (stored at the fork,
-// renamed, conversation 1's null for the session title) and `p2.main` version 1's migration.
+// renamed, conversation 1's null for the session title), `p2.main` version 1's migration and branching forward.
 
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
@@ -383,6 +383,32 @@ describe("/tree (fake provider)", () => {
 				{ conversation: 1, label: null },
 			],
 		);
+		ref.release();
+	});
+
+	it("branches forward: forks a conversation at its end into the main one, labelled; the original ends as before", async () => {
+		const ref = await treeRef();
+		const from = (await ref.tree(BACKGROUND_CONTEXT)).main;
+		await send(from, "last");
+		const before = await ref.tree(BACKGROUND_CONTEXT);
+		const { conversation } = await ref.branch(
+			{ conversation: from, label: "  a side\n question " },
+			BACKGROUND_CONTEXT,
+		);
+		assert.notEqual(conversation, from);
+		const branches = await branchesWhen((list) => list.length === before.branches.length + 1);
+		// Under the conversation it was forked from, in the sidebar's tree.
+		assert.deepEqual(branches[0], { conversation, label: "a side question", parent: from });
+		const after = await ref.tree(BACKGROUND_CONTEXT);
+		assert.equal(after.main, conversation);
+		// The fork has the whole history and goes on from there; the original still ends at its last answer.
+		const view = await send(conversation, "side");
+		assert.match(text(view), /Echo: last/);
+		const tree = await ref.tree(BACKGROUND_CONTEXT);
+		assert.equal(tree.nodes.findLast((node) => node.conversation === from)?.text, "Echo: last");
+		assert.equal(nodeWith(tree, "user", "side").parent, nodeWith(tree, "assistant", "Echo: last").entry);
+		await assert.rejects(ref.branch({ conversation, label: " \n " }, BACKGROUND_CONTEXT), /at least one character/);
+		await assert.rejects(ref.branch({ conversation: 999, label: "x" }, BACKGROUND_CONTEXT), /Unknown branch/);
 		ref.release();
 	});
 });

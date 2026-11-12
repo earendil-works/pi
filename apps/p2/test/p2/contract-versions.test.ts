@@ -2,9 +2,9 @@
 // `Catalog`, `Envs`, `SessionStatus` and `Subagents` still bind the versions released before, through their `accepts`,
 // and map the current state, arguments and results between versions. The old contracts below are copied verbatim from
 // the releases that bundled them (`Sessions` v3 and `Catalog` v2 from 0a730c8a7, `Sessions` v4, `Catalog` v3 and
-// `SessionTree` v1 from e88525506, `Sessions` v5 from 9ff0ebfd0, `Catalog` v4 from 0a180b049, `Sessions` v6 from
-// 20d86c365, `Envs` v1 from 2a32a605a and v2 from d07548004, `SessionStatus` v1 and `Subagents` v2 from 6e11a00a0), so
-// their fingerprints are the ones old bundles send.
+// `SessionTree` v1 from e88525506, `SessionTree` v2 from 7670c8be4, `Sessions` v5 from 9ff0ebfd0, `Catalog` v4 from
+// 0a180b049, `Sessions` v6 from 20d86c365, `Envs` v1 from 2a32a605a and v2 from d07548004, `SessionStatus` v1 and
+// `Subagents` v2 from 6e11a00a0), so their fingerprints are the ones old bundles send.
 
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
@@ -351,6 +351,29 @@ const SessionTreeV1 = remote("p2.tree", {
 	},
 });
 
+/** 7670c8be4's `SessionTree` (version 2): branch labels and `rename`, no `branch`. */
+const SessionTreeV2 = evolve(SessionTreeV1, (e) =>
+	e
+		.result(
+			"tree",
+			obj({
+				nodes: arr(
+					obj({
+						entry: int({ minimum: 1 }),
+						parent: union([int({ minimum: 1 }), nul()]),
+						role: union([literal("user"), literal("assistant")]),
+						text: str(),
+						conversation: int({ minimum: 1 }),
+					}),
+				),
+				branches: arr(obj({ conversation: int({ minimum: 1 }), label: union([str(), nul()]) })),
+				main: int({ minimum: 1 }),
+				current: union([int({ minimum: 1 }), nul()]),
+			}),
+		)
+		.addMethod("owner", "rename", obj({ conversation: int({ minimum: 1 }), label: union([str(), nul()]) }), nul()),
+);
+
 /** The environment configuration of `Envs` v1 and v2: sandboxes without `diskGb` (the SSH schema is unchanged). */
 const EnvConfigSchemaV2 = union([
 	SshEnvConfigSchema,
@@ -591,6 +614,17 @@ describe("older contract versions against the current server (fake provider)", (
 		assert.equal(tree.main, branch);
 		assert.equal(tree.nodes.length, 2, "conversation 1's message and answer");
 		for (const node of tree.nodes) assert.deepEqual(Object.keys(node).sort(), ["entry", "parent", "role", "text"]);
+		ref.release();
+	});
+
+	it("binds SessionTree v2: the tree with labels, rename", async () => {
+		const ref = await boundIn(owner, SessionTreeV2, { session: session.id }, "owner");
+		const tree = await ref.tree(BACKGROUND_CONTEXT);
+		assert.equal(tree.main, branch);
+		assert.deepEqual(
+			tree.branches.map((each) => each.label),
+			[null, "hello"],
+		);
 		ref.release();
 	});
 

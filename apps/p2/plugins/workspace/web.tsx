@@ -91,7 +91,7 @@ function NativePanel({
 		children?.[session]?.find((child) => child.conversationId === conversation),
 	);
 	const cwd = location?.cwd ?? "";
-	const { steer, setError } = useComposerState();
+	const { setError } = useComposerState();
 	// Why the workspace is not open: a failed open shows its error (Retry opens it again with a new reference)
 	// instead of loading forever.
 	const [unavailable, setUnavailable] = useState<string>();
@@ -121,10 +121,7 @@ function NativePanel({
 				try {
 					const writer = liveIn(chat, "participant");
 					if (!writer) throw new Error("This conversation is read-only");
-					await writer.send(
-						{ text, requestId: crypto.randomUUID(), whenBusy: steer ? "steer" : "followUp" },
-						BACKGROUND_CONTEXT,
-					);
+					await writer.send({ text, requestId: crypto.randomUUID(), whenBusy: "steer" }, BACKGROUND_CONTEXT);
 				} catch (error) {
 					setError(error instanceof Error ? error.message : "Could not send comments");
 					throw error;
