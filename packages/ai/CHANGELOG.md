@@ -5,15 +5,13 @@
 ### Added
 
 - Added custom `fetch` support to the `google-generative-ai` and `google-vertex` adapters; Vertex ADC token requests still use `google-auth-library`'s own HTTP client ([#12103](https://github.com/earendil-works/pi/pull/12103) by [@rometi](https://github.com/rometi))
-- Added `deepseek-v4.1-flash` and `deepseek-v4.1-flash-1017` to `qwen-token-plan-individual` and `qwen-token-plan-individual-cn`, matching the current Token Plan Personal model lists ([#11773](https://github.com/earendil-works/pi/issues/11773))
-- Added per-plan API key variables for Qwen Token Plan: `QWEN_TOKEN_PLAN_TEAM_API_KEY`, `QWEN_TOKEN_PLAN_TEAM_CN_API_KEY`, `QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY`, and `QWEN_TOKEN_PLAN_INDIVIDUAL_CN_API_KEY`. With a per-plan variable set, only that plan's provider is configured, so Individual subscribers no longer see Team-only models. `QWEN_TOKEN_PLAN_API_KEY` and `QWEN_TOKEN_PLAN_CN_API_KEY` keep working as a fallback for both plans ([#11773](https://github.com/earendil-works/pi/issues/11773))
+- Added `deepseek-v4.1-flash` and `deepseek-v4.1-flash-1017` to the Qwen Token Plan Individual providers, and per-plan key variables `QWEN_TOKEN_PLAN_TEAM_API_KEY`, `QWEN_TOKEN_PLAN_TEAM_CN_API_KEY`, `QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY`, and `QWEN_TOKEN_PLAN_INDIVIDUAL_CN_API_KEY`; the shared `QWEN_TOKEN_PLAN_API_KEY` and `QWEN_TOKEN_PLAN_CN_API_KEY` still work ([#11773](https://github.com/earendil-works/pi/issues/11773))
 
 ### Changed
 
 - Updated `@google/genai` to 2.32.0. The Google adapters turn off its automatic continuation, so a `CONTINUATION` finish ends the turn with stop reason `length` ([#12103](https://github.com/earendil-works/pi/pull/12103) by [@rometi](https://github.com/rometi))
 - Anthropic message threads are now on by default for any provider whose baseUrl is on api.anthropic.com, not only the `anthropic` provider ([#11987](https://github.com/earendil-works/pi/issues/11987))
-- Qwen Token Plan providers now default to the current gateways: `token-plan.maas.qwencloudapi.com` (QwenCloud, international) and `token-plan.maas.qianwenaiapi.com` (Qianwen AI Platform, China). Provider IDs are unchanged; the former `token-plan.{ap-southeast-1,cn-beijing}.maas.aliyuncs.com` hosts route to the same gateways, so configurations that still name them keep working ([#11773](https://github.com/earendil-works/pi/issues/11773))
-- Renamed the `qwen-token-plan` and `qwen-token-plan-cn` providers to "Qwen Token Plan Team" and "Qwen Token Plan Team CN": their catalogs are the Token Plan Team model lists. Provider IDs are unchanged ([#11773](https://github.com/earendil-works/pi/issues/11773))
+- Qwen Token Plan providers now use the current gateways (`token-plan.maas.qwencloudapi.com` international, `token-plan.maas.qianwenaiapi.com` China), and `qwen-token-plan` and `qwen-token-plan-cn` are named "Qwen Token Plan Team" and "Qwen Token Plan Team CN". Provider IDs are unchanged, and the old `aliyuncs.com` hosts still work ([#11773](https://github.com/earendil-works/pi/issues/11773))
 
 ### Fixed
 
@@ -24,7 +22,7 @@
 ### Removed
 
 - Removed the unused `mapStopReasonString` export from `@earendil-works/pi-ai/api/google-shared`
-- Removed `deepseek-v3.2` and `deepseek-v4-flash` from `qwen-token-plan` and `qwen-token-plan-cn`: they are no longer on the Token Plan model lists, and models.dev marks them deprecated. Use `deepseek-v4-flash-0731` or `deepseek-v4.1-flash` instead ([#11773](https://github.com/earendil-works/pi/issues/11773))
+- Removed the retired `deepseek-v3.2` and `deepseek-v4-flash` from the Qwen Token Plan Team providers; use `deepseek-v4-flash-0731` or `deepseek-v4.1-flash` ([#11773](https://github.com/earendil-works/pi/issues/11773))
 
 ## [1.5.2] - 2026-11-10
 
