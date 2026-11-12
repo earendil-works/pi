@@ -14,14 +14,11 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            // Closing an issue ends work on it, and handles it if it was waiting for review. The issue gate's close
-            // keeps untriaged: it starts the wait. (Its changes, made with the workflow token, start no workflow runs,
-            // but this does not rely on that.)
-            const gateClosed = context.payload.sender.login === 'github-actions[bot]';
-            const remove = gateClosed ? ['inprogress'] : ['inprogress', 'untriaged'];
+            // Closing an issue ends work on it and handles it if it was waiting for review. The issue gate's close keeps
+            // untriaged: it uses the workflow token, whose changes start no workflow runs.
             const present = new Set((context.payload.issue.labels ?? []).map((label) => label.name));
 
-            for (const name of remove.filter((label) => present.has(label))) {
+            for (const name of ['inprogress', 'untriaged'].filter((label) => present.has(label))) {
               await github.rest.issues.removeLabel({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
