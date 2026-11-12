@@ -32,6 +32,9 @@ export function mimeOf(path: string): string {
 	return ASSET_TYPES[extname(path).slice(1).toLowerCase()] ?? "application/octet-stream";
 }
 
+/** The extensions of files a build collects as assets (fonts, images, WebAssembly): served under the prefix's `assets/`. */
+export const ASSET_EXTENSIONS = ["svg", "png", "jpg", "jpeg", "gif", "webp", "woff", "woff2", "ttf", "wasm"] as const;
+
 /** The types of the assets builds collect, by extension. */
 const ASSET_TYPES: Readonly<Record<string, string>> = {
 	svg: "image/svg+xml",

@@ -1,7 +1,7 @@
 // Tests of base bundles' resolution (p3 step 0a): packages resolve with the given conditions (a source checkout's
 // source, not its `dist/`), by default the server process's (`--conditions`/`-C` of its flags and of a quoted
-// `NODE_OPTIONS`), a browser build keeping its `module` condition and `browser` field, and every file read recorded
-// with its bytes' hash.
+// `NODE_OPTIONS`), a browser build keeping its `module` condition and `browser` field, every file read recorded
+// with its bytes' hash, and the fonts and images its stylesheet names collected as assets.
 
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -99,5 +99,26 @@ describe("conditions", () => {
 		expect(script).toContain('"module"');
 		expect(script).toContain('"browser"');
 		expect(script).not.toContain('"node"');
+	});
+});
+
+describe("assets", () => {
+	it("collects the fonts and images the base's stylesheet names as files under assets/, named by their content", async () => {
+		const dir = await project({
+			"main.ts": 'import "./style.css";\nglobalThis.started = true;\n',
+			"style.css":
+				'@font-face { font-family: Body; src: url("./body.woff2"); }\n.logo { background: url("./logo.png"); }\n',
+			"body.woff2": "font bytes",
+			"logo.png": "png bytes",
+		});
+		const base = await buildBase(join(dir, "main.ts"), "browser", "/_chord/web/", []);
+		const assets = [...base.files.keys()].filter((path) => path.startsWith("/_chord/web/assets/")).sort();
+		expect(assets).toEqual([
+			expect.stringMatching(/^\/_chord\/web\/assets\/body-[A-Z0-9]+\.woff2$/),
+			expect.stringMatching(/^\/_chord\/web\/assets\/logo-[A-Z0-9]+\.png$/),
+		]);
+		const css = new TextDecoder().decode(base.files.get(base.style!)!.bytes);
+		for (const path of assets) expect(css).toContain(path);
+		expect(base.files.get(assets[0]!)!.mime).toBe("font/woff2");
 	});
 });

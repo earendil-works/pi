@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { basename, extname } from "node:path";
 import { build } from "esbuild";
 import { type BaseInputs, recordedSources } from "../plugins/base-inputs.ts";
-import { CSS, JAVASCRIPT, mimeOf, type ServedFile } from "./served.ts";
+import { ASSET_EXTENSIONS, CSS, JAVASCRIPT, mimeOf, type ServedFile } from "./served.ts";
 
 /**
  * A built base bundle: its hash, its script's and stylesheet's paths (under the surface's prefix), every file by
@@ -61,6 +61,8 @@ export async function buildBase(
 		define: { "process.env.NODE_ENV": '"production"' },
 		// Custom conditions drop esbuild's default `module`, which a browser build keeps; the platform stays its own.
 		conditions: browser ? [...resolving, "module"] : [...resolving],
+		// Fonts and images a stylesheet's `url()` (or a script) names: files under `assets/`, named by their content.
+		loader: Object.fromEntries(ASSET_EXTENSIONS.map((extension) => [`.${extension}`, "file" as const])),
 		plugins: [recordedSources(inputs)],
 		logLevel: "silent",
 	});
