@@ -5,7 +5,7 @@ import path from "path";
 import { type Static, Type } from "typebox";
 import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
-import { resolveToCwd } from "./path-utils.ts";
+import { resolveToCwd, VCS_DIRECTORIES } from "./path-utils.ts";
 import { grepRenderers } from "./renderers/grep.ts";
 import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import {
@@ -161,6 +161,8 @@ export function createGrepToolDefinition(
 						// --no-config: the tool contract (literal, glob, limit, ...) must not depend on
 						// ambient user config like RIPGREP_CONFIG_PATH. Users can customize via bash or extensions.
 						const args: string[] = ["--no-config", "--json", "--line-number", "--color=never", "--hidden"];
+						// A path inside a VCS directory is still searched: rg applies globs only below the search root.
+						for (const dir of VCS_DIRECTORIES) args.push("--glob", `!${dir}`);
 						if (ignoreCase) args.push("--ignore-case");
 						if (literal) args.push("--fixed-strings");
 						// rg never matches a leading "./" ("./src/*.ts" finds nothing), so drop it; "!" negates.

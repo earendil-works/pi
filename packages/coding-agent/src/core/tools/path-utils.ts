@@ -2,6 +2,12 @@ import { accessSync, constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { normalizePath, resolvePath } from "../../utils/paths.ts";
 
+/**
+ * Version control data directories that grep and find skip. They pass --hidden to find dotfiles like
+ * .github/, which would otherwise also search history, reflogs and pristine copies of every file (#12084).
+ */
+export const VCS_DIRECTORIES = [".git", ".svn", ".hg", ".jj"];
+
 const NARROW_NO_BREAK_SPACE = "\u202F";
 
 function tryMacOSScreenshotPath(filePath: string): string {

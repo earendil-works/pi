@@ -1161,6 +1161,36 @@ describe("Coding Agent Tools", () => {
 			expect(getTextOutput(result)).toContain("No matches found");
 			expect(existsSync(marker)).toBe(false);
 		});
+
+		// https://github.com/earendil-works/pi/issues/12084
+		it("should skip VCS directories but search other hidden directories", async () => {
+			mkdirSync(join(testDir, ".git", "logs"), { recursive: true });
+			mkdirSync(join(testDir, ".github"));
+			writeFileSync(join(testDir, ".git", "COMMIT_EDITMSG"), "TODO: first commit\n");
+			writeFileSync(join(testDir, ".git", "logs", "HEAD"), "commit: TODO: first commit\n");
+			for (const dir of [".svn", ".hg", ".jj"]) {
+				mkdirSync(join(testDir, dir));
+				writeFileSync(join(testDir, dir, "data"), "TODO: first commit\n");
+			}
+			writeFileSync(join(testDir, ".github", "ci.yml"), "# TODO: cache\n");
+			writeFileSync(join(testDir, "app.ts"), "// TODO: handle errors\n");
+
+			const result = await grepTool.execute("test-call-grep-skip-git", { pattern: "TODO", path: testDir });
+			expect(getTextOutput(result).split("\n").sort()).toEqual([
+				".github/ci.yml:1: # TODO: cache",
+				"app.ts:1: // TODO: handle errors",
+			]);
+
+			// A path inside .git is still searched.
+			const inGit = await grepTool.execute("test-call-grep-in-git", {
+				pattern: "TODO",
+				path: join(testDir, ".git"),
+			});
+			expect(getTextOutput(inGit).split("\n").sort()).toEqual([
+				"COMMIT_EDITMSG:1: TODO: first commit",
+				"logs/HEAD:1: commit: TODO: first commit",
+			]);
+		});
 	});
 
 	describe("find tool", () => {
@@ -1182,6 +1212,30 @@ describe("Coding Agent Tools", () => {
 
 			expect(outputLines).toContain("visible.txt");
 			expect(outputLines).toContain(".secret/hidden.txt");
+		});
+
+		// https://github.com/earendil-works/pi/issues/12084
+		it("should skip VCS directories but list other hidden directories", async () => {
+			mkdirSync(join(testDir, ".git", "logs"), { recursive: true });
+			mkdirSync(join(testDir, ".github"));
+			writeFileSync(join(testDir, ".git", "HEAD"), "ref: refs/heads/main\n");
+			writeFileSync(join(testDir, ".git", "logs", "HEAD"), "");
+			for (const dir of [".svn", ".hg", ".jj"]) {
+				mkdirSync(join(testDir, dir));
+				writeFileSync(join(testDir, dir, "data"), "");
+			}
+			writeFileSync(join(testDir, ".github", "ci.yml"), "");
+			writeFileSync(join(testDir, "app.ts"), "");
+
+			const result = await findTool.execute("test-call-find-skip-git", { pattern: "*", path: testDir });
+			expect(getTextOutput(result).split("\n").sort()).toEqual([".github/", ".github/ci.yml", "app.ts"]);
+
+			// A path inside .git is still listed.
+			const inGit = await findTool.execute("test-call-find-in-git", {
+				pattern: "HEAD",
+				path: join(testDir, ".git"),
+			});
+			expect(getTextOutput(inGit).split("\n").sort()).toEqual(["HEAD", "logs/HEAD"]);
 		});
 
 		it("should respect .gitignore", async () => {

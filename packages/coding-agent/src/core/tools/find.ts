@@ -5,7 +5,7 @@ import path from "path";
 import { type Static, Type } from "typebox";
 import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
-import { pathExists, resolveToCwd } from "./path-utils.ts";
+import { pathExists, resolveToCwd, VCS_DIRECTORIES } from "./path-utils.ts";
 import { findRenderers } from "./renderers/find.ts";
 import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
@@ -125,7 +125,7 @@ export function createFindToolDefinition(
 							}
 							// One result past the limit tells "exactly N matches" apart from "more than N".
 							const results = await ops.glob(pattern, searchPath, {
-								ignore: ["**/node_modules/**", "**/.git/**"],
+								ignore: ["**/node_modules/**", ...VCS_DIRECTORIES.map((dir) => `**/${dir}/**`)],
 								limit: effectiveLimit + 1,
 							});
 							if (signal?.aborted) {
@@ -183,7 +183,9 @@ export function createFindToolDefinition(
 							return;
 						}
 
+						// A path inside a VCS directory is still listed: fd applies --exclude only below the search root.
 						const args: string[] = ["--color=never", "--hidden"];
+						for (const dir of VCS_DIRECTORIES) args.push("--exclude", dir);
 
 						// fd normally ignores .gitignore outside git repos, so keep --no-require-git
 						// there. Inside repos, use fd's default git-aware behavior so parent
