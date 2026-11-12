@@ -143,7 +143,7 @@ node:
   in a new branch instead. The composer has one Send button: a tap sends (steers while a run is busy); a long press
   on it (touch), a right-click, the Menu key or Shift+F10, or ArrowUp while it has focus opens its menu of both ways
   to send (Elanor's `Menu`, opened by Send's own handlers: a trigger would open on the click that sends): Send and
-  "Send in a new branch" while idle, steering and "Queue as a follow-up" while a run is busy (owner decisions: one
+  "Send in a new branch" while idle, "Steer" and "Follow up" while a run is busy (owner decisions: one
   button, no second control; Elanor's component; it replaced the Steer toggle). Alt+Enter is the second way at once.
   The menu takes the focus and gives it back when it closes (Escape returns to Send); opened from the keyboard or a
   mouse its first item has it. On a phone the keyboard closes while the menu is open. Under the session in the sidebar, from two branches on, one row per

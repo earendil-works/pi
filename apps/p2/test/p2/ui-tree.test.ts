@@ -501,7 +501,7 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		await browser.click(".composer button.send");
 		await browser.wait(`document.querySelector('.composer button.stop')`);
 		await browser.evaluate(input("while busy"));
-		assert.deepEqual(await rightClick(), ["Steer the current run", "Queue as a follow-up"]);
+		assert.deepEqual(await rightClick(), ["Steer", "Follow up"]);
 		await key("Escape", 27);
 		await browser.wait(`!document.querySelector('.send-options')`);
 		await browser.click(".composer button.stop");

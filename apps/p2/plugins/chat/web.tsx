@@ -1258,8 +1258,8 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	);
 	const sends: { send: SendChoice; alternate?: SendChoice } = busy
 		? {
-				send: { label: "Steer the current run", run: () => send("steer") },
-				alternate: { label: "Queue as a follow-up", run: () => send("followUp") },
+				send: { label: "Steer", run: () => send("steer") },
+				alternate: { label: "Follow up", run: () => send("followUp") },
 			}
 		: {
 				send: { label: "Send", run: () => send("steer") },
