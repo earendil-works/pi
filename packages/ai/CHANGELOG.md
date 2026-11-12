@@ -12,6 +12,7 @@
 - Updated `@google/genai` to 2.32.0. The Google adapters turn off its automatic continuation, so a `CONTINUATION` finish ends the turn with stop reason `length` ([#12103](https://github.com/earendil-works/pi/pull/12103) by [@rometi](https://github.com/rometi))
 - Anthropic message threads are now on by default for any provider whose baseUrl is on api.anthropic.com, not only the `anthropic` provider ([#11987](https://github.com/earendil-works/pi/issues/11987))
 - Qwen Token Plan providers now default to the current gateways: `token-plan.maas.qwencloudapi.com` (QwenCloud, international) and `token-plan.maas.qianwenaiapi.com` (Qianwen AI Platform, China). Provider IDs and API key variables are unchanged; the former `token-plan.{ap-southeast-1,cn-beijing}.maas.aliyuncs.com` hosts route to the same gateways, so configurations that still name them keep working ([#11773](https://github.com/earendil-works/pi/issues/11773))
+- Renamed the `qwen-token-plan` and `qwen-token-plan-cn` providers to "Qwen Token Plan Team" and "Qwen Token Plan Team CN": their catalogs are the Token Plan Team model lists. Provider IDs are unchanged ([#11773](https://github.com/earendil-works/pi/issues/11773))
 
 ### Fixed
 
