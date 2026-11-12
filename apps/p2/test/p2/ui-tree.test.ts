@@ -367,7 +367,7 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: second')`);
 	});
 
-	it("sends in a new branch with Alt+Enter, Send's long press or ArrowUp; a tap sends; the last answer offers no Branch", async () => {
+	it("sends in a new branch with Alt+Enter, Send's long press, right-click or ArrowUp; a tap sends; the last answer offers no Branch", async () => {
 		// A known last answer to start from (the tests before leave other messages at the end).
 		await send(1, "last answer");
 		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: last answer')`);
@@ -405,7 +405,7 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 			`document.querySelector('.messages .assistant:last-of-type') && !document.querySelector('.composer button.stop')`,
 		);
 		assert.equal(await browser.evaluate<number>(`document.querySelectorAll('.composer-bar button').length`), 2);
-		const options = `[...document.querySelectorAll('.send-options button')]`;
+		const options = `[...document.querySelectorAll('.send-options [role=menuitem]')]`;
 		const key = async (name: string, code: number) => {
 			await browser.call("Input.dispatchKeyEvent", {
 				type: "rawKeyDown",
@@ -467,6 +467,46 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		await browser.click(".composer button.send");
 		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: a tap')`);
 		assert.equal((await row()).branches.length, before + 2);
+		// A right-click on Send is its context menu: the two ways for the run's state, and no browser menu.
+		const rightClick = async () => {
+			const at = await browser.evaluate<{ x: number; y: number }>(
+				`(() => { const r = document.querySelector('.composer button.send').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`,
+			);
+			await browser.call("Input.dispatchMouseEvent", {
+				type: "mousePressed",
+				...at,
+				button: "right",
+				clickCount: 1,
+			});
+			await browser.call("Input.dispatchMouseEvent", {
+				type: "mouseReleased",
+				...at,
+				button: "right",
+				clickCount: 1,
+			});
+			await browser.wait(`document.activeElement === ${options}[0]`);
+			return browser.evaluate<string[]>(`${options}.map(e=>e.querySelector('span').textContent)`);
+		};
+		await browser.wait(`!document.querySelector('.composer button.stop')`);
+		await browser.evaluate(input("right-clicked"));
+		assert.deepEqual(await rightClick(), ["Send", "Send in a new branch"]);
+		await key("Escape", 27);
+		await browser.wait(`!document.querySelector('.send-options')`);
+		assert.equal(
+			await browser.evaluate<string>(`document.querySelector('.composer textarea').value`),
+			"right-clicked",
+		);
+		// While a run is busy: steer, or queue as a follow-up.
+		await browser.evaluate(input("slow busy"));
+		await browser.click(".composer button.send");
+		await browser.wait(`document.querySelector('.composer button.stop')`);
+		await browser.evaluate(input("while busy"));
+		assert.deepEqual(await rightClick(), ["Steer the current run", "Queue as a follow-up"]);
+		await key("Escape", 27);
+		await browser.wait(`!document.querySelector('.send-options')`);
+		await browser.click(".composer button.stop");
+		await browser.wait(`!document.querySelector('.composer button.stop')`);
+		await browser.evaluate(input(""));
 		tree.release();
 	});
 

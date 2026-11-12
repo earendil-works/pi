@@ -5,11 +5,12 @@
 /*
  * The interface's sans (--sans), not the pi brand's serif that Elanor's ui typography uses: the row, the results and
  * the sheet or panel set its tokens anew, so every Elanor component inside them follows. Sizes and weights stay
- * Elanor's.
+ * Elanor's. Send's menu (plugins/chat, style.css) is Elanor's too and takes the same sans.
  */
 .activity,
 .results,
-.activity-panel {
+.activity-panel,
+.send-menu {
 	--semantic-typography-ui-primary:
 		var(--semantic-typography-ui-primary-font-weight) var(--semantic-typography-ui-primary-font-size) /
 		var(--semantic-typography-ui-primary-line-height) var(--sans);

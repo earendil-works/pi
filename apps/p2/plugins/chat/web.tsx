@@ -40,6 +40,8 @@ import {
 	forgetSession,
 	type Gap,
 	type Kept,
+	KeyboardKey,
+	KeyboardShortcut,
 	keep,
 	keepSessions,
 	keptSizes,
@@ -48,6 +50,7 @@ import {
 	lightTap,
 	loadKept,
 	locationLabel,
+	Menu,
 	MenuIcon,
 	Messages,
 	type ModelChoice,
@@ -109,7 +112,6 @@ import {
 	useCallback,
 	useContext,
 	useEffect,
-	useId,
 	useLayoutEffect,
 	useMemo,
 	useRef,
@@ -335,8 +337,8 @@ type SendChoice = { readonly label: string; readonly run: () => void };
 /**
  * Textarea with send, stop and attachments. Enter (with a fine pointer) and a tap on Send do `send`; Alt+Enter does
  * `alternate` (while a run is busy: a follow-up instead of steering; idle: the message in a new branch). Where there is
- * an alternate, Send also opens a short list of both: a long press (touch), a right-click, the Menu key or Shift+F10,
- * or ArrowUp while it has focus. Escape closes the list, else stops.
+ * an alternate, Send also opens a menu of both: a long press (touch), a right-click, the Menu key or Shift+F10,
+ * or ArrowUp while it has focus (Elanor's menu). Escape stops a busy run.
  */
 function Composer({
 	busy,
@@ -390,35 +392,22 @@ function Composer({
 	const files = attaching?.files ?? [];
 	const content = draft.trim() !== "" || files.length > 0;
 	const [choosing, setChoosing] = useState(false);
-	const listId = useId();
 	const choices = alternate && content && !disabled ? [send, alternate] : undefined;
 	const offered = choices !== undefined;
-	// The list closes when its choices go (sent, no way to branch now) and at a press outside it.
+	// The menu closes when its choices go (sent, no way to branch now).
 	useEffect(() => {
 		if (!offered) setChoosing(false);
 	}, [offered]);
-	const options = useRef<HTMLDivElement>(null);
 	const sendButton = useRef<HTMLButtonElement>(null);
-	useEffect(() => {
-		if (!choosing) return;
-		const outside = (event: PointerEvent) => {
-			// Pointer events target elements, never text nodes.
-			if (!options.current?.contains(event.target as Element)) setChoosing(false);
-		};
-		document.addEventListener("pointerdown", outside);
-		return () => document.removeEventListener("pointerdown", outside);
-	}, [choosing]);
-	// Opened from the keyboard or a mouse, the list takes the focus; a touch leaves it in the textarea (its keyboard).
-	const focusList = useRef(false);
-	useEffect(() => {
-		if (choosing && focusList.current) options.current?.querySelector("button")?.focus();
-		focusList.current = false;
-	}, [choosing]);
 	const press = useLongPress(() => {
 		if (offered) setChoosing(true);
 	});
-	const openList = () => {
-		focusList.current = true;
+	// Opened from the keyboard or a mouse, the menu's first item takes the focus (no trigger tells Elanor's menu how it
+	// opened); a touch leaves it on the menu.
+	const popup = useRef<HTMLDivElement>(null);
+	const focusFirst = useRef(false);
+	const openFromKeys = () => {
+		focusFirst.current = true;
 		setChoosing(true);
 	};
 	return (
@@ -484,11 +473,6 @@ function Composer({
 				onKeyDown={(event) => {
 					// An open completion popover owns Enter, Tab, the arrows and Escape (section 8.4).
 					if (completion?.onKeyDown(event)) return;
-					if (event.key === "Escape" && choosing) {
-						event.preventDefault();
-						setChoosing(false);
-						return;
-					}
 					if (event.key === "Escape" && busy && onStop) {
 						event.preventDefault();
 						onStop();
@@ -523,28 +507,45 @@ function Composer({
 						<StopIcon />
 					</button>
 				)}
-				{choices && choosing && (
-					<div className="send-options" id={listId} ref={options}>
-						{choices.map((choice, index) => (
-							<button
-								key={choice.label}
-								type="button"
-								onClick={() => {
-									setChoosing(false);
-									choice.run();
-								}}
-								onKeyDown={(event) => {
-									if (event.key !== "Escape") return;
-									event.preventDefault();
-									setChoosing(false);
-									sendButton.current?.focus();
-								}}
-							>
-								<span>{choice.label}</span>
-								<kbd>{index === 0 ? "Enter" : "Alt+Enter"}</kbd>
-							</button>
-						))}
-					</div>
+				{choices && (
+					// Elanor's menu, opened by Send's own gestures (a trigger would open on the click that sends). It takes the
+					// focus and gives it back when it closes.
+					<Menu.Root
+						open={choosing}
+						onOpenChange={setChoosing}
+						onOpenChangeComplete={(open) => {
+							if (open && focusFirst.current)
+								popup.current?.querySelector<HTMLElement>("[role=menuitem]")?.focus();
+							focusFirst.current = false;
+						}}
+						modal={false}
+					>
+						<Menu.Portal>
+							<Menu.Positioner className="send-menu" anchor={sendButton} side="top" align="end" sideOffset={4}>
+								<Menu.Popup ref={popup} className="send-options" aria-label="Ways to send">
+									{choices.map((choice, index) => (
+										<Menu.Item
+											key={choice.label}
+											onClick={choice.run}
+											endAdornment={
+												<KeyboardShortcut>
+													{index === 0 ? (
+														<KeyboardKey>Enter</KeyboardKey>
+													) : (
+														<>
+															<KeyboardKey>Alt</KeyboardKey>+<KeyboardKey>Enter</KeyboardKey>
+														</>
+													)}
+												</KeyboardShortcut>
+											}
+										>
+											{choice.label}
+										</Menu.Item>
+									))}
+								</Menu.Popup>
+							</Menu.Positioner>
+						</Menu.Portal>
+					</Menu.Root>
 				)}
 				{(!busy || content) && (
 					<button
@@ -554,19 +555,19 @@ function Composer({
 						aria-label="Send"
 						title={choices ? `${send.label} (long press for more)` : send.label}
 						disabled={!content || disabled}
-						{...(choices ? { "aria-expanded": choosing, "aria-controls": listId } : {})}
+						{...(choices ? { "aria-haspopup": "menu" as const, "aria-expanded": choosing } : {})}
 						{...press.handlers}
 						onContextMenu={(event) => {
 							if (!choices) return;
 							event.preventDefault();
 							// Android's long press fires this too: the press opens the list once, and its touch makes no click.
 							if (press.touching()) press.fire();
-							else openList();
+							else openFromKeys();
 						}}
 						onKeyDown={(event) => {
 							if (!choices || event.key !== "ArrowUp") return;
 							event.preventDefault();
-							openList();
+							openFromKeys();
 						}}
 					>
 						<SendIcon />

@@ -105,7 +105,7 @@ What the sidebar and the TUI selector call a branch: `label` in `p2.main`, store
 
 Navigating to where the main conversation already ends changes nothing (pi: choosing the current position is a no-op),
 so a branch after the last answer is made with the next message instead: "send in a new branch" (Alt+Enter while
-idle, or Send's long press). It keeps an idea apart without writing a throwaway message first, and leaves no empty
+idle, or Send's menu). It keeps an idea apart without writing a throwaway message first, and leaves no empty
 branch behind when the owner changes their mind.
 
 ```
@@ -141,11 +141,12 @@ node:
 - Web: "Edit" beside the owner's view of a user message (on hover; always shown on touch screens) and "Branch from
   here" under an answer, in the main conversation; not under the conversation's last entry, where the composer sends
   in a new branch instead. The composer has one Send button: a tap sends (steers while a run is busy); a long press
-  on it (touch), a right-click, the Menu key or Shift+F10, or ArrowUp while it has focus opens a short list of both
-  ways to send: Send and "Send in a new branch" while idle, steering and "Queue as a follow-up" while a run is busy
-  (owner decision: one button, no second control; it replaced the Steer toggle). Alt+Enter is the second way at once.
-  Opened from the keyboard or a mouse the list takes the focus (Escape returns to Send); a touch keeps it in the
-  textarea, so a phone's keyboard stays open. Under the session in the sidebar, from two branches on, one row per
+  on it (touch), a right-click, the Menu key or Shift+F10, or ArrowUp while it has focus opens its menu of both ways
+  to send (Elanor's `Menu`, opened by Send's own handlers: a trigger would open on the click that sends): Send and
+  "Send in a new branch" while idle, steering and "Queue as a follow-up" while a run is busy (owner decisions: one
+  button, no second control; Elanor's component; it replaced the Steer toggle). Alt+Enter is the second way at once.
+  The menu takes the focus and gives it back when it closes (Escape returns to Send); opened from the keyboard or a
+  mouse its first item has it. On a phone the keyboard closes while the menu is open. Under the session in the sidebar, from two branches on, one row per
   branch (`Sessions` rows' `branches`: the stored labels, null for the session title, newest first in a stable order,
   the current one marked in place), behind the session row's expand control, which also shows its subagents
   (collapsed by default, expanded while a subagent is shown); choosing one switches the session to its end

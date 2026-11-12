@@ -35,6 +35,7 @@ export * from "../../web/icons.tsx";
 export { type LongPress, type LongPressHandlers, useLongPress } from "../../web/long-press.ts";
 export * from "../../web/Markdown.tsx";
 export * from "../../web/ModelPicker.tsx";
+export * from "../../web/menu-components.ts";
 export * from "../../web/navigation.ts";
 export * from "../../web/navigation-components.ts";
 export * from "../../web/new-session.tsx";
