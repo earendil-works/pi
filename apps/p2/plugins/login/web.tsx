@@ -1,7 +1,7 @@
 // The Providers sheet (any owner): sign in to model providers, refresh their catalogs, sign out.
 
 import type { AuthEvent } from "@earendil-works/pi-ai";
-import { BACKGROUND_CONTEXT, contribute, defineFacet } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, type Held } from "@p2/app/v1";
 import {
 	CheckIcon,
 	ChevronIcon,
@@ -133,8 +133,7 @@ function PromptForm({ state, onAnswer }: { state: LoginState; onAnswer: (promptI
 }
 
 /** The provider list, one provider's actions, or the running login. Closing the sheet cancels an unfinished one. */
-function ProvidersSheet({ onClose }: { onClose: () => void }) {
-	const login = useObject(ProviderLogin, {});
+function ProvidersSheet({ login, onClose }: { login: Held<typeof ProviderLogin> | undefined; onClose: () => void }) {
 	// Provider errors go to the app's toast, as in Pi Mobile.
 	const { fail } = useComposerState();
 	const known = useReadable(login?.providers);
@@ -363,11 +362,16 @@ function ProvidersSheet({ onClose }: { onClose: () => void }) {
 	);
 }
 
-/** The Providers sheet while it is open (any authenticated owner): on its own, or as a page of Settings. */
+/**
+ * The Providers sheet while it is open (any authenticated owner): on its own, or as a page of Settings. Mounted from the
+ * page's start, it holds the owner's `ProviderLogin` (the providers that sign in, and a login in progress) all along: the
+ * page opens without a round trip for it.
+ */
 function ProvidersSheetSlot() {
 	const owner = useOwner();
 	const open = useSheet("providers") !== undefined;
-	return owner && open ? <ProvidersSheet onClose={closeLayers} /> : null;
+	const login = useObject(ProviderLogin, owner ? {} : undefined);
+	return owner && open ? <ProvidersSheet login={login} onClose={closeLayers} /> : null;
 }
 
 export default defineFacet((host) => {

@@ -1399,7 +1399,13 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   `SettingsSections` (`src/runtime/web-core.ts`) once, keyed by its sheet layer's name, with `label`, `title`,
   `order` (the list sorts by it, then by key), `Sheet` (renders its sheet while the route opens it; the app's layout
   keeps every one mounted, `SettingsSectionSheets` in `src/web/SettingsNav.tsx`) and optionally `Shown` (Voice: only
-  with a speech service). The section is that sheet's layer right above `settings`. While the window is open, every `Sheet` renders as a page in
+  with a speech service). The section is that sheet's layer right above `settings`. The owner's page holds the small
+  owner-only objects of the sections from its start, in components mounted all along, and hands the sections that
+  reference (a new `useObject` would be a new hold, a round trip): `Settings` and `ServerNameSettings` (the gear,
+  `HeldSettings`), `ProviderLogin` (the Providers slot), `Devices` (the Devices slot), `Discord` (`DiscordSheets`,
+  `held.ts`). Not held ahead: `Envs` and `Ports` (derived from the session catalog: re-sent as sessions change),
+  `Mcp` (the servers' tool lists), Logs (lines), Traces (calls only). Measured with a 150 ms round trip: General
+  470 ms → 20 ms, Discord 160 → 8 ms, Devices 326 → 160 ms (its token is a call). While the window is open, every `Sheet` renders as a page in
   its pane (`SettingsPane`, `src/web/settings-embed.ts`): its title and Back, no scrim or × of its own (the window's
   close everything), `sheet-body` kept for the plugin's styles. The same sheets opened elsewhere (Sign in to a
   provider, a session's logs or Discord link) stay sheets of their own.

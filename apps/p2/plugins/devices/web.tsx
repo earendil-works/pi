@@ -1,4 +1,4 @@
-import { BACKGROUND_CONTEXT, contribute, defineFacet } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, contribute, defineFacet, type Held } from "@p2/app/v1";
 import {
 	CopyButton,
 	closeLayers,
@@ -13,8 +13,7 @@ import {
 import { useEffect, useState } from "react";
 import { Devices } from "./contract.ts";
 
-function DevicesSheet() {
-	const service = useObject(Devices, {});
+function DevicesSheet({ service }: { service: Held<typeof Devices> | undefined }) {
 	const canMint = useReadable(service?.canMint);
 	const [token, setToken] = useState<string>();
 	const [error, setError] = useState<string>();
@@ -141,10 +140,15 @@ function DevicesSheet() {
 		</Sheet>
 	);
 }
-/** The Devices sheet while it is open (the owner): a page of Settings. */
+/**
+ * The Devices sheet while it is open (the owner): a page of Settings. Mounted from the page's start, it holds the
+ * owner's `Devices` (a few bytes) all along: the page opens without a round trip for it.
+ */
 function DevicesSheetSlot() {
 	const sheet = useSheet("devices");
-	return useOwner() && sheet ? <DevicesSheet /> : null;
+	const owner = useOwner();
+	const service = useObject(Devices, owner ? {} : undefined);
+	return owner && sheet ? <DevicesSheet service={service} /> : null;
 }
 
 export default defineFacet((host) => {

@@ -16,7 +16,8 @@ import {
 } from "@p2/app/v1/web";
 import { useState } from "react";
 import { Sessions } from "../sessions/contract.ts";
-import { type BotStatus, type BotView, Discord } from "./contract.ts";
+import type { BotStatus, BotView } from "./contract.ts";
+import { useDiscord } from "./held.ts";
 
 const NO_AUTOCORRECT = { autoCapitalize: "off", autoCorrect: "off", spellCheck: false } as const;
 
@@ -53,7 +54,7 @@ function Avatar({ bot }: { bot: BotView }) {
 
 /** Settings › Discord: the bots, and Add bot. */
 export function BotsSheet() {
-	const bots = useReadable(useObject(Discord, {})?.bots);
+	const bots = useReadable(useDiscord()?.bots);
 	return (
 		<Sheet title="Discord" onClose={closeLayers} className="discord-sheet">
 			<div className="list">
@@ -90,7 +91,7 @@ export function BotsSheet() {
 
 /** Add bot: its token, Connect; once Discord accepts it, the bot's sheet replaces this one. */
 export function AddBotSheet() {
-	const discord = useObject(Discord, {});
+	const discord = useDiscord();
 	const [token, setToken] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string>();
@@ -150,7 +151,7 @@ export function AddBotSheet() {
 
 /** A bot's sheet: who it is, its servers, the invite link, its linked sessions, a new token, removing it. */
 export function BotSheet({ id }: { id: string }) {
-	const discord = useObject(Discord, {});
+	const discord = useDiscord();
 	const bots = useReadable(discord?.bots);
 	const bindings = useReadable(discord?.bindings) ?? [];
 	const sessions = useReadable(useObject(Sessions, {}, { variant: "owner" })?.sessions) ?? [];

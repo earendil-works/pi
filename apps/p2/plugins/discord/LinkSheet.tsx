@@ -8,7 +8,8 @@ import { useEffect, useState } from "react";
 import { Envs } from "../envs/contract.ts";
 import { SessionLock as SessionLockView, Sessions } from "../sessions/contract.ts";
 import { back, botName } from "./BotsSheet.tsx";
-import { type Binding, Discord, type ServerDetails, type Wake } from "./contract.ts";
+import type { Binding, ServerDetails, Wake } from "./contract.ts";
+import { useDiscord } from "./held.ts";
 
 const NO_AUTOCORRECT = { autoCapitalize: "off", autoCorrect: "off", spellCheck: false } as const;
 
@@ -81,7 +82,7 @@ const toggle = <T,>(list: readonly T[], value: T, on: boolean): T[] =>
 
 /** Session `session`'s Discord sheet. */
 export function LinkSheet({ session }: { session: string }) {
-	const discord = useObject(Discord, {});
+	const discord = useDiscord();
 	const bindings = useReadable(discord?.bindings);
 	const linked = bindings?.find((binding) => binding.session === session);
 	return (
@@ -99,7 +100,7 @@ export function LinkSheet({ session }: { session: string }) {
 
 /** A server's channels and roles as `bot` sees them (undefined until loaded), and why they could not be read. */
 function useServer(bot: string | undefined, guild: string | undefined) {
-	const discord = useObject(Discord, {});
+	const discord = useDiscord();
 	const [details, setDetails] = useState<{ key: string; value: ServerDetails }>();
 	const [error, setError] = useState<string>();
 	useEffect(() => {
@@ -122,7 +123,7 @@ function useServer(bot: string | undefined, guild: string | undefined) {
 
 /** The MCP servers of mcp.json, for the lock's picks. */
 function useMcpServers(): string[] {
-	const discord = useObject(Discord, {});
+	const discord = useDiscord();
 	const [servers, setServers] = useState<string[]>([]);
 	useEffect(() => {
 		if (discord) discord.mcpServers(BACKGROUND_CONTEXT).then(setServers, () => {});
@@ -251,7 +252,7 @@ function ResourceFields({
 
 /** A linked session's sheet, its data read from the owner's objects (`LinkedView` shows it). */
 function Linked({ binding }: { binding: Binding }) {
-	const discord = useObject(Discord, {});
+	const discord = useDiscord();
 	const bot = useReadable(discord?.bots)?.find((each) => each.id === binding.botId);
 	const row = useReadable(useObject(Sessions, {}, { variant: "owner" })?.sessions)?.find(
 		(each) => each.id === binding.session,
@@ -397,7 +398,7 @@ export function LinkedView({
 type Choice = { bot: string; guild: string; channel: string; sandbox: string };
 
 function LinkForm({ session, bindings }: { session: string; bindings: readonly Binding[] }) {
-	const discord = useObject(Discord, {});
+	const discord = useDiscord();
 	const bots = (useReadable(discord?.bots) ?? []).filter((bot) => bot.status.state === "connected");
 	const sessions = useReadable(useObject(Sessions, {}, { variant: "owner" })?.sessions) ?? [];
 	const sandboxes = (useReadable(useObject(Envs, {})?.envs) ?? []).filter((env) => env.config.type === "gondolin");

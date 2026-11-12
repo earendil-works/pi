@@ -16,23 +16,29 @@ import {
 import { TranscriptEntries } from "../chat/contract.ts";
 import { AddBotSheet, BotSheet, BotsSheet } from "./BotsSheet.tsx";
 import { DISCORD_BATCH, Discord } from "./contract.ts";
+import { HeldDiscord } from "./held.ts";
 import { LinkSheet } from "./LinkSheet.tsx";
 import "./style.css";
 
-/** Every Discord sheet on top: the bots' as a page of Settings, a session's link on its own. */
+/**
+ * Every Discord sheet on top: the bots' as a page of Settings, a session's link on its own. Mounted from the page's
+ * start, it holds the owner's `Discord` for them (`held.ts`): they open without a round trip.
+ */
 function DiscordSheets() {
 	const list = useSheet("discord");
 	const add = useSheet("discord-add");
 	const bot = useSheet("discord-bot");
 	const link = useSheet("discord-link");
-	if (!useOwner()) return null;
+	const owner = useOwner();
+	const discord = useObject(Discord, owner ? {} : undefined);
+	if (!owner) return null;
 	return (
-		<>
+		<HeldDiscord.Provider value={discord}>
 			{list && <BotsSheet />}
 			{add && <AddBotSheet />}
 			{bot?.locator && <BotSheet id={bot.locator} />}
 			{link?.locator && <LinkSheet session={link.locator} />}
-		</>
+		</HeldDiscord.Provider>
 	);
 }
 
