@@ -34,24 +34,46 @@ struct ServerConfig: Equatable {
 	static let defaultDataDir = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".pi/p2")
 
 	/// The configuration of this launch. Environment variables win, so tests and dev runs never touch saved settings.
+	/// Only the launch reads it: a server chosen in the menu later is `attached(port:dataDir:)` or `own()`, so the
+	/// launch's overrides (`-source own`, P2MAC_ATTACH) do not undo the choice.
 	static func load() -> ServerConfig {
 		let env = ProcessInfo.processInfo.environment
 		let defaults = UserDefaults.standard
-		let value = { (key: String, variable: String) in env[variable] ?? defaults.string(forKey: key) }
 		// A server chosen in the menu wins over the environment's own-server settings; P2MAC_ATTACH wins over both.
-		let attachedFromEnv = env["P2MAC_ATTACH"].flatMap(Int.init)
-		let attachedPort = attachedFromEnv
-			?? (defaults.string(forKey: "source") == "attached" ? defaults.string(forKey: "attachedPort").flatMap(Int.init) : nil)
-		let attachedDataDir = attachedFromEnv != nil ? env["P2MAC_DATA_DIR"] : defaults.string(forKey: "attachedDataDir")
+		if let port = env["P2MAC_ATTACH"].flatMap(Int.init) {
+			return own().attached(port: port, dataDir: env["P2MAC_DATA_DIR"].map(path) ?? defaultDataDir)
+		}
+		if defaults.string(forKey: "source") == "attached", let port = defaults.string(forKey: "attachedPort").flatMap(Int.init) {
+			return own().attached(port: port, dataDir: defaults.string(forKey: "attachedDataDir").map(path) ?? defaultDataDir)
+		}
+		return own()
+	}
+
+	/// The app's own server: user defaults, overridden by the environment.
+	static func own() -> ServerConfig {
+		let env = ProcessInfo.processInfo.environment
+		let defaults = UserDefaults.standard
+		let value = { (key: String, variable: String) in env[variable] ?? defaults.string(forKey: key) }
+		// With P2MAC_ATTACH, P2MAC_DATA_DIR is the attached server's directory, not the own server's.
+		let dataDir = env["P2MAC_ATTACH"] == nil ? value("dataDir", "P2MAC_DATA_DIR") : defaults.string(forKey: "dataDir")
 		return ServerConfig(
-			source: attachedPort == nil ? .own : .attached,
+			source: .own,
 			checkout: value("checkout", "P2MAC_CHECKOUT").map(path).flatMap(p2Directory),
 			node: value("node", "P2MAC_NODE"),
-			port: attachedPort ?? value("port", "P2MAC_PORT").flatMap(Int.init) ?? 8788,
-			dataDir: (attachedPort == nil ? value("dataDir", "P2MAC_DATA_DIR") : attachedDataDir).map(path) ?? defaultDataDir,
+			port: value("port", "P2MAC_PORT").flatMap(Int.init) ?? 8788,
+			dataDir: dataDir.map(path) ?? defaultDataDir,
 			mode: value("mode", "P2MAC_MODE").flatMap(Mode.init) ?? .start,
 			fake: value("fake", "P2MAC_FAKE") == "1"
 		)
+	}
+
+	/// This configuration, using the server someone else runs on `port` with `dataDir` instead of the app's own.
+	func attached(port: Int, dataDir: URL) -> ServerConfig {
+		var config = self
+		config.source = .attached
+		config.port = port
+		config.dataDir = dataDir
+		return config
 	}
 
 	/// Remembers to use the server on `port` with the data directory `dataDir` from now on.
