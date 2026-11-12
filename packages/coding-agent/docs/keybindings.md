@@ -195,6 +195,18 @@ Used inside the scoped models selector (opened via `/scoped-models`).
 | `app.models.reorderUp` | `alt+up` | Move the selected model up in the cycle order |
 | `app.models.reorderDown` | `alt+down` | Move the selected model down in the cycle order |
 
+### Clarification forms
+
+Used while the main agent's `ask` form has focus; these do not change the main editor's actions.
+
+| Keybinding id | Default | Description |
+|---|---|---|
+| `app.ask.previous` | `shift+tab` | Go back to the previous question |
+| `app.ask.toggle` | `space` | Toggle the highlighted choice |
+| `app.ask.submit` | `ctrl+enter` | Explicitly submit the complete form |
+
+Forms also use `tui.input.tab` for the next question, `tui.select.up`/`down` for choices, `tui.select.pageUp`/`pageDown` for scrolling, and `tui.select.confirm` for accepting a choice or submitting on the review page. Text editing uses the normal editor bindings. `tui.select.cancel`, `app.interrupt`, and `app.clear` cancel the form and stop the turn.
+
 ### Native sub-agents
 
 Used inside `/agents`; these bindings do not change the main editor's actions.

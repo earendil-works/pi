@@ -1,7 +1,8 @@
-import { type Component, Container, Text } from "@earendil-works/pi-tui";
+import { type Component, Container, Editor, Text, TuiMainScreen } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
-import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { getEditorTheme, initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 type DialogContext = {
 	extensionDialogs: Component[];
@@ -27,6 +28,7 @@ type DialogMethods = {
 		factory: (tui: unknown, theme: unknown, keybindings: unknown, done: (result: T) => void) => Component,
 		options?: {
 			overlay?: boolean;
+			placement?: "replaceEditor" | "aboveEditor";
 			onHandle?: (handle: { setHidden: (hidden: boolean) => void }) => void;
 			blocked?: { kind: "permission" | "question" | "auth"; message: string };
 		},
@@ -89,6 +91,51 @@ function visible(context: DialogContext): string {
 
 describe("InteractiveMode extension dialogs", () => {
 	beforeAll(() => initTheme("dark"));
+
+	it("keeps compact attachments and the cursor intact while a bounded panel is shown above the draft", async () => {
+		const context = createContext();
+		const terminal = new VirtualTerminal(80, 24);
+		const editor = new Editor(new TuiMainScreen(terminal), getEditorTheme());
+		editor.setText("draft ");
+		editor.insertContent([{ kind: "paste", text: "one\ntwo\nthree\nfour" }]);
+		editor.insertContent([
+			{ kind: "image", path: "/tmp/screenshot.png", text: "/tmp/screenshot.png", label: "screenshot.png" },
+		]);
+		editor.handleInput("\x1b[D");
+		const text = editor.getText();
+		const expanded = editor.getExpandedText();
+		const cursor = editor.getCursor();
+		const content = editor.getContentItems();
+		context.editor = editor;
+		Object.assign(context.ui, { terminal });
+		Object.assign(context, {
+			footerContainer: new Container(),
+			widgetContainerAbove: new Container(),
+			widgetContainerBelow: new Container(),
+			statusContainer: new Container(),
+		});
+		let close: (() => void) | undefined;
+		const result = context.showExtensionCustom<void>(
+			(_tui, _theme, _keys, done) => {
+				close = () => done();
+				return {
+					render: (_width: number, height = 1) => Array.from({ length: height }, () => "Question panel"),
+					invalidate: () => {},
+				};
+			},
+			{ placement: "aboveEditor" },
+		);
+		await vi.waitFor(() => expect(context.editorContainer.render(80).join("\n")).toContain("Question panel"));
+		expect(context.editorContainer.render(80).length).toBeLessThanOrEqual(24);
+		expect(context.editorContainer.render(80).join("\n")).toContain(editor.getContentItems()[0].marker);
+		close?.();
+		await result;
+		expect(context.focused).toBe(editor);
+		expect(editor.getText()).toBe(text);
+		expect(editor.getExpandedText()).toBe(expanded);
+		expect(editor.getCursor()).toEqual(cursor);
+		expect(editor.getContentItems()).toEqual(content);
+	});
 
 	// Regression for #11166: a second dialog replaced the first one and the first promise never settled.
 	it("shows the earlier confirm again after the later one is answered", async () => {

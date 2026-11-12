@@ -98,6 +98,9 @@ const APP_KEYBINDINGS = {
 		defaultKeys: "ctrl+d",
 		description: "Delete the selected finished sub-agent and its history",
 	},
+	"app.ask.previous": { defaultKeys: "shift+tab", description: "Go to the previous question" },
+	"app.ask.toggle": { defaultKeys: "space", description: "Toggle the selected form option" },
+	"app.ask.submit": { defaultKeys: "ctrl+enter", description: "Submit question form answers" },
 	"app.tree.foldOrUp": {
 		defaultKeys: process.platform === "darwin" ? ["alt+left", "ctrl+left"] : ["ctrl+left", "alt+left"],
 		description: "Fold tree branch or move up",

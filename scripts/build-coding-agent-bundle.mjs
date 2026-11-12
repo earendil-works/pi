@@ -17,6 +17,8 @@ const banner = {
 };
 const allowedExternalPackages = new Set([
 	"@silvia-odwyer/photon-node",
+	// LinkeDOM's optional native canvas support falls back to its bundled shim.
+	"canvas",
 	"jiti",
 	// Optional native accelerators. Their callers fall back to JavaScript when absent.
 	"bufferutil",
@@ -81,7 +83,7 @@ function commonBuildOptions() {
 		banner,
 		bundle: true,
 		define: { PI_BUNDLED_NODE: "true" },
-		external: ["@silvia-odwyer/photon-node"],
+		external: ["@silvia-odwyer/photon-node", "canvas"],
 		format: "esm",
 		legalComments: "none",
 		logLevel: "warning",

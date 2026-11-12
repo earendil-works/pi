@@ -32,6 +32,22 @@ The startup header lists the instructions and resources Pi loaded. The editor bo
 
 Pi does not ask before every tool call. Review commands and changed files, and use a sandbox for untrusted or unattended work. See [Security](security.md).
 
+## Answer clarification questions
+
+The built-in `ask` tool lets the interactive main agent present a terminal form above your prompt. Your current draft, compact pastes, attachments, and cursor stay intact. Forms work in both fullscreen and regular mode.
+
+The question header, radio buttons, checkboxes, and submit action use the shared icon preset. Choose **Icons → Nerd** in `/settings` to use Nerd Font glyphs; the Unicode preset remains available.
+
+Use `Up`/`Down` to move among choices and `Space` to toggle them. `Enter` accepts a single choice or advances from an input; `Tab` moves forward and `Shift+Tab` moves back. Textareas use `Shift+Enter` for new lines. Choice groups include an automatic **Other (type your own)** answer. `PageUp`/`PageDown` and the mouse wheel scroll longer context.
+
+The final page reviews your answers. Press `Enter` on **Submit answers**, or use `Ctrl+Enter` from any question, to submit explicitly. Required fields and declared constraints are checked before answers reach the model. There is no timeout or automatic submission. `Escape` or `Ctrl+C` cancels the form and stops the turn, including later tool calls from the same response.
+
+The model supplies one semantic HTML `<form>` with named, labeled controls: radio buttons, checkboxes, selects (including multiple), text/number/date/email/URL inputs, and textareas. Headings, paragraphs, lists, tables, code blocks, and raster images provide context. Numbers return as numbers; checkbox groups and multiple selects return arrays; unchecked optional choices and empty optional numbers are omitted. A single checked checkbox returns its value as a string.
+
+HTML is parsed as data, not opened in a browser. Scripts, CSS, buttons, SVG, password inputs, and file uploads are unsupported. Forms are limited to 64 KiB, 64 fields, 256 options per field, and eight images. Images can use local paths, HTTP(S) URLs, or base64 PNG/JPEG/GIF/WebP data URIs; each image is limited to 8 MiB and 40 megapixels. Remote images have a 20-second loading deadline. Terminals without image support show a text fallback.
+
+`ask` is enabled by default for the interactive main agent, not for print, JSON, RPC, or sub-agent sessions. The model receives guidance to ask only for decisions or missing information it cannot obtain from tools, and to explain tradeoffs before opening a form. Disabling built-in extensions or excluding `ask` from the selected tools disables it. Form shortcuts are [configurable](keybindings.md#clarification-forms).
+
 ## Change direction
 
 You can send more input while Pi is working:
@@ -52,11 +68,17 @@ Windows Terminal reserves some Alt shortcuts. See [Terminal Setup](terminal-setu
 Type `/` to search the available commands. The commands you will use most often are:
 
 - `/model` selects a model. Press `Ctrl+L` to open the same selector.
-- `/thinking` selects how much reasoning the current model uses. Press `Shift+Tab` to cycle through supported levels.
+- `/thinking` or `/effort` selects how much reasoning the current model uses. Both use the same model-supported levels, autocomplete, and picker. `max` is distinct from `xhigh`; unsupported levels report an error rather than silently changing your selection. Press `Shift+Tab` to cycle through supported levels.
 - `/login` and `/logout` manage provider access.
 - `/settings` changes common preferences.
 
 Prompt templates, skills, and extensions can add more commands to the same menu. See [Choose a Model](models.md), [Configuration](configuration.md), or the complete [Slash Commands reference](slash-commands.md).
+
+### Codex fast mode
+
+`/fast` toggles priority-tier requests for ChatGPT/Codex models (`openai-codex`). Use `/fast on`, `/fast off`, or `/fast status` explicitly. Enabling it can increase usage; it requests `service_tier: "priority"` starting with the next provider request, not a separate model or reasoning level.
+
+The native footer shows `fast (priority)` while active. The choice is saved in the current session and follows resume and branch navigation, including sessions saved by the former local extension. Switching to another provider leaves the preference remembered but inactive and shows `fast (inactive)`; `/fast off` still disables it. New sessions start with fast mode off. The command is supplied by the default built-in `fast` extension.
 
 ## Continue or start over
 

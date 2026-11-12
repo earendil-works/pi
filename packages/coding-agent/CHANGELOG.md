@@ -34,6 +34,11 @@
 - Added background-generated names for unnamed chats and jobs, with one chat attempt after the first answer, explicit-name protection, recorded helper usage outside conversation history, and live Rex label updates. Loaded Markdown instructions tune naming style for chats, jobs, and sub-agent task labels; SDK hosts can register `createAutoNameExtension()`.
 - Added native `/pause` with Enter-to-continue, group pause at safe tool/request boundaries, and explicit recovery offers for interrupted main and child sessions. Separate per-session checkpoints retain queued inputs and completed parallel tool results without merging child histories; uncertain tool outcomes are preserved rather than replayed. Background jobs remain independent, and `/resume` keeps its session-picker behavior.
 - Added compact prompt blocks for text pastes of four or more lines or over 300 characters, plus short labels for pasted/dropped local files and images. Configurable `F2` preview supports in-place text editing and read-only native file/image previews without model calls or session-history changes; submission retains full text and original paths.
+- Added the default main-agent `ask` tool with semantic HTML forms above the prompt, typed answers, required-field and constraint validation, automatic custom choices, rich context and bounded raster images. Explicit submission and Escape-to-stop preserve the draft and prevent later tool calls after cancellation. Forms are hidden in headless and child sessions; shortcuts are configurable.
+- Added `ctx.ui.custom({ placement: "aboveEditor" })` for inline panels that preserve the mounted draft and receive an available-height argument in `render(width, maxHeight)`.
+- Added native `/effort` as another entry point to the model-aware `/thinking` picker, completion, and level controls, keeping `max` distinct from `xhigh`.
+- Added the built-in `/fast [on|off|status]` command for Codex priority-tier requests, with session/branch persistence and native footer status instead of a custom footer.
+- Added shared Nerd Font question, radio, checkbox, and submission icons to `ask` forms, with Unicode fallbacks through the existing icon preset.
 
 ### Changed
 
@@ -87,6 +92,7 @@
 - Fixed interpreter-only multiline PCRE2 searches timing out on frequent matches before a late line range. Valid UTF-8 subjects are validated once; malformed input retains the existing checked matcher.
 - Fixed ordinary streaming grep losing final UTF-16 replacement characters at decoder buffer boundaries without buffering the whole file.
 - Fixed Gondolin find reporting no files for an explicitly selected guest file.
+- Fixed Node CLI bundling when LinkeDOM's optional native Canvas dependency is installed.
 
 ## [1.5.0] - 2026-11-02
 

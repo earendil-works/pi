@@ -271,7 +271,7 @@ class BuiltInHeader extends ExpandableText {
 	}
 }
 
-type ExtensionDialogComponent = Component & { dispose?(): void };
+type ExtensionDialogComponent = Component & { render(width: number, maxHeight?: number): string[]; dispose?(): void };
 
 type CompactionQueuedMessage = {
 	text: string;
@@ -578,7 +578,11 @@ export class InteractiveMode {
 	// Extension UI state
 	// Extension dialogs shown in the editor slot (select, confirm, input, editor, inline custom).
 	// The last entry is visible; see pushExtensionDialog().
-	private extensionDialogs: Array<{ component: ExtensionDialogComponent; blocked: BlockedStatus | undefined }> = [];
+	private extensionDialogs: Array<{
+		component: ExtensionDialogComponent;
+		blocked: BlockedStatus | undefined;
+		placement: "replaceEditor" | "aboveEditor";
+	}> = [];
 	/** Numbers the program status sources of blocking overlays, so closing one keeps the others. */
 	private nextBlockingOverlayId = 0;
 	/**
@@ -782,8 +786,9 @@ export class InteractiveMode {
 			};
 		}
 
-		const thinkingCommand = slashCommands.find((command) => command.name === "thinking");
-		if (thinkingCommand) {
+		for (const thinkingCommand of slashCommands.filter(
+			(command) => command.name === "thinking" || command.name === "effort",
+		)) {
 			thinkingCommand.getArgumentCompletions = (prefix: string): AutocompleteItem[] | null => {
 				return createFuzzyAutocompleteItems(
 					this.session.getAvailableThinkingLevels(),
@@ -2829,9 +2834,13 @@ export class InteractiveMode {
 	 * the previous one again. Every dialog stays answerable, so no dialog promise is left pending,
 	 * and dialogs opened from inside another dialog (for example a confirm from a custom component) work.
 	 */
-	private pushExtensionDialog(component: ExtensionDialogComponent, blocked?: BlockedStatus): void {
+	private pushExtensionDialog(
+		component: ExtensionDialogComponent,
+		blocked?: BlockedStatus,
+		placement: "replaceEditor" | "aboveEditor" = "replaceEditor",
+	): void {
 		this.disposeActiveSelector();
-		this.extensionDialogs.push({ component, blocked });
+		this.extensionDialogs.push({ component, blocked, placement });
 		this.showTopExtensionDialog();
 	}
 
@@ -2847,7 +2856,33 @@ export class InteractiveMode {
 		const top = this.extensionDialogs.at(-1);
 		const component = top?.component ?? this.editor;
 		this.editorContainer.clear();
-		this.editorContainer.addChild(component);
+		if (top?.placement === "aboveEditor") {
+			let panelHeight = 0;
+			this.editorContainer.addChild({
+				render: (width) => {
+					const draft = this.editor.render(width);
+					const chrome =
+						this.footerContainer.render(width).length +
+						this.widgetContainerAbove.render(width).length +
+						this.widgetContainerBelow.render(width).length +
+						this.statusContainer.render(width).length;
+					const panel = component.render(width, Math.max(3, this.ui.terminal.rows - draft.length - chrome - 2));
+					panelHeight = panel.length;
+					return [...panel, ...draft];
+				},
+				handleMouse: (event) => {
+					if (event.y >= panelHeight) return undefined;
+					const result = component.handleMouse?.({ ...event, height: panelHeight });
+					return result ? { ...result, focus: false } : undefined;
+				},
+				invalidate: () => {
+					component.invalidate();
+					this.editor.invalidate();
+				},
+			});
+		} else {
+			this.editorContainer.addChild(component);
+		}
 		this.ui.setFocus(component);
 		this.programStatus.setBlocked("extension-dialog", top?.blocked);
 		this.ui.requestRender();
@@ -3073,15 +3108,18 @@ export class InteractiveMode {
 			theme: Theme,
 			keybindings: KeybindingsManager,
 			done: (result: T) => void,
-		) => (Component & { dispose?(): void }) | Promise<Component & { dispose?(): void }>,
+		) => ExtensionDialogComponent | Promise<ExtensionDialogComponent>,
 		options?: {
 			overlay?: boolean;
+			placement?: "replaceEditor" | "aboveEditor";
 			overlayOptions?: OverlayOptions | (() => OverlayOptions);
 			onHandle?: (handle: OverlayHandle) => void;
 			blocked?: BlockedStatus;
 		},
 	): Promise<T> {
-		const savedText = this.editor.getExpandedText?.() ?? this.editor.getText();
+		const placement = options?.placement ?? "replaceEditor";
+		const savedText =
+			placement === "replaceEditor" ? (this.editor.getExpandedText?.() ?? this.editor.getText()) : undefined;
 		const isOverlay = options?.overlay ?? false;
 
 		return new Promise((resolve, reject) => {
@@ -3094,7 +3132,7 @@ export class InteractiveMode {
 
 			const restoreEditor = () => {
 				if (component) this.removeExtensionDialog(component);
-				this.editor.setText(savedText);
+				if (savedText !== undefined) this.editor.setText(savedText);
 				this.ui.requestRender();
 			};
 
@@ -3130,7 +3168,10 @@ export class InteractiveMode {
 
 			Promise.resolve(factory(this.ui, theme, this.keybindings, close))
 				.then((c) => {
-					if (closed) return;
+					if (closed) {
+						c.dispose?.();
+						return;
+					}
 					component = c;
 					if (isOverlay) {
 						// Resolve overlay options - can be static or dynamic function
@@ -3152,7 +3193,7 @@ export class InteractiveMode {
 						// Expose handle to caller for visibility control
 						options?.onHandle?.(overlayHandle);
 					} else {
-						this.pushExtensionDialog(c, options?.blocked);
+						this.pushExtensionDialog(c, options?.blocked, placement);
 					}
 				})
 				.catch((err) => {
@@ -3339,8 +3380,14 @@ export class InteractiveMode {
 				await this.handleModelCommand(searchTerm);
 				return;
 			}
-			if (text === "/thinking" || text.startsWith("/thinking ")) {
-				const searchTerm = text.startsWith("/thinking ") ? text.slice(10).trim() : undefined;
+			if (
+				text === "/thinking" ||
+				text.startsWith("/thinking ") ||
+				text === "/effort" ||
+				text.startsWith("/effort ")
+			) {
+				const argumentIndex = text.indexOf(" ");
+				const searchTerm = argumentIndex === -1 ? undefined : text.slice(argumentIndex + 1).trim();
 				this.editor.setText("");
 				this.handleThinkingCommand(searchTerm);
 				return;

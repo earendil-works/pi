@@ -247,6 +247,10 @@
       "$ref": "#/$defs/KeybindingValue",
       "description": "Open external editor"
     },
+    "app.editor.preview": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Preview or edit compact pasted content"
+    },
     "app.message.copy": {
       "$ref": "#/$defs/KeybindingValue",
       "description": "Copy selection or choose content from the last assistant message"
@@ -322,6 +326,18 @@
     "app.agents.delete": {
       "$ref": "#/$defs/KeybindingValue",
       "description": "Delete the selected finished sub-agent and its history"
+    },
+    "app.ask.previous": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Go to the previous question"
+    },
+    "app.ask.toggle": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Toggle the selected form option"
+    },
+    "app.ask.submit": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Submit question form answers"
     },
     "app.tree.foldOrUp": {
       "$ref": "#/$defs/KeybindingValue",

@@ -4,6 +4,12 @@ export type IconName =
 	| "quote"
 	| "copy"
 	| "chat"
+	| "question"
+	| "radioChecked"
+	| "radioUnchecked"
+	| "checkboxChecked"
+	| "checkboxUnchecked"
+	| "submit"
 	| "agent"
 	| "agentWorker"
 	| "agentScout"
@@ -17,6 +23,12 @@ const ICONS: Record<IconPreset, Record<IconName, string>> = {
 		quote: "❯",
 		copy: "⧉",
 		chat: "?",
+		question: "?",
+		radioChecked: "(●)",
+		radioUnchecked: "( )",
+		checkboxChecked: "[x]",
+		checkboxUnchecked: "[ ]",
+		submit: "↵",
 		agent: "@",
 		agentWorker: "</>",
 		agentScout: "?",
@@ -29,6 +41,12 @@ const ICONS: Record<IconPreset, Record<IconName, string>> = {
 		quote: "\uf10e",
 		copy: "\u{f09a8}",
 		chat: "\uf075",
+		question: "\uf059",
+		radioChecked: "\uf192",
+		radioUnchecked: "\uf10c",
+		checkboxChecked: "\uf14a",
+		checkboxUnchecked: "\uf096",
+		submit: "\uf1d8",
 		agent: "\uf007",
 		agentWorker: "\uf0ad",
 		agentScout: "\uf002",

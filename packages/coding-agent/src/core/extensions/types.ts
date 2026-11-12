@@ -232,9 +232,16 @@ export interface ExtensionUIContext {
 			theme: Theme,
 			keybindings: KeybindingsManager,
 			done: (result: T) => void,
-		) => (Component & { dispose?(): void }) | Promise<Component & { dispose?(): void }>,
+		) =>
+			| (Component & { render(width: number, maxHeight?: number): string[]; dispose?(): void })
+			| Promise<Component & { render(width: number, maxHeight?: number): string[]; dispose?(): void }>,
 		options?: {
 			overlay?: boolean;
+			/**
+			 * Inline placement; defaults to replacing the editor. "aboveEditor" keeps the draft mounted
+			 * and passes the available terminal rows as the second argument to component.render().
+			 */
+			placement?: "replaceEditor" | "aboveEditor";
 			/** Overlay positioning/sizing options. Can be static or a function for dynamic updates. */
 			overlayOptions?: OverlayOptions | (() => OverlayOptions);
 			/** Called with the overlay handle after the overlay is shown. Use to control visibility. */
