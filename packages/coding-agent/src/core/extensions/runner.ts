@@ -259,18 +259,74 @@ export type ReloadHandler = () => Promise<void>;
 export type ShutdownHandler = () => void;
 
 /**
+ * How long a single `session_shutdown` handler may hold the teardown.
+ *
+ * A handler whose teardown never settles used to block `emit()` forever: the runtime never finished
+ * disposing, `process.exit()` was never reached, and the process outlived the terminal while still
+ * owning the child-agent tree. Two seconds covers the teardowns shipped today (MCP connections,
+ * agent cancellation, canvas stop) and keeps quitting predictable.
+ */
+const SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS = 2000;
+
+/**
  * Helper function to emit session_shutdown event to extensions.
  * Returns true if the event was emitted, false if there were no handlers.
+ *
+ * The dispatch is bounded by default so that disposing the runtime always finishes.
  */
 export async function emitSessionShutdownEvent(
 	extensionRunner: ExtensionRunner,
 	event: SessionShutdownEvent,
+	options?: EmitOptions,
 ): Promise<boolean> {
 	if (extensionRunner.hasHandlers("session_shutdown")) {
-		await extensionRunner.emit(event);
+		await extensionRunner.emit(event, {
+			handlerTimeoutMs: options?.handlerTimeoutMs ?? SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS,
+		});
 		return true;
 	}
 	return false;
+}
+
+/** Options for {@link ExtensionRunner.emit}. */
+export interface EmitOptions {
+	/**
+	 * Give up waiting for an individual handler after this many milliseconds and report it as an
+	 * extension error instead. Omitted (or non-positive) waits as long as the handler needs, which is
+	 * the historical behaviour and stays the default for every event that is not tearing down.
+	 */
+	handlerTimeoutMs?: number;
+}
+
+/**
+ * Awaits a handler, giving up after `timeoutMs` when one is supplied.
+ *
+ * The handler is not cancelled: it keeps running detached. The point is to stop the caller from
+ * waiting on a teardown that may never settle, not to interrupt work already in flight, so the
+ * abandoned promise is observed to keep a late rejection from surfacing as unhandled.
+ */
+async function waitForHandler<TResult>(pending: Promise<TResult>, timeoutMs: number | undefined): Promise<TResult> {
+	if (timeoutMs === undefined || timeoutMs <= 0) {
+		return await pending;
+	}
+
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		const timedOut = new Promise<never>((_resolve, reject) => {
+			timer = setTimeout(() => {
+				reject(new Error(`extension handler timed out after ${timeoutMs}ms`));
+			}, timeoutMs);
+			timer.unref?.();
+		});
+
+		void pending.catch(() => {});
+
+		return await Promise.race([pending, timedOut]);
+	} finally {
+		if (timer !== undefined) {
+			clearTimeout(timer);
+		}
+	}
 }
 
 function snapshotEventHandlers(extensions: Extension[], event: ExtensionEvent["type"]) {
@@ -1100,14 +1156,15 @@ export class ExtensionRunner {
 		);
 	}
 
-	async emit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {
+	async emit<TEvent extends RunnerEmitEvent>(event: TEvent, options?: EmitOptions): Promise<RunnerEmitResult<TEvent>> {
 		const ctx = this.createContext();
 		let result: SessionBeforeEventResult | undefined;
+		const handlerTimeoutMs = options?.handlerTimeoutMs;
 
 		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, event.type)) {
 			for (const handler of handlers) {
 				try {
-					const handlerResult = await handler(event, ctx);
+					const handlerResult = await waitForHandler(Promise.resolve(handler(event, ctx)), handlerTimeoutMs);
 
 					if (this.isSessionBeforeEvent(event) && handlerResult) {
 						result = handlerResult as SessionBeforeEventResult;
