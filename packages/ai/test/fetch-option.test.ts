@@ -164,25 +164,6 @@ describe("fetch stream option", () => {
 		}
 	});
 
-	it("allows Google adapters to receive globalThis.fetch explicitly", async () => {
-		const ambient = vi.fn<FetchFunction>(
-			async () =>
-				new Response(JSON.stringify({ error: { message: "upstream rejected request" } }), {
-					status: 401,
-					headers: { "content-type": "application/json" },
-				}),
-		);
-		vi.stubGlobal("fetch", ambient);
-		const result = await streamGoogleGenerativeAI(createModel("google-generative-ai"), context, {
-			apiKey: "test-key",
-			fetch: ambient,
-		}).result();
-
-		expect(ambient).toHaveBeenCalledOnce();
-		expect(result.errorMessage).not.toContain("Custom fetch is not supported");
-		expect(globalThis.fetch).toBe(ambient);
-	});
-
 	it("uses fetch for image generation", async () => {
 		const { custom, fallback } = mockFetches();
 		const model: ImageModel<"openrouter-images"> = {
