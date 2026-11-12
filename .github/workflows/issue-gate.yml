@@ -91,6 +91,15 @@ jobs:
             const approvedUsers = parseApprovedUsers(approvedContent);
             const capability = approvedUsers.get(issueAuthor.toLowerCase());
 
+            // Every issue from someone without write access waits for review: labeled untriaged. Those from approved
+            // contributors stay open, the others are closed until a maintainer reopens them.
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['untriaged'],
+            });
+
             if (!isBotAuthor && (capability === 'issue' || capability === 'pr')) {
               console.log(`${issueAuthor} is approved for ${capability}`);
               return;
@@ -111,13 +120,6 @@ jobs:
               repo: context.repo.repo,
               issue_number: context.issue.number,
               body: message,
-            });
-
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              labels: ['untriaged'],
             });
 
             await github.rest.issues.update({
