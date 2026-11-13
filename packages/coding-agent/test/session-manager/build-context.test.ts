@@ -206,6 +206,20 @@ describe("buildSessionContext", () => {
 			expect(ctx.thinkingLevel).toBe("high");
 			expect(ctx.messages.map((message) => message.role)).toEqual(["compactionSummary", "user"]);
 		});
+
+		it("handles more entries after compaction than fit in the call stack", () => {
+			const entries: SessionEntry[] = [msg("1", null, "user", "first"), compaction("2", "1", "Summary", "1")];
+			let parentId = "2";
+			for (let i = 0; i < 200_000; i++) {
+				entries.push(custom(`c${i}`, parentId, "bulk"));
+				parentId = `c${i}`;
+			}
+			entries.push(msg("last", parentId, "user", "last"));
+
+			expect(buildContextEntries(entries)).toHaveLength(200_003);
+			const ctx = buildSessionContext(entries);
+			expect(ctx.messages.map((message) => message.role)).toEqual(["compactionSummary", "user", "user"]);
+		});
 	});
 
 	describe("with branches", () => {
