@@ -1,0 +1,1925 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>p3: where everything stands</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A rundown · p3 · 2026-11-13</div>
+  <h1>Where<br>Everything<br>Stands</h1>
+  <p class="subtitle">What is decided, what is built in p2 and Chord, what is only proposed, and where the pieces contradict each other, for users and resources, for the screen, and for a session&#39;s worker</p>
+  <div class="cover-stats"><div class="stat"><b>22</b><span>owner decisions in apps/p3/docs/decisions.md</span></div><div class="stat"><b>0</b><span>lines of p3 code: apps/p3 holds docs only</span></div><div class="stat"><b>4</b><span>proposals from today, none decided</span></div><div class="stat"><b>1</b><span>Chord rule most proposals trip over: factories are synchronous</span></div></div>
+  <div class="cover-note"><p>Written 2026-11-13 for the owner by the subagent &quot;rundown&quot; so he does not have to hold all of it in his head.
+Sources were read from <code>origin/main</code> at <code>927cf8aaa</code> (the shared checkout&#39;s <code>main</code> is 111 commits behind it and was
+not touched), plus today&#39;s uncommitted files in the working tree: <code>apps/p3/docs/users-sketch.md</code>,
+<code>operation-gates-sketch.md</code>, <code>multiuser-walkthrough.md</code> and <code>apps/p2/docs/views-mock/index.html</code>.
+<strong>Every code block says in its first line what it is:</strong> <code>BUILT</code> (copied from the repo, path given), <code>DECIDED</code> (from
+a decision&#39;s text), <code>PROPOSED</code> (from a proposal, named with its author and date, or written here to show how a
+proposal looks in real Chord; those use only API that exists in <code>packages/chord/src</code> today). Notes marked <em>review</em>
+are contradictions or gaps found while checking. Nothing in this rundown is a decision.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#chord-rule">I. The Rule Under Everything</a></li>
+<li><a href="#users">II. Users</a></li>
+<li><a href="#resources">III. Resources and Bringing</a></li>
+<li><a href="#policy">IV. Who May</a></li>
+<li><a href="#sharing">V. Sharing and Locks</a></li>
+<li><a href="#edges">VI. Three Edges in Real Chord</a></li>
+<li><a href="#views">VII. Views and Items</a></li>
+<li><a href="#screens">VIII. Who Sees Which View</a></li>
+<li><a href="#worker">IX. What a Session&#39;s Worker Runs</a></li>
+<li><a href="#filters">X. The Filters</a></li>
+<li><a href="#subagents">XI. Subagents and Places</a></li>
+<li><a href="#worker-people">XII. The Worker and the People</a></li>
+<li><a href="#ten-rules-and-the-decisions-left">Ten Rules and the Decisions Left</a></li>
+<li><a href="#sources-and-their-status">Appendix A: Sources and Their Status</a></li>
+<li><a href="#chord-calls-the-rewrites-use">Appendix B: Chord Calls the Rewrites Use</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">It is Friday, 13 November. The onsite is next week, and p3&#39;s design is spread over 22 decisions, five design books
+written between 7 and 13 November, three sketches from this morning, a views mockup from this morning and a proposal
+another session wrote an hour ago. There is no p3 code. p2 runs on the owner&#39;s phone every day and already has a
+working, single-user version of most of what the p3 documents argue about: guests, read-only sharing, a session lock,
+views, artifacts, a harness with filtered tools, code-mode namespaces.</p>
+<p>The same questions keep coming back in every round: who owns a resource, who may bring it into a session, who checks
+that, and where the check runs. Each round a new document answers them a little differently, often with APIs that do
+not exist, and the older documents are never marked as superseded. That is what going in circles feels like.</p>
+<p>This rundown does one thing: it sorts every piece into <strong>decided</strong>, <strong>built</strong> and <strong>proposed</strong>, shows real code for
+each, and names the contradictions. It also checks today&#39;s main proposal against the one Chord rule it breaks,
+&quot;a factory is synchronous and only declares&quot;, and shows how each of its three mechanisms would have to be written
+with Chord as it is.</p>
+<h3 id="ten-things-to-know">Ten things to know</h3>
+<ol class="findings">
+<li><strong>p3 has no code.</strong> Everything marked built lives in p2 (<code>apps/p2</code>), Chord (<code>packages/chord</code>) or Durable
+(<code>packages/durable</code>). p2 is single-owner with guests.</li>
+<li><strong>The resource direction is decided in outline.</strong> Resources are owned by a user or by the instance (2026-11-13),
+you bring only your own, and everyone who may send in a session uses the session&#39;s whole list (2026-11-08). The
+mechanics are not decided.</li>
+<li><strong>A factory decides only from params and the principal.</strong> Chord runs it synchronously; the values of what it
+declares arrive later. &quot;There is no async activation guard&quot; (design §7). Every other check runs in a method or
+shows as derived state.</li>
+<li><strong>That is why p2 puts a guest&#39;s rights in the principal.</strong> <code>GuestPrincipal.sessions</code> maps each shared session to
+<code>&quot;view&quot;</code> or <code>&quot;full&quot;</code>, so a factory can choose the viewer or editor variant on the spot; any change bumps a revision
+and ends the old objects. p3&#39;s decided user principal carries only an id, so this trick does not carry over.</li>
+<li><strong>Today&#39;s &quot;three edges&quot; proposal needs Chord hooks that do not exist.</strong> <code>scope: &quot;user&quot;</code> on tables, <code>ctx.scope</code>, a
+policy gate inside Chord&#39;s dispatch, and a list check before the factory runs. It also contradicts Chord&#39;s
+ownership principle (&quot;the owner enforces its rules in its methods&quot;). Each edge can be built from today&#39;s Chord as a
+small library pattern; chapter VI shows all three.</li>
+<li><strong>Two policy shapes are on the table.</strong> The resource-model book&#39;s policy is a synchronous <code>decide(request, baseline)</code>; this morning&#39;s gate sketch is <code>async decide(...)</code>. Derives (a session&#39;s list, &quot;what may I create&quot;) can
+only use the synchronous one.</li>
+<li><strong>p2&#39;s session lock is the single-user version of &quot;resources on sessions&quot;.</strong> The owner picks MCP servers,
+instructions and two capabilities; the worker mirrors the lock into Durable; tools and server objects check it at
+every call.</li>
+<li><strong>The UI is decided at the level of plugins and items.</strong> Views are plugins, a plugin owns its items&#39; data, panes
+come from <code>ViewKinds</code>, listable items from <code>ArtifactKinds</code> (2026-11-12). Layouts as apps, placements, the &quot;+&quot;, and
+several sessions in one layout are proposals.</li>
+<li><strong>The worker is built in p2 and mostly settled.</strong> One process per session, the Durable harness, extensions from a
+registry, a guard on every tool, code-mode namespaces declared by extensions (Durable, 2026-11-12). Extensions keyed
+by resource exist only on paper.</li>
+<li><strong>About ten rules would settle most of it.</strong> They are on the last page, followed by the owner&#39;s open decisions in
+the order they unblock the most.</li>
+</ol>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p><strong>BUILT</strong>, <strong>DECIDED</strong> and <strong>PROPOSED</strong> label every code block (see the cover note). A <strong>principal</strong> is who a call is
+from, stamped by the link it arrives on (<code>{ kind: &quot;user&quot;, id }</code>). A <strong>factory</strong> is the function that makes a Chord
+object; it runs synchronously and only declares. A <strong>per-principal object</strong> is a Chord <code>remote</code> object: one per
+params and principal, choosing one <strong>variant</strong> (a set of members) when it is made. A <strong>store</strong> is a <code>local</code> object
+with empty params: one per host, it may persist data and contribute to registries. A <strong>registry</strong> collects
+contributions from plugins and composes one value. A <strong>resource</strong> is something a session can use (an MCP server, a
+tool, a model provider); its <strong>owner</strong> is a user or the instance. <strong>Bringing</strong> puts a resource on a session&#39;s
+<strong>list</strong>. The <strong>policy</strong> answers &quot;may this user do this&quot;. A <strong>lock</strong> is p2&#39;s per-session pick of resources. A
+<strong>view</strong> is a pane on screen showing an <strong>item</strong> (an artifact, a file, a terminal) of a <strong>view kind</strong>; a <strong>layout</strong>
+arranges views; a <strong>placement</strong> is one view in a layout. A <strong>worker</strong> is the process running one session; its
+<strong>harness</strong> is pi-durable&#39;s <code>Harness</code>; an <strong>extension</strong> is a Durable bundle of tools and prompt sections; a
+<strong>namespace</strong> groups an extension&#39;s tools for code mode.</p>
+</section>
+
+<section class="chapter" id="chord-rule"><header class="opener"><div class="numeral">I</div><h2>The Rule Under Everything</h2><p class="lede">Part 1 starts with Chord, because every question about users, resources and locks ends at the same rule: what a factory may know when it runs.</p></header>
+<p class="dropcap">Every access question in p3 becomes, in code, one of three questions: may this caller get this object at all, which
+variant does it get, and may it make this call now. Chord answers the first two in one place, the factory, and the
+factory runs under a hard rule.</p>
+<h3 id="the-rule">The rule</h3>
+<p>Design §1, principle 3: <em>&quot;Factories declare, Chord activates. A factory is synchronous and only declares; Chord
+performs activation. Handles a factory gets are valid for the object&#39;s whole life.&quot;</em> Design §6 adds: <em>&quot;Synchronous
+and declarative: no awaits, no side effects; async work happens in activation (opens), in calls, in routines and
+jobs.&quot;</em></p>
+<p>The types say the same:</p>
+<pre><code><span class="tk-c">// BUILT · packages/chord/src/host/attempt.ts (excerpt)</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Factory</span>&lt;C <span class="tk-k">extends</span> <span class="tk-t">Contract</span>, P <span class="tk-k">extends</span> <span class="tk-t">Principal</span> = <span class="tk-t">Principal</span>&gt; = <span class="tk-t">ShapeOf</span>&lt;C&gt;[<span class="tk-s">"kind"</span>] <span class="tk-k">extends</span> <span class="tk-s">"local"</span>
+	? (params: <span class="tk-t">ParamsOf</span>&lt;C&gt;, self: <span class="tk-k">keyof</span> <span class="tk-t">ParamsOf</span>&lt;C&gt; <span class="tk-k">extends</span> <span class="tk-k">never</span> ? <span class="tk-t">StoreSelf</span>&lt;P&gt; : <span class="tk-t">Self</span>&lt;P&gt;) =&gt; <span class="tk-t">Implementation</span>&lt;C, <span class="tk-t">Ctx</span>&lt;P&gt;&gt;
+	: (params: <span class="tk-t">ParamsOf</span>&lt;C&gt;, principal: P, self: <span class="tk-t">Self</span>&lt;P&gt;) =&gt; <span class="tk-t">Implementation</span>&lt;C, <span class="tk-t">Ctx</span>&lt;P&gt;&gt;;</code></pre>
+<p>Three consequences matter for everything that follows:</p>
+<ol>
+<li><strong>A factory can decide only from its params and its principal.</strong> It may declare <code>self.get(Other, {})</code>, but the
+reference becomes live after the factory returned. It cannot read another object&#39;s state, a table or the policy
+while it runs. So it cannot refuse a caller or pick a variant because of data stored somewhere.</li>
+<li><strong>Only stores and facets touch tables and registries.</strong> <code>self.table</code>, <code>self.query</code> and <code>self.contribute</code> exist only
+on <code>StoreSelf</code>, the <code>self</code> of a <code>local</code> type with empty params (one per host). A per-principal object cannot own a
+table and cannot contribute to a registry (design §17, R21).</li>
+<li><strong>Params are flat.</strong> A record of <code>str()</code>, <code>int()</code>, <code>bool()</code> or <code>oneOf(...)</code> fields, nothing nested (design §5). A
+resource reference <code>{ kind, owner, id }</code> cannot be one param.</li>
+</ol>
+<p>Design §7 states where checks therefore live: <em>&quot;Authority checks live in the per-principal view&#39;s methods (and in
+<code>route.authorize</code> before a host starts); there is no async activation guard.&quot;</em> <code>route.authorize</code> is synchronous too:
+<code>authorize(principal, address): boolean</code>.</p>
+<pre><code><span class="tk-c">// BUILT · apps/p2/src/hosts/session-workers.ts (excerpt): the route to session workers</span>
+authorize: (principal: <span class="tk-t">P2Principal</span>, address) =&gt;
+	principal.kind === <span class="tk-s">"server"</span> || <span class="tk-f">canView</span>(principal, address.params.id),
+principal: (address): <span class="tk-t">P2Principal</span> =&gt; ({
+	kind: <span class="tk-s">"worker"</span>,
+	session: address.params.id,
+	generation: <span class="tk-k">this</span>.<span class="tk-f">generation</span>(address.params.id),
+}),</code></pre>
+<h3 id="where-a-check-can-live">Where a check can live</h3>
+<table>
+<thead>
+<tr>
+<th>Where</th>
+<th>Runs</th>
+<th>Can read</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>the factory</td>
+<td>once per object, synchronously</td>
+<td>params, principal</td>
+<td>p2&#39;s chat refuses a guest of another session</td>
+</tr>
+<tr>
+<td><code>route.authorize</code></td>
+<td>per hold to a routed host (a worker), synchronously</td>
+<td>principal, the host&#39;s address</td>
+<td>p2 admits only the session&#39;s viewers to its worker</td>
+</tr>
+<tr>
+<td>a method</td>
+<td>per call, async</td>
+<td>anything: followed state, <code>await</code> a store</td>
+<td>p2&#39;s telemetry refuses a locked session&#39;s agent</td>
+</tr>
+<tr>
+<td>a derive</td>
+<td>on every change, synchronously</td>
+<td>followed values</td>
+<td>an editor&#39;s list filtered for a reader</td>
+</tr>
+<tr>
+<td>a routine (<code>on</code>, <code>onLive</code>)</td>
+<td>on changes, async</td>
+<td>anything</td>
+<td>p2 mirrors the session lock into Durable</td>
+</tr>
+</tbody></table>
+<h3 id="what-p2-does-with-it">What p2 does with it</h3>
+<p>p2 lives inside this rule. Its chat factory decides the variant from the principal alone, because the principal
+carries the guest&#39;s rights:</p>
+<pre><code><span class="tk-c">// BUILT · apps/p2/plugins/chat/worker.ts (excerpt)</span>
+<span class="tk-k">const</span> chatFactory: <span class="tk-t">Factory</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">Chat</span>&gt; = ({ session, conversation }, principal, self) =&gt; {
+	<span class="tk-k">if</span> (!<span class="tk-f">canView</span>(principal, session)) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"viewers only"</span>);
+	<span class="tk-k">if</span> (!<span class="tk-f">isOwner</span>(principal) &amp;&amp; !<span class="tk-f">isGuest</span>(principal)) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"people only"</span>);
+	<span class="tk-k">const</span> authorId = <span class="tk-f">authorIdOf</span>(principal);
+	<span class="tk-k">const</span> chat = self.<span class="tk-f">get</span>(<span class="tk-t">Conversation</span>, { conversation });
+	<span class="tk-c">// …</span>
+	<span class="tk-k">if</span> (!<span class="tk-f">canSend</span>(principal, session))
+		<span class="tk-k">return</span> {
+			variant: <span class="tk-s">"viewer"</span>,
+			members: { view: chat.view, stats: chat.stats, model: chat.model, liveShell, entries },
+		};
+	<span class="tk-c">// … the participant's variant with send, stop, upload</span></code></pre>
+<p>And where the answer depends on data that changes (is the session locked, is it shared), p2 declares the stores in
+the factory and checks their followed state inside each method:</p>
+<pre><code><span class="tk-c">// BUILT · apps/p2/plugins/telemetry/server.ts (excerpt)</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">Traces</span>, (_params, principal, self) =&gt; {
+	<span class="tk-c">// …</span>
+	<span class="tk-k">if</span> (<span class="tk-f">isOwner</span>(principal)) <span class="tk-k">return</span> { variant: <span class="tk-s">"owner"</span>, members: <span class="tk-f">reads</span>(store, <span class="tk-k">async</span> () =&gt; {}) };
+	<span class="tk-k">if</span> (<span class="tk-f">isWorker</span>(principal)) {
+		<span class="tk-k">const</span> { session } = principal;
+		<span class="tk-k">const</span> shares = self.<span class="tk-f">get</span>(<span class="tk-t">Shares</span>, {});
+		<span class="tk-k">const</span> locks = self.<span class="tk-f">get</span>(<span class="tk-t">SessionLocks</span>, {});
+		<span class="tk-c">// What the agent finds lands in the transcript: anyone the session is shared with (viewers too) would read it.</span>
+		<span class="tk-k">const</span> check = <span class="tk-k">async</span> (_ctx: <span class="tk-t">Ctx</span>) =&gt; {
+			<span class="tk-k">if</span> (locks.locks.value[session] !== <span class="tk-k">undefined</span>)
+				<span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"Telemetry is the owner's: this session is locked."</span>);
+			<span class="tk-k">const</span> shared =
+				shares.links.value.<span class="tk-f">some</span>((link) =&gt; link.session === session) ||
+				shares.people.value.<span class="tk-f">some</span>((person) =&gt; person.session === session);
+			<span class="tk-k">if</span> (shared) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"Telemetry is the owner's: this session is shared."</span>);
+		};
+		<span class="tk-k">return</span> { variant: <span class="tk-s">"agent"</span>, members: <span class="tk-f">reads</span>(store, check) };
+	}
+	<span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"Telemetry is the owner's."</span>);
+});</code></pre>
+<p>These two shapes, &quot;decide from the principal in the factory&quot; and &quot;declare in the factory, check followed state per
+call&quot;, are the only two Chord offers. Every mechanism in this rundown has to be one of them.</p>
+</section>
+
+<section class="chapter" id="users"><header class="opener"><div class="numeral">II</div><h2>Users</h2><p class="lede">Who a person is in p3: what is decided, what the kit and p2 have, and three generations of proposals.</p></header>
+<h3 id="decided">Decided</h3>
+<ul>
+<li><strong>Principals are <code>server</code>, <code>worker</code>, <code>user</code>, <code>guest</code></strong> (decisions.md, 2026-11-06). The guest is reserved until
+sharing is designed. The owner is the first user; the kit&#39;s owner link signs in as that user (Chord decision &quot;The
+kit&#39;s owner is a principal the app chooses&quot;).</li>
+</ul>
+<pre><code><span class="tk-c">// DECIDED · decisions.md "Principals are server, worker, user, guest" (2026-11-06), written as a type</span>
+<span class="tk-k">type</span> <span class="tk-t">P3Principal</span> =
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"server"</span> }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"worker"</span>; <span class="tk-k">readonly</span> session: string }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"user"</span>; <span class="tk-k">readonly</span> id: string }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"guest"</span> };              <span class="tk-c">// reserved until sharing is designed</span></code></pre>
+<ul>
+<li><strong>Instance resources, not an instance user</strong> (decisions.md, 2026-11-13, refines &quot;Resource model direction&quot;): a
+resource&#39;s owner is a user or the instance. No pretend user appears in lists, presence or audit.</li>
+</ul>
+<pre><code><span class="tk-c">// DECIDED · decisions.md "Instance resources, not an instance user" (2026-11-13), written as a type</span>
+<span class="tk-k">type</span> <span class="tk-t">ResourceOwner</span> = { <span class="tk-k">readonly</span> kind: <span class="tk-s">"user"</span>; <span class="tk-k">readonly</span> user: string } | { <span class="tk-k">readonly</span> kind: <span class="tk-s">"instance"</span> };</code></pre>
+<h3 id="built">Built</h3>
+<p><strong>Chord&#39;s app kit</strong> has the pieces p3 is meant to start from: <code>defineUsers(profile)</code> (profiles by id,
+<code>packages/chord/src/node/app/users.ts</code>), <code>Sessions</code> (sign-in sessions), owner links and device pairing, and a fixed
+<code>principal.owner</code> in its options (<code>app.ts</code>: <code>principal: { server: P; worker?: …; owner: P }</code>).</p>
+<p><strong>p2</strong> has one owner and guests. The owner&#39;s principal says how they reached the server; a guest&#39;s carries every
+session shared with them and a revision:</p>
+<pre><code><span class="tk-c">// BUILT · apps/p2/src/runtime/principals.ts (excerpt)</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">GuestPrincipal</span> = {
+	<span class="tk-k">readonly</span> kind: <span class="tk-s">"guest"</span>;
+	<span class="tk-k">readonly</span> id: string;
+	<span class="tk-k">readonly</span> name: string;
+	<span class="tk-k">readonly</span> email?: string;
+	<span class="tk-k">readonly</span> home: string;
+	<span class="tk-k">readonly</span> sessions: <span class="tk-t">Readonly</span>&lt;<span class="tk-t">Record</span>&lt;string, <span class="tk-s">"view"</span> | <span class="tk-s">"full"</span>&gt;&gt;;
+	<span class="tk-k">readonly</span> revision: number;
+};
+
+<span class="tk-c">/** May read the session: the owner, or a guest it was shared with. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> canView = (principal: <span class="tk-t">P2Principal</span> | <span class="tk-k">undefined</span>, session: string): boolean =&gt;
+	<span class="tk-f">isOwner</span>(principal) || (<span class="tk-f">isGuest</span>(principal) &amp;&amp; <span class="tk-t">Object</span>.<span class="tk-f">hasOwn</span>(principal.sessions, session));
+
+<span class="tk-c">/** May send, stop and upload in the session: the owner, or a guest it was shared with read/write. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> canSend = (principal: <span class="tk-t">P2Principal</span> | <span class="tk-k">undefined</span>, session: string): boolean =&gt;
+	<span class="tk-f">isOwner</span>(principal) || (<span class="tk-f">isGuest</span>(principal) &amp;&amp; principal.sessions[session] === <span class="tk-s">"full"</span>);</code></pre>
+<h3 id="proposed-three-generations">Proposed, three generations</h3>
+<table>
+<thead>
+<tr>
+<th>Document</th>
+<th>Date, author</th>
+<th>What it proposes</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>accounts/book.md</code></td>
+<td>2026-11-07, p3 session</td>
+<td><code>Users</code>, <code>Identities</code>, an <code>Accounts</code> owner of external accounts, per-session account grants, an <code>Access</code> registry <code>allows(user, action, thing)</code></td>
+<td>partly superseded</td>
+</tr>
+<tr>
+<td><code>/tmp/users-chapter.md</code> (= resource-model book ch. II)</td>
+<td>2026-11-08, p3 session</td>
+<td><code>Identities</code> with admin and disabled flags, the reserved <code>INSTANCE</code> user id, <code>Me</code>, <code>People</code>, <code>UserAdmin</code></td>
+<td><code>INSTANCE</code> superseded by 2026-11-13</td>
+</tr>
+<tr>
+<td><code>users-sketch.md</code></td>
+<td>2026-11-13, p3 session</td>
+<td>users as a required core plugin with contracts in p3&#39;s API; a <code>Directory</code> registry (one active provider) that admits people and says who administers; <code>SignIn.complete</code> as the one place that issues sessions; the kit&#39;s fixed owner removed</td>
+<td>current, not decided</td>
+</tr>
+</tbody></table>
+<p>The newest one, in its own words:</p>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/docs/users-sketch.md (2026-11-13, p3 session), excerpt</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">DirectoryProvider</span> = {
+	<span class="tk-c">/** Shown on the People screen ("Managed by Acme SSO"). */</span>
+	<span class="tk-k">readonly</span> label: string;
+	<span class="tk-c">/** Whether the start script prints a setup link and the sign-in page offers setup. */</span>
+	<span class="tk-f">setupMode</span>(): boolean;
+	<span class="tk-f">admit</span>(request: <span class="tk-t">AdmitRequest</span>, ctx: <span class="tk-t">Ctx</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-t">Admission</span>&gt;;
+	<span class="tk-c">/** A local read: called inside checks and derives. */</span>
+	<span class="tk-f">isAdmin</span>(user: <span class="tk-t">UserId</span>): boolean;
+	<span class="tk-c">// … onSignIn, manage</span>
+};
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Directory</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">DirectoryProvider</span>, <span class="tk-t">ActiveDirectory</span>&gt;(<span class="tk-s">"p3.users.directory"</span>, { version: <span class="tk-n">1</span> });</code></pre>
+<p>Note <code>isAdmin</code> is synchronous &quot;called inside checks and derives&quot;: the sketch already respects the factory rule there.</p>
+<h3 id="contradictions-and-gaps">Contradictions and gaps</h3>
+<div class="note review"><b class="tag">Review: the instance user is still in two books</b><p><code>/tmp/users-chapter.md</code> and <code>resource-model/book.md</code> (chapter II, &quot;Admins and the instance user&quot;) define <code>INSTANCE: UserId</code>, &quot;owns company resources and everything plugins bring&quot;. The 2026-11-13 decision replaces it with an owner
+<code>{ kind: &quot;instance&quot; }</code>. <code>users-sketch.md</code> already drops it (&quot;<code>INSTANCE</code> is not part of users&quot;). The two books are
+stale on this point.</p>
+</div>
+<div class="note review"><b class="tag">Review: account grants versus &quot;one resource, one login&quot;</b><p><code>accounts/book.md</code> stores per-session grants (<code>p3.account-grants</code>) so a session may use a user&#39;s account. The
+resource-model book&#39;s third edition says &quot;no grants&quot; and &quot;the owner of the resource decides its login, forever&quot;;
+<code>users-sketch.md</code> agrees (&quot;the per-call MCP account envelope is not needed: one resource, one login&quot;). The accounts
+book&#39;s grant table is superseded; its <code>AccountProviders</code> (how an integration refreshes credentials) has no successor
+yet.</p>
+</div>
+<ul>
+<li><strong>The kit&#39;s owner.</strong> The 2026-11-06 decision makes the owner the first user; <code>users-sketch.md</code> wants the kit&#39;s
+<code>principal.owner</code> removed in favour of an admin check registry. Not decided (its open point 1).</li>
+<li><strong>Who is admin.</strong> The users chapter keeps an admin flag in the users plugin; <code>users-sketch.md</code> moves it into the
+active directory. Not decided.</li>
+<li><strong>What a guest is.</strong> p3 reserves <code>{ kind: &quot;guest&quot; }</code> with no fields; p2&#39;s guest carries sessions and a revision;
+<code>sharing.md</code> (owner direction, 2026-11-10) says someone you share an app with is a user, not a guest. Nobody has
+written p3&#39;s guest. See chapter V for why its shape decides how every factory checks.</li>
+<li><strong>A user&#39;s data when they leave.</strong> Each plugin keys its own per-user data by user id; nothing tells them a user was
+deleted (<code>users-sketch.md</code> open point 5).</li>
+</ul>
+</section>
+
+<section class="chapter" id="resources"><header class="opener"><div class="numeral">III</div><h2>Resources and Bringing</h2><p class="lede">What a session may use: the decided direction, the single-user version p2 runs today, and two proposals that disagree on where the list lives.</p></header>
+<p class="dropcap">The decided core is short: what a session may use is a list of resources, people bring their own resources onto it,
+and everyone who may send in the session uses all of it. Everything else, where the list is kept, how it is computed,
+who checks it, is open, and the two proposals answer differently.</p>
+<h3 id="decided">Decided</h3>
+<ul>
+<li><strong>No per-run authority</strong> (decisions.md, 2026-11-08: <em>&quot;there is no point in trying to prevent prompt injections.
+that&#39;s why one should be able to define what is brought into a session&quot;</em>). Everyone who may send in a session uses
+every resource in its selection, whoever started the run.</li>
+<li><strong>Resource model direction</strong> (decisions.md, 2026-11-08, voice walkthrough; &quot;to be specified and reviewed against
+p2&#39;s features&quot;). In short:<ul>
+<li>each resource has one owner and its own login or none, and never changes whose login it uses;</li>
+<li>users create resources only for themselves; plugins&#39; built-in resources (tools, prompt sections) exist when the
+plugin is installed; <strong>one Durable extension = one resource</strong>;</li>
+<li>groupings (recent, folders, projects, Discord channels) only show things; a grouping &quot;with resources&quot; keeps a list
+in its own plugin;</li>
+<li><strong>a session has exactly one resource source</strong>: its own list, its owner&#39;s defaults (&quot;everything I own plus every
+instance resource I may use, so new tools appear by themselves&quot;), or one grouping with resources;</li>
+<li>one replaceable policy plugin guards create, bring, add-member &quot;through one guarded step in core&quot;;</li>
+<li>workers follow their session&#39;s list live; the harness lets in only extensions whose resource is on it &quot;(and
+belongs to the contributing plugin)&quot;; resource plugins&#39; per-session server views check the list.</li>
+</ul>
+</li>
+<li><strong>Instance resources, not an instance user</strong> (2026-11-13): owner <code>{ kind: &quot;user&quot;, user }</code> or <code>{ kind: &quot;instance&quot; }</code>;
+plugin-installed and company resources are instance resources; the policy decides who may create or bring them.</li>
+<li><strong>Session data on the server as host-keyed documents</strong> (2026-11-09): a plugin keeps per-session server data in its
+own server object, keyed by the session&#39;s host address (<code>defineState(…, { keyed: Session })</code>, <code>host(Session)</code>
+columns), so export, import and delete carry it. A session&#39;s list, wherever it lives, follows this rule.</li>
+</ul>
+<h3 id="built-p2-39-s-lock">Built: p2&#39;s lock</h3>
+<p>p2 has no users and no resources, but it has the single-user version of &quot;what is brought into a session&quot;: the lock.
+A locked session (one listening to a Discord channel, say) uses only what the owner picked.</p>
+<pre><code><span class="tk-c">// BUILT · apps/p2/src/runtime/session-lock.ts (excerpt)</span>
+<span class="tk-c">/** Capabilities a locked session may get besides MCP servers and instructions. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> LOCK_CAPABILITIES = [<span class="tk-s">"ports"</span>, <span class="tk-s">"conversations"</span>] <span class="tk-k">as</span> <span class="tk-k">const</span>;
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SessionLockSchema</span> = <span class="tk-f">obj</span>({
+	<span class="tk-c">/** Picked MCP servers of the owner's mcp.json, by name. */</span>
+	mcp: <span class="tk-f">arr</span>(<span class="tk-f">str</span>({ maxLength: <span class="tk-n">200</span> }), { maxItems: <span class="tk-n">200</span> }),
+	<span class="tk-c">/** Servers of `.pi/mcp.json` at the session's locations. */</span>
+	projectMcp: <span class="tk-f">bool</span>(),
+	<span class="tk-c">/** The global AGENTS.md, skills and prompt templates. */</span>
+	instructions: <span class="tk-f">bool</span>(),
+	capabilities: <span class="tk-f">arr</span>(<span class="tk-f">union</span>([<span class="tk-f">literal</span>(<span class="tk-s">"ports"</span>), <span class="tk-f">literal</span>(<span class="tk-s">"conversations"</span>)]), { maxItems: <span class="tk-n">8</span> }),
+});</code></pre>
+<p>It is kept the Chord way: one store on the server, one per-principal object for the owner and for each worker. The
+worker&#39;s variant is a derive picking its own session out of the store, chosen from the worker principal alone:</p>
+<pre><code><span class="tk-c">// BUILT · apps/p2/plugins/sessions/locks.ts (excerpt)</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">SessionLock</span>, (_params, principal, self) =&gt; {
+	<span class="tk-k">const</span> locks = self.<span class="tk-f">get</span>(<span class="tk-t">SessionLocks</span>, {});
+	<span class="tk-k">if</span> (<span class="tk-f">isWorker</span>(principal)) {
+		<span class="tk-k">const</span> session = principal.session;
+		<span class="tk-k">return</span> {
+			variant: <span class="tk-s">"worker"</span>,
+			members: { lock: <span class="tk-f">deriveTyped</span>(self, [locks.locks], ([all]) =&gt; all[session] ?? <span class="tk-k">null</span>) },
+		};
+	}
+	<span class="tk-k">if</span> (!<span class="tk-f">isOwner</span>(principal)) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"session locks are the owner's"</span>);
+	<span class="tk-k">return</span> { variant: <span class="tk-s">"owner"</span>, members: { locks: locks.locks, set: (args, ctx) =&gt; locks.<span class="tk-f">set</span>(args, ctx) } };
+});</code></pre>
+<p>On the worker, a store with a routine follows that object and commits the lock into the session&#39;s Durable state,
+where the tool guard (chapter X) and the prompt read it at each use:</p>
+<pre><code><span class="tk-c">// BUILT · apps/p2/plugins/sessions/lock-worker.ts (excerpt)</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">LockMirror</span>, (_params, self) =&gt; {
+	<span class="tk-k">const</span> harness = <span class="tk-f">harnessOf</span>(self);
+	<span class="tk-k">const</span> view = self.<span class="tk-f">get</span>(<span class="tk-t">SessionLock</span>, {});
+	self.<span class="tk-f">onLive</span>(<span class="tk-k">async</span> (ctx: <span class="tk-t">Ctx</span>) =&gt; {
+		<span class="tk-k">const</span> watch = <span class="tk-k">await</span> <span class="tk-f">expectVariant</span>(view, <span class="tk-s">"worker"</span>).lock.<span class="tk-f">watch</span>(ctx);
+		<span class="tk-c">// One commit at a time, the newest value last.</span>
+		<span class="tk-k">let</span> chain = <span class="tk-f">mirrorLock</span>(<span class="tk-f">harness</span>().durable, watch.value, <span class="tk-f">durableContext</span>(ctx)).<span class="tk-k">catch</span>(report);
+		watch.<span class="tk-f">start</span>(<span class="tk-k">async</span> (call) =&gt; {
+			<span class="tk-k">if</span> (call.kind !== <span class="tk-s">"value"</span>) <span class="tk-k">return</span>;
+			<span class="tk-k">const</span> value = call.value;
+			chain = chain.<span class="tk-f">then</span>(() =&gt; <span class="tk-f">mirrorLock</span>(<span class="tk-f">harness</span>().durable, value, <span class="tk-f">durableContext</span>(ctx))).<span class="tk-k">catch</span>(report);
+		});
+		<span class="tk-c">// …</span>
+	});
+	<span class="tk-k">return</span> {};
+});</code></pre>
+<p>The MCP plugin&#39;s server reads the same store when it places server processes (<code>apps/p2/plugins/mcp/server.ts</code>:
+<code>placed(…, locks.locks.value)</code>), so a locked session&#39;s worker never sees an unpicked server&#39;s tools. This is the
+whole pipeline the p3 list needs, with one owner instead of many users.</p>
+<p><strong>Host-keyed data is built too.</strong> p2&#39;s artifacts keep a session&#39;s items in documents keyed by its address; a
+per-session object pins its key synchronously, because the key comes from the params:</p>
+<pre><code><span class="tk-c">// BUILT · apps/p2/plugins/artifacts/server.ts (excerpt)</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">Artifacts</span>, ({ session }, principal, self) =&gt; {
+	<span class="tk-k">const</span> worker = <span class="tk-f">isWorker</span>(principal) &amp;&amp; principal.session === session;
+	<span class="tk-k">if</span> (!worker &amp;&amp; !<span class="tk-f">canView</span>(principal, session)) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"the session's viewers and worker only"</span>);
+	<span class="tk-k">const</span> store = self.<span class="tk-f">get</span>(<span class="tk-t">ArtifactStoreHost</span>, {});
+	<span class="tk-k">const</span> artifacts = <span class="tk-f">deriveTyped</span>(self, [store.artifacts.<span class="tk-f">at</span>(<span class="tk-t">Session</span>({ id: session }))], ([doc]) =&gt; <span class="tk-f">summariesOf</span>(doc));
+	<span class="tk-c">// …</span></code></pre>
+<h3 id="proposed-two-models-of-the-list">Proposed: two models of the list</h3>
+<p><strong>The resource-model book</strong> (<code>resource-model/book.md</code>, third edition, 2026-11-08, p3 session, after the owner&#39;s code
+review). A resource is one row in the resources plugin&#39;s index (<code>defineResource(&quot;mcp.server&quot;)</code> names the kind); brought
+resources come from a registry while their plugin is installed; a session&#39;s effective list is a derive on the
+server, recomputed when anything it depends on changes:</p>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/docs/resource-model/book.md, chapter "One List" (2026-11-08), excerpt</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">SessionList</span>, ({ session }, self) =&gt; {
+	<span class="tk-k">const</span> row = self.<span class="tk-f">get</span>(<span class="tk-t">SessionCatalog</span>, {}).rows.<span class="tk-f">at</span>(session);      <span class="tk-c">// live: owner, source</span>
+	<span class="tk-k">const</span> resources = self.<span class="tk-f">get</span>(<span class="tk-t">Resources</span>, {});
+	<span class="tk-k">const</span> own = resources.ownLists.<span class="tk-f">at</span>(session);                      <span class="tk-c">// live: this session's own list</span>
+	<span class="tk-k">const</span> groupings = self.<span class="tk-f">registry</span>(<span class="tk-t">Groupings</span>);
+	<span class="tk-k">const</span> policy = self.<span class="tk-f">registry</span>(<span class="tk-t">Policies</span>);
+	<span class="tk-c">// …</span>
+	<span class="tk-k">const</span> list = self.<span class="tk-f">derive</span>(
+		[row, own, resources.index, resources.exclusions, fromGrouping, policy, clock],
+		([r, ownEntries, index, excluded, grouping, current, time]) =&gt; {
+			<span class="tk-k">const</span> entries =
+				r.source.kind === <span class="tk-s">"defaults"</span> ? <span class="tk-f">defaultsOf</span>(r.owner, index, excluded[r.owner] ?? [])
+				: r.source.kind === <span class="tk-s">"own"</span> ? ownEntries
+				: grouping.entries;
+			<span class="tk-c">// …</span>
+			<span class="tk-k">return</span> { kind: <span class="tk-s">"ready"</span>, entries: entries.<span class="tk-f">flatMap</span>((entry) =&gt; <span class="tk-f">usable</span>(entry, r, index, current, time.now)) };
+		},
+	);
+	<span class="tk-k">return</span> { list };
+});</code></pre>
+<p>This respects the factory rule: everything is declared, the key comes from params, the policy runs inside the
+derive (so it must be synchronous; chapter IV).</p>
+<p><strong>The multi-user walkthrough</strong> (<code>multiuser-walkthrough.md</code>, 2026-11-13, p3 session, uncommitted). No central index:
+each plugin declares a resource kind with a <code>list()</code> of the current user&#39;s resources, and a <code>sessions</code> core plugin
+keeps per-session tables of people and resources:</p>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/docs/multiuser-walkthrough.md, A3 (2026-11-13), excerpt</span>
+<span class="tk-k">const</span> <span class="tk-t">Resources</span> = <span class="tk-f">defineTable</span>(<span class="tk-s">"sessions.resources"</span>, {
+	version: <span class="tk-n">1</span>,
+	columns: { session: <span class="tk-f">hostColumn</span>(<span class="tk-t">Session</span>), kind: <span class="tk-f">str</span>(), owner: <span class="tk-f">str</span>() <span class="tk-c">/* "" for instance-wide */</span>, id: <span class="tk-f">str</span>(),
+		broughtBy: <span class="tk-f">str</span>() <span class="tk-c">/* "" for instance-wide */</span>, added: <span class="tk-f">int</span>() },
+	key: [<span class="tk-s">"session"</span>, <span class="tk-s">"kind"</span>, <span class="tk-s">"owner"</span>, <span class="tk-s">"id"</span>],
+});
+
+<span class="tk-c">// plugins/sessions/server.ts</span>
+create: <span class="tk-k">async</span> ({ title, start }, ctx) =&gt; {
+	<span class="tk-k">const</span> owner = <span class="tk-f">userOf</span>(ctx.principal);
+	<span class="tk-k">const</span> session = <span class="tk-f">newSessionId</span>();
+	<span class="tk-k">const</span> mine = start === <span class="tk-s">"mine"</span> ? <span class="tk-k">await</span> <span class="tk-f">resourcesOfUser</span>(owner, ctx) : [];   <span class="tk-c">// every kind's list(), in owner's scope</span>
+	<span class="tk-c">// … puts the session's people row and one resource row per resource</span>
+},</code></pre>
+<p>Bringing is a method with a hard rule before any policy, which both proposals share:</p>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/docs/multiuser-walkthrough.md, B3 (2026-11-13), excerpt</span>
+bring: <span class="tk-k">async</span> ({ resource }, ctx) =&gt; {
+	<span class="tk-k">const</span> user = <span class="tk-f">userOf</span>(ctx.principal);
+	<span class="tk-c">// Hard rules, not policy: you bring only what is yours, into a session where you may send.</span>
+	<span class="tk-k">if</span> (resource.owner !== user) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"You can bring only your own resources."</span>);
+	<span class="tk-k">if</span> (!(<span class="tk-k">await</span> <span class="tk-f">maySend</span>(session, user, ctx))) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"You cannot send in this session."</span>);
+	<span class="tk-c">// … one row, broughtBy: user</span>
+},</code></pre>
+<h3 id="contradictions-and-gaps">Contradictions and gaps</h3>
+<div class="note review"><b class="tag">Review: defaults are a rule, not a copy</b><p>The 2026-11-08 decision says a session&#39;s owner-defaults are a rule, &quot;so new tools appear by themselves&quot;, and the
+resource-model book computes them live. The walkthrough copies &quot;my resources&quot; into the session&#39;s rows at creation
+and asks in its open point 3 whether later resources should join. The decision already answers it; the walkthrough
+contradicts it.</p>
+</div>
+<div class="note review"><b class="tag">Review: one source per session</b><p>The decision makes the source one field (&quot;own list, owner&#39;s defaults, or one grouping with resources: the invariant
+is structural&quot;). The walkthrough has no source field and no grouping with resources: each session owns rows. A
+project or a Discord channel that equips its sessions has no place in it.</p>
+</div>
+<div class="note review"><b class="tag">Review: &quot;belongs to the contributing plugin&quot;</b><p>The decision says the harness admits an extension only if its resource is on the list &quot;and belongs to the
+contributing plugin&quot;. The resource-model book&#39;s third edition dropped that check (&quot;no plugin-name check: installed
+plugins are trusted code&quot;). One of them should be corrected.</p>
+</div>
+<div class="note review"><b class="tag">Review: shelved or alive</b><p><code>sharing.md</code> §4 (owner direction, 2026-11-10) says &quot;No per-user environments … the resource-model plugin stays
+shelved&quot; and &quot;no access-control lists in the base&quot;. The 2026-11-13 decision (&quot;the policy plugin decides who may create
+or bring them&quot;) and both proposals from this week assume it is alive. Newest wins, but <code>sharing.md</code> still says
+shelved.</p>
+</div>
+<ul>
+<li><strong>Central index or per-plugin lists.</strong> The book keeps one index of every resource (owner, label, revision) so a
+derive can compute lists; the walkthrough asks each plugin&#39;s <code>list()</code> at the moment of use, &quot;in owner&#39;s scope&quot;,
+which needs a way to run plugin code as a user that Chord does not have (its open point 1).</li>
+<li><strong>Withdrawal.</strong> The book raises a revision so lists drop withdrawn entries; the walkthrough deletes the row. Both
+work; the book&#39;s also handles &quot;Colin left the company&quot; without touching every session.</li>
+<li><strong>Expiry.</strong> The book has <code>until</code> per entry (the Discord case: an hour of access); the walkthrough has none.</li>
+<li><strong>What is a resource in p2 terms.</strong> The lock picks MCP servers, instructions, and the capabilities <code>ports</code> and
+<code>conversations</code>; bash and file tools are not in it (a sandboxed location limits them). Whether p3&#39;s bash is a
+resource (the book: yes, <code>coding-tools.bash</code>) or a property of the location is not decided.</li>
+</ul>
+</section>
+
+<section class="chapter" id="policy"><header class="opener"><div class="numeral">IV</div><h2>Who May</h2><p class="lede">One replaceable policy is decided; its shape is not, and the two shapes on the table cannot both be true.</p></header>
+<h3 id="decided">Decided</h3>
+<p>The 2026-11-08 &quot;Resource model direction&quot;: <em>&quot;One replaceable policy plugin (a registry with one provider; built-in
+default: the single user may do everything) guards create, bring, add-member and similar typed operations through one
+guarded step in core; plugins never know about ACL, SAML or Radius; the UI only renders server views (e.g. a per-user
+list of creatable kinds computed with the policy).&quot;</em> The 2026-11-13 decision adds that the policy decides who may
+create or bring instance resources.</p>
+<h3 id="built">Built</h3>
+<p>Nothing in p2 is a policy: there is one owner, who may do everything, and guests whose rights are in their principal.
+The closest built piece is the registry p2&#39;s server asks whether a non-owner may reach a session. It is async,
+because it is called from routes and methods, never from a factory:</p>
+<pre><code><span class="tk-c">// BUILT · apps/p2/src/runtime/server.ts (excerpt)</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">SessionAuthorizer</span> = (principal: <span class="tk-t">P2Principal</span>, session: string, ctx: <span class="tk-t">Ctx</span>) =&gt; boolean | <span class="tk-t">Promise</span>&lt;boolean&gt;;
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SessionAccess</span> = <span class="tk-f">keyedRegistry</span>&lt;<span class="tk-t">SessionAuthorizer</span>&gt;(<span class="tk-s">"p2.session-access"</span>);
+
+<span class="tk-c">// BUILT · apps/p2/plugins/sharing/server.ts (excerpt)</span>
+self.<span class="tk-f">contribute</span>(<span class="tk-t">SessionAccess</span>, {
+	<span class="tk-c">// A guest reaches the sessions shared with it while its principal (revision included) is current.</span>
+	guest: <span class="tk-k">async</span> (principal, session, ctx) =&gt; {
+		<span class="tk-k">if</span> (!<span class="tk-f">isGuest</span>(principal) || !<span class="tk-t">Object</span>.<span class="tk-f">hasOwn</span>(principal.sessions, session)) <span class="tk-k">return</span> <span class="tk-k">false</span>;
+		<span class="tk-k">const</span> current = <span class="tk-k">await</span> shares.<span class="tk-f">grant</span>({ id: principal.id }, ctx);
+		<span class="tk-k">return</span> current !== <span class="tk-k">null</span> &amp;&amp; current.revision === principal.revision;
+	},
+});</code></pre>
+<h3 id="proposed-three-shapes">Proposed: three shapes</h3>
+<p><strong>1. <code>Access.allows</code></strong> (<code>accounts/book.md</code>, 2026-11-07): a synchronous <code>allows(user, action, thing)</code> per host, the
+default <code>acl</code> plugin answering from roles and groups, a Radius plugin answering from the Radius org. Superseded in
+detail by the next.</p>
+<p><strong>2. A typed request union with a baseline</strong> (<code>resource-model/book.md</code>, chapter &quot;Who May&quot;, 2026-11-08). Core lists
+every question it asks; the policy is a pure, synchronous function, so it can run inside derives:</p>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/docs/resource-model/book.md, chapter "Who May" (2026-11-08), excerpt</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Request</span> =
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"create-resource"</span>; <span class="tk-k">readonly</span> actor: <span class="tk-t">UserId</span>; <span class="tk-k">readonly</span> definition: <span class="tk-t">ResourceDefinition</span>; <span class="tk-k">readonly</span> owner: <span class="tk-t">UserId</span> }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"bring"</span>; <span class="tk-k">readonly</span> actor: <span class="tk-t">UserId</span>; <span class="tk-k">readonly</span> resource: <span class="tk-t">ResourceRef</span>; <span class="tk-k">readonly</span> owner: <span class="tk-t">UserId</span>; <span class="tk-k">readonly</span> into: <span class="tk-t">ListRef</span>; <span class="tk-k">readonly</span> until: number | <span class="tk-k">null</span> }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"use"</span>; <span class="tk-k">readonly</span> session: <span class="tk-t">SessionRow</span>; <span class="tk-k">readonly</span> resource: <span class="tk-t">ResourceRef</span>; <span class="tk-k">readonly</span> owner: <span class="tk-t">UserId</span> }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"administer"</span>; <span class="tk-k">readonly</span> actor: <span class="tk-t">UserId</span> }
+	<span class="tk-c">// … create-grouping, set-source, add-member, call</span>
+	;
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Policy</span> = { <span class="tk-f">decide</span>(request: <span class="tk-t">Request</span>, baseline: <span class="tk-t">Decision</span>): <span class="tk-t">Decision</span> };
+<span class="tk-c">/** Exactly one provider; zero, two or a failed one compose to deny-all, never to the default. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Policies</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">Policy</span>, <span class="tk-t">Policy</span>&gt;(<span class="tk-s">"p3.policy"</span>, { version: <span class="tk-n">1</span> });</code></pre>
+<p><strong>3. Operation gates with facts</strong> (<code>operation-gates-sketch.md</code>, 2026-11-13, p3 session, uncommitted). Plugins name
+their methods as operations and describe each call with a few shared facts; a gate in Chord&#39;s method dispatch asks
+the policy before the handler runs; the policy is async:</p>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/docs/operation-gates-sketch.md (2026-11-13), excerpt</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">CreateMcp</span> = <span class="tk-f">operation</span>(<span class="tk-t">McpServers</span>, <span class="tk-s">"create"</span>, {
+	facts: ({ config }) =&gt; ({
+		kind: <span class="tk-s">"create"</span>,                                    <span class="tk-c">// shared vocabulary: create | change | delete | use | read</span>
+		runsCode: config.transport.kind === <span class="tk-s">"server-stdio"</span> ? <span class="tk-s">"server"</span>
+			: config.transport.kind === <span class="tk-s">"checkout"</span> ? <span class="tk-s">"machine"</span> : <span class="tk-s">"none"</span>,
+		reaches: config.transport.kind === <span class="tk-s">"http"</span> ? <span class="tk-k">new</span> <span class="tk-f">URL</span>(config.transport.url).host : <span class="tk-k">null</span>,
+	}),
+});
+
+<span class="tk-c">// in Chord's remote method dispatch (host serving a method call), before the handler runs</span>
+<span class="tk-k">const</span> op = <span class="tk-f">operationOf</span>(contract, method);                  <span class="tk-c">// registered by operation(...); undefined: ungated</span>
+<span class="tk-k">if</span> (op !== <span class="tk-k">undefined</span>) {
+	<span class="tk-k">const</span> decision = <span class="tk-k">await</span> gate.<span class="tk-f">decide</span>(
+		{ principal, operation: op.name, object: { contract: contract.name, params }, args, facts: op.<span class="tk-f">facts</span>(args) },
+		ctx,
+	);
+	<span class="tk-k">if</span> (decision.kind === <span class="tk-s">"deny"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(decision.reason);
+}
+<span class="tk-k">return</span> <span class="tk-f">handler</span>(args, ctx);
+
+<span class="tk-c">// @acme/p3-policy/server.ts</span>
+<span class="tk-f">contribute</span>(host, <span class="tk-t">Gate</span>, {
+	<span class="tk-k">async</span> <span class="tk-f">decide</span>({ principal, operation, facts, args }, ctx) {
+		<span class="tk-k">const</span> groups = <span class="tk-k">await</span> directory.<span class="tk-f">groupsOf</span>(principal, ctx);
+		<span class="tk-c">// …</span>
+	},
+});</code></pre>
+<h3 id="contradictions-and-gaps">Contradictions and gaps</h3>
+<div class="note review"><b class="tag">Review: synchronous or async</b><p>The resource-model book calls <code>policy.decide(...)</code> inside a derive (<code>usable</code>, which drops denied entries from a
+session&#39;s list) and inside <code>MyResources.creatable</code>. Derives are synchronous and pure (design §12). The gate sketch&#39;s
+company policy is <code>async</code> and awaits the directory. An async policy can gate a method call; it cannot compute a list
+or tell a page what it may create. If p3 wants both, the policy plugin must follow what it needs (groups, rules) as
+state and answer synchronously; the <code>await directory.groupsOf</code> moves into the policy plugin&#39;s own routine.</p>
+</div>
+<div class="note review"><b class="tag">Review: &quot;one guarded step in core&quot; versus &quot;a gate in Chord&#39;s dispatch&quot;</b><p>The decision puts the guarded step in p3&#39;s core (a method plugins call). The sketch puts it in Chord&#39;s dispatch, which
+has no such hook. Chord&#39;s design argues against the hook: principle 2 (<em>&quot;The owner holds the data, enforces its rules
+in its methods&quot;</em>), §17 (<em>&quot;Registries add behaviour … they never replace an owner&#39;s checks&quot;</em>) and §7 (<em>&quot;there is no
+async activation guard&quot;</em>). Chapter VI shows how to get the sketch&#39;s effect without touching Chord.</p>
+</div>
+<ul>
+<li><strong>Closed or open vocabulary.</strong> The book&#39;s <code>Request</code> is a closed union in core: a third-party plugin&#39;s operation is
+only reachable through its <code>call</code> variant with <code>match(op)</code>. The sketch is open: every plugin declares operations and
+facts, and a shared fact vocabulary (<code>kind</code>, <code>runsCode</code>, <code>reaches</code>, <code>audience</code>, <code>right</code>, <code>resourceKind</code>) lets a
+policy decide without knowing the plugin. Who owns that vocabulary is the sketch&#39;s own open point 6.</li>
+<li><strong>Conflicts.</strong> The book composes zero, two or a failed policy to deny-all; the users sketch does the same for
+directories; the gate sketch does not say.</li>
+<li><strong>Baselines.</strong> The book passes the asking code&#39;s own answer (the owner rule, the admin flag) as a baseline the
+policy may override; the sketch has no baseline. With a baseline the default policy is one line
+(<code>(_request, baseline) =&gt; baseline</code>); without, the default policy re-implements the hard rules.</li>
+</ul>
+</section>
+
+<section class="chapter" id="sharing"><header class="opener"><div class="numeral">V</div><h2>Sharing and Locks</h2><p class="lede">Read-only sharing is decided and built in p2 for guests; for p3&#39;s users the question is where &#39;may Ada send here&#39; lives, and the factory rule decides that.</p></header>
+<h3 id="decided">Decided</h3>
+<ul>
+<li><strong>Read-only sharing</strong> (decisions.md, 2026-11-11: <em>&quot;we obv want read-only sharing&quot;</em>): a session can be shared with a
+viewer who reads everything and sends nothing, besides full participation.</li>
+<li><strong>No per-run authority</strong> (2026-11-08): a full participant&#39;s messages drive the same agent with the same list.</li>
+<li><strong>The agent writes plugins</strong> (2026-11-11): the trust boundary is access to the server; <em>&quot;a guest who may send can
+already have the agent run <code>bash</code> there&quot;</em>.</li>
+<li>Superseded: &quot;A view&#39;s frame is a Chord client with a view principal&quot; (2026-11-10), replaced by &quot;Artifacts and views&quot;
+(2026-11-12). There are no view principals.</li>
+</ul>
+<h3 id="built-in-p2">Built in p2</h3>
+<p>p2&#39;s sharing plugin (<code>apps/p2/plugins/sharing</code>, p2-notes &quot;Sharing&quot;) keeps links and grants in server tables keyed
+by <code>host(Session)</code>, issues a guest principal per person with the sessions shared with them and their modes, and bumps
+the guest&#39;s revision on any change (share, join, removal, link reset, archive). The revision is part of the principal
+key, so the old principal&#39;s objects end (<code>invalidatePrincipal</code>) and the guest&#39;s page re-holds as the new one. Every
+factory then decides synchronously with <code>canView</code> and <code>canSend</code> (chapter I). A read-only guest gets the <code>viewer</code> or
+<code>reader</code> variant; an html artifact&#39;s bridge tells the page <code>readOnly</code>, and its changes are not saved.</p>
+<p>The lock (chapter III) is the other half: what the session&#39;s agent may reach, whoever talks to it.</p>
+<h3 id="proposed">Proposed</h3>
+<ul>
+<li><strong><code>sharing.md</code></strong> (2026-11-10, synthesis of three designers by the p3 session; nothing decided): Watch (read-only,
+default for links) and Join (talks to the agent; named, signed-in people only); approvals are never a guest&#39;s;
+links expire by default; freeze the scope, not the layout; whole-app sharing deferred. Its §4 records the owner&#39;s
+direction of the same day: views know who is there (presence); <strong>sharing an app with someone makes them a user, not
+a guest</strong>; which of an app&#39;s sessions they see is the app&#39;s decision, enforced in its own objects&#39; variants; no
+access-control lists in the base; no per-user environments.</li>
+<li><strong><code>multiuser-walkthrough.md</code></strong> (2026-11-13): a <code>sessions.people</code> table (<code>user</code>, <code>right</code>: <code>owner | send | view</code>) and a
+<code>sessions.links</code> table per session, <code>SessionPeopleView</code> with <code>share</code>, <code>unshare</code>, <code>link</code>, <code>revokeLink</code>.</li>
+</ul>
+<h3 id="the-gap-where-does-quot-may-ada-send-here-quot-live">The gap: where does &quot;may Ada send here&quot; live?</h3>
+<p>In p2 the answer is in the guest&#39;s principal. p3&#39;s decided user principal is <code>{ kind: &quot;user&quot;, id }</code>. If Ada&#39;s rights
+live in the walkthrough&#39;s <code>sessions.people</code> table, a factory on the session&#39;s worker cannot read them: it runs
+synchronously and the table&#39;s value arrives after it returns. So the chat cannot choose <code>viewer</code> or <code>editor</code> for Ada.
+There are three ways out, all possible with today&#39;s Chord.</p>
+<p><strong>(a) Rights in the principal, as p2.</strong> <code>{ kind: &quot;user&quot;, id, sessions: { S1: &quot;view&quot; }, revision }</code>. Factories stay
+one line. Cost: every share or unshare anywhere bumps Ada&#39;s revision and ends all her objects on every device,
+which p2 accepts for guests with one or two sessions and a user with hundreds of sessions would feel all day.</p>
+<p><strong>(b) One variant for people; the right is followed state, checked per call.</strong> The worker&#39;s route admits only
+members (synchronous, against a value the server keeps current); the object exposes the right as state for the UI and
+checks it in each method; removing someone revokes their objects once. p2&#39;s worker route already admits by a
+synchronous check (<code>canView</code>, chapter I); here the check reads a followed membership map instead of the principal.</p>
+<p><code>SessionPeople</code>, <code>Chat</code> and <code>Conversation</code> below stand for p3 contracts that do not exist yet; every Chord call in
+it (<code>host.serve</code>, <code>self.get</code>, <code>self.derive</code>, <code>forbidden</code>, a route&#39;s <code>authorize</code>, <code>host.revoke</code>) exists today.</p>
+<pre><code><span class="tk-c">// PROPOSED · this rundown: option (b), written with today's Chord API only</span>
+<span class="tk-c">// Server: the route to session workers admits members only (`authorize` is synchronous; `members` is a store's</span>
+<span class="tk-c">// followed state, read at each hold).</span>
+authorize: (principal, address) =&gt;
+	principal.kind === <span class="tk-s">"server"</span> ||
+	(principal.kind === <span class="tk-s">"user"</span> &amp;&amp; members.value[address.params.id]?.[principal.id] !== <span class="tk-k">undefined</span>),
+
+<span class="tk-c">// Worker: the chat as a person sees it; the variant cannot depend on the table, so the right is a state member.</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">Chat</span>, ({ conversation }, principal, self) =&gt; {
+	<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"user"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"people only"</span>);
+	<span class="tk-k">const</span> people = self.<span class="tk-f">get</span>(<span class="tk-t">SessionPeople</span>, {});      <span class="tk-c">// server object; the worker principal names the session</span>
+	<span class="tk-k">const</span> right = self.<span class="tk-f">derive</span>([people.rights], ([rights]) =&gt; rights[principal.id] ?? <span class="tk-s">"none"</span>);
+	<span class="tk-k">const</span> chat = self.<span class="tk-f">get</span>(<span class="tk-t">Conversation</span>, { conversation });
+	<span class="tk-k">const</span> mustSend = () =&gt; {
+		<span class="tk-k">if</span> (right.value !== <span class="tk-s">"owner"</span> &amp;&amp; right.value !== <span class="tk-s">"send"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"You can only read this session."</span>);
+	};
+	<span class="tk-k">return</span> {
+		variant: <span class="tk-s">"person"</span>,
+		members: {
+			right,                                    <span class="tk-c">// the page shows or hides the composer from this</span>
+			view: chat.view,
+			send: <span class="tk-k">async</span> (input, ctx) =&gt; {
+				<span class="tk-f">mustSend</span>();
+				<span class="tk-k">return</span> chat.<span class="tk-f">send</span>(input, ctx);
+			},
+		},
+	};
+});
+
+<span class="tk-c">// Server, on unshare: end Ada's objects so her pages re-hold and meet `authorize` again.</span>
+<span class="tk-c">// (`revokedBy` returns [{ user: p.id }] for user principals; design §4.)</span>
+host.<span class="tk-f">revoke</span>({ user: <span class="tk-s">"u2"</span> }, ctx);</code></pre>
+<p><strong>(c) A principal per session.</strong> The page opens a link per shared session and the server stamps
+<code>{ kind: &quot;user&quot;, id, session, right, revision }</code> on it, as p2 does for a guest&#39;s grant. Factories stay one line and
+only that session&#39;s objects end on a change. Cost: one socket per open session per tab.</p>
+<div class="note review"><b class="tag">Review: the walkthrough&#39;s sessions core assumes (b) without saying so</b><p><code>SessionPeopleView</code> has variants <code>owner</code> and <code>member</code>, picked in its factory, while the rights are rows of
+<code>sessions.people</code>. That factory cannot read the rows. Either the variant comes from the principal (a or c) or the
+object has one variant and checks per call (b).</p>
+</div>
+<h3 id="locks-in-p3">Locks in p3</h3>
+<p>p2&#39;s lock is &quot;the owner picks what this session uses&quot;. The 2026-11-08 decision turns it into &quot;a session&#39;s own list&quot;
+(one of the three sources). Nothing p3-specific about locks is decided beyond that. What p2&#39;s lock covers and p3&#39;s list
+must also cover: MCP servers by name, project MCP servers, global instructions and skills, and the capabilities
+<code>ports</code> and <code>conversations</code>. What p2&#39;s lock deliberately does not cover: bash and file tools, which a sandboxed
+location limits instead.</p>
+<h3 id="open-questions">Open questions</h3>
+<ol>
+<li>Guests in p3: a principal kind of their own (p2&#39;s shape), or a link admission into a user-like principal
+(<code>users-sketch.md</code> open point 4)?</li>
+<li>Which of (a), (b), (c) carries &quot;may view, may send&quot; for users?</li>
+<li>Approvals: may a <code>send</code> participant approve the agent&#39;s risky calls in someone else&#39;s session? <code>sharing.md</code>:
+never; the walkthrough leaves it open.</li>
+<li>Expiry of links and of named shares.</li>
+<li>Whole-app sharing: the owner&#39;s direction makes the other person a user; the app then decides which sessions they
+see. With which mechanism (the app&#39;s own objects&#39; variants need the same answer as question 2).</li>
+</ol>
+</section>
+
+<section class="chapter" id="edges"><header class="opener"><div class="numeral">VI</div><h2>Three Edges in Real Chord</h2><p class="lede">Today&#39;s proposal, checked against the factory rule: where each of its three mechanisms breaks, and how each would have to be written with Chord as it is.</p></header>
+<p class="dropcap">Another session proposed this today (not decided), summarizing <code>multiuser-walkthrough.md</code>,
+<code>operation-gates-sketch.md</code> and <code>users-sketch.md</code>:</p>
+<blockquote>
+<p>&quot;Plugins never check anything themselves; the platform does it at three edges. (1) User scopes: a plugin declares
+some state is per user (e.g. my MCP servers) and writes code as if there were one user; the platform keeps a copy
+per user and hands the plugin the caller&#39;s copy (like browser profiles). (2) Operation gates: every contract method
+is a named operation; dispatch asks the policy before the call reaches the plugin (default allows everything; a
+company plugin restricts). (3) Resources on sessions: a plugin declares a kind of resource; the platform keeps which
+resources are on a session and who brought them, only lets you bring your own; before a call it checks the resource
+is on that session. p2&#39;s session lock is the single-user version.&quot;</p>
+</blockquote>
+<p>The goal is right: a third-party plugin (the walkthrough&#39;s <code>@someone/p3-todos</code>) should not have to know about users,
+groups or policies. The mechanism assumes something Chord does not do: that the platform can look something up
+before the plugin&#39;s object exists and hand it in. In Chord the factory is synchronous and runs first; whatever it
+needs that is not in its params or principal arrives after it returned. The walkthrough&#39;s own list of &quot;Guessed APIs&quot;
+(scopes, gates, dispatch hooks, resource kinds) is exactly the set of places where it needs an async step before or
+around the factory.</p>
+<figure class="fig wide"><svg viewBox="0 0 720 264.5" width="100%" role="img" aria-label="What the proposal assumes (top) and what Chord does (bottom). The proposal looks things up before the plugin's object exists; Chord makes the object first and lets it follow what it declared." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">THE PROPOSAL: PLATFORM FIRST</text><text x="16" y="156.5" font-size="10" fill="#2e6a8a" text-anchor="start" font-weight="600" letter-spacing="2">CHORD: OBJECT FIRST</text><rect x="16" y="36" width="116.8" height="56.5" rx="4" fill="#fff" stroke="#c9bfae"/><text x="74.4" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">a call arrives</text><text x="74.4" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">principal,</text><text x="74.4" y="81.8" font-size="9.5" fill="#7b7468" text-anchor="middle">contract, params</text><rect x="158.8" y="36" width="116.8" height="56.5" rx="4" fill="#fff" stroke="#c9bfae" stroke-dasharray="3 3"/><text x="217.2" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">find the user's</text><text x="217.2" y="68.5" font-size="11" fill="#2a2723" text-anchor="middle">copy</text><text x="217.2" y="82.5" font-size="9.5" fill="#7b7468" text-anchor="middle">async: a store read</text><rect x="301.6" y="36" width="116.8" height="56.5" rx="4" fill="#fff" stroke="#c9bfae" stroke-dasharray="3 3"/><text x="360" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">ask the policy</text><text x="360" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">async: await</text><text x="360" y="81.8" font-size="9.5" fill="#7b7468" text-anchor="middle">gate.decide</text><rect x="444.4" y="36" width="116.8" height="56.5" rx="4" fill="#fff" stroke="#c9bfae" stroke-dasharray="3 3"/><text x="502.8" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">check the</text><text x="502.8" y="68.5" font-size="11" fill="#2a2723" text-anchor="middle">session's list</text><text x="502.8" y="82.5" font-size="9.5" fill="#7b7468" text-anchor="middle">async: a table read</text><rect x="587.2" y="36" width="116.8" height="56.5" rx="4" fill="#fff" stroke="#c9bfae"/><text x="645.6" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">plugin code</text><text x="645.6" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">written as</text><text x="645.6" y="81.8" font-size="9.5" fill="#7b7468" text-anchor="middle">single-user</text><rect x="16" y="170.5" width="152.5" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="92.3" y="189" font-size="11" fill="#2a2723" text-anchor="middle">a hold arrives</text><text x="92.3" y="203" font-size="9.5" fill="#7b7468" text-anchor="middle">principal stamped by the</text><text x="92.3" y="215.5" font-size="9.5" fill="#7b7468" text-anchor="middle">link</text><rect x="194.5" y="170.5" width="152.5" height="55" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="270.8" y="195.3" font-size="11" fill="#2a2723" text-anchor="middle">factory</text><text x="270.8" y="209.3" font-size="9.5" fill="#7b7468" text-anchor="middle">sync: declares only</text><rect x="373" y="170.5" width="152.5" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="449.3" y="189" font-size="11" fill="#2a2723" text-anchor="middle">activation</text><text x="449.3" y="203" font-size="9.5" fill="#7b7468" text-anchor="middle">loads pins, binds</text><text x="449.3" y="215.5" font-size="9.5" fill="#7b7468" text-anchor="middle">references</text><rect x="551.5" y="170.5" width="152.5" height="55" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="627.8" y="189" font-size="11" fill="#2a2723" text-anchor="middle">each method call</text><text x="627.8" y="203" font-size="9.5" fill="#7b7468" text-anchor="middle">async: checks followed</text><text x="627.8" y="215.5" font-size="9.5" fill="#7b7468" text-anchor="middle">state</text><path d="M132.8 64.3 L156.8 64.3" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><path d="M275.6 64.3 L299.6 64.3" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><path d="M418.4 64.3 L442.4 64.3" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><path d="M561.2 64.3 L585.2 64.3" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><path d="M168.5 198 L192.5 198" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><path d="M347 198 L371 198" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><path d="M525.5 198 L549.5 198" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><text x="16" y="249.5" font-size="10.5" fill="#7b7468" text-anchor="start">Dashed: steps Chord has no hook for. 'There is no async activation guard' (design §7).</text></svg><figcaption><span class="fignum">Figure 1.</span> What the proposal assumes (top) and what Chord does (bottom). The proposal looks things up before the plugin&#39;s object exists; Chord makes the object first and lets it follow what it declared.</figcaption></figure>
+<h3 id="edge-1-user-scopes">Edge 1: user scopes</h3>
+<p><strong>What it assumes.</strong> A table or document declared <code>scope: &quot;user&quot;</code>; a remote contract declared <code>scope: &quot;user&quot;</code>; a
+<code>ctx.scope</code> in methods; the platform adding the user to every key and query.</p>
+<p><strong>Where it breaks.</strong> The walkthrough&#39;s MCP plugin, as written:</p>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/docs/multiuser-walkthrough.md, A2 (2026-11-13), excerpt</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">McpServers</span>, (_params, _principal, self) =&gt; {
+	<span class="tk-k">const</span> configs = self.<span class="tk-f">table</span>(<span class="tk-t">Configs</span>);                <span class="tk-c">// rows of this object's scope only (u1 here)</span>
+	<span class="tk-k">const</span> all = self.<span class="tk-f">query</span>(configs, <span class="tk-f">query</span>(<span class="tk-t">Configs</span>), <span class="tk-n">1000</span>);
+	<span class="tk-k">return</span> {
+		variant: <span class="tk-s">"user"</span>,
+		members: {
+			servers: self.<span class="tk-f">derive</span>([all], ([rows]) =&gt; rows.<span class="tk-f">map</span>(toInfo)),
+			create: <span class="tk-k">async</span> ({ label, config }, ctx) =&gt; {
+				<span class="tk-c">// …</span>
+				<span class="tk-k">return</span> { kind: <span class="tk-s">"mcp.server"</span>, owner: ctx.scope, id };   <span class="tk-c">// ctx.scope: guessed, the platform's user id</span>
+			},
+		},
+	};
+});</code></pre>
+<ol>
+<li><code>McpServers</code> is a <code>remote</code> contract, so its factory gets <code>Self</code>, not <code>StoreSelf</code>: <code>self.table</code> and <code>self.query</code>
+do not exist there (chapter I). Tables belong to stores, one per host.</li>
+<li><code>scope: &quot;user&quot;</code> on <code>defineTable</code>, <code>defineState</code> and <code>remote</code>, and <code>ctx.scope</code>, do not exist. Adding them is a Chord
+change against design §4 (<em>&quot;Objects persist a projection with its own schema, never the principal&quot;</em>).</li>
+<li>Background work for one user (refreshing that user&#39;s tokens) would need &quot;run as u1&quot;, which the walkthrough itself
+lists as unsolved (its open point 1).</li>
+</ol>
+<p><strong>What Chord already gives.</strong> Half of &quot;a copy per user&quot; is free: a remote object&#39;s identity is (type, params,
+principal key), so <code>McpServers {}</code> held by Mario and by Colin are already two objects. Only persisted data needs a
+key, and Chord has keyed documents (design §5 &quot;Keyed state members&quot;, example <code>test/examples/24-keyed-members.ts</code>).
+The factory pins the caller&#39;s key synchronously, because the key comes from the principal; Chord loads it during
+activation:</p>
+<pre><code><span class="tk-c">// PROPOSED · this rundown: per-user data with today's Chord API (keyed documents, a store, a per-principal object)</span>
+<span class="tk-k">const</span> <span class="tk-t">Configs</span> = <span class="tk-f">defineState</span>(<span class="tk-s">"mcp.configs"</span>, {
+	schema: <span class="tk-f">obj</span>({ servers: <span class="tk-f">arr</span>(<span class="tk-t">ServerConfig</span>) }),
+	version: <span class="tk-n">1</span>,
+	initial: () =&gt; ({ servers: [] }),
+	keyed: <span class="tk-k">true</span>,                                         <span class="tk-c">// one document per user id</span>
+	persist: <span class="tk-k">true</span>,
+	checkpointWhen: () =&gt; <span class="tk-k">true</span>,
+});
+
+<span class="tk-c">/** Every user's MCP servers, once per server: a store (local, empty params), the only place that writes them. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">McpStore</span> = <span class="tk-f">local</span>(<span class="tk-s">"mcp.store"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	members: {
+		configs: <span class="tk-f">keyed</span>(<span class="tk-f">obj</span>({ servers: <span class="tk-f">arr</span>(<span class="tk-t">ServerConfig</span>) })),
+		add: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ user: <span class="tk-f">str</span>(), config: <span class="tk-t">ServerConfig</span> })),
+	},
+});
+
+host.<span class="tk-f">serve</span>(<span class="tk-t">McpStore</span>, (_params, self) =&gt; {
+	<span class="tk-k">const</span> configs = self.<span class="tk-f">state</span>(<span class="tk-t">Configs</span>);
+	<span class="tk-k">return</span> {
+		configs,
+		add: <span class="tk-k">async</span> ({ user, config }, ctx) =&gt; {
+			<span class="tk-k">await</span> configs.<span class="tk-f">change</span>(user, (draft) =&gt; { draft.servers.<span class="tk-f">push</span>(config); }, ctx);
+			<span class="tk-k">return</span> <span class="tk-k">null</span>;
+		},
+	};
+});
+
+<span class="tk-c">/** My MCP servers: one object per user already, because a remote object's identity includes the principal. */</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">McpServers</span>, (_params, principal, self) =&gt; {
+	<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"user"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"users only"</span>);
+	<span class="tk-k">const</span> store = self.<span class="tk-f">get</span>(<span class="tk-t">McpStore</span>, {});
+	<span class="tk-k">const</span> mine = store.configs.<span class="tk-f">at</span>(principal.id);         <span class="tk-c">// pinned in the factory: the key comes from the principal</span>
+	<span class="tk-k">return</span> {
+		variant: <span class="tk-s">"user"</span>,
+		members: {
+			servers: self.<span class="tk-f">derive</span>([mine], ([doc]) =&gt; doc.servers.<span class="tk-f">map</span>(toInfo)),
+			create: ({ config }, ctx) =&gt; store.<span class="tk-f">add</span>({ user: principal.id, config }, ctx),
+		},
+	};
+});</code></pre>
+<p>A p3 API helper can hide the read side (refuse non-users, pin <code>at(principal.id)</code>, hand the plugin <code>mine</code>). It cannot
+hide the write side completely: a store method takes data, never a function (design §5, <em>&quot;No callbacks as
+arguments&quot;</em>), so writes stay store methods with the user as an argument, and the store&#39;s own routines do background
+work for all users at once. The plugin author writes two small objects instead of one, and never sees another user&#39;s
+data from a per-principal object.</p>
+<h3 id="edge-2-operation-gates">Edge 2: operation gates</h3>
+<p><strong>What it assumes.</strong> A hook in Chord&#39;s remote method dispatch that runs <code>await gate.decide(...)</code> before the handler.</p>
+<p><strong>Where it breaks.</strong></p>
+<ol>
+<li>Chord has no such hook, and its design rejects one: principle 2 (the owner enforces its rules in its methods), §7
+(authority checks live in the per-principal view&#39;s methods), §17 (registries never replace an owner&#39;s checks).
+This is a design change to Chord, not a missing helper.</li>
+<li>The sketch&#39;s company policy is <code>async</code> and awaits <code>directory.groupsOf</code>. The same policy must also answer inside
+derives: the book&#39;s effective list drops denied entries in a derive, and a page&#39;s &quot;what may I create&quot; list is a
+derive. Derives are synchronous.</li>
+</ol>
+<p><strong>How to write it with today&#39;s Chord.</strong> Gating is a property of the methods an object returns, and a factory returns
+plain functions. p3&#39;s API can serve a plugin&#39;s factory through a wrapper that wraps the named methods; the wrapper
+declares the policy registry like any dependency. The plugin&#39;s handlers still contain no checks:</p>
+<pre><code><span class="tk-c">// PROPOSED · this rundown: a gate without a Chord hook (types simplified). Every Chord call here exists today.</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">serveGated</span>&lt;C <span class="tk-k">extends</span> <span class="tk-t">Contract</span>&gt;(
+	host: <span class="tk-t">FacetHost</span>&lt;<span class="tk-t">P3Principal</span>&gt;,
+	<span class="tk-t">Type</span>: C,
+	operations: <span class="tk-k">readonly</span> <span class="tk-t">Operation</span>[],                    <span class="tk-c">// operation(McpServers, "create", { facts }) values</span>
+	factory: <span class="tk-t">Factory</span>&lt;C, <span class="tk-t">P3Principal</span>&gt;,
+): <span class="tk-k">void</span> {
+	host.<span class="tk-f">serve</span>(<span class="tk-t">Type</span>, (params, principal, self) =&gt; {
+		<span class="tk-k">const</span> policy = self.<span class="tk-f">registry</span>(<span class="tk-t">Policies</span>);            <span class="tk-c">// a declared dependency: the object parks until there is one</span>
+		<span class="tk-k">const</span> made = <span class="tk-f">factory</span>(params, principal, self);     <span class="tk-c">// the plugin's own factory, still synchronous</span>
+		<span class="tk-k">const</span> members: <span class="tk-t">Record</span>&lt;string, <span class="tk-k">unknown</span>&gt; = { ...made.members };
+		<span class="tk-k">for</span> (<span class="tk-k">const</span> op <span class="tk-k">of</span> operations) {
+			<span class="tk-k">const</span> handler = members[op.method] <span class="tk-k">as</span> ((args: <span class="tk-k">unknown</span>, ctx: <span class="tk-t">Ctx</span>) =&gt; <span class="tk-t">Promise</span>&lt;<span class="tk-k">unknown</span>&gt;) | <span class="tk-k">undefined</span>;
+			<span class="tk-k">if</span> (handler === <span class="tk-k">undefined</span>) <span class="tk-k">continue</span>;              <span class="tk-c">// not in this variant</span>
+			members[op.method] = <span class="tk-k">async</span> (args: <span class="tk-k">unknown</span>, ctx: <span class="tk-t">Ctx</span>) =&gt; {
+				<span class="tk-k">const</span> decision = policy.value.<span class="tk-f">decide</span>({ principal, operation: op.name, object: { contract: <span class="tk-t">Type</span>.name, params }, args, facts: op.<span class="tk-f">facts</span>(args) });
+				<span class="tk-k">if</span> (decision.kind === <span class="tk-s">"deny"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(decision.reason);
+				<span class="tk-k">return</span> <span class="tk-f">handler</span>(args, ctx);
+			};
+		}
+		<span class="tk-k">return</span> { variant: made.variant, members };
+	});
+}
+
+<span class="tk-c">// The plugin, unchanged except for the serve call:</span>
+<span class="tk-f">serveGated</span>(host, <span class="tk-t">McpServers</span>, [<span class="tk-t">CreateMcp</span>, <span class="tk-t">RemoveMcp</span>], (_params, principal, self) =&gt; { <span class="tk-c">/* as in edge 1 */</span> });</code></pre>
+<p>If p3&#39;s API hands plugins a facet <code>host</code> whose <code>serve</code> does this for every contract that declares operations, plugins
+do not even call <code>serveGated</code>. Calls between trusted code on the server (a store&#39;s methods) are not gated, which is
+correct: stores have no caller principal. The open choice is the policy&#39;s shape (chapter IV): with a synchronous
+<code>decide</code> over followed state, the same policy serves gates and derives.</p>
+<h3 id="edge-3-resources-on-sessions">Edge 3: resources on sessions</h3>
+<p><strong>What it assumes.</strong> That the platform checks a resource reference against the session&#39;s list before the plugin&#39;s
+object for it is made, and sets the scope to the resource&#39;s owner.</p>
+<p><strong>Where it breaks.</strong> The walkthrough&#39;s third-party plugin:</p>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/docs/multiuser-walkthrough.md, part C (2026-11-13), excerpts</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">TodoList</span> = <span class="tk-f">remote</span>(<span class="tk-s">"todos.list"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: { resource: <span class="tk-t">ResourceRefParam</span> },
+	<span class="tk-c">// …</span>
+});
+
+host.<span class="tk-f">serve</span>(<span class="tk-t">TodoList</span>, ({ resource }, _principal, inner) =&gt; {
+	<span class="tk-c">// The platform has checked the ref against the session list and set the scope to its owner.</span>
+	<span class="tk-k">const</span> items = inner.<span class="tk-f">table</span>(<span class="tk-t">Items</span>);
+	<span class="tk-c">// …</span>
+});
+
+<span class="tk-f">defineTool</span>({ name: <span class="tk-s">"add"</span>, parameters: <span class="tk-f">obj</span>({ text: <span class="tk-f">str</span>() }),
+	execute: <span class="tk-k">async</span> ({ text }, ctx) =&gt; (<span class="tk-k">await</span> ctx.<span class="tk-f">get</span>(<span class="tk-t">TodoList</span>, { resource })).<span class="tk-f">add</span>({ text }, ctx) }),</code></pre>
+<ol>
+<li><strong>Params are flat</strong> strings, integers, booleans or literals. <code>{ resource: ResourceRefParam }</code> (an object) is
+refused at declaration.</li>
+<li><strong>No check before the factory.</strong> The list lives in a server table or derive; reading it is async; Chord has no
+async activation guard. A worker&#39;s hold of a server object goes over its parent link, where the server sees only
+the worker principal (&quot;Upward is a boundary&quot;, design §4), and there is no <code>authorize</code> in that direction.</li>
+<li><strong>A check at hold time would not be enough anyway.</strong> Colin withdraws Linear while the worker holds the reference;
+the object lives on. The resource-model book already says &quot;check again at every call&quot;.</li>
+<li><strong>Tools get a Durable <code>Context</code>, not a Chord <code>ctx</code></strong> (design §24). Durable&#39;s <code>execute</code> is <code>(args, api, context)</code>; a
+tool reaches Chord objects through a root (<code>chord(fn, context)</code> in the design, <code>worker().root(fn, context)</code> in p2).</li>
+<li><strong><code>inner.table</code></strong> in a remote factory: as in edge 1.</li>
+</ol>
+<p><strong>How to write it with today&#39;s Chord.</strong> The resource&#39;s identity is the params (flat); the factory declares the
+session&#39;s list, chosen by the worker principal; every method checks the list, and the state members hide the data
+when the resource leaves the list. This is the telemetry pattern from chapter I:</p>
+<pre><code><span class="tk-c">// PROPOSED · this rundown: a resource's server object for one session's worker, with today's Chord API.</span>
+<span class="tk-c">// SessionList is the resource-model book's per-session list (chapter III); TodoStore a store as in edge 1.</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">TodoList</span> = <span class="tk-f">remote</span>(<span class="tk-s">"todos.list"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: { owner: <span class="tk-f">str</span>(), id: <span class="tk-f">str</span>() },               <span class="tk-c">// flat: the kind is the contract, (owner, id) the resource</span>
+	hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: { worker: { state: { todos: <span class="tk-f">arr</span>(<span class="tk-t">Todo</span>) }, methods: { add: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ text: <span class="tk-f">str</span>() }), <span class="tk-f">str</span>()) } } },
+});
+
+host.<span class="tk-f">serve</span>(<span class="tk-t">TodoList</span>, ({ owner, id }, principal, self) =&gt; {
+	<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"worker"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"session workers only"</span>);
+	<span class="tk-k">const</span> list = self.<span class="tk-f">get</span>(<span class="tk-t">SessionList</span>, { session: principal.session }).list;
+	<span class="tk-k">const</span> store = self.<span class="tk-f">get</span>(<span class="tk-t">TodoStore</span>, {});
+	<span class="tk-k">const</span> items = store.lists.<span class="tk-f">at</span>(<span class="tk-s">`${owner}/${id}`</span>);
+	<span class="tk-k">const</span> brought = (value: <span class="tk-t">SessionListValue</span>) =&gt;
+		value.kind === <span class="tk-s">"ready"</span> &amp;&amp;
+		value.entries.<span class="tk-f">some</span>((e) =&gt; e.resource.name === <span class="tk-s">"todos.list"</span> &amp;&amp; e.resource.id === id &amp;&amp; e.owner === owner);
+	<span class="tk-k">return</span> {
+		variant: <span class="tk-s">"worker"</span>,
+		members: {
+			<span class="tk-c">// Withdrawn: the data disappears from the worker's view at once.</span>
+			todos: self.<span class="tk-f">derive</span>([items, list], ([doc, current]) =&gt; (<span class="tk-f">brought</span>(current) ? doc.todos : [])),
+			add: <span class="tk-k">async</span> ({ text }, ctx) =&gt; {
+				<span class="tk-k">if</span> (!<span class="tk-f">brought</span>(list.value)) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"This list is not brought into this session."</span>);
+				<span class="tk-k">return</span> store.<span class="tk-f">add</span>({ list: <span class="tk-s">`${owner}/${id}`</span>, text }, ctx);
+			},
+		},
+	};
+});</code></pre>
+<p>On the worker, a store follows the same list and keeps one extension per
+brought resource in a writable it contributes, which is how p2&#39;s MCP plugin offers one extension per server:</p>
+<pre><code><span class="tk-c">// BUILT · apps/p2/plugins/mcp/worker.ts (excerpt): the pattern a resource kind's worker side copies</span>
+<span class="tk-k">function</span> <span class="tk-f">mcpWorker</span>(self: <span class="tk-t">StoreSelf</span>): <span class="tk-k">void</span> {
+	<span class="tk-k">const</span> harness = <span class="tk-f">harnessOf</span>(self);
+	<span class="tk-k">const</span> worker = <span class="tk-f">workerOf</span>(self);
+	<span class="tk-k">const</span> view = self.<span class="tk-f">get</span>(<span class="tk-t">Mcp</span>, {});
+	<span class="tk-k">const</span> call: <span class="tk-t">McpCall</span> = <span class="tk-k">async</span> ({ conversationId, read, ...request }, context) =&gt; {
+		<span class="tk-k">const</span> location = <span class="tk-k">await</span> <span class="tk-f">harness</span>().environments.<span class="tk-f">locate</span>(conversationId, context, read);
+		<span class="tk-k">return</span> <span class="tk-f">worker</span>().<span class="tk-f">root</span>((ctx) =&gt; <span class="tk-f">expectVariant</span>(view, <span class="tk-s">"worker"</span>).<span class="tk-f">call</span>({ location, ...request }, ctx), context);
+	};
+	<span class="tk-c">// …</span>
+	<span class="tk-k">const</span> extension = self.<span class="tk-f">writable</span>(<span class="tk-f">createMcpExtensions</span>({ servers: [], tools: [], reach: <span class="tk-s">"codemode"</span> }, call));
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">Extensions</span>, extension);
+	self.<span class="tk-f">onLive</span>((ctx) =&gt; <span class="tk-f">offerTools</span>(view, reach, extension, call, ctx));
+	<span class="tk-f">leaseLocations</span>(self, view, harness, worker);
+}</code></pre>
+<p>The p3 version swaps <code>view.servers</code> for the session&#39;s list and builds <code>defineExtension({ name, namespace, tools })</code>
+per entry; each tool&#39;s <code>execute(args, api, context)</code> opens <code>worker().root(...)</code> and calls the server object above. If
+core should enforce the list without trusting each plugin&#39;s filter, the resource-model book&#39;s shape is the one that
+fits Chord: contributions are pairs <code>[resource, extension]</code> and the harness drops pairs whose resource is not on the
+list (chapter XII).</p>
+<h3 id="is-p2-39-s-lock-the-single-user-version">Is p2&#39;s lock the single-user version?</h3>
+<p>Mostly, yes. The lock is a per-session list the owner picks, kept on the server, followed by the worker, mirrored into
+Durable, checked by the tool guard and by server objects at each call (chapter III). Two differences: it names
+capabilities (<code>ports</code>, <code>conversations</code>) and instructions, which p3 would have to make resources; and it leaves bash
+and file tools to the location&#39;s sandbox, while the resource-model book makes bash a resource.</p>
+<h3 id="the-three-edges-at-a-glance">The three edges at a glance</h3>
+<table>
+<thead>
+<tr>
+<th>Edge</th>
+<th>Needs a Chord change as proposed</th>
+<th>Form with today&#39;s Chord</th>
+<th>What the plugin writes</th>
+<th>Decision it needs</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>user scopes</td>
+<td><code>scope</code> on tables, documents, contracts; <code>ctx.scope</code>; &quot;run as user&quot;</td>
+<td>a store with keyed documents + a per-principal object pinning <code>at(principal.id)</code></td>
+<td>two objects; writes take the user as data</td>
+<td>library pattern or Chord-level scopes</td>
+</tr>
+<tr>
+<td>operation gates</td>
+<td>a dispatch hook in Chord, against principles 2, §7, §17</td>
+<td>p3&#39;s <code>serve</code> wraps the methods its operations name</td>
+<td><code>operation(...)</code> declarations</td>
+<td>policy sync or async; core&#39;s request union or plugins&#39; operations</td>
+</tr>
+<tr>
+<td>resources on sessions</td>
+<td>object params; a check before the factory</td>
+<td>flat params; the factory declares the session&#39;s list; every method checks it; state hides withdrawn data</td>
+<td>the check line, or a p3 helper that adds it</td>
+<td>central index or per-plugin lists; who enforces on the worker</td>
+</tr>
+</tbody></table>
+</section>
+
+<section class="chapter" id="views"><header class="opener"><div class="numeral">VII</div><h2>Views and Items</h2><p class="lede">Part 2. What is on screen: decided at the level of plugins and items, built in p2 per session and per device, and proposed today as layouts that host placements of several sessions.</p></header>
+<h3 id="decided">Decided</h3>
+<ul>
+<li><strong>UI is contributed from a plugin&#39;s facet</strong> (2026-11-06): objects supply data, never the UI.</li>
+<li><strong>Groupings and views are plugins</strong> (2026-11-07, relayed from the owner&#39;s talk with Christian, Max and David): the
+page&#39;s route is a <code>(kind, id)</code> of an addressable thing; the main area renders the view registered for that kind;
+group kinds and views are registries; <em>&quot;the layout itself is plugin-defined (sidebar + transcript + panel is one
+layout among others, shipped as the default &#39;so as not to rattle cages&#39;)&quot;</em>; access control must attach to the same
+model later.</li>
+<li><strong>The agent writes plugins; sketches stay single-player</strong> (2026-11-11): anything multiplayer or persistent (games,
+shared boards, Max&#39;s glyph editor) is a plugin the agent writes and applies; html views stay single-player
+artifacts. Rooms, view principals and views.md&#39;s two tiers are dropped.</li>
+<li><strong>Artifacts and views</strong> (2026-11-12; p2 first, p3 the same structure with rough edges sanded down): each plugin owns
+its per-session data, keyed by the session&#39;s host address; <code>ArtifactKinds</code> collects listable items; <code>ViewKinds</code>
+only gives panes (<code>PaneProps</code> <code>item</code>, <code>inline</code>); inline artifacts are a tool card rendering the item&#39;s pane; a
+reader who may not change the session&#39;s views opens an item in the artifacts side panel on their own device; clone
+and fork copy artifacts.</li>
+</ul>
+<h3 id="built-in-p2">Built in p2</h3>
+<p>The two registries the 2026-11-12 decision names:</p>
+<pre><code><span class="tk-c">// BUILT · apps/p2/src/web/view-kinds.ts (excerpt)</span>
+<span class="tk-c">/** What a pane gets: the item it shows, where it shows, whether the person may change it, and its annotations. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">PaneProps</span> = {
+	<span class="tk-k">readonly</span> session: string;
+	<span class="tk-c">/** The item the view shows (an artifact's ID, a Markdown file); absent for a view of the whole kind. */</span>
+	<span class="tk-k">readonly</span> item?: string;
+	<span class="tk-c">/** In the transcript (a tool card), not beside it: no view, no selection, no annotations. */</span>
+	<span class="tk-k">readonly</span> inline: boolean;
+	<span class="tk-c">/** The view beside the transcript (absent inline): its ID, kind and title. */</span>
+	<span class="tk-k">readonly</span> view?: <span class="tk-t">View</span>;
+	<span class="tk-c">/** The person may send in the session: their selections and changes are saved. */</span>
+	<span class="tk-k">readonly</span> editable: boolean;
+	<span class="tk-c">// … select, annotations</span>
+};
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">ViewKind</span> = { <span class="tk-k">readonly</span> <span class="tk-t">Pane</span>: <span class="tk-t">ComponentType</span>&lt;<span class="tk-t">PaneProps</span>&gt; };
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ViewKinds</span> = <span class="tk-f">keyedRegistry</span>&lt;<span class="tk-t">ViewKind</span>&gt;(<span class="tk-s">"p2.view-kinds"</span>);
+
+<span class="tk-c">// BUILT · apps/p2/src/web/artifact-kinds.ts (excerpt)</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">ArtifactKind</span> = {
+	<span class="tk-k">readonly</span> title: string;
+	<span class="tk-k">readonly</span> icon: <span class="tk-t">ComponentType</span>;
+	<span class="tk-k">readonly</span> useItems: (session: string) =&gt; <span class="tk-k">readonly</span> <span class="tk-t">ArtifactItem</span>[] | <span class="tk-k">undefined</span>;
+	<span class="tk-k">readonly</span> useCount: (session: string) =&gt; number | <span class="tk-k">undefined</span>;
+	<span class="tk-k">readonly</span> <span class="tk-t">Row</span>?: <span class="tk-t">ComponentType</span>&lt;{ <span class="tk-k">readonly</span> item: <span class="tk-t">ArtifactItem</span> }&gt;;
+	<span class="tk-c">/** The view kind (`ViewKinds`) that opens an item. */</span>
+	<span class="tk-k">readonly</span> view: string;
+	<span class="tk-k">readonly</span> useRemove?: (session: string) =&gt; ((id: string) =&gt; <span class="tk-t">Promise</span>&lt;<span class="tk-k">void</span>&gt;) | <span class="tk-k">undefined</span>;
+};
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ArtifactKinds</span> = <span class="tk-f">keyedRegistry</span>&lt;<span class="tk-t">ArtifactKind</span>&gt;(<span class="tk-s">"p2.artifact-kinds"</span>);</code></pre>
+<p>A session&#39;s open views are the session&#39;s data, in its Durable document <code>p2.views</code>; the layout is each device&#39;s:</p>
+<pre><code><span class="tk-c">// BUILT · apps/p2/plugins/views/contract.ts (excerpt)</span>
+<span class="tk-c">/** One view of a session: what it is (its kind and the item it shows), its title and the person's selection. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ViewSchema</span> = <span class="tk-f">obj</span>({
+	id: <span class="tk-t">Id</span>,
+	kind: <span class="tk-t">ViewKindNameSchema</span>,
+	<span class="tk-c">/** `markdown`: the file, relative to the workspace; `changes`: only changes below this path; a plugin's item ID. */</span>
+	item: <span class="tk-f">opt</span>(<span class="tk-t">ViewItemSchema</span>),
+	title: <span class="tk-f">str</span>({ minLength: <span class="tk-n">1</span>, maxLength: <span class="tk-n">120</span> }),
+	selection: <span class="tk-f">opt</span>(<span class="tk-t">SelectionSchema</span>),
+	<span class="tk-c">/** When the agent last asked to show it: devices bring it to the front (and show it again) when this grows. */</span>
+	focus: <span class="tk-f">num</span>(),
+	created: <span class="tk-f">num</span>(),
+});</code></pre>
+<table>
+<thead>
+<tr>
+<th>Fact</th>
+<th>Owner</th>
+<th>Where (p2, <code>docs/views.md</code>)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>the session&#39;s views, selections, annotations</td>
+<td>the session&#39;s worker</td>
+<td>Durable document <code>p2.views</code></td>
+</tr>
+<tr>
+<td>the layout, the views hidden on a device</td>
+<td>each device</td>
+<td><code>localStorage</code> <code>p2.views.layout:&lt;session&gt;</code></td>
+</tr>
+<tr>
+<td>the agent&#39;s last arrangement</td>
+<td>the session&#39;s worker</td>
+<td><code>p2.views</code> (<code>arrangement</code>), adopted once per device</td>
+</tr>
+<tr>
+<td>what a view shows</td>
+<td>the item&#39;s owner</td>
+<td>a workspace file, the artifacts store, a plugin&#39;s store</td>
+</tr>
+</tbody></table>
+<p>The agent opens and arranges views with code-mode tools in namespace <code>view</code> (<code>view_open({ kind, item?, title? })</code>,
+<code>view_arrange</code>, …). People who may send open, close, select and annotate; viewers read; a read-only guest opens
+artifacts in the side panel on their own device. Panes render as siblings in a fixed order and are only positioned,
+so rearranging never remounts a frame.</p>
+<h3 id="proposed">Proposed</h3>
+<p><strong><code>apps/p3/docs/views.md</code></strong> (2026-11-10, p3 session). A view kind is typed with params; session or global follows from
+the params; renderers per surface (<code>WebViews</code>, <code>TuiViews</code>); slots inside views (<code>TranscriptEntries</code>, <code>ComposerParts</code>);
+the workbench owns pane chrome, a fixed bar and safe mode; <strong>layouts are apps</strong> (recorded there as the owner&#39;s
+direction of 2026-11-10, not as an entry in <code>decisions.md</code>): an app is a layout of views for one purpose, switched in
+the fixed bar.</p>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/docs/views.md §2 (2026-11-10), excerpt</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Changes</span> = <span class="tk-f">defineViewKind</span>(<span class="tk-s">"changes"</span>, { session: <span class="tk-f">str</span>(), path: <span class="tk-f">str</span>() });
+self.<span class="tk-f">contribute</span>(<span class="tk-t">WebViews</span>, { [<span class="tk-t">Changes</span>.name]: ({ params }) =&gt; &lt;<span class="tk-t">ChangesPane</span> session={params.session} path={params.path} /&gt; });</code></pre>
+<p><strong>The views mockup</strong> (<code>apps/p2/docs/views-mock/index.html</code>, 2026-11-13, uncommitted). One way to open everything:
+every tab strip ends in <strong>+</strong>; its sheet lists recently closed views, kinds that need no item, this session&#39;s items by
+kind, and other sessions; the top bar loses its artifacts, terminal and folder buttons; a terminal tab is a view of a
+running terminal item, and closing it leaves the terminal running; on the desktop each area belongs to a session
+(shown at the strip&#39;s right) and its &quot;+&quot; lists that session&#39;s items. Its legend: <em>&quot;Mail, Calendar, Traces: global …
+Files, Changes, Search: the session&#39;s location … Terminals, artifacts, games: per session.&quot;</em></p>
+<p><strong>Today&#39;s p3 session</strong> (not decided, relayed in the brief for this rundown):</p>
+<ul>
+<li>&quot;+&quot; at the end of every tab strip is the one way to open things: view kinds that need no item, items of the current
+session through <code>ArtifactKinds</code>, recently closed;</li>
+<li>terminals and the workspace become view kinds; no separate Views button, so no hidden views;</li>
+<li>the layout (an app) is the host, per user and device class;</li>
+<li>a placement is <code>{ view kind, item, session }</code>, where the session follows the app&#39;s current session or is pinned;</li>
+<li>where data lives is the plugin&#39;s business (mail global or per user; artifacts, terminals and games per session);</li>
+<li>session colors when several sessions show; guests see placements only of sessions they may see.</li>
+</ul>
+<p>Written as a type so the pieces can be compared (this rundown&#39;s rendering of the proposal, not anyone&#39;s code):</p>
+<pre><code><span class="tk-c">// PROPOSED · this rundown, rendering today's p3 session's proposal as types</span>
+<span class="tk-k">type</span> <span class="tk-t">Placement</span> = {
+	<span class="tk-k">readonly</span> kind: string;                                   <span class="tk-c">// a ViewKinds name: "transcript", "terminal", "mail"</span>
+	<span class="tk-k">readonly</span> item?: string;                                  <span class="tk-c">// absent for kinds that need none (files, mail)</span>
+	<span class="tk-k">readonly</span> session: { <span class="tk-k">readonly</span> kind: <span class="tk-s">"follow"</span> } | { <span class="tk-k">readonly</span> kind: <span class="tk-s">"pinned"</span>; <span class="tk-k">readonly</span> session: string };
+};
+<span class="tk-k">type</span> <span class="tk-t">Layout</span> = {                                            <span class="tk-c">// an app's arrangement, per user and device class</span>
+	<span class="tk-k">readonly</span> app: string;
+	<span class="tk-k">readonly</span> device: <span class="tk-s">"phone"</span> | <span class="tk-s">"desktop"</span>;
+	<span class="tk-k">readonly</span> current: string | <span class="tk-k">null</span>;                         <span class="tk-c">// the session "follow" placements show</span>
+	<span class="tk-k">readonly</span> root: <span class="tk-t">Area</span> | <span class="tk-t">Split</span>;                             <span class="tk-c">// areas of tabs (placements) inside splits, as p2's layout</span>
+	<span class="tk-k">readonly</span> closed: <span class="tk-k">readonly</span> <span class="tk-t">Placement</span>[];                   <span class="tk-c">// "Recently closed" in the "+" sheet</span>
+};</code></pre>
+<p><strong><code>apps/p3/docs/layouts/mocks.html</code></strong> (p3 session, 2026-11-10 onwards): mockups of layouts beyond sidebar, chat,
+sidebar: a cross-session inbox of everything that needs a human, a board of runs, and others. They show what an app
+could be; they decide nothing.</p>
+<h3 id="contradictions">Contradictions</h3>
+<div class="note review"><b class="tag">Review: who owns the open views</b><p>In p2 a view belongs to a session (Durable <code>p2.views</code>) and its layout to a device. In today&#39;s proposal a placement
+belongs to a layout, which belongs to a user and a device class, and may show several sessions. Then <code>view_open</code> from
+a session&#39;s agent must find a layout to put the placement in, and a session&#39;s views are no longer the session&#39;s data
+(export, fork and guests then see nothing of them). Neither document says which is primary.</p>
+</div>
+<div class="note review"><b class="tag">Review: typed params or one item string</b><p><code>views.md</code> gives kinds typed params (<code>{ session, path }</code>). The 2026-11-12 decision and p2 give a pane <code>session</code> plus one
+<code>item</code> string. The decision is newer; <code>views.md</code> §2 is stale on this.</p>
+</div>
+<ul>
+<li><strong>Hidden views.</strong> p2 hides views a device&#39;s layout leaves out (<code>docs/views.md</code>: &quot;the views hidden on a device&quot;);
+today&#39;s proposal wants none hidden, everything reachable from &quot;+&quot;.</li>
+<li><strong>Per device or per device class.</strong> p2 and <code>views.md</code> §5: per device; today: per user and device class.</li>
+<li><strong>&quot;Viewers read everything.&quot;</strong> <code>apps/p2/docs/views.md</code> says so; p2&#39;s workspace and file index serve participants
+only (<code>plugins/file-index/worker.ts</code>: <em>&quot;view-only guests get no file names&quot;</em>). A read-only guest sees the transcript
+and artifacts, not files or changes.</li>
+<li><strong>Two searches.</strong> The mock&#39;s Search is a search at the session&#39;s location; p2&#39;s <code>search</code> plugin is the owner&#39;s
+search over all sessions&#39; transcripts (<code>plugins/search/server.ts</code>: <em>&quot;search is owner-only&quot;</em>).</li>
+</ul>
+</section>
+
+<section class="chapter" id="screens"><header class="opener"><div class="numeral">VIII</div><h2>Who Sees Which View</h2><p class="lede">Eleven kinds of view, side by side: whose data, where it lives, who sees and acts, how it opens and comes back, and every open question.</p></header>
+<p class="dropcap">The table describes p2 as built unless a cell says <em>proposed</em>. &quot;Full guest&quot; is p2&#39;s guest with <code>&quot;full&quot;</code>, &quot;read-only
+guest&quot; one with <code>&quot;view&quot;</code>. p3 has no answer for any column yet: its users, guests and policy are open (chapters II, V).</p>
+<table>
+<thead>
+<tr>
+<th>View</th>
+<th>Whose data, where it lives</th>
+<th>Owner</th>
+<th>Full guest</th>
+<th>Read-only guest</th>
+<th>Opened / reopened</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>transcript</strong></td>
+<td>the session&#39;s; Durable transcript in the session worker&#39;s store</td>
+<td>reads, sends, stops, branches</td>
+<td>reads, sends, stops</td>
+<td>reads (<code>viewer</code> variant)</td>
+<td>always the first pane of a session; <em>proposed</em>: a view kind like any other, a &quot;chat&quot; tab per session, back through &quot;+&quot; (other sessions)</td>
+</tr>
+<tr>
+<td><strong>composer</strong></td>
+<td>part of the chat pane; drafts per author in the worker (<code>plugins/drafts</code>)</td>
+<td>types, sends</td>
+<td>types, sends</td>
+<td>none</td>
+<td>with the transcript; <em>proposed</em> (<code>views.md</code>): its own prebuilt view kind with <code>ComposerParts</code></td>
+</tr>
+<tr>
+<td><strong>changes</strong></td>
+<td>the working tree at the session&#39;s location, computed by the worker (<code>plugins/workspace</code>)</td>
+<td>sees</td>
+<td>sees</td>
+<td>none (&quot;participants only&quot;)</td>
+<td>view kind <code>changes</code> (<code>view_open</code>), the workspace panel; <em>proposed</em>: a kind that needs no item, from &quot;+&quot;</td>
+</tr>
+<tr>
+<td><strong>files</strong></td>
+<td>the location&#39;s file system (<code>workspace</code>, <code>file-index</code>)</td>
+<td>browses</td>
+<td>browses</td>
+<td>none</td>
+<td>the top bar&#39;s folder button opens the workspace; <em>proposed</em>: a view kind, no item</td>
+</tr>
+<tr>
+<td><strong>terminal</strong></td>
+<td>per session; processes of the server&#39;s <code>TerminalService</code> on the session&#39;s environment</td>
+<td>opens, types</td>
+<td>none (&quot;terminals are owner-only&quot;)</td>
+<td>none</td>
+<td>top bar button, the agent&#39;s terminal tool; <em>proposed</em>: a view of a running terminal item; closing the tab leaves it running; back through &quot;+&quot; or recently closed</td>
+</tr>
+<tr>
+<td><strong>search</strong></td>
+<td>p2: the owner&#39;s index over all sessions (server SQLite); mock: a search at the location</td>
+<td>searches</td>
+<td>none</td>
+<td>none</td>
+<td>p2: the command menu; <em>proposed</em>: a kind from &quot;+&quot; (which search is unclear)</td>
+</tr>
+<tr>
+<td><strong>html / md artifact</strong></td>
+<td>the session&#39;s; server documents keyed by <code>Session</code> address, versions in <code>artifact_versions</code></td>
+<td>edits state, removes</td>
+<td>edits state, removes</td>
+<td>reads; html <code>readOnly</code>; opens in the side panel on its own device</td>
+<td><code>artifact_show</code> (inline), <code>artifact_open</code>, the artifacts side panel (<code>ArtifactKinds</code>), &quot;Open artifact…&quot;; back from the side panel</td>
+</tr>
+<tr>
+<td><strong>game</strong></td>
+<td>an agent-written plugin&#39;s server object; items per session (2026-11-11)</td>
+<td>what the plugin&#39;s variants give</td>
+<td>what the plugin&#39;s variants give</td>
+<td>what the plugin&#39;s viewer variant gives</td>
+<td><code>view_open({ kind, item })</code>; listed through <code>ArtifactKinds</code>; <em>proposed</em>: &quot;+ → Games&quot;</td>
+</tr>
+<tr>
+<td><strong>mail</strong></td>
+<td>the owner&#39;s Gmail accounts (mail plugin of the owner&#39;s install); global, not per session</td>
+<td>reads, drafts; only the owner sends</td>
+<td>none</td>
+<td>none</td>
+<td><code>view_open({ kind: &quot;mail&quot; })</code>; <em>proposed</em>: a global kind from &quot;+&quot;, the same inbox in every session; in p3 per user</td>
+</tr>
+<tr>
+<td><strong>calendar</strong></td>
+<td>the owner&#39;s Google calendars; global</td>
+<td>reads, responds, creates; the agent only with the owner&#39;s approval</td>
+<td>none</td>
+<td>none</td>
+<td><code>view_open({ kind: &quot;calendar&quot; })</code>; <em>proposed</em>: as mail</td>
+</tr>
+<tr>
+<td><strong>traces</strong></td>
+<td>the server&#39;s telemetry store; instance-wide</td>
+<td>reads</td>
+<td>none</td>
+<td>none</td>
+<td>the Traces view kind, &quot;Show traces&quot;; the agent&#39;s <code>telemetry</code> tools only in sessions neither shared nor locked</td>
+</tr>
+</tbody></table>
+<p>Three things stand out. First, p2&#39;s rule for a full guest is narrower than &quot;may do what the owner does&quot;: no terminal,
+no search, no mail, though the same guest can have the agent run <code>bash</code> (the 2026-11-11 decision says so). Second,
+mail, calendar and traces are global: they belong to a person or the instance, not a session, and a guest never
+sees them. Third, only the transcript, composer and artifacts have a read-only form today.</p>
+<h3 id="several-sessions-in-one-layout">Several sessions in one layout</h3>
+<p>The mock&#39;s desktop shows two sessions side by side (&quot;p3: skeleton&quot; with its terminal, &quot;Email&quot; with Mail); each area
+belongs to a session and its &quot;+&quot; lists that session&#39;s items. Today&#39;s proposal adds placements that follow the app&#39;s
+current session or are pinned to one, and session colors when several show. p2 has none of this: its workbench is
+per session (<code>p2.views.layout:&lt;session&gt;</code>).</p>
+<h3 id="guests-on-screen">Guests on screen</h3>
+<p><code>sharing.md</code> (2026-11-10, not decided) recommends that the server project the guest&#39;s layout from the source app:
+views whose objects give the guest nothing are dropped, and the app may list views it never shows to guests. Its owner
+direction: <em>&quot;Whoever shares accepts that everything shown for that session … is accessible to the guest. What a guest
+sees follows from what the objects give the guest&#39;s principal.&quot;</em> Today&#39;s proposal: guests see placements only of
+sessions they may see. Both agree that hiding a pane protects nothing; the objects behind it decide.</p>
+<h3 id="open-questions">Open questions</h3>
+<ol>
+<li><strong>Is a placement the session&#39;s data or the layout&#39;s?</strong> p2: the session&#39;s (<code>p2.views</code>), so export, fork and guests
+carry it. Proposed: the layout&#39;s. If the layout&#39;s, where does <code>view_open</code> from an agent land, and what does a
+guest&#39;s page show?</li>
+<li><strong>Who hosts the layout:</strong> a per-user server record (synced across devices of a class), each device (p2), or an
+app&#39;s plugin?</li>
+<li><strong>Device class or device:</strong> two phones of one user share a layout or not?</li>
+<li><strong>The &quot;+&quot; registry:</strong> does <code>ViewKinds</code> gain <code>title</code>, <code>icon</code> and <code>needsItem</code> (the mock&#39;s legend says so), or is
+&quot;+&quot; a third registry?</li>
+<li><strong>Recently closed:</strong> per session, per layout or per user; how many; does it survive a reload?</li>
+<li><strong>Closing a tab of an item with a lifetime</strong> (a terminal, a running game): the mock says the item keeps running;
+who stops it, and from where, once no tab shows it?</li>
+<li><strong>Terminals and files as view kinds:</strong> which guests get them? p2 gives terminals to the owner only and files to
+participants.</li>
+<li><strong>Global views in a shared layout:</strong> mail, calendar and traces are a person&#39;s; a guest of a session in that layout
+must not get them. Dropped by the server projection or by their objects refusing (both, per <code>sharing.md</code>)?</li>
+<li><strong>Session colors:</strong> chosen by whom, stored where (session data or the layout)?</li>
+<li><strong>Typed params or one item string</strong> for view kinds (chapter VII review).</li>
+<li><strong>Which search</strong> is the &quot;+&quot; Search: the location&#39;s files or the user&#39;s sessions?</li>
+<li><strong>The TUI:</strong> p2 shows no views in the terminal; <code>views.md</code> §5 proposes the same kinds with <code>TuiViews</code>. Not
+scheduled.</li>
+<li><strong>Layouts as apps:</strong> recorded as owner direction in <code>views.md</code> (2026-11-10) and the plan of 2026-11-11, but not in
+<code>decisions.md</code>. Is it decided?</li>
+</ol>
+</section>
+
+<section class="chapter" id="worker"><header class="opener"><div class="numeral">IX</div><h2>What a Session&#39;s Worker Runs</h2><p class="lede">Part 3. One process per session, the Durable harness inside it, and extensions from a registry: built in p2, designed in Chord §24, barely touched by p3&#39;s decisions.</p></header>
+<h3 id="built-in-p2">Built in p2</h3>
+<p>Each session runs in its own worker process, started by the server through Chord&#39;s workers component and reached
+over a route whose links stamp <code>{ kind: &quot;worker&quot;, session, generation }</code>. The worker is a Chord host that loads every
+plugin&#39;s worker facet. Its core opens pi-durable&#39;s <code>Harness</code> on the session&#39;s store, and the harness reads its
+extensions from a Chord registry that host-lifetime objects and facets contribute to:</p>
+<pre><code><span class="tk-c">// BUILT · apps/p2/src/runtime/durable.ts (excerpt)</span>
+<span class="tk-c">/**
+ * Durable extensions every conversation of the worker may select, by name (host-lifetime objects contribute them). Their
+ * tools declare their requirements (`P2Tool`).
+ */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Extensions</span> = keyedRegistry&lt;<span class="tk-t">Extension</span>&lt;<span class="tk-t">P2Tool</span>&gt;&gt;(<span class="tk-s">"p2.durable-extensions"</span>);
+
+<span class="tk-c">/**
+ * Live switches of contributed extensions, by extension name: an extension whose switch reads `false` is left out of
+ * Durable's registry, as if uninstalled, until it reads `true` again. Example: the `codemode` setting.
+ */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ExtensionSwitches</span> = <span class="tk-f">keyedRegistry</span>&lt;boolean | <span class="tk-k">undefined</span>&gt;(<span class="tk-s">"p2.extension-switches"</span>);
+
+<span class="tk-c">// in durableRegistry(extensions, switches, context): every tool with requirements is wrapped</span>
+<span class="tk-k">for</span> (<span class="tk-k">const</span> extension <span class="tk-k">of</span> installed)
+	builder.<span class="tk-f">install</span>(extension.tools ? { ...extension, tools: extension.tools.<span class="tk-f">map</span>(guardTool) } : extension);</code></pre>
+<p>An extension is Durable&#39;s unit: a name, an optional code-mode namespace, tools, prompt sections, hooks, wraps and
+tasks.</p>
+<pre><code><span class="tk-c">// BUILT · packages/durable/src/harness/types.ts (excerpt)</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">ToolNamespace</span> = { <span class="tk-k">readonly</span> name: string; <span class="tk-k">readonly</span> description: string; <span class="tk-k">readonly</span> instructions?: string };
+
+<span class="tk-k">export</span> <span class="tk-k">interface</span> <span class="tk-t">Extension</span>&lt;<span class="tk-t">Tool</span> <span class="tk-k">extends</span> <span class="tk-t">ToolRegistration</span> = <span class="tk-t">ToolRegistration</span>&gt; {
+	<span class="tk-k">readonly</span> name: string;
+	<span class="tk-c">/**
+	 * The code-mode namespace of this extension's tools (a tool named by several extensions belongs to the first). The
+	 * `codemode` section lists it while the extension is selected, also before it has any tools.
+	 */</span>
+	<span class="tk-k">readonly</span> namespace?: <span class="tk-t">ToolNamespace</span>;
+	<span class="tk-k">readonly</span> tools?: <span class="tk-k">readonly</span> <span class="tk-t">Tool</span>[];
+	<span class="tk-k">readonly</span> sections?: <span class="tk-k">readonly</span> <span class="tk-t">PromptSection</span>&lt;<span class="tk-t">Tool</span>&gt;[];
+	<span class="tk-k">readonly</span> hooks?: <span class="tk-k">readonly</span> <span class="tk-t">HookRegistration</span>[];
+	<span class="tk-c">/** Apply where this extension is selected, in order. */</span>
+	<span class="tk-k">readonly</span> wraps?: <span class="tk-k">readonly</span> <span class="tk-t">Wrap</span>&lt;<span class="tk-t">Tool</span>&gt;[];
+	<span class="tk-c">/** Resolved by name for every task, whichever conversations select this extension. */</span>
+	<span class="tk-k">readonly</span> tasks?: <span class="tk-k">readonly</span> <span class="tk-t">AnyTask</span>[];
+}</code></pre>
+<p>What else runs in a p2 worker, each a plugin&#39;s worker facet: the chat objects (one per conversation and principal),
+the models (<code>WorkerModels</code>), the execution environments (local, SSH, gondolin sandboxes), code mode&#39;s sandbox
+(<code>CodemodeRuntime</code>, one per worker), the MCP plugin&#39;s extensions (one per server; the processes and credentials stay
+on the server), subagents, views, artifacts&#39; tools, the lock mirror, drafts, files.</p>
+<h3 id="designed-in-chord-24">Designed in Chord (§24)</h3>
+<p>Design §24 describes the same thing as p3&#39;s target: the harness is a store in the core facet (host lifetime) that
+opens Durable paused with <code>self.open</code>, reads models, environments and extensions from registries at each use, and is
+resumed after <code>host.load</code>. Tools, hooks and sections get Durable&#39;s <code>ToolExecutionApi</code> and a Durable <code>Context</code>, never a
+Chord <code>ctx</code>; they reach Chord through <code>chord(async (ctx) =&gt; …, context)</code>, a root acting as the host. <em>&quot;Tools, sections,
+hooks, wraps and tasks reach the harness as one Durable <code>Extension</code> per plugin contributed to p3&#39;s core registry&quot;</em>
+(§17).</p>
+<h3 id="decided-for-p3">Decided for p3</h3>
+<ul>
+<li><strong>No per-run authority</strong> (2026-11-08): no &quot;who started this turn&quot; anywhere in the worker.</li>
+<li><strong>Resource model direction</strong> (2026-11-08): &quot;one Durable extension = one resource&quot;; workers follow their session&#39;s
+list live; the harness lets in only extensions whose resource is on the list.</li>
+<li><strong>Artifacts and views</strong> (2026-11-12): plugin tools are code-mode only, grouped by the namespace their extension
+declares; the prompt lists namespaces from configuration, so it stays stable when servers connect.</li>
+<li><strong>The agent writes plugins</strong> (2026-11-11): plugin tools are ordinary tools in the session&#39;s selection; <em>&quot;a
+locked-down session does not get them, as it does not get <code>bash</code>&quot;</em>.</li>
+</ul>
+<p>p3 decided nothing about subagents, locations or code mode beyond this; they are p2&#39;s.</p>
+</section>
+
+<section class="chapter" id="filters"><header class="opener"><div class="numeral">X</div><h2>The Filters</h2><p class="lede">Seven places decide whether the model sees a tool and whether a call goes through; p3 must keep or replace each.</p></header>
+<p class="dropcap">Between &quot;a plugin is installed&quot; and &quot;a tool call does something&quot;, p2 has seven filters. They run in this order.</p>
+<figure class="fig wide anim"><svg viewBox="0 0 720 363" width="100%" role="img" aria-label="The filters a tool passes in a p2 worker, in order. Accent: the ones that concern people and resources; blue: the per-conversation choices." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f2m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f2a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f2b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">INTO THE REGISTRY</text><text x="16" y="144" font-size="10" fill="#2e6a8a" text-anchor="start" font-weight="600" letter-spacing="2">PER CONVERSATION</text><text x="16" y="266" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">AT THE CALL</text><g class="step" style="--i:1"><rect x="19" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="124" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">installed</text><text x="124" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">a live contribution to Extensions</text></g><g class="step" style="--i:3"><rect x="255" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">switched</text><text x="360" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">ExtensionSwitches (code mode)</text></g><g class="step" style="--i:5"><rect x="491" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="596" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">wrapped</text><text x="596" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">guardTool on every tool</text></g><g class="step" style="--i:7"><rect x="19" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="124" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">selected</text><text x="124" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle" font-family="Menlo,monospace">AgentState.extensions</text></g><g class="step" style="--i:9"><rect x="255" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="360" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">enabled</text><text x="360" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle" font-family="Menlo,monospace">AgentState.tools</text></g><g class="step" style="--i:11"><rect x="491" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="596" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">offered</text><text x="596" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">modelTools, callers, deferred</text></g><g class="step" style="--i:13"><rect x="137" y="280" width="210" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="242" y="299.3" font-size="11" fill="#2a2723" text-anchor="middle">guard runs</text><text x="242" y="313.3" font-size="9.5" fill="#7b7468" text-anchor="middle">scope and locked</text></g><g class="step" style="--i:15"><rect x="373" y="280" width="210" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="478" y="299.3" font-size="11" fill="#2a2723" text-anchor="middle">server object checks</text><text x="478" y="313.3" font-size="9.5" fill="#7b7468" text-anchor="middle">per call: lock, sharing</text></g><g class="step edge" style="--i:2"><path d="M229 58 L253 58" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/></g><g class="step edge" style="--i:4"><path d="M465 58 L489 58" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/></g><g class="step edge" style="--i:6"><path d="M596 80 L124 156" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/></g><g class="step edge" style="--i:8"><path d="M229 180 L253 180" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/></g><g class="step edge" style="--i:10"><path d="M465 180 L489 180" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/></g><g class="step edge" style="--i:12"><path d="M596 202 L242 278" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><rect x="423" y="234" width="39.6" height="13" fill="#fbf8f2" opacity=".92"/><text x="427" y="244" font-size="9.5" fill="#7b7468" text-anchor="start">a call</text></g><g class="step edge" style="--i:14"><path d="M347 302 L371 302" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><rect x="290.1" y="285" width="139.7" height="13" fill="#fbf8f2" opacity=".92"/><text x="360" y="295" font-size="9.5" fill="#7b7468" text-anchor="middle">the tool calls the server</text></g><text x="16" y="348" font-size="10.5" fill="#7b7468" text-anchor="start">Prompt sections follow the same selection; the lock also decides instructions and skills.</text></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 2.</span> The filters a tool passes in a p2 worker, in order. Accent: the ones that concern people and resources; blue: the per-conversation choices.</figcaption></figure>
+<h3 id="1-3-into-durable-39-s-registry">1–3: into Durable&#39;s registry</h3>
+<p>An extension is there while its contributor is live (design §17). <code>ExtensionSwitches</code> leaves switched-off extensions
+out (code mode&#39;s setting). <code>durableRegistry</code> wraps every tool that declares requirements with <code>guardTool</code>.</p>
+<h3 id="4-6-per-conversation-durable">4–6: per conversation (Durable)</h3>
+<p>Durable&#39;s <code>AgentState</code> holds each conversation&#39;s choices. Subagents use them to get a tool selection of their own:</p>
+<pre><code><span class="tk-c">// BUILT · packages/durable/src/harness/types.ts (excerpt)</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">AgentState</span> = {
+	model?: <span class="tk-t">ModelRef</span>;
+	thinkingLevel?: <span class="tk-t">ModelThinkingLevel</span>;
+	<span class="tk-c">/** An array selects exactly these extensions, in order. An object edits the host default selection. */</span>
+	extensions?: string[] | { add?: string[]; remove?: string[] };
+	<span class="tk-c">/** Filters the selected extensions' tools: the enabled tools. An array enables exactly these, in order. */</span>
+	tools?: string[] | { remove: string[] };
+	<span class="tk-c">/**
+	 * Filters the enabled tools the model may call (`callers` includes `model`): the tools offered to it. Never widens:
+	 * other tools can still call the ones it leaves out.
+	 */</span>
+	modelTools?: string[] | { remove?: string[]; add?: string[] };
+	<span class="tk-c">// … instructions, cwd, maxTurns, compaction</span>
+};</code></pre>
+<p>A tool&#39;s <code>callers</code> (<code>[&quot;model&quot;]</code>, <code>[&quot;tools&quot;]</code> or both) and <code>deferred</code> decide whether the model is offered it directly,
+through code mode, or through <code>tool_search</code> when code mode is off.</p>
+<h3 id="7-the-guard-and-the-server">7: the guard, and the server</h3>
+<pre><code><span class="tk-c">// BUILT · apps/p2/src/runtime/tool-access.ts (excerpt)</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">ToolAccess</span> = {
+	<span class="tk-c">/**
+	 * Where it works: anywhere; only in the session's top-level conversations (`main`: the main conversation and its
+	 * `/tree` branches, never a subagent or one-shot agent, for tools acting on the session itself); or offered only to
+	 * subagents, which get it without choosing.
+	 */</span>
+	<span class="tk-k">readonly</span> scope?: <span class="tk-s">"any"</span> | <span class="tk-s">"main"</span> | <span class="tk-s">"subagent"</span>;
+	<span class="tk-c">/**
+	 * In a locked session (`SessionLock`): `pass` (the default: what it reaches is limited by the lock elsewhere, MCP
+	 * servers by their leases, location tools by the sandbox), `never`, or only when the owner picked the capability.
+	 */</span>
+	<span class="tk-k">readonly</span> locked?: <span class="tk-s">"pass"</span> | <span class="tk-s">"never"</span> | <span class="tk-t">LockCapability</span>;
+};
+
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">guardTool</span>(tool: <span class="tk-t">P2Tool</span>): <span class="tk-t">P2Tool</span> {
+	<span class="tk-k">const</span> rule = tool.locked ?? <span class="tk-s">"pass"</span>;
+	<span class="tk-k">if</span> (rule === <span class="tk-s">"pass"</span> &amp;&amp; tool.scope !== <span class="tk-s">"main"</span>) <span class="tk-k">return</span> tool;
+	<span class="tk-k">return</span> {
+		...tool,
+		execute: <span class="tk-k">async</span> (args, api, context: <span class="tk-t">Context</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-t">ToolExecutionResult</span> | <span class="tk-t">ToolPark</span>&gt; =&gt; {
+			<span class="tk-k">if</span> (tool.scope === <span class="tk-s">"main"</span> &amp;&amp; !(<span class="tk-k">await</span> <span class="tk-f">isTopLevel</span>(api, api.conversationId, context)))
+				<span class="tk-k">return</span> <span class="tk-f">refusal</span>(<span class="tk-s">`${tool.name} works only in the session's main conversation.`</span>);
+			<span class="tk-k">if</span> (rule !== <span class="tk-s">"pass"</span>) {
+				<span class="tk-k">const</span> lock = <span class="tk-k">await</span> <span class="tk-f">sessionLock</span>(api, context);
+				<span class="tk-k">if</span> (lock &amp;&amp; rule === <span class="tk-s">"never"</span>) <span class="tk-k">return</span> <span class="tk-f">refusal</span>(<span class="tk-s">`${tool.name} is not available in a locked session.`</span>);
+				<span class="tk-k">if</span> (lock &amp;&amp; rule !== <span class="tk-s">"never"</span> &amp;&amp; !lock.capabilities.<span class="tk-f">includes</span>(rule))
+					<span class="tk-k">return</span> <span class="tk-f">refusal</span>(<span class="tk-s">`${tool.name} is not among the resources the owner picked for this session.`</span>);
+			}
+			<span class="tk-k">return</span> tool.<span class="tk-f">execute</span>(args, api, context);
+		},
+	};
+}</code></pre>
+<p>Who uses which requirement today: <code>telemetry_*</code> is <code>locked: &quot;never&quot;</code>; <code>ports</code> is <code>locked: &quot;ports&quot;</code>, <code>scope: &quot;main&quot;</code>;
+<code>conversations</code> is <code>locked: &quot;conversations&quot;</code>, <code>scope: &quot;main&quot;</code>; <code>subagent</code> is <code>scope: &quot;main&quot;</code>; <code>team</code> is
+<code>scope: &quot;subagent&quot;</code>. Behind the guard, server objects check again at each call (chapter I: telemetry refuses a locked
+or shared session&#39;s agent; MCP places only the lock&#39;s servers).</p>
+<h3 id="namespaces">Namespaces</h3>
+<p>Since 2026-11-12 (<code>5e24c6b1f</code>, &quot;feat(durable)!: code-mode namespaces declared by extensions&quot;) an extension declares its
+code-mode namespace; the <code>codemode</code> section lists it while the extension is selected, also before it has tools, so the
+prompt stays byte-identical when deferred tools appear. p2&#39;s MCP plugin makes one extension per server, each with its
+namespace, described from configuration only:</p>
+<pre><code><span class="tk-c">// BUILT · apps/p2/plugins/mcp/tools.ts (excerpt)</span>
+<span class="tk-k">return</span> <span class="tk-t">Object</span>.<span class="tk-f">fromEntries</span>(
+	servers.<span class="tk-f">map</span>((server) =&gt; [
+		<span class="tk-f">mcpExtensionName</span>(server.name),
+		<span class="tk-f">defineExtension</span>&lt;<span class="tk-t">P2Tool</span>&gt;({
+			name: <span class="tk-f">mcpExtensionName</span>(server.name),
+			namespace: {
+				name: <span class="tk-f">mcpNamespace</span>(server.name),
+				description: <span class="tk-f">namespaceDescription</span>(server),
+				...(server.instructions === <span class="tk-k">undefined</span> ? {} : { instructions: server.instructions }),
+			},
+			tools: registrations.<span class="tk-f">filter</span>((entry) =&gt; entry.server === server.name).<span class="tk-f">map</span>((entry) =&gt; entry.tool),
+		}),
+	]),
+);</code></pre>
+<p>That is already &quot;one Durable extension = one resource&quot; for MCP servers. The p2 namespaces today: <code>artifact</code>, <code>view</code>,
+<code>telemetry</code>, <code>mcp__&lt;server&gt;</code>; mail and calendar in the owner&#39;s own install.</p>
+<div class="note review"><b class="tag">Review: plugin tools in a locked session</b><p>The 2026-11-11 decision says a locked-down session does not get the plugin tools &quot;as it does not get <code>bash</code>&quot;. In p2,
+<code>reload_plugins</code> (<code>plugins/dev-tools/tool.ts</code>) declares no requirement, so the guard passes it in a locked session; and
+p2&#39;s lock does not remove <code>bash</code> either (<code>locked</code> defaults to <code>pass</code>; the location&#39;s sandbox limits it). Either the
+decision assumes a p3 list that leaves both out, or p2 should mark <code>reload_plugins</code> <code>locked: &quot;never&quot;</code>.</p>
+</div>
+</section>
+
+<section class="chapter" id="subagents"><header class="opener"><div class="numeral">XI</div><h2>Subagents and Places</h2><p class="lede">Conversations inside one worker, each with its own tools and its own location; built in p2, not discussed for p3.</p></header>
+<h3 id="built-in-p2">Built in p2</h3>
+<ul>
+<li><strong>Subagents</strong> are conversations in the same harness (<code>plugins/subagents</code>), started by the <code>subagent</code> tool
+(<code>scope: &quot;main&quot;</code>) with their own <code>model</code>, <code>thinkingLevel</code>, <code>tools</code> (written to their <code>AgentState</code>), and optionally
+their own <code>cwd</code> and <code>env</code>. The <code>team</code> tool is offered only to subagents (<code>scope: &quot;subagent&quot;</code>). A subagent&#39;s tools
+are a subset of what the worker has installed; its lock is the session&#39;s.</li>
+<li><strong>Locations.</strong> Every conversation works at a location (an environment and a directory). The location tools move the
+main agent once its turn ended (<code>location_move</code>, <code>plugins/locations</code>); environments are local, SSH or gondolin
+sandboxes, and a conversation in a sandbox cannot leave it.</li>
+<li><strong>MCP follows locations.</strong> The worker leases the conversations&#39; locations to the server&#39;s MCP plugin, which runs the
+server processes there (project <code>.pi/mcp.json</code> included); <em>&quot;No MCP process or credential is ever in a worker&quot;</em>
+(<code>plugins/mcp/worker.ts</code>).</li>
+<li><strong>Agent-written plugins</strong> need the server&#39;s machine: a session elsewhere spawns a subagent with <code>env: null</code> and
+<code>cwd: &lt;data&gt;/plugins</code> (<code>docs/agent-plugins.md</code>).</li>
+</ul>
+<h3 id="p3">p3</h3>
+<p>Nothing decided. The owner&#39;s direction in <code>sharing.md</code> §4 (2026-11-10): <em>&quot;No per-user environments. A session in any
+app may use every environment of the instance; an app may lock its sessions to one environment it chooses.&quot;</em> The
+resource-model book (chapter &quot;Models, Machines, Drives&quot;) makes machines resources owned by users. These two disagree.</p>
+<h3 id="open-questions">Open questions</h3>
+<ol>
+<li>Is a subagent&#39;s tool selection always a subset of the session&#39;s list? (In p2 yes by construction: it selects from
+what is installed, and the lock applies to all conversations.)</li>
+<li>Are environments resources (the book) or instance-wide (<code>sharing.md</code>)?</li>
+<li>A resource bound to a location (a project&#39;s stdio MCP server): the walkthrough&#39;s open point 7 says its identity is
+(resource, location). Does bringing it bring it for every location the session works in?</li>
+</ol>
+</section>
+
+<section class="chapter" id="worker-people"><header class="opener"><div class="numeral">XII</div><h2>The Worker and the People</h2><p class="lede">How a session&#39;s worker relates to users, resources, policies and locks: what p2 does, what p3 decided, what is proposed, and how the proposals fit the factory rule.</p></header>
+<h3 id="who-the-worker-acts-as">Who the worker acts as</h3>
+<p>Always itself. Towards the server its principal is <code>{ kind: &quot;worker&quot;, session }</code> (p2 adds <code>generation</code>); the server
+ignores principal fields from a child link (design §4, &quot;Upward is a boundary&quot;), so a worker cannot claim to be a
+user. People&#39;s input arrives as entries with an author the worker assigns from the caller&#39;s principal (p2:
+<code>authorOf(principal, ownerName)</code>), and the model sees a <code>&lt;sender kind=&quot;owner|guest|session|subagent&quot; …/&gt;</code> block. No
+tool knows who asked. That is the decided &quot;no per-run authority&quot; (2026-11-08) and it is built (p2 removed <code>origin</code>,
+<code>docs/agent-plugins.md</code>).</p>
+<h3 id="the-pieces-side-by-side">The pieces, side by side</h3>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>Built in p2</th>
+<th>Decided for p3</th>
+<th>Proposed</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>who is in the session</td>
+<td>owner + guests in the principal; author on each entry</td>
+<td>principals <code>user</code>, <code>guest</code>, <code>worker</code>, <code>server</code></td>
+<td><code>sessions.people</code> rows (walkthrough); chapter V&#39;s options</td>
+</tr>
+<tr>
+<td>what the agent may use</td>
+<td>installed extensions, minus the lock&#39;s exclusions; locations</td>
+<td>the session&#39;s one list; &quot;one Durable extension = one resource&quot;</td>
+<td>resource-model: extensions keyed by resource; walkthrough: <code>ResourceExtensions</code> per kind</td>
+</tr>
+<tr>
+<td>how the worker learns it</td>
+<td>lock mirrored into Durable (<code>LockMirror</code>)</td>
+<td>&quot;workers follow their session&#39;s list live&quot;</td>
+<td><code>SessionResources {}</code> on the server, worker variant (book)</td>
+</tr>
+<tr>
+<td>where it is enforced</td>
+<td><code>guardTool</code> at the call; server objects per call</td>
+<td>&quot;the harness lets in only extensions whose resource is on it&quot;; &quot;resource plugins&#39; per-session server views check the list&quot;</td>
+<td>harness drops pairs whose resource left the list and wraps tools (book)</td>
+</tr>
+<tr>
+<td>policy</td>
+<td>none (one owner)</td>
+<td>one replaceable policy plugin</td>
+<td>applied on the server while computing the list (book); gates on methods (sketch)</td>
+</tr>
+<tr>
+<td>credentials</td>
+<td>never in the worker (MCP on the server; models through the server)</td>
+<td>none specific</td>
+<td><code>AccountCredentials</code> pushed short-lived tokens (accounts book); &quot;one resource, one login&quot; (users sketch)</td>
+</tr>
+</tbody></table>
+<h3 id="the-proposed-harness-and-whether-it-fits-chord">The proposed harness, and whether it fits Chord</h3>
+<p>The resource-model book&#39;s harness respects the factory rule: it declares the extensions registry and the session&#39;s
+list in the factory, opens Durable as a native, and checks the list at compose time and at each call:</p>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/docs/resource-model/book.md, chapter "On the Worker" (2026-11-08), excerpt</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">HarnessExtension</span> = <span class="tk-k">readonly</span> [resource: <span class="tk-t">ResourceRef</span>, extension: <span class="tk-t">Extension</span>];
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Extensions</span> = defineRegistry&lt;
+	<span class="tk-k">readonly</span> <span class="tk-t">HarnessExtension</span>[] | <span class="tk-t">Watchable</span>&lt;<span class="tk-k">readonly</span> <span class="tk-t">HarnessExtension</span>[]&gt;, <span class="tk-t">ExtensionTable</span>
+&gt;(<span class="tk-s">"harness.extensions"</span>, { version: <span class="tk-n">1</span> });
+
+host.<span class="tk-f">serve</span>(<span class="tk-t">HarnessHost</span>, (_params, self) =&gt; {
+	<span class="tk-k">const</span> extensions = self.<span class="tk-f">registry</span>(<span class="tk-t">Extensions</span>);
+	<span class="tk-k">const</span> resources = self.<span class="tk-f">get</span>(<span class="tk-t">SessionResources</span>, {});
+
+	<span class="tk-c">/** Whether `resource` may be used now: the server link live, the list ready, the entry there and not expired. */</span>
+	<span class="tk-k">const</span> allowed = (resource: <span class="tk-t">ResourceRef</span>): boolean =&gt; {
+		<span class="tk-k">if</span> (resources.state.value.kind !== <span class="tk-s">"live"</span>) <span class="tk-k">return</span> <span class="tk-k">false</span>;              <span class="tk-c">// a lost link keeps last values, not permission</span>
+		<span class="tk-k">const</span> list = resources.list.value;
+		<span class="tk-k">if</span> (list.kind !== <span class="tk-s">"ready"</span>) <span class="tk-k">return</span> <span class="tk-k">false</span>;
+		<span class="tk-k">const</span> now = <span class="tk-t">Date</span>.<span class="tk-f">now</span>();
+		<span class="tk-k">return</span> list.entries.<span class="tk-f">some</span>((e) =&gt; <span class="tk-f">sameResource</span>(e.resource, resource) &amp;&amp; (e.until === <span class="tk-k">null</span> || e.until &gt; now));
+	};
+
+	<span class="tk-c">// Durable's registry, built as p2's durableRegistry (apps/p2/src/runtime/durable.ts) with `allowed` in place of</span>
+	<span class="tk-c">// switches: rebuilt when the extensions or the list change, and every tool's execute wrapped so a call is refused</span>
+	<span class="tk-c">// when `allowed` turns false mid-phase (captured code-mode tools, nested calls included).</span>
+	<span class="tk-k">const</span> registry = self.<span class="tk-f">open</span>((ctx) =&gt; <span class="tk-f">durableRegistry</span>(extensions, resources.list, allowed, ctx), closeRegistry);
+	<span class="tk-k">return</span> {};
+});</code></pre>
+<p>It is p2&#39;s <code>durableRegistry</code> with the lock replaced by the list: the same three moves (follow, compose, wrap). One
+detail does not fit design §24 as written: there the harness is base code in the core facet, here a plugin
+(<code>plugins/harness</code>) owns the registry. Either is possible; the 2026-11-06 &quot;Reloads first&quot; decision (&quot;every behaviour
+… is a plugin&quot;) favours the plugin.</p>
+<p>The walkthrough&#39;s version (<code>ResourceExtensions</code> with an <code>extension(resource, label)</code> factory per kind) has the tools
+call <code>ctx.get(...)</code> inside <code>execute(args, ctx)</code>; with Durable that is <code>execute(args, api, context)</code> and a Chord root
+(chapter VI, edge 3).</p>
+<h3 id="locks-become-the-list">Locks become the list</h3>
+<p>p2&#39;s lock answers &quot;what may this session&#39;s agent use&quot; for one owner. In p3 the decided answer is the session&#39;s list,
+with three sources (own, defaults, a grouping). The p2 lock is then exactly a session whose source is &quot;own&quot;. What has
+no p3 home yet: the lock&#39;s <code>instructions</code> flag (global AGENTS.md, skills, prompt templates) and the capabilities
+<code>ports</code> and <code>conversations</code>; in the book&#39;s terms they would be instance resources brought by their plugins.</p>
+<h3 id="open-questions">Open questions</h3>
+<ol>
+<li><strong>Who enforces on the worker:</strong> core (extensions keyed by resource, the book) or each resource plugin (it
+contributes extensions only for listed resources, the walkthrough)? Recommended by the book: core, and the server
+objects check again.</li>
+<li><strong>&quot;Belongs to the contributing plugin&quot;</strong> (decision) or not (book, third edition): chapter III review.</li>
+<li><strong>Instructions and skills</strong> in a session&#39;s list: one resource (&quot;global instructions&quot;) as in p2&#39;s lock, or one per
+skill?</li>
+<li><strong>Namespaces for several resources of a kind:</strong> the walkthrough names them <code>mcp__gmail_work</code> and adds the owner
+and account to the description; the decision says the prompt lists namespaces &quot;from configuration, so it stays
+stable&quot;. Bringing or withdrawing a resource changes the prompt by design; is that acceptable for prompt caching?</li>
+<li><strong>Credentials:</strong> models and MCP use the server today. Does any p3 resource push credentials to the worker (the
+accounts book&#39;s <code>AccountCredentials</code>), or does every use go through a server object?</li>
+</ol>
+</section>
+
+<section class="chapter epilogue" id="ten-rules-and-the-decisions-left"><header class="opener"><div class="numeral">∴</div><h2>Ten Rules and the Decisions Left</h2><p class="lede">One page: ten rules that would settle most of the above (proposed by this rundown), and the owner&#39;s open decisions in the order they unblock the most.</p></header>
+<h3 id="ten-rules-proposed">Ten rules (proposed)</h3>
+<ol>
+<li><strong>A factory decides only from params and the principal.</strong> Everything else is checked in methods and shown as
+derived state. (Chord as it is; no async activation guard.)</li>
+<li><strong>Per-user data lives in a store keyed by user id.</strong> The per-user object pins <code>at(principal.id)</code> in its factory.
+No <code>scope</code> option in Chord.</li>
+<li><strong>A resource&#39;s owner is a user or the instance.</strong> You create and bring only your own; who may create or bring
+instance resources is the policy&#39;s call. (Decided 2026-11-13.)</li>
+<li><strong>A session has one list, from one source.</strong> Everyone who may send uses all of it. No per-run authority. (Decided
+2026-11-08.)</li>
+<li><strong>The list is computed on the server and followed by the worker.</strong> The policy is applied when the list is
+computed; the worker never asks the policy.</li>
+<li><strong>Every server object a worker calls for a resource checks the list at each call</strong> and hides the resource&#39;s data
+in its derived state once it is withdrawn.</li>
+<li><strong>The policy is one synchronous function over state its plugin follows,</strong> with the asking code&#39;s baseline. Hard
+rules (you bring only your own) come first and no policy changes them.</li>
+<li><strong>Guarded methods are wrapped when served,</strong> by p3&#39;s API from the operations a contract declares, never by a hook
+in Chord&#39;s dispatch.</li>
+<li><strong>A view shows an item a plugin owns.</strong> The plugin decides where the item&#39;s data lives and who sees it, through its
+per-principal objects; the layout only places.</li>
+<li><strong>A guest sees exactly what the objects give their principal.</strong> A layout or a hidden pane never protects anything.</li>
+</ol>
+<h3 id="decisions-for-the-owner-in-the-order-they-unblock-the-most">Decisions for the owner, in the order they unblock the most</h3>
+<ol>
+<li><strong>Where &quot;may view, may send&quot; lives for users:</strong> in the principal (p2), as followed state checked per call, or a
+principal per session (chapter V, a/b/c).</li>
+<li><strong>Policy shape:</strong> synchronous over followed state, or async (chapter IV).</li>
+<li><strong>Per-user data:</strong> the store-plus-pin pattern of edge 1, or Chord-level scopes.</li>
+<li><strong>Resource index:</strong> one central index (resource-model book) or per-plugin <code>list()</code> (walkthrough).</li>
+<li><strong>Defaults are a live rule</strong> (decision of 2026-11-08): confirm, and drop the walkthrough&#39;s copy at creation.</li>
+<li><strong>Guarded operations:</strong> core&#39;s typed request union, or plugins&#39; operations with shared facts; who keeps the fact
+vocabulary.</li>
+<li><strong>Who enforces on the worker:</strong> core (extensions keyed by resource) or each resource plugin; and whether &quot;belongs
+to the contributing plugin&quot; stays.</li>
+<li><strong>Retire stale texts:</strong> <code>INSTANCE</code> in two books, account grants, <code>sharing.md</code>&#39;s &quot;resource model shelved&quot;,
+<code>views.md</code>&#39;s typed params and two tiers.</li>
+<li><strong>Guests in p3:</strong> their own principal kind (p2&#39;s shape) or a link admission into a user-like principal.</li>
+<li><strong>Placements:</strong> session data (p2) or layout data, and who hosts layouts (per user and device class, or per device).</li>
+<li><strong>The &quot;+&quot; registry:</strong> <code>ViewKinds</code> gains title, icon and <code>needsItem</code>; where recently closed is kept.</li>
+<li><strong>Terminals and files as view kinds,</strong> and which guests get them.</li>
+<li><strong>Environments:</strong> instance-wide (<code>sharing.md</code>) or resources owned by users (book).</li>
+<li><strong>Lock capabilities and instructions</strong> as instance resources.</li>
+<li><strong>Plugin tools in a locked session:</strong> mark <code>reload_plugins</code> <code>locked: &quot;never&quot;</code> in p2, or change the decision&#39;s
+wording.</li>
+<li><strong>Layouts as apps:</strong> record it in <code>decisions.md</code> or not.</li>
+</ol>
+</section>
+
+<section class="chapter appendix" id="sources-and-their-status"><header class="opener"><div class="numeral">A</div><h2>Sources and Their Status</h2></header>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>Date, author</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>apps/p3/docs/decisions.md</code></td>
+<td>owner, 2026-11-06 to 2026-11-13</td>
+<td>decided; newest wins</td>
+</tr>
+<tr>
+<td><code>apps/p3/docs/accounts/book.md</code></td>
+<td>p3 session, 2026-11-07</td>
+<td>proposal; grants superseded, <code>AccountProviders</code> unanswered</td>
+</tr>
+<tr>
+<td><code>apps/p3/docs/resources-code/book.md</code></td>
+<td>p3 session, 2026-11-08</td>
+<td>proposal, first sketch; superseded by the resource-model book</td>
+</tr>
+<tr>
+<td><code>apps/p3/docs/resource-model/book.md</code></td>
+<td>p3 session, 2026-11-08, third edition</td>
+<td>proposal; <code>INSTANCE</code> superseded 2026-11-13</td>
+</tr>
+<tr>
+<td><code>/tmp/users-chapter.md</code></td>
+<td>p3 session, 2026-11-08</td>
+<td>the book&#39;s chapter II; <code>INSTANCE</code> superseded</td>
+</tr>
+<tr>
+<td><code>apps/p3/docs/sharing.md</code></td>
+<td>p3 session synthesis + owner direction, 2026-11-10</td>
+<td>proposal; §4 owner direction partly contradicted by 2026-11-13</td>
+</tr>
+<tr>
+<td><code>apps/p3/docs/views.md</code></td>
+<td>p3 session, 2026-11-10</td>
+<td>proposal; §4–4a superseded 2026-11-11/12</td>
+</tr>
+<tr>
+<td><code>apps/p3/docs/layouts/mocks.html</code></td>
+<td>p3 session, 2026-11-10 onwards</td>
+<td>mockups</td>
+</tr>
+<tr>
+<td><code>apps/p3/docs/users-sketch.md</code></td>
+<td>p3 session, 2026-11-13, uncommitted</td>
+<td>proposal</td>
+</tr>
+<tr>
+<td><code>apps/p3/docs/operation-gates-sketch.md</code></td>
+<td>p3 session, 2026-11-13, uncommitted</td>
+<td>proposal</td>
+</tr>
+<tr>
+<td><code>apps/p3/docs/multiuser-walkthrough.md</code></td>
+<td>p3 session, 2026-11-13, uncommitted</td>
+<td>proposal</td>
+</tr>
+<tr>
+<td><code>apps/p2/docs/views-mock/index.html</code></td>
+<td>2026-11-13, uncommitted</td>
+<td>mockup</td>
+</tr>
+<tr>
+<td>the &quot;three edges&quot; proposal</td>
+<td>another session, 2026-11-13</td>
+<td>proposal (chapter VI)</td>
+</tr>
+<tr>
+<td><code>apps/p2/docs/views.md</code>, <code>artifacts.md</code>, <code>agent-plugins.md</code>, <code>p2-notes.md</code></td>
+<td>p2</td>
+<td>built</td>
+</tr>
+<tr>
+<td><code>packages/chord/docs/design.md</code></td>
+<td>Chord</td>
+<td>design; §1, §4–§7, §17, §24 read</td>
+</tr>
+</tbody></table>
+</section>
+
+<section class="chapter appendix" id="chord-calls-the-rewrites-use"><header class="opener"><div class="numeral">B</div><h2>Chord Calls the Rewrites Use</h2></header>
+<p>Every <code>PROPOSED · this rundown</code> block uses only these, checked in <code>packages/chord/src</code> at <code>origin/main</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Call</th>
+<th>Where it is defined</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>local</code>, <code>remote</code>, <code>method</code>, <code>keyed</code></td>
+<td><code>contracts/declare.ts</code>, <code>contracts/schema.ts</code></td>
+</tr>
+<tr>
+<td><code>defineState(name, { keyed: true, persist: true, checkpointWhen })</code></td>
+<td><code>documents/definition.ts</code></td>
+</tr>
+<tr>
+<td><code>host.serve(Type, factory)</code>, <code>Factory</code>, <code>FacetHost</code></td>
+<td><code>host/facet.ts</code>, <code>host/attempt.ts</code></td>
+</tr>
+<tr>
+<td><code>self.state</code>, <code>self.get</code>, <code>self.derive</code>, <code>self.registry</code>, <code>self.writable</code>, <code>self.onLive</code></td>
+<td><code>host/attempt.ts</code> (<code>Self</code>), <code>host/routines.ts</code></td>
+</tr>
+<tr>
+<td><code>self.contribute</code> (stores only)</td>
+<td><code>host/attempt.ts</code> (<code>StoreSelf</code>)</td>
+</tr>
+<tr>
+<td><code>ref.member.at(key)</code> (keyed pin in a factory)</td>
+<td>design §5; <code>test/examples/24-keyed-members.ts</code></td>
+</tr>
+<tr>
+<td><code>handle.change(key, fn, ctx)</code> on a keyed document</td>
+<td><code>test/examples/24-keyed-members.ts</code></td>
+</tr>
+<tr>
+<td>a route&#39;s <code>authorize(principal, address): boolean</code></td>
+<td><code>host/host.ts</code>, <code>node/workers/workers.ts</code></td>
+</tr>
+<tr>
+<td><code>host.revoke(revocation, ctx)</code> with the app&#39;s <code>revokedBy</code></td>
+<td>design §4; <code>apps/p2/src/runtime/principals.ts</code></td>
+</tr>
+<tr>
+<td><code>forbidden(message)</code></td>
+<td><code>data/errors.ts</code></td>
+</tr>
+</tbody></table>
+<p>Not Chord, and named as such where used: p2&#39;s helpers <code>contribute</code>, <code>workerOf</code>, <code>harnessOf</code>, <code>expectVariant</code>,
+<code>deriveTyped</code>, <code>untilAborted</code>; the p3 contracts <code>SessionList</code>, <code>SessionPeople</code>, <code>Policies</code>, <code>TodoStore</code>, <code>Chat</code>,
+<code>Conversation</code>, which exist only in the proposals.</p>
+</section>
+
+<p class="colophon">p3, where everything stands · rundown, first edition · 2026-11-13 · sources: apps/p3/docs (decisions.md, accounts, resource-model, resources-code, sharing.md, views.md, layouts, today&#39;s sketches), /tmp/users-chapter.md, apps/p2 (docs, src/runtime, plugins), packages/chord (design.md §1, §4–§7, §17, §24; src/host), packages/durable/src/harness</p>
+</div></div>
+<script>(function activate(root) {
+	const replay = (f) => {
+		f.classList.remove("play");
+		void f.getBoundingClientRect();
+		f.classList.add("play");
+	};
+	const io = new IntersectionObserver(
+		(es) => {
+			for (const e of es)
+				if (e.isIntersecting) {
+					e.target.classList.add("play");
+					io.unobserve(e.target);
+				}
+		},
+		{ threshold: 0.3 },
+	);
+	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
+		f.classList.add("armed");
+		io.observe(f);
+		const b = f.querySelector(".replay");
+		if (b) b.onclick = () => replay(f);
+	});
+	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
+		s.classList.add("js");
+		const ps = [...s.querySelectorAll(":scope>.step-panel")];
+		let i = 0;
+		const c = s.querySelector(".count"),
+			p = s.querySelector(".prev"),
+			n = s.querySelector(".next");
+		const show = () => {
+			ps.forEach((x, j) => x.classList.toggle("on", j === i));
+			c.textContent = `${i + 1} / ${ps.length}`;
+			p.disabled = i === 0;
+			n.disabled = i === ps.length - 1;
+			ps[i].querySelectorAll(".anim").forEach(replay);
+		};
+		p.onclick = () => {
+			i--;
+			show();
+		};
+		n.onclick = () => {
+			i++;
+			show();
+		};
+		show();
+	});
+})(document)</script>
+</body></html>
