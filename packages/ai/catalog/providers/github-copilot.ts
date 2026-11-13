@@ -94,14 +94,15 @@ export default defineProvider({
 				skipDeprecated: true,
 				defaultContextWindow: 128000,
 				defaultMaxTokens: 8192,
-				map: (model): ChatModel => {
+				map: (model, source): ChatModel => {
 					const api = copilotApi(model.id);
 					const result: ChatModel = { ...model, api };
 					if (api === "openai-completions") {
 						result.compat = {
 							supportsStore: false,
 							supportsDeveloperRole: false,
-							supportsReasoningEffort: false,
+							supportsReasoningEffort:
+								source.reasoningOptions?.some((option) => option.type === "effort") ?? false,
 						};
 					}
 					if (model.id === "claude-opus-5.5") mergeThinking(result, claude55ThinkingLevels(model.id));
