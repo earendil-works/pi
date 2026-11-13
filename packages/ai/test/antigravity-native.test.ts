@@ -12,6 +12,7 @@ import {
 	convertTools,
 	describeInvalidEnding,
 	friendlyAntigravityError,
+	mapStopReason,
 	requiresThoughtSignature,
 	SKIP_THOUGHT_SIGNATURE_VALIDATOR,
 } from "../src/api/antigravity/stream.ts";
@@ -294,9 +295,11 @@ describe("native Antigravity", () => {
 
 	it.each([
 		["MAX_TOKENS", "length"],
+		["CONTINUATION", "length"],
 		["SAFETY", "error"],
 		["MALFORMED_FUNCTION_CALL", "error"],
 	])("does not promote %s into tool execution", async (finish, expected) => {
+		expect(mapStopReason(finish)).toBe(expected);
 		const result = await streamSimple(model, context, {
 			apiKey,
 			fetch: async () => response([{ functionCall: { name: "echo", args: {} } }], finish),

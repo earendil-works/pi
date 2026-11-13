@@ -841,7 +841,7 @@ export async function buildRequest(
 /** Exported for unit tests. */
 export function mapStopReason(reason: string | undefined): StopReason {
 	if (reason === "STOP") return StopReason.Stop;
-	if (reason === "MAX_TOKENS") return StopReason.Length;
+	if (reason === "MAX_TOKENS" || reason === "CONTINUATION") return StopReason.Length;
 	return reason ? StopReason.Error : StopReason.Stop;
 }
 
