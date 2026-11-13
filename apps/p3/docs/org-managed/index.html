@@ -1,0 +1,898 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>p3: org-managed Pis through managed settings</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A design book · p3 · first edition · 2026-11-13</div>
+  <h1>Org-Managed<br>Pis</h1>
+  <p class="subtitle">How Acme gives every member&#39;s Pi its plugins, MCP servers and models, and closes what it must, without a policy language</p>
+  <div class="cover-stats"><div class="stat"><b>1</b><span>write path for every setting, Settings.set</span></div><div class="stat"><b>2</b><span>locks a managed setting can have, default and locked</span></div><div class="stat"><b>5</b><span>gate states, from unmanaged to revoked</span></div><div class="stat"><b>1</b><span>kit change, plugin roots and admit</span></div></div>
+  <div class="cover-note"><p>The design the owner chose on 2026-11-13 (&quot;I&#39;m in favor of the Opus model ... it just needs to be flexible&quot;), written
+from the consultation <code>org-opus</code> and the good parts of <code>org-fable</code>, <code>org-astra</code> and <code>org-sol</code> (read-only notes in
+<code>/tmp</code>, not in the repo). Every Chord API used in the code was checked against <code>packages/chord/src</code> on origin/main
+<code>8f3f08561</code>; every p3 name is a proposal. Nothing is built: every code block is marked PROPOSED. Notes marked
+<em>review</em> are corrections to the consultation or points still open.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#profile">I. What Acme Sets</a></li>
+<li><a href="#settings">II. Everything Is a Setting</a></li>
+<li><a href="#gate">III. Enrolled, Locked, Ready</a></li>
+<li><a href="#trust">IV. Guardrails and Walls</a></li>
+<li><a href="#failures">V. When Things Fail</a></li>
+<li><a href="#now">VI. What the Base Needs Now</a></li>
+<li><a href="#what-it-cannot-do">What It Cannot Do</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">p3 gives one Pi to each person. Colin&#39;s plan has two dates. On December 1, Pi Roam: a person runs their own Pi,
+reaches it through Radius, backs it up there. On December 18, Org Devices: an org has a machine, and each member
+creates their own Pi on it with &quot;Create my Pi here&quot; in Radius. Dana works at Acme. Her Pi is hers: her sessions, her
+logins, her plugins. But Acme wants three things from it. It should start with Acme&#39;s plugins, MCP servers and models
+already set up. It should not share sessions with people outside Acme. And it should not quietly load code Acme never
+approved.</p>
+<p>The obvious answer is a permission system: plugins name their operations, the org writes rules over them, a policy
+plugin decides each call. The consultations showed what that costs. Every plugin author classifies every method, the
+base grows levels, a rule registry and a <code>may</code> member, and the result is still a guardrail, because code running in the
+Pi&#39;s process can skip any check. And it does not even cover the first wish: provisioning (&quot;start with our MCP
+servers&quot;) is a separate mechanism.</p>
+<p>This design takes the other road. <strong>Everything an org wants is a setting.</strong> Plugins already need settings for their
+settings page; they declare them through one base mechanism. Acme&#39;s values form one <strong>managed layer</strong> on top of
+Dana&#39;s own values. For each setting it names, the layer either provides a default (Dana may change it, or add entries
+beside Acme&#39;s) or locks it (only Acme&#39;s value counts). &quot;Start with our MCP servers&quot; and &quot;no MCP servers except ours&quot; are
+the same data with a different lock.</p>
+<h3 id="eight-things-to-know">Eight things to know</h3>
+<ol class="findings">
+<li><strong>An org profile is a list of setting values,</strong> each with a lock: <code>default</code> or <code>locked</code>. Plugins to install, MCP
+servers, model providers, sharing and peer audiences, company instructions: all are settings. There are no
+operations, levels, rule tables or policy functions.</li>
+<li><strong>Plugins declare settings with <code>defineSetting</code>,</strong> a token with a name, a schema, an initial value and a merge kind:
+<code>value</code> (one value) or <code>entries</code> (a record by name, such as MCP servers). Authors write nothing about orgs.</li>
+<li><strong>Every write goes through <code>Settings.set</code>:</strong> the settings page, the agent&#39;s tools, other plugins. It refuses a locked
+setting and any change to an org&#39;s entry with the error code <code>managed</code> (&quot;Managed by Acme&quot;).</li>
+<li><strong>Enrollment is a root-owned file:</strong> &quot;you belong to org Acme, its server is this, its key is this; do nothing before
+you have synced&quot;. It holds no secrets and no settings.</li>
+<li><strong>The profile comes from the org server (Radius), signed with the org&#39;s key.</strong> An enrolled Pi starts locked, fetches
+its profile, installs the required plugins, writes the signed profile as its cache and unlocks. Later starts use the
+cache at once and follow the server live.</li>
+<li><strong>The gate is one tagged state:</strong> <code>unmanaged</code>, <code>pending</code>, <code>ready</code>, <code>stale</code>, <code>revoked</code>. Sessions start, workers
+authorize and plugins load only when it is <code>unmanaged</code> or <code>ready</code>.</li>
+<li><strong>In the Pi it is a guardrail; at Radius it is real.</strong> It stops Dana&#39;s agent and well-behaved plugins. A shell under
+the Pi&#39;s Unix user, root, or an admitted plugin can ignore it. Sharing, peers and org-paid models are enforced at
+Radius from the same profile.</li>
+<li><strong>The base must have one settings mechanism now,</strong> before any org exists: one write path, a <code>managed</code> error, base
+switches for sharing and peers, and a gate that is always <code>unmanaged</code>. Retrofitting a single write path later is the
+expensive part.</li>
+</ol>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p>A <strong>member</strong> is a person in an org, and the owner of one Pi. A <strong>setting</strong> is a named, typed piece of configuration a
+plugin declares with <strong><code>defineSetting</code></strong>. Its <strong>merge</strong> kind is <strong>value</strong> (one value) or <strong>entries</strong> (a record of named
+entries). The <strong>user layer</strong> holds the member&#39;s own values; the <strong>managed layer</strong> holds the org&#39;s, each with a
+<strong>lock</strong>: <strong>default</strong> (the org&#39;s value is a starting point) or <strong>locked</strong> (only the org&#39;s value counts). The
+<strong>effective value</strong> is what plugins read after both layers are combined. The <strong>enrollment file</strong> binds a machine&#39;s Pis
+to an org. The <strong>profile</strong> is the org&#39;s managed layer for one member&#39;s Pi, signed with the <strong>org key</strong>; the Pi keeps the
+last good one as its <strong>cache</strong>. The <strong>gate</strong> is the Pi&#39;s org state. <strong>Admit</strong> is the kit&#39;s check that decides at
+discovery which plugins load. A <strong>guardrail</strong> holds against the member&#39;s agent and well-behaved code; a <strong>wall</strong> holds
+even against a modified Pi, because Radius enforces it.</p>
+<div class="note"><b class="tag">What this supersedes</b><p>The decision &quot;Resource model direction&quot; (2026-11-08) planned one replaceable policy plugin that guards create, bring
+and add-member operations. It is dropped: an org restricts by locking settings. Company resources of the decision
+&quot;Instance resources&quot; (2026-11-13: a shared login, a team server) become org-managed entries of the setting that holds
+them, such as an MCP server in <code>mcp.servers</code>. The research note <code>authz-research.md</code> (named operations, levels, <code>may</code>)
+is not pursued.</p>
+</div>
+</section>
+
+<section class="chapter" id="profile"><header class="opener"><div class="numeral">I</div><h2>What Acme Sets</h2><p class="lede">The two files behind an org-managed Pi: the admin&#39;s enrollment and Acme&#39;s signed profile.</p></header>
+<p class="dropcap">Two documents make Dana&#39;s Pi Acme&#39;s. The first sits on the machine and never changes: it says which org the machine&#39;s
+Pis belong to. The second lives in Radius, changes whenever Acme&#39;s admin edits it, and says what Acme wants. The split
+matters. The machine admin decides once that a machine is Acme&#39;s. Acme&#39;s admin then edits one profile in Radius, and
+every member&#39;s Pi follows it live, with no agent on the machine keeping files in sync.</p>
+<h3 id="the-enrollment-file">The enrollment file</h3>
+<p>On an Org Device, the Device&#39;s own setup (running as root, with the org&#39;s service token) writes this file once. On a
+member&#39;s laptop, the org&#39;s device management (MDM: the tool an IT department uses to push files and settings to
+company laptops) delivers it. Without the file, a Pi is personal and unmanaged, as on December 1.</p>
+<pre><code><span class="tk-c">// PROPOSED · /etc/p3/enrollment.json, owned by root, mode 0644, parent directories root-owned</span>
+{
+  <span class="tk-s">"org"</span>: <span class="tk-s">"acme"</span>,
+  <span class="tk-s">"name"</span>: <span class="tk-s">"Acme"</span>,
+  <span class="tk-s">"server"</span>: <span class="tk-s">"https://radius.example.com/orgs/acme"</span>,
+  <span class="tk-s">"orgKey"</span>: <span class="tk-s">"ed25519:MCowBQYDK2VwAyEAq4…"</span>,
+  <span class="tk-s">"pluginSources"</span>: [<span class="tk-s">"github.com/acme/"</span>]
+}</code></pre>
+<p>It holds no secrets. <code>orgKey</code> is the public key profiles are signed with. <code>pluginSources</code> limits where the org may push
+code from: a profile naming a plugin outside these prefixes is refused, even when signed. The path is fixed in the base
+code: no flag and no environment variable can point the Pi at another file, so a member&#39;s agent cannot enroll the Pi
+somewhere else or skip enrollment.</p>
+<p>The Pi&#39;s own credential is not in the file. &quot;Create my Pi here&quot; in Radius, or Dana&#39;s Radius sign-in on the gate page,
+gives her Pi its own token, kept in the Pi&#39;s data directory. A shared token in a machine-wide file would be wrong: the
+profile is per member.</p>
+<h3 id="the-profile">The profile</h3>
+<p>Radius resolves Acme&#39;s groups to one profile per member and Pi. Here is Dana&#39;s:</p>
+<pre><code><span class="tk-c">// PROPOSED · the profile Radius serves to Dana's Pi</span>
+{
+  <span class="tk-s">"payload"</span>: {
+    <span class="tk-s">"org"</span>: <span class="tk-s">"acme"</span>,
+    <span class="tk-s">"orgName"</span>: <span class="tk-s">"Acme"</span>,
+    <span class="tk-s">"member"</span>: <span class="tk-s">"dana@acme.com"</span>,
+    <span class="tk-s">"pi"</span>: <span class="tk-s">"pi_7f3a"</span>,
+    <span class="tk-s">"revision"</span>: <span class="tk-n">42</span>,
+    <span class="tk-s">"issuedAt"</span>: <span class="tk-s">"2026-12-18T09:00:00Z"</span>,
+    <span class="tk-s">"maxOffline"</span>: <span class="tk-k">null</span>,
+    <span class="tk-s">"settings"</span>: {
+      <span class="tk-s">"p3.plugins"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: {
+        <span class="tk-s">"acme-tools"</span>:   { <span class="tk-s">"source"</span>: { <span class="tk-s">"git"</span>: <span class="tk-s">"github.com/acme/p3-tools"</span>, <span class="tk-s">"ref"</span>: <span class="tk-s">"v1.4.0"</span> },   <span class="tk-s">"hash"</span>: <span class="tk-s">"sha256-9c1e…"</span>, <span class="tk-s">"required"</span>: <span class="tk-k">true</span> },
+        <span class="tk-s">"acme-deploy"</span>:  { <span class="tk-s">"source"</span>: { <span class="tk-s">"git"</span>: <span class="tk-s">"github.com/acme/p3-deploy"</span>, <span class="tk-s">"ref"</span>: <span class="tk-s">"v0.9.2"</span> },  <span class="tk-s">"hash"</span>: <span class="tk-s">"sha256-41b0…"</span>, <span class="tk-s">"required"</span>: <span class="tk-k">true</span> },
+        <span class="tk-s">"acme-reviews"</span>: { <span class="tk-s">"source"</span>: { <span class="tk-s">"git"</span>: <span class="tk-s">"github.com/acme/p3-reviews"</span>, <span class="tk-s">"ref"</span>: <span class="tk-s">"v2.0.1"</span> }, <span class="tk-s">"hash"</span>: <span class="tk-s">"sha256-77de…"</span>, <span class="tk-s">"required"</span>: <span class="tk-k">false</span> }
+      } },
+      <span class="tk-s">"p3.plugins.own"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: <span class="tk-k">false</span> },
+      <span class="tk-s">"mcp.servers"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: {
+        <span class="tk-s">"jira"</span>:   { <span class="tk-s">"url"</span>: <span class="tk-s">"https://mcp.atlassian.com/v1/sse"</span>, <span class="tk-s">"auth"</span>: { <span class="tk-s">"radius"</span>: <span class="tk-s">"jira"</span> } },
+        <span class="tk-s">"linear"</span>: { <span class="tk-s">"url"</span>: <span class="tk-s">"https://mcp.linear.app/mcp"</span>, <span class="tk-s">"auth"</span>: { <span class="tk-s">"radius"</span>: <span class="tk-s">"linear"</span> } }
+      } },
+      <span class="tk-s">"models.providers"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: {
+        <span class="tk-s">"radius"</span>: { <span class="tk-s">"kind"</span>: <span class="tk-s">"radius"</span>, <span class="tk-s">"auth"</span>: { <span class="tk-s">"radius"</span>: <span class="tk-s">"models"</span> } }
+      } },
+      <span class="tk-s">"p3.sharing.audience"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: <span class="tk-s">"org"</span> },
+      <span class="tk-s">"p3.peers.audience"</span>:   { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: <span class="tk-s">"org"</span> },
+      <span class="tk-s">"prompt.instructions"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"default"</span>, <span class="tk-s">"value"</span>: {
+        <span class="tk-s">"acme"</span>: { <span class="tk-s">"text"</span>: <span class="tk-s">"Acme code is reviewed on GitHub before merge. Never paste customer data into issues."</span> }
+      } }
+    }
+  },
+  <span class="tk-s">"signature"</span>: { <span class="tk-s">"alg"</span>: <span class="tk-s">"ed25519"</span>, <span class="tk-s">"key"</span>: <span class="tk-s">"acme-2026-11"</span>, <span class="tk-s">"value"</span>: <span class="tk-s">"Zm9v…"</span> }
+}</code></pre>
+<p>Read line by line, it says:</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Lock</th>
+<th>Effect on Dana&#39;s Pi</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>p3.plugins</code></td>
+<td>locked</td>
+<td><code>acme-tools</code> and <code>acme-deploy</code> are installed at the pinned ref and hash. <code>acme-reviews</code> is allowed: offered in the catalog, installed on request. Nothing else may be installed.</td>
+</tr>
+<tr>
+<td><code>p3.plugins.own</code></td>
+<td>locked <code>false</code></td>
+<td>Plugins Dana or her agent write do not load: only approved builds run.</td>
+</tr>
+<tr>
+<td><code>mcp.servers</code></td>
+<td>locked</td>
+<td>Jira and Linear are connected; Dana cannot add a server.</td>
+</tr>
+<tr>
+<td><code>models.providers</code></td>
+<td>locked</td>
+<td>Only Radius&#39;s model gateway; Acme&#39;s provider keys stay at Radius.</td>
+</tr>
+<tr>
+<td><code>p3.sharing.audience</code></td>
+<td>locked <code>&quot;org&quot;</code></td>
+<td>Sessions can be shared with Acme members only.</td>
+</tr>
+<tr>
+<td><code>p3.peers.audience</code></td>
+<td>locked <code>&quot;org&quot;</code></td>
+<td>The Pi connects only to Pis of Acme members.</td>
+</tr>
+<tr>
+<td><code>prompt.instructions</code></td>
+<td>default</td>
+<td>Acme&#39;s instructions are in every session; Dana may add her own beside them, not edit Acme&#39;s.</td>
+</tr>
+</tbody></table>
+<p>Every setting the profile does not name stays Dana&#39;s. Credentials are never in the profile: <code>auth: { radius: &quot;jira&quot; }</code>
+is a reference, resolved at Radius when the MCP plugin connects. Leaving Acme removes access at Radius, with nothing to
+wipe on the machine.</p>
+<p><code>member</code> and <code>pi</code> bind the profile to Dana&#39;s Pi: a profile issued for another member or another Pi is refused, even
+when the signature is valid. <code>revision</code> only grows: the Pi never takes a lower one than it has. <code>maxOffline</code> is
+optional; it is explained in chapter III.</p>
+<div class="note review"><b class="tag">Review: who holds the org key</b><p>The consultation says the profile is signed &quot;with the org key, not with Radius&#39;s key, so Radius alone cannot forge
+one&quot;. That holds only if the private key is not at Radius: the admin signs in the browser with a key Radius never sees.
+If Radius&#39;s profile editor signs with a per-org key it stores, the signature still stops edits of the cache on the
+machine, but a compromised Radius can push code to every member&#39;s Pi. Decision needed (Open Questions).</p>
+</div>
+</section>
+
+<section class="chapter" id="settings"><header class="opener"><div class="numeral">II</div><h2>Everything Is a Setting</h2><p class="lede">One declaration per setting, two merge kinds, two locks, one write path: what plugin authors write, and what they do not.</p></header>
+<p class="dropcap">Without a shared mechanism, every plugin keeps its configuration its own way. p2&#39;s MCP plugin reads <code>mcp.json</code>, the
+models plugin reads <code>models.json</code>. An org that wants to lock MCP servers would need a hook in each of them, and a
+plugin that keeps a private config file would escape any lock. So the base owns configuration: a plugin declares each
+setting once, the base stores the member&#39;s values, combines them with the org&#39;s, and every write goes through one
+method that knows about locks.</p>
+<h3 id="declaring-a-setting">Declaring a setting</h3>
+<p>A setting is a token in the contract file of the plugin that owns it, like a <code>defineState</code> token. The plugin
+contributes it to the registry <code>SettingKinds</code>, from which the settings page renders its forms.</p>
+<pre><code><span class="tk-c">// PROPOSED · @p3/app/v1/settings.ts (base contract file). Chord API: defineRegistry, keyedEntries, TableItem, Schema.</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">SettingKind</span> = {
+	<span class="tk-k">readonly</span> name: string;
+	<span class="tk-k">readonly</span> schema: <span class="tk-t">Schema</span>;
+	<span class="tk-k">readonly</span> merge: <span class="tk-s">"value"</span> | <span class="tk-s">"entries"</span>;
+	<span class="tk-k">readonly</span> initial: <span class="tk-t">JsonValue</span>;
+};
+
+<span class="tk-c">/** Declares a setting; its plugin contributes it to `SettingKinds` and reads it with `setting(self, token)`. */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">defineSetting</span>&lt;S <span class="tk-k">extends</span> <span class="tk-t">Schema</span>&gt;(
+	name: string,
+	schema: S,
+	options: { <span class="tk-k">readonly</span> merge: <span class="tk-s">"value"</span> | <span class="tk-s">"entries"</span>; <span class="tk-k">readonly</span> initial: <span class="tk-t">Static</span>&lt;S&gt; },
+): <span class="tk-t">SettingKind</span> &amp; { <span class="tk-k">readonly</span> initial: <span class="tk-t">Static</span>&lt;S&gt; } {
+	<span class="tk-k">return</span> { name, schema, merge: options.merge, initial: options.initial };
+}
+
+<span class="tk-c">/** Every declared setting by name, with the plugin that contributed it (the first by plugin name wins a name). */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SettingKinds</span> = defineRegistry&lt;<span class="tk-k">readonly</span> <span class="tk-t">SettingKind</span>[], <span class="tk-t">ReadonlyMap</span>&lt;string, <span class="tk-t">TableItem</span>&lt;<span class="tk-t">SettingKind</span>&gt;&gt;&gt;(
+	<span class="tk-s">"p3.setting-kinds"</span>,
+	{ version: <span class="tk-n">1</span> },
+);</code></pre>
+<p>The base serves <code>SettingKinds</code> with <code>keyedEntries(table, (kinds) =&gt; Object.fromEntries(kinds.map((k) =&gt; [k.name, k])), report)</code>, which reports a name two plugins declare.</p>
+<h3 id="two-merge-kinds-two-locks">Two merge kinds, two locks</h3>
+<p><strong>Value</strong> settings hold one value: a boolean, a string, an object. <code>p3.sharing.audience</code> is a value setting.
+<strong>Entries</strong> settings hold a record of named entries: MCP servers by name, providers by name, plugins by name. The
+difference matters for the default lock: an org default of a value setting is replaced by the member&#39;s value; org
+entries are added beside the member&#39;s.</p>
+<p>The effective value follows four rules:</p>
+<table>
+<thead>
+<tr>
+<th>Managed layer says</th>
+<th>Value setting</th>
+<th>Entries setting</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>nothing</td>
+<td>the member&#39;s value, else the initial value</td>
+<td>the member&#39;s entries</td>
+</tr>
+<tr>
+<td><code>default</code></td>
+<td>the member&#39;s value, else the org&#39;s</td>
+<td>the member&#39;s entries plus the org&#39;s; on the same name the org&#39;s wins, read-only</td>
+</tr>
+<tr>
+<td><code>locked</code></td>
+<td>the org&#39;s value</td>
+<td>the org&#39;s entries only</td>
+</tr>
+<tr>
+<td>(gate not open)</td>
+<td>the initial value</td>
+<td>none</td>
+</tr>
+</tbody></table>
+<p>A locked setting does not delete the member&#39;s values. They are kept and ignored, so when Acme unlocks
+<code>mcp.servers</code>, or Dana&#39;s Pi leaves Acme, her own servers come back. While the gate is closed (<code>pending</code>, <code>stale</code>,
+<code>revoked</code>), every setting reads its initial value; nothing from Dana&#39;s own configuration acts before Acme has spoken.</p>
+<h3 id="the-one-write-path">The one write path</h3>
+<p><code>Settings</code> is a local object with empty params on the server: one per Pi, persisted, the only writer of the user
+layer.</p>
+<pre><code><span class="tk-c">// PROPOSED · @p3/app/v1/settings.ts. Chord API: local, method, obj, str, arr, map, unknown, oneOf, union, nul.</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Settings</span> = <span class="tk-f">local</span>(<span class="tk-s">"p3.settings"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	members: {
+		<span class="tk-c">/** Effective values by setting name. */</span>
+		effective: <span class="tk-f">map</span>(<span class="tk-k">unknown</span>()),
+		<span class="tk-c">/** The names the org manages, with their lock and the names of the org's entries: what the page marks. */</span>
+		managed: <span class="tk-f">map</span>(<span class="tk-f">obj</span>({ org: <span class="tk-f">str</span>(), lock: <span class="tk-f">oneOf</span>(<span class="tk-s">"default"</span>, <span class="tk-s">"locked"</span>), entries: <span class="tk-f">arr</span>(<span class="tk-f">str</span>()) })),
+		<span class="tk-c">/** Sets a value setting, or puts (`value`) or removes (`null`) one entry of an entries setting. */</span>
+		set: <span class="tk-f">method</span>(<span class="tk-f">union</span>([
+			<span class="tk-f">obj</span>({ name: <span class="tk-f">str</span>(), value: <span class="tk-k">unknown</span>() }),
+			<span class="tk-f">obj</span>({ name: <span class="tk-f">str</span>(), entry: <span class="tk-f">str</span>(), value: <span class="tk-f">union</span>([<span class="tk-k">unknown</span>(), <span class="tk-f">nul</span>()]) }),
+		])),
+	},
+});</code></pre>
+<pre><code><span class="tk-c">// PROPOSED · plugins/settings/server.ts (app root). Chord API: defineState (persist, checkpointWhen), StoreSelf.state,</span>
+<span class="tk-c">// self.registry, self.get, self.derive, reference members' .value, PluginError (data/errors.ts), handle.change.</span>
+<span class="tk-k">const</span> <span class="tk-t">UserLayer</span> = <span class="tk-f">defineState</span>(<span class="tk-s">"p3.settings.user"</span>, {
+	schema: <span class="tk-f">obj</span>({ values: <span class="tk-f">map</span>(<span class="tk-k">unknown</span>()) }),
+	version: <span class="tk-n">1</span>,
+	initial: () =&gt; ({ values: {} }),
+	persist: <span class="tk-k">true</span>,
+	checkpointWhen: () =&gt; <span class="tk-k">true</span>,
+});
+
+host.<span class="tk-f">serve</span>(<span class="tk-t">Settings</span>, (_params, self) =&gt; {
+	<span class="tk-k">const</span> user = self.<span class="tk-f">state</span>(<span class="tk-t">UserLayer</span>);
+	<span class="tk-k">const</span> kinds = self.<span class="tk-f">registry</span>(<span class="tk-t">SettingKinds</span>);
+	<span class="tk-k">const</span> gate = self.<span class="tk-f">get</span>(<span class="tk-t">OrgGate</span>, {}).gate;
+	<span class="tk-k">return</span> {
+		effective: self.<span class="tk-f">derive</span>([user, kinds, gate], ([u, k, g]) =&gt; <span class="tk-f">effectiveAll</span>(u.values, k, g)),
+		managed: self.<span class="tk-f">derive</span>([gate], ([g]) =&gt; <span class="tk-f">managedMarks</span>(g)),
+		set: <span class="tk-k">async</span> (args, ctx) =&gt; {
+			<span class="tk-c">// Followed state, read per call: a profile that arrived since the last call counts.</span>
+			<span class="tk-k">const</span> g = gate.value;
+			<span class="tk-k">if</span> (g.kind !== <span class="tk-s">"unmanaged"</span> &amp;&amp; g.kind !== <span class="tk-s">"ready"</span>) <span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">PluginError</span>(<span class="tk-s">"gated"</span>, <span class="tk-s">`Waiting for ${g.orgName}`</span>);
+			<span class="tk-k">const</span> kind = kinds.value.<span class="tk-f">get</span>(args.name)?.value;
+			<span class="tk-k">if</span> (kind === <span class="tk-k">undefined</span>) <span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">PluginError</span>(<span class="tk-s">"unknown_setting"</span>, <span class="tk-s">`No setting ${args.name}`</span>);
+			<span class="tk-k">const</span> managed = g.kind === <span class="tk-s">"ready"</span> ? g.profile.settings[args.name] : <span class="tk-k">undefined</span>;
+			<span class="tk-k">if</span> (managed !== <span class="tk-k">undefined</span> &amp;&amp; (managed.lock === <span class="tk-s">"locked"</span> || (<span class="tk-s">"entry"</span> <span class="tk-k">in</span> args &amp;&amp; args.entry <span class="tk-k">in</span> managed.value)))
+				<span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">PluginError</span>(<span class="tk-s">"managed"</span>, <span class="tk-s">`Managed by ${g.orgName}`</span>, { org: g.org, setting: args.name });
+			<span class="tk-c">// Trust boundary: the page's and the agent's input, checked against the declaring plugin's schema.</span>
+			<span class="tk-k">const</span> next = <span class="tk-s">"entry"</span> <span class="tk-k">in</span> args ? <span class="tk-f">withEntry</span>(user.value.values[args.name], args.entry, args.value) : args.value;
+			<span class="tk-f">validate</span>(kind.schema, next);
+			<span class="tk-k">await</span> user.<span class="tk-f">change</span>((draft) =&gt; { draft.values[args.name] = next; }, ctx);
+		},
+	};
+});</code></pre>
+<p><code>effectiveAll</code>, <code>managedMarks</code>, <code>withEntry</code> and <code>validate</code> are small pure helpers of the settings plugin: the table above,
+the page&#39;s marks, a record with one entry put or removed, and a pi-schema check. The error carries the code <code>managed</code>;
+pages and the terminal render it as &quot;Managed by Acme&quot;, and draw a lock beside every name in <code>managed</code>. Dana&#39;s agent
+gets the same error from its settings tool, which calls the same <code>set</code>.</p>
+<div class="note"><b class="tag">Workers read settings through the server</b><p><code>Settings</code> is a server object. A session worker that needs a setting (the harness reading <code>prompt.instructions</code>)
+follows it through a server view, as other per-session server data is followed today; the worker never holds its own
+copy.</p>
+</div>
+<h3 id="what-a-plugin-author-writes">What a plugin author writes</h3>
+<p>The MCP plugin declares its servers as a setting, contributes it, and reconciles its connections with the effective
+value. It never names an org, a lock, a gate or a principal.</p>
+<pre><code><span class="tk-c">// PROPOSED · plugins/mcp: everything it writes for orgs is nothing. Chord API: defineFacet's (host, self),</span>
+<span class="tk-c">// FacetSelf.contribute, host.serve, self.on.</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">McpServers</span> = <span class="tk-f">defineSetting</span>(<span class="tk-s">"mcp.servers"</span>, <span class="tk-f">map</span>(<span class="tk-t">McpServerConfig</span>), { merge: <span class="tk-s">"entries"</span>, initial: {} });
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((host, facet) =&gt; {
+	facet.<span class="tk-f">contribute</span>(<span class="tk-t">SettingKinds</span>, [<span class="tk-t">McpServers</span>]);
+	host.<span class="tk-f">serve</span>(<span class="tk-t">McpConnections</span>, (_params, self) =&gt; {
+		<span class="tk-k">const</span> servers = <span class="tk-f">setting</span>(self, <span class="tk-t">McpServers</span>);           <span class="tk-c">// Acme's entries, plus Dana's unless locked</span>
+		self.<span class="tk-f">on</span>(servers, ({ value }, ctx) =&gt; <span class="tk-f">reconcile</span>(value, ctx));   <span class="tk-c">// a server an update locks out disconnects now</span>
+		<span class="tk-k">return</span> { <span class="tk-c">/* … */</span> };
+	});
+});</code></pre>
+<pre><code><span class="tk-c">// PROPOSED · @p3/app/v1/settings.ts. Chord API: self.get, self.derive.</span>
+<span class="tk-c">/** A setting's effective value, for any server object. */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">setting</span>&lt;T <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span>&gt;(self: <span class="tk-t">Self</span>, token: { <span class="tk-k">readonly</span> name: string; <span class="tk-k">readonly</span> initial: T }): <span class="tk-t">Watchable</span>&lt;T&gt; {
+	<span class="tk-k">const</span> all = self.<span class="tk-f">get</span>(<span class="tk-t">Settings</span>, {}).effective;
+	<span class="tk-c">// Cast: `set` and the profile check validated the value against this token's schema.</span>
+	<span class="tk-k">return</span> self.<span class="tk-f">derive</span>([all], ([values]) =&gt; (values[token.name] ?? token.initial) <span class="tk-k">as</span> T);
+}</code></pre>
+<p>The <code>self.on</code> routine is needed for Dana&#39;s own edits anyway: when she removes a server on the settings page, it
+disconnects. An org update that locks a server out takes the same path. That is the whole point of the design: the
+plugin already follows its configuration, so following the org costs it nothing.</p>
+<p>The plugin review rule is one sentence: <strong>all configuration goes through settings.</strong> A plugin that keeps a private
+config file escapes the locks. The remedy is not a check in the base but the plugin list: Acme admits only plugins it
+reviewed.</p>
+<h3 id="provisioning-and-deny-lists-are-the-same-data">Provisioning and deny lists are the same data</h3>
+<p>Acme&#39;s first draft gave every member Jira and Linear and let them add more: <code>mcp.servers</code> with lock <code>default</code>. A month
+later security asks for &quot;no MCP servers except ours&quot;. The admin changes one word, <code>default</code> to <code>locked</code>. Dana&#39;s
+personal servers disconnect within a second, stay stored, and come back if the lock is ever lifted. There is no
+second mechanism for restrictions.</p>
+</section>
+
+<section class="chapter" id="gate"><header class="opener"><div class="numeral">III</div><h2>Enrolled, Locked, Ready</h2><p class="lede">How a Pi waits for its org, unlocks, starts from its cache and follows updates, and the one kit change it needs.</p></header>
+<p class="dropcap">The enrollment file says &quot;do nothing before you have synced&quot;. The Pi needs a single place that knows whether it has
+synced, which every part consults: the start of a session, a worker&#39;s authorization, plugin loading, <code>Settings.set</code>.
+That place is the <strong>gate</strong>, a derived value of one base object, <code>OrgGate</code>.</p>
+<h3 id="five-states">Five states</h3>
+<pre class="plain"><code>// PROPOSED · OrgGate.gate
+unmanaged                        no enrollment file: personal Pi, everything open
+pending { org, why }             enrolled, no valid profile yet: locked; the page shows "Connect to Acme" and why
+ready   { profile, live }        a valid profile is applied: open; live = following the server now, else from cache
+stale   { profile }              offline longer than the profile's maxOffline: locked again (only if Acme set one)
+revoked { org }                  Acme removed this member or Pi: locked; the data stays where it is</code></pre>
+<figure class="fig wide anim"><svg viewBox="0 0 720 241" width="100%" role="img" aria-label="The gate's states. Only unmanaged and ready are open; every other state runs no session and loads no plugin beyond the app's own." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#2e6a8a" text-anchor="start" font-weight="600" letter-spacing="2">OPEN</text><text x="16" y="144" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">LOCKED</text><g class="step" style="--i:0"><rect x="137" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="242" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">unmanaged</text><text x="242" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">no enrollment file</text></g><g class="step" style="--i:3"><rect x="373" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="478" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">ready</text><text x="478" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">profile applied, live or cached</text></g><g class="step" style="--i:1"><rect x="19" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="124" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">pending</text><text x="124" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">enrolled, no valid profile</text></g><g class="step" style="--i:5"><rect x="255" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae" stroke-dasharray="3 3"/><text x="360" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">stale</text><text x="360" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">offline &gt; maxOffline</text></g><g class="step" style="--i:8"><rect x="491" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="596" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">revoked</text><text x="596" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">Acme removed the Pi</text></g><g class="step edge" style="--i:2"><path d="M124 158 L478 82" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="305" y="114" width="60.7" height="13" fill="#fbf8f2" opacity=".92"/><text x="309" y="124" font-size="9.5" fill="#7b7468" text-anchor="start">first sync</text></g><g class="step edge" style="--i:4"><path d="M469 80 L351 156" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="414" y="112" width="92.3" height="13" fill="#fbf8f2" opacity=".92"/><text x="418" y="122" font-size="9.5" fill="#7b7468" text-anchor="start">too long offline</text></g><g class="step edge" style="--i:6"><path d="M369 158 L487 82" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="432" y="114" width="55.4" height="13" fill="#fbf8f2" opacity=".92"/><text x="436" y="124" font-size="9.5" fill="#7b7468" text-anchor="start">reconnect</text></g><g class="step edge" style="--i:7"><path d="M478 80 L596 156" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="541" y="112" width="108.1" height="13" fill="#fbf8f2" opacity=".92"/><text x="545" y="122" font-size="9.5" fill="#7b7468" text-anchor="start">server says revoked</text></g><text x="16" y="226" font-size="10.5" fill="#7b7468" text-anchor="start">A cache that fails its signature check is no profile: the gate is pending again.</text></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 1.</span> The gate&#39;s states. Only <code>unmanaged</code> and <code>ready</code> are open; every other state runs no session and loads no plugin beyond the app&#39;s own.</figcaption></figure>
+<p>Locked means four things, all through hooks Chord already has or the one kit change below:</p>
+<ul>
+<li>The session worker kind&#39;s <code>start</code> throws and its synchronous <code>authorize</code> refuses: no session runs.</li>
+<li><code>admit</code> lets only the app&#39;s own root load: the base, <code>Settings</code>, <code>OrgGate</code> and the gate page. Neither Acme&#39;s plugins
+nor Dana&#39;s own load.</li>
+<li>Every setting reads its initial value, and <code>Settings.set</code> refuses with &quot;Waiting for Acme&quot;.</li>
+<li>The base&#39;s own paths (share a session, connect to a peer) refuse.</li>
+</ul>
+<h3 id="first-start">First start</h3>
+<figure class="fig anim"><svg viewBox="0 0 720 350" width="100%" role="img" aria-label="Dana's Pi on its first start. Nothing outside the app root runs before the accent step." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f2m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f2a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f2b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="102" y1="52" x2="102" y2="342" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="102" y="27" font-size="11" fill="#2a2723" text-anchor="middle">start script</text><text x="102" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">base code</text><line x1="274" y1="52" x2="274" y2="342" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="195" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="274" y="27" font-size="11" fill="#2a2723" text-anchor="middle">OrgGate</text><text x="274" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">app root</text><line x1="446" y1="52" x2="446" y2="342" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="367" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="446" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Radius</text><text x="446" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">org server</text><line x1="618" y1="52" x2="618" y2="342" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="539" y="10" width="158" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="618" y="30" font-size="11" fill="#2a2723" text-anchor="middle">data dir</text><g class="step edge" style="--i:1"><path d="M102 72 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><text x="144" y="82" font-size="10" fill="#2a2723" text-anchor="start">read /etc/p3/enrollment.json</text></g><g class="step edge" style="--i:2"><line x1="102" y1="118" x2="271" y2="118" stroke="#7b7468" marker-end="url(#f2m)"/><text x="188" y="112" font-size="10" fill="#2a2723" text-anchor="middle">startServer (admit: app root only)</text></g><g class="step edge" style="--i:3"><line x1="274" y1="150" x2="443" y2="150" stroke="#7b7468" marker-end="url(#f2m)"/><text x="360" y="144" font-size="10" fill="#2a2723" text-anchor="middle">follow profile (Pi token)</text></g><g class="step edge" style="--i:4"><line x1="446" y1="182" x2="277" y2="182" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="360" y="176" font-size="10" fill="#2a2723" text-anchor="middle">signed profile, revision 42</text></g><g class="step edge" style="--i:5"><path d="M274 208 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><text x="316" y="218" font-size="10" fill="#2a2723" text-anchor="start">check signature, member, pi, hashes, pluginSources</text></g><g class="step edge" style="--i:6"><line x1="274" y1="254" x2="615" y2="254" stroke="#7b7468" marker-end="url(#f2m)"/><text x="446" y="248" font-size="10" fill="#2a2723" text-anchor="middle">install acme-tools, acme-deploy into the org root</text></g><g class="step edge" style="--i:7"><line x1="274" y1="286" x2="615" y2="286" stroke="#b4472f" marker-end="url(#f2a)"/><text x="446" y="280" font-size="10" fill="#b4472f" text-anchor="middle">write profile cache (atomic rename)</text></g><g class="step edge" style="--i:8"><line x1="274" y1="318" x2="105" y2="318" stroke="#7b7468" marker-end="url(#f2m)"/><text x="188" y="312" font-size="10" fill="#2a2723" text-anchor="middle">gate ready: Apply (admit follows the profile)</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 2.</span> Dana&#39;s Pi on its first start. Nothing outside the app root runs before the accent step.</figcaption></figure>
+<ol>
+<li>The start script (base code, not a plugin) reads the enrollment file before <code>startServer</code>, and the cache if there
+is one. With no cache the gate starts <code>pending</code>.</li>
+<li><code>OrgGate</code> connects to <code>server</code> with the Pi&#39;s token. Without a token, the gate page asks Dana to sign in with Radius.</li>
+<li>It checks the profile: the signature against <code>orgKey</code>, <code>org</code>, <code>member</code> and <code>pi</code>, every plugin source under
+<code>pluginSources</code>. A profile that fails is not used, and the gate page says why.</li>
+<li>It installs every required plugin at its pinned ref into the org root, and checks each installed tree against its
+<code>hash</code>. A required plugin that fails to install or build keeps the gate <code>pending</code>, with the reason on the page.</li>
+<li>It writes the signed profile as the cache, in one atomic rename. This one write is the commit: the managed layer
+is whatever the cache holds.</li>
+<li>The gate turns <code>ready</code>. The base runs Apply: <code>admit</code> now follows the profile, so Acme&#39;s plugins and Dana&#39;s admitted
+ones load, and workers may start.</li>
+</ol>
+<h3 id="later-starts">Later starts</h3>
+<p>The start script reads the cache with the enrollment file, before <code>startServer</code>, and checks the signature and, if
+Acme set <code>maxOffline</code>, the age of <code>issuedAt</code>. If both hold, the gate is <code>ready</code> from the first moment, with no network
+wait, and <code>admit</code> loads the right plugins at the first discovery. <code>OrgGate</code> follows the server in the background.</p>
+<div class="note review"><b class="tag">Review: the cache is a file, not a Chord document</b><p>The consultation kept the cache as a persisted Chord document in the server store. But <code>admit</code> runs at the first
+discovery, inside <code>startServer</code>, before any store object exists. With the cache in the store, every start would load
+only the app root first and run a second Apply once the gate reads the cache: a second build pass on every start,
+against the decision &quot;Efficiency is a requirement&quot;. A file the start script reads synchronously avoids it. A file also
+moves with the machine, not with a backup: restoring a backup onto another machine must enroll there, not carry
+Acme&#39;s profile along.</p>
+</div>
+<h3 id="updates">Updates</h3>
+<p>A profile with a higher revision arrives live. Its settings and its plugins apply in a fixed order:</p>
+<ol>
+<li><strong>Settings first, at once.</strong> The new cache is written and the gate&#39;s profile changes. Every effective setting
+changes in place: the MCP plugin disconnects a server that is now forbidden, the sharing plugin ends shares whose
+audience no longer conforms, the peer plugin closes links outside the audience. Removed plugins unload on the Apply
+that follows.</li>
+<li><strong>Plugin additions when installed.</strong> New and updated plugins install into the org root; each loads with the next
+Apply once its hash matches. Until then the previous version keeps running.</li>
+<li><strong>A failed install is reported</strong>, to Dana on the page and to Acme through Radius, and retried. It never holds back
+a tightening: a broken new plugin in the same update as a removed MCP server does not keep that server connected.</li>
+</ol>
+<p>No restart is needed: the roots stay fixed, and <code>admit</code> plus Apply change which plugins are loaded.</p>
+<div class="note review"><b class="tag">Review: &quot;never half-applied&quot; refined</b><p>The consultation applies an update whole or not at all, keeping the last good profile when an install fails. Two
+other consultations point out that this lets one broken plugin publish keep a revoked MCP server or an outside share
+alive. Settings first, plugins when installed, keeps every tightening immediate; additions wait for their install.</p>
+</div>
+<h3 id="the-one-kit-change">The one kit change</h3>
+<p>Today <code>startServer</code> fixes the plugin roots to two (<code>packages/chord/src/node/app/app.ts</code>, line 348: the app root,
+required, and <code>layout.plugins</code>) and loads everything discovered. Discovery already lets the first root win a name and
+reports the duplicate (<code>discover.ts</code>, <code>discoverPlugins</code>), so a plugin in a later root cannot shadow an org plugin.</p>
+<pre><code><span class="tk-c">// PROPOSED · kit change in packages/chord/src/node/app/app.ts. `Plugin` and `PluginRoot` exist in node/plugins/discover.ts.</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">AppOptions</span>&lt;P <span class="tk-k">extends</span> <span class="tk-t">Principal</span>&gt; = {
+	<span class="tk-c">// … as today …</span>
+	<span class="tk-k">readonly</span> plugins?: {
+		<span class="tk-c">/** Roots after the app's own, in order; the first root wins a plugin name. Default: the user's root. */</span>
+		<span class="tk-k">readonly</span> roots?: <span class="tk-k">readonly</span> <span class="tk-t">PluginRoot</span>[];
+		<span class="tk-c">/** Read at every discovery: whether a discovered plugin loads. Default: every plugin. */</span>
+		<span class="tk-k">readonly</span> admit?: (plugin: <span class="tk-t">Plugin</span>) =&gt; boolean;
+	};
+};
+
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">AppPlugins</span> = {
+	<span class="tk-c">// … as today …</span>
+	<span class="tk-c">/** Marks that `admit` may answer differently now: the next `applyChanges` discovers again. */</span>
+	<span class="tk-f">readmit</span>(): <span class="tk-k">void</span>;
+};</code></pre>
+<p><code>readmit</code> belongs to the same change. Today <code>applyChanges</code> builds the dirty plugins and discovers again only when the
+watcher saw files change (<code>plugins.ts</code>, <code>needsDiscovery</code>); a gate that turns <code>ready</code> changes no file, so the base
+says so before its Apply.</p>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/src/server.ts (base code). Chord API: startServer, App.host, Host.get, reference members' .value.</span>
+<span class="tk-k">const</span> start = <span class="tk-f">readGate</span>(ENROLLMENT_PATH, dataDir);       <span class="tk-c">// sync: enrollment, cache, signature, maxOffline</span>
+<span class="tk-k">let</span> held: <span class="tk-t">Reference</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">OrgGate</span>&gt; | <span class="tk-k">undefined</span>;
+<span class="tk-k">const</span> gate = () =&gt; held?.gate.value ?? start;           <span class="tk-c">// the start read until OrgGate is live</span>
+
+<span class="tk-k">const</span> app = <span class="tk-k">await</span> <span class="tk-f">startServer</span>&lt;<span class="tk-t">P3Principal</span>&gt;({
+	name: <span class="tk-s">"p3"</span>,
+	dataDir,
+	<span class="tk-c">// … api, kinds, principal, web …</span>
+	workers: [{ ...sessionKind, authorize: (principal, address) =&gt; <span class="tk-f">isOpen</span>(<span class="tk-f">gate</span>()) &amp;&amp; <span class="tk-f">mayUse</span>(principal, address) }],
+	plugins: {
+		roots: [<span class="tk-f">orgRoot</span>(dataDir), <span class="tk-f">memberRoot</span>(dataDir)],
+		admit: (plugin) =&gt; <span class="tk-f">admits</span>(<span class="tk-f">gate</span>(), plugin),
+	},
+}, context);
+held = <span class="tk-k">await</span> app.host.<span class="tk-f">get</span>(<span class="tk-t">OrgGate</span>, {}, context);</code></pre>
+<p><code>admits</code> is four lines. The app root always loads. Nothing else loads while the gate is locked. In the org root, a
+plugin loads when its name is an org entry of <code>p3.plugins</code> and its tree matched its hash. In the member root, a
+plugin loads when the Pi is unmanaged, or when the effective <code>p3.plugins.own</code> is <code>true</code>.</p>
+<p><code>p3.plugins.own</code> is how &quot;no agent-written plugins&quot; becomes enforceable: not by tracking who wrote a file, which no
+check can know, but by loading only approved builds. An org plugin edited in place no longer matches its hash: the base
+checks the org root&#39;s hashes at start and before each Apply, and an edited plugin stays out until it is installed
+again.</p>
+<h3 id="the-gate-object">The gate object</h3>
+<p><code>OrgGate</code> owns the connection to the org server as a native, follows it, and runs installs and Apply in a routine.</p>
+<pre><code><span class="tk-c">// PROPOSED · plugins/org/server.ts (app root). Chord API: local, self.open, self.follow, self.get, self.derive,</span>
+<span class="tk-c">// self.on. `OrgClient` (base code) reads the enrollment file and the cache, follows the server with backoff, checks</span>
+<span class="tk-c">// profiles, and writes the cache by atomic rename; `PluginManager` is base inventory #14 (install, apply).</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">OrgGate</span>, (_params, self) =&gt; {
+	<span class="tk-k">const</span> client = self.<span class="tk-f">open</span>((ctx) =&gt; <span class="tk-f">openOrgClient</span>(ctx), (c) =&gt; c.<span class="tk-f">close</span>());
+	<span class="tk-c">// { enrollment, cached, offered, revoked, live, now }: the client's observer, attached once it opened.</span>
+	<span class="tk-k">const</span> org = self.<span class="tk-f">follow</span>((observer, ctx) =&gt; client.value.<span class="tk-f">attach</span>(observer, ctx));
+	<span class="tk-k">const</span> plugins = self.<span class="tk-f">get</span>(<span class="tk-t">PluginManager</span>, {});
+	<span class="tk-k">const</span> offered = self.<span class="tk-f">derive</span>([org], ([o]) =&gt; o.offered);   <span class="tk-c">// a checked profile newer than the cache, or null</span>
+	self.<span class="tk-f">on</span>(offered, <span class="tk-k">async</span> ({ value }, ctx) =&gt; {
+		<span class="tk-k">if</span> (value === <span class="tk-k">null</span>) <span class="tk-k">return</span>;
+		<span class="tk-k">const</span> first = org.value.cached === <span class="tk-k">null</span>;
+		<span class="tk-c">// First sync: required plugins install before anything opens; a throw leaves the gate pending.</span>
+		<span class="tk-k">if</span> (first) <span class="tk-k">await</span> plugins.<span class="tk-f">reconcile</span>(<span class="tk-f">orgPlugins</span>(value), ctx);
+		<span class="tk-k">await</span> client.value.<span class="tk-f">commit</span>(value, ctx);                  <span class="tk-c">// the cache is the managed layer: settings apply now</span>
+		<span class="tk-c">// Updates: settings first, plugins when installed; failures are reported and retried, never thrown.</span>
+		<span class="tk-k">if</span> (!first) <span class="tk-k">await</span> plugins.<span class="tk-f">reconcile</span>(<span class="tk-f">orgPlugins</span>(value), ctx);
+		<span class="tk-k">await</span> plugins.<span class="tk-f">apply</span>(ctx);                               <span class="tk-c">// readmit, then the kit's applyChanges</span>
+	});
+	<span class="tk-k">return</span> { gate: self.<span class="tk-f">derive</span>([org], ([o]) =&gt; <span class="tk-f">gateOf</span>(o)) };
+});</code></pre>
+<p><code>gateOf</code> is the table of five states as a pure function. The first sync is the same routine: with no cache, <code>offered</code>
+is the first profile, and the cache is written only after <code>reconcile</code> installed the required plugins. When the
+routine throws, the client offers the profile again after its backoff.</p>
+</section>
+
+<section class="chapter" id="trust"><header class="opener"><div class="numeral">IV</div><h2>Guardrails and Walls</h2><p class="lede">Who this stops, who it does not, and what Radius enforces whatever the Pi does.</p></header>
+<p class="dropcap">Every check in the Pi runs in the Pi&#39;s process, as the Pi&#39;s Unix user. That decides what it can stop. The design is
+honest about it: in the Pi, managed settings are a guardrail; where Radius sits in the path, they are a wall.</p>
+<h3 id="three-adversaries">Three adversaries</h3>
+<p><strong>Dana&#39;s agent</strong> is the main target: prompt injection or plain sloppiness. Its ordinary means are the settings tool,
+the plugin tools, the share tool and file edits. <code>Settings.set</code> refuses locked settings. The base&#39;s install path
+refuses plugins outside the profile, and <code>admit</code> keeps unapproved code from loading. The enrollment file is root-owned.
+An edited cache fails its signature, and the gate falls back to <code>pending</code>. All of these hold. What does not hold is
+<code>bash</code> under the Pi&#39;s Unix user: it can start a modified copy of the Pi on the same data directory, with Dana&#39;s token,
+ignoring the gate. That is the decided trust line (&quot;The agent writes plugins&quot;: the boundary is access to the server).</p>
+<p><strong>A third-party plugin</strong> is server code in the Pi&#39;s process. It can do anything the process can. Admitting it is the
+trust decision, and the only control is <code>p3.plugins</code>. A plugin that keeps its configuration through settings is covered
+without knowing it.</p>
+<p><strong>Dana herself.</strong> On her own laptop she is not an adversary: enrollment is compliance, and she could simply not
+enroll. On an Org Device she is held as far as her agent is. Anything that must hold against a determined member is
+enforced at Radius.</p>
+<h3 id="what-is-real">What is real</h3>
+<table>
+<thead>
+<tr>
+<th>Acme wants</th>
+<th>Pi-side check</th>
+<th>Real at Radius</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>No MCP servers except Acme&#39;s</td>
+<td><code>set</code> refuses; MCP connects only to effective entries</td>
+<td>Jira and Linear tokens live at Radius (<code>auth: radius</code>), so only those two work with Acme&#39;s accounts. Another server with Dana&#39;s own credentials: guardrail.</td>
+</tr>
+<tr>
+<td>Only Radius&#39;s models</td>
+<td><code>set</code> refuses; the models plugin offers only effective providers</td>
+<td>Acme&#39;s keys never leave Radius; leaving Acme ends access. Another provider with Dana&#39;s own key: guardrail.</td>
+</tr>
+<tr>
+<td>Required and approved plugins only</td>
+<td>install path, <code>admit</code>, hash checks</td>
+<td>guardrail: the org root is written by the Pi&#39;s Unix user. On an Org Device a root-owned root is stronger (below).</td>
+</tr>
+<tr>
+<td>No sharing outside Acme</td>
+<td>the share method refuses; tightening ends non-conforming shares</td>
+<td>Radius issues guest sign-ins and relays from the same profile: real.</td>
+</tr>
+<tr>
+<td>No Pis outside Acme</td>
+<td>the peer plugin refuses and closes links</td>
+<td>Radius brokers every Pi-to-Pi link: real.</td>
+</tr>
+<tr>
+<td>Company instructions</td>
+<td>the harness reads the effective value</td>
+<td>guardrail (it is a prompt).</td>
+</tr>
+</tbody></table>
+<p>On an Org Device, the Device&#39;s setup may pre-install Acme&#39;s plugins into a root-owned directory such as
+<code>/opt/p3/org-plugins</code> and give it as the org root. The Pi can then load but not change them, which makes &quot;approved
+builds only&quot; hold against the agent&#39;s <code>bash</code> too, for that root. It is an option, not a requirement.</p>
+<div class="note"><b class="tag">Revocation while offline</b><p>Radius-enforced parts end the moment Acme removes Dana: guest links, peer links and org models stop at Radius. The
+Pi-side settings follow only when the Pi reconnects and receives <code>revoked</code>. A Pi that stays offline keeps its cached
+profile, and an offline Pi can be given an older signed profile it was once sent. Acme bounds both with <code>maxOffline</code>,
+at the price of a Pi that locks itself after that long without the server.</p>
+</div>
+</section>
+
+<section class="chapter" id="failures"><header class="opener"><div class="numeral">V</div><h2>When Things Fail</h2><p class="lede">Every failure the consultations found, and what the Pi does.</p></header>
+<p class="dropcap">The rule behind every row: a failure never makes an enrolled Pi unmanaged, and never opens what the last good profile
+closed.</p>
+<table>
+<thead>
+<tr>
+<th>Failure</th>
+<th>What happens</th>
+<th>Note</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>First sync never succeeds (server down, wrong URL, Dana not signed in)</td>
+<td><code>pending</code> with the reason; retried with backoff; no sessions</td>
+<td>Fail closed, as the owner wants. An admin&#39;s typo locks every new Pi, visibly.</td>
+</tr>
+<tr>
+<td>A required plugin fails to install or build on the first sync</td>
+<td><code>pending</code> with the plugin and its error</td>
+<td>Required means required.</td>
+</tr>
+<tr>
+<td>Enrollment file present but invalid</td>
+<td><code>pending</code> with the parse error</td>
+<td>Never unmanaged.</td>
+</tr>
+<tr>
+<td>Enrollment file missing</td>
+<td><code>unmanaged</code> on the next start</td>
+<td>Only root can remove it (root-owned file and parent directories). The path is fixed in base code. On an Org Device the Device&#39;s supervisor refuses to start a member Pi without it.</td>
+</tr>
+<tr>
+<td>Offline after the first sync</td>
+<td><code>ready</code> from the cache, <code>live: false</code></td>
+<td>With <code>maxOffline</code> set: <code>stale</code> once it passes. None by default.</td>
+</tr>
+<tr>
+<td>Cache edited or deleted under the Pi&#39;s Unix user</td>
+<td>signature check fails or no cache: <code>pending</code></td>
+<td>Fail closed.</td>
+</tr>
+<tr>
+<td>Older signed profile replayed</td>
+<td>refused while the Pi knows a higher revision; after a deleted cache, accepted until the next sync</td>
+<td>Bounded by <code>maxOffline</code>.</td>
+</tr>
+<tr>
+<td>Profile for another member or Pi</td>
+<td>refused (<code>member</code>, <code>pi</code>)</td>
+<td>Signed is not enough.</td>
+</tr>
+<tr>
+<td>Plugin source outside <code>pluginSources</code></td>
+<td>the profile is refused</td>
+<td>Bounds what a stolen org key can push.</td>
+</tr>
+<tr>
+<td>Profile names a setting no loaded plugin declares</td>
+<td>kept in the layer; applies when the plugin loads</td>
+<td>A plugin installed later is managed from its first moment.</td>
+</tr>
+<tr>
+<td>An org value fails the plugin&#39;s schema</td>
+<td>that setting reads its initial value and refuses writes; reported to Acme</td>
+<td>The rest applies.</td>
+</tr>
+<tr>
+<td>Update tightens while sessions run</td>
+<td>settings change live; MCP disconnects, shares and peer links end; removed plugins unload on Apply</td>
+<td>Calls already sent cannot be recalled.</td>
+</tr>
+<tr>
+<td>Update&#39;s plugin install fails</td>
+<td>settings applied, the failed plugin&#39;s previous version keeps running; reported and retried</td>
+<td>A tightening never waits for an install.</td>
+</tr>
+<tr>
+<td>Dana or her Pi removed from Acme</td>
+<td><code>revoked</code>: locked; data stays</td>
+<td>Radius ends org access at once. What happens to the data on an Org Device is Acme&#39;s decision.</td>
+</tr>
+<tr>
+<td>Org server or Radius compromised, org key safe</td>
+<td>cannot forge profiles</td>
+<td>Radius still controls its own enforcement (sharing, peers, models).</td>
+</tr>
+<tr>
+<td>Org key compromised</td>
+<td>can push code to every enrolled Pi</td>
+<td>Pinned refs and hashes, <code>pluginSources</code> in the root-owned file. Required plugins are a code-push channel by design.</td>
+</tr>
+<tr>
+<td>Clock set back to dodge <code>maxOffline</code></td>
+<td>the check passes</td>
+<td>Guardrail: the clock belongs to the machine.</td>
+</tr>
+<tr>
+<td>Shell under the Pi&#39;s Unix user</td>
+<td>can run a modified Pi on the same data</td>
+<td>Not enforceable on the machine; Radius-side checks hold.</td>
+</tr>
+<tr>
+<td>Root, or an admitted plugin</td>
+<td>ignores everything</td>
+<td>Root is the admin; admitting a plugin is the trust decision.</td>
+</tr>
+</tbody></table>
+</section>
+
+<section class="chapter" id="now"><header class="opener"><div class="numeral">VI</div><h2>What the Base Needs Now</h2><p class="lede">What p3 must build before any org exists, and what waits for December 18.</p></header>
+<p class="dropcap">The org machinery itself is small and late: an enrollment reader, a client, a gate page. What is expensive to add later
+is the shape it relies on: that every piece of configuration is a declared setting with one write path, and that every
+place that starts a session or loads a plugin asks one gate. With no org, all of it is one store and a constant.</p>
+<h3 id="now-for-december-1">Now, for December 1</h3>
+<ol>
+<li><strong>One settings mechanism.</strong> <code>defineSetting</code>, <code>SettingKinds</code>, the <code>Settings</code> store with <code>set</code> as the only write path,
+and <code>setting(self, token)</code> for readers. No plugin JSON files like p2&#39;s <code>mcp.json</code> and <code>models.json</code>: MCP servers,
+model providers, company or personal instructions and the plugin list are settings from the start.</li>
+<li><strong>The <code>managed</code> error.</strong> <code>set</code> throws it for a locked setting; the page, the terminal and the agent&#39;s settings tool
+render it as &quot;Managed by X&quot;, and the page draws locks from <code>Settings.managed</code>.</li>
+<li><strong>Plugins only through the base.</strong> Installs, Apply and the plugin-writing tool are methods of one base object
+(<code>PluginManager</code>, base inventory #14), never a side effect of a file write; the member root is a separate root from
+the app&#39;s own.</li>
+<li><strong>Base switches with permissive defaults:</strong> <code>p3.sharing.audience</code> (<code>&quot;anyone&quot; | &quot;org&quot; | &quot;nobody&quot;</code>) and
+<code>p3.peers.audience</code>. The share and peer paths read them, and end shares and links that no longer conform when they
+change.</li>
+<li><strong>A gate that is always <code>unmanaged</code>,</strong> already consulted by the worker kind&#39;s <code>start</code> and <code>authorize</code> and by
+Apply.</li>
+<li><strong>Credentials by reference.</strong> Setting values name credentials (<code>auth: { radius: &quot;jira&quot; }</code>) and never contain them
+(base inventory #13).</li>
+</ol>
+<h3 id="for-december-18">For December 18</h3>
+<ul>
+<li>The enrollment reader and its fixed path; <code>readGate</code> in the start script.</li>
+<li><code>OrgGate</code>, <code>OrgClient</code>, the profile cache and the gate page (&quot;Connect to Acme&quot;, the reason, sign-in).</li>
+<li>The kit change: plugin roots and <code>admit</code>.</li>
+<li>Hash checks of the org root at start and before each Apply.</li>
+<li>In Radius: the profile editor per org and group, per-member profiles, signing, the <code>revoked</code> answer, &quot;Create my Pi
+here&quot;, and enforcement of sharing and peers from the same profile.</li>
+<li>On Org Devices: the Device setup writes the enrollment file; its supervisor refuses to start a member Pi without it.</li>
+</ul>
+</section>
+
+<section class="chapter epilogue" id="what-it-cannot-do"><header class="opener"><div class="numeral">∴</div><h2>What It Cannot Do</h2><p class="lede">The limits of managed settings, and the decisions still open.</p></header>
+<p class="dropcap">Managed settings lock configuration. That covers what Acme asked for: provisioning, closed lists, audiences, approved
+plugins. It does not cover everything, and the limits are deliberate.</p>
+<ul>
+<li><strong>Rules over values.</strong> &quot;MCP servers only on <code>*.acme.com</code>&quot; or a token budget is not a lock. A plugin has to offer a
+setting for it (an allowed-hosts setting), and budgets belong at Radius.</li>
+<li><strong>Denying an action that is not configuration,</strong> such as exporting or deleting a session, unless the base or the
+plugin exposes a switch setting for it.</li>
+<li><strong>Different rights for different people in one Pi.</strong> There is one person per Pi; Radius picks the profile per
+member, and guests get what the session gives them.</li>
+<li><strong>A plugin&#39;s private config files.</strong> The answer is the plugin list.</li>
+<li><strong>A shell under the Pi&#39;s Unix user, root, or an admitted plugin.</strong> They are past the boundary.</li>
+<li><strong>Instant revocation while offline,</strong> and replays of an older signed profile, unless Acme sets <code>maxOffline</code>.</li>
+<li><strong>Running without the org server.</strong> A new enrolled Pi does nothing before its first sync, by design.</li>
+<li><strong>One Pi in two orgs.</strong> The enrollment file names one.</li>
+</ul>
+<h3 id="decisions-needed">Decisions needed</h3>
+<ol>
+<li><strong>Who holds the org key.</strong> The admin in the browser (Radius cannot forge profiles; key loss and rotation are the
+org&#39;s problem), or Radius per org (simpler; a compromised Radius can push code). Recommended: Radius for December 18,
+with the key id in the profile so an admin-held key can replace it later.</li>
+<li><strong><code>maxOffline</code> default.</strong> None (offline work always continues) or a default such as 30 days for Org Devices.</li>
+<li><strong>Instructions as entries.</strong> <code>prompt.instructions</code> is drawn here as an entries setting so Acme&#39;s text and Dana&#39;s sit
+side by side. The harness&#39;s prompt design may want a different owner for it.</li>
+<li><strong>What <code>revoked</code> does to data on an Org Device.</strong> Keep it (as here), export it to the org, or delete it.</li>
+</ol>
+</section>
+
+<p class="colophon">p3 org-managed Pis · design, first edition · 2026-11-13 · sources: org consultations (opus, fable, astra, sol), apps/p3/docs/decisions.md, packages/chord/src</p>
+</div></div>
+<script>(function activate(root) {
+	const replay = (f) => {
+		f.classList.remove("play");
+		void f.getBoundingClientRect();
+		f.classList.add("play");
+	};
+	const io = new IntersectionObserver(
+		(es) => {
+			for (const e of es)
+				if (e.isIntersecting) {
+					e.target.classList.add("play");
+					io.unobserve(e.target);
+				}
+		},
+		{ threshold: 0.3 },
+	);
+	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
+		f.classList.add("armed");
+		io.observe(f);
+		const b = f.querySelector(".replay");
+		if (b) b.onclick = () => replay(f);
+	});
+	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
+		s.classList.add("js");
+		const ps = [...s.querySelectorAll(":scope>.step-panel")];
+		let i = 0;
+		const c = s.querySelector(".count"),
+			p = s.querySelector(".prev"),
+			n = s.querySelector(".next");
+		const show = () => {
+			ps.forEach((x, j) => x.classList.toggle("on", j === i));
+			c.textContent = `${i + 1} / ${ps.length}`;
+			p.disabled = i === 0;
+			n.disabled = i === ps.length - 1;
+			ps[i].querySelectorAll(".anim").forEach(replay);
+		};
+		p.onclick = () => {
+			i--;
+			show();
+		};
+		n.onclick = () => {
+			i++;
+			show();
+		};
+		show();
+	});
+})(document)</script>
+</body></html>

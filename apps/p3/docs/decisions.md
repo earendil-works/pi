@@ -150,3 +150,25 @@ and its working rules are in `handoff.md`.
   `{ kind: "instance" }`. Resources plugins create when installed (tools, prompt sections) and company resources (a
   shared login, a team server) are instance resources; the policy plugin decides who may create or bring them (default:
   the single user may do everything). No pretend user appears in lists, presence or audit.
+- **Org-managed Pis through managed settings (owner, 2026-11-13: "I'm in favor of the Opus model ... it just needs to
+  be flexible"; supersedes the policy plugin of "Resource model direction" and the company resources of "Instance
+  resources"):** one Pi per person; everything an org wants is a setting. Plugins declare their configuration with
+  `defineSetting` (a name, a schema, an initial value, merge `value` or `entries`) in their contract file; the base keeps
+  the member's values and every write goes through `Settings.set` (the page, the agent's tools, other plugins). The
+  org's values form one managed layer that gives any setting a value with lock `default` (a starting point; org
+  entries sit beside the member's, read-only) or `locked` (only the org's value counts; the member's values are kept
+  and ignored); `set` refuses a locked setting or an org entry with the error code `managed` ("Managed by Acme").
+  Provisioning and deny lists are the same data; there are no operations, levels, rule tables or policy functions.
+  A machine is enrolled by a root-owned file at a fixed path (`/etc/p3/enrollment.json`: org, server, org key,
+  allowed plugin sources; no secrets); an enrolled Pi stays locked (gate `pending`: no sessions, only the app root
+  loads, settings at their initial values) until its first sync with the org server (Radius) delivered a profile
+  signed with the org key and bound to the member and the Pi, the required plugins installed at pinned refs and
+  hashes, and the profile was written as the cache; later starts open from the cache and follow updates live
+  (settings first, plugin additions once installed). Gate states `unmanaged`, `pending`, `ready`, `stale` (optional
+  `maxOffline`), `revoked`. "No agent-written plugins" means only approved builds load (`p3.plugins.own`). In-process
+  checks are guardrails against the member's agent and well-behaved plugins; sharing, peers and org models are
+  enforced at Radius from the same profile. Kit change: `startServer` takes plugin roots and an `admit` function.
+  Needed in the base now, before any org: the settings mechanism as the only configuration (no plugin JSON files),
+  the `managed` error, installs and Apply only through the base, the sharing and peer audience settings, and a gate
+  that is always `unmanaged`. Company resources (a shared login, a team server) are org-managed entries of the setting
+  that holds them; no policy plugin decides who may create or bring anything. Design: `org-managed/book.md`.
