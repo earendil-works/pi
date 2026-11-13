@@ -84,6 +84,21 @@ function downgradeUnsupportedImages<TApi extends Api>(messages: Message[], model
 }
 
 /**
+ * Gemini tool call signatures stay valid across Gemini models of one Google provider: Vertex accepts a
+ * gemini-3.7-flash signature on gemini-3.6-flash, and Antigravity's own client replays them that way.
+ * They are not valid across providers (Antigravity and Vertex reject each other's signatures).
+ */
+function keepsGeminiSignatureAcrossModels<TApi extends Api>(source: AssistantMessage, model: Model<TApi>): boolean {
+	return (
+		source.provider === model.provider &&
+		source.api === model.api &&
+		(model.api === "google-generative-ai" || model.api === "google-vertex") &&
+		source.model.startsWith("gemini-") &&
+		model.id.startsWith("gemini-")
+	);
+}
+
+/**
  * Normalize tool call ID for cross-provider compatibility.
  * OpenAI Responses API generates IDs that are 450+ chars with special characters like `|`.
  * Anthropic APIs require IDs matching ^[a-zA-Z0-9_-]+$ (max 64 chars).
@@ -149,7 +164,11 @@ export function transformMessages<TApi extends Api>(
 					const toolCall = block as ToolCall;
 					let normalizedToolCall: ToolCall = toolCall;
 
-					if (!isSameModel && toolCall.thoughtSignature) {
+					if (
+						!isSameModel &&
+						toolCall.thoughtSignature &&
+						!keepsGeminiSignatureAcrossModels(assistantMsg, model)
+					) {
 						normalizedToolCall = { ...toolCall };
 						delete (normalizedToolCall as { thoughtSignature?: string }).thoughtSignature;
 					}

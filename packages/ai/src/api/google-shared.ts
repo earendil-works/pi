@@ -224,6 +224,20 @@ export function resolveThoughtSignature(
 }
 
 /**
+ * Google's documented bypass value for a function call the current model did not sign, base64-encoded
+ * because thoughtSignature is a bytes field (the raw string was reported to fail on Vertex in #4032).
+ * Gemini 3+ rejects a model turn whose function calls carry no signature (400 "Function call is missing a
+ * thought_signature"), which happens on history from another provider, whose signatures are dropped.
+ */
+const SKIP_THOUGHT_SIGNATURE_VALIDATOR_B64 = "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=";
+
+/** Whether Gemini enforces a thought signature on the first function call of each model turn (Gemini 3+). */
+export function requiresFunctionCallThoughtSignature(modelId: string): boolean {
+	const geminiMajorVersion = getGeminiMajorVersion(modelId);
+	return geminiMajorVersion !== undefined && geminiMajorVersion >= 3;
+}
+
+/**
  * Models via Google APIs that require explicit tool call IDs in function calls/responses.
  */
 export function requiresToolCallId(modelId: string): boolean {
@@ -294,6 +308,8 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 			const parts: Part[] = [];
 			// Check if message is from same provider and model - only then keep thinking blocks
 			const isSameProviderAndModel = msg.provider === model.provider && msg.model === model.id;
+			// transformMessages already dropped tool call signatures that do not carry over to this model.
+			const isSameProvider = msg.provider === model.provider && msg.api === model.api;
 
 			for (const block of msg.content) {
 				if (block.type === "text") {
@@ -328,7 +344,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 						});
 					}
 				} else if (block.type === "toolCall") {
-					const thoughtSignature = resolveThoughtSignature(isSameProviderAndModel, block.thoughtSignature);
+					const thoughtSignature = resolveThoughtSignature(isSameProvider, block.thoughtSignature);
 					const part: Part = {
 						functionCall: {
 							name: block.name,
@@ -342,6 +358,16 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 			}
 
 			if (parts.length === 0) continue;
+			// Only the first call of a parallel group is signed by Gemini, so one signature per turn is the
+			// valid shape; add the bypass only when no call in this turn kept a signature.
+			const functionCallParts = parts.filter((part) => part.functionCall !== undefined);
+			if (
+				requiresFunctionCallThoughtSignature(model.id) &&
+				functionCallParts.length > 0 &&
+				!functionCallParts.some((part) => part.thoughtSignature)
+			) {
+				functionCallParts[0].thoughtSignature = SKIP_THOUGHT_SIGNATURE_VALIDATOR_B64;
+			}
 			contents.push({
 				role: "model",
 				parts,
