@@ -3,6 +3,5 @@ feat/native-anthropic
 feat/native-google
 feat/native-meta
 feat/native-openai
-fix/coding-agent
 feat/native-providers
 fork/tooling

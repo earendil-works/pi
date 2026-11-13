@@ -38,7 +38,6 @@ case "${1:-focused}" in
 		)
 		core_agent_tests=(agent-loop)
 		agent_tests=(
-			suite/agent-session-codemode
 			add-endpoint-provider remote-catalog-names anthropic-oauth-prompt-drift references
 		)
 		# vitest skips a listed file that does not exist, so a branch missing from next would pass silently.
