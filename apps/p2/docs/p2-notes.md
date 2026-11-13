@@ -672,7 +672,8 @@ startup fencing, the list marker, owner notice, worker-filtered Show logs and re
 
 **Telemetry** (Chord §29; off unless settings.json's `telemetry` is `true`, read once at the server's start; no
 sampling: Chord offers none; recording everything cost the phone 1.8M spans, 1 GB and a third of a core in 15 h, so it
-is opt-in since 2026-11-13). Off, the server opens no store and serves no ingest objects, `WorkerInit.telemetry` is
+is opt-in since 2026-11-13). Off, the server opens no store and its ingest objects refuse everyone (a page loaded while it
+was on fails `forbidden` at once and stops sending, never waits unbound), `WorkerInit.telemetry` is
 false (the worker's host has no recorder and sends nothing), no page is marked, every host uses Chord's NOOP adapter,
 and `Traces` answers `unavailable` "telemetry is off (settings.json telemetry)" (the pane and the tools show it;
 `telemetry-off.test.ts`). On: the server records to `<data>/telemetry.sqlite`

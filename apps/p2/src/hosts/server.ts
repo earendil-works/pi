@@ -137,6 +137,9 @@ function principalText(principal: P2Principal): string {
 	}
 }
 
+/** The ingest target while telemetry is off: never reached (the ingest facet admits no one then), stores nothing. */
+const NOTHING_STORED = { ingest: () => 0 };
+
 export async function startServer(options: ServerOptions = {}): Promise<P2Server> {
 	// As Pi Mobile: a half-set default model from the environment refuses to start (before taking any lock).
 	envDefaultModel();
@@ -401,21 +404,22 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 					// The server's files (the kit's `Files`): `<data>/server/files/`.
 					{ name: "chord.app.files", facet: filesFacet(hostFiles(serverDirectory(dataDir))) },
 					// The pages' code, and the user's locale pick that a page's language follows (Chord's page holds it).
-					...(telemetry === undefined
-						? []
-						: [
-								{
-									name: "chord.telemetry",
-									facet: telemetryIngestFacet<P2Principal>({
-										target: telemetry.telemetry,
-										// Owners' pages only: a guest could open page after page (each its own budget).
-										admit: isOwner,
-										workerHost: (principal: P2Principal) =>
-											principal.kind === "worker" ? Session({ id: principal.session }).key : undefined,
-										principalAttributes,
-									}),
-								},
-							]),
+					{
+						name: "chord.telemetry",
+						// Served also while telemetry is off, refusing everyone: a page loaded while it was on (marked to
+						// record) fails `forbidden` at once and stops sending, instead of waiting unbound for a type
+						// nobody serves (`unbound_long`); a worker gets the variant without `ingest`. Nothing is stored.
+						facet: telemetryIngestFacet<P2Principal>({
+							target: telemetry?.telemetry ?? NOTHING_STORED,
+							// Owners' pages only: a guest could open page after page (each its own budget).
+							admit: (principal) => telemetry !== undefined && isOwner(principal),
+							workerHost: (principal: P2Principal) =>
+								telemetry !== undefined && principal.kind === "worker"
+									? Session({ id: principal.session }).key
+									: undefined,
+							principalAttributes,
+						}),
+					},
 					...(surface === undefined
 						? []
 						: [

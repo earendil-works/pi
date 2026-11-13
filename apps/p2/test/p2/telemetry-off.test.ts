@@ -1,9 +1,11 @@
 // Telemetry off (settings.json without `telemetry: true`, the default; on: telemetry.test.ts): the server opens no
-// telemetry store and serves no ingest objects, workers record and send nothing, no page is marked to record, and the
-// Traces object, its pane and the agent's tools say that telemetry is off. Fake provider, disposable data.
+// telemetry store, its ingest objects refuse everyone (a page loaded while telemetry was on is refused at once, never
+// left waiting), workers record and send nothing, no page is marked to record, and the Traces object, its pane and the
+// agent's tools say that telemetry is off. Fake provider, disposable data.
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { after, before, describe, it } from "node:test";
+import { after, before, describe, it, mock } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 import { PageTelemetry, WorkerTelemetry } from "@earendil-works/chord/telemetry-ingest";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
@@ -63,15 +65,40 @@ describe("telemetry off (the default)", () => {
 	});
 	after(() => fixture?.close());
 
-	it("opens no store and serves no ingest: a worker's turn leaves no telemetry.sqlite", async () => {
+	it("opens no store: a worker's turn leaves no telemetry.sqlite", async () => {
 		const result = await script("return 1;");
 		assert.equal(result.isError, false, text(result));
 		assert.equal(existsSync(telemetryStore(fixture.dataDir)), false);
-		for (const Ingest of [PageTelemetry, WorkerTelemetry]) {
-			const refused = await owner
-				.get(Ingest, {}, BACKGROUND_CONTEXT, { readyTimeout: 200 })
-				.catch((error: unknown) => error);
-			assert.ok(refused instanceof Error, `${Ingest.name} is not served`);
+	});
+
+	it("refuses a page still marked to record at once (forbidden, never unbound_long); a worker gets no ingest", async () => {
+		const errors = mock.method(console, "error");
+		try {
+			// A page loaded while telemetry was on holds the page object as Chord's page does (`sendPageTelemetry`).
+			const page = fixture.browser();
+			const held = page.hold(PageTelemetry, {}, BACKGROUND_CONTEXT);
+			const started = Date.now();
+			await until(held.state, (state) => state.kind !== "loading", 2000);
+			assert.ok(Date.now() - started < 2000);
+			assert.deepEqual(
+				[held.state.value.kind, (held.state.value as { cause?: { error?: { code?: string } } }).cause?.error?.code],
+				["failed", "forbidden"],
+			);
+			const worker = fixture.as({ kind: "worker", session, generation: 1 });
+			const ingest = await worker.get(WorkerTelemetry, {}, BACKGROUND_CONTEXT);
+			assert.equal(ingest.variant, "other");
+			// Past the 5 s after which a request nobody serves is reported.
+			await sleep(5500);
+			const unbound = errors.mock.calls.filter((call) =>
+				call.arguments.some((value) =>
+					typeof value === "string"
+						? value.includes("has waited for")
+						: (value as { kind?: string } | null)?.kind === "unbound_long",
+				),
+			);
+			assert.deepEqual(unbound, []);
+		} finally {
+			errors.mock.restore();
 		}
 	});
 
