@@ -131,6 +131,7 @@ async function start(dataDir: string, project: string, facets: { followers?: Ret
 		app: APP,
 		dataDir,
 		fake: true,
+		telemetry: false,
 		generation: 1,
 		values: { session: { id: "s1", cwd: project, env: null, model: MODEL, thinkingLevel: "off" } },
 	};

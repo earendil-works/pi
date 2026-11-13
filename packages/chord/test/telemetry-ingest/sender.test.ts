@@ -60,8 +60,9 @@ describe("a page's sender", () => {
 		connect();
 		await transported();
 		await sender.send(true);
+		// The sender's own hold is shared work: a `chord.hold` root on the page's adapter, sent with the rest.
 		expect(batches.map(({ spans, metrics }) => [spans.map(({ name }) => name), metrics])).toEqual([
-			[["page.click"], []],
+			[["page.click", "chord.hold"], []],
 		]);
 		expect(recorder.queuedSpans).toBe(0);
 		// Nothing waits: no call.
@@ -93,7 +94,7 @@ describe("a worker's sender", () => {
 		recorder.metrics.counter("runs").add(2);
 		await sender.send(true);
 		const [batch] = batches;
-		expect(batch!.spans.map(({ name }) => name)).toEqual(["worker.job"]);
+		expect(batch!.spans.map(({ name }) => name)).toEqual(["chord.hold", "worker.job"]);
 		expect(batch!.metrics.find(({ name }) => name === "runs")?.sum).toBe(2);
 	});
 });

@@ -19,7 +19,7 @@ import {
 	withTelemetry,
 } from "../context/index.ts";
 import type { Address, Contract, HostKind, ParamsOf } from "../contracts/index.ts";
-import { contractData, type Params } from "../contracts/internal.ts";
+import { contractData, joinKey, type Params } from "../contracts/internal.ts";
 import { ChordError, type FailureCause, type Principal, type PrincipalKeyFunction } from "../data/index.ts";
 import {
 	asChordError,
@@ -28,12 +28,13 @@ import {
 	checkParams,
 	identityKey,
 	invalid,
+	principalJson,
 	principalKey,
 } from "../data/internal.ts";
 import type { TransactionCancelled } from "../documents/internal.ts";
 import type { JsonValue } from "../json.ts";
 import { binaryCodec, type Codec, type Compression, type Link, type PartLimits } from "../link/index.ts";
-import { linkLimits } from "../link/internal.ts";
+import { linkLimits, type WireAddress } from "../link/internal.ts";
 import type { Registry, RegistryValue } from "../registries/index.ts";
 import type { RegistryValueSource } from "../registries/internal.ts";
 import { type RegistryContribution, type RegistryError, RegistryRecord } from "../registries/internal.ts";
@@ -613,6 +614,11 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 	 * resolves for them) until `ref.retry()` places them anew; ended at `close` like the others.
 	 */
 	readonly unplaced = new Path(() => {});
+	/**
+	 * The remote objects references of this host share, per path, by sharing key (decision "References share one wire
+	 * hold"); each entry owned by its object, which takes it out (`#share`). A dropped route path takes its table.
+	 */
+	readonly #shared = new WeakMap<Path, Map<string, RemoteObject>>();
 	readonly #routes = new Map<string, Route>();
 	readonly #destination: Destination;
 	/** The downstream origins this host relays holds for, by their number on upstream links (never reused). */
@@ -1440,22 +1446,7 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 	bind(binding: Binding, Type: Contract, params: CheckedParams, context: Context): Target | undefined {
 		const { principal } = binding.caller;
 		const placed = this.#destination.reference(Type, params.params, principal, context);
-		if (placed.kind === "path") {
-			const { caller, dependent } = binding;
-			const remote = new RemoteObject(
-				this,
-				Type,
-				params,
-				placed.address,
-				caller,
-				placed.path,
-				dependent,
-				context.telemetry,
-			);
-			placed.path.attach(remote);
-			binding.bind(remote);
-			return remote;
-		}
+		if (placed.kind === "path") return this.#bindRemote(binding, Type, params, placed.path, placed.address, context);
 		const served = this.#types.get(Type.name);
 		const unbound =
 			unboundCause(served, Type.kind, Type.name, Type.version, Type.fingerprint) ??
@@ -1487,6 +1478,81 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		const activation = object.activationSpan;
 		if (activation !== undefined && !untraced(context.telemetry)) context.telemetry.addLink({ context: activation });
 		return object;
+	}
+
+	/**
+	 * Binds `binding` to a remote object over `path` (decision "References share one wire hold"): the one this host
+	 * holds for its sharing key, joined with no message (on a path whose route failed to resolve here, a join is a new
+	 * request: `path.requested`), or a new one, stored and bound before it attaches (a resolver re-entering `bind` finds
+	 * it, and a reference it makes and releases there is not its last). A `self.get` reference (its hold carries its
+	 * dependent's chain, Q5), one on a suspended path, and one whose key's object a provider or relay left failed
+	 * `waiting` (a new hold is a new request there: a relay's failed route resolves again for it) hold on their own, as
+	 * before.
+	 */
+	#bindRemote(
+		binding: Binding,
+		Type: Contract,
+		params: CheckedParams,
+		path: Path,
+		address: WireAddress,
+		context: Context,
+	): RemoteObject {
+		const { caller, dependent } = binding;
+		const shared = dependent === undefined && !path.suspended;
+		const key = shared ? this.#sharingKey(Type, params, address, caller, context) : undefined;
+		const found = key === undefined ? undefined : this.#shared.get(path)?.get(key);
+		const waiting = found?.state.kind === "failed" && found.state.cause.kind === "waiting";
+		if (found !== undefined && !(waiting && path.link !== undefined)) {
+			binding.bind(found);
+			if (waiting) path.requested(found);
+			// A joining getter links to the hold while it is open (decision "Shared work").
+			const span = found.span;
+			if (span !== undefined && !untraced(context.telemetry)) context.telemetry.addLink({ context: span });
+			return found;
+		}
+		// Owned entries: only the object an entry maps to takes it out, so an ended object never removes a newer one.
+		const table = key !== undefined && found === undefined ? this.#tableOf(path) : undefined;
+		const unindex =
+			table === undefined || key === undefined
+				? undefined
+				: () => {
+						if (table.get(key) === remote) table.delete(key);
+					};
+		const remote = new RemoteObject(this, Type, params, address, caller, path, dependent, context.telemetry, unindex);
+		if (table !== undefined && key !== undefined) table.set(key, remote);
+		binding.bind(remote);
+		path.attach(remote);
+		return remote;
+	}
+
+	/** The sharing table of `path`, made by its first shared object. */
+	#tableOf(path: Path): Map<string, RemoteObject> {
+		let table = this.#shared.get(path);
+		if (table === undefined) {
+			table = new Map();
+			this.#shared.set(path, table);
+		}
+		return table;
+	}
+
+	/**
+	 * The key under which references of this host share a remote object: its type, version and fingerprint, its params'
+	 * identity key, the address its placement computed (`hostAddress` is not in the fingerprint), and its caller (its
+	 * principal's JSON as the wire carries it, and the incarnation it acts with); every part escaped (`joinKey`).
+	 */
+	#sharingKey(Type: Contract, params: CheckedParams, address: WireAddress, caller: Caller, context: Context): string {
+		const { principal, incarnation } = caller;
+		// A `hostAddress` returns JSON params (checked where the address is routed or served).
+		const placed = joinKey([address.kind, canonicalJson(address.params as JsonValue, context)]);
+		return joinKey([
+			Type.name,
+			String(Type.version),
+			Type.fingerprint,
+			params.key,
+			placed,
+			principal === undefined ? "-" : `+${principalJson(principal, context)}`,
+			incarnation,
+		]);
 	}
 
 	/** Where a hold arriving on `link` goes (`Destination.hold`: by the address it names); `released` once the host closed. */

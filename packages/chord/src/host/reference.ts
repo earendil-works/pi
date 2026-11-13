@@ -103,8 +103,11 @@ export interface Target {
 	hold(binding: Binding): void;
 	/** `binding` was released. */
 	unhold(binding: Binding): void;
-	/** Calls a method of the live object for `caller`, bound at `version` (an older one is mapped, Q10). */
-	call(method: string, args: unknown, context: Context, caller: Caller, version: number): Promise<unknown>;
+	/**
+	 * Calls a method of the live object for `binding` (its caller, at its contract's version: an older one is mapped,
+	 * Q10); over a link the call is the binding's own, cancelled with its release.
+	 */
+	call(method: string, args: unknown, binding: Binding, context: Context): Promise<unknown>;
 	/**
 	 * What a reference of `version` follows for state member `member` now (decision "References are the only
 	 * indirection"): the live instance's member (a replica over a link), or nothing (`loading`, or `failed` with the
@@ -128,10 +131,15 @@ export interface Target {
 	 */
 	pinKey(member: string, key: string, version: number, context: Context): Promise<PinnedKey>;
 	/**
-	 * `ref.retry()`, as one step of `walk`: an attempt now if failed; an object parked on failed dependencies passes it
-	 * on; ignored otherwise.
+	 * `ref.retry()` from `binding`, as one step of `walk`: an attempt now if failed; an object parked on failed
+	 * dependencies passes it on; ignored otherwise.
 	 */
-	retry(walk: RetryWalk): void;
+	retry(walk: RetryWalk, binding: Binding): void;
+	/**
+	 * How many values the shared replica of state member `member` took (a remote object's; decision "References share
+	 * one wire hold"); `undefined` without one (and on this host, where members are no replicas).
+	 */
+	generationOf(member: string): number | undefined;
 	/**
 	 * The chain of activation waits from this object to `target`, both included (Q5); `undefined` when there is none.
 	 * `visited` keeps a search over shared dependencies linear in the waits.
@@ -282,6 +290,11 @@ export class Binding implements Holder, UnboundRequest {
 	#listed = true;
 	/** Its events, for a contract with event members only (one slot otherwise); dropped at its end (it keeps no host). */
 	#events: BindingEvents | undefined;
+	/**
+	 * The state members it has not seen since it joined a shared remote object, each with its replica's count of values
+	 * then (decision "References share one wire hold"); one is seen once that count passes. Made at the join.
+	 */
+	#unseen: Map<string, number> | undefined;
 
 	constructor(
 		contract: Contract,
@@ -376,11 +389,15 @@ export class Binding implements Holder, UnboundRequest {
 	 */
 	bind(target: Target): void {
 		const state = this.#state;
-		if (state.kind !== "unbound") return;
-		this.#state = { kind: "bound", batch: state.batch, dependent: state.dependent, target };
+		if (state.kind === "unbound") this.#boundTo(target, state.batch, state.dependent);
+	}
+
+	/** Counted by `target` as a reference: its members and keys follow what `target` shows now, and it is told. */
+	#boundTo(target: Target, batch: Batch, dependent: ChordObject | undefined): void {
+		this.#state = { kind: "bound", batch, dependent, target };
 		target.hold(this);
 		// `hold` may release it at once (a presence derive): `retarget` sees that. A batch only when members move.
-		if (this.following) state.batch.within(() => this.retarget(), BACKGROUND_CONTEXT);
+		if (this.following) batch.within(() => this.retarget(), BACKGROUND_CONTEXT);
 		else this.retarget();
 		this.moved();
 	}
@@ -388,6 +405,32 @@ export class Binding implements Holder, UnboundRequest {
 	/** Whether its members or keys were used: `retarget` moves them (in a batch). */
 	get following(): boolean {
 		return this.#sources !== undefined || this.#heldKeys !== undefined;
+	}
+
+	/**
+	 * It joined a shared remote object that was bound already: `unseen` are the members it has not seen, with their
+	 * replicas' counts of values now. Until a value arrives for one, it shows no last value of it from before the join
+	 * (as on a fresh failed snapshot), whether it is read meanwhile or not. A member it holds a value of its own for (a
+	 * binding that followed another object before) keeps its history.
+	 */
+	joined(unseen: ReadonlyMap<string, number>): void {
+		for (const [member, count] of unseen) {
+			const source = this.#sources?.get(member);
+			if (source !== undefined && !source.unbound) continue;
+			this.#unseen ??= new Map();
+			this.#unseen.set(member, count);
+			source?.unseen(() => this.#seen(member));
+		}
+	}
+
+	/**
+	 * Moves to `target` keeping everything of its own (its reference, watches, subscriptions, waiters, calls, last
+	 * values, unseen members): a reference retrying alone after `too_large/part` (decision "References share one wire
+	 * hold"). Its previous target let it go already; its members and keys follow `target`, and it is told.
+	 */
+	transfer(target: Target): void {
+		const state = this.#state;
+		if (state.kind === "bound") this.#boundTo(target, state.batch, state.dependent);
 	}
 
 	/**
@@ -568,9 +611,23 @@ export class Binding implements Holder, UnboundRequest {
 		if (state.kind === "released") throw state.state.error;
 		source = new ReferenceSource(state.batch, this);
 		this.#sources.set(member, source);
+		if (this.#unseen?.has(member) === true) source.unseen(() => this.#seen(member));
 		// New, nothing follows it yet: placing it needs no batch.
 		if (state.kind === "bound") place(source, state.target.followed(member, this.contract.version), this.#attached);
 		return source;
+	}
+
+	/**
+	 * Whether member `member`, unseen at its join, took a value since (its replica's count of values passed the one
+	 * recorded then, also across rebinds and a private retry's copies): from then on it is seen for good.
+	 */
+	#seen(member: string): boolean {
+		const count = this.#unseen?.get(member);
+		if (count === undefined) return true;
+		const generation = this.target?.generationOf(member);
+		if (generation === undefined || generation <= count) return false;
+		this.#unseen!.delete(member);
+		return true;
 	}
 
 	/** What a read of a member that never had a value throws: `released`, the failure's error, or `not_ready`. */
@@ -757,7 +814,7 @@ export class Binding implements Holder, UnboundRequest {
 	retry(walk: RetryWalk = retryWalk()): void {
 		const state = this.#state;
 		if (state.kind === "bound") {
-			state.target.retry(walk);
+			state.target.retry(walk, this);
 			return;
 		}
 		if (state.kind !== "refused") return;
@@ -799,6 +856,7 @@ export class Binding implements Holder, UnboundRequest {
 		this.#sources = undefined;
 		this.#heldKeys = undefined;
 		this.#attached = undefined;
+		this.#unseen = undefined;
 		if (previous.kind !== "released" && (sources !== undefined || keys !== undefined)) {
 			const end = (): void => {
 				for (const source of sources?.values() ?? []) source.end(error);
@@ -844,7 +902,7 @@ export class Binding implements Holder, UnboundRequest {
 		const { target } = this.#state as Extract<BindingState, { readonly kind: "bound" }>;
 		this.#calls ??= new AbortController();
 		const linked = withLinkedAbortSignal(this.#calls.signal, context);
-		return target.call(method, args, linked.context, this.caller, this.contract.version).finally(linked.release);
+		return target.call(method, args, this, linked.context).finally(linked.release);
 	}
 
 	/**

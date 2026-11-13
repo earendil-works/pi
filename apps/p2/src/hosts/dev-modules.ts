@@ -21,6 +21,8 @@ export const loadedModuleHashes: ReadonlyMap<string, string> = loaded;
 const pluginFiles = new Set<string>();
 export const loadedPluginFiles: ReadonlySet<string> = pluginFiles;
 let publication: ReturnType<typeof setImmediate> | undefined;
+/** Whether this worker wrote its report file (removed when it exits). */
+let reporting = false;
 
 /** This process's report: the modules it loaded with their hashes, and the plugin files its facet loader loaded. */
 const report = () => ({
@@ -31,16 +33,22 @@ const report = () => ({
 
 /**
  * Publishes the report: a dev server to its supervisor over IPC; a session worker (whose IPC channel is Chord's link)
- * as `<P2_DEV_MODULE_DIR>/<pid>.json`, which the dev server reads (`LoadedModules`).
+ * as `<P2_DEV_MODULE_DIR>/<server pid>-<pid>.json` (the server forked it: `ppid`), which the dev server reads
+ * (`LoadedModules`), and removes when it exits.
  */
 function publish(): void {
 	const directory = process.env.P2_DEV_MODULE_DIR;
 	if (publication) return;
 	if (directory) {
+		const file = join(directory, `${process.ppid}-${process.pid}.json`);
+		if (!reporting) {
+			reporting = true;
+			process.once("exit", () => rmSync(file, { force: true }));
+		}
 		publication = setImmediate(() => {
 			publication = undefined;
 			mkdirSync(directory, { recursive: true, mode: 0o700 });
-			writeFileSync(join(directory, `${process.pid}.json`), JSON.stringify(report()), { mode: 0o600 });
+			writeFileSync(file, JSON.stringify(report()), { mode: 0o600 });
 		});
 		return;
 	}
@@ -110,7 +118,11 @@ export class LoadedModules {
 		this.#reports = reports;
 	}
 
-	/** Reads the workers' reports: a live worker's baseline is set; an exited one's report and baseline go. */
+	/**
+	 * Reads the workers' reports: a live worker's baseline is set; an exited one's report and baseline go, and so do
+	 * reports of another server run's workers (named with another server pid, or in the layout before it): a pid of an
+	 * ended run may be alive again as an unrelated process, whose "report" would keep a restart notice up.
+	 */
 	#readReports(): void {
 		const directory = this.#reports;
 		if (directory === undefined) return;
@@ -122,8 +134,12 @@ export class LoadedModules {
 		}
 		const live = new Set<string>();
 		for (const name of names) {
-			const pid = Number(name.replace(/\.json$/, ""));
-			if (!Number.isInteger(pid)) continue;
+			const own = /^(\d+)-(\d+)\.json$/.exec(name);
+			const pid = Number(own?.[2]);
+			if (Number(own?.[1]) !== process.pid) {
+				rmSync(join(directory, name), { force: true });
+				continue;
+			}
 			const key = `worker:${pid}`;
 			try {
 				process.kill(pid, 0);

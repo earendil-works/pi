@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -132,11 +132,21 @@ export type Fixture = {
 /** The p2 app directory, as the server tells facets (`Server.info.app`, `WorkerInit.app`). */
 export const APP = fileURLToPath(new URL("../../", import.meta.url));
 
-export async function startFixture(options: ServerOptions = {}): Promise<Fixture> {
+export async function startFixture(
+	options: ServerOptions & {
+		/** settings.json written into the data directory before the server starts (keys read at the start: `telemetry`). */
+		readonly settings?: Readonly<Record<string, unknown>>;
+	} = {},
+): Promise<Fixture> {
 	const root = mkdtempSync(join(tmpdir(), "p2-test-"));
 	const dataDir = join(root, "data");
 	const workspace = join(root, "workspace");
 	mkdirSync(workspace, { recursive: true });
+	const { settings, ...serverOptions } = options;
+	if (settings !== undefined) {
+		mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+		writeFileSync(join(dataDir, "settings.json"), JSON.stringify(settings), { mode: 0o600 });
+	}
 	let server: P2Server;
 	try {
 		server = await startServer({
@@ -144,7 +154,7 @@ export async function startFixture(options: ServerOptions = {}): Promise<Fixture
 			port: 0,
 			fake: true,
 			web: false,
-			...options,
+			...serverOptions,
 		});
 	} catch (error) {
 		rmSync(root, { recursive: true, force: true });

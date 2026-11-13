@@ -1,7 +1,9 @@
 # References sharing one wire hold
 
-Status: design, sixth draft (2026-11-12): the fifth draft (0b48a1d18) with the fixes of its reviews by GPT-6 Astra
-and GPT-6.1 Sol; to build. The owner's model: sharing is the consuming host's
+Status: built (2026-11-13), from the sixth draft (2026-11-12: the fifth draft, 0b48a1d18, with the fixes of its
+reviews by GPT-6 Astra and GPT-6.1 Sol) with the eight amendments of its last review folded in below (principal key,
+seen members, accepted difference 9, cancellation order, table ownership, retry transfer, telemetry, getters), and
+the build's own decisions in §9. The owner's model: sharing is the consuming host's
 business. A reference to a remote object this host already holds for the same caller joins that hold: no message, no
 round trip; the host counts its references and releases the hold when the last one goes. Drafts 1–4 (502f79e3e …
 ec1ffa15c) and two review rounds (GPT-6 Astra, GPT-6.1 Sol) are in this file's history; their findings are answered
@@ -57,6 +59,10 @@ Differs (owner, 2026-11-12, accepted):
    another version) restarts that one hold, so every reference sharing it sees the attempt (`loading`, then its
    outcome), where today only the retrying reference's own request restarted. (A retry of a failed provider object
    already reaches every holder today.)
+9. **Watch callbacks within one commit run in subscription order.** Several references sharing a replica have their
+   watches subscribed to that one replica: within one commit their callbacks run in the order the watches subscribed,
+   not in the order the references were held (and so may the calls those listeners make), where separate holds ran
+   per hold.
 
 Telemetry is not surface.
 
@@ -70,8 +76,7 @@ key = joinKey([
 	Type.name, String(Type.version), Type.fingerprint,
 	params.key,                                                     // CheckedParams' identity key
 	joinKey([address.kind, canonicalJson(address.params)]),         // the WireAddress the placement computed
-	caller.principal === undefined ? "-" : `+${principalKey(caller.principal, context)}`,              // canonical JSON (defaultKeys)
-	caller.principal === undefined ? "-" : `+${principalKey(caller.principal, context, host's principalKey)}`, // the app's key
+	caller.principal === undefined ? "-" : `+${principalJson(caller.principal)}`, // the principal's own JSON
 	caller.incarnation,
 ]);
 ```
@@ -80,11 +85,11 @@ key = joinKey([
   the same params at different addresses over one parent path; each must reach its own provider.
 - **The caller** is in the key because a hold acts for its caller (`actingFor`, `src/remote/README.md`): a server
   handler's `ctx.get` holds for whoever called it, and two callers must not share a hold (their variants and
-  `ctx.principal` at the provider differ). On a page or TUI every reference is the host's own principal. Both the
-  canonical principal (its whole data: `principalKey` without a custom function, cached in the existing `defaultKeys`
-  `WeakMap`) and the app's own principal key are compared: equal app keys with different data stay separate, and so
-  do principals the app's key tells apart (an app key may distinguish what canonical JSON does not, e.g. field
-  order).
+  `ctx.principal` at the provider differ). On a page or TUI every reference is the host's own principal. The
+  principal part is the principal's own JSON (`JSON.stringify`, insertion order, as the wire carries it), cached per
+  principal object in a `WeakMap` (`principalJson`, one walk counted per object): two callers share only when they
+  serialize equally (amendment 1; replaces canonical JSON plus the app's key: equal app keys with different data, and
+  equal data in another field order, stay separate).
 - `joinKey` escapes every part, so no params or principal content can collide; "no principal" (`-`) and a principal
   are distinct.
 
@@ -96,20 +101,27 @@ Not shared:
 - **A reference that retries after `too_large/part`:** it moves into a private `RemoteObject` of its own (§4).
 - **A `RemoteObject` failed broken** leaves the table (by identity) and is never put back, also after it recovers: a
   new reference holds anew, as a new hold would have been checked anew.
-- **A path that is suspended or unreachable** (a route suspended, its resolve failed): a new reference holds
-  separately, as today (it fails `unavailable` or waits on its own), instead of inheriting the object's state.
+- **A suspended path** (a route suspended): a new reference holds separately, as today (it fails `unavailable` on its
+  own), instead of inheriting the object's state. A path whose route failed to resolve is joined, and the join counts
+  as a new request there (§4, `path.requested()`; §9).
+- **A key whose object is failed `waiting` over a link** (the provider or a relay refused it: a type not served,
+  another version, a relay's failed route): a new reference holds anew, unindexed, as today: a new hold is a new
+  request there, and a relay's failed route resolves again for it (§9).
 
-An object is stored in the table before it attaches to its path, so a resolver that re-enters `bind` during the attach
-finds it. Entries are owned: removed only by the `RemoteObject` they map to (`if (table.get(key) === this) table.delete(key)`),
-when it ends (last release, `gone`, revocation, host close), fails broken, or leaves its path.
+An object is stored in the table, an owned entry (never a placeholder), and its first binding bound to it, before it
+attaches to its path, so a resolver that re-enters `bind` during the attach finds it, and a reference that resolver
+makes and releases is not its last (amendment 5). Entries are owned: removed only by the `RemoteObject` they map to
+(`if (table.get(key) === this) table.delete(key)`), and never put back: at its last release and on every broken
+failure (a provider's `failed { broken }` too) before anything is told (teardown cannot re-enter and find it); on
+`gone`, revocation and the host's close the bindings are captured and the entry taken out before any is told.
 
 ## 4. Behaviour
 
 | Event | Shared |
 | --- | --- |
-| a reference with a held key | binds to the `RemoteObject`: live at once if it is live (values from its replicas), else loading or failed as it is. Members failed, or missing from the bound variant, when it joins are "not seen" by this binding until a value arrives for them after the join, read or not: until then a watch on one rejects with its error, as on a fresh failed snapshot (no inherited last value); from then on the binding's own last-value rules apply (§6) |
+| a reference with a held key | binds to the `RemoteObject`: live at once if it is live (values from its replicas), else loading or failed as it is. "Seen" means a value this binding received while it was live (amendment 2): joining an object that is not live (loading, failed) it has seen no member; joining a live one, the members failed or missing from the bound variant are not seen. Such a member is seen once a value arrives for it after the join, read or not (also while no source of the binding exists); until then it shows no last value: a watch on it rejects with its error, as on a fresh failed snapshot, and watch creation, `start`, holding, detaching and a vanishing keep none. From then on the binding's own last-value rules apply; its history survives rebinds and the retry transfer (§6) |
 | a join while the path's route failed to resolve and has no link | the join tells the path a request arrived (`path.requested()`); a route treats it as an attach: it resolves again unless suspended or resolving |
-| a reference releases, others remain | no `release`. Its watches and subscriptions end; its calls reject `released`: its queued calls leave the call window's queue unsent first, all of them, then its sent calls are aborted, **newest first** (so a relay drops a later call still waiting in its upstream window before an earlier abort frees a slot for it) |
+| a reference releases, others remain | no `release`. Its watches and subscriptions end; its calls reject `released`: its queued calls leave the call window's queue unsent first, all of them, then a snapshot of its sent calls is aborted in reverse wire-send order, **newest first** (so a relay drops a later call still waiting in its upstream window before an earlier abort frees a slot for it); its call records and their abort listeners are gone before `Binding.end` aborts its controller (amendment 4) |
 | the last reference releases | `release` sent, entry removed |
 | `failed`, `loading`, `bound` (a restart, another variant), `gone`, host close, revocation | every binding is told: all retarget in one batch, then each is told (`moved()`), as a local object tells its holders; each ends exactly once |
 | a call | over the shared hold from its own binding (parked per binding while loading) |
@@ -117,7 +129,8 @@ when it ends (last release, `gone`, revocation, host close), fails broken, or le
 | `too_large/part` on a snapshot or state part | every binding fails broken (they share the part); the object leaves the table. A `retry` from one binding moves **that binding alone** into a new private `RemoteObject`, placed anew; the others stay failed until they retry. Oversized call arguments or results fail only their call; oversized event values are dropped, as today |
 | link drop | one re-hold on the next link for the object |
 | events | the object's nodes; each binding taps them through its own subscriptions from the counter value it bound at (§11); see §2.3 |
-| telemetry | the first reference's `chord.hold` span is the hold's; it is shared work (§29): a root on the host's adapter, linked to its first trigger; a joining getter links to it while open |
+| telemetry | the hold's `chord.hold` span is shared work (§29): a root on the host's adapter whatever the first getter's context, linked to that getter's span when traced; a joining getter links to it while open; a re-hold's span links to the first whenever the adapter records (amendment 7) |
+| a getter (`get`, `ctx.get`) | waits for its own binding (its live wait, abort and deadline as before); one timing out or aborted releases only its own binding; per-binding event cutoffs never reset when another binding joins (amendment 8) |
 
 ## 5. What changes in the design
 
@@ -154,9 +167,10 @@ when it ends (last release, `gone`, revocation, host close), fails broken, or le
 - **§2 and §5 event concepts, §11 "Who gets an event", events spec §2 opening rule and §2.4:** the provider's
   eligibility is per wire hold; a binding joining a held remote object gets the events that arrive at its host after
   it bound, also one emitted before that was in transit. Same-host eligibility unchanged; no wire field or fence.
-- **§19 entry lifetime and §3 `host.activity`:** one entry and count per bound holder on the provider: a same-host
-  binding or an arriving wire hold; several consuming-host bindings behind one hold are one entry until it ends; a
-  non-final consumer release removes nothing there. Local, `self.get`, private-retry, other-key and separate
+- **§19 entry lifetime and §3 `host.activity`:** presence lists bound holders on the provider (same-host bindings and
+  arriving wire holds); `host.activity.references` counts the incoming served wire holds, from arrival to end (bound
+  or not; same-host bindings do not count). Several consuming-host bindings behind one hold are one entry in the first
+  and one count in the second until that hold ends; a non-final consumer release removes nothing there. Local, `self.get`, private-retry, other-key and separate
   downstream holds are not deduplicated. No provider code change: incoming holds already are the unit.
 - **§22 "Size limits per part":** a joiner receives no snapshot and checks none; an oversized snapshot or state part
   fails the shared object and all its bindings; only a binding that retries moves to a new private hold. No message,
@@ -188,21 +202,28 @@ when it ends (last release, `gone`, revocation, host close), fails broken, or le
   added to the new one and retargeted, without ending its public reference, watches, subscriptions, waiters, calls or
   retained values; its seen-member records carry over. A placement that throws fails the private object broken (the
   binding stays transferred, as a separate reference's failed retry would). The old object losing its last binding
-  ends as any; its table callback cannot remove a newer entry.
+  ends as any; its table callback cannot remove a newer entry. The move is dedicated (amendment 6): it keeps the
+  public reference, never runs the old object's `#end` on the moved binding, a throwing placement fails only that
+  binding, the private object never enters or evicts a table entry, and a `self.get` binding's private object keeps
+  its dependent's chain.
 - **Seen members** (`remote/replica.ts`, `host/reference.ts`, `host/reference-source.ts`): each replica counts the values
   it adopts (`generation`, one integer). A joining binding records, only for members failed or missing at the join,
   the generation it saw (a sparse map); such a member is seen once the replica's generation passes it, whether the
-  binding read it or not. An unseen member's watch opens as on a fresh failed snapshot. No walks; nothing for members
-  that were good at the join.
+  binding read it or not. An unseen member's watch opens as on a fresh failed snapshot. Per amendment 2, a join to an
+  object that is not live records every state member of the contract (one pass over its members at the join, none
+  per read); a join to a live one only the failed or missing ones; a binding's sources made before a join (a binding
+  that followed another object) keep the members they hold values of.
 - **Call owners** (`host/reference.ts` `Binding.#send`, `Target.call`, `remote/remote-object.ts` `call`,
   `remote/consumer.ts` `call` and `OutgoingCall`, `remote/calls.ts` `CallWindow`): an internal owner token (the binding)
   travels from `Binding.#send` to the consumer's call record; never on the wire. `CallWindow` gains owner-scoped removal
   of queued calls (hold-wide removal stays for loading, failure and release; relay windows unchanged).
-  `ConsumerSide.cancelCalls(hold, owner, error)` removes and rejects every queued call of the owner first, then sends
-  an `abort` for each of its sent calls, newest first; each frees its slot exactly once. It runs from `unhold`,
+  `ConsumerSide.cancelCalls(hold, owner, label)` removes and rejects every queued call of the owner first, then sends
+  an `abort` for each of its sent calls, newest first; each frees its slot exactly once (the `released` error is made
+  only when the owner has calls). It runs from `unhold`,
   coordinated with `Binding.end`'s abort controller so no call is rejected, aborted or freed twice.
-- **Principals:** the existing `principalKey` (`data/principal.ts`) gives both parts of the key; no new cache. The key's
-  canonical JSON of the address params is counted work, as `canonicalJson` already counts.
+- **Principals:** `principalJson` (`data/principal.ts`), the principal's own JSON, cached per principal object in a
+  `WeakMap` (one counted walk per object; a GC test for the cache). The key's canonical JSON of the address params is
+  counted work, as `canonicalJson` already counts.
 - Telemetry per §4. No change to `ProviderSide`, relays, the window or the wire.
 
 ## 7. Tests (one file per source file, per the Chord code style)
@@ -298,3 +319,21 @@ The provider's window (K = 2 `bound`/`state` messages per origin) sends every bi
 cost at most one extra round trip (the first two `bound`s, then one with all the rest). p2's measured session switch
 also chained loads (views, then each pane's artifacts hold, then its `read`); that chain is p2's to shorten. Whether
 first bindings should be exempt is decided after a trace of the switch with p2's telemetry once this is built.
+
+## 9. Build notes (2026-11-13)
+
+Decisions the build took where this design was open or contradicted itself, conservatively (today's behaviour):
+
+- **A path whose route failed to resolve is joined** (§4's row and §6's `path.requested()`), not held separately as
+  §3's "suspended or unreachable" read: the join counts as a new request, so the route resolves again, and both
+  references go live on one hold. A suspended path is not joined (§3).
+- **A key whose object is failed `waiting` over an open link is held anew** and the new object is not indexed (the
+  entry stays the older object's): the provider's or a relay's refusal is re-checked by a new request, as today (a
+  relay's failed route resolves again for it). §7's "join while failed waiting" applies to an unlinked path.
+- **Bind before attach:** the first binding binds to its new object before the object attaches to its path (it used
+  to attach first): a resolver re-entering during the attach finds an object with one binding, so a reference the
+  resolver makes and releases there does not end it.
+- **`joinKey` copies a part only when it has something to escape** (most have nothing); a non-final release makes no
+  `released` error unless the reference has calls to cancel. Both measured (`benchmarks.md`, "Shared holds").
+- **Tests** are in each changed source file's test file; the relay cases with two hops connect each upstream as the
+  relay's child (an accepted link carries no origins).

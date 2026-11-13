@@ -145,3 +145,8 @@ and its working rules are in `handoff.md`.
   principal" and drops rooms and the view library. As built in p2: html artifacts keep the custom views' page API
   (`window.p2view`, state per artifact); a reader who may not change the session's views opens an item in the
   artifacts side panel on their own device; a session's clone and fork copy its artifacts.
+- **Instance resources, not an instance user (owner, 2026-11-13: "an instance user seems stupid. instance resources
+  make more sense"; refines "Resource model direction"):** a resource's owner is `{ kind: "user", user }` or
+  `{ kind: "instance" }`. Resources plugins create when installed (tools, prompt sections) and company resources (a
+  shared login, a team server) are instance resources; the policy plugin decides who may create or bring them (default:
+  the single user may do everything). No pretend user appears in lists, presence or audit.

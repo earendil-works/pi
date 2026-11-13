@@ -1,8 +1,9 @@
 // Session worker host: one process per running session, forked by the server's workers component. Its host sits at the
 // session's address on the session's Chord store (`<data>/sessions/<id>/store.sqlite`), connected to the server over
 // IPC, and loads the worker facets the server shipped beside the core facet, which owns the session's Durable Harness
-// (its records in that store), and the kit's `Files` over the session's files. It records telemetry in memory (its host's,
-// Durable's and pi-ai's spans and metrics) and sends it to the server's store every second, as Chord's kit worker does.
+// (its records in that store), and the kit's `Files` over the session's files. While settings.json's `telemetry` is on
+// (`WorkerInit.telemetry`), it records telemetry in memory (its host's, Durable's and pi-ai's spans and metrics) and
+// sends it to the server's store every second, as Chord's kit worker does; off, its host uses Chord's NOOP adapter.
 
 import { setTimeout as sleep } from "node:timers/promises";
 import { isChordError } from "@earendil-works/chord";
@@ -58,12 +59,12 @@ workerMain(
 		const store = await openHostStore(dir, { outbox: backupConfigured() }, context);
 		onClose(() => store.close(BACKGROUND_CONTEXT));
 		const scope = crypto.randomUUID();
-		const recorder = new TelemetryRecorder(() => scope, TELEMETRY_QUEUE);
+		const recorder = init.telemetry ? new TelemetryRecorder(() => scope, TELEMETRY_QUEUE) : undefined;
 		const host = createHost({
 			address,
 			principal: HOST,
 			store,
-			telemetry: recorder,
+			...(recorder === undefined ? {} : { telemetry: recorder }),
 			principalAttributes,
 			// Large parts (a conversation's view) leave deflated; the server relays them as they are.
 			compression: nodeCompression,
@@ -106,14 +107,16 @@ workerMain(
 		);
 		// Held after the load (a host holds nothing before). Closers run in reverse: this one before the host closes, the
 		// last spans and partial metrics sent while the link is up, for at most a second.
-		const sender = sendWorkerTelemetry(host, recorder, context);
-		const timer = setInterval(() => void sender.send(false), TELEMETRY_SEND_MS);
-		timer.unref();
-		onClose(async () => {
-			clearInterval(timer);
-			await Promise.race([sender.send(true), sleep(TELEMETRY_SEND_MS, undefined, { ref: false })]);
-			sender.stop();
-		});
+		if (recorder !== undefined) {
+			const sender = sendWorkerTelemetry(host, recorder, context);
+			const timer = setInterval(() => void sender.send(false), TELEMETRY_SEND_MS);
+			timer.unref();
+			onClose(async () => {
+				clearInterval(timer);
+				await Promise.race([sender.send(true), sleep(TELEMETRY_SEND_MS, undefined, { ref: false })]);
+				sender.stop();
+			});
+		}
 		// A Harness that cannot open fails the worker (its error, with Retry), as an unknown root model does: at its first
 		// failed attempt (`get` would retry it until its ready timeout, the start meanwhile hanging).
 		const harnessHost = host.hold(HarnessHost, {}, context);

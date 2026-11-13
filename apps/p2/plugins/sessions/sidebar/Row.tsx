@@ -413,7 +413,7 @@ export function SessionItem({
 	) : null;
 	const target = useCommandTargetRow({ type: "session", id: session.id, kind: "Session", label: session.title });
 	return (
-		<SideNavigation.Item className={`session-row ${aged ? "aged" : ""}`}>
+		<SideNavigation.Item className={`session-row ${aged ? "aged" : ""}`} data-session={session.id}>
 			<NavRow
 				selected={active && conversationId === main}
 				className={`session-header ${nested ? "has-subagents" : ""}`}

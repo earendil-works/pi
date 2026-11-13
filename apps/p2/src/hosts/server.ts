@@ -48,6 +48,7 @@ import {
 	Upgrades,
 	WorkerInitValues,
 } from "../runtime/server.ts";
+import { readTelemetrySetting } from "../runtime/settings.ts";
 import { isLinkClient, STALE_PAGE_CODE, STALE_PAGE_REASON } from "../runtime/stale-page.ts";
 import { WorkerBoundary, type WorkerInit } from "../runtime/worker.ts";
 import { type BundleInput, buildTuiBundle, type TuiBundle, tuiManifest } from "./bundles.ts";
@@ -136,6 +137,9 @@ function principalText(principal: P2Principal): string {
 	}
 }
 
+/** The ingest target while telemetry is off: never reached (the ingest facet admits no one then), stores nothing. */
+const NOTHING_STORED = { ingest: () => 0 };
+
 export async function startServer(options: ServerOptions = {}): Promise<P2Server> {
 	// As Pi Mobile: a half-set default model from the environment refuses to start (before taking any lock).
 	envDefaultModel();
@@ -179,14 +183,17 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 	// an outbox while backup is configured (`src/runtime/backup.ts`), which `plugins/backup` uploads.
 	let store: Awaited<ReturnType<typeof openHostStore>>;
 	// The telemetry store (`<data>/telemetry.sqlite`, Chord's §29): the server's host records to it, the ingest facet
-	// below writes what workers and owner pages send. Always on: Chord's cost (§30), no sampling.
-	let telemetry: Awaited<ReturnType<typeof openTelemetry>>;
+	// below writes what workers and owner pages send. Only when settings.json's `telemetry` is true, read once here (a
+	// change needs a restart): off, nothing is opened, the hosts use Chord's NOOP adapter, workers and pages record
+	// nothing (no sampling: Chord offers none, and recording everything cost the phone a third of a core).
+	const telemetryOn = readTelemetrySetting(join(dataDir, "settings.json"));
+	let telemetry: Awaited<ReturnType<typeof openTelemetry>> | undefined;
 	try {
 		assertMigrated(dataDir);
-		telemetry = await openTelemetry(dataDir);
+		telemetry = telemetryOn ? await openTelemetry(dataDir) : undefined;
 		store = await openHostStore(serverDirectory(dataDir), { outbox: backupConfigured() }, BACKGROUND_CONTEXT).catch(
 			async (error: unknown) => {
-				await telemetry.close();
+				await telemetry?.close();
 				throw error;
 			},
 		);
@@ -199,7 +206,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		address: Server(),
 		principal: SERVER,
 		store,
-		telemetry: telemetry.telemetry,
+		...(telemetry === undefined ? {} : { telemetry: telemetry.telemetry }),
 		principalAttributes,
 		// JSON parts above 16 KiB this host originates (snapshots of the catalogs) go deflated: the WebSocket does not
 		// compress, and a tunnel carries them as they are.
@@ -280,6 +287,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 			app: APP,
 			dataDir,
 			fake,
+			telemetry: telemetryOn,
 			entry: fileURLToPath(new URL("./worker.ts", import.meta.url)),
 			// A young generation of at most 2 MiB per semi-space (default 16): V8 grows it to 32 MiB committed during bursts
 			// and keeps most of it, about 26 MiB of every worker's private memory; the cap costs a few ms more minor GC
@@ -374,7 +382,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 	const web =
 		surface === undefined
 			? undefined
-			: createWeb({ nonce, surface, root: (fn) => host.root(fn, BACKGROUND_CONTEXT) });
+			: createWeb({ nonce, surface, root: (fn) => host.root(fn, BACKGROUND_CONTEXT), telemetry: telemetryOn });
 	try {
 		await chordPlugins.load(
 			host,
@@ -388,7 +396,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 							workers,
 							root: (fn, context) => host.root(fn, context),
 							store,
-							telemetry: telemetry.telemetry,
+							...(telemetry === undefined ? {} : { telemetry: telemetry.telemetry }),
 							plugins: { root: userRoot, reload: (requested) => applyPlugins(requested) },
 						}),
 					},
@@ -398,12 +406,17 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 					// The pages' code, and the user's locale pick that a page's language follows (Chord's page holds it).
 					{
 						name: "chord.telemetry",
+						// Served also while telemetry is off, refusing everyone: a page loaded while it was on (marked to
+						// record) fails `forbidden` at once and stops sending, instead of waiting unbound for a type
+						// nobody serves (`unbound_long`); a worker gets the variant without `ingest`. Nothing is stored.
 						facet: telemetryIngestFacet<P2Principal>({
-							target: telemetry.telemetry,
+							target: telemetry?.telemetry ?? NOTHING_STORED,
 							// Owners' pages only: a guest could open page after page (each its own budget).
-							admit: isOwner,
-							workerHost: (principal) =>
-								principal.kind === "worker" ? Session({ id: principal.session }).key : undefined,
+							admit: (principal) => telemetry !== undefined && isOwner(principal),
+							workerHost: (principal: P2Principal) =>
+								telemetry !== undefined && principal.kind === "worker"
+									? Session({ id: principal.session }).key
+									: undefined,
 							principalAttributes,
 						}),
 					},
@@ -423,7 +436,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		processLogs.notice("server", `Server startup failed: ${error instanceof Error ? error.message : String(error)}`);
 		await workers.close(BACKGROUND_CONTEXT).catch(() => {});
 		await host.close(BACKGROUND_CONTEXT).catch(() => {});
-		await telemetry.close().catch(() => {});
+		await telemetry?.close().catch(() => {});
 		await store.close(BACKGROUND_CONTEXT).catch(() => {});
 		p2Plugins.close();
 		stopLogs();
@@ -929,7 +942,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 				// Workers send their last spans while closing, the host records its own: the store drains after both.
 				await workers.close(BACKGROUND_CONTEXT);
 				await host.close(BACKGROUND_CONTEXT);
-				await telemetry.close();
+				await telemetry?.close();
 				await store.close(BACKGROUND_CONTEXT);
 				p2Plugins.close();
 				stopLogs();

@@ -1089,3 +1089,28 @@ with trusted links): the fields events and call windows added to objects every b
 event record slot, a hold's taps slot, a remote binding's event nodes slot, per-message fields of the link's sides),
 not attributed further. Nothing event-specific is allocated: no event record, node, tap or names list per binding (`test/host/events.test.ts`, "a contract without event members costs no event bookkeeping per
 binding, here or over a link").
+
+## Shared holds (2026-11-13)
+
+`test/bench/shared-holds.ts` (decision "References share one wire hold"), Node 24.4.1, CPU 32, medians of seven bursts
+of 2,000 steps after a warm-up, a server and a client host over a memory link (binary codec), two runs each, measured
+on the build and on the commit before it (`275dde410`, a temporary worktree with the same bench file). Time and heap
+per step include everything both hosts do (the getter's wait, the hold's `bound` and its `ack`). Heap is the observed
+heap growth per step (`heapUsed` after a burst minus before it, divided by its steps), not allocated bytes: a collection
+may run inside a burst and free part of what the burst allocated. Bytes are what the server sends per step.
+
+| Step (time, heap growth, server's bytes) | Before | After |
+| --- | --- | --- |
+| first reference over a link: get and release (its own hold) | 101.3-104.2 µs, 17.4 KB, 10 B | 108.1-110.3 µs, 15.4-15.9 KB, 10 B |
+| a reference joining a held object: get and release | 46.6-47.5 µs, 11.2 KB, 10 B | 13.2-13.3 µs, 14.4 KB, 0 B |
+| a commit (with its call) seen by ten references of one object | 56.4-56.6 µs, 25.1 KB, 178 B, 10 encodes | 34.3-35.6 µs, 17.2-18.4 KB, 23 B, 1 encode |
+| heap retained per reference held (1,000 references to one object) | 7,077-7,080 B | 1,384-1,458 B |
+
+A joining reference sends nothing and waits for no round trip: about a quarter of a new hold's time, no bytes, and a
+fifth of the memory per held reference (no replica, decoder or hold record of its own; what remains is its binding,
+reference object and member records). A commit to ten references is one hold entry and one encode in its `state`
+message instead of ten (one message either way: a commit touching several holds on one link travels as one). A first reference pays the sharing key and its table entry: about 5 µs more (the key, its parts escaped and
+joined, measured at about 1.2 µs per key in the profile; the rest in the binding path, not attributed further). The
+release of a non-final reference makes no `released` error unless it has calls to cancel (an error with its stack is
+the largest single cost of a release). `test/bench/state-binding.ts`'s "over a link: get and release" keeps one
+reference alive, so it now measures a join.

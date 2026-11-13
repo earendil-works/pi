@@ -1,12 +1,13 @@
-// An object held over a link (§7): what one remote reference is bound to on the consumer, across the links of its path
-// (the parent, or a route address). Its state, the replicas of its last bound variant (kept while its link is down),
-// the nodes its binding's events arrive at (decision "Events: fire-and-forget members"), its hold on the path's
-// current link and calls through it: its hold in a `chord.hold` span until bound, each call in a `chord.call` span,
-// their carriers on the wire (slice 9).
+// An object held over a link (§7): what the remote references of this host with one sharing key are bound to, across
+// the links of its path (the parent, or a route address); one hold for all of them (decision "References share one
+// wire hold"). Its state, the replicas of its last bound variant (kept while its link is down), the nodes its events
+// arrive at (decision "Events: fire-and-forget members"), its bindings (each reference's own release, calls and seen
+// members), its hold on the path's current link and calls through it: its hold in a `chord.hold` span until bound
+// (shared work: a root on the host's adapter), each call in a `chord.call` span, their carriers on the wire (slice 9).
 
 import type { TelemetryCarrier, TelemetryContext, TelemetrySpan } from "@earendil-works/pi-telemetry";
 import { BACKGROUND_CONTEXT, type Context, withTelemetry } from "../context/index.ts";
-import type { Contract, ParamsOf } from "../contracts/index.ts";
+import type { Contract } from "../contracts/index.ts";
 import {
 	currentVariants,
 	type MethodData,
@@ -78,9 +79,10 @@ function eventNodes(members: readonly string[]): (member: string) => EventNode |
 const NO_EVENT_NODES = (): undefined => undefined;
 
 /**
- * One remote reference's object, owned by its host across the links of its path. It is `loading` until a link's hold
- * of it is bound, and again whenever that link drops or its relay's upstream starts over; each link holds it with its
- * own id. Two references are two holds, each member of each with its own Delta decoder.
+ * The object of the remote references with one sharing key, owned by its host across the links of its path (one held
+ * by a `self.get` reference or a private retry is its reference's alone). It is `loading` until a link's hold of it is
+ * bound, and again whenever that link drops or its relay's upstream starts over; each link holds it once, with its own
+ * id, each member with its own Delta decoder. It tells every binding of each change; the hold ends with the last.
  */
 export class RemoteObject implements Target {
 	readonly kind = "remote";
@@ -92,8 +94,8 @@ export class RemoteObject implements Target {
 	readonly request: HoldRequest;
 	/** Whom its reference acts for: named on route links (`actingFor`). */
 	readonly caller: Caller;
-	/** Its params, for placing it anew (`retry` after a part past the limits). */
-	readonly #params: ParamsOf<Contract>;
+	/** Its params as L1 checked them, for placing it anew (a private retry after a part past the limits). */
+	readonly #params: CheckedParams;
 	/** Its path: the parent's or a route address's; the host's `unplaced` one after a part past the limits. */
 	#path: Path;
 	/** The object whose activation declared the reference (`self.get`): its holds carry its chain while it activates. */
@@ -103,7 +105,10 @@ export class RemoteObject implements Target {
 	#bound: Bound | undefined;
 	/** The hold on the path's link while one is open: that link's consumer side and this hold's id on it. */
 	#hold: { readonly side: ConsumerSide; readonly id: number } | undefined;
-	#binding: Binding | undefined;
+	/** Its references' bindings, in the order they joined; the hold ends with the last. */
+	readonly #bindings = new Set<Binding>();
+	/** Takes its entry out of its path's sharing table, once; none for a private object or once taken out. */
+	#unindex: (() => void) | undefined;
 	#lastFailure: ChordError | undefined;
 	/** Its current `chord.hold` span until its hold's `bound` or failure; none when nothing records. */
 	#holding: OpenSpan<"chord.hold"> | undefined;
@@ -112,35 +117,43 @@ export class RemoteObject implements Target {
 	/** How many times it was held (on the links of its path). */
 	#holds = 0;
 
+	/**
+	 * Made for its first reference (its getter's `trigger`), on `path`; `unindex` takes it out of its path's sharing
+	 * table (none: a private object, never shared).
+	 */
 	constructor(
 		host: AnyHost,
 		contract: Contract,
-		{ params, key }: CheckedParams,
+		params: CheckedParams,
 		address: WireAddress,
 		caller: Caller,
 		path: Path,
 		dependent: ChordObject | undefined,
-		holder: TelemetryContext,
+		trigger: TelemetryContext,
+		unindex?: () => void,
 	) {
 		this.#host = host;
 		this.contract = contract;
-		this.label = key === "" ? contract.name : `${contract.name}(${key})`;
+		this.label = params.key === "" ? contract.name : `${contract.name}(${params.key})`;
 		const { name: type, version, fingerprint } = contract;
-		// Its first hold carries the carrier of its `chord.hold` span, under its holder's span (`#holdTrace`).
-		if (!untraced(holder)) {
-			this.#holding = new OpenSpan(holder, "chord.hold", {
+		// Its hold is shared work (decision "Shared work"): a root on the host's adapter whatever its first getter's
+		// context, linked to that getter's span when traced; its first hold carries the span's carrier (`#holdTrace`).
+		if (!untraced(host.telemetry)) {
+			this.#holding = new OpenSpan(host.telemetry, "chord.hold", {
 				"chord.host": host.spanHost,
 				type,
 				object: capped(this.label),
 				"address.kind": address.kind,
 			});
+			if (!untraced(trigger)) this.#holding.span.addLink({ context: trigger });
 			this.#firstHold = carrierOf(this.#holding.span);
 		}
-		this.request = { type, version, fingerprint, params: jsonPart(params), address };
+		this.request = { type, version, fingerprint, params: jsonPart(params.params), address };
 		this.caller = caller;
 		this.#params = params;
 		this.#path = path;
 		this.#dependent = dependent;
+		this.#unindex = unindex;
 	}
 
 	get state(): RefState {
@@ -177,16 +190,67 @@ export class RemoteObject implements Target {
 		return this.#bound !== undefined;
 	}
 
-	/** Its one reference bound to it. */
-	hold(binding: Binding): void {
-		this.#binding = binding;
+	/** Whether its path is the host's unplaced one: a part past the limits failed it, so it holds nothing anywhere. */
+	get unplaced(): boolean {
+		return this.#path === this.#host.unplaced;
 	}
 
-	/** The reference was released: the current link's provider is told and the reference's sent calls rejected. */
-	unhold(_binding: Binding): void {
+	/**
+	 * Counts `binding` as one of its references. One joining it after it was bound (decision "References share one wire
+	 * hold") has not seen what it finds: every member when it is not live, else the members failed or missing from the
+	 * bound variant; each counts as seen once its replica takes a value after the join. `Binding.bind` retargets and
+	 * tells it.
+	 */
+	hold(binding: Binding): void {
+		const bound = this.#bound;
+		if (bound !== undefined && this.#bindings.size > 0) binding.joined(this.#unseen(bound));
+		this.#bindings.add(binding);
+	}
+
+	/**
+	 * The members a binding joining now has not seen, each with its replica's count of values now (0 without one): its
+	 * own history starts there.
+	 */
+	#unseen(bound: Bound): ReadonlyMap<string, number> {
+		const live = this.#state.kind === "live";
+		const unseen = new Map<string, number>();
+		for (const variant of currentVariants(this.contract).values()) {
+			for (const member of variant.state.keys()) {
+				const replica = bound.replicas.get(member);
+				const good = live && bound.names.state.includes(member) && replica?.start().kind === "value";
+				if (!good) unseen.set(member, replica?.generation ?? 0);
+			}
+		}
+		return unseen;
+	}
+
+	/** How many values the replica of `member` took; `undefined` without one. */
+	generationOf(member: string): number | undefined {
+		return this.#bound?.replicas.get(member)?.generation;
+	}
+
+	/**
+	 * `binding` was released. While others remain nothing is sent but the cancellation of its own calls (queued ones
+	 * leave unsent, sent ones are aborted); with the last the hold is released and the object ends (no linger, D8).
+	 */
+	unhold(binding: Binding): void {
+		if (!this.#bindings.delete(binding)) return;
+		if (this.#bindings.size > 0) {
+			this.#hold?.side.cancelCalls(this.#hold.id, binding, this.label);
+			return;
+		}
 		const error = new ChordError({ code: "released", message: `${this.label}: released` });
+		// Out of the table before anything else runs: a reference made from here on holds anew.
+		this.#unpublish();
 		this.#hold?.side.release(this.#hold.id, error);
 		this.#end(error);
+	}
+
+	/** Leaves its path's sharing table (once): it is never put back. */
+	#unpublish(): void {
+		const unindex = this.#unindex;
+		this.#unindex = undefined;
+		unindex?.();
 	}
 
 	/**
@@ -199,14 +263,15 @@ export class RemoteObject implements Target {
 	}
 
 	/**
-	 * The carrier of this hold: the first one's span's (a child of its holder's span); a re-hold on a later link (a
-	 * reconnect, days later for a page kept open) is a fresh `chord.hold` root of this host's adapter linked to the first,
-	 * so nothing keeps adding children under a span long ended (review L1).
+	 * The carrier of this hold: the first one's span's (a root of this host's adapter); a re-hold on a later link (a
+	 * reconnect, days later for a page kept open) is a fresh `chord.hold` root linked to the first, so nothing keeps
+	 * adding children under a span long ended (review L1). None when the host's adapter records nothing (then the first
+	 * hold had no span either, whatever its getter's context).
 	 */
 	#holdTrace(): TelemetryCarrier | undefined {
 		if (this.#holds++ === 0) return this.#firstHold;
+		if (this.#firstHold === undefined) return undefined;
 		const adapter = this.#host.telemetry;
-		if (this.#firstHold === undefined || untraced(adapter)) return undefined;
 		// A hold that dropped before it was bound ends here.
 		this.#held("ended");
 		const attributes = {
@@ -241,7 +306,7 @@ export class RemoteObject implements Target {
 	 * Calls a method of the bound variant over the link; one outside it fails `invalid/member`. Only a live object is
 	 * called: bound on an open link.
 	 */
-	async call(method: string, args: unknown, context: Context): Promise<unknown> {
+	async call(method: string, args: unknown, binding: Binding, context: Context): Promise<unknown> {
 		const bound = this.#bound!;
 		const hold = this.#hold!;
 		const data = bound.methods.get(method);
@@ -251,7 +316,7 @@ export class RemoteObject implements Target {
 		const index = bound.names.methods.indexOf(method);
 		// Arguments are checked by the provider.
 		const parent = context.telemetry;
-		if (untraced(parent)) return hold.side.call(hold.id, index, data, args, context);
+		if (untraced(parent)) return hold.side.call(hold.id, index, data, args, binding, context);
 		const attributes = {
 			"chord.host": this.#host.spanHost,
 			type: this.contract.name,
@@ -262,7 +327,7 @@ export class RemoteObject implements Target {
 		};
 		return chordSpans(parent)("chord.call", attributes, async (span) => {
 			try {
-				const result = await hold.side.call(hold.id, index, data, args, withTelemetry(span, context));
+				const result = await hold.side.call(hold.id, index, data, args, binding, withTelemetry(span, context));
 				span.setAttributes({ outcome: "ok" });
 				return result;
 			} catch (error) {
@@ -340,44 +405,75 @@ export class RemoteObject implements Target {
 	}
 
 	/**
-	 * `ref.retry()`, as a step of `walk`: a failed object's provider is asked for an attempt with the walk's hop budget,
-	 * none left: nothing is sent (a hold it refused is started there again; a parked object there passes it on with one
-	 * hop less). One that failed for a part past the link's limits is placed anew and held with a new id, now or on its
-	 * path's next link (a `hostAddress` that throws fails it broken again).
+	 * `ref.retry()` from `binding`, as a step of `walk`: a failed object's provider is asked for an attempt with the
+	 * walk's hop budget, none left: nothing is sent (a hold it refused is started there again, for every reference
+	 * sharing it; a parked object there passes it on with one hop less). After a part past the link's limits `binding`
+	 * alone moves to a private object of its own, placed anew and held with a new id (`#retryAlone`).
 	 */
-	retry(walk: RetryWalk): void {
+	retry(walk: RetryWalk, binding: Binding): void {
 		if (this.#state.kind !== "failed") return;
-		if (this.#path === this.#host.unplaced) {
-			this.#place();
+		if (this.unplaced) {
+			this.#retryAlone(binding);
 			return;
 		}
 		if (walk.hops > 0) this.#hold?.side.retry(this.#hold.id, walk.hops);
 	}
 
-	/** Places a reference whose part was past the limits anew, on its path now (a throwing `hostAddress` fails it). */
+	/**
+	 * Moves `binding` to a private object (never shared) that keeps what this one had for it (its variant, copies of its
+	 * replicas with their counts: its last values and seen members stay its own) and places it anew; the others stay
+	 * here, failed, until they retry. The binding leaves first, so this object ending with its last binding never ends
+	 * it. A placement that throws fails only the private object broken (`hostAddress`, a route that refuses).
+	 */
+	#retryAlone(binding: Binding): void {
+		const { batch, unplaced } = this.#host;
+		const own = new RemoteObject(
+			this.#host,
+			this.contract,
+			this.#params,
+			this.request.address,
+			this.caller,
+			unplaced,
+			this.#dependent,
+			BACKGROUND_CONTEXT.telemetry,
+		);
+		const bound = this.#bound;
+		if (bound !== undefined) {
+			const replicas = new Map([...bound.replicas].map(([member, replica]) => [member, replica.fork(batch)]));
+			own.#bound = { ...bound, replicas, eventNode: eventNodes(bound.names.events) };
+		}
+		unplaced.attach(own);
+		this.#bindings.delete(binding);
+		binding.transfer(own);
+		if (this.#bindings.size === 0)
+			this.#end(new ChordError({ code: "released", message: `${this.label}: released` }));
+		own.#place();
+	}
+
+	/** Places a private object anew, on its path now (a throwing `hostAddress` or route fails it broken). */
 	#place(): void {
 		let path: Path;
 		try {
-			path = this.#host.pathOf(this.contract, this.#params, this.caller.principal);
+			path = this.#host.pathOf(this.contract, this.#params.params, this.caller.principal);
 		} catch (error) {
 			this.#fail(asChordError(error, this.contract.name));
 			return;
 		}
 		this.#path.detach(this);
 		this.#path = path;
-		this.#move(LOADING);
 		path.attach(this);
 	}
 
 	/**
 	 * A part of its snapshot or of a state change was past the link's limits (`too_large/part`): the hold is released
-	 * at the provider, and the reference fails broken with `error`, final: no link holds it again (a reconnect
-	 * included) until `retry`.
+	 * at the provider, it leaves the sharing table, and every binding fails broken with `error` (they share the part),
+	 * final: no link holds it again (a reconnect included); each binding's `retry` moves it alone (`#retryAlone`).
 	 */
 	tooLarge(error: ChordError): void {
 		const hold = this.#hold;
 		if (hold === undefined) return;
 		this.#hold = undefined;
+		this.#unpublish();
 		hold.side.release(hold.id, error);
 		this.#path.detach(this);
 		this.#path = this.#host.unplaced;
@@ -554,24 +650,30 @@ export class RemoteObject implements Target {
 	revoke(error: ChordError): void {
 		const hold = this.#hold;
 		this.#hold = undefined;
+		this.#unpublish();
 		hold?.side.release(hold.id, error);
 		this.lost(error);
 	}
 
-	/** `gone`, or the host closes: the reference ends, its calls reject with `error`. */
+	/**
+	 * `gone`, or the host closes: every reference ends, their calls reject with `error`. The bindings are taken and the
+	 * object ends first, so each ends exactly once whatever ending one does.
+	 */
 	lost(error: ChordError): void {
-		const binding = this.#binding;
+		const bindings = [...this.#bindings];
+		this.#unpublish();
 		this.#hold?.side.forget(this.#hold.id, error);
 		this.#end(error);
-		binding?.end(error);
+		for (const binding of bindings) binding.end(error);
 	}
 
-	/** Ends the object: detached from its path, waits rejected, replicas ended; keeps nothing of its reference. */
+	/** Ends the object: out of the table, detached from its path, replicas ended; keeps none of its references. */
 	#end(error: ChordError): void {
+		this.#unpublish();
 		this.#held("ended");
 		const bound = this.#bound;
 		this.#state = { kind: "ended", error };
-		this.#binding = undefined;
+		this.#bindings.clear();
 		this.#dependent = undefined;
 		this.#hold = undefined;
 		this.#bound = undefined;
@@ -599,13 +701,23 @@ export class RemoteObject implements Target {
 		if (kind !== "ended" && kind !== "loading") this.#move(LOADING);
 	}
 
-	/** Moves to `state` and tells the reference: its members follow what it shows now (in a batch), then its state. */
+	/**
+	 * Moves to `state` and tells every binding, as a local object tells its holders: their members follow what it shows
+	 * now (all in one batch), then each its state; one released meanwhile is not told. A broken failure takes it out of
+	 * the sharing table first, for good: a new reference holds anew.
+	 */
 	#move(state: RefState): void {
+		if (state.kind === "failed" && state.cause.kind === "broken") this.#unpublish();
 		this.#state = state;
-		const binding = this.#binding;
-		if (binding === undefined) return;
-		if (binding.following) this.#host.batch.within(() => binding.retarget(), BACKGROUND_CONTEXT);
-		else binding.retarget();
-		binding.moved();
+		if (this.#bindings.size === 0) return;
+		const bindings = [...this.#bindings];
+		if (bindings.some((binding) => binding.following)) {
+			this.#host.batch.within(() => {
+				for (const binding of bindings) binding.retarget();
+			}, BACKGROUND_CONTEXT);
+		} else {
+			for (const binding of bindings) binding.retarget();
+		}
+		for (const binding of bindings) if (this.#bindings.has(binding)) binding.moved();
 	}
 }

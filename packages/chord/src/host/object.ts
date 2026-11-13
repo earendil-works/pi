@@ -35,7 +35,14 @@ import type { CloseFailed, NativeCloseReason } from "./native.ts";
 import { OPENING } from "./old-work.ts";
 import { Readiness } from "./readiness.ts";
 import { type Ended, type Failed, LIVE, LOADING, type RefState } from "./ref-state.ts";
-import { type CheckedParams, type Followed, type RetryWalk, retryWalk, type Target } from "./reference.ts";
+import {
+	type Binding,
+	type CheckedParams,
+	type Followed,
+	type RetryWalk,
+	retryWalk,
+	type Target,
+} from "./reference.ts";
 import { type RetrySource, RetryWakes } from "./retry-on.ts";
 import type { Request } from "./staging.ts";
 import { uuidv7 } from "./uuid.ts";
@@ -446,13 +453,23 @@ export class ChordObject implements Target {
 		this.#wakes.replace(sources, () => this.#wake());
 	}
 
+	/** Calls a method of the live object for a reference's `binding`: as its caller, at its version (`callAs`). */
+	call(method: string, args: unknown, binding: Binding, context: Context): Promise<unknown> {
+		return this.callAs(method, args, context, binding.caller, binding.contract.version);
+	}
+
+	/** Members on this host are no replicas (decision "References share one wire hold"). */
+	generationOf(): undefined {
+		return undefined;
+	}
+
 	/**
 	 * Calls a method of the live object for `caller`, bound at `version` (an older one maps its arguments and result,
 	 * Q10), its `chord.method` span under `parent` (the caller's span on this host, a call's carrier over a link). While
 	 * an attempt activates (a reload's restart, a retry), new work waits for its outcome (the gate); old work runs on a
 	 * restart's open old attempt.
 	 */
-	async call(
+	async callAs(
 		method: string,
 		args: unknown,
 		context: Context,

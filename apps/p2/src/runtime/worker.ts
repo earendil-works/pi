@@ -48,6 +48,8 @@ export type WorkerInit = {
 	readonly app: string;
 	readonly dataDir: string;
 	readonly fake: boolean;
+	/** Whether the worker records telemetry and sends it to the server (settings.json's `telemetry`, read at its start). */
+	readonly telemetry: boolean;
 	readonly generation: number;
 	readonly values: { readonly session: SessionInit } & Readonly<Record<string, JsonValue>>;
 };

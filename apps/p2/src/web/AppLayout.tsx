@@ -1,5 +1,5 @@
 import { type PointerEvent as ReactPointerEvent, useRef, useState } from "react";
-import { closeLayers, Slot, useCanWrite, useDrawer, useRoute, useUnshownLayers } from "../runtime/web.tsx";
+import { closeLayers, Slot, SlotList, useCanWrite, useDrawer, useRoute, useUnshownLayers } from "../runtime/web.tsx";
 import { CommandMenu } from "./command-menu/CommandMenu.tsx";
 import { useComposerState } from "./composer-state.tsx";
 import { useDragSize } from "./drag-size.ts";
@@ -108,6 +108,8 @@ function Layout() {
 			<div id="side-dock" className="side-dock" />
 			<Slot name="workspace-panel" />
 			<SettingsSectionSheets />
+			{/* Layers over the whole page (`overlay:<name>`), e.g. the scope prompt's highlight and composer. */}
+			<SlotList prefix="overlay" />
 		</div>
 	);
 }

@@ -1,7 +1,7 @@
 import { InMemoryTelemetryContext, type SpanAttributes } from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context, withAbortSignal, withCancel, withTelemetry } from "../../src/context/index.ts";
-import { evolve, hostKind, int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
+import { type Address, evolve, hostKind, int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
 import { broken } from "../../src/data/index.ts";
 import { type Ctx, createHost, defineFacet, type FacetHost, type HostError, type Self } from "../../src/host/index.ts";
 import type { ChordHost } from "../../src/host/internal.ts";
@@ -14,6 +14,7 @@ import { sqliteBackend } from "../../src/store/backend.ts";
 import type { StagedWrite } from "../../src/store/step.ts";
 import { type ChordStore, openStore } from "../../src/store/store.ts";
 import {
+	bindHold,
 	failures,
 	fakeTimers,
 	faultyStore,
@@ -25,6 +26,8 @@ import {
 	PlacedNotes,
 	partValue,
 	RawPeer,
+	rawParent,
+	rawProvider,
 	rejection,
 	relayed,
 	SERVER_ADDRESS,
@@ -1849,5 +1852,216 @@ describe("the host's spans (slice 9)", () => {
 		expect(revoke.attributes).toEqual({ "chord.host": "server", count: 1 });
 		host.revoke("S1", context);
 		expect(telemetry.getSpans().filter(({ name }) => name === "chord.revoke")).toHaveLength(1);
+	});
+});
+
+describe('bind: remote references sharing one wire hold (decision "References share one wire hold")', () => {
+	/** How many holds `peer` got since the last count (taken out). */
+	const holdsAt = async (peer: RawPeer): Promise<number> => {
+		await transported();
+		const count = peer.received.filter((message) => message.kind === "hold").length;
+		peer.received.splice(0, peer.received.length, ...peer.received.filter((message) => message.kind !== "hold"));
+		return count;
+	};
+	const keyed = (version: number, members: Record<string, ReturnType<typeof int>>, address: () => Address) =>
+		remote("app.keyed", {
+			version,
+			params: { a: str(), b: str() },
+			hostAddress: address,
+			variants: { v: { state: members, methods: {} } },
+		});
+
+	it("one hold per type, version, fingerprint, params and placed address; escaped parts never collide", async () => {
+		const { client, peer } = await rawProvider();
+		const Keyed = keyed(1, { n: int() }, () => Server());
+		const params = { a: "x", b: "y" };
+		client.hold(Keyed, params, context);
+		client.hold(Keyed, { ...params }, context);
+		expect(await holdsAt(peer)).toBe(1);
+		// Another version, another fingerprint, another address (`hostAddress` is not in the fingerprint): one each.
+		client.hold(
+			keyed(2, { n: int() }, () => Server()),
+			params,
+			context,
+		);
+		client.hold(
+			keyed(1, { m: int() }, () => Server()),
+			params,
+			context,
+		);
+		const Elsewhere = keyed(1, { n: int() }, () => Session({ id: "elsewhere" }));
+		expect(Elsewhere.fingerprint).toBe(Keyed.fingerprint);
+		client.hold(Elsewhere, params, context);
+		expect(await holdsAt(peer)).toBe(3);
+		// Separators, backslashes and NUL moved between params: all apart.
+		const split = [
+			{ a: "x|", b: "y" },
+			{ a: "x", b: "|y" },
+			{ a: "x\\", b: "y" },
+			{ a: "x", b: "\\y" },
+			{ a: "x\u0000", b: "y" },
+			{ a: "x", b: "\u0000y" },
+		];
+		for (const each of split) client.hold(Keyed, each, context);
+		expect(await holdsAt(peer)).toBe(split.length);
+	});
+
+	it("one hold per caller: equal principal JSON shares, another field order, another principal or none holds anew", async () => {
+		const { client, peer } = await rawProvider();
+		const open = Promise.withResolvers<void>();
+		const holding: Promise<unknown>[] = [];
+		const as = (principal: TestPrincipal | undefined): void =>
+			void holding.push(
+				client.root(
+					async (ctx) => {
+						ctx.get(Notes, { session: "S1" }).catch(() => {});
+						await open.promise;
+					},
+					context,
+					{ principal },
+				),
+			);
+		as({ kind: "guest", session: "S1" });
+		as({ kind: "guest", session: "S1" });
+		expect(await holdsAt(peer)).toBe(1);
+		// Field order is part of the principal's JSON as the wire carries it.
+		as({ session: "S1", kind: "guest" } as TestPrincipal);
+		as({ kind: "guest", session: "S2" });
+		as(undefined);
+		expect(await holdsAt(peer)).toBe(3);
+		open.resolve();
+		await Promise.all(holding);
+	});
+
+	it("one hold per caller's incarnation: ctx.get for two calls of one tab shares, for another tab's holds anew", async () => {
+		const Opener = remote("app.opener", {
+			version: 1,
+			params: {},
+			hostAddress: () => Server(),
+			variants: { v: { state: {}, methods: { open: method(undefined, int()) } } },
+		});
+		const gate = Promise.withResolvers<void>();
+		const { tab, server, workers } = await relayed({
+			server: (h) =>
+				h.serve(Opener, () => ({
+					variant: "v",
+					members: {
+						open: async (ctx) => {
+							await ctx.get(PlacedNotes, { session: "S1" });
+							await gate.promise;
+							return 1;
+						},
+					},
+				})),
+		});
+		const other = createHost<TestPrincipal>({ onError: () => {} });
+		await other.load([], context);
+		const [near, far] = memoryLinkPair();
+		server.accept(near, { principal: { kind: "owner" }, codec: testCodec() }, context);
+		other.connect(far, { principal: { kind: "server" }, codec: testCodec() }, context);
+		const opener = (await tab.get(Opener, {}, context)) as unknown as { open(context: unknown): Promise<number> };
+		const another = (await other.get(Opener, {}, context)) as unknown as typeof opener;
+		const calls = [opener.open(context), opener.open(context)];
+		await transported();
+		await transported();
+		const worker = workers.get("session|S1")!;
+		expect(worker.activity.value.references).toBe(1);
+		calls.push(another.open(context));
+		await transported();
+		await transported();
+		expect(worker.activity.value.references).toBe(2);
+		gate.resolve();
+		expect(await Promise.all(calls)).toEqual([1, 1, 1]);
+		await Promise.all([tab.close(context), other.close(context)]);
+	});
+
+	it("self.get references hold on their own: while activating, once live, and on a re-hold", async () => {
+		const User = local("app.notes-user", { version: 1, params: {}, members: { count: int() } });
+		const client = createHost<TestPrincipal>({ onError: () => {} });
+		await client.load(
+			[
+				{
+					name: "@test/user",
+					facet: defineFacet<TestPrincipal>((h) =>
+						h.serve(User, (_, self) => {
+							const notes = self.get(Notes, { session: "S1" });
+							return { count: self.derive([notes.count], ([count]) => count) };
+						}),
+					),
+				},
+			],
+			context,
+		);
+		const peer = await rawParent(client);
+		const shared = client.hold(Notes, { session: "S1" }, context);
+		const user = client.hold(User, {}, context);
+		const holds = [await peer.next("hold"), await peer.next("hold")];
+		for (const { hold } of holds) bindHold(peer, hold);
+		await transported();
+		expect([shared.state.value.kind, user.state.value.kind]).toEqual(["live", "live"]);
+		// A reference made now joins the host's own hold, not the dependent's.
+		client.hold(Notes, { session: "S1" }, context);
+		expect(await holdsAt(peer)).toBe(0);
+		peer.close();
+		await transported();
+		const next = await rawParent(client);
+		expect(await holdsAt(next)).toBe(2);
+		await client.close(context);
+	});
+
+	it("a relay forwards two downstream holds of the same key as two upstream holds", async () => {
+		const { tab, server, workers } = await relayed();
+		const other = createHost<TestPrincipal>({ onError: () => {} });
+		await other.load([], context);
+		const [near, far] = memoryLinkPair();
+		server.accept(near, { principal: { kind: "owner" }, codec: testCodec() }, context);
+		other.connect(far, { principal: { kind: "server" }, codec: testCodec() }, context);
+		await tab.get(PlacedNotes, { session: "S1" }, context);
+		await tab.get(PlacedNotes, { session: "S1" }, context);
+		await other.get(PlacedNotes, { session: "S1" }, context);
+		const worker = workers.get("session|S1")!;
+		await transported();
+		expect(worker.activity.value.references).toBe(2);
+		await Promise.all([tab.close(context), other.close(context)]);
+	});
+
+	it("revocation ends every reference sharing a hold, and the next one holds anew", async () => {
+		const client = createHost<TestPrincipal>({
+			revokedBy: (principal) => (principal.kind === "guest" ? [principal.session] : []),
+			onError: () => {},
+		});
+		await client.load([], context);
+		const peer = await rawParent(client);
+		const open = Promise.withResolvers<void>();
+		const ended: string[] = [];
+		const guest: TestPrincipal = { kind: "guest", session: "S1" };
+		const scope = (name: string) =>
+			client
+				.root(
+					async (ctx) => {
+						const notes = await ctx.get(Notes, { session: "S1" });
+						void notes.state
+							.watch(context)
+							.then((watch) => watch.closed)
+							.then(() => void ended.push(name));
+						await open.promise;
+					},
+					context,
+					{ principal: guest },
+				)
+				.catch(() => {});
+		const scopes = [scope("a")];
+		bindHold(peer, (await peer.next("hold")).hold);
+		scopes.push(scope("b"));
+		await transported();
+		expect(await holdsAt(peer)).toBe(0);
+		client.revoke("S1", context);
+		await transported();
+		expect([ended.sort(), peer.kinds().filter((kind) => kind === "release")]).toEqual([["a", "b"], ["release"]]);
+		void scope("c");
+		expect(await holdsAt(peer)).toBe(1);
+		open.resolve();
+		await Promise.all(scopes);
+		await client.close(context);
 	});
 });

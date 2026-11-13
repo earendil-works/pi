@@ -670,7 +670,13 @@ syntax/startup errors are retained too. Focused tests: `logs.test.ts`, `ui-logs.
 `test-host.test.ts`; the browser regression exercises the original `Unknown p2 plugin: settings` failure, sticky
 startup fencing, the list marker, owner notice, worker-filtered Show logs and recovery through Retry.
 
-**Telemetry** (Chord §29; always on, no sampling: Chord offers none): the server records to `<data>/telemetry.sqlite`
+**Telemetry** (Chord §29; off unless settings.json's `telemetry` is `true`, read once at the server's start; no
+sampling: Chord offers none; recording everything cost the phone 1.8M spans, 1 GB and a third of a core in 15 h, so it
+is opt-in since 2026-11-13). Off, the server opens no store and its ingest objects refuse everyone (a page loaded while it
+was on fails `forbidden` at once and stops sending, never waits unbound), `WorkerInit.telemetry` is
+false (the worker's host has no recorder and sends nothing), no page is marked, every host uses Chord's NOOP adapter,
+and `Traces` answers `unavailable` "telemetry is off (settings.json telemetry)" (the pane and the tools show it;
+`telemetry-off.test.ts`). On: the server records to `<data>/telemetry.sqlite`
 (`openTelemetry`, `src/runtime/host-dirs.ts`; Chord's SQLite store, 7 days, a queue of 10,000 spans, a flush every
 second; its own private file, never in a backup), its only writer. Each session worker records in memory (its host's
 spans and metrics, and Durable's `pi.durable.*` and pi-ai's `pi.ai.*`: the Harness gets the same adapter) and sends
@@ -1529,6 +1535,28 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   restoring it when archived; the session's working spinner or unread dot on its corner); the sessions plugin's `DrawerRowsContext` (`plugins/sessions/contract.web.tsx`) gives it the
   rows, `SessionDot` and `listApart`, which leaves its session out of the rollups. The TUI lists it as an ordinary session. Tests:
   `familiar.test.ts`, `ui-familiar.test.ts`, the conversations actions in `conversations.test.ts`.
+- **Scope prompt** (`plugins/scope-prompt`, experiment; owner only, web only): an overlay (`overlay:` slots, the
+  `SlotList` at the end of `AppLayout`) that leaves the page as it is until pointing mode is on (`mode.ts`): a double tap
+  of the bare primary modifier (Cmd on macOS, Ctrl elsewhere: each press released within 300 ms, the second within
+  450 ms of the first, no other key, click or focus loss between, so Cmd+V sent by a dictation tool never counts), the
+  binding `p2.scope-prompt.toggle` (Cmd+.), the command menu's "Prompt anywhere", or its button (`Toggle.tsx`: in the
+  sidebar's header before the collapse button, the `sidebar-header:` slots; in the top bars of the chat and the list
+  pages while the sidebar is not shown docked, the `topbar-start:` slots), which also switches it off. Holding the modifier does nothing,
+  so Cmd+click still opens links in new tabs. While on, a pill says so, frames take no pointer events (they count as
+  their pane), the thing under the mouse is outlined with its chain of labels, and a click (touch too) is taken before
+  the page sees it and opens a small composer there, whose steps widen the scope (a touch: its tap outlines what it is
+  on, a second tap on that opens the composer; a drag scrolls as always); Escape, Stop, leaving the window or
+  the pick end the mode. `scopes.ts` reads the chain from attributes the page already renders: `.drawer`,
+  `.sidebar-section` and `.sidebar-group` `[data-key]`, `[data-session]` (session rows), `[data-view-pane]` with
+  `data-view-kind/-item/-title` (Workbench), `[data-path]` (a file of the changes view), `.diff-line`, `[data-entry]`
+  (transcript entries). Where it goes (`message.ts`; the composer's "To" switches): a target in the open session's
+  page (its chat, a view) goes to the open conversation as the person's message, as the composer sends it: the page
+  stages the `<scope>` block on the session (`ScopeStage`, worker facet, by `requestId`, dropped after a minute) and
+  the views' send router carries it with that message (`MessageContexts`, which now get the routed input), so the
+  transcript shows the text with the note "with scope Chat › Message". Anything else (the sidebar) goes to the
+  Familiar: opened as its logo does, the text queued on its main conversation followed by the block with the page's
+  session, conversation and title or list, which its prompt section explains. Not yet: frames' insides (an html
+  artifact is its pane). Test: `ui-scope-prompt.test.ts`.
 - **Subagents** (`plugins/subagents`): owns its protocol-independent Durable extension (persistent
   anchor conversations and exactly-once background reporter tasks, model/thinking/tool validation). The worker
   facet (an object of lifetime "host") contributes it to `Extensions` and catches up child metadata after relevant commits, retrying

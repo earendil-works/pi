@@ -118,6 +118,7 @@ async function worker(t: test.TestContext, start: Location, machines: Record<str
 		app: CHECKOUT,
 		dataDir,
 		fake: true,
+		telemetry: false,
 		generation: 1,
 		values: { session: { id: "s1", ...start, model: MODEL, thinkingLevel: "off" } },
 	};

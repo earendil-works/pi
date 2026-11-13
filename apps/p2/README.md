@@ -222,6 +222,11 @@ or `>`; default "Owner") is the name your messages carry from then on; messages 
 agent's texts and its tool calls on one wheel per turn; 2 the texts too, thinking and calls on wheels between them;
 3 thinking too (collapsed), only runs of tool calls on wheels; 4 thinking in full and each tool call as its own row,
 no wheels.
+`telemetry` (boolean, default `false`) records traces and metrics: the server's own, every session worker's and owners'
+pages', in `<P2_DATA_DIR>/telemetry.sqlite` (7 days), read in the Traces pane (Settings, or the command "Show traces")
+and by the agent's `telemetry_*` code-mode tools. It costs CPU and storage on every request, so it is off unless set to
+`true`; off, the Traces pane and the tools say "telemetry is off (settings.json telemetry)". Unlike the other keys it is
+read once when the server starts: a change needs a server restart.
 
 **Server name.** The server goes by the device's name (on macOS the computer name, else the host name), read again at
 every start. Settings, General, **Server name** gives it a name of its own (one line, at most 63 characters), kept in
