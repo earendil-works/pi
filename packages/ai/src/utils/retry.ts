@@ -89,6 +89,14 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"timed? out",
 	"timeout",
 	"terminated",
+	// Node socket error codes. A dropped connection often reports only the code, without
+	// the fetch wording above, e.g. "read ECONNRESET" mid-stream or
+	// "connect ETIMEDOUT 140.82.113.3:443" (#12070). The lookaround guards keep a code
+	// from matching inside a longer identifier such as a request id.
+	// ECONNREFUSED stays out: nothing is listening, so restarting the request does not help.
+	"(?<![a-z0-9])(?:ECONNRESET|ECONNABORTED|ETIMEDOUT|EPIPE)(?![a-z0-9])",
+	// Node's message text for ECONNRESET, which some SDK wrappers send without the code.
+	"connection reset by peer",
 
 	// WebSocket transports can report close/error text instead of HTTP/fetch text.
 	"websocket.?closed",

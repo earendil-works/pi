@@ -88,6 +88,28 @@ describe("provider retry classification", () => {
 	});
 
 	it.each([
+		// Regression for #12070: mid-stream socket drops reported as bare Node error codes.
+		"read ECONNRESET",
+		"stream error: read ECONNRESET",
+		"connect ETIMEDOUT 140.82.113.3:443",
+		"Error: write EPIPE",
+		"write ECONNABORTED 10.0.0.1:443",
+		"Connection reset by peer",
+	])("matches socket error code wording: %s", (errorMessage) => {
+		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(true);
+	});
+
+	it.each([
+		// Regression for #12070: the codes must not match inside a longer identifier.
+		"EXECONNRESET",
+		"ETIMEDOUTX",
+		// A refused connection means nothing is listening; retrying the same request does not help.
+		"connect ECONNREFUSED 127.0.0.1:9",
+	])("does not match socket error lookalikes: %s", (errorMessage) => {
+		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(false);
+	});
+
+	it.each([
 		// Regression for #10920: gateway upstream failures sent as `response.failed` error codes.
 		"unknown: Unable to forward upstream stream",
 		"upstream_error: Upstream request failed",
