@@ -25,7 +25,6 @@ function correctUpstream(model: ChatModel): ChatModel {
 	}
 	if (model.id.startsWith("moonshotai/kimi-k2.6")) {
 		mergeCompat(model as Model<"openai-completions">, {
-			supportsDeveloperRole: false,
 			requiresReasoningContentOnAssistantMessages: true,
 		});
 	}
@@ -72,8 +71,6 @@ export default defineProvider({
 	classifiers: (ctx) => structuredClone(ctx.sources.openRouter.classifiers),
 	compat: {
 		"openai-completions": (model): OpenAICompletionsCompat => ({
-			// OpenRouter passes developer messages through to Anthropic and OpenAI models only.
-			...(/^(anthropic|openai)\//.test(model.id) ? {} : { supportsDeveloperRole: false }),
 			thinkingFormat: "openrouter",
 			supportsStrictMode: true,
 			...(/^~?anthropic\//.test(model.id) ? { cacheControlFormat: "anthropic" } : {}),

@@ -13,7 +13,6 @@ export const CN_BASE_URL = "https://token-plan.maas.qianwenaiapi.com/compatible-
 
 const COMPAT: OpenAICompletionsCompat = {
 	thinkingFormat: "qwen",
-	supportsDeveloperRole: false,
 	supportsStore: false,
 	supportsReasoningEffort: true,
 };

@@ -142,7 +142,6 @@ export function opencodeModels(ctx: ProviderContext): ChatModel[] {
 
 export const OPENCODE_COMPLETIONS_COMPAT = {
 	supportsStore: false,
-	supportsDeveloperRole: false,
 	supportsStrictMode: true,
 } as const;
 

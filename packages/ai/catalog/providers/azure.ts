@@ -47,10 +47,9 @@ export default defineProvider({
 	finalize: (model) => {
 		enableOpenAiGrammarTools(model);
 		if (model.api === "openai-completions") {
-			// Azure 400s on DeepSeek's `thinking` field and on every prompt cache parameter, discards a
-			// `developer` system message unbilled once reasoning_effort is set, and honours mid-convo ones (#9645).
+			// Azure 400s on DeepSeek's `thinking` field and on every prompt cache parameter, and honours
+			// mid-convo system messages (#9645).
 			mergeCompat(model as Model<"openai-completions">, {
-				supportsDeveloperRole: false,
 				supportsMidConvoSystemMessages: true,
 				thinkingFormat: "openai",
 				supportsLongCacheRetention: false,

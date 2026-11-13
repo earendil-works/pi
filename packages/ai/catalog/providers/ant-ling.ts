@@ -3,7 +3,6 @@ import { defineProvider, mergeThinking } from "../define.ts";
 
 const COMPAT: OpenAICompletionsCompat = {
 	supportsStore: false,
-	supportsDeveloperRole: false,
 	supportsReasoningEffort: false,
 	maxTokensField: "max_tokens",
 	supportsLongCacheRetention: false,
@@ -35,7 +34,6 @@ export default defineProvider({
 	compat: {
 		"openai-completions": {
 			supportsStore: false,
-			supportsDeveloperRole: false,
 			supportsReasoningEffort: false,
 			maxTokensField: "max_tokens",
 			thinkingFormat: "ant-ling",

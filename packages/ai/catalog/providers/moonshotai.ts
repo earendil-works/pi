@@ -41,7 +41,6 @@ export function moonshotModels(ctx: ProviderContext, source: string, baseUrl: st
 
 export const MOONSHOT_COMPLETIONS_COMPAT = {
 	supportsStore: false,
-	supportsDeveloperRole: false,
 	supportsReasoningEffort: false,
 	maxTokensField: "max_tokens",
 } as const;

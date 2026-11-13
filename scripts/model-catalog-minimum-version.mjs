@@ -6,4 +6,6 @@
 // older pi clients, in the same commit as the change that requires it.
 // 1.2.1: kimi-coding models use openai-completions at /coding/v1; older clients only
 // implement anthropic-messages for kimi-coding and ignore a model's api.
-export const MINIMUM_PI_VERSION = "1.2.1";
+// 1.5.3: Chat Completions models no longer carry supportsDeveloperRole: false; older
+// clients default it to true and would send the developer role, which most hosts reject.
+export const MINIMUM_PI_VERSION = "1.5.3";

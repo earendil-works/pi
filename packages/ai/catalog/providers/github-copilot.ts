@@ -100,7 +100,6 @@ export default defineProvider({
 					if (api === "openai-completions") {
 						result.compat = {
 							supportsStore: false,
-							supportsDeveloperRole: false,
 							supportsReasoningEffort: false,
 						};
 					}
