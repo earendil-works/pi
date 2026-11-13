@@ -290,6 +290,9 @@ export function Workbench({ children }: { children?: ReactNode }) {
 							key={view.id}
 							className={`views-pane kind-${view.kind}`}
 							data-view-pane={view.id}
+							data-view-kind={view.kind}
+							data-view-title={view.title}
+							{...(view.item === undefined ? {} : { "data-view-item": view.item })}
 							{...paneAttributes(pane)}
 						>
 							{Kind ? (

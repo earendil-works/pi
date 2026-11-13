@@ -39,7 +39,7 @@ export default defineFacet((host) => {
 		self.contribute(Extensions, { [extension.name]: extension });
 		// New errors of the session's open html pages go with the person's next message, once.
 		self.contribute(MessageContexts, {
-			artifacts: async (ctx) => {
+			artifacts: async (_input, ctx) => {
 				const server = await artifacts(ctx);
 				const { errors, marks } = await server.newErrors(ctx);
 				if (!errors.length) return undefined;
