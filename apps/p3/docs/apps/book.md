@@ -22,6 +22,9 @@ note: |
 colophon: p3 apps · design note, third edition · 2026-11-13
 ---
 
+> **Superseded (2026-11-13, evening):** per-app user pools, `self.choose` and the async app rule are replaced by `apps/p3/docs/people/book.md` (persons with roles in the principal, locks). Kept as the record.
+
+
 # The Goal {.preface}
 
 One Pi, one owner. The owner, or his agent, builds **apps** and shares them:

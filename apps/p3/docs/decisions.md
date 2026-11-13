@@ -189,3 +189,18 @@ and its working rules are in `handoff.md`.
   keyed by her id). Privacy against the owner is only an app's UI courtesy (he owns the machine and the code; no base
   machinery). Design and gaps (kit: per-app user pools and invites, revocation, current principals; harness:
   `scope.app`, fixed folder): `apps/book.md`.
+- **People, apps and locks (owner, 2026-11-13, evening; supersedes the per-app user pools of "Apps are plugins; users
+  and guests are the confined people", and with it `self.choose`; replaces the settings layer of "Org-managed Pis"):**
+  everyone besides the owner is a **person** `{ kind: "person", id, name, roles: app → role, sessions: id → read |
+  write, revision }`, rights in the principal as p2's guests ("maybe guest is sufficient"); a change bumps the
+  revision and revokes. Identity is pluggable (providers with server, web and terminal parts); by default Radius
+  (verified email; Google/GitHub at Radius) and this device; more devices by pairing. A session belongs to exactly
+  one app; any app may show any session; the owner always passes. Lockdown is **locks**: a plugin declares a switch or
+  a limit (`defineSwitch`, `defineLimit`: schema, open, closed, narrow), registers it with the server (`Locks`), and
+  enforces it where it hands things out; layers company (the org profile: initial copy on disk, then Radius) > Pi >
+  app (the app's code defaults, then the owner's app sheet) > session, only narrowing; one sheet per scope for
+  technical owners, with the agent's help (`locks` tools). Plugins outside Pi's own root get a plugin switch per app
+  (`otherPlugins: "on" | "off"` in the app, the owner chooses the apps on install); base plugins declare locks. Radius
+  learns the locks from member Pis' reports and by loading selected plugins' server facets in a sandbox. Design, kit
+  changes, open questions: `people/book.md` (second edition). The owner: "this still seems overly complex".
+

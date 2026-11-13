@@ -16,6 +16,9 @@ note: |
 colophon: p3 org-managed Pis · fifth edition, short · 2026-11-13
 ---
 
+> **Partly superseded (2026-11-13, evening):** the settings layer (`defineSetting`, managed layer) is replaced by locks and the org profile as the company layer in `apps/p3/docs/people/book.md`; enrollment, the gate and machine lock-down here stay valid.
+
+
 # The Model {.nodrop}
 
 Each person has one Pi. An org configures its members' Pis through a **deployment profile**: a list of Earendil
