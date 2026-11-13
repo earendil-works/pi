@@ -1,16 +1,16 @@
 // `afterTool` runs on every result a tool task writes, also those the Harness decides without executing the tool
 // (#11043).
+
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { JsonValue } from "@earendil-works/chord";
+import type { JsonValue } from "@earendil-works/chord/json";
 import {
 	type AssistantMessage,
 	fauxAssistantMessage,
 	fauxText,
 	fauxToolCall,
 	type ToolResultMessage,
-	Type,
 } from "@earendil-works/pi-ai";
 import {
 	defineTool,
@@ -29,8 +29,10 @@ import {
 	ToolResultEntry,
 	ToolTask,
 } from "@earendil-works/pi-durable";
+import { bool, obj, opt, str } from "@earendil-works/pi-schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
+import { commitWrites } from "../src/testing/commit-writes.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat, waitFor } from "./chat-support.ts";
 import { addHooks, addTool } from "./harness-support.ts";
 import { context } from "./session-support.ts";
@@ -78,7 +80,7 @@ function stored(): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, 50));
 }
 
-const Parameters = Type.Object({ text: Type.Optional(Type.String()) });
+const Parameters = obj({ text: opt(str()) });
 
 function tool(
 	name: string,
@@ -317,7 +319,7 @@ describe("afterTool on results the call phase decides", () => {
 		addTool(
 			setup.registry,
 			tool("typed", async () => ({ output: [], structuredOutput: { ok: true } }), {
-				structuredOutputSchema: Type.Object({ ok: Type.Boolean() }),
+				structuredOutputSchema: obj({ ok: bool() }),
 			}),
 		);
 		const nested: NestedToolExecutionResult[] = [];
@@ -756,21 +758,21 @@ describe("calls to tools the request did not offer", () => {
 				["c1", undefined],
 				["c2", true],
 			]);
-			expect((await opened.harness.getTask(generation, context))?.version).toBe(2);
+			expect((await opened.harness.getTask(generation, context))?.version).toBe(3);
 			// The tools are offered when the round goes on: only the flag keeps `ghost` from running.
 			await root.configure({ tools: null }, context);
 			await opened.harness.close(context);
 			if (version === 1) {
 				const storage = await openNodeSqliteStorage(path);
 				const record = (await storage.task(generation, context))!;
-				await storage.commit([{ type: "task", value: { ...record, version: 1 } }], () => {}, context);
+				await commitWrites(storage, [{ type: "task", value: { ...record, version: 1 } }], context);
 				await storage.close(context);
 			}
 
 			opened = await open(path, setup);
 			root = opened.root;
 			expect((await (await opened.harness.submission(id, context))!.wait(context)).status).toBe("done");
-			expect((await opened.harness.getTask(generation, context))?.version).toBe(2);
+			expect((await opened.harness.getTask(generation, context))?.version).toBe(3);
 			const entries = await allEntries(root);
 			expect(await diagnosticsOf(entries, "c2")).toEqual(["tool_unavailable"]);
 			expect(text(results(entries).get("c2"))).not.toContain("ran");

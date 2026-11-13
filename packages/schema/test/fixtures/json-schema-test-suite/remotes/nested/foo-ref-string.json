@@ -1,0 +1,6 @@
+{
+    "type": "object",
+    "properties": {
+        "foo": {"$ref": "string.json"}
+    }
+}

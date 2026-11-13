@@ -1,0 +1,952 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hosts and Plugins: a tutorial for Chord v2</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A guide · Chord v2 · 2026-11-02</div>
+  <h1>Hosts<br>and Plugins</h1>
+  <p class="subtitle">Build a small notes app step by step, from one host to plugins on a server and on workers, edited while it runs</p>
+  <div class="cover-stats"><div class="stat"><b>3</b><span>kinds of host in an app: server, worker, client</span></div><div class="stat"><b>1</b><span>file per host kind in a plugin</span></div><div class="stat"><b>0</b><span>restarts to apply a plugin edit</span></div><div class="stat"><b>1</b><span>rule: plugins talk only through object types and registries</span></div></div>
+  <div class="cover-note"><p>A tutorial for people building apps on Chord v2, written by the redesign session from <code>design.md</code>, <code>slice-7c.md</code>,
+<code>slice-10.md</code>, <code>slice-12.md</code>, <code>slice-13.md</code>, the decision log and the code in <code>packages/chord/src</code>. API names
+are the current ones. The early chapters wire hosts by hand to show the parts; the last chapter shows the app kit
+(<code>chord/app</code>), which does that wiring for an app.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#host">I. One Host</a></li>
+<li><a href="#parts">II. An Object&#39;s Parts</a></li>
+<li><a href="#hosts">III. Several Hosts</a></li>
+<li><a href="#clients">IV. Client Hosts</a></li>
+<li><a href="#plugins">V. Plugins</a></li>
+<li><a href="#loading">VI. Loading Plugins</a></li>
+<li><a href="#together">VII. Plugins Using Plugins</a></li>
+<li><a href="#reload">VIII. Changing a Plugin</a></li>
+<li><a href="#base">IX. Base Code and Plugins</a></li>
+<li><a href="#kit">X. The App Kit</a></li>
+<li><a href="#telemetry">XI. Seeing a Request Across Hosts</a></li>
+<li><a href="#reference">Appendix A: Reference</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">You want to build a notes app. You type a note in a browser tab, and every other tab sees it at once. Each project
+gets its own notes in its own process, so a project that misbehaves cannot take the others down. And you, or an agent
+you work with, add features while the app runs: a search, an export button, a word count, without restarting
+anything.</p>
+<p>Chord gives you three things for that. <strong>Hosts</strong>: the processes of your app (the server, a worker per project, the
+browser tabs), connected to each other. <strong>Objects</strong>: the state and methods your app is made of, living on one host and
+used from any other. <strong>Plugins</strong>: directories of code that declare objects for each kind of host, loaded and
+reloaded while the app runs.</p>
+<p>This book builds the app in that order. Each chapter adds one concept and shows complete code.</p>
+<h3 id="seven-things-to-know">Seven things to know</h3>
+<ol class="findings">
+<li><strong>A host is one participant.</strong> The server, each worker, each browser tab and each terminal UI is a host; hosts
+connect over links. Tabs and terminal UIs are clients: no address, they connect to the server and ask.</li>
+<li><strong>An object has a type, and a type is a contract.</strong> The contract names the object&#39;s state and methods; any host can
+ask for an object by type and params, and Chord finds where it lives.</li>
+<li><strong>A facet declares, an object acts.</strong> A facet is a plugin&#39;s code for one host kind: it says which object types this
+host serves. The objects hold the state and do the work.</li>
+<li><strong>A plugin is a directory</strong> (or a single file). A <code>package.json</code> with the plugin&#39;s name, and one file per host kind:
+<code>server.ts</code>, <code>worker.ts</code>, <code>web.tsx</code>. It imports its host only through the app&#39;s versioned API (<code>@app/api/v1</code>).</li>
+<li><strong>The server builds, every host evaluates.</strong> The plugins component builds each facet into a small script; the
+server, workers and tabs load the scripts for their kind.</li>
+<li><strong>Plugins meet through types and registries.</strong> One plugin uses another&#39;s objects through its contract, or
+contributes to a registry another defines. Nothing else crosses between plugins.</li>
+<li><strong>An edit is a rollout.</strong> Change a file, build, roll out: the server, then every worker, restart the plugin&#39;s
+objects (running work finishes on the old code); a broken edit keeps the old code running and reports why.</li>
+</ol>
+<figure class="fig wide anim"><svg viewBox="0 0 720 396" width="100%" role="img" aria-label="How it all fits: plugins on disk are built once on the server; each host evaluates the facets of its kind; tabs and the TUI are clients that reach workers' objects through the server." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">ON DISK</text><text x="16" y="155" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">SERVER PROCESS</text><text x="16" y="288" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">CLIENTS AND WORKERS</text><g class="step" style="--i:1"><rect x="137" y="36" width="210" height="55" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="242" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">plugins/notes/</text><text x="242" y="68.5" font-size="9.5" fill="#7b7468" text-anchor="middle" font-family="Menlo,monospace">server.ts`, `worker.ts`,</text><text x="242" y="81" font-size="9.5" fill="#7b7468" text-anchor="middle" font-family="Menlo,monospace">`web.tsx`, `tui.ts`, `contract.ts</text></g><g class="step" style="--i:4"><rect x="373" y="36" width="210" height="55" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="478" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">src/ (base code)</text><text x="478" y="68.5" font-size="9.5" fill="#7b7468" text-anchor="middle">`@app/api/v1`: Chord's surface, host</text><text x="478" y="81" font-size="9.5" fill="#7b7468" text-anchor="middle">kinds, principals</text></g><g class="step" style="--i:3"><rect x="137" y="169" width="210" height="55" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="242" y="187.5" font-size="11" fill="#2a2723" text-anchor="middle">plugins component</text><text x="242" y="201.5" font-size="9.5" fill="#7b7468" text-anchor="middle">discover, build every facet, watch,</text><text x="242" y="214" font-size="9.5" fill="#7b7468" text-anchor="middle">roll out</text></g><g class="step" style="--i:7"><rect x="373" y="169" width="210" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="478" y="187.5" font-size="11" fill="#2a2723" text-anchor="middle">server host</text><text x="478" y="201.5" font-size="9.5" fill="#7b7468" text-anchor="middle">server facets; routes Project →</text><text x="478" y="214" font-size="9.5" fill="#7b7468" text-anchor="middle">workers</text></g><g class="step" style="--i:9"><rect x="137" y="302" width="210" height="55" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="242" y="320.5" font-size="11" fill="#2a2723" text-anchor="middle">client: tab or TUI</text><text x="242" y="334.5" font-size="9.5" fill="#7b7468" text-anchor="middle">web or tui facets, local UI objects;</text><text x="242" y="347" font-size="9.5" fill="#7b7468" text-anchor="middle">holds `Notes { p1 }`</text></g><g class="step" style="--i:12"><rect x="373" y="302" width="210" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="478" y="326.8" font-size="11" fill="#2a2723" text-anchor="middle">worker p1</text><text x="478" y="340.8" font-size="9.5" fill="#7b7468" text-anchor="middle">worker facets; serves `Notes { p1 }`</text></g><g class="step edge" style="--i:2"><path d="M242 91 L242 167" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="246" y="123" width="65.9" height="13" fill="#fbf8f2" opacity=".92"/><text x="250" y="133" font-size="9.5" fill="#7b7468" text-anchor="start">read, build</text></g><g class="step edge" style="--i:5"><path d="M478 91 L242 167" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="364" y="123" width="76.5" height="13" fill="#fbf8f2" opacity=".92"/><text x="368" y="133" font-size="9.5" fill="#7b7468" text-anchor="start">host packages</text></g><g class="step edge" style="--i:6"><path d="M347 196.5 L371 196.5" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="319.1" y="179.5" width="81.8" height="13" fill="#fbf8f2" opacity=".92"/><text x="360" y="189.5" font-size="9.5" fill="#7b7468" text-anchor="middle">server scripts</text></g><g class="step edge" style="--i:8"><path d="M242 224 L242 300" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="246" y="256" width="102.8" height="13" fill="#fbf8f2" opacity=".92"/><text x="250" y="266" font-size="9.5" fill="#7b7468" text-anchor="start">web or tui scripts</text></g><g class="step edge" style="--i:10"><path d="M242 302 L478 226" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="364" y="258" width="97.6" height="13" fill="#fbf8f2" opacity=".92"/><text x="368" y="268" font-size="9.5" fill="#7b7468" text-anchor="start">hold Notes { p1 }</text></g><g class="step edge" style="--i:11"><path d="M478 224 L478 300" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="482" y="256" width="160.8" height="13" fill="#fbf8f2" opacity=".92"/><text x="486" y="266" font-size="9.5" fill="#7b7468" text-anchor="start">start (worker scripts), relay</text></g><text x="16" y="381" font-size="10.5" fill="#7b7468" text-anchor="start">Each host loads only its own kind's facets. Plugins meet only through object types and registries.</text></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 1.</span> How it all fits: plugins on disk are built once on the server; each host evaluates the facets of its kind; tabs and the TUI are clients that reach workers&#39; objects through the server.</figcaption></figure>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p>A <strong>host</strong> is one participant of the app, made with <code>createHost</code>. A <strong>host kind</strong> (<code>Server</code>, <code>Session</code>) describes
+addressable hosts; an <strong>address</strong> (<code>Session({ id: &quot;p1&quot; })</code>) names one. An <strong>object type</strong> is a contract: <code>local</code> (used
+on its own host only) or <code>remote</code> (used from any host). An <strong>object</strong> is one instance of a type, per params. A
+<strong>facet</strong> is a plugin&#39;s declarations for one host kind. A <strong>plugin</strong> is a directory with a <code>package.json</code>. A
+<strong>reference</strong> is what you get when you ask for an object (<code>host.get</code>, <code>self.get</code>, <code>ctx.get</code>). A <strong>document</strong> is data an object
+stores, changed in <strong>transactions</strong>; a <strong>table</strong> holds many records with queries, in the host&#39;s <strong>store</strong>, and a <strong>live query</strong> keeps some of its rows current; a <strong>derive</strong> is a value computed from others; a <strong>native</strong> is an outside
+resource an object opens and closes. A <strong>registry</strong> is an
+extension point: one plugin defines it, others contribute. A <strong>rollout</strong> applies a build to the hosts in order.</p>
+</section>
+
+<section class="chapter" id="host"><header class="opener"><div class="numeral">I</div><h2>One Host</h2><p class="lede">The smallest app: one process, one object type, one call.</p></header>
+<p class="dropcap">Start without plugins. One host, one object that keeps notes:</p>
+<pre><code><span class="tk-k">import</span> { createHost, defineFacet, defineState, local, method, obj, arr, str } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord"</span>;
+
+<span class="tk-k">const</span> <span class="tk-t">NoteList</span> = <span class="tk-f">obj</span>({ items: <span class="tk-f">arr</span>(<span class="tk-f">str</span>()) });          <span class="tk-c">// one schema, used by the contract and the document</span>
+
+<span class="tk-c">// the contract: what a Notes object offers</span>
+<span class="tk-k">const</span> <span class="tk-t">Notes</span> = <span class="tk-f">local</span>(<span class="tk-s">"notes.store"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},                                        <span class="tk-c">// one object per host: no params</span>
+	members: {
+		list: <span class="tk-t">NoteList</span>,                               <span class="tk-c">// state anyone can read and watch</span>
+		add: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ text: <span class="tk-f">str</span>() })),            <span class="tk-c">// a method: arguments checked by Chord</span>
+	},
+});
+
+<span class="tk-c">// the document the object stores (its own version: storage can change without changing the contract)</span>
+<span class="tk-k">const</span> <span class="tk-t">NotesDoc</span> = <span class="tk-f">defineState</span>(<span class="tk-s">"notes"</span>, { schema: <span class="tk-t">NoteList</span>, version: <span class="tk-n">1</span>, initial: () =&gt; ({ items: [] }) });
+
+<span class="tk-c">// the facet: which types this host serves, and how to make each object</span>
+<span class="tk-k">const</span> facet = <span class="tk-f">defineFacet</span>((host) =&gt; {
+	host.<span class="tk-f">serve</span>(<span class="tk-t">Notes</span>, (_params, self) =&gt; {
+		<span class="tk-k">const</span> doc = self.<span class="tk-f">state</span>(<span class="tk-t">NotesDoc</span>);
+		<span class="tk-k">return</span> {
+			list: doc,
+			add: <span class="tk-k">async</span> ({ text }, ctx) =&gt; self.<span class="tk-f">tx</span>(<span class="tk-k">async</span> (tx) =&gt; { (<span class="tk-k">await</span> tx.<span class="tk-f">draft</span>(doc)).items.<span class="tk-f">push</span>(text); }, ctx),
+		};
+	});
+});
+
+<span class="tk-k">const</span> server = <span class="tk-f">createHost</span>({ onError: console.error });
+<span class="tk-k">await</span> server.<span class="tk-f">load</span>([{ name: <span class="tk-s">"@app/notes"</span>, facet }], ctx);
+<span class="tk-k">const</span> notes = <span class="tk-k">await</span> server.<span class="tk-f">get</span>(<span class="tk-t">Notes</span>, {}, ctx);        <span class="tk-c">// a reference: live, with its state</span>
+<span class="tk-k">await</span> notes.<span class="tk-f">add</span>({ text: <span class="tk-s">"buy milk"</span> }, ctx);
+console.<span class="tk-f">log</span>(notes.list.value);                          <span class="tk-c">// { items: ["buy milk"] }</span></code></pre>
+<p>Four things happened. The <strong>contract</strong> <code>Notes</code> says what the object offers; the <strong>document</strong> says what it stores.
+Here they have the same shape, so one schema serves both; they are separate because they change separately (an
+object may offer a computed value or a shortened view instead of what it stores, and storage can change its shape
+without users noticing).
+The <strong>facet</strong> says this host serves
+<code>Notes</code>, with a <strong>factory</strong> that declares the object&#39;s parts: a document, and a method writing it in a transaction.
+<code>load</code> publishes the facet. <code>get</code> returns a <strong>reference</strong> once the object is live; its members are the contract&#39;s.</p>
+<p>The factory only declares: it is synchronous and opens nothing. Chord activates the object (loads its documents, opens
+what it asked to open) and then serves calls. That is why the same factory can run again when the code changes.</p>
+<p><strong><code>load</code> comes first.</strong> A <code>get</code>, <code>hold</code> or <code>registry</code> on a host whose <code>load</code> was not called throws <code>not_ready</code> at once
+(&quot;call <code>host.load</code> first&quot;): it would wait for types nobody published. A client with nothing to load calls
+<code>load([])</code>. Mistakes that would otherwise look like slowness are reported through <code>onError</code> instead: a request
+waiting for a type or registry nobody serves (<code>unbound_long</code>, after 5 s; it keeps waiting until its <code>readyTimeout</code>),
+a registry with contributions and no provider (<code>registry_undeclared</code>, when <code>load</code> publishes), and a plugin name that is
+no npm name makes <code>load</code> throw.</p>
+</section>
+
+<section class="chapter" id="parts"><header class="opener"><div class="numeral">II</div><h2>An Object&#39;s Parts</h2><p class="lede">Documents, tables, transactions, computed values, watching, and outside resources: the vocabulary of every factory.</p></header>
+<p class="dropcap">A factory builds an object from a handful of parts, each declared with one call on <code>self</code>. The notes object grows to
+show all of them.</p>
+<p><strong>Documents</strong> hold the object&#39;s data: <code>self.state(NotesDoc)</code> gives a handle whose <code>.value</code> is the current data. Data
+changes only in a <strong>transaction</strong>: <code>self.tx(fn, ctx)</code> runs <code>fn</code> with <code>tx</code>, and <code>await tx.draft(handle)</code> gives a
+mutable copy of the document&#39;s data; whatever you change on it is committed at once when <code>fn</code> returns, or not at all
+if it throws.</p>
+<pre><code>add: <span class="tk-k">async</span> ({ text }, ctx) =&gt; self.<span class="tk-f">tx</span>(<span class="tk-k">async</span> (tx) =&gt; {
+	<span class="tk-k">const</span> draft = <span class="tk-k">await</span> tx.<span class="tk-f">draft</span>(doc);          <span class="tk-c">// the document's data, writable inside this transaction only</span>
+	draft.items.<span class="tk-f">push</span>(text);                      <span class="tk-c">// recorded as a change, committed when the function returns</span>
+}, ctx),</code></pre>
+<p>Documents live in memory unless they are <strong>persisted</strong>: <code>defineState(..., { persist: true, checkpointWhen })</code> keeps
+one in the host&#39;s <strong>store</strong> (a SQLite file the app opens and gives to <code>createHost({ store })</code>), loaded when the
+object activates. For many records with queries, an object declares a <strong>table</strong>:</p>
+<pre><code><span class="tk-k">const</span> <span class="tk-t">NoteRows</span> = <span class="tk-f">defineTable</span>(<span class="tk-s">"notes"</span>, {
+	version: <span class="tk-n">1</span>,
+	columns: { id: <span class="tk-f">str</span>(), text: <span class="tk-f">str</span>(), at: <span class="tk-f">int</span>() },
+	key: [<span class="tk-s">"id"</span>],
+	indexes: { by_time: [<span class="tk-s">"at"</span>] },
+});
+
+host.<span class="tk-f">serve</span>(<span class="tk-t">NoteStore</span>, (_params, self) =&gt; {               <span class="tk-c">// a local type with empty params: it may persist</span>
+	<span class="tk-k">const</span> rows = self.<span class="tk-f">table</span>(<span class="tk-t">NoteRows</span>);                    <span class="tk-c">// created (or migrated) when the object activates</span>
+	<span class="tk-k">const</span> recent = <span class="tk-f">query</span>(<span class="tk-t">NoteRows</span>).<span class="tk-f">orderBy</span>((n) =&gt; n.at, <span class="tk-s">"desc"</span>);
+	<span class="tk-k">return</span> {
+		add: <span class="tk-k">async</span> ({ text }, ctx) =&gt; self.<span class="tk-f">tx</span>(<span class="tk-k">async</span> (tx) =&gt; tx.<span class="tk-f">put</span>(rows, { id: <span class="tk-f">uuid</span>(), text, at: <span class="tk-t">Date</span>.<span class="tk-f">now</span>() }), ctx),
+		page: <span class="tk-k">async</span> ({ after }, ctx) =&gt; rows.<span class="tk-f">page</span>(recent, <span class="tk-n">50</span>, ctx, { after }),   <span class="tk-c">// 50 at a time, with a cursor</span>
+	};
+});</code></pre>
+<p>Persisted data lives only in <code>local</code> objects with empty params (one per host and type), so its address never depends
+on who asked or with which params; an object with params (a view per project) reads from such a store. Writes go
+through the same transactions as documents: a note row and a document can change in one commit.</p>
+<p>A table has no watch of its own. To show rows live (the newest notes in a tab), the object declares a <strong>live query</strong>
+over its own table, with a limit:</p>
+<pre><code><span class="tk-k">const</span> newest = self.<span class="tk-f">query</span>(rows, recent, <span class="tk-n">50</span>);             <span class="tk-c">// the 50 newest rows, a value like a document's</span>
+<span class="tk-k">return</span> { newest, add, page };                            <span class="tk-c">// a member: tabs watch it and get only the changes</span></code></pre>
+<p>Chord runs the query before the object goes live, and again in every commit of the object that writes <code>rows</code>, and
+sends what changed. Only the object&#39;s own tables: it is their only writer, so its commits are exactly when the rows
+can change, and a commit that writes no such table costs nothing. Each writing commit runs the query once more, at
+most the limit&#39;s rows: right for data people edit, wrong for a table written hundreds of times a second (there may be
+dragons; keep what the tab shows in a document the object writes with each change instead). The limit is required.</p>
+<p>A <strong>derive</strong> is a value computed from other values, recomputed whenever they change. It is how an object offers
+something it does not store:</p>
+<pre><code><span class="tk-k">const</span> count = self.<span class="tk-f">derive</span>([doc], ([notes]) =&gt; notes.items.length);   <span class="tk-c">// 0, 1, 2, … as notes are added</span>
+<span class="tk-k">return</span> { list: doc, count, add };                                      <span class="tk-c">// `count` can be a member like `list`</span></code></pre>
+<p><strong>Watching</strong> is how anyone follows a value as it changes: a document handle, a derive, a reference&#39;s member. <code>watch</code>
+gives the current value, then one call per change:</p>
+<pre><code><span class="tk-k">const</span> watch = <span class="tk-k">await</span> notes.count.<span class="tk-f">watch</span>(ctx);
+watch.<span class="tk-f">start</span>(<span class="tk-k">async</span> (call) =&gt; {
+	<span class="tk-k">if</span> (call.kind === <span class="tk-s">"value"</span>) console.<span class="tk-f">log</span>(<span class="tk-s">"notes:"</span>, call.value);   <span class="tk-c">// "failed" calls say a value cannot be computed now</span>
+});</code></pre>
+<p>A <strong>routine</strong> is the object watching on its own behalf: <code>self.on(source, fn)</code> runs <code>fn</code> with each new value, for as
+long as the object lives (a reconciler: &quot;whenever the notes change, rebuild the export file&quot;).</p>
+<p>A <strong>native</strong> is something outside Chord the object opens and must close: a file watcher, a database connection, a
+child process. <code>self.open(open, close)</code> opens it while the object activates and closes it when the object ends:</p>
+<pre><code><span class="tk-k">const</span> inbox = self.<span class="tk-f">open</span>(<span class="tk-k">async</span> (ctx) =&gt; <span class="tk-f">watchDirectory</span>(inboxPath, ctx.abortSignal), (watcher) =&gt; watcher.<span class="tk-f">close</span>());
+self.<span class="tk-f">onLive</span>(<span class="tk-k">async</span> (ctx) =&gt; {                                  <span class="tk-c">// a routine started once the object is live</span>
+	<span class="tk-k">for</span> <span class="tk-k">await</span> (<span class="tk-k">const</span> file <span class="tk-k">of</span> inbox.value.<span class="tk-f">files</span>(ctx.abortSignal)) <span class="tk-k">await</span> <span class="tk-f">importNote</span>(file, ctx);
+});</code></pre>
+<p>Every live object restarts when its plugin changes; natives close (<code>reload</code>) and open again with the new code, since
+an open connection cannot be moved to new code. A first read of a table needs no native: declare it as a live query,
+not with <code>self.open</code>.</p>
+<p><strong>Await what you start in a root or a handler.</strong> What is started with a context ends with it. Code outside objects
+gets its <code>ctx</code> from <code>host.root(fn, ctx)</code>, and that scope seals when <code>fn</code> returns; a handler&#39;s context ends when its
+caller cancels or its object ends. A change still waiting when its context ends is cancelled before it commits:</p>
+<pre><code><span class="tk-k">await</span> server.<span class="tk-f">root</span>(<span class="tk-k">async</span> (ctx) =&gt; {
+	<span class="tk-k">void</span> notes.<span class="tk-f">add</span>({ text: <span class="tk-s">"lost"</span> }, ctx).<span class="tk-k">catch</span>(() =&gt; {});   <span class="tk-c">// fn returns, the scope seals: the call's change is cancelled</span>
+}, ctx);
+<span class="tk-k">await</span> server.<span class="tk-f">root</span>(<span class="tk-k">async</span> (ctx) =&gt; notes.<span class="tk-f">add</span>({ text: <span class="tk-s">"kept"</span> }, ctx), ctx);   <span class="tk-c">// awaited: it commits</span></code></pre>
+<p>The cancelled change rejects, and since an empty <code>catch</code> would hide that it never happened, Chord also reports it
+through <code>onError</code> as <code>transaction_cancelled</code>, naming the object and, in its error, the scope that ended.</p>
+</section>
+
+<section class="chapter" id="hosts"><header class="opener"><div class="numeral">III</div><h2>Several Hosts</h2><p class="lede">A server, a worker per project, browser tabs: how they find each other&#39;s objects.</p></header>
+<p class="dropcap">Now give each project its own process. Declare the kinds of addressable host, and make notes a <code>remote</code> type that
+lives on its project&#39;s worker:</p>
+<pre><code><span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Server</span> = <span class="tk-f">hostKind</span>(<span class="tk-s">"server"</span>);
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Project</span> = <span class="tk-f">hostKind</span>(<span class="tk-s">"project"</span>, { id: <span class="tk-f">str</span>() });
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Notes</span> = <span class="tk-f">remote</span>(<span class="tk-s">"notes"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: { project: <span class="tk-f">str</span>() },
+	hostAddress: ({ project }) =&gt; <span class="tk-t">Project</span>({ id: project }),   <span class="tk-c">// where an object of these params lives</span>
+	variants: { editor: { state: { list: <span class="tk-t">NoteList</span> }, methods: { add: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ text: <span class="tk-f">str</span>() })) } } },
+});</code></pre>
+<p>Two things are new. A <code>remote</code> type can be used from any host, and it has <strong>variants</strong>: different sets of members
+for different callers, chosen by the factory (an <code>editor</code> variant with <code>add</code>, a <code>reader</code> variant for guests without
+it). And <code>hostAddress</code> says where its objects live; it is the whole routing story.</p>
+<p>A tab asks for <code>Notes { project: &quot;p1&quot; }</code>. Its host computes the address,
+<code>Project(p1)</code>, and sends the request to its parent, the server. The server has a <strong>route</strong> for <code>Project</code>: it starts (or
+finds) the worker for <code>p1</code> and passes the request on. The worker serves <code>Notes</code>. The tab gets a reference whose state
+follows the worker&#39;s document, one frame per change.</p>
+<figure class="fig wide anim"><svg viewBox="0 0 720 342" width="100%" role="img" aria-label="A tab holds a project's notes: the server routes by address to the project's worker and relays, without reading the data." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f2m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f2a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f2b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#2e6a8a" text-anchor="start" font-weight="600" letter-spacing="2">CLIENTS</text><text x="16" y="144" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">SERVER</text><text x="16" y="266" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">WORKERS</text><g class="step" style="--i:1"><rect x="137" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="242" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">tab A</text><text x="242" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">holds Notes { project: p1 }</text></g><g class="step" style="--i:4"><rect x="373" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="478" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">tab B</text><text x="478" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">holds Notes { project: p1 }</text></g><g class="step" style="--i:3"><rect x="255" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">server</text><text x="360" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">route Project → worker</text></g><g class="step" style="--i:7"><rect x="137" y="280" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="242" y="299.3" font-size="11" fill="#2a2723" text-anchor="middle">worker p1</text><text x="242" y="313.3" font-size="9.5" fill="#7b7468" text-anchor="middle">serves Notes { p1 }</text></g><g class="step" style="--i:0"><rect x="373" y="280" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="478" y="299.3" font-size="11" fill="#2a2723" text-anchor="middle">worker p2</text><text x="478" y="313.3" font-size="9.5" fill="#7b7468" text-anchor="middle">serves Notes { p2 }</text></g><g class="step edge" style="--i:2"><path d="M242 80 L360 156" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><rect x="305" y="112" width="29.1" height="13" fill="#fbf8f2" opacity=".92"/><text x="309" y="122" font-size="9.5" fill="#7b7468" text-anchor="start">hold</text></g><g class="step edge" style="--i:5"><path d="M478 80 L360 156" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><rect x="423" y="112" width="29.1" height="13" fill="#fbf8f2" opacity=".92"/><text x="427" y="122" font-size="9.5" fill="#7b7468" text-anchor="start">hold</text></g><g class="step edge" style="--i:6"><path d="M360 202 L242 278" fill="none" stroke="#7b7468" marker-end="url(#f2m)"/><rect x="305" y="234" width="34.3" height="13" fill="#fbf8f2" opacity=".92"/><text x="309" y="244" font-size="9.5" fill="#7b7468" text-anchor="start">relay</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 2.</span> A tab holds a project&#39;s notes: the server routes by address to the project&#39;s worker and relays, without reading the data.</figcaption></figure>
+<p>Each host is created the same way, with what it is:</p>
+<pre><code><span class="tk-c">// server.ts</span>
+<span class="tk-k">const</span> server = <span class="tk-f">createHost</span>&lt;P&gt;({ address: <span class="tk-t">Server</span>(), principal: { kind: <span class="tk-s">"server"</span> }, onError });
+
+<span class="tk-c">// worker.ts (started by the server for one project)</span>
+<span class="tk-k">const</span> worker = <span class="tk-f">createHost</span>&lt;P&gt;({ address: <span class="tk-t">Project</span>({ id }), principal: { kind: <span class="tk-s">"worker"</span>, project: id }, onError });
+worker.<span class="tk-f">connect</span>(parentLink, { principal: { kind: <span class="tk-s">"server"</span> }, trusted: <span class="tk-k">true</span> }, ctx);
+
+<span class="tk-c">// a browser tab: no address, it is a client</span>
+<span class="tk-k">const</span> tab = <span class="tk-f">createHost</span>&lt;P&gt;({ onError });
+tab.<span class="tk-f">connect</span>(<span class="tk-f">webSocketLink</span>(<span class="tk-k">new</span> <span class="tk-t">WebSocket</span>(<span class="tk-s">"/chord"</span>)), { principal: { kind: <span class="tk-s">"server"</span> } }, ctx);</code></pre>
+<p><code>P</code> is your app&#39;s type of <strong>principal</strong>, who is calling: an owner, a guest, the server, a worker. Links stamp it;
+a <code>remote</code> object is made per principal, so a guest can get a read-only variant of the same notes.</p>
+<h3 id="who-a-reference-acts-as">Who a reference acts as</h3>
+<p>A reference acts as whoever made it. <code>host.get</code> and <code>self.get</code> in a <code>local</code> object act as the host; <code>self.get</code> in a
+<code>remote</code> object acts as that object&#39;s principal; <strong><code>ctx.get</code> in a method acts as the method&#39;s caller</strong>. That is what
+lets a guest&#39;s call reach a worker as the guest and get the guest&#39;s variant, never more than the guest may see.</p>
+<p>It surprises one case: a server object that should act as itself towards a worker. The owner calls
+<code>Search.rebuildIndex</code>, which asks each project&#39;s worker to scan its files:</p>
+<pre><code><span class="tk-c">// server.ts: wrong, the worker sees the owner</span>
+rebuildIndex: <span class="tk-k">async</span> ({ project }, ctx) =&gt; {
+	<span class="tk-k">const</span> scan = <span class="tk-k">await</span> ctx.<span class="tk-f">get</span>(<span class="tk-t">IndexScan</span>, { project });   <span class="tk-c">// acts as ctx.principal: the owner, the method's caller</span>
+	<span class="tk-k">return</span> scan.<span class="tk-f">run</span>(ctx);
+},
+
+<span class="tk-c">// worker.ts: the factory serves only the server</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">IndexScan</span>, (params, principal, self) =&gt; {
+	<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"server"</span>) <span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">Error</span>(<span class="tk-s">"IndexScan serves the server only"</span>);   <span class="tk-c">// refuses the owner</span>
+	…
+});</code></pre>
+<p>The worker&#39;s factory gets <code>{ kind: &quot;owner&quot; }</code> and refuses. To act as the server, take the reference where the server
+is the maker: <code>self.get(IndexScan, { project })</code> in a <code>local</code> server object of its own (a dependency of that object,
+which acts as the host), or, in base code that has the host, a root of the server&#39;s host:</p>
+<pre><code><span class="tk-c">// base code: a root acts as the host (the server), not as the method's caller</span>
+rebuildIndex: <span class="tk-k">async</span> ({ project }, ctx) =&gt;
+	server.<span class="tk-f">root</span>(<span class="tk-k">async</span> (own) =&gt; (<span class="tk-k">await</span> own.<span class="tk-f">get</span>(<span class="tk-t">IndexScan</span>, { project })).<span class="tk-f">run</span>(own), ctx),</code></pre>
+<h3 id="calls-in-progress">Calls in progress</h3>
+<p>There is no limit on calls in progress per link. A tab sending 200 calls at once over its socket gets all 200 run:
+at most N (256 by default, announced in the handshake) are in flight per origin, the rest wait in order in the link&#39;s
+call queue, none is refused for being too many. The bounds are that call window and the part limits on what arrives
+(sizes, not counts). An object that must limit work per caller does so in its methods, or runs the work as a job.</p>
+<div class="note"><b class="tag">The app kit does this wiring</b><p>Starting workers, routing a host kind to them, the WebSocket entry and authentication are slice 10&#39;s components
+(<code>createWorkers</code>, <code>chord.http</code>). An app built with the app kit (<code>chord/app</code>, the last chapter) does not wire them:
+<code>startServer(...)</code> on the server and <code>startWorker(...)</code> in a worker&#39;s entry do.</p>
+</div>
+</section>
+
+<section class="chapter" id="clients"><header class="opener"><div class="numeral">IV</div><h2>Client Hosts</h2><p class="lede">Browser tabs and terminal UIs are hosts too: what they can do, and what they cannot.</p></header>
+<p class="dropcap">A browser tab and a terminal UI are hosts like the server, with one difference: they have <strong>no address</strong>. Nobody can
+send a request <em>to</em> a tab; a tab only connects to the server and asks for things. That is a deliberate rule: a tab
+runs on a device the server does not control, so nothing on the server ever waits for, or trusts, a tab&#39;s state.</p>
+<pre><code><span class="tk-c">// a browser tab (slice 11's page host will do this wiring for you)</span>
+<span class="tk-k">const</span> tab = <span class="tk-f">createHost</span>&lt;P&gt;({ onError });                               <span class="tk-c">// no address, no principal: a client</span>
+tab.<span class="tk-f">connect</span>(<span class="tk-f">webSocketLink</span>(<span class="tk-k">new</span> <span class="tk-t">WebSocket</span>(<span class="tk-s">"/chord"</span>)), { principal: { kind: <span class="tk-s">"server"</span> } }, ctx);
+<span class="tk-k">await</span> tab.<span class="tk-f">load</span>([{ name: <span class="tk-s">"@app/web"</span>, facet: webCore }, ...webFacets], ctx);
+
+<span class="tk-k">const</span> notes = tab.<span class="tk-f">hold</span>(<span class="tk-t">Notes</span>, { project: <span class="tk-s">"p1"</span> }, ctx);               <span class="tk-c">// a reference at once, live soon</span>
+(<span class="tk-k">await</span> notes.list.<span class="tk-f">watch</span>(ctx)).<span class="tk-f">start</span>(<span class="tk-k">async</span> (call) =&gt; {
+	<span class="tk-k">if</span> (call.kind === <span class="tk-s">"value"</span>) <span class="tk-f">render</span>(call.value.items);              <span class="tk-c">// every change, as it commits on the worker</span>
+});
+<span class="tk-k">await</span> notes.<span class="tk-f">add</span>({ text: <span class="tk-s">"from the tab"</span> }, ctx);                        <span class="tk-c">// a call: tab → server → worker</span></code></pre>
+<p><strong>Who the tab is</strong> is not the tab&#39;s to say. The server authenticates the WebSocket when it connects (a cookie, the
+owner on loopback, a guest&#39;s share link) and stamps that principal on everything the tab asks for. The worker&#39;s
+<code>Notes</code> factory receives it and may give a guest a read-only variant. A tab cannot claim to be the owner.</p>
+<p><strong>What a tab serves</strong> is only <code>local</code> types: state of this tab&#39;s UI, never shared. A draft that survives switching
+panels, a selection, a tab-local cache:</p>
+<pre><code><span class="tk-c">// plugins/notes/web.tsx: the web facet serves a local type, and contributes a panel</span>
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((host, self) =&gt; {
+	host.<span class="tk-f">serve</span>(<span class="tk-t">NoteDraft</span>, (_params, self) =&gt; ({ text: self.<span class="tk-f">state</span>(<span class="tk-t">DraftDoc</span>) }));   <span class="tk-c">// lives in this tab only</span>
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">Panels</span>, { title: <span class="tk-s">"Notes"</span>, <span class="tk-t">Component</span>: <span class="tk-t">NotesPanel</span> });
+});</code></pre>
+<p><strong>When the connection drops</strong> (a phone in a tunnel, a server restart), the tab keeps its references. Their values
+stay readable, their <code>state</code> says <code>loading</code>, calls made meanwhile wait; on reconnect every reference is held again and
+gets the current value in one frame. The UI shows a banner from <code>ref.state</code>, nothing more.</p>
+<p><strong>A terminal UI</strong> is the same in Node: a client host connected to the server over a WebSocket, loading the plugins&#39;
+<code>tui</code> facets, rendering with whatever terminal library the app chose. <strong>What a client never does</strong>: serve a <code>remote</code>
+type, be routed to, or keep data others rely on. Data that must outlive a tab belongs in an object on the server or a
+worker.</p>
+<p><strong>Text in the viewer&#39;s language</strong> is a client&#39;s job too, because two people looking at the same object may read
+different languages. A plugin writes its texts once, in a shared <code>messages.ts</code>; a client renders them in its host&#39;s
+language (the user&#39;s pick, else the device&#39;s), and objects store messages as data, never sentences (design §23,
+&quot;Messages and languages&quot;):</p>
+<pre><code><span class="tk-c">// plugins/notes/messages.ts: the first catalog types the others</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> messages = <span class="tk-f">defineMessages</span>(<span class="tk-s">"notes"</span>, { en: { empty: <span class="tk-s">"No notes yet"</span> }, de: { empty: <span class="tk-s">"Noch keine Notizen"</span> } });
+<span class="tk-c">// plugins/notes/web.tsx: the facet contributes its catalogs; a component renders in the page's language</span>
+self.<span class="tk-f">contribute</span>(<span class="tk-t">Translations</span>, messages.translations);
+<span class="tk-k">const</span> { t } = <span class="tk-f">useMessages</span>(messages);                       <span class="tk-c">// re-renders when the user picks another language</span>
+<span class="tk-c">// plugins/notes/worker.ts: a notice as data; every client renders it with t.render(notice)</span>
+draft.notice = messages.<span class="tk-f">message</span>(<span class="tk-s">"empty"</span>);</code></pre>
+<h3 id="optimistic-ui">Optimistic UI</h3>
+<p>A user renames a session. The call goes from the tab through the server to the session&#39;s worker, which renames it and
+reports the new title to the server&#39;s index of sessions, then answers. That round trip takes a moment, and the title
+should change at once. React&#39;s <code>useOptimistic</code> shows a value while a transition runs, and Chord&#39;s references fit it:</p>
+<pre><code><span class="tk-c">// plugins/sessions/web.tsx</span>
+<span class="tk-k">function</span> <span class="tk-t">SessionName</span>({ id }: { id: string }) {
+	<span class="tk-k">const</span> sessions = <span class="tk-f">useHold</span>(<span class="tk-t">Sessions</span>, {});                       <span class="tk-c">// the server's index, which every list shows</span>
+	<span class="tk-k">const</span> session = <span class="tk-f">useHold</span>(<span class="tk-t">SessionTitle</span>, { id });                <span class="tk-c">// on the session's worker</span>
+	<span class="tk-k">const</span> title = <span class="tk-f">useWatch</span>(sessions?.titles)?.[id] ?? <span class="tk-s">""</span>;
+	<span class="tk-k">const</span> [shown, showOptimistic] = <span class="tk-f">useOptimistic</span>(title);
+	<span class="tk-k">const</span> rename = (next: string) =&gt;
+		<span class="tk-f">startTransition</span>(<span class="tk-k">async</span> () =&gt; {
+			<span class="tk-f">showOptimistic</span>(next);                                    <span class="tk-c">// drawn at once</span>
+			<span class="tk-k">await</span> session?.<span class="tk-f">rename</span>(next, BACKGROUND_CONTEXT);         <span class="tk-c">// settles once the index has `next`</span>
+		});
+	<span class="tk-k">return</span> &lt;<span class="tk-t">TitleField</span> value={shown} onRename={rename} /&gt;;
+}</code></pre>
+<p>When the transition ends, React drops the optimistic value and draws <code>title</code> again. That is only right if <code>title</code> is
+already the new name by then. <strong>Chord guarantees it:</strong> a call settles in the page only after every change its answering
+host committed before answering is applied there, and so does every change a host that relays the answer committed
+before it forwarded it. Here the worker&#39;s own changes travel before its answer, and the server sends its index change
+for this tab before it forwards the worker&#39;s answer, even on a slow connection whose window of unacknowledged state is
+full (design §3). Without that, the answer could overtake the index change and the old title flickered back.</p>
+<p><strong>What it does not cover:</strong></p>
+<ul>
+<li>Changes committed after the answer: a method that starts work and returns before it lands (a <code>void</code> call, a job, a
+routine) answers first; the optimistic value goes and the old one shows until the change arrives.</li>
+<li>Changes on a host that neither answers nor relays the answer. A server method that calls a worker and then answers
+the tab orders only the server&#39;s own changes before its answer; what the worker changed for the tab travels on its
+own and may come later.</li>
+</ul>
+<p>So the rule for a method that should feel instant: it awaits its own changes, the pushes to other hosts included (the
+worker&#39;s <code>rename</code> awaits its report to the index), and keeps them on the host that answers or relays the answer.</p>
+<p>A terminal UI does the same with its component scope: <code>scope.optimistic(read, reduce?)</code> wraps a reader and returns
+it with <code>add(action, call)</code> and <code>pending()</code>, as React&#39;s <code>useOptimistic</code>: while calls are in flight the reader shows
+<code>reduce(current, action)</code> over each action, in order (without a reducer the last action is the value), until every
+call added settles. <code>add</code> returns the call; a rejection is the caller&#39;s to handle.</p>
+<pre><code><span class="tk-k">const</span> titles = scope.<span class="tk-f">watch</span>(sessions.titles);
+<span class="tk-k">const</span> [title, add] = scope.<span class="tk-f">optimistic</span>(() =&gt; <span class="tk-f">titles</span>()?.[id]);
+<span class="tk-k">await</span> <span class="tk-f">add</span>(next, session.<span class="tk-f">rename</span>(next, ctx));               <span class="tk-c">// title() is `next` at once, the real one when it settles</span>
+
+<span class="tk-k">const</span> [rows, change] = scope.<span class="tk-f">optimistic</span>(() =&gt; <span class="tk-f">list</span>() ?? [], (rows, id: string) =&gt; rows.<span class="tk-f">filter</span>((row) =&gt; row.id !== id));
+<span class="tk-f">change</span>(id, store.<span class="tk-f">remove</span>({ id }, ctx)).<span class="tk-f">catch</span>(fail);        <span class="tk-c">// gone at once; back with the error if refused</span></code></pre>
+<p><code>test/examples/63-optimistic-answers.ts</code> runs this with a stalled terminal client and prints what each redraw showed.</p>
+</section>
+
+<section class="chapter" id="plugins"><header class="opener"><div class="numeral">V</div><h2>Plugins</h2><p class="lede">Move the code into a directory that can be added, edited and removed while the app runs.</p></header>
+<p class="dropcap">So far the facets were part of the app&#39;s own code. A <strong>plugin</strong> is the same code in its own directory:</p>
+<pre class="plain"><code>plugins/notes/
+  package.json        { "name": "@app/notes" }
+  contract.ts         the Notes contract (other plugins import it)
+  worker.ts           the facet for workers: serves Notes
+  server.ts           the facet for the server: an export route
+  web.tsx             the facet for browser tabs: a notes panel</code></pre>
+<p>The plugin&#39;s name is its <code>package.json</code> name. Each file named after a <strong>host kind</strong> is that kind&#39;s facet, its
+default export a <code>defineFacet(...)</code>. A plugin has only the files it needs: a plugin that only adds a route has a
+<code>server.ts</code> and nothing else.</p>
+<pre><code><span class="tk-c">// plugins/notes/worker.ts</span>
+<span class="tk-k">import</span> { defineFacet } <span class="tk-k">from</span> <span class="tk-s">"@app/api/v1"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">Notes</span> } <span class="tk-k">from</span> <span class="tk-s">"./contract.ts"</span>;
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((host) =&gt; {
+	host.<span class="tk-f">serve</span>(<span class="tk-t">Notes</span>, ({ project }, principal, self) =&gt; {
+		<span class="tk-k">const</span> doc = self.<span class="tk-f">state</span>(<span class="tk-t">NotesDoc</span>);
+		<span class="tk-k">return</span> { variant: <span class="tk-s">"editor"</span>, members: { list: doc, add: <span class="tk-k">async</span> ({ text }, ctx) =&gt; <span class="tk-c">/* … */</span> } };
+	});
+});</code></pre>
+<p><code>@app/api/v1</code> is your app&#39;s <strong>API</strong>, version 1: the part of its base code plugins import, as a host package (the
+plugin&#39;s build leaves it out; every host passes its own copy in). It holds what plugins share and never reloads:
+Chord&#39;s builders re-exported (<code>local</code>, <code>remote</code>, <code>obj</code>, <code>str</code>, ...), host kinds, the principal type, a <code>defineFacet</code>
+bound to it. A plugin never imports Chord itself; the version in the path says what it was written against.</p>
+</section>
+
+<section class="chapter" id="loading"><header class="opener"><div class="numeral">VI</div><h2>Loading Plugins</h2><p class="lede">Two steps in two places: building a plugin into a script happens once, on the server; evaluating it happens in every process that runs it.</p></header>
+<p class="dropcap">A plugin is source code on the server&#39;s disk: TypeScript files that import each other, import other plugins&#39;
+contracts, import npm packages, and import things the app itself provides. None of the processes that run the plugin
+can use those files as they are. A browser tab has no file system and no TypeScript; a worker could read the files,
+but then every worker would compile every plugin again, and two workers started a minute apart could see two different
+versions. So loading a plugin is two separate steps:</p>
+<ol>
+<li><strong>Build</strong>: turn each plugin facet (<code>notes/worker.ts</code>, <code>notes/web.tsx</code>) into one self-contained <strong>script</strong>. This
+happens once per edit, on the server, for every host kind.</li>
+<li><strong>Evaluate</strong>: run a script inside one process, which gives back the facet, ready for <code>host.load</code>. This happens in
+every process that hosts that kind: the server for its own facets, each worker for the worker facets, each tab for
+the web facets.</li>
+</ol>
+<p>The two steps need different things, and that is why the API has two calls.</p>
+<h3 id="host-packages-what-a-script-leaves-out">Host packages: what a script leaves out</h3>
+<p>Look at what <code>notes/worker.ts</code> imports:</p>
+<pre><code><span class="tk-k">import</span> { defineFacet, obj, remote, <span class="tk-t">Session</span>, str } <span class="tk-k">from</span> <span class="tk-s">"@app/api/v1"</span>;   <span class="tk-c">// the app's API: its own part and Chord's</span>
+<span class="tk-k">import</span> { <span class="tk-t">Notes</span> } <span class="tk-k">from</span> <span class="tk-s">"./contract.ts"</span>;                                  <span class="tk-c">// the plugin's own file</span>
+<span class="tk-k">import</span> slugify <span class="tk-k">from</span> <span class="tk-s">"slugify"</span>;                                          <span class="tk-c">// an npm package in its dependencies</span></code></pre>
+<p>The last two go into the script: the plugin&#39;s own files and its npm dependencies are copied in. The first must not.
+If the script carried its own copy of the API, and with it of Chord, the worker would run two Chords: the plugin&#39;s
+<code>ChordError</code> would not be the worker&#39;s <code>ChordError</code>, and the plugin&#39;s <code>defineFacet</code> would make a facet the worker&#39;s host
+does not recognize. The plugin must see the very <code>Session</code> host kind and the very <code>Panels</code> registry the process
+already has, not a copy.</p>
+<p>Packages the process already has, and that every plugin must share, are its <strong>host packages</strong>. A script leaves them
+out and asks for them by name when it runs. Building therefore needs only their <strong>names</strong>: &quot;do not copy <code>@app/api/v1</code>
+into this script&quot;.</p>
+<h3 id="building-createplugins-on-the-server">Building: <code>createPlugins</code>, on the server</h3>
+<pre><code><span class="tk-k">const</span> plugins = <span class="tk-f">createPlugins</span>({
+	roots: [{ path: <span class="tk-s">"./plugins"</span>, required: <span class="tk-k">true</span> }],      <span class="tk-c">// where the plugin directories are</span>
+	api: { name: <span class="tk-s">"@app/api"</span>, versions: [<span class="tk-s">"v1"</span>] },          <span class="tk-c">// the app's API and the versions it provides</span>
+	kinds: {
+		server: { platform: <span class="tk-s">"node"</span>, hostPackages: [<span class="tk-s">"@app/api/v1"</span>, <span class="tk-s">"@app/api/v1/server"</span>] },
+		worker: { platform: <span class="tk-s">"node"</span>, hostPackages: [<span class="tk-s">"@app/api/v1"</span>, <span class="tk-s">"@app/api/v1/worker"</span>] },
+		web: { platform: <span class="tk-s">"browser"</span>, hostPackages: [<span class="tk-s">"@app/api/v1"</span>, <span class="tk-s">"@app/api/v1/web"</span>, <span class="tk-s">"react"</span>, <span class="tk-s">"react/jsx-runtime"</span>] },
+	},
+	onError,
+}, ctx);</code></pre>
+<p><code>createPlugins</code> is the builder, and it builds for every kind, because only the server has the sources. For each kind
+it needs two facts. The <strong>platform</strong> says where the scripts run: a <code>node</code> script may import <code>node:fs</code>, a <code>browser</code>
+script may import a stylesheet but not <code>node:fs</code>. The <strong>host package names</strong> say what to leave out; they differ per
+kind, because a tab also shares React with its plugins and a worker does not, and the API&#39;s per-kind modules
+(<code>/v1/web</code>) belong to their kind only. With <code>api</code> set, the build checks every import of the API: a version the app
+does not list, another kind&#39;s module, two versions in one facet, or Chord imported directly is a build error naming
+the file and line. Nothing here runs a plugin.</p>
+<h3 id="evaluating-plugins-load-in-the-process-that-hosts">Evaluating: <code>plugins.load</code>, in the process that hosts</h3>
+<p>Evaluating is where the names become things. When the script runs and asks for <code>@app/api/v1</code>, someone has to hand
+it the actual module, the one this process imported when it started. Only the process itself has it:</p>
+<pre><code><span class="tk-c">// server.ts</span>
+<span class="tk-k">import</span> * <span class="tk-k">as</span> api <span class="tk-k">from</span> <span class="tk-s">"./api/v1/index.ts"</span>;                 <span class="tk-c">// the app's API, the module plugins import as "@app/api/v1"</span>
+<span class="tk-k">import</span> * <span class="tk-k">as</span> apiServer <span class="tk-k">from</span> <span class="tk-s">"./api/v1/server.ts"</span>;
+<span class="tk-k">import</span> { serverFacet } <span class="tk-k">from</span> <span class="tk-s">"./core.ts"</span>;
+
+<span class="tk-k">const</span> report = <span class="tk-k">await</span> plugins.<span class="tk-f">load</span>(server, {
+	kind: <span class="tk-s">"server"</span>,                                          <span class="tk-c">// evaluate the server kind's scripts</span>
+	modules: { <span class="tk-s">"@app/api/v1"</span>: api, <span class="tk-s">"@app/api/v1/server"</span>: apiServer },   <span class="tk-c">// this process's own instances</span>
+	core: [{ name: <span class="tk-s">"@app/core"</span>, facet: serverFacet }],       <span class="tk-c">// base-code facets, loaded beside the plugins</span>
+}, ctx);</code></pre>
+<p><code>modules</code> is this process&#39;s answer to every host package name. The server passes its own; a worker passes its own in
+<code>workerMain</code>; a page passes its own in <code>startPage</code>. Each process has different instances, which is exactly the point:
+inside each process, plugins share that process&#39;s Chord and base code.</p>
+<p><code>core</code> is the app&#39;s base code in facet form. It is a facet like a plugin&#39;s, but it is not a plugin: it is made in the
+process&#39;s own code, often from values only this process has (<code>core.workerFacet(start)</code> closes over a worker&#39;s start
+data and store), and it never reloads, because it defines what all plugins share. Passing it here loads it together
+with the plugins, so they are published in one step.</p>
+<h3 id="why-plugins-load-host-not-host-load">Why <code>plugins.load(host)</code>, not <code>host.load</code></h3>
+<p>A host has its own <code>load</code>, and <code>plugins.load</code> calls it. The host&#39;s <code>load</code> takes facets that already exist: functions
+in memory. It knows nothing about directories, builds, scripts or modules, on purpose: the same host runs in a test
+with facets imported directly, or in a Cloudflare Durable Object where plugins are bundled at deploy time and nothing
+is built or evaluated at runtime.</p>
+<p>The plugins component is the part that knows about directories. It finds the plugins, builds them, evaluates them
+with the process&#39;s modules, and then calls <code>host.load</code> with the result. It also remembers, per host, which facet each
+plugin runs, so that a later reload can hand the host its complete new plugin set, with unchanged plugins as the very
+same objects. That memory is why the host is passed to it: <code>plugins.load(server, …)</code> on the server,
+<code>plugins.load(worker, …)</code> in a worker (where <code>workerMain</code> gives it a <code>plugins</code> that only evaluates), the same call
+in every process.</p>
+<figure class="fig wide"><svg viewBox="0 0 720 242" width="100%" role="img" aria-label="Building on the server needs names; evaluating in each process needs that process's modules." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f3m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f3a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f3b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">SERVER: BUILD (ONCE PER EDIT)</text><text x="16" y="155" font-size="10" fill="#2e6a8a" text-anchor="start" font-weight="600" letter-spacing="2">EACH WORKER: EVALUATE</text><rect x="19" y="36" width="210" height="55" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="124" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">plugin sources</text><text x="124" y="68.5" font-size="9.5" fill="#7b7468" text-anchor="middle" font-family="Menlo,monospace">notes/worker.ts`, imports</text><text x="124" y="81" font-size="9.5" fill="#7b7468" text-anchor="middle" font-family="Menlo,monospace">`@app/api/v1</text><rect x="255" y="36" width="210" height="55" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="360" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">createPlugins</text><text x="360" y="68.5" font-size="9.5" fill="#7b7468" text-anchor="middle">copies own files and npm deps; leaves</text><text x="360" y="81" font-size="9.5" fill="#7b7468" text-anchor="middle">host packages out</text><rect x="491" y="36" width="210" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="596" y="54.5" font-size="11" fill="#2a2723" text-anchor="middle">worker script</text><text x="596" y="68.5" font-size="9.5" fill="#7b7468" text-anchor="middle">`require(&quot;@app/api/v1&quot;)` left as a</text><text x="596" y="81" font-size="9.5" fill="#7b7468" text-anchor="middle">name</text><rect x="19" y="169" width="210" height="55" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="124" y="193.8" font-size="11" fill="#2a2723" text-anchor="middle">the worker's modules</text><text x="124" y="207.8" font-size="9.5" fill="#7b7468" text-anchor="middle">its own `@app/api/v1`, its own Chord</text><rect x="255" y="169" width="210" height="55" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="360" y="193.8" font-size="11" fill="#2a2723" text-anchor="middle">plugins.load(worker, …)</text><text x="360" y="207.8" font-size="9.5" fill="#7b7468" text-anchor="middle">runs the script, answers each name</text><rect x="491" y="169" width="210" height="55" rx="4" fill="#fff" stroke="#c9bfae"/><text x="596" y="187.5" font-size="11" fill="#2a2723" text-anchor="middle">the facet</text><text x="596" y="201.5" font-size="9.5" fill="#7b7468" text-anchor="middle">uses the worker's `Session`, the</text><text x="596" y="214" font-size="9.5" fill="#7b7468" text-anchor="middle">worker's `defineFacet`</text><path d="M229 63.5 L253 63.5" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><path d="M465 63.5 L489 63.5" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><path d="M596 91 L360 167" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><rect x="482" y="123" width="44.9" height="13" fill="#fbf8f2" opacity=".92"/><text x="486" y="133" font-size="9.5" fill="#7b7468" text-anchor="start">shipped</text><path d="M229 196.5 L253 196.5" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><path d="M465 196.5 L489 196.5" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/></svg><figcaption><span class="fignum">Figure 3.</span> Building on the server needs names; evaluating in each process needs that process&#39;s modules.</figcaption></figure>
+<h3 id="what-happens-step-by-step">What happens, step by step</h3>
+<div class="steps"><div class="steps-head"><span class="title"><code>plugins.load(server, { kind: &quot;server&quot;, … })</code></span><span class="count"></span><button class="prev" type="button">Back</button><button class="next" type="button">Next</button></div><div class="step-panel"><h4>Discover</h4><p>The component lists <code>./plugins</code> and reads each <code>package.json</code>. Its <code>name</code> is the plugin&#39;s name; the files named after
+a kind are its facets. A directory without a <code>package.json</code>, or with two <code>server</code> files, is reported, not loaded. Files
+at the root&#39;s top named <code>&lt;name&gt;.&lt;kind&gt;.ts</code> (<code>hello.server.ts</code>) are single-file plugins, grouped by name.</p>
+</div><div class="step-panel"><h4>Build</h4><p>For each plugin with a <code>server</code> facet it builds one script, if no current one exists. A syntax error or an import the
+rules do not allow (a path into base code, a package not in the plugin&#39;s dependencies) is a failed build with the file
+and line, never a crash.</p>
+</div><div class="step-panel"><h4>Evaluate</h4><p>The script runs. Each host package name it asks for is answered from <code>modules</code>; anything else it may not have. The
+script&#39;s default export must be a facet.</p>
+</div><div class="step-panel"><h4>Load</h4><p><code>host.load</code> runs the setups of <code>core</code> and of every plugin facet and publishes them together. A plugin whose build,
+evaluation or setup failed is left out and listed in <code>report.failed</code> with the reason; the others load. Objects that
+need it wait until a later edit loads it.</p>
+</div></div>
+<p>Only the server builds. Workers and clients (browser tabs, terminal UIs) only evaluate: the server builds their kinds
+too, a worker gets its scripts in its start message, a tab or a TUI gets them from the server over HTTP, and each
+evaluates them with its own modules (a worker&#39;s from <code>workerMain</code>, a page&#39;s from its base bundle).</p>
+</section>
+
+<section class="chapter" id="together"><header class="opener"><div class="numeral">VII</div><h2>Plugins Using Plugins</h2><p class="lede">Two ways one plugin uses another, and the one it may not.</p></header>
+<p class="dropcap">A search plugin wants to search the notes. It <strong>imports the contract</strong> and asks for the object:</p>
+<pre><code><span class="tk-c">// plugins/search/worker.ts</span>
+<span class="tk-k">import</span> { <span class="tk-t">Notes</span> } <span class="tk-k">from</span> <span class="tk-s">"../notes/contract.ts"</span>;   <span class="tk-c">// a plugin of the same root, by relative path: copied into search's script</span>
+
+host.<span class="tk-f">serve</span>(<span class="tk-t">Search</span>, ({ project }, principal, self) =&gt; {
+	<span class="tk-k">const</span> notes = self.<span class="tk-f">get</span>(<span class="tk-t">Notes</span>, { project });   <span class="tk-c">// a dependency: Search goes live once Notes is</span>
+	<span class="tk-k">const</span> index = self.<span class="tk-f">derive</span>([notes.list], ([list]) =&gt; <span class="tk-f">buildIndex</span>(list.items));
+	<span class="tk-k">return</span> { variant: <span class="tk-s">"main"</span>, members: { find: <span class="tk-k">async</span> ({ q }) =&gt; <span class="tk-f">lookup</span>(index.value, q) } };
+});</code></pre>
+<p>Which file a plugin imports decides which version of the contract it claims, so the rule is: <strong>a plugin carries the
+contract it was written against.</strong> Two cases:</p>
+<ul>
+<li><strong>Plugins that change together</strong> (the app&#39;s own, in its repository; a user&#39;s, in one root) import each other by
+relative path, <code>../notes/contract.ts</code>: the same commit holds both sides. The file is copied into the importer&#39;s
+script, so only contracts and other side-effect-free files belong there (a copied file may import only the API and
+files of its own plugin). A relative path leaving the root (into base code, into another root) is a build error.</li>
+<li><strong>Plugins from another repository</strong> take contracts as a dependency at a fixed version, by package name:
+<code>@bob/notes</code> (its <code>contract.ts</code>, through the package&#39;s <code>exports</code>), <code>@bob/notes/web</code> (its <code>contract.web.tsx</code>), pinned
+in <code>package.json</code> by an npm version or a git ref (<code>&quot;@bob/notes&quot;: &quot;github:bob/notes#&lt;commit&gt;&quot;</code>). The build inlines
+the installed version: when Bob&#39;s notes move to contract version 2, a consumer built against version 1 keeps
+claiming version 1, and the provider serves it through <code>accepts</code> or the consumer waits &quot;contract mismatch&quot;, visible,
+never silently wrong. A plugin inside a repository holding several (which lists them in its own <code>package.json</code>,
+<code>&quot;chord&quot;: { &quot;plugins&quot;: [&quot;./notes&quot;, &quot;./search&quot;] }</code>) is a dependency on the whole repository, imported by path into it:
+<code>@bob/plugins/notes/contract.ts</code>.</li>
+</ul>
+<p>A contract file may be for one kind: <code>contract.web.tsx</code> (React components in a type, a panel&#39;s registry token) is a
+<strong>web file</strong>. Importing it, directly or through other files, from a facet of another kind is a build error naming
+the chain (<code>server.ts → view.ts → ../notes/contract.web.tsx</code>). The shared <code>contract.ts</code> mentions native things only
+through <code>import type</code>.</p>
+<p><code>self.get</code> in a factory declares a dependency: Chord makes <code>Search</code> live only once <code>Notes</code> is, and if the notes
+plugin is missing, <code>Search</code> waits with a clear reason (&quot;waiting for notes: not served here&quot;) instead of failing.</p>
+<p>The other way is a <strong>registry</strong>: an extension point one plugin defines and others contribute to. The app&#39;s API
+defines <code>Panels</code> in its web module, and every plugin with a UI contributes one:</p>
+<pre><code><span class="tk-c">// plugins/notes/web.tsx</span>
+<span class="tk-k">import</span> { <span class="tk-t">Panels</span> } <span class="tk-k">from</span> <span class="tk-s">"@app/api/v1/web"</span>;
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((host, self) =&gt; self.<span class="tk-f">contribute</span>(<span class="tk-t">Panels</span>, { title: <span class="tk-s">"Notes"</span>, <span class="tk-t">Component</span>: <span class="tk-t">NotesPanel</span> }));</code></pre>
+<p>What a plugin may not do is reach into another&#39;s data. Search never reads notes&#39; documents; it uses the <code>Notes</code>
+object&#39;s state. That rule is what lets the notes plugin change its storage without breaking search.</p>
+</section>
+
+<section class="chapter" id="reload"><header class="opener"><div class="numeral">VIII</div><h2>Changing a Plugin</h2><p class="lede">Edit, build, roll out: how new code takes over while every tab stays connected.</p></header>
+<p class="dropcap">You change the notes plugin: notes now have a timestamp. The watcher sees the saved file and marks the plugin dirty.
+You (or an agent) build and roll out:</p>
+<pre><code><span class="tk-k">const</span> built = <span class="tk-k">await</span> plugins.<span class="tk-f">build</span>(plugins.state.value.dirty, ctx);
+<span class="tk-k">const</span> result = <span class="tk-k">await</span> plugins.<span class="tk-f">rollout</span>([plugins.<span class="tk-f">step</span>(<span class="tk-s">"server"</span>, server), workers.<span class="tk-f">step</span>(<span class="tk-s">"workers"</span>)], built, ctx);</code></pre>
+<p>The rollout goes host by host, server first, then every running worker. On each host Chord compares the new plugin
+set with the loaded one, runs the new factories against a recording <code>self</code> to see what each object would declare, and
+then gives every object of the changed plugin its fate:</p>
+<table>
+<thead>
+<tr>
+<th>The object</th>
+<th>What happens</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>live</td>
+<td><strong>restarted</strong>: running calls, and the calls they make with their <code>ctx</code>, finish on the old code; new calls wait for the new code; same documents; natives close and reopen</td>
+</tr>
+<tr>
+<td>not live (failed, parked)</td>
+<td><strong>retried</strong> on the new code</td>
+</tr>
+<tr>
+<td>its type was removed</td>
+<td><strong>ended</strong>; its users wait until something serves it again</td>
+</tr>
+</tbody></table>
+<p>The tab&#39;s reference stays live while the old code drains, shows <code>loading</code> for a moment, then follows the new object
+with one frame of difference. Nothing reconnects. If the edit
+is broken (a syntax error, a factory that throws), that plugin keeps its old code on that host and the report says why;
+every other plugin of the rollout applies.</p>
+<p>A tab applies a new web script the same way, without reloading the page, and the UI keeps what lives outside the
+changed plugin. The changed plugin&#39;s own components are new functions, so React mounts them anew and their <code>useState</code>
+starts over. What must survive the update (a half-typed note, a scroll position) goes into <strong>page state</strong>, kept by the
+tab&#39;s host under a key: <code>usePageState(key, initial)</code> from <code>chord/react</code> instead of <code>useState</code>, and
+<code>scope.pageState(key, initial)</code> on a terminal&#39;s <code>TuiScope</code> (design §21, &quot;UI on client hosts&quot;).</p>
+<div class="note"><b class="tag">Versions</b><p>A change to a contract (a new field in <code>Notes</code>&#39;s state) gets a new <code>version</code>. A tab built with the old contract keeps
+working if the provider maps the old version (<code>accepts</code>); otherwise it waits with &quot;version mismatch&quot; until it reloads.</p>
+</div>
+</section>
+
+<section class="chapter" id="base"><header class="opener"><div class="numeral">IX</div><h2>Base Code and Plugins</h2><p class="lede">What goes into the app itself, what goes into plugins, and how an app ships plugins of its own.</p></header>
+<p class="dropcap">Every app has two kinds of code, and the line between them decides what can change while the app runs.</p>
+<p><strong>Base code</strong> is the app&#39;s own program: <code>src/</code>, started by <code>node server.ts</code>. It shrinks to three things: the <strong>API</strong>
+(the versioned modules plugins import), the <strong>bootstrap</strong> (creating hosts, opening the store, components such as
+<code>createHttp</code> and <code>createWorkers</code>) and one small <strong>start-data facet</strong> serving process values (start data, the opened
+store) as core objects. Base code changes only with a restart: if it reloaded, the process would hold two <code>Panels</code>
+registries, and old and new plugins would no longer meet.</p>
+<p><strong>Plugins</strong> are everything else: notes, search, export, a terminal, the harness, the providers of the app&#39;s core
+registries. They reload on an edit, a broken one is left out alone, and an agent can write one while the app runs.</p>
+<h3 id="the-api-by-version-and-by-kind">The API, by version and by kind</h3>
+<p>Plugins import their host only through the API, a version in the path:</p>
+<pre><code><span class="tk-c">// src/api/v1/index.ts: "@app/api/v1", for every kind</span>
+<span class="tk-k">export</span> { defineRegistry, local, obj, remote, str } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord"</span>;   <span class="tk-c">// the Chord surface the app supports</span>
+<span class="tk-k">export</span> { defineFacet, <span class="tk-t">Project</span>, <span class="tk-t">Server</span> } <span class="tk-k">from</span> <span class="tk-s">"../../core.ts"</span>;                           <span class="tk-c">// bound to the app's principal</span>
+<span class="tk-c">// src/api/v1/web.ts: "@app/api/v1/web", for pages only</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Panels</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">Panel</span>, <span class="tk-k">readonly</span> <span class="tk-t">Panel</span>[]&gt;(<span class="tk-s">"app.panels"</span>, { version: <span class="tk-n">1</span> });</code></pre>
+<p>The app lists the versions it provides, newest first (<code>api: { name: &quot;@app/api&quot;, versions: [&quot;v2&quot;, &quot;v1&quot;] }</code>), and each
+kind&#39;s modules in <code>kinds.&lt;kind&gt;.hostPackages</code>. When the app changes its API in a way that breaks plugins, it adds
+<code>/v2</code> and keeps <code>/v1</code> as a thin layer over it for a while; once <code>/v1</code> goes, a plugin importing it fails to build with
+&quot;@app/api/v1 is not available: this app provides v2&quot;, the plugin alone, the message saying what to change. One facet
+uses one version. Contracts the app promises others are re-exported in the API (<code>export { Notes } from &quot;../../plugins/notes/contract.ts&quot;</code>), so a plugin built against <code>/v1</code> keeps v1&#39;s contract files.</p>
+<h3 id="plugins-the-app-ships">Plugins the app ships</h3>
+<p>An app comes with plugins of its own. They follow the same rules as anyone&#39;s, in a root inside the app, next to the
+root where users and agents add theirs:</p>
+<pre><code><span class="tk-k">const</span> plugins = <span class="tk-f">createPlugins</span>({
+	roots: [{ path: <span class="tk-s">"./plugins"</span>, required: <span class="tk-k">true</span> }, <span class="tk-f">join</span>(dataDir, <span class="tk-s">"plugins"</span>)],   <span class="tk-c">// the app's own, then the user's</span>
+	api: { name: <span class="tk-s">"@app/api"</span>, versions: [<span class="tk-s">"v1"</span>] },
+	kinds,
+	onError,
+}, ctx);</code></pre>
+<p>They are built at startup like any plugin (a quarter of a second for twenty), reload like any plugin, and are left out
+alone when broken at a reload. The app&#39;s root is <strong>required</strong>: a plugin of it failing at startup makes
+<code>plugins.load</code> reject with a <code>PluginError</code> naming it (after the load settled), so the app stops instead of running
+without its core. A failure in the user&#39;s root is reported and the app runs on. If two roots have a plugin with the
+same name, the first root wins, and the other is reported.</p>
+<h3 id="small-plugins-installed-plugins-tested-plugins">Small plugins, installed plugins, tested plugins</h3>
+<ul>
+<li><strong>A single file</strong> at a root&#39;s top is a plugin: <code>plugins/hello.server.ts</code> and <code>plugins/hello.web.tsx</code> are the plugin
+<code>hello</code> with two facets. It has no <code>package.json</code> and imports only the API; when it needs a second file or a
+package, it becomes the directory <code>hello/</code>, which a reload treats as the same plugin.</li>
+<li><strong>Installing</strong> from git or npm: <code>plugins.installPlugin({ git: url, ref }, root, ctx)</code> clones the ref (a branch, tag
+or commit) into the root, <code>{ npm: name, version }</code> extracts the package; then its dependencies are installed. Removal
+is deleting the directory.</li>
+<li><strong>Testing</strong> a plugin alone: <code>testPlugin(&quot;./plugins/stats&quot;, { kind: &quot;worker&quot;, api, modules, stubs }, ctx)</code> builds it
+as production does, loads it on an in-memory host beside stub facets serving what it uses, collects what it
+contributes to registries nobody serves, and lists the contracts it waits for (<code>docs/plugin-authoring.md</code>).</li>
+</ul>
+</section>
+
+<section class="chapter" id="kit"><header class="opener"><div class="numeral">X</div><h2>The App Kit</h2><p class="lede">startServer and startWorker: the hosts, stores, sign-in, files and plugin roots every app needs, so an app is its API, its plugins and a start script.</p></header>
+<p class="dropcap">The chapters so far wired an app by hand: a store, a host, <code>createHttp</code>, <code>createWorkers</code>, <code>createPlugins</code>, an
+authenticator, a worker entry connecting to its parent. Every app needs the same wiring, and most of it has one right
+answer. The <strong>app kit</strong> (<code>chord/app</code>) is that answer, opinionated on purpose: one data directory layout, one way
+to sign in, one place for files.</p>
+<h3 id="a-whole-app">A whole app</h3>
+<p>The notes app of example 53 is four files of base code and two plugins:</p>
+<pre><code><span class="tk-c">// start.ts</span>
+<span class="tk-k">const</span> app = <span class="tk-k">await</span> <span class="tk-f">startServer</span>&lt;<span class="tk-t">NotesPrincipal</span>&gt;({
+	name: <span class="tk-s">"notes"</span>,                                  <span class="tk-c">// the data directory: ~/.notes unless dataDir says otherwise</span>
+	root: <span class="tk-s">"./plugins"</span>,                              <span class="tk-c">// the app's own plugins: a required root</span>
+	api: { name: <span class="tk-s">"@notes/app"</span>, versions: [<span class="tk-s">"v1"</span>], modules: { <span class="tk-s">"@notes/app/v1"</span>: v1, <span class="tk-s">"@notes/app/v1/server"</span>: v1server } },
+	kinds: { server: { platform: <span class="tk-s">"node"</span> }, worker: { platform: <span class="tk-s">"node"</span> } },
+	principal: {
+		server: { kind: <span class="tk-s">"server"</span> },
+		worker: (address) =&gt; ({ kind: <span class="tk-s">"worker"</span>, project: address.key }),
+		owner: { kind: <span class="tk-s">"owner"</span> },                   <span class="tk-c">// whom the owner link, the token file and pairing sign in</span>
+	},
+	workers: [{
+		kind: <span class="tk-t">Project</span>,                              <span class="tk-c">// one worker per project</span>
+		entry: <span class="tk-s">"./worker.ts"</span>,
+		start: (address) =&gt; ({ project: address.key }),
+		authorize: (principal) =&gt; principal.kind === <span class="tk-s">"owner"</span> || principal.kind === <span class="tk-s">"server"</span>,
+	}],
+	onError: (error) =&gt; <span class="tk-f">log</span>(error),
+}, ctx);
+console.<span class="tk-f">log</span>(<span class="tk-s">`Open ${app.ownerLink()}`</span>);
+
+<span class="tk-c">// worker.ts</span>
+<span class="tk-f">startWorker</span>({ api: API, kinds: KINDS, onError: (error) =&gt; <span class="tk-f">log</span>(error) });</code></pre>
+<p><code>startServer</code> creates the data directory (<code>server/store.sqlite</code>, <code>workers/&lt;kind&gt;/&lt;address&gt;/</code>, <code>plugins/</code>, <code>logs/</code>,
+<code>owner-token</code>), opens the server&#39;s store, creates the server host, HTTP, a workers component per worker kind and the
+plugins component over two roots: the app&#39;s <code>plugins/</code> and the user&#39;s <code>&lt;dataDir&gt;/plugins/</code>. Then it loads the server&#39;s
+plugins with the kit&#39;s own facets beside them and resolves. <code>startWorker</code> does the worker&#39;s half: the project&#39;s
+directory and store, the host at the project&#39;s address, the link to the server first, the worker&#39;s plugins.</p>
+<h3 id="what-plugins-get-from-the-kit">What plugins get from the kit</h3>
+<p>Plugins still import only the app&#39;s API; the API re-exports the kit&#39;s objects it offers:</p>
+<ul>
+<li><code>AppInfo</code> on the server (data directory, app name, API version, owner) and <code>WorkerInfo</code> on workers (the address and
+the start data <code>start(address)</code> made): the <strong>start-data objects</strong>. Process values reach plugins only through them.</li>
+<li><code>Files</code>, one per host: <code>put</code> for small files, <code>begin</code>, <code>append</code> and <code>finish</code> for large ones, ranged <code>read</code>, <code>remove</code>
+and a watchable <code>list</code>, stored in the host&#39;s directory with caps per host.</li>
+<li><code>Sessions</code> on the server: <code>issue</code>, <code>revoke</code>, <code>list</code>.</li>
+</ul>
+<p>This finishes what the previous chapter started. Base code is the API, the start script and the worker&#39;s entry. The
+providers of the app&#39;s own registries live in its required root: example 53&#39;s API declares a <code>Sections</code> registry, and
+its home plugin serves it and reads <code>AppInfo</code>, so it reloads like any other plugin.</p>
+<h3 id="who-may-come-in">Who may come in</h3>
+<p>HTTP <strong>denies by default</strong>: a request without a principal gets 401 before any plugin code runs, unless the route says
+<code>public: true</code>. Someone gets a principal through a <strong>session</strong>: a random token, kept in the store only as a hash, sent
+as a signed cookie by a browser or as <code>Authorization: Bearer</code> by a command-line client.</p>
+<p>The first session is the owner&#39;s, the principal the app names in <code>principal.owner</code> (a variant of its own, as here, or
+one of its users). At each start the kit makes a one-time <strong>owner link</strong>,
+<code>http://127.0.0.1:8788/_chord/owner#&lt;token&gt;</code>, valid ten minutes; the start script prints it. The token is in the
+fragment, which browsers never send, so it never reaches a log: the page posts it, the kit consumes it and sets the
+owner&#39;s cookie. A command-line client on the same machine reads <code>&lt;dataDir&gt;/owner-token</code> (mode 0600). One on another
+machine <strong>pairs</strong>: it asks for a code, the owner approves the code in a signed-in browser, and the client&#39;s next poll
+returns its token (example 54).</p>
+<p>Users other than the owner come from optional plugins the app adds: <code>defineUsers(profile)</code> for accounts,
+<code>inviteFacet()</code> for invite links, <code>ephemeralLoginFacet()</code> for &quot;pick a name and you&#39;re in&quot;.</p>
+<h3 id="applying-changes-moving-projects">Applying changes, moving projects</h3>
+<p>The kit never reloads by itself. An edit or an install marks plugins dirty; <code>app.plugins.state</code> drives the app&#39;s
+&quot;apply changes&quot; button, and <code>app.applyChanges(ctx)</code> builds and rolls out to the server, then the workers.</p>
+<p>A project&#39;s data is what its worker created: its store and its files. <code>app.exportData(Project({ id }), path, ctx)</code>
+writes them as one archive (a manifest, the store&#39;s export, the files) and stops nothing: a running worker writes its
+own store at one consistent point. <code>app.importData(path, Project({ id: &quot;copy&quot; }), ctx)</code> makes a new project from it and
+refuses one that already has data (example 55).</p>
+</section>
+
+<section class="chapter" id="telemetry"><header class="opener"><div class="numeral">XI</div><h2>Seeing a Request Across Hosts</h2><p class="lede">One trace from a click in a client through the server&#39;s relay into a worker&#39;s method: adapters, carriers and spans.</p></header>
+<p class="dropcap">A tab calls <code>notes.add(…)</code>. The call leaves the tab, the server relays it, the project&#39;s worker runs the method, the
+method commits. When it is slow, where did the time go? Each host is a different process, so no single log has the
+answer. Chord&#39;s telemetry makes the four steps one <strong>trace</strong>: a tree of <strong>spans</strong> (named, timed pieces of work), each
+host recording its own with its own <strong>adapter</strong>, joined by <strong>carriers</strong> (a few strings naming the caller&#39;s span) that
+ride on the wire with every <code>hold</code> and <code>call</code>.</p>
+<p>Give the server a store and the kit does the rest. The SQLite store (<code>@earendil-works/chord/telemetry-sqlite</code>)
+records settled spans and metrics in one file in the data directory, and the server is its only writer: every worker
+records in memory and sends its spans and metrics to the server once a second over its link, and a page that records
+(<code>startPage({ telemetry: true })</code>) sends its own every few seconds and when hidden (example 62):</p>
+<pre><code><span class="tk-c">// start.ts: the server, its store, and whom spans were for (default: the principal's key)</span>
+<span class="tk-k">const</span> telemetry = <span class="tk-k">await</span> <span class="tk-f">createSqliteTelemetry</span>(<span class="tk-k">await</span> <span class="tk-f">openNodeSqliteDatabase</span>(<span class="tk-f">join</span>(dataDir, <span class="tk-s">"telemetry.sqlite"</span>)));
+<span class="tk-k">await</span> <span class="tk-f">startServer</span>({ ...options, telemetry, principalAttributes: (p) =&gt; ({ <span class="tk-s">"chord.principal"</span>: p.kind }) }, ctx);
+<span class="tk-c">// worker.ts: nothing about telemetry (its own `principalAttributes`, if any)</span>
+<span class="tk-f">startWorker</span>({ api, kinds, onError });
+<span class="tk-c">// the web entry: the page records</span>
+<span class="tk-f">startPage</span>({ ...options, telemetry: <span class="tk-k">true</span> });</code></pre>
+<p>A page is untrusted: the server checks each batch&#39;s every field (sizes, no control characters, ids printable ASCII),
+keeps only spans under the page&#39;s own ids, caps them per page and minute, marks them <code>chord.host: browser</code> and stamps
+them with the principal of their link. A click is a trace of its own with <code>host.root(fn, ctx, { trace: { name } })</code>.</p>
+<p>Nothing else changes in plugin code. A method&#39;s <code>ctx.telemetry</code> is its <code>chord.method</code> span, so whatever it calls or
+commits is parented under it, on its host or the next one. <code>ctx.trace(name, attributes, fn)</code> adds a span of your own:</p>
+<pre><code>add: <span class="tk-k">async</span> (n, ctx) =&gt; {
+	<span class="tk-k">await</span> ctx.<span class="tk-f">trace</span>(<span class="tk-s">"tally.check"</span>, { n }, <span class="tk-k">async</span> () =&gt; {
+		<span class="tk-k">if</span> (!<span class="tk-t">Number</span>.<span class="tk-f">isSafeInteger</span>(n) || n &lt;= <span class="tk-n">0</span>) <span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">Error</span>(<span class="tk-s">"add a positive count"</span>);
+	});
+	<span class="tk-k">return</span> store.<span class="tk-f">add</span>(n, ctx);
+},</code></pre>
+<p>The store renders the click&#39;s trace across the three hosts (the client&#39;s spans, the server&#39;s relay, the worker&#39;s
+methods and the commit, an event of the method that made it); every span of Chord names the host that recorded it
+(<code>chord.host</code>: its address key, <code>client</code> without an address), and method and call spans whom they were for
+(<code>chord.principal</code>, the host&#39;s <code>principalAttributes</code> hook):</p>
+<pre><code>tally.click
+  chord.hold chord.host="client" type="tally.counter" object="tally.counter(t1)" address.kind="tally" outcome="bound"
+    chord.relay chord.host="server" type="tally.counter" member="hold" upstream.kind="tally" outcome="ok"
+      → link to chord.resolve
+  chord.call chord.host="client" type="tally.counter" member="add" object="tally.counter(t1)" address.kind="tally" outcome="ok"
+    chord.relay chord.host="server" type="tally.counter" member="#0" upstream.kind="tally" outcome="ok"
+      chord.method chord.host="tally|t1" type="tally.counter" member="add" object="tally.counter(t1)" principal.kind="owner" chord.principal="{\"kind\":\"owner\"}" outcome="ok"
+        tally.check chord.host="tally|t1" n=3
+        chord.method chord.host="tally|t1" type="tally.store" member="add" object="tally.store" principal.kind="worker" chord.principal="{\"kind\":\"worker\",\"tally\":\"tally|t1\"}" outcome="ok"
+          · chord.commit documents=1 ops=1 rows=0 duration=1.9</code></pre>
+<p>Work shared by several requests is its own trace, linked rather than nested: the worker&#39;s start (<code>chord.resolve</code>),
+an object&#39;s activation (<code>chord.activate</code>, linked to whoever asked first). Routines and job phases are roots too; a job&#39;s
+<code>run</code> and <code>finish</code> stay under the carrier its start stored, even when a restarted worker resumes the run. Metrics
+(<code>chord.link.bytes</code>, <code>chord.commit.duration</code>, <code>chord.calls.in_flight</code>, ...) are aggregated per 10 s; ids are never their
+attributes. Without an adapter (the default), Chord starts no span and sends no carrier: a call costs what it did before.
+A script or a viewer reads the file with <code>openTelemetryStore(path)</code> (<code>@earendil-works/chord/telemetry-sqlite/node</code>),
+which opens it read-only and offers only the read interface (<code>findTraces</code>, <code>getTrace</code>, <code>findMetrics</code>).</p>
+</section>
+
+<section class="chapter appendix" id="reference"><header class="opener"><div class="numeral">A</div><h2>Reference</h2></header>
+<table>
+<thead>
+<tr>
+<th>Call</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>createHost&lt;P&gt;({ address?, principal?, store?, onError })</code></td>
+<td>a host: addressable with an address, else a client</td>
+</tr>
+<tr>
+<td><code>host.load([{ name, facet }], ctx)</code> / <code>host.reload(...)</code></td>
+<td>publish facets / apply a new plugin set</td>
+</tr>
+<tr>
+<td><code>host.get(Type, params, ctx)</code> / <code>host.hold(...)</code></td>
+<td>a live reference / a reference at once that follows its object</td>
+</tr>
+<tr>
+<td><code>local(name, { version, params, members })</code> / <code>remote(name, { version, params, hostAddress, variants })</code></td>
+<td>contracts</td>
+</tr>
+<tr>
+<td><code>defineFacet((host, self) =&gt; …)</code>, <code>host.serve(Type, factory)</code>, <code>self.contribute(R, value)</code></td>
+<td>a facet</td>
+</tr>
+<tr>
+<td>factory <code>self</code>: <code>state</code>, <code>derive</code>, <code>get</code>, <code>registry</code>, <code>open</code>, <code>on</code>, <code>onLive</code>, <code>job</code>, <code>tx</code></td>
+<td>an object&#39;s parts</td>
+</tr>
+<tr>
+<td><code>createPlugins({ roots, api, kinds, onError }, ctx)</code></td>
+<td>the plugins component</td>
+</tr>
+<tr>
+<td><code>plugins.load(host, { kind, core, modules }, ctx)</code>, <code>build(names)</code>, <code>rollout(steps, built)</code></td>
+<td>load, build, roll out</td>
+</tr>
+<tr>
+<td><code>plugins.installPlugin(source, root, ctx)</code>, <code>testPlugin(dir, options, ctx)</code></td>
+<td>install a plugin, test one alone</td>
+</tr>
+<tr>
+<td><code>hostKind(name, params?)</code>, <code>Kind(params)</code></td>
+<td>host kinds and addresses</td>
+</tr>
+<tr>
+<td><code>startServer&lt;P&gt;({ name, dataDir?, root?, listen?, api, kinds, principal, workers?, files?, onError }, ctx)</code></td>
+<td>an app&#39;s server, with the kit</td>
+</tr>
+<tr>
+<td><code>startWorker({ api, kinds, busy?, onError })</code></td>
+<td>a worker&#39;s entry, with the kit</td>
+</tr>
+<tr>
+<td><code>app.ownerLink()</code>, <code>app.applyChanges(ctx)</code>, <code>app.plugins.install(source, ctx)</code></td>
+<td>sign in, apply changes, install</td>
+</tr>
+<tr>
+<td><code>app.exportData(address, path, ctx)</code>, <code>app.importData(path, address, ctx)</code></td>
+<td>move a worker&#39;s data</td>
+</tr>
+<tr>
+<td><code>AppInfo</code>, <code>WorkerInfo</code>, <code>Files</code>, <code>Sessions</code></td>
+<td>the kit&#39;s objects plugins get</td>
+</tr>
+</tbody></table>
+</section>
+
+<p class="colophon">Hosts and Plugins · fourth edition · 2026-11-04 · Chord v2 slices 1-13, messages and languages, telemetry</p>
+</div></div>
+<script>(function activate(root) {
+	const replay = (f) => {
+		f.classList.remove("play");
+		void f.getBoundingClientRect();
+		f.classList.add("play");
+	};
+	const io = new IntersectionObserver(
+		(es) => {
+			for (const e of es)
+				if (e.isIntersecting) {
+					e.target.classList.add("play");
+					io.unobserve(e.target);
+				}
+		},
+		{ threshold: 0.3 },
+	);
+	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
+		f.classList.add("armed");
+		io.observe(f);
+		const b = f.querySelector(".replay");
+		if (b) b.onclick = () => replay(f);
+	});
+	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
+		s.classList.add("js");
+		const ps = [...s.querySelectorAll(":scope>.step-panel")];
+		let i = 0;
+		const c = s.querySelector(".count"),
+			p = s.querySelector(".prev"),
+			n = s.querySelector(".next");
+		const show = () => {
+			ps.forEach((x, j) => x.classList.toggle("on", j === i));
+			c.textContent = `${i + 1} / ${ps.length}`;
+			p.disabled = i === 0;
+			n.disabled = i === ps.length - 1;
+			ps[i].querySelectorAll(".anim").forEach(replay);
+		};
+		p.onclick = () => {
+			i--;
+			show();
+		};
+		n.onclick = () => {
+			i++;
+			show();
+		};
+		show();
+	});
+})(document)</script>
+</body></html>

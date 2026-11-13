@@ -1,0 +1,6 @@
+{
+  "gpu": {
+    "type": "ssh",
+    "host": "gpu.example"
+  }
+}

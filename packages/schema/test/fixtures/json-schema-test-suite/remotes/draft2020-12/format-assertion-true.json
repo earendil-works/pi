@@ -1,0 +1,13 @@
+{
+    "$id": "http://localhost:1234/draft2020-12/format-assertion-true.json",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$vocabulary": {
+        "https://json-schema.org/draft/2020-12/vocab/core": true,
+        "https://json-schema.org/draft/2020-12/vocab/format-assertion": true
+    },
+    "$dynamicAnchor": "meta",
+    "allOf": [
+        { "$ref": "https://json-schema.org/draft/2020-12/meta/core" },
+        { "$ref": "https://json-schema.org/draft/2020-12/meta/format-assertion" }
+    ]
+}

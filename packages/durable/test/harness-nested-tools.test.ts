@@ -1,16 +1,15 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { JsonValue } from "@earendil-works/chord";
 import { withAbortSignal } from "@earendil-works/chord/context";
 import { applyImmutable } from "@earendil-works/chord/delta";
+import type { JsonValue } from "@earendil-works/chord/json";
 import {
 	type AssistantMessage,
 	fauxAssistantMessage,
 	fauxText,
 	fauxToolCall,
 	type ToolResultMessage,
-	Type,
 	type Usage,
 } from "@earendil-works/pi-ai";
 import {
@@ -33,15 +32,17 @@ import {
 	type ToolTaskResult,
 	UsageDoc,
 } from "@earendil-works/pi-durable";
+import { obj, opt, str } from "@earendil-works/pi-schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
+import { commitWrites } from "../src/testing/commit-writes.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat } from "./chat-support.ts";
 import { addHooks, addTool } from "./harness-support.ts";
 import { endedAt, nestedResultOf, nestedResults, slotsOf, startOrder, viewHistory } from "./live-support.ts";
 import { context, onValue } from "./session-support.ts";
 import { aborted, deferred, eventually } from "./task-support.ts";
 
-const Parameters = Type.Object({ text: Type.Optional(Type.String()) });
+const Parameters = obj({ text: opt(str()) });
 type Tool = ToolRegistration<typeof Parameters>;
 
 function tool(name: string, execute: Tool["execute"], extra: Partial<Tool> = {}): Tool {
@@ -117,11 +118,11 @@ describe("nested tool calls", () => {
 		// Per document written, the keys of the nested calls it holds.
 		const written: { kind: string; key: string | undefined }[] = [];
 		const commit = storage.commit.bind(storage);
-		storage.commit = (writes, adopt, commitContext) => {
-			for (const write of writes) {
+		storage.commit = (batches, receive, commitContext) => {
+			for (const write of batches.flat()) {
 				if (write.type === "document.create") written.push({ kind: write.record.kind, key: write.record.key });
 			}
-			return commit(writes, adopt, commitContext);
+			return commit(batches, receive, commitContext);
 		};
 		const { harness, root } = await openChat(storage, setup);
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
@@ -328,7 +329,7 @@ describe("nested tool calls", () => {
 			defineTool({
 				name: "pair",
 				description: "pair",
-				parameters: Type.Object({ a: Type.String(), b: Type.String() }),
+				parameters: obj({ a: str(), b: str() }),
 				execute: async (args) => {
 					runs++;
 					return { output: [{ type: "text", text: `${args.a}${args.b}` }] };
@@ -1206,7 +1207,7 @@ describe("nested tool calls", () => {
 			{
 				callId: "c1/2",
 				status: "done",
-				summary: { isError: true, error: "Tool missing is not available" },
+				summary: { isError: true, durationMs: expect.any(Number), error: "Tool missing is not available" },
 			},
 			{ callId: "c1/3", status: "done", summary: { isError: false, durationMs: expect.any(Number), usage } },
 			{
@@ -1280,9 +1281,9 @@ describe("tool task version 1 and 2 records", () => {
 		const { kind: _kind, ...version1 } = record.input as Extract<ToolTaskInput, { kind: "model" }>;
 		const input = version === 1 ? version1 : record.input;
 		const state = { ...record.state, checkpoint } as typeof record.state;
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[{ type: "task", value: { ...record, version, input, state } as typeof record }],
-			() => {},
 			context,
 		);
 		await storage.close(context);
@@ -1298,7 +1299,7 @@ describe("tool task version 1 and 2 records", () => {
 		expect((await harness.getTask(id, context))?.version).toBe(1);
 		harness.resume();
 		const settled = await harness.waitForTask(id, context);
-		expect(settled.version).toBe(3);
+		expect(settled.version).toBe(4);
 		expect(settled.input).toMatchObject({ kind: "model", callId: "c1" });
 		expect(settled.state.outcome).toMatchObject({ status: "completed", result: { kind: "model" } });
 		expect(echo.state.runs).toBe(1);
@@ -1316,7 +1317,7 @@ describe("tool task version 1 and 2 records", () => {
 		const { harness, root } = await openChat(await openNodeSqliteStorage(path), setup);
 		harness.resume();
 		const settled = await harness.waitForTask(id, context);
-		expect(settled.version).toBe(3);
+		expect(settled.version).toBe(4);
 		expect(settled.state.outcome).toMatchObject({ status: "failed", result: { kind: "model" } });
 		expect(echo.state.runs).toBe(0);
 		const [result] = results(await allEntries(root));
@@ -1326,7 +1327,7 @@ describe("tool task version 1 and 2 records", () => {
 	});
 
 	// #11043
-	it("reserves a stored version 2 task under version 3 and runs it as a model-issued call", async () => {
+	it("reserves a stored version 2 task under version 4 and runs it as a model-issued call", async () => {
 		const setup = chatSetup();
 		const echo = echoTool();
 		addTool(setup.registry, echo.registration);
@@ -1335,7 +1336,7 @@ describe("tool task version 1 and 2 records", () => {
 		expect((await harness.getTask(id, context))?.version).toBe(2);
 		harness.resume();
 		const settled = await harness.waitForTask(id, context);
-		expect(settled.version).toBe(3);
+		expect(settled.version).toBe(4);
 		expect(settled.input).toEqual({ kind: "model", assistant: expect.any(Number), callId: "c1" });
 		expect(settled.state.outcome).toMatchObject({ status: "completed", result: { kind: "model" } });
 		expect(echo.state.runs).toBe(1);

@@ -1,0 +1,5 @@
+{
+	"name": "@example/tunnel",
+	"private": true,
+	"type": "module"
+}

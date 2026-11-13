@@ -1,0 +1,5 @@
+{
+	"name": "@acme/ancient",
+	"private": true,
+	"type": "module"
+}

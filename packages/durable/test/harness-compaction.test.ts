@@ -9,12 +9,13 @@ import {
 	type Message,
 	type SimpleStreamOptions,
 	type TranscriptContext,
-	Type,
 	type UserMessage,
 } from "@earendil-works/pi-ai";
 import {
+	AgentDoc,
 	type CompactionPolicy,
 	type CompactionResult,
+	type CompactionSettings,
 	CompactionTask,
 	type ContextView,
 	type Conversation,
@@ -33,6 +34,7 @@ import {
 	type TaskId,
 	UsageDoc,
 } from "@earendil-works/pi-durable";
+import { obj } from "@earendil-works/pi-schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { selectCut, serializeConversation } from "../src/harness/compaction.ts";
 import { orderToolResults } from "../src/harness/context.ts";
@@ -471,7 +473,7 @@ describe("manual compaction", () => {
 			defineTool({
 				name: "wait",
 				description: "wait",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async () => ({ output: [{ type: "text", text: "waited" }] }),
 			}),
 		);
@@ -886,7 +888,7 @@ describe("compaction outcomes", () => {
 			defineTool({
 				name: "read",
 				description: "read",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async () => ({ output: [] }),
 			}),
 		);
@@ -1343,7 +1345,7 @@ describe("compaction estimates and interactions", () => {
 				defineTool({
 					name: "slow",
 					description: "slow",
-					parameters: Type.Object({}),
+					parameters: obj({}),
 					execute: async () => {
 						toolReached.resolve();
 						await toolGate.promise;
@@ -2450,6 +2452,101 @@ describe("per-model compaction overrides", () => {
 		expect(chat.faux.summaryRequests[0]!.options?.maxTokens).toBe(400);
 		const messages = (await chat.root.context(context)).messages;
 		expect(messages.slice(1).map(userText)).toEqual([text("u3", 100), text("a3", 100)]);
+		await chat.harness.close(context);
+	});
+});
+
+// #11771: per-conversation compaction settings.
+describe("per-conversation compaction settings", () => {
+	it("resolves model-specific over general, and the conversation over the harness at the same level", async () => {
+		// The summary's maxTokens is 0.8 * the resolved reserveTokens, below the model's 900.
+		const cases: {
+			readonly harness: CompactionSettings;
+			readonly conversation: CompactionSettings;
+			readonly maxTokens: number;
+		}[] = [
+			{ harness: {}, conversation: { reserveTokens: 500 }, maxTokens: 400 },
+			{
+				harness: { modelOverrides: { "faux/faux-1": { reserveTokens: 250 } } },
+				conversation: { reserveTokens: 500 },
+				maxTokens: 200,
+			},
+			{
+				harness: { modelOverrides: { "faux/faux-1": { reserveTokens: 250 } } },
+				conversation: { reserveTokens: 500, modelOverrides: { "faux/faux-1": { reserveTokens: 125 } } },
+				maxTokens: 100,
+			},
+			{
+				harness: {},
+				conversation: { reserveTokens: 500, modelOverrides: { "faux/other": { reserveTokens: 125 } } },
+				maxTokens: 400,
+			},
+		];
+		for (const { harness, conversation, maxTokens } of cases) {
+			const chat = await open();
+			await history(chat);
+			chat.setup.settings.compaction = { ...MANUAL, ...harness };
+			await chat.root.configure({ compaction: conversation }, context);
+			chat.faux.summaries.push(summary());
+			expect((await result(chat, await chat.root.compact(undefined, context))).status).toBe("completed");
+			expect(chat.faux.summaryRequests[0]!.options?.maxTokens).toBe(maxTokens);
+			await chat.harness.close(context);
+		}
+	});
+
+	it("lets the conversation's enabled: false beat the harness's model override, and its own model override beat that", async () => {
+		const harness: CompactionSettings = {
+			...BLOCKING,
+			reserveTokens: 0,
+			modelOverrides: { "faux/faux-1": { enabled: true, reserveTokens: 300 } },
+		};
+		const cases: { readonly conversation: CompactionSettings | null; readonly summaries: number }[] = [
+			{ conversation: null, summaries: 1 },
+			{ conversation: { enabled: false }, summaries: 0 },
+			{ conversation: { enabled: false, modelOverrides: { "faux/faux-1": { enabled: true } } }, summaries: 1 },
+		];
+		for (const { conversation, summaries } of cases) {
+			const chat = await open({ contextWindow: 1000 });
+			await history(chat);
+			chat.setup.settings.compaction = harness;
+			await chat.root.configure({ compaction: conversation }, context);
+			chat.faux.summaries.push(summary());
+			await turn(chat, text("u4", 200), "a4");
+			expect(chat.faux.summaryRequests).toHaveLength(summaries);
+			await chat.harness.close(context);
+		}
+	});
+
+	it("skips overflow compaction when the conversation turns compaction off", async () => {
+		const chat = await open();
+		await history(chat);
+		chat.setup.settings.compaction = { ...MANUAL, enabled: true };
+		await chat.root.configure({ compaction: { enabled: false } }, context);
+		chat.faux.agent.push(failure(OVERFLOW));
+		const input = await chat.root.submit({ type: "input", content: text("u4", 100) }, context);
+		expect((await input.wait(context)).status).toBe("unanswered");
+		expect(chat.faux.summaryRequests).toHaveLength(0);
+		await chat.harness.close(context);
+	});
+
+	it("drops undefined fields, rejects token counts that are not integers 0 or more, and clears on null", async () => {
+		const chat = await open();
+		const settings: CompactionSettings = {
+			keepRecentTokens: 0,
+			enabled: undefined,
+			modelOverrides: { "faux/faux-1": { reserveTokens: 10 } },
+		};
+		await chat.root.configure({ compaction: settings }, context);
+		const stored = async () => (await chat.harness.snapshot(AgentDoc, chat.root.id, context))?.compaction;
+		const expected = { keepRecentTokens: 0, modelOverrides: { "faux/faux-1": { reserveTokens: 10 } } };
+		expect(await stored()).toStrictEqual(expected);
+		for (const bad of [{ reserveTokens: -1 }, { modelOverrides: { "faux/faux-1": { backgroundTokens: 1.5 } } }]) {
+			await expect(chat.root.configure({ compaction: bad }, context)).rejects.toThrow(RangeError);
+		}
+		// A rejected change leaves the stored settings as they were.
+		expect(await stored()).toEqual(expected);
+		await chat.root.configure({ compaction: null }, context);
+		expect(await stored()).toBeUndefined();
 		await chat.harness.close(context);
 	});
 });

@@ -1,0 +1,5 @@
+{
+	"name": "@example/paths",
+	"private": true,
+	"type": "module"
+}

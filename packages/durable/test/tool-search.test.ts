@@ -1,4 +1,4 @@
-import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@earendil-works/pi-ai";
+import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import {
 	AgentDoc,
 	type Conversation,
@@ -9,6 +9,7 @@ import {
 	MemoryStorage,
 	type ToolRegistration,
 } from "@earendil-works/pi-durable";
+import { num, obj, opt } from "@earendil-works/pi-schema";
 import { describe, expect, it } from "vitest";
 import { createToolSearchExtension } from "../src/tool-search/index.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat } from "./chat-support.ts";
@@ -19,7 +20,7 @@ function tool(name: string, description: string, extra: Partial<ToolRegistration
 	return defineTool({
 		name,
 		description,
-		parameters: Type.Object({ number: Type.Optional(Type.Number({ description: "Issue number" })) }),
+		parameters: obj({ number: opt(num({ description: "Issue number" })) }),
 		execute: async () => ({ output: [{ type: "text", text: `${name} ran` }] }),
 		...extra,
 	});
@@ -120,7 +121,7 @@ describe("deferred tools and tool_search", () => {
 		const grow = defineTool({
 			name: "grow",
 			description: "grow",
-			parameters: Type.Object({}),
+			parameters: obj({}),
 			execute: async () => ({ output: [], control: { addTools: ["github_get_issue", "alpha", "ghost"] } }),
 		});
 		addTool(chat.registry, grow);
@@ -188,6 +189,37 @@ describe("deferred tools and tool_search", () => {
 			"omega",
 			"tool_search",
 			"github_get_issue",
+		]);
+		await harness.close(context);
+	});
+
+	// #11803
+	it("finds a tool by a parameter description behind a local reference, and not by unreferenced definitions", async () => {
+		const chat = setup();
+		addTool(
+			chat.registry,
+			tool("ledger_inspect", "Inspect records", {
+				deferred: true,
+				parameters: {
+					type: "object",
+					properties: { options: { $ref: "#/$defs/options" } },
+					$defs: {
+						options: { type: "object", properties: { mode: { type: "string", description: "reconciliation" } } },
+						unused: { description: "forecast" },
+					},
+				},
+			}),
+		);
+		chat.faux.setResponses([
+			call("tool_search", { query: "forecast" }),
+			call("tool_search", { query: "reconciliation" }, "c2"),
+			DONE,
+		]);
+		const { harness, root } = await openChat(new MemoryStorage(), chat);
+		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
+		expect(toolResultTexts(await allEntries(root))).toEqual([
+			"No matching tools found.",
+			"Loaded 1 tool. They are available from your next call:\n- ledger_inspect: Inspect records",
 		]);
 		await harness.close(context);
 	});

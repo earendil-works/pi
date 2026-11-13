@@ -1,0 +1,5 @@
+{
+	"name": "telemetry",
+	"private": true,
+	"type": "module"
+}

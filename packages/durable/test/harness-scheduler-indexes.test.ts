@@ -3,7 +3,14 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createSession, defineTask, type Harness, type TaskId, type TaskRuntime } from "@earendil-works/pi-durable";
+import {
+	createSession,
+	defineTask,
+	type Harness,
+	type Storage,
+	type TaskId,
+	type TaskRuntime,
+} from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { context } from "./session-support.ts";
@@ -104,16 +111,16 @@ describe("scheduler indexes", () => {
 		}, context);
 		await session.close(context);
 		// Record every mark of the leaf, in commit order.
-		const storage = await openNodeSqliteStorage(path);
+		const storage: Storage = await openNodeSqliteStorage(path);
 		const reasons: (string | undefined)[] = [];
 		const commit = storage.commit.bind(storage);
-		storage.commit = (writes, adopt, commitContext) => {
-			for (const write of writes) {
+		storage.commit = (batches, receive, commitContext) => {
+			for (const write of batches.flat()) {
 				if (write.type === "task" && write.value.id === ids.leaf && write.value.abortRequested) {
 					reasons.push(write.value.abortReason);
 				}
 			}
-			return commit(writes, adopt, commitContext);
+			return commit(batches, receive, commitContext);
 		};
 		const { harness } = await openTasks(storage, [Hold]);
 		harness.resume();
@@ -123,17 +130,20 @@ describe("scheduler indexes", () => {
 	});
 
 	it("finalizes a chain of held owners in the commit that frees the last one", async () => {
-		const storage = await openNodeSqliteStorage(await sqlitePath());
+		const storage: Storage = await openNodeSqliteStorage(await sqlitePath());
 		// The commit, by count, that wrote each terminal record.
 		const endedIn = new Map<TaskId, number>();
 		let commits = 0;
 		const commit = storage.commit.bind(storage);
-		storage.commit = (writes, adopt, commitContext) => {
-			commits++;
-			for (const write of writes) {
-				if (write.type === "task" && write.value.state.status === "terminal") endedIn.set(write.value.id, commits);
+		storage.commit = (batches, receive, commitContext) => {
+			for (const writes of batches) {
+				commits++;
+				for (const write of writes) {
+					if (write.type === "task" && write.value.state.status === "terminal")
+						endedIn.set(write.value.id, commits);
+				}
 			}
-			return commit(writes, adopt, commitContext);
+			return commit(batches, receive, commitContext);
 		};
 		const opened = await openTasks(storage, [Hold]);
 		const harness = opened.harness;

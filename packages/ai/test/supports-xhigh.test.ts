@@ -169,6 +169,13 @@ describe("getSupportedThinkingLevels", () => {
 		}
 	});
 
+	it.each(["gpt-6-astra", "gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra"] as const)(
+		"uses the Azure Foundry 1.05M context window for %s",
+		(modelId) => {
+			expect(getModel("azure", modelId)?.contextWindow).toBe(1050000);
+		},
+	);
+
 	it("includes only medium/high/xhigh for OpenAI GPT-5.5 Pro", () => {
 		const model = getModel("openai", "gpt-5.5-pro");
 		expect(model).toBeDefined();

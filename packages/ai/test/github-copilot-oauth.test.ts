@@ -467,7 +467,14 @@ describe("GitHub Copilot OAuth device flow", () => {
 			notify: () => {},
 		});
 
-		await vi.advanceTimersByTimeAsync(1000);
+		// models.login loads the flow module with real I/O before the device flow starts,
+		// so keep moving the fake clock until login settles instead of advancing once.
+		let settled = false;
+		const markSettled = () => {
+			settled = true;
+		};
+		loginPromise.then(markSettled, markSettled);
+		while (!settled) await vi.advanceTimersByTimeAsync(1000);
 		const credential = await loginPromise;
 		expect(credential).toMatchObject({ type: "oauth", access: testCopilotAccessToken });
 		expect(policyModelIds).toEqual([firstModelId]);

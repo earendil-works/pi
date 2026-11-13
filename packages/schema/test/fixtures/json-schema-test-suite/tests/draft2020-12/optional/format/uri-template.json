@@ -1,0 +1,251 @@
+[
+    {
+        "description": "format: uri-template",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "format": "uri-template"
+        },
+        "tests": [
+            {
+                "description": "all string formats ignore integers",
+                "data": 12,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore floats",
+                "data": 13.7,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore objects",
+                "data": {},
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore arrays",
+                "data": [],
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore booleans",
+                "data": false,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore nulls",
+                "data": null,
+                "valid": true
+            },
+            {
+                "description": "a valid uri-template",
+                "data": "http://example.com/dictionary/{term:1}/{term}",
+                "valid": true
+            },
+            {
+                "description": "an invalid uri-template",
+                "data": "http://example.com/dictionary/{term:1}/{term",
+                "valid": false
+            },
+            {
+                "description": "a valid uri-template without variables",
+                "data": "http://example.com/dictionary",
+                "valid": true
+            },
+            {
+                "description": "a valid relative uri-template",
+                "data": "dictionary/{term:1}/{term}",
+                "valid": true
+            },
+            {
+                "description": "an empty expression is invalid",
+                "data": "{}",
+                "valid": false
+            },
+            {
+                "description": "an empty varspec inside the variable list is invalid",
+                "data": "{a,,b}",
+                "valid": false
+            },
+            {
+                "description": "a zero prefix max-length is invalid",
+                "data": "{v:0}",
+                "valid": false
+            },
+            {
+                "description": "a five-digit prefix max-length is invalid",
+                "data": "{v:10000}",
+                "valid": false
+            },
+            {
+                "description": "an empty string is a valid uri-template",
+                "data": "",
+                "valid": true
+            },
+            {
+                "description": "an unmatched closing brace is invalid",
+                "data": "foo}bar",
+                "valid": false
+            },
+            {
+                "description": "a percent-encoded triplet in a literal is valid",
+                "data": "a%41b",
+                "valid": true
+            },
+            {
+                "description": "a literal with a lone percent sign is invalid",
+                "data": "a%",
+                "valid": false
+            },
+            {
+                "description": "a literal with an incomplete percent-encoded triplet is invalid",
+                "data": "a%4",
+                "valid": false
+            },
+            {
+                "description": "a literal with non-hex percent encoding is invalid",
+                "data": "a%GG",
+                "valid": false
+            },
+            {
+                "description": "a supplementary plane character in a literal is valid",
+                "data": "a\ud83d\ude00b",
+                "valid": true
+            },
+            {
+                "description": "a private-use character in a literal is valid",
+                "data": "a\ue000b",
+                "valid": true
+            },
+            {
+                "description": "a supplementary private-use character in a literal is valid",
+                "data": "a\udb80\udc00b",
+                "valid": true
+            },
+            {
+                "description": "reserved expansion operator",
+                "data": "{+var}",
+                "valid": true
+            },
+            {
+                "description": "fragment expansion operator",
+                "data": "{#var}",
+                "valid": true
+            },
+            {
+                "description": "label expansion operator",
+                "data": "{.var}",
+                "valid": true
+            },
+            {
+                "description": "path segment expansion operator",
+                "data": "{/var}",
+                "valid": true
+            },
+            {
+                "description": "path style parameter expansion operator",
+                "data": "{;var}",
+                "valid": true
+            },
+            {
+                "description": "form style query expansion operator",
+                "data": "{?var}",
+                "valid": true
+            },
+            {
+                "description": "form style query continuation operator",
+                "data": "{&var}",
+                "valid": true
+            },
+            {
+                "description": "the explode modifier is valid",
+                "data": "{var*}",
+                "valid": true
+            },
+            {
+                "description": "combined prefix and explode modifiers are invalid",
+                "data": "{var:1*}",
+                "valid": false
+            },
+            {
+                "description": "a variable list with more than one varspec is valid",
+                "data": "{x,y}",
+                "valid": true
+            },
+            {
+                "description": "a dotted variable name is valid",
+                "data": "{a.b}",
+                "valid": true
+            },
+            {
+                "description": "a trailing dot in a variable name is invalid",
+                "data": "{a.}",
+                "valid": false
+            },
+            {
+                "description": "a double dot in a variable name is invalid",
+                "data": "{a..b}",
+                "valid": false
+            },
+            {
+                "description": "a variable name may start with a percent-encoded triplet",
+                "data": "{%41}",
+                "valid": true
+            },
+            {
+                "description": "a variable name with a lone percent sign is invalid",
+                "data": "{%}",
+                "valid": false
+            },
+            {
+                "description": "a variable name with an incomplete percent-encoded triplet is invalid",
+                "data": "{%4}",
+                "valid": false
+            },
+            {
+                "description": "a variable name with non-hex percent encoding is invalid",
+                "data": "{%GG}",
+                "valid": false
+            },
+            {
+                "description": "a four-digit prefix max-length is valid",
+                "data": "{v:1000}",
+                "valid": true
+            },
+            {
+                "description": "a leading zero in the prefix max-length is invalid",
+                "data": "{v:01}",
+                "valid": false
+            },
+            {
+                "description": "a space in a literal is invalid",
+                "data": "a b",
+                "valid": false
+            },
+            {
+                "description": "a delete character in a literal is invalid",
+                "data": "a\u007fb",
+                "valid": false
+            },
+            {
+                "description": "a trailing comma in the variable list is invalid",
+                "data": "{a,}",
+                "valid": false
+            },
+            {
+                "description": "a default value in a varspec is invalid",
+                "data": "{var=def}",
+                "valid": false
+            },
+            {
+                "description": "an operator in place of the first varspec is invalid",
+                "data": "{,+var}",
+                "valid": false
+            },
+            {
+                "description": "an apostrophe in a literal is valid",
+                "data": "a'b",
+                "valid": true
+            }
+        ]
+    }
+]

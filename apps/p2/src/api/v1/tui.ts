@@ -1,0 +1,31 @@
+// p2's plugin API, version 1, for TUI facets (`@p2/app/v1/tui`): the TUI runtime, its context, commands and renderers,
+// the chat surface other facets use, the shared transcript model and pi's components as p2 copied them.
+export * from "../../runtime/tui.ts";
+export * from "../../runtime/tui-chat.ts";
+export * from "../../runtime/tui-commands.ts";
+export * from "../../runtime/tui-context.ts";
+export * from "../../runtime/tui-preferences.ts";
+export * from "../../runtime/tui-renderers.ts";
+export * from "../../runtime/tui-sessions.ts";
+export * from "../../tui/completion.ts";
+export * from "../../tui/components/bash-execution.ts";
+export * from "../../tui/components/chrome.ts";
+export * from "../../tui/components/diff.ts";
+export * from "../../tui/components/list-overlay.ts";
+export * from "../../tui/components/secret-input.ts";
+export * from "../../tui/components/selectors.ts";
+export * from "../../tui/components/status.ts";
+export * from "../../tui/components/transcript.ts";
+export * from "../../tui/components/tree-selector.ts";
+export * from "../../tui/components/user-message-selector.ts";
+export * from "../../tui/components/visual-truncate.ts";
+export * from "../../tui/core-commands.ts";
+export * from "../../tui/grant-notice.ts";
+export * from "../../tui/render-context.ts";
+export { Theme } from "../../tui/theme/theme.ts";
+export * from "../../tui/tools/index.ts";
+export * from "../../tui/tools/render-utils.ts";
+export * from "../../tui/tools/shell.ts";
+export * from "../../tui/tools/types.ts";
+export * from "../../web/history.ts";
+export * from "../../web/transcript.ts";

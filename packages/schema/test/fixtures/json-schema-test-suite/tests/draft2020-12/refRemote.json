@@ -1,0 +1,342 @@
+[
+    {
+        "description": "remote ref",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "http://localhost:1234/draft2020-12/integer.json"
+        },
+        "tests": [
+            {
+                "description": "remote ref valid",
+                "data": 1,
+                "valid": true
+            },
+            {
+                "description": "remote ref invalid",
+                "data": "a",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "fragment within remote ref",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "http://localhost:1234/draft2020-12/subSchemas.json#/$defs/integer"
+        },
+        "tests": [
+            {
+                "description": "remote fragment valid",
+                "data": 1,
+                "valid": true
+            },
+            {
+                "description": "remote fragment invalid",
+                "data": "a",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "anchor within remote ref",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "http://localhost:1234/draft2020-12/locationIndependentIdentifier.json#foo"
+        },
+        "tests": [
+            {
+                "description": "remote anchor valid",
+                "data": 1,
+                "valid": true
+            },
+            {
+                "description": "remote anchor invalid",
+                "data": "a",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "ref within remote ref",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "http://localhost:1234/draft2020-12/subSchemas.json#/$defs/refToInteger"
+        },
+        "tests": [
+            {
+                "description": "ref within ref valid",
+                "data": 1,
+                "valid": true
+            },
+            {
+                "description": "ref within ref invalid",
+                "data": "a",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "base URI change",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "http://localhost:1234/draft2020-12/",
+            "items": {
+                "$id": "baseUriChange/",
+                "items": {"$ref": "folderInteger.json"}
+            }
+        },
+        "tests": [
+            {
+                "description": "base URI change ref valid",
+                "data": [[1]],
+                "valid": true
+            },
+            {
+                "description": "base URI change ref invalid",
+                "data": [["a"]],
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "base URI change - change folder",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "http://localhost:1234/draft2020-12/scope_change_defs1.json",
+            "type" : "object",
+            "properties": {"list": {"$ref": "baseUriChangeFolder/"}},
+            "$defs": {
+                "baz": {
+                    "$id": "baseUriChangeFolder/",
+                    "type": "array",
+                    "items": {"$ref": "folderInteger.json"}
+                }
+            }
+        },
+        "tests": [
+            {
+                "description": "number is valid",
+                "data": {"list": [1]},
+                "valid": true
+            },
+            {
+                "description": "string is invalid",
+                "data": {"list": ["a"]},
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "base URI change - change folder in subschema",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "http://localhost:1234/draft2020-12/scope_change_defs2.json",
+            "type" : "object",
+            "properties": {"list": {"$ref": "baseUriChangeFolderInSubschema/#/$defs/bar"}},
+            "$defs": {
+                "baz": {
+                    "$id": "baseUriChangeFolderInSubschema/",
+                    "$defs": {
+                        "bar": {
+                            "type": "array",
+                            "items": {"$ref": "folderInteger.json"}
+                        }
+                    }
+                }
+            }
+        },
+        "tests": [
+            {
+                "description": "number is valid",
+                "data": {"list": [1]},
+                "valid": true
+            },
+            {
+                "description": "string is invalid",
+                "data": {"list": ["a"]},
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "root ref in remote ref",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "http://localhost:1234/draft2020-12/object",
+            "type": "object",
+            "properties": {
+                "name": {"$ref": "name-defs.json#/$defs/orNull"}
+            }
+        },
+        "tests": [
+            {
+                "description": "string is valid",
+                "data": {
+                    "name": "foo"
+                },
+                "valid": true
+            },
+            {
+                "description": "null is valid",
+                "data": {
+                    "name": null
+                },
+                "valid": true
+            },
+            {
+                "description": "object is invalid",
+                "data": {
+                    "name": {
+                        "name": null
+                    }
+                },
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "remote ref with ref to defs",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "http://localhost:1234/draft2020-12/schema-remote-ref-ref-defs1.json",
+            "$ref": "ref-and-defs.json"
+        },
+        "tests": [
+            {
+                "description": "invalid",
+                "data": {
+                    "bar": 1
+                },
+                "valid": false
+            },
+            {
+                "description": "valid",
+                "data": {
+                    "bar": "a"
+                },
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "Location-independent identifier in remote ref",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "http://localhost:1234/draft2020-12/locationIndependentIdentifier.json#/$defs/refToInteger"
+        },
+        "tests": [
+            {
+                "description": "integer is valid",
+                "data": 1,
+                "valid": true
+            },
+            {
+                "description": "string is invalid",
+                "data": "foo",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "retrieved nested refs resolve relative to their URI not $id",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "http://localhost:1234/draft2020-12/some-id",
+            "properties": {
+                "name": {"$ref": "nested/foo-ref-string.json"}
+            }
+        },
+        "tests": [
+            {
+                "description": "number is invalid",
+                "data": {
+                    "name": {"foo":  1}
+                },
+                "valid": false
+            },
+            {
+                "description": "string is valid",
+                "data": {
+                    "name": {"foo":  "a"}
+                },
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "remote HTTP ref with different $id",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "http://localhost:1234/draft2020-12/different-id-ref-string.json"
+        },
+        "tests": [
+            {
+                "description": "number is invalid",
+                "data": 1,
+                "valid": false
+            },
+            {
+                "description": "string is valid",
+                "data": "foo",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "remote HTTP ref with different URN $id",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "http://localhost:1234/draft2020-12/urn-ref-string.json"
+        },
+        "tests": [
+            {
+                "description": "number is invalid",
+                "data": 1,
+                "valid": false
+            },
+            {
+                "description": "string is valid",
+                "data": "foo",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "remote HTTP ref with nested absolute ref",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "http://localhost:1234/draft2020-12/nested-absolute-ref-to-string.json"
+        },
+        "tests": [
+            {
+                "description": "number is invalid",
+                "data": 1,
+                "valid": false
+            },
+            {
+                "description": "string is valid",
+                "data": "foo",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "$ref to $ref finds detached $anchor",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "http://localhost:1234/draft2020-12/detached-ref.json#/$defs/foo"
+        },
+        "tests": [
+            {
+                "description": "number is valid",
+                "data": 1,
+                "valid": true
+            },
+            {
+                "description": "non-number is invalid",
+                "data": "a",
+                "valid": false
+            }
+        ]
+    }
+]

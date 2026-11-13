@@ -1,0 +1,268 @@
+[
+    {
+        "description": "validation of duration strings",
+        "comment": "RFC 3339 Appendix A defines the ABNF grammar for ISO-8601 durations used by JSON Schema format 'duration'. These tests enforce only the syntax defined by that grammar.",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "format": "duration"
+        },
+        "tests": [
+            {
+                "description": "all string formats ignore integers",
+                "data": 12,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore floats",
+                "data": 13.7,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore objects",
+                "data": {},
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore arrays",
+                "data": [],
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore booleans",
+                "data": false,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore nulls",
+                "data": null,
+                "valid": true
+            },
+            {
+                "description": "a valid duration string",
+                "data": "P4DT12H30M5S",
+                "valid": true
+            },
+            {
+                "description": "an invalid duration string",
+                "data": "PT1D",
+                "valid": false
+            },
+            {
+                "description": "must start with P",
+                "data": "4DT12H30M5S",
+                "valid": false
+            },
+            {
+                "description": "no elements present",
+                "data": "P",
+                "valid": false
+            },
+            {
+                "description": "no time elements present",
+                "data": "P1YT",
+                "valid": false
+            },
+            {
+                "description": "no date or time elements present",
+                "data": "PT",
+                "valid": false
+            },
+            {
+                "description": "elements out of order",
+                "data": "P2D1Y",
+                "valid": false
+            },
+            {
+                "description": "missing time separator",
+                "data": "P1D2H",
+                "valid": false
+            },
+            {
+                "description": "time element in the date position",
+                "data": "P2S",
+                "valid": false
+            },
+            {
+                "description": "four years duration",
+                "data": "P4Y",
+                "valid": true
+            },
+            {
+                "description": "zero time, in seconds",
+                "data": "PT0S",
+                "valid": true
+            },
+            {
+                "description": "zero time, in days",
+                "data": "P0D",
+                "valid": true
+            },
+            {
+                "description": "one month duration",
+                "data": "P1M",
+                "valid": true
+            },
+            {
+                "description": "one minute duration",
+                "data": "PT1M",
+                "valid": true
+            },
+            {
+                "description": "one and a half days, in hours",
+                "data": "PT36H",
+                "valid": true
+            },
+            {
+                "description": "one and a half days, in days and hours",
+                "data": "P1DT12H",
+                "valid": true
+            },
+            {
+                "description": "two weeks",
+                "data": "P2W",
+                "valid": true
+            },
+            {
+                "description": "weeks cannot be combined with other units",
+                "data": "P1Y2W",
+                "valid": false
+            },
+            {
+                "description": "invalid non-ASCII '২' (a Bengali 2)",
+                "data": "P২Y",
+                "valid": false
+            },
+            {
+                "description": "element without unit",
+                "data": "P1",
+                "valid": false
+            },
+            {
+                "description": "all date and time components",
+                "data": "P1Y2M3DT4H5M6S",
+                "valid": true
+            },
+            {
+                "description": "date components only",
+                "data": "P1Y2M3D",
+                "valid": true
+            },
+            {
+                "description": "time components only",
+                "data": "PT1H2M3S",
+                "valid": true
+            },
+            {
+                "description": "month and day",
+                "data": "P1M2D",
+                "valid": true
+            },
+            {
+                "description": "hour and minute",
+                "data": "PT1H30M",
+                "valid": true
+            },
+            {
+                "description": "multi-digit values in all components",
+                "data": "P10Y10M10DT10H10M10S",
+                "valid": true
+            },
+            {
+                "description": "fractional duration is not allowed by RFC 3339 ABNF",
+                "comment": "numeric components use 1*DIGIT where DIGIT = %x30-39; '.' is not allowed",
+                "data": "PT0.5S",
+                "valid": false
+            },
+            {
+                "description": "leading whitespace is invalid",
+                "data": " P1D",
+                "valid": false
+            },
+            {
+                "description": "trailing whitespace is invalid",
+                "data": "P1D ",
+                "valid": false
+            },
+            {
+                "description": "empty string is invalid",
+                "data": "",
+                "valid": false
+            },
+            {
+                "description": "years and months can appear without days",
+                "data": "P1Y2M",
+                "valid": true
+            },
+            {
+                "description": "years and days cannot appear without months",
+                "data": "P1Y2D",
+                "valid": false
+            },
+            {
+                "description": "hours and minutes can appear without seconds",
+                "data": "PT1H2M",
+                "valid": true
+            },
+            {
+                "description": "hours and seconds cannot appear without minutes",
+                "data": "PT1H2S",
+                "valid": false
+            },
+            {
+                "description": "minutes and seconds can appear without hour",
+                "data": "PT1M2S",
+                "valid": true
+            },
+            {
+                "description": "a leading sign is not allowed",
+                "data": "-P1D",
+                "valid": false
+            },
+            {
+                "description": "a number before the time separator has no unit",
+                "data": "P1D2T3H",
+                "valid": false
+            },
+            {
+                "description": "exponent notation is not allowed in a component",
+                "data": "P1e2D",
+                "valid": false
+            },
+            {
+                "description": "a trailing newline is invalid",
+                "data": "P1D\n",
+                "valid": false
+            },
+            {
+                "description": "weeks cannot be combined with a time component",
+                "data": "P1WT1H",
+                "valid": false
+            },
+            {
+                "description": "weeks cannot be combined with a zero-valued component",
+                "data": "P0Y1W",
+                "valid": false
+            },
+            {
+                "description": "a leading zero in a component is valid",
+                "data": "P01D",
+                "valid": true
+            },
+            {
+                "description": "a component with many digits is valid",
+                "data": "P999999999999999999999999999999999999999999999999999999999999999999999999999999D",
+                "valid": true
+            },
+            {
+                "description": "a comma as the decimal separator is invalid",
+                "data": "PT0,5S",
+                "valid": false
+            },
+            {
+                "description": "a sign inside a component is invalid",
+                "data": "P-1D",
+                "valid": false
+            }
+        ]
+    }
+]

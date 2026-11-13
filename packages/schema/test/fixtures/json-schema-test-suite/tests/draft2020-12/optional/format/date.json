@@ -1,0 +1,423 @@
+[
+    {
+        "description": "validation of date strings",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "format": "date"
+        },
+        "tests": [
+            {
+                "description": "all string formats ignore integers",
+                "data": 12,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore floats",
+                "data": 13.7,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore objects",
+                "data": {},
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore arrays",
+                "data": [],
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore booleans",
+                "data": false,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore nulls",
+                "data": null,
+                "valid": true
+            },
+            {
+                "description": "a valid date string",
+                "data": "1963-06-19",
+                "valid": true
+            },
+            {
+                "description": "a valid date string with 31 days in January",
+                "data": "2020-01-31",
+                "valid": true
+            },
+            {
+                "description": "a invalid date string with 32 days in January",
+                "data": "2020-01-32",
+                "valid": false
+            },
+            {
+                "description": "a valid date string with 28 days in February (normal)",
+                "data": "2021-02-28",
+                "valid": true
+            },
+            {
+                "description": "a invalid date string with 30 days in February (leap)",
+                "data": "2020-02-30",
+                "valid": false
+            },
+            {
+                "description": "a valid date string with 31 days in March",
+                "data": "2020-03-31",
+                "valid": true
+            },
+            {
+                "description": "a invalid date string with 32 days in March",
+                "data": "2020-03-32",
+                "valid": false
+            },
+            {
+                "description": "a valid date string with 30 days in April",
+                "data": "2020-04-30",
+                "valid": true
+            },
+            {
+                "description": "a invalid date string with 31 days in April",
+                "data": "2020-04-31",
+                "valid": false
+            },
+            {
+                "description": "a valid date string with 31 days in May",
+                "data": "2020-05-31",
+                "valid": true
+            },
+            {
+                "description": "a invalid date string with 32 days in May",
+                "data": "2020-05-32",
+                "valid": false
+            },
+            {
+                "description": "a valid date string with 30 days in June",
+                "data": "2020-06-30",
+                "valid": true
+            },
+            {
+                "description": "a invalid date string with 31 days in June",
+                "data": "2020-06-31",
+                "valid": false
+            },
+            {
+                "description": "a valid date string with 31 days in July",
+                "data": "2020-07-31",
+                "valid": true
+            },
+            {
+                "description": "a invalid date string with 32 days in July",
+                "data": "2020-07-32",
+                "valid": false
+            },
+            {
+                "description": "a valid date string with 31 days in August",
+                "data": "2020-08-31",
+                "valid": true
+            },
+            {
+                "description": "a invalid date string with 32 days in August",
+                "data": "2020-08-32",
+                "valid": false
+            },
+            {
+                "description": "a valid date string with 30 days in September",
+                "data": "2020-09-30",
+                "valid": true
+            },
+            {
+                "description": "a invalid date string with 31 days in September",
+                "data": "2020-09-31",
+                "valid": false
+            },
+            {
+                "description": "a valid date string with 31 days in October",
+                "data": "2020-10-31",
+                "valid": true
+            },
+            {
+                "description": "a invalid date string with 32 days in October",
+                "data": "2020-10-32",
+                "valid": false
+            },
+            {
+                "description": "a valid date string with 30 days in November",
+                "data": "2020-11-30",
+                "valid": true
+            },
+            {
+                "description": "a invalid date string with 31 days in November",
+                "data": "2020-11-31",
+                "valid": false
+            },
+            {
+                "description": "a valid date string with 31 days in December",
+                "data": "2020-12-31",
+                "valid": true
+            },
+            {
+                "description": "a invalid date string with 32 days in December",
+                "data": "2020-12-32",
+                "valid": false
+            },
+            {
+                "description": "an invalid date string",
+                "data": "06/19/1963",
+                "valid": false
+            },
+            {
+                "description": "only RFC3339 not all of ISO 8601 are valid",
+                "data": "2013-350",
+                "valid": false
+            },
+            {
+                "description": "non-padded month dates are not valid",
+                "data": "1998-1-20",
+                "valid": false
+            },
+            {
+                "description": "non-padded day dates are not valid",
+                "data": "1998-01-1",
+                "valid": false
+            },
+            {
+                "description": "invalid month",
+                "data": "1998-13-01",
+                "valid": false
+            },
+            {
+                "description": "2021 is not a leap year",
+                "data": "2021-02-29",
+                "valid": false
+            },
+            {
+                "description": "2020 is a leap year",
+                "data": "2020-02-29",
+                "valid": true
+            },
+            {
+                "description": "invalid non-ASCII '৪' (a Bengali 4)",
+                "data": "1963-06-1৪",
+                "valid": false
+            },
+            {
+                "description": "invalid: non-ASCII Bengali digit in month field",
+                "data": "2020-0৪-01",
+                "valid": false
+            },
+            {
+                "description": "ISO8601 / non-RFC3339: YYYYMMDD without dashes (2023-03-28)",
+                "data": "20230328",
+                "valid": false
+            },
+            {
+                "description": "ISO8601 / non-RFC3339: week number implicit day of week (2023-01-02)",
+                "data": "2023-W01",
+                "valid": false
+            },
+            {
+                "description": "ISO8601 / non-RFC3339: week number with day of week (2023-03-28)",
+                "data": "2023-W13-2",
+                "valid": false
+            },
+            {
+                "description": "ISO8601 / non-RFC3339: week number rollover to next year (2023-01-01)",
+                "data": "2022W527",
+                "valid": false
+            },
+            {
+                "description": "an invalid time string in date-time format",
+                "data": "2020-11-28T23:55:45Z",
+                "valid": false
+            },
+            {
+                "description": "century year 0100 is not a leap year",
+                "comment": "https://www.rfc-editor.org/rfc/rfc3339#appendix-C — 100 % 100 == 0 but 100 % 400 != 0",
+                "data": "0100-02-29",
+                "valid": false
+            },
+            {
+                "description": "century year 0400 is a leap year",
+                "comment": "https://www.rfc-editor.org/rfc/rfc3339#appendix-C — 400-year cycle boundary",
+                "data": "0400-02-29",
+                "valid": true
+            },
+            {
+                "description": "century year 2100 is not a leap year",
+                "comment": "https://www.rfc-editor.org/rfc/rfc3339#appendix-C — future century year",
+                "data": "2100-02-29",
+                "valid": false
+            },
+            {
+                "description": "invalid: leading whitespace is not permitted",
+                "comment": "https://www.rfc-editor.org/rfc/rfc3339#section-5.6 — full-date grammar does not include whitespace",
+                "data": " 2024-01-15",
+                "valid": false
+            },
+            {
+                "description": "invalid: trailing whitespace is not permitted",
+                "comment": "https://www.rfc-editor.org/rfc/rfc3339#section-5.6 — full-date grammar does not include whitespace",
+                "data": "2024-01-15 ",
+                "valid": false
+            },
+            {
+                "description": "invalid: month 00 is not valid per date-month range 01-12",
+                "comment": "https://www.rfc-editor.org/rfc/rfc3339#section-5.6 — date-month = 2DIGIT ; 01-12",
+                "data": "2024-00-15",
+                "valid": false
+            },
+            {
+                "description": "invalid: day 00 is not valid per date-mday minimum of 01",
+                "comment": "https://www.rfc-editor.org/rfc/rfc3339#section-5.6 — date-mday = 2DIGIT ; 01-28/29/30/31",
+                "data": "2024-01-00",
+                "valid": false
+            },
+            {
+                "description": "invalid: empty string",
+                "data": "",
+                "valid": false
+            },
+            {
+                "description": "invalid: embedded whitespace between year and month",
+                "data": "2020 -01-01",
+                "valid": false
+            },
+            {
+                "description": "invalid: trailing character after valid full-date",
+                "data": "2020-01-01X",
+                "valid": false
+            },
+            {
+                "description": "invalid: trailing Z after full-date",
+                "data": "2020-01-01Z",
+                "valid": false
+            },
+            {
+                "description": "invalid: full-date followed by space and time component",
+                "data": "2020-01-01 00:00:00Z",
+                "valid": false
+            },
+            {
+                "description": "valid: four-digit year 0001",
+                "data": "0001-01-01",
+                "valid": true
+            },
+            {
+                "description": "invalid: two-digit year (N-2 digits)",
+                "data": "20-01-01",
+                "valid": false
+            },
+            {
+                "description": "invalid: three-digit year (N-1 digits)",
+                "data": "998-01-01",
+                "valid": false
+            },
+            {
+                "description": "invalid: five-digit year (N+1 digits)",
+                "data": "12020-01-01",
+                "valid": false
+            },
+            {
+                "description": "invalid: positive sign prefix on year",
+                "data": "+2020-01-01",
+                "valid": false
+            },
+            {
+                "description": "invalid: negative sign prefix on year",
+                "data": "-2020-01-01",
+                "valid": false
+            },
+            {
+                "description": "invalid: non-ASCII Bengali digit in year field",
+                "data": "২020-01-01",
+                "valid": false
+            },
+            {
+                "description": "invalid: alphabetic characters in year field",
+                "data": "YYYY-01-01",
+                "valid": false
+            },
+            {
+                "description": "invalid: three-digit month (N+1 digits)",
+                "data": "2020-001-01",
+                "valid": false
+            },
+            {
+                "description": "invalid: alphabetic characters in month field",
+                "data": "2020-MM-01",
+                "valid": false
+            },
+            {
+                "description": "invalid: three-digit day (N+1 digits)",
+                "data": "2020-01-001",
+                "valid": false
+            },
+            {
+                "description": "invalid: alphabetic characters in day field",
+                "data": "2020-01-DD",
+                "valid": false
+            },
+            {
+                "description": "invalid: colon separators",
+                "data": "2020:01:01",
+                "valid": false
+            },
+            {
+                "description": "invalid: dot separators",
+                "data": "2020.01.01",
+                "valid": false
+            },
+            {
+                "description": "invalid: space separators",
+                "data": "2020 01 01",
+                "valid": false
+            },
+            {
+                "description": "invalid: mixed slash and hyphen separators",
+                "data": "2020-01/01",
+                "valid": false
+            },
+            {
+                "description": "invalid: duplicated first hyphen",
+                "data": "2020--01-01",
+                "valid": false
+            },
+            {
+                "description": "invalid: duplicated second hyphen",
+                "data": "2020-01--01",
+                "valid": false
+            },
+            {
+                "description": "valid: date inside the Julian to Gregorian reform gap",
+                "data": "1582-10-10",
+                "valid": true
+            },
+            {
+                "description": "invalid: year field numerically larger than a 32-bit signed integer",
+                "data": "2147483648-01-01",
+                "valid": false
+            },
+            {
+                "description": "invalid: character just above '9' as the second digit of the day",
+                "data": "2020-01-0:",
+                "valid": false
+            },
+            {
+                "description": "invalid: non-ASCII digit leaving ten UTF-8 bytes but eight characters",
+                "data": "\u09e80-01-01",
+                "valid": false
+            },
+            {
+                "description": "invalid: en dash separators instead of hyphen-minus",
+                "data": "2020\u201301\u201301",
+                "valid": false
+            },
+            {
+                "description": "invalid: NUL character after an otherwise valid full-date",
+                "data": "2020-01-01\u0000",
+                "valid": false
+            }
+        ]
+    }
+]

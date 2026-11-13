@@ -1,5 +1,5 @@
 import { Type } from "typebox";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const bedrockMock = vi.hoisted(() => ({
 	inputs: [] as unknown[],
@@ -44,6 +44,7 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 
 import { BedrockRuntimeServiceException } from "@aws-sdk/client-bedrock-runtime";
 import { stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
+import { cleanupSessionResources } from "../src/session-resources.ts";
 import type { Model, Tool } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
@@ -91,12 +92,18 @@ function successResponse(): Promise<unknown> {
 	});
 }
 
-function run(tools: Tool[], onPayload?: (payload: unknown) => unknown) {
+function run(tools: Tool[], onPayload?: (payload: unknown) => unknown, sessionId?: string) {
 	return streamBedrock(
 		model,
 		normalizeContext({ tools, messages: [{ role: "user", content: "Hello", timestamp: 1 }] }),
-		{ cacheRetention: "none", onPayload },
+		{ cacheRetention: "none", onPayload, sessionId },
 	).result();
+}
+
+function strictFlags(): (boolean | undefined)[][] {
+	return (bedrockMock.inputs as CommandInput[]).map((input) =>
+		input.toolConfig.tools.map((tool) => tool.toolSpec.strict),
+	);
 }
 
 // Regression tests for https://github.com/earendil-works/pi/issues/11416.
@@ -104,6 +111,8 @@ describe("Bedrock preferred strict tool fallback", () => {
 	beforeEach(() => {
 		bedrockMock.inputs = [];
 	});
+
+	afterEach(() => cleanupSessionResources());
 
 	it("retries a strict tool limit rejection with preferred tools non-strict and keeps required tools strict", async () => {
 		bedrockMock.respond = (attempt) =>
@@ -169,5 +178,46 @@ describe("Bedrock preferred strict tool fallback", () => {
 
 		expect(result.stopReason).toBe("error");
 		expect(bedrockMock.inputs).toHaveLength(2);
+	});
+
+	it("does not remember a rejection without a session", async () => {
+		bedrockMock.respond = (attempt) =>
+			attempt === 1 ? Promise.reject(sdkError("ValidationException", unionLimitMessage)) : successResponse();
+
+		await run([tool("preferred", "prefer")]);
+		await run([tool("preferred", "prefer")]);
+
+		expect(strictFlags()).toEqual([[true], [undefined], [true]]);
+	});
+
+	// Regression tests for https://github.com/earendil-works/pi/issues/11626.
+	it("sends preferred tools non-strict right away on later requests of a rejected session", async () => {
+		bedrockMock.respond = (attempt) =>
+			attempt === 1 ? Promise.reject(sdkError("ValidationException", unionLimitMessage)) : successResponse();
+		const tools = [tool("preferred", "prefer"), tool("required", "require")];
+
+		await run(tools, undefined, "rejected");
+		const second = await run(tools, undefined, "rejected");
+		await run(tools, undefined, "other");
+
+		expect(second.stopReason).toBe("stop");
+		expect(second.diagnostics).toBeUndefined();
+		expect(strictFlags()).toEqual([
+			[true, true],
+			[undefined, true],
+			[undefined, true],
+			[true, true],
+		]);
+	});
+
+	it("tries strict sampling again after the session's resources are cleaned up", async () => {
+		bedrockMock.respond = (attempt) =>
+			attempt === 1 ? Promise.reject(sdkError("ValidationException", unionLimitMessage)) : successResponse();
+
+		await run([tool("preferred", "prefer")], undefined, "cleaned");
+		cleanupSessionResources("cleaned");
+		await run([tool("preferred", "prefer")], undefined, "cleaned");
+
+		expect(strictFlags()).toEqual([[true], [undefined], [true]]);
 	});
 });

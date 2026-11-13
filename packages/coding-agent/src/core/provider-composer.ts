@@ -591,21 +591,26 @@ export function composeModelProvider(
 		options: StreamOptions | undefined,
 		simple: boolean,
 	): AssistantMessageEventStream =>
-		lazyStream(model, async () => {
-			if (extension?.streamSimple && model.api === extension.api) {
-				return extension.streamSimple(model, context, options as SimpleStreamOptions);
-			}
-			if (base && supportsBaseApi(model)) {
+		lazyStream(
+			model,
+			async () => {
+				if (extension?.streamSimple && model.api === extension.api) {
+					return extension.streamSimple(model, context, options as SimpleStreamOptions);
+				}
+				if (base && supportsBaseApi(model)) {
+					return simple
+						? base.streamSimple(model, context, options as SimpleStreamOptions)
+						: base.stream(model, context, options);
+				}
+				const api = getApiProvider(model.api);
+				if (!api) throw new Error(`No API provider registered for api: ${model.api}`);
 				return simple
-					? base.streamSimple(model, context, options as SimpleStreamOptions)
-					: base.stream(model, context, options);
-			}
-			const api = getApiProvider(model.api);
-			if (!api) throw new Error(`No API provider registered for api: ${model.api}`);
-			return simple
-				? api.streamSimple(model, context, options as SimpleStreamOptions)
-				: api.stream(model, context, options);
-		});
+					? api.streamSimple(model, context, options as SimpleStreamOptions)
+					: api.stream(model, context, options);
+			},
+			undefined,
+			options?.signal,
+		);
 
 	const provider: Provider = {
 		id: providerId,
@@ -615,6 +620,9 @@ export function composeModelProvider(
 		auth: { ...(apiKey ? { apiKey } : {}), ...(oauth ? { oauth } : {}) },
 		getModels: () => getAllModels().filter((model) => isModelType(model, "chat")),
 		getAllModels,
+		// Extension hooks read context.credential, so they need the default credential refresh.
+		refreshModelsAuth:
+			extension?.refreshModels || extension?.oauth?.modifyModels ? undefined : base?.refreshModelsAuth,
 		refreshModels:
 			base?.refreshModels || extension?.refreshModels || extension?.oauth?.modifyModels
 				? async (context) => {

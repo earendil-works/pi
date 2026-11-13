@@ -1,0 +1,308 @@
+[
+    {
+        "description": "ignore if without then or else",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "if": {
+                "const": 0
+            }
+        },
+        "tests": [
+            {
+                "description": "valid when valid against lone if",
+                "data": 0,
+                "valid": true
+            },
+            {
+                "description": "valid when invalid against lone if",
+                "data": "hello",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "ignore then without if",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "then": {
+                "const": 0
+            }
+        },
+        "tests": [
+            {
+                "description": "valid when valid against lone then",
+                "data": 0,
+                "valid": true
+            },
+            {
+                "description": "valid when invalid against lone then",
+                "data": "hello",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "ignore else without if",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "else": {
+                "const": 0
+            }
+        },
+        "tests": [
+            {
+                "description": "valid when valid against lone else",
+                "data": 0,
+                "valid": true
+            },
+            {
+                "description": "valid when invalid against lone else",
+                "data": "hello",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "if and then without else",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "if": {
+                "exclusiveMaximum": 0
+            },
+            "then": {
+                "minimum": -10
+            }
+        },
+        "tests": [
+            {
+                "description": "valid through then",
+                "data": -1,
+                "valid": true
+            },
+            {
+                "description": "invalid through then",
+                "data": -100,
+                "valid": false
+            },
+            {
+                "description": "valid when if test fails",
+                "data": 3,
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "if and else without then",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "if": {
+                "exclusiveMaximum": 0
+            },
+            "else": {
+                "multipleOf": 2
+            }
+        },
+        "tests": [
+            {
+                "description": "valid when if test passes",
+                "data": -1,
+                "valid": true
+            },
+            {
+                "description": "valid through else",
+                "data": 4,
+                "valid": true
+            },
+            {
+                "description": "invalid through else",
+                "data": 3,
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "validate against correct branch, then vs else",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "if": {
+                "exclusiveMaximum": 0
+            },
+            "then": {
+                "minimum": -10
+            },
+            "else": {
+                "multipleOf": 2
+            }
+        },
+        "tests": [
+            {
+                "description": "valid through then",
+                "data": -1,
+                "valid": true
+            },
+            {
+                "description": "invalid through then",
+                "data": -100,
+                "valid": false
+            },
+            {
+                "description": "valid through else",
+                "data": 4,
+                "valid": true
+            },
+            {
+                "description": "invalid through else",
+                "data": 3,
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "non-interference across combined schemas",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "allOf": [
+                {
+                    "if": {
+                        "exclusiveMaximum": 0
+                    }
+                },
+                {
+                    "then": {
+                        "minimum": -10
+                    }
+                },
+                {
+                    "else": {
+                        "multipleOf": 2
+                    }
+                }
+            ]
+        },
+        "tests": [
+            {
+                "description": "valid, but would have been invalid through then",
+                "data": -100,
+                "valid": true
+            },
+            {
+                "description": "valid, but would have been invalid through else",
+                "data": 3,
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "if with boolean schema true",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "if": true,
+            "then": { "const": "then" },
+            "else": { "const": "else" }
+        },
+        "tests": [
+            {
+                "description": "boolean schema true in if always chooses the then path (valid)",
+                "data": "then",
+                "valid": true
+            },
+            {
+                "description": "boolean schema true in if always chooses the then path (invalid)",
+                "data": "else",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "if with boolean schema false",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "if": false,
+            "then": { "const": "then" },
+            "else": { "const": "else" }
+        },
+        "tests": [
+            {
+                "description": "boolean schema false in if always chooses the else path (invalid)",
+                "data": "then",
+                "valid": false
+            },
+            {
+                "description": "boolean schema false in if always chooses the else path (valid)",
+                "data": "else",
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "if appears at the end when serialized (keyword processing sequence)",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "then": { "const": "yes" },
+            "else": { "const": "other" },
+            "if": { "maxLength": 4 }
+        },
+        "tests": [
+            {
+                "description": "yes redirects to then and passes",
+                "data": "yes",
+                "valid": true
+            },
+            {
+                "description": "other redirects to else and passes",
+                "data": "other",
+                "valid": true
+            },
+            {
+                "description": "no redirects to then and fails",
+                "data": "no",
+                "valid": false
+            },
+            {
+                "description": "invalid redirects to else and fails",
+                "data": "invalid",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "then: false fails when condition matches",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "if": { "const": 1 },
+            "then": false
+        },
+        "tests": [
+            {
+                "description": "matches if → then=false → invalid",
+                "data": 1,
+                "valid": false
+            },
+            {
+                "description": "does not match if → then ignored → valid",
+                "data": 2,
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "else: false fails when condition does not match",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "if": { "const": 1 },
+            "else": false
+        },
+        "tests": [
+            {
+                "description": "matches if → else ignored → valid",
+                "data": 1,
+                "valid": true
+            },
+            {
+                "description": "does not match if → else executes → invalid",
+                "data": 2,
+                "valid": false
+            }
+        ]
+    }
+]

@@ -1,0 +1,5 @@
+{
+	"name": "@acme/stats",
+	"private": true,
+	"type": "module"
+}

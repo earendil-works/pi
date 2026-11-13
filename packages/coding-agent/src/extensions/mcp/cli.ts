@@ -7,12 +7,13 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { createInterface } from "node:readline/promises";
 import chalk from "chalk";
 import { APP_NAME, CONFIG_DIR_NAME } from "../../config.ts";
 import { validateMcpServerConfig } from "../../core/mcp-servers.ts";
+import { ModelRuntime } from "../../core/model-runtime.ts";
 import { ProjectTrustStore } from "../../core/trust-manager.ts";
 import { openBrowser } from "../../utils/open-browser.ts";
+import { questionTerminal } from "../../utils/terminal-question.ts";
 import {
 	addMcpServerConfig,
 	getMcpToolExposure,
@@ -35,8 +36,8 @@ const HELP = `${chalk.bold("Usage:")}
   ${APP_NAME} mcp add <server> [options] --url <url>
   ${APP_NAME} mcp remove <server> [-l]
   ${APP_NAME} mcp list [--json]
-  ${APP_NAME} mcp login <server> [--timeout <seconds>]
-  ${APP_NAME} mcp logout <server>
+  ${APP_NAME} mcp login <server> [-l] [--timeout <seconds>]
+  ${APP_NAME} mcp logout <server> [-l]
 
 Configure and check MCP servers and sign in to OAuth servers without starting a session.
 Reads ~/${CONFIG_DIR_NAME}/agent/mcp.json and, in trusted projects, ${CONFIG_DIR_NAME}/mcp.json.
@@ -48,7 +49,7 @@ Commands:
   login <server>          Sign in through the browser
   logout <server>         Delete the stored OAuth credentials
 
-Options for add and remove:
+Options for add, remove, login, and logout:
   -l, --local             Use ${CONFIG_DIR_NAME}/mcp.json in the current project instead of the global file
 
 Options for add:
@@ -65,6 +66,8 @@ Options for add:
                           Fixed OAuth callback port
   --oauth-client-name <name>
                           Client name sent when registering with the OAuth server
+  --oauth-client-registration <mode>
+                          auto (default), cimd, or dcr
   --exposure <mode>       codemode (default), deferred, direct, or hidden
   --description <text>    What the server offers, shown in the system prompt
 
@@ -81,6 +84,8 @@ export interface McpCommandOptions {
 	agentDir: string;
 	/** Defaults to `mcp-auth.json` in the agent directory. */
 	credentials?: McpOAuthCredentialStore;
+	/** Token of a pi provider, for servers with `auth.provider`. Defaults to the agent directory's `auth.json`. */
+	providerToken?: (provider: string) => Promise<string | undefined>;
 	/** Defaults to the platform browser. */
 	openUrl?: (url: string) => void;
 	/** Defaults to console output. */
@@ -97,6 +102,8 @@ interface ServerReport {
 	enabled: boolean;
 	exposure: string;
 	transport: string;
+	/** The pi provider whose token the server receives, from `auth.provider`. */
+	authProvider?: string;
 	state: string;
 	tools: string[];
 	/** Tools whose exposure differs from the server's, from `toolExposure`. */
@@ -115,15 +122,47 @@ function describeTransport(entry: McpServerEntry): string {
 	return "url" in config ? config.url : [config.command, ...(config.args ?? [])].join(" ");
 }
 
-function createConnection(entry: McpServerEntry, options: McpCommandOptions, credentials: McpOAuthCredentialStore) {
+function getAuthProvider(entry: McpServerEntry): string | undefined {
+	return "url" in entry.config ? entry.config.auth?.provider : undefined;
+}
+
+function createConnection(
+	entry: McpServerEntry,
+	options: McpCommandOptions,
+	credentials: McpOAuthCredentialStore,
+	providerToken: (provider: string) => Promise<string | undefined>,
+) {
 	return new McpServerConnection({
 		entry,
 		cwd: options.cwd,
 		createTransport: createDefaultTransport,
 		credentials,
+		providerToken,
 		log: new McpServerLog(join(options.agentDir, "mcp.log")),
 		onTools: () => {},
 	});
+}
+
+/**
+ * Reads provider tokens from the agent directory's credentials, refreshing expired OAuth tokens like a
+ * session does. The model runtime is created on the first request, so servers without `auth.provider`
+ * do not load it.
+ */
+function createProviderTokenReader(agentDir: string): (provider: string) => Promise<string | undefined> {
+	let runtime: Promise<ModelRuntime> | undefined;
+	return async (provider) => {
+		runtime ??= ModelRuntime.create({
+			authPath: join(agentDir, "auth.json"),
+			modelsPath: join(agentDir, "models.json"),
+			refreshOnCreate: false,
+		});
+		try {
+			return (await (await runtime).getAuth(provider))?.auth.apiKey;
+		} catch {
+			// Missing or unrefreshable credentials: the server's 401 then reports that sign-in is needed.
+			return undefined;
+		}
+	};
 }
 
 /** Short spellings of options. `-l`/`--local` match `pi install`. */
@@ -151,7 +190,8 @@ function parseOptions(
 	const values = new Map<string, string | true>();
 	const lists = new Map<string, string[]>();
 	for (let index = 0; index < args.length; index++) {
-		const arg = OPTION_ALIASES.get(args[index]) ?? args[index];
+		const typed = args[index];
+		const arg = OPTION_ALIASES.get(typed) ?? typed;
 		if (arg === "--" || positional.length >= maxPositionals) {
 			positional.push(...args.slice(arg === "--" ? index + 1 : index));
 			break;
@@ -163,7 +203,7 @@ function parseOptions(
 		const name = arg.slice(2);
 		const kind = known[name];
 		if (!kind) {
-			error(`Unknown option ${arg}.\n${HELP_HINT}`);
+			error(`Unknown option ${typed}.\n${HELP_HINT}`);
 			return undefined;
 		}
 		if (kind === "flag") {
@@ -204,6 +244,7 @@ export async function runMcpCommand(args: string[], options: McpCommandOptions):
 			? `${projectConfig} is ignored because the project is not trusted. Start ${APP_NAME} in the project to trust it.`
 			: undefined;
 	const credentials = options.credentials ?? new McpOAuthCredentialStore();
+	const providerToken = options.providerToken ?? createProviderTokenReader(options.agentDir);
 
 	switch (command) {
 		case "list": {
@@ -213,25 +254,42 @@ export async function runMcpCommand(args: string[], options: McpCommandOptions):
 				error(`Usage: ${APP_NAME} mcp list [--json]\n${HELP_HINT}`);
 				return 1;
 			}
-			return list(loaded, parsed.values.has("json"), untrustedNote, options, credentials, log);
+			return list(loaded, parsed.values.has("json"), untrustedNote, options, credentials, providerToken, log);
 		}
 		case "login":
 		case "logout": {
-			const parsed = parseOptions(rest, command === "login" ? { timeout: "value" } : {}, error);
+			const parsed = parseOptions(
+				rest,
+				command === "login" ? { local: "flag", timeout: "value" } : { local: "flag" },
+				error,
+			);
 			if (!parsed) return 1;
 			const [name, ...extra] = parsed.positional;
 			if (!name || extra.length > 0) {
-				error(`Usage: ${APP_NAME} mcp ${command} <server>\n${HELP_HINT}`);
+				error(`Usage: ${APP_NAME} mcp ${command} <server> [-l]\n${HELP_HINT}`);
 				return 1;
 			}
 			const entry = loaded.servers.find((server) => server.name === name);
 			if (!entry) {
+				const names = loaded.servers.map((server) => server.name);
+				const suggestion = names.find((candidate) => editDistance(candidate, name) <= 2);
 				error(
-					`No MCP server named "${name}".${untrustedNote ? ` ${untrustedNote}` : ""} Configured: ${loaded.servers.map((server) => server.name).join(", ") || "none"}.`,
+					`No MCP server named "${name}".${suggestion ? ` Did you mean "${suggestion}"?` : ""}${untrustedNote ? ` ${untrustedNote}` : ""} Configured: ${names.join(", ") || "none"}.`,
 				);
 				return 1;
 			}
-			const connection = createConnection(entry, options, credentials);
+			if (parsed.values.has("local") && entry.scope !== "project") {
+				error(`MCP server "${name}" is defined in ${entry.source}, not in the project; omit --local.`);
+				return 1;
+			}
+			const authProvider = getAuthProvider(entry);
+			if (authProvider) {
+				error(
+					`MCP server "${name}" uses the credentials of provider "${authProvider}". Run "${APP_NAME} auth ${command} ${authProvider}".`,
+				);
+				return 1;
+			}
+			const connection = createConnection(entry, options, credentials, providerToken);
 			const url = connection.oauthUrl;
 			if (!url) {
 				error(`MCP server "${name}" does not use OAuth. Only HTTP servers without an Authorization header do.`);
@@ -257,6 +315,19 @@ export async function runMcpCommand(args: string[], options: McpCommandOptions):
 			error(`Unknown mcp command "${command}".\n${HELP_HINT}`);
 			return 1;
 	}
+}
+
+/** Levenshtein distance, to suggest a configured server name for a mistyped one. */
+function editDistance(a: string, b: string): number {
+	let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+	for (let i = 1; i <= a.length; i++) {
+		const current = [i];
+		for (let j = 1; j <= b.length; j++) {
+			current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+		}
+		previous = current;
+	}
+	return previous[b.length];
 }
 
 /** Parse `KEY=VALUE` pairs of a repeatable option into a record. */
@@ -295,6 +366,7 @@ function add(
 			"oauth-client-secret": "value",
 			"oauth-callback-port": "value",
 			"oauth-client-name": "value",
+			"oauth-client-registration": "value",
 			exposure: "value",
 			description: "value",
 		},
@@ -321,6 +393,7 @@ function add(
 		"oauth-client-secret",
 		"oauth-callback-port",
 		"oauth-client-name",
+		"oauth-client-registration",
 	];
 	const stdioOnly = ["env", "cwd"];
 	const misplaced = (url === undefined ? httpOnly : stdioOnly).find(
@@ -343,6 +416,9 @@ function add(
 			...(value("oauth-client-secret") === undefined ? {} : { clientSecret: value("oauth-client-secret") }),
 			...(port === undefined ? {} : { callbackPort: Number(port) }),
 			...(value("oauth-client-name") === undefined ? {} : { clientName: value("oauth-client-name") }),
+			...(value("oauth-client-registration") === undefined
+				? {}
+				: { clientRegistration: value("oauth-client-registration") }),
 		};
 		config = {
 			url,
@@ -437,10 +513,12 @@ async function list(
 	untrustedNote: string | undefined,
 	options: McpCommandOptions,
 	credentials: McpOAuthCredentialStore,
+	providerToken: (provider: string) => Promise<string | undefined>,
 	log: (line: string) => void,
 ): Promise<number> {
 	const reports = await Promise.all(
 		loaded.servers.map(async (entry): Promise<ServerReport> => {
+			const authProvider = getAuthProvider(entry);
 			const report: ServerReport = {
 				name: entry.name,
 				scope: entry.scope ?? "global",
@@ -449,11 +527,12 @@ async function list(
 				enabled: entry.config.enabled !== false,
 				exposure: entry.config.exposure ?? "codemode",
 				transport: describeTransport(entry),
+				...(authProvider ? { authProvider } : {}),
 				state: "disabled",
 				tools: [],
 			};
 			if (!report.enabled) return report;
-			const connection = createConnection(entry, options, credentials);
+			const connection = createConnection(entry, options, credentials, providerToken);
 			try {
 				await connection.getClient();
 			} catch {
@@ -497,7 +576,13 @@ async function list(
 		log(`${report.name}: ${state} (${report.exposure}, ${report.scope})`);
 		log(`  ${report.transport}`);
 		if (report.override) log(`  project override: ${report.override}`);
-		if (report.state === "needs-auth") log(`  sign in with: ${APP_NAME} mcp login ${report.name}`);
+		if (report.state === "needs-auth") {
+			log(
+				report.authProvider
+					? `  sign in with: /login ${report.authProvider} in ${APP_NAME}`
+					: `  sign in with: ${APP_NAME} mcp login ${report.name}`,
+			);
+		}
 		if (report.tools.length > 0) {
 			const tools = report.tools.map((tool) => {
 				const exposure = report.toolExposure?.[tool];
@@ -574,21 +659,19 @@ async function login(
 
 /**
  * The pasted redirect URL in a terminal; otherwise only the browser callback can finish the sign-in.
- * Resolves to undefined when `signal` aborts: the callback arrived, or the sign-in timed out.
+ * Resolves to undefined on cancellation or EOF, or when the callback arrives or the sign-in times out.
  */
 async function waitForRedirectUrl(signal: AbortSignal, interactive: boolean): Promise<string | undefined> {
 	if (!interactive) {
 		if (!signal.aborted) await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
 		return undefined;
 	}
-	const readline = createInterface({ input: process.stdin, output: process.stderr });
 	try {
-		return await readline.question("If the browser cannot reach this machine, paste the URL it was redirected to: ", {
+		return await questionTerminal("If the browser cannot reach this machine, paste the URL it was redirected to: ", {
 			signal,
+			output: process.stderr,
 		});
 	} catch {
 		return undefined;
-	} finally {
-		readline.close();
 	}
 }

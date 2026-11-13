@@ -1,8 +1,8 @@
 // Tests for `Session.observeDoc()`, the synchronous observer of one document address that watches are built on.
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
-import type { WatchCall, WatchEnd } from "@earendil-works/chord";
 import { withAbortSignal } from "@earendil-works/chord/context";
+import type { WatchCall, WatchEnd } from "@earendil-works/chord/watch";
 import {
 	type CommitObserver,
 	type ConversationId,
@@ -84,7 +84,7 @@ describe("observeDoc", () => {
 		await session.close(context);
 	});
 
-	it("starts at the committed value and advances inside adopt with each stored commit's ops", async () => {
+	it("starts at the committed value and advances at the publication of each stored commit with its ops", async () => {
 		const { storage, session } = open();
 		await add(session);
 		const { calls, observer } = recorder(storage);
@@ -95,7 +95,7 @@ describe("observeDoc", () => {
 		expect(calls).toEqual([
 			{
 				advance: { kind: "value", value: { count: 3 }, ops: [["s", ["count"], 3]], retired: false },
-				adopting: true,
+				adopting: false,
 			},
 		]);
 		observation.detach();
@@ -146,10 +146,10 @@ describe("observeDoc", () => {
 			(await tx.doc(ConversationCounter, conversationId)).count = 9;
 		}, context);
 		expect(calls).toEqual([
-			{ advance: { kind: "value", value: observation.value, ops: [], retired: true }, adopting: true },
+			{ advance: { kind: "value", value: observation.value, ops: [], retired: true }, adopting: false },
 			{
 				advance: { kind: "value", value: { count: 9 }, ops: [["r", { count: 9 }]], retired: false },
-				adopting: true,
+				adopting: false,
 			},
 		]);
 		expect((calls[0] as { advance: Extract<WatchCall<Counter>, { kind: "value" }> }).advance.value).toBe(

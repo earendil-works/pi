@@ -1,0 +1,56 @@
+[
+    {
+        "description": "$id inside an unknown keyword is not a real identifier",
+        "comment": "the implementation must not be confused by an $id in locations we do not know how to parse",
+        "schema": {
+            "definitions": {
+                "id_in_unknown0": {
+                    "not": {
+                        "array_of_schemas": [
+                            {
+                              "$id": "https://localhost:1234/unknownKeyword/my_identifier.json",
+                              "type": "null"
+                            }
+                        ]
+                    }
+                },
+                "real_id_in_schema": {
+                    "$id": "https://localhost:1234/unknownKeyword/my_identifier.json",
+                    "type": "string"
+                },
+                "id_in_unknown1": {
+                    "not": {
+                        "object_of_schemas": {
+                            "foo": {
+                              "$id": "https://localhost:1234/unknownKeyword/my_identifier.json",
+                              "type": "integer"
+                            }
+                        }
+                    }
+                }
+            },
+            "anyOf": [
+                { "$ref": "#/definitions/id_in_unknown0" },
+                { "$ref": "#/definitions/id_in_unknown1" },
+                { "$ref": "https://localhost:1234/unknownKeyword/my_identifier.json" }
+            ]
+        },
+        "tests": [
+            {
+                "description": "type matches second anyOf, which has a real schema in it",
+                "data": "a string",
+                "valid": true
+            },
+            {
+                "description": "type matches non-schema in first anyOf",
+                "data": null,
+                "valid": false
+            },
+            {
+                "description": "type matches non-schema in third anyOf",
+                "data": 1,
+                "valid": false
+            }
+        ]
+    }
+]

@@ -4,8 +4,9 @@ import { appendFileSync, mkdirSync, rmSync } from "node:fs";
 import { symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Context, JsonValue } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
+import type { JsonValue } from "@earendil-works/chord/json";
 import type {
 	ToolDiagnostic,
 	ToolExecutionApi,
@@ -86,7 +87,9 @@ async function run(
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<ToolExecutionResult & { streamed: string[]; reported: ToolDiagnostic[] }> {
 	const { api, output, diagnostics } = fakeApi(env);
-	return { ...(await tool.execute(args, api, context)), streamed: output, reported: diagnostics };
+	// The coding tools never park.
+	const result = (await tool.execute(args, api, context)) as ToolExecutionResult;
+	return { ...result, streamed: output, reported: diagnostics };
 }
 
 /** Run a tool expected to throw; returns the error with what it streamed and reported first. */

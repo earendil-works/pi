@@ -1,6 +1,7 @@
 // What a crash (a host that dies, is evicted, or is reset) does to work that was running: a generation's interrupted
 // request is a failed attempt under the retry policy, and every other task ends visibly once it was cut off
 // `settings.restartLimit` times in a row (#11139).
+
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,7 +14,6 @@ import {
 	type Message,
 	type Models,
 	type ToolResultMessage,
-	Type,
 } from "@earendil-works/pi-ai";
 import {
 	defineTool,
@@ -27,8 +27,10 @@ import {
 	type SubmissionId,
 	type TaskId,
 } from "@earendil-works/pi-durable";
+import { obj } from "@earendil-works/pi-schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
+import { commitWrites } from "../src/testing/commit-writes.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat, textOf, unanswered, waitFor } from "./chat-support.ts";
 import { addSection, addTool } from "./harness-support.ts";
 import { context, followCommits } from "./session-support.ts";
@@ -281,7 +283,7 @@ describe("a generation interrupted while the model answers (#11139)", () => {
 			defineTool({
 				name: "hold",
 				description: "Waits",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				replay: "safe",
 				execute: async () => {
 					started.resolve();
@@ -374,7 +376,7 @@ describe("other tasks cut off restartLimit times in a row (#11139)", () => {
 			defineTool({
 				name: "heavy",
 				description: "Never finishes",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				replay: "safe",
 				execute: async (_args, api, ctx) => {
 					runs++;
@@ -650,7 +652,7 @@ describe("crash edges (#11139)", () => {
 		// As if the charge had been cut off twice before: the open after this crash counts 3, past the limit of 2.
 		const raw = await openNodeSqliteStorage(path);
 		const record = await raw.task(taskId, context);
-		await raw.commit([{ type: "task", value: { ...record!, restarts: 2 } }], () => {}, context);
+		await commitWrites(raw, [{ type: "task", value: { ...record!, restarts: 2 } }], context);
 		await raw.close(context);
 		const setup = chatSetup();
 		setup.settings.restartLimit = 2;
@@ -750,7 +752,7 @@ describe("the restart limit on the normal path (#11139)", () => {
 			defineTool({
 				name: "t",
 				description: "t",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				replay: "safe",
 				execute: async () => ({}),
 			}),
@@ -770,8 +772,9 @@ describe("the restart limit on the normal path (#11139)", () => {
 		for (let round = 0; round < rounds; round++) {
 			await (await root.submit({ type: "input", content: `round ${round}` }, context)).wait(context);
 		}
-		// One generation round with one tool call, as before the restart limit applied to every kind (#11327: 49).
-		expect(resolutions / rounds).toBe(49);
+		// One generation round with one tool call, no more often than before the restart limit applied to every kind
+		// (#11327: 49; group commit coalesces some reconcile passes).
+		expect(resolutions / rounds).toBeLessThanOrEqual(49);
 		await harness.close(context);
 	});
 });

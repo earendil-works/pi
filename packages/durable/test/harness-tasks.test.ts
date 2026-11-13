@@ -1,6 +1,6 @@
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { withAbortSignal, withCancel } from "@earendil-works/chord/context";
-import { createModels, Type } from "@earendil-works/pi-ai";
+import { createModels } from "@earendil-works/pi-ai";
 import {
 	type CommitPublication,
 	type Conversation,
@@ -18,8 +18,10 @@ import {
 	type TaskId,
 	type TaskRuntime,
 } from "@earendil-works/pi-durable";
+import { obj } from "@earendil-works/pi-schema";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it } from "vitest";
+import type { SessionImpl } from "../src/session/session.ts";
 import { addHooks, addTask, addTool, user } from "./harness-support.ts";
 import { ControlledStorage, context, flush, followCommits, LateResolvingStorage, onValue } from "./session-support.ts";
 import { aborted, abortedWith, completed, deferred, eventually, openTasks, settled } from "./task-support.ts";
@@ -83,6 +85,20 @@ async function markDurably(
 
 function withSignal(signal: AbortSignal): Context {
 	return withAbortSignal(signal, context);
+}
+
+/** Hold the Session line with a commit whose callback waits: the jobs queued after it start once it is released. */
+function holdLine(harness: { commit(change: () => Promise<void>, context: Context): Promise<void> }): {
+	readonly entered: Promise<void>;
+	release(): void;
+} {
+	const entered = deferred();
+	const release = deferred();
+	void harness.commit(async () => {
+		entered.resolve();
+		await release.promise;
+	}, context);
+	return { entered: entered.promise, release: () => release.resolve() };
 }
 
 describe("task phases", () => {
@@ -235,7 +251,15 @@ describe("task phases", () => {
 			},
 			abort: async () => {},
 		});
-		const { harness, root } = await openRoot([Writer, Child]);
+		class CountingStorage extends MemoryStorage {
+			documentScans = 0;
+			override scanDocuments(...args: Parameters<MemoryStorage["scanDocuments"]>) {
+				this.documentScans++;
+				return super.scanDocuments(...args);
+			}
+		}
+		const storage = new CountingStorage();
+		const { harness, root } = await openRoot([Writer, Child], { storage });
 		const conversation = await harness.createConversation({ ownership: { kind: "ownerless" } }, context);
 		const id = await conversation.commit(
 			(tx) => tx.createTask(Writer, null, { ownership: { kind: "conversation" } }),
@@ -252,6 +276,10 @@ describe("task phases", () => {
 		expect(entry?.conversationId).toBe(conversation.id);
 		expect(progressSeen).toEqual(["wrote"]);
 		expect(await harness.snapshot(Progress, id, context)).toBeUndefined();
+		// The Session indexed the documents of the tasks it created, so no terminal commit scanned for them, and it dropped
+		// each task's entry at its end.
+		expect(storage.documentScans).toBe(0);
+		expect((harness as unknown as SessionImpl).documentCacheSizes.taskDocuments).toBe(0);
 		expect(await harness.getTask(id, context)).toEqual(receipt);
 		expect((await harness.waitForTask(childId!, context)).conversationId).toBe(conversation.id);
 		expect(root.id).not.toBe(conversation.id);
@@ -397,7 +425,7 @@ describe("task phases", () => {
 			defineTool({
 				name: "late",
 				description: "late",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async () => ({}),
 			}),
 		);
@@ -700,6 +728,130 @@ describe("task runtime", () => {
 });
 
 describe("task scheduling", () => {
+	// #11892
+	it("finalizes a holder whose last child is published while a finalize pass plans other holders", async () => {
+		const storage = new ControlledStorage();
+		const gate = deferred();
+		const holder = (name: string, child: ReturnType<typeof gated>) =>
+			oneStep(name, async (task, runtime, ctx) => {
+				await runtime.commit(async (tx) => {
+					await tx.createTask(child, null, { ownership: { kind: "task", taskId: task.id } });
+				}, ctx);
+				// The child is still live: the outcome is held as `completing` until a reconcile pass finalizes it.
+				await runtime.commit(() => completed(null), ctx);
+			});
+		const HeldChild = gated("test.held-child", gate.promise);
+		const OtherChild = gated("test.other-child", gate.promise);
+		const Held = holder("test.held", HeldChild);
+		const Other = holder("test.other", OtherChild);
+		const { harness, root } = await openRoot([HeldChild, OtherChild, Held, Other], { storage });
+		const other = await start(root, Other);
+		const held = await start(root, Held);
+		harness.resume();
+		const status = async (id: TaskId) => (await harness.getTask(id, context))?.state.status;
+		await eventually(async () => (await status(other)) === "completing" && (await status(held)) === "completing");
+		await flush();
+		// Both children end together. The other child's publication asks for a finalize pass over its holder alone; the
+		// held child's terminal record is published from that pass's decision region, after the pass took its checks.
+		const heldChildEnded = (writes: readonly StorageWrite[]) =>
+			writes.some(
+				(write) =>
+					write.type === "task" &&
+					write.value.kind === "test.held-child" &&
+					write.value.state.status === "terminal",
+			);
+		let publication: (() => void) | undefined;
+		let released = false;
+		(storage as { publishing?: (publish: () => void, context: Context) => void }).publishing = (publish) => {
+			if (!released && publication === undefined && heldChildEnded(storage.commits.at(-1)!)) publication = publish;
+			else publish();
+		};
+		const session = harness as unknown as SessionImpl;
+		const touch = session.touch.bind(session);
+		session.touch = (key) => {
+			if (publication !== undefined && key === `task:${other}`) {
+				queueMicrotask(publication);
+				publication = undefined;
+				released = true;
+			}
+			return touch(key);
+		};
+		gate.resolve();
+		await eventually(() => released);
+		await eventually(async () => (await status(held)) === "terminal");
+		expect(await status(other)).toBe("terminal");
+		await harness.close(context);
+	});
+
+	// #11892
+	it("runs a waiter whose last dependency is published while a reservation pass plans", async () => {
+		const storage = new ControlledStorage();
+		const gate = deferred();
+		let on: TaskId[] = [];
+		const Child = gated("test.held-child", gate.promise);
+		const Parent = oneStep("test.held-parent", async (task, runtime, ctx) => {
+			await runtime.commit(async (tx) => {
+				on = [task.id, await tx.createTask(Child, null, { ownership: { kind: "task", taskId: task.id } })];
+			}, ctx);
+			// The child is still live: the outcome is held as `completing` until a reconcile pass finalizes it.
+			await runtime.commit(() => completed(null), ctx);
+		});
+		const Waiter = defineTask<null, { phase: "wait" } | { phase: "resume" }, null>({
+			name: "test.waiter",
+			version: 1,
+			initial: () => ({ phase: "wait" }),
+			phases: {
+				wait: async (_task, runtime, ctx) => {
+					const checkpoint = { phase: "resume" } as const;
+					await runtime.commit(() => ({ status: "waiting", checkpoint, on, policy: "allSettled" }), ctx);
+				},
+				resume: (_task, runtime, ctx) => runtime.commit(() => completed(null), ctx),
+			},
+			abort: (_task, runtime, ctx) => runtime.commit(() => abortedWith("test"), ctx),
+		});
+		const { harness, root } = await openRoot([Parent, Child, Waiter], { storage });
+		const parent = await start(root, Parent);
+		harness.resume();
+		await eventually(async () => (await harness.getTask(parent, context))?.state.status === "completing");
+		const waiter = await root.commit(
+			(tx) => tx.createTask(Waiter, null, { ownership: { kind: "conversation" } }),
+			context,
+		);
+		await eventually(async () => (await harness.getTask(waiter, context))?.state.status === "waiting");
+		await flush();
+		// The waiter waits on the parent and its child. The child's publication makes the waiter a candidate and asks for
+		// the reconcile pass that finalizes the parent, admitted before the reservation pass. The parent's terminal record
+		// is held until that pass, which still sees the parent live, has decided to drop the waiter; it is published before
+		// the pass applies that decision.
+		const parentEnded = () =>
+			storage.commits.some((batch) =>
+				batch.some(
+					(write) => write.type === "task" && write.value.id === parent && write.value.state.status === "terminal",
+				),
+			);
+		let held: (() => void) | undefined;
+		let released = false;
+		(storage as { publishing?: (publish: () => void, context: Context) => void }).publishing = (publish) => {
+			if (!released && held === undefined && parentEnded()) held = publish;
+			else publish();
+		};
+		const session = harness as unknown as SessionImpl;
+		const touch = session.touch.bind(session);
+		session.touch = (key) => {
+			if (held !== undefined && key === `task:${waiter}`) {
+				const publish = held;
+				held = undefined;
+				released = true;
+				queueMicrotask(publish);
+			}
+			return touch(key);
+		};
+		gate.resolve();
+		await eventually(() => released);
+		await eventually(async () => (await harness.getTask(waiter, context))?.state.status === "terminal");
+		await harness.close(context);
+	});
+
 	it("fails the Harness on a failed reservation commit; reopening runs the task", async () => {
 		let runs = 0;
 		const Once = oneStep("test.once", async (_task, runtime, ctx) => {
@@ -1208,13 +1360,11 @@ describe("task close", () => {
 
 	it("writes no fault when close seals while the step after a failed phase is queued", async () => {
 		const storage = new ControlledStorage();
-		let held: ReturnType<ControlledStorage["holdCommits"]> | undefined;
+		let held: ReturnType<typeof holdLine> | undefined;
 		let harnessRef: Awaited<ReturnType<typeof openRoot>>["harness"] | undefined;
-		const Throws = oneStep("test.close-fault", async (_task, runtime) => {
-			held = storage.holdCommits();
-			void harnessRef!.commit(async (tx) => {
-				await tx.appendEntry(runtime.conversationId, { kind: "blocker" });
-			}, context);
+		const Throws = oneStep("test.close-fault", async () => {
+			// The step after this phase queues behind a job that holds the line.
+			held = holdLine(harnessRef!);
 			throw new Error("would fault");
 		});
 		const { harness, root } = await openRoot([Throws], { storage });
@@ -1269,14 +1419,11 @@ describe("task close", () => {
 	it("rejects a runtime commit that was queued on the line when close sealed it", async () => {
 		const storage = new ControlledStorage();
 		let queued: Promise<unknown> | undefined;
-		let held: ReturnType<ControlledStorage["holdCommits"]> | undefined;
+		let held: ReturnType<typeof holdLine> | undefined;
 		let harnessRef: Awaited<ReturnType<typeof openRoot>>["harness"] | undefined;
 		const proceed = deferred();
 		const Queued = oneStep("test.close-queued-commit", async (_task, runtime) => {
-			held = storage.holdCommits();
-			void harnessRef!.commit(async (tx) => {
-				await tx.appendEntry(runtime.conversationId, { kind: "blocker" });
-			}, context);
+			held = holdLine(harnessRef!);
 			queued = runtime.commit(() => completed(null), context).catch((error: unknown) => error);
 			// Ignores the close signal, so the invocation is still alive when the queued commit reaches the line.
 			await proceed.promise;
@@ -1459,7 +1606,7 @@ describe("publication at adoption", () => {
 		});
 	}
 
-	it("resolves a waitForIdle() called after adoption, before the storage resolved, after host listeners", async () => {
+	it("resolves a waitForIdle() called while the storage stores the commit at its publication, after host listeners", async () => {
 		const storage = new LateResolvingStorage();
 		const gate = deferred();
 		const Gated = gated("test.gap-idle", gate.promise);
@@ -1484,7 +1631,7 @@ describe("publication at adoption", () => {
 		gate.resolve();
 		await gapped.promise;
 		await idle;
-		expect(order).toEqual(["host", "idle committing=true"]);
+		expect(order).toEqual(["host", "idle committing=false"]);
 		await harness.close(context);
 	});
 
@@ -1545,7 +1692,7 @@ describe("publication at adoption", () => {
 		await closing;
 	});
 
-	it("keeps a task wait resolved when the Harness closes after adoption, before the storage resolved", async () => {
+	it("ends a task wait when the Harness closes while the terminal commit is stored, and still stores it", async () => {
 		const storage = new LateResolvingStorage();
 		const gate = deferred();
 		const Gated = gated("test.close-in-gap", gate.promise);
@@ -1567,8 +1714,12 @@ describe("publication at adoption", () => {
 		gate.resolve();
 		await gapped.promise;
 		await closing;
-		expect(await waited).toEqual({ status: "completed", result: null });
+		// Close ends the waits before it drains the commit in flight, which is published and stored all the same.
+		expect(await waited).toMatchObject({ message: expect.stringContaining("closed") });
 		expect(await harness.closed).toEqual({ kind: "closed" });
+		const reopened = await openRoot([Gated], { storage: storage.reopen() });
+		expect((await reopened.harness.getTask(id, context))?.state.status).toBe("terminal");
+		await reopened.harness.close(context);
 	});
 
 	it("fails the Session with the storage error when it rejects after adopting, and reports an observer's throw", async () => {
@@ -1627,14 +1778,22 @@ describe("publication at adoption", () => {
 		await harness.close(context);
 	});
 
-	it("calls a host listener added on a Harness between adopt and the dispatch only when one was registered at adopt", async () => {
+	it("calls a host listener added on a Harness during a publication only when one was registered at it", async () => {
 		const storage = new ControlledStorage();
 		const { harness, root } = await openRoot([], { storage });
 		const note = () => root.commit((tx) => tx.appendEntry(root.id, { kind: "note", data: {} }), context);
 		const late: number[] = [];
 		let stopLate = { detach: (): void => {} };
-		// No host listener at adopt, although the Harness's own observers run: no dispatch, so the late one misses it.
-		storage.afterAdopt = () => {
+		// Runs once, during the next publication, after its dispatch was queued or not.
+		let during: (() => void) | undefined;
+		followCommits(harness, () => {
+			const run = during;
+			during = undefined;
+			run?.();
+		});
+		// No host listener at the publication, although the Harness's own observers run: no dispatch, so the late one
+		// misses it.
+		during = () => {
 			stopLate = harness.observeCommits({
 				advance: (publication) => {
 					late.push(publication.seq);
@@ -1651,7 +1810,7 @@ describe("publication at adoption", () => {
 		// One registered at adopt: the dispatch reads the listeners when it runs, the late one included.
 		harness.observeCommits({ advance: () => {}, end: () => {} });
 		const second: number[] = [];
-		storage.afterAdopt = () => {
+		during = () => {
 			harness.observeCommits({
 				advance: (publication) => {
 					second.push(publication.seq);

@@ -1,4 +1,5 @@
-import type { Draft, JsonRepresentation, JsonValue } from "@earendil-works/chord";
+import type { Draft } from "@earendil-works/chord/delta";
+import type { JsonRepresentation, JsonValue } from "@earendil-works/chord/json";
 import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
 import { defineDoc } from "../documents.ts";
 import type { Transaction } from "../session/transaction.ts";
@@ -20,7 +21,8 @@ import type { CompactionReason, CompactionResult, ToolDiagnostic } from "./types
 type SlotProgress = {
 	callId: string;
 	name: string;
-	status: "pending" | "running" | "done";
+	/** `sleeping` or `waiting` while the call is parked (spec suspendable §4.2); a parked slot holds no output. */
+	status: "pending" | "running" | "sleeping" | "waiting" | "done";
 	/** Retained running output and what the bounds dropped. */
 	output?: string;
 	droppedBytes?: number;
@@ -153,6 +155,12 @@ export type LiveRun = {
 	 * created: queued items stay queued until they are terminal, and the run then ends without a failure.
 	 */
 	afterRun?: { tasks?: TaskId[] };
+	/**
+	 * Present while tasks an `onYield` hook asked for decide whether the answer stands (spec suspendable §6): the
+	 * answer's entry, which the tasks read, and the tasks. The inputs stay open; every exit but a continuation settles
+	 * them `done` with this answer.
+	 */
+	yield?: { answer: EntryId; tasks: TaskId[] };
 };
 
 /** Built-in live conversation state: run control and presentation of the current generation and tool round. */
@@ -388,11 +396,16 @@ export function removeNestedSlots(live: Draft<LiveState>, taskId: TaskId): void 
 
 /** Remove what a tool published while running; its result entry or a rerun replaces it. */
 export function clearProgress(slot: Draft<SlotProgress>): void {
+	clearOutput(slot);
+	delete slot.details;
+	delete slot.diagnostics;
+}
+
+/** Remove a slot's running output only: a parked call, and its next run, keep its details and diagnostics. */
+export function clearOutput(slot: Draft<SlotProgress>): void {
 	delete slot.output;
 	delete slot.droppedBytes;
 	delete slot.droppedLines;
-	delete slot.details;
-	delete slot.diagnostics;
 }
 
 /**
@@ -433,6 +446,9 @@ export async function settleSchedulerOutcome(
 	if (!RUN_TASK_KINDS.has(record.kind)) return;
 	const live = await tx.doc(LiveDoc, record.conversationId);
 	if (live.run?.taskId !== record.id) return;
+	// The run answered and waited for its `onYield` tasks: it ends with its answer, without a failure.
+	const answered = live.run.yield?.answer;
+	if (answered !== undefined) return endRun(tx, live, record.id, { status: "done", answer: answered });
 	// Cut off, the abort handler may have died converting the partial: the run ends without it.
 	if (!cutOff) await convertPartial(tx, live, record.conversationId);
 	endRun(

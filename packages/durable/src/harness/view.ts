@@ -1,13 +1,7 @@
-import {
-	type Context,
-	type JsonValue,
-	Watch,
-	type WatchCall,
-	type WatchEnd,
-	type WatchHandle,
-} from "@earendil-works/chord";
-import { withoutAbortSignal } from "@earendil-works/chord/context";
+import { type Context, withoutAbortSignal } from "@earendil-works/chord/context";
 import { applyImmutable, type NonEmptyPath, type Op, type Path } from "@earendil-works/chord/delta";
+import type { JsonValue } from "@earendil-works/chord/json";
+import { Watch, type WatchCall, type WatchEnd, type WatchHandle } from "@earendil-works/chord/watch";
 import { idFromNumber } from "../ids.ts";
 import {
 	closeEndOf,
@@ -145,13 +139,11 @@ function resolveWindow(window: ConversationWindow | undefined): WindowBounds {
  */
 export class ConversationViews {
 	readonly #session: SessionImpl;
-	readonly #storage: Storage;
 	readonly #mounts = new Map<ConversationId, Mount>();
 	#closed = false;
 
-	constructor(session: SessionImpl, storage: Storage) {
+	constructor(session: SessionImpl) {
 		this.#session = session;
-		this.#storage = storage;
 		VIEWS.set(session, this);
 		session.followCommits((publication, context) => {
 			for (const [id, mount] of this.#mounts)
@@ -236,9 +228,9 @@ export class ConversationViews {
 		context: Context,
 	): Promise<{ observer: O; detach: () => void }> {
 		const bounds = resolveWindow(window);
-		return this.#session.readOnLine(async () => {
-			const mount = this.#mounts.get(id) ?? (await this.#build(id, context));
-			const { entries, before } = await loadWindow(this.#storage, id, bounds, context);
+		return this.#session.readOnLine(async (storage) => {
+			const mount = this.#mounts.get(id) ?? (await this.#build(storage, id, context));
+			const { entries, before } = await loadWindow(storage, id, bounds, context);
 			const value = view(mount.conversation, entries, before, mount.docs);
 			let windowed: Windowed | undefined;
 			const detach = (): void => {
@@ -256,8 +248,9 @@ export class ConversationViews {
 		});
 	}
 
-	async #build(id: ConversationId, context: Context): Promise<Mount> {
-		const conversation = await this.#storage.conversation(id, context);
+	/** Hydrate a mount on the line, through the line's `storage`. */
+	async #build(storage: Storage, id: ConversationId, context: Context): Promise<Mount> {
+		const conversation = await storage.conversation(id, context);
 		if (conversation === undefined) throw new Error(`Conversation ${id} does not exist`);
 		const docs: Record<string, JsonObject> = {};
 		const incarnations = new Map<string, { id: DocumentId; version: number }>();

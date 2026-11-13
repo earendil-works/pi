@@ -1,12 +1,15 @@
-import { copyJson, type Draft } from "@earendil-works/chord";
+import type { Draft } from "@earendil-works/chord/delta";
+import { copyJson } from "@earendil-works/chord/json";
 import { defineDoc } from "../documents.ts";
 import { documentRetention, persistWithin } from "../session/session.ts";
 import type { ConversationId, ConversationRecord, Tx } from "../types.ts";
+import { wrapComposite } from "./parks.ts";
 import type {
 	Agent,
 	AgentChange,
 	AgentState,
 	CompactionPolicy,
+	CompactionSettings,
 	ConversationRetryPolicy,
 	Extension,
 	HarnessSettings,
@@ -163,6 +166,32 @@ function applyChange(state: Draft<AgentState>, change: AgentChange): void {
 		throw new RangeError(`maxTurns must be an integer 1 or more, got ${String(maxTurns)}`);
 	}
 	set("maxTurns", maxTurns);
+	const compaction = change.compaction;
+	set("compaction", compaction === undefined || compaction === null ? compaction : compactionSettings(compaction));
+}
+
+/** A stored copy of a conversation's compaction settings, without undefined fields. */
+function compactionSettings(settings: CompactionSettings): CompactionSettings {
+	const { modelOverrides, ...policy } = settings;
+	if (modelOverrides === undefined) return compactionFields(policy);
+	const overrides = Object.entries(modelOverrides).map(([key, override]) => [key, compactionFields(override)]);
+	return { ...compactionFields(policy), modelOverrides: Object.fromEntries(overrides) };
+}
+
+const TOKEN_FIELDS = ["reserveTokens", "keepRecentTokens", "backgroundTokens"] as const;
+
+/** The set fields of `policy`; throws a `RangeError` for a token count that is not an integer `0` or more. */
+function compactionFields(policy: Partial<CompactionPolicy>): Partial<CompactionPolicy> {
+	const fields: Partial<CompactionPolicy> = policy.enabled === undefined ? {} : { enabled: policy.enabled };
+	for (const key of TOKEN_FIELDS) {
+		const value = policy[key];
+		if (value === undefined) continue;
+		if (!(Number.isSafeInteger(value) && value >= 0)) {
+			throw new RangeError(`compaction.${key} must be an integer 0 or more, got ${String(value)}`);
+		}
+		fields[key] = value;
+	}
+	return fields;
 }
 
 function isList<T>(value: readonly T[] | object): value is readonly T[] {
@@ -248,7 +277,7 @@ export function resolveAgent<Tool extends ToolRegistration>(
 				applyWrap(
 					composed,
 					wrap.tool,
-					(tool) => wrap.wrap(tool),
+					(tool) => wrapComposite(tool, (base) => wrap.wrap(base)),
 					(tool) => tool.name,
 					wrapReport,
 				);
@@ -287,6 +316,7 @@ export function resolveAgent<Tool extends ToolRegistration>(
 		...(instructions === undefined ? {} : { instructions }),
 		...(state?.cwd === undefined ? {} : { cwd: state.cwd }),
 		...(state?.maxTurns === undefined ? {} : { maxTurns: state.maxTurns }),
+		...(state?.compaction === undefined ? {} : { compaction: state.compaction }),
 	};
 	return agent;
 }

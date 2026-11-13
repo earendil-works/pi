@@ -14,7 +14,6 @@ import {
 	type ModelReferenceRequest,
 	resolveCliModel,
 	resolveModelReference,
-	resolveModelScope,
 	resolveModelScopeWithDiagnostics,
 } from "../src/core/model-resolver.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
@@ -380,23 +379,6 @@ describe("resolveModelScopeWithDiagnostics", () => {
 		}
 	});
 
-	test("resolveModelScope preserves CLI warning output", async () => {
-		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-		try {
-			const registry = {
-				getAvailable: () => allModels,
-			} as unknown as Parameters<typeof resolveModelScope>[1];
-
-			const scopedModels = await resolveModelScope(["missing"], registry);
-
-			expect(scopedModels).toEqual([]);
-			expect(warn).toHaveBeenCalledOnce();
-			expect(warn.mock.calls[0][0]).toContain('Warning: No models match pattern "missing"');
-		} finally {
-			warn.mockRestore();
-		}
-	});
-
 	test("adds every provider for a pattern matching the same id on several providers, with a warning", async () => {
 		const registry = {
 			getAvailable: () => [
@@ -705,8 +687,8 @@ describe("default model selection", () => {
 	test("zai, minimax, cerebras, and ant-ling defaults track current models", () => {
 		expect(defaultModelPerProvider.zai).toBe("glm-5.3");
 		expect(defaultModelPerProvider["zai-coding-cn"]).toBe("glm-5.3");
-		expect(defaultModelPerProvider.minimax).toBe("MiniMax-M2.7");
-		expect(defaultModelPerProvider["minimax-cn"]).toBe("MiniMax-M2.7");
+		expect(defaultModelPerProvider.minimax).toBe("MiniMax-M3");
+		expect(defaultModelPerProvider["minimax-cn"]).toBe("MiniMax-M3");
 		expect(defaultModelPerProvider.cerebras).toBe("gpt-oss-120b");
 		expect(defaultModelPerProvider["ant-ling"]).toBe("Ring-2.6-1T");
 	});
@@ -727,7 +709,11 @@ describe("default model selection", () => {
 	});
 
 	test("ai-gateway default tracks current model", () => {
-		expect(defaultModelPerProvider["vercel-ai-gateway"]).toBe("zai/glm-5.1");
+		expect(defaultModelPerProvider["vercel-ai-gateway"]).toBe("zai/glm-5.3");
+	});
+
+	test("anthropic default tracks current model", () => {
+		expect(defaultModelPerProvider.anthropic).toBe("claude-opus-5-5");
 	});
 
 	test("xai default tracks current model", () => {
@@ -736,6 +722,7 @@ describe("default model selection", () => {
 
 	test("qwen token plan individual default tracks current model", () => {
 		expect(defaultModelPerProvider["qwen-token-plan-individual"]).toBe("qwen3.8-max");
+		expect(defaultModelPerProvider["qwen-token-plan-individual-cn"]).toBe("qwen3.8-max");
 	});
 
 	test("findInitialModel selects ai-gateway default when available", async () => {

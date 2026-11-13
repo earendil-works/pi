@@ -1,4 +1,5 @@
-import type { Context, Draft } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
+import type { Draft } from "@earendil-works/chord/delta";
 import type { AssistantMessage, Message, ModelThinkingLevel, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { calculateContextTokens, estimateMessageTokens } from "@earendil-works/pi-ai/utils/estimate";
 import { isRetryableAssistantError, retryDelayMs } from "@earendil-works/pi-ai/utils/retry";
@@ -32,6 +33,7 @@ import type {
 	CompactionPolicy,
 	CompactionReason,
 	CompactionResult,
+	CompactionSettings,
 	ContextView,
 	ConversationStreamOptions,
 	ModelRef,
@@ -124,7 +126,7 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 			const ref = agent.model;
 			const model = ref === undefined ? undefined : runtime.models.getModel(ref.provider, ref.modelId);
 			if (ref === undefined || model === undefined) return failNoModel(runtime, ref, context);
-			const policy = compactionPolicy(settings, ref);
+			const policy = compactionPolicy(settings, ref, agent.compaction);
 			const view = await runtime.context(conversationId, context);
 			const cut = selectCut(view, policy.keepRecentTokens);
 			if (cut === undefined) return complete(runtime, context);
@@ -263,15 +265,32 @@ export async function createCompaction(
 	return taskId;
 }
 
-/** The compaction policy for `model`: its `modelOverrides` entry over the harness-wide policy, field by field. */
-export function compactionPolicy(settings: Settings, model: ModelRef): CompactionPolicy {
-	const { modelOverrides, ...policy } = settings.compaction;
-	const override = modelOverrides?.[`${model.provider}/${model.modelId}`];
+/**
+ * The compaction policy for `model` in a conversation, field by field: the conversation's `modelOverrides` entry, the
+ * harness's, the conversation's own fields, then the harness-wide policy. A model-specific value beats a general one,
+ * and the conversation beats the harness at the same level. The exception: the conversation's own `enabled: false` also
+ * beats the harness's model override, since turning compaction off for a conversation does not depend on the model.
+ */
+export function compactionPolicy(
+	settings: Settings,
+	model: ModelRef,
+	conversation: CompactionSettings | undefined,
+): CompactionPolicy {
+	const key = `${model.provider}/${model.modelId}`;
+	const { modelOverrides, ...harness } = settings.compaction;
+	const conversationModel = conversation?.modelOverrides?.[key];
+	const layers: readonly (Partial<CompactionPolicy> | undefined)[] = [
+		conversationModel,
+		modelOverrides?.[key],
+		conversation,
+	];
+	const field = <K extends keyof CompactionPolicy>(name: K): CompactionPolicy[K] =>
+		layers.find((layer) => layer?.[name] !== undefined)?.[name] ?? harness[name];
 	return {
-		enabled: override?.enabled ?? policy.enabled,
-		reserveTokens: override?.reserveTokens ?? policy.reserveTokens,
-		keepRecentTokens: override?.keepRecentTokens ?? policy.keepRecentTokens,
-		backgroundTokens: override?.backgroundTokens ?? policy.backgroundTokens,
+		enabled: conversationModel?.enabled ?? (conversation?.enabled === false ? false : field("enabled")),
+		reserveTokens: field("reserveTokens"),
+		keepRecentTokens: field("keepRecentTokens"),
+		backgroundTokens: field("backgroundTokens"),
 	};
 }
 

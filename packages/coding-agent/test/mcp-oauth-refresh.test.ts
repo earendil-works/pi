@@ -2,13 +2,18 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type OAuthChallenge, OAuthIssuerMismatchError } from "@earendil-works/pi-mcp/oauth";
+import {
+	type McpOAuthServerStore,
+	type McpOAuthSettings,
+	McpSignInCancelledError,
+	type OAuthChallenge,
+	OAuthIssuerMismatchError,
+} from "@earendil-works/pi-mcp/oauth";
 import { afterEach, describe, expect, it } from "vitest";
 import { InMemoryAuthStorageBackend } from "../src/core/auth-storage.ts";
 import {
 	createMcpAuthProvider,
 	McpOAuthCredentialStore,
-	type McpOAuthSettings,
 	type McpSignInPrompt,
 	signInMcpServer,
 } from "../src/extensions/mcp/oauth.ts";
@@ -71,6 +76,45 @@ describe("MCP OAuth refresh", () => {
 		expect(server.log.filter((entry) => entry === "token refresh")).toHaveLength(1);
 		for (const { provider } of processes) expect(await provider.token()).toBe("access-2");
 		// The lock is released.
+		expect(readdirSync(lockDir)).toEqual([]);
+	});
+
+	it("cancels a sign-in that waits for another process's refresh", async () => {
+		const { server, lockDir, process } = await signedIn();
+		let release = () => {};
+		const held = process().store.withRefreshLock(
+			() =>
+				new Promise<void>((resolve) => {
+					release = resolve;
+				}),
+		);
+		// The sign-in's store, recording its wait for the lock.
+		const store = process().store;
+		let waiting: Promise<unknown> | undefined;
+		const recording: McpOAuthServerStore = {
+			...store,
+			withRefreshLock: (fn) => {
+				const run = store.withRefreshLock(fn);
+				waiting = run;
+				return run;
+			},
+		};
+		const controller = new AbortController();
+		const signIn = signInMcpServer({
+			serverUrl: server.url,
+			store: recording,
+			settings: {},
+			prompt: { showAuthorizationUrl: () => {}, promptForRedirectUrl: async () => undefined },
+			signal: controller.signal,
+		});
+		setTimeout(() => controller.abort(), 200);
+		await expect(signIn).rejects.toBeInstanceOf(McpSignInCancelledError);
+
+		release();
+		await held;
+		// The cancelled sign-in takes the lock once it is free and releases it without refreshing.
+		await waiting;
+		expect(server.log.filter((entry) => entry === "token refresh")).toHaveLength(0);
 		expect(readdirSync(lockDir)).toEqual([]);
 	});
 
@@ -164,6 +208,7 @@ describe("MCP OAuth sign-in", () => {
 describe("MCP OAuth client ID metadata documents", () => {
 	const cleanups: (() => Promise<void>)[] = [];
 	const cimd: McpOAuthSettings = { clientRegistration: "cimd" };
+	const dcr: McpOAuthSettings = { clientRegistration: "dcr" };
 
 	afterEach(async () => {
 		while (cleanups.length > 0) await cleanups.pop()?.();
@@ -183,16 +228,17 @@ describe("MCP OAuth client ID metadata documents", () => {
 		return { server, store, signIn };
 	}
 
-	it("registers dynamically by default, even when the server supports documents", async () => {
+	it("registers dynamically with dcr, even when the server supports documents", async () => {
 		const { server, signIn } = await startServer({ cimd: true, issParameter: true });
-		await signIn({});
+		await signIn(dcr);
 		expect(server.registrations).toHaveLength(1);
 		expect(server.authorizations[0].get("client_id")).toBe("client-1");
 	});
 
-	it("uses pi's document when authorization responses name their issuer", async () => {
+	// #11426
+	it("uses pi's document by default when authorization responses name their issuer", async () => {
 		const { server, store, signIn } = await startServer({ cimd: true, issParameter: true });
-		await signIn(cimd);
+		await signIn({});
 		const [authorization] = server.authorizations;
 		expect(authorization.get("client_id")).toBe("https://pi.dev/oauth/client.json");
 		const redirect = new URL(authorization.get("redirect_uri") ?? "");
@@ -203,10 +249,37 @@ describe("MCP OAuth client ID metadata documents", () => {
 		expect(server.tokenRequests[0].get("redirect_uri")).toBe(redirect.href);
 		// The document is not stored, so signing in again refreshes the tokens instead of discarding them.
 		expect((await store.load())?.clientInformation).toBeUndefined();
-		await signIn(cimd);
+		await signIn({});
 		expect(server.authorizations).toHaveLength(1);
 		expect(server.tokenRequests[1].get("grant_type")).toBe("refresh_token");
 		expect(server.tokenRequests[1].get("client_id")).toBe("https://pi.dev/oauth/client.json");
+	});
+
+	// #11426
+	it("registers dynamically by default when the server does not support documents", async () => {
+		const { server, signIn } = await startServer({ issParameter: true });
+		await signIn({});
+		expect(server.registrations).toHaveLength(1);
+		expect(server.authorizations[0].get("client_id")).toBe("client-1");
+	});
+
+	// #11426
+	it("registers dynamically by default with a client name", async () => {
+		const { server, signIn } = await startServer({ cimd: true, issParameter: true });
+		await signIn({ clientName: "Claude Code" });
+		expect(server.registrations).toMatchObject([{ client_name: "Claude Code" }]);
+	});
+
+	// #11426
+	it("keeps a registered client by default", async () => {
+		const { server, store, signIn } = await startServer({ cimd: true, issParameter: true });
+		await signIn(dcr);
+		await signIn({});
+		// The registered client's tokens are refreshed instead of signing in with the document.
+		expect(server.authorizations).toHaveLength(1);
+		expect(server.tokenRequests[1].get("grant_type")).toBe("refresh_token");
+		expect(server.tokenRequests[1].get("client_id")).toBe("client-1");
+		expect((await store.load())?.clientInformation?.client_id).toBe("client-1");
 	});
 
 	it("uses a document and callback path specific to the MCP server without the iss parameter", async () => {
@@ -224,7 +297,7 @@ describe("MCP OAuth client ID metadata documents", () => {
 
 	it("replaces a registered client when switching to the document", async () => {
 		const { server, store, signIn } = await startServer({ cimd: true, issParameter: true });
-		await signIn({});
+		await signIn(dcr);
 		expect((await store.load())?.clientInformation?.client_id).toBe("client-1");
 		await signIn(cimd);
 		// The registered client's tokens are not refreshed with another client.

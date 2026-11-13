@@ -2,24 +2,39 @@
 
 /**
  * Validates lockstep versions for published packages, then synchronizes
- * exact internal dependency versions in all workspace packages, including private ones.
+ * exact internal dependency versions in all workspace packages, including private ones,
+ * and in the apps next to the packages directory (`apps/*`, never published).
+ * Only dependencies on published packages are rewritten: private packages, such as the
+ * fixtures in Chord's examples, are referenced by path or git URL and must stay that way.
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { findPackageDirectories } from "./package-workspaces.mjs";
+import { getPublicWorkspacePackages } from "./release-packages.mjs";
 
 const GENERATED_PACKAGE_SUFFIXES = [join("coding-agent", "install-lock")];
 
-const packageRoot = process.argv[2] ?? "packages";
-const workspacePackages = findPackageDirectories(packageRoot)
-	.filter((directory) => !GENERATED_PACKAGE_SUFFIXES.some((suffix) => directory.endsWith(suffix)))
-	.map((directory) => {
+function readManifests(directories) {
+	return directories.map((directory) => {
 		const path = join(directory, "package.json");
 		return { data: JSON.parse(readFileSync(path, "utf8")), path };
 	});
-const publishedPackages = workspacePackages.filter((pkg) => pkg.data.private !== true);
-const versionMap = new Map(workspacePackages.map((pkg) => [pkg.data.name, pkg.data.version]));
+}
+
+const packageRoot = process.argv[2] ?? "packages";
+const workspacePackages = readManifests(
+	findPackageDirectories(packageRoot).filter(
+		(directory) => !GENERATED_PACKAGE_SUFFIXES.some((suffix) => directory.endsWith(suffix)),
+	),
+);
+// Apps pin the workspace packages exactly too; stale pins would make npm install them from the registry.
+const appRoot = join(dirname(packageRoot), "apps");
+const appPackages = existsSync(appRoot) ? readManifests(findPackageDirectories(appRoot)) : [];
+// Not a filter over workspacePackages: that walk also finds leftover build output, such as
+// packages/coding-agent/binaries/<platform>, which holds non-private copies of a package's manifest.
+const publishedPackages = readManifests(getPublicWorkspacePackages(packageRoot).map(({ directory }) => directory));
+const versionMap = new Map(publishedPackages.map((pkg) => [pkg.data.name, pkg.data.version]));
 
 console.log("Current versions:");
 for (const pkg of [...publishedPackages].sort((a, b) => a.data.name.localeCompare(b.data.name))) {
@@ -40,7 +55,7 @@ console.log("\nAll non-private packages are at the same version (lockstep).");
 
 let totalUpdates = 0;
 const updatedPackages = new Set();
-for (const pkg of workspacePackages) {
+for (const pkg of [...workspacePackages, ...appPackages]) {
 	for (const dependencyType of ["dependencies", "devDependencies", "optionalDependencies"]) {
 		const dependencies = pkg.data[dependencyType];
 		if (!dependencies) {

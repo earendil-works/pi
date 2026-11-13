@@ -1,20 +1,21 @@
 /** Immutable, credential-blind models.json snapshot. */
 
 import { readFile } from "node:fs/promises";
-import { ProviderCompatSchema } from "@earendil-works/pi-ai/providers/compat-schema";
-import {
-	ModelCostSchema,
-	ModelInputLimitsSchema,
-	ModelInputModalitySchema,
-	ModelPromptCacheSchema,
-	ThinkingLevelMapSchema,
-} from "@earendil-works/pi-ai/providers/model-schema";
 import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
 import type { TLocalizedValidationError } from "typebox/error";
 import { stripJsonComments } from "../utils/json.ts";
 import { normalizePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
+import {
+	ModelCostSchema,
+	ModelInputLimitsSchema,
+	ModelInputModalitySchema,
+	ModelPromptCacheSchema,
+	PartialModelCostSchema,
+	ProviderCompatSchema,
+	ThinkingLevelMapSchema,
+} from "./pi-ai-schemas.ts";
 
 const SamplingParamsSchema = Type.Record(Type.String(), Type.Unknown());
 const SamplingParamsByThinkingLevelSchema = Type.Object(
@@ -74,7 +75,7 @@ const ModelOverrideSchema = Type.Object({
 	thinkingLevelMap: Type.Optional(ThinkingLevelMapSchema),
 	input: Type.Optional(Type.Array(ModelInputModalitySchema)),
 	inputLimits: Type.Optional(ModelInputLimitsSchema),
-	cost: Type.Optional(Type.Partial(ModelCostSchema)),
+	cost: Type.Optional(PartialModelCostSchema),
 	promptCache: Type.Optional(ModelPromptCacheSchema),
 	contextWindow: Type.Optional(
 		Type.Number({ exclusiveMinimum: 0, description: ModelFieldDescriptions.contextWindow }),

@@ -1,16 +1,19 @@
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import type { Context, JsonValue } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { JsonValue } from "@earendil-works/chord/json";
 import { registerStorageConformance } from "@earendil-works/pi-durable/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import { err, FileError, type FileSystem, type Result } from "../src/env/index.ts";
 import { NodeExecutionEnv } from "../src/env/node.ts";
 import { idFromNumber } from "../src/ids.ts";
-import { JsonlStorage } from "../src/storage/jsonl/index.ts";
+import { JsonlStorage, type JsonlStorageOptions, JsonlStorageReadOnlyError } from "../src/storage/jsonl/index.ts";
 import { openNodeJsonlStorage } from "../src/storage/jsonl/node.ts";
+import { commitWrites } from "../src/testing/commit-writes.ts";
 import type {
+	CommitResult,
 	ConversationId,
 	DocumentCreate,
 	DocumentId,
@@ -23,9 +26,6 @@ import type {
 	TaskRecord,
 } from "../src/types.ts";
 import { ROOT_CONVERSATION_ID } from "../src/types.ts";
-
-/** Storage-level commits here have no in-memory owner to adopt them. */
-const adopt = (): void => {};
 
 const context = BACKGROUND_CONTEXT;
 type StoredTask = TaskRecord<JsonValue, JsonValue, JsonValue>;
@@ -48,7 +48,7 @@ async function tempDirectory(prefix = "pi-durable-jsonl-"): Promise<string> {
 async function openStorage(
 	directory: string,
 	fs: FileSystem = new NodeExecutionEnv({ cwd: directory }),
-	options: { readonly fsync?: boolean } = {},
+	options: JsonlStorageOptions = {},
 ): Promise<JsonlStorage> {
 	const storage = await JsonlStorage.open(directory, fs, context, options);
 	openStorages.add(storage);
@@ -69,10 +69,14 @@ class ReopeningStorage implements Storage {
 		this.directory = directory;
 	}
 
-	async commit(writes: readonly StorageWrite[], adopt: (seq: Seq) => void, commitContext: Context): Promise<Seq> {
-		if (this.closed) return this.current.commit(writes, adopt, commitContext);
+	async commit(
+		batches: readonly (readonly StorageWrite[])[],
+		receive: (index: number, seq: Seq) => void,
+		commitContext: Context,
+	): Promise<CommitResult> {
+		if (this.closed) return this.current.commit(batches, receive, commitContext);
 		try {
-			return await this.current.commit(writes, adopt, commitContext);
+			return await this.current.commit(batches, receive, commitContext);
 		} finally {
 			await this.current.close(context);
 			this.current = await JsonlStorage.open(this.directory, new NodeExecutionEnv({ cwd: this.directory }), context);
@@ -163,7 +167,7 @@ function terminalTask(id: TaskId<JsonValue>): StoredTask {
 }
 
 async function createRoot(storage: Storage): Promise<void> {
-	await storage.commit([{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], adopt, context);
+	await commitWrites(storage, [{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], context);
 }
 
 function sessionDocument(id: DocumentId, kind = "test.document"): DocumentCreate {
@@ -308,6 +312,15 @@ async function readLines(path: string): Promise<string[]> {
 	return text === "" ? [] : text.trimEnd().split("\n");
 }
 
+/** Every file of `directory` with its bytes, to show an open wrote nothing. */
+async function directoryBytes(directory: string): Promise<Record<string, string>> {
+	const files: Record<string, string> = {};
+	for (const name of (await readdir(directory)).sort()) {
+		files[name] = (await readFile(join(directory, name))).toString("base64");
+	}
+	return files;
+}
+
 async function fileExists(path: string): Promise<boolean> {
 	try {
 		await stat(path);
@@ -332,8 +345,9 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		await createRoot(storage);
 		const taskId = await storage.mintId<TaskId<JsonValue>>();
 		const documentId = await storage.mintId<DocumentId>();
-		await storage.commit([{ type: "task", value: pendingTask(taskId) }], adopt, context);
-		await storage.commit(
+		await commitWrites(storage, [{ type: "task", value: pendingTask(taskId) }], context);
+		await commitWrites(
+			storage,
 			[
 				{
 					type: "document.create",
@@ -341,15 +355,15 @@ describe("Pico JsonlStorage publication and recovery", () => {
 					content: { kind: "base", version: 1, value: { count: 0 } },
 				},
 			],
-			adopt,
 			context,
 		);
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[{ type: "document.change", id: documentId, content: { kind: "delta", version: 1, ops: [] } }],
-			adopt,
 			context,
 		);
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[
 				{
 					type: "document.change",
@@ -357,14 +371,13 @@ describe("Pico JsonlStorage publication and recovery", () => {
 					content: { kind: "base", version: 1, value: { count: 1 } },
 				},
 			],
-			adopt,
 			context,
 		);
 		expect(await readLines(join(directory, `task-${taskId}.jsonl`))).toHaveLength(1);
 		expect(await readLines(join(directory, `doc-${documentId}.jsonl`))).toHaveLength(1);
 
-		await storage.commit([{ type: "document.retire", id: documentId }], adopt, context);
-		await storage.commit([{ type: "task", value: terminalTask(taskId) }], adopt, context);
+		await commitWrites(storage, [{ type: "document.retire", id: documentId }], context);
+		await commitWrites(storage, [{ type: "task", value: terminalTask(taskId) }], context);
 
 		expect(await readLines(join(directory, "main.jsonl"))).toHaveLength(7);
 		expect(await fileExists(join(directory, `task-${taskId}.jsonl`))).toBe(false);
@@ -380,12 +393,12 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		const storage = await openStorage(directory);
 		await createRoot(storage);
 		const taskId = await storage.mintId<TaskId<JsonValue>>();
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[
 				{ type: "task", value: pendingTask(taskId, "first") },
 				{ type: "task", value: pendingTask(taskId, "second") },
 			],
-			adopt,
 			context,
 		);
 		expect(await readLines(join(directory, `task-${taskId}.jsonl`))).toHaveLength(2);
@@ -402,12 +415,12 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		const taskId = await storage.mintId<TaskId<JsonValue>>();
 		env.fail({ operation: "append", call: 1, mode: "short" });
 		await expect(
-			storage.commit(
+			commitWrites(
+				storage,
 				[
 					{ type: "task", value: pendingTask(taskId, "first") },
 					{ type: "task", value: pendingTask(taskId, `second-${"x".repeat(512)}`) },
 				],
-				adopt,
 				context,
 			),
 		).rejects.toThrow("poisoned");
@@ -420,6 +433,46 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		expect((await stat(join(directory, `task-${taskId}.jsonl`))).size).toBe(0);
 	});
 
+	it("poisons the storage when an append fails after its batches applied, before a waiting read goes on (review)", async () => {
+		const directory = await tempDirectory();
+		const gate = Promise.withResolvers<void>();
+		class FailingJoin extends NodeExecutionEnv {
+			fail = false;
+			override async joinPath(parts: string[], callContext: Context): Promise<Result<string, FileError>> {
+				if (!this.fail) return super.joinPath(parts, callContext);
+				await gate.promise;
+				return err(new FileError("unknown", "injected path resolution failure"));
+			}
+		}
+		const fs = new FailingJoin({ cwd: directory });
+		const storage = await JsonlStorage.open(directory, fs, context);
+		fs.fail = true;
+		const conversationId = idFromNumber<ConversationId>(100);
+		const committing = storage.commit(
+			[
+				[{ type: "conversation", value: { id: conversationId } }],
+				[
+					{
+						type: "document.create",
+						record: { id: idFromNumber<DocumentId>(101), kind: "state", scope: { kind: "session" } },
+						content: { kind: "base", version: 1, value: {} },
+					},
+				],
+			],
+			() => {},
+			context,
+		);
+		// Started while the batches are in memory and the append waits.
+		const read = storage.conversation(conversationId, context);
+		gate.resolve();
+		await expect(committing).rejects.toThrow("poisoned");
+		await expect(read).rejects.toThrow("poisoned");
+		await storage.close(context);
+		const reopened = await openStorage(directory);
+		expect(await reopened.conversation(conversationId, context)).toBeUndefined();
+		await reopened.close(context);
+	});
+
 	it("serializes the complete candidate before I/O and leaves preparation failures usable", async () => {
 		const directory = await tempDirectory();
 		const env = new InstrumentedEnv({ cwd: directory });
@@ -428,7 +481,8 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		env.clear();
 		const id = await storage.mintId<EntryId>();
 		await expect(
-			storage.commit(
+			commitWrites(
+				storage,
 				[
 					{
 						type: "entry",
@@ -440,16 +494,15 @@ describe("Pico JsonlStorage publication and recovery", () => {
 						},
 					},
 				],
-				adopt,
 				context,
 			),
 		).rejects.toThrow();
 		expect(env.operations).toEqual([]);
 		expect(await storage.entry(id, context)).toBeUndefined();
 		expect(
-			await storage.commit(
+			await commitWrites(
+				storage,
 				[{ type: "entry", value: { id, conversationId: ROOT_CONVERSATION_ID, kind: "good" } }],
-				adopt,
 				context,
 			),
 		).toBe(2);
@@ -474,7 +527,8 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			const secondId = await storage.mintId<DocumentId>();
 			env.fail(failure);
 			await expect(
-				storage.commit(
+				commitWrites(
+					storage,
 					[
 						{
 							type: "document.create",
@@ -487,7 +541,6 @@ describe("Pico JsonlStorage publication and recovery", () => {
 							content: { kind: "base", version: 1, value: { text: "β" } },
 						},
 					],
-					adopt,
 					context,
 				),
 			).rejects.toThrow("poisoned");
@@ -519,7 +572,8 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			const secondId = await storage.mintId<DocumentId>();
 			env.fail(failure);
 			await expect(
-				storage.commit(
+				commitWrites(
+					storage,
 					[
 						{
 							type: "document.create",
@@ -532,7 +586,6 @@ describe("Pico JsonlStorage publication and recovery", () => {
 							content: { kind: "base", version: 1, value: {} },
 						},
 					],
-					adopt,
 					context,
 				),
 			).rejects.toThrow("poisoned");
@@ -551,7 +604,8 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			const firstId = await storage.mintId<DocumentId>();
 			const secondId = await storage.mintId<DocumentId>();
 			env.clear();
-			await storage.commit(
+			await commitWrites(
+				storage,
 				[
 					{
 						type: "document.create",
@@ -564,7 +618,6 @@ describe("Pico JsonlStorage publication and recovery", () => {
 						content: { kind: "base", version: 1, value: {} },
 					},
 				],
-				adopt,
 				context,
 			);
 			const expected = [
@@ -576,7 +629,8 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			expect(env.operations).toEqual(expected);
 
 			env.clear();
-			await storage.commit(
+			await commitWrites(
+				storage,
 				[
 					{
 						type: "document.change",
@@ -584,7 +638,6 @@ describe("Pico JsonlStorage publication and recovery", () => {
 						content: { kind: "base", version: 1, value: { checkpoint: true } },
 					},
 				],
-				adopt,
 				context,
 			);
 			expect(env.operations).toEqual([
@@ -598,7 +651,8 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			]);
 
 			env.clear();
-			await storage.commit(
+			await commitWrites(
+				storage,
 				[
 					{
 						type: "entry",
@@ -609,15 +663,14 @@ describe("Pico JsonlStorage publication and recovery", () => {
 						},
 					},
 				],
-				adopt,
 				context,
 			);
 			expect(env.operations).toEqual(["append:main.jsonl"]);
 
 			const taskId = await storage.mintId<TaskId<JsonValue>>();
-			await storage.commit([{ type: "task", value: pendingTask(taskId) }], adopt, context);
+			await commitWrites(storage, [{ type: "task", value: pendingTask(taskId) }], context);
 			env.clear();
-			await storage.commit([{ type: "task", value: terminalTask(taskId) }], adopt, context);
+			await commitWrites(storage, [{ type: "task", value: terminalTask(taskId) }], context);
 			expect(env.operations).toEqual([
 				"append:main.jsonl",
 				...(fsync ? ["flush:main.jsonl"] : []),
@@ -639,7 +692,8 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			const storage = await openStorage(directory, env);
 			await createRoot(storage);
 			const id = await storage.mintId<DocumentId>();
-			await storage.commit(
+			await commitWrites(
+				storage,
 				[
 					{
 						type: "document.create",
@@ -647,10 +701,10 @@ describe("Pico JsonlStorage publication and recovery", () => {
 						content: { kind: "base", version: 1, value: { count: 0 } },
 					},
 				],
-				adopt,
 				context,
 			);
-			await storage.commit(
+			await commitWrites(
+				storage,
 				[
 					{
 						type: "document.change",
@@ -658,13 +712,13 @@ describe("Pico JsonlStorage publication and recovery", () => {
 						content: { kind: "delta", version: 1, ops: [["s", ["count"], 1]] },
 					},
 				],
-				adopt,
 				context,
 			);
 
 			env.fail(failure);
 			await expect(
-				storage.commit(
+				commitWrites(
+					storage,
 					[
 						{
 							type: "document.change",
@@ -672,7 +726,6 @@ describe("Pico JsonlStorage publication and recovery", () => {
 							content: { kind: "base", version: 1, value: { count: 2 } },
 						},
 					],
-					adopt,
 					context,
 				),
 			).resolves.toBe(4);
@@ -694,7 +747,8 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			await createRoot(storage);
 			const taskId = await storage.mintId<TaskId<JsonValue>>();
 			const id = await storage.mintId<DocumentId>();
-			await storage.commit(
+			await commitWrites(
+				storage,
 				[
 					{ type: "task", value: pendingTask(taskId) },
 					{
@@ -703,11 +757,10 @@ describe("Pico JsonlStorage publication and recovery", () => {
 						content: { kind: "base", version: 1, value: { count: 1 } },
 					},
 				],
-				adopt,
 				context,
 			);
 			env.fail({ operation: "remove", call: 1, mode });
-			await expect(storage.commit([{ type: "document.retire", id }], adopt, context)).resolves.toBe(3);
+			await expect(commitWrites(storage, [{ type: "document.retire", id }], context)).resolves.toBe(3);
 			expect(await storage.document(id, "current", context)).toBeUndefined();
 			await storage.close(context);
 
@@ -726,7 +779,8 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			const storage = await openStorage(directory, env, { fsync: true });
 			await createRoot(storage);
 			const id = await storage.mintId<DocumentId>();
-			await storage.commit(
+			await commitWrites(
+				storage,
 				[
 					{
 						type: "document.create",
@@ -734,12 +788,12 @@ describe("Pico JsonlStorage publication and recovery", () => {
 						content: { kind: "base", version: 1, value: { count: 0 } },
 					},
 				],
-				adopt,
 				context,
 			);
 			env.fail({ operation: "flush", call: 2, mode });
 			await expect(
-				storage.commit(
+				commitWrites(
+					storage,
 					[
 						{
 							type: "document.change",
@@ -747,7 +801,6 @@ describe("Pico JsonlStorage publication and recovery", () => {
 							content: { kind: "base", version: 1, value: { count: 2 } },
 						},
 					],
-					adopt,
 					context,
 				),
 			).resolves.toBe(3);
@@ -782,7 +835,8 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			const storage = await openStorage(directory, env, { fsync: true });
 			await createRoot(storage);
 			const id = await storage.mintId<DocumentId>();
-			await storage.commit(
+			await commitWrites(
+				storage,
 				[
 					{
 						type: "document.create",
@@ -790,12 +844,12 @@ describe("Pico JsonlStorage publication and recovery", () => {
 						content: { kind: "base", version: 1, value: { count: 0 } },
 					},
 				],
-				adopt,
 				context,
 			);
 			env.fail({ operation: "flush", call: 3, mode });
 			await expect(
-				storage.commit(
+				commitWrites(
+					storage,
 					[
 						{
 							type: "document.change",
@@ -803,12 +857,12 @@ describe("Pico JsonlStorage publication and recovery", () => {
 							content: { kind: "base", version: 1, value: { count: 2 } },
 						},
 					],
-					adopt,
 					context,
 				),
 			).resolves.toBe(3);
 			env.clear();
-			await storage.commit(
+			await commitWrites(
+				storage,
 				[
 					{
 						type: "document.change",
@@ -816,7 +870,6 @@ describe("Pico JsonlStorage publication and recovery", () => {
 						content: { kind: "delta", version: 1, ops: [["s", ["count"], 3]] },
 					},
 				],
-				adopt,
 				context,
 			);
 			await storage.close(context);
@@ -834,9 +887,9 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			const storage = await openStorage(directory, env);
 			await createRoot(storage);
 			const id = await storage.mintId<TaskId<JsonValue>>();
-			await storage.commit([{ type: "task", value: pendingTask(id) }], adopt, context);
+			await commitWrites(storage, [{ type: "task", value: pendingTask(id) }], context);
 			env.fail({ operation: "remove", call: 1, mode });
-			await expect(storage.commit([{ type: "task", value: terminalTask(id) }], adopt, context)).resolves.toBe(3);
+			await expect(commitWrites(storage, [{ type: "task", value: terminalTask(id) }], context)).resolves.toBe(3);
 			expect(await storage.task(id, context)).toEqual(terminalTask(id));
 			await storage.close(context);
 
@@ -852,7 +905,8 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		const storage = await openStorage(directory);
 		await createRoot(storage);
 		const id = await storage.mintId<DocumentId>();
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[
 				{
 					type: "document.create",
@@ -860,10 +914,10 @@ describe("Pico JsonlStorage publication and recovery", () => {
 					content: { kind: "base", version: 1, value: { count: 0 } },
 				},
 			],
-			adopt,
 			context,
 		);
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[
 				{
 					type: "document.change",
@@ -871,10 +925,10 @@ describe("Pico JsonlStorage publication and recovery", () => {
 					content: { kind: "base", version: 1, value: { count: 10 } },
 				},
 			],
-			adopt,
 			context,
 		);
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[
 				{
 					type: "document.change",
@@ -882,7 +936,6 @@ describe("Pico JsonlStorage publication and recovery", () => {
 					content: { kind: "delta", version: 1, ops: [["s", ["count"], 11]] },
 				},
 			],
-			adopt,
 			context,
 		);
 		expect(await readLines(join(directory, `doc-${id}.jsonl`))).toHaveLength(2);
@@ -902,12 +955,13 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			history: "rewindable" as const,
 			fork: "asOf" as const,
 		};
-		const createdAt = await storage.commit(
+		const createdAt = await commitWrites(
+			storage,
 			[{ type: "document.create", record, content: { kind: "base", version: 1, value: { count: 0 } } }],
-			adopt,
 			context,
 		);
-		const changedAt = await storage.commit(
+		const changedAt = await commitWrites(
+			storage,
 			[
 				{
 					type: "document.change",
@@ -915,10 +969,10 @@ describe("Pico JsonlStorage publication and recovery", () => {
 					content: { kind: "delta", version: 1, ops: [["s", ["count"], 1]] },
 				},
 			],
-			adopt,
 			context,
 		);
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[
 				{
 					type: "document.change",
@@ -926,10 +980,9 @@ describe("Pico JsonlStorage publication and recovery", () => {
 					content: { kind: "base", version: 1, value: { count: 2 } },
 				},
 			],
-			adopt,
 			context,
 		);
-		await storage.commit([{ type: "document.retire", id }], adopt, context);
+		await commitWrites(storage, [{ type: "document.retire", id }], context);
 
 		expect(await readLines(join(directory, `doc-${id}.jsonl`))).toHaveLength(3);
 		const reopened = await openStorage(directory);
@@ -947,7 +1000,8 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		const sessionId = await storage.mintId<DocumentId>();
 		const latestId = await storage.mintId<DocumentId>();
 		const taskDocumentId = await storage.mintId<DocumentId>();
-		const createdAt = await storage.commit(
+		const createdAt = await commitWrites(
+			storage,
 			[
 				{ type: "task", value: pendingTask(taskId) },
 				{
@@ -972,17 +1026,16 @@ describe("Pico JsonlStorage publication and recovery", () => {
 					content: { kind: "base", version: 1, value: {} },
 				},
 			],
-			adopt,
 			context,
 		);
-		const retiredAt = await storage.commit(
+		const retiredAt = await commitWrites(
+			storage,
 			[
 				{ type: "document.retire", id: sessionId },
 				{ type: "document.retire", id: latestId },
 				{ type: "document.retire", id: taskDocumentId },
 				{ type: "task", value: terminalTask(taskId) },
 			],
-			adopt,
 			context,
 		);
 		for (const file of [
@@ -1012,7 +1065,8 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		const storage = await openStorage(directory);
 		await createRoot(storage);
 		const documentId = await storage.mintId<DocumentId>();
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[
 				{
 					type: "document.create",
@@ -1020,7 +1074,6 @@ describe("Pico JsonlStorage publication and recovery", () => {
 					content: { kind: "base", version: 1, value: { text: "kept" } },
 				},
 			],
-			adopt,
 			context,
 		);
 		const sidecarPath = join(directory, `doc-${documentId}.jsonl`);
@@ -1035,9 +1088,9 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		expect((await stat(sidecarPath)).size).toBe(sidecarSize);
 		expect((await stat(mainPath)).size).toBe(mainSize);
 		expect(
-			await reopened.commit(
+			await commitWrites(
+				reopened,
 				[{ type: "document.change", id: documentId, content: { kind: "delta", version: 1, ops: [] } }],
-				adopt,
 				context,
 			),
 		).toBe(3);
@@ -1048,8 +1101,8 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		const storage = await openStorage(directory);
 		await createRoot(storage);
 		const taskId = await storage.mintId<TaskId<JsonValue>>();
-		await storage.commit([{ type: "task", value: pendingTask(taskId) }], adopt, context);
-		await storage.commit([{ type: "task", value: terminalTask(taskId) }], adopt, context);
+		await commitWrites(storage, [{ type: "task", value: pendingTask(taskId) }], context);
+		await commitWrites(storage, [{ type: "task", value: terminalTask(taskId) }], context);
 		const sidecarPath = join(directory, `task-${taskId}.jsonl`);
 		expect(await fileExists(sidecarPath)).toBe(false);
 		await writeFile(
@@ -1067,7 +1120,8 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		const reopened = await openStorage(directory);
 		expect(await fileExists(sidecarPath)).toBe(false);
 		expect(await reopened.task(taskId, context)).toEqual(terminalTask(taskId));
-		expect(await reopened.commit([], adopt, context)).toBe(4);
+		const next = await reopened.mintId<ConversationId>();
+		expect(await commitWrites(reopened, [{ type: "conversation", value: { id: next } }], context)).toBe(4);
 	});
 
 	it("fails open when confirmed sidecar data is missing", async () => {
@@ -1075,7 +1129,8 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		const storage = await openStorage(directory);
 		await createRoot(storage);
 		const documentId = await storage.mintId<DocumentId>();
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[
 				{
 					type: "document.create",
@@ -1083,7 +1138,6 @@ describe("Pico JsonlStorage publication and recovery", () => {
 					content: { kind: "base", version: 1, value: {} },
 				},
 			],
-			adopt,
 			context,
 		);
 		await writeFile(join(directory, `doc-${documentId}.jsonl`), "");
@@ -1097,7 +1151,8 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		const storage = await openStorage(directory);
 		await createRoot(storage);
 		const documentId = await storage.mintId<DocumentId>();
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[
 				{
 					type: "document.create",
@@ -1105,10 +1160,10 @@ describe("Pico JsonlStorage publication and recovery", () => {
 					content: { kind: "base", version: 1, value: { count: 0 } },
 				},
 			],
-			adopt,
 			context,
 		);
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[
 				{
 					type: "document.change",
@@ -1116,7 +1171,6 @@ describe("Pico JsonlStorage publication and recovery", () => {
 					content: { kind: "delta", version: 1, ops: [["s", ["count"], 1]] },
 				},
 			],
-			adopt,
 			context,
 		);
 		const path = join(directory, `doc-${documentId}.jsonl`);
@@ -1151,7 +1205,8 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		const storage = await openStorage(directory);
 		await createRoot(storage);
 		const documentId = await storage.mintId<DocumentId>();
-		await storage.commit(
+		await commitWrites(
+			storage,
 			[
 				{
 					type: "document.create",
@@ -1159,7 +1214,6 @@ describe("Pico JsonlStorage publication and recovery", () => {
 					content: { kind: "base", version: 1, value: {} },
 				},
 			],
-			adopt,
 			context,
 		);
 		const path = join(directory, `doc-${documentId}.jsonl`);
@@ -1192,3 +1246,184 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		).rejects.toThrow("Malformed complete doc-99.jsonl");
 	});
 });
+
+describe("JsonlStorage batches", () => {
+	it("appends a batch's markers in one write and recovers a shorter prefix from a torn one", async () => {
+		const directory = await tempDirectory();
+		const storage = await openStorage(directory);
+		await createRoot(storage);
+		const documentId = await storage.mintId<DocumentId>();
+		await commitWrites(
+			storage,
+			[
+				{
+					type: "document.create",
+					record: sessionDocument(documentId),
+					content: { kind: "base", version: 1, value: { n: 0 } },
+				},
+			],
+			context,
+		);
+		const mainPath = join(directory, "main.jsonl");
+		const before = (await readFile(mainPath, "utf8")).length;
+		const entries = [
+			await storage.mintId<EntryId>(),
+			await storage.mintId<EntryId>(),
+			await storage.mintId<EntryId>(),
+		];
+		const batches: StorageWrite[][] = entries.map((id, index) => [
+			{ type: "entry", value: { id, conversationId: ROOT_CONVERSATION_ID, kind: "note" } },
+			{
+				type: "document.change",
+				id: documentId,
+				content: { kind: "delta", version: 1, ops: [["s", ["n"], index + 1]] },
+			},
+		]);
+		// Reads wait for the append: a read started while it runs sees every batch durable.
+		const result = storage.commit(batches, () => {}, context);
+		const read = storage.entry(entries[2]!, context);
+		expect(await result).toEqual({ stored: 3 });
+		expect(await read).toBeDefined();
+		const main = await readFile(mainPath, "utf8");
+		const markers = main
+			.slice(before)
+			.split("\n")
+			.filter((line) => line.length > 0);
+		expect(markers).toHaveLength(3);
+		await storage.close(context);
+		openStorages.delete(storage);
+
+		// Torn inside the last marker: the two complete ones survive, and the third's sidecar record is unconfirmed.
+		const tornAt = main.length - Math.floor(markers[2]!.length / 2);
+		await writeFile(mainPath, main.slice(0, tornAt));
+		const reopened = await openStorage(directory);
+		expect(await reopened.entry(entries[0]!, context)).toBeDefined();
+		expect(await reopened.entry(entries[1]!, context)).toBeDefined();
+		expect(await reopened.entry(entries[2]!, context)).toBeUndefined();
+		expect((await reopened.document(documentId, "current", context))?.value).toEqual({ n: 2 });
+		const seq = await commitWrites(
+			reopened,
+			[{ type: "document.change", id: documentId, content: { kind: "delta", version: 1, ops: [["s", ["n"], 9]] } }],
+			context,
+		);
+		expect(seq).toBe(5);
+		const again = await openStorage(directory);
+		expect((await again.document(documentId, "current", context))?.value).toEqual({ n: 9 });
+	});
+});
+
+// #11939: a viewer opens a directory another process drives without repairing or reclaiming anything.
+describe("JsonlStorage read-only open", () => {
+	it("skips torn lines, unconfirmed tails, and due reclamation in memory without writing", async () => {
+		const directory = await tempDirectory();
+		const env = new InstrumentedEnv({ cwd: directory });
+		const storage = await openStorage(directory, env);
+		await createRoot(storage);
+		const liveId = await storage.mintId<TaskId<JsonValue>>();
+		const endedId = await storage.mintId<TaskId<JsonValue>>();
+		await commitWrites(
+			storage,
+			[
+				{ type: "task", value: pendingTask(liveId) },
+				{ type: "task", value: pendingTask(endedId) },
+			],
+			context,
+		);
+		// The terminal task's sidecar stays behind: its reclamation is due at the next writable open.
+		env.fail({ operation: "remove", call: 1, mode: "before" });
+		await commitWrites(storage, [{ type: "task", value: terminalTask(endedId) }], context);
+		env.clear();
+		expect(await fileExists(join(directory, `task-${endedId}.jsonl`))).toBe(true);
+		const unconfirmed = JSON.stringify({
+			format: 1,
+			type: "record",
+			seq: 4,
+			ordinal: 0,
+			payload: { type: "task", value: pendingTask(liveId, "unconfirmed") },
+		});
+		await writeFile(join(directory, `task-${liveId}.jsonl`), `${unconfirmed}\n{"format":1`, { flag: "a" });
+		await writeFile(join(directory, "main.jsonl"), '{"format":1,"type":"commit"', { flag: "a" });
+		await writeFile(join(directory, `task-${liveId}.jsonl.reclaim`), "leftover");
+		const before = await directoryBytes(directory);
+
+		const viewer = await openStorage(directory, new NodeExecutionEnv({ cwd: directory }), { readOnly: true });
+		expect(await viewer.task(liveId, context)).toEqual(pendingTask(liveId));
+		expect(await viewer.task(endedId, context)).toEqual(terminalTask(endedId));
+		await expect(
+			commitWrites(viewer, [{ type: "task", value: pendingTask(liveId, "next") }], context),
+		).rejects.toBeInstanceOf(JsonlStorageReadOnlyError);
+		expect(await directoryBytes(directory)).toEqual(before);
+
+		// A writable open still repairs the same files.
+		await openStorage(directory);
+		expect(await directoryBytes(directory)).not.toEqual(before);
+		expect(await fileExists(join(directory, `task-${endedId}.jsonl`))).toBe(false);
+		expect(await fileExists(join(directory, `task-${liveId}.jsonl.reclaim`))).toBe(false);
+	});
+
+	it("keeps a torn-only main file", async () => {
+		const directory = await tempDirectory();
+		await writeFile(join(directory, "main.jsonl"), '{"format":1,"type":"commit"');
+		const viewer = await openStorage(directory, new NodeExecutionEnv({ cwd: directory }), { readOnly: true });
+		expect(await viewer.conversation(ROOT_CONVERSATION_ID, context)).toBeUndefined();
+		expect((await stat(join(directory, "main.jsonl"))).size).toBe(27);
+	});
+
+	it("creates no missing directory", async () => {
+		const directory = join(await tempDirectory(), "missing");
+		await expect(
+			JsonlStorage.open(directory, new NodeExecutionEnv({ cwd: directory }), context, { readOnly: true }),
+		).rejects.toThrow("directory listing");
+		expect(await fileExists(directory)).toBe(false);
+	});
+
+	it("retries a recovery that raced a writer's commit, and fails on corruption at once", async () => {
+		const directory = await tempDirectory();
+		const writer = await openStorage(directory);
+		await createRoot(writer);
+		const taskId = await writer.mintId<TaskId<JsonValue>>();
+		await commitWrites(writer, [{ type: "task", value: pendingTask(taskId) }], context);
+
+		// The writer ends the task between the viewer's read of main.jsonl and of the task's sidecar, so the sidecar the
+		// viewer's markers need is reclaimed when it reads it.
+		const env = new RacingEnv(directory, `task-${taskId}.jsonl`, () =>
+			commitWrites(writer, [{ type: "task", value: terminalTask(taskId) }], context),
+		);
+		const viewer = await openStorage(directory, env, { readOnly: true });
+		expect(await viewer.task(taskId, context)).toEqual(terminalTask(taskId));
+		expect(env.mainReads).toBe(2);
+
+		// Missing confirmed data while main.jsonl stays the same is corruption: no retry.
+		const brokenId = await writer.mintId<TaskId<JsonValue>>();
+		await commitWrites(writer, [{ type: "task", value: pendingTask(brokenId) }], context);
+		await writeFile(join(directory, `task-${brokenId}.jsonl`), "");
+		const counting = new RacingEnv(directory, "none", async () => {});
+		await expect(JsonlStorage.open(directory, counting, context, { readOnly: true })).rejects.toThrow(
+			"Missing confirmed sidecar record",
+		);
+		expect(counting.mainReads).toBe(1);
+	});
+});
+
+/** Runs `race` once, right before the first read of `file`, and counts reads of main.jsonl. */
+class RacingEnv extends NodeExecutionEnv {
+	mainReads = 0;
+	private readonly file: string;
+	private race: (() => Promise<unknown>) | undefined;
+
+	constructor(directory: string, file: string, race: () => Promise<unknown>) {
+		super({ cwd: directory });
+		this.file = file;
+		this.race = race;
+	}
+
+	override async readBinaryFile(path: string, readContext: Context): Promise<Result<Uint8Array, FileError>> {
+		if (basename(path) === "main.jsonl") this.mainReads++;
+		if (basename(path) === this.file && this.race !== undefined) {
+			const race = this.race;
+			this.race = undefined;
+			await race();
+		}
+		return super.readBinaryFile(path, readContext);
+	}
+}

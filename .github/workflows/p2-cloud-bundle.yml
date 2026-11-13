@@ -1,0 +1,73 @@
+# Builds p2's web UI for Radius Cloud Brain after CI passes on main (apps/p2/scripts/cloud-bundle.ts) and uploads it
+# to the R2 bucket pi-ui under the commit's full SHA, which Radius serves under /pi/ui/. Builds are immutable: a SHA
+# that has one is skipped. Never runs for PRs: the job holds R2 write credentials.
+
+name: p2 cloud bundle
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full commit SHA to build and upload
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    environment: pi-model-upload
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha || inputs.sha }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.PI_ARTIFACTS_R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.PI_ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      AWS_EC2_METADATA_DISABLED: 'true'
+      R2: --endpoint-url https://67c0d357268b0fca6e0b465bb9d01b84.r2.cloudflarestorage.com
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SHA }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # The web UI imports pi-ai, whose generated model data is not committed.
+      - name: Hydrate model data
+        run: npm run hydrate:model-data
+
+      - name: Build
+        working-directory: apps/p2
+        run: node --import ./src/source.ts scripts/cloud-bundle.ts "$SHA" "$RUNNER_TEMP/cloud-bundle"
+
+      # The manifest goes last, so a build whose manifest exists is complete.
+      - name: Upload
+        run: |
+          if aws s3api head-object $R2 --bucket pi-ui --key "$SHA/manifest.json" >/dev/null 2>&1; then
+            echo "pi-ui/$SHA exists: kept"
+            exit 0
+          fi
+          cache="public, max-age=31536000, immutable"
+          aws s3 cp $R2 --recursive --exclude manifest.json --cache-control "$cache" \
+            "$RUNNER_TEMP/cloud-bundle/$SHA" "s3://pi-ui/$SHA"
+          aws s3 cp $R2 --cache-control "$cache" \
+            "$RUNNER_TEMP/cloud-bundle/$SHA/manifest.json" "s3://pi-ui/$SHA/manifest.json"

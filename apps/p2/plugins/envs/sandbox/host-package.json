@@ -1,0 +1,8 @@
+{
+	"name": "p2-sandbox-host",
+	"private": true,
+	"type": "module",
+	"dependencies": {
+		"@earendil-works/gondolin": "0.14.0"
+	}
+}

@@ -55,6 +55,14 @@ test("pins published and private dependencies without touching registry aliases,
 				"@mariozechner/pi-ai": "npm:@earendil-works/pi-ai@1.0.0",
 			},
 		});
+		await writeManifest(root, "apps/p2", {
+			name: "p2",
+			version: "0.0.1",
+			private: true,
+			dependencies: {
+				"@earendil-works/pi-ai": "1.0.0",
+			},
+		});
 		await writeManifest(root, "packages/coding-agent/install-lock", {
 			name: "generated-install-lock",
 			version: "0.0.0",
@@ -74,6 +82,9 @@ test("pins published and private dependencies without touching registry aliases,
 		const evalsManifest = await readManifest(root, "packages/evals");
 		assert.equal(evalsManifest.dependencies["@earendil-works/pi-coding-agent"], "2.0.0");
 		assert.equal(evalsManifest.dependencies["@mariozechner/pi-ai"], "npm:@earendil-works/pi-ai@1.0.0");
+		const appManifest = await readManifest(root, "apps/p2");
+		assert.equal(appManifest.dependencies["@earendil-works/pi-ai"], "2.0.0");
+		assert.equal(appManifest.version, "0.0.1");
 		const generatedManifest = await readManifest(root, "packages/coding-agent/install-lock");
 		assert.equal(generatedManifest.dependencies["@earendil-works/pi-coding-agent"], "^1.0.0");
 
@@ -87,6 +98,46 @@ test("pins published and private dependencies without touching registry aliases,
 		});
 		const lockstepFailure = runSyncVersions(root);
 		assert.equal(lockstepFailure.status, 1, lockstepFailure.stderr);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("syncs to the published packages only, not to private fixtures or nested copies of a package", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pi-sync-versions-"));
+	try {
+		await writeManifest(root, "packages/coding-agent", {
+			name: "@earendil-works/pi-coding-agent",
+			version: "2.0.0",
+		});
+		// Leftover output of scripts/build-binaries.sh: a non-private copy of the manifest at an older version.
+		await writeManifest(root, "packages/coding-agent/binaries/darwin-arm64", {
+			name: "@earendil-works/pi-coding-agent",
+			version: "1.0.0",
+		});
+		await writeManifest(root, "packages/chord/test/examples/deps/greeting", {
+			name: "example-greeting",
+			version: "1.0.0",
+			private: true,
+		});
+		await writeManifest(root, "packages/chord/test/examples/plugins/report", {
+			name: "report",
+			private: true,
+			dependencies: { "example-greeting": "file:../../deps/greeting" },
+		});
+		await writeManifest(root, "packages/evals", {
+			name: "@earendil-works/pi-evals",
+			version: "2.0.0",
+			private: true,
+			dependencies: { "@earendil-works/pi-coding-agent": "1.0.0" },
+		});
+
+		const result = runSyncVersions(root);
+		assert.equal(result.status, 0, result.stderr);
+		const evalsManifest = await readManifest(root, "packages/evals");
+		assert.equal(evalsManifest.dependencies["@earendil-works/pi-coding-agent"], "2.0.0");
+		const pluginManifest = await readManifest(root, "packages/chord/test/examples/plugins/report");
+		assert.equal(pluginManifest.dependencies["example-greeting"], "file:../../deps/greeting");
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}

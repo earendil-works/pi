@@ -1,0 +1,368 @@
+[
+    {
+        "description": "validation of e-mail addresses",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "format": "email"
+        },
+        "tests": [
+            {
+                "description": "all string formats ignore integers",
+                "data": 12,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore floats",
+                "data": 13.7,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore objects",
+                "data": {},
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore arrays",
+                "data": [],
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore booleans",
+                "data": false,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore nulls",
+                "data": null,
+                "valid": true
+            },
+            {
+                "description": "a valid e-mail address",
+                "data": "joe.bloggs@example.com",
+                "valid": true
+            },
+            {
+                "description": "an invalid e-mail address",
+                "data": "2962",
+                "valid": false
+            },
+            {
+                "description": "tilde in local part is valid",
+                "data": "te~st@example.com",
+                "valid": true
+            },
+            {
+                "description": "tilde before local part is valid",
+                "data": "~test@example.com",
+                "valid": true
+            },
+            {
+                "description": "tilde after local part is valid",
+                "data": "test~@example.com",
+                "valid": true
+            },
+            {
+                "description": "a quoted string with a space in the local part is valid",
+                "data": "\"joe bloggs\"@example.com",
+                "valid": true
+            },
+            {
+                "description": "a quoted string with a double dot in the local part is valid",
+                "data": "\"joe..bloggs\"@example.com",
+                "valid": true
+            },
+            {
+                "description": "a quoted string with a @ in the local part is valid",
+                "data": "\"joe@bloggs\"@example.com",
+                "valid": true
+            },
+            {
+                "description": "an IPv4-address-literal after the @ is valid",
+                "data": "joe.bloggs@[127.0.0.1]",
+                "valid": true
+            },
+            {
+                "description": "an IPv6-address-literal after the @ is valid",
+                "data": "joe.bloggs@[IPv6:::1]",
+                "valid": true
+            },
+            {
+                "description": "dot before local part is not valid",
+                "data": ".test@example.com",
+                "valid": false
+            },
+            {
+                "description": "dot after local part is not valid",
+                "data": "test.@example.com",
+                "valid": false
+            },
+            {
+                "description": "two separated dots inside local part are valid",
+                "data": "te.s.t@example.com",
+                "valid": true
+            },
+            {
+                "description": "two subsequent dots inside local part are not valid",
+                "data": "te..st@example.com",
+                "valid": false
+            },
+            {
+                "description": "an invalid domain",
+                "data": "joe.bloggs@invalid=domain.com",
+                "valid": false
+            },
+            {
+                "description": "an invalid IPv4-address-literal",
+                "data": "joe.bloggs@[127.0.0.300]",
+                "valid": false
+            },
+            {
+                "description": "two email addresses is not valid",
+                "data": "user1@oceania.org, user2@oceania.org",
+                "valid": false
+            },
+            {
+                "description": "full \"From\" header is invalid",
+                "data": "\"Winston Smith\" <winston.smith@recdep.minitrue> (Records Department)",
+                "valid": false
+            },
+            {
+                "description": "local part is required",
+                "data": "@example.com",
+                "valid": false
+            },
+            {
+                "description": "domain is required",
+                "data": "joe.bloggs@",
+                "valid": false
+            },
+            {
+                "description": "unquoted space in local part is invalid",
+                "data": "joe bloggs@example.com",
+                "valid": false
+            },
+            {
+                "description": "a domain that looks like an IPv4 address without brackets is valid",
+                "data": "test@255.255.255.255",
+                "valid": true
+            },
+            {
+                "description": "an empty quoted string in the local part is valid",
+                "data": "\"\"@iana.org",
+                "valid": true
+            },
+            {
+                "description": "a quoted string containing only a space in the local part is valid",
+                "data": "\" \"@iana.org",
+                "valid": true
+            },
+            {
+                "description": "consecutive hyphens inside a domain label are valid",
+                "data": "test@c--n.com",
+                "valid": true
+            },
+            {
+                "description": "a domain label starting with a digit is valid",
+                "data": "test@123.com",
+                "valid": true
+            },
+            {
+                "description": "a non-ASCII character in the local part is not valid",
+                "data": "a\u00e9@iana.org",
+                "valid": false
+            },
+            {
+                "description": "a non-ASCII character in the domain is not valid",
+                "data": "a@\u00e9.org",
+                "valid": false
+            },
+            {
+                "description": "a fullwidth commercial at is not a valid separator",
+                "data": "a\uff20iana.org",
+                "valid": false
+            },
+            {
+                "description": "a non-ASCII character in a quoted pair is not valid",
+                "data": "\"test\\\u00a9\"@iana.org",
+                "valid": false
+            },
+            {
+                "description": "a trailing line feed is not valid",
+                "data": "test@iana.org\n",
+                "valid": false
+            },
+            {
+                "description": "a trailing carriage return is not valid",
+                "data": "test@iana.org\r",
+                "valid": false
+            },
+            {
+                "description": "a trailing space is not valid",
+                "data": "a@iana.org ",
+                "valid": false
+            },
+            {
+                "description": "a leading space is not valid",
+                "data": " a@iana.org",
+                "valid": false
+            },
+            {
+                "description": "a tab in the local part is not valid",
+                "data": "a\tb@iana.org",
+                "valid": false
+            },
+            {
+                "description": "a delete character in the local part is not valid",
+                "data": "\u007f@iana.org",
+                "valid": false
+            },
+            {
+                "description": "a quoted string with no special characters in the local part is valid",
+                "data": "\"test\"@iana.org",
+                "valid": true
+            },
+            {
+                "description": "a quoted pair in the local part is valid",
+                "data": "\"\\a\"@iana.org",
+                "valid": true
+            },
+            {
+                "description": "an escaped double quote in the local part is valid",
+                "data": "\"\\\"\"@iana.org",
+                "valid": true
+            },
+            {
+                "description": "an escaped backslash in the local part is valid",
+                "data": "\"\\\\\"@iana.org",
+                "valid": true
+            },
+            {
+                "description": "an unescaped double quote in an unquoted local part is not valid",
+                "data": "test\"@iana.org",
+                "valid": false
+            },
+            {
+                "description": "text after the closing double quote in the local part is not valid",
+                "data": "\"test\"test@iana.org",
+                "valid": false
+            },
+            {
+                "description": "an unclosed double quote in the local part is not valid",
+                "data": "\"test@iana.org",
+                "valid": false
+            },
+            {
+                "description": "two unquoted @ signs are not valid",
+                "data": "a@b@c.org",
+                "valid": false
+            },
+            {
+                "description": "a backslash-escaped @ in an unquoted local part is not valid",
+                "data": "test\\@test@iana.org",
+                "valid": false
+            },
+            {
+                "description": "an address literal in the local part position is not valid",
+                "data": "[1.2.3.4]@iana.org",
+                "valid": false
+            },
+            {
+                "description": "an empty string is not valid",
+                "data": "",
+                "valid": false
+            },
+            {
+                "description": "a domain label starting with a hyphen is not valid",
+                "data": "test@-iana.org",
+                "valid": false
+            },
+            {
+                "description": "a domain label ending with a hyphen is not valid",
+                "data": "test@iana-.com",
+                "valid": false
+            },
+            {
+                "description": "a domain starting with a dot is not valid",
+                "data": "test@.iana.org",
+                "valid": false
+            },
+            {
+                "description": "a domain ending with a dot is not valid",
+                "data": "test@iana.org.",
+                "valid": false
+            },
+            {
+                "description": "two subsequent dots inside the domain are not valid",
+                "data": "test@iana..com",
+                "valid": false
+            },
+            {
+                "description": "a single-label domain is valid",
+                "data": "test@io",
+                "valid": true
+            },
+            {
+                "description": "an unclosed address literal is not valid",
+                "data": "test@[1.2.3.4",
+                "valid": false
+            },
+            {
+                "description": "empty brackets after the @ are not valid",
+                "data": "a@[]",
+                "valid": false
+            },
+            {
+                "description": "an IPv4-address-literal with three octets is not valid",
+                "data": "a@[1.2.3]",
+                "valid": false
+            },
+            {
+                "description": "an IPv4-address-literal with five octets is not valid",
+                "data": "a@[1.2.3.4.5]",
+                "valid": false
+            },
+            {
+                "description": "bracketed content that is not an address is not valid",
+                "data": "test@[RFC-5322-domain-literal]",
+                "valid": false
+            },
+            {
+                "description": "a domain label before the opening bracket is not valid",
+                "data": "test@a[255.255.255.255]",
+                "valid": false
+            },
+            {
+                "description": "a lowercase IPv6 tag in an address literal is valid",
+                "data": "a@[ipv6:::1]",
+                "valid": true
+            },
+            {
+                "description": "a comma in an unquoted local part is not valid",
+                "data": "a,b@iana.org",
+                "valid": false
+            },
+            {
+                "description": "a semicolon in an unquoted local part is not valid",
+                "data": "a;b@iana.org",
+                "valid": false
+            },
+            {
+                "description": "a colon in an unquoted local part is not valid",
+                "data": "a:b@iana.org",
+                "valid": false
+            },
+            {
+                "description": "a parenthesis in an unquoted local part is not valid",
+                "comment": "a comment is RFC 5322 syntax, which the RFC 5321 Mailbox grammar does not have",
+                "data": "test(comment)@iana.org",
+                "valid": false
+            },
+            {
+                "description": "a parenthesis in the domain is not valid",
+                "comment": "a comment is RFC 5322 syntax, which the RFC 5321 Mailbox grammar does not have",
+                "data": "a@b(c).org",
+                "valid": false
+            }
+        ]
+    }
+]

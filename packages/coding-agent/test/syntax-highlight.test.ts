@@ -1,6 +1,12 @@
 import { resetCapabilitiesCache, setCapabilities } from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getMarkdownTheme, highlightCode, initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
+import {
+	getLanguageFromPath,
+	getMarkdownTheme,
+	highlightCode,
+	initTheme,
+	theme,
+} from "../src/modes/interactive/theme/theme.ts";
 import {
 	highlight,
 	loadAllHighlightLanguages,
@@ -39,6 +45,14 @@ describe("syntax highlight renderer", () => {
 		expect(uncommonLanguageLoadedAtStartup).toBe(false);
 		await loadAllHighlightLanguages();
 		expect(supportsLanguage("ada")).toBe(true);
+	});
+
+	it("maps file extensions of eagerly loaded languages to their language", () => {
+		expect(getLanguageFromPath("lib/main.dart")).toBe("dart");
+		expect(getLanguageFromPath("flake.nix")).toBe("nix");
+		expect(getLanguageFromPath("script.groovy")).toBe("groovy");
+		expect(getLanguageFromPath("build.gradle")).toBe("groovy");
+		expect(getLanguageFromPath("src/Main.kt")).toBe("kotlin");
 	});
 
 	it("renders highlighted spans with the provided theme", () => {

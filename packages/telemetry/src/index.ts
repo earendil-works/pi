@@ -29,12 +29,16 @@ export interface SpanOptions {
 
 export type SpanStatus = { status: "ok" } | { status: "error"; error?: { name: string; message: string } };
 
-/** A settled span snapshot, independent of the recording adapter. Event times are relative to span start. */
+/**
+ * A settled span snapshot, independent of the recording adapter. Times are milliseconds at microsecond resolution;
+ * event times are relative to span start.
+ */
 export interface StoredSpan {
 	readonly id: string;
 	readonly traceId: string;
 	readonly parentId?: string;
 	readonly name: string;
+	/** Wall-clock milliseconds since the epoch (`telemetryNow`). */
 	readonly startedMs: number;
 	readonly endedMs: number;
 	readonly attributes: SpanAttributes;
@@ -462,4 +466,4 @@ export type {
 	RecordedTelemetryMeasurement,
 	RecordedTelemetrySpan,
 } from "./memory.ts";
-export { InMemoryTelemetryContext } from "./memory.ts";
+export { InMemoryTelemetryContext, telemetryNow } from "./memory.ts";

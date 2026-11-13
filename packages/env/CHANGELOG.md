@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `RemoteExecutionEnv.listDir()` leaves out an entry removed between enumeration and `lstat` instead of failing, like `NodeExecutionEnv.listDir()` and both directory readers. Names that are not valid UTF-8, which `lstat` also reports as missing, are now left out the same way instead of failing the listing, as the directory readers already did ([#11994](https://github.com/earendil-works/pi/issues/11994))
+- Fixed the end of a program's output going missing when the program exited while the link was backed up: the daemon stopped reading 100 ms after the exit even though the rest still sat in the pipe, so `exec` without an output window, `pty` and `process` could lose up to one pipe buffer (64 KiB on Linux). Reading now continues while the link holds output back
+
+## [1.5.2] - 2026-11-10
+
+## [1.5.1] - 2026-11-09
+
+### Added
+
+- The daemon's `process` operation runs a program with plain pipes for stdin, stdout and stderr, for programs that speak a protocol on stdin and stdout such as MCP servers: `processWrite` and `processCloseStdin` feed its stdin in arrival order, output arrives as raw bytes per stream, and cancelling, a lost connection or the program's own exit kills its process group (on Windows, its job object), so a wrapper such as `npx` that exits leaves nothing running. `hello` reports it in `features`. `openProcess()` returns a `RemoteProcess`; daemons released before it fail the open with `not_supported`. Unlike terminals, it works on Windows too.
+
+### Fixed
+
+- An aborted or timed-out request no longer waits for a remote host that does not answer: aborting while the connection starts rejects at once with `aborted`, a sent request settles as `aborted` if the daemon does not answer its cancel within a second, `RemoteExecutionEnv.exec` enforces its timeout locally as well, and file operations stop waiting for the connection when aborted. `ssh` gets `ConnectTimeout=15`, so a host that is down fails a start within 15 s.
+- On Windows, an `exec` command's output readers stop once the command has settled, also while a descendant keeps a pipe open without writing; they stayed blocked until it exited, because cancelling a blocked read did not reach the standard library's overlapped pipe I/O.
+
+## [1.5.0] - 2026-11-02
+
 ### Breaking Changes
 
 - `RemoteWatcher` follows Durable's `FileWatcher`: `close(context)` is `stop(context)`, and its changes are tagged (`{ kind: "paths", paths }`, `{ kind: "overflow" }`, `{ kind: "failed", error }`). The daemon's `watch` protocol is unchanged. Migration: `await watcher.close(ctx)` becomes `await watcher.stop(ctx)`; test `change.kind` instead of `"overflow" in change` or `"error" in change`.

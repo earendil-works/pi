@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-11-10
+
+## [1.5.1] - 2026-11-09
+
+### Added
+
+- Added `PipeTransport`, MCP's stdio transport over a program started by the caller through an `McpPipe` (`write`, `closeStdin`, `close`, `exited`), for example `@earendil-works/pi-env`'s `openProcess()` on another machine. `StdioTransport` and `PipeTransport` share the newline-delimited framing and the stderr tail.
+- Added MCP OAuth sign-in in two halves (`@earendil-works/pi-mcp/oauth`), moved from pi's coding agent: `startMcpSignIn()` refreshes the stored tokens or returns the authorization URL, and `completeMcpSignIn()` exchanges the code later, possibly in another request with the same state store. The code comes from a loopback callback server (`listenForLoopbackSignIn()`, `waitForLoopbackSignIn()`), the application's own callback route, or a pasted redirect URL (`responseFromRedirectUrl()`). Client ID Metadata Documents (`clientMetadataDocuments`) and the client name are the caller's. Aborting a sign-in's `signal` also stops `startMcpSignIn()` while it waits for the refresh lock; a store's `withRefreshLock()` throws `McpRefreshLockBusyError` when another process holds the lock too long, which makes `startMcpSignIn()` skip the refresh, while any other lock failure fails the sign-in. Also added `createMcpAuthProvider()`, which refreshes tokens once across requests and, through `McpOAuthServerStore.withRefreshLock()`, across processes; its `redirectUrl` option names a redirect URI the application signs in with, so tokens from a Client ID Metadata Document that lists only an https callback route can be refreshed. Also added the `refreshOnly` option of `authorizeMcp()`, which refreshes without registering a client or replacing a pending authorization's `state` and PKCE verifier.
+- Added helpers that let applications name and configure MCP tools like pi's coding agent, moved from it: `createMcpToolName()` (`mcp__<server>__<tool>`, sanitized, with a hash suffix for long or colliding names) and `mcpNamespace()`; `normalizeMcpInputSchema()`, which makes an input schema an object schema; `limitMcpContent()` and `MCP_OUTPUT_MAX_BYTES`, which cut model-facing text over 20KB in the middle and optionally save the full text through a caller's `McpOutputSaver`; and `validateMcpServerConfig()`, which validates one entry of the `mcpServers` configuration shape (stdio, Streamable HTTP, `oauth`, `enabled`, `description`, `timeout`), returns the entry tagged with its transport, and keeps the application's own fields for it to check afterwards. `isMcpServerOverride()` recognizes entries that only override a server defined elsewhere.
+
+### Fixed
+
+- The third-party licenses are in `THIRD_PARTY_NOTICES/`, renamed from `LICENSES/`, which Vite's license notices read as the package's license file, failing browser builds that bundle the package.
+- Fixed Streamable HTTP `application/json` responses bypassing `maxMessageBytes`; oversized JSON responses are now cancelled and rejected like oversized SSE events ([#11335](https://github.com/earendil-works/pi/issues/11335))
+- Fixed Streamable HTTP errors reading the whole HTTP error body; only the first 8 KiB kept in the error is read, and the rest is cancelled
+- Fixed `OAuthCallbackServer.close()` waiting for minutes when the browser kept an unused connection open to the callback port, for example a preconnect. It now closes the remaining connections ([#11311](https://github.com/earendil-works/pi/issues/11311))
+- Fixed large MCP stdio messages being repeatedly copied and scanned as chunks arrived, causing slow tool responses ([#11761](https://github.com/earendil-works/pi/issues/11761))
+- Fixed MCP Streamable HTTP SSE replies with CR-only line endings failing with "stream ended without a response" ([#11764](https://github.com/earendil-works/pi/issues/11764))
+- Fixed oversized MCP SSE responses keeping their HTTP connections open after the message-size limit rejected them ([#11729](https://github.com/earendil-works/pi/issues/11729))
+- Fixed MCP stdio server subprocesses surviving disconnect or pi exit on POSIX when the server's main process had already exited ([#11721](https://github.com/earendil-works/pi/issues/11721))
+
+## [1.5.0] - 2026-11-02
+
+### Changed
+
+- README: the `AgentTool` wrapping example passes the MCP input schema as plain JSON Schema instead of through TypeBox's `Type.Unsafe`.
+
 ### Fixed
 
 - OAuth metadata parsing and `startAuthorization()` now accept only `http:` and `https:` URLs. Before, a server could supply a `file:` or custom protocol authorization endpoint (for example `search-ms:`), which the platform URL handler would launch on sign-in.

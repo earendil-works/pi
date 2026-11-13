@@ -28,22 +28,24 @@ import {
 	StdioTransport,
 	StreamableHttpTransport,
 } from "@earendil-works/pi-mcp";
-import { McpOAuthAuthorizationRequiredError, type OAuthChallenge } from "@earendil-works/pi-mcp/oauth";
+import {
+	type McpAuthProvider,
+	McpOAuthAuthorizationRequiredError,
+	type McpOAuthSettings,
+	type OAuthChallenge,
+} from "@earendil-works/pi-mcp/oauth";
 import { VERSION } from "../../config.ts";
 import { resolveConfigValueOrThrow, resolveHeadersOrThrow } from "../../core/resolve-config-value.ts";
+import { sliceTail } from "../../core/tools/truncate.ts";
 import type { McpServerEntry } from "./config.ts";
 import type { McpServerLog } from "./log.ts";
-import {
-	createMcpAuthProvider,
-	type McpAuthProvider,
-	type McpOAuthCredentialStore,
-	type McpOAuthSettings,
-} from "./oauth.ts";
+import { createMcpAuthProvider, type McpOAuthCredentialStore } from "./oauth.ts";
 import type { McpResourceServer } from "./resources.ts";
 import type { McpToolCaller } from "./tools.ts";
 
+export { McpSignInCancelledError } from "@earendil-works/pi-mcp/oauth";
 export { McpServerLog } from "./log.ts";
-export { McpOAuthCredentialStore, McpSignInCancelledError, signInMcpServer } from "./oauth.ts";
+export { McpOAuthCredentialStore, signInMcpServer } from "./oauth.ts";
 
 const DEFAULT_TIMEOUT_SECONDS = 60;
 const STDERR_TAIL_CHARS = 2_000;
@@ -398,7 +400,7 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 		} catch (error) {
 			await closeClient();
 			if (transport instanceof StdioTransport) {
-				this.stderrTail = transport.stderr.trim().slice(-STDERR_TAIL_CHARS) || undefined;
+				this.stderrTail = sliceTail(transport.stderr.trim(), STDERR_TAIL_CHARS) || undefined;
 			}
 			throw error;
 		} finally {
@@ -422,7 +424,7 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 		if (this.client !== client || this.closed) return;
 		this.client = undefined;
 		this.state = "disconnected";
-		const stderr = stdio?.stderr.trim().slice(-STDERR_TAIL_CHARS);
+		const stderr = stdio ? sliceTail(stdio.stderr.trim(), STDERR_TAIL_CHARS) : undefined;
 		this.error = stderr ? `Connection closed\n${stderr}` : "Connection closed";
 		this.changed();
 	}

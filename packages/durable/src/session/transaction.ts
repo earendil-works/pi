@@ -1,6 +1,14 @@
-import { type Context, copyJson, type Draft, type JsonValue } from "@earendil-works/chord";
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { type Change, type Op, type PendingOps, type Prepared, type Tracker, track } from "@earendil-works/chord/delta";
+import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
+import {
+	type Change,
+	type Draft,
+	type Op,
+	type PendingOps,
+	type Prepared,
+	type Tracker,
+	track,
+} from "@earendil-works/chord/delta";
+import { copyJson, type JsonValue } from "@earendil-works/chord/json";
 import type { TelemetryCarrier } from "@earendil-works/pi-telemetry";
 import {
 	type AnyDocDefinition,
@@ -14,6 +22,8 @@ import {
 	resolveAddress,
 } from "../documents.ts";
 import { ReadAfterWrite } from "../errors.ts";
+import type { SettledSubmissionRecord } from "../harness/types.ts";
+import { deliverSignal, isSettled, type SignalResult, type SignalToken, SubmissionSettled } from "../signals.ts";
 import type {
 	ConversationDocFamilyToken,
 	ConversationDocToken,
@@ -42,6 +52,7 @@ import type {
 	StorageWrite,
 	SubmissionCreate,
 	SubmissionId,
+	SubmissionNotify,
 	SubmissionRecord,
 	SubmissionSettlement,
 	Task,
@@ -57,6 +68,7 @@ import type {
 } from "../types.ts";
 import { ROOT_CONVERSATION_ID } from "../types.ts";
 import { prepareForkDocumentCopies } from "./forks.ts";
+import { documentKey, incarnationKey, scopeKey, tableKeys } from "./keys.ts";
 
 type AnyTaskRecord = TaskRecord<JsonValue, JsonValue, JsonValue>;
 
@@ -119,7 +131,10 @@ export type AdoptedDocuments = {
 
 /** Session services used by a transaction while it holds the mutation line. */
 export interface TransactionHost {
+	/** Reads wait while their key has an unpublished writer (`GatedStorage`). */
 	readonly storage: Storage;
+	/** Wait while `key` has an unpublished writer; `undefined` when it has none. */
+	touch(key: string): Promise<void> | undefined;
 	/** Wall clock for task lifecycle times. */
 	now(): number;
 	/** Return the cached current incarnation without loading. */
@@ -137,6 +152,17 @@ export interface TransactionHost {
 	evict(addressId: string, recordId: DocumentId): void;
 	/** Stage writes that belong to every newly created or forked conversation, in its creating transaction. */
 	conversationCreated(tx: Transaction, record: ConversationRecord): Promise<void>;
+	/** The newest entry ID visible from a conversation, known from the Session's commits. */
+	latestEntryId(conversationId: ConversationId, context: Context): Promise<EntryId | undefined>;
+	/**
+	 * The current documents of a live task when the Session knows all of them (it created the task), else `undefined`.
+	 */
+	taskDocuments(taskId: TaskId): Iterable<DocumentRecord> | undefined;
+	/** The newest visible head marker of a conversation, known from the Session's commits. */
+	latestHeadMarker(
+		conversationId: ConversationId,
+		context: Context,
+	): Promise<(EntryRecord & { readonly head: EntryId }) | undefined>;
 }
 
 /** Committed and candidate state for one task touched by this transaction. */
@@ -304,16 +330,18 @@ export class Transaction implements Tx {
 	}
 
 	latestHeadMarker(conversationId: ConversationId) {
-		return this.#read("latestHeadMarker", () =>
-			this.#host.storage.findLatestHeadMarker(conversationId, undefined, this.#context),
-		);
+		return this.#read("latestHeadMarker", () => this.#host.latestHeadMarker(conversationId, this.#context));
+	}
+
+	latestEntryId(conversationId: ConversationId): Promise<EntryId | undefined> {
+		return this.#read("latestEntryId", () => this.#host.latestEntryId(conversationId, this.#context));
 	}
 
 	scanTasks(query: TaskQuery, limit: number, cursor?: Cursor) {
 		return this.#read("scanTasks", () => this.#host.storage.scanTasks(query, limit, cursor, this.#context));
 	}
 
-	/** Internal: committed submission record. */
+	/** Committed submission record. */
 	submission(id: SubmissionId): Promise<SubmissionRecord | undefined> {
 		return this.#read("submission", () => this.#host.storage.submission(id, this.#context));
 	}
@@ -523,10 +551,30 @@ export class Transaction implements Tx {
 		this.#submissionChanges.push({ id, change: { status: "placed", entry } });
 	}
 
-	/** Internal: replace one task record completely. Tasks change their own state through their runtime. */
+	/** Deliver a signal to a task (spec suspendable §3.2): a read of the task, then a write of it when the key changes. */
+	signal<T>(taskId: TaskId, token: SignalToken<T>, key: string, value: T): Promise<SignalResult> {
+		return this.#read("signal", async () => {
+			const committed = await this.#committedTask(taskId);
+			// Read after the await: a delivery started alongside, in `Promise.all()`, may have staged the key since.
+			const record = this.#tasksById.get(taskId)?.write?.record ?? committed;
+			const delivered = deliverSignal(record, token, key, value, this.#host.now());
+			if (delivered.record !== undefined) this.setTask(delivered.record);
+			return delivered.result;
+		});
+	}
+
+	/**
+	 * Internal: replace one task record. Tasks change their own state through their runtime. A live replacement keeps the
+	 * memos an earlier write of this transaction staged, so no write erases another.
+	 */
 	setTask(value: AnyTaskRecord): void {
 		this.#assertOpen();
 		this.#hasTableWrite = true;
+		this.#stageTask(value);
+	}
+
+	/** Stage a task record over the transaction's candidate, also during assembly. */
+	#stageTask(value: AnyTaskRecord): void {
 		const task = this.#taskEntry(value.id);
 		const candidate = task.write?.record;
 		if (candidate?.state.status === "terminal") {
@@ -535,9 +583,14 @@ export class Transaction implements Tx {
 		if (candidate !== undefined && candidate.conversationId !== value.conversationId) {
 			throw new Error(`Task ${value.id} cannot change conversations`);
 		}
+		// A live replacement keeps the memos an earlier write staged, such as a signal delivered to a task whose own commit
+		// then changes its state: no write erases another.
+		const status = value.state.status;
+		const keeps = candidate?.memos !== undefined && status !== "terminal" && status !== "completing";
+		const composed = keeps ? ({ ...value, memos: { ...candidate.memos, ...value.memos } } as AnyTaskRecord) : value;
 		task.write = {
 			kind: task.write?.kind === "create" ? "create" : "replace",
-			record: copyJson(this.#stampTimes(value, candidate), TABLE_JSON_COPY_OPTIONS) as unknown as AnyTaskRecord,
+			record: copyJson(this.#stampTimes(composed, candidate), TABLE_JSON_COPY_OPTIONS) as unknown as AnyTaskRecord,
 		};
 	}
 
@@ -546,6 +599,13 @@ export class Transaction implements Tx {
 		const records: AnyTaskRecord[] = [];
 		for (const task of this.#tasksById.values()) if (task.write !== undefined) records.push(task.write.record);
 		return records;
+	}
+
+	/** Internal: IDs of the tasks this transaction creates. */
+	createdTaskIds(): TaskId[] {
+		const ids: TaskId[] = [];
+		for (const [id, task] of this.#tasksById) if (task.write?.kind === "create") ids.push(id);
+		return ids;
 	}
 
 	/** Internal: conversations this transaction created or forked so far. */
@@ -717,6 +777,8 @@ export class Transaction implements Tx {
 	}
 
 	async #findRetirement(entry: DocumentEntry): Promise<void> {
+		const gate = this.#host.touch(documentKey(entry.addressId));
+		if (gate !== undefined) await gate;
 		const record =
 			this.#host.cached(entry.addressId)?.record ??
 			(await this.#host.storage.findDocument(entry.address, "current", this.#context));
@@ -850,6 +912,22 @@ export class Transaction implements Tx {
 		return taken;
 	}
 
+	/**
+	 * Internal: the keys this commit writes, once settled (and after `takeHeld()`), for the Session's unpublished write
+	 * set: its table records, and the address and incarnation of every document it creates, changes, or retires, with
+	 * the scope of every incarnation it creates or retires.
+	 */
+	writeKeys(): string[] {
+		const keys: string[] = [];
+		tableKeys(this.#writes, keys);
+		for (const plan of this.#plans) {
+			if (plan.content === undefined && !plan.retire) continue;
+			keys.push(documentKey(plan.addressId), incarnationKey(plan.record.id));
+			if (plan.retire || !("createdAt" in plan.record)) keys.push(scopeKey(plan.record.scope));
+		}
+		return keys;
+	}
+
 	/** Stage a content write for an incarnation, before its retirement when it retires. */
 	#insertBeforeRetirement(write: Extract<StorageWrite, { readonly type: "document.change" }>): void {
 		const at = this.#writes.findIndex(
@@ -944,8 +1022,21 @@ export class Transaction implements Tx {
 				plan.retire = true;
 				retiring.add(plan.record.id);
 			}
+			const retire = (record: DocumentRecord): void => {
+				if (retiring.has(record.id)) return;
+				plans.push({ addressId: addressId(record), record, retire: true });
+				retiring.add(record.id);
+			};
 			for (const taskId of terminalTaskIds) {
 				if (this.#tasksById.get(taskId)?.write?.kind === "create") continue;
+				// The Session knows the documents of the tasks it created; any other task's are scanned.
+				const gate = this.#host.touch(scopeKey({ kind: "task", taskId }));
+				if (gate !== undefined) await gate;
+				const known = this.#host.taskDocuments(taskId);
+				if (known !== undefined) {
+					for (const record of known) retire(record);
+					continue;
+				}
 				let cursor: Cursor | undefined;
 				do {
 					const page = await storage.scanDocuments(
@@ -954,11 +1045,7 @@ export class Transaction implements Tx {
 						cursor,
 						this.#context,
 					);
-					for (const record of page.items) {
-						if (retiring.has(record.id)) continue;
-						plans.push({ addressId: addressId(record), record, retire: true });
-						retiring.add(record.id);
-					}
+					for (const record of page.items) retire(record);
 					cursor = page.next;
 				} while (cursor !== undefined);
 			}
@@ -978,12 +1065,17 @@ export class Transaction implements Tx {
 			plan.conversationId = task.publicationConversationId;
 		}
 
+		// Created settled, or settled by a change: each one with `notify` signals its task (spec suspendable §4.5).
+		const settling = [...this.#submissions.values()].filter(isSettled);
 		for (const { id, change } of this.#submissionChanges) {
 			const current = this.#submissions.get(id) ?? (await storage.submission(id, this.#context));
 			if (current === undefined) throw new Error(`Submission ${id} does not exist`);
 			const next = applySubmissionChange(current, change);
-			if (next !== current) this.#submissions.set(id, next);
+			if (next === current) continue;
+			this.#submissions.set(id, next);
+			if (isSettled(next)) settling.push(next);
 		}
+		for (const record of settling) if (record.notify !== undefined) await this.#notify(record, record.notify);
 
 		const writes = this.#writes;
 		for (const value of this.#submissions.values()) writes.push({ type: "submission", value });
@@ -1007,6 +1099,17 @@ export class Transaction implements Tx {
 	}
 
 	// ─── Helpers ────────────────────────────────────────────────────────────
+
+	/**
+	 * Deliver `SubmissionSettled` for a submission this commit settles, against the transaction's latest candidate of the
+	 * task; a delivery the task refuses changes nothing and fails nothing.
+	 */
+	async #notify(record: SettledSubmissionRecord, notify: SubmissionNotify): Promise<void> {
+		const committed = await this.#committedTask(notify.taskId);
+		const target = this.#tasksById.get(notify.taskId)?.write?.record ?? committed;
+		const delivered = deliverSignal(target, SubmissionSettled, notify.key, record, this.#host.now());
+		if (delivered.record !== undefined) this.#stageTask(delivered.record);
+	}
 
 	/**
 	 * New owned work needs a live owner, judged on the owner's final candidate: not `completing`, terminal, or

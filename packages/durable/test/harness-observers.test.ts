@@ -2,8 +2,8 @@
 // document) and for task document watches, which end with their task.
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
-import type { WatchCall } from "@earendil-works/chord";
 import { withAbortSignal } from "@earendil-works/chord/context";
+import type { WatchCall } from "@earendil-works/chord/watch";
 import {
 	type ConversationView,
 	defineDoc,
@@ -95,7 +95,7 @@ const collect = (() => {
 })();
 
 describe("observeConversation and observeTaskGraph", () => {
-	it("start at the current value and advance inside adopt with the same change a watch gets", async () => {
+	it("start at the current value and advance at the publication with the same change a watch gets", async () => {
 		const storage = new ControlledStorage();
 		const { harness } = await openTasks(storage, []);
 		const root = await harness.root(context);
@@ -113,7 +113,8 @@ describe("observeConversation and observeTaskGraph", () => {
 		const entry = await root.commit((tx) => tx.appendEntry(root.id, { kind: "note", data: {} }), context);
 		expect(view.calls).toHaveLength(1);
 		const [call] = view.calls as [{ advance: WatchValue<ConversationView>; adopting: boolean }];
-		expect(call.adopting).toBe(true);
+		// Published once Storage stored it, outside its call.
+		expect(call.adopting).toBe(false);
 		expect(call.advance.retired).toBe(false);
 		expect(call.advance.value.entries.at(-1)?.id).toBe(entry.id);
 		await flush();
@@ -238,7 +239,7 @@ describe("observeConversation and observeTaskGraph", () => {
 					ops: [["s", ["tasks", key], expect.objectContaining({ blocked: "missing_task" })]],
 					retired: false,
 				},
-				adopting: true,
+				adopting: false,
 			},
 		]);
 		registry.install(defineExtension({ name: "late", tasks: [Missing] }));
@@ -304,7 +305,7 @@ describe("task documents", () => {
 		await harness.close(context);
 	});
 
-	it("an observer gets the retirement, then its end, inside the adopt of the commit that ends the task", async () => {
+	it("an observer gets the retirement, then its end, at the publication of the commit that ends the task", async () => {
 		const { harness, storage, id, finish } = await openWriter();
 		const progress = recorder<Readonly<{ lines: string[] }>>(storage);
 		let endedAdopting: boolean | undefined;
@@ -319,10 +320,10 @@ describe("task documents", () => {
 		finish();
 		await harness.waitForTask(id, context);
 		expect(progress.calls).toEqual([
-			{ advance: { kind: "value", value: { lines: ["started"] }, ops: [], retired: true }, adopting: true },
+			{ advance: { kind: "value", value: { lines: ["started"] }, ops: [], retired: true }, adopting: false },
 			{ end: { kind: "ended" } },
 		]);
-		expect(endedAdopting).toBe(true);
+		expect(endedAdopting).toBe(false);
 		await harness.close(context);
 		expect(progress.calls).toHaveLength(2);
 	});

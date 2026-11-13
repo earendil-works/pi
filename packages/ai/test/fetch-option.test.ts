@@ -121,25 +121,32 @@ describe("fetch stream option", () => {
 		expect(globalThis.fetch).toBe(fallback);
 	});
 
-	it("rejects custom fetch for Google adapters instead of silently bypassing it", async () => {
+	// Regression test for #12097: the Google adapters rejected a custom fetch.
+	it("passes fetch through streamSimple to the Google GenAI SDK adapters", async () => {
 		const { custom, fallback } = mockFetches();
 		const google = await streamGoogleGenerativeAI(createModel("google-generative-ai"), context, {
 			apiKey: "test-key",
 			fetch: custom,
+			maxRetries: 0,
 		}).result();
 		const vertex = await streamGoogleVertex(createModel("google-vertex"), context, {
 			apiKey: "test-key",
 			fetch: custom,
+			maxRetries: 0,
 		}).result();
 
-		expect(google.errorMessage).toContain("Custom fetch is not supported by the Google Generative AI adapter");
-		expect(vertex.errorMessage).toContain("Custom fetch is not supported by the Google Vertex adapter");
-		expect(custom).not.toHaveBeenCalled();
+		expect(google.errorMessage).toContain("upstream rejected request");
+		expect(vertex.errorMessage).toContain("upstream rejected request");
+		expect(custom).toHaveBeenCalledTimes(2);
+		expect(custom.mock.calls[0]?.[0].toString()).toContain("https://upstream.test/v1");
+		expect(custom.mock.calls[1]?.[0].toString()).toContain("https://upstream.test/v1");
 		expect(fallback).not.toHaveBeenCalled();
 		expect(globalThis.fetch).toBe(fallback);
 	});
 
-	it("allows Google adapters to receive globalThis.fetch explicitly", async () => {
+	// #12097: without a fetch, @google/genai adds a per-request dispatcher that disables the
+	// global dispatcher's header and body timeouts.
+	it("keeps the global dispatcher for Google adapters when no fetch is given", async () => {
 		const ambient = vi.fn<FetchFunction>(
 			async () =>
 				new Response(JSON.stringify({ error: { message: "upstream rejected request" } }), {
@@ -148,14 +155,13 @@ describe("fetch stream option", () => {
 				}),
 		);
 		vi.stubGlobal("fetch", ambient);
-		const result = await streamGoogleGenerativeAI(createModel("google-generative-ai"), context, {
-			apiKey: "test-key",
-			fetch: ambient,
-		}).result();
+		await streamGoogleGenerativeAI(createModel("google-generative-ai"), context, { apiKey: "test-key" }).result();
+		await streamGoogleVertex(createModel("google-vertex"), context, { apiKey: "test-key" }).result();
 
-		expect(ambient).toHaveBeenCalledOnce();
-		expect(result.errorMessage).not.toContain("Custom fetch is not supported");
-		expect(globalThis.fetch).toBe(ambient);
+		expect(ambient).toHaveBeenCalledTimes(2);
+		for (const [, init] of ambient.mock.calls) {
+			expect(init).not.toHaveProperty("dispatcher");
+		}
 	});
 
 	it("uses fetch for image generation", async () => {

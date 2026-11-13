@@ -1,0 +1,224 @@
+[
+    {
+        "description": "minContains without contains is ignored",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "minContains": 1
+        },
+        "tests": [
+            {
+                "description": "one item valid against lone minContains",
+                "data": [ 1 ],
+                "valid": true
+            },
+            {
+                "description": "zero items still valid against lone minContains",
+                "data": [],
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "minContains=1 with contains",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "contains": {"const": 1},
+            "minContains": 1
+        },
+        "tests": [
+            {
+                "description": "empty data",
+                "data": [ ],
+                "valid": false
+            },
+            {
+                "description": "no elements match",
+                "data": [ 2 ],
+                "valid": false
+            },
+            {
+                "description": "single element matches, valid minContains",
+                "data": [ 1 ],
+                "valid": true
+            },
+            {
+                "description": "some elements match, valid minContains",
+                "data": [ 1, 2 ],
+                "valid": true
+            },
+            {
+                "description": "all elements match, valid minContains",
+                "data": [ 1, 1 ],
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "minContains=2 with contains",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "contains": {"const": 1},
+            "minContains": 2
+        },
+        "tests": [
+            {
+                "description": "empty data",
+                "data": [ ],
+                "valid": false
+            },
+            {
+                "description": "all elements match, invalid minContains",
+                "data": [ 1 ],
+                "valid": false
+            },
+            {
+                "description": "some elements match, invalid minContains",
+                "data": [ 1, 2 ],
+                "valid": false
+            },
+            {
+                "description": "all elements match, valid minContains (exactly as needed)",
+                "data": [ 1, 1 ],
+                "valid": true
+            },
+            {
+                "description": "all elements match, valid minContains (more than needed)",
+                "data": [ 1, 1, 1 ],
+                "valid": true
+            },
+            {
+                "description": "some elements match, valid minContains",
+                "data": [ 1, 2, 1 ],
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "minContains=2 with contains with a decimal value",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "contains": {"const": 1},
+            "minContains": 2.0
+        },
+        "tests": [
+            {
+                "description": "one element matches, invalid minContains",
+                "data": [ 1 ],
+                "valid": false
+            },
+            {
+                "description": "both elements match, valid minContains",
+                "data": [ 1, 1 ],
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "maxContains = minContains",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "contains": {"const": 1},
+            "maxContains": 2,
+            "minContains": 2
+        },
+        "tests": [
+            {
+                "description": "empty data",
+                "data": [ ],
+                "valid": false
+            },
+            {
+                "description": "all elements match, invalid minContains",
+                "data": [ 1 ],
+                "valid": false
+            },
+            {
+                "description": "all elements match, invalid maxContains",
+                "data": [ 1, 1, 1 ],
+                "valid": false
+            },
+            {
+                "description": "all elements match, valid maxContains and minContains",
+                "data": [ 1, 1 ],
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "maxContains < minContains",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "contains": {"const": 1},
+            "maxContains": 1,
+            "minContains": 3
+        },
+        "tests": [
+            {
+                "description": "empty data",
+                "data": [ ],
+                "valid": false
+            },
+            {
+                "description": "invalid minContains",
+                "data": [ 1 ],
+                "valid": false
+            },
+            {
+                "description": "invalid maxContains",
+                "data": [ 1, 1, 1 ],
+                "valid": false
+            },
+            {
+                "description": "invalid maxContains and minContains",
+                "data": [ 1, 1 ],
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "minContains = 0",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "contains": {"const": 1},
+            "minContains": 0
+        },
+        "tests": [
+            {
+                "description": "empty data",
+                "data": [ ],
+                "valid": true
+            },
+            {
+                "description": "minContains = 0 makes contains always pass",
+                "data": [ 2 ],
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "minContains = 0 with maxContains",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "contains": {"const": 1},
+            "minContains": 0,
+            "maxContains": 1
+        },
+        "tests": [
+            {
+                "description": "empty data",
+                "data": [ ],
+                "valid": true
+            },
+            {
+                "description": "not more than maxContains",
+                "data": [ 1 ],
+                "valid": true
+            },
+            {
+                "description": "too many",
+                "data": [ 1, 1 ],
+                "valid": false
+            }
+        ]
+    }
+]

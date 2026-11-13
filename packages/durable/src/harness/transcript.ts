@@ -1,4 +1,4 @@
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { idFromNumber } from "../ids.ts";
 import type { Cursor, EntryId, EntryQuery, EntryRecord, Page } from "../types.ts";
 import type { ConversationView, ConversationWindow } from "./view.ts";

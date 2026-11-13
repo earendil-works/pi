@@ -1,9 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { BetaTool, MessageCreateParamsStreaming } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
 import { Type } from "typebox";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { type AnthropicOptions, stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { stream as streamPiMessages } from "../src/api/pi-messages.ts";
+import { cleanupSessionResources } from "../src/session-resources.ts";
 import type { Model, Tool, TranscriptContext } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
@@ -66,6 +67,8 @@ function harness(respond: (payload: MessageCreateParamsStreaming, attempt: numbe
 
 // Regression tests for https://github.com/earendil-works/pi/issues/10409.
 describe("Anthropic preferred strict tool fallback", () => {
+	afterEach(() => cleanupSessionResources());
+
 	it.each([
 		grammarError,
 		// Observed from the live API: 32 strict tools, then 20 tools with 24 optional fields each.
@@ -248,7 +251,7 @@ describe("Anthropic preferred strict tool fallback", () => {
 		expect(payloads).toHaveLength(1);
 	});
 
-	it("does not disable strict sampling on later requests", async () => {
+	it("does not disable strict sampling on later requests without a session", async () => {
 		const { payloads, options } = harness((_payload, attempt) =>
 			attempt === 1 ? errorResponse() : successResponse(),
 		);
@@ -256,6 +259,50 @@ describe("Anthropic preferred strict tool fallback", () => {
 		await streamAnthropic(model, transcript, options).result();
 		await streamAnthropic(model, transcript, options).result();
 		expect(payloads.map((payload) => (payload.tools as BetaTool[])[0].strict)).toEqual([true, undefined, true]);
+	});
+
+	// Regression tests for https://github.com/earendil-works/pi/issues/11626.
+	it("sends preferred tools non-strict right away on later requests of a rejected session", async () => {
+		const { payloads, options } = harness((_payload, attempt) =>
+			attempt === 1 ? errorResponse() : successResponse(),
+		);
+		const transcript = context([tool("lookup", "prefer"), tool("required", "require")]);
+		const first = await streamAnthropic(model, transcript, { ...options, sessionId: "rejected" }).result();
+		const second = await streamAnthropic(model, transcript, { ...options, sessionId: "rejected" }).result();
+		await streamAnthropic(model, transcript, { ...options, sessionId: "other" }).result();
+
+		expect(first.diagnostics?.[0]?.type).toBe("anthropic_strict_tools_fallback");
+		expect(second.stopReason).toBe("stop");
+		expect(second.diagnostics).toBeUndefined();
+		expect(payloads.map((payload) => (payload.tools as BetaTool[]).map((definition) => definition.strict))).toEqual([
+			[true, true],
+			[undefined, true],
+			[undefined, true],
+			[true, true],
+		]);
+	});
+
+	it("tries strict sampling again after the session's resources are cleaned up", async () => {
+		const { payloads, options } = harness((_payload, attempt) =>
+			attempt === 1 ? errorResponse() : successResponse(),
+		);
+		const transcript = context([tool("lookup", "prefer")]);
+		await streamAnthropic(model, transcript, { ...options, sessionId: "cleaned" }).result();
+		cleanupSessionResources("cleaned");
+		await streamAnthropic(model, transcript, { ...options, sessionId: "cleaned" }).result();
+		expect(payloads.map((payload) => (payload.tools as BetaTool[])[0].strict)).toEqual([true, undefined, true]);
+	});
+
+	it("surfaces a rejection of a remembered session's required tools without retrying", async () => {
+		const { payloads, options } = harness((_payload, attempt) =>
+			attempt === 2 ? successResponse() : errorResponse(),
+		);
+		const transcript = context([tool("lookup", "prefer"), tool("required", "require")]);
+		await streamAnthropic(model, transcript, { ...options, sessionId: "required" }).result();
+		const result = await streamAnthropic(model, transcript, { ...options, sessionId: "required" }).result();
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toContain(grammarError);
+		expect(payloads).toHaveLength(3);
 	});
 
 	it("preserves prefer through pi-messages so the gateway's Anthropic adapter can fall back", async () => {

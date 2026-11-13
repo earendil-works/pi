@@ -1,0 +1,582 @@
+[
+    {
+        "description": "validation of internationalized host names",
+        "schema": { "format": "idn-hostname" },
+        "tests": [
+            {
+                "description": "all string formats ignore integers",
+                "data": 12,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore floats",
+                "data": 13.7,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore objects",
+                "data": {},
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore arrays",
+                "data": [],
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore booleans",
+                "data": false,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore nulls",
+                "data": null,
+                "valid": true
+            },
+            {
+                "description": "a valid host name (example.test in Hangul)",
+                "data": "실례.테스트",
+                "valid": true
+            },
+            {
+                "description": "illegal first char U+302E Hangul single dot tone mark",
+                "data": "〮실례.테스트",
+                "valid": false
+            },
+            {
+                "description": "contains illegal char U+302E Hangul single dot tone mark",
+                "data": "실〮례.테스트",
+                "valid": false
+            },
+            {
+                "description": "a single label of 63 characters is valid",
+                "data": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "valid": true
+            },
+            {
+                "description": "a single label of 64 characters is too long",
+                "data": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "valid": false
+            },
+            {
+                "description": "invalid label, correct Punycode",
+                "comment": "https://tools.ietf.org/html/rfc5890#section-2.3.2.1 https://tools.ietf.org/html/rfc5891#section-4.4 https://tools.ietf.org/html/rfc3492#section-7.1",
+                "data": "-> $1.00 <--",
+                "valid": false
+            },
+            {
+                "description": "valid Chinese Punycode",
+                "comment": "https://tools.ietf.org/html/rfc5890#section-2.3.2.1 https://tools.ietf.org/html/rfc5891#section-4.4",
+                "data": "xn--ihqwcrb4cv8a8dqg056pqjye",
+                "valid": true
+            },
+            {
+                "description": "invalid Punycode",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.4 https://tools.ietf.org/html/rfc5890#section-2.3.2.1",
+                "data": "xn--X",
+                "valid": false
+            },
+            {
+                "description": "U-label contains \"--\" in the 3rd and 4th position",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.1 https://tools.ietf.org/html/rfc5890#section-2.3.2.1",
+                "data": "XN--aa---o47jg78q",
+                "valid": false
+            },
+            {
+                "description": "U-label starts with a dash",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.1",
+                "data": "-hello",
+                "valid": false
+            },
+            {
+                "description": "U-label ends with a dash",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.1",
+                "data": "hello-",
+                "valid": false
+            },
+            {
+                "description": "U-label starts and ends with a dash",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.1",
+                "data": "-hello-",
+                "valid": false
+            },
+            {
+                "description": "Begins with a Spacing Combining Mark",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.2",
+                "data": "\u0903hello",
+                "valid": false
+            },
+            {
+                "description": "Begins with a Nonspacing Mark",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.2",
+                "data": "\u0300hello",
+                "valid": false
+            },
+            {
+                "description": "Begins with an Enclosing Mark",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.2",
+                "data": "\u0488hello",
+                "valid": false
+            },
+            {
+                "description": "Exceptions that are PVALID, left-to-right chars",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.2 https://tools.ietf.org/html/rfc5892#section-2.6",
+                "data": "\u00df\u03c2\u0f0b\u3007",
+                "valid": true
+            },
+            {
+                "description": "Exceptions that are PVALID, right-to-left chars",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.2 https://tools.ietf.org/html/rfc5892#section-2.6",
+                "data": "\u06fd\u06fe",
+                "valid": true
+            },
+            {
+                "description": "Exceptions that are DISALLOWED, right-to-left chars",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.2 https://tools.ietf.org/html/rfc5892#section-2.6",
+                "data": "\u0640\u07fa",
+                "valid": false
+            },
+            {
+                "description": "Exceptions that are DISALLOWED, left-to-right chars",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.2 https://tools.ietf.org/html/rfc5892#section-2.6 Note: The two combining marks (U+302E and U+302F) are in the middle and not at the start",
+                "data": "\u3031\u3032\u3033\u3034\u3035\u302e\u302f\u303b",
+                "valid": false
+            },
+            {
+                "description": "MIDDLE DOT with no preceding 'l'",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.3",
+                "data": "a\u00b7l",
+                "valid": false
+            },
+            {
+                "description": "MIDDLE DOT with nothing preceding",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.3",
+                "data": "\u00b7l",
+                "valid": false
+            },
+            {
+                "description": "MIDDLE DOT with no following 'l'",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.3",
+                "data": "l\u00b7a",
+                "valid": false
+            },
+            {
+                "description": "MIDDLE DOT with nothing following",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.3",
+                "data": "l\u00b7",
+                "valid": false
+            },
+            {
+                "description": "MIDDLE DOT with surrounding 'l's",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.3",
+                "data": "l\u00b7l",
+                "valid": true
+            },
+            {
+                "description": "Greek KERAIA not followed by Greek",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.4",
+                "data": "\u03b1\u0375S",
+                "valid": false
+            },
+            {
+                "description": "Greek KERAIA not followed by anything",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.4",
+                "data": "\u03b1\u0375",
+                "valid": false
+            },
+            {
+                "description": "Greek KERAIA followed by Greek",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.4",
+                "data": "\u03b1\u0375\u03b2",
+                "valid": true
+            },
+            {
+                "description": "Hebrew GERESH not preceded by Hebrew",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.5",
+                "data": "A\u05f3\u05d1",
+                "valid": false
+            },
+            {
+                "description": "Hebrew GERESH not preceded by anything",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.5",
+                "data": "\u05f3\u05d1",
+                "valid": false
+            },
+            {
+                "description": "Hebrew GERESH preceded by Hebrew",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.5",
+                "data": "\u05d0\u05f3\u05d1",
+                "valid": true
+            },
+            {
+                "description": "Hebrew GERSHAYIM not preceded by Hebrew",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.6",
+                "data": "A\u05f4\u05d1",
+                "valid": false
+            },
+            {
+                "description": "Hebrew GERSHAYIM not preceded by anything",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.6",
+                "data": "\u05f4\u05d1",
+                "valid": false
+            },
+            {
+                "description": "Hebrew GERSHAYIM preceded by Hebrew",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.6",
+                "data": "\u05d0\u05f4\u05d1",
+                "valid": true
+            },
+            {
+                "description": "KATAKANA MIDDLE DOT with no Hiragana, Katakana, or Han",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.7",
+                "data": "def\u30fbabc",
+                "valid": false
+            },
+            {
+                "description": "KATAKANA MIDDLE DOT with no other characters",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.7",
+                "data": "\u30fb",
+                "valid": false
+            },
+            {
+                "description": "KATAKANA MIDDLE DOT with Hiragana",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.7",
+                "data": "\u30fb\u3041",
+                "valid": true
+            },
+            {
+                "description": "KATAKANA MIDDLE DOT with Katakana",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.7",
+                "data": "\u30fb\u30a1",
+                "valid": true
+            },
+            {
+                "description": "KATAKANA MIDDLE DOT with Han",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.7",
+                "data": "\u30fb\u4e08",
+                "valid": true
+            },
+            {
+                "description": "Arabic-Indic digits mixed with Extended Arabic-Indic digits",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.8",
+                "data": "\u0628\u0660\u06f0",
+                "valid": false
+            },
+            {
+                "description": "Arabic-Indic digits not mixed with Extended Arabic-Indic digits",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.8",
+                "data": "\u0628\u0660\u0628",
+                "valid": true
+            },
+            {
+                "description": "Extended Arabic-Indic digits not mixed with Arabic-Indic digits",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.9",
+                "data": "\u06f00",
+                "valid": true
+            },
+            {
+                "description": "ZERO WIDTH JOINER not preceded by Virama",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.2 https://www.unicode.org/review/pr-37.pdf",
+                "data": "\u0915\u200d\u0937",
+                "valid": false
+            },
+            {
+                "description": "ZERO WIDTH JOINER not preceded by anything",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.2 https://www.unicode.org/review/pr-37.pdf",
+                "data": "\u200d\u0937",
+                "valid": false
+            },
+            {
+                "description": "ZERO WIDTH JOINER preceded by Virama",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.2 https://www.unicode.org/review/pr-37.pdf",
+                "data": "\u0915\u094d\u200d\u0937",
+                "valid": true
+            },
+            {
+                "description": "ZERO WIDTH NON-JOINER preceded by Virama",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.1",
+                "data": "\u0915\u094d\u200c\u0937",
+                "valid": true
+            },
+            {
+                "description": "ZERO WIDTH NON-JOINER not preceded by Virama but matches regexp",
+                "comment": "https://tools.ietf.org/html/rfc5891#section-4.2.3.3 https://tools.ietf.org/html/rfc5892#appendix-A.1 https://www.w3.org/TR/alreq/#h_disjoining_enforcement",
+                "data": "\u0628\u064a\u200c\u0628\u064a",
+                "valid": true
+            },
+            {
+                "description": "single label",
+                "data": "hostname",
+                "valid": true
+            },
+            {
+                "description": "single label with hyphen",
+                "data": "host-name",
+                "valid": true
+            },
+            {
+                "description": "single label with digits",
+                "data": "h0stn4me",
+                "valid": true
+            },
+            {
+                "description": "single label starting with digit",
+                "data": "1host",
+                "valid": true
+            },
+            {
+                "description": "single label ending with digit",
+                "data": "hostnam3",
+                "valid": true
+            },
+            {
+                "description": "empty string",
+                "data": "",
+                "valid": false
+            },
+            {
+                "description": "trailing newline is invalid",
+                "data": "example.com\n",
+                "valid": false
+            },
+            {
+                "description": "leading space is invalid",
+                "data": " example.com",
+                "valid": false
+            },
+            {
+                "description": "space inside a label is invalid",
+                "data": "ex ample.com",
+                "valid": false
+            },
+            {
+                "description": "fullwidth digits are mapped to ASCII digits",
+                "comment": "IdnaMappingTable.txt maps U+FF11 to 0031, so this label maps to 123",
+                "data": "\uff11\uff12\uff13",
+                "valid": true
+            },
+            {
+                "description": "a zero width space is ignored by the mapping",
+                "comment": "IdnaMappingTable.txt lists U+200B as ignored, so this label maps to ab",
+                "data": "a\u200bb",
+                "valid": true
+            },
+            {
+                "description": "an A-label with an uppercase Punycode body is valid",
+                "comment": "https://www.rfc-editor.org/rfc/rfc5891#section-5.3 lowercases the A-label before the round-trip test, and RFC 3492 section 5 gives A-Z and a-z the same digit-values",
+                "data": "xn--NXASMQ6B",
+                "valid": true
+            },
+            {
+                "description": "the two Arabic-Indic digit blocks may appear in different labels",
+                "comment": "https://www.rfc-editor.org/rfc/rfc5892#appendix-A.8 scopes the rule to \"this label\", so one block per label is valid",
+                "data": "\u0628\u0660.\u0628\u06f0",
+                "valid": true
+            },
+            {
+                "description": "a label of only Arabic-Indic digits is invalid",
+                "comment": "https://www.rfc-editor.org/rfc/rfc5893#section-2 condition 1 allows only L, R or AL as the first character, and an Arabic-Indic digit is AN",
+                "data": "\u0660\u0661",
+                "valid": false
+            },
+            {
+                "description": "a non-NFC U-label is valid after UTS 46 normalisation",
+                "comment": "UTS 46 section 4 normalises to NFC before validating, so the decomposed form is accepted",
+                "data": "cafe\u0301.com",
+                "valid": true
+            },
+            {
+                "description": "a label of 63 fullwidth characters is valid after mapping",
+                "comment": "UTS 46 maps each U+FF41 to an ASCII letter, so this label is 63 octets in its mapped form",
+                "data": "\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41\uff41",
+                "valid": true
+            },
+            {
+                "description": "an ACE prefix produced by the mapping step is decoded as an A-label",
+                "comment": "UTS 46 maps U+FF58 U+FF4E to \"xn\", so the mapped label is the A-label xn--nxasmq6b",
+                "data": "\uff58\uff4e--nxasmq6b",
+                "valid": true
+            },
+            {
+                "description": "zero width non-joiner must pass at every occurrence",
+                "comment": "https://www.rfc-editor.org/rfc/rfc5892#appendix-A.1",
+                "data": "\u0915\u094d\u200c\u0937x\u200cy",
+                "valid": false
+            },
+            {
+                "description": "Bidi domain name with a digit-first label is invalid",
+                "comment": "https://www.rfc-editor.org/rfc/rfc5893#section-2 a label in a Bidi domain name must start with an L, R or AL character",
+                "data": "0a.\u05d0",
+                "valid": false
+            },
+            {
+                "description": "label starting with a digit before a right-to-left letter is invalid",
+                "comment": "https://www.rfc-editor.org/rfc/rfc5893#section-2",
+                "data": "0\u0627",
+                "valid": false
+            },
+            {
+                "description": "left-to-right label containing a right-to-left letter is invalid",
+                "comment": "https://www.rfc-editor.org/rfc/rfc5893#section-2",
+                "data": "a\u05d0",
+                "valid": false
+            },
+            {
+                "description": "right-to-left label mixing both digit types is invalid",
+                "comment": "https://www.rfc-editor.org/rfc/rfc5893#section-2",
+                "data": "\u05d00\u0660",
+                "valid": false
+            },
+            {
+                "description": "A-label that decodes to a disallowed code point is invalid",
+                "comment": "https://www.rfc-editor.org/rfc/rfc5890#section-2.3.2.1 https://www.rfc-editor.org/rfc/rfc5892#section-2.6",
+                "data": "xn--7a",
+                "valid": false
+            },
+            {
+                "description": "A-label that decodes to a Bidi rule violation is invalid",
+                "comment": "https://www.rfc-editor.org/rfc/rfc5890#section-2.3.2.1 https://www.rfc-editor.org/rfc/rfc5893",
+                "data": "xn--0ca24w",
+                "valid": false
+            },
+            {
+                "description": "a U-label whose A-label form is longer than 63 octets is invalid",
+                "comment": "https://www.rfc-editor.org/rfc/rfc5891#section-4.2.4 the 63-octet limit is on the A-label form, not the code point count",
+                "data": "\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc\u00fc",
+                "valid": false
+            },
+            {
+                "description": "empty label between two dots is invalid",
+                "comment": "https://www.rfc-editor.org/rfc/rfc1034#section-3.1",
+                "data": "a..b",
+                "valid": false
+            },
+            {
+                "description": "a name longer than 253 characters is invalid",
+                "data": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "valid": false
+            },
+            {
+                "description": "A-label that decodes to only ASCII is invalid",
+                "comment": "https://www.rfc-editor.org/rfc/rfc5890#section-2.3.2.1 a U-label must have at least one non-ASCII character",
+                "data": "xn--example-",
+                "valid": false
+            },
+            {
+                "description": "non-canonical Punycode that does not re-encode to itself is invalid",
+                "comment": "https://www.rfc-editor.org/rfc/rfc5891#section-5.4 a label decoded from Punycode must be identical to the original A-label",
+                "data": "xn---9uc",
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "validation of separators in internationalized host names",
+        "specification": [
+            {"rfc3490": "3.1", "quote": "Whenever dots are used as label separators, the following characters MUST be recognized as dots: U+002E (full stop), U+3002 (ideographic full stop), U+FF0E (fullwidth full stop), U+FF61(halfwidth ideographic full stop)"}
+        ],
+        "schema": { "format": "idn-hostname" },
+        "tests": [
+            {
+                "description": "single dot",
+                "data": ".",
+                "valid": false
+            },
+            {
+                "description": "single ideographic full stop",
+                "data": "\u3002",
+                "valid": false
+            },
+            {
+                "description": "single fullwidth full stop",
+                "data": "\uff0e",
+                "valid": false
+            },
+            {
+                "description": "single halfwidth ideographic full stop",
+                "data": "\uff61",
+                "valid": false
+            },
+            {
+                "description": "dot as label separator",
+                "data": "a.b",
+                "valid": true
+            },
+            {
+                "description": "ideographic full stop as label separator",
+                "data": "a\u3002b",
+                "valid": true
+            },
+            {
+                "description": "fullwidth full stop as label separator",
+                "data": "a\uff0eb",
+                "valid": true
+            },
+            {
+                "description": "halfwidth ideographic full stop as label separator",
+                "data": "a\uff61b",
+                "valid": true
+            },
+            {
+                "description": "leading dot",
+                "data": ".example",
+                "valid": false
+            },
+            {
+                "description": "leading ideographic full stop",
+                "data": "\u3002example",
+                "valid": false
+            },
+            {
+                "description": "leading fullwidth full stop",
+                "data": "\uff0eexample",
+                "valid": false
+            },
+            {
+                "description": "leading halfwidth ideographic full stop",
+                "data": "\uff61example",
+                "valid": false
+            },
+            {
+                "description": "trailing dot",
+                "data": "example.",
+                "valid": false
+            },
+            {
+                "description": "trailing ideographic full stop",
+                "data": "example\u3002",
+                "valid": false
+            },
+            {
+                "description": "trailing fullwidth full stop",
+                "data": "example\uff0e",
+                "valid": false
+            },
+            {
+                "description": "trailing halfwidth ideographic full stop",
+                "data": "example\uff61",
+                "valid": false
+            },
+            {
+                "description": "label too long if separator ignored (full stop)",
+                "data": "παράδειγμαπαράδειγμαπαράδειγμαπαράδειγμαπαράδειγμαπα.com",
+                "valid": true
+            },
+            {
+                "description": "label too long if separator ignored (ideographic full stop)",
+                "data": "παράδειγμαπαράδειγμαπαράδειγμαπαράδειγμαπαράδειγμαπα\u3002com",
+                "valid": true
+            },
+            {
+                "description": "label too long if separator ignored (fullwidth full stop)",
+                "data": "παράδειγμαπαράδειγμαπαράδειγμαπαράδειγμαπαράδειγμαπα\uff0ecom",
+                "valid": true
+            },
+            {
+                "description": "label too long if separator ignored (halfwidth ideographic full stop)",
+                "data": "παράδειγμαπαράδειγμαπαράδειγμαπαράδειγμαπαράδειγμαπα\uff61com",
+                "valid": true
+            }
+        ]
+    }
+]

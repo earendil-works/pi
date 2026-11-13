@@ -1,7 +1,7 @@
 import { readFileSync, rmSync } from "node:fs";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import type { SystemMessage, ToolResultMessage } from "@earendil-works/pi-ai/compat";
-import { type JsonRpcRequest, LATEST_PROTOCOL_VERSION } from "@earendil-works/pi-mcp";
+import { createMcpToolName, type JsonRpcRequest, LATEST_PROTOCOL_VERSION } from "@earendil-works/pi-mcp";
 import { createInMemoryTransportPair } from "@earendil-works/pi-mcp/testing";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -10,7 +10,6 @@ import type { SessionManager } from "../../src/core/session-manager.ts";
 import { createCodemodeExtension } from "../../src/extensions/codemode/index.ts";
 import type { McpExposure, McpServerEntry } from "../../src/extensions/mcp/config.ts";
 import { createMcpExtension, MCP_SERVERS_SECTION } from "../../src/extensions/mcp/index.ts";
-import { createMcpToolName } from "../../src/extensions/mcp/tools.ts";
 import { createToolSearchExtension } from "../../src/extensions/tool-search/index.ts";
 import { TOOL_SEARCH_DESCRIPTION } from "../../src/extensions/tool-search/tool.ts";
 import { createTestExtensionsResult, createTestResourceLoader } from "../utilities.ts";
@@ -1245,6 +1244,39 @@ describe("AgentSession MCP tools after resume and reload", () => {
 			expect(second.harness.session.getActiveToolNames().includes("mcp__docs__search")).toBe(kept);
 		},
 	);
+
+	// Like extensions that register a loader tool and hide it at session_start: the restore or reload
+	// activates the loader as a tool the branch never recorded, and the extension deactivates it again.
+	const dropLoader: ExtensionFactory = (pi) => {
+		pi.registerTool({
+			name: "loader",
+			label: "loader",
+			description: "Loads the extension's tools.",
+			parameters: Type.Object({}),
+			execute: async () => ({ content: [], details: undefined }),
+		});
+		pi.on("session_start", () => pi.setActiveTools(pi.getActiveTools().filter((name) => name !== "loader")));
+	};
+
+	it("keeps restored tools when an extension deactivates only its own tool before they register", async () => {
+		const first = await setup(undefined, [dropLoader]);
+		await loadDocsSearch(first.harness);
+		const second = await setup(first.harness.sessionManager, [dropLoader]);
+		await vi.waitFor(() =>
+			expect(second.harness.session.getAllTools().some((tool) => tool.name === "mcp__docs__search")).toBe(true),
+		);
+		expect(second.harness.session.getActiveToolNames()).toContain("mcp__docs__search");
+		expect(second.harness.session.getActiveToolNames()).not.toContain("loader");
+	});
+
+	it("keeps tools tool_search loaded after /reload when an extension deactivates only its own tool", async () => {
+		const { harness, connected } = await setup(undefined, [dropLoader]);
+		await loadDocsSearch(harness);
+		await harness.session.reload();
+		await vi.waitFor(() => expect(connected).toEqual(["docs", "docs"]));
+		await vi.waitFor(() => expect(harness.session.getActiveToolNames()).toContain("mcp__docs__search"));
+		expect(harness.session.getActiveToolNames()).not.toContain("loader");
+	});
 
 	it("does not activate restored tools that register after the next prompt starts", async () => {
 		const first = await setup();

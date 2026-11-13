@@ -1,0 +1,7 @@
+{
+    "$id": "http://localhost:1234/draft2020-12/prefixItems.json",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "prefixItems": [
+        {"type": "string"}
+    ]
+}

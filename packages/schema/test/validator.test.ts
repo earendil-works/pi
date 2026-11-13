@@ -1,0 +1,530 @@
+// compile() and Validator: checks, errors, values, options and schemas from other sources.
+
+import Type from "typebox";
+import { Check } from "typebox/value";
+import { describe, expect, it } from "vitest";
+import { formats } from "../src/formats/index.ts";
+import { compile } from "../src/index.ts";
+
+const read = {
+	type: "object",
+	properties: { path: { type: "string" }, offset: { type: "integer", minimum: 1 } },
+	required: ["path"],
+	additionalProperties: false,
+};
+
+const block = {
+	anyOf: [
+		{
+			type: "object",
+			properties: { kind: { const: "text" }, text: { type: "string" } },
+			required: ["kind", "text"],
+			additionalProperties: false,
+		},
+		{
+			type: "object",
+			properties: { kind: { const: "image" }, width: { type: "integer", minimum: 0 } },
+			required: ["kind", "width"],
+			additionalProperties: false,
+		},
+	],
+};
+
+describe("errors", () => {
+	it("reports a missing field and an unknown field at the field", () => {
+		expect(compile(read).errors({ offset: 0, extra: true })).toEqual([
+			{ path: "/path", keyword: "required", message: "missing" },
+			{ path: "/offset", keyword: "minimum", message: "expected >= 1" },
+			{ path: "/extra", keyword: "additionalProperties", message: "unknown field" },
+		]);
+	});
+
+	it("is empty for a valid value", () => {
+		expect(compile(read).errors({ path: "a.ts" })).toEqual([]);
+	});
+
+	it("reports the branch a tagged union's tag selects", () => {
+		const validator = compile({ type: "array", items: block });
+		expect(
+			validator.errors([
+				{ kind: "text", text: "a" },
+				{ kind: "image", width: -1 },
+			]),
+		).toEqual([{ path: "/1/width", keyword: "minimum", message: "expected >= 0" }]);
+		expect(validator.errors([{ kind: "video" }])).toEqual([
+			{ path: "/0/kind", keyword: "anyOf", message: 'expected one of ["text","image"]' },
+		]);
+	});
+
+	it("escapes ~ and / in paths as JSON Pointer does", () => {
+		const validator = compile({ type: "object", properties: { "a/b~c": { type: "string" } } });
+		expect(validator.errors({ "a/b~c": 1 })).toEqual([
+			{ path: "/a~1b~0c", keyword: "type", message: "expected string, got integer" },
+		]);
+	});
+
+	it("follows $ref into the referenced schema", () => {
+		const validator = compile({
+			$defs: { point: { type: "object", properties: { x: { type: "number" } }, required: ["x"] } },
+			type: "array",
+			items: { $ref: "#/$defs/point" },
+		});
+		expect(validator.errors([{ x: 1 }, {}])).toEqual([{ path: "/1/x", keyword: "required", message: "missing" }]);
+	});
+});
+
+describe("values", () => {
+	it("treats a property set to undefined as absent", () => {
+		const validator = compile(read);
+		expect(validator.check({ path: "a.ts", offset: undefined })).toBe(true);
+		expect(validator.check({ path: undefined })).toBe(false);
+	});
+
+	it("checks bytes as Uint8Array with length bounds", () => {
+		const validator = compile({ type: "object", properties: { data: { type: "bytes", maxLength: 4 } } });
+		expect(validator.check({ data: new Uint8Array(4) })).toBe(true);
+		expect(validator.check({ data: new Uint8Array(5) })).toBe(false);
+		expect(validator.check({ data: [1, 2] })).toBe(false);
+		expect(validator.errors({ data: new Uint8Array(5) })).toEqual([
+			{ path: "/data", keyword: "maxLength", message: "expected at most 4 bytes" },
+		]);
+	});
+
+	it("does not treat bytes as an object", () => {
+		expect(compile({ type: "object" }).check(new Uint8Array(1))).toBe(false);
+	});
+
+	it("checks properties named like Object.prototype members as own properties", () => {
+		const validator = compile({
+			type: "object",
+			properties: { constructor: { type: "string" }, toString: { type: "number" } },
+			required: ["constructor"],
+			additionalProperties: false,
+		});
+		expect(validator.check({})).toBe(false);
+		expect(validator.check({ constructor: "a" })).toBe(true);
+		expect(validator.check({ constructor: "a", toString: "b" })).toBe(false);
+	});
+
+	it("does not accept every value for a type named like an Object.prototype member", () => {
+		expect(compile({ type: "constructor" }).check(1)).toBe(false);
+	});
+
+	it("rejects NaN and Infinity as a number or an integer, with or without bounds, as TypeBox does", () => {
+		const schemas = [
+			{ type: "number" },
+			{ type: "integer" },
+			{ type: "number", minimum: 0 },
+			{ type: ["number", "string"] },
+			{ anyOf: [{ type: "number" }, { type: "null" }] },
+			{ type: "object", properties: { a: { type: "number" } } },
+		];
+		for (const schema of schemas) {
+			const { check } = compile(schema);
+			for (const v of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+				const value = schema.type === "object" ? { a: v } : v;
+				expect(check(value), `${JSON.stringify(schema)}: ${v}`).toBe(false);
+				expect(check(value)).toBe(Check(schema, value));
+			}
+		}
+		expect(compile({ type: "number" }).errors(Number.NaN)).toEqual([
+			{ path: "", keyword: "type", message: "expected number, got NaN" },
+		]);
+	});
+
+	it("checks a detached check function", () => {
+		const { check } = compile(read);
+		expect([{ path: "a" }, { path: 1 }].filter(check)).toEqual([{ path: "a" }]);
+	});
+});
+
+describe("options", () => {
+	it("treats format as an annotation unless formats are given", () => {
+		const schema = { type: "string", format: "email" };
+		expect(compile(schema).check("not an email")).toBe(true);
+		expect(compile(schema, { formats }).check("not an email")).toBe(false);
+		expect(compile(schema, { formats }).check("a@example.com")).toBe(true);
+	});
+
+	it("resolves $ref to registered documents", () => {
+		const point = { type: "object", properties: { x: { type: "number" } }, required: ["x"] };
+		const validator = compile(
+			{ $ref: "https://example.com/point.json" },
+			{ schemas: { "https://example.com/point.json": point } },
+		);
+		expect(validator.check({ x: 1 })).toBe(true);
+		expect(validator.check({})).toBe(false);
+	});
+
+	it("throws for a $ref that names nothing", () => {
+		expect(() => compile({ $ref: "https://example.com/missing.json" })).toThrow(/Unresolved \$ref/);
+		expect(() => compile({ $ref: "#/$defs/missing" })).toThrow(/Unresolved \$ref/);
+	});
+
+	it("applies draft 7 semantics: $ref overrides its siblings", () => {
+		const schema = { definitions: { s: { type: "string" } }, $ref: "#/definitions/s", maxLength: 1 };
+		expect(compile(schema, { draft: "7" }).check("ab")).toBe(true);
+		expect(compile(schema).check("ab")).toBe(false);
+	});
+});
+
+describe("schemas", () => {
+	it("compiles TypeBox schemas as they are", () => {
+		const validator = compile(Type.Object({ name: Type.String(), tags: Type.Array(Type.String()) }));
+		expect(validator.check({ name: "a", tags: [] })).toBe(true);
+		expect(validator.errors({ name: "a", tags: [1] })).toEqual([
+			{ path: "/tags/0", keyword: "type", message: "expected string, got integer" },
+		]);
+	});
+
+	it("compiles deep-frozen schemas and never modifies a schema", () => {
+		const schema = deepFreeze(structuredClone({ ...block, $defs: { s: { type: "string", pattern: "^a" } } }));
+		const before = JSON.stringify(schema);
+		const validator = compile(schema);
+		expect(validator.check({ kind: "text", text: "x" })).toBe(true);
+		expect(validator.errors({ kind: "image", width: -1 })).toHaveLength(1);
+		expect(JSON.stringify(schema)).toBe(before);
+	});
+
+	it("compiles a recursive schema", () => {
+		const tree = {
+			type: "object",
+			properties: { value: { type: "number" }, children: { type: "array", items: { $ref: "#" } } },
+			required: ["value"],
+		};
+		const validator = compile(tree);
+		expect(validator.check({ value: 1, children: [{ value: 2, children: [{ value: 3 }] }] })).toBe(true);
+		expect(validator.errors({ value: 1, children: [{ value: 2, children: [{}] }] })).toEqual([
+			{ path: "/children/0/children/0/value", keyword: "required", message: "missing" },
+		]);
+	});
+
+	// #11697
+	it("applies a relative root $id once when resolving local references", () => {
+		const schema = {
+			$id: "schemas/tool.json",
+			type: "object",
+			properties: { count: { $ref: "#/$defs/count" } },
+			required: ["count"],
+			$defs: { count: { type: "integer" } },
+		};
+		expect(compile(schema).check({ count: 2 })).toBe(true);
+		const validator = compile(schema, { unresolvedRefs: "reject" });
+		expect(validator.check({ count: 2 })).toBe(true);
+		expect(validator.errors({ count: "a" })).toEqual([
+			{ path: "/count", keyword: "type", message: "expected integer, got string" },
+		]);
+		expect(compile(schema, { coerce: true }).parse({ count: "2" })).toEqual({ ok: true, value: { count: 2 } });
+	});
+
+	it("applies a relative root $id once in schemas with unevaluated keywords", () => {
+		const props = {
+			$id: "schemas/tool.json",
+			type: "object",
+			properties: { count: { $ref: "#/$defs/count" } },
+			$defs: { count: { type: "integer" } },
+			unevaluatedProperties: false,
+		};
+		const validator = compile(props, { unresolvedRefs: "reject" });
+		expect(validator.check({ count: 2 })).toBe(true);
+		expect(validator.errors({ count: 2, extra: 1 })).toEqual([
+			{ path: "/extra", keyword: "unevaluatedProperties", message: "unknown field" },
+		]);
+		const items = {
+			$id: "schemas/list.json",
+			type: "array",
+			prefixItems: [{ $ref: "#/$defs/count" }],
+			$defs: { count: { type: "integer" } },
+			unevaluatedItems: false,
+		};
+		expect(compile(items, { unresolvedRefs: "reject" }).check([2])).toBe(true);
+		expect(compile(items).check([2, 3])).toBe(false);
+	});
+
+	it("explains errors under nested resources with a relative $id", () => {
+		const cloned = {
+			$id: "https://example.com/root.json",
+			allOf: [{ $ref: "#/$defs/child" }],
+			$defs: {
+				child: {
+					$id: "schemas/tool.json",
+					$ref: "#/$defs/props",
+					unevaluatedProperties: false,
+					$defs: { props: { properties: { count: { type: "integer" } } } },
+				},
+			},
+		};
+		expect(compile(cloned).errors({ count: 2, extra: 1 })).toEqual([
+			{ path: "/extra", keyword: "unevaluatedProperties", message: "unknown field" },
+		]);
+		const branch = {
+			$id: "https://example.com/root.json",
+			anyOf: [{ $id: "a/b.json", $ref: "#/$defs/n", $defs: { n: { type: "integer" } } }, { type: "boolean" }],
+		};
+		expect(compile(branch).errors({})).toEqual([
+			{ path: "", keyword: "type", message: "expected integer, got object" },
+		]);
+	});
+
+	it("throws for a malformed schema", () => {
+		expect(() => compile({ properties: { a: 1 } })).toThrow(/must be an object or a boolean/);
+	});
+});
+
+function deepFreeze<T>(value: T): T {
+	if (typeof value === "object" && value !== null && !Object.isFrozen(value)) {
+		Object.freeze(value);
+		for (const child of Object.values(value)) deepFreeze(child);
+	}
+	return value;
+}
+
+describe("unresolved references", () => {
+	const dangling = { type: "object", properties: { t: { $ref: "#/definitions/Missing" } } };
+	const external = { type: "object", properties: { t: { $ref: "https://example.com/schemas/t.json" } } };
+
+	it("throw when the schema compiles, by default", () => {
+		expect(() => compile(dangling)).toThrow("Unresolved $ref #/definitions/Missing");
+		expect(() => compile(external)).toThrow("Unresolved $ref https://example.com/schemas/t.json");
+	});
+
+	it("reject only values at their place with unresolvedRefs: reject", () => {
+		for (const schema of [dangling, external]) {
+			const validator = compile(schema, { unresolvedRefs: "reject" });
+			expect(validator.check({})).toBe(true);
+			expect(validator.check({ t: 1 })).toBe(false);
+		}
+		expect(compile(dangling, { unresolvedRefs: "reject" }).errors({ t: 1 })).toEqual([
+			{ path: "/t", keyword: "$ref", message: "unresolved reference #/definitions/Missing" },
+		]);
+	});
+
+	it("leave values at their place uncoerced", () => {
+		const validator = compile(dangling, { unresolvedRefs: "reject", coerce: true });
+		expect(validator.parse({ t: "1" })).toEqual({
+			ok: false,
+			errors: [{ path: "/t", keyword: "$ref", message: "unresolved reference #/definitions/Missing" }],
+		});
+	});
+
+	it("reject a TypeBox Ref without its definition", () => {
+		const validator = compile(Type.Object({ a: Type.Ref("A") }), { unresolvedRefs: "reject" });
+		expect(validator.errors({ a: { x: "1" } })).toEqual([
+			{ path: "/a", keyword: "$ref", message: "unresolved reference A" },
+		]);
+	});
+});
+
+describe("leaf checks inlined by object and array loops", () => {
+	const leaves: [object, unknown[]][] = [
+		[{ const: "a" }, ["a", "b", 1, null]],
+		[{ const: null }, [null, 0, false, "null"]],
+		[{ enum: ["a", 1, null] }, ["a", 1, null, "b", 2, true]],
+		[{ type: ["string", "null"] }, ["a", null, 1, {}, []]],
+		[{ type: ["integer", "boolean"] }, [1, 1.5, true, "1"]],
+		[{ type: ["number", "array"] }, [1.5, 2, [], {}, new Uint8Array(1)]],
+		[{ type: ["object", "bytes"] }, [{}, new Uint8Array(1), [], null]],
+		[{ anyOf: [{ type: "string" }, { type: "null" }] }, ["a", null, 1]],
+		[{ anyOf: [{ type: "integer" }, { type: "string", minLength: 2 }] }, [1, 1.5, "ab", "a"]],
+		[{ type: "integer", minimum: 1, exclusiveMaximum: 5 }, [1, 4, 5, 0, 2.5, "2"]],
+		[{ type: "number", exclusiveMinimum: 0, maximum: 1 }, [0.5, 1, 0, 1.5, "0.5"]],
+		[{ type: "integer", multipleOf: 2 }, [2, 3, 2.5]],
+		[{ type: "string", minLength: 2, maxLength: 3 }, ["ab", "abc", "a", "abcd", "😀😀", 12]],
+		[{ type: "string", pattern: "^a+$" }, ["aa", "ab", 1]],
+		[{ minimum: 1 }, [1, 0, "x", null]],
+	];
+
+	it("agree with the standalone check as a property, a pattern property and an item", () => {
+		for (const [schema, values] of leaves) {
+			const alone = compile(schema).check;
+			const closed = compile({ type: "object", properties: { p: schema }, additionalProperties: false }).check;
+			const open = compile({ type: "object", properties: { p: schema }, required: ["q"] }).check;
+			const items = compile({ type: "array", items: schema }).check;
+			for (const v of values) {
+				const expected = alone(v);
+				expect([closed({ p: v }), open({ p: v, q: 1 }), items([v])], JSON.stringify({ schema, v })).toEqual([
+					expected,
+					expected,
+					expected,
+				]);
+			}
+		}
+	});
+
+	it("find properties in any order", () => {
+		const { check } = compile({
+			type: "object",
+			properties: { a: { const: 1 }, b: { type: "string" }, c: { type: "integer", minimum: 0 } },
+			required: ["a", "c"],
+			additionalProperties: false,
+		});
+		expect(check({ a: 1, b: "x", c: 0 })).toBe(true);
+		expect(check({ c: 0, b: "x", a: 1 })).toBe(true);
+		expect(check({ b: "x", c: 0, a: 1 })).toBe(true);
+		expect(check({ a: 1, c: 0, a2: 1 })).toBe(false);
+		expect(check({ c: -1, a: 1 })).toBe(false);
+		expect(check({ c: 0, b: 1, a: 1 })).toBe(false);
+		expect(check({ c: 0, b: undefined, a: 1 })).toBe(true);
+		expect(check({ c: 0, b: "x" })).toBe(false);
+	});
+});
+
+describe("string lengths", () => {
+	it("count an unpaired high surrogate as one code point and a pair as one", () => {
+		expect(compile({ type: "string", minLength: 2 }).check("\ud800A")).toBe(true);
+		expect(compile({ type: "string", maxLength: 1 }).check("\ud800A")).toBe(false);
+		expect(compile({ type: "string", maxLength: 1 }).check("\ud800")).toBe(true);
+		expect(compile({ type: "string", maxLength: 1 }).check("😀")).toBe(true);
+		expect(compile({ type: "string", minLength: 2 }).check("😀")).toBe(false);
+		expect(compile({ type: "string", minLength: 2 }).check("\udc00\ud800")).toBe(true);
+	});
+});
+
+describe("error messages", () => {
+	it("list at most 20 enum values", () => {
+		const values = Array.from({ length: 5000 }, (_, i) => `v${i}`);
+		const validator = compile({ type: "object", properties: { e: { type: "string", enum: values } } });
+		expect(validator.check({ e: "v4999" })).toBe(true);
+		const [error] = validator.errors({ e: "v5000" });
+		expect(error.message).toBe(
+			`expected one of ${JSON.stringify(values.slice(0, 20)).slice(0, -1)}, ... and 4980 more]`,
+		);
+		expect(compile({ enum: ["a", "b"] }).errors("c")).toEqual([
+			{ path: "", keyword: "enum", message: 'expected one of ["a","b"]' },
+		]);
+	});
+
+	it("accept a 10,000-value enum", () => {
+		const values = Array.from({ length: 10_000 }, (_, i) => `member${i}`);
+		expect(compile({ enum: values }).check("member9999")).toBe(true);
+	});
+
+	it("describe contains bounds in words", () => {
+		const at = (schema: object) => compile({ type: "array", ...schema }).errors(["a"])[0]?.message;
+		expect(at({ contains: { type: "number" } })).toBe("expected at least 1 matching item");
+		expect(at({ contains: { type: "number" }, minContains: 2 })).toBe("expected at least 2 matching items");
+		expect(at({ contains: { type: "string" }, maxContains: 0, minContains: 0 })).toBe(
+			"expected at most 0 matching items",
+		);
+		expect(at({ contains: { type: "number" }, minContains: 1, maxContains: 3 })).toBe(
+			"expected between 1 and 3 matching items",
+		);
+	});
+
+	it("blame a oneOf failure on the branch that declares most of the object's properties", () => {
+		const filter = {
+			type: "object",
+			properties: { where: { $ref: "#/$defs/F" } },
+			$defs: {
+				F: {
+					oneOf: [
+						{
+							type: "object",
+							properties: { field: { type: "string" }, eq: { type: "string" } },
+							required: ["field", "eq"],
+							additionalProperties: false,
+						},
+						{
+							type: "object",
+							properties: { and: { type: "array", items: { $ref: "#/$defs/F" } } },
+							required: ["and"],
+							additionalProperties: false,
+						},
+					],
+				},
+			},
+		};
+		expect(compile(filter).errors({ where: { and: [{ field: "a", eq: 1, x: 2 }] } })).toEqual([
+			{ path: "/where/and/0/eq", keyword: "type", message: "expected string, got integer" },
+			{ path: "/where/and/0/x", keyword: "additionalProperties", message: "unknown field" },
+		]);
+	});
+
+	it("explain one object reached through the same reference at two paths at each path", () => {
+		const schema = {
+			type: "object",
+			properties: { a: { $ref: "#/$defs/P" }, b: { $ref: "#/$defs/P" } },
+			$defs: { P: { type: "object", properties: { n: { type: "integer" } } } },
+		};
+		const shared = { n: "x" };
+		expect(compile(schema).errors({ a: shared, b: shared })).toEqual([
+			{ path: "/a/n", keyword: "type", message: "expected integer, got string" },
+			{ path: "/b/n", keyword: "type", message: "expected integer, got string" },
+		]);
+	});
+});
+
+describe("TypeBox's extra formats", () => {
+	it("check url and json-pointer-uri-fragment", () => {
+		const url = compile({ type: "string", format: "url" }, { formats });
+		expect(url.check("https://example.com/a?b=1")).toBe(true);
+		expect(url.check("not a url")).toBe(false);
+		const fragment = compile({ type: "string", format: "json-pointer-uri-fragment" }, { formats });
+		expect(fragment.check("#/a/b~1c")).toBe(true);
+		expect(fragment.check("#/a b")).toBe(false);
+		expect(fragment.check("/a")).toBe(false);
+	});
+});
+
+describe("TypeBox's JavaScript types", () => {
+	it("check Type.BigInt with its bounds, as TypeBox does", () => {
+		const schema = Type.Union([Type.BigInt({ minimum: 0n }), Type.Null()]);
+		const validator = compile(schema);
+		for (const value of [5n, 0n, null]) expect(validator.check(value)).toBe(true);
+		for (const value of [-1n, 5, "5", undefined]) expect(validator.check(value)).toBe(false);
+		expect(compile(Type.BigInt({ maximum: 10n, multipleOf: 5n })).check(10n)).toBe(true);
+		expect(compile(Type.BigInt({ multipleOf: 5n })).check(7n)).toBe(false);
+		expect(compile(Type.BigInt({ exclusiveMaximum: 3n })).check(3n)).toBe(false);
+		expect(compile(Type.BigInt({ minimum: 0n })).errors(-2n)).toEqual([
+			{ path: "", keyword: "minimum", message: "expected >= 0" },
+		]);
+		expect(compile(Type.BigInt()).errors(2)).toEqual([
+			{ path: "", keyword: "type", message: "expected bigint, got integer" },
+		]);
+	});
+
+	it("check Type.Undefined: only undefined, and a required property with it must be present", () => {
+		expect(compile(Type.Undefined()).check(undefined)).toBe(true);
+		expect(compile(Type.Undefined()).check(null)).toBe(false);
+		const schema = Type.Object({ selection: Type.Literal("average"), principalId: Type.Undefined() });
+		const validator = compile(schema);
+		expect(validator.check({ selection: "average", principalId: undefined })).toBe(true);
+		expect(validator.check({ selection: "average" })).toBe(false);
+		expect(validator.check({ selection: "average", principalId: "x" })).toBe(false);
+		expect(validator.check({ selection: "average", principalId: null })).toBe(false);
+		expect(validator.errors({ selection: "average" })).toEqual([
+			{ path: "/principalId", keyword: "required", message: "missing" },
+		]);
+		expect(validator.errors({ selection: "average", principalId: "x" })).toEqual([
+			{ path: "/principalId", keyword: "type", message: "expected undefined, got string" },
+		]);
+	});
+
+	it("check a required property set to undefined by its schema, as TypeBox does", () => {
+		// Present and undefined: valid when the schema takes undefined (Undefined in a union, Unknown, Any).
+		for (const property of [Type.Union([Type.String(), Type.Undefined()]), Type.Unknown(), Type.Any()]) {
+			for (const additionalProperties of [undefined, false]) {
+				const validator = compile(
+					Type.Object({ a: property }, additionalProperties === false ? { additionalProperties } : {}),
+				);
+				expect(validator.check({ a: undefined })).toBe(true);
+				expect(validator.check({})).toBe(false);
+			}
+		}
+		// A required property whose schema does not take undefined stays missing when set to undefined.
+		const name = compile(Type.Object({ name: Type.String() }));
+		expect(name.check({ name: undefined })).toBe(false);
+		expect(name.errors({ name: undefined })).toEqual([{ path: "/name", keyword: "required", message: "missing" }]);
+		// An optional property set to undefined still counts as absent.
+		expect(compile(Type.Object({ name: Type.Optional(Type.String()) })).check({ name: undefined })).toBe(true);
+	});
+
+	it("check multipleOf of bigints exactly, however large", () => {
+		const five = compile(Type.BigInt({ multipleOf: 5n }));
+		expect(five.check(10n ** 400n)).toBe(true);
+		expect(five.check(10n ** 400n + 1n)).toBe(false);
+		// A bigint is no multiple of 0 or of a fraction.
+		expect(compile({ multipleOf: 0n }).check(4n)).toBe(false);
+		expect(compile({ multipleOf: 0.5 }).check(3n)).toBe(false);
+	});
+});

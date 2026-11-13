@@ -1,10 +1,11 @@
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { Context } from "@earendil-works/chord";
-import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@earendil-works/pi-ai";
+import type { Context } from "@earendil-works/chord/context";
+import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import { type CodemodeRun, CodemodeSandbox } from "@earendil-works/pi-codemode";
 import {
+	defineExtension,
 	defineTool,
 	type Harness,
 	type TaskId,
@@ -13,6 +14,7 @@ import {
 	ToolTask,
 	type ToolTaskInput,
 } from "@earendil-works/pi-durable";
+import { bool, num, obj, opt, str } from "@earendil-works/pi-schema";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	type CodemodeGlobal,
@@ -21,15 +23,15 @@ import {
 	type CodemodeToolDetails,
 	createCodemodeTool,
 } from "../src/codemode/codemode.ts";
-import type { CodemodeNamespace } from "../src/codemode/describe.ts";
 import { NodeExecutionEnv } from "../src/env/node.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
+import { createReadTool } from "../src/tools/read.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat } from "./chat-support.ts";
 import { addHooks, addTool } from "./harness-support.ts";
 import { ControlledStorage, context } from "./session-support.ts";
 import { aborted, type Deferred, deferred, eventually } from "./task-support.ts";
 
-const Parameters = Type.Object({ text: Type.Optional(Type.String()), id: Type.Optional(Type.Number()) });
+const Parameters = obj({ text: opt(str()), id: opt(num()) });
 
 function tool(
 	name: string,
@@ -63,7 +65,7 @@ async function sqlitePath(): Promise<string> {
  * - `hold` (replay-safe) waits for `holds.gate` while `holds.block` is set, then returns `held <id>`;
  * - `slow` returns `slow <id>` once `slows.release(id)` was called.
  */
-function codemodeChat(globals: CodemodeGlobal[] = [], namespaces: CodemodeNamespace[] = []) {
+function codemodeChat(globals: CodemodeGlobal[] = []) {
 	const setup = chatSetup();
 	const sandbox = new CodemodeSandbox({ memoryLimitBytes: 64 * 1024 * 1024 });
 	const vm: { starts: number; onStart?: (run: CodemodeRun) => void } = { starts: 0 };
@@ -74,7 +76,7 @@ function codemodeChat(globals: CodemodeGlobal[] = [], namespaces: CodemodeNamesp
 		vm.onStart?.(run);
 		return run;
 	};
-	addTool(setup.registry, createCodemodeTool({ sandbox, globals, namespaces }));
+	addTool(setup.registry, createCodemodeTool({ sandbox, globals }));
 	const echo = new Map<string, number>();
 	addTool(
 		setup.registry,
@@ -714,13 +716,13 @@ describe("durable code mode", () => {
 
 	it("resolves a schema tool's error result that carries its value, and rejects one without with its text", async () => {
 		const chat = codemodeChat();
-		const Exit = Type.Object({ output: Type.String(), exitCode: Type.Number() });
+		const Exit = obj({ output: str(), exitCode: num() });
 		addTool(
 			chat.setup.registry,
 			defineTool({
 				name: "run",
 				description: "run",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				structuredOutputSchema: Exit,
 				// Like bash on a nonzero exit: an error result with its value.
 				execute: async () => ({
@@ -735,7 +737,7 @@ describe("durable code mode", () => {
 			defineTool({
 				name: "denied",
 				description: "denied",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				structuredOutputSchema: Exit,
 				execute: async () => ({ output: [{ type: "text", text: "permission denied" }], isError: true }),
 			}),
@@ -766,7 +768,7 @@ describe("durable code mode", () => {
 			defineTool({
 				name: "picture",
 				description: "picture",
-				parameters: Type.Object({ caption: Type.Boolean() }),
+				parameters: obj({ caption: bool() }),
 				execute: async (args) => ({
 					output: [
 						...(args.caption ? [{ type: "text" as const, text: "a cat" }] : []),
@@ -1047,6 +1049,29 @@ describe("durable code mode output and tool search", () => {
 		expect(message.content.some((item) => item.type === "image")).toBe(true);
 	});
 
+	// #11015
+	it("resolves the built-in read with an image's block, which image() shows, and with a text file's text", async () => {
+		const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+		const files = await mkdtemp(join(tmpdir(), "pi-codemode-read-"));
+		directories.add(files);
+		await writeFile(join(files, "pixel.png"), Buffer.from(png, "base64"));
+		await writeFile(join(files, "note.txt"), "hello");
+		const chat = codemodeChat();
+		addTool(chat.setup.registry, createReadTool());
+		const { text, message } = await runScript(
+			`const picture = await tools.read({ path: ${JSON.stringify(join(files, "pixel.png"))} });
+			text([picture.type, picture.mimeType, picture.data.length].join(" "));
+			image(picture);
+			text(await tools.read({ path: ${JSON.stringify(join(files, "note.txt"))} }));`,
+			chat,
+		);
+		expect(message.isError).toBe(false);
+		expect(text).toContain(`image image/png ${png.length}`);
+		expect(text).toMatch(/\[Image saved to \S+ \(image\/png, \d+ bytes\)\]/);
+		expect(text).toContain("hello");
+		expect(message.content.some((item) => item.type === "image")).toBe(true);
+	});
+
 	it("calls a deferred tool the model is not offered, and finds it in ALL_TOOLS", async () => {
 		const chat = codemodeChat();
 		addTool(
@@ -1054,7 +1079,7 @@ describe("durable code mode output and tool search", () => {
 			defineTool({
 				name: "later",
 				description: "A deferred tool",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				deferred: true,
 				execute: async () => ({ output: [{ type: "text", text: "later ran" }] }),
 			}),
@@ -1075,30 +1100,52 @@ describe("durable code mode output and tool search", () => {
 	});
 
 	it("finds tools with searchTools(), describeTool(), and describeNamespace(), and lists them in ALL_TOOLS", async () => {
-		const chat = codemodeChat([], [{ name: "github", description: "GitHub MCP server", prefix: "mcp__github__" }]);
-		addTool(
-			chat.setup.registry,
-			tool("mcp__github__list_issues", async () => ({ output: [] })),
+		const chat = codemodeChat();
+		// The namespace is the extension's: its tools belong to it whatever their names.
+		chat.setup.registry.install(
+			defineExtension({
+				name: "mcp:github",
+				namespace: {
+					name: "github",
+					description: "GitHub MCP server",
+					instructions: "Pass the repository as owner/name.",
+				},
+				tools: [tool("list_issues", async () => ({ output: [] }))],
+			}),
+		);
+		// A namespace without tools yet (a server waiting for sign-in) is described too.
+		chat.setup.registry.install(
+			defineExtension({ name: "mcp:linear", namespace: { name: "linear", description: "Linear: sign in first." } }),
 		);
 		const { text } = await runScript(
 			`const found = await searchTools("issues");
+			const byInstructions = await searchTools("repository owner");
 			const inNamespace = await searchTools("echo", { namespace: "github" });
 			return {
 				found: found.map((tool) => tool.name),
+				byInstructions: byInstructions.map((tool) => tool.name),
 				inNamespace,
 				described: (await describeTool("echo")).includes("echo(args:"),
 				missing: (await describeTool("nope")) ?? null,
 				namespace: await describeNamespace("github"),
-				all: ALL_TOOLS.map((tool) => tool.name).includes("mcp__github__list_issues"),
+				empty: await describeNamespace("linear"),
+				all: ALL_TOOLS.map((tool) => tool.name).includes("list_issues"),
 			};`,
 			chat,
 		);
 		expect(JSON.parse(text.replace(/^Script completed\nWall time [\d.]+ seconds\nOutput:\n/, ""))).toEqual({
-			found: ["mcp__github__list_issues"],
+			found: ["list_issues"],
+			byInstructions: ["list_issues"],
 			inNamespace: [],
 			described: true,
 			missing: null,
-			namespace: { name: "github", description: "GitHub MCP server", tools: ["mcp__github__list_issues"] },
+			namespace: {
+				name: "github",
+				description: "GitHub MCP server",
+				instructions: "Pass the repository as owner/name.",
+				tools: ["list_issues"],
+			},
+			empty: { name: "linear", description: "Linear: sign in first.", tools: [] },
 			all: true,
 		});
 	});

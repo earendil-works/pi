@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-11-10
+
+## [1.5.1] - 2026-11-09
+
+### Added
+
+- Added `resolveSchemaRef(ref, root)`, which returns the subschema a local `$ref` (`#`, `#/$defs/Item`) names in a schema, with URI-decoded and JSON Pointer unescaped segments ([#11803](https://github.com/earendil-works/pi/issues/11803))
+
+### Fixed
+
+- Fixed `schemaToType()`, `renderDeclarations()`, `renderToolSignature()`, and `renderToolSample()` throwing `URIError` for a local `$ref` with a malformed percent escape (`#/$defs/%E0`), so one such tool schema failed every caller that renders all tools. The reference now renders as `unknown`, like a reference that names nothing ([#11803](https://github.com/earendil-works/pi/issues/11803))
+- Fixed `console.*` output and thrown non-Error values in scripts showing `NaN`, `Infinity`, and `-Infinity` as `null`; they now print as `text()` prints them ([#11901](https://github.com/earendil-works/pi/issues/11901))
+
+## [1.5.0] - 2026-11-02
+
+### Changed
+
+- README: the codemode tool example builds its parameters with `@earendil-works/pi-schema` instead of TypeBox.
+
 ## [1.4.0] - 2026-10-21
 
 ## [1.3.0] - 2026-10-15

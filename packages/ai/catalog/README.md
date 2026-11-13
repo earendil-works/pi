@@ -42,6 +42,14 @@ export default defineProvider({
 
 `modelsDevModels()` keeps tool-capable chat models and maps names, input modalities, costs (including context tiers), and limits. Use its `include` and `map` options for provider-specific filtering and fields. Prefer fixing wrong upstream data in models.dev; keep local corrections small and say why they exist.
 
+## Released clients
+
+pi.dev serves each published catalog to every released pi at or above `MINIMUM_PI_VERSION` (`scripts/model-catalog-minimum-version.mjs` in the repository root). Released clients use it within hours, without updating pi, and combine it with their own code's defaults, such as `detectCompat()` in `src/api/openai-completions.ts`.
+
+A catalog change must therefore work with the latest release's code, not only with the code in the same commit. Example: a new code default makes `supportsDeveloperRole: false` redundant for a provider, so the line is removed from the catalog. Released clients still default to `true` and start sending the `developer` role, which the provider rejects.
+
+If a catalog change needs new code, either keep the catalog working with old code (add explicit values; remove nothing old clients rely on), or set `MINIMUM_PI_VERSION` to the next release in the same commit. Clients below the minimum keep the last catalog published for them and receive no further catalog updates. `npm run check:model-catalog-compat` only catches type errors against the latest release, not changed behavior.
+
 ## Checking changes
 
 `npm run diff:model-catalog -- [provider ...]` from the repository root generates the catalog at `HEAD` and in the worktree and prints the JSON differences.

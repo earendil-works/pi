@@ -2,13 +2,14 @@
 // extension's own document, and switching back restores the full tool set.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/26-plan-mode.ts
+
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { Type } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
+import { arr, obj, str } from "@earendil-works/pi-schema";
 import { NodeExecutionEnv } from "../../src/env/node.ts";
 import {
 	createRegistry,
@@ -39,7 +40,7 @@ const PlanDoc = defineDoc<{ steps: string[] }>({
 const submitPlan = defineTool({
 	name: "submit_plan",
 	description: "Submit the plan as a list of steps.",
-	parameters: Type.Object({ steps: Type.Array(Type.String()) }),
+	parameters: obj({ steps: arr(str()) }),
 	execute: async (args, api, callContext) => {
 		await api.commit(async (tx) => {
 			(await tx.doc(PlanDoc, api.conversationId)).steps = args.steps;

@@ -17,6 +17,7 @@ interface HighlightJsApi {
 	highlight(code: string, options: HighlightJsOptions): HighlightJsResult;
 	highlightAuto(code: string, languageSubset?: string[]): HighlightJsResult;
 	getLanguage(name: string): HighlightJsLanguageDefinition | undefined;
+	listLanguages(): string[];
 	registerLanguage(name: string, language: HighlightJsLanguageFactory): void;
 }
 

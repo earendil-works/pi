@@ -272,43 +272,31 @@ export function truncateLine(
 	if (line.length <= maxChars) {
 		return { text: line, wasTruncated: false };
 	}
-	return { text: `${line.slice(0, maxChars)}... [truncated]`, wasTruncated: true };
+	return { text: `${sliceHead(line, maxChars)}... [truncated]`, wasTruncated: true };
 }
 
-export interface MiddleTruncationResult {
-	/** The start and end of the content with a `…N chars truncated…` marker between them. */
-	content: string;
-	truncated: boolean;
-	/** Characters left out. */
-	removedChars: number;
-	totalBytes: number;
-	totalLines: number;
+/** Returns at most the first `maxUnits` UTF-16 code units of `text`, without splitting a surrogate pair. */
+export function sliceHead(text: string, maxUnits: number): string {
+	const end = Math.max(0, maxUnits);
+	// A lone high surrogate before the cut would be invalid UTF-16; keep the whole character out instead.
+	return isHighSurrogate(text.charCodeAt(end - 1)) && isLowSurrogate(text.charCodeAt(end))
+		? text.slice(0, end - 1)
+		: text.slice(0, end);
 }
 
-/**
- * Keep the start and the end of `content`, half of `maxBytes` each, and replace the middle with a
- * `…N chars truncated…` marker, like Codex does for tool output. Cuts only at character boundaries.
- */
-export function truncateMiddle(content: string, maxBytes: number): MiddleTruncationResult {
-	const buf = Buffer.from(content, "utf-8");
-	const totalLines = splitLinesForCounting(content).length;
-	if (buf.length <= maxBytes) {
-		return { content, truncated: false, removedChars: 0, totalBytes: buf.length, totalLines };
-	}
-	// Continuation bytes (10xxxxxx) are not character starts.
-	const isBoundary = (index: number) => index >= buf.length || (buf[index] & 0xc0) !== 0x80;
-	let headEnd = Math.floor(maxBytes / 2);
-	while (headEnd > 0 && !isBoundary(headEnd)) headEnd--;
-	let tailStart = buf.length - (maxBytes - Math.floor(maxBytes / 2));
-	while (tailStart < buf.length && !isBoundary(tailStart)) tailStart++;
-	const head = buf.subarray(0, headEnd).toString("utf-8");
-	const tail = buf.subarray(tailStart).toString("utf-8");
-	const removedChars = Array.from(buf.subarray(headEnd, tailStart).toString("utf-8")).length;
-	return {
-		content: `${head}…${removedChars} chars truncated…${tail}`,
-		truncated: true,
-		removedChars,
-		totalBytes: buf.length,
-		totalLines,
-	};
+/** Returns at most the last `maxUnits` UTF-16 code units of `text`, without splitting a surrogate pair. */
+export function sliceTail(text: string, maxUnits: number): string {
+	if (maxUnits <= 0) return "";
+	const start = Math.max(0, text.length - maxUnits);
+	return isLowSurrogate(text.charCodeAt(start)) && isHighSurrogate(text.charCodeAt(start - 1))
+		? text.slice(start + 1)
+		: text.slice(start);
+}
+
+function isHighSurrogate(code: number): boolean {
+	return code >= 0xd800 && code <= 0xdbff;
+}
+
+function isLowSurrogate(code: number): boolean {
+	return code >= 0xdc00 && code <= 0xdfff;
 }

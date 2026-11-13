@@ -3,11 +3,13 @@
 //! its id.
 
 use crate::errors::Failure;
-use crate::exec::{Control, Groups};
+use crate::exec::{Control, Groups, running};
 #[cfg(unix)]
-use crate::exec::{Message, kill_group};
+use crate::exec::{Message, kill_group, start_waiter};
 #[cfg(unix)]
 use crate::frame::{EVENT, Frame};
+#[cfg(unix)]
+use crate::output::Gate;
 use crate::output::Output;
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
@@ -55,25 +57,8 @@ fn size(json: &Value, key: &str) -> Result<u16, Failure> {
 
 impl PtyRequest {
     pub fn from_json(json: &Value) -> Result<PtyRequest, Failure> {
-        let argv = match &json["argv"] {
-            Value::Null => None,
-            value => Some(
-                value
-                    .as_array()
-                    .and_then(|items| {
-                        items
-                            .iter()
-                            .map(|item| item.as_str().map(str::to_string))
-                            .collect()
-                    })
-                    .filter(|argv: &Vec<String>| !argv.is_empty())
-                    .ok_or_else(|| {
-                        Failure::new("EINVAL", "argv must be a non-empty array of strings")
-                    })?,
-            ),
-        };
         Ok(PtyRequest {
-            argv,
+            argv: crate::exec::argv(json)?,
             cwd: json["cwd"]
                 .as_str()
                 .ok_or_else(|| Failure::new("EINVAL", "pty needs cwd"))?
@@ -87,15 +72,7 @@ impl PtyRequest {
 }
 
 fn find(terminals: &Terminals, json: &Value) -> Result<Arc<Terminal>, Failure> {
-    let target = json["target"]
-        .as_u64()
-        .ok_or_else(|| Failure::new("EINVAL", "missing field target"))?;
-    terminals
-        .lock()
-        .unwrap()
-        .get(&(target as u32))
-        .cloned()
-        .ok_or_else(|| Failure::new("EBADF", "no running terminal with this id"))
+    running(terminals, json, "terminal")
 }
 
 /// Queue input for the terminal; it is written in the order it arrives, without holding up other requests.
@@ -212,17 +189,18 @@ pub fn run(
         groups.lock().unwrap().remove(&pid);
         Failure::new("spawn_error", error.to_string())
     };
+    // Like a full pipe: a program that writes faster than the link waits.
+    let gate = Gate::new(output);
     let started = {
         let master = master.clone();
         let sender = sender.clone();
         let stop = stop.clone();
-        let output = output.clone();
+        let gate = gate.clone();
         thread::Builder::new().spawn(move || {
             unix::read(&master, &stop, |bytes| {
-                let delivered = sender.send(Message::Data(0, bytes.to_vec())).is_ok();
-                // Like a full pipe: a program that writes faster than the link waits.
-                output.wait_for_room(&stop);
-                delivered
+                gate.pass(&stop, || {
+                    sender.send(Message::Data(0, bytes.to_vec())).is_ok()
+                })
             });
             let _ = sender.send(Message::Eof(0));
         })
@@ -245,22 +223,9 @@ pub fn run(
     if let Err(error) = started {
         return Err(abandon(child, error));
     }
-    // The waiter receives the child once it runs, so a waiter that cannot start leaves the child here to reap.
-    let (give, take) = mpsc::channel::<std::process::Child>();
-    let waiter = sender.clone();
-    let started = thread::Builder::new().spawn(move || {
-        let Ok(mut child) = take.recv() else {
-            return;
-        };
-        let _ = waiter.send(match child.wait() {
-            Ok(status) => Message::Exit(status),
-            Err(error) => Message::WaitFailed(error.to_string()),
-        });
-    });
-    if let Err(error) = started {
+    if let Err((child, error)) = start_waiter(child, None, sender.clone()) {
         return Err(abandon(child, error));
     }
-    let _ = give.send(child);
     drop(sender);
 
     let mut status = None;
@@ -284,11 +249,16 @@ pub fn run(
         let wait = match idle_until {
             Some(idle) => {
                 let now = Instant::now();
-                if now >= idle {
+                if now < idle {
+                    idle - now
+                } else if gate.held() {
+                    // Silence while the link holds the reader up is not the end of the output.
+                    idle_until = Some(now + EXIT_GRACE);
+                    EXIT_GRACE
+                } else {
                     // A background job may keep the terminal open after the program exited.
                     break;
                 }
-                idle - now
             }
             None => Duration::from_secs(3600),
         };

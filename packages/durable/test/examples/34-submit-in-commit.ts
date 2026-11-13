@@ -3,10 +3,11 @@
 // state; `whenIdle: "reject"` refuses it when no run is working.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/34-submit-in-commit.ts
+
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { Type } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
+import { obj } from "@earendil-works/pi-schema";
 import {
 	ConversationIdle,
 	createRegistry,
@@ -38,7 +39,7 @@ const working = new Promise<void>((resolve) => {
 const build = defineTool({
 	name: "build",
 	description: "Build the project",
-	parameters: Type.Object({}),
+	parameters: obj({}),
 	execute: async () => {
 		await working;
 		return { output: [{ type: "text", text: "built" }] };

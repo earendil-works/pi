@@ -1,5 +1,7 @@
-import type { Context, Draft, JsonValue, WatchCall, WatchEnd, WatchHandle } from "@earendil-works/chord";
-import type { Op } from "@earendil-works/chord/delta";
+import type { Context } from "@earendil-works/chord/context";
+import type { Draft, Op } from "@earendil-works/chord/delta";
+import type { JsonValue } from "@earendil-works/chord/json";
+import type { WatchCall, WatchEnd, WatchHandle } from "@earendil-works/chord/watch";
 import type { Message, Models } from "@earendil-works/pi-ai";
 import type { TelemetryCarrier } from "@earendil-works/pi-telemetry";
 import type { ExecutionEnv } from "./env/index.ts";
@@ -11,6 +13,7 @@ import type {
 	Settings,
 	SettledTask,
 } from "./harness/types.ts";
+import type { SignalKey, SignalResult, SignalState, SignalToken } from "./signals.ts";
 
 /** JSON object used as the root of every durable document. */
 export type JsonObject = { [key: string]: JsonValue };
@@ -228,12 +231,12 @@ export type RunningTask<I, S, R> = TaskRecord<I, S, R> & {
 
 /**
  * Next state a task commits for itself: a replacement checkpoint, a wait on tasks, a sleep, or its outcome. A returned `terminal` state is
- * stored as `completing` while ordinary owned work below the task is live (spec §5.5).
+ * stored as `completing` while ordinary owned work below the task is live (spec §5.5). A task never writes its own
+ * `wake`: a commit of the same checkpoint keeps it, any other state drops it.
  */
-export type NextTaskState<S, R> = Extract<
-	TaskState<S, R>,
-	{ readonly status: "running" | "waiting" | "sleeping" | "terminal" }
->;
+export type NextTaskState<S, R> =
+	| { readonly status: "running"; readonly checkpoint: S; readonly wake?: never; readonly outcome?: never }
+	| Extract<TaskState<S, R>, { readonly status: "waiting" | "sleeping" | "terminal" }>;
 
 /**
  * Runs one checkpoint phase. It must commit a changed checkpoint or a terminal outcome through `runtime.commit()`;
@@ -299,6 +302,11 @@ export interface TaskRuntime<I, S, R, H extends object> extends DocumentObserver
 	memo<T extends JsonValue>(name: string, context: Context): Promise<T | undefined>;
 	/** Store `candidate` unless a memo already exists; return the durable winner. */
 	memo<T extends JsonValue>(name: string, candidate: T, context: Context): Promise<T>;
+	/**
+	 * A signal key's committed state, the value migrated to the token's version; undefined while nothing came. Throws when
+	 * the stored value cannot be migrated or the migrated value does not match the schema.
+	 */
+	readSignal<T>(token: SignalToken<T>, key: string, context: Context): Promise<SignalState<T> | undefined>;
 	/** Committed task record. */
 	getTask<T>(id: TaskId<T>, context: Context): Promise<TaskRecord<JsonValue, JsonValue, T> | undefined>;
 	/** Resolve with the task's terminal receipt; rejects when the invocation ends. */
@@ -394,8 +402,23 @@ export interface Task<I, S extends { phase: string }, R, H extends object> {
 /** Who owns a task: its conversation (a top-level task) or another task of the same conversation (a child task). */
 export type TaskOwnership = { readonly kind: "conversation" } | { readonly kind: "task"; readonly taskId: TaskId };
 
-/** How a waiting task treats the tasks it waits on (spec §5.5). */
-export type JoinPolicy = "failFast" | "allSettled";
+/**
+ * How a waiting task treats the tasks it waits on (spec §5.5): `allSettled` resumes once every task in `on` is terminal,
+ * `failFast` too but aborts the others once one fails, `any` once at least one is terminal.
+ */
+export type JoinPolicy = "failFast" | "allSettled" | "any";
+
+/**
+ * Why parked work runs again, as the reservation that woke it recorded: `time` (the sleep's `until`, no signals listed),
+ * `expired` (`until` came before any listed signal), `signal` (the key whose value woke it; read the value with
+ * `readSignal()`), `tasks` (the terminal tasks of the wait's `on` at the reservation). Kept until the task commits another
+ * checkpoint, parks, or ends.
+ */
+export type WakeReason =
+	| { readonly reason: "time" }
+	| { readonly reason: "expired" }
+	| { readonly reason: "signal"; readonly signal: string; readonly key: string }
+	| { readonly reason: "tasks"; readonly ended: readonly TaskId[] };
 
 /** Creation options for a durable task. */
 export type TaskOptions = {
@@ -500,7 +523,12 @@ type SubmissionRecordBase = {
 	readonly conversationId: ConversationId;
 	/** Host-provided deduplication key, scoped to the conversation. */
 	readonly requestId?: string;
+	/** The task to deliver `SubmissionSettled` to under `key` when the submission settles. */
+	readonly notify?: SubmissionNotify;
 };
+
+/** Where a settling submission delivers `SubmissionSettled`: a task, and the key it sleeps on. */
+export type SubmissionNotify = { readonly taskId: TaskId; readonly key: string };
 
 /** Durable lifecycle of one admitted user input, passive entry write, or continue. */
 export type SubmissionRecord =
@@ -661,6 +689,8 @@ export type TaskState<S, R> =
 			readonly status: "pending";
 			/** Complete durable state from which execution resumes. */
 			readonly checkpoint: S;
+			/** Why the task woke from its last wait or sleep, kept while it runs at the checkpoint it woke at. */
+			readonly wake?: WakeReason;
 			readonly outcome?: never;
 	  }
 	| {
@@ -668,6 +698,8 @@ export type TaskState<S, R> =
 			readonly status: "running";
 			/** Complete durable state from which execution resumes. */
 			readonly checkpoint: S;
+			/** Why the task woke from its last wait or sleep, kept while it runs at the checkpoint it woke at. */
+			readonly wake?: WakeReason;
 			readonly outcome?: never;
 	  }
 	| {
@@ -681,11 +713,13 @@ export type TaskState<S, R> =
 	| {
 			/**
 			 * Parked without an invocation until the Harness clock reaches `until`, in milliseconds on the
-			 * `HarnessOptions.now` clock; then resumes at `checkpoint`. An abort mark does not wait for it.
+			 * `HarnessOptions.now` clock, or one of `signals` holds a value no wake used, whichever comes first; then resumes
+			 * at `checkpoint`. Needs `until` or a non-empty `signals`. An abort mark does not wait for it.
 			 */
 			readonly status: "sleeping";
 			readonly checkpoint: S;
-			readonly until: number;
+			readonly until?: number;
+			readonly signals?: readonly SignalKey<unknown>[];
 			readonly outcome?: never;
 	  }
 	| {
@@ -981,7 +1015,8 @@ export type CommitPublication = {
 
 /**
  * Transaction surface of one Session commit callback.
- * Table reads and creation results are trusted immutable values and may be shared with internal commit state.
+ * Table reads and creation results are trusted immutable values and may be shared with internal commit state; the
+ * Session may freeze them (its caches and context ranges keep them), so mutating one can throw.
  */
 export interface Tx {
 	conversation(id: ConversationId): Promise<ConversationRecord | undefined>;
@@ -997,11 +1032,15 @@ export interface Tx {
 	scanEntries(query: EntryQuery, limit: number, cursor?: Cursor): Promise<Page<EntryRecord, Cursor>>;
 	/** Newest visible entry of the conversation that carries a `head`. */
 	latestHeadMarker(conversationId: ConversationId): Promise<(EntryRecord & { readonly head: EntryId }) | undefined>;
+	/** ID of the newest entry visible from the conversation; `undefined` when it has none. */
+	latestEntryId(conversationId: ConversationId): Promise<EntryId | undefined>;
 	scanTasks(
 		query: TaskQuery,
 		limit: number,
 		cursor?: Cursor,
 	): Promise<Page<TaskRecord<JsonValue, JsonValue, JsonValue>, Cursor>>;
+	/** Committed submission record, such as one of `pi.live.run.inputs`; a placed input's `entry` is its transcript entry. */
+	submission(id: SubmissionId): Promise<SubmissionRecord | undefined>;
 	/** Committed submission with a conversation-scoped request ID. */
 	submissionByRequest(conversationId: ConversationId, requestId: string): Promise<SubmissionRecord | undefined>;
 
@@ -1042,6 +1081,12 @@ export interface Tx {
 	 * `settleSubmission()`. Inbox boundaries place the submissions they select.
 	 */
 	placeSubmission(id: SubmissionId, entry: EntryId): void;
+	/**
+	 * Deliver `value` to task `taskId` under `key`: stored in the task until a sleep on the key wakes on it, also when the
+	 * task does not sleep on it yet. Reads the task, so it throws `ReadAfterWrite` after the commit's first table write;
+	 * the result is provisional until the commit is stored. Checks nothing about the caller.
+	 */
+	signal<T>(taskId: TaskId, token: SignalToken<T>, key: string, value: T): Promise<SignalResult>;
 
 	doc<T extends JsonObject>(token: SessionDocToken<T>): Promise<Draft<T>>;
 	doc<T extends JsonObject>(token: ConversationDocToken<T>, conversationId: ConversationId): Promise<Draft<T>>;
@@ -1093,10 +1138,11 @@ export type DocumentWatch<T extends JsonObject> = WatchHandle<Readonly<T>>;
 /**
  * A synchronous observer of committed Durable state, for adapters such as a Chord source (`observeDoc()`,
  * `Harness.observeConversation()`, `Harness.observeTaskGraph()`), with the shapes of Chord's watch: `advance` gets a
- * `WatchCall`, `end` a `WatchEnd`. `advance` gets every change, unfolded, as memory adopts it: for a stored commit inside
- * Storage's `adopt`, for a deferred one before it is stored. A view or the graph gets at most one call per commit, a
- * document observer one per change at its address (two for a commit that retires and recreates it); the task graph also
- * advances outside any commit and `adopt`, on the Session line, when a registry change or a failed migration changes a
+ * `WatchCall`, `end` a `WatchEnd`. `advance` gets every change, unfolded, as memory adopts it: for a stored commit at its
+ * publication once Storage stored it, for a deferred one before it is stored. A view or the graph gets at most one call
+ * per commit, a document observer one per change at its address (two for a commit that retires and recreates it); the
+ * task graph also advances outside any commit's publication, on the Session line, when a registry change or a failed
+ * migration changes a
  * `blocked` reason. Durable's failures are final, so every call is a `value` call; a failure ends the observer. Calls
  * may come before the attaching promise resolves; their ops apply from `Observation.value`. `advance` must only record
  * the call, synchronously and quickly, never await, call the Session, or throw. A throw is reported as
@@ -1188,7 +1234,10 @@ export type CommitOptions = { readonly persistence?: CommitPersistence };
 export interface Session extends DocumentObserver {
 	/**
 	 * Run one atomic transaction on the Session mutation line. Inside the callback read only through `tx`: `snapshot()`, `watchDoc()`, `getTask()`, and the other Session and runtime reads may queue on the line the callback holds, and then never resolve.
-	 * `options.persistence` may defer storing it (`CommitPersistence`).
+	 * `options.persistence` may defer storing it (`CommitPersistence`). The callback may run while an earlier commit is
+	 * being stored: at its first read or write of what an unpublished commit wrote, it waits until that commit is stored
+	 * and published; code before that runs early, so act on what it computes only once the commit resolves. Resolves
+	 * once the commit is stored and published, after every earlier commit's outcome.
 	 */
 	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context, options?: CommitOptions): Promise<T>;
 	/** Seal admission, settle admitted commits, then close storage. */
@@ -1243,10 +1292,10 @@ export interface Session extends DocumentObserver {
 	): Promise<Observation<Readonly<T>> | undefined>;
 	/**
 	 * Observe stored commits, each with exactly what it stored, except that a document the commit retires is published
-	 * as its retirement only; a commit held in memory is published when it is stored (`CommitPublication`). Storage's
-	 * adoption of the commit queues one dispatch, which runs a microtask later, before every wait the commit resolves
-	 * and every abort it queues, and calls the observers attached by then; a commit adopted while none was attached has
-	 * no dispatch. There is no order relative to watch listeners. `advance` runs synchronously and must not block or
+	 * as its retirement only; a commit held in memory is published when it is stored (`CommitPublication`). Commits are
+	 * published in line order once Storage stored them, a macrotask apart; a publication queues one dispatch, which runs
+	 * a microtask later, before every wait the commit resolves and every abort it queues, and calls the observers
+	 * attached by then; a commit published while none was attached has no dispatch. There is no order relative to watch listeners. `advance` runs synchronously and must not block or
 	 * call Session APIs; a throw is reported as `listener_error`, detaches the observer, and ends it `listener_error`.
 	 * `end` is called once, when the Session closes (`ended`, after its last publication) or fails (`failed`), never
 	 * after `detach()`. Attaches synchronously; the observation has no `value`: commits are events, not a state, and the
@@ -1303,6 +1352,9 @@ export interface Session extends DocumentObserver {
 	): Promise<Readonly<T> | undefined>;
 }
 
+/** What `Storage.commit()` stored: the number of durable batches, and why the next one was refused, if one was. */
+export type CommitResult = { readonly stored: number; readonly refused?: unknown };
+
 /**
  * Atomic persistence boundary for Session records.
  *
@@ -1318,13 +1370,29 @@ export interface Session extends DocumentObserver {
  */
 export interface Storage {
 	/**
-	 * Atomically persist one batch and return its sequence. Once the batch is durable, call `adopt(seq)` exactly once,
-	 * synchronously and before this storage's next commit starts, then resolve with `seq`; a commit that fails before it
-	 * is durable never calls `adopt`. `adopt` is the caller's in-memory adoption and publication of the batch, so memory
-	 * and the Session's views always show a complete prefix of the log; it runs the Session's own observers, which call
-	 * no Storage method, and never throws. Once resolved, later reads through this storage observe the batch.
+	 * Persist `batches` in order, each as one ordinary atomic commit with its own seq, checked against the state the
+	 * earlier ones left, in as few round trips as the backend can. Every batch has at least one write: a commit without
+	 * writes never reaches Storage, so the Session never sends an empty batch. Stops at the first batch Durable's own checks refuse
+	 * (global IDs, document actions, copy resolution): the batches before it are durable, it and the ones after are not.
+	 * Calls `receive(index, seq)` once per durable batch, in order, synchronously, after all of them are durable and
+	 * before the next commit starts. Resolves with the number of durable batches and the refusal, if any. Rejects for an
+	 * unknown outcome (connection lost, statement or commit failed); `receive` calls made before the rejection still
+	 * stand. `receive` is a durability receipt, not publication: the Session publishes later. Once it resolved, later
+	 * reads through this storage observe the stored batches.
 	 */
-	commit(writes: readonly StorageWrite[], adopt: (seq: Seq) => void, context: Context): Promise<Seq>;
+	commit(
+		batches: readonly (readonly StorageWrite[])[],
+		receive: (index: number, seq: Seq) => void,
+		context: Context,
+	): Promise<CommitResult>;
+
+	/**
+	 * Optional. Run `publish`, the Session's publication of one stored or held commit (its cache write-through,
+	 * adoption, and observers), inside this storage's own scope, such as a store's attached host batch, so what the
+	 * publication marks lands together. Call `publish` exactly once, now or soon after; the Session publishes the next
+	 * commit only once it ran. Without it, the Session publishes directly.
+	 */
+	publishing?(publish: () => void, context: Context): void;
 
 	/**
 	 * Return a fresh branded candidate from the Session-global numeric ID namespace, greater than every ID minted since

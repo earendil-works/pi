@@ -3,6 +3,13 @@ name: Issue Gate
 on:
   issues:
     types: [opened]
+  # Gate an issue by hand, e.g. when its run on opening never started.
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number
+        required: true
+        type: number
 
 jobs:
   check-contributor:
@@ -18,7 +25,18 @@ jobs:
             const APPROVED_FILE = '.github/APPROVED_CONTRIBUTORS';
             const VALID_CAPABILITIES = new Set(['issue', 'pr']);
             const TRUSTED_BOT_AUTHORS = new Set(['dependabot[bot]', 'sentry[bot]', 'claude[bot]']);
-            const issueAuthor = context.payload.issue.user.login;
+            const issue =
+              context.eventName === 'workflow_dispatch'
+                ? (
+                    await github.rest.issues.get({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      issue_number: Number(context.payload.inputs.issue),
+                    })
+                  ).data
+                : context.payload.issue;
+            if (issue.pull_request) throw new Error(`#${issue.number} is a pull request`);
+            const issueAuthor = issue.user.login;
             const defaultBranch = context.payload.repository.default_branch;
             const isBotAuthor = issueAuthor.endsWith('[bot]');
 
@@ -91,6 +109,15 @@ jobs:
             const approvedUsers = parseApprovedUsers(approvedContent);
             const capability = approvedUsers.get(issueAuthor.toLowerCase());
 
+            // Every issue from someone without write access waits for review: labeled untriaged. Those from approved
+            // contributors stay open, the others are closed until a maintainer reopens them.
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              labels: ['untriaged'],
+            });
+
             if (!isBotAuthor && (capability === 'issue' || capability === 'pr')) {
               console.log(`${issueAuthor} is approved for ${capability}`);
               return;
@@ -109,21 +136,14 @@ jobs:
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number,
+              issue_number: issue.number,
               body: message,
-            });
-
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              labels: ['untriaged'],
             });
 
             await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number,
+              issue_number: issue.number,
               state: 'closed',
               state_reason: 'not_planned',
             });

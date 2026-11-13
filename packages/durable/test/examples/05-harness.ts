@@ -1,9 +1,10 @@
 // Open a Harness with a registry of extensions.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/05-harness.ts
+
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { Type } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai/models";
+import { obj, str } from "@earendil-works/pi-schema";
 import {
 	AgentDoc,
 	createRegistry,
@@ -23,7 +24,7 @@ const context = BACKGROUND_CONTEXT;
 const read = defineTool({
 	name: "read",
 	description: "Read a file",
-	parameters: Type.Object({ path: Type.String() }),
+	parameters: obj({ path: str() }),
 	execute: async (args) => ({ output: [{ type: "text", text: `contents of ${args.path}` }] }),
 });
 const Files = defineExtension({ name: "files", tools: [read] });

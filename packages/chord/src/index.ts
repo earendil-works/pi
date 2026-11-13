@@ -1,93 +1,54 @@
-export type { Cell } from "./cell.ts";
-export type { AcceptOptions, LinkOptions } from "./connection.ts";
-export type { Context, ContextKey } from "./context/index.ts";
+// Chord (`@earendil-works/chord`, v2, experimental): every layer's API for apps, and the store's surface for adapters
+// (Durable's `StoreStorage`), marked internal. The Node components and the client surfaces are subpaths (`/http`,
+// `/workers`, `/plugins`, `/app`, `/surfaces`, `/web`, `/react`, `/tui`).
+
+export * from "./contracts/index.ts";
+export * from "./data/index.ts";
+export * from "./documents/index.ts";
+export * from "./host/index.ts";
+export * from "./jobs/index.ts";
+export * from "./link/index.ts";
+export * from "./registries/index.ts";
+export * from "./state/index.ts";
+/** @internal The store's surface for adapters (slice 6b §2.1). */
+export { type DecodedRow, OwnerTable, StoreOwnerTables } from "./store/adapter.ts";
+/** @internal The sync layer's batch apply (slice 6b §1.6). */
+export { applyBatch } from "./store/apply-batch.ts";
+/** @internal */
+export type { Claimant } from "./store/claims.ts";
+/** @internal */
 export {
-	type Accepts,
-	type Adapter,
-	type AnyContract,
-	bind,
-	coverage,
-	type Description,
-	type HostFamily,
-	type HostNamed,
-	hostFamily,
-	hostNamed,
-	type ImplementationOf,
-	type InputOf,
-	type LocalContract,
-	local,
-	method,
-	opaque,
-	type Placement,
-	type PlacementFor,
-	type Ref,
-	type RemoteContract,
-	remote,
-} from "./contract.ts";
-export type { EventOf, Resource, ResourceDeclaration, Subscribable, ValueOf } from "./declare.ts";
-export type { Draft } from "./delta/index.ts";
-export { ChordError, type ChordErrorCode, forbidden, invalid, isChordError } from "./errors.ts";
-export type { ConnectOptions, PrincipalMatch, PrincipalPattern, Route } from "./host.ts";
-export {
-	createHost,
-	defineFacet,
-	type Facet,
-	type FacetApi,
-	type FacetDefinition,
-	type FacetLoader,
-	type Host,
-	type HostOptions,
-	type LoadOptions,
-	type PluginRef,
-	type RootOptions,
-} from "./host.ts";
-export { type CopyJsonOptions, copyJson, isJsonValue, type JsonRepresentation, type JsonValue } from "./json.ts";
-export {
-	type IpcChannel,
-	inflateMessage,
-	ipcLink,
-	type Link,
-	memoryLinkPair,
-	PACK_THRESHOLD,
-	type WebSocketLike,
-	type WebSocketLinkOptions,
-	webSocketLink,
-} from "./link.ts";
-export type {
-	Factory,
-	HostServeOptions,
-	Lifetime,
-	ReferencedServeOptions,
-	Self,
-	ServeOptions,
-	ServeOptionsFor,
-	StateInit,
-	StateOptions,
-} from "./object.ts";
-export { defineRegistry, type Registry, type RegistryTable, type RegistryView } from "./registry.ts";
-export type { ReloadOptions, ReloadReport } from "./reload.ts";
-export {
-	type AttachedReplicatedState,
-	type MutableReplicatedState,
-	type ReplicatedState,
-	type ReplicatedStateDelivery,
-	type ReplicatedStateSource,
-	type ReplicatedStateSourceAttachment,
-	type ReplicatedStateSourceFrame,
-	type ReplicatedStateSourceOptions,
-	replicatedState,
-} from "./state.ts";
-export type { Ctx, GetOptions, Readable, RefStatus, Shape, StateEvent } from "./types.ts";
-export {
-	NativeWatch,
-	type NativeWatchable,
-	type NativeWatchCall,
-	type NativeWatchHandle,
-	Watch,
-	type Watchable,
-	type WatchCall,
-	type WatchEnd,
-	type WatchHandle,
-} from "./watch.ts";
-export { acceptWebSockets, type WebSocketAcceptOptions, type WebSocketServerLike } from "./websocket.ts";
-export { type Frame, PROTOCOL_VERSION } from "./wire.ts";
+	type DocumentAddress,
+	type DocumentContent,
+	type DocumentEntry,
+	type DocumentHistory,
+	type DocumentPoint,
+	type DocumentRecord,
+	type DocumentScope,
+	findDocument,
+	findDocumentEntry,
+	insertDocument,
+	listDocumentEntries,
+	listDocuments,
+	loadContent,
+	loadDocument,
+	type OwnedDocumentEntry,
+	readDocument,
+	readDocumentEntry,
+	retireRecord,
+	type StoredDocument,
+	writeContent,
+} from "./store/engine.ts";
+/** @internal */
+export type { WhereNode } from "./store/expression.ts";
+export * from "./store/index.ts";
+/** @internal */
+export type { EncodedRow } from "./store/rows.ts";
+/** @internal */
+export type { Order } from "./store/sql.ts";
+/** @internal */
+export type { StagedWrite, Step } from "./store/step.ts";
+/** @internal */
+export type { ChordStore, SeriesCommit, SeriesResult } from "./store/store.ts";
+export * from "./surfaces/index.ts";
+export { CHORD_TELEMETRY_SCHEMA, type ChordSpanName } from "./telemetry.ts";

@@ -1,0 +1,56 @@
+[
+  {
+      "description": "$dynamicRef skips over intermediate resources - pointer reference across resource boundary",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://test.json-schema.org/dynamic-ref-skips-intermediate-resource/optional/main",
+        "type": "object",
+          "properties": {
+              "bar-item": {
+                  "$ref": "bar#/$defs/item"
+              }
+          },
+          "$defs": {
+              "bar": {
+                  "$id": "bar",
+                  "type": "array",
+                  "items": {
+                      "$ref": "item"
+                  },
+                  "$defs": {
+                      "item": {
+                          "$id": "item",
+                          "type": "object",
+                          "properties": {
+                              "content": {
+                                  "$dynamicRef": "#content"
+                              }
+                          },
+                          "$defs": {
+                              "defaultContent": {
+                                  "$dynamicAnchor": "content",
+                                  "type": "integer"
+                              }
+                          }
+                      },
+                      "content": {
+                          "$dynamicAnchor": "content",
+                          "type": "string"
+                      }
+                  }
+              }
+          }
+      },
+      "tests": [
+          {
+              "description": "integer property passes",
+              "data": { "bar-item": { "content": 42 } },
+              "valid": true
+          },
+          {
+              "description": "string property fails",
+              "data": { "bar-item": { "content": "value" } },
+              "valid": false
+          }
+      ]
+  }]

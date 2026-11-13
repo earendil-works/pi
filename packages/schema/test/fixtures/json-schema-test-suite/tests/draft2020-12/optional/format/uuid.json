@@ -1,0 +1,156 @@
+[
+    {
+        "description": "uuid format",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "format": "uuid"
+        },
+        "tests": [
+            {
+                "description": "all string formats ignore integers",
+                "data": 12,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore floats",
+                "data": 13.7,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore objects",
+                "data": {},
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore arrays",
+                "data": [],
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore booleans",
+                "data": false,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore nulls",
+                "data": null,
+                "valid": true
+            },
+            {
+                "description": "all upper-case",
+                "data": "2EB8AA08-AA98-11EA-B4AA-73B441D16380",
+                "valid": true
+            },
+            {
+                "description": "all lower-case",
+                "data": "2eb8aa08-aa98-11ea-b4aa-73b441d16380",
+                "valid": true
+            },
+            {
+                "description": "mixed case",
+                "data": "2eb8aa08-AA98-11ea-B4Aa-73B441D16380",
+                "valid": true
+            },
+            {
+                "description": "all zeroes is valid",
+                "data": "00000000-0000-0000-0000-000000000000",
+                "valid": true
+            },
+            {
+                "description": "wrong length",
+                "data": "2eb8aa08-aa98-11ea-b4aa-73b441d1638",
+                "valid": false
+            },
+            {
+                "description": "missing section",
+                "data": "2eb8aa08-aa98-11ea-73b441d16380",
+                "valid": false
+            },
+            {
+                "description": "bad characters (not hex)",
+                "data": "2eb8aa08-aa98-11ea-b4ga-73b441d16380",
+                "valid": false
+            },
+            {
+                "description": "no dashes",
+                "data": "2eb8aa08aa9811eab4aa73b441d16380",
+                "valid": false
+            },
+            {
+                "description": "too few dashes",
+                "data": "2eb8aa08aa98-11ea-b4aa73b441d16380",
+                "valid": false
+            },
+            {
+                "description": "too many dashes",
+                "data": "2eb8-aa08-aa98-11ea-b4aa73b44-1d16380",
+                "valid": false
+            },
+            {
+                "description": "dashes in the wrong spot",
+                "data": "2eb8aa08aa9811eab4aa73b441d16380----",
+                "valid": false
+            },
+            {
+                "description": "shifted dashes",
+                "data": "2eb8aa0-8aa98-11e-ab4aa7-3b441d16380",
+                "valid": false
+            },
+            {
+                "description": "valid version 4",
+                "data": "98d80576-482e-427f-8434-7f86890ab222",
+                "valid": true
+            },
+            {
+                "description": "valid version 5",
+                "data": "99c17cbb-656f-564a-940f-1a4568f03487",
+                "valid": true
+            },
+            {
+                "description": "hypothetical version 6",
+                "data": "99c17cbb-656f-664a-940f-1a4568f03487",
+                "valid": true
+            },
+            {
+                "description": "hypothetical version 15",
+                "data": "99c17cbb-656f-f64a-940f-1a4568f03487",
+                "valid": true
+            },
+            {
+                "description": "URN prefixed UUID is invalid",
+                "data": "urn:uuid:2eb8aa08-aa98-11ea-b4aa-73b441d16380",
+                "valid": false
+            },
+            {
+                "description": "a UUID wrapped in curly braces is invalid",
+                "data": "{2eb8aa08-aa98-11ea-b4aa-73b441d16380}",
+                "valid": false
+            },
+            {
+                "description": "trailing hyphen after a complete UUID is invalid",
+                "data": "2eb8aa08-aa98-11ea-b4aa-73b441d16380-",
+                "valid": false
+            },
+            {
+                "description": "non-ASCII digit '২' (a Bengali 2) is invalid",
+                "data": "২eb8aa08-aa98-11ea-b4aa-73b441d16380",
+                "valid": false
+            },
+            {
+                "description": "an underscore in place of a hex digit is invalid",
+                "data": "2eb8aa08-aa98-11ea-b4aa-73b441d1_380",
+                "valid": false
+            },
+            {
+                "description": "a trailing newline after a complete UUID is invalid",
+                "data": "2eb8aa08-aa98-11ea-b4aa-73b441d16380\n",
+                "valid": false
+            },
+            {
+                "description": "a variant nibble not defined by RFC 4122 is valid",
+                "data": "2eb8aa08-aa98-11ea-f4aa-73b441d16380",
+                "valid": true
+            }
+        ]
+    }
+]

@@ -1,6 +1,6 @@
 /*
  * Adapted from modelcontextprotocol/typescript-sdk v1.29.0 src/client/auth.ts.
- * Copyright (c) 2024 Anthropic, PBC. Licensed under MIT; see LICENSES/.
+ * Copyright (c) 2024 Anthropic, PBC. Licensed under MIT; see THIRD_PARTY_NOTICES/.
  * Modified to remove SDK/Zod dependencies and use WebCrypto for PKCE.
  */
 
@@ -89,6 +89,16 @@ export interface OAuthFlowOptions {
 	 * server asks for scopes the current grant lacks (a refresh keeps the old scope).
 	 */
 	skipRefresh?: boolean;
+	/**
+	 * Only refresh the stored tokens: return `REDIRECT` instead of registering a client or preparing an
+	 * authorization request, so a pending authorization (its `state` and PKCE verifier) stays usable.
+	 */
+	refreshOnly?: boolean;
+	/**
+	 * With `authorizationCode`: the redirect URI the authorization request used. The exchange fails before
+	 * sending the code when the flow would send another one (RFC 6749 section 4.1.3 requires the same).
+	 */
+	authorizationRedirectUrl?: string;
 }
 
 export type OAuthFlowResult = "AUTHORIZED" | "REDIRECT";
@@ -320,7 +330,17 @@ export function stepUpScope(granted: string | undefined, challenged: string | un
 	return [...new Set(scopes)].join(" ");
 }
 
-async function runFlow(provider: OAuthClientProvider, options: OAuthFlowOptions): Promise<OAuthFlowResult> {
+/** What a flow used, for deciding what to invalidate after it failed. */
+interface FlowUse {
+	/** `client_id` of the stored client the flow used; `undefined` when none was stored. */
+	storedClientId?: string;
+}
+
+async function runFlow(
+	provider: OAuthClientProvider,
+	options: OAuthFlowOptions,
+	use: FlowUse = {},
+): Promise<OAuthFlowResult> {
 	const metadataUrl = options.authorizationServerMetadataUrl && secureEndpoint(options.authorizationServerMetadataUrl);
 	// With a configured metadata URL, discovery is not cached, so changing the URL applies at once.
 	const cached = metadataUrl ? undefined : await provider.discoveryState?.();
@@ -355,14 +375,30 @@ async function runFlow(provider: OAuthClientProvider, options: OAuthFlowOptions)
 	const scope =
 		options.scope || discovered.resourceMetadata?.scopes_supported?.join(" ") || provider.clientMetadata.scope;
 	const stored = await provider.clientInformation();
+	use.storedClientId = stored?.client_id;
 	const clientDocument = stored ? undefined : provider.clientMetadataDocument?.(metadata);
 	if (clientDocument) {
 		const url = new URL(clientDocument.url);
 		if (url.protocol !== "https:" || url.pathname === "/") throw new Error("Invalid OAuth client metadata URL");
 	}
+	// The document's redirect URI may differ from the provider's, for example by a server-specific path.
+	const redirectUrl = clientDocument?.redirectUrl ?? String(provider.redirectUrl);
+	// Checked first: another redirect URI also explains a client that is missing for the exchange.
+	if (options.authorizationCode && options.authorizationRedirectUrl !== undefined) {
+		if (redirectUrl !== options.authorizationRedirectUrl) {
+			throw new Error(
+				`The code exchange would use the redirect URI ${redirectUrl}, but the authorization request used ${options.authorizationRedirectUrl}`,
+			);
+		}
+	}
 	let client = stored ?? (clientDocument && { client_id: clientDocument.url });
 	if (!client) {
-		if (options.authorizationCode) throw new Error("OAuth client information is missing during code exchange");
+		if (options.refreshOnly) return "REDIRECT";
+		if (options.authorizationCode) {
+			throw new Error(
+				"OAuth client information is missing during code exchange: the authorization request's client was removed, or the client settings changed",
+			);
+		}
 		if (!provider.saveClientInformation) throw new Error("OAuth client information cannot be persisted");
 		client = await registerClient(discovered.authorizationServerUrl, {
 			metadata,
@@ -373,8 +409,6 @@ async function runFlow(provider: OAuthClientProvider, options: OAuthFlowOptions)
 		});
 		await provider.saveClientInformation(client);
 	}
-	// The document's redirect URI may differ from the provider's, for example by a server-specific path.
-	const redirectUrl = clientDocument?.redirectUrl ?? provider.redirectUrl;
 	const tokenOptions: TokenRequestOptions = {
 		metadata,
 		clientInformation: client,
@@ -416,6 +450,7 @@ async function runFlow(provider: OAuthClientProvider, options: OAuthFlowOptions)
 			if (error instanceof OAuthError && error.code !== "server_error") throw error;
 		}
 	}
+	if (options.refreshOnly) return "REDIRECT";
 	const state = await provider.state?.();
 	const authorization = await startAuthorization(discovered.authorizationServerUrl, {
 		metadata,
@@ -431,11 +466,21 @@ async function runFlow(provider: OAuthClientProvider, options: OAuthFlowOptions)
 }
 
 export async function authorizeMcp(provider: OAuthClientProvider, options: OAuthFlowOptions): Promise<OAuthFlowResult> {
+	const use: FlowUse = {};
 	try {
-		return await runFlow(provider, options);
+		return await runFlow(provider, options, use);
 	} catch (error) {
 		if (error instanceof OAuthError && ["invalid_client", "unauthorized_client"].includes(error.code)) {
-			await provider.invalidateCredentials?.("all");
+			// A refresh keeps a pending authorization's `state` and verifier: they are the user's sign-in. A client
+			// stored meanwhile (by a sign-in that completed) is not the one the server rejected, so it stays.
+			if (options.refreshOnly) {
+				if ((await provider.clientInformation())?.client_id === use.storedClientId) {
+					for (const kind of ["client", "tokens", "discovery"] as const)
+						await provider.invalidateCredentials?.(kind);
+				}
+			} else {
+				await provider.invalidateCredentials?.("all");
+			}
 			return runFlow(provider, options);
 		}
 		if (error instanceof OAuthError && error.code === "invalid_grant") {

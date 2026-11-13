@@ -119,6 +119,8 @@ describe("generation", () => {
 	it("stores partials as deltas and a complete base once nothing is in flight", async () => {
 		const setup = chatSetup({ tokensPerSecond: 200, tokenSize: { min: 1, max: 1 } });
 		setup.faux.setResponses([fauxAssistantMessage("w".repeat(200))]);
+		// Store deferred partials well within the stream, so some reach Storage before the answer.
+		setup.settings.progress = { persistWithinMs: 100 };
 		const storage = new ControlledStorage();
 		const { harness, root } = await openChat(storage, setup);
 		const record = await storage.findDocument(
@@ -382,7 +384,12 @@ describe("generation", () => {
 				return fauxAssistantMessage("b");
 			},
 		]);
-		setup.settings.stream = { timeoutMs: 1234, headers: { "x-test": "1" } };
+		setup.settings.stream = {
+			timeoutMs: 1234,
+			headers: { "x-test": "1" },
+			websocketConnectTimeoutMs: 5678,
+			thinkingBudgets: { minimal: 128, low: 512, medium: 2048, high: 8192 },
+		};
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		await root.configure({ thinkingLevel: "high" }, context);
 		harness.resume();
@@ -397,11 +404,15 @@ describe("generation", () => {
 			headers: { "x-test": "1" },
 			reasoning: "high",
 			sessionId,
+			websocketConnectTimeoutMs: 5678,
+			thinkingBudgets: { minimal: 128, low: 512, medium: 2048, high: 8192 },
 		});
 		expect(seen[0]!.signal).toBeInstanceOf(AbortSignal);
 		expect(seen[1]!.reasoning).toBeUndefined();
 		expect(seen[1]).toMatchObject({ timeoutMs: 99, sessionId });
 		expect(seen[1]!.headers).toBeUndefined();
+		expect(seen[1]!.websocketConnectTimeoutMs).toBeUndefined();
+		expect(seen[1]!.thinkingBudgets).toBeUndefined();
 		await harness.close(context);
 	});
 

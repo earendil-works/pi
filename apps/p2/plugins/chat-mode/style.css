@@ -1,0 +1,11 @@
+/* Chat messages never reached the agent: an outlined bubble instead of a filled one. */
+.chat-message .bubble {
+	border: 1px dashed var(--line);
+	background: transparent;
+}
+/* How the agent is mentioned while chat mode is on; the owner's opens its renaming. */
+.chat-mode-name {
+	padding: 0 var(--s1);
+	font-family: var(--mono);
+	font-size: var(--fs-xs);
+}

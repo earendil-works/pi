@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed fullscreen Kitty images disappearing after a full redraw such as a window resize. Clearing the screen made Kitty free the cached image data that the redraw then tried to reuse ([#12010](https://github.com/earendil-works/pi/issues/12010))
+- Fixed text after a multi-row inline image in Markdown drawing over the image when the image's rows were joined with hard line breaks ([#12017](https://github.com/earendil-works/pi/issues/12017))
+- Fixed Kitty and iTerm2 images covering overlays drawn over them. An image that an overlay overlaps by row and column is now removed while the overlay is open and drawn again when it closes. Images beside an overlay, such as a sidebar, stay visible ([#11584](https://github.com/earendil-works/pi/issues/11584))
+
+## [1.5.2] - 2026-11-10
+
+## [1.5.1] - 2026-11-09
+
+### Fixed
+
+- Fixed Markdown rendering HTML comments (`<!-- ... -->`) as visible text ([#11710](https://github.com/earendil-works/pi/issues/11710))
+- Fixed fullscreen Kitty images in Orca showing only their first row. Orca's xterm.js image addon stores images in the cells they cover. `TuiAltScreen` now draws Kitty images after clearing and writing the rows they cover on every terminal, not only WezTerm ([#11835](https://github.com/earendil-works/pi/issues/11835))
+- Fixed deleting a paste marker with Backspace corrupting later short markers such as `[paste #2]`, causing the marker text to be submitted instead of its pasted content ([#11923](https://github.com/earendil-works/pi/issues/11923))
+- Fixed internal cursor markers leaking into terminal output, including with multiple markers or horizontally clipped content ([#9441](https://github.com/earendil-works/pi/pull/9441) by [@muyiyr](https://github.com/muyiyr))
+- Fixed Alacritty hyperlinks not being enabled when `TERM_PROGRAM` is unset; detection now also uses `TERM` and `ALACRITTY_WINDOW_ID` ([#11767](https://github.com/earendil-works/pi/issues/11767))
+
+## [1.5.0] - 2026-11-02
+
 ### Added
 
 - Added `replaceControlCharacters()` to replace runs of C0 and C1 control characters with a space
@@ -18,6 +38,13 @@
 - Fixed display math wider than the content width being wrapped row by row, which split fractions and sums apart. It now falls back to the raw LaTeX source ([#11483](https://github.com/earendil-works/pi/issues/11483))
 - Fixed `tui.select.pageUp` and `tui.select.pageDown` being ignored by `SelectList`, `SettingsList`, and editor autocomplete ([#7629](https://github.com/earendil-works/pi/issues/7629), based on [#7680](https://github.com/earendil-works/pi/pull/7680) by [@muyiyr](https://github.com/muyiyr))
 - Fixed `wrapTextWithAnsi()` starting the next line with a space when a styled word ended exactly at the wrap width, and strikethrough continuing into the right padding of wrapped lines ([#10925](https://github.com/earendil-works/pi/issues/10925))
+- Fixed `Markdown` styling, highlighting, and wrapping every block on each render. It now reuses the top-level blocks of its last render, so a streaming message renders only its changed last block, and a resize reuses highlighted code. Reused blocks are held weakly and dropped by `invalidate()`, which a theme change must call because `MarkdownTheme.highlightCode` results are reused until then ([#10971](https://github.com/earendil-works/pi/issues/10971))
+- Fixed `Text.setText()` with unchanged text dropping the wrapped lines, so renderers that set the same text on every update wrapped it again ([#10971](https://github.com/earendil-works/pi/issues/10971))
+- Fixed Orca terminals falling back to text for inline images. Orca is now recognized as supporting true color and hyperlinks, and Kitty images when it advertises `ORCA_IMAGE_PROTOCOL=kitty` ([#9329](https://github.com/earendil-works/pi/pull/9329) by [@XRX193](https://github.com/XRX193))
+- Fixed bare Markdown URLs swallowing following CJK punctuation and text; explicit Markdown links and angle autolinks are unchanged ([#10934](https://github.com/earendil-works/pi/pull/10934) by [@haoqixu](https://github.com/haoqixu))
+- Fixed Kitty-protocol F1–F12 shortcuts, including modified function keys, not being recognized, and F13+ and other functional keys inserting invisible private-use characters into the editor ([#11419](https://github.com/earendil-works/pi/issues/11419), [#11345](https://github.com/earendil-works/pi/issues/11345))
+- Fixed Kitty images inside padded or colored boxes disappearing when their first row scrolled above the fullscreen viewport. Partially visible images are now cropped correctly, including beside other text
+- Fixed deeply nested Markdown blockquotes producing exponentially many lines, hanging or crashing rendering once their borders exhausted the available width ([#11272](https://github.com/earendil-works/pi/issues/11272))
 
 ## [1.4.0] - 2026-10-21
 

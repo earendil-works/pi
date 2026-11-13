@@ -6,11 +6,19 @@ import type { SqliteDatabase, SqliteExecutor, SqliteValue } from "./database.ts"
 
 /** Node SQLite connection settings for a database file. */
 export type NodeSqliteDatabaseOptions = {
+	/**
+	 * `read-only` opens an existing file for reads (another process may write it): no directory is made, nothing is
+	 * configured or checkpointed, and transactions are deferred (`BEGIN`), reading one snapshot. `read-write` by default.
+	 */
+	readonly mode?: NodeSqliteMode;
 	/** SQLite WAL auto-checkpoint threshold. SQLite and this adapter default to 1,000 pages; 0 disables it. */
 	readonly walAutoCheckpointPages?: number;
 	/** Time SQLite waits for a competing file lock. SQLite defaults to 0; this adapter defaults to 5,000 ms. */
 	readonly busyTimeoutMs?: number;
 };
+
+/** How a connection opens its file. */
+export type NodeSqliteMode = "read-write" | "read-only";
 
 const DEFAULT_WAL_AUTO_CHECKPOINT_PAGES = 1_000;
 const DEFAULT_BUSY_TIMEOUT_MS = 5_000;
@@ -148,15 +156,18 @@ class NodeSqliteTransaction extends NodeSqliteExecutor {
 /** `SqliteDatabase` adapter backed by Node's built-in `node:sqlite`. */
 export class NodeSqliteDatabase extends NodeSqliteExecutor implements SqliteDatabase {
 	private readonly access = new SerialOperationQueue();
+	private readonly mode: NodeSqliteMode;
 	private closed = false;
 
-	constructor(database: DatabaseSync) {
+	constructor(database: DatabaseSync, mode: NodeSqliteMode = "read-write") {
 		super(database, new Map());
+		this.mode = mode;
 	}
 
 	transaction<T>(callback: (transaction: SqliteExecutor) => Promise<T>): Promise<T> {
 		return this.access.runAsync(async () => {
-			this.database.exec("BEGIN IMMEDIATE");
+			// A writer takes the write lock at once; a read-only connection cannot, and reads one snapshot.
+			this.database.exec(this.mode === "read-only" ? "BEGIN" : "BEGIN IMMEDIATE");
 			const scope = { active: true };
 			try {
 				const result = await callback(new NodeSqliteTransaction(this.database, this.statements, scope));
@@ -181,7 +192,7 @@ export class NodeSqliteDatabase extends NodeSqliteExecutor implements SqliteData
 			this.closed = true;
 			this.statements.clear();
 			try {
-				this.database.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+				if (this.mode === "read-write") this.database.exec("PRAGMA wal_checkpoint(TRUNCATE)");
 			} finally {
 				this.database.close();
 			}
@@ -200,6 +211,8 @@ export async function openNodeSqliteDatabase(
 ): Promise<NodeSqliteDatabase> {
 	const checkpointPages = options.walAutoCheckpointPages ?? DEFAULT_WAL_AUTO_CHECKPOINT_PAGES;
 	const timeout = options.busyTimeoutMs ?? DEFAULT_BUSY_TIMEOUT_MS;
+	if (options.mode === "read-only")
+		return new NodeSqliteDatabase(new DatabaseSync(path, { timeout, readOnly: true }), "read-only");
 	if (path !== ":memory:") await mkdir(dirname(path), { recursive: true });
 	const database = new DatabaseSync(path, { timeout });
 	const adapter = new NodeSqliteDatabase(database);

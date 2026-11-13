@@ -1,0 +1,189 @@
+/* The owner's traces (traces.tsx): a search and its list, one trace as a tree on its timeline. Narrow (a phone, a
+   narrow pane): the list or the trace; wide: side by side. */
+.traces-shell {
+	flex: 1;
+	min-height: 0;
+	height: 100%;
+	overflow: auto;
+	container-type: inline-size;
+}
+.traces-sheet .traces-shell {
+	height: auto;
+	overflow: visible;
+}
+.traces {
+	display: grid;
+	gap: var(--s4);
+	align-content: start;
+	padding: var(--s3) var(--x) var(--s5);
+}
+.traces-sheet .traces {
+	padding: 0;
+}
+.traces.has-trace .traces-search {
+	display: none;
+}
+@container (min-width: 620px) {
+	.traces.has-trace {
+		grid-template-columns: minmax(260px, 2fr) 3fr;
+	}
+	.traces.has-trace .traces-search {
+		display: block;
+	}
+	.traces-back {
+		visibility: hidden;
+	}
+}
+.traces-form {
+	display: grid;
+	gap: var(--s2);
+	margin-bottom: var(--s3);
+}
+.traces-form-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--s2);
+}
+.traces-form-row select {
+	width: auto;
+}
+.traces-errors {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--s1);
+	min-height: var(--control);
+	color: var(--muted);
+	font-size: var(--fs-sm);
+}
+.traces-list,
+.traces-tree,
+.traces-events {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+.traces-row,
+.traces-span {
+	display: grid;
+	gap: 2px;
+	width: 100%;
+	min-height: var(--row);
+	padding: var(--s2) 0;
+	border: 0;
+	border-bottom: 1px solid var(--line);
+	background: none;
+	color: var(--text);
+	font: inherit;
+	text-align: start;
+	cursor: pointer;
+}
+.traces-row.on,
+.traces-span.on {
+	background: var(--hover);
+}
+.traces-row:active,
+.traces-span:active {
+	background: var(--hover);
+}
+@media (hover: hover) {
+	.traces-row:hover,
+	.traces-span:hover {
+		background: var(--hover);
+	}
+}
+.traces-row-name,
+.traces-span-name {
+	overflow-wrap: anywhere;
+}
+.traces-row-name {
+	font-weight: var(--fw-strong);
+}
+.traces-row-meta,
+.traces-span-meta,
+.traces-summary,
+.traces-muted {
+	color: var(--muted);
+	font-size: var(--fs-sm);
+}
+.traces-span {
+	grid-template-columns: 1fr auto;
+	column-gap: var(--s2);
+	font-size: var(--fs-sm);
+}
+.traces-span-meta {
+	white-space: nowrap;
+}
+.traces-failed {
+	margin-inline-end: var(--s1);
+	color: var(--bad);
+	font-weight: var(--fw-strong);
+}
+.traces-bar {
+	grid-column: 1 / -1;
+	position: relative;
+	height: 4px;
+	background: var(--line);
+}
+.traces-bar > span {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	background: var(--muted);
+}
+.failed > .traces-span .traces-bar > span {
+	background: var(--bad);
+}
+.traces-span-detail {
+	display: grid;
+	gap: var(--s2);
+	padding: var(--s2) 0 var(--s3);
+	border-bottom: 1px solid var(--line);
+	font-size: var(--fs-sm);
+}
+.traces-span-detail h4 {
+	margin: var(--s1) 0 0;
+	font-size: var(--fs-sm);
+	font-weight: var(--fw-strong);
+}
+.traces-attributes {
+	display: grid;
+	gap: 2px;
+	margin: 0;
+	font-family: var(--mono);
+	font-size: var(--fs-code);
+}
+.traces-attributes > div {
+	display: grid;
+	grid-template-columns: minmax(8em, 35%) 1fr;
+	gap: var(--s2);
+}
+.traces-attributes dt {
+	color: var(--muted);
+	overflow-wrap: anywhere;
+}
+.traces-attributes dd {
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+.traces-events > li {
+	display: grid;
+	gap: 2px;
+	padding-bottom: var(--s2);
+}
+.traces-detail-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--s2);
+	margin-bottom: var(--s2);
+}
+.traces-id {
+	color: var(--muted);
+	font-family: var(--mono);
+	font-size: var(--fs-xs);
+	overflow-wrap: anywhere;
+}
+.traces-more {
+	margin-top: var(--s2);
+}

@@ -1,0 +1,98 @@
+/* Mobile's tokens, thin separators and outline controls; this lane participates in main's flex layout. */
+.main > .topbar {
+	order: -2;
+	flex: none;
+}
+.owner-notices {
+	order: -1;
+	flex: 0 1 auto;
+	min-height: 0;
+	max-height: min(25%, 200px);
+	padding: var(--s1) var(--x);
+	overflow: auto;
+	border-bottom: 1px solid var(--line);
+	background: var(--bg);
+	color: var(--text);
+	font-size: var(--fs-sm);
+}
+.owner-pending {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--s1) var(--s2);
+}
+.owner-notice {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--s1) var(--s2);
+	padding: var(--s1) var(--s2);
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg);
+}
+.owner-notice:not(.pending) {
+	margin: var(--s1) 0;
+}
+.owner-notice.pending {
+	flex-wrap: nowrap;
+	padding: 0 var(--s2) 0 var(--s3);
+	border-radius: 999px;
+	color: var(--muted);
+}
+.owner-notice-message {
+	flex: 1 1 140px;
+	min-width: 0;
+}
+.owner-notice.pending .owner-notice-message {
+	flex: none;
+}
+.owner-notice-summary {
+	display: -webkit-box;
+	width: 100%;
+	overflow: hidden;
+	font-size: var(--fs-sm);
+	text-align: left;
+	text-overflow: ellipsis;
+	overflow-wrap: anywhere;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+}
+button.owner-notice-summary {
+	min-height: var(--row);
+	color: inherit;
+	text-decoration: underline dotted var(--faint);
+	text-underline-offset: 3px;
+}
+.owner-notice.error .owner-notice-summary {
+	color: var(--bad);
+}
+.owner-notice.success .owner-notice-summary {
+	color: var(--ok);
+}
+.owner-notice-actions {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: var(--s2);
+	margin-left: auto;
+}
+.owner-notice-actions .button {
+	min-width: var(--row);
+	min-height: var(--row);
+	padding: 0 var(--s3);
+}
+.owner-notice.pending .button {
+	border: 0;
+	color: var(--text);
+}
+.owner-notice-dot {
+	color: var(--faint);
+}
+.owner-notice-details {
+	white-space: pre-wrap;
+}
+@media (max-width: 699px) {
+	.owner-notice.error .owner-notice-message {
+		flex-basis: 100%;
+	}
+}

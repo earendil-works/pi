@@ -1,3 +1,6 @@
+// The reads of the SQLite telemetry store (`TelemetryStore`): complete traces by query or id, metric rows by query; span
+// times read from microseconds as milliseconds.
+
 import type {
 	MetricQuery,
 	SpanAttributes,
@@ -14,8 +17,8 @@ type SpanRow = {
 	trace_id: string;
 	parent_id: string | null;
 	name: string;
-	started_ms: number;
-	ended_ms: number;
+	started_us: number;
+	ended_us: number;
 	attributes: string;
 	events: string;
 	links: string;
@@ -28,8 +31,8 @@ function storedSpan(row: SpanRow): StoredSpan {
 		traceId: row.trace_id,
 		...(row.parent_id === null ? {} : { parentId: row.parent_id }),
 		name: row.name,
-		startedMs: row.started_ms,
-		endedMs: row.ended_ms,
+		startedMs: row.started_us / 1000,
+		endedMs: row.ended_us / 1000,
 		attributes: JSON.parse(row.attributes) as SpanAttributes,
 		events: (JSON.parse(row.events) as { name: string; time_ms: number; attributes: SpanAttributes }[]).map(
 			(event) => ({ name: event.name, timeMs: event.time_ms, attributes: event.attributes }),
@@ -63,14 +66,23 @@ function attributesSql(attributes: TraceQuery["attributes"], column: string, par
 	);
 }
 
+/**
+ * Spans in start order: by start time (to the microsecond), then as each recorder started them (an id is its
+ * recorder's scope and a counter: by length, then text, the counter compares as a number), so spans of one
+ * microsecond keep their order (slice 9).
+ */
+const SPAN_ORDER = "started_us, length(id), id";
+
+/** The spans of trace `traceId` in start order; `undefined` when none is stored. */
 export async function getTrace(db: SqliteDatabase, traceId: string): Promise<StoredTrace | undefined> {
 	const rows = await db.all<SpanRow>(
-		"SELECT * FROM telemetry_spans WHERE trace_id = ? ORDER BY started_ms, id",
+		`SELECT * FROM telemetry_spans WHERE trace_id = ? ORDER BY ${SPAN_ORDER}`,
 		traceId,
 	);
 	return rows.length ? { traceId, spans: rows.map(storedSpan) } : undefined;
 }
 
+/** Complete traces matching `query`, newest first, paged by an opaque cursor. */
 export async function findTraces(
 	db: SqliteDatabase,
 	query: TraceQuery = {},
@@ -80,17 +92,17 @@ export async function findTraces(
 	const params: SqliteValue[] = [];
 	if (query.name !== undefined) {
 		conditions.push(
-			"(SELECT name FROM telemetry_spans WHERE trace_id = heads.trace_id ORDER BY started_ms, id LIMIT 1) = ?",
+			`(SELECT name FROM telemetry_spans WHERE trace_id = heads.trace_id ORDER BY ${SPAN_ORDER} LIMIT 1) = ?`,
 		);
 		params.push(query.name);
 	}
 	if (query.startMin !== undefined) {
-		conditions.push("started_ms >= ?");
-		params.push(query.startMin);
+		conditions.push("started_us >= ?");
+		params.push(query.startMin * 1000);
 	}
 	if (query.startMax !== undefined) {
-		conditions.push("started_ms <= ?");
-		params.push(query.startMax);
+		conditions.push("started_us <= ?");
+		params.push(query.startMax * 1000);
 	}
 	if (query.errors)
 		conditions.push(
@@ -102,14 +114,14 @@ export async function findTraces(
 		);
 	if (query.cursor !== undefined) {
 		const cursor = JSON.parse(query.cursor) as [number, string];
-		conditions.push("(started_ms < ? OR (started_ms = ? AND trace_id > ?))");
+		conditions.push("(started_us < ? OR (started_us = ? AND trace_id > ?))");
 		params.push(cursor[0], cursor[0], cursor[1]);
 	}
 	return db.transaction(async (tx) => {
-		const heads = await tx.all<{ trace_id: string; started_ms: number }>(
+		const heads = await tx.all<{ trace_id: string; started_us: number }>(
 			`WITH heads AS (
-			SELECT trace_id, min(started_ms) started_ms FROM telemetry_spans GROUP BY trace_id
-		) SELECT * FROM heads WHERE ${conditions.join(" AND ") || "1"} ORDER BY started_ms DESC, trace_id LIMIT ?`,
+			SELECT trace_id, min(started_us) started_us FROM telemetry_spans GROUP BY trace_id
+		) SELECT * FROM heads WHERE ${conditions.join(" AND ") || "1"} ORDER BY started_us DESC, trace_id LIMIT ?`,
 			...params,
 			limit + 1,
 		);
@@ -117,7 +129,7 @@ export async function findTraces(
 		if (more) heads.pop();
 		if (!heads.length) return { traces: [] };
 		const rows = await tx.all<SpanRow>(
-			"SELECT * FROM telemetry_spans WHERE trace_id IN (SELECT value FROM json_each(?)) ORDER BY started_ms, id",
+			`SELECT * FROM telemetry_spans WHERE trace_id IN (SELECT value FROM json_each(?)) ORDER BY ${SPAN_ORDER}`,
 			JSON.stringify(heads.map((head) => head.trace_id)),
 		);
 		const grouped = new Map<string, StoredSpan[]>();
@@ -129,11 +141,12 @@ export async function findTraces(
 		const last = heads.at(-1)!;
 		return {
 			traces: heads.map((head) => ({ traceId: head.trace_id, spans: grouped.get(head.trace_id)! })),
-			...(more ? { cursor: JSON.stringify([last.started_ms, last.trace_id]) } : {}),
+			...(more ? { cursor: JSON.stringify([last.started_us, last.trace_id]) } : {}),
 		};
 	});
 }
 
+/** The stored metric rows (per series and 10 s interval) matching `query`. */
 export async function findMetrics(db: SqliteDatabase, query: MetricQuery): Promise<readonly StoredMetric[]> {
 	const params: SqliteValue[] = [query.name];
 	const conditions = ["name = ?"];

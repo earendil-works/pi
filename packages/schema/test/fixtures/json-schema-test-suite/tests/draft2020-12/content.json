@@ -1,0 +1,131 @@
+[
+    {
+        "description": "validation of string-encoded content based on media type",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "contentMediaType": "application/json"
+        },
+        "tests": [
+            {
+                "description": "a valid JSON document",
+                "data": "{\"foo\": \"bar\"}",
+                "valid": true
+            },
+            {
+                "description": "an invalid JSON document; validates true",
+                "data": "{:}",
+                "valid": true
+            },
+            {
+                "description": "ignores non-strings",
+                "data": 100,
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "validation of binary string-encoding",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "contentEncoding": "base64"
+        },
+        "tests": [
+            {
+                "description": "a valid base64 string",
+                "data": "eyJmb28iOiAiYmFyIn0K",
+                "valid": true
+            },
+            {
+                "description": "an invalid base64 string (% is not a valid character); validates true",
+                "data": "eyJmb28iOi%iYmFyIn0K",
+                "valid": true
+            },
+            {
+                "description": "ignores non-strings",
+                "data": 100,
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "validation of binary-encoded media type documents",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "contentMediaType": "application/json",
+            "contentEncoding": "base64"
+        },
+        "tests": [
+            {
+                "description": "a valid base64-encoded JSON document",
+                "data": "eyJmb28iOiAiYmFyIn0K",
+                "valid": true
+            },
+            {
+                "description": "a validly-encoded invalid JSON document; validates true",
+                "data": "ezp9Cg==",
+                "valid": true
+            },
+            {
+                "description": "an invalid base64 string that is valid JSON; validates true",
+                "data": "{}",
+                "valid": true
+            },
+            {
+                "description": "ignores non-strings",
+                "data": 100,
+                "valid": true
+            }
+        ]
+    },
+    {
+        "description": "validation of binary-encoded media type documents with schema",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "contentMediaType": "application/json",
+            "contentEncoding": "base64",
+            "contentSchema": { "type": "object", "required": ["foo"], "properties": { "foo": { "type": "string" } } }
+        },
+        "tests": [
+            {
+                "description": "a valid base64-encoded JSON document",
+                "data": "eyJmb28iOiAiYmFyIn0K",
+                "valid": true
+            },
+            {
+                "description": "another valid base64-encoded JSON document",
+                "data": "eyJib28iOiAyMCwgImZvbyI6ICJiYXoifQ==",
+                "valid": true
+            },
+            {
+                "description": "an invalid base64-encoded JSON document; validates true",
+                "data": "eyJib28iOiAyMH0=",
+                "valid": true
+            },
+            {
+                "description": "an empty object as a base64-encoded JSON document; validates true",
+                "data": "e30=",
+                "valid": true
+            },
+            {
+                "description": "an empty array as a base64-encoded JSON document",
+                "data": "W10=",
+                "valid": true
+            },
+            {
+                "description": "a validly-encoded invalid JSON document; validates true",
+                "data": "ezp9Cg==",
+                "valid": true
+            },
+            {
+                "description": "an invalid base64 string that is valid JSON; validates true",
+                "data": "{}",
+                "valid": true
+            },
+            {
+                "description": "ignores non-strings",
+                "data": 100,
+                "valid": true
+            }
+        ]
+    }
+]

@@ -35,14 +35,17 @@ async function captureOpenAIResponseHeaders(
 	sessionId: string | null;
 	clientRequestId: string | null;
 	xSessionId: string | null;
+	legacySessionId: string | null;
 }> {
 	const captured = {
 		sessionId: null as string | null,
 		clientRequestId: null as string | null,
 		xSessionId: null as string | null,
+		legacySessionId: null as string | null,
 	};
 	vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
-		captured.sessionId = getHeader(init?.headers, "session_id");
+		captured.sessionId = getHeader(init?.headers, "session-id");
+		captured.legacySessionId = getHeader(init?.headers, "session_id");
 		captured.clientRequestId = getHeader(init?.headers, "x-client-request-id");
 		captured.xSessionId = getHeader(init?.headers, "x-session-id");
 		return new Response("data: [DONE]\n\n", {
@@ -295,6 +298,7 @@ describe("openai-responses provider defaults", () => {
 		const captured = await captureOpenAIResponseHeaders({ sessionId: "session-123" });
 
 		expect(captured.sessionId).toBe("session-123");
+		expect(captured.legacySessionId).toBeNull();
 		expect(captured.clientRequestId).toBe("session-123");
 	});
 
@@ -436,7 +440,7 @@ describe("openai-responses provider defaults", () => {
 		expect(capturedPayload?.prompt_cache_key).toBe("session-opencode");
 	});
 
-	it("can omit OpenAI session_id header while preserving other affinity data", async () => {
+	it("can omit OpenAI session-id header while preserving other affinity data", async () => {
 		const proxyModel: Model<"openai-responses"> = {
 			...getModel("openai", "gpt-5.4"),
 			provider: "opencode",
@@ -463,7 +467,7 @@ describe("openai-responses provider defaults", () => {
 		const captured = await captureOpenAIResponseHeaders({
 			sessionId: "session-123",
 			headers: {
-				session_id: "override-session",
+				"session-id": "override-session",
 				"x-client-request-id": "override-request",
 			},
 		});

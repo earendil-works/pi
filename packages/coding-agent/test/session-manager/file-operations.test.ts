@@ -511,3 +511,34 @@ describe("SessionManager session file creation", () => {
 		expect(readSessionFileRoles(session.getSessionFile()!)).toEqual(["session", "model_change", "user"]);
 	});
 });
+
+describe("SessionManager listing abort", () => {
+	let tempDir: string;
+
+	beforeEach(() => {
+		tempDir = mkdtempSync(join(tmpdir(), "session-list-abort-"));
+	});
+
+	afterEach(() => {
+		rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	// #11956
+	it("does not crash when aborted after a file that is not a session was skipped", async () => {
+		// Larger than one 64 KB stream chunk, so the file is still being read when the listing skips it.
+		writeFileSync(join(tempDir, "other.jsonl"), `{"type":"other"}\n${"x".repeat(1024 * 1024)}\n`);
+		const controller = new AbortController();
+		const uncaught: unknown[] = [];
+		const onUncaught = (error: unknown) => uncaught.push(error);
+		process.on("uncaughtException", onUncaught);
+		try {
+			expect(await SessionManager.listAll(tempDir, undefined, controller.signal)).toEqual([]);
+			// The session picker aborts its loads when it closes, after files were skipped.
+			controller.abort();
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		} finally {
+			process.off("uncaughtException", onUncaught);
+		}
+		expect(uncaught).toEqual([]);
+	});
+});

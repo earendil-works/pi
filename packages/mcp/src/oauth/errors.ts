@@ -53,3 +53,14 @@ export class McpOAuthAuthorizationRequiredError extends Error {
 		this.name = "McpOAuthAuthorizationRequiredError";
 	}
 }
+
+/**
+ * Thrown by `McpOAuthServerStore.withRefreshLock()` when another process holds the refresh lock for the
+ * whole wait. `startMcpSignIn()` then skips the refresh and goes to the browser step.
+ */
+export class McpRefreshLockBusyError extends Error {
+	constructor() {
+		super("Another process is refreshing the MCP server's tokens");
+		this.name = "McpRefreshLockBusyError";
+	}
+}

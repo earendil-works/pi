@@ -1,0 +1,13 @@
+{
+	"name": "@todo/app",
+	"version": "0.0.1",
+	"private": true,
+	"description": "The tutorial's todo app: its API (v1 and its per-kind modules), base code and built-in plugins",
+	"type": "module",
+	"exports": {
+		"./v1": "./src/api/v1/index.ts",
+		"./v1/server": "./src/api/v1/server.ts",
+		"./v1/web": "./src/api/v1/web.ts",
+		"./v1/tui": "./src/api/v1/tui.ts"
+	}
+}

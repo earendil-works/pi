@@ -1,0 +1,40 @@
+/* Artifacts: the side panel's rows and the item a reader opens there, and artifacts shown in the transcript. */
+.artifact-item {
+	display: flex;
+	align-items: center;
+	gap: var(--s2);
+}
+.artifact-item > .artifact-row {
+	flex: 1;
+	min-width: 0;
+}
+.artifact-kind + .artifact-kind {
+	margin-top: var(--s3);
+}
+.artifact-local {
+	display: flex;
+	flex-direction: column;
+	gap: var(--s2);
+	height: 100%;
+	min-height: 60vh;
+}
+.artifact-local > .views-frame,
+.artifact-local > .views-doc {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+}
+.artifact-inline {
+	margin: var(--s2) 0;
+}
+.artifact-frame.inline {
+	display: block;
+	width: 100%;
+	border: 0;
+	border-radius: var(--radius, 6px);
+	background: white;
+}
+.artifact-md.inline {
+	padding: 0;
+	overflow: visible;
+}

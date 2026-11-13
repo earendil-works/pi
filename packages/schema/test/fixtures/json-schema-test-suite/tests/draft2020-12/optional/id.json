@@ -1,0 +1,53 @@
+[
+    {
+        "description": "$id inside an enum is not a real identifier",
+        "comment": "the implementation must not be confused by an $id buried in the enum",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$defs": {
+                "id_in_enum": {
+                    "enum": [
+                        {
+                          "$id": "https://localhost:1234/draft2020-12/id/my_identifier.json",
+                          "type": "null"
+                        }
+                    ]
+                },
+                "real_id_in_schema": {
+                    "$id": "https://localhost:1234/draft2020-12/id/my_identifier.json",
+                    "type": "string"
+                },
+                "zzz_id_in_const": {
+                    "const": {
+                        "$id": "https://localhost:1234/draft2020-12/id/my_identifier.json",
+                        "type": "null"
+                    }
+                }
+            },
+            "anyOf": [
+                { "$ref": "#/$defs/id_in_enum" },
+                { "$ref": "https://localhost:1234/draft2020-12/id/my_identifier.json" }
+            ]
+        },
+        "tests": [
+            {
+                "description": "exact match to enum, and type matches",
+                "data": {
+                    "$id": "https://localhost:1234/draft2020-12/id/my_identifier.json",
+                    "type": "null"
+                },
+                "valid": true
+            },
+            {
+                "description": "match $ref to $id",
+                "data": "a string to match #/$defs/id_in_enum",
+                "valid": true
+            },
+            {
+                "description": "no match on enum or $ref to $id",
+                "data": 1,
+                "valid": false
+            }
+        ]
+    }
+]

@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Looks and Themes: how an app shares its styles and components with plugins</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A proposal · Chord v2 · 2026-11-02</div>
+  <h1>Looks<br>and Themes</h1>
+  <p class="subtitle">One app, a notes plugin and a stranger&#39;s theme plugin, on a browser page and in a terminal</p>
+  <div class="cover-stats"><div class="stat"><b>1</b><span>registry for themes, shared by web and terminal</span></div><div class="stat"><b>0</b><span>copies of the app&#39;s components inside plugins</span></div><div class="stat"><b>0</b><span>page reloads to switch a theme</span></div></div>
+  <div class="cover-note"><p>A proposal by the redesign session, asked for by the owner on 2026-11-02 (&quot;can you write a small explainer about
+what you envision&quot;). It builds on decided rules: the app&#39;s versioned API split by host kind, plugins importing only
+that API, registries for what plugins add (decisions of 2026-11-01 in <code>decisions.md</code>). Nothing here is built; slice
+11 (web and TUI) and slice 13 (the app kit) are where it would land.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#components">I. Shared Components</a></li>
+<li><a href="#tokens">II. Looks as Tokens</a></li>
+<li><a href="#tui">III. The Terminal</a></li>
+<li><a href="#themes">IV. Themes as a Registry</a></li>
+<li><a href="#plugin">V. A Theme Plugin</a></li>
+<li><a href="#limits">VI. What a Plugin Cannot Do</a></li>
+<li><a href="#open-questions">Open Questions</a></li>
+<li><a href="#reference">Appendix A: Reference</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">Acme&#39;s notes app has a look: a sidebar, cards with rounded corners, an orange accent, a dark mode. Its own plugins
+draw panels inside that look, and so should a stranger&#39;s plugin. Then someone wants a Solarized theme, and writes it as
+a plugin. And the same app also runs in a terminal, where there are no CSS files and no React, only text and colours.</p>
+<p>Three questions follow. How does a plugin get the app&#39;s components and styles without carrying its own copy? How does
+it style its own parts so they fit, without stepping on other plugins? And how does a plugin contribute a theme that
+the app, every other plugin and both surfaces pick up?</p>
+<h3 id="five-things-to-know">Five things to know</h3>
+<ol class="findings">
+<li><strong>Shared components come from the app&#39;s API.</strong> The web module of the app&#39;s API (<code>@acme/app/v3/web</code>) exports them;
+it is in the base bundle once, and every plugin uses that instance.</li>
+<li><strong>Looks are design tokens.</strong> Colours, radii and fonts are CSS custom properties on the page (<code>--accent</code>, <code>--bg</code>);
+the app&#39;s components and every plugin&#39;s CSS use them.</li>
+<li><strong>A plugin&#39;s own CSS is scoped.</strong> CSS modules (<code>notes.module.css</code>) keep its class names its own; the build already
+collects and ships each facet&#39;s stylesheet.</li>
+<li><strong>A theme is data in one registry.</strong> <code>Themes</code> lives in the app&#39;s shared API module; an entry names colours for
+roles (accent, background, text, ...). The web turns the active one into CSS variables, the terminal into colours.</li>
+<li><strong>A plugin contributes a theme like anything else.</strong> It contributes an entry to <code>Themes</code>; the picker shows it,
+choosing it restyles the page and the terminal at once, editing the plugin restyles them on its rollout.</li>
+</ol>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p>The <strong>app&#39;s API</strong> is the versioned set of modules plugins may import (<code>@acme/app/v3</code>, shared by every host kind, and
+<code>@acme/app/v3/web</code>, <code>/v3/tui</code> for one kind). A <strong>host package</strong> is a module the running process provides once to all
+plugins. A <strong>design token</strong> is a named value of the look (the accent colour), written as a <strong>CSS custom property</strong>
+(<code>--accent</code>) on the web. A <strong>role</strong> is what a colour is for (accent, background, error), as opposed to the colour
+itself. A <strong>theme</strong> is one set of values for every role. A <strong>registry</strong> is an extension point plugins contribute to.</p>
+</section>
+
+<section class="chapter" id="components"><header class="opener"><div class="numeral">I</div><h2>Shared Components</h2><p class="lede">Why plugins import the app&#39;s components instead of bundling their own.</p></header>
+<p class="dropcap">A plugin&#39;s script is built without the app&#39;s API: imports of it are left as names and answered by the page at load
+time (decision &quot;Plugins import only the app&#39;s versioned API&quot;). So when the app exports components from its web module,
+every plugin gets the very same functions, from the base bundle the page loaded once:</p>
+<pre><code><span class="tk-c">// src/api/v3/web.ts (the app)</span>
+<span class="tk-k">export</span> { <span class="tk-t">Sheet</span>, <span class="tk-t">Button</span>, <span class="tk-t">List</span>, <span class="tk-t">Toolbar</span> } <span class="tk-k">from</span> <span class="tk-s">"../../web/components.tsx"</span>;
+<span class="tk-k">export</span> { <span class="tk-t">Panels</span> } <span class="tk-k">from</span> <span class="tk-s">"./panels.web.ts"</span>;
+
+<span class="tk-c">// plugins/notes/web.tsx</span>
+<span class="tk-k">import</span> { defineFacet } <span class="tk-k">from</span> <span class="tk-s">"@acme/app/v3"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">Panels</span>, <span class="tk-t">Sheet</span>, <span class="tk-t">Button</span> } <span class="tk-k">from</span> <span class="tk-s">"@acme/app/v3/web"</span>;
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((host, self) =&gt; {
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">Panels</span>, { title: <span class="tk-s">"Notes"</span>, <span class="tk-t">Component</span>: () =&gt; &lt;<span class="tk-t">Sheet</span>&gt;&lt;<span class="tk-t">Button</span>&gt;<span class="tk-t">New</span> note&lt;/<span class="tk-t">Button</span>&gt;&lt;/<span class="tk-t">Sheet</span>&gt; });
+});</code></pre>
+<p>Two things follow. A plugin never ships a copy of the app&#39;s components, so a page with twenty plugins loads them once.
+And when the app improves a component, every plugin shows the improvement after the app&#39;s next restart, without being
+rebuilt. Components that change shape incompatibly get a new API version, as any API does.</p>
+</section>
+
+<section class="chapter" id="tokens"><header class="opener"><div class="numeral">II</div><h2>Looks as Tokens</h2><p class="lede">One set of variables that the app&#39;s components and every plugin&#39;s CSS read.</p></header>
+<p class="dropcap">The app&#39;s stylesheet, part of the base bundle, defines the look as CSS custom properties on the page&#39;s root:</p>
+<pre class="plain"><code>:root {
+	--accent: #e8590c;
+	--bg: #111317;
+	--fg: #e8e8e8;
+	--muted: #8a8f98;
+	--radius: 10px;
+	--font: "Inter", system-ui, sans-serif;
+}</code></pre>
+<p>The app&#39;s components use only these variables, never fixed colours. A plugin does the same in its own CSS:</p>
+<pre class="plain"><code>/* plugins/notes/notes.module.css */
+.card { background: color-mix(in srgb, var(--bg) 92%, var(--fg)); border-radius: var(--radius); }
+.title { color: var(--accent); font-family: var(--font); }</code></pre>
+<pre><code><span class="tk-k">import</span> styles <span class="tk-k">from</span> <span class="tk-s">"./notes.module.css"</span>;
+&lt;div className={styles.card}&gt;&lt;h2 className={styles.title}&gt;<span class="tk-t">Shopping</span>&lt;/h2&gt;&lt;/div&gt;</code></pre>
+<p>Because everything reads the variables, changing the variables changes everything: the app&#39;s components and every
+plugin&#39;s parts, at once, without reloading anything. That is what makes themes cheap.</p>
+<h3 id="keeping-plugins-apart">Keeping plugins apart</h3>
+<p>Two plugins both writing <code>.card { ... }</code> would overwrite each other&#39;s styles. CSS modules solve that: esbuild gives each
+class in a <code>*.module.css</code> file a name unique to that file, and the import returns the mapping. The build already
+collects each web facet&#39;s CSS into one stylesheet, served next to its script and swapped when the plugin reloads, so
+nothing new is needed except the convention. Plain CSS files still work; their class names should then start with the
+plugin&#39;s name.</p>
+</section>
+
+<section class="chapter" id="tui"><header class="opener"><div class="numeral">III</div><h2>The Terminal</h2><p class="lede">The same idea without CSS: components and colour roles from the app.</p></header>
+<p class="dropcap">A terminal has no stylesheets, but the same split works. The app&#39;s terminal module exports its components, built on
+whichever terminal UI library the app chose, and a theme lookup by role:</p>
+<pre><code><span class="tk-c">// plugins/notes/tui.ts</span>
+<span class="tk-k">import</span> { defineFacet } <span class="tk-k">from</span> <span class="tk-s">"@acme/app/v3"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">Panels</span>, <span class="tk-t">Box</span>, theme } <span class="tk-k">from</span> <span class="tk-s">"@acme/app/v3/tui"</span>;
+
+<span class="tk-k">const</span> render = (notes) =&gt; <span class="tk-t">Box</span>({ title: theme.<span class="tk-f">fg</span>(<span class="tk-s">"accent"</span>, <span class="tk-s">"Notes"</span>), lines: notes.<span class="tk-f">map</span>((n) =&gt; theme.<span class="tk-f">fg</span>(<span class="tk-s">"fg"</span>, n.text)) });</code></pre>
+<p>A plugin never writes raw escape codes; it asks for a role (<code>accent</code>, <code>muted</code>, <code>error</code>), and the app&#39;s lookup turns
+the active theme&#39;s colour into what the terminal supports: true colour, or the nearest of 256 colours.</p>
+</section>
+
+<section class="chapter" id="themes"><header class="opener"><div class="numeral">IV</div><h2>Themes as a Registry</h2><p class="lede">One extension point, data only, read by both surfaces.</p></header>
+<p class="dropcap">A theme names a colour for each role. Roles, not surfaces: an accent is an accent on a page and in a terminal. So the
+registry lives in the app&#39;s <strong>shared</strong> API module, and its entries are plain data, safe to import from any host kind:</p>
+<pre><code><span class="tk-c">// src/api/v3/index.ts (the app)</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Theme</span> = {
+	id: string;
+	name: string;
+	mode: <span class="tk-s">"dark"</span> | <span class="tk-s">"light"</span>;
+	colors: { accent: string; bg: string; fg: string; muted: string; error: string; warning: string; success: string };
+	web?: <span class="tk-t">Readonly</span>&lt;<span class="tk-t">Record</span>&lt;string, string&gt;&gt;;   <span class="tk-c">// extra CSS variables: radius, fonts, shadows</span>
+	tui?: <span class="tk-t">Readonly</span>&lt;<span class="tk-t">Record</span>&lt;string, string&gt;&gt;;   <span class="tk-c">// terminal-only overrides: a 256-colour fallback for a role</span>
+};
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Themes</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">Theme</span>, <span class="tk-k">readonly</span> <span class="tk-t">Theme</span>[]&gt;(<span class="tk-s">"acme.themes"</span>, { version: <span class="tk-n">1</span> });</code></pre>
+<p>The app contributes its default themes from its own plugins, like any other contribution. Its theme picker lists the
+registry&#39;s current entries; the choice is a user preference.</p>
+<figure class="fig wide anim"><svg viewBox="0 0 720 342" width="100%" role="img" aria-label="A theme from a plugin reaches the page and the terminal through one registry." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">PLUGINS</text><text x="16" y="144" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">SHARED API</text><text x="16" y="266" font-size="10" fill="#2e6a8a" text-anchor="start" font-weight="600" letter-spacing="2">SURFACES</text><g class="step" style="--i:1"><rect x="137" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="242" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">solarized plugin</text><text x="242" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">contributes a Theme</text></g><g class="step" style="--i:4"><rect x="373" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="478" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">app's theme plugin</text><text x="478" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle">contributes the defaults</text></g><g class="step" style="--i:3"><rect x="255" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="360" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">Themes registry</text><text x="360" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">data: roles to colours</text></g><g class="step" style="--i:7"><rect x="137" y="280" width="210" height="44" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="242" y="299.3" font-size="11" fill="#2a2723" text-anchor="middle">web page</text><text x="242" y="313.3" font-size="9.5" fill="#7b7468" text-anchor="middle">active theme → CSS variables on :root</text></g><g class="step" style="--i:9"><rect x="373" y="280" width="210" height="44" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="478" y="299.3" font-size="11" fill="#2a2723" text-anchor="middle">terminal</text><text x="478" y="313.3" font-size="9.5" fill="#7b7468" text-anchor="middle">active theme → colours by role</text></g><g class="step edge" style="--i:2"><path d="M242 80 L360 156" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="305" y="112" width="60.7" height="13" fill="#fbf8f2" opacity=".92"/><text x="309" y="122" font-size="9.5" fill="#7b7468" text-anchor="start">contribute</text></g><g class="step edge" style="--i:5"><path d="M478 80 L360 156" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="423" y="112" width="60.7" height="13" fill="#fbf8f2" opacity=".92"/><text x="427" y="122" font-size="9.5" fill="#7b7468" text-anchor="start">contribute</text></g><g class="step edge" style="--i:6"><path d="M360 202 L242 278" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="305" y="234" width="34.3" height="13" fill="#fbf8f2" opacity=".92"/><text x="309" y="244" font-size="9.5" fill="#7b7468" text-anchor="start">watch</text></g><g class="step edge" style="--i:8"><path d="M360 202 L478 278" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="423" y="234" width="34.3" height="13" fill="#fbf8f2" opacity=".92"/><text x="427" y="244" font-size="9.5" fill="#7b7468" text-anchor="start">watch</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 1.</span> A theme from a plugin reaches the page and the terminal through one registry.</figcaption></figure>
+<p><strong>On the web</strong>, the page watches <code>Themes</code> and the user&#39;s choice; when either changes it writes the active theme&#39;s
+colours (and its <code>web</code> extras) as CSS variables on <code>:root</code>. Nothing reloads; the browser repaints.</p>
+<p><strong>In the terminal</strong>, the app&#39;s theme lookup reads the same entry; the next redraw uses the new colours.</p>
+</section>
+
+<section class="chapter" id="plugin"><header class="opener"><div class="numeral">V</div><h2>A Theme Plugin</h2><p class="lede">What a stranger writes to add a theme, and what happens when they edit it.</p></header>
+<p class="dropcap">A theme plugin is the smallest kind of plugin there is: data, contributed. As single-file plugins (decision
+&quot;Single-file plugins&quot;), one per surface it wants to be visible on, sharing the data:</p>
+<pre><code><span class="tk-c">// plugins/solarized.web.ts</span>
+<span class="tk-k">import</span> { defineFacet, <span class="tk-t">Themes</span> } <span class="tk-k">from</span> <span class="tk-s">"@acme/app/v3"</span>;
+<span class="tk-k">import</span> { solarized } <span class="tk-k">from</span> <span class="tk-s">"./solarized-data.ts"</span>;   <span class="tk-c">// or inline: single-file plugins import only the API</span>
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; self.<span class="tk-f">contribute</span>(<span class="tk-t">Themes</span>, solarized));</code></pre>
+<p>Since a single-file plugin may import only the app&#39;s API, a theme with two surfaces is either two files with the data
+inlined, or a small directory plugin (<code>plugins/solarized/</code> with <code>theme.ts</code>, <code>web.ts</code>, <code>tui.ts</code>).</p>
+<p>When its author changes a colour, the watcher marks the plugin dirty; the next rollout reloads it on the server and in
+every open page and terminal; the registry recomposes; pages that use Solarized repaint. No page reloads, nothing on
+screen is lost.</p>
+<h3 id="when-the-app-changes-its-roles">When the app changes its roles</h3>
+<p>The app adds a role (<code>link</code>) in a later release. Old themes do not name it. The registry&#39;s version guards this: the app
+bumps <code>Themes</code> to version 2 and maps version 1 entries by filling the new role from the default theme. An old theme
+keeps working, slightly less complete; nobody&#39;s page breaks.</p>
+</section>
+
+<section class="chapter" id="limits"><header class="opener"><div class="numeral">VI</div><h2>What a Plugin Cannot Do</h2><p class="lede">Where the app&#39;s look ends and a plugin&#39;s begins.</p></header>
+<p class="dropcap">A plugin cannot change the app&#39;s base stylesheet or its components: those are base code, changed by the app&#39;s
+release. It can contribute a theme (the app&#39;s looks, re-valued), style its own parts with scoped CSS that reads the
+tokens, and place UI through registries like <code>Panels</code>. That line keeps a page coherent with twenty plugins from
+twenty authors, and keeps one bad plugin from breaking everyone&#39;s layout.</p>
+</section>
+
+<section class="chapter epilogue" id="open-questions"><header class="opener"><div class="numeral">∴</div><h2>Open Questions</h2><p class="lede">What this proposal leaves to decide.</p></header>
+<ol>
+<li><strong>The roles.</strong> A fixed set the kit defines (accent, background, text, muted, error, warning, success) or each app&#39;s
+own. Recommendation: the kit defines a base set and an app may add roles; themes fill the base set at least.</li>
+<li><strong>Where <code>Themes</code> lives.</strong> In the app kit (every kit app gets it and the CSS-variable writer) or in each app.
+Recommendation: the kit ships it, with the picker&#39;s preference and the writer; apps add roles and their defaults.</li>
+<li><strong>Light and dark.</strong> A theme carries one mode; following the operating system&#39;s preference picks the user&#39;s chosen
+dark or light theme. Recommendation: yes, two choices per user (one dark, one light).</li>
+<li><strong>Fonts and assets in themes.</strong> Allowed through <code>web</code> extras with URLs to the plugin&#39;s assets (the build serves
+them), or colours only. Recommendation: allowed, under the page&#39;s CSP (<code>font-src</code>, <code>img-src</code> self).</li>
+</ol>
+</section>
+
+<section class="chapter appendix" id="reference"><header class="opener"><div class="numeral">A</div><h2>Reference</h2></header>
+<table>
+<thead>
+<tr>
+<th>Piece</th>
+<th>Where</th>
+<th>What</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>shared components (web)</td>
+<td><code>@acme/app/v3/web</code></td>
+<td>React components, one instance in the base bundle</td>
+</tr>
+<tr>
+<td>shared components (terminal)</td>
+<td><code>@acme/app/v3/tui</code></td>
+<td>the app&#39;s terminal components and <code>theme</code> lookup</td>
+</tr>
+<tr>
+<td>design tokens</td>
+<td>the app&#39;s base stylesheet</td>
+<td>CSS custom properties on <code>:root</code></td>
+</tr>
+<tr>
+<td>plugin styles</td>
+<td><code>*.module.css</code> in the plugin</td>
+<td>scoped class names, shipped with the facet&#39;s script</td>
+</tr>
+<tr>
+<td><code>Themes</code></td>
+<td><code>@acme/app/v3</code> (shared)</td>
+<td>registry of theme data, read by both surfaces</td>
+</tr>
+<tr>
+<td>theme plugin</td>
+<td><code>plugins/&lt;name&gt;.web.ts</code>, <code>.tui.ts</code> or a directory</td>
+<td>contributes a <code>Theme</code></td>
+</tr>
+</tbody></table>
+</section>
+
+<p class="colophon">Looks and Themes · proposal · 2026-11-02</p>
+</div></div>
+<script>(function activate(root) {
+	const replay = (f) => {
+		f.classList.remove("play");
+		void f.getBoundingClientRect();
+		f.classList.add("play");
+	};
+	const io = new IntersectionObserver(
+		(es) => {
+			for (const e of es)
+				if (e.isIntersecting) {
+					e.target.classList.add("play");
+					io.unobserve(e.target);
+				}
+		},
+		{ threshold: 0.3 },
+	);
+	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
+		f.classList.add("armed");
+		io.observe(f);
+		const b = f.querySelector(".replay");
+		if (b) b.onclick = () => replay(f);
+	});
+	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
+		s.classList.add("js");
+		const ps = [...s.querySelectorAll(":scope>.step-panel")];
+		let i = 0;
+		const c = s.querySelector(".count"),
+			p = s.querySelector(".prev"),
+			n = s.querySelector(".next");
+		const show = () => {
+			ps.forEach((x, j) => x.classList.toggle("on", j === i));
+			c.textContent = `${i + 1} / ${ps.length}`;
+			p.disabled = i === 0;
+			n.disabled = i === ps.length - 1;
+			ps[i].querySelectorAll(".anim").forEach(replay);
+		};
+		p.onclick = () => {
+			i--;
+			show();
+		};
+		n.onclick = () => {
+			i++;
+			show();
+		};
+		show();
+	});
+})(document)</script>
+</body></html>

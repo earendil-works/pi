@@ -1,0 +1,30 @@
+[
+    {
+        "description": "exclusiveMaximum validation",
+        "schema": {
+            "exclusiveMaximum": 3.0
+        },
+        "tests": [
+            {
+                "description": "below the exclusiveMaximum is valid",
+                "data": 2.2,
+                "valid": true
+            },
+            {
+                "description": "boundary point is invalid",
+                "data": 3.0,
+                "valid": false
+            },
+            {
+                "description": "above the exclusiveMaximum is invalid",
+                "data": 3.5,
+                "valid": false
+            },
+            {
+                "description": "ignores non-numbers",
+                "data": "x",
+                "valid": true
+            }
+        ]
+    }
+]

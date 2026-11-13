@@ -1,5 +1,6 @@
 // Admission for hosts that must not start runs: `whenIdle: "reject"`, and `submit(tx, draft)` inside the caller's
 // commit (#11149).
+
 import { withTelemetry } from "@earendil-works/chord/context";
 import {
 	type AssistantMessage,
@@ -7,7 +8,6 @@ import {
 	fauxAssistantMessage,
 	fauxText,
 	fauxToolCall,
-	Type,
 } from "@earendil-works/pi-ai";
 import {
 	type Conversation,
@@ -26,6 +26,7 @@ import {
 	type Tx,
 	UserEntry,
 } from "@earendil-works/pi-durable";
+import { obj } from "@earendil-works/pi-schema";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it } from "vitest";
 import { type ChatSetup, chatSetup, openChat, unanswered, waitFor } from "./chat-support.ts";
@@ -80,7 +81,7 @@ function addHold(setup: ChatSetup) {
 		defineTool({
 			name: "hold",
 			description: "Holds until released",
-			parameters: Type.Object({}),
+			parameters: obj({}),
 			execute: async () => {
 				reached.resolve();
 				await release.promise;
@@ -180,7 +181,7 @@ describe("whenIdle reject", () => {
 			defineTool({
 				name: "nudge",
 				description: "Steers another conversation",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async (_args, api, callContext) => {
 					const handle = (await api.conversation(other!.id, callContext))!;
 					const draft = { type: "input", content: "nudge", whenBusy: "steer", whenIdle: "reject" } as const;
@@ -278,6 +279,22 @@ describe("submit inside the caller's commit", () => {
 		const { harness, root } = await openChat(new ControlledStorage(), setup);
 		const id = await harness.commit((tx) => root.submit(tx, { type: "input", content: "hi" }), context);
 		expect(await settledStatus(harness, id)).toMatchObject({ type: "input", status: "done" });
+		await harness.close(context);
+	});
+
+	it("reads a submission by ID in a commit, with the entry its input was placed at", async () => {
+		const setup = chatSetup();
+		setup.faux.setResponses([fauxAssistantMessage([fauxText("answer")])]);
+		const { harness, root } = await openChat(new ControlledStorage(), setup);
+		const id = await harness.commit((tx) => root.submit(tx, { type: "input", content: "hi" }), context);
+		await settledStatus(harness, id);
+		const found = await harness.commit(async (tx) => {
+			const submission = await tx.submission(id);
+			const entry = submission?.entry === undefined ? undefined : await tx.entry(submission.entry);
+			return { status: submission?.status, conversationId: entry?.conversationId, kind: entry?.kind };
+		}, context);
+		expect(found).toEqual({ status: "done", conversationId: root.id, kind: "pi.user" });
+		expect(await harness.commit((tx) => tx.submission(999_999 as SubmissionId), context)).toBeUndefined();
 		await harness.close(context);
 	});
 
@@ -525,7 +542,7 @@ describe("submit inside the caller's commit", () => {
 			defineTool({
 				name: "delegate",
 				description: "Delegates to another conversation",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async (_args, api, callContext) => {
 					toolTask = api.taskId;
 					const handle = (await api.conversation(other!.id, callContext))!;
@@ -611,7 +628,7 @@ describe("submit inside the caller's commit", () => {
 			defineTool({
 				name: "hold",
 				description: "Holds until released, also when aborted",
-				parameters: Type.Object({}),
+				parameters: obj({}),
 				execute: async (_args, api, callContext) => {
 					handle = (await api.conversation(other!.id, callContext))!;
 					callContext.abortSignal!.addEventListener("abort", () => abortSeen.resolve(), { once: true });

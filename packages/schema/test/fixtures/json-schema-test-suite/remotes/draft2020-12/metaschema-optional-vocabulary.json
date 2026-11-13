@@ -1,0 +1,14 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "http://localhost:1234/draft2020-12/metaschema-optional-vocabulary.json",
+    "$vocabulary": {
+        "https://json-schema.org/draft/2020-12/vocab/validation": true,
+        "https://json-schema.org/draft/2020-12/vocab/core": true,
+        "http://localhost:1234/draft/2020-12/vocab/custom": false
+    },
+    "$dynamicAnchor": "meta",
+    "allOf": [
+        { "$ref": "https://json-schema.org/draft/2020-12/meta/validation" },
+        { "$ref": "https://json-schema.org/draft/2020-12/meta/core" }
+    ]
+}

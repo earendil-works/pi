@@ -18,7 +18,10 @@ import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import type { CustomEntry } from "../../src/core/session-manager.ts";
-import { createToolDefinitionFromAgentTool } from "../../src/core/tools/tool-definition-wrapper.ts";
+import {
+	createToolDefinitionFromAgentTool,
+	type TypeBoxAgentTool,
+} from "../../src/core/tools/tool-definition-wrapper.ts";
 import { readCodemodeStore } from "../../src/extensions/codemode/execute.ts";
 import { createCodemodeExtension } from "../../src/extensions/codemode/index.ts";
 import {
@@ -33,7 +36,7 @@ const TINY_PNG_BASE64 =
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
 
 const echoSchema = Type.Object({ text: Type.String({ description: "Text to echo" }) });
-const echoTool: AgentTool<typeof echoSchema> = {
+const echoTool: TypeBoxAgentTool<typeof echoSchema> = {
 	name: "echo",
 	label: "Echo",
 	description: "Echo text back.\n\nSecond paragraph.",
@@ -225,6 +228,50 @@ describe("AgentSession codemode tool", () => {
 			'entries tool\n\nCodemode: `tools.entries(args)` resolves to a value; `await describeTool("entries")` shows its type.',
 		);
 		expect(description("count")).toBe("count tool\n\nCodemode: `tools.count(args)` resolves to `number`.");
+	});
+
+	it("summarizes output fields behind local schema references", async () => {
+		const outputTool = (name: string, outputSchema: Record<string, unknown>): AgentTool => ({
+			name,
+			label: name,
+			description: `${name} tool`,
+			parameters: Type.Object({}),
+			outputSchema: Type.Unsafe(outputSchema),
+			execute: async () => ({ content: [], details: {} }),
+		});
+		const report = outputTool("report", {
+			$ref: "#/$defs/Report",
+			$defs: {
+				Report: {
+					type: "object",
+					properties: { kind: { $ref: "#/$defs/Kind" }, summary: { $ref: "#/$defs/Summary" } },
+					required: ["kind", "summary"],
+				},
+				Kind: { const: "ledger" },
+				Summary: { type: "object", properties: { total: { type: "number" } }, required: ["total"] },
+			},
+		});
+		const result = outputTool("result", {
+			anyOf: [{ $ref: "#/$defs/Ok" }, { $ref: "#/$defs/Failed" }],
+			$defs: {
+				Ok: { type: "object", properties: { value: { type: "string" } }, required: ["value"] },
+				Failed: { type: "object", properties: { error: { type: "string" } }, required: ["error"] },
+			},
+		});
+		const harness = await setup([
+			(pi: ExtensionAPI) => {
+				for (const tool of [report, result]) pi.registerTool(createToolDefinitionFromAgentTool(tool));
+			},
+		]);
+		harness.session.setActiveToolsByName(["report", "result", "codemode"]);
+		const description = (name: string) =>
+			harness.session.agent.state.tools.find((tool) => tool.name === name)?.description ?? "";
+		expect(description("report")).toBe(
+			'report tool\n\nCodemode: `tools.report(args)` resolves to `{ kind: "ledger", summary: { total } }`.',
+		);
+		expect(description("result")).toBe(
+			"result tool\n\nCodemode: `tools.result(args)` resolves to `{ value } | { error }`.",
+		);
 	});
 
 	// #10343

@@ -1,0 +1,140 @@
+[
+    {
+        "description": "validation of an internationalized e-mail addresses",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "format": "idn-email"
+        },
+        "tests": [
+            {
+                "description": "all string formats ignore integers",
+                "data": 12,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore floats",
+                "data": 13.7,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore objects",
+                "data": {},
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore arrays",
+                "data": [],
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore booleans",
+                "data": false,
+                "valid": true
+            },
+            {
+                "description": "all string formats ignore nulls",
+                "data": null,
+                "valid": true
+            },
+            {
+                "description": "a valid idn e-mail (example@example.test in Hangul)",
+                "data": "실례@실례.테스트",
+                "valid": true
+            },
+            {
+                "description": "an invalid e-mail/idn e-mail address",
+                "data": "2962",
+                "valid": false
+            },
+            {
+                "description": "a valid e-mail address",
+                "data": "joe.bloggs@example.com",
+                "valid": true
+            },
+            {
+                "description": "a non-ASCII local part with an ASCII domain is valid",
+                "data": "δοκιμή@example.com",
+                "valid": true
+            },
+            {
+                "description": "a non-ASCII quoted local part is valid",
+                "data": "\"δοκιμή\"@example.com",
+                "valid": true
+            },
+            {
+                "description": "a domain label that is not in Unicode NFC is valid",
+                "data": "user@cafe\u0301.com",
+                "valid": true
+            },
+            {
+                "description": "a local part that is not in Unicode NFC is valid",
+                "data": "cafe\u0301@example.com",
+                "valid": true
+            },
+            {
+                "description": "a C1 control in the local part is valid",
+                "comment": "https://www.rfc-editor.org/rfc/rfc6531#section-3.3 atext =/ UTF8-non-ascii; https://www.rfc-editor.org/rfc/rfc3629#section-4 UTF8-2 admits U+0085",
+                "data": "\u0085@example.com",
+                "valid": true
+            },
+            {
+                "description": "a noncharacter in the local part is valid",
+                "comment": "https://www.rfc-editor.org/rfc/rfc6531#section-3.3 atext =/ UTF8-non-ascii; https://www.rfc-editor.org/rfc/rfc3629#section-4 UTF8-3 admits U+FFFF",
+                "data": "\uffff@example.com",
+                "valid": true
+            },
+            {
+                "description": "a local part at the 64-octet limit is valid",
+                "comment": "https://www.rfc-editor.org/rfc/rfc5321#section-4.5.3.1 every implementation must be able to receive a local part of 64 octets",
+                "data": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com",
+                "valid": true
+            },
+            {
+                "description": "a fullwidth commercial at is not a local-part separator",
+                "comment": "https://www.rfc-editor.org/rfc/rfc5321#section-4.1.2 Mailbox = Local-part \"@\" ( Domain / address-literal ) splits on U+0040, and any IDN mapping applies only to the domain that split produces, so U+FF20 cannot become the delimiter",
+                "data": "user\uff20example.com",
+                "valid": false
+            },
+            {
+                "description": "a local part with a supplementary-plane character is valid",
+                "comment": "https://www.rfc-editor.org/rfc/rfc6531#section-3.3 atext =/ UTF8-non-ascii, and https://www.rfc-editor.org/rfc/rfc3629#section-4 UTF8-4 covers U+10000 and above",
+                "data": "\ud835\udd4f@example.com",
+                "valid": true
+            },
+            {
+                "description": "a domain label starting with a hyphen is not valid",
+                "comment": "https://www.rfc-editor.org/rfc/rfc5321#section-4.1.2 sub-domain = Let-dig [Ldh-str], so a label starts with a letter or digit; RFC 6531 section 3.3 only adds sub-domain =/ U-label",
+                "data": "δοκιμή@-example.com",
+                "valid": false
+            },
+            {
+                "description": "a domain label ending with a hyphen is not valid",
+                "comment": "https://www.rfc-editor.org/rfc/rfc5321#section-4.1.2 Ldh-str = *( ALPHA / DIGIT / \"-\" ) Let-dig, so a label ends with a letter or digit",
+                "data": "δοκιμή@example-.com",
+                "valid": false
+            },
+            {
+                "description": "a domain starting with a dot is not valid",
+                "comment": "https://www.rfc-editor.org/rfc/rfc5321#section-4.1.2 Domain = sub-domain *(\".\" sub-domain) admits no empty sub-domain",
+                "data": "δοκιμή@.example.com",
+                "valid": false
+            },
+            {
+                "description": "a domain ending with a dot is not valid",
+                "data": "δοκιμή@example.com.",
+                "valid": false
+            },
+            {
+                "description": "two subsequent dots inside the domain are not valid",
+                "data": "δοκιμή@example..com",
+                "valid": false
+            },
+            {
+                "description": "domain is required",
+                "comment": "https://www.rfc-editor.org/rfc/rfc5321#section-4.1.2 Mailbox = Local-part \"@\" ( Domain / address-literal )",
+                "data": "δοκιμή@",
+                "valid": false
+            }
+        ]
+    }
+]
