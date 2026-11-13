@@ -226,7 +226,7 @@ export function StepList({
 				const icon: ReactNode = step ? (
 					<KindIcon kind={describe(step, tools).label.kind} />
 				) : entry.kind === "thought" ? (
-					<SparkIcon size={16} />
+					<SparkIcon />
 				) : (
 					<CommentIcon />
 				);
