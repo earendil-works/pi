@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed tool calls skipped by an abort mid-batch getting no tool result in the transcript; each now gets an "Operation aborted" error result. With an aborted signal, `runToolCall` and the loop now return that result before looking up the tool or calling `beforeToolCall` ([#9986](https://github.com/earendil-works/pi/issues/9986))
+
 ## [1.5.2] - 2026-11-10
 
 ## [1.5.1] - 2026-11-09
