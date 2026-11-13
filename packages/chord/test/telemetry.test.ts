@@ -362,7 +362,7 @@ describe("across hosts", () => {
 });
 
 describe("re-holds (slice 9 review L1)", () => {
-	it("carries the carrier only on a reference's first hold; a re-hold after a reconnect is a fresh root linked to it", async () => {
+	it("carries the carrier only on an object's first hold (a root linked to its getter: shared work); a re-hold after a reconnect is a fresh root linked to it", async () => {
 		const telemetry = new InMemoryTelemetryContext();
 		const { tab, server, tabLink } = await relayed({
 			telemetry: { tab: telemetry, server: telemetry, worker: telemetry },
@@ -384,8 +384,9 @@ describe("re-holds (slice 9 review L1)", () => {
 		const spans = telemetry.getSpans();
 		const load = spans.find(({ name }) => name === "page load")!;
 		const holds = spans.filter(({ name }) => name === "chord.hold");
-		expect(holds.map(({ parentId }) => parentId)).toEqual([load.id, null, null, null]);
+		expect(holds.map(({ parentId }) => parentId)).toEqual([null, null, null, null]);
 		const [first, ...again] = holds;
+		expect(first!.links.map(({ context: carrier }) => carrier)).toEqual([load.context]);
 		for (const hold of again) {
 			expect(hold.links.map(({ context: carrier }) => carrier)).toEqual([first!.context]);
 			expect(hold.attributes.outcome).toBe("bound");

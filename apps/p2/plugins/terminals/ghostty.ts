@@ -3,51 +3,71 @@
 // ghostty_type_json(), and structs passed by value travel as pointers (the wasm32 C ABI).
 
 type Fn = (...args: (number | bigint)[]) => number;
-type Layout = Record<string, { size: number; fields: Record<string, { offset: number; size: number }> }>;
+/** `types` of ghostty_type_json(): structs have `fields`, packed bit sets (style flags) have `bits`. */
+type Layout = Record<
+	string,
+	{
+		size: number;
+		fields?: Record<string, { offset: number; size: number }>;
+		bits?: Record<string, { lsb: number; width: number }>;
+	}
+>;
 
 const SUCCESS = 0;
 const OUT_OF_SPACE = -3;
 
+// GhosttySysOption
+const SYS_LOG = 3;
 // GhosttyTerminalOption
-const OPT_WRITE_PTY = 1;
-const OPT_COLOR_SCHEME = 7;
-const OPT_COLOR_FOREGROUND = 11;
-const OPT_COLOR_BACKGROUND = 12;
-const OPT_COLOR_CURSOR = 13;
+const OPT_WRITE_PTY = 2;
+const OPT_COLOR_SCHEME = 8;
+const OPT_COLOR_FOREGROUND = 12;
+const OPT_COLOR_BACKGROUND = 13;
+const OPT_COLOR_CURSOR = 14;
+const OPT_SCROLLBACK_MAX_BYTES = 28;
+const OPT_SCROLLBACK_MAX_LINES = 29;
 // GhosttyTerminalData
 const DATA_ACTIVE_SCREEN = 6;
 const DATA_MOUSE_TRACKING = 11;
 const DATA_SCROLLBAR = 9;
 const DATA_TITLE = 12;
+const DATA_MODE = 37;
 // GhosttyRenderStateData
 const RENDER_DIRTY = 3;
 const RENDER_ROW_ITERATOR = 4;
-const RENDER_CURSOR_STYLE = 10;
-const RENDER_CURSOR_VISIBLE = 11;
-const RENDER_CURSOR_BLINKING = 12;
-const RENDER_CURSOR_IN_VIEWPORT = 14;
-const RENDER_CURSOR_X = 15;
-const RENDER_CURSOR_Y = 16;
-const RENDER_CURSOR_WIDE_TAIL = 17;
+const RENDER_CURSOR = 18;
+const RENDER_COLORS = 19;
+// GhosttyRenderStateRowData
 const ROW_DIRTY = 1;
 const ROW_RAW = 2;
 const ROW_CELLS = 3;
 // GhosttyRowData
 const ROW_DATA_WRAP = 1;
+// GhosttyRenderStateRowCellsData
 const CELL_RAW = 1;
 const CELL_STYLE = 2;
-const CELL_GRAPHEMES_LEN = 3;
-const CELL_GRAPHEMES_BUF = 4;
 const CELL_BG = 5;
 const CELL_FG = 6;
 const CELL_HAS_STYLING = 8;
-// GhosttyFormatterFormat
+const CELL_GRAPHEMES_UTF8 = 9;
+// GhosttyFormatterOption, GhosttyFormatterFormat
+const FORMATTER_EMIT = 1;
+const FORMATTER_UNWRAP = 2;
+const FORMATTER_TRIM = 3;
+const FORMATTER_EXTRAS = 5;
 const FORMAT_PLAIN = 0;
 const FORMAT_VT = 1;
+// GhosttyMouseEncoderOption
+const MOUSE_SIZE = 3;
+const MOUSE_ANY_BUTTON_PRESSED = 4;
+const MOUSE_TRACK_LAST_CELL = 5;
 // GhosttyCellData, GhosttyCellWide
 const CELL_DATA_WIDE = 3;
 const CELL_WIDE = 1;
-const MAX_GRAPHEME = 32;
+/** Bytes of UTF-8 a cell's text gets before it needs a larger buffer. */
+const GRAPHEME_BYTES = 128;
+/** SIZE_MAX on wasm32: no limit. */
+const UNLIMITED = 0xffff_ffff;
 
 /** Cell flags in `Cell.flags`. */
 export const BOLD = 1;
@@ -211,6 +231,8 @@ function callback(
 	return instance.exports.f as WebAssembly.ExportValue;
 }
 
+const utf8 = new TextDecoder();
+
 const rgb = (view: DataView, offset: number) =>
 	(view.getUint8(offset) << 16) | (view.getUint8(offset + 1) << 8) | view.getUint8(offset + 2);
 
@@ -231,8 +253,22 @@ export class Ghostty {
 		const json = typeJson();
 		const bytes = new Uint8Array(this.#memory.buffer);
 		const end = bytes.indexOf(0, json);
-		this.#layout = JSON.parse(new TextDecoder().decode(bytes.subarray(json, end))) as Layout;
+		const parsed = JSON.parse(new TextDecoder().decode(bytes.subarray(json, end))) as { types: Layout };
+		this.#layout = parsed.types;
 		const table = instance.exports.__indirect_function_table as WebAssembly.Table;
+		// GhosttySysLogFn(userdata, level, scope, scope_len, message, message_len)
+		const log = table.grow(1);
+		table.set(
+			log,
+			callback(6, false, (_userdata, _level, scope, scopeLength, message, messageLength) => {
+				const decoder = new TextDecoder();
+				const text = decoder.decode(new Uint8Array(this.#memory.buffer, message, messageLength));
+				const name = scopeLength ? decoder.decode(new Uint8Array(this.#memory.buffer, scope, scopeLength)) : "";
+				console.debug(name ? `[ghostty ${name}]` : "[ghostty]", text);
+				return undefined;
+			}),
+		);
+		this.call("ghostty_sys_set", SYS_LOG, log);
 		// GhosttyTerminalWritePtyFn(terminal, userdata, data, len)
 		this.#writePty = table.grow(1);
 		table.set(
@@ -257,20 +293,10 @@ export class Ghostty {
 	}
 
 	static async load(source: BufferSource | WebAssembly.Module): Promise<Ghostty> {
-		let memory: WebAssembly.Memory | undefined;
-		const imports = {
-			env: {
-				log: (pointer: number, length: number) => {
-					if (memory)
-						console.debug("[ghostty]", new TextDecoder().decode(new Uint8Array(memory.buffer, pointer, length)));
-				},
-			},
-		};
 		const instance =
 			source instanceof WebAssembly.Module
-				? await WebAssembly.instantiate(source, imports)
-				: (await WebAssembly.instantiate(source, imports)).instance;
-		memory = instance.exports.memory as WebAssembly.Memory;
+				? await WebAssembly.instantiate(source)
+				: (await WebAssembly.instantiate(source)).instance;
 		return new Ghostty(instance);
 	}
 
@@ -306,9 +332,16 @@ export class Ghostty {
 
 	/** @internal */
 	field(type: string, name: string): number {
-		const field = this.#layout[type]?.fields[name];
+		const field = this.#layout[type]?.fields?.[name];
 		if (!field) throw new Error(`libghostty-vt has no ${type}.${name}`);
 		return field.offset;
+	}
+
+	/** @internal The lowest bit of `name` in the packed bit set `type`. */
+	bit(type: string, name: string): number {
+		const bit = this.#layout[type]?.bits?.[name];
+		if (!bit) throw new Error(`libghostty-vt has no ${type}.${name}`);
+		return bit.lsb;
 	}
 
 	/** @internal */
@@ -320,7 +353,7 @@ export class Ghostty {
 
 	/** @internal Allocate `length` zeroed bytes. */
 	alloc(length: number): number {
-		const pointer = this.call("ghostty_wasm_alloc_u8_array", length);
+		const pointer = this.call("ghostty_wasm_alloc", length);
 		if (!pointer) throw new Error("libghostty-vt is out of memory");
 		this.bytes(pointer, length).fill(0);
 		return pointer;
@@ -328,7 +361,7 @@ export class Ghostty {
 
 	/** @internal */
 	free(pointer: number, length: number): void {
-		this.call("ghostty_wasm_free_u8_array", pointer, length);
+		this.call("ghostty_wasm_free", pointer, length);
 	}
 
 	/** @internal Create an object through `new(allocator, out)` and return its handle. */
@@ -346,6 +379,14 @@ export class Ghostty {
 
 /** Scratch space each terminal keeps for small results. */
 const SCRATCH = 1024;
+
+/**
+ * GhosttyFormatterExtras of a snapshot (GHOSTTY_FORMATTER_EXTRA_* bits): modes 1, scrolling region 2, pwd 4, keyboard
+ * 5, cursor 6, style 7, hyperlink 8, protection 9, Kitty keyboard 10, charsets 11. Not the palette (0), and not tab
+ * stops (3): the formatter emits them after the cursor position, moving the cursor (programs rarely change the default
+ * stops anyway).
+ */
+const VT_EXTRAS = [1, 2, 4, 5, 6, 7, 8, 9, 10, 11].reduce((bits, bit) => bits | (1 << bit), 0);
 
 /** One terminal emulator: VT state, screen and scrollback, rendering and input encoding. */
 export class VtTerminal {
@@ -372,20 +413,14 @@ export class VtTerminal {
 		if (options.colorScheme) this.#colorSchemeOf = options.colorScheme;
 		this.cols = options.cols;
 		this.rows = options.rows;
-		const type = "GhosttyTerminalOptions";
-		const size = ghostty.size(type);
-		const pointer = ghostty.alloc(size);
-		try {
-			const view = ghostty.view();
-			view.setUint16(pointer + ghostty.field(type, "cols"), options.cols, true);
-			view.setUint16(pointer + ghostty.field(type, "rows"), options.rows, true);
-			view.setUint32(pointer + ghostty.field(type, "max_scrollback"), options.scrollback, true);
-			this.handle = ghostty.create("ghostty_terminal_new", pointer);
-		} finally {
-			ghostty.free(pointer, size);
-		}
+		this.handle = ghostty.create("ghostty_terminal_new", options.cols, options.rows);
 		this.#scratch = ghostty.alloc(SCRATCH);
-		this.#graphemes = ghostty.alloc(MAX_GRAPHEME * 4);
+		this.#graphemes = ghostty.alloc(GRAPHEME_BYTES);
+		// Scrollback is limited by lines alone: the default byte limit keeps about one page (a few hundred rows).
+		ghostty.view().setUint32(this.#scratch, options.scrollback, true);
+		ghostty.call("ghostty_terminal_set", this.handle, OPT_SCROLLBACK_MAX_LINES, this.#scratch);
+		ghostty.view().setUint32(this.#scratch, UNLIMITED, true);
+		ghostty.call("ghostty_terminal_set", this.handle, OPT_SCROLLBACK_MAX_BYTES, this.#scratch);
 		if (options.colors) this.setColors(options.colors);
 	}
 
@@ -443,10 +478,13 @@ export class VtTerminal {
 
 	/** Whether a mode is set; DEC private modes unless `ansi`. */
 	mode(value: number, ansi = false): boolean {
-		const mode = (value & 0x7fff) | (ansi ? 0x8000 : 0);
-		this.#ghostty.view().setUint8(this.#scratch, 0);
-		this.#ghostty.call("ghostty_terminal_mode_get", this.handle, mode, this.#scratch);
-		return this.#ghostty.view().getUint8(this.#scratch) !== 0;
+		const ghostty = this.#ghostty;
+		const type = "GhosttyTerminalModeConfig";
+		ghostty.bytes(this.#scratch, ghostty.size(type)).fill(0);
+		const view = ghostty.view();
+		view.setUint16(this.#scratch + ghostty.field(type, "mode"), (value & 0x7fff) | (ansi ? 0x8000 : 0), true);
+		ghostty.call("ghostty_terminal_get", this.handle, DATA_MODE, this.#scratch);
+		return ghostty.view().getUint8(this.#scratch + ghostty.field(type, "value")) !== 0;
 	}
 
 	/** The alternate screen (full-screen programs) is active. */
@@ -473,9 +511,9 @@ export class VtTerminal {
 			this.#mouseEvent = ghostty.create("ghostty_mouse_event_new");
 			// Motion within the cell of the last report is not reported again.
 			ghostty.view().setUint8(this.#scratch, 1);
-			ghostty.call("ghostty_mouse_encoder_setopt", this.#mouseEncoder, 4, this.#scratch);
+			ghostty.call("ghostty_mouse_encoder_set", this.#mouseEncoder, MOUSE_TRACK_LAST_CELL, this.#scratch);
 		}
-		ghostty.call("ghostty_mouse_encoder_setopt_from_terminal", this.#mouseEncoder, this.handle);
+		ghostty.call("ghostty_mouse_encoder_set_from_terminal", this.#mouseEncoder, this.handle);
 		const type = "GhosttyMouseEncoderSize";
 		const size = ghostty.size(type);
 		const scratch = this.#scratch;
@@ -488,11 +526,11 @@ export class VtTerminal {
 		set("screen_height", input.height);
 		set("cell_width", input.cellWidth);
 		set("cell_height", input.cellHeight);
-		ghostty.call("ghostty_mouse_encoder_setopt", this.#mouseEncoder, 2, scratch);
+		ghostty.call("ghostty_mouse_encoder_set", this.#mouseEncoder, MOUSE_SIZE, scratch);
 		// Motion with a button held is reported in button-event mode (1002) too.
 		view = ghostty.view();
 		view.setUint8(scratch, input.action === "motion" && input.button ? 1 : 0);
-		ghostty.call("ghostty_mouse_encoder_setopt", this.#mouseEncoder, 3, scratch);
+		ghostty.call("ghostty_mouse_encoder_set", this.#mouseEncoder, MOUSE_ANY_BUTTON_PRESSED, scratch);
 		// GhosttyMouseAction: press, release, motion. GhosttyMouseButton: left 1, right 2, middle 3, wheel 4 / 5.
 		ghostty.call(
 			"ghostty_mouse_event_set_action",
@@ -574,39 +612,18 @@ export class VtTerminal {
 
 	#format(emit: number): Uint8Array {
 		const ghostty = this.#ghostty;
-		const type = "GhosttyFormatterTerminalOptions";
-		const size = ghostty.size(type);
-		const options = ghostty.alloc(size);
-		let formatter = 0;
+		const scratch = this.#scratch;
+		const formatter = ghostty.create("ghostty_formatter_terminal_new", this.handle);
 		try {
-			const view = ghostty.view();
-			const extra = options + ghostty.field(type, "extra");
-			const screen = extra + ghostty.field("GhosttyFormatterTerminalExtra", "screen");
-			const flag = (base: number, struct: string, name: string) =>
-				view.setUint8(base + ghostty.field(struct, name), 1);
-			view.setUint32(options + ghostty.field(type, "size"), size, true);
-			view.setUint32(options + ghostty.field(type, "emit"), emit, true);
-			flag(options, type, "unwrap");
-			flag(options, type, "trim");
-			view.setUint32(
-				extra + ghostty.field("GhosttyFormatterTerminalExtra", "size"),
-				ghostty.size("GhosttyFormatterTerminalExtra"),
-				true,
-			);
-			view.setUint32(
-				screen + ghostty.field("GhosttyFormatterScreenExtra", "size"),
-				ghostty.size("GhosttyFormatterScreenExtra"),
-				true,
-			);
-			if (emit === FORMAT_VT) {
-				// Not `tabstops`: the formatter emits them after the cursor position, moving the cursor (programs rarely
-				// change the default stops anyway).
-				for (const name of ["modes", "scrolling_region", "pwd", "keyboard"])
-					flag(extra, "GhosttyFormatterTerminalExtra", name);
-				for (const name of ["cursor", "style", "hyperlink", "protection", "kitty_keyboard", "charsets"])
-					flag(screen, "GhosttyFormatterScreenExtra", name);
-			}
-			formatter = ghostty.create("ghostty_formatter_terminal_new", this.handle, options);
+			const set = (option: number, value: number) => {
+				ghostty.view().setUint32(scratch, value, true);
+				ghostty.call("ghostty_formatter_set", formatter, option, scratch);
+			};
+			set(FORMATTER_EMIT, emit);
+			// bool values: the little-endian 1 is the byte 1.
+			set(FORMATTER_UNWRAP, 1);
+			set(FORMATTER_TRIM, 1);
+			if (emit === FORMAT_VT) set(FORMATTER_EXTRAS, VT_EXTRAS);
 			const result = ghostty.call("ghostty_formatter_format_alloc", formatter, 0, this.#scratch, this.#scratch + 4);
 			if (result !== SUCCESS) throw new Error(`Formatting the terminal failed (${result})`);
 			const after = ghostty.view();
@@ -616,8 +633,7 @@ export class VtTerminal {
 			ghostty.call("ghostty_free", 0, pointer, length);
 			return copy;
 		} finally {
-			if (formatter) ghostty.call("ghostty_formatter_free", formatter);
-			ghostty.free(options, size);
+			ghostty.call("ghostty_formatter_free", formatter);
 		}
 	}
 
@@ -632,37 +648,38 @@ export class VtTerminal {
 		const state = this.#render;
 		const scratch = this.#scratch;
 		ghostty.call("ghostty_render_state_update", state, this.handle);
-		const get = (data: number) => {
-			ghostty.view().setUint32(scratch, 0, true);
-			const result = ghostty.call("ghostty_render_state_get", state, data, scratch);
-			return result === SUCCESS ? ghostty.view() : undefined;
-		};
-		const dirtyValue = get(RENDER_DIRTY)?.getUint32(scratch, true) ?? 2;
+		const dirtyValue =
+			ghostty.call("ghostty_render_state_get", state, RENDER_DIRTY, scratch) === SUCCESS
+				? ghostty.view().getUint32(scratch, true)
+				: 2;
 		const dirty = dirtyValue === 0 ? "none" : dirtyValue === 1 ? "partial" : "full";
-		const type = "GhosttyRenderStateColors";
-		const colorsSize = ghostty.size(type);
-		ghostty.bytes(scratch, colorsSize).fill(0);
-		ghostty.view().setUint32(scratch + ghostty.field(type, "size"), colorsSize, true);
-		ghostty.call("ghostty_render_state_colors_get", state, scratch);
-		let view = ghostty.view();
-		const background = rgb(view, scratch + ghostty.field(type, "background"));
-		const foreground = rgb(view, scratch + ghostty.field(type, "foreground"));
-		const cursorColor = view.getUint8(scratch + ghostty.field(type, "cursor_has_value"))
-			? rgb(view, scratch + ghostty.field(type, "cursor"))
+		const sized = (data: number, type: string) => {
+			const size = ghostty.size(type);
+			ghostty.bytes(scratch, size).fill(0);
+			ghostty.view().setUint32(scratch + ghostty.field(type, "size"), size, true);
+			ghostty.call("ghostty_render_state_get", state, data, scratch);
+			return ghostty.view();
+		};
+		const colors = "GhosttyRenderStateColors";
+		let view = sized(RENDER_COLORS, colors);
+		const background = rgb(view, scratch + ghostty.field(colors, "background"));
+		const foreground = rgb(view, scratch + ghostty.field(colors, "foreground"));
+		const cursorColor = view.getUint8(scratch + ghostty.field(colors, "cursor_has_value"))
+			? rgb(view, scratch + ghostty.field(colors, "cursor"))
 			: undefined;
+		const cursorType = "GhosttyRenderStateCursor";
+		view = sized(RENDER_CURSOR, cursorType);
+		const at = (name: string) => scratch + ghostty.field(cursorType, name);
 		let cursor: Frame["cursor"];
-		if (get(RENDER_CURSOR_VISIBLE)?.getUint8(scratch) && get(RENDER_CURSOR_IN_VIEWPORT)?.getUint8(scratch)) {
-			const x = get(RENDER_CURSOR_X)?.getUint16(scratch, true) ?? 0;
-			const y = get(RENDER_CURSOR_Y)?.getUint16(scratch, true) ?? 0;
-			const wideTail = Boolean(get(RENDER_CURSOR_WIDE_TAIL)?.getUint8(scratch));
-			const style = (["bar", "block", "underline", "hollow"] as const)[
-				get(RENDER_CURSOR_STYLE)?.getUint32(scratch, true) ?? 1
-			];
+		if (view.getUint8(at("visible")) && view.getUint8(at("viewport_has_value"))) {
+			const x = view.getUint16(at("viewport_x"), true);
+			// GhosttyCursorStyle: bar, block, underline, block hollow.
+			const style = (["bar", "block", "underline", "hollow"] as const)[view.getUint32(at("visual_style"), true)];
 			cursor = {
-				x: wideTail ? Math.max(0, x - 1) : x,
-				y,
+				x: view.getUint8(at("wide_tail")) ? Math.max(0, x - 1) : x,
+				y: view.getUint16(at("viewport_y"), true),
 				style: style ?? "block",
-				blinking: Boolean(get(RENDER_CURSOR_BLINKING)?.getUint8(scratch)),
+				blinking: view.getUint8(at("blinking")) !== 0,
 				...(cursorColor === undefined ? {} : { color: cursorColor }),
 			};
 		}
@@ -673,6 +690,7 @@ export class VtTerminal {
 			ghostty.call("ghostty_render_state_get", state, RENDER_ROW_ITERATOR, scratch);
 			const style = "GhosttyStyle";
 			const styleSize = ghostty.size(style);
+			const styleFlags = scratch + ghostty.field(style, "flags");
 			const flags: [string, number][] = [
 				["bold", BOLD],
 				["italic", ITALIC],
@@ -683,8 +701,9 @@ export class VtTerminal {
 				["strikethrough", STRIKETHROUGH],
 				["overline", OVERLINE],
 			];
-			const flagOffsets = flags.map(([name, bit]) => [ghostty.field(style, name), bit] as const);
-			const underline = ghostty.field(style, "underline");
+			const flagBits = flags.map(([name, bit]) => [1 << ghostty.bit("GhosttyStyleFlags", name), bit] as const);
+			// GhosttySgrUnderline in three bits; anything but none underlines.
+			const underline = 0b111 << ghostty.bit("GhosttyStyleFlags", "underline");
 			for (let y = 0; ghostty.call("ghostty_render_state_row_iterator_next", this.#rows); y++) {
 				ghostty.view().setUint8(scratch, 0);
 				ghostty.call("ghostty_render_state_row_get", this.#rows, ROW_DIRTY, scratch);
@@ -701,15 +720,8 @@ export class VtTerminal {
 					let text = "";
 					let width: Cell["width"] = afterWide ? 0 : 1;
 					afterWide = false;
-					ghostty.call("ghostty_render_state_row_cells_get", this.#cells, CELL_GRAPHEMES_LEN, scratch);
-					const length = Math.min(ghostty.view().getUint32(scratch, true), MAX_GRAPHEME);
-					if (length > 0) {
-						ghostty.call("ghostty_render_state_row_cells_get", this.#cells, CELL_GRAPHEMES_BUF, this.#graphemes);
-						const codes = new Uint32Array(length);
-						const graphemes = ghostty.view();
-						for (let index = 0; index < length; index++)
-							codes[index] = graphemes.getUint32(this.#graphemes + index * 4, true);
-						text = String.fromCodePoint(...codes);
+					text = this.#cellText();
+					if (text) {
 						ghostty.call("ghostty_render_state_row_cells_get", this.#cells, CELL_RAW, scratch);
 						const raw = ghostty.view().getBigUint64(scratch, true);
 						ghostty.call("ghostty_cell_get", raw, CELL_DATA_WIDE, scratch);
@@ -724,11 +736,10 @@ export class VtTerminal {
 					ghostty.call("ghostty_render_state_row_cells_get", this.#cells, CELL_HAS_STYLING, scratch);
 					if (ghostty.view().getUint8(scratch)) {
 						ghostty.bytes(scratch, styleSize).fill(0);
-						ghostty.view().setUint32(scratch + ghostty.field(style, "size"), styleSize, true);
 						ghostty.call("ghostty_render_state_row_cells_get", this.#cells, CELL_STYLE, scratch);
-						const styled = ghostty.view();
-						for (const [offset, bit] of flagOffsets) if (styled.getUint8(scratch + offset)) cellFlags |= bit;
-						if (styled.getInt32(scratch + underline, true) !== 0) cellFlags |= UNDERLINE;
+						const bits = ghostty.view().getUint16(styleFlags, true);
+						for (const [mask, bit] of flagBits) if (bits & mask) cellFlags |= bit;
+						if (bits & underline) cellFlags |= UNDERLINE;
 						if (ghostty.call("ghostty_render_state_row_cells_get", this.#cells, CELL_FG, scratch) === SUCCESS)
 							fg = rgb(ghostty.view(), scratch);
 					}
@@ -739,11 +750,8 @@ export class VtTerminal {
 					cells.push({ text, width, fg, bg, flags: cellFlags });
 				}
 				changed.push({ y, cells, wrapped });
-				ghostty.view().setUint8(scratch, 0);
-				ghostty.call("ghostty_render_state_row_set", this.#rows, 0, scratch);
 			}
-			ghostty.view().setUint32(scratch, 0, true);
-			ghostty.call("ghostty_render_state_set", state, 0, scratch);
+			ghostty.call("ghostty_render_state_clean", state);
 		}
 		return {
 			dirty,
@@ -754,6 +762,32 @@ export class VtTerminal {
 			...(cursor ? { cursor } : {}),
 			changed,
 		};
+	}
+
+	/** The text of the row cells' current cell: its grapheme cluster, "" when it has none. */
+	#cellText(): string {
+		const ghostty = this.#ghostty;
+		const type = "GhosttyBuffer";
+		const buffer = this.#scratch;
+		const read = (pointer: number, capacity: number) => {
+			const view = ghostty.view();
+			view.setUint32(buffer + ghostty.field(type, "ptr"), pointer, true);
+			view.setUint32(buffer + ghostty.field(type, "cap"), capacity, true);
+			view.setUint32(buffer + ghostty.field(type, "len"), 0, true);
+			const result = ghostty.call("ghostty_render_state_row_cells_get", this.#cells, CELL_GRAPHEMES_UTF8, buffer);
+			return { result, length: ghostty.view().getUint32(buffer + ghostty.field(type, "len"), true) };
+		};
+		const first = read(this.#graphemes, GRAPHEME_BYTES);
+		if (first.result === SUCCESS) return utf8.decode(ghostty.bytes(this.#graphemes, first.length));
+		if (first.result !== OUT_OF_SPACE) return "";
+		// A long cluster (many combining marks): `length` is the size it needs.
+		const pointer = ghostty.alloc(first.length);
+		try {
+			const second = read(pointer, first.length);
+			return second.result === SUCCESS ? utf8.decode(ghostty.bytes(pointer, second.length)) : "";
+		} finally {
+			ghostty.free(pointer, first.length);
+		}
 	}
 
 	/** The bytes a key press sends in the terminal's current modes; undefined when it sends nothing. */
@@ -769,7 +803,7 @@ export class VtTerminal {
 		const code = character?.codePointAt(0) ?? 0;
 		const printable = character !== undefined && code >= 0x20 && code !== 0x7f;
 		if (!key && !printable) return undefined;
-		ghostty.call("ghostty_key_encoder_setopt_from_terminal", this.#encoder, this.handle);
+		ghostty.call("ghostty_key_encoder_set_from_terminal", this.#encoder, this.handle);
 		ghostty.call("ghostty_key_event_set_action", this.#event, input.repeat ? 2 : 1);
 		ghostty.call("ghostty_key_event_set_key", this.#event, key);
 		ghostty.call(
@@ -785,14 +819,22 @@ export class VtTerminal {
 					? character.toLowerCase()
 					: "";
 		ghostty.call("ghostty_key_event_set_unshifted_codepoint", this.#event, unshifted.codePointAt(0) ?? 0);
-		const utf8 = printable ? new TextEncoder().encode(character) : new Uint8Array(0);
-		// The text lives in scratch space past the encoder's output.
+		const bytes = printable ? new TextEncoder().encode(character) : new Uint8Array(0);
+		// The text and the GhosttyString pointing at it (by value: a pointer on wasm32) live in scratch space past the
+		// encoder's output; the event borrows the text until it is cleared again.
 		const text = this.#scratch + 512;
-		ghostty.bytes(text, utf8.length).set(utf8);
-		ghostty.call("ghostty_key_event_set_utf8", this.#event, utf8.length ? text : 0, utf8.length);
+		const string = this.#scratch + 520;
+		const setText = (pointer: number, length: number) => {
+			const view = ghostty.view();
+			view.setUint32(string + ghostty.field("GhosttyString", "ptr"), pointer, true);
+			view.setUint32(string + ghostty.field("GhosttyString", "len"), length, true);
+			ghostty.call("ghostty_key_event_set_utf8", this.#event, string);
+		};
+		ghostty.bytes(text, bytes.length).set(bytes);
+		setText(bytes.length ? text : 0, bytes.length);
 		const out = this.#scratch + 8;
 		const result = ghostty.call("ghostty_key_encoder_encode", this.#encoder, this.#event, out, 256, this.#scratch);
-		ghostty.call("ghostty_key_event_set_utf8", this.#event, 0, 0);
+		setText(0, 0);
 		if (result !== SUCCESS) return undefined;
 		const length = ghostty.view().getUint32(this.#scratch, true);
 		return length ? ghostty.bytes(out, length).slice() : undefined;
@@ -855,7 +897,7 @@ export class VtTerminal {
 			ghostty.call("ghostty_mouse_encoder_free", this.#mouseEncoder);
 		}
 		ghostty.free(this.#scratch, SCRATCH);
-		ghostty.free(this.#graphemes, MAX_GRAPHEME * 4);
+		ghostty.free(this.#graphemes, GRAPHEME_BYTES);
 		ghostty.call("ghostty_terminal_free", this.handle);
 	}
 }

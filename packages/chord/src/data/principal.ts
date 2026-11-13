@@ -30,6 +30,23 @@ export function principalKey<P extends Principal>(
 
 const defaultKeys = new WeakMap<Principal, string>();
 
+/**
+ * A principal's own JSON, as the wire carries it (its fields in insertion order): two principals give the same text
+ * only when they serialize equally. Cached per principal object, one walk counted per object (decision "References
+ * share one wire hold": the caller part of the sharing key).
+ */
+export function principalJson(principal: Principal, context: Context): string {
+	let json = wireJson.get(principal);
+	if (json === undefined) {
+		chordMetrics(context.telemetry.metrics).counter("chord.data.walks").add(1);
+		json = JSON.stringify(principal);
+		wireJson.set(principal, json);
+	}
+	return json;
+}
+
+const wireJson = new WeakMap<Principal, string>();
+
 const customKeys = new WeakMap<PrincipalKeyFunction<never>, WeakMap<Principal, string>>();
 
 function customKeyCache(customKey: PrincipalKeyFunction<never>): WeakMap<Principal, string> {

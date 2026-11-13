@@ -43,8 +43,8 @@ version 2; absent: `{ 1, [{ 1, null }] }`):
   terminals, reading unread answers, `Sessions.fork`, and peer messages (the conversations broker).
 - Clients learn it through the session row (`Sessions` version 4, catalog schema 4; version 5: null labels); the
   worker pushes it inside the switch, before answering, and at every start (`treeSelf`). Clients built before still
-  bind: the providers accept `Sessions` 3, 4 and 5 and `SessionTree` 1, mapping rows and the tree back (no `main`/`branches` for 3, a null
-  label as the session title for 4, no labels for `SessionTree` 1). A web page or TUI viewing the previous main conversation follows a switch.
+  bind: the providers accept `Sessions` 3, 4 and 5 and `SessionTree` 1 and 2, mapping rows and the tree back (no `main`/`branches` for 3, a null
+  label as the session title for 4, no labels for `SessionTree` 1; 2 lacks only `branch`). A web page or TUI viewing the previous main conversation follows a switch.
 - Earlier branches are read-only (`ReadOnlyConversations`): only the main conversation takes input (send, dequeue,
   configure); Stop stays allowed. A branch left while it works keeps running in the background: its run and queued
   input go on, its sidebar row shows the working mark, and its answer counts as unread. To watch or stop it, switch
@@ -101,6 +101,28 @@ What the sidebar and the TUI selector call a branch: `label` in `p2.main`, store
   null branches other than conversation 1 once, in one commit: the fork point's message (`parent.at`; for an Edit that
   is the entry before the edited message), else the branch's first own user message.
 
+### Sending in a new branch
+
+Navigating to where the main conversation already ends changes nothing (pi: choosing the current position is a no-op),
+so a branch after the last answer is made with the next message instead: "send in a new branch" (Alt+Enter while
+idle, or Send's menu). It keeps an idea apart without writing a throwaway message first, and leaves no empty
+branch behind when the owner changes their mind.
+
+```
+1 "add login"  2 answer            ← main conversation 1, ends at 2
+Alt+Enter "what about OAuth?"
+→ conversation 3 forked at 2, labelled "what about OAuth?", becomes main; the message is sent there
+→ conversation 1 still ends at 2
+```
+
+`SessionTree.branch({ conversation, label })` (owner, version 3) forks the top-level conversation at its last entry
+(from the conversation storing that entry, as `navigate`), labels the fork (one line, `PREVIEW_LENGTH`) and makes it
+the main conversation, in one commit; the client then sends the message to the fork as any message. Fork and send are
+two steps (Durable's first input is a `submit()` after the fork): a lost connection between them leaves the message in
+the composer or editor and an empty branch, which is harmless. Clients offer it only to the owner, in the main
+conversation, idle and with entries; while a run is busy the same key queues a follow-up (pi's Alt+Enter). The label
+is the message (attachments only: their names).
+
 ### Tree
 
 `SessionTree.tree()` (owner) returns the nodes (entry, parent node, role, preview), the main conversation and its last
@@ -117,13 +139,21 @@ node:
   adapted from pi's `tree-selector.ts` (layout, active path, paging, label input; no filters or folding). A branch's
   label shows before its first own message (`TreeNode.conversation` names the branch storing a node).
 - Web: "Edit" beside the owner's view of a user message (on hover; always shown on touch screens) and "Branch from
-  here" under an answer, in the main conversation. Under the session in the sidebar, from two branches on, one row per
+  here" under an answer, in the main conversation; not under the conversation's last entry, where the composer sends
+  in a new branch instead. The composer has one Send button: a tap sends (steers while a run is busy); a long press
+  on it (touch), a right-click, the Menu key or Shift+F10, or ArrowUp while it has focus opens its menu of both ways
+  to send (Elanor's `Menu`, opened by Send's own handlers: a trigger would open on the click that sends): Send and
+  "Send in a new branch" while idle, "Steer" and "Follow up" while a run is busy (owner decisions: one
+  button, no second control; Elanor's component; it replaced the Steer toggle). Alt+Enter is the second way at once.
+  The menu takes the focus and gives it back when it closes (Escape returns to Send); opened from the keyboard or a
+  mouse its first item has it. On a phone the keyboard closes while the menu is open. Under the session in the sidebar, from two branches on, one row per
   branch (`Sessions` rows' `branches`: the stored labels, null for the session title, newest first in a stable order,
   the current one marked in place), behind the session row's expand control, which also shows its subagents
   (collapsed by default, expanded while a subagent is shown); choosing one switches the session to its end
   (`SessionTree.select`). The worker
   pushes `p2.main` (`treeSelf`: `main` and the branches with their labels) at start and inside each `SessionTree`
   method that changes it, before the method answers (nothing else changes `p2.main`).
+- TUI: `app.message.followUp` (Alt+Enter) sends in a new branch while idle (`ChatSurface.sendAlternate`).
 - Search indexes each branch's own entries (after its fork point).
 
 ## Later

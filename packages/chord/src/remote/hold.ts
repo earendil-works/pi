@@ -411,7 +411,7 @@ export class Hold implements Holder, UnboundRequest {
 
 	/** Calls a method of the held object as the hold's caller, its span under `parent` (the call's carrier, extracted). */
 	call(method: string, args: unknown, parent: TelemetryContext, context: Context): Promise<unknown> {
-		return this.#object!.call(method, args, context, this.caller, this.contract.version, parent);
+		return this.#object!.callAs(method, args, context, this.caller, this.contract.version, parent);
 	}
 
 	/**

@@ -87,4 +87,28 @@ describe("a path", () => {
 		expect(events).toEqual(["attached", "dropped", "released"]);
 		expect(failed).toEqual(["no worker"]);
 	});
+
+	it("counts a join to a held holder as a request without a link (a failed route resolves again), none with one", () => {
+		const events: string[] = [];
+		const path = new Path((event) => events.push(event.kind));
+		const a = holder("a", []);
+		path.attach(a);
+		path.requested(a);
+		expect(events).toEqual(["attached", "attached"]);
+		path.connected(linkOf("1"));
+		path.requested(a);
+		expect(events).toEqual(["attached", "attached"]);
+	});
+
+	it("tells whether its route suspended it; a path without a route never is", () => {
+		let suspended = false;
+		expect(new Path(() => {}).suspended).toBe(false);
+		const routed = new Path(
+			() => {},
+			() => suspended,
+		);
+		expect(routed.suspended).toBe(false);
+		suspended = true;
+		expect(routed.suspended).toBe(true);
+	});
 });

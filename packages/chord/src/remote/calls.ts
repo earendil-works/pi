@@ -48,9 +48,17 @@ export class CallWindow<C extends QueuedCall<unknown> = QueuedCall> {
 
 	/** Takes every waiting call of `hold` out and returns them (its hold rebinds or was released). */
 	removeHold(hold: C["hold"]): C[] {
+		return this.removeWhere((call) => call.hold === hold);
+	}
+
+	/**
+	 * Takes every waiting call `matches` out and returns them, in order: one owner's calls when a reference sharing a hold
+	 * releases (decision "References share one wire hold").
+	 */
+	removeWhere(matches: (call: C) => boolean): C[] {
 		const removed: C[] = [];
 		for (const call of this.#waiting) {
-			if (call.hold !== hold) continue;
+			if (!matches(call)) continue;
 			this.#waiting.delete(call);
 			removed.push(call);
 		}

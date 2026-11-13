@@ -2474,6 +2474,31 @@ button.diff-number:hover {
 	color: var(--text);
 	font-weight: var(--fw-strong);
 }
+/* Send's ways to send (steer or follow-up while busy; idle, a new branch): Elanor's menu above Send, from a long press
+   or the keyboard (plugins/chat/web.tsx). p2's popovers: a 1px line, no shadow; above the dock, below sheets. Send's
+   long press shows no callout or selection on iOS. */
+.send {
+	-webkit-touch-callout: none;
+	user-select: none;
+}
+.send-menu {
+	z-index: 30;
+}
+.send-options {
+	width: max-content;
+	min-width: 240px;
+	border: 1px solid var(--line);
+	box-shadow: none;
+}
+.send-options [role="menuitem"] {
+	justify-content: space-between;
+	gap: var(--s3);
+	min-height: var(--control);
+}
+/* The item's end slot is an icon's size in Elanor; here it holds the keyboard shortcut. */
+.send-options [role="menuitem"] > :last-child {
+	inline-size: auto;
+}
 .to-bottom {
 	position: absolute;
 	top: calc(-1 * (var(--control) + var(--s2)));
@@ -3513,8 +3538,13 @@ button.history-edge:disabled {
 	.segments button,
 	.detail-more,
 	.queued > div,
-	.file-completion > [role="option"] {
+	.file-completion > [role="option"],
+	.send-options [role="menuitem"] {
 		min-height: var(--row);
+	}
+	/* No keyboard to press them with. */
+	.send-options kbd {
+		display: none;
 	}
 	.foot-button {
 		height: var(--row);

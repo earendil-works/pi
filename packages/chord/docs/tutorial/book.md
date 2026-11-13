@@ -1634,20 +1634,21 @@ a span of another trace; the renderer prints it and never follows it.
 
 ## Trap: a trace starts where a span starts
 
-The panel took its reference to `Todos` before the click (`useHold`), under `BACKGROUND_CONTEXT`, and that hold is in no
-trace of the page: **a context without a recording span records nothing.** A host gives such work no span of its own,
-so its calls start no `chord.call` and send no carrier, and the provider's `chord.method` becomes a root of its own trace
-(the server's relay of the page's hold is one: `chord.relay` with `member="hold"`). So were the server's calls in step 2:
-on the worker each is a root `chord.method`. Start a span where the work begins, a click handler or a job
-(`host.root(fn, context, { trace })`), and pass its `ctx` down. The kit's HTTP component does this for every request: a
-`chord.http` span (method, route pattern, status), with the route's `ctx` under it. Step 11 adds honey from the command
-line, as step 3 did; the request is the trace's root, the server's call to the worker under it:
+The panel took its reference to `Todos` before the click (`useHold`), under `BACKGROUND_CONTEXT`, and that reference is
+in no trace of the page: **a context without a recording span records nothing.** Its hold is shared work (the page's
+other references to the same list use it too), a `chord.hold` root of its own, linked to the getter's span when there is
+one; but calls made under such a context start no `chord.call` and send no carrier, and the provider's `chord.method`
+becomes a root of its own trace (the server's relay of the page's hold is one: `chord.relay` with `member="hold"`). So
+were the server's calls in step 2: on the worker each is a root `chord.method`. Start a span where the work begins, a
+click handler or a job (`host.root(fn, context, { trace })`), and pass its `ctx` down. The kit's HTTP component does
+this for every request: a `chord.http` span (method, route pattern, status), with the route's `ctx` under it. Step 11
+adds honey from the command line, as step 3 did; the request is the trace's root, the server's call to the worker under
+it (its hold of the list is shared work: a root of its own, linked to the request):
 
 <!-- output: main -->
 ```text
 11. adding honey from the command line:
    chord.http chord.host="server" method="POST" route="POST /api/lists/:list" status=200
-     chord.hold chord.host="server" type="todo.todos" object="todo.todos(groceries)" address.kind="list" outcome="bound"
      chord.call chord.host="server" type="todo.todos" member="add" object="todo.todos(groceries)" address.kind="list" chord.principal="owner" outcome="ok"
        chord.method chord.host="list|groceries" type="todo.todos" member="add" object="todo.todos(groceries)" principal.kind="owner" chord.principal="owner" outcome="ok"
          chord.method chord.host="list|groceries" type="todo.store" member="add" object="todo.store" principal.kind="worker" chord.principal="worker:list|groceries" outcome="ok"

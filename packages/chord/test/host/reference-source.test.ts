@@ -11,8 +11,10 @@ import { defineState, type SingletonHandle } from "../../src/documents/index.ts"
 import { createHost, defineFacet, type Reference, type Self, type StoreSelf } from "../../src/host/index.ts";
 import { ChordObject } from "../../src/host/object.ts";
 import { resolveWatchable } from "../../src/host/reference.ts";
+import { ReferenceSource } from "../../src/host/reference-source.ts";
+import { Replica } from "../../src/remote/replica.ts";
 import { constant } from "../../src/state/index.ts";
-import type { Source, Subscriber } from "../../src/state/internal.ts";
+import { Batch, type Source, type Subscriber } from "../../src/state/internal.ts";
 import {
 	changesOf,
 	delivered,
@@ -643,5 +645,43 @@ describe("a failed object lets its ended instance go (final review)", () => {
 		await expectCollected(instance);
 		ref.release();
 		await host.close(context);
+	});
+});
+
+describe('a member its reference has not seen (decision "References share one wire hold")', () => {
+	/** A source following a replica of `x` failed after 7, its reference not having seen `x` while `seen.now` is false. */
+	const unseen = () => {
+		const batch = new Batch(() => {}, undefined);
+		const replica = new Replica(batch, { kind: "value", value: 7 });
+		batch.commit(() => replica.fail(new Error("x threw")), context);
+		const seen = { now: false };
+		const source = new ReferenceSource(batch, { none: () => new ChordError({ code: "not_ready", message: "none" }) });
+		source.unseen(() => seen.now);
+		batch.commit(() => source.bind(replica), context);
+		return { batch, source, seen };
+	};
+
+	it("starts and opens watches as on a fresh failed snapshot: the failure, no last value from before", () => {
+		const { source } = unseen();
+		expect(source.start()).toEqual({ kind: "failed", error: new Error("x threw"), last: undefined });
+		expect(() => source.openWatch(context)).toThrow("x threw");
+	});
+
+	it("held or vanished, keeps no last value from before either", () => {
+		const held = unseen();
+		held.batch.commit(() => held.source.hold(), context);
+		expect(held.source.start()).toMatchObject({ kind: "failed", last: undefined });
+		const vanished = unseen();
+		const error = new ChordError({ code: "invalid", reason: "member", message: "no x" });
+		vanished.batch.commit(() => vanished.source.vanish(error, context), context);
+		expect(vanished.source.start()).toEqual({ kind: "failed", error, last: undefined });
+	});
+
+	it("once seen, starts at the member's last value, and stays seen", () => {
+		const { source, seen } = unseen();
+		seen.now = true;
+		expect(source.start()).toMatchObject({ kind: "failed", last: 7 });
+		seen.now = false;
+		expect(source.start()).toMatchObject({ kind: "failed", last: 7 });
 	});
 });

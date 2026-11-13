@@ -6,7 +6,9 @@ import {
 	type Frame,
 	Ghostty,
 	INVERSE,
+	ITALIC,
 	type MouseInput,
+	UNDERLINE,
 	type VtTerminal,
 } from "../../plugins/terminals/ghostty.ts";
 
@@ -68,6 +70,33 @@ test("ghostty: renders text, styles, colors and the cursor", async () => {
 		next.changed.map((row) => row.y),
 		[0, 2],
 	);
+	vt.free();
+});
+
+test("ghostty: renders grapheme clusters, underlines, the cursor style and the title", async () => {
+	const vt = await terminal();
+	// A cluster longer than the cell text buffer (128 bytes): "e" with combining acute accents (2 bytes each), as many as
+	// libghostty keeps.
+	const long = `e${"\u0301".repeat(100)}`;
+	vt.write(encoder.encode(`e\u0301 \x1b[4;3mu\x1b[0m ${long}\x1b[5 q\x1b]2;my title\x07`));
+	const frame = vt.frame(true);
+	const cells = frame.changed[0]?.cells ?? [];
+	assert.equal(cells[0]?.text, "e\u0301");
+	assert.equal((cells[2]?.flags ?? 0) & (UNDERLINE | ITALIC), UNDERLINE | ITALIC);
+	const kept = cells[4]?.text ?? "";
+	assert.ok(encoder.encode(kept).length > 128);
+	assert.ok(long.startsWith(kept));
+	assert.deepEqual({ style: frame.cursor?.style, blinking: frame.cursor?.blinking }, { style: "bar", blinking: true });
+	assert.equal(vt.title(), "my title");
+	vt.free();
+});
+
+test("ghostty: limits scrollback by lines, not by libghostty's default of about one page", async () => {
+	const vt = (await ghostty).terminal({ cols: 80, rows: 24, scrollback: 5000 });
+	vt.write(encoder.encode(Array.from({ length: 20_000 }, (_, index) => String(index)).join("\r\n")));
+	// libghostty drops whole pages (hundreds of rows at 80 columns), so somewhat fewer lines than the limit remain.
+	const { total } = vt.scrollbar();
+	assert.ok(total > 3000 && total <= 5000 + 24, `${total} rows`);
 	vt.free();
 });
 

@@ -167,6 +167,32 @@ describe("identity and lifetime", () => {
 	});
 });
 
+describe('calls for a reference (decision "References share one wire hold")', () => {
+	it("run as the reference's binding's caller; a local object keeps no replica counts", async () => {
+		const Who = local("app.who", { version: 1, params: {}, members: { who: method(str(), str()) } });
+		const owner = { kind: "owner" } as const;
+		const host = createHost<typeof owner>({ principal: owner, onError: () => {} });
+		await host.load(
+			[
+				{
+					name: "@test/who",
+					facet: defineFacet<typeof owner>((h) =>
+						h.serve(Who, () => ({
+							who: async (_, ctx) => ctx.principal?.kind ?? "none",
+						})),
+					),
+				},
+			],
+			context,
+		);
+		const who = await host.get(Who, {}, context);
+		expect(await who.who("?", context)).toBe("owner");
+		const object = attempted.map((ref) => ref.deref()).find((each) => each?.label === "app.who")!;
+		expect(object.generationOf()).toBeUndefined();
+		await host.close(context);
+	});
+});
+
 describe("retries", () => {
 	fakeTimers();
 

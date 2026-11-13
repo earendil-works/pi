@@ -263,7 +263,7 @@ pi's defaults (rebindable in pi's `keybindings.json` or p2 prefs; `/hotkeys` lis
 | --- | --- |
 | Ctrl+R (chat), `/sessions`, `/resume`, `/new` | Session picker / create a session with a working directory |
 | Ctrl+L, `/model` | Model picker, then thinking level (with no session, sets the default; owner) |
-| Enter / Alt+Enter | Send (steer if busy) / queue a follow-up |
+| Enter / Alt+Enter | Send (steer if busy) / queue a follow-up; idle: send in a new branch (`docs/tree.md`) |
 | Escape / Alt+Up | Stop / restore the last queued input to the editor |
 | Ctrl+C / Ctrl+D | Clear the editor (twice: exit) / exit when the editor is empty (`/quit`) |
 | Ctrl+T / Ctrl+O | Show thinking / expand tool output |
@@ -463,7 +463,7 @@ p2 runs on Chord v2 (`packages/chord`, `docs/design.md` there); the port's notes
 - **Contract versions:** pages and TUIs keep the contracts they were built with until they reload, so a deploy that
   bumps a contract a client holds must keep serving the old version: write the history with `evolve` (the released
   version as the base, verbatim, so old bundles' fingerprints match) and give the provider an `accepts` table mapping
-  current state and results back (`Sessions` v3/v4, `Catalog` v2/v3, `SessionTree` v1, `Envs` v1/v2;
+  current state and results back (`Sessions` v3/v4, `Catalog` v2/v3, `SessionTree` v1/v2, `Envs` v1/v2;
   `test/p2/contract-versions.test.ts` binds the released declarations). Without it, old clients wait unbound
   (`contract_mismatch`) until they reload.
 

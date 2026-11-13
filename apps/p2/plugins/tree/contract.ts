@@ -72,12 +72,26 @@ const SessionTreeV1 = remote("p2.tree", {
 });
 
 /**
- * The session's branches, for the owner (worker). 2: branch labels (`Tree.branches`, `TreeNode.conversation`) and
- * `rename`: renames the branch `conversation`, 1 to `PREVIEW_LENGTH` characters after trimming; null or empty resets
- * conversation 1 to the session title, other branches need a label. The provider still serves 1 (its `accepts`).
+ * 2: branch labels (`Tree.branches`, `TreeNode.conversation`) and `rename`: renames the branch `conversation`, 1 to
+ * `PREVIEW_LENGTH` characters after trimming; null or empty resets conversation 1 to the session title, other branches
+ * need a label.
  */
-export const SessionTree = evolve(SessionTreeV1, (e) =>
+const SessionTreeV2 = evolve(SessionTreeV1, (e) =>
 	e
 		.result("tree", TreeSchema)
 		.addMethod("owner", "rename", obj({ conversation: int({ minimum: 1 }), label: BranchLabelSchema }), nul()),
+);
+
+/**
+ * The session's branches, for the owner (worker). 3: `branch`: forks the top-level conversation `conversation` at its
+ * last entry, labelled `label`, and makes the fork the main conversation (sending the next message in a new branch);
+ * returns it. The provider still serves 1 and 2 (its `accepts`).
+ */
+export const SessionTree = evolve(SessionTreeV2, (e) =>
+	e.addMethod(
+		"owner",
+		"branch",
+		obj({ conversation: int({ minimum: 1 }), label: str({ minLength: 1 }) }),
+		obj({ conversation: int({ minimum: 1 }) }),
+	),
 );

@@ -23,11 +23,12 @@ export const CHAT_COMMANDS: Record<string, TuiCommand> = {
 		when: "chat && editorFocused && !autocomplete && !overlay",
 		run: (ctx) => chat(ctx)?.clear(),
 	},
+	// While a run is busy a follow-up; idle, the owner's message in a new branch (ChatSurface.sendAlternate).
 	"app.message.followUp": {
-		title: "Queue follow-up message",
+		title: "Queue follow-up message, or send in a new branch when idle",
 		category: "Chat",
 		when: "chat && participant && !overlay",
-		run: (ctx) => chat(ctx)?.send("followUp"),
+		run: (ctx) => chat(ctx)?.sendAlternate(),
 	},
 	"app.message.dequeue": {
 		title: "Restore your queued messages",

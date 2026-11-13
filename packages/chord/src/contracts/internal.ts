@@ -23,4 +23,5 @@ export type { Increment } from "./history.ts";
 export { addressOfKey, keyOfAddress, kindOfKey, kindParams } from "./host-kind.ts";
 export { checkName } from "./names.ts";
 export type { Params, ParamsData } from "./params.ts";
+export { joinKey } from "./params.ts";
 export { Method } from "./schema.ts";

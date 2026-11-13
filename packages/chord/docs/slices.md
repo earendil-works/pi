@@ -138,6 +138,7 @@ pattern, no code. Decided cuts are noted where they apply.
 | 7 | getters wait through `waiting`; `host.hold` throws only for invalid params | 7a |
 | 7 | `ref.variant` as discriminant, `RefIn` (C15: no `inVariant`/`expectVariant`) | 3a |
 | 7 | `state: false` (C8: cut) | - |
+| 7 | remote references of one host sharing one wire hold (sharing key per path, seen members, a non-final release cancelling its own calls newest first, the private retry after `too_large/part`, the hold span as shared work; spec `shared-holds/design.md`) | shared holds |
 | 7 | optional dependencies as registries | doc (8) |
 | 8 | `ctx` with telemetry and signal | 1 |
 | 8 | `ctx.principal`, `ctx.incarnation` (R20), `ctx.get` (3a); relayed incarnations (Q13, 4a) | 3a, 4a |

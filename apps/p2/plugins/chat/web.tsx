@@ -40,6 +40,8 @@ import {
 	forgetSession,
 	type Gap,
 	type Kept,
+	KeyboardKey,
+	KeyboardShortcut,
 	keep,
 	keepSessions,
 	keptSizes,
@@ -48,6 +50,7 @@ import {
 	lightTap,
 	loadKept,
 	locationLabel,
+	Menu,
 	MenuIcon,
 	Messages,
 	type ModelChoice,
@@ -89,6 +92,7 @@ import {
 	useConnected,
 	useFileCompletion,
 	useHost,
+	useLongPress,
 	useNavigation,
 	useNewSessionState,
 	useObject,
@@ -327,13 +331,20 @@ function ModelControl({ resources, choice }: { resources: ResourceSnapshot | und
 	);
 }
 
-/** Textarea with send, stop, steer and attachments; Enter sends with a fine pointer, Escape stops. */
+/** One way to send the composer's message: its menu label and what it does. */
+type SendChoice = { readonly label: string; readonly run: () => void };
+
+/**
+ * Textarea with send, stop and attachments. Enter (with a fine pointer) and a tap on Send do `send`; Alt+Enter does
+ * `alternate` (while a run is busy: a follow-up instead of steering; idle: the message in a new branch). Where there is
+ * an alternate, Send also opens a menu of both: a long press (touch), a right-click, the Menu key or Shift+F10,
+ * or ArrowUp while it has focus (Elanor's menu). Escape stops a busy run.
+ */
 function Composer({
 	busy,
-	steer,
-	setSteer,
 	disabled,
-	onSend,
+	send,
+	alternate,
 	onStop,
 	attaching,
 	replying,
@@ -342,10 +353,10 @@ function Composer({
 	children,
 }: {
 	busy: boolean;
-	steer: boolean;
-	setSteer: (steer: boolean) => void;
 	disabled: boolean;
-	onSend: () => void;
+	send: SendChoice;
+	/** The other way to send, if there is one here. */
+	alternate?: SendChoice;
 	onStop?: () => void;
 	attaching?: Attaching;
 	/** The message being answered, shown above the text with a way to drop the reply. */
@@ -380,6 +391,25 @@ function Composer({
 	}, [draft]);
 	const files = attaching?.files ?? [];
 	const content = draft.trim() !== "" || files.length > 0;
+	const [choosing, setChoosing] = useState(false);
+	const choices = alternate && content && !disabled ? [send, alternate] : undefined;
+	const offered = choices !== undefined;
+	// The menu closes when its choices go (sent, no way to branch now).
+	useEffect(() => {
+		if (!offered) setChoosing(false);
+	}, [offered]);
+	const sendButton = useRef<HTMLButtonElement>(null);
+	const press = useLongPress(() => {
+		if (offered) setChoosing(true);
+	});
+	// Opened from the keyboard or a mouse, the menu's first item takes the focus (no trigger tells Elanor's menu how it
+	// opened); a touch leaves it on the menu.
+	const popup = useRef<HTMLDivElement>(null);
+	const focusFirst = useRef(false);
+	const openFromKeys = () => {
+		focusFirst.current = true;
+		setChoosing(true);
+	};
 	return (
 		<form
 			className="composer"
@@ -387,7 +417,7 @@ function Composer({
 			onSubmit={(event) => {
 				event.preventDefault();
 				// A form in a sheet a composer control opened (chat-mode's name) is a React child: its submit bubbles here.
-				if (event.target === event.currentTarget) onSend();
+				if (event.target === event.currentTarget) send.run();
 			}}
 		>
 			{replying && (
@@ -422,7 +452,7 @@ function Composer({
 				ref={ref}
 				rows={1}
 				value={draft}
-				placeholder={busy ? (steer ? "Steer the current run…" : "Queue a follow-up…") : "Message Pi…"}
+				placeholder={busy ? "Steer the current run…" : "Message Pi…"}
 				aria-label="Message"
 				onChange={(event) => {
 					setDraft(event.target.value);
@@ -450,7 +480,8 @@ function Composer({
 					}
 					if (event.key === "Enter" && !event.shiftKey && window.matchMedia("(pointer: fine)").matches) {
 						event.preventDefault();
-						onSend();
+						// Without another way here (a guest, a subagent), Alt+Enter sends as Enter does.
+						(event.altKey && alternate && !disabled ? alternate : send).run();
 					}
 				}}
 			/>
@@ -469,16 +500,6 @@ function Composer({
 						/>
 					</label>
 				)}
-				{busy && (
-					<button
-						type="button"
-						className={`chip toggle ${steer ? "on" : ""}`}
-						aria-pressed={steer}
-						onClick={() => setSteer(!steer)}
-					>
-						Steer
-					</button>
-				)}
 				{children}
 				<span className="spacer" />
 				{busy && onStop && (
@@ -486,8 +507,69 @@ function Composer({
 						<StopIcon />
 					</button>
 				)}
+				{choices && (
+					// Elanor's menu, opened by Send's own gestures (a trigger would open on the click that sends). It takes the
+					// focus and gives it back when it closes.
+					<Menu.Root
+						open={choosing}
+						onOpenChange={setChoosing}
+						onOpenChangeComplete={(open) => {
+							if (open && focusFirst.current)
+								popup.current?.querySelector<HTMLElement>("[role=menuitem]")?.focus();
+							focusFirst.current = false;
+						}}
+						modal={false}
+					>
+						<Menu.Portal>
+							<Menu.Positioner className="send-menu" anchor={sendButton} side="top" align="end" sideOffset={4}>
+								<Menu.Popup ref={popup} className="send-options" aria-label="Ways to send">
+									{choices.map((choice, index) => (
+										<Menu.Item
+											key={choice.label}
+											onClick={choice.run}
+											endAdornment={
+												<KeyboardShortcut>
+													{index === 0 ? (
+														<KeyboardKey>Enter</KeyboardKey>
+													) : (
+														<>
+															<KeyboardKey>Alt</KeyboardKey>+<KeyboardKey>Enter</KeyboardKey>
+														</>
+													)}
+												</KeyboardShortcut>
+											}
+										>
+											{choice.label}
+										</Menu.Item>
+									))}
+								</Menu.Popup>
+							</Menu.Positioner>
+						</Menu.Portal>
+					</Menu.Root>
+				)}
 				{(!busy || content) && (
-					<button type="submit" className="round send" aria-label="Send" disabled={!content || disabled}>
+					<button
+						ref={sendButton}
+						type="submit"
+						className="round send"
+						aria-label="Send"
+						title={choices ? `${send.label} (long press for more)` : send.label}
+						disabled={!content || disabled}
+						{...(choices ? { "aria-haspopup": "menu" as const, "aria-expanded": choosing } : {})}
+						{...press.handlers}
+						onContextMenu={(event) => {
+							if (!choices) return;
+							event.preventDefault();
+							// Android's long press fires this too: the press opens the list once, and its touch makes no click.
+							if (press.touching()) press.fire();
+							else openFromKeys();
+						}}
+						onKeyDown={(event) => {
+							if (!choices || event.key !== "ArrowUp") return;
+							event.preventDefault();
+							openFromKeys();
+						}}
+					>
 						<SendIcon />
 					</button>
 				)}
@@ -928,8 +1010,6 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	const {
 		draft,
 		setDraft,
-		steer,
-		setSteer,
 		setError,
 		files,
 		setFiles,
@@ -1111,7 +1191,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	 * the outbox delivers it when it can (outbox.ts). Sending keeps the reader's scroll position; the scroll-down button
 	 * follows the answer when wanted.
 	 */
-	const send = () => {
+	const send = (whenBusy: "steer" | "followUp") => {
 		const text = draft.trim();
 		if ((!text && !files.length) || !canWrite) return;
 		lightTap();
@@ -1121,15 +1201,70 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 			id,
 			text,
 			files: [...files],
-			whenBusy: steer ? "steer" : "followUp",
+			whenBusy,
 			...(replying ? { replyTo: replying } : {}),
 			item: outgoingItem(id, text, files, author ?? (owner ? OWNER_AUTHOR : undefined)),
 		});
 		setDraft("");
 		setFiles([]);
 		setReplyTo(undefined);
-		setSteer(true);
 	};
+	/**
+	 * Sends the composer's message in a new branch (docs/tree.md): the worker forks this conversation at its end and
+	 * makes the fork the main one (`SessionTree.branch`, labelled with the message); the message then goes to the fork's
+	 * outbox and the view follows. This conversation keeps ending where it did. A refused branch puts the message back.
+	 */
+	const sendInBranch = () => {
+		const text = draft.trim();
+		if (!text && !files.length) return;
+		lightTap();
+		setStopped(undefined);
+		const picked = [...files];
+		setDraft("");
+		setFiles([]);
+		setReplyTo(undefined);
+		const held = host.hold(SessionTree, { session: sessionId }, BACKGROUND_CONTEXT);
+		whenLive(held)
+			.then(() => {
+				const tree = liveIn(held, "owner");
+				if (!tree) throw new Error("Only the owner branches the session");
+				const label = text || picked.map((file) => file.file.name).join(", ");
+				return tree.branch({ conversation: conversationId, label }, BACKGROUND_CONTEXT);
+			})
+			.then(({ conversation }) => {
+				const id = crypto.randomUUID();
+				outboxOf(`${sessionId}#${conversation}`).add({
+					id,
+					text,
+					files: picked,
+					whenBusy: "steer",
+					item: outgoingItem(id, text, picked, author ?? OWNER_AUTHOR),
+				});
+				void nav.replace(conversationRoute(nav.route, sessionId, conversation));
+			})
+			.catch((reason: unknown) => {
+				restore([text]);
+				setFiles((current) => [...picked, ...current]);
+				setError(errorText(reason));
+			})
+			.finally(() => held.release());
+	};
+	// Idle, the other way to send is a new branch: the owner, in the main conversation, once it has entries. While a
+	// run is busy, Send steers it and the other way queues a follow-up.
+	const branchable = canBranch && known && newestEntry > 0;
+	const branching = useMemo(
+		() => (canBranch ? { from: branchFrom, end: newestEntry } : undefined),
+		[canBranch, branchFrom, newestEntry],
+	);
+	const sends: { send: SendChoice; alternate?: SendChoice } = busy
+		? {
+				send: { label: "Steer", run: () => send("steer") },
+				alternate: { label: "Follow up", run: () => send("followUp") },
+			}
+		: {
+				send: { label: "Send", run: () => send("steer") },
+				...(branchable ? { alternate: { label: "Send in a new branch", run: sendInBranch } } : {}),
+			};
 	// The outbox sends while this conversation's chat object is live; the latest values, for its sender.
 	const latest = useRef({ chat: writer, host, sessionId, conversationId, busy });
 	latest.current = { chat: writer, host, sessionId, conversationId, busy };
@@ -1435,10 +1570,8 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 									queued: queuedRows,
 									props: {
 										busy,
-										steer,
-										setSteer,
 										disabled: copyTarget,
-										onSend: send,
+										...sends,
 										onStop: stop,
 										attaching,
 										completion: fileCompletion,
@@ -1539,7 +1672,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 												<OpenWorkspaceFile.Provider value={canWrite ? openWorkspaceFile : undefined}>
 													<OpenTerminal.Provider value={owner ? openTerminal : undefined}>
 														<ReplyTo.Provider value={participant && canReply ? startReply : undefined}>
-															<BranchFrom.Provider value={canBranch ? branchFrom : undefined}>
+															<BranchFrom.Provider value={branching}>
 																<RevealEntry.Provider value={reveal}>
 																	<FillGap.Provider value={fillGap}>
 																		<Messages
@@ -1617,7 +1750,7 @@ function NewSession() {
 		(entry) => entry.provider === choice?.model.provider && entry.modelId === choice?.model.modelId,
 	)?.contextWindow;
 	const composer = useComposerState();
-	const { draft, setDraft, files, setFiles, setError, steer, setSteer, setStopped } = composer;
+	const { draft, setDraft, files, setFiles, setError, setStopped } = composer;
 	const cwdSheet = useSheet("cwd");
 	const modelSheet = useSheet("model");
 	const attaching = attachingOf(composer);
@@ -1646,7 +1779,7 @@ function NewSession() {
 				id,
 				text,
 				files: [...files],
-				whenBusy: steer ? "steer" : "followUp",
+				whenBusy: "steer",
 				item: outgoingItem(id, text, files, OWNER_AUTHOR),
 			},
 			// The page chooses the session's ID: a retried creation answers the same session.
@@ -1654,7 +1787,6 @@ function NewSession() {
 		);
 		setDraft("");
 		setFiles([]);
-		setSteer(true);
 	};
 	// The session is created while the owner's catalog is live; the session opens once it exists, if this screen still
 	// shows (the outbox delivers the messages whenever the session is opened).
@@ -1722,7 +1854,7 @@ function NewSession() {
 			screen: conversationKey(NEW_SESSION),
 			composer: owner
 				? {
-						props: { busy: false, steer, setSteer, disabled: false, onSend: send, attaching },
+						props: { busy: false, disabled: false, send: { label: "Send", run: send }, attaching },
 						footer: (
 							<div className="session-usage">
 								<div className="session-controls">

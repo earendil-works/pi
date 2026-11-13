@@ -1323,6 +1323,31 @@ describe("holds across a reload (slice 7b §6)", () => {
 		expect(states.at(-1)).toBe("live");
 		await server.close(context);
 	});
+
+	it('two references sharing one hold (decision "References share one wire hold") follow a restart, a dropped version and a removal together', async () => {
+		const { server, client } = await linked((h) => serveShown(h, "v1", true));
+		const a = await client.get(Shown, {}, context);
+		const b = await client.get(Shown, {}, context);
+		await transported();
+		expect(server.activity.value.references).toBe(1);
+		const states = [statesOf(await a.state.watch(context)), statesOf(await b.state.watch(context))];
+		await reloadServer(server, (h) => serveShown(h, "v2", true));
+		await transported();
+		expect([a.label.value, b.label.value]).toEqual(["v2", "v2"]);
+		await reloadServer(server, (h) => serveShownV2(h, "v3", false));
+		await transported();
+		await server.reload([], context);
+		await transported();
+		await reloadServer(server, (h) => serveShown(h, "v4"));
+		await transported();
+		expect([a.label.value, b.label.value]).toEqual(["v4", "v4"]);
+		// Each reference sees what one hold of its own would have: the restart, the dropped version, the removal while
+		// failed (no change), the type served again.
+		const followed = ["loading", "live", "loading", "failed", "loading", "live"];
+		expect(states.map((each) => each.map((state) => state.replace(/:.*/, "")))).toEqual([followed, followed]);
+		expect(server.activity.value.references).toBe(1);
+		await server.close(context);
+	});
 });
 
 describe("holds across more than one reload (fix round 1)", () => {

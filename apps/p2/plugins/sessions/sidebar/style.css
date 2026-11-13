@@ -608,7 +608,8 @@
 	}
 }
 /* A branch row's rename pencil: with a fine pointer, on hover or keyboard focus, over the row's end (hidden behind it),
-   so nothing moves when it appears; touch has the row's long-press menu instead. */
+   so nothing moves when it appears; touch has the row's long-press menu instead. At rest it stays laid out, invisible
+   and not hit, so Tab and Shift+Tab reach it; focus from a click does not keep it showing (:focus-visible). */
 .nav-row > .nav-control.branch-rename {
 	position: absolute;
 	inset-block-start: 0;
@@ -617,10 +618,16 @@
 	margin: 0;
 }
 @media (hover: hover) and (not (pointer: coarse)) {
-	.nav-row:is(:hover, :focus-within) > .nav-control.branch-rename {
+	.nav-row > .nav-control.branch-rename {
 		display: inline-flex;
+		opacity: 0;
+		pointer-events: none;
 	}
-	.nav-row:is(:hover, :focus-within):has(> .branch-rename) > .nav-details {
+	.nav-row:is(:hover, :has(:focus-visible)) > .nav-control.branch-rename {
+		opacity: 1;
+		pointer-events: auto;
+	}
+	.nav-row:is(:hover, :has(:focus-visible)):has(> .branch-rename) > .nav-details {
 		visibility: hidden;
 	}
 }

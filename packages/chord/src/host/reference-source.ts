@@ -60,10 +60,23 @@ export class ReferenceSource extends Source implements Dependent {
 	#framed: { readonly value: JsonValue | undefined } | undefined;
 	/** Its reference: what a read throws while it never had a value (its failure, `not_ready`, or `released`). */
 	readonly #owner: SourceOwner;
+	/**
+	 * While its reference has not seen the member (it joined a shared remote object and no value arrived since: decision
+	 * "References share one wire hold"), what tells whether it has now; the member's failure then shows no last value.
+	 */
+	#unseen: (() => boolean) | undefined;
 
 	constructor(batch: Batch, owner: SourceOwner) {
 		super(batch);
 		this.#owner = owner;
+	}
+
+	/**
+	 * Its reference has not seen the member until `seen` says so: until then a failure of the member it follows shows
+	 * no last value (as a fresh failed snapshot), in reads, watches, holds and vanishings alike.
+	 */
+	unseen(seen: () => boolean): void {
+		this.#unseen = seen;
 	}
 
 	/** Whether it never had a value (a watch waits for its reference's values first). */
@@ -91,7 +104,7 @@ export class ReferenceSource extends Source implements Dependent {
 		const state = this.#state;
 		switch (state.kind) {
 			case "bound":
-				return state.source instanceof Source ? state.source.start() : { kind: "value", value: state.source.value };
+				return this.#startOf(state.source);
 			case "held":
 				return state.failure === NO_FAILURE
 					? { kind: "value", value: state.value }
@@ -255,15 +268,27 @@ export class ReferenceSource extends Source implements Dependent {
 	 */
 	#keep(failure: unknown): boolean {
 		const state = this.#state as Extract<SourceState, { readonly kind: "bound" }>;
-		const start = state.source instanceof Source ? state.source.start() : undefined;
+		const start = this.#startOf(state.source);
 		this.#leave();
-		if (start === undefined || start.kind === "value") {
-			const value = start === undefined ? state.source.value : start.value;
-			this.#state = { kind: "held", value, failure, told: failure !== NO_FAILURE };
+		if (start.kind === "value") {
+			this.#state = { kind: "held", value: start.value, failure, told: failure !== NO_FAILURE };
 			return true;
 		}
 		this.#state = { kind: "failed", error: handedOut(start.error), last: start.last };
 		return false;
+	}
+
+	/**
+	 * What the member it follows starts at: its value, or its failure with its last good value, none while its reference
+	 * has not seen the member (`unseen`; seen once, it stays seen).
+	 */
+	#startOf(source: DeriveSource): WatchStart {
+		if (!(source instanceof Source)) return { kind: "value", value: source.value };
+		const start = source.start();
+		if (start.kind === "value" || this.#unseen === undefined) return start;
+		if (!this.#unseen()) return { kind: "failed", error: start.error, last: undefined };
+		this.#unseen = undefined;
+		return start;
 	}
 
 	/** A call of its own (a move's frame, a failure) to its watches and subscribers. */

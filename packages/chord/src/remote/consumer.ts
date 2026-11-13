@@ -39,6 +39,11 @@ type Reply = Extract<Message, { readonly kind: "result" | "error" }>;
  */
 type OutgoingCall = {
 	readonly hold: number;
+	/**
+	 * The reference that made it (its binding; never on the wire): releasing one of several references sharing the hold
+	 * cancels its own calls only (decision "References share one wire hold").
+	 */
+	readonly owner: object;
 	/** The method's index in the bound variant and its arguments' part. */
 	readonly method: number;
 	readonly args: Part | undefined;
@@ -101,9 +106,16 @@ export class ConsumerSide {
 	 * Calls method `method` (an index into the bound variant) on hold `hold` with `args`: left out for a method without
 	 * arguments, with byte segments when its argument schema has a `bytes()` leaf, deflated above the threshold except on
 	 * the parent link; with the carrier of `context`'s span when its adapter propagates. The result is parsed here. The
-	 * caller's cancellation rejects it at once and sends `abort` when it is in flight.
+	 * caller's cancellation rejects it at once and sends `abort` when it is in flight. `owner` is the reference making it.
 	 */
-	call(hold: number, method: number, data: MethodData, args: unknown, context: Context): Promise<unknown> {
+	call(
+		hold: number,
+		method: number,
+		data: MethodData,
+		args: unknown,
+		owner: object,
+		context: Context,
+	): Promise<unknown> {
 		const signal = context.abortSignal;
 		signal?.throwIfAborted();
 		const payload = takesNoArgs(data) ? undefined : payloadPart(args, data.args.bytes);
@@ -120,6 +132,7 @@ export class ConsumerSide {
 		const done = (): void => signal?.removeEventListener("abort", cancel);
 		const call: OutgoingCall = {
 			hold,
+			owner,
 			method,
 			args: part,
 			segments: payload?.segments,
@@ -145,6 +158,30 @@ export class ConsumerSide {
 	release(hold: number, error: ChordError): void {
 		this.#link.send({ kind: "release", hold });
 		this.forget(hold, error);
+	}
+
+	/**
+	 * One of several references sharing hold `hold` released (`owner`, of the object `label`): its calls reject
+	 * `released` and leave the tables, so its own end finds none (decision "References share one wire hold"). Its
+	 * waiting calls leave the window unsent first, then each of its sent calls is aborted, the last sent first (a relay
+	 * drops a later call still waiting in its upstream window before an earlier abort frees a slot for it); then their
+	 * slots free. An owner without calls costs no error.
+	 */
+	cancelCalls(hold: number, owner: object, label: string): void {
+		const waiting = this.#window.removeWhere((call) => call.hold === hold && call.owner === owner);
+		const sent: [number, OutgoingCall][] = [];
+		for (const entry of this.#calls) if (entry[1].hold === hold && entry[1].owner === owner) sent.push(entry);
+		if (waiting.length === 0 && sent.length === 0) return;
+		// Ids grow in the order calls were sent.
+		sent.reverse();
+		for (const [id] of sent) {
+			this.#calls.delete(id);
+			this.#link.send({ kind: "abort", call: id });
+		}
+		for (const _ of sent) this.#window.freed();
+		const error = new ChordError({ code: "released", message: `${label}: released` });
+		for (const call of waiting) call.reject(error);
+		for (const [, call] of sent) call.reject(error);
 	}
 
 	/** `ref.retry()` on a failed hold, with `hops` left of its budget: the provider is asked for an attempt now. */

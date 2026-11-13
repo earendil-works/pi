@@ -1,7 +1,8 @@
 // `/tree` in the browser (docs/tree.md): "Edit" on a user message (a branch before it, its text in the composer),
-// "Branch from here" on an answer, the branch rows under the session in the sidebar (stored labels, the session title
-// for conversation 1) and renaming them, following a switch made elsewhere, and the session's conversations: the forks
-// as a tree with connector guides, the subagents as a list after it.
+// "Branch from here" on an answer (not the last one), sending in a new branch (Alt+Enter, Send's long press or ArrowUp), the branch
+// rows under the session in the sidebar (stored labels, the session title for conversation 1) and renaming them,
+// following a switch made elsewhere, and the session's conversations: the forks as a tree with connector guides, the
+// subagents as a list after it.
 
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
@@ -16,6 +17,9 @@ import { type BaselineOffset, baselineOffsets } from "./sidebar-baselines.ts";
 
 /** A page function: a row's mark: the fork icon, the idle ring, the spinner, or none. */
 const GLYPH = `((e) => e.querySelector('.nav-marker .nav-icon svg circle') ? 'fork' : e.querySelector('.nav-marker > .run-mark[data-state=idle]') ? 'ring' : e.querySelector('.nav-marker > .run-mark[data-state=working]') ? 'spinner' : 'none')`;
+
+const input = (value: string) =>
+	`(()=>{const e=document.querySelector('.composer textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`;
 
 const idle = (view: { docs: Record<string, unknown> } | null | undefined) =>
 	!(view?.docs["pi.live"] as { run?: unknown } | undefined)?.run;
@@ -158,7 +162,9 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		const rowOf = (label: string) =>
 			`[...document.querySelectorAll('.sidebar-section[data-key=recent] .nav-row:has(> .branch-row)')].find(e=>e.querySelector('.session-title').textContent===${JSON.stringify(label)})`;
 		const pencilOf = (label: string) => `${rowOf(label)}.querySelector('.branch-rename')`;
-		const shown = (label: string) => `getComputedStyle(${pencilOf(label)}).display !== 'none'`;
+		// Laid out at rest with a fine pointer (so Shift+Tab reaches it), but invisible.
+		const shown = (label: string) =>
+			`(s => s.display !== "none" && s.opacity === "1")(getComputedStyle(${pencilOf(label)}))`;
 		const key = async (event: { key: string; code: string; windowsVirtualKeyCode: number; modifiers?: number }) => {
 			await browser.call("Input.dispatchKeyEvent", { type: "rawKeyDown", ...event });
 			await browser.call("Input.dispatchKeyEvent", { type: "keyUp", ...event });
@@ -227,12 +233,19 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		await sessions.rename({ id, title: "Renamed" }, BACKGROUND_CONTEXT);
 		await browser.wait(`${rowOf("Renamed")}`);
 		assert.equal(await rows(), "Renamed|Second try");
-		// The keyboard: focus on a row shows its pencil, Tab reaches it, Enter opens the sheet.
+		// The keyboard: focus on a row shows its pencil, Tab reaches it, and Shift+Tab from the next row too (the pencil
+		// stays in the tab order while hidden); Enter opens the sheet.
 		await browser.call("Input.dispatchMouseEvent", { type: "mouseMoved", x: 900, y: 500 });
-		await browser.evaluate(`${rowOf("Renamed")}.querySelector('.branch-row').focus()`);
+		// Keyboard focus (`focusVisible`, as a Tab gives it); focus from a click does not show it.
+		await browser.evaluate(`${rowOf("Renamed")}.querySelector('.branch-row').focus({ focusVisible: true })`);
 		await browser.wait(shown("Renamed"));
 		await key({ key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
 		await browser.wait(`document.activeElement === ${pencilOf("Renamed")}`);
+		await key({ key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
+		await browser.wait(`document.activeElement === ${rowOf("Second try")}.querySelector('.branch-row')`);
+		await browser.wait(`!(${shown("Renamed")})`);
+		await key({ key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, modifiers: 8 });
+		await browser.wait(`document.activeElement === ${pencilOf("Renamed")} && ${shown("Renamed")}`);
 		// A key down with its text, as a key press activates a button.
 		await browser.call("Input.dispatchKeyEvent", {
 			type: "keyDown",
@@ -329,7 +342,7 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		if ((await browser.evaluate<string>(`${desktopToggle}.getAttribute('aria-expanded')`)) === "false")
 			await browser.evaluate(`${desktopToggle}.click()`);
 		await browser.wait(`${rowOf("Main line")}`);
-		await browser.evaluate(`${rowOf("Main line")}.querySelector('.branch-row').focus()`);
+		await browser.evaluate(`${rowOf("Main line")}.querySelector('.branch-row').focus({ focusVisible: true })`);
 		await browser.wait(shown("Main line"));
 		await browser.evaluate(`${pencilOf("Main line")}.click()`);
 		await sheetOn("Main line");
@@ -352,6 +365,149 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		await tree.select({ conversation: 1 }, BACKGROUND_CONTEXT);
 		await browser.wait(`location.pathname==='/s/${id}'`);
 		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: second')`);
+	});
+
+	it("sends in a new branch with Alt+Enter, Send's long press, right-click or ArrowUp; a tap sends; the last answer offers no Branch", async () => {
+		// A known last answer to start from (the tests before leave other messages at the end).
+		await send(1, "last answer");
+		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: last answer')`);
+		const answer = (text: string) =>
+			`[...document.querySelectorAll('.assistant')].find(e=>e.textContent.includes(${JSON.stringify(text)}))`;
+		await browser.wait(`${answer("Echo: first")}?.querySelector('button[aria-label="Branch from here"]')`);
+		assert.equal(
+			await browser.evaluate<boolean>(
+				`Boolean(${answer("Echo: last answer")}.querySelector('[aria-label="Branch from here"]'))`,
+			),
+			false,
+		);
+		const before = (await row()).branches.length;
+		// Alt+Enter: a fork of conversation 1 at its end becomes the main conversation, labelled with the message.
+		await browser.evaluate(input("a side question"));
+		await browser.evaluate(
+			`document.querySelector('.composer textarea').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',altKey:true,bubbles:true,cancelable:true}))`,
+		);
+		await browser.wait(`location.pathname.startsWith('/s/${id}/c/')`);
+		await browser.wait(
+			`document.querySelector('.messages')?.textContent.includes('Echo: a side question') && document.querySelector('.messages').textContent.includes('Echo: last answer')`,
+		);
+		assert.equal(await browser.evaluate<string>(`document.querySelector('.composer textarea').value`), "");
+		const branched = await row();
+		assert.notEqual(branched.main, 1);
+		assert.equal(branched.branches.length, before + 1);
+		assert.deepEqual(branched.branches[0], { conversation: branched.main, label: "a side question", parent: 1 });
+		// Conversation 1 still ends at its last answer.
+		const tree = await holdIn(fixture.browser(), SessionTree, { session: id }, "owner");
+		const nodes = (await tree.tree(BACKGROUND_CONTEXT)).nodes;
+		assert.equal(nodes.findLast((node) => node.conversation === 1)?.text, "Echo: last answer");
+		// One Send button: from the keyboard, ArrowUp on it lists both ways and focuses the first; Escape closes the
+		// list and returns to Send.
+		await browser.wait(
+			`document.querySelector('.messages .assistant:last-of-type') && !document.querySelector('.composer button.stop')`,
+		);
+		assert.equal(await browser.evaluate<number>(`document.querySelectorAll('.composer-bar button').length`), 2);
+		const options = `[...document.querySelectorAll('.send-options [role=menuitem]')]`;
+		const key = async (name: string, code: number) => {
+			await browser.call("Input.dispatchKeyEvent", {
+				type: "rawKeyDown",
+				key: name,
+				code: name,
+				windowsVirtualKeyCode: code,
+			});
+			await browser.call("Input.dispatchKeyEvent", {
+				type: "keyUp",
+				key: name,
+				code: name,
+				windowsVirtualKeyCode: code,
+			});
+		};
+		await browser.evaluate(input("from the menu"));
+		await browser.evaluate(`document.querySelector('.composer button.send').focus()`);
+		await key("ArrowUp", 38);
+		await browser.wait(`document.activeElement === ${options}[0]`);
+		assert.deepEqual(await browser.evaluate<string[]>(`${options}.map(e=>e.querySelector('span').textContent)`), [
+			"Send",
+			"Send in a new branch",
+		]);
+		assert.equal(
+			await browser.evaluate<string>(
+				`document.querySelector('.composer button.send').getAttribute('aria-expanded')`,
+			),
+			"true",
+		);
+		await key("Escape", 27);
+		await browser.wait(
+			`!document.querySelector('.send-options') && document.activeElement === document.querySelector('.composer button.send')`,
+		);
+		// A touch: a long press on Send opens the list without sending; its second way sends in a new branch.
+		await browser.call("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+		const point = await browser.evaluate<{ x: number; y: number }>(
+			`(() => { const r = document.querySelector('.composer button.send').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`,
+		);
+		await browser.call("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [point] });
+		await new Promise((resolve) => setTimeout(resolve, 700));
+		await browser.call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+		await browser.wait(`${options}.length === 2`);
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		assert.equal(
+			await browser.evaluate<string>(`document.querySelector('.composer textarea').value`),
+			"from the menu",
+		);
+		await browser.evaluate(`${options}.find(e=>e.textContent.includes('new branch')).click()`);
+		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: from the menu')`);
+		await browser.call("Emulation.setTouchEmulationEnabled", { enabled: false });
+		const menu = await row();
+		assert.equal(menu.branches.length, before + 2);
+		assert.deepEqual(menu.branches[0], { conversation: menu.main, label: "from the menu", parent: branched.main });
+		await browser.wait(`location.pathname==='/s/${id}/c/${menu.main}'`);
+		// It continues the branch it was sent from.
+		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: a side question')`);
+		// A tap sends in the conversation shown.
+		await browser.wait(`!document.querySelector('.composer button.stop')`);
+		await browser.evaluate(input("a tap"));
+		await browser.click(".composer button.send");
+		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: a tap')`);
+		assert.equal((await row()).branches.length, before + 2);
+		// A right-click on Send is its context menu: the two ways for the run's state, and no browser menu.
+		const rightClick = async () => {
+			const at = await browser.evaluate<{ x: number; y: number }>(
+				`(() => { const r = document.querySelector('.composer button.send').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`,
+			);
+			await browser.call("Input.dispatchMouseEvent", {
+				type: "mousePressed",
+				...at,
+				button: "right",
+				clickCount: 1,
+			});
+			await browser.call("Input.dispatchMouseEvent", {
+				type: "mouseReleased",
+				...at,
+				button: "right",
+				clickCount: 1,
+			});
+			await browser.wait(`document.activeElement === ${options}[0]`);
+			return browser.evaluate<string[]>(`${options}.map(e=>e.querySelector('span').textContent)`);
+		};
+		await browser.wait(`!document.querySelector('.composer button.stop')`);
+		await browser.evaluate(input("right-clicked"));
+		assert.deepEqual(await rightClick(), ["Send", "Send in a new branch"]);
+		await key("Escape", 27);
+		await browser.wait(`!document.querySelector('.send-options')`);
+		assert.equal(
+			await browser.evaluate<string>(`document.querySelector('.composer textarea').value`),
+			"right-clicked",
+		);
+		// While a run is busy: steer, or queue as a follow-up.
+		await browser.evaluate(input("slow busy"));
+		await browser.click(".composer button.send");
+		await browser.wait(`document.querySelector('.composer button.stop')`);
+		await browser.evaluate(input("while busy"));
+		assert.deepEqual(await rightClick(), ["Steer", "Follow up"]);
+		await key("Escape", 27);
+		await browser.wait(`!document.querySelector('.send-options')`);
+		await browser.click(".composer button.stop");
+		await browser.wait(`!document.querySelector('.composer button.stop')`);
+		await browser.evaluate(input(""));
+		tree.release();
 	});
 
 	it("draws the branches as a tree under their source, with guides; the subagents as a list after it", async () => {

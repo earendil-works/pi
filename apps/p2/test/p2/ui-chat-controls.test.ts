@@ -58,7 +58,8 @@ describe("chat control parity", { skip: !browserTests }, () => {
 		await browser.wait(
 			`document.querySelector('.messages .assistant')?.textContent.includes('Echo: hello controls') && document.querySelector('.cost-link')`,
 		);
-		// The sent message and the answer show their time, with the full moment as the tooltip; the message has Copy.
+		// The sent message and the answer show their time, with the full moment as the tooltip; the message has Copy. The
+		// answer ends the conversation: no Branch (the composer sends in a new branch instead).
 		const times = await browser.evaluate<{ actions: string[]; sent: number; title: boolean }[]>(
 			`[...document.querySelectorAll('.messages .user, .messages .assistant')].filter((e) => e.querySelector('.message-actions')).map((e) => { const time = e.querySelector('.message-actions .message-time'); return { actions: [...e.querySelector('.message-actions').children].map((child) => child.classList.contains('message-time') ? 'time' : child.getAttribute('aria-label')), sent: Date.now() - Date.parse(time.dateTime), title: Boolean(time.title) }; })`,
 		);
@@ -66,7 +67,7 @@ describe("chat control parity", { skip: !browserTests }, () => {
 			times.map(({ actions, title }) => ({ actions: actions.filter((action) => action !== "Reply"), title })),
 			[
 				{ actions: ["time", "Edit", "Copy"], title: true },
-				{ actions: ["Copy", "Branch from here", "time"], title: true },
+				{ actions: ["Copy", "time"], title: true },
 			],
 		);
 		assert.ok(times.every(({ sent }) => sent >= 0 && sent < 60_000));

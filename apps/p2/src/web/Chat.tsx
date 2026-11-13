@@ -391,7 +391,7 @@ function Incoming({ item }: { item: Extract<Item, { type: "user" }> }) {
 						className="edit-button"
 						aria-label="Edit"
 						title="Edit: continue the session before this message, with its text in the composer"
-						onClick={() => branch(entryId)}
+						onClick={() => branch.from(entryId)}
 					>
 						<PencilIcon />
 					</button>
@@ -508,7 +508,7 @@ function UserMessage({ item }: { item: Extract<Item, { type: "user" }> }) {
 							className="copy"
 							aria-label="Edit"
 							title="Edit: continue the session before this message, with its text in the composer"
-							onClick={() => branch(entryId)}
+							onClick={() => branch.from(entryId)}
 						>
 							<PencilIcon />
 						</button>
@@ -556,13 +556,13 @@ const Answer = memo(function Answer({ item }: { item: Extract<ChatItem, { type: 
 					{!item.streaming && (
 						<div className="message-actions">
 							<CopyButton text={text} />
-							{branch && entryId !== undefined && (
+							{branch && entryId !== undefined && entryId !== branch.end && (
 								<button
 									type="button"
 									className="copy"
 									aria-label="Branch from here"
 									title="Branch from here: continue the session after this answer"
-									onClick={() => branch(entryId)}
+									onClick={() => branch.from(entryId)}
 								>
 									<BranchIcon />
 								</button>

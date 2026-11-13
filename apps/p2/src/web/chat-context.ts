@@ -22,10 +22,14 @@ export const SessionId = createContext<string | undefined>(undefined);
 /** Starts a reply to an entry; absent while the conversation accepts no replies (chat-mode turns them on). */
 export const ReplyTo = createContext<((target: { entryId: number; name: string }) => void) | undefined>(undefined);
 /**
- * Continues the session from a message (`/tree`, docs/tree.md): before a user message, whose text goes back to the
- * composer ("Edit"), after an answer ("Branch from here"). Absent unless the owner views the main conversation.
+ * Continues the session from a message (`/tree`, docs/tree.md): `from` before a user message, whose text goes back to
+ * the composer ("Edit"), or after an answer ("Branch from here"). `end` is the conversation's last entry: an answer
+ * there offers no Branch, as the session already continues after it (the composer sends in a new branch instead).
+ * Absent unless the owner views the main conversation.
  */
-export const BranchFrom = createContext<((entryId: number) => void) | undefined>(undefined);
+export const BranchFrom = createContext<
+	{ readonly from: (entryId: number) => void; readonly end: number | undefined } | undefined
+>(undefined);
 /** Loads older history until an entry is retained; false when the conversation has no such entry. */
 export const RevealEntry = createContext<((entryId: number) => Promise<boolean>) | undefined>(undefined);
 
