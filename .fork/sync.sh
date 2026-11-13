@@ -39,6 +39,8 @@ if [[ -z "${FORK_SYNC_REPO:-}" ]]; then
 			tooling_ref="refs/remotes/origin/fork/tooling"
 		fi
 		git -C "$repo" archive "$tooling_ref" .fork | tar -x -C "$copy" --strip-components=1
+	elif git -C "$repo" rev-parse -q --verify refs/remotes/origin/fork/tooling >/dev/null; then
+		git -C "$repo" archive refs/remotes/origin/fork/tooling .fork | tar -x -C "$copy" --strip-components=1
 	else
 		cp -R "$here/." "$copy/"
 	fi

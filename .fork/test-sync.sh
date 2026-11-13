@@ -105,3 +105,20 @@ printf '%s\n' "$status_output"
 [[ $status_rc -ne 0 ]] || fail "status succeeded while main was behind upstream"
 
 echo "PASS: conflicts fail before refs move or next is pushed, and status rejects a held main"
+
+# A fresh checkout of next (before local fork/tooling exists) still aligns a branch renamed on origin/fork/tooling.
+cd "$tmp/seed"
+git checkout -q -b feat/a-renamed feat/a
+git checkout -q fork/tooling
+cp "$here/sync.sh" .fork/sync.sh
+printf 'feat/a-renamed\nfeat/b\nfork/tooling\n' > .fork/branches
+git add .fork/branches .fork/sync.sh
+git commit -q -m "rename feat/a to feat/a-renamed"
+git push -q origin feat/a-renamed fork/tooling
+
+git clone -q --branch next "$tmp/origin.git" "$tmp/fresh"
+cd "$tmp/fresh"
+.fork/sync.sh --align
+git rev-parse -q --verify refs/heads/feat/a-renamed >/dev/null ||
+	fail "align on fresh next checkout did not create renamed branch from origin/fork/tooling"
+echo "PASS: fresh next checkout aligns renamed branches from origin/fork/tooling"

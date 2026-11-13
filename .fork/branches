@@ -1,6 +1,6 @@
 # Branches merged into `next`, in order. The first is the base; each following branch is merged --no-ff.
 feat/native-anthropic
-feat/native-antigravity
+feat/native-google
 feat/native-meta
 feat/native-openai
 fix/coding-agent

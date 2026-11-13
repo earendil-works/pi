@@ -68,6 +68,7 @@ jobs:
       - name: Create local branches
         run: |
           git remote add upstream https://github.com/earendil-works/pi.git
+          git branch -f fork/tooling origin/fork/tooling
           .fork/sync.sh --align
 
       - name: Sync with upstream
