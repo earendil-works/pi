@@ -150,3 +150,16 @@
 	padding: 0;
 	border: 0;
 }
+/* The button: pressed while pointing. In the top bar only while the sidebar is not shown docked beside it (as the
+   menu button). */
+.scope-toggle.on {
+	color: var(--unread);
+}
+.drawer-header-row .scope-toggle {
+	margin-inline-start: auto;
+}
+@media (min-width: 900px) {
+	.app:not(.sidebar-collapsed) .topbar .scope-toggle {
+		display: none;
+	}
+}

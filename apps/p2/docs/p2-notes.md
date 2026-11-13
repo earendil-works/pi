@@ -1538,10 +1538,13 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   `SlotList` at the end of `AppLayout`) that leaves the page as it is until pointing mode is on (`mode.ts`): a double tap
   of the bare primary modifier (Cmd on macOS, Ctrl elsewhere: each press released within 300 ms, the second within
   450 ms of the first, no other key, click or focus loss between, so Cmd+V sent by a dictation tool never counts), the
-  binding `p2.scope-prompt.toggle` (Cmd+.) or the command menu's "Prompt anywhere". Holding the modifier does nothing,
+  binding `p2.scope-prompt.toggle` (Cmd+.), the command menu's "Prompt anywhere", or its button (`Toggle.tsx`: in the
+  sidebar's header before the collapse button, the `sidebar-header:` slots; in the top bars of the chat and the list
+  pages while the sidebar is not shown docked, the `topbar-start:` slots), which also switches it off. Holding the modifier does nothing,
   so Cmd+click still opens links in new tabs. While on, a pill says so, frames take no pointer events (they count as
   their pane), the thing under the mouse is outlined with its chain of labels, and a click (touch too) is taken before
-  the page sees it and opens a small composer there, whose steps widen the scope; Escape, Stop, leaving the window or
+  the page sees it and opens a small composer there, whose steps widen the scope (a touch: its tap outlines what it is
+  on, a second tap on that opens the composer; a drag scrolls as always); Escape, Stop, leaving the window or
   the pick end the mode. `scopes.ts` reads the chain from attributes the page already renders: `.drawer`,
   `.sidebar-section` and `.sidebar-group` `[data-key]`, `[data-session]` (session rows), `[data-view-pane]` with
   `data-view-kind/-item/-title` (Workbench), `[data-path]` (a file of the changes view), `.diff-line`, `[data-entry]`

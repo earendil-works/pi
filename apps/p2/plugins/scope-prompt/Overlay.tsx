@@ -1,6 +1,6 @@
 // The scope prompt over the owner's page. In pointing mode (mode.ts: a double tap of Cmd, Cmd+. or the command menu)
 // the thing under the pointer is outlined (scopes.ts); a click on it opens a small composer there instead of acting on
-// the page. What is typed about the open session's page (its chat, a view) goes to the open conversation as the
+// the page. On a touch screen a tap outlines what it is on and a second tap on it (a double tap) opens the composer. What is typed about the open session's page (its chat, a view) goes to the open conversation as the
 // person's message, the scope as message context; what is typed about anything else (the sidebar) goes to the Familiar
 // with the scope after it, to route (message.ts). The composer's "To" switches between the two.
 // Outside the mode the page behaves as before: the overlay draws nothing and takes no events.
@@ -26,6 +26,9 @@ type Sent =
 	| { readonly kind: "chat" }
 	| { readonly kind: "familiar"; readonly session: string; readonly conversation: number };
 
+/** Touch screens: a tap shows the scope, a second tap on it asks. */
+const COARSE = matchMedia("(pointer: coarse)");
+
 /** The overlay, for the owner only (it talks to the Familiar, which is the owner's). */
 export function ScopePrompt() {
 	return useOwner() ? <Overlay /> : null;
@@ -38,41 +41,66 @@ function Overlay() {
 	const [pick, setPick] = useState<Pick>();
 	const [text, setText] = useState("");
 	const [sent, setSent] = useState<Sent>();
-	// Where the pointer was last, so the mode outlines what it is on as soon as it starts.
-	const point = useRef({ x: -1, y: -1 });
+	// Where the pointer was last and what it is (a mouse outlines what it is on as soon as the mode starts).
+	const point = useRef({ x: -1, y: -1, mouse: true });
 
 	useEffect(() => {
 		const track = (event: PointerEvent) => {
-			point.current = { x: event.clientX, y: event.clientY };
+			point.current = { x: event.clientX, y: event.clientY, mouse: event.pointerType === "mouse" };
 		};
 		window.addEventListener("pointermove", track, { capture: true, passive: true });
-		return () => window.removeEventListener("pointermove", track, { capture: true });
+		window.addEventListener("pointerdown", track, { capture: true, passive: true });
+		return () => {
+			window.removeEventListener("pointermove", track, { capture: true });
+			window.removeEventListener("pointerdown", track, { capture: true });
+		};
 	}, []);
 
 	useEffect(() => {
 		if (!pointing) return;
 		let frame = 0;
+		// The innermost element outlined now: a tap on it again picks it.
+		let shown: Element | undefined;
+		const outline = (levels: ScopeLevel[]) => {
+			shown = levels.at(-1)?.element;
+			setHover(levels.length ? levels : undefined);
+		};
 		const show = () => {
 			cancelAnimationFrame(frame);
 			frame = requestAnimationFrame(() => {
-				const levels = scopesAt(document.elementFromPoint(point.current.x, point.current.y));
-				setHover(levels.length ? levels : undefined);
+				// Over the overlay's own controls (its button, the pill, the composer) nothing is outlined: they stay
+				// clearly pressable.
+				const element = document.elementFromPoint(point.current.x, point.current.y);
+				outline(element?.closest(".scope-ui") ? [] : scopesAt(element));
 			});
 		};
+		const choose = (levels: ScopeLevel[], x: number, y: number) => {
+			setPointing(false);
+			if (!levels.length) return;
+			setSent(undefined);
+			setPick({ levels, x, y, ...selectionIn(levels.at(-1)?.element) });
+		};
+		const ours = (event: Event) => event.target instanceof Element && event.target.closest(".scope-ui") !== null;
 		const onMove = (event: PointerEvent) => {
 			if (event.pointerType === "mouse") show();
 		};
+		// A mouse picks on press, before the page sees it: no focus change, no text selection starting, no link or button
+		// acting. A touch is left to the page until its tap (a drag scrolls as always).
 		const onPointerDown = (event: PointerEvent) => {
-			if (event.button !== 0 || (event.target instanceof Element && event.target.closest(".scope-ui"))) return;
-			// Before the page sees it: no focus change, no text selection starting, no link or button acting.
+			if (event.pointerType !== "mouse" || event.button !== 0 || ours(event)) return;
 			event.preventDefault();
 			event.stopPropagation();
 			swallowClick();
-			setPointing(false);
+			choose(scopesAt(document.elementFromPoint(event.clientX, event.clientY)), event.clientX, event.clientY);
+		};
+		// A tap outlines what it is on; a tap on what is outlined (a double tap) picks it.
+		const onClick = (event: MouseEvent) => {
+			if (point.current.mouse || ours(event)) return;
+			event.preventDefault();
+			event.stopPropagation();
 			const levels = scopesAt(document.elementFromPoint(event.clientX, event.clientY));
-			if (!levels.length) return;
-			setSent(undefined);
-			setPick({ levels, x: event.clientX, y: event.clientY, ...selectionIn(levels.at(-1)?.element) });
+			if (shown !== undefined && levels.at(-1)?.element === shown) choose(levels, event.clientX, event.clientY);
+			else outline(levels);
 		};
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.key !== "Escape") return;
@@ -83,9 +111,10 @@ function Overlay() {
 		const stop = () => setPointing(false);
 		// Frames would keep the pointer's moves and clicks to themselves: while pointing, a frame is part of its pane.
 		document.documentElement.classList.add("scope-pointing");
-		show();
+		if (point.current.mouse) show();
 		window.addEventListener("pointermove", onMove, { capture: true, passive: true });
 		window.addEventListener("pointerdown", onPointerDown, true);
+		window.addEventListener("click", onClick, true);
 		window.addEventListener("keydown", onKeyDown, true);
 		window.addEventListener("blur", stop);
 		document.addEventListener("visibilitychange", stop);
@@ -95,6 +124,7 @@ function Overlay() {
 			document.documentElement.classList.remove("scope-pointing");
 			window.removeEventListener("pointermove", onMove, { capture: true });
 			window.removeEventListener("pointerdown", onPointerDown, true);
+			window.removeEventListener("click", onClick, true);
 			window.removeEventListener("keydown", onKeyDown, true);
 			window.removeEventListener("blur", stop);
 			document.removeEventListener("visibilitychange", stop);
@@ -111,8 +141,8 @@ function Overlay() {
 			{hover && <Outline level={hover.at(-1)} chain={hover} />}
 			{pointing && (
 				<output className="scope-mode scope-ui">
-					<span>Click what to ask about</span>
-					<span className="muted">Esc to stop</span>
+					<span>{COARSE.matches ? "Tap to see the scope, tap it again to ask" : "Click what to ask about"}</span>
+					{!COARSE.matches && <span className="muted">Esc to stop</span>}
 					<button type="button" className="text-action" onClick={() => setPointing(false)}>
 						Stop
 					</button>

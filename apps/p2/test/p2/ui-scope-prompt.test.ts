@@ -164,4 +164,96 @@ describe("the scope prompt", { skip: !browserTests }, () => {
 		chat.release();
 		sessions.release();
 	});
+
+	/** A session with one message of the person's, open on this page; its ID. */
+	const openWithMessage = async (title: string) => {
+		const owner = fixture.browser();
+		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const id = (await sessions.create({ cwd: fixture.workspace, title }, BACKGROUND_CONTEXT)).id;
+		const chat = await holdIn(owner, Chat, { session: id, conversation: 1 }, "participant");
+		await chat.send({ text: "hello there", requestId: `scope-${title}` }, BACKGROUND_CONTEXT);
+		chat.release();
+		sessions.release();
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${id}`);
+		await browser.wait(`document.querySelector('.user[data-entry]')`);
+		return id;
+	};
+	const shown = (selector: string) =>
+		`(e => e && getComputedStyle(e).display !== 'none' && e.getBoundingClientRect().width > 0)(document.querySelector(${JSON.stringify(selector)}))`;
+	const mode = `document.querySelector('.scope-mode')`;
+	const move = async (selector: string) => {
+		const { x, y } = await browser.evaluate<{ x: number; y: number }>(
+			`(() => {const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`,
+		);
+		await browser.call("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+	};
+
+	it("has a button by the sidebar's collapse button, in the top bar while the sidebar is collapsed", async () => {
+		await browser.metrics(1280, 900);
+		await openWithMessage("Buttons");
+		await browser.wait(shown(".drawer-header-row .scope-toggle"));
+		assert.equal(await browser.evaluate<boolean>(shown(".topbar .scope-toggle")), false);
+		// It switches pointing on, and off again.
+		await browser.click(".drawer-header-row .scope-toggle");
+		await browser.wait(
+			`${mode} && document.querySelector('.drawer-header-row .scope-toggle').ariaPressed === 'true'`,
+		);
+		// Over the button nothing is outlined; away from it, what the pointer is on is.
+		assert.equal(await browser.evaluate<boolean>(`Boolean(document.querySelector('.scope-outline'))`), false);
+		await move(".user[data-entry]");
+		await browser.wait(`document.querySelector('.scope-outline-label')?.textContent === 'Chat › Message'`);
+		await move(".drawer-header-row .scope-toggle");
+		await browser.wait(`!document.querySelector('.scope-outline')`);
+		await browser.click(".drawer-header-row .scope-toggle");
+		await browser.wait(`!${mode}`);
+		// Collapsed, the sidebar's is gone and the top bar's does it.
+		await browser.click(".collapse-sidebar");
+		await browser.wait(shown(".topbar .scope-toggle"));
+		await browser.click(".topbar .scope-toggle");
+		await browser.wait(mode);
+		await browser.click(".topbar .scope-toggle");
+		await browser.wait(`!${mode}`);
+		await browser.click(".topbar .sidebar-open");
+		await browser.wait(shown(".drawer-header-row .scope-toggle"));
+	});
+
+	it("on a phone: the top bar's button, a tap shows the scope, a second tap on it asks", async () => {
+		await browser.metrics(390, 844);
+		await browser.call("Emulation.setTouchEmulationEnabled", { enabled: true });
+		try {
+			await openWithMessage("Phone");
+			await browser.wait(shown(".topbar .scope-toggle"));
+			const tap = async (selector: string) => {
+				const point = await browser.evaluate<{ x: number; y: number }>(
+					`(() => {const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`,
+				);
+				await browser.call("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ ...point, id: 1 }] });
+				await browser.call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+			};
+			await tap(".topbar .scope-toggle");
+			await browser.wait(mode);
+			// The first tap outlines the message; nothing opens.
+			await tap(".user[data-entry] .bubble");
+			await browser.wait(`document.querySelector('.scope-outline-label')?.textContent === 'Chat › Message'`);
+			assert.equal(await browser.evaluate<boolean>(`Boolean(document.querySelector('.scope-composer'))`), false);
+			// A second tap on it opens the composer, pointing ends.
+			await tap(".user[data-entry] .bubble");
+			await browser.wait(`document.querySelector('.scope-composer') && !${mode}`);
+			assert.equal(
+				await browser.evaluate<string>(
+					`document.querySelector('.scope-destination .scope-step.chosen').textContent`,
+				),
+				"Chat",
+			);
+			await tap(".scope-close");
+			await browser.wait(`!document.querySelector('.scope-composer')`);
+			// The button switches it off before anything was picked.
+			await tap(".topbar .scope-toggle");
+			await browser.wait(mode);
+			await tap(".topbar .scope-toggle");
+			await browser.wait(`!${mode}`);
+		} finally {
+			await browser.call("Emulation.setTouchEmulationEnabled", { enabled: false });
+		}
+	});
 });

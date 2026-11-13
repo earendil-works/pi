@@ -94,6 +94,8 @@ const usePageVisible = () => useSyncExternalStore(subscribeVisibility, () => doc
 const brand = <Slot name="drawer-brand" fallback={<PiLogo compact />} />;
 /** Icon buttons at the footer's end, before the theme switch (`sidebar-actions:<name>`, e.g. the Settings gear). */
 const actions = <SlotList prefix="sidebar-actions" />;
+/** Icon buttons in the header, before the collapse button (`sidebar-header:<name>`, e.g. the scope prompt's). */
+const headerActions = <SlotList prefix="sidebar-header" />;
 
 /** The sidebar's New session: the new-session screen, without the project or model chosen before. */
 const newSession = () => startNewSession();
@@ -570,6 +572,7 @@ function Sidebar() {
 				onCollapse={owner ? onCollapse : undefined}
 				onPage={openPage}
 				onCollapseSidebar={toggleSidebar}
+				headerActions={headerActions}
 				footerActions={actions}
 			/>
 			{optionsOf && (

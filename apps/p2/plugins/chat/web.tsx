@@ -731,6 +731,7 @@ function TopBar({
 				<MenuIcon />
 				<Slot name="menu-badge" />
 			</button>
+			<SlotList prefix="topbar-start" />
 			<div className="title">
 				{child ? (
 					<>
