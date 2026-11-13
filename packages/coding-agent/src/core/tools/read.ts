@@ -284,7 +284,7 @@ export function createReadToolDefinition(
 	return {
 		name: "read",
 		label: "read",
-		description: `Read files, PDF pages (text or images, no OCR), HTTP(S) URLs (clean Markdown/text; explicit browser strategy only), read-only SQLite schemas/rows/queries, or artifact:// output. Text offset/limit select lines; SQLite uses rowOffset/rowLimit. PDF pages are 1-indexed ranges. Oversized document snapshots are retained as artifacts in sessions. Ordinary text files default to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB. Follow artifact nextByteOffset with byteOffset for long lines. Also supports images (jpg, png, gif, webp, bmp).`,
+		description: `Read files, PDF pages (text or images), HTTP(S) URLs (clean Markdown/text; explicit browser strategy only), read-only SQLite schemas/rows/queries, or artifact:// output. Text offset/limit select lines; SQLite uses rowOffset/rowLimit. PDF pages are 1-indexed ranges. Oversized document snapshots are retained as artifacts in sessions. Ordinary text files default to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB. Follow artifact nextByteOffset with byteOffset for long lines. Also supports images (jpg, png, gif, webp, bmp).`,
 		promptSnippet: readToolSystemPromptContribution.snippet,
 		promptGuidelines: [...readToolSystemPromptContribution.guidelines],
 		parameters: readSchema,
