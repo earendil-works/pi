@@ -69,7 +69,6 @@ export default defineProvider({
 	compat: {
 		"openai-completions": {
 			supportsStore: false,
-			supportsDeveloperRole: false,
 			supportsReasoningEffort: false,
 			maxTokensField: "max_tokens",
 			supportsLongCacheRetention: false,

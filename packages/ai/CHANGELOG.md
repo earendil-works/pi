@@ -10,11 +10,13 @@
 
 - Updated `@google/genai` to 2.32.0. The Google adapters turn off its automatic continuation, so a `CONTINUATION` finish ends the turn with stop reason `length` ([#12103](https://github.com/earendil-works/pi/pull/12103) by [@rometi](https://github.com/rometi))
 - Anthropic message threads are now on by default for any provider whose baseUrl is on api.anthropic.com, not only the `anthropic` provider ([#11987](https://github.com/earendil-works/pi/issues/11987))
+- `openai-completions` now sends system messages of reasoning models (the system prompt and mid-conversation system messages) with the `developer` role only to `api.openai.com`; all other hosts, including Azure and OpenRouter, get `system`. Set `compat.supportsDeveloperRole` to override ([#10741](https://github.com/earendil-works/pi/issues/10741))
 
 ### Fixed
 
 - Fixed tools with `strict: "prefer"` constrained sampling being sent in strict mode when their schema contains a node without a `type` (such as `items: {}`, `Type.Unknown()`, or a bare `const`), which OpenAI rejects with a 400 error; these tools now fall back to non-strict mode, and `strict: "require"` fails locally. Nodes with only an `enum` stay strict ([#12049](https://github.com/earendil-works/pi/issues/12049))
 - Fixed provider errors reading "Connection closed." not being retried ([#12064](https://github.com/earendil-works/pi/issues/12064))
+- Fixed Groq Qwen models failing with `400 Unexpected message role` because the system prompt was sent with the `developer` role ([#10741](https://github.com/earendil-works/pi/issues/10741))
 - Fixed non-strict Anthropic tool schemas dropping the root `additionalProperties`, so the model was not told that extra arguments are forbidden ([#12067](https://github.com/earendil-works/pi/issues/12067))
 
 ### Removed

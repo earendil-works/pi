@@ -10,7 +10,6 @@ export const CN_BASE_URL = "https://token-plan.cn-beijing.maas.aliyuncs.com/comp
 
 const COMPAT: OpenAICompletionsCompat = {
 	thinkingFormat: "qwen",
-	supportsDeveloperRole: false,
 	supportsStore: false,
 	supportsReasoningEffort: true,
 };

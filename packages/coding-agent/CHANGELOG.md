@@ -15,6 +15,7 @@
 - Fixed the bash tool returning no output, with a footer like `[Showing lines 3-2 of 2]`, when the output ends in one line longer than about 100KB, such as a `grep` match in a minified file; it now shows the end of that line ([#12062](https://github.com/earendil-works/pi/issues/12062))
 - Fixed provider errors reading "Connection closed." not triggering automatic retries ([#12064](https://github.com/earendil-works/pi/issues/12064))
 - Fixed `/resume` sometimes selecting an unrelated session while the list reloads after deleting or renaming a session ([#12106](https://github.com/earendil-works/pi/issues/12106))
+- Fixed Groq Qwen models failing with `400 Unexpected message role`; OpenAI-compatible providers other than OpenAI now receive system messages (the system prompt and mid-conversation system messages) with the `system` role ([#10741](https://github.com/earendil-works/pi/issues/10741))
 
 ## [1.5.2] - 2026-11-10
 

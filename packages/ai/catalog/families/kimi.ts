@@ -22,7 +22,6 @@ export const KIMI_K3_COST: ModelCost = {
 // Kimi Chat Completions settings shared by Moonshot and Kimi Coding.
 export const KIMI_OPENAI_COMPAT: OpenAICompletionsCompat = {
 	supportsStore: false,
-	supportsDeveloperRole: false,
 	supportsReasoningEffort: false,
 	maxTokensField: "max_tokens",
 	supportsStrictMode: false,

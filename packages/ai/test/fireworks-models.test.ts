@@ -70,7 +70,6 @@ describe("Fireworks models", () => {
 		const fast = getModel("fireworks", "accounts/fireworks/routers/kimi-k3-fast");
 		const compat = {
 			supportsStore: false,
-			supportsDeveloperRole: false,
 			supportsStrictMode: true,
 			requiresReasoningContentOnAssistantMessages: true,
 			thinkingFormat: "openai",

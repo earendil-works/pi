@@ -4,7 +4,6 @@ import { getEffortThinkingLevelMap } from "../reasoning.ts";
 
 const BASE_COMPAT: OpenAICompletionsCompat = {
 	supportsStore: false,
-	supportsDeveloperRole: false,
 	supportsReasoningEffort: false,
 	supportsUsageInStreaming: true,
 	maxTokensField: "max_tokens",

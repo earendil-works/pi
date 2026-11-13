@@ -1380,7 +1380,7 @@ Use `models.refresh({ providers: ['openrouter'] })` to restrict work to selected
 
 Custom models can carry `headers` (e.g. proxies behind bot detection) and `compat` flags. `Models.getAuth(model)` includes those model headers, and stream methods merge them before explicit request headers and `transformHeaders`. See [OpenAI Compatibility Settings](#openai-compatibility-settings).
 
-Some OpenAI-compatible servers do not understand the `developer` role used for reasoning-capable models. For those providers, set `compat.supportsDeveloperRole` to `false` so the system prompt is sent as a `system` message instead. If the server also does not support `reasoning_effort`, set `compat.supportsReasoningEffort` to `false` too. This commonly applies to Ollama, vLLM, SGLang, and similar OpenAI-compatible servers.
+The `developer` role is OpenAI's replacement for `system` on reasoning models, and many other OpenAI-compatible servers reject it. `openai-completions` therefore sends system messages (the system prompt and mid-conversation system messages) as `system` unless the endpoint is `api.openai.com`. Set `compat.supportsDeveloperRole` to override this. If a server does not support `reasoning_effort`, set `compat.supportsReasoningEffort` to `false`. This commonly applies to Ollama, vLLM, SGLang, and similar OpenAI-compatible servers.
 
 Use model-level `thinkingLevelMap` to describe model-specific thinking controls. Keys are pi thinking levels (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`). Missing standard levels through `high` use provider defaults; `xhigh` and `max` are opt-in and require a non-null map entry. String values are sent to the provider, `null` marks a level unsupported, and maps may skip levels.
 
@@ -1450,7 +1450,7 @@ The `openai-completions` API is implemented by many providers with minor differe
 ```typescript
 interface OpenAICompletionsCompat {
   supportsStore?: boolean;           // Whether provider supports the `store` field (default: true)
-  supportsDeveloperRole?: boolean;   // Whether provider supports `developer` role vs `system` (default: true)
+  supportsDeveloperRole?: boolean;   // Send system messages of reasoning models as `developer` instead of `system` (default: true only for `api.openai.com`)
   supportsReasoningEffort?: boolean; // Whether provider supports `reasoning_effort` (default: true)
   supportsUsageInStreaming?: boolean; // Whether provider supports `stream_options: { include_usage: true }` (default: true)
   supportsStrictMode?: boolean;      // Whether provider supports `strict` in tool definitions (default: false; enabled in metadata for capable built-in models)

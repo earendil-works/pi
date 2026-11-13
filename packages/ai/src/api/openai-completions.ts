@@ -1637,13 +1637,14 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		isZai;
 
 	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
-	const isOpenRouterDeveloperRoleModel =
-		isOpenRouter && (model.id.startsWith("anthropic/") || model.id.startsWith("openai/"));
+	// The developer role is OpenAI's. Other hosts' chat templates often reject it (#10741),
+	// and every host accepts system, so only OpenAI's own API gets developer by default.
+	const isOpenAI = provider === "openai" || baseUrl.includes("api.openai.com");
 	const cacheControlFormat = provider === "openrouter" && model.id.startsWith("anthropic/") ? "anthropic" : undefined;
 
 	return {
 		supportsStore: !isNonStandard,
-		supportsDeveloperRole: isOpenRouterDeveloperRoleModel || (!isNonStandard && !isOpenRouter),
+		supportsDeveloperRole: isOpenAI,
 		supportsReasoningEffort:
 			!isGrok && !isZai && !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isAntLing,
 		supportsUsageInStreaming: true,

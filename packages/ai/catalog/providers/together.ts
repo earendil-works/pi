@@ -3,7 +3,6 @@ import { defineProvider, modelsDevModels } from "../define.ts";
 
 const BASE_COMPAT: OpenAICompletionsCompat = {
 	supportsStore: false,
-	supportsDeveloperRole: false,
 	supportsReasoningEffort: false,
 	maxTokensField: "max_tokens",
 	supportsStrictMode: false,
@@ -48,7 +47,6 @@ export default defineProvider({
 	compat: {
 		"openai-completions": {
 			supportsStore: false,
-			supportsDeveloperRole: false,
 			supportsReasoningEffort: false,
 			maxTokensField: "max_tokens",
 			thinkingFormat: "together",
