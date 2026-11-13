@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>p3 apps: trusted plugins, confined people</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A design note · p3 · 2026-11-13</div>
+  <h1>Apps<br>Users<br>Guests</h1>
+  <p class="subtitle">The owner builds apps for his family, his club and his team; each person reaches only what an app gives them</p>
+  <div class="cover-stats"><div class="stat"><b>1</b><span>owner per Pi, who installs every plugin</span></div><div class="stat"><b>3</b><span>kinds of people: owner, users of an app, guests of a session</span></div><div class="stat"><b>1</b><span>session check for every session view and object</span></div><div class="stat"><b>0</b><span>permission engines, settings layers or rule tables</span></div></div>
+  <div class="cover-note"><p>The owner&#39;s direction of 2026-11-13, worked out with three reviewers (Opus: product, Astra: adversarial, Sol:
+Chord&#39;s API). Replaces the decision &quot;Org-managed Pis through managed settings&quot; of the same day. Every code block is
+PROPOSED: p3 has no code. Chord calls named in the code exist in <code>packages/chord/src</code> (<code>defineFacet</code>, <code>host.serve</code>,
+<code>local</code>, <code>remote</code>, <code>self.get</code>, <code>self.state</code>, <code>self.on</code>, <code>self.onLive</code>, <code>self.writable</code>, <code>self.contribute</code>,
+<code>defineRegistry</code>, <code>defineState</code> with <code>keyed</code>, keyed members&#39; <code>.at</code>, <code>forbidden</code>); p3 names (<code>Apps</code>, <code>Sessions</code>,
+<code>defineAppUsers</code>, <code>HarnessFilters</code>, <code>WebViews</code>) are proposals. Sources: <code>apps/p3/docs/views.md</code>,
+<code>apps/p3/docs/sharing.md</code>, <code>apps/p3/docs/apps/web-ui-direction.html</code>, the base-inventory explainer (harness filters).</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#the-goal">The Goal</a></li>
+<li><a href="#people">I. People</a></li>
+<li><a href="#access">II. The Session Check</a></li>
+<li><a href="#app">III. An App Is a Plugin</a></li>
+<li><a href="#users">IV. Users and Invites</a></li>
+<li><a href="#guests">V. Guests</a></li>
+<li><a href="#gaps">VI. What the Base Must Add</a></li>
+<li><a href="#not-covered-here">Not Covered Here</a></li>
+</ol></nav>
+
+<section class="preface" id="the-goal">
+<h2>The Goal</h2>
+<p class="dropcap">One Pi, one owner. The owner, or his agent, builds <strong>apps</strong> and shares them:</p>
+<ul>
+<li><strong>The robot</strong> for his son, who cannot read: a friendly face, hold to talk, one long-running session in a fixed
+folder with its own skills and AGENTS.md, no shell.</li>
+<li><strong>Family</strong> for his wife: her calendars and mail, a simple voice chat, the family files; her own journal.</li>
+<li><strong>The football club:</strong> shared match sessions, a team roster only coaches change.</li>
+<li><strong>Coding:</strong> the app Pi ships with, for himself and his team.</li>
+<li><strong>Guests:</strong> a friend watches one session, or joins it, through a link.</li>
+</ul>
+<p>An app decides what you see (its layout and views), what its sessions get (machine and folder, skills, tools, models,
+accounts) and who may use it. People reach only what the app gives them.</p>
+<h3 id="six-rules">Six rules</h3>
+<ol class="findings">
+<li><strong>An app is a plugin.</strong> It creates the layouts, views and objects it needs and reuses any other plugin&#39;s. The owner
+installs it; the agent writes one when asked (&quot;make a robot app for my son&quot;).</li>
+<li><strong>Plugins are trusted, people are confined.</strong> Apps call each other and every plugin freely. Only users and guests
+are limited, by their principal.</li>
+<li><strong>Every object serves only the principals it knows.</strong> The terminal, mail and settings serve the owner; a user who
+holds them directly gets <code>forbidden</code>, whatever pane he opens.</li>
+<li><strong>Users reach the rest through their app&#39;s objects.</strong> An app&#39;s object for its users calls the app&#39;s local store,
+which acts as the host and reaches any plugin. The app chooses exactly what each user sees.</li>
+<li><strong>One session check</strong> for every session view and object: the owner always; a user if the session&#39;s app says so;
+a guest if the session is in its principal.</li>
+<li><strong>What an app&#39;s sessions get is the app&#39;s worker facet:</strong> filters on the harness, for the agent, its subagents and
+code mode alike.</li>
+</ol>
+</section>
+
+<section class="chapter" id="people"><header class="opener"><div class="numeral">I</div><h2>People</h2><p class="lede">Three kinds of people, each a principal the link stamps; who may reach what follows from it.</p></header>
+<pre><code><span class="tk-c">// PROPOSED · @p3/v1: p3's principal kinds</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">P3Principal</span> =
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"server"</span> }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"worker"</span>; <span class="tk-k">readonly</span> session: string }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"owner"</span> }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"user"</span>; <span class="tk-k">readonly</span> app: string; <span class="tk-k">readonly</span> id: string }      <span class="tk-c">// a member of one app</span>
+	| {                                                                         <span class="tk-c">// a guest of shared sessions (p2's)</span>
+			<span class="tk-k">readonly</span> kind: <span class="tk-s">"guest"</span>;
+			<span class="tk-k">readonly</span> id: string;
+			<span class="tk-k">readonly</span> sessions: <span class="tk-t">Readonly</span>&lt;<span class="tk-t">Record</span>&lt;string, <span class="tk-s">"read"</span> | <span class="tk-s">"write"</span>&gt;&gt;;
+			<span class="tk-k">readonly</span> revision: number;
+	  };</code></pre>
+<ul>
+<li><strong>The owner</strong> signs in with the kit&#39;s owner link, token file or pairing.</li>
+<li><strong>A user</strong> belongs to one app. The owner invites them; they sign up on the app&#39;s page; the server issues a sign-in
+for <code>{ kind: &quot;user&quot;, app, id }</code>. What they may do inside the app is the app&#39;s data, not the principal.</li>
+<li><strong>A guest</strong> gets one or more sessions, each read or write, in the principal itself, so a factory picks the viewer or
+the participant variant synchronously (Chord&#39;s factory rule). A change bumps the revision: the old objects end and
+the guest reconnects with the new principal, as in p2.</li>
+<li><strong>The owner is not protected against.</strong> He passes every session check, shares any session, and can read the store.
+An app may still refuse him in its own objects (her journal view), as a courtesy of its UI.</li>
+</ul>
+</section>
+
+<section class="chapter" id="access"><header class="opener"><div class="numeral">II</div><h2>The Session Check</h2><p class="lede">One question every session view and object asks: may this principal see or send in this session?</p></header>
+<p class="dropcap">The base records each session&#39;s app when the session is created (it never changes). Transcript, composer,
+artifacts, files, search, export and cross-session tools all ask one function:</p>
+<pre><code><span class="tk-c">// PROPOSED · plugins/sessions: the one session check (server and worker)</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Access</span> = { <span class="tk-k">readonly</span> see: boolean; <span class="tk-k">readonly</span> send: boolean };
+<span class="tk-k">const</span> NONE: <span class="tk-t">Access</span> = { see: <span class="tk-k">false</span>, send: <span class="tk-k">false</span> };
+
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">access</span>(principal: <span class="tk-t">P3Principal</span>, session: <span class="tk-t">SessionFacts</span>, apps: <span class="tk-t">AppTable</span>): <span class="tk-t">Access</span> {
+	<span class="tk-k">switch</span> (principal.kind) {
+		<span class="tk-k">case</span> <span class="tk-s">"owner"</span>:
+		<span class="tk-k">case</span> <span class="tk-s">"server"</span>:
+			<span class="tk-k">return</span> { see: <span class="tk-k">true</span>, send: <span class="tk-k">true</span> };
+		<span class="tk-k">case</span> <span class="tk-s">"worker"</span>:
+			<span class="tk-k">return</span> principal.session === session.id ? { see: <span class="tk-k">true</span>, send: <span class="tk-k">true</span> } : apps.<span class="tk-f">get</span>(session.app)?.<span class="tk-f">access</span>(principal, session) ?? NONE;
+		<span class="tk-k">case</span> <span class="tk-s">"user"</span>:
+			<span class="tk-k">return</span> principal.app === session.app ? apps.<span class="tk-f">get</span>(session.app)?.<span class="tk-f">access</span>(principal, session) ?? NONE : NONE;
+		<span class="tk-k">case</span> <span class="tk-s">"guest"</span>: {
+			<span class="tk-k">const</span> mode = principal.sessions[session.id];
+			<span class="tk-k">return</span> mode === <span class="tk-k">undefined</span> ? NONE : { see: <span class="tk-k">true</span>, send: mode === <span class="tk-s">"write"</span> };
+		}
+	}
+}</code></pre>
+<p>The session worker&#39;s route applies it in its synchronous <code>authorize</code>, so every object a session&#39;s worker serves is
+covered; methods that send check <code>send</code> again at the call, and HTTP routes (downloads, exports) at the request.</p>
+</section>
+
+<section class="chapter" id="app"><header class="opener"><div class="numeral">III</div><h2>An App Is a Plugin</h2><p class="lede">What an app contributes, and the robot in four files.</p></header>
+<p class="dropcap">An app contributes one entry to the <code>Apps</code> registry: its id, title, layout and the <code>access</code> rule above. It keeps no
+other configuration: everything else is its own code and objects.</p>
+<pre><code><span class="tk-c">// PROPOSED · @p3/v1/server</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">AppContribution</span> = {
+	<span class="tk-k">readonly</span> id: string;                                                  <span class="tk-c">// also the `app` of its users and sessions</span>
+	<span class="tk-k">readonly</span> title: string;
+	<span class="tk-k">readonly</span> layout: (principal: <span class="tk-t">P3Principal</span>) =&gt; <span class="tk-t">Layout</span>;                  <span class="tk-c">// panes: view kind, session, item</span>
+	<span class="tk-k">readonly</span> access: (principal: <span class="tk-t">P3Principal</span>, session: <span class="tk-t">SessionFacts</span>) =&gt; <span class="tk-t">Access</span>;
+	<span class="tk-k">readonly</span> users?: <span class="tk-t">AppUsersAdmin</span>;                                       <span class="tk-c">// its user pool's admin object, if it has users</span>
+};
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Apps</span> = defineRegistry&lt;<span class="tk-t">AppContribution</span> | <span class="tk-t">Watchable</span>&lt;<span class="tk-t">AppContribution</span>&gt;, <span class="tk-t">AppTable</span>&gt;(<span class="tk-s">"p3.apps"</span>, { version: <span class="tk-n">1</span> });</code></pre>
+<h3 id="the-robot">The robot</h3>
+<pre><code><span class="tk-c">// PROPOSED · plugins/robot/contract.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> APP = <span class="tk-s">"robot"</span>;
+<span class="tk-k">export</span> <span class="tk-k">const</span> SESSION = <span class="tk-s">"robot-main"</span>;
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Users</span> = <span class="tk-f">defineAppUsers</span>(APP, {
+	profile: <span class="tk-f">obj</span>({ name: <span class="tk-f">str</span>() }),                       <span class="tk-c">// what he enters when signing up</span>
+	config: <span class="tk-f">obj</span>({ voice: <span class="tk-f">str</span>() }),                       <span class="tk-c">// what the owner sets for him</span>
+	initialConfig: () =&gt; ({ voice: <span class="tk-s">"friendly"</span> }),
+});
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Place</span> = { environment: <span class="tk-s">"kidbox"</span>, cwd: <span class="tk-s">"/srv/son"</span> };       <span class="tk-c">// its AGENTS.md and skills live there</span></code></pre>
+<pre><code><span class="tk-c">// PROPOSED · plugins/robot/server.ts</span>
+<span class="tk-k">const</span> <span class="tk-t">Robot</span> = <span class="tk-f">local</span>(<span class="tk-s">"robot.app"</span>, { version: <span class="tk-n">1</span>, params: {}, members: {} });
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((host, self) =&gt; {
+	<span class="tk-t">Users</span>.<span class="tk-f">serve</span>(host, self);                                            <span class="tk-c">// the user pool: admin, store, sign-up page</span>
+	host.<span class="tk-f">serve</span>(<span class="tk-t">Robot</span>, (_params, self) =&gt; {
+		<span class="tk-k">const</span> users = self.<span class="tk-f">get</span>(<span class="tk-t">Users</span>.<span class="tk-t">Store</span>, {});
+		<span class="tk-k">const</span> sessions = self.<span class="tk-f">get</span>(<span class="tk-t">Sessions</span>, {});
+		<span class="tk-k">const</span> app = (members: <span class="tk-k">readonly</span> <span class="tk-t">AppUser</span>[]): <span class="tk-t">AppContribution</span> =&gt; ({
+			id: APP,
+			title: <span class="tk-s">"Robot"</span>,
+			users: <span class="tk-t">Users</span>.<span class="tk-t">Admin</span>,
+			layout: (p) =&gt; {
+				<span class="tk-k">const</span> voice = p.kind === <span class="tk-s">"user"</span> ? members.<span class="tk-f">find</span>((u) =&gt; u.id === p.id)?.config.voice : <span class="tk-k">undefined</span>;
+				<span class="tk-k">return</span> [{ kind: <span class="tk-s">"robot.face"</span>, session: SESSION, item: { voice: voice ?? <span class="tk-s">"friendly"</span> } }];
+			},
+			access: (p, session) =&gt; {
+				<span class="tk-k">const</span> ok = session.id === SESSION &amp;&amp; p.kind === <span class="tk-s">"user"</span> &amp;&amp; members.<span class="tk-f">some</span>((u) =&gt; u.id === p.id);
+				<span class="tk-k">return</span> { see: ok, send: ok };
+			},
+		});
+		<span class="tk-k">const</span> entry = self.<span class="tk-f">writable</span>(<span class="tk-f">app</span>([]));
+		self.<span class="tk-f">on</span>(users.list, ({ value }) =&gt; entry.<span class="tk-f">set</span>(<span class="tk-f">app</span>(value)));     <span class="tk-c">// a removed user loses access at once</span>
+		self.<span class="tk-f">contribute</span>(<span class="tk-t">Apps</span>, entry);
+		self.<span class="tk-f">onLive</span>((ctx) =&gt; sessions.<span class="tk-f">ensure</span>({ id: SESSION, app: APP, ...<span class="tk-t">Place</span> }, ctx));   <span class="tk-c">// the one session</span>
+		<span class="tk-k">return</span> {};
+	});
+});</code></pre>
+<pre><code><span class="tk-c">// PROPOSED · plugins/robot/worker.ts: what the robot's session gets</span>
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; {
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">HarnessFilters</span>, {
+		tools: (tools, scope) =&gt; (scope.app === APP ? [] : tools),                       <span class="tk-c">// no tools at all</span>
+		models: (models, scope) =&gt; (scope.app === APP ? models.<span class="tk-f">filter</span>((m) =&gt; m.id === <span class="tk-s">"child-chat"</span>) : models),
+		environments: (envs, scope) =&gt; (scope.app === APP ? envs.<span class="tk-f">filter</span>((e) =&gt; e.id === <span class="tk-t">Place</span>.environment) : envs),
+		location: (chosen, scope) =&gt; scope.app !== APP || (chosen.environment === <span class="tk-t">Place</span>.environment &amp;&amp; chosen.cwd === <span class="tk-t">Place</span>.cwd),
+	});
+});</code></pre>
+<pre><code><span class="tk-c">// PROPOSED · plugins/robot/web.tsx: the face, around the ordinary voice chat</span>
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; {
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">WebViews</span>, {
+		<span class="tk-s">"robot.face"</span>: ({ app, session, item }) =&gt; (
+			&lt;<span class="tk-t">VoiceChat</span> app={app} session={session} voice={item.voice} transcript=<span class="tk-s">"hidden"</span>&gt;
+				&lt;<span class="tk-t">RobotFace</span> /&gt;
+			&lt;/<span class="tk-t">VoiceChat</span>&gt;
+		),
+	});
+});</code></pre>
+<p>The owner installs it, opens Users, invites his son and sets his voice. The son signs up on the link and gets one
+hold-to-talk session. He holds <code>Terminals</code> or <code>Mail</code> directly? <code>forbidden</code>: those serve the owner only.</p>
+<p><strong>Coding</strong> is the plugin Pi ships: its access rule gives its sessions to the owner (and to users of a team it invites),
+its layout the sidebar, transcript and changes, no filters.</p>
+</section>
+
+<section class="chapter" id="users"><header class="opener"><div class="numeral">IV</div><h2>Users and Invites</h2><p class="lede">Each app has its own user pool; the owner invites, configures, removes.</p></header>
+<pre><code><span class="tk-c">// PROPOSED · @p3/v1: an app's user pool, built on the kit's users, invites and sign-ins</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">defineAppUsers</span>&lt;P <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span>, C <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span>&gt;(app: string, shape: {
+	profile: <span class="tk-t">Schema</span>&lt;P&gt;; config: <span class="tk-t">Schema</span>&lt;C&gt;; initialConfig: () =&gt; C;
+}): {
+	<span class="tk-c">/** Owner only: invite (returns the sign-up URL), the users, set a user's config, remove a user. */</span>
+	<span class="tk-k">readonly</span> <span class="tk-t">Admin</span>: <span class="tk-t">RemoteContract</span>;        <span class="tk-c">// `${app}.users.admin`</span>
+	<span class="tk-c">/** For the app's own objects: the users, and one user by id (`users.at(principal.id)`), absent when removed. */</span>
+	<span class="tk-k">readonly</span> <span class="tk-t">Store</span>: <span class="tk-t">LocalContract</span>;         <span class="tk-c">// `${app}.users.store`</span>
+	<span class="tk-c">/** Serves both and the public sign-up page `/apps/&lt;app&gt;/join#&lt;token&gt;`. */</span>
+	<span class="tk-f">serve</span>(host: <span class="tk-t">FacetHost</span>, self: <span class="tk-t">FacetSelf</span>): <span class="tk-k">void</span>;
+};</code></pre>
+<ol>
+<li><strong>Invite:</strong> the owner calls <code>Admin.invite({ label, config? })</code> and sends the link.</li>
+<li><strong>Sign up:</strong> the page asks for the profile (her name), checks the token, stores the user, and issues a sign-in for
+<code>{ kind: &quot;user&quot;, app, id }</code>. The browser never chooses the app, the id or the config.</li>
+<li><strong>Configure:</strong> the owner sets what is hers in this app (<code>setConfig</code>: which calendars, which mail account).</li>
+<li><strong>Use:</strong> the app&#39;s objects pin her record: <code>self.get(Users.Store, {}).users.at(principal.id)</code>.</li>
+<li><strong>Remove:</strong> deletes the record, revokes her sign-ins and ends her open objects.</li>
+</ol>
+<h3 id="reaching-other-plugins">Reaching other plugins</h3>
+<p>A remote object keeps its caller&#39;s principal when it calls <code>self.get</code> (Chord §4); only a <code>local</code> object acts as the
+host. So an app gives its users a slice of another plugin through its own local store:</p>
+<pre><code><span class="tk-c">// PROPOSED · plugins/family/server.ts: her calendars, chosen by the owner's config for her</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">MyCalendars</span>, (_params, principal, self) =&gt; {
+	<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"user"</span> || principal.app !== <span class="tk-s">"family"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"Family only."</span>);
+	<span class="tk-k">const</span> me = self.<span class="tk-f">get</span>(<span class="tk-t">FamilyUsers</span>.<span class="tk-t">Store</span>, {}).users.<span class="tk-f">at</span>(principal.id);
+	<span class="tk-k">const</span> calendars = self.<span class="tk-f">get</span>(<span class="tk-t">FamilyCalendars</span>, {});      <span class="tk-c">// the family app's local store: it reads the calendar plugin as the host</span>
+	<span class="tk-k">return</span> { variant: <span class="tk-s">"mine"</span>, members: { events: self.<span class="tk-f">derive</span>([me, calendars.events], ([u, all]) =&gt; <span class="tk-f">onlyThese</span>(all, u)) } };
+});
+
+<span class="tk-c">// her journal: keyed by her id; nobody else's principal reaches it (the owner refused as a courtesy)</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">Journal</span>, (_params, principal, self) =&gt; {
+	<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"user"</span> || principal.app !== <span class="tk-s">"family"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"Your own journal only."</span>);
+	<span class="tk-k">const</span> journals = self.<span class="tk-f">get</span>(<span class="tk-t">JournalStore</span>, {});           <span class="tk-c">// the app's local store</span>
+	<span class="tk-k">const</span> journal = journals.entries.<span class="tk-f">at</span>(principal.id);
+	<span class="tk-k">return</span> { variant: <span class="tk-s">"mine"</span>, members: { text: journal, write: (text, ctx) =&gt; journals.<span class="tk-f">write</span>({ id: principal.id, text }, ctx) } };
+});</code></pre>
+<p>The calendar plugin must serve its local store to the server (or a server variant); a plugin that serves only the
+owner&#39;s remote object cannot be reused by apps until it does.</p>
+</section>
+
+<section class="chapter" id="guests"><header class="opener"><div class="numeral">V</div><h2>Guests</h2><p class="lede">Sharing one session, read or write, with the same invite and sign-in path.</p></header>
+<p class="dropcap">The sharing plugin uses the same join path as app users (invite or reusable link, a page for the name, a sign-in) and
+issues guest principals. Read or write lives in the principal; a change bumps the revision, revokes the old objects,
+and the guest reconnects as the new principal. A guest sees the layout of the app the session belongs to, cut to that
+session. A share link many people open makes one guest per browser, never one shared identity.</p>
+</section>
+
+<section class="chapter" id="gaps"><header class="opener"><div class="numeral">VI</div><h2>What the Base Must Add</h2><p class="lede">Chord and the kit are enough with these small changes.</p></header>
+<table>
+<thead>
+<tr>
+<th>Where</th>
+<th>Gap</th>
+<th>Smallest fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>kit</td>
+<td><code>defineUsers</code> exists once (fixed name <code>chord.app.users</code>), no record by id</td>
+<td>a namespace per pool; keyed records (profile, config)</td>
+</tr>
+<tr>
+<td>kit</td>
+<td>invites: HTTP only, one principal chosen up front, single use, in memory, no sign-up form</td>
+<td>reusable issue and redeem, a sign-up step; reusable share links</td>
+</tr>
+<tr>
+<td>kit</td>
+<td><code>SignIns.revoke</code> leaves open objects; a facet cannot call <code>host.revoke</code></td>
+<td><code>revokedBy</code> for server and workers, a local revocation service</td>
+</tr>
+<tr>
+<td>kit</td>
+<td>a sign-in keeps its principal forever, so a guest never gets a new revision</td>
+<td>resolve the current principal at sign-in use; admission checks the current revision (p2 does)</td>
+</tr>
+<tr>
+<td>Chord</td>
+<td>a changed rule does not reach panes already open (<code>authorize</code> runs when a hold starts)</td>
+<td>methods and derives check at use; or <code>route.reauthorize(address)</code></td>
+</tr>
+<tr>
+<td>p3</td>
+<td>harness filters do not know the session&#39;s app, nor a fixed folder, accounts or MCP</td>
+<td><code>scope.app</code>, a <code>location</code> check at choice and at resolution, filters for accounts and MCP</td>
+</tr>
+<tr>
+<td>p3</td>
+<td>the session check everywhere</td>
+<td>transcript, composer, artifacts, files, search, export, downloads, cross-session tools</td>
+</tr>
+</tbody></table>
+</section>
+
+<section class="chapter epilogue" id="not-covered-here"><header class="opener"><div class="numeral">∴</div><h2>Not Covered Here</h2></header>
+<ul>
+<li><strong>Org-managed Pis</strong> (an employer setting up and restricting its members&#39; Pis) are redone on top of apps later; the
+settings layer of this morning&#39;s decision is withdrawn.</li>
+<li><strong>One browser, one sign-in:</strong> signing up for a second app in the same browser replaces the first sign-in.</li>
+<li><strong>Privacy from the owner</strong> is a courtesy of an app&#39;s UI, never a guarantee: he owns the machine and the code.</li>
+<li><strong>Discord</strong> is an app whose session gets narrow filters; its people are authors of input, not principals.</li>
+</ul>
+</section>
+
+<p class="colophon">p3 apps · design note, first edition · 2026-11-13</p>
+</div></div>
+
+</body></html>
