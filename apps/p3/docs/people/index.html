@@ -151,6 +151,39 @@ other session. And companies (Colin&#39;s plan, Dec 18: Org Devices) must be abl
 in <code>package.json</code>, per-plugin &quot;features&quot;, rule tables over registry entries, per-app user pools with <code>self.choose</code>
 (two-step activation; the reviews found it hits Chord&#39;s reload, staging and document invariants), an
 <code>plugins: { only: [...] }</code> list in app code. What survived is below.</p>
+<h3 id="read-first-in-full-read">Read first, in full {#read}</h3>
+<p>To be up to speed on this design (after a compaction or in a new session), read these completely, in this order:</p>
+<ol>
+<li><strong>This note</strong>, all chapters.</li>
+<li><strong><code>apps/p3/docs/decisions.md</code></strong>, all entries (newest last; the last three are today&#39;s).</li>
+<li><strong><code>apps/p3/docs/base-inventory/explainer/book.md</code></strong>: chapters &quot;The Harness&quot; (extensions, <code>HarnessFilters</code>,
+<code>FilterScope</code>, model and environment providers), &quot;What Is Offered&quot; (<code>ConversationOffer</code>), &quot;Waiting Costs Nothing&quot;;
+its session metadata store is superseded by host-keyed documents (decisions.md).</li>
+<li><strong><code>apps/p3/docs/status-2026-11-09.md</code></strong> (the harness direction, instruction scopes, the session service).</li>
+<li><strong><code>apps/p3/docs/views.md</code></strong> and <strong><code>apps/p3/docs/sharing.md</code></strong> (views, layouts as apps, sharing and the owner&#39;s
+direction of 2026-11-10).</li>
+<li><strong><code>apps/p3/docs/apps/web-ui-direction.html</code></strong> (the apps mockup: robot, family, club, music, friends,
+environments) and <strong><code>apps/p3/docs/apps/book.md</code></strong> (superseded; the record of the per-app user pools).</li>
+<li><strong><code>apps/p3/docs/org-managed/book.md</code></strong> (enrollment, gate, machine lock-down; its settings layer superseded) and,
+for detail, <code>details.md</code> next to it.</li>
+<li><strong><code>apps/p3/docs/rundown/book.md</code></strong> chapters &quot;The Rule Under Everything&quot;, &quot;Resources and Bringing&quot;, &quot;Who May&quot;,
+&quot;Sharing and Locks&quot;, &quot;The Filters&quot;.</li>
+<li><strong>Chord:</strong> <code>packages/chord/docs/design.md</code> §1, §4 (principals, revocation), §6–§7 (the factory rule), §10 &quot;Data
+belonging to a host&quot;, §16–§18, §21 &quot;The plugin model&quot;, §23 &quot;The app kit&quot;; code: <code>src/node/app/sign-ins.ts</code>,
+<code>pairing.ts</code>, <code>invite.ts</code>, <code>users.ts</code>, <code>worker.ts</code>, <code>app.ts</code>; <code>src/node/http/authenticate.ts</code> and <code>http.ts</code> (the
+accept path); <code>src/host/revocation.ts</code>; <code>src/remote/hold.ts</code> (<code>#bindTo</code>, the rebind race).</li>
+<li><strong>p2 as precedent</strong> (not reused): <code>apps/p2/src/runtime/principals.ts</code> (the guest principal),
+<code>apps/p2/plugins/sharing/server.ts</code> and <code>store.ts</code> (guests, revisions, Radius email shares),
+<code>apps/p2/src/runtime/session-lock.ts</code>, <code>tool-access.ts</code>, <code>durable.ts</code>, <code>apps/p2/plugins/envs/schema.ts</code>,
+<code>apps/p2/plugins/mcp/placement.ts</code>, <code>apps/p2/plugins/prompt/worker.ts</code> (what p2 locks today).</li>
+<li><strong>Research:</strong> <code>apps/p3/docs/authz-research.md</code> (prior art; its levels and policy are superseded) and the two
+team-mode research notes <code>apps/p3/docs/*-teams.md</code> (how other agent systems handle teams and tool policies).</li>
+<li><strong>Reviews</strong> (temporary, on slayer): <code>/tmp/apps-brief.md</code>, <code>/tmp/apps-opus.md</code>, <code>/tmp/apps-astra.md</code>,
+<code>/tmp/apps-sol.md</code> (the first app designs), <code>/tmp/choose-spec.md</code> and the reviews of <code>self.choose</code> (rejected).</li>
+<li><strong>History</strong> of the p3 session (8b6ab5cc): the harness and filter design (entries 271840–273175), the apps
+discussion (277211–277720); today&#39;s people and locks discussion: search &quot;person&quot;, &quot;locks&quot;, &quot;otherPlugins&quot;,
+&quot;lock down&quot;.</li>
+</ol>
 <h3 id="decisions-of-2026-11-13-decisions">Decisions of 2026-11-13 {#decisions}</h3>
 <ol class="findings">
 <li><strong>One Pi, one owner, who installs every plugin; plugins (apps among them) are trusted code.</strong> Only people are

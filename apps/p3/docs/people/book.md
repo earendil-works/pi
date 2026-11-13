@@ -34,6 +34,40 @@ in `package.json`, per-plugin "features", rule tables over registry entries, per
 (two-step activation; the reviews found it hits Chord's reload, staging and document invariants), an
 `plugins: { only: [...] }` list in app code. What survived is below.
 
+## Read first, in full {#read}
+
+To be up to speed on this design (after a compaction or in a new session), read these completely, in this order:
+
+1. **This note**, all chapters.
+2. **`apps/p3/docs/decisions.md`**, all entries (newest last; the last three are today's).
+3. **`apps/p3/docs/base-inventory/explainer/book.md`**: chapters "The Harness" (extensions, `HarnessFilters`,
+   `FilterScope`, model and environment providers), "What Is Offered" (`ConversationOffer`), "Waiting Costs Nothing";
+   its session metadata store is superseded by host-keyed documents (decisions.md).
+4. **`apps/p3/docs/status-2026-11-09.md`** (the harness direction, instruction scopes, the session service).
+5. **`apps/p3/docs/views.md`** and **`apps/p3/docs/sharing.md`** (views, layouts as apps, sharing and the owner's
+   direction of 2026-11-10).
+6. **`apps/p3/docs/apps/web-ui-direction.html`** (the apps mockup: robot, family, club, music, friends,
+   environments) and **`apps/p3/docs/apps/book.md`** (superseded; the record of the per-app user pools).
+7. **`apps/p3/docs/org-managed/book.md`** (enrollment, gate, machine lock-down; its settings layer superseded) and,
+   for detail, `details.md` next to it.
+8. **`apps/p3/docs/rundown/book.md`** chapters "The Rule Under Everything", "Resources and Bringing", "Who May",
+   "Sharing and Locks", "The Filters".
+9. **Chord:** `packages/chord/docs/design.md` §1, §4 (principals, revocation), §6–§7 (the factory rule), §10 "Data
+   belonging to a host", §16–§18, §21 "The plugin model", §23 "The app kit"; code: `src/node/app/sign-ins.ts`,
+   `pairing.ts`, `invite.ts`, `users.ts`, `worker.ts`, `app.ts`; `src/node/http/authenticate.ts` and `http.ts` (the
+   accept path); `src/host/revocation.ts`; `src/remote/hold.ts` (`#bindTo`, the rebind race).
+10. **p2 as precedent** (not reused): `apps/p2/src/runtime/principals.ts` (the guest principal),
+    `apps/p2/plugins/sharing/server.ts` and `store.ts` (guests, revisions, Radius email shares),
+    `apps/p2/src/runtime/session-lock.ts`, `tool-access.ts`, `durable.ts`, `apps/p2/plugins/envs/schema.ts`,
+    `apps/p2/plugins/mcp/placement.ts`, `apps/p2/plugins/prompt/worker.ts` (what p2 locks today).
+11. **Research:** `apps/p3/docs/authz-research.md` (prior art; its levels and policy are superseded) and the two
+    team-mode research notes `apps/p3/docs/*-teams.md` (how other agent systems handle teams and tool policies).
+12. **Reviews** (temporary, on slayer): `/tmp/apps-brief.md`, `/tmp/apps-opus.md`, `/tmp/apps-astra.md`,
+    `/tmp/apps-sol.md` (the first app designs), `/tmp/choose-spec.md` and the reviews of `self.choose` (rejected).
+13. **History** of the p3 session (8b6ab5cc): the harness and filter design (entries 271840–273175), the apps
+    discussion (277211–277720); today's people and locks discussion: search "person", "locks", "otherPlugins",
+    "lock down".
+
 ## Decisions of 2026-11-13 {#decisions}
 
 :::findings
