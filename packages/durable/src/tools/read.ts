@@ -146,7 +146,7 @@ export function createReadTool(options: ReadToolOptions = {}): ToolRegistration<
 /**
  * One image block, prepared by `processor` or, without one, as it is when its format is inline and it fits the limits
  * (its size is checked before reading it, its dimensions from its header); otherwise an error result saying why. What happened to the image is an `info` diagnostic, so programs get the
- * bare `ImageContent`. A model without image input sees pi-ai's placeholder instead; a diagnostic says so.
+ * bare `ImageContent`. A model without image input sees pi-ai's placeholder instead, decided per request.
  */
 async function readImage(
 	reader: BinaryReader,
@@ -154,7 +154,7 @@ async function readImage(
 	path: string,
 	mimeType: string,
 	processor: ImageProcessor | undefined,
-	{ vision, limits }: ImageModel,
+	{ limits }: ImageModel,
 	context: Context,
 ): Promise<ToolExecutionResult<ReadToolDetails>> {
 	let image: { readonly data: string; readonly mimeType: string };
@@ -196,7 +196,6 @@ async function readImage(
 		}
 		image = { data: toBase64(bytes), mimeType };
 	}
-	if (!vision) notes.push("The current model does not support images; it sees a placeholder instead.");
 	const diagnostics: ToolDiagnostic[] = [
 		{ severity: "info", code: "image", message: [`Read image file [${image.mimeType}].`, ...notes].join(" ") },
 	];
@@ -204,19 +203,18 @@ async function readImage(
 	return { output: [block], structuredOutput: block, diagnostics };
 }
 
-/** What the conversation's model takes: whether images, and within which limits. */
-type ImageModel = { readonly vision: boolean; readonly limits: ImageLimits };
+/** The image limits of the conversation's model. */
+type ImageModel = { readonly limits: ImageLimits };
 
 /**
- * The conversation model's image input: `DEFAULT_IMAGE_LIMITS` overridden by its `inputLimits.images.resize`. Without
- * a resolvable model, it counts as one that takes images within the defaults.
+ * The conversation model's image limits: `DEFAULT_IMAGE_LIMITS` overridden by its `inputLimits.images.resize`. Without
+ * a resolvable model, the defaults.
  */
 async function imageModel(api: ToolExecutionApi, context: Context): Promise<ImageModel> {
 	const ref = (await api.agent(context)).model;
 	const model = ref === undefined ? undefined : api.models.getModel(ref.provider, ref.modelId);
 	const resize = model?.inputLimits?.images?.resize;
 	return {
-		vision: model?.input.includes("image") ?? true,
 		limits: {
 			maxWidth: resize?.maxWidth ?? DEFAULT_IMAGE_LIMITS.maxWidth,
 			maxHeight: resize?.maxHeight ?? DEFAULT_IMAGE_LIMITS.maxHeight,

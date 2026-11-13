@@ -256,12 +256,10 @@ describe("read of images, without an image processor", () => {
 		]);
 	});
 
-	it("says when the model sees a placeholder instead of the image", async () => {
+	it("keeps the image without a note about the current model's image support", async () => {
 		const result = await read("a.png", encode(4, 4, "png"), { input: ["text"] });
-		expect(result.output).toHaveLength(1);
-		expect(messages(result)).toEqual([
-			"Read image file [image/png]. The current model does not support images; it sees a placeholder instead.",
-		]);
+		expect(onlyImage(result).mimeType).toBe("image/png");
+		expect(messages(result)).toEqual(["Read image file [image/png]."]);
 	});
 
 	it("applies the model's image limits instead of the defaults", async () => {
