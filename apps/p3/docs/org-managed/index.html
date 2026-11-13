@@ -109,15 +109,18 @@ table{max-width:100%}
 </head>
 <body><div class="book">
 <section class="cover">
-  <div class="kicker">A design book · p3 · first edition · 2026-11-13</div>
+  <div class="kicker">A design book · p3 · second edition · 2026-11-13</div>
   <h1>Org-Managed<br>Pis</h1>
   <p class="subtitle">How Acme gives every member&#39;s Pi its plugins, MCP servers and models, and closes what it must, without a policy language</p>
-  <div class="cover-stats"><div class="stat"><b>1</b><span>write path for every setting, Settings.set</span></div><div class="stat"><b>2</b><span>locks a managed setting can have, default and locked</span></div><div class="stat"><b>5</b><span>gate states, from unmanaged to revoked</span></div><div class="stat"><b>1</b><span>kit change, plugin roots and admit</span></div></div>
+  <div class="cover-stats"><div class="stat"><b>1</b><span>write path for every setting, Settings.set</span></div><div class="stat"><b>2</b><span>locks a managed setting can have, default and locked</span></div><div class="stat"><b>5</b><span>gate states, from unmanaged to revoked</span></div><div class="stat"><b>8</b><span>traces from a click or a tool call to what Dana sees</span></div></div>
   <div class="cover-note"><p>The design the owner chose on 2026-11-13 (&quot;I&#39;m in favor of the Opus model ... it just needs to be flexible&quot;), written
 from the consultation <code>org-opus</code> and the good parts of <code>org-fable</code>, <code>org-astra</code> and <code>org-sol</code> (read-only notes in
 <code>/tmp</code>, not in the repo). Every Chord API used in the code was checked against <code>packages/chord/src</code> on origin/main
 <code>8f3f08561</code>; every p3 name is a proposal. Nothing is built: every code block is marked PROPOSED. Notes marked
-<em>review</em> are corrections to the consultation or points still open.</p>
+<em>review</em> are corrections to the consultation or points still open. The second edition adds, at the owner&#39;s request,
+chapter IV (Acme end to end: the admin&#39;s form, the full profile, the code of every file involved, eight traces) and
+chapter VI (locking down the machine: a signed install, a service user, tools as the member, execution control, a
+device-bound key).</p>
 </div>
 </section><div class="inner">
 <nav class="toc"><h2>Contents</h2><ol>
@@ -125,9 +128,11 @@ from the consultation <code>org-opus</code> and the good parts of <code>org-fabl
 <li><a href="#profile">I. What Acme Sets</a></li>
 <li><a href="#settings">II. Everything Is a Setting</a></li>
 <li><a href="#gate">III. Enrolled, Locked, Ready</a></li>
-<li><a href="#trust">IV. Guardrails and Walls</a></li>
-<li><a href="#failures">V. When Things Fail</a></li>
-<li><a href="#now">VI. What the Base Needs Now</a></li>
+<li><a href="#e2e">IV. Acme End to End</a></li>
+<li><a href="#trust">V. Guardrails and Walls</a></li>
+<li><a href="#lockdown">VI. Locking Down the Machine</a></li>
+<li><a href="#failures">VII. When Things Fail</a></li>
+<li><a href="#now">VIII. What the Base Needs Now</a></li>
 <li><a href="#what-it-cannot-do">What It Cannot Do</a></li>
 </ol></nav>
 
@@ -149,7 +154,7 @@ settings page; they declare them through one base mechanism. Acme&#39;s values f
 Dana&#39;s own values. For each setting it names, the layer either provides a default (Dana may change it, or add entries
 beside Acme&#39;s) or locks it (only Acme&#39;s value counts). &quot;Start with our MCP servers&quot; and &quot;no MCP servers except ours&quot; are
 the same data with a different lock.</p>
-<h3 id="eight-things-to-know">Eight things to know</h3>
+<h3 id="ten-things-to-know">Ten things to know</h3>
 <ol class="findings">
 <li><strong>An org profile is a list of setting values,</strong> each with a lock: <code>default</code> or <code>locked</code>. Plugins to install, MCP
 servers, model providers, sharing and peer audiences, company instructions: all are settings. There are no
@@ -171,6 +176,12 @@ Radius from the same profile.</li>
 <li><strong>The base must have one settings mechanism now,</strong> before any org exists: one write path, a <code>managed</code> error, base
 switches for sharing and peers, and a gate that is always <code>unmanaged</code>. Retrofitting a single write path later is the
 expensive part.</li>
+<li><strong>One mechanism covers every case Acme cares about.</strong> Adding an MCP server, editing Acme&#39;s Jira entry, installing a
+plugin, writing one, sharing outside Acme, a live removal, and a lock on Acme&#39;s own plugin&#39;s setting all end in
+<code>Settings.set</code>, <code>admit</code> or a setting a plugin follows. Chapter IV traces each one through the code.</li>
+<li><strong>On an Org Device the shell is moved out of reach.</strong> The Pi runs as a service under its own Unix user, from a
+   root-owned install; the agent&#39;s tools run as the member through <code>pi-env</code>; Radius serves org resources only to a Pi
+   that proves a device-bound key. Then a member&#39;s agent can no longer edit the Pi&#39;s files at all.</li>
 </ol>
 <h3 id="words-used-throughout">Words used throughout</h3>
 <p>A <strong>member</strong> is a person in an org, and the owner of one Pi. A <strong>setting</strong> is a named, typed piece of configuration a
@@ -181,7 +192,8 @@ entries). The <strong>user layer</strong> holds the member&#39;s own values; the
 to an org. The <strong>profile</strong> is the org&#39;s managed layer for one member&#39;s Pi, signed with the <strong>org key</strong>; the Pi keeps the
 last good one as its <strong>cache</strong>. The <strong>gate</strong> is the Pi&#39;s org state. <strong>Admit</strong> is the kit&#39;s check that decides at
 discovery which plugins load. A <strong>guardrail</strong> holds against the member&#39;s agent and well-behaved code; a <strong>wall</strong> holds
-even against a modified Pi, because Radius enforces it.</p>
+even against a modified Pi, because Radius enforces it. On a locked-down machine the Pi runs as a <strong>service user</strong> of its own, and the
+agent&#39;s tools run as the member through <strong><code>pi-env</code></strong>, the tool daemon of <code>packages/env</code>.</p>
 <div class="note"><b class="tag">What this supersedes</b><p>The decision &quot;Resource model direction&quot; (2026-11-08) planned one replaceable policy plugin that guards create, bring
 and add-member operations. It is dropped: an org restricts by locking settings. Company resources of the decision
 &quot;Instance resources&quot; (2026-11-13: a shared login, a team server) become org-managed entries of the setting that holds
@@ -205,7 +217,7 @@ company laptops) delivers it. Without the file, a Pi is personal and unmanaged, 
   <span class="tk-s">"name"</span>: <span class="tk-s">"Acme"</span>,
   <span class="tk-s">"server"</span>: <span class="tk-s">"https://radius.example.com/orgs/acme"</span>,
   <span class="tk-s">"orgKey"</span>: <span class="tk-s">"ed25519:MCowBQYDK2VwAyEAq4…"</span>,
-  <span class="tk-s">"pluginSources"</span>: [<span class="tk-s">"github.com/acme/"</span>]
+  <span class="tk-s">"pluginSources"</span>: [<span class="tk-s">"https://github.com/acme/"</span>]
 }</code></pre>
 <p>It holds no secrets. <code>orgKey</code> is the public key profiles are signed with. <code>pluginSources</code> limits where the org may push
 code from: a profile naming a plugin outside these prefixes is refused, even when signed. The path is fixed in the base
@@ -228,9 +240,9 @@ profile is per member.</p>
     <span class="tk-s">"maxOffline"</span>: <span class="tk-k">null</span>,
     <span class="tk-s">"settings"</span>: {
       <span class="tk-s">"p3.plugins"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: {
-        <span class="tk-s">"acme-tools"</span>:   { <span class="tk-s">"source"</span>: { <span class="tk-s">"git"</span>: <span class="tk-s">"github.com/acme/p3-tools"</span>, <span class="tk-s">"ref"</span>: <span class="tk-s">"v1.4.0"</span> },   <span class="tk-s">"hash"</span>: <span class="tk-s">"sha256-9c1e…"</span>, <span class="tk-s">"required"</span>: <span class="tk-k">true</span> },
-        <span class="tk-s">"acme-deploy"</span>:  { <span class="tk-s">"source"</span>: { <span class="tk-s">"git"</span>: <span class="tk-s">"github.com/acme/p3-deploy"</span>, <span class="tk-s">"ref"</span>: <span class="tk-s">"v0.9.2"</span> },  <span class="tk-s">"hash"</span>: <span class="tk-s">"sha256-41b0…"</span>, <span class="tk-s">"required"</span>: <span class="tk-k">true</span> },
-        <span class="tk-s">"acme-reviews"</span>: { <span class="tk-s">"source"</span>: { <span class="tk-s">"git"</span>: <span class="tk-s">"github.com/acme/p3-reviews"</span>, <span class="tk-s">"ref"</span>: <span class="tk-s">"v2.0.1"</span> }, <span class="tk-s">"hash"</span>: <span class="tk-s">"sha256-77de…"</span>, <span class="tk-s">"required"</span>: <span class="tk-k">false</span> }
+        <span class="tk-s">"acme-tools"</span>:   { <span class="tk-s">"source"</span>: { <span class="tk-s">"git"</span>: <span class="tk-s">"https://github.com/acme/p3-tools"</span>, <span class="tk-s">"ref"</span>: <span class="tk-s">"v1.4.0"</span> },   <span class="tk-s">"hash"</span>: <span class="tk-s">"sha256-9c1e…"</span>, <span class="tk-s">"required"</span>: <span class="tk-k">true</span> },
+        <span class="tk-s">"acme-deploy"</span>:  { <span class="tk-s">"source"</span>: { <span class="tk-s">"git"</span>: <span class="tk-s">"https://github.com/acme/p3-deploy"</span>, <span class="tk-s">"ref"</span>: <span class="tk-s">"v0.9.2"</span> },  <span class="tk-s">"hash"</span>: <span class="tk-s">"sha256-41b0…"</span>, <span class="tk-s">"required"</span>: <span class="tk-k">true</span> },
+        <span class="tk-s">"acme-reviews"</span>: { <span class="tk-s">"source"</span>: { <span class="tk-s">"git"</span>: <span class="tk-s">"https://github.com/acme/p3-reviews"</span>, <span class="tk-s">"ref"</span>: <span class="tk-s">"v2.0.1"</span> }, <span class="tk-s">"hash"</span>: <span class="tk-s">"sha256-77de…"</span>, <span class="tk-s">"required"</span>: <span class="tk-k">false</span> }
       } },
       <span class="tk-s">"p3.plugins.own"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: <span class="tk-k">false</span> },
       <span class="tk-s">"mcp.servers"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: {
@@ -314,31 +326,13 @@ plugin that keeps a private config file would escape any lock. So the base owns 
 setting once, the base stores the member&#39;s values, combines them with the org&#39;s, and every write goes through one
 method that knows about locks.</p>
 <h3 id="declaring-a-setting">Declaring a setting</h3>
-<p>A setting is a token in the contract file of the plugin that owns it, like a <code>defineState</code> token. The plugin
-contributes it to the registry <code>SettingKinds</code>, from which the settings page renders its forms.</p>
-<pre><code><span class="tk-c">// PROPOSED · @p3/app/v1/settings.ts (base contract file). Chord API: defineRegistry, keyedEntries, TableItem, Schema.</span>
-<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">SettingKind</span> = {
-	<span class="tk-k">readonly</span> name: string;
-	<span class="tk-k">readonly</span> schema: <span class="tk-t">Schema</span>;
-	<span class="tk-k">readonly</span> merge: <span class="tk-s">"value"</span> | <span class="tk-s">"entries"</span>;
-	<span class="tk-k">readonly</span> initial: <span class="tk-t">JsonValue</span>;
-};
-
-<span class="tk-c">/** Declares a setting; its plugin contributes it to `SettingKinds` and reads it with `setting(self, token)`. */</span>
-<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">defineSetting</span>&lt;S <span class="tk-k">extends</span> <span class="tk-t">Schema</span>&gt;(
-	name: string,
-	schema: S,
-	options: { <span class="tk-k">readonly</span> merge: <span class="tk-s">"value"</span> | <span class="tk-s">"entries"</span>; <span class="tk-k">readonly</span> initial: <span class="tk-t">Static</span>&lt;S&gt; },
-): <span class="tk-t">SettingKind</span> &amp; { <span class="tk-k">readonly</span> initial: <span class="tk-t">Static</span>&lt;S&gt; } {
-	<span class="tk-k">return</span> { name, schema, merge: options.merge, initial: options.initial };
-}
-
-<span class="tk-c">/** Every declared setting by name, with the plugin that contributed it (the first by plugin name wins a name). */</span>
-<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SettingKinds</span> = defineRegistry&lt;<span class="tk-k">readonly</span> <span class="tk-t">SettingKind</span>[], <span class="tk-t">ReadonlyMap</span>&lt;string, <span class="tk-t">TableItem</span>&lt;<span class="tk-t">SettingKind</span>&gt;&gt;&gt;(
-	<span class="tk-s">"p3.setting-kinds"</span>,
-	{ version: <span class="tk-n">1</span> },
-);</code></pre>
-<p>The base serves <code>SettingKinds</code> with <code>keyedEntries(table, (kinds) =&gt; Object.fromEntries(kinds.map((k) =&gt; [k.name, k])), report)</code>, which reports a name two plugins declare.</p>
+<p>A setting is a token in the contract file of the plugin that owns it, like a <code>defineState</code> token: a name, a schema, a
+merge kind and an initial value. The plugin contributes it to the registry <code>SettingKinds</code>, from which the settings page
+renders its forms and which the Pi reports to the org server so its admin form knows the setting.</p>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/plugins/mcp/contract.ts (full file in chapter IV)</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">McpServers</span> = <span class="tk-f">defineSetting</span>(<span class="tk-s">"mcp.servers"</span>, <span class="tk-f">map</span>(<span class="tk-t">McpServerConfig</span>), { merge: <span class="tk-s">"entries"</span>, initial: {} });</code></pre>
+<p><code>defineSetting</code>, <code>SettingKinds</code>, <code>Settings</code> and <code>setting()</code> are in <code>apps/p3/app/v1/settings.ts</code>, shown in full in
+chapter IV.</p>
 <h3 id="two-merge-kinds-two-locks">Two merge kinds, two locks</h3>
 <p><strong>Value</strong> settings hold one value: a boolean, a string, an object. <code>p3.sharing.audience</code> is a value setting.
 <strong>Entries</strong> settings hold a record of named entries: MCP servers by name, providers by name, plugins by name. The
@@ -379,60 +373,18 @@ entries are added beside the member&#39;s.</p>
 <code>revoked</code>), every setting reads its initial value; nothing from Dana&#39;s own configuration acts before Acme has spoken.</p>
 <h3 id="the-one-write-path">The one write path</h3>
 <p><code>Settings</code> is a local object with empty params on the server: one per Pi, persisted, the only writer of the user
-layer.</p>
-<pre><code><span class="tk-c">// PROPOSED · @p3/app/v1/settings.ts. Chord API: local, method, obj, str, arr, map, unknown, oneOf, union, nul.</span>
-<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Settings</span> = <span class="tk-f">local</span>(<span class="tk-s">"p3.settings"</span>, {
-	version: <span class="tk-n">1</span>,
-	params: {},
-	members: {
-		<span class="tk-c">/** Effective values by setting name. */</span>
-		effective: <span class="tk-f">map</span>(<span class="tk-k">unknown</span>()),
-		<span class="tk-c">/** The names the org manages, with their lock and the names of the org's entries: what the page marks. */</span>
-		managed: <span class="tk-f">map</span>(<span class="tk-f">obj</span>({ org: <span class="tk-f">str</span>(), lock: <span class="tk-f">oneOf</span>(<span class="tk-s">"default"</span>, <span class="tk-s">"locked"</span>), entries: <span class="tk-f">arr</span>(<span class="tk-f">str</span>()) })),
-		<span class="tk-c">/** Sets a value setting, or puts (`value`) or removes (`null`) one entry of an entries setting. */</span>
-		set: <span class="tk-f">method</span>(<span class="tk-f">union</span>([
-			<span class="tk-f">obj</span>({ name: <span class="tk-f">str</span>(), value: <span class="tk-k">unknown</span>() }),
-			<span class="tk-f">obj</span>({ name: <span class="tk-f">str</span>(), entry: <span class="tk-f">str</span>(), value: <span class="tk-f">union</span>([<span class="tk-k">unknown</span>(), <span class="tk-f">nul</span>()]) }),
-		])),
-	},
-});</code></pre>
-<pre><code><span class="tk-c">// PROPOSED · plugins/settings/server.ts (app root). Chord API: defineState (persist, checkpointWhen), StoreSelf.state,</span>
-<span class="tk-c">// self.registry, self.get, self.derive, reference members' .value, PluginError (data/errors.ts), handle.change.</span>
-<span class="tk-k">const</span> <span class="tk-t">UserLayer</span> = <span class="tk-f">defineState</span>(<span class="tk-s">"p3.settings.user"</span>, {
-	schema: <span class="tk-f">obj</span>({ values: <span class="tk-f">map</span>(<span class="tk-k">unknown</span>()) }),
-	version: <span class="tk-n">1</span>,
-	initial: () =&gt; ({ values: {} }),
-	persist: <span class="tk-k">true</span>,
-	checkpointWhen: () =&gt; <span class="tk-k">true</span>,
-});
-
-host.<span class="tk-f">serve</span>(<span class="tk-t">Settings</span>, (_params, self) =&gt; {
-	<span class="tk-k">const</span> user = self.<span class="tk-f">state</span>(<span class="tk-t">UserLayer</span>);
-	<span class="tk-k">const</span> kinds = self.<span class="tk-f">registry</span>(<span class="tk-t">SettingKinds</span>);
-	<span class="tk-k">const</span> gate = self.<span class="tk-f">get</span>(<span class="tk-t">OrgGate</span>, {}).gate;
-	<span class="tk-k">return</span> {
-		effective: self.<span class="tk-f">derive</span>([user, kinds, gate], ([u, k, g]) =&gt; <span class="tk-f">effectiveAll</span>(u.values, k, g)),
-		managed: self.<span class="tk-f">derive</span>([gate], ([g]) =&gt; <span class="tk-f">managedMarks</span>(g)),
-		set: <span class="tk-k">async</span> (args, ctx) =&gt; {
-			<span class="tk-c">// Followed state, read per call: a profile that arrived since the last call counts.</span>
-			<span class="tk-k">const</span> g = gate.value;
-			<span class="tk-k">if</span> (g.kind !== <span class="tk-s">"unmanaged"</span> &amp;&amp; g.kind !== <span class="tk-s">"ready"</span>) <span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">PluginError</span>(<span class="tk-s">"gated"</span>, <span class="tk-s">`Waiting for ${g.orgName}`</span>);
-			<span class="tk-k">const</span> kind = kinds.value.<span class="tk-f">get</span>(args.name)?.value;
-			<span class="tk-k">if</span> (kind === <span class="tk-k">undefined</span>) <span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">PluginError</span>(<span class="tk-s">"unknown_setting"</span>, <span class="tk-s">`No setting ${args.name}`</span>);
-			<span class="tk-k">const</span> managed = g.kind === <span class="tk-s">"ready"</span> ? g.profile.settings[args.name] : <span class="tk-k">undefined</span>;
-			<span class="tk-k">if</span> (managed !== <span class="tk-k">undefined</span> &amp;&amp; (managed.lock === <span class="tk-s">"locked"</span> || (<span class="tk-s">"entry"</span> <span class="tk-k">in</span> args &amp;&amp; args.entry <span class="tk-k">in</span> managed.value)))
-				<span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">PluginError</span>(<span class="tk-s">"managed"</span>, <span class="tk-s">`Managed by ${g.orgName}`</span>, { org: g.org, setting: args.name });
-			<span class="tk-c">// Trust boundary: the page's and the agent's input, checked against the declaring plugin's schema.</span>
-			<span class="tk-k">const</span> next = <span class="tk-s">"entry"</span> <span class="tk-k">in</span> args ? <span class="tk-f">withEntry</span>(user.value.values[args.name], args.entry, args.value) : args.value;
-			<span class="tk-f">validate</span>(kind.schema, next);
-			<span class="tk-k">await</span> user.<span class="tk-f">change</span>((draft) =&gt; { draft.values[args.name] = next; }, ctx);
-		},
-	};
-});</code></pre>
-<p><code>effectiveAll</code>, <code>managedMarks</code>, <code>withEntry</code> and <code>validate</code> are small pure helpers of the settings plugin: the table above,
-the page&#39;s marks, a record with one entry put or removed, and a pi-schema check. The error carries the code <code>managed</code>;
-pages and the terminal render it as &quot;Managed by Acme&quot;, and draw a lock beside every name in <code>managed</code>. Dana&#39;s agent
-gets the same error from its settings tool, which calls the same <code>set</code>.</p>
+layer. Its one method, <code>set</code>, takes either a whole value or one entry of an entries setting, and refuses in this order:</p>
+<ol>
+<li>the gate is closed: <code>gated</code>, &quot;Waiting for Acme&quot;;</li>
+<li>no loaded plugin declares the name: <code>unknown_setting</code>;</li>
+<li>the org locked the setting: <code>managed</code>, &quot;Managed by Acme: mcp.servers is locked&quot;;</li>
+<li>the write touches one of the org&#39;s entries: <code>managed</code>, &quot;Managed by Acme: the entry jira of mcp.servers&quot;;</li>
+<li>the value fails the declaring plugin&#39;s schema: <code>invalid_value</code>.</li>
+</ol>
+<p>Then it writes Dana&#39;s layer. The gate is read per call, not when the page was drawn, so a lock that arrived a second
+ago counts. Pages and the terminal render <code>managed</code> as &quot;Managed by Acme&quot; and draw a lock beside every name in the
+store&#39;s <code>managed</code> member; Dana&#39;s agent gets the same error from its tools, which call the same <code>set</code>. Chapter IV has the
+code (<code>apps/p3/plugins/settings/server.ts</code>) and traces both paths.</p>
 <div class="note"><b class="tag">Workers read settings through the server</b><p><code>Settings</code> is a server object. A session worker that needs a setting (the harness reading <code>prompt.instructions</code>)
 follows it through a server view, as other per-session server data is followed today; the worker never holds its own
 copy.</p>
@@ -440,25 +392,15 @@ copy.</p>
 <h3 id="what-a-plugin-author-writes">What a plugin author writes</h3>
 <p>The MCP plugin declares its servers as a setting, contributes it, and reconciles its connections with the effective
 value. It never names an org, a lock, a gate or a principal.</p>
-<pre><code><span class="tk-c">// PROPOSED · plugins/mcp: everything it writes for orgs is nothing. Chord API: defineFacet's (host, self),</span>
-<span class="tk-c">// FacetSelf.contribute, host.serve, self.on.</span>
-<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">McpServers</span> = <span class="tk-f">defineSetting</span>(<span class="tk-s">"mcp.servers"</span>, <span class="tk-f">map</span>(<span class="tk-t">McpServerConfig</span>), { merge: <span class="tk-s">"entries"</span>, initial: {} });
-
-<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((host, facet) =&gt; {
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/plugins/mcp/server.ts, shortened (full file in chapter IV)</span>
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>&lt;<span class="tk-t">P3Principal</span>&gt;((host, facet) =&gt; {
 	facet.<span class="tk-f">contribute</span>(<span class="tk-t">SettingKinds</span>, [<span class="tk-t">McpServers</span>]);
 	host.<span class="tk-f">serve</span>(<span class="tk-t">McpConnections</span>, (_params, self) =&gt; {
-		<span class="tk-k">const</span> servers = <span class="tk-f">setting</span>(self, <span class="tk-t">McpServers</span>);           <span class="tk-c">// Acme's entries, plus Dana's unless locked</span>
-		self.<span class="tk-f">on</span>(servers, ({ value }, ctx) =&gt; <span class="tk-f">reconcile</span>(value, ctx));   <span class="tk-c">// a server an update locks out disconnects now</span>
-		<span class="tk-k">return</span> { <span class="tk-c">/* … */</span> };
+		<span class="tk-k">const</span> servers = <span class="tk-f">setting</span>(self, <span class="tk-t">McpServers</span>);                     <span class="tk-c">// Acme's entries, plus Dana's unless locked</span>
+		self.<span class="tk-f">on</span>(servers, <span class="tk-k">async</span> ({ value }) =&gt; <span class="tk-f">reconcile</span>(value));       <span class="tk-c">// a server an update locks out disconnects now</span>
+		<span class="tk-k">return</span> { status, tools, call };
 	});
 });</code></pre>
-<pre><code><span class="tk-c">// PROPOSED · @p3/app/v1/settings.ts. Chord API: self.get, self.derive.</span>
-<span class="tk-c">/** A setting's effective value, for any server object. */</span>
-<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">setting</span>&lt;T <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span>&gt;(self: <span class="tk-t">Self</span>, token: { <span class="tk-k">readonly</span> name: string; <span class="tk-k">readonly</span> initial: T }): <span class="tk-t">Watchable</span>&lt;T&gt; {
-	<span class="tk-k">const</span> all = self.<span class="tk-f">get</span>(<span class="tk-t">Settings</span>, {}).effective;
-	<span class="tk-c">// Cast: `set` and the profile check validated the value against this token's schema.</span>
-	<span class="tk-k">return</span> self.<span class="tk-f">derive</span>([all], ([values]) =&gt; (values[token.name] ?? token.initial) <span class="tk-k">as</span> T);
-}</code></pre>
 <p>The <code>self.on</code> routine is needed for Dana&#39;s own edits anyway: when she removes a server on the settings page, it
 disconnects. An org update that locks a server out takes the same path. That is the whole point of the design: the
 plugin already follows its configuration, so following the org costs it nothing.</p>
@@ -559,9 +501,12 @@ reports the duplicate (<code>discover.ts</code>, <code>discoverPlugins</code>), 
 watcher saw files change (<code>plugins.ts</code>, <code>needsDiscovery</code>); a gate that turns <code>ready</code> changes no file, so the base
 says so before its Apply.</p>
 <pre><code><span class="tk-c">// PROPOSED · apps/p3/src/server.ts (base code). Chord API: startServer, App.host, Host.get, reference members' .value.</span>
-<span class="tk-k">const</span> start = <span class="tk-f">readGate</span>(ENROLLMENT_PATH, dataDir);       <span class="tk-c">// sync: enrollment, cache, signature, maxOffline</span>
+<span class="tk-k">const</span> start = <span class="tk-f">readStart</span>(ENROLLMENT_PATH, dataDir);      <span class="tk-c">// sync: enrollment, cache, signature, maxOffline, verified hashes</span>
 <span class="tk-k">let</span> held: <span class="tk-t">Reference</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">OrgGate</span>&gt; | <span class="tk-k">undefined</span>;
-<span class="tk-k">const</span> gate = () =&gt; held?.gate.value ?? start;           <span class="tk-c">// the start read until OrgGate is live</span>
+<span class="tk-k">let</span> plugins: <span class="tk-t">Reference</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">Plugins</span>&gt; | <span class="tk-k">undefined</span>;
+<span class="tk-k">const</span> gate = () =&gt; held?.gate.value ?? start.gate;      <span class="tk-c">// the start read until OrgGate is live</span>
+<span class="tk-c">// What `admits` needs: the gate, the verified org plugins, the effective `p3.plugins.own` (chapter IV, admit.ts).</span>
+<span class="tk-k">const</span> admitState = () =&gt; ({ gate: <span class="tk-f">gate</span>(), verified: plugins?.verified.value ?? start.verified, ownPlugins: <span class="tk-f">own</span>() });
 
 <span class="tk-k">const</span> app = <span class="tk-k">await</span> <span class="tk-f">startServer</span>&lt;<span class="tk-t">P3Principal</span>&gt;({
 	name: <span class="tk-s">"p3"</span>,
@@ -570,11 +515,13 @@ says so before its Apply.</p>
 	workers: [{ ...sessionKind, authorize: (principal, address) =&gt; <span class="tk-f">isOpen</span>(<span class="tk-f">gate</span>()) &amp;&amp; <span class="tk-f">mayUse</span>(principal, address) }],
 	plugins: {
 		roots: [<span class="tk-f">orgRoot</span>(dataDir), <span class="tk-f">memberRoot</span>(dataDir)],
-		admit: (plugin) =&gt; <span class="tk-f">admits</span>(<span class="tk-f">gate</span>(), plugin),
+		admit: (plugin) =&gt; <span class="tk-f">admits</span>(<span class="tk-f">admitState</span>(), plugin, roots),
 	},
 }, context);
-held = <span class="tk-k">await</span> app.host.<span class="tk-f">get</span>(<span class="tk-t">OrgGate</span>, {}, context);</code></pre>
-<p><code>admits</code> is four lines. The app root always loads. Nothing else loads while the gate is locked. In the org root, a
+held = <span class="tk-k">await</span> app.host.<span class="tk-f">get</span>(<span class="tk-t">OrgGate</span>, {}, context);
+plugins = <span class="tk-k">await</span> app.host.<span class="tk-f">get</span>(<span class="tk-t">Plugins</span>, {}, context);</code></pre>
+<p><code>own()</code> reads the effective <code>p3.plugins.own</code>: from the cached profile before the host is up, from <code>Settings</code> after.
+<code>admits</code> (<code>apps/p3/src/admit.ts</code>, in chapter IV) is a few lines. The app root always loads. Nothing else loads while the gate is locked. In the org root, a
 plugin loads when its name is an org entry of <code>p3.plugins</code> and its tree matched its hash. In the member root, a
 plugin loads when the Pi is unmanaged, or when the effective <code>p3.plugins.own</code> is <code>true</code>.</p>
 <p><code>p3.plugins.own</code> is how &quot;no agent-written plugins&quot; becomes enforceable: not by tracking who wrote a file, which no
@@ -585,22 +532,25 @@ again.</p>
 <p><code>OrgGate</code> owns the connection to the org server as a native, follows it, and runs installs and Apply in a routine.</p>
 <pre><code><span class="tk-c">// PROPOSED · plugins/org/server.ts (app root). Chord API: local, self.open, self.follow, self.get, self.derive,</span>
 <span class="tk-c">// self.on. `OrgClient` (base code) reads the enrollment file and the cache, follows the server with backoff, checks</span>
-<span class="tk-c">// profiles, and writes the cache by atomic rename; `PluginManager` is base inventory #14 (install, apply).</span>
+<span class="tk-c">// profiles, and writes the cache by atomic rename; `Plugins` is the plugin service of chapter IV.</span>
 host.<span class="tk-f">serve</span>(<span class="tk-t">OrgGate</span>, (_params, self) =&gt; {
 	<span class="tk-k">const</span> client = self.<span class="tk-f">open</span>((ctx) =&gt; <span class="tk-f">openOrgClient</span>(ctx), (c) =&gt; c.<span class="tk-f">close</span>());
 	<span class="tk-c">// { enrollment, cached, offered, revoked, live, now }: the client's observer, attached once it opened.</span>
 	<span class="tk-k">const</span> org = self.<span class="tk-f">follow</span>((observer, ctx) =&gt; client.value.<span class="tk-f">attach</span>(observer, ctx));
-	<span class="tk-k">const</span> plugins = self.<span class="tk-f">get</span>(<span class="tk-t">PluginManager</span>, {});
+	<span class="tk-k">const</span> plugins = self.<span class="tk-f">get</span>(<span class="tk-t">Plugins</span>, {});
 	<span class="tk-k">const</span> offered = self.<span class="tk-f">derive</span>([org], ([o]) =&gt; o.offered);   <span class="tk-c">// a checked profile newer than the cache, or null</span>
 	self.<span class="tk-f">on</span>(offered, <span class="tk-k">async</span> ({ value }, ctx) =&gt; {
 		<span class="tk-k">if</span> (value === <span class="tk-k">null</span>) <span class="tk-k">return</span>;
 		<span class="tk-k">const</span> first = org.value.cached === <span class="tk-k">null</span>;
 		<span class="tk-c">// First sync: required plugins install before anything opens; a throw leaves the gate pending.</span>
-		<span class="tk-k">if</span> (first) <span class="tk-k">await</span> plugins.<span class="tk-f">reconcile</span>(<span class="tk-f">orgPlugins</span>(value), ctx);
+		<span class="tk-k">if</span> (first) {
+			<span class="tk-k">const</span> failed = <span class="tk-k">await</span> plugins.<span class="tk-f">reconcile</span>(<span class="tk-f">orgPlugins</span>(value), ctx);
+			<span class="tk-k">if</span> (failed.length &gt; <span class="tk-n">0</span>) <span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">PluginError</span>(<span class="tk-s">"required_failed"</span>, failed.<span class="tk-f">map</span>((f) =&gt; <span class="tk-s">`${f.name}: ${f.error}`</span>).<span class="tk-f">join</span>(<span class="tk-s">"; "</span>));
+		}
 		<span class="tk-k">await</span> client.value.<span class="tk-f">commit</span>(value, ctx);                  <span class="tk-c">// the cache is the managed layer: settings apply now</span>
 		<span class="tk-c">// Updates: settings first, plugins when installed; failures are reported and retried, never thrown.</span>
 		<span class="tk-k">if</span> (!first) <span class="tk-k">await</span> plugins.<span class="tk-f">reconcile</span>(<span class="tk-f">orgPlugins</span>(value), ctx);
-		<span class="tk-k">await</span> plugins.<span class="tk-f">apply</span>(ctx);                               <span class="tk-c">// readmit, then the kit's applyChanges</span>
+		<span class="tk-k">await</span> plugins.<span class="tk-f">apply</span>(<span class="tk-k">null</span>, ctx);                         <span class="tk-c">// recheck hashes, readmit, the kit's applyChanges</span>
 	});
 	<span class="tk-k">return</span> { gate: self.<span class="tk-f">derive</span>([org], ([o]) =&gt; <span class="tk-f">gateOf</span>(o)) };
 });</code></pre>
@@ -609,16 +559,1253 @@ is the first profile, and the cache is written only after <code>reconcile</code>
 routine throws, the client offers the profile again after its backoff.</p>
 </section>
 
-<section class="chapter" id="trust"><header class="opener"><div class="numeral">IV</div><h2>Guardrails and Walls</h2><p class="lede">Who this stops, who it does not, and what Radius enforces whatever the Pi does.</p></header>
+<section class="chapter" id="e2e"><header class="opener"><div class="numeral">IV</div><h2>Acme End to End</h2><p class="lede">What Acme&#39;s admin types into Radius, the files that come out of it, the code they pass through, and eight traces from a click or a tool call to what Dana and her agent see.</p></header>
+<p class="dropcap">The chapters so far describe the mechanism. This one shows all of it at once, for one org: what the admin fills in,
+the two documents that result, every file of p3 that takes part, and what happens, line by line, in the eight cases
+an org cares about. Every code block is PROPOSED and names its path as it would be in <code>apps/p3</code>; every Chord call in it
+exists on origin/main (checked again for this edition: <code>local</code>, <code>remote</code>, <code>hostKind</code>, <code>method</code>, <code>defineState</code> with
+<code>persist</code> and <code>checkpointWhen</code>, <code>defineRegistry</code>, <code>keyedEntries</code>, <code>StoreSelf.state</code>, <code>self.registry</code>, <code>self.get</code>,
+<code>self.derive</code>, <code>self.on</code>, <code>self.onLive</code>, <code>self.open</code>, <code>self.follow</code>, <code>self.writable</code>, <code>self.contribute</code>, <code>PluginError</code>,
+<code>forbidden</code>,
+<code>useHold</code>, <code>useWatch</code>). Names from pi&#39;s other packages are real too: Durable&#39;s <code>defineTool</code> and its
+<code>ToolExecutionResult</code>, pi-mcp&#39;s <code>McpClient</code>, <code>StreamableHttpTransport</code>, <code>createMcpToolName</code>, <code>toLlmContent</code>,
+pi-schema&#39;s <code>compile</code>.</p>
+<h3 id="what-the-admin-fills-in">What the admin fills in</h3>
+<p>Acme&#39;s admin opens the org&#39;s page in Radius. Each field becomes one place in the profile:</p>
+<table>
+<thead>
+<tr>
+<th>Section</th>
+<th>Field</th>
+<th>Acme&#39;s value</th>
+<th>Becomes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Org</td>
+<td>Name, id</td>
+<td>Acme, <code>acme</code></td>
+<td><code>orgName</code>, <code>org</code></td>
+</tr>
+<tr>
+<td>Org</td>
+<td>Signing key</td>
+<td><code>acme-2026-11</code> (see Open Questions)</td>
+<td><code>signature.key</code></td>
+</tr>
+<tr>
+<td>Org</td>
+<td>Plugin sources</td>
+<td><code>github.com/acme/</code></td>
+<td><code>pluginSources</code> of the enrollment file</td>
+</tr>
+<tr>
+<td>Assignment</td>
+<td>Profile per group</td>
+<td>everyone in <code>acme-staff</code></td>
+<td>one profile per member and Pi</td>
+</tr>
+<tr>
+<td>Plugins</td>
+<td>Name, source (git URL and ref, or npm name and version), Required or Allowed</td>
+<td><code>acme-tools</code> and <code>acme-deploy</code> required, <code>acme-reviews</code> allowed</td>
+<td><code>p3.plugins</code> entries; Radius fetches each source and computes its <code>hash</code> on save</td>
+</tr>
+<tr>
+<td>Plugins</td>
+<td>Members may add or write plugins</td>
+<td>off</td>
+<td><code>p3.plugins</code> locked, <code>p3.plugins.own</code> locked <code>false</code></td>
+</tr>
+<tr>
+<td>MCP servers</td>
+<td>Name, URL, credential (a Radius connection), &quot;only these servers&quot;</td>
+<td>Jira, Linear; only these</td>
+<td><code>mcp.servers</code> entries, locked</td>
+</tr>
+<tr>
+<td>Models</td>
+<td>Providers, &quot;only these&quot;</td>
+<td>Radius gateway; only this</td>
+<td><code>models.providers</code> entries, locked</td>
+</tr>
+<tr>
+<td>Sharing</td>
+<td>Sessions may be shared with: anyone, members of Acme, nobody; locked</td>
+<td>members of Acme; locked</td>
+<td><code>p3.sharing.audience</code></td>
+</tr>
+<tr>
+<td>Peers</td>
+<td>Pis this Pi may connect to: any, Acme&#39;s, none; locked</td>
+<td>Acme&#39;s; locked</td>
+<td><code>p3.peers.audience</code></td>
+</tr>
+<tr>
+<td>Instructions</td>
+<td>Name, text, members may add their own</td>
+<td><code>acme</code>; yes</td>
+<td><code>prompt.instructions</code> entries, default</td>
+</tr>
+<tr>
+<td>Offline</td>
+<td>Lock a Pi after this many days without Radius</td>
+<td>off</td>
+<td><code>maxOffline</code></td>
+</tr>
+<tr>
+<td>Other settings</td>
+<td>Setting name, value, lock</td>
+<td><code>deploy.targets</code>: staging and production, locked</td>
+<td><code>settings[&quot;deploy.targets&quot;]</code></td>
+</tr>
+</tbody></table>
+<p>The last row is what makes the design flexible: any setting any approved plugin declares can be managed, not a fixed
+list of switches. Radius learns the names and schemas from the Pis: after each sync a Pi reports the <code>SettingKinds</code> of
+its loaded plugins (name, merge kind, JSON schema), and the form for <code>deploy.targets</code> is generated from that schema and
+checked against it on save.</p>
+<h3 id="the-profile-radius-signs">The profile Radius signs</h3>
+<p>This is Dana&#39;s profile, complete. Hashes and the key are shortened; nothing else is left out.</p>
+<pre><code><span class="tk-c">// PROPOSED · served by Radius at GET /orgs/acme/pis/pi_7f3a/profile</span>
+{
+  <span class="tk-s">"payload"</span>: {
+    <span class="tk-s">"org"</span>: <span class="tk-s">"acme"</span>,
+    <span class="tk-s">"orgName"</span>: <span class="tk-s">"Acme"</span>,
+    <span class="tk-s">"member"</span>: <span class="tk-s">"dana@acme.com"</span>,
+    <span class="tk-s">"pi"</span>: <span class="tk-s">"pi_7f3a"</span>,
+    <span class="tk-s">"deviceKey"</span>: <span class="tk-s">"p256:BHk2…"</span>,
+    <span class="tk-s">"revision"</span>: <span class="tk-n">42</span>,
+    <span class="tk-s">"issuedAt"</span>: <span class="tk-s">"2026-12-18T09:00:00Z"</span>,
+    <span class="tk-s">"maxOffline"</span>: <span class="tk-k">null</span>,
+    <span class="tk-s">"settings"</span>: {
+      <span class="tk-s">"p3.plugins"</span>: {
+        <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>,
+        <span class="tk-s">"value"</span>: {
+          <span class="tk-s">"acme-tools"</span>: {
+            <span class="tk-s">"source"</span>: { <span class="tk-s">"git"</span>: <span class="tk-s">"https://github.com/acme/p3-tools"</span>, <span class="tk-s">"ref"</span>: <span class="tk-s">"v1.4.0"</span> },
+            <span class="tk-s">"hash"</span>: <span class="tk-s">"sha256-9c1e…"</span>,
+            <span class="tk-s">"required"</span>: <span class="tk-k">true</span>
+          },
+          <span class="tk-s">"acme-deploy"</span>: {
+            <span class="tk-s">"source"</span>: { <span class="tk-s">"git"</span>: <span class="tk-s">"https://github.com/acme/p3-deploy"</span>, <span class="tk-s">"ref"</span>: <span class="tk-s">"v0.9.2"</span> },
+            <span class="tk-s">"hash"</span>: <span class="tk-s">"sha256-41b0…"</span>,
+            <span class="tk-s">"required"</span>: <span class="tk-k">true</span>
+          },
+          <span class="tk-s">"acme-reviews"</span>: {
+            <span class="tk-s">"source"</span>: { <span class="tk-s">"git"</span>: <span class="tk-s">"https://github.com/acme/p3-reviews"</span>, <span class="tk-s">"ref"</span>: <span class="tk-s">"v2.0.1"</span> },
+            <span class="tk-s">"hash"</span>: <span class="tk-s">"sha256-77de…"</span>,
+            <span class="tk-s">"required"</span>: <span class="tk-k">false</span>
+          }
+        }
+      },
+      <span class="tk-s">"p3.plugins.own"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: <span class="tk-k">false</span> },
+      <span class="tk-s">"mcp.servers"</span>: {
+        <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>,
+        <span class="tk-s">"value"</span>: {
+          <span class="tk-s">"jira"</span>: { <span class="tk-s">"url"</span>: <span class="tk-s">"https://mcp.atlassian.com/v1/sse"</span>, <span class="tk-s">"auth"</span>: { <span class="tk-s">"radius"</span>: <span class="tk-s">"jira"</span> } },
+          <span class="tk-s">"linear"</span>: { <span class="tk-s">"url"</span>: <span class="tk-s">"https://mcp.linear.app/mcp"</span>, <span class="tk-s">"auth"</span>: { <span class="tk-s">"radius"</span>: <span class="tk-s">"linear"</span> } }
+        }
+      },
+      <span class="tk-s">"models.providers"</span>: {
+        <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>,
+        <span class="tk-s">"value"</span>: {
+          <span class="tk-s">"radius"</span>: { <span class="tk-s">"kind"</span>: <span class="tk-s">"radius"</span>, <span class="tk-s">"auth"</span>: { <span class="tk-s">"radius"</span>: <span class="tk-s">"models"</span> } }
+        }
+      },
+      <span class="tk-s">"p3.sharing.audience"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: <span class="tk-s">"org"</span> },
+      <span class="tk-s">"p3.peers.audience"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: <span class="tk-s">"org"</span> },
+      <span class="tk-s">"prompt.instructions"</span>: {
+        <span class="tk-s">"lock"</span>: <span class="tk-s">"default"</span>,
+        <span class="tk-s">"value"</span>: {
+          <span class="tk-s">"acme"</span>: {
+            <span class="tk-s">"text"</span>: <span class="tk-s">"Acme code is reviewed on GitHub before merge. Never paste customer data into issues or chats."</span>
+          }
+        }
+      },
+      <span class="tk-s">"deploy.targets"</span>: {
+        <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>,
+        <span class="tk-s">"value"</span>: {
+          <span class="tk-s">"staging"</span>: { <span class="tk-s">"host"</span>: <span class="tk-s">"deploy.staging.acme.internal"</span>, <span class="tk-s">"branch"</span>: <span class="tk-s">"main"</span>, <span class="tk-s">"approval"</span>: <span class="tk-s">"none"</span> },
+          <span class="tk-s">"production"</span>: { <span class="tk-s">"host"</span>: <span class="tk-s">"deploy.acme.internal"</span>, <span class="tk-s">"branch"</span>: <span class="tk-s">"release"</span>, <span class="tk-s">"approval"</span>: <span class="tk-s">"review"</span> }
+        }
+      }
+    }
+  },
+  <span class="tk-s">"signature"</span>: { <span class="tk-s">"alg"</span>: <span class="tk-s">"ed25519"</span>, <span class="tk-s">"key"</span>: <span class="tk-s">"acme-2026-11"</span>, <span class="tk-s">"value"</span>: <span class="tk-s">"Zm9vYmFy…"</span> }
+}</code></pre>
+<p>The signature covers the canonical JSON of <code>payload</code> (keys sorted, no whitespace). <code>deviceKey</code> is the public half of
+the key Dana&#39;s Pi made at enrollment (chapter VI); Radius serves the profile, and every org resource, only to a Pi that
+proves it holds the private half.</p>
+<h3 id="the-enrollment-file">The enrollment file</h3>
+<p>The same as in chapter I, complete:</p>
+<pre><code><span class="tk-c">// PROPOSED · /etc/p3/enrollment.json, owner root, mode 0644, parent directories root-owned</span>
+{
+  <span class="tk-s">"org"</span>: <span class="tk-s">"acme"</span>,
+  <span class="tk-s">"name"</span>: <span class="tk-s">"Acme"</span>,
+  <span class="tk-s">"server"</span>: <span class="tk-s">"https://radius.example.com/orgs/acme"</span>,
+  <span class="tk-s">"orgKey"</span>: <span class="tk-s">"ed25519:MCowBQYDK2VwAyEAq4…"</span>,
+  <span class="tk-s">"pluginSources"</span>: [<span class="tk-s">"https://github.com/acme/"</span>]
+}</code></pre>
+<h3 id="the-files-that-take-part">The files that take part</h3>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>What it holds</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>apps/p3/app/v1/hosts.ts</code></td>
+<td>the host kinds: <code>Server</code>, <code>Session</code></td>
+</tr>
+<tr>
+<td><code>apps/p3/app/v1/settings.ts</code></td>
+<td><code>defineSetting</code>, <code>SettingKinds</code>, <code>Settings</code>, <code>SettingsView</code>, <code>setting()</code>, <code>refusedBy()</code></td>
+</tr>
+<tr>
+<td><code>apps/p3/plugins/settings/server.ts</code></td>
+<td>the registry&#39;s provider, the store, the view</td>
+</tr>
+<tr>
+<td><code>apps/p3/app/v1/org.ts</code></td>
+<td><code>OrgGate</code> and the <code>Gate</code> and <code>Profile</code> schemas</td>
+</tr>
+<tr>
+<td><code>apps/p3/plugins/org/server.ts</code></td>
+<td><code>OrgGate</code> (chapter III)</td>
+</tr>
+<tr>
+<td><code>apps/p3/app/v1/plugins.ts</code></td>
+<td><code>PluginEntries</code>, <code>OwnPlugins</code>, <code>Plugins</code>, <code>PluginsView</code></td>
+</tr>
+<tr>
+<td><code>apps/p3/plugins/plugins/server.ts</code></td>
+<td>the only path that installs, writes and applies plugins</td>
+</tr>
+<tr>
+<td><code>apps/p3/src/org/roots.ts</code></td>
+<td>the org root and the member root under the data directory; the verified-hashes file</td>
+</tr>
+<tr>
+<td><code>apps/p3/src/org/tree-hash.ts</code></td>
+<td>the plugin tree hash (Radius runs the same function)</td>
+</tr>
+<tr>
+<td><code>apps/p3/src/admit.ts</code></td>
+<td><code>admits</code>, the function the kit asks at every discovery</td>
+</tr>
+<tr>
+<td><code>apps/p3/src/server.ts</code></td>
+<td>the start script (chapter III)</td>
+</tr>
+<tr>
+<td><code>apps/p3/plugins/harness/refusals.ts</code></td>
+<td>how any refusal becomes a tool result for the model</td>
+</tr>
+<tr>
+<td><code>apps/p3/plugins/mcp/contract.ts</code>, <code>server.ts</code>, <code>worker.ts</code>, <code>web.tsx</code></td>
+<td>the MCP plugin</td>
+</tr>
+<tr>
+<td><code>apps/p3/plugins/sharing/contract.ts</code>, <code>server.ts</code></td>
+<td>sharing</td>
+</tr>
+<tr>
+<td><code>github.com/acme/p3-deploy</code>: <code>contract.ts</code>, <code>server.ts</code></td>
+<td>Acme&#39;s own deploy plugin</td>
+</tr>
+</tbody></table>
+<h3 id="settings-the-contract">Settings: the contract</h3>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/app/v1/settings.ts</span>
+<span class="tk-c">// The settings contract (`@p3/app/v1/settings`): how plugins declare settings, the registry of declared settings,</span>
+<span class="tk-c">// the server's store, the view pages and session agents use, and `setting()` for server objects.</span>
+
+<span class="tk-k">import</span> {
+	arr, defineRegistry, lit, local, map, method, obj, oneOf, <span class="tk-t">PluginError</span>, remote, <span class="tk-k">type</span> <span class="tk-t">Schema</span>, <span class="tk-k">type</span> <span class="tk-t">Self</span>, <span class="tk-k">type</span> <span class="tk-t">Static</span>,
+	str, <span class="tk-k">type</span> <span class="tk-t">TableItem</span>, union, <span class="tk-k">unknown</span>, <span class="tk-k">type</span> <span class="tk-t">Watchable</span>,
+} <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord"</span>;
+<span class="tk-k">import</span> <span class="tk-k">type</span> { <span class="tk-t">JsonValue</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord/json"</span>;
+<span class="tk-k">import</span> { compile, <span class="tk-k">type</span> <span class="tk-t">Validator</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/pi-schema"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">Server</span> } <span class="tk-k">from</span> <span class="tk-s">"./hosts.ts"</span>;
+
+<span class="tk-c">/** A declared setting as the registry and the store see it. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">SettingKind</span> = {
+	<span class="tk-k">readonly</span> name: string;
+	<span class="tk-k">readonly</span> merge: <span class="tk-s">"value"</span> | <span class="tk-s">"entries"</span>;
+	<span class="tk-k">readonly</span> initial: <span class="tk-t">JsonValue</span>;
+	<span class="tk-c">/** Reported to the org server, which renders its form from it. */</span>
+	<span class="tk-k">readonly</span> schema: <span class="tk-t">Schema</span>;
+	<span class="tk-c">/** Checks a whole value (an entries setting: the whole record); compiled once, at declaration. */</span>
+	<span class="tk-k">readonly</span> validator: <span class="tk-t">Validator</span>;
+};
+
+<span class="tk-c">/** A declared setting with its value type. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Setting</span>&lt;T <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span>&gt; = <span class="tk-t">SettingKind</span> &amp; { <span class="tk-k">readonly</span> initial: T };
+
+<span class="tk-c">/** Declares a setting; its plugin contributes it to `SettingKinds` and reads it with `setting(self, token)`. */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">defineSetting</span>&lt;S <span class="tk-k">extends</span> <span class="tk-t">Schema</span>&gt;(
+	name: string,
+	schema: S,
+	options: { <span class="tk-k">readonly</span> merge: <span class="tk-s">"value"</span> | <span class="tk-s">"entries"</span>; <span class="tk-k">readonly</span> initial: <span class="tk-t">Static</span>&lt;S&gt; &amp; <span class="tk-t">JsonValue</span> },
+): <span class="tk-t">Setting</span>&lt;<span class="tk-t">Static</span>&lt;S&gt; &amp; <span class="tk-t">JsonValue</span>&gt; {
+	<span class="tk-k">return</span> { name, merge: options.merge, initial: options.initial, schema, validator: <span class="tk-f">compile</span>(schema) };
+}
+
+<span class="tk-c">/** Every declared setting by name, with its plugin; a name declared twice is reported, the first by plugin name kept. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SettingKinds</span> = defineRegistry&lt;<span class="tk-k">readonly</span> <span class="tk-t">SettingKind</span>[], <span class="tk-t">ReadonlyMap</span>&lt;string, <span class="tk-t">TableItem</span>&lt;<span class="tk-t">SettingKind</span>&gt;&gt;&gt;(
+	<span class="tk-s">"p3.setting-kinds"</span>,
+	{ version: <span class="tk-n">1</span> },
+);
+
+<span class="tk-c">/** How the org manages one setting: what pages draw and the agent is told. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ManagedMark</span> = <span class="tk-f">obj</span>({ orgName: <span class="tk-f">str</span>(), lock: <span class="tk-f">oneOf</span>(<span class="tk-s">"default"</span>, <span class="tk-s">"locked"</span>), entries: <span class="tk-f">arr</span>(<span class="tk-f">str</span>()) });
+
+<span class="tk-c">/** One write: a value setting's whole value, or one entry of an entries setting (`null` removes it). */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SettingWrite</span> = <span class="tk-f">union</span>([
+	<span class="tk-f">obj</span>({ kind: <span class="tk-f">lit</span>(<span class="tk-s">"value"</span>), name: <span class="tk-f">str</span>(), value: <span class="tk-k">unknown</span>() }),
+	<span class="tk-f">obj</span>({ kind: <span class="tk-f">lit</span>(<span class="tk-s">"entry"</span>), name: <span class="tk-f">str</span>(), entry: <span class="tk-f">str</span>(), value: <span class="tk-k">unknown</span>() }),
+]);
+
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">SettingWrite</span> = <span class="tk-t">Static</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">SettingWrite</span>&gt;;
+
+<span class="tk-c">/** The settings store, on the server: the only writer of the member's values (server objects only). */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Settings</span> = <span class="tk-f">local</span>(<span class="tk-s">"p3.settings"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	members: {
+		<span class="tk-c">/** Effective values by setting name. */</span>
+		effective: <span class="tk-f">map</span>(<span class="tk-k">unknown</span>()),
+		<span class="tk-c">/** The settings the org manages. */</span>
+		managed: <span class="tk-f">map</span>(<span class="tk-t">ManagedMark</span>),
+		set: <span class="tk-f">method</span>(<span class="tk-t">SettingWrite</span>),
+	},
+});
+
+<span class="tk-c">/** The store for the owner's page and terminal and the owner's session agents. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SettingsView</span> = <span class="tk-f">remote</span>(<span class="tk-s">"p3.settings-view"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: {
+		main: {
+			state: { effective: <span class="tk-f">map</span>(<span class="tk-k">unknown</span>()), managed: <span class="tk-f">map</span>(<span class="tk-t">ManagedMark</span>) },
+			methods: { set: <span class="tk-f">method</span>(<span class="tk-t">SettingWrite</span>) },
+		},
+	},
+});
+
+<span class="tk-c">/** A setting's effective value, for any server object. */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">setting</span>&lt;T <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span>&gt;(self: <span class="tk-t">Self</span>, token: <span class="tk-t">Setting</span>&lt;T&gt;): <span class="tk-t">Watchable</span>&lt;T&gt; {
+	<span class="tk-k">const</span> all = self.<span class="tk-f">get</span>(<span class="tk-t">Settings</span>, {}).effective;
+	<span class="tk-c">// Cast: `set` and the profile check validated the value against this token's schema.</span>
+	<span class="tk-k">return</span> self.<span class="tk-f">derive</span>([all], ([values]) =&gt; (values[token.name] ?? token.initial) <span class="tk-k">as</span> T);
+}
+
+<span class="tk-c">/** The error a plugin throws when an effective setting forbids an action; pages and the harness say who manages it. */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">refusedBy</span>(token: <span class="tk-t">SettingKind</span>, message: string): <span class="tk-t">PluginError</span> {
+	<span class="tk-k">return</span> <span class="tk-k">new</span> <span class="tk-t">PluginError</span>(<span class="tk-s">"refused_by_setting"</span>, message, { setting: token.name });
+}</code></pre>
+<p><code>refusedBy</code> is the only thing a plugin may use that sounds like policy, and it says nothing about orgs: it names the
+setting that forbade the action. Whether that setting is Dana&#39;s own choice or Acme&#39;s lock is for the page and the
+harness to say, from <code>managed</code>.</p>
+<h3 id="settings-the-store">Settings: the store</h3>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/plugins/settings/server.ts (app root)</span>
+<span class="tk-c">// The registry of declared settings, the store of the member's values with the managed layer on top, and the view.</span>
+
+<span class="tk-k">import</span> { defineState, forbidden, keyedEntries, map, obj, <span class="tk-t">PluginError</span>, <span class="tk-k">unknown</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord"</span>;
+<span class="tk-k">import</span> <span class="tk-k">type</span> { <span class="tk-t">JsonValue</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord/json"</span>;
+<span class="tk-k">import</span> { defineFacet, <span class="tk-k">type</span> <span class="tk-t">P3Principal</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1"</span>;
+<span class="tk-k">import</span> { <span class="tk-k">type</span> <span class="tk-t">Gate</span>, <span class="tk-k">type</span> <span class="tk-t">ManagedSetting</span>, <span class="tk-t">OrgGate</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1/org"</span>;
+<span class="tk-k">import</span> { <span class="tk-k">type</span> <span class="tk-t">SettingKind</span>, <span class="tk-t">SettingKinds</span>, <span class="tk-t">Settings</span>, <span class="tk-t">SettingsView</span>, <span class="tk-k">type</span> <span class="tk-t">SettingWrite</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1/settings"</span>;
+
+<span class="tk-k">const</span> <span class="tk-t">UserLayer</span> = <span class="tk-f">defineState</span>(<span class="tk-s">"p3.settings.user"</span>, {
+	schema: <span class="tk-f">obj</span>({ values: <span class="tk-f">map</span>(<span class="tk-k">unknown</span>()) }),
+	version: <span class="tk-n">1</span>,
+	initial: () =&gt; ({ values: {} }),
+	persist: <span class="tk-k">true</span>,
+	checkpointWhen: () =&gt; <span class="tk-k">true</span>,
+});
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>&lt;<span class="tk-t">P3Principal</span>&gt;((host) =&gt; {
+	host.<span class="tk-f">serve</span>(<span class="tk-t">SettingKinds</span>, {
+		compose: (table, context) =&gt;
+			<span class="tk-f">keyedEntries</span>(table, (kinds) =&gt; <span class="tk-t">Object</span>.<span class="tk-f">fromEntries</span>(kinds.<span class="tk-f">map</span>((kind) =&gt; [kind.name, kind])), context.report),
+	});
+
+	host.<span class="tk-f">serve</span>(<span class="tk-t">Settings</span>, (_params, self) =&gt; {
+		<span class="tk-k">const</span> user = self.<span class="tk-f">state</span>(<span class="tk-t">UserLayer</span>);
+		<span class="tk-k">const</span> kinds = self.<span class="tk-f">registry</span>(<span class="tk-t">SettingKinds</span>);
+		<span class="tk-k">const</span> gate = self.<span class="tk-f">get</span>(<span class="tk-t">OrgGate</span>, {}).gate;
+		<span class="tk-k">return</span> {
+			effective: self.<span class="tk-f">derive</span>([user, kinds, gate], ([mine, declared, now]) =&gt; <span class="tk-f">effectiveAll</span>(mine.values, declared, now)),
+			managed: self.<span class="tk-f">derive</span>([gate], ([now]) =&gt; <span class="tk-f">managedMarks</span>(now)),
+			set: <span class="tk-k">async</span> (write, ctx) =&gt; {
+				<span class="tk-c">// Followed state, read per call: a profile that arrived since the page rendered counts.</span>
+				<span class="tk-k">const</span> kind = <span class="tk-f">writable</span>(write, kinds.value.<span class="tk-f">get</span>(write.name)?.value, gate.value);
+				<span class="tk-k">const</span> next = write.kind === <span class="tk-s">"value"</span> ? write.value : <span class="tk-f">withEntry</span>(user.value.values[write.name], write.entry, write.value);
+				<span class="tk-c">// Trust boundary: the page's and the agent's input, checked against the declaring plugin's schema.</span>
+				<span class="tk-k">const</span> checked = kind.validator.<span class="tk-f">validate</span>(next);
+				<span class="tk-k">if</span> (!checked.ok) <span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">PluginError</span>(<span class="tk-s">"invalid_value"</span>, <span class="tk-s">`Invalid value for ${write.name}`</span>, { errors: checked.errors });
+				<span class="tk-k">await</span> user.<span class="tk-f">change</span>((draft) =&gt; {
+					draft.values[write.name] = next;
+				}, ctx);
+			},
+		};
+	});
+
+	host.<span class="tk-f">serve</span>(<span class="tk-t">SettingsView</span>, (_params, principal, self) =&gt; {
+		<span class="tk-c">// The owner (page, terminal) and the owner's session workers; a guest never writes settings.</span>
+		<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"user"</span> &amp;&amp; principal.kind !== <span class="tk-s">"worker"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"Settings are the owner's"</span>);
+		<span class="tk-k">const</span> settings = self.<span class="tk-f">get</span>(<span class="tk-t">Settings</span>, {});
+		<span class="tk-k">return</span> {
+			variant: <span class="tk-s">"main"</span>,
+			members: { effective: settings.effective, managed: settings.managed, set: (write, ctx) =&gt; settings.<span class="tk-f">set</span>(write, ctx) },
+		};
+	});
+});
+
+<span class="tk-c">/** The declared setting `write` may change, or the refusal. */</span>
+<span class="tk-k">function</span> <span class="tk-f">writable</span>(write: <span class="tk-t">SettingWrite</span>, kind: <span class="tk-t">SettingKind</span> | <span class="tk-k">undefined</span>, gate: <span class="tk-t">Gate</span>): <span class="tk-t">SettingKind</span> {
+	<span class="tk-k">if</span> (gate.kind !== <span class="tk-s">"unmanaged"</span> &amp;&amp; gate.kind !== <span class="tk-s">"ready"</span>)
+		<span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">PluginError</span>(<span class="tk-s">"gated"</span>, <span class="tk-s">`Waiting for ${gate.orgName}`</span>, { setting: write.name });
+	<span class="tk-k">if</span> (kind === <span class="tk-k">undefined</span>) <span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">PluginError</span>(<span class="tk-s">"unknown_setting"</span>, <span class="tk-s">`No setting ${write.name}`</span>);
+	<span class="tk-k">const</span> managed = gate.kind === <span class="tk-s">"ready"</span> ? gate.profile.settings[write.name] : <span class="tk-k">undefined</span>;
+	<span class="tk-k">if</span> (managed === <span class="tk-k">undefined</span>) <span class="tk-k">return</span> kind;
+	<span class="tk-k">const</span> orgName = gate.profile.orgName;
+	<span class="tk-k">if</span> (managed.lock === <span class="tk-s">"locked"</span>)
+		<span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">PluginError</span>(<span class="tk-s">"managed"</span>, <span class="tk-s">`Managed by ${orgName}: ${write.name} is locked`</span>, { setting: write.name });
+	<span class="tk-k">if</span> (write.kind === <span class="tk-s">"entry"</span> &amp;&amp; kind.merge === <span class="tk-s">"entries"</span> &amp;&amp; <span class="tk-t">Object</span>.<span class="tk-f">hasOwn</span>(<span class="tk-f">managedEntries</span>(managed), write.entry))
+		<span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">PluginError</span>(<span class="tk-s">"managed"</span>, <span class="tk-s">`Managed by ${orgName}: the entry ${write.entry} of ${write.name}`</span>, {
+			setting: write.name,
+			entry: write.entry,
+		});
+	<span class="tk-k">return</span> kind;
+}
+
+<span class="tk-c">/** Every declared setting's effective value: the table in chapter II. */</span>
+<span class="tk-k">function</span> <span class="tk-f">effectiveAll</span>(
+	mine: <span class="tk-t">Readonly</span>&lt;<span class="tk-t">Record</span>&lt;string, <span class="tk-t">JsonValue</span>&gt;&gt;,
+	declared: <span class="tk-t">ReadonlyMap</span>&lt;string, { <span class="tk-k">readonly</span> value: <span class="tk-t">SettingKind</span> }&gt;,
+	gate: <span class="tk-t">Gate</span>,
+): <span class="tk-t">Record</span>&lt;string, <span class="tk-t">JsonValue</span>&gt; {
+	<span class="tk-k">const</span> open = gate.kind === <span class="tk-s">"unmanaged"</span> || gate.kind === <span class="tk-s">"ready"</span>;
+	<span class="tk-k">const</span> layer = gate.kind === <span class="tk-s">"ready"</span> ? gate.profile.settings : {};
+	<span class="tk-k">const</span> out: <span class="tk-t">Record</span>&lt;string, <span class="tk-t">JsonValue</span>&gt; = {};
+	<span class="tk-k">for</span> (<span class="tk-k">const</span> [name, { value: kind }] <span class="tk-k">of</span> declared) {
+		out[name] = open ? <span class="tk-f">effectiveOf</span>(kind, layer[name], mine[name]) : kind.initial;
+	}
+	<span class="tk-k">return</span> out;
+}
+
+<span class="tk-c">/** One setting's effective value from the org's entry (if any) and the member's value (if any). */</span>
+<span class="tk-k">function</span> <span class="tk-f">effectiveOf</span>(kind: <span class="tk-t">SettingKind</span>, managed: <span class="tk-t">ManagedSetting</span> | <span class="tk-k">undefined</span>, mine: <span class="tk-t">JsonValue</span> | <span class="tk-k">undefined</span>): <span class="tk-t">JsonValue</span> {
+	<span class="tk-k">if</span> (managed === <span class="tk-k">undefined</span>) <span class="tk-k">return</span> mine ?? kind.initial;
+	<span class="tk-c">// An org value that fails the plugin's schema: a lock reads as the initial value, a default as absent (reported at sync).</span>
+	<span class="tk-k">const</span> valid = kind.validator.<span class="tk-f">check</span>(managed.value);
+	<span class="tk-k">if</span> (managed.lock === <span class="tk-s">"locked"</span>) <span class="tk-k">return</span> valid ? managed.value : kind.initial;
+	<span class="tk-k">if</span> (!valid) <span class="tk-k">return</span> mine ?? kind.initial;
+	<span class="tk-k">if</span> (kind.merge === <span class="tk-s">"value"</span>) <span class="tk-k">return</span> mine ?? managed.value;
+	<span class="tk-c">// Cast: an entries setting's values are records (its schema is a `map`).</span>
+	<span class="tk-k">return</span> { ...((mine ?? {}) <span class="tk-k">as</span> <span class="tk-t">Record</span>&lt;string, <span class="tk-t">JsonValue</span>&gt;), ...(managed.value <span class="tk-k">as</span> <span class="tk-t">Record</span>&lt;string, <span class="tk-t">JsonValue</span>&gt;) };
+}</code></pre>
+<p><code>managedMarks</code>, <code>managedEntries</code> and <code>withEntry</code> are three-line helpers: the marks are <code>{ orgName, lock, entries: Object.keys(value) }</code> per managed setting, and <code>withEntry</code> copies the member&#39;s record with one entry put or deleted.
+The member&#39;s own entry named like an org entry stays stored and is hidden by the spread, so it comes back if Acme ever
+drops its entry.</p>
+<h3 id="the-org-contract">The org contract</h3>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/app/v1/org.ts</span>
+<span class="tk-c">// The gate's contract and schemas (`@p3/app/v1/org`): the org's managed settings as the profile carries them, and the</span>
+<span class="tk-c">// five states of the gate.</span>
+
+<span class="tk-k">import</span> { bool, lit, local, map, nul, num, obj, oneOf, <span class="tk-k">type</span> <span class="tk-t">Static</span>, str, union, <span class="tk-k">unknown</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord"</span>;
+
+<span class="tk-c">/** One managed setting in a profile. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ManagedSetting</span> = <span class="tk-f">obj</span>({ lock: <span class="tk-f">oneOf</span>(<span class="tk-s">"default"</span>, <span class="tk-s">"locked"</span>), value: <span class="tk-k">unknown</span>() });
+
+<span class="tk-c">/** A profile's payload, after the signature, the member, the Pi and the plugin sources were checked. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Profile</span> = <span class="tk-f">obj</span>({
+	org: <span class="tk-f">str</span>(),
+	orgName: <span class="tk-f">str</span>(),
+	member: <span class="tk-f">str</span>(),
+	pi: <span class="tk-f">str</span>(),
+	deviceKey: <span class="tk-f">str</span>(),
+	revision: <span class="tk-f">num</span>(),
+	issuedAt: <span class="tk-f">str</span>(),
+	maxOffline: <span class="tk-f">union</span>([<span class="tk-f">num</span>(), <span class="tk-f">nul</span>()]),
+	settings: <span class="tk-f">map</span>(<span class="tk-t">ManagedSetting</span>),
+});
+
+<span class="tk-c">/** The Pi's org state. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Gate</span> = <span class="tk-f">union</span>([
+	<span class="tk-f">obj</span>({ kind: <span class="tk-f">lit</span>(<span class="tk-s">"unmanaged"</span>) }),
+	<span class="tk-f">obj</span>({ kind: <span class="tk-f">lit</span>(<span class="tk-s">"pending"</span>), org: <span class="tk-f">str</span>(), orgName: <span class="tk-f">str</span>(), why: <span class="tk-f">str</span>() }),
+	<span class="tk-f">obj</span>({ kind: <span class="tk-f">lit</span>(<span class="tk-s">"ready"</span>), orgName: <span class="tk-f">str</span>(), profile: <span class="tk-t">Profile</span>, live: <span class="tk-f">bool</span>() }),
+	<span class="tk-f">obj</span>({ kind: <span class="tk-f">lit</span>(<span class="tk-s">"stale"</span>), orgName: <span class="tk-f">str</span>(), profile: <span class="tk-t">Profile</span> }),
+	<span class="tk-f">obj</span>({ kind: <span class="tk-f">lit</span>(<span class="tk-s">"revoked"</span>), org: <span class="tk-f">str</span>(), orgName: <span class="tk-f">str</span>() }),
+]);
+
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Gate</span> = <span class="tk-t">Static</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">Gate</span>&gt;;
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">ManagedSetting</span> = <span class="tk-t">Static</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">ManagedSetting</span>&gt;;
+
+<span class="tk-c">/** The Pi's org state, on the server. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">OrgGate</span> = <span class="tk-f">local</span>(<span class="tk-s">"p3.org-gate"</span>, { version: <span class="tk-n">1</span>, params: {}, members: { gate: <span class="tk-t">Gate</span> } });</code></pre>
+<h3 id="plugins-the-only-install-path">Plugins: the only install path</h3>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/app/v1/plugins.ts</span>
+<span class="tk-c">// The plugin settings and the plugin service (`@p3/app/v1/plugins`): installs, writes and Apply go only through it.</span>
+
+<span class="tk-k">import</span> { arr, bool, lit, local, map, method, nul, obj, oneOf, remote, <span class="tk-k">type</span> <span class="tk-t">Static</span>, str, union } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">Server</span> } <span class="tk-k">from</span> <span class="tk-s">"./hosts.ts"</span>;
+<span class="tk-k">import</span> { defineSetting } <span class="tk-k">from</span> <span class="tk-s">"./settings.ts"</span>;
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">PluginSource</span> = <span class="tk-f">union</span>([
+	<span class="tk-f">obj</span>({ git: <span class="tk-f">str</span>(), ref: <span class="tk-f">str</span>() }),
+	<span class="tk-f">obj</span>({ npm: <span class="tk-f">str</span>(), version: <span class="tk-f">str</span>() }),
+]);
+
+<span class="tk-c">/** An installed plugin's source, its tree hash (`null`: not pinned, member installs only) and whether it is required. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">PluginEntry</span> = <span class="tk-f">obj</span>({ source: <span class="tk-t">PluginSource</span>, hash: <span class="tk-f">union</span>([<span class="tk-f">str</span>(), <span class="tk-f">nul</span>()]), required: <span class="tk-f">bool</span>() });
+
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">PluginEntry</span> = <span class="tk-t">Static</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">PluginEntry</span>&gt;;
+
+<span class="tk-c">/** The plugins installed from a pinned source: the org's into the org root, the member's into the member root. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">PluginEntries</span> = <span class="tk-f">defineSetting</span>(<span class="tk-s">"p3.plugins"</span>, <span class="tk-f">map</span>(<span class="tk-t">PluginEntry</span>), { merge: <span class="tk-s">"entries"</span>, initial: {} });
+
+<span class="tk-c">/** Whether the member root loads: plugins the member installs from any source, and plugins the agent writes. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">OwnPlugins</span> = <span class="tk-f">defineSetting</span>(<span class="tk-s">"p3.plugins.own"</span>, <span class="tk-f">bool</span>(), { merge: <span class="tk-s">"value"</span>, initial: <span class="tk-k">true</span> });
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">CatalogItem</span> = <span class="tk-f">obj</span>({
+	name: <span class="tk-f">str</span>(),
+	<span class="tk-k">from</span>: <span class="tk-f">oneOf</span>(<span class="tk-s">"app"</span>, <span class="tk-s">"org"</span>, <span class="tk-s">"member"</span>),
+	required: <span class="tk-f">bool</span>(),
+	state: <span class="tk-f">oneOf</span>(<span class="tk-s">"loaded"</span>, <span class="tk-s">"available"</span>, <span class="tk-s">"left-out"</span>, <span class="tk-s">"failed"</span>),
+	why: <span class="tk-f">union</span>([<span class="tk-f">str</span>(), <span class="tk-f">nul</span>()]),
+});
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">InstallRequest</span> = <span class="tk-f">union</span>([
+	<span class="tk-f">obj</span>({ kind: <span class="tk-f">lit</span>(<span class="tk-s">"catalog"</span>), name: <span class="tk-f">str</span>() }),
+	<span class="tk-f">obj</span>({ kind: <span class="tk-f">lit</span>(<span class="tk-s">"source"</span>), source: <span class="tk-t">PluginSource</span> }),
+]);
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">PluginFile</span> = <span class="tk-f">obj</span>({ plugin: <span class="tk-f">str</span>(), path: <span class="tk-f">str</span>(), content: <span class="tk-f">str</span>() });
+
+<span class="tk-c">/** The plugin service on the server. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Plugins</span> = <span class="tk-f">local</span>(<span class="tk-s">"p3.plugins"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	members: {
+		catalog: <span class="tk-f">arr</span>(<span class="tk-t">CatalogItem</span>),
+		<span class="tk-c">/** Names and tree hashes of the org root's plugins that matched their profile entry. */</span>
+		verified: <span class="tk-f">map</span>(<span class="tk-f">str</span>()),
+		install: <span class="tk-f">method</span>(<span class="tk-t">InstallRequest</span>),
+		write: <span class="tk-f">method</span>(<span class="tk-t">PluginFile</span>),
+		reconcile: <span class="tk-f">method</span>(<span class="tk-f">map</span>(<span class="tk-t">PluginEntry</span>), <span class="tk-f">arr</span>(<span class="tk-f">obj</span>({ name: <span class="tk-f">str</span>(), error: <span class="tk-f">str</span>() }))),
+		apply: <span class="tk-f">method</span>(),
+	},
+});
+
+<span class="tk-c">/** The same for the owner's page and terminal and the owner's session agents (the plugin tools). */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">PluginsView</span> = <span class="tk-f">remote</span>(<span class="tk-s">"p3.plugins-view"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: {
+		main: {
+			state: { catalog: <span class="tk-f">arr</span>(<span class="tk-t">CatalogItem</span>) },
+			methods: { install: <span class="tk-f">method</span>(<span class="tk-t">InstallRequest</span>), write: <span class="tk-f">method</span>(<span class="tk-t">PluginFile</span>), apply: <span class="tk-f">method</span>() },
+		},
+	},
+});</code></pre>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/plugins/plugins/server.ts (app root)</span>
+<span class="tk-c">// The plugin service: installs into the right root, checks org plugins against their hash, writes agent plugins, and</span>
+<span class="tk-c">// runs Apply. `PluginManager` is the kit's platform binding (base inventory #14): install, readmit, apply, discovered.</span>
+
+<span class="tk-k">import</span> { rm } <span class="tk-k">from</span> <span class="tk-s">"node:fs/promises"</span>;
+<span class="tk-k">import</span> { join } <span class="tk-k">from</span> <span class="tk-s">"node:path"</span>;
+<span class="tk-k">import</span> { forbidden, <span class="tk-t">PluginError</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord"</span>;
+<span class="tk-k">import</span> <span class="tk-k">type</span> { <span class="tk-t">Context</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord/context"</span>;
+<span class="tk-k">import</span> { defineFacet, <span class="tk-k">type</span> <span class="tk-t">P3Principal</span>, <span class="tk-t">PluginManager</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">OrgGate</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1/org"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">OwnPlugins</span>, <span class="tk-t">PluginEntries</span>, <span class="tk-k">type</span> <span class="tk-t">PluginEntry</span>, <span class="tk-t">Plugins</span>, <span class="tk-t">PluginsView</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1/plugins"</span>;
+<span class="tk-k">import</span> { refusedBy, <span class="tk-t">Settings</span>, setting } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1/settings"</span>;
+<span class="tk-k">import</span> { MEMBER_ROOT, ORG_ROOT, readVerified, writeVerified } <span class="tk-k">from</span> <span class="tk-s">"../../src/org/roots.ts"</span>;
+<span class="tk-k">import</span> { treeHash } <span class="tk-k">from</span> <span class="tk-s">"../../src/org/tree-hash.ts"</span>;
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>&lt;<span class="tk-t">P3Principal</span>&gt;((host) =&gt; {
+	host.<span class="tk-f">serve</span>(<span class="tk-t">Plugins</span>, (_params, self) =&gt; {
+		<span class="tk-k">const</span> kit = self.<span class="tk-f">get</span>(<span class="tk-t">PluginManager</span>, {});
+		<span class="tk-k">const</span> settings = self.<span class="tk-f">get</span>(<span class="tk-t">Settings</span>, {});
+		<span class="tk-k">const</span> entries = <span class="tk-f">setting</span>(self, <span class="tk-t">PluginEntries</span>);
+		<span class="tk-k">const</span> own = <span class="tk-f">setting</span>(self, <span class="tk-t">OwnPlugins</span>);
+		<span class="tk-k">const</span> gate = self.<span class="tk-f">get</span>(<span class="tk-t">OrgGate</span>, {}).gate;
+		<span class="tk-k">const</span> stored = self.<span class="tk-f">open</span>(() =&gt; <span class="tk-f">readVerified</span>(ORG_ROOT), () =&gt; {});
+		<span class="tk-k">const</span> verified = self.writable&lt;<span class="tk-t">Readonly</span>&lt;<span class="tk-t">Record</span>&lt;string, string&gt;&gt;&gt;({});
+		<span class="tk-c">// The start script read the same file for its first discovery; this copy serves the catalog and later Applies.</span>
+		self.<span class="tk-f">onLive</span>(() =&gt; verified.<span class="tk-f">set</span>(stored.value));
+
+		<span class="tk-c">/** Installs an org entry into the org root and keeps it only if its tree matches the entry's hash. */</span>
+		<span class="tk-k">const</span> installOrg = <span class="tk-k">async</span> (name: string, entry: <span class="tk-t">PluginEntry</span>, ctx: <span class="tk-t">Context</span>) =&gt; {
+			<span class="tk-k">await</span> kit.<span class="tk-f">install</span>({ source: entry.source, root: ORG_ROOT }, ctx);
+			<span class="tk-k">const</span> actual = <span class="tk-k">await</span> <span class="tk-f">treeHash</span>(<span class="tk-f">join</span>(ORG_ROOT, name));
+			<span class="tk-k">if</span> (actual !== entry.hash) {
+				<span class="tk-k">await</span> <span class="tk-f">rm</span>(<span class="tk-f">join</span>(ORG_ROOT, name), { recursive: <span class="tk-k">true</span>, force: <span class="tk-k">true</span> });
+				<span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">PluginError</span>(<span class="tk-s">"hash_mismatch"</span>, <span class="tk-s">`${name}: the installed tree is not the approved build`</span>);
+			}
+			<span class="tk-k">const</span> next = { ...verified.value, [name]: actual };
+			<span class="tk-k">await</span> <span class="tk-f">writeVerified</span>(ORG_ROOT, next);                  <span class="tk-c">// read by the start script at the next start</span>
+			verified.<span class="tk-f">set</span>(next);
+		};
+
+		<span class="tk-k">return</span> {
+			catalog: self.<span class="tk-f">derive</span>([kit.discovered, entries, settings.managed, gate, verified], (values) =&gt; <span class="tk-f">catalogOf</span>(...values)),
+			verified: self.<span class="tk-f">derive</span>([verified], ([v]) =&gt; v),
+			install: <span class="tk-k">async</span> (request, ctx) =&gt; {
+				<span class="tk-k">const</span> mark = settings.managed.value[<span class="tk-t">PluginEntries</span>.name];
+				<span class="tk-k">if</span> (request.kind === <span class="tk-s">"catalog"</span>) {
+					<span class="tk-c">// Only the org's entries are in the catalog to install from by name.</span>
+					<span class="tk-k">if</span> (!mark?.entries.<span class="tk-f">includes</span>(request.name)) <span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">PluginError</span>(<span class="tk-s">"unknown_plugin"</span>, <span class="tk-s">`${request.name} is not in the catalog`</span>);
+					<span class="tk-k">await</span> <span class="tk-f">installOrg</span>(request.name, entries.value[request.name]!, ctx);
+				} <span class="tk-k">else</span> {
+					<span class="tk-k">if</span> (!own.value) <span class="tk-k">throw</span> <span class="tk-f">refusedBy</span>(<span class="tk-t">OwnPlugins</span>, <span class="tk-s">"Plugins from other sources do not load on this Pi"</span>);
+					<span class="tk-k">if</span> (mark?.lock === <span class="tk-s">"locked"</span>) <span class="tk-k">throw</span> <span class="tk-f">refusedBy</span>(<span class="tk-t">PluginEntries</span>, <span class="tk-s">"Only the catalog's plugins can be installed"</span>);
+					<span class="tk-k">const</span> [name] = <span class="tk-k">await</span> kit.<span class="tk-f">install</span>({ source: request.source, root: MEMBER_ROOT }, ctx);
+					<span class="tk-k">await</span> settings.<span class="tk-f">set</span>({ kind: <span class="tk-s">"entry"</span>, name: <span class="tk-t">PluginEntries</span>.name, entry: name!, value: { source: request.source, hash: <span class="tk-k">null</span>, required: <span class="tk-k">false</span> } }, ctx);
+				}
+				<span class="tk-k">await</span> kit.<span class="tk-f">readmit</span>(ctx);
+				<span class="tk-k">await</span> kit.<span class="tk-f">apply</span>(ctx);
+			},
+			write: <span class="tk-k">async</span> ({ plugin, path, content }, ctx) =&gt; {
+				<span class="tk-k">if</span> (!own.value) <span class="tk-k">throw</span> <span class="tk-f">refusedBy</span>(<span class="tk-t">OwnPlugins</span>, <span class="tk-s">"Plugins written on this Pi do not load"</span>);
+				<span class="tk-k">await</span> <span class="tk-f">writePluginFile</span>(MEMBER_ROOT, plugin, path, content, ctx);   <span class="tk-c">// stays inside the member root</span>
+			},
+			reconcile: <span class="tk-k">async</span> (wanted, ctx) =&gt; {
+				<span class="tk-k">const</span> failures: { name: string; error: string }[] = [];
+				<span class="tk-c">// `wanted` comes from the offered profile: at the first sync it is not the effective value yet.</span>
+				<span class="tk-k">for</span> (<span class="tk-k">const</span> [name, entry] <span class="tk-k">of</span> <span class="tk-t">Object</span>.<span class="tk-f">entries</span>(wanted)) {
+					<span class="tk-k">const</span> installed = <span class="tk-t">Object</span>.<span class="tk-f">hasOwn</span>(verified.value, name);
+					<span class="tk-k">if</span> (verified.value[name] === entry.hash || (!entry.required &amp;&amp; !installed)) <span class="tk-k">continue</span>;
+					<span class="tk-k">await</span> <span class="tk-f">installOrg</span>(name, entry, ctx).<span class="tk-k">catch</span>((error: <span class="tk-t">Error</span>) =&gt; failures.<span class="tk-f">push</span>({ name, error: error.message }));
+				}
+				<span class="tk-k">await</span> <span class="tk-f">removeUnlisted</span>(ORG_ROOT, wanted, ctx);          <span class="tk-c">// dropped by the org: gone at the next Apply</span>
+				<span class="tk-k">return</span> failures;
+			},
+			apply: <span class="tk-k">async</span> (_args, ctx) =&gt; {
+				<span class="tk-c">// An org plugin edited in place no longer matches its hash: it is dropped from `verified` and left out.</span>
+				verified.<span class="tk-f">set</span>(<span class="tk-k">await</span> <span class="tk-f">recheck</span>(ORG_ROOT, verified.value));
+				<span class="tk-k">await</span> kit.<span class="tk-f">readmit</span>(ctx);
+				<span class="tk-k">await</span> kit.<span class="tk-f">apply</span>(ctx);
+			},
+		};
+	});
+
+	host.<span class="tk-f">serve</span>(<span class="tk-t">PluginsView</span>, (_params, principal, self) =&gt; {
+		<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"user"</span> &amp;&amp; principal.kind !== <span class="tk-s">"worker"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"Plugins are the owner's"</span>);
+		<span class="tk-k">const</span> plugins = self.<span class="tk-f">get</span>(<span class="tk-t">Plugins</span>, {});
+		<span class="tk-k">return</span> {
+			variant: <span class="tk-s">"main"</span>,
+			members: {
+				catalog: plugins.catalog,
+				install: (request, ctx) =&gt; plugins.<span class="tk-f">install</span>(request, ctx),
+				write: (file, ctx) =&gt; plugins.<span class="tk-f">write</span>(file, ctx),
+				apply: (_args, ctx) =&gt; plugins.<span class="tk-f">apply</span>(<span class="tk-k">null</span>, ctx),
+			},
+		};
+	});
+});</code></pre>
+<p><code>catalogOf</code> lists every discovered plugin and every catalog entry with its state, and for each plugin that is not
+loaded it runs the same <code>admits</code> the kit runs and says why: &quot;not in Acme&#39;s catalog&quot;, &quot;edited since it was installed&quot;,
+&quot;plugins written on this Pi do not load (managed by Acme)&quot;.</p>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/src/admit.ts (base code)</span>
+<span class="tk-c">// Which discovered plugins load: the kit asks `admits` at every discovery (the kit change of chapter III).</span>
+
+<span class="tk-k">import</span> <span class="tk-k">type</span> { <span class="tk-t">Plugin</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord/plugins"</span>;
+<span class="tk-k">import</span> <span class="tk-k">type</span> { <span class="tk-t">Gate</span> } <span class="tk-k">from</span> <span class="tk-s">"../app/v1/org.ts"</span>;
+
+<span class="tk-c">/** What admission depends on: the gate, the org root's verified hashes, and the effective `p3.plugins.own`. */</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">AdmitState</span> = {
+	<span class="tk-k">readonly</span> gate: <span class="tk-t">Gate</span>;
+	<span class="tk-k">readonly</span> verified: <span class="tk-t">Readonly</span>&lt;<span class="tk-t">Record</span>&lt;string, string&gt;&gt;;
+	<span class="tk-k">readonly</span> ownPlugins: boolean;
+};
+
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Roots</span> = { <span class="tk-k">readonly</span> app: string; <span class="tk-k">readonly</span> org: string; <span class="tk-k">readonly</span> member: string };
+
+<span class="tk-c">/** Whether `plugin` loads now. */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">admits</span>(state: <span class="tk-t">AdmitState</span>, plugin: <span class="tk-t">Plugin</span>, roots: <span class="tk-t">Roots</span>): boolean {
+	<span class="tk-k">if</span> (plugin.root === roots.app) <span class="tk-k">return</span> <span class="tk-k">true</span>;
+	<span class="tk-k">const</span> { gate } = state;
+	<span class="tk-k">if</span> (gate.kind === <span class="tk-s">"unmanaged"</span>) <span class="tk-k">return</span> <span class="tk-k">true</span>;
+	<span class="tk-k">if</span> (gate.kind !== <span class="tk-s">"ready"</span>) <span class="tk-k">return</span> <span class="tk-k">false</span>;
+	<span class="tk-k">if</span> (plugin.root === roots.org) {
+		<span class="tk-c">// Cast: `p3.plugins` passed its schema when the profile was checked.</span>
+		<span class="tk-k">const</span> entry = (gate.profile.settings[<span class="tk-s">"p3.plugins"</span>]?.value <span class="tk-k">as</span> <span class="tk-t">Record</span>&lt;string, { hash: string }&gt; | <span class="tk-k">undefined</span>)?.[plugin.name];
+		<span class="tk-k">return</span> entry !== <span class="tk-k">undefined</span> &amp;&amp; state.verified[plugin.name] === entry.hash;
+	}
+	<span class="tk-k">return</span> state.ownPlugins;
+}</code></pre>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/src/org/tree-hash.ts (base code; Radius runs the same function when the admin saves a plugin)</span>
+
+<span class="tk-k">import</span> { createHash } <span class="tk-k">from</span> <span class="tk-s">"node:crypto"</span>;
+<span class="tk-k">import</span> { readdir, readFile } <span class="tk-k">from</span> <span class="tk-s">"node:fs/promises"</span>;
+<span class="tk-k">import</span> { join, relative, sep } <span class="tk-k">from</span> <span class="tk-s">"node:path"</span>;
+
+<span class="tk-c">/** sha256 over a plugin's files: sorted relative paths, each with its length and bytes; `.git` and `node_modules` left out. */</span>
+<span class="tk-k">export</span> <span class="tk-k">async</span> <span class="tk-k">function</span> <span class="tk-f">treeHash</span>(dir: string): <span class="tk-t">Promise</span>&lt;string&gt; {
+	<span class="tk-k">const</span> files = (<span class="tk-k">await</span> <span class="tk-f">readdir</span>(dir, { recursive: <span class="tk-k">true</span>, withFileTypes: <span class="tk-k">true</span> }))
+		.<span class="tk-f">filter</span>((entry) =&gt; entry.<span class="tk-f">isFile</span>())
+		.<span class="tk-f">map</span>((entry) =&gt; <span class="tk-f">relative</span>(dir, <span class="tk-f">join</span>(entry.parentPath, entry.name)).<span class="tk-f">split</span>(sep).<span class="tk-f">join</span>(<span class="tk-s">"/"</span>))
+		.<span class="tk-f">filter</span>((path) =&gt; !path.<span class="tk-f">startsWith</span>(<span class="tk-s">".git/"</span>) &amp;&amp; !path.<span class="tk-f">includes</span>(<span class="tk-s">"node_modules/"</span>))
+		.<span class="tk-f">sort</span>();
+	<span class="tk-k">const</span> hash = <span class="tk-f">createHash</span>(<span class="tk-s">"sha256"</span>);
+	<span class="tk-k">for</span> (<span class="tk-k">const</span> path <span class="tk-k">of</span> files) {
+		<span class="tk-k">const</span> bytes = <span class="tk-k">await</span> <span class="tk-f">readFile</span>(<span class="tk-f">join</span>(dir, path));
+		hash.<span class="tk-f">update</span>(<span class="tk-s">`${path}\0${bytes.length}\0`</span>);
+		hash.<span class="tk-f">update</span>(bytes);
+	}
+	<span class="tk-k">return</span> <span class="tk-s">`sha256-${hash.digest("hex")}`</span>;
+}</code></pre>
+<p>The hash covers the plugin&#39;s own files, including its <code>package-lock.json</code>; <code>npm install</code> (run by the kit with
+<code>--ignore-scripts</code>) checks every dependency against the integrity hashes in that lockfile. A plugin without a lockfile
+cannot be pinned, and Radius refuses to save it as an org plugin.</p>
+<h3 id="how-a-refusal-reaches-the-model">How a refusal reaches the model</h3>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/plugins/harness/refusals.ts (app root, worker side)</span>
+<span class="tk-c">// Every tool error goes through `toolError`: a refusal that names a setting tells the model who manages it and that</span>
+<span class="tk-c">// retrying will not help.</span>
+
+<span class="tk-k">import</span> { <span class="tk-t">PluginError</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord"</span>;
+<span class="tk-k">import</span> <span class="tk-k">type</span> { <span class="tk-t">ToolExecutionResult</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/pi-durable"</span>;
+<span class="tk-k">import</span> <span class="tk-k">type</span> { <span class="tk-t">ManagedMark</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1/settings"</span>;
+
+<span class="tk-c">/** The tool result for `error`, with `managed` (the view's marks) to say who manages the setting it names. */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">toolError</span>(error: <span class="tk-k">unknown</span>, managed: <span class="tk-t">Readonly</span>&lt;<span class="tk-t">Record</span>&lt;string, <span class="tk-t">ManagedMark</span>&gt;&gt;): <span class="tk-t">ToolExecutionResult</span> {
+	<span class="tk-k">if</span> (!(error <span class="tk-k">instanceof</span> <span class="tk-t">PluginError</span>)) <span class="tk-k">return</span> <span class="tk-f">text</span>(error <span class="tk-k">instanceof</span> <span class="tk-t">Error</span> ? error.message : <span class="tk-t">String</span>(error));
+	<span class="tk-c">// Wire input: `details` came over a link.</span>
+	<span class="tk-k">const</span> setting = <span class="tk-k">typeof</span> error.details === <span class="tk-s">"object"</span> &amp;&amp; error.details !== <span class="tk-k">null</span> &amp;&amp; <span class="tk-s">"setting"</span> <span class="tk-k">in</span> error.details ? <span class="tk-t">String</span>(error.details.setting) : <span class="tk-k">undefined</span>;
+	<span class="tk-k">const</span> mark = setting === <span class="tk-k">undefined</span> ? <span class="tk-k">undefined</span> : managed[setting];
+	<span class="tk-k">if</span> (mark === <span class="tk-k">undefined</span>) <span class="tk-k">return</span> <span class="tk-f">text</span>(error.message);
+	<span class="tk-k">return</span> <span class="tk-f">text</span>(
+		<span class="tk-s">`${error.message}. The setting ${setting} is managed by ${mark.orgName}`</span> +
+			(mark.lock === <span class="tk-s">"locked"</span> ? <span class="tk-s">" and locked"</span> : <span class="tk-s">""</span>) +
+			<span class="tk-s">`. Do not retry or look for another way; tell the user to ask ${mark.orgName}'s admin.`</span>,
+	);
+}
+
+<span class="tk-k">function</span> <span class="tk-f">text</span>(message: string): <span class="tk-t">ToolExecutionResult</span> {
+	<span class="tk-k">return</span> { output: [{ <span class="tk-k">type</span>: <span class="tk-s">"text"</span>, text: message }], isError: <span class="tk-k">true</span> };
+}</code></pre>
+<p>The last sentence matters. Without it, a model told &quot;refused&quot; tries the next way: edit a config file, write a plugin,
+run a command. With it, the model stops and tells Dana.</p>
+<h3 id="the-mcp-plugin">The MCP plugin</h3>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/plugins/mcp/contract.ts</span>
+<span class="tk-c">// The MCP plugin's setting, its connections on the server, and their tools for session workers.</span>
+
+<span class="tk-k">import</span> { arr, local, map, method, nul, obj, oneOf, opt, remote, str, union, <span class="tk-k">unknown</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">Server</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1/hosts"</span>;
+<span class="tk-k">import</span> { defineSetting } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1/settings"</span>;
+
+<span class="tk-c">/** One server: its URL and how it signs in (a Radius connection, a secret by name, or nothing). Never a credential. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">McpServerConfig</span> = <span class="tk-f">obj</span>({
+	url: <span class="tk-f">str</span>(),
+	auth: <span class="tk-f">union</span>([<span class="tk-f">nul</span>(), <span class="tk-f">obj</span>({ radius: <span class="tk-f">str</span>() }), <span class="tk-f">obj</span>({ secret: <span class="tk-f">str</span>() })]),
+});
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">McpServers</span> = <span class="tk-f">defineSetting</span>(<span class="tk-s">"mcp.servers"</span>, <span class="tk-f">map</span>(<span class="tk-t">McpServerConfig</span>), { merge: <span class="tk-s">"entries"</span>, initial: {} });
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">McpTool</span> = <span class="tk-f">obj</span>({ server: <span class="tk-f">str</span>(), name: <span class="tk-f">str</span>(), description: <span class="tk-f">str</span>(), inputSchema: <span class="tk-k">unknown</span>() });
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">McpCall</span> = <span class="tk-f">obj</span>({ server: <span class="tk-f">str</span>(), tool: <span class="tk-f">str</span>(), args: <span class="tk-k">unknown</span>() });
+
+<span class="tk-c">/** The connections, on the server. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">McpConnections</span> = <span class="tk-f">local</span>(<span class="tk-s">"mcp.connections"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	members: {
+		status: <span class="tk-f">map</span>(<span class="tk-f">obj</span>({ state: <span class="tk-f">oneOf</span>(<span class="tk-s">"connected"</span>, <span class="tk-s">"failed"</span>), error: <span class="tk-f">opt</span>(<span class="tk-f">str</span>()) })),
+		tools: <span class="tk-f">arr</span>(<span class="tk-t">McpTool</span>),
+		call: <span class="tk-f">method</span>(<span class="tk-t">McpCall</span>, <span class="tk-k">unknown</span>()),
+	},
+});
+
+<span class="tk-c">/** The tools for the owner's session workers. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">McpToolsView</span> = <span class="tk-f">remote</span>(<span class="tk-s">"mcp.tools"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: { main: { state: { tools: <span class="tk-f">arr</span>(<span class="tk-t">McpTool</span>) }, methods: { call: <span class="tk-f">method</span>(<span class="tk-t">McpCall</span>, <span class="tk-k">unknown</span>()) } } },
+});</code></pre>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/plugins/mcp/server.ts</span>
+<span class="tk-c">// The connections: one MCP client per effective server, reconciled whenever the effective `mcp.servers` changes.</span>
+
+<span class="tk-k">import</span> { forbidden, <span class="tk-t">PluginError</span>, <span class="tk-k">type</span> <span class="tk-t">Reference</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord"</span>;
+<span class="tk-k">import</span> { BACKGROUND_CONTEXT } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord/context"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">McpClient</span>, <span class="tk-t">StreamableHttpTransport</span>, <span class="tk-k">type</span> <span class="tk-t">Tool</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/pi-mcp"</span>;
+<span class="tk-k">import</span> { defineFacet, <span class="tk-k">type</span> <span class="tk-t">P3Principal</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">RadiusAuth</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/radius/contract"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">SettingKinds</span>, setting } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1/settings"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">McpConnections</span>, <span class="tk-k">type</span> <span class="tk-t">McpServerConfig</span>, <span class="tk-t">McpServers</span>, <span class="tk-t">McpToolsView</span> } <span class="tk-k">from</span> <span class="tk-s">"./contract.ts"</span>;
+
+<span class="tk-k">type</span> <span class="tk-t">Live</span> =
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"connected"</span>; <span class="tk-k">readonly</span> config: <span class="tk-t">McpServerConfig</span>; <span class="tk-k">readonly</span> client: <span class="tk-t">McpClient</span>; <span class="tk-k">readonly</span> tools: <span class="tk-k">readonly</span> <span class="tk-t">Tool</span>[] }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"failed"</span>; <span class="tk-k">readonly</span> config: <span class="tk-t">McpServerConfig</span>; <span class="tk-k">readonly</span> error: string };
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>&lt;<span class="tk-t">P3Principal</span>&gt;((host, facet) =&gt; {
+	facet.<span class="tk-f">contribute</span>(<span class="tk-t">SettingKinds</span>, [<span class="tk-t">McpServers</span>]);
+
+	host.<span class="tk-f">serve</span>(<span class="tk-t">McpConnections</span>, (_params, self) =&gt; {
+		<span class="tk-k">const</span> servers = <span class="tk-f">setting</span>(self, <span class="tk-t">McpServers</span>);              <span class="tk-c">// Acme's entries, plus Dana's unless locked</span>
+		<span class="tk-k">const</span> radius = self.<span class="tk-f">get</span>(<span class="tk-t">RadiusAuth</span>, {});
+		<span class="tk-k">const</span> pool = self.<span class="tk-f">open</span>(
+			<span class="tk-k">async</span> () =&gt; <span class="tk-k">new</span> <span class="tk-t">Map</span>&lt;string, <span class="tk-t">Live</span>&gt;(),
+			<span class="tk-k">async</span> (live) =&gt; { <span class="tk-k">for</span> (<span class="tk-k">const</span> each <span class="tk-k">of</span> live.<span class="tk-f">values</span>()) <span class="tk-k">if</span> (each.kind === <span class="tk-s">"connected"</span>) <span class="tk-k">await</span> each.client.<span class="tk-f">close</span>(); },
+		);
+		<span class="tk-k">const</span> snapshot = self.writable&lt;<span class="tk-t">ReadonlyMap</span>&lt;string, <span class="tk-t">Live</span>&gt;&gt;(<span class="tk-k">new</span> <span class="tk-t">Map</span>());
+
+		<span class="tk-c">// The same routine serves Dana's edits, Acme's updates and the first start.</span>
+		self.<span class="tk-f">on</span>(servers, <span class="tk-k">async</span> ({ value: wanted }) =&gt; {
+			<span class="tk-k">const</span> live = pool.value;
+			<span class="tk-k">for</span> (<span class="tk-k">const</span> [name, each] <span class="tk-k">of</span> live) {
+				<span class="tk-k">if</span> (JSON.<span class="tk-f">stringify</span>(wanted[name]) === JSON.<span class="tk-f">stringify</span>(each.config)) <span class="tk-k">continue</span>;
+				live.<span class="tk-k">delete</span>(name);
+				<span class="tk-c">// Removed or changed: calls in flight fail with McpConnectionClosedError.</span>
+				<span class="tk-k">if</span> (each.kind === <span class="tk-s">"connected"</span>) <span class="tk-k">await</span> each.client.<span class="tk-f">close</span>();
+			}
+			<span class="tk-k">for</span> (<span class="tk-k">const</span> [name, config] <span class="tk-k">of</span> <span class="tk-t">Object</span>.<span class="tk-f">entries</span>(wanted)) {
+				<span class="tk-k">if</span> (!live.<span class="tk-f">has</span>(name)) live.<span class="tk-f">set</span>(name, <span class="tk-k">await</span> <span class="tk-f">connect</span>(config, radius));
+			}
+			snapshot.<span class="tk-f">set</span>(<span class="tk-k">new</span> <span class="tk-t">Map</span>(live));
+		});
+
+		<span class="tk-k">return</span> {
+			status: self.<span class="tk-f">derive</span>([snapshot], ([live]) =&gt;
+				<span class="tk-t">Object</span>.<span class="tk-f">fromEntries</span>([...live].<span class="tk-f">map</span>(([name, each]) =&gt; [name, each.kind === <span class="tk-s">"connected"</span> ? { state: <span class="tk-s">"connected"</span> } : { state: <span class="tk-s">"failed"</span>, error: each.error }])),
+			),
+			tools: self.<span class="tk-f">derive</span>([snapshot], ([live]) =&gt;
+				[...live].<span class="tk-f">flatMap</span>(([server, each]) =&gt;
+					each.kind === <span class="tk-s">"connected"</span>
+						? each.tools.<span class="tk-f">map</span>((tool) =&gt; ({ server, name: tool.name, description: tool.description ?? <span class="tk-s">""</span>, inputSchema: tool.inputSchema }))
+						: [],
+				),
+			),
+			call: <span class="tk-k">async</span> ({ server, tool, args }, ctx) =&gt; {
+				<span class="tk-k">const</span> each = pool.value.<span class="tk-f">get</span>(server);
+				<span class="tk-k">if</span> (each?.kind !== <span class="tk-s">"connected"</span>) <span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">PluginError</span>(<span class="tk-s">"mcp_unavailable"</span>, <span class="tk-s">`MCP server ${server} is not connected`</span>);
+				<span class="tk-c">// Cast: MCP arguments are a JSON object; the tool's input schema was checked by the harness.</span>
+				<span class="tk-k">return</span> each.client.<span class="tk-f">callTool</span>(tool, args <span class="tk-k">as</span> <span class="tk-t">Record</span>&lt;string, <span class="tk-k">unknown</span>&gt;, { signal: ctx.abortSignal });
+			},
+		};
+	});
+
+	host.<span class="tk-f">serve</span>(<span class="tk-t">McpToolsView</span>, (_params, principal, self) =&gt; {
+		<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"worker"</span> &amp;&amp; principal.kind !== <span class="tk-s">"user"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"MCP tools are for the owner's sessions"</span>);
+		<span class="tk-k">const</span> connections = self.<span class="tk-f">get</span>(<span class="tk-t">McpConnections</span>, {});
+		<span class="tk-k">return</span> { variant: <span class="tk-s">"main"</span>, members: { tools: connections.tools, call: (args, ctx) =&gt; connections.<span class="tk-f">call</span>(args, ctx) } };
+	});
+});
+
+<span class="tk-c">/** A connected client, or the reason it is not; never throws, so one bad server does not stop the others. */</span>
+<span class="tk-k">async</span> <span class="tk-k">function</span> <span class="tk-f">connect</span>(config: <span class="tk-t">McpServerConfig</span>, radius: <span class="tk-t">Reference</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">RadiusAuth</span>&gt;): <span class="tk-t">Promise</span>&lt;<span class="tk-t">Live</span>&gt; {
+	<span class="tk-k">const</span> client = <span class="tk-k">new</span> <span class="tk-t">McpClient</span>({ name: <span class="tk-s">"p3"</span>, version: <span class="tk-s">"1"</span> });
+	<span class="tk-k">const</span> auth = config.auth;
+	<span class="tk-k">try</span> {
+		<span class="tk-k">await</span> client.<span class="tk-f">connect</span>(
+			<span class="tk-k">new</span> <span class="tk-t">StreamableHttpTransport</span>({
+				url: config.url,
+				<span class="tk-c">// Host lifetime: the provider is asked before every request, long after this routine call ended.</span>
+				authProvider: auth === <span class="tk-k">null</span> ? <span class="tk-k">undefined</span> : { token: () =&gt; <span class="tk-f">tokenFor</span>(auth, radius, BACKGROUND_CONTEXT) },
+			}),
+		);
+		<span class="tk-k">return</span> { kind: <span class="tk-s">"connected"</span>, config, client, tools: <span class="tk-k">await</span> client.<span class="tk-f">listTools</span>() };
+	} <span class="tk-k">catch</span> (error) {
+		<span class="tk-k">return</span> { kind: <span class="tk-s">"failed"</span>, config, error: error <span class="tk-k">instanceof</span> <span class="tk-t">Error</span> ? error.message : <span class="tk-t">String</span>(error) };
+	}
+}</code></pre>
+<p><code>RadiusAuth</code> and <code>RadiusOrg</code> are the Radius plugin&#39;s server objects (PROPOSED: tokens for Radius connections,
+membership, shares). <code>tokenFor</code> asks the Radius plugin (<code>RadiusAuth.token({ connection: &quot;jira&quot; })</code>) for a short-lived token, or the secrets
+store for a named secret. The Jira token never enters the profile, the settings or the MCP plugin&#39;s state.</p>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/plugins/mcp/worker.ts</span>
+<span class="tk-c">// A session's MCP tools, and the agent's tool to add a server: both through server views, as the owner's session.</span>
+
+<span class="tk-k">import</span> <span class="tk-k">type</span> { <span class="tk-t">Reference</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord"</span>;
+<span class="tk-k">import</span> { defineTool, <span class="tk-k">type</span> <span class="tk-t">ToolRegistration</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/pi-durable"</span>;
+<span class="tk-k">import</span> { createMcpToolName, toLlmContent } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/pi-mcp"</span>;
+<span class="tk-k">import</span> { obj, str } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/pi-schema"</span>;
+<span class="tk-k">import</span> { defineFacet, <span class="tk-t">HarnessTools</span>, local, <span class="tk-k">type</span> <span class="tk-t">P3Principal</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">SettingsView</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1/settings"</span>;
+<span class="tk-k">import</span> { toolError } <span class="tk-k">from</span> <span class="tk-s">"../harness/refusals.ts"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">McpServers</span>, <span class="tk-k">type</span> <span class="tk-t">McpTool</span>, <span class="tk-t">McpToolsView</span> } <span class="tk-k">from</span> <span class="tk-s">"./contract.ts"</span>;
+
+<span class="tk-k">const</span> <span class="tk-t">McpAgent</span> = <span class="tk-f">local</span>(<span class="tk-s">"mcp.agent"</span>, { version: <span class="tk-n">1</span>, params: {}, members: {} });
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>&lt;<span class="tk-t">P3Principal</span>&gt;((host) =&gt; {
+	host.<span class="tk-f">serve</span>(<span class="tk-t">McpAgent</span>, (_params, self) =&gt; {
+		<span class="tk-k">const</span> view = self.<span class="tk-f">get</span>(<span class="tk-t">McpToolsView</span>, {});
+		<span class="tk-k">const</span> settings = self.<span class="tk-f">get</span>(<span class="tk-t">SettingsView</span>, {});
+		<span class="tk-k">const</span> tools = self.<span class="tk-f">writable</span>&lt;<span class="tk-k">readonly</span> <span class="tk-t">ToolRegistration</span>[]&gt;([<span class="tk-f">addServer</span>(settings)]);
+		<span class="tk-c">// Follows the server's tool list: a server Acme removes takes its tools out of the next model request.</span>
+		self.<span class="tk-f">on</span>(view.tools, ({ value }) =&gt; tools.<span class="tk-f">set</span>([<span class="tk-f">addServer</span>(settings), ...value.<span class="tk-f">map</span>((tool) =&gt; <span class="tk-f">mcpTool</span>(tool, view, settings))]));
+		self.<span class="tk-f">contribute</span>(<span class="tk-t">HarnessTools</span>, tools);
+		<span class="tk-k">return</span> {};
+	});
+});
+
+<span class="tk-c">/** The agent's way to add a server: the same `set` the settings page calls. */</span>
+<span class="tk-k">function</span> <span class="tk-f">addServer</span>(settings: <span class="tk-t">Reference</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">SettingsView</span>&gt;): <span class="tk-t">ToolRegistration</span> {
+	<span class="tk-k">return</span> <span class="tk-f">defineTool</span>({
+		name: <span class="tk-s">"mcp_add_server"</span>,
+		description: <span class="tk-s">"Add a remote MCP server to this Pi. Its tools are available from the next turn."</span>,
+		parameters: <span class="tk-f">obj</span>({ name: <span class="tk-f">str</span>(), url: <span class="tk-f">str</span>() }),
+		<span class="tk-k">async</span> <span class="tk-f">execute</span>({ name, url }, _api, context) {
+			<span class="tk-k">try</span> {
+				<span class="tk-k">await</span> settings.<span class="tk-f">set</span>({ kind: <span class="tk-s">"entry"</span>, name: <span class="tk-t">McpServers</span>.name, entry: name, value: { url, auth: <span class="tk-k">null</span> } }, context);
+				<span class="tk-k">return</span> { output: [{ <span class="tk-k">type</span>: <span class="tk-s">"text"</span>, text: <span class="tk-s">`Added MCP server ${name}. Its tools are available from the next turn.`</span> }] };
+			} <span class="tk-k">catch</span> (error) {
+				<span class="tk-k">return</span> <span class="tk-f">toolError</span>(error, settings.managed.value);
+			}
+		},
+	});
+}
+
+<span class="tk-c">/** One server tool, called on the server, where the connection lives. */</span>
+<span class="tk-k">function</span> <span class="tk-f">mcpTool</span>(tool: <span class="tk-t">McpTool</span>, view: <span class="tk-t">Reference</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">McpToolsView</span>&gt;, settings: <span class="tk-t">Reference</span>&lt;<span class="tk-k">typeof</span> <span class="tk-t">SettingsView</span>&gt;): <span class="tk-t">ToolRegistration</span> {
+	<span class="tk-k">return</span> <span class="tk-f">defineTool</span>({
+		name: <span class="tk-f">createMcpToolName</span>(tool.server, tool.name),
+		description: tool.description,
+		<span class="tk-c">// Cast: an MCP input schema is a JSON schema object.</span>
+		parameters: tool.inputSchema <span class="tk-k">as</span> object,
+		<span class="tk-k">async</span> <span class="tk-f">execute</span>(args, _api, context) {
+			<span class="tk-k">try</span> {
+				<span class="tk-k">return</span> { output: <span class="tk-f">toLlmContent</span>(<span class="tk-k">await</span> view.<span class="tk-f">call</span>({ server: tool.server, tool: tool.name, args }, context)) };
+			} <span class="tk-k">catch</span> (error) {
+				<span class="tk-k">return</span> <span class="tk-f">toolError</span>(error, settings.managed.value);
+			}
+		},
+	});
+}</code></pre>
+<p><code>HarnessTools</code> is the harness&#39;s registry of tools (base inventory #4); the session&#39;s own selection of resources still
+applies on top of it (decision &quot;No per-run authority&quot;).</p>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/plugins/mcp/web.tsx</span>
+<span class="tk-c">// The MCP section of the settings page: drawn from the effective value and the managed marks, never from a guess.</span>
+
+<span class="tk-k">import</span> { <span class="tk-t">PluginError</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord"</span>;
+<span class="tk-k">import</span> { BACKGROUND_CONTEXT } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord/context"</span>;
+<span class="tk-k">import</span> { useHold, useWatch } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord/react"</span>;
+<span class="tk-k">import</span> { useState } <span class="tk-k">from</span> <span class="tk-s">"react"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">SettingsView</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1/settings"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">McpServers</span>, <span class="tk-k">type</span> <span class="tk-t">McpServerConfig</span> } <span class="tk-k">from</span> <span class="tk-s">"./contract.ts"</span>;
+
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-t">McpSettings</span>() {
+	<span class="tk-k">const</span> view = <span class="tk-f">useHold</span>(<span class="tk-t">SettingsView</span>, {});
+	<span class="tk-k">const</span> effective = <span class="tk-f">useWatch</span>(view?.effective);
+	<span class="tk-k">const</span> managed = <span class="tk-f">useWatch</span>(view?.managed);
+	<span class="tk-k">const</span> [error, setError] = <span class="tk-f">useState</span>&lt;string | <span class="tk-k">undefined</span>&gt;(<span class="tk-k">undefined</span>);
+	<span class="tk-c">// Cast: the effective value passed the setting's schema.</span>
+	<span class="tk-k">const</span> servers = (effective?.[<span class="tk-t">McpServers</span>.name] ?? {}) <span class="tk-k">as</span> <span class="tk-t">Record</span>&lt;string, <span class="tk-t">McpServerConfig</span>&gt;;
+	<span class="tk-k">const</span> mark = managed?.[<span class="tk-t">McpServers</span>.name];
+	<span class="tk-k">const</span> locked = mark?.lock === <span class="tk-s">"locked"</span>;
+
+	<span class="tk-k">const</span> add = <span class="tk-k">async</span> (name: string, url: string) =&gt; {
+		<span class="tk-f">setError</span>(<span class="tk-k">undefined</span>);
+		<span class="tk-k">try</span> {
+			<span class="tk-k">await</span> view?.<span class="tk-f">set</span>({ kind: <span class="tk-s">"entry"</span>, name: <span class="tk-t">McpServers</span>.name, entry: name, value: { url, auth: <span class="tk-k">null</span> } }, BACKGROUND_CONTEXT);
+		} <span class="tk-k">catch</span> (failure) {
+			<span class="tk-k">if</span> (failure <span class="tk-k">instanceof</span> <span class="tk-t">PluginError</span>) <span class="tk-f">setError</span>(failure.message);
+			<span class="tk-k">else</span> <span class="tk-k">throw</span> failure;
+		}
+	};
+
+	<span class="tk-k">return</span> (
+		&lt;section&gt;
+			&lt;h2&gt;MCP servers&lt;/h2&gt;
+			{mark &amp;&amp; &lt;p className=<span class="tk-s">"managed"</span>&gt;<span class="tk-t">Managed</span> by {mark.orgName}{locked ? <span class="tk-s">". Only its servers are used."</span> : <span class="tk-s">""</span>}&lt;/p&gt;}
+			&lt;ul&gt;
+				{<span class="tk-t">Object</span>.<span class="tk-f">entries</span>(servers).<span class="tk-f">map</span>(([name, server]) =&gt; (
+					&lt;li key={name}&gt;
+						&lt;span&gt;{name}&lt;/span&gt; &lt;code&gt;{server.url}&lt;/code&gt;
+						{mark?.entries.<span class="tk-f">includes</span>(name) ? &lt;span className=<span class="tk-s">"lock"</span> title={<span class="tk-s">`Managed by ${mark.orgName}`</span>} /&gt; : &lt;<span class="tk-t">EditButtons</span> name={name} /&gt;}
+					&lt;/li&gt;
+				))}
+			&lt;/ul&gt;
+			&lt;<span class="tk-t">AddServerForm</span> disabled={locked} title={locked ? <span class="tk-s">`Managed by ${mark?.orgName}`</span> : <span class="tk-k">undefined</span>} onAdd={add} /&gt;
+			{error &amp;&amp; &lt;p role=<span class="tk-s">"alert"</span>&gt;{error}&lt;/p&gt;}
+		&lt;/section&gt;
+	);
+}</code></pre>
+<h3 id="sharing">Sharing</h3>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/plugins/sharing/contract.ts</span>
+
+<span class="tk-k">import</span> { arr, local, method, obj, oneOf, remote, str } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">Server</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1/hosts"</span>;
+<span class="tk-k">import</span> { defineSetting } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1/settings"</span>;
+
+<span class="tk-c">/** Who sessions may be shared with. Radius applies the same value from the profile to every invite and sign-in. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SharingAudience</span> = <span class="tk-f">defineSetting</span>(<span class="tk-s">"p3.sharing.audience"</span>, <span class="tk-f">oneOf</span>(<span class="tk-s">"anyone"</span>, <span class="tk-s">"org"</span>, <span class="tk-s">"nobody"</span>), { merge: <span class="tk-s">"value"</span>, initial: <span class="tk-s">"anyone"</span> });
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Share</span> = <span class="tk-f">obj</span>({ id: <span class="tk-f">str</span>(), session: <span class="tk-f">str</span>(), invitee: <span class="tk-f">str</span>(), mode: <span class="tk-f">oneOf</span>(<span class="tk-s">"read"</span>, <span class="tk-s">"send"</span>) });
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">ShareRequest</span> = <span class="tk-f">obj</span>({ session: <span class="tk-f">str</span>(), invitee: <span class="tk-f">str</span>(), mode: <span class="tk-f">oneOf</span>(<span class="tk-s">"read"</span>, <span class="tk-s">"send"</span>) });
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Shares</span> = <span class="tk-f">local</span>(<span class="tk-s">"p3.shares"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	members: { shares: <span class="tk-f">arr</span>(<span class="tk-t">Share</span>), share: <span class="tk-f">method</span>(<span class="tk-t">ShareRequest</span>, <span class="tk-t">Share</span>), revoke: <span class="tk-f">method</span>(<span class="tk-f">str</span>()) },
+});
+
+<span class="tk-c">/** The owner's sharing controls. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Sharing</span> = <span class="tk-f">remote</span>(<span class="tk-s">"p3.sharing"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: { owner: { state: { shares: <span class="tk-f">arr</span>(<span class="tk-t">Share</span>) }, methods: { share: <span class="tk-f">method</span>(<span class="tk-t">ShareRequest</span>, <span class="tk-t">Share</span>), revoke: <span class="tk-f">method</span>(<span class="tk-f">str</span>()) } } },
+});</code></pre>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/plugins/sharing/server.ts (app root)</span>
+<span class="tk-c">// Shares: refused by the audience setting before Radius is asked; ended when the setting tightens.</span>
+
+<span class="tk-k">import</span> { arr, defineState, forbidden, obj } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord"</span>;
+<span class="tk-k">import</span> { defineFacet, <span class="tk-k">type</span> <span class="tk-t">P3Principal</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">RadiusOrg</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/radius/contract"</span>;
+<span class="tk-k">import</span> { refusedBy, <span class="tk-t">SettingKinds</span>, setting } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1/settings"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">Share</span>, <span class="tk-t">Shares</span>, <span class="tk-t">Sharing</span>, <span class="tk-t">SharingAudience</span> } <span class="tk-k">from</span> <span class="tk-s">"./contract.ts"</span>;
+
+<span class="tk-k">const</span> <span class="tk-t">ShareList</span> = <span class="tk-f">defineState</span>(<span class="tk-s">"p3.shares.list"</span>, {
+	schema: <span class="tk-f">obj</span>({ shares: <span class="tk-f">arr</span>(<span class="tk-t">Share</span>) }),
+	version: <span class="tk-n">1</span>,
+	initial: () =&gt; ({ shares: [] }),
+	persist: <span class="tk-k">true</span>,
+	checkpointWhen: () =&gt; <span class="tk-k">true</span>,
+});
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>&lt;<span class="tk-t">P3Principal</span>&gt;((host, facet) =&gt; {
+	facet.<span class="tk-f">contribute</span>(<span class="tk-t">SettingKinds</span>, [<span class="tk-t">SharingAudience</span>]);
+
+	host.<span class="tk-f">serve</span>(<span class="tk-t">Shares</span>, (_params, self) =&gt; {
+		<span class="tk-k">const</span> audience = <span class="tk-f">setting</span>(self, <span class="tk-t">SharingAudience</span>);
+		<span class="tk-k">const</span> radius = self.<span class="tk-f">get</span>(<span class="tk-t">RadiusOrg</span>, {});
+		<span class="tk-k">const</span> list = self.<span class="tk-f">state</span>(<span class="tk-t">ShareList</span>);
+
+		<span class="tk-c">// A tightened audience ends every share that no longer conforms, here and at Radius.</span>
+		self.<span class="tk-f">on</span>(audience, <span class="tk-k">async</span> ({ value }, ctx) =&gt; {
+			<span class="tk-k">for</span> (<span class="tk-k">const</span> share <span class="tk-k">of</span> list.value.shares) {
+				<span class="tk-k">if</span> (value === <span class="tk-s">"anyone"</span>) <span class="tk-k">break</span>;
+				<span class="tk-k">if</span> (value === <span class="tk-s">"org"</span> &amp;&amp; (<span class="tk-k">await</span> radius.<span class="tk-f">isMember</span>({ email: share.invitee }, ctx))) <span class="tk-k">continue</span>;
+				<span class="tk-k">await</span> radius.<span class="tk-f">revokeShare</span>(share.id, ctx);
+				<span class="tk-k">await</span> list.<span class="tk-f">change</span>((draft) =&gt; {
+					draft.shares = draft.shares.<span class="tk-f">filter</span>((each) =&gt; each.id !== share.id);
+				}, ctx);
+			}
+		});
+
+		<span class="tk-k">return</span> {
+			shares: self.<span class="tk-f">derive</span>([list], ([doc]) =&gt; doc.shares),
+			share: <span class="tk-k">async</span> (request, ctx) =&gt; {
+				<span class="tk-k">const</span> now = audience.value;
+				<span class="tk-k">if</span> (now === <span class="tk-s">"nobody"</span>) <span class="tk-k">throw</span> <span class="tk-f">refusedBy</span>(<span class="tk-t">SharingAudience</span>, <span class="tk-s">"Sessions on this Pi cannot be shared"</span>);
+				<span class="tk-k">if</span> (now === <span class="tk-s">"org"</span> &amp;&amp; !(<span class="tk-k">await</span> radius.<span class="tk-f">isMember</span>({ email: request.invitee }, ctx)))
+					<span class="tk-k">throw</span> <span class="tk-f">refusedBy</span>(<span class="tk-t">SharingAudience</span>, <span class="tk-s">`${request.invitee} is not a member of the org; sessions can be shared with members only`</span>);
+				<span class="tk-c">// Radius checks again from the profile it signed: a modified Pi gets the same answer.</span>
+				<span class="tk-k">const</span> share = <span class="tk-k">await</span> radius.<span class="tk-f">share</span>(request, ctx);
+				<span class="tk-k">await</span> list.<span class="tk-f">change</span>((draft) =&gt; {
+					draft.shares.<span class="tk-f">push</span>(share);
+				}, ctx);
+				<span class="tk-k">return</span> share;
+			},
+			revoke: <span class="tk-k">async</span> (id, ctx) =&gt; {
+				<span class="tk-k">await</span> radius.<span class="tk-f">revokeShare</span>(id, ctx);
+				<span class="tk-k">await</span> list.<span class="tk-f">change</span>((draft) =&gt; {
+					draft.shares = draft.shares.<span class="tk-f">filter</span>((each) =&gt; each.id !== id);
+				}, ctx);
+			},
+		};
+	});
+
+	host.<span class="tk-f">serve</span>(<span class="tk-t">Sharing</span>, (_params, principal, self) =&gt; {
+		<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"user"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"Only the owner shares sessions"</span>);
+		<span class="tk-k">const</span> shares = self.<span class="tk-f">get</span>(<span class="tk-t">Shares</span>, {});
+		<span class="tk-k">return</span> {
+			variant: <span class="tk-s">"owner"</span>,
+			members: {
+				shares: shares.shares,
+				share: (request, ctx) =&gt; shares.<span class="tk-f">share</span>(request, ctx),
+				revoke: (id, ctx) =&gt; shares.<span class="tk-f">revoke</span>(id, ctx),
+			},
+		};
+	});
+});</code></pre>
+<pre><code><span class="tk-c">// PROPOSED · Radius: POST /orgs/:org/pis/:pi/shares (the invite endpoint behind RadiusOrg.share)</span>
+<span class="tk-k">async</span> <span class="tk-k">function</span> <span class="tk-f">createShare</span>(request: <span class="tk-t">Request</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-t">Response</span>&gt; {
+	<span class="tk-k">const</span> pi = <span class="tk-k">await</span> <span class="tk-f">authenticatePi</span>(request);                 <span class="tk-c">// a short-lived token minted against the device key</span>
+	<span class="tk-k">const</span> profile = <span class="tk-k">await</span> profiles.<span class="tk-f">current</span>(pi.org, pi.member, pi.id);
+	<span class="tk-k">const</span> audience = profile.settings[<span class="tk-s">"p3.sharing.audience"</span>]?.value ?? <span class="tk-s">"anyone"</span>;
+	<span class="tk-k">const</span> { session, invitee, mode } = <span class="tk-k">await</span> request.<span class="tk-f">json</span>();
+	<span class="tk-k">if</span> (audience === <span class="tk-s">"nobody"</span>) <span class="tk-k">return</span> <span class="tk-f">refuse</span>(<span class="tk-n">403</span>, <span class="tk-s">"sharing_disabled"</span>);
+	<span class="tk-k">if</span> (audience === <span class="tk-s">"org"</span> &amp;&amp; !(<span class="tk-k">await</span> orgs.<span class="tk-f">isMember</span>(pi.org, invitee))) <span class="tk-k">return</span> <span class="tk-f">refuse</span>(<span class="tk-n">403</span>, <span class="tk-s">"outside_org"</span>);
+	<span class="tk-c">// Org-only shares need a Radius sign-in to redeem: no anonymous link, and membership is checked again at sign-in.</span>
+	<span class="tk-k">const</span> grant = <span class="tk-k">await</span> grants.<span class="tk-f">create</span>({ pi: pi.id, session, invitee, mode, requireMember: audience === <span class="tk-s">"org"</span> ? pi.org : <span class="tk-k">null</span> });
+	<span class="tk-k">return</span> <span class="tk-t">Response</span>.<span class="tk-f">json</span>(grant);
+}</code></pre>
+<h3 id="acme-39-s-own-plugin">Acme&#39;s own plugin</h3>
+<pre><code><span class="tk-c">// PROPOSED · github.com/acme/p3-deploy, contract.ts. Written by Acme's developers; nothing in it knows about orgs.</span>
+
+<span class="tk-k">import</span> { local, map, method, obj, oneOf, str } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord"</span>;
+<span class="tk-k">import</span> { defineSetting } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1/settings"</span>;
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">DeployTarget</span> = <span class="tk-f">obj</span>({ host: <span class="tk-f">str</span>(), branch: <span class="tk-f">str</span>(), approval: <span class="tk-f">oneOf</span>(<span class="tk-s">"none"</span>, <span class="tk-s">"review"</span>) });
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">DeployTargets</span> = <span class="tk-f">defineSetting</span>(<span class="tk-s">"deploy.targets"</span>, <span class="tk-f">map</span>(<span class="tk-t">DeployTarget</span>), { merge: <span class="tk-s">"entries"</span>, initial: {} });
+
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Deployer</span> = <span class="tk-f">local</span>(<span class="tk-s">"acme.deployer"</span>, {
+	version: <span class="tk-n">1</span>,
+	params: {},
+	members: { targets: <span class="tk-f">map</span>(<span class="tk-t">DeployTarget</span>), deploy: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ target: <span class="tk-f">str</span>(), ref: <span class="tk-f">str</span>() }), <span class="tk-f">str</span>()) },
+});</code></pre>
+<pre><code><span class="tk-c">// PROPOSED · github.com/acme/p3-deploy, server.ts</span>
+
+<span class="tk-k">import</span> { <span class="tk-t">PluginError</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord"</span>;
+<span class="tk-k">import</span> { defineFacet, <span class="tk-k">type</span> <span class="tk-t">P3Principal</span> } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">SettingKinds</span>, setting } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1/settings"</span>;
+<span class="tk-k">import</span> { <span class="tk-t">Deployer</span>, <span class="tk-t">DeployTargets</span> } <span class="tk-k">from</span> <span class="tk-s">"./contract.ts"</span>;
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>&lt;<span class="tk-t">P3Principal</span>&gt;((host, facet) =&gt; {
+	facet.<span class="tk-f">contribute</span>(<span class="tk-t">SettingKinds</span>, [<span class="tk-t">DeployTargets</span>]);
+	host.<span class="tk-f">serve</span>(<span class="tk-t">Deployer</span>, (_params, self) =&gt; {
+		<span class="tk-k">const</span> targets = <span class="tk-f">setting</span>(self, <span class="tk-t">DeployTargets</span>);
+		<span class="tk-k">return</span> {
+			targets,
+			deploy: <span class="tk-k">async</span> ({ target, ref }, ctx) =&gt; {
+				<span class="tk-k">const</span> chosen = targets.value[target];
+				<span class="tk-k">if</span> (chosen === <span class="tk-k">undefined</span>) <span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">PluginError</span>(<span class="tk-s">"unknown_target"</span>, <span class="tk-s">`No deploy target ${target}`</span>);
+				<span class="tk-k">return</span> <span class="tk-f">startDeploy</span>(chosen, ref, ctx);   <span class="tk-c">// asks for a review first when chosen.approval is "review"</span>
+			},
+		};
+	});
+});</code></pre>
+<h3 id="eight-traces">Eight traces</h3>
+<p>Each trace starts with what Dana or her agent does and ends with what they see. The line that decides is named.</p>
+<h4>(i) Dana clicks &quot;Add MCP server&quot;</h4>
+<figure class="fig anim"><svg viewBox="0 0 720 445" width="100%" role="img" aria-label="The settings page draws the lock from the managed marks; set refuses even when the page is behind." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f3m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f3a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f3b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="102" y1="52" x2="102" y2="437" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="23" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="102" y="27" font-size="11" fill="#2a2723" text-anchor="middle">settings page</text><text x="102" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">Dana's browser</text><line x1="274" y1="52" x2="274" y2="437" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="195" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="274" y="27" font-size="11" fill="#2a2723" text-anchor="middle">SettingsView</text><text x="274" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">server</text><line x1="446" y1="52" x2="446" y2="437" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="367" y="10" width="158" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="446" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Settings</text><text x="446" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">server</text><line x1="618" y1="52" x2="618" y2="437" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="539" y="10" width="158" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="618" y="27" font-size="11" fill="#2a2723" text-anchor="middle">OrgGate</text><text x="618" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">server</text><g class="step edge" style="--i:1"><line x1="102" y1="78" x2="271" y2="78" stroke="#7b7468" marker-end="url(#f3m)"/><text x="188" y="72" font-size="10" fill="#2a2723" text-anchor="middle">useHold, useWatch(effective, managed)</text></g><g class="step edge" style="--i:2"><line x1="274" y1="110" x2="105" y2="110" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f3m)"/><text x="188" y="104" font-size="10" fill="#2a2723" text-anchor="middle">mcp.servers: jira, linear; managed: locked by Acme</text></g><g class="step edge" style="--i:3"><path d="M102 136 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><text x="144" y="146" font-size="10" fill="#2a2723" text-anchor="start">draw lock icons, disable &quot;Add&quot;</text></g><g class="step" style="--i:4"><rect x="26" y="168" width="152" height="49" rx="3" fill="#f4eee2" stroke="#c2b18c"/><text x="102" y="182" font-size="10" fill="#5b5549" text-anchor="middle">an old tab, opened</text><text x="102" y="195" font-size="10" fill="#5b5549" text-anchor="middle">before revision 42,</text><text x="102" y="208" font-size="10" fill="#5b5549" text-anchor="middle">still shows &quot;Add&quot;</text></g><g class="step edge" style="--i:5"><line x1="102" y1="245" x2="271" y2="245" stroke="#7b7468" marker-end="url(#f3m)"/><text x="188" y="239" font-size="10" fill="#2a2723" text-anchor="middle">set { kind: entry, name: mcp.servers, entry: github }</text></g><g class="step edge" style="--i:6"><line x1="274" y1="277" x2="443" y2="277" stroke="#7b7468" marker-end="url(#f3m)"/><text x="360" y="271" font-size="10" fill="#2a2723" text-anchor="middle">set</text></g><g class="step edge" style="--i:7"><line x1="446" y1="309" x2="615" y2="309" stroke="#7b7468" marker-end="url(#f3m)"/><text x="532" y="303" font-size="10" fill="#2a2723" text-anchor="middle">gate.value (ready, revision 42)</text></g><g class="step edge" style="--i:8"><line x1="446" y1="341" x2="277" y2="341" stroke="#b4472f" marker-end="url(#f3a)"/><text x="360" y="335" font-size="10" fill="#b4472f" text-anchor="middle">PluginError managed, &quot;Managed by Acme: mcp.servers is locked&quot;</text></g><g class="step edge" style="--i:9"><line x1="274" y1="373" x2="105" y2="373" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f3m)"/><text x="188" y="367" font-size="10" fill="#2a2723" text-anchor="middle">the same PluginError over the link</text></g><g class="step edge" style="--i:10"><path d="M102 399 h34 v14 h-32" fill="none" stroke="#7b7468" marker-end="url(#f3m)"/><text x="144" y="409" font-size="10" fill="#2a2723" text-anchor="start">show the alert</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 3.</span> The settings page draws the lock from the managed marks; <code>set</code> refuses even when the page is behind.</figcaption></figure>
+<ol>
+<li><code>McpSettings</code> holds <code>SettingsView</code> and watches <code>effective</code> and <code>managed</code>. <code>managed[&quot;mcp.servers&quot;]</code> is <code>{ orgName: &quot;Acme&quot;, lock: &quot;locked&quot;, entries: [&quot;jira&quot;, &quot;linear&quot;] }</code>. The page draws both rows with a lock, and <code>AddServerForm</code>
+disabled with the title &quot;Managed by Acme&quot;. This is how the page knows: it never guesses from the error, it renders
+the marks.</li>
+<li>A page that missed the update (a tab left open since before Acme locked the list) still shows the form. Dana enters
+<code>github</code>, <code>https://github-mcp.example.com/mcp</code> and clicks Add. The page calls <code>view.set({ kind: &quot;entry&quot;, name: &quot;mcp.servers&quot;, entry: &quot;github&quot;, value: { url, auth: null } })</code>.</li>
+<li><code>Settings.set</code> reads <code>gate.value</code> (followed state, per call): <code>ready</code>, revision 42. <code>writable</code> finds
+<code>managed.lock === &quot;locked&quot;</code> and throws <code>PluginError(&quot;managed&quot;, &quot;Managed by Acme: mcp.servers is locked&quot;, { setting: &quot;mcp.servers&quot; })</code>. Nothing is written.</li>
+<li>The error crosses the link as code, message and details (Chord sends nothing else), and the page rethrows it as a
+<code>PluginError</code>. <code>add</code> shows the message under the form: <strong>Managed by Acme: mcp.servers is locked.</strong></li>
+</ol>
+<h4>(ii) The agent calls <code>mcp_add_server</code></h4>
+<p>Dana asks: &quot;connect the GitHub MCP server&quot;. The model calls <code>mcp_add_server({ name: &quot;github&quot;, url: &quot;…&quot; })</code>.</p>
+<ol>
+<li>The tool runs in the session&#39;s worker. It calls <code>settings.set(...)</code> on its <code>SettingsView</code> reference: the worker&#39;s
+principal <code>{ kind: &quot;worker&quot;, session }</code> is let in by the view&#39;s factory.</li>
+<li><code>Settings.set</code> refuses exactly as in (i): same method, same line.</li>
+<li><code>toolError</code> finds <code>details.setting = &quot;mcp.servers&quot;</code> and the mark, and the model&#39;s tool result is:</li>
+</ol>
+<pre class="plain"><code>Managed by Acme: mcp.servers is locked. The setting mcp.servers is managed by Acme and locked. Do not retry or look
+for another way; tell the user to ask Acme's admin.</code></pre>
+<p>The model answers Dana that Acme manages the MCP servers. If it tries <code>bash</code> instead, to edit a config file: there is
+none (MCP servers are a setting, not a file), and with the lock-down of chapter VI its shell runs as Dana, who cannot
+write the Pi&#39;s data directory.</p>
+<h4>(iii) Acme&#39;s Jira entry appears, connects, and cannot be edited</h4>
+<ol>
+<li>At the first sync <code>OrgGate</code> writes revision 42 as the cache; <code>gate</code> turns <code>ready</code>.</li>
+<li><code>Settings.effective</code> recomputes: <code>effectiveOf</code> for <code>mcp.servers</code> with <code>lock: &quot;locked&quot;</code> returns Acme&#39;s record, <code>{ jira, linear }</code>. Any servers Dana had before enrollment stay in her layer, unused.</li>
+<li><code>McpConnections</code>&#39;s routine (<code>self.on(servers, …)</code>) gets the new record: nothing live yet, so it calls <code>connect</code> for
+both. The Jira transport&#39;s <code>authProvider.token()</code> asks <code>RadiusAuth</code> for a token of the Radius connection <code>jira</code>.</li>
+<li><code>snapshot.set(...)</code>: <code>tools</code> now lists Jira&#39;s tools; each session&#39;s <code>McpAgent</code> sees <code>view.tools</code> change and
+contributes the new tools; the next model request offers <code>mcp__jira__search_issues</code> and the others.</li>
+<li>Dana clicks the edit button on the Jira row: there is none, the row has a lock. Her agent calls <code>set({ kind: &quot;entry&quot;, name: &quot;mcp.servers&quot;, entry: &quot;jira&quot;, value: { url: &quot;…&quot;, auth: null } })</code>: refused by <code>writable</code> because the
+setting is locked. Had Acme used <code>lock: &quot;default&quot;</code> (its servers plus Dana&#39;s), the second check would refuse the
+same write: <code>Object.hasOwn(managedEntries(managed), &quot;jira&quot;)</code>, with &quot;Managed by Acme: the entry jira of
+mcp.servers&quot;. Dana could still add <code>github</code> beside it.</li>
+</ol>
+<h4>(iv) Dana installs plugins</h4>
+<p><strong>An allowed optional plugin.</strong> The plugins page lists the catalog from <code>PluginsView.catalog</code>: <code>acme-reviews</code>,
+&quot;available&quot;, from Acme. Dana clicks Install.</p>
+<ol>
+<li><code>Plugins.install({ kind: &quot;catalog&quot;, name: &quot;acme-reviews&quot; })</code>: the mark of <code>p3.plugins</code> lists it, so <code>installOrg</code>
+runs.</li>
+<li>The kit&#39;s binding clones <code>https://github.com/acme/p3-reviews</code> at <code>v2.0.1</code> into the org root and runs <code>npm install --ignore-scripts</code> there.</li>
+<li><code>treeHash</code> of the installed tree is <code>sha256-77de…</code>, equal to the profile&#39;s: it goes into <code>verified</code> and the file
+the start script reads.</li>
+<li><code>kit.readmit()</code>, <code>kit.apply()</code>: discovery runs again, <code>admits</code> sees an org-root plugin with a matching entry and
+hash, and returns <code>true</code>. The plugin loads; the catalog shows it &quot;loaded&quot;.</li>
+</ol>
+<p><strong>A plugin that is not allowed.</strong> Dana pastes <code>https://github.com/someone/p3-weather</code> into &quot;Install from a source&quot;.</p>
+<ol>
+<li><code>Plugins.install({ kind: &quot;source&quot;, … })</code>: <code>own.value</code> is <code>false</code> (Acme locked <code>p3.plugins.own</code>), so
+<code>refusedBy(OwnPlugins, &quot;Plugins from other sources do not load on this Pi&quot;)</code>. The page shows it with &quot;Managed by
+Acme&quot;, because <code>managed[&quot;p3.plugins.own&quot;]</code> exists.</li>
+<li>Suppose the tree got into the member root anyway (copied there before enrollment, or by a shell running as the
+Pi&#39;s user without the lock-down). Discovery finds it; <code>admits</code> reaches the last line, <code>state.ownPlugins</code> is
+<code>false</code>, and it does not load. The catalog lists it as &quot;left-out: plugins written or installed on this Pi do not
+load (managed by Acme)&quot;.</li>
+<li>And if someone put it into the org root under a catalog name? Its hash does not match: <code>recheck</code> drops it from
+<code>verified</code>, and <code>admits</code> refuses it.</li>
+</ol>
+<h4>(v) The agent writes a plugin</h4>
+<p>Dana asks for &quot;a small plugin that shows the weather in the sidebar&quot;. The agent calls the plugin tool <code>plugin_write({ plugin: &quot;weather&quot;, path: &quot;web.tsx&quot;, content: &quot;…&quot; })</code>.</p>
+<ol>
+<li><code>PluginsView.write</code> → <code>Plugins.write</code>: <code>own.value</code> is <code>false</code>, so <code>refusedBy(OwnPlugins, &quot;Plugins written on this Pi do not load&quot;)</code>.</li>
+<li><code>toolError</code> turns it into: <strong>&quot;Plugins written on this Pi do not load. The setting p3.plugins.own is managed by Acme
+and locked. Do not retry or look for another way; tell the user to ask Acme&#39;s admin.&quot;</strong></li>
+<li>Without the lock-down, a determined agent could still write the files with its own file tools into the member
+root and call <code>plugin_apply</code>. Apply runs, the plugin is discovered, <code>admits</code> returns <code>false</code>, and the apply tool&#39;s
+result lists <code>weather: left out: plugins written on this Pi do not load (managed by Acme)</code>. With the lock-down, the
+write itself fails: the member root belongs to the Pi&#39;s service user, and the agent&#39;s shell runs as Dana.</li>
+</ol>
+<h4>(vi) Dana shares a session with an outside email</h4>
+<p>Dana opens the share sheet of a session and types <code>sam@partner.example</code>.</p>
+<ol>
+<li><code>Sharing.share</code> → <code>Shares.share</code>. <code>audience.value</code> is <code>&quot;org&quot;</code>. <code>radius.isMember({ email: &quot;sam@partner.example&quot; })</code>
+answers <code>false</code>. The method throws <code>refusedBy(SharingAudience, &quot;sam@partner.example is not a member of the org; sessions can be shared with members only&quot;)</code>, and the sheet shows it with &quot;Managed by Acme&quot;.</li>
+<li>A modified Pi that skips that check reaches Radius&#39;s <code>createShare</code>. Radius loads the profile it signed for
+<code>pi_7f3a</code>, finds <code>&quot;org&quot;</code>, asks its own membership table and answers <code>403 outside_org</code>. No grant, no link, no relay.</li>
+<li>A grant made before the lock (when the audience was <code>&quot;anyone&quot;</code>) is ended by the <code>self.on(audience, …)</code> routine:
+<code>radius.revokeShare</code> for every invitee who is not a member. Radius also ends such grants itself when the profile
+changes, so a Pi that is offline at that moment does not keep them alive.</li>
+</ol>
+<h4>(vii) Acme removes Linear, live</h4>
+<p>Acme&#39;s admin deletes the Linear row and saves. Radius signs revision 43.</p>
+<ol>
+<li><code>OrgClient</code> receives it over the follow connection, checks the signature, <code>member</code>, <code>pi</code> and the plugin sources,
+and offers it. <code>OrgGate</code>&#39;s routine writes the cache (settings first) and calls <code>plugins.reconcile</code> (nothing to
+install) and <code>plugins.apply</code>.</li>
+<li><code>gate</code> changes, so <code>Settings.effective</code> changes: <code>mcp.servers</code> is now <code>{ jira }</code>.</li>
+<li><code>McpConnections</code>&#39;s routine runs with <code>{ jira }</code>. <code>linear</code> is live but no longer wanted: removed from the pool, its
+client closed. A Linear call in flight at that moment rejects with <code>McpConnectionClosedError</code>; its tool result is an
+error the model sees (&quot;MCP server linear: connection closed&quot;).</li>
+<li><code>snapshot.set</code> → <code>tools</code> loses Linear&#39;s tools → every running session&#39;s <code>McpAgent</code> routine sets its tools → the
+harness&#39;s next model request in each session no longer offers <code>mcp__linear__*</code>. No session restarts; nothing else
+reconnects.</li>
+</ol>
+<p>The page&#39;s MCP section loses its Linear row in the same second, because it watches the same <code>effective</code> value.</p>
+<h4>(viii) Acme locks its own plugin&#39;s setting</h4>
+<p><code>acme-deploy</code> declares <code>deploy.targets</code> and reads it with <code>setting(self, DeployTargets)</code>. Its authors wrote the
+settings page form for it, as for any setting; they never mention orgs.</p>
+<ol>
+<li>Acme&#39;s admin opens &quot;Other settings&quot; in Radius. The setting is listed because Dana&#39;s Pi reported the <code>SettingKinds</code>
+of its loaded plugins at its last sync, with the schema <code>map(DeployTarget)</code>. Radius renders the form from the
+schema; the admin adds <code>staging</code> and <code>production</code> and picks &quot;locked&quot;.</li>
+<li>The profile carries <code>&quot;deploy.targets&quot;: { &quot;lock&quot;: &quot;locked&quot;, &quot;value&quot;: { … } }</code>. On Dana&#39;s Pi, <code>effectiveOf</code> returns
+exactly those two targets; <code>Deployer.targets</code> (a derive of the effective value) shows them; <code>deploy({ target: &quot;my-box&quot; })</code> fails with &quot;No deploy target my-box&quot; from the plugin&#39;s own check.</li>
+<li>Dana&#39;s attempt to add <code>my-box</code> on the settings page, or her agent&#39;s through a settings tool, ends in <code>Settings.set</code>
+with &quot;Managed by Acme: deploy.targets is locked&quot;.</li>
+</ol>
+<p>The plugin did one thing: it kept its configuration as a setting. That is the whole contract between plugin authors
+and orgs. A plugin that keeps its targets in a private file instead would escape the lock; Acme&#39;s answer is not to
+admit it.</p>
+</section>
+
+<section class="chapter" id="trust"><header class="opener"><div class="numeral">V</div><h2>Guardrails and Walls</h2><p class="lede">Who this stops, who it does not, and what Radius enforces whatever the Pi does.</p></header>
 <p class="dropcap">Every check in the Pi runs in the Pi&#39;s process, as the Pi&#39;s Unix user. That decides what it can stop. The design is
 honest about it: in the Pi, managed settings are a guardrail; where Radius sits in the path, they are a wall.</p>
 <h3 id="three-adversaries">Three adversaries</h3>
 <p><strong>Dana&#39;s agent</strong> is the main target: prompt injection or plain sloppiness. Its ordinary means are the settings tool,
 the plugin tools, the share tool and file edits. <code>Settings.set</code> refuses locked settings. The base&#39;s install path
 refuses plugins outside the profile, and <code>admit</code> keeps unapproved code from loading. The enrollment file is root-owned.
-An edited cache fails its signature, and the gate falls back to <code>pending</code>. All of these hold. What does not hold is
-<code>bash</code> under the Pi&#39;s Unix user: it can start a modified copy of the Pi on the same data directory, with Dana&#39;s token,
-ignoring the gate. That is the decided trust line (&quot;The agent writes plugins&quot;: the boundary is access to the server).</p>
+An edited cache fails its signature, and the gate falls back to <code>pending</code>. All of these hold. What does not hold, on a
+Pi that runs as Dana&#39;s own user, is <code>bash</code> under the Pi&#39;s Unix user: it can start a modified copy of the Pi on the same
+data directory, with Dana&#39;s token, ignoring the gate. On a personal Pi that is the decided trust line (&quot;The agent
+writes plugins&quot;: the boundary is access to the server). On an Org Device chapter VI moves it: the Pi runs as a user of
+its own and the agent&#39;s shell runs as Dana, so the shell cannot reach the Pi&#39;s files.</p>
 <p><strong>A third-party plugin</strong> is server code in the Pi&#39;s process. It can do anything the process can. Admitting it is the
 trust decision, and the only control is <code>p3.plugins</code>. A plugin that keeps its configuration through settings is covered
 without knowing it.</p>
@@ -647,7 +1834,7 @@ enforced at Radius.</p>
 <tr>
 <td>Required and approved plugins only</td>
 <td>install path, <code>admit</code>, hash checks</td>
-<td>guardrail: the org root is written by the Pi&#39;s Unix user. On an Org Device a root-owned root is stronger (below).</td>
+<td>guardrail: the org root is written by the Pi&#39;s Unix user; with the service user of chapter VI the agent cannot write it.</td>
 </tr>
 <tr>
 <td>No sharing outside Acme</td>
@@ -675,7 +1862,274 @@ at the price of a Pi that locks itself after that long without the server.</p>
 </div>
 </section>
 
-<section class="chapter" id="failures"><header class="opener"><div class="numeral">V</div><h2>When Things Fail</h2><p class="lede">Every failure the consultations found, and what the Pi does.</p></header>
+<section class="chapter" id="lockdown"><header class="opener"><div class="numeral">VI</div><h2>Locking Down the Machine</h2><p class="lede">How a managed Pi holds against a member or an agent with a shell: a signed install, a service user, tools that run as the member, execution control, and a key Radius checks.</p></header>
+<p class="dropcap">Chapter V ends at one line: <code>bash</code> under the Pi&#39;s Unix user defeats every check in the Pi. On a personal Pi that line
+is fine, it is the decided trust boundary. On an Org Device it is the first thing a curious agent finds. Dana&#39;s agent
+runs <code>bash</code> as the user the Pi runs as, so it can edit the profile cache, read the Radius token, write into the org
+root, or start a patched copy of the Pi on the same data directory with Dana&#39;s token.</p>
+<p>The fix is not more checks inside the Pi. It is to move the Pi out of reach of the shell: the Pi runs as a user of its
+own, from files nobody else can write, and the agent&#39;s tools run as Dana, who owns none of the Pi&#39;s files. Five
+pieces do that. Each stops some adversaries and not others; the table at the end says which.</p>
+<h3 id="a-one-signed-executable-in-a-system-location">(a) One signed executable in a system location</h3>
+<p>The Pi is installed by the machine&#39;s admin (on a laptop: the MDM, the tool an IT department uses to push software and
+settings to company machines) into a directory only an administrator can write: <code>/opt/p3</code> on Linux,
+<code>/Library/Application Support/p3</code> or <code>/usr/local/p3</code> on macOS, <code>C:\Program Files\p3</code> on Windows. Dana and her agent can
+read and run it, not change it.</p>
+<p><strong>What pi has today.</strong> The coding agent already ships standalone binaries:</p>
+<ul>
+<li><code>packages/coding-agent</code>&#39;s <code>build:binary</code> script and <code>scripts/build-binaries.sh</code> compile <code>dist/bun/cli.js</code> with Bun&#39;s
+<code>--compile</code> into one executable per platform (darwin arm64 and x64, linux x64 and arm64, windows x64 and arm64),
+embedding two worker entry points (the image resize worker and the code mode worker).</li>
+<li>The executable is not alone: the release archives carry assets next to it (themes, the export template and its
+vendor scripts, the photon wasm file, docs), and <code>src/config.ts</code> finds them relative to the executable when
+<code>isBunBinary</code> is set (<code>getPackageDir</code>, <code>getThemesDir</code>, <code>getExportTemplateDir</code>).</li>
+<li>There is also an esbuild-bundled Node distribution (<code>dist/bundle/cli.js</code>, detected by <code>isBundledNode</code>).</li>
+<li>Nothing is signed. <code>.github/workflows/build-binaries.yml</code> builds and uploads the archives; there is no code signing,
+notarization or Authenticode step.</li>
+</ul>
+<p><strong>What p3 needs is different.</strong> p3&#39;s server is a Chord app, and the kit depends on Node in ways the coding agent does
+not: the store uses <code>node:sqlite</code>; session workers are separate Node processes started with <code>child_process.fork</code> and
+advanced serialization (<code>packages/chord/src/node/workers/process.ts</code>); plugin builds call esbuild, which is a native
+executable of its own (<code>packages/chord/src/node/plugins/build.ts</code>); installs run <code>git</code>, <code>tar</code> and <code>npm</code>
+(<code>packages/chord/src/node/plugins/install.ts</code>). So p3&#39;s executable is a Node single executable application (Node&#39;s
+own mechanism: one Node binary with the bundled server injected into it), and it does not travel alone either:</p>
+<table>
+<thead>
+<tr>
+<th>File in <code>/opt/p3/bin</code></th>
+<th>Why it is separate</th>
+<th>Signed</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>p3</code></td>
+<td>Node with the bundled server, the worker entry and the TUI; started as <code>p3 serve</code>, <code>p3 worker</code>, <code>p3</code> (TUI)</td>
+<td>yes</td>
+</tr>
+<tr>
+<td><code>esbuild</code></td>
+<td>plugin builds; found through <code>ESBUILD_BINARY_PATH</code></td>
+<td>yes</td>
+</tr>
+<tr>
+<td><code>pi-env</code></td>
+<td>the tool daemon of <code>packages/env</code> (Rust), started as the member, (c) below</td>
+<td>yes</td>
+</tr>
+<tr>
+<td><code>p3-devkey</code></td>
+<td>the device key helper, (e) below</td>
+<td>yes, with the platform&#39;s key access entitlement on macOS</td>
+</tr>
+</tbody></table>
+<p>Three kit changes follow, all for laptops later rather than Dec 18: the worker fork must start the same executable in
+worker mode (<code>fork</code> runs <code>process.execPath</code>, which is <code>p3</code> itself, so its entry point dispatches on its arguments, and
+the worker kind&#39;s Node flags are fixed at build time); installs of org plugins must not need <code>npm</code> and <code>git</code> on the
+machine, so Radius (or Acme&#39;s CI) builds each approved plugin into a complete tree with its <code>node_modules</code>, hashed as
+a whole, and the kit installs that tarball; and esbuild&#39;s path comes from the install directory, never from the data
+directory, where the service user could replace it.</p>
+<p>On macOS the four files are signed with a Developer ID and the package is notarized; on Windows they carry
+Authenticode signatures. Signing is what lets (d) tell this Pi from a patched copy.</p>
+<h3 id="b-the-pi-runs-as-a-service-under-its-own-user">(b) The Pi runs as a service under its own user</h3>
+<p>Each member&#39;s Pi is a system service with a Unix user (a Windows service account) of its own, created by the root
+setup when Dana&#39;s Pi is created:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Linux (Org Devices, Dec 18)</th>
+<th>macOS</th>
+<th>Windows</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Service</td>
+<td>systemd unit <code>p3@dana.service</code>, <code>User=p3-dana</code></td>
+<td>launchd daemon <code>/Library/LaunchDaemons/com.earendil.p3.dana.plist</code>, <code>UserName</code> <code>_p3dana</code></td>
+<td>a Windows service per member, virtual account <code>NT SERVICE\p3-dana</code></td>
+</tr>
+<tr>
+<td>Data directory</td>
+<td><code>/var/lib/p3/dana</code>, owner <code>p3-dana</code>, mode 0700</td>
+<td><code>/Library/Application Support/p3/dana</code>, owner <code>_p3dana</code>, 0700</td>
+<td><code>C:\ProgramData\p3\dana</code>, ACL: the service account only</td>
+</tr>
+<tr>
+<td>Inside it</td>
+<td>the Chord store, the profile cache, the Pi&#39;s Radius token, the org root, the member root, secrets</td>
+<td>same</td>
+<td>same</td>
+</tr>
+<tr>
+<td>Listens on</td>
+<td><code>127.0.0.1:&lt;port&gt;</code>, a port per member Pi</td>
+<td>same</td>
+<td>same</td>
+</tr>
+</tbody></table>
+<p>The profile cache, the Radius token and both plugin roots now belong to <code>p3-dana</code>. Dana&#39;s user cannot read or write
+them, and neither can anything running as Dana: her shell, her editor, her agent&#39;s tools.</p>
+<p><strong>How Dana&#39;s clients sign in.</strong> The kit already has the pieces: device sign-ins, the owner token file (a device
+sign-in of the owner, mode 0600, <code>ownerTokenFile</code> in <code>packages/chord/src/node/app/owner.ts</code>), and one-time owner links
+for the browser. Only where the token lives changes:</p>
+<ul>
+<li>When the root setup creates the Pi, it writes <code>~dana/.p3/pi.json</code>, owner <code>dana</code>, mode 0600: <code>{ &quot;url&quot;: &quot;http://127.0.0.1:47123&quot;, &quot;token&quot;: &quot;&lt;a device sign-in of the owner&gt;&quot; }</code>. Other members on the same Org Device cannot
+read it. On Windows the file is under <code>%LOCALAPPDATA%\p3</code> with an ACL for Dana only.</li>
+<li><strong>The TUI</strong> (<code>p3</code>, run by Dana) reads the file and opens its Chord link with the token as a bearer credential, as
+command-line clients use the owner token file today.</li>
+<li><strong>The browser on the same machine:</strong> <code>p3 open</code> reads the same file, asks the Pi for a fresh one-time owner link
+(<code>POST /_chord/owner-link</code> with the bearer token; the base route calls the kit&#39;s existing <code>App.ownerLink()</code> through
+the platform binding), and opens it. The page posts the one-time token from the URL fragment and gets the owner
+cookie, as the kit&#39;s owner link works today.</li>
+<li><strong>The browser anywhere else</strong> (an Org Device in the cloud, Dana&#39;s phone): through the Radius relay. Dana signs in
+with Radius; the Radius plugin&#39;s authenticator, contributed to the kit&#39;s <code>Authenticators</code> registry, maps her Radius
+identity to the owner.</li>
+</ul>
+<p>A unix socket checked by peer credentials would avoid the token file, but Node has no API to read a socket peer&#39;s
+credentials (<code>SO_PEERCRED</code>, <code>LOCAL_PEERCRED</code>), and the kit listens on TCP only (<code>ListenAddress</code> is a host and a port).
+The token file gives the same guarantee through the file system: only Dana can read it. Her agent can read it too,
+and that is fine: it then talks to the Pi as the owner, and the owner is held by the locks.</p>
+<h3 id="c-the-agent-39-s-tools-run-as-dana">(c) The agent&#39;s tools run as Dana</h3>
+<p>A Pi running as <code>p3-dana</code> that runs <code>bash</code> in its own process would hand <code>p3-dana</code>&#39;s rights to the agent, and the
+service user would protect nothing. So the session&#39;s tools never run as the service user. Every session&#39;s execution
+environment is the <code>pi-env</code> daemon from <code>packages/env</code>, started as Dana:</p>
+<pre><code><span class="tk-c">// PROPOSED · apps/p3/plugins/environments/server.ts: the member's environment of a service-run Pi.</span>
+<span class="tk-c">// pi-env API as on origin/main: Connection (a command speaking the daemon's protocol on stdin/stdout), RemoteExecutionEnv.</span>
+<span class="tk-k">import</span> { <span class="tk-t">Connection</span>, <span class="tk-t">RemoteExecutionEnv</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/pi-env"</span>;
+
+<span class="tk-c">/** The member's machine environment: the daemon started as the member through the one rule the setup wrote. */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">memberEnvironment</span>(member: string, cwd: string): <span class="tk-t">RemoteExecutionEnv</span> {
+	<span class="tk-k">const</span> connection = <span class="tk-k">new</span> <span class="tk-t">Connection</span>({ command: [<span class="tk-s">"/usr/bin/sudo"</span>, <span class="tk-s">"-n"</span>, <span class="tk-s">"-u"</span>, member, <span class="tk-s">"/opt/p3/bin/pi-env"</span>] });
+	<span class="tk-k">return</span> <span class="tk-k">new</span> <span class="tk-t">RemoteExecutionEnv</span>({ connection, id: <span class="tk-s">`pi-env:member:${member}`</span>, cwd });
+}</code></pre>
+<pre class="plain"><code># PROPOSED · /etc/sudoers.d/p3-dana, written by the root setup when Dana's Pi is created.
+# p3-dana may start exactly one program as dana, with no arguments ("" forbids any).
+p3-dana ALL=(dana) NOPASSWD: /opt/p3/bin/pi-env ""</code></pre>
+<p><code>bash</code>, <code>read</code>, <code>write</code> and <code>edit</code> go through <code>RemoteExecutionEnv</code> as they do for an SSH machine today. Terminals use
+<code>openTerminal</code> and local MCP servers (the stdio kind) use <code>openProcess</code> on the same connection, so they run as Dana
+too. Dana&#39;s agent can do everything Dana can do on the machine, and nothing the Pi&#39;s user can.</p>
+<p><strong>How each platform starts a process as another user:</strong></p>
+<ul>
+<li><strong>Linux:</strong> the sudoers rule above. sudo is the privileged helper; the rule names one binary with no arguments.</li>
+<li><strong>macOS:</strong> the same rule works. A root launchd helper that starts <code>pi-env</code> for the console user is the alternative
+when an org disables sudo for service accounts.</li>
+<li><strong>Windows:</strong> a service account cannot start processes as a logged-in user without that user&#39;s token. So the
+direction turns around: a per-user launcher (a logon task in Dana&#39;s session) starts <code>pi-env</code> as Dana and connects it
+to the service over a named pipe whose ACL admits Dana only. Tools work only while Dana is logged in, and terminals
+are not supported by <code>pi-env</code> on Windows yet.</li>
+</ul>
+<p><strong>What it costs.</strong> One <code>pi-env</code> process per session environment (a small Rust daemon, a few MB, an estimate), started
+once per connection, not per command; sudo adds its start time to that first start only. Every file operation becomes
+a message on a pipe instead of a call in the process, which the coding agent&#39;s SSH environments already pay. And the
+setup grows: a Unix user and a sudoers file per member Pi.</p>
+<p><strong>What it does not fix.</strong> Plugins are Pi code: they run in the service as <code>p3-dana</code>, can read the token and could
+start <code>pi-env</code> as Dana themselves. The plugin list stays the control for them.</p>
+<h3 id="d-execution-control">(d) Execution control</h3>
+<p>(a) to (c) protect the managed Pi. They do not stop Dana from running a different Pi: a patched copy of the binary,
+or pi from source, as her own user, with her own provider keys. Execution control is the MDM&#39;s job, not the Pi&#39;s:</p>
+<ul>
+<li><strong>macOS:</strong> an endpoint-security agent installed by the MDM, with an allow list by signing team; Dana is not an
+administrator. Gatekeeper alone checks only downloaded files.</li>
+<li><strong>Linux:</strong> fapolicyd with a trust database of approved binaries, or <code>noexec</code> mounts for home and temporary
+directories.</li>
+<li><strong>Windows:</strong> App Control for Business or AppLocker publisher rules, pushed by the MDM.</li>
+</ul>
+<p>Execution control has a hard limit on developer machines: it stops a patched <code>p3</code> binary, not a Pi run from source by
+an interpreter Dana needs for her work (<code>node</code>, <code>python</code>). That is why (e) matters more: a copy that runs gets nothing
+from Acme.</p>
+<h3 id="e-a-device-bound-key">(e) A device-bound key</h3>
+<p>At enrollment the Pi asks <code>p3-devkey</code> to create a key that cannot leave the machine: in the Secure Enclave on macOS
+(P-256, the only curve it offers), in the TPM 2.0 on Linux and Windows (<code>/dev/tpmrm0</code>, the Windows Platform Crypto
+Provider; a cloud Org Device has a virtual TPM). The public half goes to Radius with the first sync and is in the
+profile as <code>deviceKey</code>. From then on Radius gives org resources only to a Pi that proves it holds the private half:</p>
+<figure class="fig anim"><svg viewBox="0 0 720 270" width="100%" role="img" aria-label="Every Radius token is minted against the device key. A copy of the Pi's data on another machine, or under another user, has no key." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f4m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f4a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f4b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="130.7" y1="52" x2="130.7" y2="262" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="45.7" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="130.7" y="27" font-size="11" fill="#2a2723" text-anchor="middle">Dana's Pi</text><text x="130.7" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">p3-dana</text><line x1="360" y1="52" x2="360" y2="262" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="275" y="10" width="170" height="42" rx="4" fill="#efe9dd" stroke="#c9bfae"/><text x="360" y="27" font-size="11" fill="#2a2723" text-anchor="middle">p3-devkey</text><text x="360" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">TPM / Secure Enclave</text><line x1="589.3" y1="52" x2="589.3" y2="262" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="504.3" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="589.3" y="30" font-size="11" fill="#2a2723" text-anchor="middle">Radius</text><g class="step edge" style="--i:1"><line x1="130.7" y1="78" x2="586.3" y2="78" stroke="#7b7468" marker-end="url(#f4m)"/><text x="360" y="72" font-size="10" fill="#2a2723" text-anchor="middle">POST /pis/pi_7f3a/challenge</text></g><g class="step edge" style="--i:2"><line x1="589.3" y1="110" x2="133.7" y2="110" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f4m)"/><text x="360" y="104" font-size="10" fill="#2a2723" text-anchor="middle">nonce</text></g><g class="step edge" style="--i:3"><line x1="130.7" y1="142" x2="357" y2="142" stroke="#7b7468" marker-end="url(#f4m)"/><text x="245.3" y="136" font-size="10" fill="#2a2723" text-anchor="middle">sign(nonce)</text></g><g class="step edge" style="--i:4"><line x1="360" y1="174" x2="133.7" y2="174" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f4m)"/><text x="245.3" y="168" font-size="10" fill="#2a2723" text-anchor="middle">signature</text></g><g class="step edge" style="--i:5"><line x1="130.7" y1="206" x2="586.3" y2="206" stroke="#7b7468" marker-end="url(#f4m)"/><text x="360" y="200" font-size="10" fill="#2a2723" text-anchor="middle">POST /pis/pi_7f3a/token { nonce, signature }</text></g><g class="step edge" style="--i:6"><line x1="589.3" y1="238" x2="133.7" y2="238" stroke="#b4472f" marker-end="url(#f4a)"/><text x="360" y="232" font-size="10" fill="#b4472f" text-anchor="middle">access token, 10 minutes (models, MCP gateway, relay, peers)</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 4.</span> Every Radius token is minted against the device key. A copy of the Pi&#39;s data on another machine, or under another user, has no key.</figcaption></figure>
+<p>The org&#39;s resources at Radius (the model gateway with Acme&#39;s keys, the MCP credentials behind <code>auth: radius</code>, the
+sharing relay, peer links) all take only that short-lived token. Copying the data directory, or the Pi&#39;s long-lived
+Radius token, to another machine gives a Pi that cannot get one. The key handle is readable only by <code>p3-dana</code> (on
+Linux the TPM device is opened by the service, in the <code>tss</code> group; Dana is not).</p>
+<p>For Dec 18 a simpler form is enough: a key file in the data directory, mode 0600, owner <code>p3-dana</code>. It stops Dana and
+her agent (they cannot read it) but not root, which could copy it; the TPM form stops the copy too.</p>
+<h3 id="which-piece-stops-whom">Which piece stops whom</h3>
+<table>
+<thead>
+<tr>
+<th>Piece</th>
+<th>Dana&#39;s agent</th>
+<th>Dana with a shell</th>
+<th>Dana with admin rights</th>
+<th>A third-party plugin</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>(a) signed install in a system location</td>
+<td>cannot patch the Pi</td>
+<td>cannot patch it; can run another copy</td>
+<td>no</td>
+<td>no: it runs inside</td>
+</tr>
+<tr>
+<td>(b) service user</td>
+<td>cannot edit the cache, token, roots or store</td>
+<td>same</td>
+<td>no</td>
+<td>no: it runs as the service user</td>
+</tr>
+<tr>
+<td>(c) tools as Dana</td>
+<td>its shell and files are Dana&#39;s, not the Pi&#39;s</td>
+<td>not needed: she is Dana</td>
+<td>no</td>
+<td>no: it can start <code>pi-env</code> itself</td>
+</tr>
+<tr>
+<td>(d) execution control</td>
+<td>cannot start a patched binary</td>
+<td>same, except interpreters she needs</td>
+<td>only where the MDM holds admin rights back</td>
+<td>not applicable</td>
+</tr>
+<tr>
+<td>(e) device-bound key</td>
+<td>a copy it starts gets nothing from Acme</td>
+<td>same</td>
+<td>cannot export the key; can use it on that machine</td>
+<td>can use it from inside</td>
+</tr>
+<tr>
+<td>Plugin list (<code>admit</code>, hashes)</td>
+<td>its plugins do not load</td>
+<td>same</td>
+<td>no</td>
+<td>holds: unadmitted code never runs</td>
+</tr>
+<tr>
+<td>Radius enforcement</td>
+<td>holds</td>
+<td>holds</td>
+<td>holds</td>
+<td>holds</td>
+</tr>
+</tbody></table>
+<p>Read by column: an agent is held by (b) and (c) alone. A member with a shell is held by (a), (b) and (e). A member
+with admin rights is held only by Radius, and on that machine not even by (e), which then only stops copies to other
+machines. A third-party plugin is held only by the plugin list and Radius.</p>
+<h3 id="what-dec-18-needs-and-what-waits-for-laptops">What Dec 18 needs, and what waits for laptops</h3>
+<p><strong>Dec 18, Linux Org Devices:</strong></p>
+<ul>
+<li>(b) a systemd unit and a Unix user per member Pi, data in <code>/var/lib/p3/&lt;member&gt;</code>;</li>
+<li>(a) a root-owned install directory <code>/opt/p3</code>, installed by the Device setup: Node, the bundled server, esbuild,
+<code>pi-env</code>; not yet a single executable, not yet signed (on Linux, file ownership already does the work);</li>
+<li>(c) <code>pi-env</code> as the member through one sudoers rule per Pi; the local environment of the service user is never
+offered to sessions;</li>
+<li><code>~&lt;member&gt;/.p3/pi.json</code> for the TUI and <code>p3 open</code>, and Radius sign-in through the relay for the browser;</li>
+<li>(e) the key-file form of the device key.</li>
+</ul>
+<p><strong>Later, for laptops:</strong> the single executable and its signing and notarization; launchd daemons and Windows services;
+the Windows launcher and named pipe; the Secure Enclave and TPM forms of the device key; installs from complete,
+hashed plugin artifacts without <code>npm</code> and <code>git</code>; and execution control, which is the MDM&#39;s, configured by the org.</p>
+</section>
+
+<section class="chapter" id="failures"><header class="opener"><div class="numeral">VII</div><h2>When Things Fail</h2><p class="lede">Every failure the consultations found, and what the Pi does.</p></header>
 <p class="dropcap">The rule behind every row: a failure never makes an enrolled Pi unmanaged, and never opens what the last good profile
 closed.</p>
 <table>
@@ -774,7 +2228,12 @@ closed.</p>
 <tr>
 <td>Shell under the Pi&#39;s Unix user</td>
 <td>can run a modified Pi on the same data</td>
-<td>Not enforceable on the machine; Radius-side checks hold.</td>
+<td>Without lock-down, not enforceable on the machine; Radius-side checks hold. With chapter VI, the member&#39;s shell is not that user.</td>
+</tr>
+<tr>
+<td>A copy of the Pi&#39;s data and token on another machine</td>
+<td>gets no Radius token: it cannot prove the device key</td>
+<td>Org models, MCP credentials, relay and peers stay closed to it (chapter VI, (e)).</td>
 </tr>
 <tr>
 <td>Root, or an admitted plugin</td>
@@ -784,7 +2243,7 @@ closed.</p>
 </tbody></table>
 </section>
 
-<section class="chapter" id="now"><header class="opener"><div class="numeral">VI</div><h2>What the Base Needs Now</h2><p class="lede">What p3 must build before any org exists, and what waits for December 18.</p></header>
+<section class="chapter" id="now"><header class="opener"><div class="numeral">VIII</div><h2>What the Base Needs Now</h2><p class="lede">What p3 must build before any org exists, and what waits for December 18.</p></header>
 <p class="dropcap">The org machinery itself is small and late: an enrollment reader, a client, a gate page. What is expensive to add later
 is the shape it relies on: that every piece of configuration is a declared setting with one write path, and that every
 place that starts a session or loads a plugin asks one gate. With no org, all of it is one store and a constant.</p>
@@ -796,7 +2255,7 @@ model providers, company or personal instructions and the plugin list are settin
 <li><strong>The <code>managed</code> error.</strong> <code>set</code> throws it for a locked setting; the page, the terminal and the agent&#39;s settings tool
 render it as &quot;Managed by X&quot;, and the page draws locks from <code>Settings.managed</code>.</li>
 <li><strong>Plugins only through the base.</strong> Installs, Apply and the plugin-writing tool are methods of one base object
-(<code>PluginManager</code>, base inventory #14), never a side effect of a file write; the member root is a separate root from
+(<code>Plugins</code>, on top of the kit&#39;s <code>PluginManager</code> binding, base inventory #14), never a side effect of a file write; the member root is a separate root from
 the app&#39;s own.</li>
 <li><strong>Base switches with permissive defaults:</strong> <code>p3.sharing.audience</code> (<code>&quot;anyone&quot; | &quot;org&quot; | &quot;nobody&quot;</code>) and
 <code>p3.peers.audience</code>. The share and peer paths read them, and end shares and links that no longer conform when they
@@ -808,13 +2267,17 @@ Apply.</li>
 </ol>
 <h3 id="for-december-18">For December 18</h3>
 <ul>
-<li>The enrollment reader and its fixed path; <code>readGate</code> in the start script.</li>
+<li>The enrollment reader and its fixed path; <code>readStart</code> in the start script.</li>
 <li><code>OrgGate</code>, <code>OrgClient</code>, the profile cache and the gate page (&quot;Connect to Acme&quot;, the reason, sign-in).</li>
 <li>The kit change: plugin roots and <code>admit</code>.</li>
 <li>Hash checks of the org root at start and before each Apply.</li>
 <li>In Radius: the profile editor per org and group, per-member profiles, signing, the <code>revoked</code> answer, &quot;Create my Pi
 here&quot;, and enforcement of sharing and peers from the same profile.</li>
 <li>On Org Devices: the Device setup writes the enrollment file; its supervisor refuses to start a member Pi without it.</li>
+<li>The lock-down of chapter VI for Linux Org Devices: a service user and systemd unit per member Pi, the root-owned
+install in <code>/opt/p3</code>, the agent&#39;s tools as the member through <code>pi-env</code> and one sudoers rule, the client token file in
+the member&#39;s home, and the key-file form of the device key. The single signed executable, launchd and Windows
+services, hardware keys and execution control wait for laptops.</li>
 </ul>
 </section>
 
@@ -843,10 +2306,14 @@ with the key id in the profile so an admin-held key can replace it later.</li>
 <li><strong>Instructions as entries.</strong> <code>prompt.instructions</code> is drawn here as an entries setting so Acme&#39;s text and Dana&#39;s sit
 side by side. The harness&#39;s prompt design may want a different owner for it.</li>
 <li><strong>What <code>revoked</code> does to data on an Org Device.</strong> Keep it (as here), export it to the org, or delete it.</li>
+<li><strong>Lock-down on laptops.</strong> A per-member system service (chapter VI) protects the Pi&#39;s files from the member&#39;s shell,
+but costs a service user, a helper to start tools as the member, and on Windows a logon launcher. The alternative
+is a Pi under the member&#39;s own user with Radius-side enforcement only. Recommended: the service on Org Devices from
+Dec 18; decide for laptops once an org asks for MDM deployment.</li>
 </ol>
 </section>
 
-<p class="colophon">p3 org-managed Pis · design, first edition · 2026-11-13 · sources: org consultations (opus, fable, astra, sol), apps/p3/docs/decisions.md, packages/chord/src</p>
+<p class="colophon">p3 org-managed Pis · design, second edition · 2026-11-13 · sources: org consultations (opus, fable, astra, sol), apps/p3/docs/decisions.md, packages/chord/src</p>
 </div></div>
 <script>(function activate(root) {
 	const replay = (f) => {

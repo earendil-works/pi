@@ -1,20 +1,23 @@
 ---
 title: p3: org-managed Pis through managed settings
 cover: Org-Managed / Pis
-kicker: A design book · p3 · first edition · 2026-11-13
+kicker: A design book · p3 · second edition · 2026-11-13
 subtitle: How Acme gives every member's Pi its plugins, MCP servers and models, and closes what it must, without a policy language
 stats:
   - 1 | write path for every setting, Settings.set
   - 2 | locks a managed setting can have, default and locked
   - 5 | gate states, from unmanaged to revoked
-  - 1 | kit change, plugin roots and admit
+  - 8 | traces from a click or a tool call to what Dana sees
 note: |
   The design the owner chose on 2026-11-13 ("I'm in favor of the Opus model ... it just needs to be flexible"), written
   from the consultation `org-opus` and the good parts of `org-fable`, `org-astra` and `org-sol` (read-only notes in
   `/tmp`, not in the repo). Every Chord API used in the code was checked against `packages/chord/src` on origin/main
   `8f3f08561`; every p3 name is a proposal. Nothing is built: every code block is marked PROPOSED. Notes marked
-  *review* are corrections to the consultation or points still open.
-colophon: p3 org-managed Pis · design, first edition · 2026-11-13 · sources: org consultations (opus, fable, astra, sol), apps/p3/docs/decisions.md, packages/chord/src
+  *review* are corrections to the consultation or points still open. The second edition adds, at the owner's request,
+  chapter IV (Acme end to end: the admin's form, the full profile, the code of every file involved, eight traces) and
+  chapter VI (locking down the machine: a signed install, a service user, tools as the member, execution control, a
+  device-bound key).
+colophon: p3 org-managed Pis · design, second edition · 2026-11-13 · sources: org consultations (opus, fable, astra, sol), apps/p3/docs/decisions.md, packages/chord/src
 ---
 
 # Before we begin {.preface}
@@ -38,7 +41,7 @@ Dana's own values. For each setting it names, the layer either provides a defaul
 beside Acme's) or locks it (only Acme's value counts). "Start with our MCP servers" and "no MCP servers except ours" are
 the same data with a different lock.
 
-## Eight things to know
+## Ten things to know
 
 :::findings
 1. **An org profile is a list of setting values,** each with a lock: `default` or `locked`. Plugins to install, MCP
@@ -61,6 +64,12 @@ the same data with a different lock.
 8. **The base must have one settings mechanism now,** before any org exists: one write path, a `managed` error, base
    switches for sharing and peers, and a gate that is always `unmanaged`. Retrofitting a single write path later is the
    expensive part.
+9. **One mechanism covers every case Acme cares about.** Adding an MCP server, editing Acme's Jira entry, installing a
+   plugin, writing one, sharing outside Acme, a live removal, and a lock on Acme's own plugin's setting all end in
+   `Settings.set`, `admit` or a setting a plugin follows. Chapter IV traces each one through the code.
+10. **On an Org Device the shell is moved out of reach.** The Pi runs as a service under its own Unix user, from a
+   root-owned install; the agent's tools run as the member through `pi-env`; Radius serves org resources only to a Pi
+   that proves a device-bound key. Then a member's agent can no longer edit the Pi's files at all.
 :::
 
 ## Words used throughout
@@ -73,7 +82,8 @@ entries). The **user layer** holds the member's own values; the **managed layer*
 to an org. The **profile** is the org's managed layer for one member's Pi, signed with the **org key**; the Pi keeps the
 last good one as its **cache**. The **gate** is the Pi's org state. **Admit** is the kit's check that decides at
 discovery which plugins load. A **guardrail** holds against the member's agent and well-behaved code; a **wall** holds
-even against a modified Pi, because Radius enforces it.
+even against a modified Pi, because Radius enforces it. On a locked-down machine the Pi runs as a **service user** of its own, and the
+agent's tools run as the member through **`pi-env`**, the tool daemon of `packages/env`.
 
 :::note | What this supersedes
 The decision "Resource model direction" (2026-11-08) planned one replaceable policy plugin that guards create, bring
@@ -103,7 +113,7 @@ company laptops) delivers it. Without the file, a Pi is personal and unmanaged, 
   "name": "Acme",
   "server": "https://radius.example.com/orgs/acme",
   "orgKey": "ed25519:MCowBQYDK2VwAyEAq4…",
-  "pluginSources": ["github.com/acme/"]
+  "pluginSources": ["https://github.com/acme/"]
 }
 ```
 
@@ -133,9 +143,9 @@ Radius resolves Acme's groups to one profile per member and Pi. Here is Dana's:
     "maxOffline": null,
     "settings": {
       "p3.plugins": { "lock": "locked", "value": {
-        "acme-tools":   { "source": { "git": "github.com/acme/p3-tools", "ref": "v1.4.0" },   "hash": "sha256-9c1e…", "required": true },
-        "acme-deploy":  { "source": { "git": "github.com/acme/p3-deploy", "ref": "v0.9.2" },  "hash": "sha256-41b0…", "required": true },
-        "acme-reviews": { "source": { "git": "github.com/acme/p3-reviews", "ref": "v2.0.1" }, "hash": "sha256-77de…", "required": false }
+        "acme-tools":   { "source": { "git": "https://github.com/acme/p3-tools", "ref": "v1.4.0" },   "hash": "sha256-9c1e…", "required": true },
+        "acme-deploy":  { "source": { "git": "https://github.com/acme/p3-deploy", "ref": "v0.9.2" },  "hash": "sha256-41b0…", "required": true },
+        "acme-reviews": { "source": { "git": "https://github.com/acme/p3-reviews", "ref": "v2.0.1" }, "hash": "sha256-77de…", "required": false }
       } },
       "p3.plugins.own": { "lock": "locked", "value": false },
       "mcp.servers": { "lock": "locked", "value": {
@@ -193,36 +203,17 @@ method that knows about locks.
 
 ## Declaring a setting
 
-A setting is a token in the contract file of the plugin that owns it, like a `defineState` token. The plugin
-contributes it to the registry `SettingKinds`, from which the settings page renders its forms.
+A setting is a token in the contract file of the plugin that owns it, like a `defineState` token: a name, a schema, a
+merge kind and an initial value. The plugin contributes it to the registry `SettingKinds`, from which the settings page
+renders its forms and which the Pi reports to the org server so its admin form knows the setting.
 
 ```ts
-// PROPOSED · @p3/app/v1/settings.ts (base contract file). Chord API: defineRegistry, keyedEntries, TableItem, Schema.
-export type SettingKind = {
-	readonly name: string;
-	readonly schema: Schema;
-	readonly merge: "value" | "entries";
-	readonly initial: JsonValue;
-};
-
-/** Declares a setting; its plugin contributes it to `SettingKinds` and reads it with `setting(self, token)`. */
-export function defineSetting<S extends Schema>(
-	name: string,
-	schema: S,
-	options: { readonly merge: "value" | "entries"; readonly initial: Static<S> },
-): SettingKind & { readonly initial: Static<S> } {
-	return { name, schema, merge: options.merge, initial: options.initial };
-}
-
-/** Every declared setting by name, with the plugin that contributed it (the first by plugin name wins a name). */
-export const SettingKinds = defineRegistry<readonly SettingKind[], ReadonlyMap<string, TableItem<SettingKind>>>(
-	"p3.setting-kinds",
-	{ version: 1 },
-);
+// PROPOSED · apps/p3/plugins/mcp/contract.ts (full file in chapter IV)
+export const McpServers = defineSetting("mcp.servers", map(McpServerConfig), { merge: "entries", initial: {} });
 ```
 
-The base serves `SettingKinds` with `keyedEntries(table, (kinds) => Object.fromEntries(kinds.map((k) => [k.name, k])),
-report)`, which reports a name two plugins declare.
+`defineSetting`, `SettingKinds`, `Settings` and `setting()` are in `apps/p3/app/v1/settings.ts`, shown in full in
+chapter IV.
 
 ## Two merge kinds, two locks
 
@@ -247,67 +238,18 @@ A locked setting does not delete the member's values. They are kept and ignored,
 ## The one write path
 
 `Settings` is a local object with empty params on the server: one per Pi, persisted, the only writer of the user
-layer.
+layer. Its one method, `set`, takes either a whole value or one entry of an entries setting, and refuses in this order:
 
-```ts
-// PROPOSED · @p3/app/v1/settings.ts. Chord API: local, method, obj, str, arr, map, unknown, oneOf, union, nul.
-export const Settings = local("p3.settings", {
-	version: 1,
-	params: {},
-	members: {
-		/** Effective values by setting name. */
-		effective: map(unknown()),
-		/** The names the org manages, with their lock and the names of the org's entries: what the page marks. */
-		managed: map(obj({ org: str(), lock: oneOf("default", "locked"), entries: arr(str()) })),
-		/** Sets a value setting, or puts (`value`) or removes (`null`) one entry of an entries setting. */
-		set: method(union([
-			obj({ name: str(), value: unknown() }),
-			obj({ name: str(), entry: str(), value: union([unknown(), nul()]) }),
-		])),
-	},
-});
-```
+1. the gate is closed: `gated`, "Waiting for Acme";
+2. no loaded plugin declares the name: `unknown_setting`;
+3. the org locked the setting: `managed`, "Managed by Acme: mcp.servers is locked";
+4. the write touches one of the org's entries: `managed`, "Managed by Acme: the entry jira of mcp.servers";
+5. the value fails the declaring plugin's schema: `invalid_value`.
 
-```ts
-// PROPOSED · plugins/settings/server.ts (app root). Chord API: defineState (persist, checkpointWhen), StoreSelf.state,
-// self.registry, self.get, self.derive, reference members' .value, PluginError (data/errors.ts), handle.change.
-const UserLayer = defineState("p3.settings.user", {
-	schema: obj({ values: map(unknown()) }),
-	version: 1,
-	initial: () => ({ values: {} }),
-	persist: true,
-	checkpointWhen: () => true,
-});
-
-host.serve(Settings, (_params, self) => {
-	const user = self.state(UserLayer);
-	const kinds = self.registry(SettingKinds);
-	const gate = self.get(OrgGate, {}).gate;
-	return {
-		effective: self.derive([user, kinds, gate], ([u, k, g]) => effectiveAll(u.values, k, g)),
-		managed: self.derive([gate], ([g]) => managedMarks(g)),
-		set: async (args, ctx) => {
-			// Followed state, read per call: a profile that arrived since the last call counts.
-			const g = gate.value;
-			if (g.kind !== "unmanaged" && g.kind !== "ready") throw new PluginError("gated", `Waiting for ${g.orgName}`);
-			const kind = kinds.value.get(args.name)?.value;
-			if (kind === undefined) throw new PluginError("unknown_setting", `No setting ${args.name}`);
-			const managed = g.kind === "ready" ? g.profile.settings[args.name] : undefined;
-			if (managed !== undefined && (managed.lock === "locked" || ("entry" in args && args.entry in managed.value)))
-				throw new PluginError("managed", `Managed by ${g.orgName}`, { org: g.org, setting: args.name });
-			// Trust boundary: the page's and the agent's input, checked against the declaring plugin's schema.
-			const next = "entry" in args ? withEntry(user.value.values[args.name], args.entry, args.value) : args.value;
-			validate(kind.schema, next);
-			await user.change((draft) => { draft.values[args.name] = next; }, ctx);
-		},
-	};
-});
-```
-
-`effectiveAll`, `managedMarks`, `withEntry` and `validate` are small pure helpers of the settings plugin: the table above,
-the page's marks, a record with one entry put or removed, and a pi-schema check. The error carries the code `managed`;
-pages and the terminal render it as "Managed by Acme", and draw a lock beside every name in `managed`. Dana's agent
-gets the same error from its settings tool, which calls the same `set`.
+Then it writes Dana's layer. The gate is read per call, not when the page was drawn, so a lock that arrived a second
+ago counts. Pages and the terminal render `managed` as "Managed by Acme" and draw a lock beside every name in the
+store's `managed` member; Dana's agent gets the same error from its tools, which call the same `set`. Chapter IV has the
+code (`apps/p3/plugins/settings/server.ts`) and traces both paths.
 
 :::note | Workers read settings through the server
 `Settings` is a server object. A session worker that needs a setting (the harness reading `prompt.instructions`)
@@ -321,28 +263,15 @@ The MCP plugin declares its servers as a setting, contributes it, and reconciles
 value. It never names an org, a lock, a gate or a principal.
 
 ```ts
-// PROPOSED · plugins/mcp: everything it writes for orgs is nothing. Chord API: defineFacet's (host, self),
-// FacetSelf.contribute, host.serve, self.on.
-export const McpServers = defineSetting("mcp.servers", map(McpServerConfig), { merge: "entries", initial: {} });
-
-export default defineFacet((host, facet) => {
+// PROPOSED · apps/p3/plugins/mcp/server.ts, shortened (full file in chapter IV)
+export default defineFacet<P3Principal>((host, facet) => {
 	facet.contribute(SettingKinds, [McpServers]);
 	host.serve(McpConnections, (_params, self) => {
-		const servers = setting(self, McpServers);           // Acme's entries, plus Dana's unless locked
-		self.on(servers, ({ value }, ctx) => reconcile(value, ctx));   // a server an update locks out disconnects now
-		return { /* … */ };
+		const servers = setting(self, McpServers);                     // Acme's entries, plus Dana's unless locked
+		self.on(servers, async ({ value }) => reconcile(value));       // a server an update locks out disconnects now
+		return { status, tools, call };
 	});
 });
-```
-
-```ts
-// PROPOSED · @p3/app/v1/settings.ts. Chord API: self.get, self.derive.
-/** A setting's effective value, for any server object. */
-export function setting<T extends JsonValue>(self: Self, token: { readonly name: string; readonly initial: T }): Watchable<T> {
-	const all = self.get(Settings, {}).effective;
-	// Cast: `set` and the profile check validated the value against this token's schema.
-	return self.derive([all], ([values]) => (values[token.name] ?? token.initial) as T);
-}
 ```
 
 The `self.on` routine is needed for Dana's own edits anyway: when she removes a server on the settings page, it
@@ -496,9 +425,12 @@ says so before its Apply.
 
 ```ts
 // PROPOSED · apps/p3/src/server.ts (base code). Chord API: startServer, App.host, Host.get, reference members' .value.
-const start = readGate(ENROLLMENT_PATH, dataDir);       // sync: enrollment, cache, signature, maxOffline
+const start = readStart(ENROLLMENT_PATH, dataDir);      // sync: enrollment, cache, signature, maxOffline, verified hashes
 let held: Reference<typeof OrgGate> | undefined;
-const gate = () => held?.gate.value ?? start;           // the start read until OrgGate is live
+let plugins: Reference<typeof Plugins> | undefined;
+const gate = () => held?.gate.value ?? start.gate;      // the start read until OrgGate is live
+// What `admits` needs: the gate, the verified org plugins, the effective `p3.plugins.own` (chapter IV, admit.ts).
+const admitState = () => ({ gate: gate(), verified: plugins?.verified.value ?? start.verified, ownPlugins: own() });
 
 const app = await startServer<P3Principal>({
 	name: "p3",
@@ -507,13 +439,15 @@ const app = await startServer<P3Principal>({
 	workers: [{ ...sessionKind, authorize: (principal, address) => isOpen(gate()) && mayUse(principal, address) }],
 	plugins: {
 		roots: [orgRoot(dataDir), memberRoot(dataDir)],
-		admit: (plugin) => admits(gate(), plugin),
+		admit: (plugin) => admits(admitState(), plugin, roots),
 	},
 }, context);
 held = await app.host.get(OrgGate, {}, context);
+plugins = await app.host.get(Plugins, {}, context);
 ```
 
-`admits` is four lines. The app root always loads. Nothing else loads while the gate is locked. In the org root, a
+`own()` reads the effective `p3.plugins.own`: from the cached profile before the host is up, from `Settings` after.
+`admits` (`apps/p3/src/admit.ts`, in chapter IV) is a few lines. The app root always loads. Nothing else loads while the gate is locked. In the org root, a
 plugin loads when its name is an org entry of `p3.plugins` and its tree matched its hash. In the member root, a
 plugin loads when the Pi is unmanaged, or when the effective `p3.plugins.own` is `true`.
 
@@ -529,22 +463,25 @@ again.
 ```ts
 // PROPOSED · plugins/org/server.ts (app root). Chord API: local, self.open, self.follow, self.get, self.derive,
 // self.on. `OrgClient` (base code) reads the enrollment file and the cache, follows the server with backoff, checks
-// profiles, and writes the cache by atomic rename; `PluginManager` is base inventory #14 (install, apply).
+// profiles, and writes the cache by atomic rename; `Plugins` is the plugin service of chapter IV.
 host.serve(OrgGate, (_params, self) => {
 	const client = self.open((ctx) => openOrgClient(ctx), (c) => c.close());
 	// { enrollment, cached, offered, revoked, live, now }: the client's observer, attached once it opened.
 	const org = self.follow((observer, ctx) => client.value.attach(observer, ctx));
-	const plugins = self.get(PluginManager, {});
+	const plugins = self.get(Plugins, {});
 	const offered = self.derive([org], ([o]) => o.offered);   // a checked profile newer than the cache, or null
 	self.on(offered, async ({ value }, ctx) => {
 		if (value === null) return;
 		const first = org.value.cached === null;
 		// First sync: required plugins install before anything opens; a throw leaves the gate pending.
-		if (first) await plugins.reconcile(orgPlugins(value), ctx);
+		if (first) {
+			const failed = await plugins.reconcile(orgPlugins(value), ctx);
+			if (failed.length > 0) throw new PluginError("required_failed", failed.map((f) => `${f.name}: ${f.error}`).join("; "));
+		}
 		await client.value.commit(value, ctx);                  // the cache is the managed layer: settings apply now
 		// Updates: settings first, plugins when installed; failures are reported and retried, never thrown.
 		if (!first) await plugins.reconcile(orgPlugins(value), ctx);
-		await plugins.apply(ctx);                               // readmit, then the kit's applyChanges
+		await plugins.apply(null, ctx);                         // recheck hashes, readmit, the kit's applyChanges
 	});
 	return { gate: self.derive([org], ([o]) => gateOf(o)) };
 });
@@ -553,6 +490,1241 @@ host.serve(OrgGate, (_params, self) => {
 `gateOf` is the table of five states as a pure function. The first sync is the same routine: with no cache, `offered`
 is the first profile, and the cache is written only after `reconcile` installed the required plugins. When the
 routine throws, the client offers the profile again after its backoff.
+
+# Acme End to End {#e2e lede="What Acme's admin types into Radius, the files that come out of it, the code they pass through, and eight traces from a click or a tool call to what Dana and her agent see."}
+
+The chapters so far describe the mechanism. This one shows all of it at once, for one org: what the admin fills in,
+the two documents that result, every file of p3 that takes part, and what happens, line by line, in the eight cases
+an org cares about. Every code block is PROPOSED and names its path as it would be in `apps/p3`; every Chord call in it
+exists on origin/main (checked again for this edition: `local`, `remote`, `hostKind`, `method`, `defineState` with
+`persist` and `checkpointWhen`, `defineRegistry`, `keyedEntries`, `StoreSelf.state`, `self.registry`, `self.get`,
+`self.derive`, `self.on`, `self.onLive`, `self.open`, `self.follow`, `self.writable`, `self.contribute`, `PluginError`,
+`forbidden`,
+`useHold`, `useWatch`). Names from pi's other packages are real too: Durable's `defineTool` and its
+`ToolExecutionResult`, pi-mcp's `McpClient`, `StreamableHttpTransport`, `createMcpToolName`, `toLlmContent`,
+pi-schema's `compile`.
+
+## What the admin fills in
+
+Acme's admin opens the org's page in Radius. Each field becomes one place in the profile:
+
+| Section | Field | Acme's value | Becomes |
+| --- | --- | --- | --- |
+| Org | Name, id | Acme, `acme` | `orgName`, `org` |
+| Org | Signing key | `acme-2026-11` (see Open Questions) | `signature.key` |
+| Org | Plugin sources | `github.com/acme/` | `pluginSources` of the enrollment file |
+| Assignment | Profile per group | everyone in `acme-staff` | one profile per member and Pi |
+| Plugins | Name, source (git URL and ref, or npm name and version), Required or Allowed | `acme-tools` and `acme-deploy` required, `acme-reviews` allowed | `p3.plugins` entries; Radius fetches each source and computes its `hash` on save |
+| Plugins | Members may add or write plugins | off | `p3.plugins` locked, `p3.plugins.own` locked `false` |
+| MCP servers | Name, URL, credential (a Radius connection), "only these servers" | Jira, Linear; only these | `mcp.servers` entries, locked |
+| Models | Providers, "only these" | Radius gateway; only this | `models.providers` entries, locked |
+| Sharing | Sessions may be shared with: anyone, members of Acme, nobody; locked | members of Acme; locked | `p3.sharing.audience` |
+| Peers | Pis this Pi may connect to: any, Acme's, none; locked | Acme's; locked | `p3.peers.audience` |
+| Instructions | Name, text, members may add their own | `acme`; yes | `prompt.instructions` entries, default |
+| Offline | Lock a Pi after this many days without Radius | off | `maxOffline` |
+| Other settings | Setting name, value, lock | `deploy.targets`: staging and production, locked | `settings["deploy.targets"]` |
+
+The last row is what makes the design flexible: any setting any approved plugin declares can be managed, not a fixed
+list of switches. Radius learns the names and schemas from the Pis: after each sync a Pi reports the `SettingKinds` of
+its loaded plugins (name, merge kind, JSON schema), and the form for `deploy.targets` is generated from that schema and
+checked against it on save.
+
+## The profile Radius signs
+
+This is Dana's profile, complete. Hashes and the key are shortened; nothing else is left out.
+
+```json
+// PROPOSED · served by Radius at GET /orgs/acme/pis/pi_7f3a/profile
+{
+  "payload": {
+    "org": "acme",
+    "orgName": "Acme",
+    "member": "dana@acme.com",
+    "pi": "pi_7f3a",
+    "deviceKey": "p256:BHk2…",
+    "revision": 42,
+    "issuedAt": "2026-12-18T09:00:00Z",
+    "maxOffline": null,
+    "settings": {
+      "p3.plugins": {
+        "lock": "locked",
+        "value": {
+          "acme-tools": {
+            "source": { "git": "https://github.com/acme/p3-tools", "ref": "v1.4.0" },
+            "hash": "sha256-9c1e…",
+            "required": true
+          },
+          "acme-deploy": {
+            "source": { "git": "https://github.com/acme/p3-deploy", "ref": "v0.9.2" },
+            "hash": "sha256-41b0…",
+            "required": true
+          },
+          "acme-reviews": {
+            "source": { "git": "https://github.com/acme/p3-reviews", "ref": "v2.0.1" },
+            "hash": "sha256-77de…",
+            "required": false
+          }
+        }
+      },
+      "p3.plugins.own": { "lock": "locked", "value": false },
+      "mcp.servers": {
+        "lock": "locked",
+        "value": {
+          "jira": { "url": "https://mcp.atlassian.com/v1/sse", "auth": { "radius": "jira" } },
+          "linear": { "url": "https://mcp.linear.app/mcp", "auth": { "radius": "linear" } }
+        }
+      },
+      "models.providers": {
+        "lock": "locked",
+        "value": {
+          "radius": { "kind": "radius", "auth": { "radius": "models" } }
+        }
+      },
+      "p3.sharing.audience": { "lock": "locked", "value": "org" },
+      "p3.peers.audience": { "lock": "locked", "value": "org" },
+      "prompt.instructions": {
+        "lock": "default",
+        "value": {
+          "acme": {
+            "text": "Acme code is reviewed on GitHub before merge. Never paste customer data into issues or chats."
+          }
+        }
+      },
+      "deploy.targets": {
+        "lock": "locked",
+        "value": {
+          "staging": { "host": "deploy.staging.acme.internal", "branch": "main", "approval": "none" },
+          "production": { "host": "deploy.acme.internal", "branch": "release", "approval": "review" }
+        }
+      }
+    }
+  },
+  "signature": { "alg": "ed25519", "key": "acme-2026-11", "value": "Zm9vYmFy…" }
+}
+```
+
+The signature covers the canonical JSON of `payload` (keys sorted, no whitespace). `deviceKey` is the public half of
+the key Dana's Pi made at enrollment (chapter VI); Radius serves the profile, and every org resource, only to a Pi that
+proves it holds the private half.
+
+## The enrollment file
+
+The same as in chapter I, complete:
+
+```json
+// PROPOSED · /etc/p3/enrollment.json, owner root, mode 0644, parent directories root-owned
+{
+  "org": "acme",
+  "name": "Acme",
+  "server": "https://radius.example.com/orgs/acme",
+  "orgKey": "ed25519:MCowBQYDK2VwAyEAq4…",
+  "pluginSources": ["https://github.com/acme/"]
+}
+```
+
+## The files that take part
+
+| Path | What it holds |
+| --- | --- |
+| `apps/p3/app/v1/hosts.ts` | the host kinds: `Server`, `Session` |
+| `apps/p3/app/v1/settings.ts` | `defineSetting`, `SettingKinds`, `Settings`, `SettingsView`, `setting()`, `refusedBy()` |
+| `apps/p3/plugins/settings/server.ts` | the registry's provider, the store, the view |
+| `apps/p3/app/v1/org.ts` | `OrgGate` and the `Gate` and `Profile` schemas |
+| `apps/p3/plugins/org/server.ts` | `OrgGate` (chapter III) |
+| `apps/p3/app/v1/plugins.ts` | `PluginEntries`, `OwnPlugins`, `Plugins`, `PluginsView` |
+| `apps/p3/plugins/plugins/server.ts` | the only path that installs, writes and applies plugins |
+| `apps/p3/src/org/roots.ts` | the org root and the member root under the data directory; the verified-hashes file |
+| `apps/p3/src/org/tree-hash.ts` | the plugin tree hash (Radius runs the same function) |
+| `apps/p3/src/admit.ts` | `admits`, the function the kit asks at every discovery |
+| `apps/p3/src/server.ts` | the start script (chapter III) |
+| `apps/p3/plugins/harness/refusals.ts` | how any refusal becomes a tool result for the model |
+| `apps/p3/plugins/mcp/contract.ts`, `server.ts`, `worker.ts`, `web.tsx` | the MCP plugin |
+| `apps/p3/plugins/sharing/contract.ts`, `server.ts` | sharing |
+| `github.com/acme/p3-deploy`: `contract.ts`, `server.ts` | Acme's own deploy plugin |
+
+## Settings: the contract
+
+```ts
+// PROPOSED · apps/p3/app/v1/settings.ts
+// The settings contract (`@p3/app/v1/settings`): how plugins declare settings, the registry of declared settings,
+// the server's store, the view pages and session agents use, and `setting()` for server objects.
+
+import {
+	arr, defineRegistry, lit, local, map, method, obj, oneOf, PluginError, remote, type Schema, type Self, type Static,
+	str, type TableItem, union, unknown, type Watchable,
+} from "@earendil-works/chord";
+import type { JsonValue } from "@earendil-works/chord/json";
+import { compile, type Validator } from "@earendil-works/pi-schema";
+import { Server } from "./hosts.ts";
+
+/** A declared setting as the registry and the store see it. */
+export type SettingKind = {
+	readonly name: string;
+	readonly merge: "value" | "entries";
+	readonly initial: JsonValue;
+	/** Reported to the org server, which renders its form from it. */
+	readonly schema: Schema;
+	/** Checks a whole value (an entries setting: the whole record); compiled once, at declaration. */
+	readonly validator: Validator;
+};
+
+/** A declared setting with its value type. */
+export type Setting<T extends JsonValue> = SettingKind & { readonly initial: T };
+
+/** Declares a setting; its plugin contributes it to `SettingKinds` and reads it with `setting(self, token)`. */
+export function defineSetting<S extends Schema>(
+	name: string,
+	schema: S,
+	options: { readonly merge: "value" | "entries"; readonly initial: Static<S> & JsonValue },
+): Setting<Static<S> & JsonValue> {
+	return { name, merge: options.merge, initial: options.initial, schema, validator: compile(schema) };
+}
+
+/** Every declared setting by name, with its plugin; a name declared twice is reported, the first by plugin name kept. */
+export const SettingKinds = defineRegistry<readonly SettingKind[], ReadonlyMap<string, TableItem<SettingKind>>>(
+	"p3.setting-kinds",
+	{ version: 1 },
+);
+
+/** How the org manages one setting: what pages draw and the agent is told. */
+export const ManagedMark = obj({ orgName: str(), lock: oneOf("default", "locked"), entries: arr(str()) });
+
+/** One write: a value setting's whole value, or one entry of an entries setting (`null` removes it). */
+export const SettingWrite = union([
+	obj({ kind: lit("value"), name: str(), value: unknown() }),
+	obj({ kind: lit("entry"), name: str(), entry: str(), value: unknown() }),
+]);
+
+export type SettingWrite = Static<typeof SettingWrite>;
+
+/** The settings store, on the server: the only writer of the member's values (server objects only). */
+export const Settings = local("p3.settings", {
+	version: 1,
+	params: {},
+	members: {
+		/** Effective values by setting name. */
+		effective: map(unknown()),
+		/** The settings the org manages. */
+		managed: map(ManagedMark),
+		set: method(SettingWrite),
+	},
+});
+
+/** The store for the owner's page and terminal and the owner's session agents. */
+export const SettingsView = remote("p3.settings-view", {
+	version: 1,
+	params: {},
+	hostAddress: () => Server(),
+	variants: {
+		main: {
+			state: { effective: map(unknown()), managed: map(ManagedMark) },
+			methods: { set: method(SettingWrite) },
+		},
+	},
+});
+
+/** A setting's effective value, for any server object. */
+export function setting<T extends JsonValue>(self: Self, token: Setting<T>): Watchable<T> {
+	const all = self.get(Settings, {}).effective;
+	// Cast: `set` and the profile check validated the value against this token's schema.
+	return self.derive([all], ([values]) => (values[token.name] ?? token.initial) as T);
+}
+
+/** The error a plugin throws when an effective setting forbids an action; pages and the harness say who manages it. */
+export function refusedBy(token: SettingKind, message: string): PluginError {
+	return new PluginError("refused_by_setting", message, { setting: token.name });
+}
+```
+
+`refusedBy` is the only thing a plugin may use that sounds like policy, and it says nothing about orgs: it names the
+setting that forbade the action. Whether that setting is Dana's own choice or Acme's lock is for the page and the
+harness to say, from `managed`.
+
+## Settings: the store
+
+```ts
+// PROPOSED · apps/p3/plugins/settings/server.ts (app root)
+// The registry of declared settings, the store of the member's values with the managed layer on top, and the view.
+
+import { defineState, forbidden, keyedEntries, map, obj, PluginError, unknown } from "@earendil-works/chord";
+import type { JsonValue } from "@earendil-works/chord/json";
+import { defineFacet, type P3Principal } from "@p3/app/v1";
+import { type Gate, type ManagedSetting, OrgGate } from "@p3/app/v1/org";
+import { type SettingKind, SettingKinds, Settings, SettingsView, type SettingWrite } from "@p3/app/v1/settings";
+
+const UserLayer = defineState("p3.settings.user", {
+	schema: obj({ values: map(unknown()) }),
+	version: 1,
+	initial: () => ({ values: {} }),
+	persist: true,
+	checkpointWhen: () => true,
+});
+
+export default defineFacet<P3Principal>((host) => {
+	host.serve(SettingKinds, {
+		compose: (table, context) =>
+			keyedEntries(table, (kinds) => Object.fromEntries(kinds.map((kind) => [kind.name, kind])), context.report),
+	});
+
+	host.serve(Settings, (_params, self) => {
+		const user = self.state(UserLayer);
+		const kinds = self.registry(SettingKinds);
+		const gate = self.get(OrgGate, {}).gate;
+		return {
+			effective: self.derive([user, kinds, gate], ([mine, declared, now]) => effectiveAll(mine.values, declared, now)),
+			managed: self.derive([gate], ([now]) => managedMarks(now)),
+			set: async (write, ctx) => {
+				// Followed state, read per call: a profile that arrived since the page rendered counts.
+				const kind = writable(write, kinds.value.get(write.name)?.value, gate.value);
+				const next = write.kind === "value" ? write.value : withEntry(user.value.values[write.name], write.entry, write.value);
+				// Trust boundary: the page's and the agent's input, checked against the declaring plugin's schema.
+				const checked = kind.validator.validate(next);
+				if (!checked.ok) throw new PluginError("invalid_value", `Invalid value for ${write.name}`, { errors: checked.errors });
+				await user.change((draft) => {
+					draft.values[write.name] = next;
+				}, ctx);
+			},
+		};
+	});
+
+	host.serve(SettingsView, (_params, principal, self) => {
+		// The owner (page, terminal) and the owner's session workers; a guest never writes settings.
+		if (principal.kind !== "user" && principal.kind !== "worker") throw forbidden("Settings are the owner's");
+		const settings = self.get(Settings, {});
+		return {
+			variant: "main",
+			members: { effective: settings.effective, managed: settings.managed, set: (write, ctx) => settings.set(write, ctx) },
+		};
+	});
+});
+
+/** The declared setting `write` may change, or the refusal. */
+function writable(write: SettingWrite, kind: SettingKind | undefined, gate: Gate): SettingKind {
+	if (gate.kind !== "unmanaged" && gate.kind !== "ready")
+		throw new PluginError("gated", `Waiting for ${gate.orgName}`, { setting: write.name });
+	if (kind === undefined) throw new PluginError("unknown_setting", `No setting ${write.name}`);
+	const managed = gate.kind === "ready" ? gate.profile.settings[write.name] : undefined;
+	if (managed === undefined) return kind;
+	const orgName = gate.profile.orgName;
+	if (managed.lock === "locked")
+		throw new PluginError("managed", `Managed by ${orgName}: ${write.name} is locked`, { setting: write.name });
+	if (write.kind === "entry" && kind.merge === "entries" && Object.hasOwn(managedEntries(managed), write.entry))
+		throw new PluginError("managed", `Managed by ${orgName}: the entry ${write.entry} of ${write.name}`, {
+			setting: write.name,
+			entry: write.entry,
+		});
+	return kind;
+}
+
+/** Every declared setting's effective value: the table in chapter II. */
+function effectiveAll(
+	mine: Readonly<Record<string, JsonValue>>,
+	declared: ReadonlyMap<string, { readonly value: SettingKind }>,
+	gate: Gate,
+): Record<string, JsonValue> {
+	const open = gate.kind === "unmanaged" || gate.kind === "ready";
+	const layer = gate.kind === "ready" ? gate.profile.settings : {};
+	const out: Record<string, JsonValue> = {};
+	for (const [name, { value: kind }] of declared) {
+		out[name] = open ? effectiveOf(kind, layer[name], mine[name]) : kind.initial;
+	}
+	return out;
+}
+
+/** One setting's effective value from the org's entry (if any) and the member's value (if any). */
+function effectiveOf(kind: SettingKind, managed: ManagedSetting | undefined, mine: JsonValue | undefined): JsonValue {
+	if (managed === undefined) return mine ?? kind.initial;
+	// An org value that fails the plugin's schema: a lock reads as the initial value, a default as absent (reported at sync).
+	const valid = kind.validator.check(managed.value);
+	if (managed.lock === "locked") return valid ? managed.value : kind.initial;
+	if (!valid) return mine ?? kind.initial;
+	if (kind.merge === "value") return mine ?? managed.value;
+	// Cast: an entries setting's values are records (its schema is a `map`).
+	return { ...((mine ?? {}) as Record<string, JsonValue>), ...(managed.value as Record<string, JsonValue>) };
+}
+```
+
+`managedMarks`, `managedEntries` and `withEntry` are three-line helpers: the marks are `{ orgName, lock, entries:
+Object.keys(value) }` per managed setting, and `withEntry` copies the member's record with one entry put or deleted.
+The member's own entry named like an org entry stays stored and is hidden by the spread, so it comes back if Acme ever
+drops its entry.
+
+## The org contract
+
+```ts
+// PROPOSED · apps/p3/app/v1/org.ts
+// The gate's contract and schemas (`@p3/app/v1/org`): the org's managed settings as the profile carries them, and the
+// five states of the gate.
+
+import { bool, lit, local, map, nul, num, obj, oneOf, type Static, str, union, unknown } from "@earendil-works/chord";
+
+/** One managed setting in a profile. */
+export const ManagedSetting = obj({ lock: oneOf("default", "locked"), value: unknown() });
+
+/** A profile's payload, after the signature, the member, the Pi and the plugin sources were checked. */
+export const Profile = obj({
+	org: str(),
+	orgName: str(),
+	member: str(),
+	pi: str(),
+	deviceKey: str(),
+	revision: num(),
+	issuedAt: str(),
+	maxOffline: union([num(), nul()]),
+	settings: map(ManagedSetting),
+});
+
+/** The Pi's org state. */
+export const Gate = union([
+	obj({ kind: lit("unmanaged") }),
+	obj({ kind: lit("pending"), org: str(), orgName: str(), why: str() }),
+	obj({ kind: lit("ready"), orgName: str(), profile: Profile, live: bool() }),
+	obj({ kind: lit("stale"), orgName: str(), profile: Profile }),
+	obj({ kind: lit("revoked"), org: str(), orgName: str() }),
+]);
+
+export type Gate = Static<typeof Gate>;
+export type ManagedSetting = Static<typeof ManagedSetting>;
+
+/** The Pi's org state, on the server. */
+export const OrgGate = local("p3.org-gate", { version: 1, params: {}, members: { gate: Gate } });
+```
+
+## Plugins: the only install path
+
+```ts
+// PROPOSED · apps/p3/app/v1/plugins.ts
+// The plugin settings and the plugin service (`@p3/app/v1/plugins`): installs, writes and Apply go only through it.
+
+import { arr, bool, lit, local, map, method, nul, obj, oneOf, remote, type Static, str, union } from "@earendil-works/chord";
+import { Server } from "./hosts.ts";
+import { defineSetting } from "./settings.ts";
+
+export const PluginSource = union([
+	obj({ git: str(), ref: str() }),
+	obj({ npm: str(), version: str() }),
+]);
+
+/** An installed plugin's source, its tree hash (`null`: not pinned, member installs only) and whether it is required. */
+export const PluginEntry = obj({ source: PluginSource, hash: union([str(), nul()]), required: bool() });
+
+export type PluginEntry = Static<typeof PluginEntry>;
+
+/** The plugins installed from a pinned source: the org's into the org root, the member's into the member root. */
+export const PluginEntries = defineSetting("p3.plugins", map(PluginEntry), { merge: "entries", initial: {} });
+
+/** Whether the member root loads: plugins the member installs from any source, and plugins the agent writes. */
+export const OwnPlugins = defineSetting("p3.plugins.own", bool(), { merge: "value", initial: true });
+
+export const CatalogItem = obj({
+	name: str(),
+	from: oneOf("app", "org", "member"),
+	required: bool(),
+	state: oneOf("loaded", "available", "left-out", "failed"),
+	why: union([str(), nul()]),
+});
+
+export const InstallRequest = union([
+	obj({ kind: lit("catalog"), name: str() }),
+	obj({ kind: lit("source"), source: PluginSource }),
+]);
+
+export const PluginFile = obj({ plugin: str(), path: str(), content: str() });
+
+/** The plugin service on the server. */
+export const Plugins = local("p3.plugins", {
+	version: 1,
+	params: {},
+	members: {
+		catalog: arr(CatalogItem),
+		/** Names and tree hashes of the org root's plugins that matched their profile entry. */
+		verified: map(str()),
+		install: method(InstallRequest),
+		write: method(PluginFile),
+		reconcile: method(map(PluginEntry), arr(obj({ name: str(), error: str() }))),
+		apply: method(),
+	},
+});
+
+/** The same for the owner's page and terminal and the owner's session agents (the plugin tools). */
+export const PluginsView = remote("p3.plugins-view", {
+	version: 1,
+	params: {},
+	hostAddress: () => Server(),
+	variants: {
+		main: {
+			state: { catalog: arr(CatalogItem) },
+			methods: { install: method(InstallRequest), write: method(PluginFile), apply: method() },
+		},
+	},
+});
+```
+
+```ts
+// PROPOSED · apps/p3/plugins/plugins/server.ts (app root)
+// The plugin service: installs into the right root, checks org plugins against their hash, writes agent plugins, and
+// runs Apply. `PluginManager` is the kit's platform binding (base inventory #14): install, readmit, apply, discovered.
+
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
+import { forbidden, PluginError } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
+import { defineFacet, type P3Principal, PluginManager } from "@p3/app/v1";
+import { OrgGate } from "@p3/app/v1/org";
+import { OwnPlugins, PluginEntries, type PluginEntry, Plugins, PluginsView } from "@p3/app/v1/plugins";
+import { refusedBy, Settings, setting } from "@p3/app/v1/settings";
+import { MEMBER_ROOT, ORG_ROOT, readVerified, writeVerified } from "../../src/org/roots.ts";
+import { treeHash } from "../../src/org/tree-hash.ts";
+
+export default defineFacet<P3Principal>((host) => {
+	host.serve(Plugins, (_params, self) => {
+		const kit = self.get(PluginManager, {});
+		const settings = self.get(Settings, {});
+		const entries = setting(self, PluginEntries);
+		const own = setting(self, OwnPlugins);
+		const gate = self.get(OrgGate, {}).gate;
+		const stored = self.open(() => readVerified(ORG_ROOT), () => {});
+		const verified = self.writable<Readonly<Record<string, string>>>({});
+		// The start script read the same file for its first discovery; this copy serves the catalog and later Applies.
+		self.onLive(() => verified.set(stored.value));
+
+		/** Installs an org entry into the org root and keeps it only if its tree matches the entry's hash. */
+		const installOrg = async (name: string, entry: PluginEntry, ctx: Context) => {
+			await kit.install({ source: entry.source, root: ORG_ROOT }, ctx);
+			const actual = await treeHash(join(ORG_ROOT, name));
+			if (actual !== entry.hash) {
+				await rm(join(ORG_ROOT, name), { recursive: true, force: true });
+				throw new PluginError("hash_mismatch", `${name}: the installed tree is not the approved build`);
+			}
+			const next = { ...verified.value, [name]: actual };
+			await writeVerified(ORG_ROOT, next);                  // read by the start script at the next start
+			verified.set(next);
+		};
+
+		return {
+			catalog: self.derive([kit.discovered, entries, settings.managed, gate, verified], (values) => catalogOf(...values)),
+			verified: self.derive([verified], ([v]) => v),
+			install: async (request, ctx) => {
+				const mark = settings.managed.value[PluginEntries.name];
+				if (request.kind === "catalog") {
+					// Only the org's entries are in the catalog to install from by name.
+					if (!mark?.entries.includes(request.name)) throw new PluginError("unknown_plugin", `${request.name} is not in the catalog`);
+					await installOrg(request.name, entries.value[request.name]!, ctx);
+				} else {
+					if (!own.value) throw refusedBy(OwnPlugins, "Plugins from other sources do not load on this Pi");
+					if (mark?.lock === "locked") throw refusedBy(PluginEntries, "Only the catalog's plugins can be installed");
+					const [name] = await kit.install({ source: request.source, root: MEMBER_ROOT }, ctx);
+					await settings.set({ kind: "entry", name: PluginEntries.name, entry: name!, value: { source: request.source, hash: null, required: false } }, ctx);
+				}
+				await kit.readmit(ctx);
+				await kit.apply(ctx);
+			},
+			write: async ({ plugin, path, content }, ctx) => {
+				if (!own.value) throw refusedBy(OwnPlugins, "Plugins written on this Pi do not load");
+				await writePluginFile(MEMBER_ROOT, plugin, path, content, ctx);   // stays inside the member root
+			},
+			reconcile: async (wanted, ctx) => {
+				const failures: { name: string; error: string }[] = [];
+				// `wanted` comes from the offered profile: at the first sync it is not the effective value yet.
+				for (const [name, entry] of Object.entries(wanted)) {
+					const installed = Object.hasOwn(verified.value, name);
+					if (verified.value[name] === entry.hash || (!entry.required && !installed)) continue;
+					await installOrg(name, entry, ctx).catch((error: Error) => failures.push({ name, error: error.message }));
+				}
+				await removeUnlisted(ORG_ROOT, wanted, ctx);          // dropped by the org: gone at the next Apply
+				return failures;
+			},
+			apply: async (_args, ctx) => {
+				// An org plugin edited in place no longer matches its hash: it is dropped from `verified` and left out.
+				verified.set(await recheck(ORG_ROOT, verified.value));
+				await kit.readmit(ctx);
+				await kit.apply(ctx);
+			},
+		};
+	});
+
+	host.serve(PluginsView, (_params, principal, self) => {
+		if (principal.kind !== "user" && principal.kind !== "worker") throw forbidden("Plugins are the owner's");
+		const plugins = self.get(Plugins, {});
+		return {
+			variant: "main",
+			members: {
+				catalog: plugins.catalog,
+				install: (request, ctx) => plugins.install(request, ctx),
+				write: (file, ctx) => plugins.write(file, ctx),
+				apply: (_args, ctx) => plugins.apply(null, ctx),
+			},
+		};
+	});
+});
+```
+
+`catalogOf` lists every discovered plugin and every catalog entry with its state, and for each plugin that is not
+loaded it runs the same `admits` the kit runs and says why: "not in Acme's catalog", "edited since it was installed",
+"plugins written on this Pi do not load (managed by Acme)".
+
+```ts
+// PROPOSED · apps/p3/src/admit.ts (base code)
+// Which discovered plugins load: the kit asks `admits` at every discovery (the kit change of chapter III).
+
+import type { Plugin } from "@earendil-works/chord/plugins";
+import type { Gate } from "../app/v1/org.ts";
+
+/** What admission depends on: the gate, the org root's verified hashes, and the effective `p3.plugins.own`. */
+export type AdmitState = {
+	readonly gate: Gate;
+	readonly verified: Readonly<Record<string, string>>;
+	readonly ownPlugins: boolean;
+};
+
+export type Roots = { readonly app: string; readonly org: string; readonly member: string };
+
+/** Whether `plugin` loads now. */
+export function admits(state: AdmitState, plugin: Plugin, roots: Roots): boolean {
+	if (plugin.root === roots.app) return true;
+	const { gate } = state;
+	if (gate.kind === "unmanaged") return true;
+	if (gate.kind !== "ready") return false;
+	if (plugin.root === roots.org) {
+		// Cast: `p3.plugins` passed its schema when the profile was checked.
+		const entry = (gate.profile.settings["p3.plugins"]?.value as Record<string, { hash: string }> | undefined)?.[plugin.name];
+		return entry !== undefined && state.verified[plugin.name] === entry.hash;
+	}
+	return state.ownPlugins;
+}
+```
+
+```ts
+// PROPOSED · apps/p3/src/org/tree-hash.ts (base code; Radius runs the same function when the admin saves a plugin)
+
+import { createHash } from "node:crypto";
+import { readdir, readFile } from "node:fs/promises";
+import { join, relative, sep } from "node:path";
+
+/** sha256 over a plugin's files: sorted relative paths, each with its length and bytes; `.git` and `node_modules` left out. */
+export async function treeHash(dir: string): Promise<string> {
+	const files = (await readdir(dir, { recursive: true, withFileTypes: true }))
+		.filter((entry) => entry.isFile())
+		.map((entry) => relative(dir, join(entry.parentPath, entry.name)).split(sep).join("/"))
+		.filter((path) => !path.startsWith(".git/") && !path.includes("node_modules/"))
+		.sort();
+	const hash = createHash("sha256");
+	for (const path of files) {
+		const bytes = await readFile(join(dir, path));
+		hash.update(`${path}\0${bytes.length}\0`);
+		hash.update(bytes);
+	}
+	return `sha256-${hash.digest("hex")}`;
+}
+```
+
+The hash covers the plugin's own files, including its `package-lock.json`; `npm install` (run by the kit with
+`--ignore-scripts`) checks every dependency against the integrity hashes in that lockfile. A plugin without a lockfile
+cannot be pinned, and Radius refuses to save it as an org plugin.
+
+## How a refusal reaches the model
+
+```ts
+// PROPOSED · apps/p3/plugins/harness/refusals.ts (app root, worker side)
+// Every tool error goes through `toolError`: a refusal that names a setting tells the model who manages it and that
+// retrying will not help.
+
+import { PluginError } from "@earendil-works/chord";
+import type { ToolExecutionResult } from "@earendil-works/pi-durable";
+import type { ManagedMark } from "@p3/app/v1/settings";
+
+/** The tool result for `error`, with `managed` (the view's marks) to say who manages the setting it names. */
+export function toolError(error: unknown, managed: Readonly<Record<string, ManagedMark>>): ToolExecutionResult {
+	if (!(error instanceof PluginError)) return text(error instanceof Error ? error.message : String(error));
+	// Wire input: `details` came over a link.
+	const setting = typeof error.details === "object" && error.details !== null && "setting" in error.details ? String(error.details.setting) : undefined;
+	const mark = setting === undefined ? undefined : managed[setting];
+	if (mark === undefined) return text(error.message);
+	return text(
+		`${error.message}. The setting ${setting} is managed by ${mark.orgName}` +
+			(mark.lock === "locked" ? " and locked" : "") +
+			`. Do not retry or look for another way; tell the user to ask ${mark.orgName}'s admin.`,
+	);
+}
+
+function text(message: string): ToolExecutionResult {
+	return { output: [{ type: "text", text: message }], isError: true };
+}
+```
+
+The last sentence matters. Without it, a model told "refused" tries the next way: edit a config file, write a plugin,
+run a command. With it, the model stops and tells Dana.
+
+## The MCP plugin
+
+```ts
+// PROPOSED · apps/p3/plugins/mcp/contract.ts
+// The MCP plugin's setting, its connections on the server, and their tools for session workers.
+
+import { arr, local, map, method, nul, obj, oneOf, opt, remote, str, union, unknown } from "@earendil-works/chord";
+import { Server } from "@p3/app/v1/hosts";
+import { defineSetting } from "@p3/app/v1/settings";
+
+/** One server: its URL and how it signs in (a Radius connection, a secret by name, or nothing). Never a credential. */
+export const McpServerConfig = obj({
+	url: str(),
+	auth: union([nul(), obj({ radius: str() }), obj({ secret: str() })]),
+});
+
+export const McpServers = defineSetting("mcp.servers", map(McpServerConfig), { merge: "entries", initial: {} });
+
+export const McpTool = obj({ server: str(), name: str(), description: str(), inputSchema: unknown() });
+
+export const McpCall = obj({ server: str(), tool: str(), args: unknown() });
+
+/** The connections, on the server. */
+export const McpConnections = local("mcp.connections", {
+	version: 1,
+	params: {},
+	members: {
+		status: map(obj({ state: oneOf("connected", "failed"), error: opt(str()) })),
+		tools: arr(McpTool),
+		call: method(McpCall, unknown()),
+	},
+});
+
+/** The tools for the owner's session workers. */
+export const McpToolsView = remote("mcp.tools", {
+	version: 1,
+	params: {},
+	hostAddress: () => Server(),
+	variants: { main: { state: { tools: arr(McpTool) }, methods: { call: method(McpCall, unknown()) } } },
+});
+```
+
+```ts
+// PROPOSED · apps/p3/plugins/mcp/server.ts
+// The connections: one MCP client per effective server, reconciled whenever the effective `mcp.servers` changes.
+
+import { forbidden, PluginError, type Reference } from "@earendil-works/chord";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { McpClient, StreamableHttpTransport, type Tool } from "@earendil-works/pi-mcp";
+import { defineFacet, type P3Principal } from "@p3/app/v1";
+import { RadiusAuth } from "@p3/radius/contract";
+import { SettingKinds, setting } from "@p3/app/v1/settings";
+import { McpConnections, type McpServerConfig, McpServers, McpToolsView } from "./contract.ts";
+
+type Live =
+	| { readonly kind: "connected"; readonly config: McpServerConfig; readonly client: McpClient; readonly tools: readonly Tool[] }
+	| { readonly kind: "failed"; readonly config: McpServerConfig; readonly error: string };
+
+export default defineFacet<P3Principal>((host, facet) => {
+	facet.contribute(SettingKinds, [McpServers]);
+
+	host.serve(McpConnections, (_params, self) => {
+		const servers = setting(self, McpServers);              // Acme's entries, plus Dana's unless locked
+		const radius = self.get(RadiusAuth, {});
+		const pool = self.open(
+			async () => new Map<string, Live>(),
+			async (live) => { for (const each of live.values()) if (each.kind === "connected") await each.client.close(); },
+		);
+		const snapshot = self.writable<ReadonlyMap<string, Live>>(new Map());
+
+		// The same routine serves Dana's edits, Acme's updates and the first start.
+		self.on(servers, async ({ value: wanted }) => {
+			const live = pool.value;
+			for (const [name, each] of live) {
+				if (JSON.stringify(wanted[name]) === JSON.stringify(each.config)) continue;
+				live.delete(name);
+				// Removed or changed: calls in flight fail with McpConnectionClosedError.
+				if (each.kind === "connected") await each.client.close();
+			}
+			for (const [name, config] of Object.entries(wanted)) {
+				if (!live.has(name)) live.set(name, await connect(config, radius));
+			}
+			snapshot.set(new Map(live));
+		});
+
+		return {
+			status: self.derive([snapshot], ([live]) =>
+				Object.fromEntries([...live].map(([name, each]) => [name, each.kind === "connected" ? { state: "connected" } : { state: "failed", error: each.error }])),
+			),
+			tools: self.derive([snapshot], ([live]) =>
+				[...live].flatMap(([server, each]) =>
+					each.kind === "connected"
+						? each.tools.map((tool) => ({ server, name: tool.name, description: tool.description ?? "", inputSchema: tool.inputSchema }))
+						: [],
+				),
+			),
+			call: async ({ server, tool, args }, ctx) => {
+				const each = pool.value.get(server);
+				if (each?.kind !== "connected") throw new PluginError("mcp_unavailable", `MCP server ${server} is not connected`);
+				// Cast: MCP arguments are a JSON object; the tool's input schema was checked by the harness.
+				return each.client.callTool(tool, args as Record<string, unknown>, { signal: ctx.abortSignal });
+			},
+		};
+	});
+
+	host.serve(McpToolsView, (_params, principal, self) => {
+		if (principal.kind !== "worker" && principal.kind !== "user") throw forbidden("MCP tools are for the owner's sessions");
+		const connections = self.get(McpConnections, {});
+		return { variant: "main", members: { tools: connections.tools, call: (args, ctx) => connections.call(args, ctx) } };
+	});
+});
+
+/** A connected client, or the reason it is not; never throws, so one bad server does not stop the others. */
+async function connect(config: McpServerConfig, radius: Reference<typeof RadiusAuth>): Promise<Live> {
+	const client = new McpClient({ name: "p3", version: "1" });
+	const auth = config.auth;
+	try {
+		await client.connect(
+			new StreamableHttpTransport({
+				url: config.url,
+				// Host lifetime: the provider is asked before every request, long after this routine call ended.
+				authProvider: auth === null ? undefined : { token: () => tokenFor(auth, radius, BACKGROUND_CONTEXT) },
+			}),
+		);
+		return { kind: "connected", config, client, tools: await client.listTools() };
+	} catch (error) {
+		return { kind: "failed", config, error: error instanceof Error ? error.message : String(error) };
+	}
+}
+```
+
+`RadiusAuth` and `RadiusOrg` are the Radius plugin's server objects (PROPOSED: tokens for Radius connections,
+membership, shares). `tokenFor` asks the Radius plugin (`RadiusAuth.token({ connection: "jira" })`) for a short-lived token, or the secrets
+store for a named secret. The Jira token never enters the profile, the settings or the MCP plugin's state.
+
+```ts
+// PROPOSED · apps/p3/plugins/mcp/worker.ts
+// A session's MCP tools, and the agent's tool to add a server: both through server views, as the owner's session.
+
+import type { Reference } from "@earendil-works/chord";
+import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable";
+import { createMcpToolName, toLlmContent } from "@earendil-works/pi-mcp";
+import { obj, str } from "@earendil-works/pi-schema";
+import { defineFacet, HarnessTools, local, type P3Principal } from "@p3/app/v1";
+import { SettingsView } from "@p3/app/v1/settings";
+import { toolError } from "../harness/refusals.ts";
+import { McpServers, type McpTool, McpToolsView } from "./contract.ts";
+
+const McpAgent = local("mcp.agent", { version: 1, params: {}, members: {} });
+
+export default defineFacet<P3Principal>((host) => {
+	host.serve(McpAgent, (_params, self) => {
+		const view = self.get(McpToolsView, {});
+		const settings = self.get(SettingsView, {});
+		const tools = self.writable<readonly ToolRegistration[]>([addServer(settings)]);
+		// Follows the server's tool list: a server Acme removes takes its tools out of the next model request.
+		self.on(view.tools, ({ value }) => tools.set([addServer(settings), ...value.map((tool) => mcpTool(tool, view, settings))]));
+		self.contribute(HarnessTools, tools);
+		return {};
+	});
+});
+
+/** The agent's way to add a server: the same `set` the settings page calls. */
+function addServer(settings: Reference<typeof SettingsView>): ToolRegistration {
+	return defineTool({
+		name: "mcp_add_server",
+		description: "Add a remote MCP server to this Pi. Its tools are available from the next turn.",
+		parameters: obj({ name: str(), url: str() }),
+		async execute({ name, url }, _api, context) {
+			try {
+				await settings.set({ kind: "entry", name: McpServers.name, entry: name, value: { url, auth: null } }, context);
+				return { output: [{ type: "text", text: `Added MCP server ${name}. Its tools are available from the next turn.` }] };
+			} catch (error) {
+				return toolError(error, settings.managed.value);
+			}
+		},
+	});
+}
+
+/** One server tool, called on the server, where the connection lives. */
+function mcpTool(tool: McpTool, view: Reference<typeof McpToolsView>, settings: Reference<typeof SettingsView>): ToolRegistration {
+	return defineTool({
+		name: createMcpToolName(tool.server, tool.name),
+		description: tool.description,
+		// Cast: an MCP input schema is a JSON schema object.
+		parameters: tool.inputSchema as object,
+		async execute(args, _api, context) {
+			try {
+				return { output: toLlmContent(await view.call({ server: tool.server, tool: tool.name, args }, context)) };
+			} catch (error) {
+				return toolError(error, settings.managed.value);
+			}
+		},
+	});
+}
+```
+
+`HarnessTools` is the harness's registry of tools (base inventory #4); the session's own selection of resources still
+applies on top of it (decision "No per-run authority").
+
+```tsx
+// PROPOSED · apps/p3/plugins/mcp/web.tsx
+// The MCP section of the settings page: drawn from the effective value and the managed marks, never from a guess.
+
+import { PluginError } from "@earendil-works/chord";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { useHold, useWatch } from "@earendil-works/chord/react";
+import { useState } from "react";
+import { SettingsView } from "@p3/app/v1/settings";
+import { McpServers, type McpServerConfig } from "./contract.ts";
+
+export function McpSettings() {
+	const view = useHold(SettingsView, {});
+	const effective = useWatch(view?.effective);
+	const managed = useWatch(view?.managed);
+	const [error, setError] = useState<string | undefined>(undefined);
+	// Cast: the effective value passed the setting's schema.
+	const servers = (effective?.[McpServers.name] ?? {}) as Record<string, McpServerConfig>;
+	const mark = managed?.[McpServers.name];
+	const locked = mark?.lock === "locked";
+
+	const add = async (name: string, url: string) => {
+		setError(undefined);
+		try {
+			await view?.set({ kind: "entry", name: McpServers.name, entry: name, value: { url, auth: null } }, BACKGROUND_CONTEXT);
+		} catch (failure) {
+			if (failure instanceof PluginError) setError(failure.message);
+			else throw failure;
+		}
+	};
+
+	return (
+		<section>
+			<h2>MCP servers</h2>
+			{mark && <p className="managed">Managed by {mark.orgName}{locked ? ". Only its servers are used." : ""}</p>}
+			<ul>
+				{Object.entries(servers).map(([name, server]) => (
+					<li key={name}>
+						<span>{name}</span> <code>{server.url}</code>
+						{mark?.entries.includes(name) ? <span className="lock" title={`Managed by ${mark.orgName}`} /> : <EditButtons name={name} />}
+					</li>
+				))}
+			</ul>
+			<AddServerForm disabled={locked} title={locked ? `Managed by ${mark?.orgName}` : undefined} onAdd={add} />
+			{error && <p role="alert">{error}</p>}
+		</section>
+	);
+}
+```
+
+## Sharing
+
+```ts
+// PROPOSED · apps/p3/plugins/sharing/contract.ts
+
+import { arr, local, method, obj, oneOf, remote, str } from "@earendil-works/chord";
+import { Server } from "@p3/app/v1/hosts";
+import { defineSetting } from "@p3/app/v1/settings";
+
+/** Who sessions may be shared with. Radius applies the same value from the profile to every invite and sign-in. */
+export const SharingAudience = defineSetting("p3.sharing.audience", oneOf("anyone", "org", "nobody"), { merge: "value", initial: "anyone" });
+
+export const Share = obj({ id: str(), session: str(), invitee: str(), mode: oneOf("read", "send") });
+export const ShareRequest = obj({ session: str(), invitee: str(), mode: oneOf("read", "send") });
+
+export const Shares = local("p3.shares", {
+	version: 1,
+	params: {},
+	members: { shares: arr(Share), share: method(ShareRequest, Share), revoke: method(str()) },
+});
+
+/** The owner's sharing controls. */
+export const Sharing = remote("p3.sharing", {
+	version: 1,
+	params: {},
+	hostAddress: () => Server(),
+	variants: { owner: { state: { shares: arr(Share) }, methods: { share: method(ShareRequest, Share), revoke: method(str()) } } },
+});
+```
+
+```ts
+// PROPOSED · apps/p3/plugins/sharing/server.ts (app root)
+// Shares: refused by the audience setting before Radius is asked; ended when the setting tightens.
+
+import { arr, defineState, forbidden, obj } from "@earendil-works/chord";
+import { defineFacet, type P3Principal } from "@p3/app/v1";
+import { RadiusOrg } from "@p3/radius/contract";
+import { refusedBy, SettingKinds, setting } from "@p3/app/v1/settings";
+import { Share, Shares, Sharing, SharingAudience } from "./contract.ts";
+
+const ShareList = defineState("p3.shares.list", {
+	schema: obj({ shares: arr(Share) }),
+	version: 1,
+	initial: () => ({ shares: [] }),
+	persist: true,
+	checkpointWhen: () => true,
+});
+
+export default defineFacet<P3Principal>((host, facet) => {
+	facet.contribute(SettingKinds, [SharingAudience]);
+
+	host.serve(Shares, (_params, self) => {
+		const audience = setting(self, SharingAudience);
+		const radius = self.get(RadiusOrg, {});
+		const list = self.state(ShareList);
+
+		// A tightened audience ends every share that no longer conforms, here and at Radius.
+		self.on(audience, async ({ value }, ctx) => {
+			for (const share of list.value.shares) {
+				if (value === "anyone") break;
+				if (value === "org" && (await radius.isMember({ email: share.invitee }, ctx))) continue;
+				await radius.revokeShare(share.id, ctx);
+				await list.change((draft) => {
+					draft.shares = draft.shares.filter((each) => each.id !== share.id);
+				}, ctx);
+			}
+		});
+
+		return {
+			shares: self.derive([list], ([doc]) => doc.shares),
+			share: async (request, ctx) => {
+				const now = audience.value;
+				if (now === "nobody") throw refusedBy(SharingAudience, "Sessions on this Pi cannot be shared");
+				if (now === "org" && !(await radius.isMember({ email: request.invitee }, ctx)))
+					throw refusedBy(SharingAudience, `${request.invitee} is not a member of the org; sessions can be shared with members only`);
+				// Radius checks again from the profile it signed: a modified Pi gets the same answer.
+				const share = await radius.share(request, ctx);
+				await list.change((draft) => {
+					draft.shares.push(share);
+				}, ctx);
+				return share;
+			},
+			revoke: async (id, ctx) => {
+				await radius.revokeShare(id, ctx);
+				await list.change((draft) => {
+					draft.shares = draft.shares.filter((each) => each.id !== id);
+				}, ctx);
+			},
+		};
+	});
+
+	host.serve(Sharing, (_params, principal, self) => {
+		if (principal.kind !== "user") throw forbidden("Only the owner shares sessions");
+		const shares = self.get(Shares, {});
+		return {
+			variant: "owner",
+			members: {
+				shares: shares.shares,
+				share: (request, ctx) => shares.share(request, ctx),
+				revoke: (id, ctx) => shares.revoke(id, ctx),
+			},
+		};
+	});
+});
+```
+
+```ts
+// PROPOSED · Radius: POST /orgs/:org/pis/:pi/shares (the invite endpoint behind RadiusOrg.share)
+async function createShare(request: Request): Promise<Response> {
+	const pi = await authenticatePi(request);                 // a short-lived token minted against the device key
+	const profile = await profiles.current(pi.org, pi.member, pi.id);
+	const audience = profile.settings["p3.sharing.audience"]?.value ?? "anyone";
+	const { session, invitee, mode } = await request.json();
+	if (audience === "nobody") return refuse(403, "sharing_disabled");
+	if (audience === "org" && !(await orgs.isMember(pi.org, invitee))) return refuse(403, "outside_org");
+	// Org-only shares need a Radius sign-in to redeem: no anonymous link, and membership is checked again at sign-in.
+	const grant = await grants.create({ pi: pi.id, session, invitee, mode, requireMember: audience === "org" ? pi.org : null });
+	return Response.json(grant);
+}
+```
+
+## Acme's own plugin
+
+```ts
+// PROPOSED · github.com/acme/p3-deploy, contract.ts. Written by Acme's developers; nothing in it knows about orgs.
+
+import { local, map, method, obj, oneOf, str } from "@earendil-works/chord";
+import { defineSetting } from "@p3/app/v1/settings";
+
+export const DeployTarget = obj({ host: str(), branch: str(), approval: oneOf("none", "review") });
+
+export const DeployTargets = defineSetting("deploy.targets", map(DeployTarget), { merge: "entries", initial: {} });
+
+export const Deployer = local("acme.deployer", {
+	version: 1,
+	params: {},
+	members: { targets: map(DeployTarget), deploy: method(obj({ target: str(), ref: str() }), str()) },
+});
+```
+
+```ts
+// PROPOSED · github.com/acme/p3-deploy, server.ts
+
+import { PluginError } from "@earendil-works/chord";
+import { defineFacet, type P3Principal } from "@p3/app/v1";
+import { SettingKinds, setting } from "@p3/app/v1/settings";
+import { Deployer, DeployTargets } from "./contract.ts";
+
+export default defineFacet<P3Principal>((host, facet) => {
+	facet.contribute(SettingKinds, [DeployTargets]);
+	host.serve(Deployer, (_params, self) => {
+		const targets = setting(self, DeployTargets);
+		return {
+			targets,
+			deploy: async ({ target, ref }, ctx) => {
+				const chosen = targets.value[target];
+				if (chosen === undefined) throw new PluginError("unknown_target", `No deploy target ${target}`);
+				return startDeploy(chosen, ref, ctx);   // asks for a review first when chosen.approval is "review"
+			},
+		};
+	});
+});
+```
+
+## Eight traces
+
+Each trace starts with what Dana or her agent does and ends with what they see. The line that decides is named.
+
+### (i) Dana clicks "Add MCP server"
+
+:::sequence animate | The settings page draws the lock from the managed marks; `set` refuses even when the page is behind.
+actor page "settings page" "Dana's browser"
+actor view "SettingsView" "server" blue
+actor settings "Settings" "server" accent
+actor gate "OrgGate" "server" muted
+page -> view: useHold, useWatch(effective, managed)
+view --> page: mcp.servers: jira, linear; managed: locked by Acme
+page -> page: draw lock icons, disable "Add"
+note page: an old tab, opened before revision 42, still shows "Add"
+page -> view: set { kind: entry, name: mcp.servers, entry: github }
+view -> settings: set
+settings -> gate: gate.value (ready, revision 42)
+settings => view: PluginError managed, "Managed by Acme: mcp.servers is locked"
+view --> page: the same PluginError over the link
+page -> page: show the alert
+:::
+
+1. `McpSettings` holds `SettingsView` and watches `effective` and `managed`. `managed["mcp.servers"]` is `{ orgName:
+   "Acme", lock: "locked", entries: ["jira", "linear"] }`. The page draws both rows with a lock, and `AddServerForm`
+   disabled with the title "Managed by Acme". This is how the page knows: it never guesses from the error, it renders
+   the marks.
+2. A page that missed the update (a tab left open since before Acme locked the list) still shows the form. Dana enters
+   `github`, `https://github-mcp.example.com/mcp` and clicks Add. The page calls `view.set({ kind: "entry", name:
+   "mcp.servers", entry: "github", value: { url, auth: null } })`.
+3. `Settings.set` reads `gate.value` (followed state, per call): `ready`, revision 42. `writable` finds
+   `managed.lock === "locked"` and throws `PluginError("managed", "Managed by Acme: mcp.servers is locked", { setting:
+   "mcp.servers" })`. Nothing is written.
+4. The error crosses the link as code, message and details (Chord sends nothing else), and the page rethrows it as a
+   `PluginError`. `add` shows the message under the form: **Managed by Acme: mcp.servers is locked.**
+
+### (ii) The agent calls `mcp_add_server`
+
+Dana asks: "connect the GitHub MCP server". The model calls `mcp_add_server({ name: "github", url: "…" })`.
+
+1. The tool runs in the session's worker. It calls `settings.set(...)` on its `SettingsView` reference: the worker's
+   principal `{ kind: "worker", session }` is let in by the view's factory.
+2. `Settings.set` refuses exactly as in (i): same method, same line.
+3. `toolError` finds `details.setting = "mcp.servers"` and the mark, and the model's tool result is:
+
+```text
+Managed by Acme: mcp.servers is locked. The setting mcp.servers is managed by Acme and locked. Do not retry or look
+for another way; tell the user to ask Acme's admin.
+```
+
+The model answers Dana that Acme manages the MCP servers. If it tries `bash` instead, to edit a config file: there is
+none (MCP servers are a setting, not a file), and with the lock-down of chapter VI its shell runs as Dana, who cannot
+write the Pi's data directory.
+
+### (iii) Acme's Jira entry appears, connects, and cannot be edited
+
+1. At the first sync `OrgGate` writes revision 42 as the cache; `gate` turns `ready`.
+2. `Settings.effective` recomputes: `effectiveOf` for `mcp.servers` with `lock: "locked"` returns Acme's record, `{
+   jira, linear }`. Any servers Dana had before enrollment stay in her layer, unused.
+3. `McpConnections`'s routine (`self.on(servers, …)`) gets the new record: nothing live yet, so it calls `connect` for
+   both. The Jira transport's `authProvider.token()` asks `RadiusAuth` for a token of the Radius connection `jira`.
+4. `snapshot.set(...)`: `tools` now lists Jira's tools; each session's `McpAgent` sees `view.tools` change and
+   contributes the new tools; the next model request offers `mcp__jira__search_issues` and the others.
+5. Dana clicks the edit button on the Jira row: there is none, the row has a lock. Her agent calls `set({ kind:
+   "entry", name: "mcp.servers", entry: "jira", value: { url: "…", auth: null } })`: refused by `writable` because the
+   setting is locked. Had Acme used `lock: "default"` (its servers plus Dana's), the second check would refuse the
+   same write: `Object.hasOwn(managedEntries(managed), "jira")`, with "Managed by Acme: the entry jira of
+   mcp.servers". Dana could still add `github` beside it.
+
+### (iv) Dana installs plugins
+
+**An allowed optional plugin.** The plugins page lists the catalog from `PluginsView.catalog`: `acme-reviews`,
+"available", from Acme. Dana clicks Install.
+
+1. `Plugins.install({ kind: "catalog", name: "acme-reviews" })`: the mark of `p3.plugins` lists it, so `installOrg`
+   runs.
+2. The kit's binding clones `https://github.com/acme/p3-reviews` at `v2.0.1` into the org root and runs `npm install
+   --ignore-scripts` there.
+3. `treeHash` of the installed tree is `sha256-77de…`, equal to the profile's: it goes into `verified` and the file
+   the start script reads.
+4. `kit.readmit()`, `kit.apply()`: discovery runs again, `admits` sees an org-root plugin with a matching entry and
+   hash, and returns `true`. The plugin loads; the catalog shows it "loaded".
+
+**A plugin that is not allowed.** Dana pastes `https://github.com/someone/p3-weather` into "Install from a source".
+
+1. `Plugins.install({ kind: "source", … })`: `own.value` is `false` (Acme locked `p3.plugins.own`), so
+   `refusedBy(OwnPlugins, "Plugins from other sources do not load on this Pi")`. The page shows it with "Managed by
+   Acme", because `managed["p3.plugins.own"]` exists.
+2. Suppose the tree got into the member root anyway (copied there before enrollment, or by a shell running as the
+   Pi's user without the lock-down). Discovery finds it; `admits` reaches the last line, `state.ownPlugins` is
+   `false`, and it does not load. The catalog lists it as "left-out: plugins written or installed on this Pi do not
+   load (managed by Acme)".
+3. And if someone put it into the org root under a catalog name? Its hash does not match: `recheck` drops it from
+   `verified`, and `admits` refuses it.
+
+### (v) The agent writes a plugin
+
+Dana asks for "a small plugin that shows the weather in the sidebar". The agent calls the plugin tool `plugin_write({
+plugin: "weather", path: "web.tsx", content: "…" })`.
+
+1. `PluginsView.write` → `Plugins.write`: `own.value` is `false`, so `refusedBy(OwnPlugins, "Plugins written on this Pi
+   do not load")`.
+2. `toolError` turns it into: **"Plugins written on this Pi do not load. The setting p3.plugins.own is managed by Acme
+   and locked. Do not retry or look for another way; tell the user to ask Acme's admin."**
+3. Without the lock-down, a determined agent could still write the files with its own file tools into the member
+   root and call `plugin_apply`. Apply runs, the plugin is discovered, `admits` returns `false`, and the apply tool's
+   result lists `weather: left out: plugins written on this Pi do not load (managed by Acme)`. With the lock-down, the
+   write itself fails: the member root belongs to the Pi's service user, and the agent's shell runs as Dana.
+
+### (vi) Dana shares a session with an outside email
+
+Dana opens the share sheet of a session and types `sam@partner.example`.
+
+1. `Sharing.share` → `Shares.share`. `audience.value` is `"org"`. `radius.isMember({ email: "sam@partner.example" })`
+   answers `false`. The method throws `refusedBy(SharingAudience, "sam@partner.example is not a member of the org;
+   sessions can be shared with members only")`, and the sheet shows it with "Managed by Acme".
+2. A modified Pi that skips that check reaches Radius's `createShare`. Radius loads the profile it signed for
+   `pi_7f3a`, finds `"org"`, asks its own membership table and answers `403 outside_org`. No grant, no link, no relay.
+3. A grant made before the lock (when the audience was `"anyone"`) is ended by the `self.on(audience, …)` routine:
+   `radius.revokeShare` for every invitee who is not a member. Radius also ends such grants itself when the profile
+   changes, so a Pi that is offline at that moment does not keep them alive.
+
+### (vii) Acme removes Linear, live
+
+Acme's admin deletes the Linear row and saves. Radius signs revision 43.
+
+1. `OrgClient` receives it over the follow connection, checks the signature, `member`, `pi` and the plugin sources,
+   and offers it. `OrgGate`'s routine writes the cache (settings first) and calls `plugins.reconcile` (nothing to
+   install) and `plugins.apply`.
+2. `gate` changes, so `Settings.effective` changes: `mcp.servers` is now `{ jira }`.
+3. `McpConnections`'s routine runs with `{ jira }`. `linear` is live but no longer wanted: removed from the pool, its
+   client closed. A Linear call in flight at that moment rejects with `McpConnectionClosedError`; its tool result is an
+   error the model sees ("MCP server linear: connection closed").
+4. `snapshot.set` → `tools` loses Linear's tools → every running session's `McpAgent` routine sets its tools → the
+   harness's next model request in each session no longer offers `mcp__linear__*`. No session restarts; nothing else
+   reconnects.
+
+The page's MCP section loses its Linear row in the same second, because it watches the same `effective` value.
+
+### (viii) Acme locks its own plugin's setting
+
+`acme-deploy` declares `deploy.targets` and reads it with `setting(self, DeployTargets)`. Its authors wrote the
+settings page form for it, as for any setting; they never mention orgs.
+
+1. Acme's admin opens "Other settings" in Radius. The setting is listed because Dana's Pi reported the `SettingKinds`
+   of its loaded plugins at its last sync, with the schema `map(DeployTarget)`. Radius renders the form from the
+   schema; the admin adds `staging` and `production` and picks "locked".
+2. The profile carries `"deploy.targets": { "lock": "locked", "value": { … } }`. On Dana's Pi, `effectiveOf` returns
+   exactly those two targets; `Deployer.targets` (a derive of the effective value) shows them; `deploy({ target:
+   "my-box" })` fails with "No deploy target my-box" from the plugin's own check.
+3. Dana's attempt to add `my-box` on the settings page, or her agent's through a settings tool, ends in `Settings.set`
+   with "Managed by Acme: deploy.targets is locked".
+
+The plugin did one thing: it kept its configuration as a setting. That is the whole contract between plugin authors
+and orgs. A plugin that keeps its targets in a private file instead would escape the lock; Acme's answer is not to
+admit it.
 
 # Guardrails and Walls {#trust lede="Who this stops, who it does not, and what Radius enforces whatever the Pi does."}
 
@@ -564,9 +1736,11 @@ honest about it: in the Pi, managed settings are a guardrail; where Radius sits 
 **Dana's agent** is the main target: prompt injection or plain sloppiness. Its ordinary means are the settings tool,
 the plugin tools, the share tool and file edits. `Settings.set` refuses locked settings. The base's install path
 refuses plugins outside the profile, and `admit` keeps unapproved code from loading. The enrollment file is root-owned.
-An edited cache fails its signature, and the gate falls back to `pending`. All of these hold. What does not hold is
-`bash` under the Pi's Unix user: it can start a modified copy of the Pi on the same data directory, with Dana's token,
-ignoring the gate. That is the decided trust line ("The agent writes plugins": the boundary is access to the server).
+An edited cache fails its signature, and the gate falls back to `pending`. All of these hold. What does not hold, on a
+Pi that runs as Dana's own user, is `bash` under the Pi's Unix user: it can start a modified copy of the Pi on the same
+data directory, with Dana's token, ignoring the gate. On a personal Pi that is the decided trust line ("The agent
+writes plugins": the boundary is access to the server). On an Org Device chapter VI moves it: the Pi runs as a user of
+its own and the agent's shell runs as Dana, so the shell cannot reach the Pi's files.
 
 **A third-party plugin** is server code in the Pi's process. It can do anything the process can. Admitting it is the
 trust decision, and the only control is `p3.plugins`. A plugin that keeps its configuration through settings is covered
@@ -582,7 +1756,7 @@ enforced at Radius.
 | --- | --- | --- |
 | No MCP servers except Acme's | `set` refuses; MCP connects only to effective entries | Jira and Linear tokens live at Radius (`auth: radius`), so only those two work with Acme's accounts. Another server with Dana's own credentials: guardrail. |
 | Only Radius's models | `set` refuses; the models plugin offers only effective providers | Acme's keys never leave Radius; leaving Acme ends access. Another provider with Dana's own key: guardrail. |
-| Required and approved plugins only | install path, `admit`, hash checks | guardrail: the org root is written by the Pi's Unix user. On an Org Device a root-owned root is stronger (below). |
+| Required and approved plugins only | install path, `admit`, hash checks | guardrail: the org root is written by the Pi's Unix user; with the service user of chapter VI the agent cannot write it. |
 | No sharing outside Acme | the share method refuses; tightening ends non-conforming shares | Radius issues guest sign-ins and relays from the same profile: real. |
 | No Pis outside Acme | the peer plugin refuses and closes links | Radius brokers every Pi-to-Pi link: real. |
 | Company instructions | the harness reads the effective value | guardrail (it is a prompt). |
@@ -597,6 +1771,217 @@ Pi-side settings follow only when the Pi reconnects and receives `revoked`. A Pi
 profile, and an offline Pi can be given an older signed profile it was once sent. Acme bounds both with `maxOffline`,
 at the price of a Pi that locks itself after that long without the server.
 :::
+
+# Locking Down the Machine {#lockdown lede="How a managed Pi holds against a member or an agent with a shell: a signed install, a service user, tools that run as the member, execution control, and a key Radius checks."}
+
+Chapter V ends at one line: `bash` under the Pi's Unix user defeats every check in the Pi. On a personal Pi that line
+is fine, it is the decided trust boundary. On an Org Device it is the first thing a curious agent finds. Dana's agent
+runs `bash` as the user the Pi runs as, so it can edit the profile cache, read the Radius token, write into the org
+root, or start a patched copy of the Pi on the same data directory with Dana's token.
+
+The fix is not more checks inside the Pi. It is to move the Pi out of reach of the shell: the Pi runs as a user of its
+own, from files nobody else can write, and the agent's tools run as Dana, who owns none of the Pi's files. Five
+pieces do that. Each stops some adversaries and not others; the table at the end says which.
+
+## (a) One signed executable in a system location
+
+The Pi is installed by the machine's admin (on a laptop: the MDM, the tool an IT department uses to push software and
+settings to company machines) into a directory only an administrator can write: `/opt/p3` on Linux,
+`/Library/Application Support/p3` or `/usr/local/p3` on macOS, `C:\Program Files\p3` on Windows. Dana and her agent can
+read and run it, not change it.
+
+**What pi has today.** The coding agent already ships standalone binaries:
+
+- `packages/coding-agent`'s `build:binary` script and `scripts/build-binaries.sh` compile `dist/bun/cli.js` with Bun's
+  `--compile` into one executable per platform (darwin arm64 and x64, linux x64 and arm64, windows x64 and arm64),
+  embedding two worker entry points (the image resize worker and the code mode worker).
+- The executable is not alone: the release archives carry assets next to it (themes, the export template and its
+  vendor scripts, the photon wasm file, docs), and `src/config.ts` finds them relative to the executable when
+  `isBunBinary` is set (`getPackageDir`, `getThemesDir`, `getExportTemplateDir`).
+- There is also an esbuild-bundled Node distribution (`dist/bundle/cli.js`, detected by `isBundledNode`).
+- Nothing is signed. `.github/workflows/build-binaries.yml` builds and uploads the archives; there is no code signing,
+  notarization or Authenticode step.
+
+**What p3 needs is different.** p3's server is a Chord app, and the kit depends on Node in ways the coding agent does
+not: the store uses `node:sqlite`; session workers are separate Node processes started with `child_process.fork` and
+advanced serialization (`packages/chord/src/node/workers/process.ts`); plugin builds call esbuild, which is a native
+executable of its own (`packages/chord/src/node/plugins/build.ts`); installs run `git`, `tar` and `npm`
+(`packages/chord/src/node/plugins/install.ts`). So p3's executable is a Node single executable application (Node's
+own mechanism: one Node binary with the bundled server injected into it), and it does not travel alone either:
+
+| File in `/opt/p3/bin` | Why it is separate | Signed |
+| --- | --- | --- |
+| `p3` | Node with the bundled server, the worker entry and the TUI; started as `p3 serve`, `p3 worker`, `p3` (TUI) | yes |
+| `esbuild` | plugin builds; found through `ESBUILD_BINARY_PATH` | yes |
+| `pi-env` | the tool daemon of `packages/env` (Rust), started as the member, (c) below | yes |
+| `p3-devkey` | the device key helper, (e) below | yes, with the platform's key access entitlement on macOS |
+
+Three kit changes follow, all for laptops later rather than Dec 18: the worker fork must start the same executable in
+worker mode (`fork` runs `process.execPath`, which is `p3` itself, so its entry point dispatches on its arguments, and
+the worker kind's Node flags are fixed at build time); installs of org plugins must not need `npm` and `git` on the
+machine, so Radius (or Acme's CI) builds each approved plugin into a complete tree with its `node_modules`, hashed as
+a whole, and the kit installs that tarball; and esbuild's path comes from the install directory, never from the data
+directory, where the service user could replace it.
+
+On macOS the four files are signed with a Developer ID and the package is notarized; on Windows they carry
+Authenticode signatures. Signing is what lets (d) tell this Pi from a patched copy.
+
+## (b) The Pi runs as a service under its own user
+
+Each member's Pi is a system service with a Unix user (a Windows service account) of its own, created by the root
+setup when Dana's Pi is created:
+
+| | Linux (Org Devices, Dec 18) | macOS | Windows |
+| --- | --- | --- | --- |
+| Service | systemd unit `p3@dana.service`, `User=p3-dana` | launchd daemon `/Library/LaunchDaemons/com.earendil.p3.dana.plist`, `UserName` `_p3dana` | a Windows service per member, virtual account `NT SERVICE\p3-dana` |
+| Data directory | `/var/lib/p3/dana`, owner `p3-dana`, mode 0700 | `/Library/Application Support/p3/dana`, owner `_p3dana`, 0700 | `C:\ProgramData\p3\dana`, ACL: the service account only |
+| Inside it | the Chord store, the profile cache, the Pi's Radius token, the org root, the member root, secrets | same | same |
+| Listens on | `127.0.0.1:<port>`, a port per member Pi | same | same |
+
+The profile cache, the Radius token and both plugin roots now belong to `p3-dana`. Dana's user cannot read or write
+them, and neither can anything running as Dana: her shell, her editor, her agent's tools.
+
+**How Dana's clients sign in.** The kit already has the pieces: device sign-ins, the owner token file (a device
+sign-in of the owner, mode 0600, `ownerTokenFile` in `packages/chord/src/node/app/owner.ts`), and one-time owner links
+for the browser. Only where the token lives changes:
+
+- When the root setup creates the Pi, it writes `~dana/.p3/pi.json`, owner `dana`, mode 0600: `{ "url":
+  "http://127.0.0.1:47123", "token": "<a device sign-in of the owner>" }`. Other members on the same Org Device cannot
+  read it. On Windows the file is under `%LOCALAPPDATA%\p3` with an ACL for Dana only.
+- **The TUI** (`p3`, run by Dana) reads the file and opens its Chord link with the token as a bearer credential, as
+  command-line clients use the owner token file today.
+- **The browser on the same machine:** `p3 open` reads the same file, asks the Pi for a fresh one-time owner link
+  (`POST /_chord/owner-link` with the bearer token; the base route calls the kit's existing `App.ownerLink()` through
+  the platform binding), and opens it. The page posts the one-time token from the URL fragment and gets the owner
+  cookie, as the kit's owner link works today.
+- **The browser anywhere else** (an Org Device in the cloud, Dana's phone): through the Radius relay. Dana signs in
+  with Radius; the Radius plugin's authenticator, contributed to the kit's `Authenticators` registry, maps her Radius
+  identity to the owner.
+
+A unix socket checked by peer credentials would avoid the token file, but Node has no API to read a socket peer's
+credentials (`SO_PEERCRED`, `LOCAL_PEERCRED`), and the kit listens on TCP only (`ListenAddress` is a host and a port).
+The token file gives the same guarantee through the file system: only Dana can read it. Her agent can read it too,
+and that is fine: it then talks to the Pi as the owner, and the owner is held by the locks.
+
+## (c) The agent's tools run as Dana
+
+A Pi running as `p3-dana` that runs `bash` in its own process would hand `p3-dana`'s rights to the agent, and the
+service user would protect nothing. So the session's tools never run as the service user. Every session's execution
+environment is the `pi-env` daemon from `packages/env`, started as Dana:
+
+```ts
+// PROPOSED · apps/p3/plugins/environments/server.ts: the member's environment of a service-run Pi.
+// pi-env API as on origin/main: Connection (a command speaking the daemon's protocol on stdin/stdout), RemoteExecutionEnv.
+import { Connection, RemoteExecutionEnv } from "@earendil-works/pi-env";
+
+/** The member's machine environment: the daemon started as the member through the one rule the setup wrote. */
+export function memberEnvironment(member: string, cwd: string): RemoteExecutionEnv {
+	const connection = new Connection({ command: ["/usr/bin/sudo", "-n", "-u", member, "/opt/p3/bin/pi-env"] });
+	return new RemoteExecutionEnv({ connection, id: `pi-env:member:${member}`, cwd });
+}
+```
+
+```text
+# PROPOSED · /etc/sudoers.d/p3-dana, written by the root setup when Dana's Pi is created.
+# p3-dana may start exactly one program as dana, with no arguments ("" forbids any).
+p3-dana ALL=(dana) NOPASSWD: /opt/p3/bin/pi-env ""
+```
+
+`bash`, `read`, `write` and `edit` go through `RemoteExecutionEnv` as they do for an SSH machine today. Terminals use
+`openTerminal` and local MCP servers (the stdio kind) use `openProcess` on the same connection, so they run as Dana
+too. Dana's agent can do everything Dana can do on the machine, and nothing the Pi's user can.
+
+**How each platform starts a process as another user:**
+
+- **Linux:** the sudoers rule above. sudo is the privileged helper; the rule names one binary with no arguments.
+- **macOS:** the same rule works. A root launchd helper that starts `pi-env` for the console user is the alternative
+  when an org disables sudo for service accounts.
+- **Windows:** a service account cannot start processes as a logged-in user without that user's token. So the
+  direction turns around: a per-user launcher (a logon task in Dana's session) starts `pi-env` as Dana and connects it
+  to the service over a named pipe whose ACL admits Dana only. Tools work only while Dana is logged in, and terminals
+  are not supported by `pi-env` on Windows yet.
+
+**What it costs.** One `pi-env` process per session environment (a small Rust daemon, a few MB, an estimate), started
+once per connection, not per command; sudo adds its start time to that first start only. Every file operation becomes
+a message on a pipe instead of a call in the process, which the coding agent's SSH environments already pay. And the
+setup grows: a Unix user and a sudoers file per member Pi.
+
+**What it does not fix.** Plugins are Pi code: they run in the service as `p3-dana`, can read the token and could
+start `pi-env` as Dana themselves. The plugin list stays the control for them.
+
+## (d) Execution control
+
+(a) to (c) protect the managed Pi. They do not stop Dana from running a different Pi: a patched copy of the binary,
+or pi from source, as her own user, with her own provider keys. Execution control is the MDM's job, not the Pi's:
+
+- **macOS:** an endpoint-security agent installed by the MDM, with an allow list by signing team; Dana is not an
+  administrator. Gatekeeper alone checks only downloaded files.
+- **Linux:** fapolicyd with a trust database of approved binaries, or `noexec` mounts for home and temporary
+  directories.
+- **Windows:** App Control for Business or AppLocker publisher rules, pushed by the MDM.
+
+Execution control has a hard limit on developer machines: it stops a patched `p3` binary, not a Pi run from source by
+an interpreter Dana needs for her work (`node`, `python`). That is why (e) matters more: a copy that runs gets nothing
+from Acme.
+
+## (e) A device-bound key
+
+At enrollment the Pi asks `p3-devkey` to create a key that cannot leave the machine: in the Secure Enclave on macOS
+(P-256, the only curve it offers), in the TPM 2.0 on Linux and Windows (`/dev/tpmrm0`, the Windows Platform Crypto
+Provider; a cloud Org Device has a virtual TPM). The public half goes to Radius with the first sync and is in the
+profile as `deviceKey`. From then on Radius gives org resources only to a Pi that proves it holds the private half:
+
+:::sequence animate | Every Radius token is minted against the device key. A copy of the Pi's data on another machine, or under another user, has no key.
+actor pi "Dana's Pi" "p3-dana"
+actor key "p3-devkey" "TPM / Secure Enclave" muted
+actor radius "Radius" blue
+pi -> radius: POST /pis/pi_7f3a/challenge
+radius --> pi: nonce
+pi -> key: sign(nonce)
+key --> pi: signature
+pi -> radius: POST /pis/pi_7f3a/token { nonce, signature }
+radius => pi: access token, 10 minutes (models, MCP gateway, relay, peers)
+:::
+
+The org's resources at Radius (the model gateway with Acme's keys, the MCP credentials behind `auth: radius`, the
+sharing relay, peer links) all take only that short-lived token. Copying the data directory, or the Pi's long-lived
+Radius token, to another machine gives a Pi that cannot get one. The key handle is readable only by `p3-dana` (on
+Linux the TPM device is opened by the service, in the `tss` group; Dana is not).
+
+For Dec 18 a simpler form is enough: a key file in the data directory, mode 0600, owner `p3-dana`. It stops Dana and
+her agent (they cannot read it) but not root, which could copy it; the TPM form stops the copy too.
+
+## Which piece stops whom
+
+| Piece | Dana's agent | Dana with a shell | Dana with admin rights | A third-party plugin |
+| --- | --- | --- | --- | --- |
+| (a) signed install in a system location | cannot patch the Pi | cannot patch it; can run another copy | no | no: it runs inside |
+| (b) service user | cannot edit the cache, token, roots or store | same | no | no: it runs as the service user |
+| (c) tools as Dana | its shell and files are Dana's, not the Pi's | not needed: she is Dana | no | no: it can start `pi-env` itself |
+| (d) execution control | cannot start a patched binary | same, except interpreters she needs | only where the MDM holds admin rights back | not applicable |
+| (e) device-bound key | a copy it starts gets nothing from Acme | same | cannot export the key; can use it on that machine | can use it from inside |
+| Plugin list (`admit`, hashes) | its plugins do not load | same | no | holds: unadmitted code never runs |
+| Radius enforcement | holds | holds | holds | holds |
+
+Read by column: an agent is held by (b) and (c) alone. A member with a shell is held by (a), (b) and (e). A member
+with admin rights is held only by Radius, and on that machine not even by (e), which then only stops copies to other
+machines. A third-party plugin is held only by the plugin list and Radius.
+
+## What Dec 18 needs, and what waits for laptops
+
+**Dec 18, Linux Org Devices:**
+
+- (b) a systemd unit and a Unix user per member Pi, data in `/var/lib/p3/<member>`;
+- (a) a root-owned install directory `/opt/p3`, installed by the Device setup: Node, the bundled server, esbuild,
+  `pi-env`; not yet a single executable, not yet signed (on Linux, file ownership already does the work);
+- (c) `pi-env` as the member through one sudoers rule per Pi; the local environment of the service user is never
+  offered to sessions;
+- `~<member>/.p3/pi.json` for the TUI and `p3 open`, and Radius sign-in through the relay for the browser;
+- (e) the key-file form of the device key.
+
+**Later, for laptops:** the single executable and its signing and notarization; launchd daemons and Windows services;
+the Windows launcher and named pipe; the Secure Enclave and TPM forms of the device key; installs from complete,
+hashed plugin artifacts without `npm` and `git`; and execution control, which is the MDM's, configured by the org.
 
 # When Things Fail {#failures lede="Every failure the consultations found, and what the Pi does."}
 
@@ -622,7 +2007,8 @@ closed.
 | Org server or Radius compromised, org key safe | cannot forge profiles | Radius still controls its own enforcement (sharing, peers, models). |
 | Org key compromised | can push code to every enrolled Pi | Pinned refs and hashes, `pluginSources` in the root-owned file. Required plugins are a code-push channel by design. |
 | Clock set back to dodge `maxOffline` | the check passes | Guardrail: the clock belongs to the machine. |
-| Shell under the Pi's Unix user | can run a modified Pi on the same data | Not enforceable on the machine; Radius-side checks hold. |
+| Shell under the Pi's Unix user | can run a modified Pi on the same data | Without lock-down, not enforceable on the machine; Radius-side checks hold. With chapter VI, the member's shell is not that user. |
+| A copy of the Pi's data and token on another machine | gets no Radius token: it cannot prove the device key | Org models, MCP credentials, relay and peers stay closed to it (chapter VI, (e)). |
 | Root, or an admitted plugin | ignores everything | Root is the admin; admitting a plugin is the trust decision. |
 
 # What the Base Needs Now {#now lede="What p3 must build before any org exists, and what waits for December 18."}
@@ -639,7 +2025,7 @@ place that starts a session or loads a plugin asks one gate. With no org, all of
 2. **The `managed` error.** `set` throws it for a locked setting; the page, the terminal and the agent's settings tool
    render it as "Managed by X", and the page draws locks from `Settings.managed`.
 3. **Plugins only through the base.** Installs, Apply and the plugin-writing tool are methods of one base object
-   (`PluginManager`, base inventory #14), never a side effect of a file write; the member root is a separate root from
+   (`Plugins`, on top of the kit's `PluginManager` binding, base inventory #14), never a side effect of a file write; the member root is a separate root from
    the app's own.
 4. **Base switches with permissive defaults:** `p3.sharing.audience` (`"anyone" | "org" | "nobody"`) and
    `p3.peers.audience`. The share and peer paths read them, and end shares and links that no longer conform when they
@@ -651,13 +2037,17 @@ place that starts a session or loads a plugin asks one gate. With no org, all of
 
 ## For December 18
 
-- The enrollment reader and its fixed path; `readGate` in the start script.
+- The enrollment reader and its fixed path; `readStart` in the start script.
 - `OrgGate`, `OrgClient`, the profile cache and the gate page ("Connect to Acme", the reason, sign-in).
 - The kit change: plugin roots and `admit`.
 - Hash checks of the org root at start and before each Apply.
 - In Radius: the profile editor per org and group, per-member profiles, signing, the `revoked` answer, "Create my Pi
   here", and enforcement of sharing and peers from the same profile.
 - On Org Devices: the Device setup writes the enrollment file; its supervisor refuses to start a member Pi without it.
+- The lock-down of chapter VI for Linux Org Devices: a service user and systemd unit per member Pi, the root-owned
+  install in `/opt/p3`, the agent's tools as the member through `pi-env` and one sudoers rule, the client token file in
+  the member's home, and the key-file form of the device key. The single signed executable, launchd and Windows
+  services, hardware keys and execution control wait for laptops.
 
 # What It Cannot Do {.epilogue lede="The limits of managed settings, and the decisions still open."}
 
@@ -685,3 +2075,7 @@ plugins. It does not cover everything, and the limits are deliberate.
 3. **Instructions as entries.** `prompt.instructions` is drawn here as an entries setting so Acme's text and Dana's sit
    side by side. The harness's prompt design may want a different owner for it.
 4. **What `revoked` does to data on an Org Device.** Keep it (as here), export it to the org, or delete it.
+5. **Lock-down on laptops.** A per-member system service (chapter VI) protects the Pi's files from the member's shell,
+   but costs a service user, a helper to start tools as the member, and on Windows a logon launcher. The alternative
+   is a Pi under the member's own user with Radius-side enforcement only. Recommended: the service on Org Devices from
+   Dec 18; decide for laptops once an org asks for MDM deployment.
