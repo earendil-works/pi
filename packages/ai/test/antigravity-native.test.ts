@@ -1237,3 +1237,80 @@ describe("antigravity convertMessages — shared normalisation", () => {
 		},
 	);
 });
+
+describe("Gemini continuation on Antigravity", () => {
+	function hop(text: string, finishReason: string, extra: Record<string, unknown>, usage: Record<string, number>) {
+		return new Response(
+			`data: ${JSON.stringify({ response: { responseId: "resp-hop", candidates: [{ content: { parts: [{ text }] }, finishReason, ...extra }], usageMetadata: usage } })}\n\n`,
+			{ headers: { "content-type": "text/event-stream" } },
+		);
+	}
+
+	it("resends the continuation token and keeps streaming into the same text block", async () => {
+		const bodies: Array<{ request: { continuationToken?: string; contents: unknown } }> = [];
+		const hops = [
+			hop(
+				"part",
+				"CONTINUATION",
+				{ continuationToken: "tok-1" },
+				{ promptTokenCount: 10, candidatesTokenCount: 5, totalTokenCount: 15 },
+			),
+			hop(" two", "STOP", {}, { promptTokenCount: 15, candidatesTokenCount: 3, totalTokenCount: 18 }),
+		];
+		const result = await streamSimple(model, context, {
+			apiKey,
+			fetch: async (_url, init) => {
+				bodies.push(JSON.parse(String(init?.body)));
+				return hops.shift()!;
+			},
+		}).result();
+		expect(bodies).toHaveLength(2);
+		expect(bodies[0]!.request.continuationToken).toBeUndefined();
+		expect(bodies[1]!.request.continuationToken).toBe("tok-1");
+		expect(bodies[1]!.request.contents).toEqual(bodies[0]!.request.contents);
+		expect(result.stopReason).toBe("stop");
+		expect(result.rawStopReason).toBe("STOP");
+		expect(result.content).toEqual([{ type: "text", text: "part two" }]);
+		// Each hop bills its prompt (which includes the earlier output); the context holds the first
+		// prompt plus all output.
+		expect(result.usage).toMatchObject({ input: 25, output: 8, totalTokens: 18 });
+	});
+
+	it("ends as length without compaction-eligible state when CONTINUATION carries no token", async () => {
+		let calls = 0;
+		const result = await streamSimple(model, context, {
+			apiKey,
+			fetch: async () => {
+				calls++;
+				return hop(
+					"cut",
+					"CONTINUATION",
+					{},
+					{ promptTokenCount: 10, candidatesTokenCount: 5, totalTokenCount: 15 },
+				);
+			},
+		}).result();
+		expect(calls).toBe(1);
+		expect(result.stopReason).toBe("length");
+		expect(result.rawStopReason).toBe("CONTINUATION");
+	});
+
+	it("does not resend a token the previous hop already started from", async () => {
+		let calls = 0;
+		const result = await streamSimple(model, context, {
+			apiKey,
+			fetch: async () => {
+				calls++;
+				return hop(
+					"again",
+					"CONTINUATION",
+					{ continuationToken: "tok-same" },
+					{ promptTokenCount: 10, candidatesTokenCount: 5, totalTokenCount: 15 },
+				);
+			},
+		}).result();
+		expect(calls).toBe(2);
+		expect(result.stopReason).toBe("length");
+		expect(result.content).toEqual([{ type: "text", text: "againagain" }]);
+	});
+});

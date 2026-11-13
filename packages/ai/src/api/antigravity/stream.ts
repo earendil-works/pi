@@ -1099,14 +1099,8 @@ async function streamResponse(
 	output: AssistantMessage,
 	model?: Model<Api>,
 	options?: AntigravityStreamOptions,
+	resume?: (continuationToken: string) => Promise<Response>,
 ): Promise<boolean> {
-	if (!response.body) throw new Error("No response body");
-	const reader = response.body.getReader();
-	const decoder = new TextDecoder();
-	let buffer = "";
-	// Consumed-prefix offset: the buffer is compacted once per network chunk instead of
-	// re-copying the whole remainder for every SSE line.
-	let scanStart = 0;
 	let started = false;
 	let currentBlock: ActiveBlock | null = null;
 	let hasContent = false;
@@ -1181,122 +1175,164 @@ async function streamResponse(
 		appendText(text, false, signature);
 	};
 
+	// A CONTINUATION finish ends one decode hop (maxOutputTokens above the per-request cap); the
+	// same request resent with its continuationToken resumes the output. Hops stream into the open
+	// block. Usage: each hop's usageMetadata is that hop's running total, so completed hops are
+	// summed; each later hop's prompt repeats the first prompt plus earlier output, so the context
+	// size is the first prompt plus all output.
+	const done = { input: 0, output: 0, reasoning: 0, cacheRead: 0 };
+	let firstPrompt: number | undefined;
+	let startToken: string | undefined;
+	let body: Response | undefined = response;
 	try {
-		while (true) {
-			options?.signal?.throwIfAborted();
-			const result = await reader.read();
-			buffer += result.done ? `${decoder.decode()}\n` : decoder.decode(result.value, { stream: true });
-
-			while (true) {
-				const newlineIdx = buffer.indexOf("\n", scanStart);
-				if (newlineIdx === -1) break;
-				const line = buffer.slice(scanStart, newlineIdx);
-				scanStart = newlineIdx + 1;
-				if (!line.startsWith("data:")) continue;
-				const json = line.slice(5).trim();
-				if (!json || json === "[DONE]") continue;
-
-				let chunk: StreamChunk;
-				try {
-					chunk = JSON.parse(json) as StreamChunk;
-				} catch {
-					throw new Error("Malformed Antigravity stream event");
-				}
-
-				if (model) await options?.onProviderStreamEvent?.(chunk, model);
-				if (chunk.error) {
-					throw new Error(chunk.error.message || JSON.stringify(chunk.error));
-				}
-
-				const responseData = chunk.response || chunk;
-				if (responseData.responseId && !output.responseId) {
-					output.responseId = responseData.responseId;
-				}
-				const candidate = responseData.candidates?.[0];
-
-				for (const part of candidate?.content?.parts || []) {
-					if (part.text !== undefined) {
-						const isThinking = part.thought === true;
-						if (holds(part.text, isThinking)) {
-							held = {
-								text: (held?.text ?? "") + part.text,
-								signature: part.thoughtSignature ?? held?.signature,
-							};
-						} else {
-							flushHeld();
-							appendText(part.text, isThinking, part.thoughtSignature);
-						}
-					}
-
-					if (part.functionCall) {
-						flushHeld();
-						hasContent = true;
-						finishCurrent();
-						const rawId = part.functionCall.id || "";
-						const toolCall: ToolCall = {
-							type: "toolCall",
-							id: sanitizeToolCallId(rawId, part.functionCall.name),
-							name: part.functionCall.name || "",
-							arguments: asToolCallArguments(part.functionCall.args),
-							...(part.thoughtSignature ? { thoughtSignature: part.thoughtSignature } : {}),
-						};
-						blocks.push(toolCall);
-						ensureStarted();
-						stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
-						stream.push({
-							type: "toolcall_delta",
-							contentIndex: blockIndex(),
-							delta: JSON.stringify(toolCall.arguments),
-							partial: output,
-						});
-						stream.push({
-							type: "toolcall_end",
-							contentIndex: blockIndex(),
-							toolCall,
-							partial: output,
-						});
-					}
-				}
-
-				if (candidate?.finishReason) {
-					const reason = mapStopReason(candidate.finishReason);
-					if (reason === StopReason.Stop && blocks.length === 0 && model && isGemini(model, output))
-						held = undefined;
-					else flushHeld();
-					output.rawStopReason = candidate.finishReason;
-					output.stopReason =
-						reason === StopReason.Stop && blocks.some((b) => b.type === "toolCall") ? StopReason.ToolUse : reason;
-				}
-
-				if (responseData.usageMetadata) {
-					const prompt = responseData.usageMetadata.promptTokenCount || 0;
-					const cacheRead = responseData.usageMetadata.cachedContentTokenCount || 0;
-					const thoughts = responseData.usageMetadata.thoughtsTokenCount || 0;
-					output.usage.input = prompt - cacheRead;
-					output.usage.output = (responseData.usageMetadata.candidatesTokenCount || 0) + thoughts;
-					output.usage.reasoning = thoughts;
-					output.usage.cacheRead = cacheRead;
-					output.usage.totalTokens = responseData.usageMetadata.totalTokenCount || 0;
-					if (model?.cost) {
-						calculateCost(model, output.usage);
-					} else {
-						output.usage.cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
-					}
-				}
+		while (body) {
+			const hop = await readHop(body);
+			body = undefined;
+			if (hop.finishReason === "CONTINUATION" && hop.token && hop.token !== startToken && resume) {
+				startToken = hop.token;
+				done.input = output.usage.input;
+				done.output = output.usage.output;
+				done.reasoning = output.usage.reasoning ?? 0;
+				done.cacheRead = output.usage.cacheRead;
+				body = await resume(hop.token);
 			}
-
-			if (scanStart > 0) {
-				buffer = buffer.slice(scanStart);
-				scanStart = 0;
-			}
-			if (result.done) break;
 		}
 	} finally {
-		await reader.cancel().catch(() => undefined);
-		reader.releaseLock();
 		finishCurrent();
 	}
 	return hasContent;
+
+	async function readHop(hopResponse: Response): Promise<{ finishReason?: string; token?: string }> {
+		if (!hopResponse.body) throw new Error("No response body");
+		const reader = hopResponse.body.getReader();
+		const decoder = new TextDecoder();
+		let buffer = "";
+		// Consumed-prefix offset: the buffer is compacted once per network chunk instead of
+		// re-copying the whole remainder for every SSE line.
+		let scanStart = 0;
+		const hop: { finishReason?: string; token?: string } = {};
+		try {
+			while (true) {
+				options?.signal?.throwIfAborted();
+				const result = await reader.read();
+				buffer += result.done ? `${decoder.decode()}\n` : decoder.decode(result.value, { stream: true });
+
+				while (true) {
+					const newlineIdx = buffer.indexOf("\n", scanStart);
+					if (newlineIdx === -1) break;
+					const line = buffer.slice(scanStart, newlineIdx);
+					scanStart = newlineIdx + 1;
+					if (!line.startsWith("data:")) continue;
+					const json = line.slice(5).trim();
+					if (!json || json === "[DONE]") continue;
+
+					let chunk: StreamChunk;
+					try {
+						chunk = JSON.parse(json) as StreamChunk;
+					} catch {
+						throw new Error("Malformed Antigravity stream event");
+					}
+
+					if (model) await options?.onProviderStreamEvent?.(chunk, model);
+					if (chunk.error) {
+						throw new Error(chunk.error.message || JSON.stringify(chunk.error));
+					}
+
+					const responseData = chunk.response || chunk;
+					if (responseData.responseId && !output.responseId) {
+						output.responseId = responseData.responseId;
+					}
+					const candidate = responseData.candidates?.[0];
+
+					for (const part of candidate?.content?.parts || []) {
+						if (part.text !== undefined) {
+							const isThinking = part.thought === true;
+							if (holds(part.text, isThinking)) {
+								held = {
+									text: (held?.text ?? "") + part.text,
+									signature: part.thoughtSignature ?? held?.signature,
+								};
+							} else {
+								flushHeld();
+								appendText(part.text, isThinking, part.thoughtSignature);
+							}
+						}
+
+						if (part.functionCall) {
+							flushHeld();
+							hasContent = true;
+							finishCurrent();
+							const rawId = part.functionCall.id || "";
+							const toolCall: ToolCall = {
+								type: "toolCall",
+								id: sanitizeToolCallId(rawId, part.functionCall.name),
+								name: part.functionCall.name || "",
+								arguments: asToolCallArguments(part.functionCall.args),
+								...(part.thoughtSignature ? { thoughtSignature: part.thoughtSignature } : {}),
+							};
+							blocks.push(toolCall);
+							ensureStarted();
+							stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
+							stream.push({
+								type: "toolcall_delta",
+								contentIndex: blockIndex(),
+								delta: JSON.stringify(toolCall.arguments),
+								partial: output,
+							});
+							stream.push({
+								type: "toolcall_end",
+								contentIndex: blockIndex(),
+								toolCall,
+								partial: output,
+							});
+						}
+					}
+
+					if (candidate?.continuationToken) hop.token = candidate.continuationToken;
+					if (candidate?.finishReason) {
+						hop.finishReason = candidate.finishReason;
+						const reason = mapStopReason(candidate.finishReason);
+						if (reason === StopReason.Stop && blocks.length === 0 && model && isGemini(model, output))
+							held = undefined;
+						else flushHeld();
+						output.rawStopReason = candidate.finishReason;
+						output.stopReason =
+							reason === StopReason.Stop && blocks.some((b) => b.type === "toolCall")
+								? StopReason.ToolUse
+								: reason;
+					}
+
+					if (responseData.usageMetadata) {
+						const prompt = responseData.usageMetadata.promptTokenCount || 0;
+						const cacheRead = responseData.usageMetadata.cachedContentTokenCount || 0;
+						const thoughts = responseData.usageMetadata.thoughtsTokenCount || 0;
+						firstPrompt ??= prompt;
+						output.usage.input = done.input + prompt - cacheRead;
+						output.usage.output = done.output + (responseData.usageMetadata.candidatesTokenCount || 0) + thoughts;
+						output.usage.reasoning = done.reasoning + thoughts;
+						output.usage.cacheRead = done.cacheRead + cacheRead;
+						output.usage.totalTokens =
+							(responseData.usageMetadata.totalTokenCount || 0) - prompt + firstPrompt + done.output;
+						if (model?.cost) {
+							calculateCost(model, output.usage);
+						} else {
+							output.usage.cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+						}
+					}
+				}
+
+				if (scanStart > 0) {
+					buffer = buffer.slice(scanStart);
+					scanStart = 0;
+				}
+				if (result.done) break;
+			}
+		} finally {
+			await reader.cancel().catch(() => undefined);
+			reader.releaseLock();
+		}
+		return hop;
+	}
 }
 
 /** Finish reasons Google's Gemini CLI retries; the stream content is a transient bad generation. */
@@ -1435,6 +1471,15 @@ export function streamAntigravity(
 				model.headers,
 				opts.headers,
 			);
+			const fetchStream = (url: string, body: string) =>
+				fetchWithHeaderDeadline(
+					url,
+					{ method: "POST", headers: requestHeaders, body },
+					opts.signal,
+					opts.timeoutMs ?? streamHeaderTimeoutMs(opts.env),
+					streamStallTimeoutMs(opts.env),
+					opts.fetch ? (url, init) => opts.fetch!(url, init) : fetch,
+				);
 
 			let response: Response | undefined;
 			let lastText = "";
@@ -1446,6 +1491,8 @@ export function streamAntigravity(
 			// Why the last attempt that reached the model gave no output; undefined for empty bodies.
 			let emptyAnswer: string | undefined;
 			let runtimeModel = initialRuntimeModel;
+			// The request that reached the model, resent with a continuationToken to resume its output.
+			let sent: { url: string; body: string } | undefined;
 
 			for (let emptyAttempt = 0; emptyAttempt <= 2; emptyAttempt++) {
 				if (opts.signal?.aborted) throw new Error("Request was aborted");
@@ -1468,18 +1515,8 @@ export function streamAntigravity(
 					const body = JSON.stringify((await opts.onPayload?.(payload, model)) ?? payload);
 
 					for (const endpoint of endpointCandidates(opts.env, model.baseUrl)) {
-						response = await fetchWithHeaderDeadline(
-							`${endpoint}/v1internal:streamGenerateContent?alt=sse`,
-							{
-								method: "POST",
-								headers: requestHeaders,
-								body,
-							},
-							opts.signal,
-							opts.timeoutMs ?? streamHeaderTimeoutMs(opts.env),
-							streamStallTimeoutMs(opts.env),
-							opts.fetch ? (url, init) => opts.fetch!(url, init) : fetch,
-						);
+						sent = { url: `${endpoint}/v1internal:streamGenerateContent?alt=sse`, body };
+						response = await fetchStream(sent.url, body);
 
 						try {
 							await opts.onResponse?.(
@@ -1524,7 +1561,8 @@ export function streamAntigravity(
 					break;
 				}
 
-				if (!response || !response.ok) {
+				// sent is set whenever a response is.
+				if (!response || !response.ok || !sent) {
 					const friendly = friendlyAntigravityError(response?.status, lastText);
 					throw new Error(
 						`Antigravity API error (${response?.status ?? "no response"}, runtimeModel=${runtimeCandidates.join(" -> ")}): ${friendly}`,
@@ -1543,7 +1581,20 @@ export function streamAntigravity(
 				Object.assign(output, { stopReason: "pending", rawStopReason: undefined, responseId: undefined });
 
 				output.responseModel = runtimeModel !== model.id ? runtimeModel : undefined;
-				received = await streamResponse(response, stream, output, model, opts);
+				const first = sent;
+				received = await streamResponse(response, stream, output, model, opts, async (continuationToken) => {
+					// The body is the request pi built (possibly replaced by onPayload), serialized above.
+					const payload = JSON.parse(first.body) as AntigravityGenerateRequest;
+					payload.request.continuationToken = continuationToken;
+					const next = await fetchStream(first.url, JSON.stringify(payload));
+					if (!next.ok) {
+						const friendly = friendlyAntigravityError(next.status, await next.text());
+						throw new Error(
+							`Antigravity API error (${next.status}, continuation, runtimeModel=${runtimeModel}): ${friendly}`,
+						);
+					}
+					return next;
+				});
 				if (received || output.stopReason === "error") break;
 				// The model answered with nothing: a STOP, or frames without a finish reason. The same
 				// request tends to repeat it, so later attempts carry the nudge. An empty body is a

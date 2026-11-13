@@ -213,6 +213,14 @@ describe("isContextOverflow", () => {
 		expect(isRecoverableLength(message, 128000)).toBe(true);
 	});
 
+	it("does not recover a Gemini CONTINUATION stop, whose output is a finished hop", () => {
+		const message = {
+			...createLengthStopMessage({ input: 33705, cacheRead: 0, output: 65536, api: "antigravity-api" }),
+			rawStopReason: "CONTINUATION",
+		};
+		expect(isRecoverableLength(message, 262144)).toBe(false);
+	});
+
 	it("does not recover a length stop that reached the desired output limit", () => {
 		const message = createLengthStopMessage({ input: 4062, cacheRead: 0, output: 1024 });
 		expect(isRecoverableLength(message, 1024)).toBe(false);

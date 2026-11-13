@@ -182,9 +182,17 @@ export function isContextOverflow(message: AssistantMessage, contextWindow?: num
  * Such responses may be caused by context pressure or provider-side truncation, so callers
  * can make one bounded compact-and-retry attempt. `desiredMaxOutput` must be the original
  * limit before any context-based clamping.
+ *
+ * A Gemini CONTINUATION stop is excluded: it ends a full per-request decode hop that could not be
+ * resumed, not a stop caused by context pressure, so compacting and retrying would discard it.
  */
 export function isRecoverableLength(message: AssistantMessage, desiredMaxOutput: number): boolean {
-	return message.stopReason === "length" && desiredMaxOutput > 0 && message.usage.output < desiredMaxOutput;
+	return (
+		message.stopReason === "length" &&
+		message.rawStopReason !== "CONTINUATION" &&
+		desiredMaxOutput > 0 &&
+		message.usage.output < desiredMaxOutput
+	);
 }
 
 /**

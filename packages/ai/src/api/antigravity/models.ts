@@ -178,8 +178,9 @@ export const ANTIGRAVITY_ROUTING: Record<string, AntigravityRouting> = {
 };
 
 /**
- * Verified maximum output tokens accepted by the Cloud Code Assist backend per model/runtime ID.
- * Requesting more than these limits returns a 400 Bad Request from the API.
+ * Maximum output tokens per turn, by model/runtime ID. Gemini 4 models decode at most 65536 tokens
+ * per request and end with CONTINUATION above that; the stream resumes with the continuation token
+ * (streamResponse), so carbon and hydrogen reach the 262144 the backend advertises over several requests.
  */
 export const RUNTIME_MAX_OUTPUT_TOKENS: Record<string, number> = {
 	"gemini-4-hydrogen": 262144,

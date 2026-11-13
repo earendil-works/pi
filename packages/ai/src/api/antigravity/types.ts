@@ -104,6 +104,8 @@ export type GeminiRequestBody = {
 	toolConfig?: GeminiToolConfig;
 	sessionId?: string;
 	labels?: Record<string, string>;
+	/** Resumes the output of a request that ended with finishReason CONTINUATION. */
+	continuationToken?: string;
 };
 
 export type AntigravityGenerateRequest = {
@@ -137,6 +139,8 @@ export type StreamUsageMetadata = {
 export type StreamCandidate = {
 	content?: { parts?: StreamPart[] };
 	finishReason?: string;
+	/** Checkpoint mid-stream; with finishReason CONTINUATION, resumes the output in a new request. */
+	continuationToken?: string;
 };
 
 export type StreamResponseData = {

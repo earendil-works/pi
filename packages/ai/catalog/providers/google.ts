@@ -8,6 +8,13 @@ export const GOOGLE_ALIAS_TARGETS: Record<string, string> = {
 	"gemini-flash-lite-latest": "gemini-3.1-flash-lite",
 };
 
+// models.dev copies AI Studio's outputTokenLimit (32768) for these, but one request decodes up to
+// 65536 output tokens (live, 2026-11-13: MAX_TOKENS at 65536, CONTINUATION above it).
+const MEASURED_MAX_TOKENS: Record<string, number> = {
+	"gemini-4-argon": 65536,
+	"gemini-4-carbon": 65536,
+};
+
 export default defineProvider({
 	id: "google",
 	models: (ctx) => {
@@ -27,7 +34,7 @@ export default defineProvider({
 					input: source.imageInput ? ["text", "image"] : ["text"],
 					cost: modelsDevCost(source.cost),
 					contextWindow: source.contextWindow || 4096,
-					maxTokens: source.maxTokens || 4096,
+					maxTokens: MEASURED_MAX_TOKENS[model.id] ?? (source.maxTokens || 4096),
 				};
 			},
 		});

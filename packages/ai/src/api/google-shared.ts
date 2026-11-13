@@ -7,6 +7,7 @@ import type {
 	FinishReason,
 	FunctionCallingConfigMode,
 	GenerateContentResponsePromptFeedback,
+	GenerateContentResponseUsageMetadata,
 	ThinkingLevel as GoogleSdkThinkingLevel,
 	Part,
 	ThinkingConfig,
@@ -605,6 +606,16 @@ export function formatGooglePromptBlockError(
 }
 
 /**
+ * Context tokens after a turn. Across continuation hops the SDK sums promptTokenCount, and each
+ * later hop's prompt repeats the first prompt plus the output so far, which output already counts.
+ */
+export function googleContextTokens(usage: GenerateContentResponseUsageMetadata): number {
+	const total = usage.totalTokenCount || 0;
+	const initialPrompt = usage.initialPromptTokenCount;
+	return initialPrompt === undefined ? total : total - ((usage.promptTokenCount || 0) - initialPrompt);
+}
+
+/**
  * Map Gemini FinishReason to our StopReason.
  */
 export function mapStopReason(reason: `${FinishReason}`): StopReason {
@@ -612,7 +623,8 @@ export function mapStopReason(reason: `${FinishReason}`): StopReason {
 		case "STOP":
 			return "stop";
 		case "MAX_TOKENS":
-		// Per-request token limit reached before generation completed; pi does not resume with the continuation token.
+		// The SDK resumes CONTINUATION stops with their token; one reaches pi only when the hop ended
+		// without a new token, so the output is cut short like MAX_TOKENS.
 		case "CONTINUATION":
 			return "length";
 		case "BLOCKLIST":
