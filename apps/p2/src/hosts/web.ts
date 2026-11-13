@@ -68,9 +68,10 @@ const escapeAttribute = (value: string): string =>
  * The app page. The inline style and theme script run before any CSS so the first paint has the right background;
  * the surface's bootstrap, stylesheets and deferred scripts (`pageScripts`) follow them, so the stylesheets' rules win.
  * `data-web-version` names the base bundle (the service worker keeps the page's files under it); `#root`'s
- * `data-p2-telemetry` makes an owner's page record its telemetry (src/hosts/web/main.tsx; the server admits owners only).
+ * `data-p2-telemetry` makes an owner's page record its telemetry (src/hosts/web/main.tsx; the server admits owners only),
+ * while settings.json's `telemetry` is on.
  */
-function page(nonce: string, base: string, assets: PageAssets, viewer: Viewer): string {
+function page(nonce: string, base: string, assets: PageAssets, viewer: Viewer, telemetry: boolean): string {
 	const { shellOrigin } = viewer;
 	return `<!doctype html>
 <html lang="en" data-web-version="${base}">
@@ -117,7 +118,7 @@ function page(nonce: string, base: string, assets: PageAssets, viewer: Viewer): 
 		${pageScripts(assets, nonce).replaceAll("\n", "\n\t\t")}
 	</head>
 	<body>
-		<div id="root"${isOwner(viewer.principal) ? ' data-p2-telemetry="on"' : ""}></div>
+		<div id="root"${telemetry && isOwner(viewer.principal) ? ' data-p2-telemetry="on"' : ""}></div>
 	</body>
 </html>
 `;
@@ -177,6 +178,8 @@ export function createWeb(options: {
 	readonly surface: WebSurface<P2Principal>;
 	/** A scope of the server's host, for reading the surface's files. */
 	readonly root: Root;
+	/** Whether owners' pages record telemetry (settings.json's `telemetry`): off, no page is marked. */
+	readonly telemetry: boolean;
 }) {
 	const { surface } = options;
 
@@ -205,7 +208,7 @@ export function createWeb(options: {
 		if (isAppPage(path) && viewer !== undefined) {
 			const [assets, base] = await Promise.all([surface.pageAssets(), surface.base()]);
 			if (assets === undefined || base === undefined) return unavailable(response);
-			const html = page(options.nonce, base, assets, viewer);
+			const html = page(options.nonce, base, assets, viewer, options.telemetry);
 			response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
 			response.end(head ? undefined : html);
 			return;

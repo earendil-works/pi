@@ -58,6 +58,7 @@ test("afterResponse hooks find the request that produced their message, once", a
 		app: APP,
 		dataDir,
 		fake: true,
+		telemetry: false,
 		generation: 1,
 		values: { session: { id: "s1", cwd: dataDir, env: null, model: MODEL, thinkingLevel: "off" } },
 	};

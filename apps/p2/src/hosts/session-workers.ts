@@ -26,6 +26,8 @@ export type SessionWorkersOptions = {
 	readonly app: string;
 	readonly dataDir: string;
 	readonly fake: boolean;
+	/** Whether workers record and send telemetry (`WorkerInit.telemetry`; settings.json's `telemetry`). */
+	readonly telemetry: boolean;
 	readonly entry: string;
 	readonly execArgv: readonly string[];
 	readonly env?: Readonly<Record<string, string>>;
@@ -132,6 +134,7 @@ export class SessionWorkers implements SessionWorkerControl {
 						app: options.app,
 						dataDir: options.dataDir,
 						fake: options.fake,
+						telemetry: options.telemetry,
 						generation,
 						values,
 					};

@@ -1,4 +1,5 @@
-// Telemetry (Chord §29): the server records to `<data>/telemetry.sqlite` (src/runtime/host-dirs.ts); a session worker's
+// Telemetry (Chord §29), on (settings.json `telemetry: true`; off: telemetry-off.test.ts): the server records to
+// `<data>/telemetry.sqlite` (src/runtime/host-dirs.ts); a session worker's
 // spans (Chord's, Durable's, pi-ai's) reach it over the worker's link, stamped with its host; owners' pages may send
 // theirs and are marked to record, guests' may not; what a span records about its principal is p2's hook, never a name
 // or an email. Fake provider, disposable data.
@@ -34,7 +35,7 @@ describe("telemetry", () => {
 	let fixture: Fixture;
 	let session: string;
 	before(async () => {
-		fixture = await startFixture({ web: browserTests });
+		fixture = await startFixture({ web: browserTests, settings: { telemetry: true } });
 		const owner = fixture.browser();
 		await owner
 			.hold(Models, {}, BACKGROUND_CONTEXT)

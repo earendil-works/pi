@@ -2,7 +2,7 @@
 // owner reads everything; a session's worker (its agent's tools) reads it only while the session is neither shared nor
 // locked, checked at each call: sharing the session later cuts its agent off at once.
 import type { AttributeValue, StoredSpan, StoredTrace, TelemetryStore } from "@earendil-works/pi-telemetry";
-import { type Ctx, defineFacet, forbidden, invalid, isOwner, isWorker } from "@p2/app/v1";
+import { ChordError, type Ctx, defineFacet, forbidden, invalid, isOwner, isWorker } from "@p2/app/v1";
 import { serverOf } from "@p2/app/v1/server";
 import { SessionLocks } from "../sessions/contract.ts";
 import { Shares } from "../sharing/contract.ts";
@@ -13,6 +13,7 @@ import {
 	MAX_METRICS,
 	MAX_SPANS,
 	type MetricQuery,
+	TELEMETRY_OFF,
 	type Trace,
 	type TraceQuery,
 	type TraceSummary,
@@ -29,7 +30,8 @@ export default defineFacet((host) => {
 		const server = serverOf(self);
 		const store = (): TelemetryStore => {
 			const telemetry = server().telemetry;
-			if (telemetry === undefined) throw new Error("This server has no telemetry store");
+			// settings.json's `telemetry` was off at the server's start: no store was opened.
+			if (telemetry === undefined) throw new ChordError({ code: "unavailable", message: TELEMETRY_OFF });
 			return telemetry;
 		};
 		if (isOwner(principal)) return { variant: "owner", members: reads(store, async () => {}) };

@@ -670,7 +670,12 @@ syntax/startup errors are retained too. Focused tests: `logs.test.ts`, `ui-logs.
 `test-host.test.ts`; the browser regression exercises the original `Unknown p2 plugin: settings` failure, sticky
 startup fencing, the list marker, owner notice, worker-filtered Show logs and recovery through Retry.
 
-**Telemetry** (Chord §29; always on, no sampling: Chord offers none): the server records to `<data>/telemetry.sqlite`
+**Telemetry** (Chord §29; off unless settings.json's `telemetry` is `true`, read once at the server's start; no
+sampling: Chord offers none; recording everything cost the phone 1.8M spans, 1 GB and a third of a core in 15 h, so it
+is opt-in since 2026-11-13). Off, the server opens no store and serves no ingest objects, `WorkerInit.telemetry` is
+false (the worker's host has no recorder and sends nothing), no page is marked, every host uses Chord's NOOP adapter,
+and `Traces` answers `unavailable` "telemetry is off (settings.json telemetry)" (the pane and the tools show it;
+`telemetry-off.test.ts`). On: the server records to `<data>/telemetry.sqlite`
 (`openTelemetry`, `src/runtime/host-dirs.ts`; Chord's SQLite store, 7 days, a queue of 10,000 spans, a flush every
 second; its own private file, never in a backup), its only writer. Each session worker records in memory (its host's
 spans and metrics, and Durable's `pi.durable.*` and pi-ai's `pi.ai.*`: the Harness gets the same adapter) and sends
