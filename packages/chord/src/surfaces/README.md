@@ -18,8 +18,11 @@ from `@earendil-works/chord`.
   one after another; an `aborted` reload after its commit adopts the commit.
 - **The connection loop** (`connection.ts`, p2's `keepConnected`): reconnects after 250 ms doubling to 5 s (reset by a
   connection open 10 s; the longest while offline), at once on a wake; gives up a socket not open in 20 s; replaces an
-  open socket silent past the server's pings (25 s) on a wake, once its next ping is overdue; asks `canRetry` after
-  every close; reports `connecting`, `connected`, `waiting`. The environment (clock, timers, online, wakes) is given.
+  open socket silent past the server's pings (25 s) on a wake, once its next ping is overdue, and retries at once a drop
+  soon after a wake; after a close it asks `canRetry` alongside the next attempt, never holding it up (a page's base
+  check is an HTTP request, slow on a network just woken), one question at a time (closes while one is open ask
+  nothing more: its answer covers them), a `false` stopping the loop (the attempt it ends reported `waiting`); reports
+  `connecting`, `connected`, `waiting`. The environment (clock, timers, online, wakes) is given.
 - **A client** (`client.ts`): `startClient` makes a client host (no address), loads the initial scripts with the app's
   core facets, keeps its parent link with the loop (the link's close shared by the loop and the host), and follows the
   scripts object: a new set fetches the changed scripts (`fetchScript`), has a page's `styles` (`ClientStyles`) fetch
@@ -30,8 +33,9 @@ from `@earendil-works/chord`.
   object in the background (it starts, a page renders, offline too) and applies the set it shows when following
   begins as well as later ones, and a reconnect re-applies the newest
   set when a plugin kept its old code (the scripts object shows an unchanged set no second time); a set with another
-  `base` calls `outdated`. Before each reconnect it asks the server's base (`serverBase`): another one also calls
-  `outdated` (a new link protocol comes with a new base bundle, Chord being in it), and the loop stops. A static client
+  `base` calls `outdated`. At each reconnect, beside the next attempt, it asks the server's base (`serverBase`): another
+  one stops the loop (ending an attempt made meanwhile), then calls `outdated` (a new link protocol comes with a new base
+  bundle, Chord being in it). A static client
   (`follow: false`) neither follows the scripts object nor asks the server's base.
 - **Themes** (`themes.ts`, `theme-choice.ts`, `active-theme.ts`): `Theme` (`{ id, name, mode, colors, web?, tui? }`; the
   base roles `accent`, `bg`, `fg`, `muted`, `error`, `warning`, `success`, apps add roles), the `Themes` registry

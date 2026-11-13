@@ -115,7 +115,7 @@ describe("phone gestures across a live plugin reload", { skip: !browserTests }, 
 		assert.equal(await browser.evaluate<string>("document.documentElement.dataset.webVersion"), version);
 		await gestures("after the plugin reload");
 
-		// The server's base code changed (answered here by CDP): the page asks the base before it reconnects, finds
+		// The server's base code changed (answered here by CDP): the page asks the base at its reconnect, finds
 		// another one and loads the new page. Its link drops while the network is off.
 		await browser.evaluate("(window.__before = true)");
 		const changed = (raw: unknown) => {

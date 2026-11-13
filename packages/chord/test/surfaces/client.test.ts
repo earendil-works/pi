@@ -79,6 +79,8 @@ async function setup(
 		readonly offline?: true;
 		/** The set the server shows from the start (default: `initial`'s). */
 		readonly shown?: readonly RegisteredScript[];
+		/** Holds the server's base answers until it settles (a slow network). */
+		readonly baseAnswers?: Promise<void>;
 	} = {},
 ) {
 	let failing = more.failing ?? 0;
@@ -97,6 +99,7 @@ async function setup(
 	const sockets: { events: SocketEvents; link: chordNext.Link }[] = [];
 	let serverBase = "B1";
 	const asked: string[] = [];
+	const states: chordNext.ConnectionState[] = [];
 	const client = await startClient<TestPrincipal>({
 		scripts: WebScripts,
 		base: "B1",
@@ -125,9 +128,12 @@ async function setup(
 		},
 		serverBase: async () => {
 			asked.push(serverBase);
+			await more.baseAnswers;
 			return serverBase;
 		},
-		outdated: () => outdated.push("outdated"),
+		// With the connection state then: the loop has stopped (`waiting`) before the app starts over.
+		outdated: () => outdated.push(`outdated (${states.at(-1)})`),
+		onConnection: (state) => states.push(state),
 		...(more.styles === undefined ? {} : { styles: more.styles }),
 		...(more.follow === undefined ? {} : { follow: more.follow }),
 		environment: {
@@ -361,13 +367,27 @@ describe("outdated clients", () => {
 		await server.close(context);
 	});
 
-	it("asks the server's base before reconnecting: another one calls outdated and stops", async () => {
+	it("asks the server's base at a reconnect: another one stops the loop, then calls outdated", async () => {
 		const { client, server, outdated, sockets, setServerBase } = await setup([]);
 		setServerBase("B2");
 		sockets[0]!.link.close();
 		await until(() => outdated.length === 1);
 		await new Promise((resolve) => setTimeout(resolve, 400));
-		expect(sockets).toHaveLength(1);
+		expect([sockets.length <= 2, outdated]).toEqual([true, ["outdated (waiting)"]]);
+		await client.stop(context);
+		await server.close(context);
+	});
+
+	it("a slow base answer after the next link opened: that link ends before outdated is called", async () => {
+		const gate = Promise.withResolvers<void>();
+		const { client, server, outdated, sockets, setServerBase } = await setup([], [], { baseAnswers: gate.promise });
+		setServerBase("B2");
+		sockets[0]!.link.close();
+		await until(() => sockets.length === 2);
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		gate.resolve();
+		await until(() => outdated.length === 1);
+		expect(outdated).toEqual(["outdated (waiting)"]);
 		await client.stop(context);
 		await server.close(context);
 	});

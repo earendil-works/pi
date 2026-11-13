@@ -34,7 +34,7 @@ export type PageOptions<P extends Principal> = {
 	readonly modules: ClientModules;
 	/** The app's own web facets. */
 	readonly core?: readonly PluginFacet<P>[];
-	/** Asked before each reconnect; `false` stops reconnecting (a guest's ended share). */
+	/** Asked at each reconnect, beside the next attempt; `false` stops reconnecting (a guest's ended share). */
 	readonly canRetry?: () => Promise<boolean>;
 	readonly onConnection?: (state: ConnectionState) => void;
 	/** Renders the app with its host, once the plugins are loaded. */

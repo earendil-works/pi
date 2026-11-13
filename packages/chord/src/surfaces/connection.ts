@@ -1,9 +1,10 @@
 // The connection loop (slice 11 §2, decision "Slice 11, P6"; p2's `keepConnected`): a client keeps one link to the
 // server and replaces it when it ends. After a drop it reconnects after a growing pause (250 ms doubling to 5 s; a
-// connection that stayed open 10 s resets it), at once on a wake (visible again, back online, network changed); it
-// replaces an open socket silent past the server's ping interval on a wake, gives up a socket not open after 20 s, and
-// stops when the app's `canRetry` says no (an outdated client, a guest's ended share). The environment (time, timers,
-// wakes) is given, so the same loop runs in a page and in a terminal's sandbox.
+// connection that stayed open 10 s resets it), at once on a wake (visible again, back online, network changed) and for
+// a drop soon after one; it replaces an open socket silent past the server's ping interval on a wake, gives up a socket
+// not open after 20 s, and stops when the app's `canRetry` says no (an outdated client, a guest's ended share), asked
+// beside the next attempt, never before it. The environment (time, timers, wakes) is given, so the same loop runs in a
+// page and in a terminal's sandbox.
 
 /** The first retry pause after a failed or short-lived connection: 250 ms, doubling from there. */
 export const RETRY_INITIAL_MS = 250;
@@ -55,7 +56,11 @@ export type LoopOptions = {
 	/** Opens one socket and its link; the socket reports to `events`. */
 	readonly open: (events: SocketEvents) => LoopLink;
 	readonly onState: (state: ConnectionState) => void;
-	/** Asked after every close; `false` stops the loop. A rejection counts as `true` (unreachable, try again). */
+	/**
+	 * Asked after a close, while the next attempt goes ahead, one question at a time (closes while one is open ask
+	 * nothing more); `false` stops the loop (and closes that attempt). A rejection counts as `true` (unreachable, try
+	 * again).
+	 */
 	readonly canRetry: () => Promise<boolean>;
 	readonly environment: LoopEnvironment;
 };
@@ -84,9 +89,10 @@ class Loop {
 	#current: Attempt | undefined;
 	#cancelRetry: (() => void) | undefined;
 	#cancelStaleCheck: (() => void) | undefined;
-	/** Between a close and `canRetry`'s answer; a wake meanwhile retries at once. */
-	#deciding = false;
-	#wokeWhileDeciding = false;
+	/** When the last wake came, until a close used it (the next attempt then goes at once). */
+	#wokenAt: number | undefined;
+	/** Whether `canRetry` is being asked: one question at a time, its answer covering the closes meanwhile. */
+	#asking = false;
 	#stopped = false;
 
 	constructor(options: LoopOptions) {
@@ -126,17 +132,22 @@ class Loop {
 		link.onClose(() => this.#closed(attempt));
 	}
 
-	/** Stops the loop and closes the current link. */
+	/** Stops the loop and closes the current link; an attempt it ended is reported `waiting` (its last state). */
 	stop(): void {
 		if (this.#stopped) return;
 		this.#stopped = true;
 		this.#removeWake();
 		this.#cancelRetry?.();
 		this.#cancelRetry = undefined;
-		this.#current?.link?.close();
+		const attempt = this.#current;
+		attempt?.link?.close();
+		if (attempt !== undefined) this.#options.onState("waiting");
 	}
 
-	/** `attempt`'s link closed: asks `canRetry`, then schedules the next attempt. */
+	/**
+	 * `attempt`'s link closed: schedules the next attempt, at once when the close came soon after a wake (the socket
+	 * that was away, or its stale check), and asks `canRetry` meanwhile.
+	 */
 	#closed(attempt: Attempt): void {
 		if (this.#current !== attempt) return;
 		this.#current = undefined;
@@ -145,15 +156,29 @@ class Loop {
 		this.#cancelStaleCheck = undefined;
 		if (this.#stopped) return;
 		this.#options.onState("waiting");
+		const now = this.#env.now();
 		const { openedAt } = attempt;
-		if (openedAt !== undefined && this.#env.now() - openedAt >= STABLE_MS) this.#failures = 0;
-		this.#deciding = true;
-		this.#wokeWhileDeciding = false;
-		const decided = (retry: boolean): void => {
-			this.#deciding = false;
-			if (retry) this.#schedule(this.#wokeWhileDeciding);
+		if (openedAt !== undefined && now - openedAt >= STABLE_MS) this.#failures = 0;
+		// Once per wake: a server down would otherwise be retried in a tight loop.
+		const woke = this.#wokenAt !== undefined && now - this.#wokenAt <= STALE_MS + WAKE_GRACE_MS;
+		this.#wokenAt = undefined;
+		this.#schedule(woke);
+		this.#ask();
+	}
+
+	/**
+	 * Asks `canRetry` unless a question is open (its answer covers this close too). Beside the next attempt, not before
+	 * it: the app's check (a page asks the server's base over HTTP) may take seconds on a network just woken, and its
+	 * "no" stops the loop whenever it comes.
+	 */
+	#ask(): void {
+		if (this.#asking) return;
+		this.#asking = true;
+		const answered = (retry: boolean): void => {
+			this.#asking = false;
+			if (!retry) this.stop();
 		};
-		this.#options.canRetry().then(decided, () => decided(true));
+		this.#options.canRetry().then(answered, () => answered(true));
 	}
 
 	/** Schedules the next attempt: at once (`now`), else after the backoff (offline: the longest pause). */
@@ -168,13 +193,10 @@ class Loop {
 
 	/** A wake: a pending retry runs now; an open socket silent too long is replaced once its overdue ping is checked. */
 	#wake(): void {
+		this.#wokenAt = this.#env.now();
 		if (this.#cancelRetry !== undefined) {
 			this.#cancelRetry();
 			this.connect();
-			return;
-		}
-		if (this.#deciding) {
-			this.#wokeWhileDeciding = true;
 			return;
 		}
 		const attempt = this.#current;

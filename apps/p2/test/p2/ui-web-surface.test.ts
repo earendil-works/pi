@@ -102,7 +102,7 @@ describe("pages on the web surface", { skip: !browserTests }, () => {
 		await browser.open(`http://127.0.0.1:${port}/s/${session}`);
 		await browser.wait(`${shows("two")} && document.querySelector('.composer textarea')`);
 		await browser.evaluate("window.__sameDocument = true");
-		// The page asks the server's base before reconnecting; here CDP answers another one once, after a restart.
+		// The page asks the server's base when it reconnects; here CDP answers another one once, after a restart.
 		let answered = false;
 		const changed = (raw: unknown) => {
 			const message = JSON.parse(String(raw)) as { method?: string; params?: { requestId: string } };

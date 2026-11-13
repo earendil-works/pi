@@ -96,6 +96,7 @@ import {
 	useNavigation,
 	useNewSessionState,
 	useObject,
+	useOffline,
 	useOptimisticCall,
 	useOwner,
 	useReadable,
@@ -705,7 +706,7 @@ function TopBar({
 	/** The session is being moved (a relocation job runs). */
 	moving?: boolean;
 }) {
-	const connected = useConnected();
+	const offline = useOffline();
 	// Only the owner reads environments (`PageObjects.envs`): guests see the location without the sandbox lock.
 	const objects = usePageObjects();
 	const envs = useReadable(objects.envs?.envs);
@@ -772,7 +773,7 @@ function TopBar({
 					</>
 				)}
 			</div>
-			{!connected && <span className="offline">Offline</span>}
+			{offline && <span className="offline">Offline</span>}
 			<Slot name="view-actions" />
 			<Slot name="artifact-actions" />
 			<Slot name="terminal-actions" />

@@ -50,8 +50,9 @@ P2_FAKE=1 npm start          # http://127.0.0.1:8788, data in ~/.pi/p2
   503. A plugin reload rolls web facets out with the server's and workers' (the surface's step last): an open page
   fetches the changed scripts and applies them in place (`host.reload` in the page; each plugin's stylesheet swapped
   with its code), so the transcript's scroll and the other panes stay; only base code (the entry, `src/web`,
-  `src/runtime`, the API, Chord, React) needs a restart, and pages reload onto the new base: before reconnecting a
-  page asks `/_chord/web/base`, another one reloads it. No polling. A page's link names its base
+  `src/runtime`, the API, Chord, React) needs a restart, and pages reload onto the new base: when its link drops a
+  page asks `/_chord/web/base` alongside the reconnect (never before it: one check at a time, a drop while one runs
+  asks nothing more), and another base stops the reconnecting and reloads the page. No polling. A page's link names its base
   (`/chord?web=<base>`); every other client names itself (`?client=tui`, `cloud`, `script` for scripts and tests;
   `src/runtime/stale-page.ts`). The server refuses a link naming another base, or neither a base nor a known client (a
   page from before 2026-11-12, which would re-hold types removed since), at once (close code 4001; the page reloads)

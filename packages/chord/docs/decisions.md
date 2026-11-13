@@ -2331,7 +2331,8 @@ validation and copies the v2 kernel added around Delta.
 - **Slice 11, P6: the connection loop (owner, 2026-11-01: "agree"):** p2's `keepConnected`: after a drop, reconnect
   with a growing pause (250 ms to 5 s); try at once when the tab becomes visible, the browser comes back online or the
   network changes; replace a socket open but silent; stop when the server reports an outdated protocol (the page
-  reloads) or the app's `canRetry` says no (a guest's share ended). References keep their last values and wait while
+  reloads) or the app's `canRetry` says no (a guest's share ended; asked beside the next attempt, never before it:
+  2026-11-13, the owner's PWA showed "Offline" for seconds on every return while a page's base check went first). References keep their last values and wait while
   down, so the UI shows a banner from the connection state. A network reconnect, not a crash restart.
 - **Slice 11, P7: React bindings (owner, 2026-11-01: "we definitely want something like that"; p2's `useObject`,
   `useReadable`, `useRegistry` in `runtime/web.tsx`):** an optional subpath (`chord/react`): `HostProvider`,
