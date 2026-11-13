@@ -466,6 +466,8 @@ export class AgentSession {
 	private _isEmittingAgentSettled = false;
 	private readonly _deferredSettledActions: Array<() => Promise<void>> = [];
 	private readonly _deferredCompactionActions: Array<() => Promise<void>> = [];
+	/** abort() calls still waiting for the session to settle; while any is, compaction-deferred runs are dropped. */
+	private _pendingAborts = 0;
 
 	private _resourceLoader: ResourceLoader;
 	private _customTools: ToolDefinition[];
@@ -2497,7 +2499,10 @@ export class AgentSession {
 		} else if (options?.triggerTurn) {
 			// A run started now would build on the branch compaction is replacing (#10982).
 			if (this.isCompacting) {
-				this._deferredCompactionActions.push(async () => await this.sendCustomMessage(message, options));
+				// An aborted compaction still settles before abort() returns; a run requested meanwhile is dropped too.
+				if (this._pendingAborts === 0) {
+					this._deferredCompactionActions.push(async () => await this.sendCustomMessage(message, options));
+				}
 				return;
 			}
 			if (this._isEmittingAgentSettled) {
@@ -2625,12 +2630,17 @@ export class AgentSession {
 		}
 		// Runs deferred by compaction would otherwise start once the aborted compaction settles.
 		this._deferredCompactionActions.length = 0;
-		this.abortRetry();
-		this.abortCompaction();
-		this.abortBranchSummary();
-		if (this._isBeforeSettle) this._abortDuringBeforeSettle = true;
-		this.agent.abort();
-		await this.waitForIdle();
+		this._pendingAborts++;
+		try {
+			this.abortRetry();
+			this.abortCompaction();
+			this.abortBranchSummary();
+			if (this._isBeforeSettle) this._abortDuringBeforeSettle = true;
+			this.agent.abort();
+			await this.waitForIdle();
+		} finally {
+			this._pendingAborts--;
+		}
 	}
 
 	async waitForIdle(): Promise<void> {
