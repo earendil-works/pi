@@ -39,6 +39,11 @@ export type ReadToolOutput = Static<typeof readOutputSchema>;
 
 export interface ReadToolDetails {
 	truncation?: TruncationResult;
+	/**
+	 * Id of the model that was selected when the image was read, if it has no image input. Shown to the user only:
+	 * the model gets pi-ai's placeholder per request, so the stored result stays right after a model switch.
+	 */
+	imageUnsupportedByModel?: string;
 }
 
 /**
@@ -284,6 +289,9 @@ export function createReadToolDefinition(
 										{ type: "text", text: textNote },
 										{ type: "image", data: processed.data, mimeType: processed.mimeType },
 									];
+									if (ctx?.model && !ctx.model.input.includes("image")) {
+										details = { imageUnsupportedByModel: ctx.model.id };
+									}
 								}
 							} else {
 								// Read text content. Convert offset from 1-indexed input to 0-indexed line access.
