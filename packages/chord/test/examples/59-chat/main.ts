@@ -23,7 +23,7 @@ const app = await startChat(dataDir, root, context);
 const url = new URL(app.ownerLink()).origin;
 console.log(`1. the chat at ${url}/ (pick a name), the page at ${url}/chat`);
 
-// 2. Ada picks a name (the kit's ephemeral login) and joins over the links endpoint with her session cookie.
+// 2. Ada picks a name (the kit's ephemeral login) and joins over the links endpoint with her sign-in cookie.
 const login = await fetch(`${url}/_chord/login`, {
 	method: "POST",
 	headers: { "content-type": "application/json" },

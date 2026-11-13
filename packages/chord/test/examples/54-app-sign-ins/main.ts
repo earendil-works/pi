@@ -1,14 +1,14 @@
-// Sessions and device pairing (slice 13 §2), with example 53's notes app. A command-line client on another machine
+// Sign-ins and device pairing (slice 13 §2), with example 53's notes app. A command-line client on another machine
 // has no owner token file: it asks for a pairing code (`POST /_chord/pair`, public), the owner approves the code in a
 // signed-in browser (`/_chord/pair/<code>`, owner only), and the client's next poll returns its device token, once.
-// The owner lists the sessions (`Sessions`, the kit's object; never a token or its hash) and revokes the device's.
+// The owner lists the sign-ins (`SignIns`, the kit's object; never a token or its hash) and revokes the device's.
 // Run from packages/chord:
-//   node --conditions=source --experimental-strip-types test/examples/54-app-sessions/main.ts
+//   node --conditions=source --experimental-strip-types test/examples/54-app-sign-ins/main.ts
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
-import { Sessions } from "../../../src/node/app/index.ts";
+import { SignIns } from "../../../src/node/app/index.ts";
 import { call } from "../53-app/client.ts";
 import { startNotes } from "../53-app/start.ts";
 
@@ -48,15 +48,15 @@ console.log("   poll again:", (await call(port, "POST", "/_chord/pair/poll", {},
 const device = { authorization: `Bearer ${approved.token}` };
 console.log("   CLI GET /:", JSON.stringify((await call(port, "GET", "/", device)).body));
 
-// 5. The owner lists the sessions (a server plugin would do this with `self.get(Sessions, {})`) and revokes the
+// 5. The owner lists the sign-ins (a server plugin would do this with `self.get(SignIns, {})`) and revokes the
 //    device's: its next request is refused.
-const sessions = await app.host.get(Sessions, {}, context);
-console.log("4. sessions:");
-for (const { kind, label } of sessions.list.value) console.log(`   ${kind}: ${label}`);
-const laptop = sessions.list.value.find(({ label }) => label === "laptop CLI");
-await sessions.revoke(laptop?.id ?? "", context);
+const signIns = await app.host.get(SignIns, {}, context);
+console.log("4. sign-ins:");
+for (const { kind, label } of signIns.list.value) console.log(`   ${kind}: ${label}`);
+const laptop = signIns.list.value.find(({ label }) => label === "laptop CLI");
+await signIns.revoke(laptop?.id ?? "", context);
 console.log("   revoked; CLI GET /:", (await call(port, "GET", "/", device)).status);
-sessions.release();
+signIns.release();
 
 await app.close(context);
 await rm(base, { recursive: true, force: true });

@@ -3,9 +3,9 @@
 The app kit (slice 13, design §23 "The app kit", decisions "The app kit, point 1" to "point 5"): an opinionated layer
 over `http`, `workers` and `plugins` so an app is its API, its built-in plugins and a start script. `startServer` on the
 server, `startWorker` in a worker's entry; the kit makes the data directory, the stores, the hosts, HTTP with deny by
-default, sessions and the owner's sign-in, device pairing, each host's files, export and import per address, and the
+default, sign-ins and the owner's sign-in, device pairing, each host's files, export and import per address, and the
 plugin roots with "apply changes". Node-only. Exported as `@earendil-works/chord/app`. Examples 53 (`53-app/`, a whole
-small app), 54 (sessions and pairing) and 55 (export and import) run one app; 65 (`65-files.ts`) shows `Files` on a
+small app), 54 (sign-ins and pairing) and 55 (export and import) run one app; 65 (`65-files.ts`) shows `Files` on a
 host of its own.
 
 ## For apps (`index.ts`)
@@ -34,7 +34,7 @@ const app = await startServer<P>({
 	}],
 	files: { maxFile: 256 * 2 ** 20, maxTotal: 4 * 2 ** 30 },  // every host's caps (these are the defaults)
 	install: { npmCommand: ["npm"] },               // how installs run npm
-	limits: { ephemeralSessions: 1000, pendingPairings: 100, pairingsPerAddress: 10,   // the defaults
+	limits: { ephemeralSignIns: 1000, pendingPairings: 100, pairingsPerAddress: 10,   // the defaults
 		uploads: 64, importBytes: 4 * 2 ** 30, importEntries: 100_000 },
 	web: { entry: "./src/web/main.tsx", page: (request, assets) => shell(request.nonce, assets) },   // slice 11
 	tui: { entry: "./src/tui/main.ts" },
@@ -59,11 +59,11 @@ startWorker<P>({ api, kinds, busy, onError });
 - **The principal type** `P` is the app's. The kit needs `principal.server`, `principal.owner` (any value of `P`: one of
   the app's users or a variant of its own) and, with worker kinds, `principal.worker(address)` (worker kinds without it
   are a type error on `AppOptions`, also a `workers` list typed as an array, not a tuple, that is empty). The owner must
-  be strict JSON (sessions keep it as JSON) and not the server's principal: `startServer` refuses either. The owner
+  be strict JSON (sign-ins keep it as JSON) and not the server's principal: `startServer` refuses either. The owner
   link, the owner token file and device pairing sign in as `principal.owner`; pairing's confirm and approval, its caps'
   exemption and invites recognize it by canonical JSON (`samePrincipal`: the default principal key, computed once per
-  principal object). Changing `principal.owner` between starts replaces the owner token file and revokes its session;
-  other sessions issued for the previous owner stay its own (the app revokes them through `Sessions` if it wants).
+  principal object). Changing `principal.owner` between starts replaces the owner token file and revokes its sign-in;
+  other sign-ins issued for the previous owner stay its own (the app revokes them through `SignIns` if it wants).
 - **The API's modules** are named by convention: `<api>/<version>` for every kind and `<api>/<version>/<kind>` for a
   kind's own; a kind's `packages` (React for a web kind) are host packages besides. The modules are this process's
   instances; the worker's entry passes the same `api` and `kinds`.
@@ -72,7 +72,7 @@ startWorker<P>({ api, kinds, busy, onError });
   through a symbolic link: a second is refused after a second's wait), the layout made private (below), the cookie
   secret, the server's store, the host (address `Server()`, `principal.server`), `createHttp` (the links endpoint at
   `/chord`), the plugins component with the two roots, one workers component per worker kind (none without worker
-  kinds), the server's plugins loaded with the kit's core facets (`chord.http`, `chord.app.info`, `chord.app.sessions`,
+  kinds), the server's plugins loaded with the kit's core facets (`chord.http`, `chord.app.info`, `chord.app.sign-ins`,
   `chord.app.owner`, `chord.app.pairing`, `chord.app.files`, `chord.themes`, `chord.themes.choice`,
   `chord.translations`, `chord.locale.choice`), the owner token file, the listening port, the owner link. Then, off the
   start's path: the bases built (the web and terminal base bundles, each worker kind's worker base; `app.basesBuilt`;
@@ -102,35 +102,36 @@ declares the registries; process values (paths, the start data, the version) rea
 objects, not through closures over the start script. Example 53: the API declares `Sections`, the home plugin serves it
 and reads `AppInfo`.
 
-## Sessions and sign-in
+## Sign-ins
 
 - **Deny by default** (`http`): a route or socket without a principal answers 401 before plugin code runs unless its
   contribution says `public: true`; the `/chord` links endpoint needs a principal.
-- **Sessions** (`Sessions`, `chord.app.sessions`, local, one per server): `issue({ principal, label, kind: "browser"
-  | "device" | "ephemeral", secure? })` returns `{ id, token, cookie }`, `verify(token)` the principal or `null`,
-  `revoke(id)`, `list` (browser and device sessions: `id`, `label`, `kind`, `principal`, `created`, `lastUsed`; never a
+- **Sign-ins** (`SignIns`, `chord.app.sign-ins`, local, one per server; decision "Sign-ins, not sessions"): a sign-in
+  is one browser or device signed in as a principal: its cookie or token, its expiry, its revocation.
+  `issue({ principal, label, kind: "browser" | "device" | "ephemeral", secure? })` returns `{ id, token, cookie }`, `verify(token)` the principal or `null`,
+  `revoke(id)`, `list` (browser and device sign-ins: `id`, `label`, `kind`, `principal`, `created`, `lastUsed`; never a
   token or hash). A token is `<id>.<secret>` (32 random bytes, base64url); only the secret's SHA-256 is kept, compared
-  in constant time. The kit's authenticator reads `Authorization: Bearer <token>` or the session cookie
-  `chord-session` (signed with `server/cookie-secret`, `HttpOnly`, `SameSite=Strict`, `Secure` for a remote browser,
+  in constant time. The kit's authenticator reads `Authorization: Bearer <token>` or the sign-in cookie
+  `chord-sign-in` (signed with `server/cookie-secret`, `HttpOnly`, `SameSite=Strict`, `Secure` for a remote browser,
   400 days, renewed by a response once older than a day, so a browser used within every 400 days stays signed in;
-  an ephemeral one only while the browser runs); a malformed token or an id that is no session (a prototype
-  key included) is a plain 401. Browser and device sessions persist in the server's store; `lastUsed` is written at
-  most once a minute, and a session unused for 400 days ends (checked when it is used, removed then). Ephemeral
-  sessions (a public login) live in memory only (`ephemeral-sessions.ts`), never listed: at most
-  `limits.ephemeralSessions`, none outliving the server's run, so a login costs the same whatever came before. Past
+  an ephemeral one only while the browser runs); a malformed token or an id that is no sign-in (a prototype
+  key included) is a plain 401. Browser and device sign-ins persist in the server's store; `lastUsed` is written at
+  most once a minute, and a sign-in unused for 400 days ends (checked when it is used, removed then). Ephemeral
+  sign-ins (a public login) live in memory only (`ephemeral-sign-ins.ts`), never listed: at most
+  `limits.ephemeralSignIns`, none outliving the server's run, so a login costs the same whatever came before. Past
   the cap the oldest ends: a flood of logins signs out the earliest ephemeral users (the trade for bounded memory). An
-  ephemeral session ends with its client's connection (slice 11): once the last Chord link opened with it closed and
+  ephemeral sign-in ends with its client's connection (slice 11): once the last Chord link opened with it closed and
   none opened for a minute (a reload, a reconnect), or when none opened within a minute of the login; the links
   endpoint's `opened` hook counts them.
 - **The owner link:** each start makes a one-time token (single use, 10 minutes, the previous start's no longer
   valid), `app.ownerLink()` is `http://<the address listened on>:<port>/_chord/owner#<token>` (`127.0.0.1` for
   `0.0.0.0`, `[::1]` for `::`, an IPv6 address in brackets). The page at `GET /_chord/owner` posts
-  the fragment's token to `POST /_chord/owner` (public), which consumes it and sets an owner browser session's cookie.
+  the fragment's token to `POST /_chord/owner` (public), which consumes it and sets an owner browser sign-in's cookie.
   The token stays in the fragment: browsers never send it, so it never reaches a log. No owner by loopback alone.
-- **The owner token file** `<dataDir>/owner-token`: a device session of the owner for command-line clients on the same
+- **The owner token file** `<dataDir>/owner-token`: a device sign-in of the owner for command-line clients on the same
   machine, mode 0600, written in one step (a temporary file made exclusively with mode 0600, then linked or renamed into
-  place). Kept while its token authenticates as the owner (its session exists, the secret matches, not expired, its
-  principal is `principal.owner`; its mode set to 0600 again); replaced at the next start otherwise, its session revoked
+  place). Kept while its token authenticates as the owner (its sign-in exists, the secret matches, not expired, its
+  principal is `principal.owner`; its mode set to 0600 again); replaced at the next start otherwise, its sign-in revoked
   when it names another principal (the owner changed).
 - **Device pairing** for clients elsewhere: `POST /_chord/pair` (public, `{ label? }`) returns `{ code, poll }`; the
   owner opens `/_chord/pair/<code>` signed in (owner only, a confirm page naming the device) and approves; the
@@ -177,7 +178,7 @@ export default users.facet;
 
 Every start sets these modes again, on the server's part when the server starts and on a worker's when it starts:
 a data directory made looser before (or restored with other modes) is tightened, so other local users can neither
-read a store (it holds the sessions) nor replace it.
+read a store (it holds the sign-ins) nor replace it.
 
 A worker's key is percent-encoded as one directory name (`/`, `\`, `.` and capital letters included, so keys differing
 only in case stay apart on a case-insensitive file system), or `sha256-<hex>` past 160 characters.
@@ -331,11 +332,11 @@ desktop (slayer, Linux x64, Node 24.4.1, warm file system).
 ## Internals
 
 `app.ts` (`startServer`, the `App`), `worker.ts` (`startWorker`), `layout.ts` (the layout, private directories and
-stores), `secrets.ts` (tokens, hashes, files of mode 0600), `sessions.ts`, `owner.ts` (owner link and token file),
+stores), `secrets.ts` (tokens, hashes, files of mode 0600), `sign-ins.ts`, `owner.ts` (owner link and token file),
 `pairing.ts`, `files.ts` (`Files`, `FilesFolder`, the facet), `files-index.ts` (the index's tables, documents,
 queries and changes), `blobs.ts` (blob files), `folder-views.ts` (live listings), `uploads.ts` (chunked uploads),
 `files-copy.ts` (`copyFiles`), `info.ts` (start-data objects), `archive.ts` and `tar.ts`
-(export and import), `ephemeral-sessions.ts`, and the optional plugins `users.ts`, `invite.ts`, `ephemeral.ts`.
+(export and import), `ephemeral-sign-ins.ts`, and the optional plugins `users.ts`, `invite.ts`, `ephemeral.ts`.
 
 ## Web and terminal (slice 11)
 

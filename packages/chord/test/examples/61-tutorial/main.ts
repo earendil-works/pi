@@ -36,7 +36,7 @@ const { base, dataDir, root } = await todoDirectories();
 
 // 1. Start the app: the kit makes the data directory, the server's store and host, HTTP and the owner link. Nobody is
 //    signed in yet, so the page answers 401. The owner opens the link: its page posts the token from the URL's fragment
-//    and gets a session cookie.
+//    and gets a sign-in cookie.
 const telemetry = await openTelemetry(telemetryFile(dataDir));
 const app = await startTodo(dataDir, root, telemetry, context);
 const link = new URL(app.ownerLink());

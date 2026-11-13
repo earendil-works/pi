@@ -130,7 +130,7 @@ function webRoutes<P extends Principal>(
 		[`GET ${WEB_PREFIX}plugin/:file`]: { ...access, handler: serve },
 		[`GET ${WEB_PREFIX}assets/:file`]: { ...access, handler: serve },
 		// Asked by a page before it reconnects: another base means its code is outdated. Public: an outdated page whose
-		// session ended still learns it should reload.
+		// sign-in ended still learns it should reload.
 		[`GET ${WEB_PREFIX}base`]: {
 			public: true,
 			handler: async () => {

@@ -1,5 +1,5 @@
 // Tests of the ephemeral login plugin (slice 13 §3): a public route taking a name signs the browser in as a fresh
-// `{ kind: "user", id, name }` with a cookie that ends with the browser, and the session ends with the server.
+// `{ kind: "user", id, name }` with a cookie that ends with the browser, and the sign-in ends with the server.
 
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
@@ -44,7 +44,7 @@ describe("ephemeral login", () => {
 		await app.close(context);
 	});
 
-	it("ends its sessions with the server", async () => {
+	it("ends its sign-ins with the server", async () => {
 		const first = await testApp({ api: WITH_LOGIN, plugins: PLUGINS });
 		const set = String((await logIn(first.port, "ada")).headers["set-cookie"]);
 		await first.app.close(context);

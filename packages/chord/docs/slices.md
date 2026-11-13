@@ -40,7 +40,7 @@ slice spec's section citations are for orientation, not a reading limit (owner, 
 - **Slice 12** (committed 2026-11-01, `slice-12.md`): the plugin model in `src/node/plugins/` (the app's versioned
   API, per-kind files, single-file plugins, installs from git and npm, `testPlugin`); examples 49-52.
 - **Slice 13** (committed 2026-11-02, `slice-13.md`): the app kit, `src/node/app/` (`startServer`, `startWorker`,
-  sessions, owner link, pairing, `Files`, `exportData`/`importData`); examples 53-55.
+  sign-ins, owner link, pairing, `Files`, `exportData`/`importData`); examples 53-55.
 - **Slice 11** (committed 2026-11-03, `slice-11.md`): `src/surfaces/` (scripts objects, registered scripts, the
   connection loop, clients, themes), `src/web/`, `src/react/`, `src/tui/`, `src/node/surfaces/`, `src/node/tui/` (the
   launcher and its child-process sandbox); examples 56-59.
@@ -89,7 +89,7 @@ telemetry last, since it instruments the app kit too; 2026-11-01: the plugin mod
 | 7c | **Plugins** | `chord/plugins` (discovery, `buildFacet`, `evaluateFacet`, `pluginFile`, `installDependencies`, the watcher, `rollout`, `mapStack`; no dev/prod split; the kernel's `load`/`reload` per plugin; `slice-7c.md`) |
 | 10 | **HTTP and workers** | `chord/http` (server, `Http` registry, responses as descriptions, WebSocket entry) and `chord/workers` (a worker per address, IPC, idle stop) |
 | 12 | **The plugin model** | imports (relative within a repository, package names pinned across), versioned app API with Chord re-exported, per-kind API modules and contract files with the build's import check, single-file plugins, git installs, `testPlugin`, a required root (`slice-12.md`) |
-| 13 | **The app kit** | `chord/app`: `startServer`, `startWorker`, layout, worker kinds, owner link, deny by default, sessions, CLI tokens, storage, the files plugin, export per address, plugin roots and "apply changes", base code as API, bootstrap and a start-data facet (`slice-13.md`) |
+| 13 | **The app kit** | `chord/app`: `startServer`, `startWorker`, layout, worker kinds, owner link, deny by default, sign-ins, CLI tokens, storage, the files plugin, export per address, plugin roots and "apply changes", base code as API, bootstrap and a start-data facet (`slice-13.md`) |
 | 11 | **Web and TUI** | `chord/web` (page host), `chord/react` (React hooks), `chord/tui` with `chord/tui/launcher` (sandbox, launcher) and `chord/surfaces` (their server side), from p2's code |
 | 9 | **Telemetry** | spans, events, metrics across hosts |
 
@@ -180,7 +180,7 @@ pattern, no code. Decided cuts are noted where they apply.
 | 23 | `useEvents` (`chord/react`), `TuiScope.on` | events |
 | 27 | event edits (`event`, `addEvent`, `removeEvent`), `accepts.events`, one mapping per emit per older version (`event_mapping_failed`) | events |
 | 23 | HTTP (routes, wraps, responses as descriptions, request bodies, plugin sockets), workers; channels and chunked transfers stay owner patterns until a second user | 10 |
-| 23 | the app kit: `startServer`, `startWorker`, start-data objects, deny by default, sessions, owner link and token file, device pairing, files (with chunked transfers), export and import per address, plugin roots and "apply changes", optional users, invite and ephemeral-login plugins | 13 |
+| 23 | the app kit: `startServer`, `startWorker`, start-data objects, deny by default, sign-ins (`SignIns`), owner link and token file, device pairing, files (with chunked transfers), export and import per address, plugin roots and "apply changes", optional users, invite and ephemeral-login plugins | 13 |
 | 23 | web and TUI: base bundles, registered plugin scripts and the combined file, `WebScripts`/`TuiScripts`, `startPage` with the connection loop and in-place reloads, React bindings, the sandboxed terminal (launcher, sandbox, `TuiScope`), themes (`Themes`, `ThemeChoice`, CSS variables, terminal colours), CSS modules | 11 |
 | 24 | Durable integration: `chord(fn, context)` (Q6), a `RegistryReader` over composed registries; the harness object and its model and env registries are p3's (base code, owner, 2026-10-27) | 8 (Chord parts), p3 |
 | 24 | `StoreStorage` | 6b |

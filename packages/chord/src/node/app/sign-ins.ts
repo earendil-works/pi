@@ -1,9 +1,9 @@
-// Sessions (slice 13 §2, decision "The app kit, point 3: authentication"): the kit's object on the server that issues
-// and revokes sessions, and its authenticator. A session is a principal behind a token `<id>.<secret>` (random); only
-// the secret's hash is kept. A browser carries its token in the kit's signed session cookie (`HttpOnly`,
-// `SameSite=Strict`), a command-line client in `Authorization: Bearer <token>`. Browser and device sessions persist in
-// the server's store and expire after 400 days unused; ephemeral sessions (a pick-a-name login, a public route) live
-// in memory only (`EphemeralSessions`), at most `maxEphemeral` of them (past it the oldest ends), so a public login
+// SignIns (slice 13 §2, decision "The app kit, point 3: authentication"): the kit's object on the server that issues
+// and revokes sign-ins, and its authenticator. A sign-in is a principal behind a token `<id>.<secret>` (random); only
+// the secret's hash is kept. A browser carries its token in the kit's signed sign-in cookie (`HttpOnly`,
+// `SameSite=Strict`), a command-line client in `Authorization: Bearer <token>`. Browser and device sign-ins persist in
+// the server's store and expire after 400 days unused; ephemeral sign-ins (a pick-a-name login, a public route) live
+// in memory only (`EphemeralSignIns`), at most `maxEphemeral` of them (past it the oldest ends), so a public login
 // costs the same whatever came before; each ends with its client's connection (its last link closed, a grace period
 // passed: the links endpoint's `opened` hook counts them), and none outlives the server's run.
 
@@ -23,14 +23,14 @@ import {
 	readCookie,
 	readSignedCookie,
 } from "../http/index.ts";
-import { EphemeralSessions } from "./ephemeral-sessions.ts";
+import { EphemeralSignIns } from "./ephemeral-sign-ins.ts";
 import { hashToken, matchesHash, newToken } from "./secrets.ts";
 
-/** What a session is for: a browser (its cookie), a device (a command-line client's token), an ephemeral login. */
-export type SessionKind = "browser" | "device" | "ephemeral";
+/** What a sign-in is for: a browser (its cookie), a device (a command-line client's token), an ephemeral login. */
+export type SignInKind = "browser" | "device" | "ephemeral";
 
-/** A browser or device session as `Sessions.list` shows it: never its token or hash. */
-export type SessionInfo = {
+/** A browser or device sign-in as `SignIns.list` shows it: never its token or hash. */
+export type SignInInfo = {
 	readonly id: string;
 	readonly label: string;
 	readonly kind: "browser" | "device";
@@ -39,12 +39,12 @@ export type SessionInfo = {
 	readonly lastUsed: number;
 };
 
-/** The kit's sessions (one per server): issue, verify, revoke, and the watchable list of persisted ones. */
-export const Sessions = local("chord.app.sessions", {
+/** The kit's sign-ins (one per server): issue, verify, revoke, and the watchable list of persisted ones. */
+export const SignIns = local("chord.app.sign-ins", {
 	version: 1,
 	params: {},
 	members: {
-		/** The browser and device sessions (ephemeral ones are not listed: there may be many, and they are short). */
+		/** The browser and device sign-ins (ephemeral ones are not listed: there may be many, and they are short). */
 		list: arr(
 			obj({
 				id: str(),
@@ -56,7 +56,7 @@ export const Sessions = local("chord.app.sessions", {
 			}),
 		),
 		/**
-		 * A new session for `principal`: its id, its token (shown once, kept only hashed) and the session cookie carrying
+		 * A new sign-in for `principal`: its id, its token (shown once, kept only hashed) and the sign-in cookie carrying
 		 * it for a browser (`Set-Cookie`; `secure` for a remote one).
 		 */
 		issue: method(
@@ -70,18 +70,18 @@ export const Sessions = local("chord.app.sessions", {
 		),
 		/** The principal `token` authenticates as, or `null` (unknown, revoked, expired, malformed). */
 		verify: method(str(), unknown()),
-		/** Ends session `id` at once: its token authenticates nothing more. */
+		/** Ends sign-in `id` at once: its token authenticates nothing more. */
 		revoke: method(str()),
 	},
 });
 
-/** The name of the kit's session cookie. */
-export const SESSION_COOKIE = "chord-session";
+/** The name of the kit's sign-in cookie. */
+export const SIGN_IN_COOKIE = "chord-sign-in";
 
-/** The stored sessions: by id, each with its secret's hash and its principal (as JSON text: any of the app's). */
-const SessionsDocument = defineState("chord.app.sessions", {
+/** The stored sign-ins: by id, each with its secret's hash and its principal (as JSON text: any of the app's). */
+const SignInsDocument = defineState("chord.app.sign-ins", {
 	schema: obj({
-		sessions: map(
+		signIns: map(
 			obj({
 				hash: str(),
 				label: str(),
@@ -93,51 +93,51 @@ const SessionsDocument = defineState("chord.app.sessions", {
 		),
 	}),
 	version: 1,
-	initial: () => ({ sessions: {} }),
+	initial: () => ({ signIns: {} }),
 	persist: true,
 	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 50,
 });
 
-/** How often a session's `lastUsed` is written at most: once a minute (not one commit per request). */
+/** How often a sign-in's `lastUsed` is written at most: once a minute (not one commit per request). */
 const TOUCH_MS = 60_000;
 
-/** How long a persisted session lives unused: 400 days, as its cookie. */
-const SESSION_IDLE_MS = 400 * 24 * 60 * 60_000;
+/** How long a persisted sign-in lives unused: 400 days, as its cookie. */
+const SIGN_IN_IDLE_MS = 400 * 24 * 60 * 60_000;
 
-/** The sessions' limits: how many ephemeral sessions live at once (1,000 by default; past it the oldest ends). */
-export type SessionLimits = { readonly maxEphemeral?: number };
+/** The sign-ins' limits: how many ephemeral sign-ins live at once (1,000 by default; past it the oldest ends). */
+export type SignInLimits = { readonly maxEphemeral?: number };
 
-/** The kit's sessions: the facet for the server's core facets, and the links endpoint's `opened` hook. */
-export type KitSessions<P extends Principal> = {
+/** The kit's sign-ins: the facet for the server's core facets, and the links endpoint's `opened` hook. */
+export type KitSignIns<P extends Principal> = {
 	readonly facet: Facet<P>;
-	/** A link opened with `request`'s credentials: an ephemeral session's links are counted (it ends with its last). */
+	/** A link opened with `request`'s credentials: an ephemeral sign-in's links are counted (it ends with its last). */
 	readonly opened: (request: HttpRequest) => (() => void) | undefined;
 };
 
 /**
- * The kit's sessions: its facet serving `Sessions` (a host-lifetime object) and contributing its authenticator (the
- * bearer token first, else the session cookie signed with `cookieSecret`), and the links hook ending an ephemeral
- * session with its client's connection.
+ * The kit's sign-ins: its facet serving `SignIns` (a host-lifetime object) and contributing its authenticator (the
+ * bearer token first, else the sign-in cookie signed with `cookieSecret`), and the links hook ending an ephemeral
+ * sign-in with its client's connection.
  */
-export function createSessions<P extends Principal>(cookieSecret: string, limits: SessionLimits = {}): KitSessions<P> {
-	const ephemeral = new EphemeralSessions(limits.maxEphemeral ?? 1000);
+export function createSignIns<P extends Principal>(cookieSecret: string, limits: SignInLimits = {}): KitSignIns<P> {
+	const ephemeral = new EphemeralSignIns(limits.maxEphemeral ?? 1000);
 	const opened = (request: HttpRequest): (() => void) | undefined => {
-		const token = bearerToken(request) ?? readCookie(request, SESSION_COOKIE, cookieSecret);
+		const token = bearerToken(request) ?? readCookie(request, SIGN_IN_COOKIE, cookieSecret);
 		const dot = token?.indexOf(".") ?? -1;
 		return dot > 0 ? ephemeral.linkOpened(token!.slice(0, dot)) : undefined;
 	};
-	return { facet: sessionsFacet<P>(cookieSecret, ephemeral), opened };
+	return { facet: signInsFacet<P>(cookieSecret, ephemeral), opened };
 }
 
-/** The facet of `createSessions`. */
-function sessionsFacet<P extends Principal>(cookieSecret: string, ephemeral: EphemeralSessions): Facet<P> {
+/** The facet of `createSignIns`. */
+function signInsFacet<P extends Principal>(cookieSecret: string, ephemeral: EphemeralSignIns): Facet<P> {
 	return defineFacet<P>((host) =>
-		host.serve(Sessions, (_params, self) => {
-			const document = self.state(SessionsDocument);
-			const change = (fn: (sessions: Record<string, { lastUsed: number }>) => void, context: Context) =>
+		host.serve(SignIns, (_params, self) => {
+			const document = self.state(SignInsDocument);
+			const change = (fn: (signIns: Record<string, { lastUsed: number }>) => void, context: Context) =>
 				// Not awaited by authentication: the request goes on; a write that fails is made again by a later request.
-				void document.change((draft) => fn(draft.sessions), context).catch(() => {});
-			/** The principal of `token`, or `undefined`; touches or lazily removes the persisted session it names. */
+				void document.change((draft) => fn(draft.signIns), context).catch(() => {});
+			/** The principal of `token`, or `undefined`; touches or lazily removes the persisted sign-in it names. */
 			const authenticate = (token: string, context: Context): Principal | undefined => {
 				const dot = token.indexOf(".");
 				if (dot <= 0) return undefined;
@@ -145,34 +145,34 @@ function sessionsFacet<P extends Principal>(cookieSecret: string, ephemeral: Eph
 				const secret = token.slice(dot + 1);
 				const short = ephemeral.get(id);
 				if (short !== undefined) return matchesHash(secret, short.hash) ? short.principal : undefined;
-				// A trust boundary: `id` is the client's (`Object.hasOwn`: no inherited member is a session).
-				const sessions = document.value.sessions;
-				if (!Object.hasOwn(sessions, id)) return undefined;
-				const session = sessions[id]!;
-				if (!matchesHash(secret, session.hash)) return undefined;
+				// A trust boundary: `id` is the client's (`Object.hasOwn`: no inherited member is a sign-in).
+				const signIns = document.value.signIns;
+				if (!Object.hasOwn(signIns, id)) return undefined;
+				const signIn = signIns[id]!;
+				if (!matchesHash(secret, signIn.hash)) return undefined;
 				const now = Date.now();
-				if (now - session.lastUsed > SESSION_IDLE_MS) {
+				if (now - signIn.lastUsed > SIGN_IN_IDLE_MS) {
 					change((draft) => {
 						delete draft[id];
 					}, context);
 					return undefined;
 				}
-				if (now - session.lastUsed > TOUCH_MS) {
+				if (now - signIn.lastUsed > TOUCH_MS) {
 					change((draft) => {
 						if (Object.hasOwn(draft, id)) draft[id]!.lastUsed = now;
 					}, context);
 				}
 				// Stored by `issue` from a principal of the app's type.
-				return JSON.parse(session.principal) as Principal;
+				return JSON.parse(signIn.principal) as Principal;
 			};
 			self.contribute(Authenticators, (request, context) => {
-				const token = bearerToken(request) ?? readCookie(request, SESSION_COOKIE, cookieSecret);
+				const token = bearerToken(request) ?? readCookie(request, SIGN_IN_COOKIE, cookieSecret);
 				return token === undefined ? undefined : authenticate(token, context);
 			});
 			self.contribute(Http, { wraps: [rollingCookie(cookieSecret, authenticate)] });
 			return {
 				list: self.derive([document], ([value]) =>
-					Object.entries(value.sessions).map(([id, { label, kind, principal, created, lastUsed }]) => ({
+					Object.entries(value.signIns).map(([id, { label, kind, principal, created, lastUsed }]) => ({
 						id,
 						label,
 						kind,
@@ -192,7 +192,7 @@ function sessionsFacet<P extends Principal>(cookieSecret: string, ephemeral: Eph
 						const now = Date.now();
 						const stored = JSON.stringify(principal);
 						await document.change((draft) => {
-							draft.sessions[id] = {
+							draft.signIns[id] = {
 								hash: hashToken(secret),
 								label,
 								kind,
@@ -205,14 +205,14 @@ function sessionsFacet<P extends Principal>(cookieSecret: string, ephemeral: Eph
 					const token = `${id}.${secret}`;
 					// Only whether the browser is remote matters to the cookie (`Secure`).
 					const provenance: Provenance = secure === true ? { kind: "remote", host: "" } : { kind: "local" };
-					const set = sessionCookie(token, kind, { provenance }, cookieSecret);
+					const set = signInCookie(token, kind, { provenance }, cookieSecret);
 					return { id, token, cookie: set };
 				},
 				verify: async (token, ctx) => (authenticate(token, ctx) as JsonValue | undefined) ?? null,
 				revoke: async (id, ctx) => {
 					if (ephemeral.revoke(id)) return null;
 					await document.change((draft) => {
-						delete draft.sessions[id];
+						delete draft.signIns[id];
 					}, ctx);
 					return null;
 				},
@@ -222,27 +222,27 @@ function sessionsFacet<P extends Principal>(cookieSecret: string, ephemeral: Eph
 }
 
 /**
- * The session cookie carrying `token` (a session of `kind`) for a browser of `request`'s provenance: a persisted
- * session's lives as long as the session does unused (400 days, renewed by `rollingCookie`), an ephemeral one's only
+ * The sign-in cookie carrying `token` (a sign-in of `kind`) for a browser of `request`'s provenance: a persisted
+ * sign-in's lives as long as the sign-in does unused (400 days, renewed by `rollingCookie`), an ephemeral one's only
  * while the browser runs.
  */
-function sessionCookie(
+function signInCookie(
 	token: string,
-	kind: SessionKind,
+	kind: SignInKind,
 	request: Pick<HttpRequest, "provenance">,
 	secret: string,
 ): string {
-	const maxAge = kind === "ephemeral" ? undefined : SESSION_IDLE_MS / 1000;
-	return cookie(SESSION_COOKIE, token, { secret, request, maxAge });
+	const maxAge = kind === "ephemeral" ? undefined : SIGN_IN_IDLE_MS / 1000;
+	return cookie(SIGN_IN_COOKIE, token, { secret, request, maxAge });
 }
 
-/** How old a session cookie gets before a response renews it: a day. */
+/** How old a sign-in cookie gets before a response renews it: a day. */
 const ROLL_MS = 24 * 60 * 60_000;
 
 /**
- * The wrap around every route renewing the session cookie a request signed in with once it is older than a day: the
+ * The wrap around every route renewing the sign-in cookie a request signed in with once it is older than a day: the
  * response sets it again with a fresh signed expiry, so a browser used within every 400 days stays signed in. Not when
- * the route sets a cookie itself, nor for an ephemeral session's (it has no expiry) or a token that no longer
+ * the route sets a cookie itself, nor for an ephemeral sign-in's (it has no expiry) or a token that no longer
  * authenticates.
  */
 function rollingCookie(
@@ -256,10 +256,10 @@ function rollingCookie(
 		wrap: async (request, next, ctx) => {
 			const response = await next(request);
 			if (ctx.principal === undefined || Object.keys(response.headers ?? {}).some(isSetCookie)) return response;
-			const signed = readSignedCookie(request, SESSION_COOKIE, secret);
-			if (signed?.expires === undefined || signed.expires - Date.now() > SESSION_IDLE_MS - ROLL_MS) return response;
+			const signed = readSignedCookie(request, SIGN_IN_COOKIE, secret);
+			if (signed?.expires === undefined || signed.expires - Date.now() > SIGN_IN_IDLE_MS - ROLL_MS) return response;
 			if (authenticate(signed.value, ctx) === undefined) return response;
-			const renewed = sessionCookie(signed.value, "browser", request, secret);
+			const renewed = signInCookie(signed.value, "browser", request, secret);
 			return { ...response, headers: { ...response.headers, "Set-Cookie": renewed } };
 		},
 	};

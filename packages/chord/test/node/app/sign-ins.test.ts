@@ -1,11 +1,11 @@
-// Tests of sessions (slice 13 §2): issue, revoke and list through `Sessions`; tokens kept only as hashes; the
-// authenticator taking a bearer token or the signed session cookie; ephemeral sessions dropped when the server starts.
+// Tests of sign-ins (slice 13 §2): issue, revoke and list through `SignIns`; tokens kept only as hashes; the
+// authenticator taking a bearer token or the signed sign-in cookie; ephemeral sign-ins dropped when the server starts.
 
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
-import { Sessions } from "../../../src/node/app/index.ts";
+import { SignIns } from "../../../src/node/app/index.ts";
 import { hashToken } from "../../../src/node/app/secrets.ts";
 import { send } from "../http/support.ts";
 import { testApp, WHOAMI } from "./support.ts";
@@ -16,11 +16,11 @@ async function withWhoami() {
 }
 
 describe("issuing, listing and revoking", () => {
-	it("issues a session whose token authenticates as a bearer and as the cookie, lists it without its hash, revokes it", async () => {
+	it("issues a sign-in whose token authenticates as a bearer and as the cookie, lists it without its hash, revokes it", async () => {
 		const { app, port } = await withWhoami();
 		const issued = await app.host.root(async (ctx) => {
-			const sessions = await ctx.get(Sessions, {});
-			return sessions.issue(
+			const signIns = await ctx.get(SignIns, {});
+			return signIns.issue(
 				{ principal: { kind: "user", id: "u1", name: "ada" }, label: "ada's laptop", kind: "device" },
 				ctx,
 			);
@@ -29,10 +29,10 @@ describe("issuing, listing and revoking", () => {
 		const bearer = await send(port, "GET", "/whoami", { headers: { authorization: `Bearer ${issued.token}` } });
 		expect(JSON.parse(bearer.body.toString())).toEqual({ kind: "user", id: "u1", name: "ada" });
 		const cookie = issued.cookie.split(";")[0]!;
-		expect(issued.cookie).toMatch(/^chord-session=[^;]+; HttpOnly; Path=\/; SameSite=Strict; Max-Age=34560000$/);
+		expect(issued.cookie).toMatch(/^chord-sign-in=[^;]+; HttpOnly; Path=\/; SameSite=Strict; Max-Age=34560000$/);
 		const browser = await send(port, "GET", "/whoami", { headers: { cookie } });
 		expect(JSON.parse(browser.body.toString())).toMatchObject({ id: "u1" });
-		const listed = await app.host.root(async (ctx) => (await ctx.get(Sessions, {})).list.value, context);
+		const listed = await app.host.root(async (ctx) => (await ctx.get(SignIns, {})).list.value, context);
 		expect(listed.find(({ id }) => id === issued.id)).toEqual({
 			id: issued.id,
 			label: "ada's laptop",
@@ -41,7 +41,7 @@ describe("issuing, listing and revoking", () => {
 			created: expect.any(Number),
 			lastUsed: expect.any(Number),
 		});
-		await app.host.root(async (ctx) => (await ctx.get(Sessions, {})).revoke(issued.id, ctx), context);
+		await app.host.root(async (ctx) => (await ctx.get(SignIns, {})).revoke(issued.id, ctx), context);
 		expect(
 			(await send(port, "GET", "/whoami", { headers: { authorization: `Bearer ${issued.token}` } })).status,
 		).toBe(401);
@@ -52,7 +52,7 @@ describe("issuing, listing and revoking", () => {
 		const { app, port } = await withWhoami();
 		const issued = await app.host.root(
 			async (ctx) =>
-				(await ctx.get(Sessions, {})).issue({ principal: { kind: "owner" }, label: "x", kind: "device" }, ctx),
+				(await ctx.get(SignIns, {})).issue({ principal: { kind: "owner" }, label: "x", kind: "device" }, ctx),
 			context,
 		);
 		const [id] = issued.token.split(".");
@@ -62,7 +62,7 @@ describe("issuing, listing and revoking", () => {
 			);
 		}
 		expect(
-			(await send(port, "GET", "/whoami", { headers: { cookie: `chord-session=${issued.token}.x.y` } })).status,
+			(await send(port, "GET", "/whoami", { headers: { cookie: `chord-sign-in=${issued.token}.x.y` } })).status,
 		).toBe(401);
 		await app.close(context);
 	});
@@ -71,7 +71,7 @@ describe("issuing, listing and revoking", () => {
 		const { app, dataDir } = await withWhoami();
 		const issued = await app.host.root(
 			async (ctx) =>
-				(await ctx.get(Sessions, {})).issue({ principal: { kind: "owner" }, label: "x", kind: "device" }, ctx),
+				(await ctx.get(SignIns, {})).issue({ principal: { kind: "owner" }, label: "x", kind: "device" }, ctx),
 			context,
 		);
 		await app.close(context);
@@ -88,15 +88,15 @@ describe("issuing, listing and revoking", () => {
 	});
 });
 
-describe("ephemeral sessions", () => {
+describe("ephemeral sign-ins", () => {
 	it("authenticate in memory, are not listed, and end with the server; persisted ones stay", async () => {
 		const first = await withWhoami();
 		const issued = await first.app.host.root(async (ctx) => {
-			const sessions = await ctx.get(Sessions, {});
+			const signIns = await ctx.get(SignIns, {});
 			const principal = { kind: "user", id: "e", name: "e" };
-			const ephemeral = await sessions.issue({ principal, label: "e", kind: "ephemeral" }, ctx);
-			const device = await sessions.issue({ principal: { kind: "owner" }, label: "d", kind: "device" }, ctx);
-			return { ephemeral, device, listed: sessions.list.value.map(({ id }) => id) };
+			const ephemeral = await signIns.issue({ principal, label: "e", kind: "ephemeral" }, ctx);
+			const device = await signIns.issue({ principal: { kind: "owner" }, label: "d", kind: "device" }, ctx);
+			return { ephemeral, device, listed: signIns.list.value.map(({ id }) => id) };
 		}, context);
 		expect(issued.listed).toEqual(expect.arrayContaining([issued.device.id]));
 		expect(issued.listed).not.toContain(issued.ephemeral.id);
@@ -109,14 +109,14 @@ describe("ephemeral sessions", () => {
 		await second.app.close(context);
 	});
 
-	it("live at most `limits.ephemeralSessions`: past it the oldest ends; an issue costs the same whatever came before", async () => {
+	it("live at most `limits.ephemeralSignIns`: past it the oldest ends; an issue costs the same whatever came before", async () => {
 		const { app, port } = await testApp({
-			limits: { ephemeralSessions: 3 },
+			limits: { ephemeralSignIns: 3 },
 			plugins: { whoami: { "server.ts": WHOAMI } },
 		});
-		const sessions = await app.host.get(Sessions, {}, context);
+		const signIns = await app.host.get(SignIns, {}, context);
 		const issue = (index: number) =>
-			sessions.issue(
+			signIns.issue(
 				{ principal: { kind: "user", id: `u${index}`, name: "u" }, label: "u", kind: "ephemeral" },
 				context,
 			);
@@ -127,18 +127,18 @@ describe("ephemeral sessions", () => {
 		expect(await Promise.all(tokens.map(status))).toEqual([401, 200, 200, 200]);
 		// Many more: the cap holds them, and nothing is persisted (no document grows).
 		for (let index = 4; index < 2000; index++) await issue(index);
-		expect(sessions.list.value.filter(({ kind }) => kind !== "browser" && kind !== "device")).toEqual([]);
-		sessions.release();
+		expect(signIns.list.value.filter(({ kind }) => kind !== "browser" && kind !== "device")).toEqual([]);
+		signIns.release();
 		await app.close(context);
 	});
 });
 
 describe("rolling cookies", () => {
-	it("renews a browser's session cookie once it is older than a day, with a fresh signed expiry (recheck N3)", async () => {
+	it("renews a browser's sign-in cookie once it is older than a day, with a fresh signed expiry (recheck N3)", async () => {
 		const { app, port } = await withWhoami();
 		const issued = await app.host.root(
 			async (ctx) =>
-				(await ctx.get(Sessions, {})).issue({ principal: { kind: "owner" }, label: "b", kind: "browser" }, ctx),
+				(await ctx.get(SignIns, {})).issue({ principal: { kind: "owner" }, label: "b", kind: "browser" }, ctx),
 			context,
 		);
 		const cookie = issued.cookie.split(";")[0]!;
@@ -151,7 +151,7 @@ describe("rolling cookies", () => {
 			const renewed = await whoami(cookie);
 			expect(renewed.status).toBe(200);
 			const set = String(renewed.headers["set-cookie"]);
-			expect(set).toMatch(/^chord-session=[^;]+; HttpOnly; Path=\/; SameSite=Strict; Max-Age=34560000$/);
+			expect(set).toMatch(/^chord-sign-in=[^;]+; HttpOnly; Path=\/; SameSite=Strict; Max-Age=34560000$/);
 			const expires = Number(set.split(";")[0]!.split(".").at(-2)) * 1000;
 			expect(expires).toBeGreaterThan(start + 401 * 24 * 60 * 60_000);
 			// 399 days later the old cookie has expired, the renewed one still signs in.
@@ -164,15 +164,15 @@ describe("rolling cookies", () => {
 		await app.close(context);
 	});
 
-	it("does not renew an ephemeral session's cookie, nor a revoked session's", async () => {
+	it("does not renew an ephemeral sign-in's cookie, nor a revoked sign-in's", async () => {
 		const { app, port } = await withWhoami();
-		const sessions = await app.host.get(Sessions, {}, context);
-		const ephemeral = await sessions.issue(
+		const signIns = await app.host.get(SignIns, {}, context);
+		const ephemeral = await signIns.issue(
 			{ principal: { kind: "user", id: "e", name: "e" }, label: "e", kind: "ephemeral" },
 			context,
 		);
-		const browser = await sessions.issue({ principal: { kind: "owner" }, label: "b", kind: "browser" }, context);
-		await sessions.revoke(browser.id, context);
+		const browser = await signIns.issue({ principal: { kind: "owner" }, label: "b", kind: "browser" }, context);
+		await signIns.revoke(browser.id, context);
 		vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 2 * 24 * 60 * 60_000 });
 		try {
 			const short = await send(port, "GET", "/whoami", { headers: { cookie: ephemeral.cookie.split(";")[0]! } });
@@ -182,17 +182,17 @@ describe("rolling cookies", () => {
 		} finally {
 			vi.useRealTimers();
 		}
-		sessions.release();
+		signIns.release();
 		await app.close(context);
 	});
 });
 
 describe("expiry and malformed tokens", () => {
-	it("ends a persisted session unused for 400 days, at its next use", async () => {
+	it("ends a persisted sign-in unused for 400 days, at its next use", async () => {
 		const { app, port } = await withWhoami();
 		const { token } = await app.host.root(
 			async (ctx) =>
-				(await ctx.get(Sessions, {})).issue({ principal: { kind: "owner" }, label: "d", kind: "device" }, ctx),
+				(await ctx.get(SignIns, {})).issue({ principal: { kind: "owner" }, label: "d", kind: "device" }, ctx),
 			context,
 		);
 		const now = Date.now();
@@ -204,10 +204,10 @@ describe("expiry and malformed tokens", () => {
 		} finally {
 			vi.useRealTimers();
 		}
-		const sessions = await app.host.get(Sessions, {}, context);
-		while (sessions.list.value.some(({ label }) => label === "d"))
+		const signIns = await app.host.get(SignIns, {}, context);
+		while (signIns.list.value.some(({ label }) => label === "d"))
 			await new Promise((resolve) => setTimeout(resolve, 10));
-		sessions.release();
+		signIns.release();
 		await app.close(context);
 	});
 
@@ -218,7 +218,7 @@ describe("expiry and malformed tokens", () => {
 				401,
 			);
 		}
-		expect((await send(port, "GET", "/whoami", { headers: { cookie: "chord-session=__proto__.x" } })).status).toBe(
+		expect((await send(port, "GET", "/whoami", { headers: { cookie: "chord-sign-in=__proto__.x" } })).status).toBe(
 			401,
 		);
 		expect(errors).toEqual([]);

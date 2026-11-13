@@ -1,6 +1,6 @@
 // The app kit (slice 13): an app is its API (`app/`), its built-in plugins (`plugins/`: home and notes) and a start
 // script (`start.ts`) calling `startServer`; its workers' entry (`worker.ts`) calls `startWorker`. The kit makes the data
-// directory, the server's store and host, HTTP (deny by default: no session, 401), one worker per project with its own
+// directory, the server's store and host, HTTP (deny by default: no sign-in, 401), one worker per project with its own
 // store and files, and the owner's sign-in: a one-time owner link for the browser, an owner token file for command-line
 // clients on the same machine.
 // Run from packages/chord:
@@ -25,7 +25,7 @@ console.log("   data directory:", (await readdir(dataDir)).sort().join(", "));
 console.log("2. anonymous GET /:", (await call(port, "GET", "/")).status);
 
 // 3. The owner opens the link: the page posts the token from the URL's fragment (never sent in a URL, so never in a
-//    log) and gets the session cookie. The link is used up.
+//    log) and gets the sign-in cookie. The link is used up.
 const page = await call(port, "GET", link.pathname);
 console.log(
 	"3. the link's page:",

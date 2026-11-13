@@ -2746,11 +2746,12 @@ entry. Opinionated and small: an app is its API, its built-in plugins and a star
   User data lives in objects keyed by the user's id. Optional kit plugins: users (accounts with an app-supplied profile
   schema), authenticators (device pairing, invite links, an ephemeral pick-a-name login).
 - **Authentication:** no owner by loopback alone: the start script prints a link with a one-time token that sets a
-  signed cookie of the owner's session; the owner link, the owner token file and device pairing sign in as the app's
+  signed cookie of the owner's sign-in; the owner link, the owner token file and device pairing sign in as the app's
   owner principal, and the owner-only routes (pairing's approval, invites) recognize it by canonical JSON, each
   principal's key computed once per principal object; a change of the owner between starts replaces the owner token file
-  and revokes its old session; deny by default (the HTTP component refuses requests without a principal unless the route
-  or socket is public); a session helper issues and revokes sessions; command-line clients send a token in a header (an
+  and revokes its old sign-in; deny by default (the HTTP component refuses requests without a principal unless the route
+  or socket is public); `SignIns` issues and revokes sign-ins (one browser or device signed in as a principal: its
+  cookie or token, its expiry, its revocation; decision "Sign-ins, not sessions"); command-line clients send a token in a header (an
   owner token file readable only by the app's OS user; a device pairing flow from other machines).
 - **Storage:** one store for the server, a directory per worker under its kind and address with its store; plugins
   never use data-directory paths. `Files`, one per host (decision "Files v2"), is the default file storage: its

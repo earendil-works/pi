@@ -1,5 +1,5 @@
 // The notes plugin's server facet: routes reading and writing a project's notes, and its section of the home page.
-// No route is public: the kit refuses anyone without a session (401) before they run.
+// No route is public: the kit refuses anyone without a sign-in (401) before they run.
 
 import { defineFacet, Sections } from "@notes/app/v1";
 import { Http } from "@notes/app/v1/server";

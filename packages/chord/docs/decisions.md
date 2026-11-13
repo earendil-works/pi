@@ -3524,6 +3524,14 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   callbacks of several references sharing a replica run in subscription order, not hold order (and so may calls those
   listeners make). No wire, codec or protocol change. Rejected (design §31): keeping a hold past its last release,
   borrowed references and leases.
+- **Sign-ins, not sessions (owner, 2026-11-13):** the app kit's sign-in sessions clashed with agent sessions in p2 and p3.
+  The concept is a **sign-in**: one browser or device signed in as a user (its cookie or token, its expiry, its
+  revocation). Renamed: `Sessions` to `SignIns` (contract `chord.app.sign-ins`, its stored document
+  `chord.app.sign-ins` with the field `signIns`, the core facet `chord.app.sign-ins`), `SessionInfo` to `SignInInfo`,
+  `SessionKind` to `SignInKind`, `SESSION_COOKIE` to `SIGN_IN_COOKIE` (the cookie `chord-sign-in`), the start option
+  `limits.ephemeralSessions` to `limits.ephemeralSignIns`, the files `sign-ins.ts` and `ephemeral-sign-ins.ts`, example
+  `54-app-sign-ins`. No migration: nothing deployed uses the kit's sign-ins (p2 has its own); a kit app's existing
+  sign-ins and cookies are not read under the new names (everyone signs in again).
 
 ## Still valid from `target-design.md`
 

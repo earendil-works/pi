@@ -1,5 +1,5 @@
 // A page without a browser, for examples 56 and 58: what `startPage` does, run in Node. It loads the page's combined
-// file and runs its registered scripts (`vm` here; `<script src>` in a browser), connects to `/chord` with the session
+// file and runs its registered scripts (`vm` here; `<script src>` in a browser), connects to `/chord` with the sign-in
 // token, and keeps its plugins current with `startClient` (the same code `startPage` runs). No DOM: what the page would
 // render is read from its host.
 

@@ -3,7 +3,7 @@
 // files, `plugins/` the user's plugins root, `logs/` the logs, `cache/` what only saves time (`workers/<kind>/`, each
 // worker kind's base, written again at every start; `node/`, the workers' compile cache), `owner-token` the owner's token for command-line
 // clients. Directories are 0700 and stores 0600, also when they existed looser before (other local users must not
-// read the sessions in a store, nor replace it).
+// read the sign-ins in a store, nor replace it).
 
 import { createHash } from "node:crypto";
 import { chmod, mkdir, open, realpath, stat } from "node:fs/promises";

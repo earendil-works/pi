@@ -7,7 +7,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
-import { Sessions } from "../../../src/node/app/index.ts";
+import { SignIns } from "../../../src/node/app/index.ts";
 import { requireSandboxNode, terminalFile } from "../../../src/node/tui/index.ts";
 import { send } from "../http/support.ts";
 import { Launched, linesPlugin, TUI_NODE, tuiApp } from "./support.ts";
@@ -242,7 +242,7 @@ describe.skipIf(TUI_NODE === undefined)("a terminal client", () => {
 			const [, code] = await launched.waitFor(/Pairing code ([A-Z0-9]{4}-[A-Z0-9]{4}): approve it at /);
 			const { token } = await app.host.root(
 				async (ctx) =>
-					(await ctx.get(Sessions, {})).issue({ principal: { kind: "owner" }, label: "o", kind: "device" }, ctx),
+					(await ctx.get(SignIns, {})).issue({ principal: { kind: "owner" }, label: "o", kind: "device" }, ctx),
 				context,
 			);
 			expect(
@@ -250,9 +250,9 @@ describe.skipIf(TUI_NODE === undefined)("a terminal client", () => {
 					.status,
 			).toBe(200);
 			await launched.waitFor(/lines: \["plugin v1 tried=\d+ escaped=none"\]/);
-			const sessions = await app.host.get(Sessions, {}, context);
-			expect(sessions.list.value.map(({ label }) => label)).toContain("test terminal");
-			sessions.release();
+			const signIns = await app.host.get(SignIns, {}, context);
+			expect(signIns.list.value.map(({ label }) => label)).toContain("test terminal");
+			signIns.release();
 			launched.type("q");
 			expect(await launched.exited).toBe(3);
 		} finally {

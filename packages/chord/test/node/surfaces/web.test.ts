@@ -9,7 +9,7 @@ import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import { hostKind } from "../../../src/contracts/index.ts";
 import { createHost } from "../../../src/host/index.ts";
 import { WebScripts } from "../../../src/index.ts";
-import { Sessions } from "../../../src/node/app/index.ts";
+import { SignIns } from "../../../src/node/app/index.ts";
 import { createHttp } from "../../../src/node/http/index.ts";
 import { createPlugins } from "../../../src/node/plugins/index.ts";
 import { pageBootstrap, pageScripts, webSurface } from "../../../src/node/surfaces/index.ts";
@@ -50,11 +50,11 @@ async function webApp(
 	});
 }
 
-/** A bearer header of a new owner session of `app`. */
+/** A bearer header of a new owner sign-in of `app`. */
 async function owner(app: Awaited<ReturnType<typeof webApp>>["app"]): Promise<Record<string, string>> {
 	const issued = await app.host.root(
 		async (ctx) =>
-			(await ctx.get(Sessions, {})).issue({ principal: { kind: "owner" }, label: "t", kind: "device" }, ctx),
+			(await ctx.get(SignIns, {})).issue({ principal: { kind: "owner" }, label: "t", kind: "device" }, ctx),
 		context,
 	);
 	return { authorization: `Bearer ${issued.token}` };
@@ -98,7 +98,7 @@ describe("the base bundle and the page", () => {
 		await app.close(context);
 	});
 
-	it("answers the current base hash publicly, and refuses the page and files to a request without a session", async () => {
+	it("answers the current base hash publicly, and refuses the page and files to a request without a sign-in", async () => {
 		const { app, port } = await webApp();
 		const base = await send(port, "GET", "/_chord/web/base");
 		expect([base.status, JSON.parse(base.body.toString()), base.headers["cache-control"]]).toEqual([
