@@ -125,8 +125,8 @@ function sanitizeToolCallId(id: string, fallbackName?: string): string {
 	return capped || `${fallbackName || "tool"}_${++toolCallCounter}`;
 }
 
-export const resolveCurrentSystemPrompt = (context: Context) => getCurrentSystemPrompt(context.messages);
-export const resolveCurrentTools = (context: Context) => getCurrentTools(context.messages);
+const resolveCurrentSystemPrompt = (context: Context) => getCurrentSystemPrompt(context.messages);
+const resolveCurrentTools = (context: Context) => getCurrentTools(context.messages);
 
 /**
  * Google's documented bypass for replaying a function call the current model did not sign
@@ -228,9 +228,6 @@ export function convertMessages(model: Model<Api>, context: Context, runtimeMode
 			const parts = asTextParts(msg.content);
 			appendTurn(contents, GeminiRole.User, parts);
 		} else if (msg.role === "assistant") {
-			if (msg.stopReason === "error" || msg.stopReason === "aborted") {
-				continue;
-			}
 			const parts: GeminiPart[] = [];
 			const isSameModel = msg.provider === model.provider && msg.model === model.id;
 
@@ -245,7 +242,6 @@ export function convertMessages(model: Model<Api>, context: Context, runtimeMode
 						...(textSig ? { thoughtSignature: textSig } : {}),
 					});
 				} else if (block.type === "thinking") {
-					if (!isSameModel) continue;
 					const thinkingSig = resolveThoughtSignature(isSameModel, block.thinkingSignature);
 					if (!String(block.thinking || "").trim() && !thinkingSig) {
 						continue;
@@ -850,16 +846,16 @@ export function friendlyAntigravityError(status: number | undefined, text: strin
 	const msg = ownedSlice(redactSecrets(jsonOrTextError(text)), 0, 500);
 	if (status === 400) {
 		if (/Requests ending with a model turn are not supported/i.test(msg)) {
-			return "Antigravity rejected an invalid conversation message boundary. Next: update the extension or add a user message / start a new session, then retry.";
+			return "Antigravity rejected an invalid conversation message boundary. Next: update pi or add a user message / start a new session, then retry.";
 		}
 		if (/function call turn comes immediately after a user turn or after a function response turn/i.test(msg)) {
-			return "Antigravity rejected an invalid function-call message boundary. Next: update the extension or start a new session, then retry; re-login is not required.";
+			return "Antigravity rejected an invalid function-call message boundary. Next: update pi or start a new session, then retry; re-login is not required.";
 		}
 		if (/API key not valid|API_KEY_INVALID/i.test(msg)) {
 			return "Antigravity login expired or credentials are invalid. Next: run /login antigravity, then retry.";
 		}
 		if (/Invalid JSON payload|Unknown name/i.test(msg)) {
-			return `Antigravity request format was rejected by the backend (${msg}). Next: switch to a simpler model or retry after updating the extension.`;
+			return `Antigravity request format was rejected by the backend (${msg}). Next: switch to a simpler model or retry after updating pi.`;
 		}
 		if (/Request contains an invalid argument/i.test(msg)) {
 			return `Antigravity rejected this request (${msg}). Next: retry once; if it keeps failing, switch models or re-login.`;
@@ -877,7 +873,7 @@ export function friendlyAntigravityError(status: number | undefined, text: strin
 	}
 	if (status === 404) {
 		if (/Requested entity was not found/i.test(msg)) {
-			return "This model is not available right now. Next: switch to gemini-3.8-flash, gemini-3.7-flash, gemini-3.6-flash, gemini-3.5-flash, gemini-3.1-pro, or another working model.";
+			return "This model is not available right now. Next: switch to gemini-4-carbon, gemini-4-hydrogen, gemini-4-argon, gemini-3.8-flash, gemini-3.5-flash, or another working model.";
 		}
 		return `Antigravity could not find the requested resource. Next: retry or switch models. Backend said: ${msg}`;
 	}
@@ -1097,7 +1093,7 @@ export async function fetchWithHeaderDeadline(
 
 /** Exported for unit tests. */
 
-export async function streamResponse(
+async function streamResponse(
 	response: Response,
 	stream: AssistantMessageEventStream,
 	output: AssistantMessage,

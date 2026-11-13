@@ -8,8 +8,8 @@ import {
 import { ANTIGRAVITY_MODEL_ENUM, ANTIGRAVITY_MODELS, ANTIGRAVITY_ROUTING } from "../api/antigravity/models.ts";
 import type { AntigravityRouting } from "../api/antigravity/types.ts";
 import { antigravityEnv } from "../api/antigravity/util.ts";
-import { antigravityApi } from "../api/antigravity-api.ts";
-import { generateImages } from "../api/antigravity-images.ts";
+import { antigravityApi } from "../api/antigravity-api.lazy.ts";
+import { antigravityImagesApi } from "../api/antigravity-images.lazy.ts";
 import { lazyOAuth } from "../auth/helpers.ts";
 import { loadAntigravityOAuth } from "../auth/oauth/load.ts";
 import { createProvider, isModelType, type Provider } from "../models.ts";
@@ -82,7 +82,7 @@ export function antigravityProvider(): Provider<"antigravity-api"> {
 		auth: { oauth },
 		models,
 		api: antigravityApi(),
-		images: { "antigravity-images": { generateImages } },
+		images: { "antigravity-images": antigravityImagesApi() },
 	});
 	return {
 		...provider,

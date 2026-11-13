@@ -1,7 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
-import { getGlobalDispatcher, MockAgent, setGlobalDispatcher } from "undici";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { endpointCandidates } from "../src/api/antigravity/client.ts";
 import { getThinkingConfig } from "../src/api/antigravity/models.ts";
@@ -213,32 +212,23 @@ describe("native Antigravity", () => {
 	it("refreshes expired credentials and preserves the project and refresh token", async () => {
 		const credentials = new InMemoryCredentialStore();
 		await credentials.modify("antigravity", async () => ({ ...credential, expires: 1 }));
-		const previousDispatcher = getGlobalDispatcher();
-		const mock = new MockAgent();
-		mock.disableNetConnect();
-		setGlobalDispatcher(mock);
-		vi.stubGlobal("fetch", () => {
-			throw new Error("OAuth must use Undici fetch");
+		const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+			expect(String(url)).toBe("https://oauth2.googleapis.com/token");
+			expect(init?.method).toBe("POST");
+			expect(String(init?.body)).toMatch(/refresh_token=fake-refresh/);
+			return Response.json({ access_token: "fresh-access", expires_in: 3600 });
 		});
-		try {
-			mock
-				.get("https://oauth2.googleapis.com")
-				.intercept({ path: "/token", method: "POST", body: /refresh_token=fake-refresh/ })
-				.reply(200, { access_token: "fresh-access", expires_in: 3600 });
-			const models = createModels({ credentials });
-			models.setProvider(antigravityProvider());
-			const auth = await models.getAuth("antigravity");
-			expect(JSON.parse(auth!.auth.apiKey!)).toEqual({ token: "fresh-access", projectId: "test-project" });
-			expect(await credentials.read("antigravity")).toMatchObject({
-				refresh: "fake-refresh",
-				access: "fresh-access",
-				projectId: "test-project",
-			});
-			mock.assertNoPendingInterceptors();
-		} finally {
-			setGlobalDispatcher(previousDispatcher);
-			await mock.close();
-		}
+		vi.stubGlobal("fetch", fetchMock);
+		const models = createModels({ credentials });
+		models.setProvider(antigravityProvider());
+		const auth = await models.getAuth("antigravity");
+		expect(JSON.parse(auth!.auth.apiKey!)).toEqual({ token: "fresh-access", projectId: "test-project" });
+		expect(await credentials.read("antigravity")).toMatchObject({
+			refresh: "fake-refresh",
+			access: "fresh-access",
+			projectId: "test-project",
+		});
+		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 
 	it("does not refresh an already aborted request", async () => {

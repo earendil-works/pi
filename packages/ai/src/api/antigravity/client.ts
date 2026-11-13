@@ -35,8 +35,6 @@ export function antigravityUserAgent(env?: ProviderEnv): string {
 	);
 }
 
-export const DEFAULT_USER_AGENT = antigravityUserAgent();
-
 export function endpointCandidates(env?: ProviderEnv, baseUrl?: string): string[] {
 	const explicit = antigravityEnv("BASE_URL", env)?.trim();
 	if (explicit) return [assertSafeApiBaseUrl(explicit)];

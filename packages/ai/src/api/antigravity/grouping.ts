@@ -76,14 +76,6 @@ export function isSelectableRuntimeModelId(id: string): boolean {
 	return true;
 }
 
-export function resolvedCatalog(
-	discovered: AntigravityCatalog | undefined,
-	current: AntigravityCatalog,
-): AntigravityCatalog {
-	if (discovered && discovered.models.length > 0) return discovered;
-	return current;
-}
-
 export function buildAntigravityCatalog(
 	rawModels: Record<string, ModelInfoRaw>,
 	fallback: AntigravityCatalog,

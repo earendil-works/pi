@@ -14,9 +14,6 @@ type ProviderModelConfig = Omit<Model<"antigravity-api">, "api" | "provider" | "
 import { ThinkingEffort } from "./enums.ts";
 import type { AntigravityRouting, ThinkingWire } from "./types.ts";
 
-export const PROVIDER_ID = "antigravity";
-export const PROVIDER_NAME = "Antigravity";
-
 /**
  * Public selectable model IDs → backend request model IDs by thinking effort.
  *
@@ -277,24 +274,6 @@ const thinkingLevelMaps = {
 		minimal: null,
 		low: "low",
 		medium: "medium",
-		high: "high",
-		xhigh: null,
-		max: null,
-	},
-	lowHigh: {
-		off: null,
-		minimal: null,
-		low: "low",
-		medium: null,
-		high: "high",
-		xhigh: null,
-		max: null,
-	},
-	thinking: {
-		off: null,
-		minimal: null,
-		low: null,
-		medium: null,
 		high: "high",
 		xhigh: null,
 		max: null,

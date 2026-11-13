@@ -1,6 +1,5 @@
 // Adapted from pi-antigravity (MIT), Copyright (c) 2026 Rahul Arya.
 // See ../../api/antigravity/LICENSE.
-import { fetch as oauthFetch } from "undici";
 import { defaultProjectId, loadCodeAssist } from "../../api/antigravity/client.ts";
 import { safeError } from "../../api/antigravity/security.ts";
 import { antigravityEnv, isRecord } from "../../api/antigravity/util.ts";
@@ -24,9 +23,7 @@ async function exchange(
 	signal: AbortSignal,
 ): Promise<{ access: string; refresh?: string; expires: number }> {
 	signal.throwIfAborted();
-	// Keep Google OAuth decompression in Undici (upstream pi-antigravity #69),
-	// retaining its shared dispatcher without replacing the host\'s global fetch.
-	const response = await oauthFetch(TOKEN_URL, {
+	const response = await fetch(TOKEN_URL, {
 		method: "POST",
 		headers: { "Content-Type": "application/x-www-form-urlencoded" },
 		body: new URLSearchParams({
@@ -112,7 +109,7 @@ async function login(interaction: ProviderAuthInteraction): Promise<OAuthCredent
 		if (!tokens.refresh) throw new Error("Antigravity did not grant offline access; sign in again");
 		let email: string | undefined;
 		try {
-			const response = await oauthFetch("https://www.googleapis.com/oauth2/v1/userinfo?alt=json", {
+			const response = await fetch("https://www.googleapis.com/oauth2/v1/userinfo?alt=json", {
 				headers: { Authorization: `Bearer ${tokens.access}` },
 				signal,
 			});
