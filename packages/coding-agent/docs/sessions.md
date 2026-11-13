@@ -65,7 +65,15 @@ See [Compaction Reference](compaction.md) for thresholds, retained boundaries, b
 
 By default, Pi stores sessions under `~/.pi/agent/sessions/`, grouped by working directory. Use `--session-dir`, `PI_CODING_AGENT_SESSION_DIR`, or the `sessionDir` setting to choose another location. The CLI option has highest precedence.
 
-Use `--no-session` for an ephemeral run. An ephemeral session cannot be resumed after Pi exits.
+Use `--no-session` for an ephemeral run. Automatic persistence stays off until you run `/save`, and an ephemeral session cannot be resumed after Pi exits unless you explicitly saved it.
+
+### Save a temporary session
+
+The footer prefixes the working directory with `unsaved` while the session exists only in memory, and `/session` reports `In-memory (unsaved, /save to keep)`. Run `/save` to write the session to the normal session directory and keep autosaving it from then on. `/save` takes no arguments. Until the save succeeds, nothing is written and automatic persistence stays off.
+
+Saving keeps the session ID, header, and the whole entry tree, including abandoned branches, labels, and metadata. It writes to `--session-dir`, `PI_CODING_AGENT_SESSION_DIR`, or the `sessionDir` setting when one is configured, and to the default directory otherwise. A session without a user or assistant message is not saved yet, and a failed save leaves the in-memory session usable so you can retry.
+
+Reopening the saved file restores the position that was active at save time. When that position was not the last entry, the file ends with a `pi.save-position` custom entry that records it; the entry adds no model context. See [Session Format](session-format.md#customentry).
 
 ## Export or share a session
 

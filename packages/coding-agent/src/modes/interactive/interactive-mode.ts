@@ -3359,6 +3359,16 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
+			// A trailing argument can start with any whitespace character, not just a space.
+			if (text === "/save" || /^\/save\s/.test(text)) {
+				this.editor.setText("");
+				if (text === "/save") {
+					this.handleSaveCommand();
+				} else {
+					this.showError("Usage: /save");
+				}
+				return;
+			}
 			if (text === "/share") {
 				await this.handleShareCommand();
 				this.editor.setText("");
@@ -5748,6 +5758,27 @@ export class InteractiveMode {
 		}
 	}
 
+	private handleSaveCommand(): void {
+		try {
+			const result = this.sessionManager.saveInPlace();
+			switch (result.status) {
+				case "saved":
+					this.showStatus(`Session saved to: ${result.sessionFile}`);
+					this.footer.invalidate();
+					this.ui.requestRender();
+					return;
+				case "already-saved":
+					this.showStatus(`Session already saved to: ${result.sessionFile}`);
+					return;
+				case "empty":
+					this.showWarning("Nothing to save yet: send a message first");
+					return;
+			}
+		} catch (error) {
+			this.showError(`Failed to save session: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+
 	private showTreeSelector(initialSelectedId?: string): void {
 		const tree = this.sessionManager.getTree();
 		const realLeafId = this.sessionManager.getLeafId();
@@ -6902,7 +6933,7 @@ export class InteractiveMode {
 			if (sessionName) {
 				info += `${theme.fg("dim", "Name:")} ${sessionName}\n`;
 			}
-			info += `${theme.fg("dim", "File:")} ${stats.sessionFile ?? "In-memory"}\n`;
+			info += `${theme.fg("dim", "File:")} ${stats.sessionFile ?? "In-memory (unsaved, /save to keep)"}\n`;
 			info += `${theme.fg("dim", "ID:")} ${stats.sessionId}\n\n`;
 			info += `${theme.bold("Messages")}\n`;
 			info += `${theme.fg("dim", "Total:")} ${stats.totalMessages}\n`;

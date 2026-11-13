@@ -23,6 +23,7 @@ import {
 	readSync,
 	type Stats,
 	statSync,
+	unlinkSync,
 	writeFileSync,
 } from "fs";
 import { readdir, stat } from "fs/promises";
@@ -241,6 +242,15 @@ export interface SessionInfo {
 	firstMessage: string;
 	allMessagesText: string;
 }
+
+/** Custom entry that records the active leaf at save time so reopening restores the same position. */
+const SAVE_POSITION_CUSTOM_TYPE = "pi.save-position";
+
+/** Outcome of {@link SessionManager.saveInPlace}. */
+export type SaveInPlaceResult =
+	| { status: "saved"; sessionFile: string }
+	| { status: "already-saved"; sessionFile: string }
+	| { status: "empty" };
 
 export type ReadonlySessionManager = Pick<
 	SessionManager,
@@ -981,6 +991,37 @@ async function listSessionsFromDir(
 	}
 }
 
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function isErrnoWithCode(error: unknown, code: string): boolean {
+	return error instanceof Error && "code" in error && error.code === code;
+}
+
+/** Close a descriptor and remove a failed save's file. Returns cleanup failures; never throws. */
+function cleanupFailedSave(fd: number, sessionFile: string): string[] {
+	const failures: string[] = [];
+	try {
+		closeSync(fd);
+	} catch (error) {
+		// A failed close may already have released the descriptor; a second close then reports EBADF,
+		// which is not a leaked descriptor and not worth surfacing next to the original error.
+		if (!isErrnoWithCode(error, "EBADF")) {
+			failures.push(errorMessage(error));
+		}
+	}
+	try {
+		unlinkSync(sessionFile);
+	} catch (error) {
+		// A file that is already gone needs no cleanup; anything else may leave the partial file behind.
+		if (!isErrnoWithCode(error, "ENOENT")) {
+			failures.push(errorMessage(error));
+		}
+	}
+	return failures;
+}
+
 /**
  * Manages conversation sessions as append-only trees stored in JSONL files.
  *
@@ -996,6 +1037,8 @@ export class SessionManager {
 	private sessionId: string = "";
 	private sessionFile: string | undefined;
 	private sessionDir: string;
+	/** Future save target of a temporary session. Undefined means the default session directory applies. */
+	private saveSessionDir: string | undefined;
 	private cwd: string;
 	private persist: boolean;
 	private flushed: boolean = false;
@@ -1012,9 +1055,11 @@ export class SessionManager {
 		persist: boolean,
 		newSessionOptions?: NewSessionOptions,
 		preloadedFileEntries?: FileEntry[],
+		saveSessionDir?: string,
 	) {
 		this.cwd = resolvePath(cwd);
 		this.sessionDir = normalizePath(sessionDir);
+		this.saveSessionDir = saveSessionDir ? normalizePath(saveSessionDir) : undefined;
 		this.persist = persist;
 		if (persist && this.sessionDir && !existsSync(this.sessionDir)) {
 			mkdirSync(this.sessionDir, { recursive: true });
@@ -1153,6 +1198,14 @@ export class SessionManager {
 		return this.sessionDir;
 	}
 
+	/**
+	 * Directory that a temporary session will be written to by saveInPlace().
+	 * Undefined when none was configured and the default session directory applies.
+	 */
+	getSaveSessionDir(): string | undefined {
+		return this.saveSessionDir;
+	}
+
 	usesDefaultSessionDir(): boolean {
 		return pathsEqual(this.sessionDir, getDefaultSessionDirPath(this.cwd));
 	}
@@ -1163,6 +1216,87 @@ export class SessionManager {
 
 	getSessionFile(): string | undefined {
 		return this.sessionFile;
+	}
+
+	/**
+	 * Write a temporary session to disk in place and start autosaving it.
+	 *
+	 * Writes the whole entry tree, including abandoned branches, labels, and metadata,
+	 * under the existing header and session ID. The active leaf survives reopening as a
+	 * `pi.save-position` custom entry when it is not the last entry. A failed save leaves
+	 * the manager in memory unchanged, and repeating a successful save does not write again.
+	 */
+	saveInPlace(): SaveInPlaceResult {
+		if (this.persist && this.flushed && this.sessionFile && existsSync(this.sessionFile)) {
+			return { status: "already-saved", sessionFile: this.sessionFile };
+		}
+		// A session without a user or assistant message has nothing worth keeping, and saving it
+		// must not create a session directory yet.
+		if (!this._hasConversation()) return { status: "empty" };
+
+		const header = this.getHeader();
+		if (!header) throw new Error("Cannot save a session without a header");
+		const sessionDir = this.persist ? this.sessionDir : (this.saveSessionDir ?? getDefaultSessionDir(this.cwd));
+		// Another file holding this session ID would make the ID ambiguous, so refuse before writing.
+		// This runs after the already-saved check: a session with its own valid file stays idempotent.
+		const existingSessionFile = SessionManager.findById(this.cwd, this.sessionId, sessionDir);
+		if (existingSessionFile) {
+			throw new Error(`Session ${this.sessionId} already exists at ${existingSessionFile}`);
+		}
+		const sessionFile =
+			this.sessionFile ?? join(sessionDir, `${header.timestamp.replace(/[:.]/g, "-")}_${this.sessionId}.jsonl`);
+
+		// Reopening makes the last file entry the leaf, so a leaf that is not the last entry needs a
+		// marker to reopen at the same position. A custom entry adds no model context.
+		const lastEntry = this.fileEntries[this.fileEntries.length - 1];
+		const lastEntryId = lastEntry && lastEntry.type !== "session" ? lastEntry.id : null;
+		const positionMarker: CustomEntry<{ leafId: string | null }> | undefined =
+			this.leafId === lastEntryId
+				? undefined
+				: {
+						type: "custom",
+						customType: SAVE_POSITION_CUSTOM_TYPE,
+						data: { leafId: this.leafId },
+						id: generateId(this.byId),
+						parentId: this.leafId,
+						timestamp: new Date().toISOString(),
+					};
+
+		// "wx" never overwrites an existing file, and the attempt only cleans up what it created,
+		// so a name collision leaves the existing file untouched. Creating the directory is part of
+		// the same attempt so its failure is reported against the same target path.
+		let fd: number;
+		try {
+			mkdirSync(sessionDir, { recursive: true });
+			fd = openSync(sessionFile, "wx");
+		} catch (error) {
+			throw new Error(`Could not write session file ${sessionFile}: ${errorMessage(error)}`);
+		}
+		try {
+			for (const entry of this.fileEntries) {
+				writeFileSync(fd, `${JSON.stringify(entry)}\n`);
+			}
+			if (positionMarker) {
+				writeFileSync(fd, `${JSON.stringify(positionMarker)}\n`);
+			}
+			closeSync(fd);
+		} catch (error) {
+			const cleanupFailures = cleanupFailedSave(fd, sessionFile);
+			const cleanupNote = cleanupFailures.length > 0 ? ` (cleanup failed: ${cleanupFailures.join("; ")})` : "";
+			throw new Error(`Could not write session file ${sessionFile}: ${errorMessage(error)}${cleanupNote}`);
+		}
+
+		this.sessionDir = sessionDir;
+		this.sessionFile = sessionFile;
+		this.persist = true;
+		this.flushed = true;
+		this.saveSessionDir = undefined;
+		if (positionMarker) {
+			this.fileEntries.push(positionMarker);
+			this.byId.set(positionMarker.id, positionMarker);
+			this.leafId = positionMarker.id;
+		}
+		return { status: "saved", sessionFile };
 	}
 
 	/**
@@ -1818,9 +1952,15 @@ export class SessionManager {
 		return new SessionManager(cwd, dir, undefined, true);
 	}
 
-	/** Create an in-memory session (no file persistence), optionally from entries held outside the filesystem. */
-	static inMemory(cwd: string = process.cwd(), options?: NewSessionOptions, entries?: FileEntry[]): SessionManager {
-		return new SessionManager(cwd, "", undefined, false, options, entries);
+	/** Create an in-memory session (no file persistence), optionally from entries held outside the filesystem.
+	 * `saveSessionDir` is where a later saveInPlace() writes; it is not created until then. */
+	static inMemory(
+		cwd: string = process.cwd(),
+		options?: NewSessionOptions,
+		entries?: FileEntry[],
+		saveSessionDir?: string,
+	): SessionManager {
+		return new SessionManager(cwd, "", undefined, false, options, entries, saveSessionDir);
 	}
 
 	/**

@@ -49,6 +49,17 @@ const { session } = await createAgentSession({
 });
 ```
 
+`SessionManager.inMemory(cwd?, options?, entries?, saveSessionDir?)` accepts an optional future-save directory as its fourth argument. It is normalized but not created, and nothing is written until `saveInPlace()` runs:
+
+```typescript
+const sessionManager = SessionManager.inMemory(process.cwd(), undefined, undefined, saveDir);
+// ... after the user asks to keep the session
+const result = sessionManager.saveInPlace();
+// { status: "saved", sessionFile } | { status: "already-saved", sessionFile } | { status: "empty" }
+```
+
+`saveInPlace()` is synchronous. It writes the whole entry tree under the existing header and session ID to the configured directory, or to the default session directory when none was given, and then persists later appends normally. It returns `"empty"` without writing anything while the session has no user or assistant message, and `"already-saved"` without touching the file when it is already on disk. A failed write or close attempts to remove the partial file it created and throws; the disk cleanup itself can fail, but the manager stays in memory unchanged. `getSaveSessionDir()` reports a temporary session's future save directory, and `isPersisted()` flips only after a successful save.
+
 See the checked [sessions example](../examples/sdk/11-sessions.ts) for creating, opening, continuing, listing, and forking sessions. [Session File Format](session-format.md) defines the persisted JSONL contract, and [Message Types](message-types.md) defines transcript values. For exact methods and signatures, use the exported TypeScript declarations or [`session-manager.ts`](../src/core/session-manager.ts).
 
 `cwd` selects the workspace used for project resource discovery, context files, session grouping, and built-in tool paths. Pass it explicitly when the target differs from `process.cwd()`.

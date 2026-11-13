@@ -173,6 +173,8 @@ Use `customType` to identify your extension's entries on reload. Interactive mod
 
 Pi stores [virtual model](virtual-models.md) router state as custom entries with `customType` `pi.virtual-model-state` and `data` `{ provider, modelId, state }`.
 
+Pi also writes `customType` `pi.save-position` when `saveInPlace()` (the SDK operation behind `/save`) promotes a temporary session whose active position is not the last entry. `data` is `{ leafId }`, the leaf that was active at save time, and `parentId` is that same leaf, or `null` for a root position. Reopening the file makes this final entry the leaf, which restores the saved position; it is a metadata child of the position it records and contributes no model context. The marker only appears in files written by `saveInPlace()` with a non-final active position.
+
 ### CustomMessageEntry
 
 Extension-injected messages that DO participate in LLM context.

@@ -237,7 +237,7 @@ export class AgentSessionRuntime {
 		const sessionDir = this.session.sessionManager.getSessionDir();
 		const sessionManager = this.session.sessionManager.isPersisted()
 			? SessionManager.create(this.cwd, sessionDir)
-			: SessionManager.inMemory(this.cwd);
+			: SessionManager.inMemory(this.cwd, undefined, undefined, this.session.sessionManager.getSaveSessionDir());
 		if (options?.parentSession) {
 			sessionManager.newSession({ parentSession: options.parentSession });
 		}

@@ -164,6 +164,12 @@ export class FooterComponent implements Component {
 		// Replace home directory with ~
 		let pwd = formatCwdForFooter(this.session.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE);
 
+		// A temporary session has no file on disk yet. Prefix the label to the path so it stays
+		// visible when a long path, branch, or name is truncated instead of appending it.
+		if (!this.session.sessionManager.isPersisted()) {
+			pwd = `unsaved • ${pwd}`;
+		}
+
 		// Add git branch if available
 		const branch = this.footerData.getGitBranch();
 		if (branch) {

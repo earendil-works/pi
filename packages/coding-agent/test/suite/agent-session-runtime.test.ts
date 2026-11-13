@@ -40,7 +40,12 @@ describe("AgentSessionRuntime characterization", () => {
 
 	async function createRuntimeForTest(
 		extensionFactory: ExtensionFactory,
-		options?: { cwd?: string; bootstrapModel?: boolean; bootstrapThinkingLevel?: boolean },
+		options?: {
+			cwd?: string;
+			bootstrapModel?: boolean;
+			bootstrapThinkingLevel?: boolean;
+			sessionManager?: SessionManager;
+		},
 	) {
 		const tempDir =
 			options?.cwd ?? join(tmpdir(), `pi-runtime-suite-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -108,7 +113,7 @@ describe("AgentSessionRuntime characterization", () => {
 		const runtime = await createAgentSessionRuntime(createRuntime, {
 			cwd: tempDir,
 			agentDir: tempDir,
-			sessionManager: SessionManager.create(tempDir),
+			sessionManager: options?.sessionManager ?? SessionManager.create(tempDir),
 		});
 		await runtime.session.bindExtensions({});
 
@@ -641,6 +646,117 @@ describe("AgentSessionRuntime characterization", () => {
 
 		expect(realpathSync(runtime.session.sessionManager.getCwd())).toBe(realpathSync(secondDir));
 		expect(realpathSync(runtime.cwd)).toBe(realpathSync(secondDir));
+	});
+
+	// #10768
+	it("keeps the future save target across /new and becomes persistent in it after saving", async () => {
+		const tempDir = join(tmpdir(), `pi-runtime-save-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		mkdirSync(tempDir, { recursive: true });
+		const saveDir = join(tempDir, "saved");
+		const { runtime } = await createRuntimeForTest(() => {}, {
+			cwd: tempDir,
+			sessionManager: SessionManager.inMemory(tempDir, undefined, undefined, saveDir),
+		});
+
+		await runtime.session.prompt("hello");
+		expect(runtime.session.sessionManager.isPersisted()).toBe(false);
+
+		await runtime.newSession();
+		expect(runtime.session.sessionManager.isPersisted()).toBe(false);
+		expect(runtime.session.sessionManager.getSaveSessionDir()).toBe(saveDir);
+		// The replacement session has no messages, so saving it stays a no-op.
+		expect(runtime.session.sessionManager.saveInPlace()).toEqual({ status: "empty" });
+		expect(existsSync(saveDir)).toBe(false);
+
+		await runtime.session.prompt("second session");
+		const saved = runtime.session.sessionManager.saveInPlace();
+		if (saved.status !== "saved") throw new Error(`expected a saved session, got ${saved.status}`);
+		expect(saved.sessionFile.startsWith(`${saveDir}/`)).toBe(true);
+		expect(existsSync(saved.sessionFile)).toBe(true);
+
+		await runtime.newSession();
+		expect(runtime.session.sessionManager.isPersisted()).toBe(true);
+		expect(runtime.session.sessionManager.getSessionDir()).toBe(saveDir);
+	});
+
+	// #10768
+	it("saves a temporary session during an active turn without interrupting it", async () => {
+		let resolveTool!: (result: AgentToolResult<unknown>) => void;
+		let toolStarted!: () => void;
+		const toolStartedPromise = new Promise<void>((resolve) => {
+			toolStarted = resolve;
+		});
+		const tempDir = join(tmpdir(), `pi-runtime-save-live-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		mkdirSync(tempDir, { recursive: true });
+		const saveDir = join(tempDir, "saved");
+		const { runtime, faux } = await createRuntimeForTest(
+			(pi: ExtensionAPI) => {
+				pi.registerTool({
+					name: "block",
+					label: "Block",
+					description: "Blocks until released",
+					parameters: Type.Object({}),
+					execute: () => {
+						toolStarted();
+						return new Promise<AgentToolResult<unknown>>((resolve) => {
+							resolveTool = resolve;
+						});
+					},
+				});
+			},
+			{
+				cwd: tempDir,
+				sessionManager: SessionManager.inMemory(tempDir, undefined, undefined, saveDir),
+			},
+		);
+		faux.setResponses([
+			fauxAssistantMessage(fauxToolCall("block", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+
+		const promptPromise = runtime.session.prompt("start blocking tool");
+		await toolStartedPromise;
+
+		const saved = runtime.session.sessionManager.saveInPlace();
+		if (saved.status !== "saved") throw new Error(`expected a saved session, got ${saved.status}`);
+		expect(existsSync(saved.sessionFile)).toBe(true);
+
+		resolveTool({ content: [{ type: "text", text: "tool finished" }], details: {} });
+		await promptPromise;
+
+		const reopened = SessionManager.open(saved.sessionFile);
+		const roles = reopened
+			.getEntries()
+			.filter((entry) => entry.type === "message")
+			.map((entry) => entry.message.role);
+		expect(roles).toContain("toolResult");
+		expect(roles.at(-1)).toBe("assistant");
+		const content = readFileSync(saved.sessionFile, "utf-8");
+		expect(content).toContain("tool finished");
+		expect(content).toContain("done");
+		expect(runtime.session.sessionManager.getSessionFile()).toBe(saved.sessionFile);
+	});
+
+	// #10768
+	it("keeps the future save target across an in-memory fork", async () => {
+		const tempDir = join(tmpdir(), `pi-runtime-save-fork-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		mkdirSync(tempDir, { recursive: true });
+		const saveDir = join(tempDir, "saved");
+		const { runtime } = await createRuntimeForTest(() => {}, {
+			cwd: tempDir,
+			sessionManager: SessionManager.inMemory(tempDir, undefined, undefined, saveDir),
+		});
+		await runtime.session.prompt("hello");
+		const leafId = runtime.session.sessionManager.getLeafId();
+		if (!leafId) throw new Error("expected a session leaf");
+
+		await runtime.fork(leafId, { position: "at" });
+
+		expect(runtime.session.sessionManager.isPersisted()).toBe(false);
+		expect(runtime.session.sessionManager.getSaveSessionDir()).toBe(saveDir);
+		const saved = runtime.session.sessionManager.saveInPlace();
+		if (saved.status !== "saved") throw new Error(`expected a saved session, got ${saved.status}`);
+		expect(saved.sessionFile.startsWith(`${saveDir}/`)).toBe(true);
 	});
 
 	it("restores model and thinking state from the destination session", async () => {

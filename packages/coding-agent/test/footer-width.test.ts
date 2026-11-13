@@ -26,6 +26,8 @@ function createSession(options: {
 	toolUsage?: AssistantUsage;
 	usingSubscription?: boolean;
 	routedModel?: { model: { id: string }; thinkingLevel?: string };
+	persisted?: boolean;
+	cwd?: string;
 }): AgentSession {
 	const usage = options.usage;
 	const entries: Array<Record<string, unknown>> = [];
@@ -80,7 +82,8 @@ function createSession(options: {
 			getSessionId: () => "test-session",
 			getLeafId: () => null,
 			getSessionName: () => options.sessionName,
-			getCwd: () => "/tmp/project",
+			getCwd: () => options.cwd ?? "/tmp/project",
+			isPersisted: () => options.persisted ?? true,
 		},
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
 		routedModel: options.routedModel,
@@ -278,5 +281,63 @@ describe("FooterComponent width handling", () => {
 
 		expect(stats).toContain("$1.234");
 		expect(stats).not.toContain("(sub)");
+	});
+});
+
+describe("FooterComponent temporary session indicator", () => {
+	beforeAll(() => {
+		initTheme(undefined, false);
+	});
+
+	it("marks a temporary session in front of the path", () => {
+		// #10768
+		const session = createSession({ sessionName: "", persisted: false });
+		const lines = new FooterComponent(session, createFooterData(1)).render(80);
+
+		expect(stripAnsi(lines[0])).toBe("unsaved \u2022 /tmp/project (main)");
+	});
+
+	it("omits the marker for a persisted session", () => {
+		const session = createSession({ sessionName: "", persisted: true });
+		const lines = new FooterComponent(session, createFooterData(1)).render(80);
+
+		expect(stripAnsi(lines[0])).not.toContain("unsaved");
+	});
+
+	it("keeps the marker visible with long unicode paths and names at narrow widths", () => {
+		for (const width of [40, 20]) {
+			const session = createSession({
+				sessionName: "\ud55c\uae00".repeat(20),
+				cwd: `/tmp/${"\ud504\ub85c\uc81d\ud2b8".repeat(10)}`,
+				persisted: false,
+			});
+			const lines = new FooterComponent(session, createFooterData(1)).render(width);
+
+			expect(stripAnsi(lines[0])).toContain("unsaved");
+			for (const line of lines) {
+				expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+			}
+		}
+	});
+
+	it("clips safely when the width is shorter than the marker", () => {
+		const session = createSession({ sessionName: "", persisted: false });
+		const lines = new FooterComponent(session, createFooterData(1)).render(5);
+
+		for (const line of lines) {
+			expect(visibleWidth(line)).toBeLessThanOrEqual(5);
+		}
+	});
+
+	it("drops the marker after the session is saved", () => {
+		const options = { sessionName: "", persisted: false };
+		const session = createSession(options);
+		const footer = new FooterComponent(session, createFooterData(1));
+		expect(stripAnsi(footer.render(80)[0])).toContain("unsaved");
+
+		// The fixture reads the option on every render, so this stands in for saveInPlace().
+		options.persisted = true;
+
+		expect(stripAnsi(footer.render(80)[0])).not.toContain("unsaved");
 	});
 });

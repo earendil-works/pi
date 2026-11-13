@@ -402,6 +402,19 @@ function forkSessionOrExit(sourcePath: string, cwd: string, sessionDir?: string,
 	}
 }
 
+/**
+ * Resolve where new sessions are stored: the CLI flag first, then the environment, then settings.
+ * A temporary session keeps the result as its future save target.
+ */
+export function resolveSessionDir(parsed: Args, settingsManager: SettingsManager): string | undefined {
+	const envSessionDir = process.env[ENV_SESSION_DIR];
+	return (
+		(parsed.sessionDir ? normalizePath(parsed.sessionDir) : undefined) ??
+		(envSessionDir ? expandTildePath(envSessionDir) : undefined) ??
+		settingsManager.getSessionDir()
+	);
+}
+
 export async function createSessionManager(
 	parsed: Args,
 	cwd: string,
@@ -409,7 +422,12 @@ export async function createSessionManager(
 	settingsManager: SettingsManager,
 ): Promise<SessionManager> {
 	if (parsed.noSession || parsed.help || parsed.listModels !== undefined) {
-		return SessionManager.inMemory(cwd, parsed.sessionId !== undefined ? { id: parsed.sessionId } : undefined);
+		return SessionManager.inMemory(
+			cwd,
+			parsed.sessionId !== undefined ? { id: parsed.sessionId } : undefined,
+			undefined,
+			sessionDir,
+		);
 	}
 
 	if (parsed.fork) {
@@ -736,11 +754,7 @@ export async function main(args: string[], options?: MainOptions) {
 	// settings, resources, provider registrations, and models must be resolved only after
 	// the target session cwd is known. The startup-cwd settings manager is used only for
 	// sessionDir lookup during session selection.
-	const envSessionDir = process.env[ENV_SESSION_DIR];
-	const sessionDir =
-		(parsed.sessionDir ? normalizePath(parsed.sessionDir) : undefined) ??
-		(envSessionDir ? expandTildePath(envSessionDir) : undefined) ??
-		startupSettingsManager.getSessionDir();
+	const sessionDir = resolveSessionDir(parsed, startupSettingsManager);
 	let sessionManager = await createSessionManager(parsed, cwd, sessionDir, startupSettingsManager);
 	const missingSessionCwdIssue = getMissingSessionCwdIssue(sessionManager, cwd);
 	if (missingSessionCwdIssue) {
