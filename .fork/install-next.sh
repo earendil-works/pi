@@ -49,7 +49,7 @@ node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.ex
 
 mkdir -p "$root/releases"
 root="$(cd "$root" && pwd -P)"
-cli_path="node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
+cli_path="node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
 asset="pi-next.tar.gz"
 
 target_of() { readlink "$root/$1" 2>/dev/null || true; }

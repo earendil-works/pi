@@ -69,7 +69,7 @@ const foreign = Object.entries(installed).filter(
 if (foreign.length > 0) throw new Error(`installed from the registry instead of this build: ${foreign.map(([key]) => key).join(", ")}`);
 NODE
 
-cli="$work/install/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
+cli="$work/install/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
 version="$(node "$cli" --version)"
 commit="$(git rev-parse HEAD)"
 printf '{\n\t"commit": "%s",\n\t"version": "%s",\n\t"builtAt": "%s"\n}\n' \

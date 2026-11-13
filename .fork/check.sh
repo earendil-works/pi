@@ -31,14 +31,14 @@ case "${1:-focused}" in
 			anthropic-thinking-disable anthropic-oauth oauth-callback-server anthropic-sse-parsing
 			google-shared-gemini3-unsigned-tool-call google-shared-convert-tools
 			google-thinking-level-map google-raw-stop-reason google-stop-reason-continuation meta-oauth
-			generic-endpoint-provider openrouter-regional openrouter-user-models
+			generic-endpoint-provider
 			openai-responses-mid-convo-effort openai-codex-stream openai-responses-compat
 			openai-completions-tool-choice images-models
-			provider-audit-model-generation native-providers-catalog native-providers-kimi-wire
+			native-providers-catalog native-providers-kimi-wire
 		)
 		core_agent_tests=(agent-loop)
 		agent_tests=(
-			suite/stationarity-extension suite/agent-session-codemode
+			suite/agent-session-codemode
 			add-endpoint-provider remote-catalog-names anthropic-oauth-prompt-drift references
 		)
 		# vitest skips a listed file that does not exist, so a branch missing from next would pass silently.

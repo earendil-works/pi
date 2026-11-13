@@ -72,10 +72,17 @@ jobs:
           .fork/sync.sh --align
 
       - name: Sync with upstream
-        # sync.sh rebuilds next and runs the focused checks only when upstream or a branch moved. Any rebase
-        # conflict restores the pre-sync refs, reports every conflicting branch, and fails before push or release.
+        id: sync
+        # sync.sh rebuilds next, hydrates model data, and runs npm run check + .fork/check.sh focused when upstream or
+        # a branch moved. Any rebase conflict restores the pre-sync refs, reports every conflicting branch, and fails.
         run: |
+          before="$(git rev-parse next)"
           if [ "$PUBLISH" = "true" ]; then .fork/sync.sh --hold-on-conflict --push; else echo "dry run: no push"; .fork/sync.sh --hold-on-conflict; fi
+          if [ "$(git rev-parse next)" != "$before" ] && [ "$PUBLISH" = "true" ]; then
+            echo "checked=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "checked=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Require every branch on current upstream
         # The release gate for every pusher: current main, every branch on it, and no stale or stray commits on next.
@@ -97,15 +104,15 @@ jobs:
           fi
 
       - name: Build
-        # sync.sh already prepared the workspace when it rebuilt next; these guards cover a run that did not.
+        # sync.sh already installed dependencies and hydrated model data when it rebuilt next; these guards cover a run that did not.
         if: steps.release.outputs.needed == 'true'
         run: |
           [ -d node_modules ] || npm ci --ignore-scripts
-          npm run hydrate:model-data
+          npm --prefix packages/ai run check:model-data >/dev/null 2>&1 || npm run hydrate:model-data
           npm run build:offline
 
       - name: Check
-        if: steps.release.outputs.needed == 'true'
+        if: steps.release.outputs.needed == 'true' && steps.sync.outputs.checked != 'true'
         run: |
           npm run check
           git diff --exit-code || { echo "npm run check changed files; fix them on their owning branch"; exit 1; }

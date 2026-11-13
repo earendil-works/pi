@@ -68,7 +68,7 @@ if [[ ! -d node_modules ]]; then
 	say "Installing dependencies (npm ci --ignore-scripts)"
 	npm ci --ignore-scripts
 fi
-if [[ ! -f packages/coding-agent/dist/cli.js || ! -d packages/ai/dist ]]; then
+if [[ ! -f packages/coding-agent/dist/bundle/cli.js || ! -d packages/ai/dist ]]; then
 	if ! npm --prefix packages/ai run check:model-data >/dev/null 2>&1; then
 		say "Hydrating model data (npm run hydrate:model-data, needs network)"
 		npm run hydrate:model-data
@@ -101,7 +101,8 @@ cat > CLAUDE.local.md <<'MD'
 This checkout is the JangMan-J/pi fork. Before changing or committing anything, read `.fork/AGENTS.md`
 (on `next`; from another branch, `git show next:.fork/AGENTS.md`) and run `.fork/sync.sh --status` on `next`.
 Never commit on `main` or `next`. Never push `next` or `main`: push only the owning branch
-(`git push origin <branch>`); that push starts fork-sync.yml, which builds, pushes and releases `next`.
+(`git push origin <branch>`), then run `gh workflow run fork-sync.yml --repo JangMan-J/pi` (a push to
+`fork/tooling` starts it automatically), which builds, pushes and releases `next`.
 MD
 grep -qx 'CLAUDE.local.md' .git/info/exclude 2>/dev/null || echo 'CLAUDE.local.md' >> .git/info/exclude
 # pi reads ~/.pi/agent/AGENTS.md in every directory; keep one guarded pointer block, replacing an older one.
@@ -115,8 +116,8 @@ When the working directory is a checkout of JangMan-J/pi (`git remote get-url or
 `.fork/AGENTS.md` before changing anything (on `next`; from another branch, `git show next:.fork/AGENTS.md`) and
 run `.fork/sync.sh --status` on `next` first. Commit only on the owning branch, never on `main` or `next`.
 NEVER push `next` or `main`. Push ONLY the owning branch (`git push origin <branch>`, `--force-with-lease`
-after a rebase); the push starts `.github/workflows/fork-sync.yml`, which alone builds, pushes and releases
-`next` (`gh workflow run fork-sync.yml --repo JangMan-J/pi` to run it without a push). Never run
+after a rebase), then dispatch `.github/workflows/fork-sync.yml` (`gh workflow run fork-sync.yml --repo JangMan-J/pi`;
+a push to `fork/tooling` starts it automatically), which alone builds, pushes and releases `next`. Never run
 `.fork/sync.sh --push` outside GitHub Actions.
 <!-- /fork-workflow -->
 MD
