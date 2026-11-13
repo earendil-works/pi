@@ -308,9 +308,9 @@ section 21), a job `finish` backs off 1 s to 60 s, provider-side `linger` is per
   method calls running on this host, running jobs, provider-side lingering objects. Counters are kept where the work
   happens; a change marks it dirty and it is published at most once per microtask turn with changes. A hold placed
   here counts from its arrival to its end, bound or not (one waiting for a missing provider keeps the worker alive;
-  slice 7a); a hold this host relays counts at its destination; `host.references` lists bound references only.
-  One entry and count per bound holder on the provider: a same-host binding or an arriving wire hold; several
-  references of a consuming host sharing one hold (§7) are one, until that hold ends. Core code
+  slice 7a); a hold this host relays counts at its destination; same-host bindings do not count.
+  `host.references` (§19) lists bound holders only: same-host bindings and arriving wire holds. Several references of a
+  consuming host sharing one hold (§7) are one entry there and one count here, until that hold ends. Core code
   reports it plus Durable tasks (the core `Harness`); the server's supervisor stops the worker when all are zero for
   the idle time (p2: 5 minutes, checked every second). Chord provides the counts, no idle logic.
 

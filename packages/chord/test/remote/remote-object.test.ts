@@ -1519,6 +1519,26 @@ describe('references sharing one wire hold (decision "References share one wire 
 			expect([a.state.value.kind, b.state.value.kind]).toEqual(["live", "live"]);
 		});
 
+		it("watch callbacks of one shared commit run in subscription order, not hold order (accepted difference 9)", async () => {
+			const { client, peer } = await rawProvider();
+			const a = client.hold(Notes, { session: "S1" }, context);
+			const b = client.hold(Notes, { session: "S1" }, context);
+			const hold = await bindNext(peer);
+			await waitLive(b);
+			const order: string[] = [];
+			// B subscribes first, though A holds first.
+			(await b.count.watch(context)).start(async () => void order.push("b"));
+			(await a.count.watch(context)).start(async () => void order.push("a"));
+			peer.send({
+				kind: "state",
+				holds: [
+					{ hold, members: [{ member: EDITOR.state.count!, ops: jsonPart([["r", 4]]) }], failed: [], retired: [] },
+				],
+			});
+			await delivered();
+			expect(order).toEqual(["b", "a"]);
+		});
+
 		it("a joining getter makes no hold and no window turn: it resolves with the replica at once", async () => {
 			const { client, peer } = await rawProvider();
 			const a = await (async () => {
@@ -1552,6 +1572,116 @@ describe('references sharing one wire hold (decision "References share one wire 
 			await waitLive(a);
 			return { client, peer, hold, a };
 		};
+
+		it("a subscription survives its reference's retry alone after too_large/part: the private hold's events reach it", async () => {
+			const { client, peer } = await rawProvider({ limits: { part: 64 } });
+			const a1 = client.hold(Match, { id: 1 }, context) as unknown as RefIn<typeof Match, "player">;
+			const a2 = client.hold(Match, { id: 1 }, context) as unknown as RefIn<typeof Match, "player">;
+			const { hold } = await peer.next("hold");
+			const bound = (id: number): void =>
+				peer.send({
+					kind: "bound",
+					holds: [
+						{
+							hold: id,
+							variant: PLAYER.variant,
+							members: [{ member: PLAYER.state.score!, value: jsonPart(0) }],
+							failed: [],
+						},
+					],
+				});
+			bound(hold);
+			await waitLive(a1);
+			const heard: string[] = [];
+			await a1.paddle.on(({ value }) => void heard.push(`a1:${value.y}`), context);
+			await a2.paddle.on(({ value }) => void heard.push(`a2:${value.y}`), context);
+			const ops = jsonPart([["r", "x".repeat(100)]]);
+			peer.send({
+				kind: "state",
+				holds: [{ hold, members: [{ member: PLAYER.state.score!, ops }], failed: [], retired: [] }],
+			});
+			await delivered();
+			await peer.next("release");
+			a1.retry();
+			const { hold: own } = await peer.next("hold");
+			bound(own);
+			await waitLive(a1);
+			paddle(peer, own, 1);
+			paddle(peer, hold, 2);
+			await delivered();
+			expect([heard, a2.state.value.kind]).toEqual([["a1:1"], "failed"]);
+		});
+
+		for (const terminal of ["gone", "the host's close", "revocation"] as const) {
+			it(`${terminal} ends every reference sharing the hold once: its watches, event subscriptions and running calls`, async () => {
+				const client = createHost<TestPrincipal>({
+					revokedBy: (principal) => (principal.kind === "guest" ? [principal.session] : []),
+					onError: () => {},
+				});
+				await client.load([], context);
+				const peer = await rawParent(client);
+				// Two references of a guest's scope (revocation ends a revoked principal's, never the host's own).
+				const refs: RefIn<typeof Match, "player">[] = [];
+				const ready = Promise.withResolvers<void>();
+				const scope = client
+					.root(
+						async (ctx) => {
+							for (let n = 0; n < 2; n++)
+								refs.push((await ctx.get(Match, { id: 1 })) as RefIn<typeof Match, "player">);
+							ready.resolve();
+							await new Promise(() => {});
+						},
+						context,
+						{ principal: { kind: "guest", session: "S1" } },
+					)
+					.catch(() => {});
+				const { hold } = await peer.next("hold");
+				const members = [{ member: PLAYER.state.score!, value: jsonPart(0) }];
+				peer.send({ kind: "bound", holds: [{ hold, variant: PLAYER.variant, members, failed: [] }] });
+				await ready.promise;
+				const states = await Promise.all(refs.map(async (ref) => statesOf(await ref.state.watch(context))));
+				const watches = await Promise.all(refs.map((ref) => ref.score.watch(context)));
+				const heard: string[] = [];
+				for (const [index, ref] of refs.entries()) {
+					await ref.paddle.on(({ value }) => void heard.push(`${index}:${value.y}`), context);
+				}
+				const calls = refs.map((ref) => rejection(ref.bump(context)));
+				await peer.next("call");
+				await peer.next("call");
+				paddle(peer, hold, 1);
+				await delivered();
+				expect(heard).toEqual(["0:1", "1:1"]);
+				if (terminal === "gone") {
+					const error = { kind: "chord", error: { code: "released", reason: "ended", message: "ended" } } as const;
+					peer.send({ kind: "gone", hold, error });
+					await delivered();
+				} else if (terminal === "revocation") {
+					client.revoke("S1", context);
+				} else {
+					await client.close(context);
+				}
+				const code = terminal === "revocation" ? "forbidden" : "released";
+				// Ended once each: no other state on the way, their state watches ended with it.
+				expect([refs.map((ref) => ref.state.value.kind), states]).toEqual([
+					["ended", "ended"],
+					[[], []],
+				]);
+				expect(await Promise.all(watches.map((watch) => watch.closed))).toEqual([
+					{ kind: "ended" },
+					{ kind: "ended" },
+				]);
+				// The host's close closes its links first: running calls see the link drop.
+				const called = terminal === "the host's close" ? "unavailable" : code;
+				expect((await Promise.all(calls)).map((error) => (error as ChordError).code)).toEqual([called, called]);
+				// Their subscriptions ended: a new one is refused, and nothing more reaches the old listeners.
+				expect(await rejection(refs[0]!.paddle.on(() => {}, context))).toMatchObject({ code });
+				if (!peer.closed) paddle(peer, hold, 2);
+				await delivered();
+				expect(heard).toEqual(["0:1", "1:1"]);
+				await client.close(context);
+				await scope;
+			});
+		}
 
 		it("two references subscribed to one member each get every event once; stopping one leaves the other's", async () => {
 			const { client, peer, hold, a } = await match();
@@ -1930,6 +2060,33 @@ describe('references sharing one wire hold (decision "References share one wire 
 			const { call } = await peer.next("call");
 			peer.send({ kind: "result", call, value: jsonPart(1) });
 			expect([await sibling, b.state.value.kind, taken(peer, "call")]).toEqual([1, "live", 0]);
+		});
+
+		it("after a retry alone, the old object keeps neither the moved binding nor the private object's forked replicas", async () => {
+			const { client, peer } = await rawProvider({ limits: { part: 64 } });
+			const kept = client.hold(Notes, { session: "S1" }, context);
+			const refs = await (async () => {
+				const moved = client.hold(Notes, { session: "S1" }, context);
+				const hold = await bindNext(peer);
+				await waitLive(moved);
+				const ops = jsonPart([["r", [{ text: "x".repeat(100) }]]]);
+				peer.send({
+					kind: "state",
+					holds: [{ hold, members: [{ member: EDITOR.state.notes!, ops }], failed: [], retired: [] }],
+				});
+				await delivered();
+				await peer.next("release");
+				moved.retry();
+				bindHold(peer, (await peer.next("hold")).hold);
+				await waitLive(moved);
+				const own = objects.at(-1)!.deref()!;
+				const refs = [new WeakRef(moved), new WeakRef(own), new WeakRef(own.member("count"))];
+				moved.release();
+				return refs;
+			})();
+			await transported();
+			await expectCollected(...refs);
+			expect(kept.state.value).toMatchObject({ kind: "failed", cause: { kind: "broken" } });
 		});
 
 		it("a route path dropped after its last holder takes its sharing table", async () => {

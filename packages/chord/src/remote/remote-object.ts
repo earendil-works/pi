@@ -306,7 +306,7 @@ export class RemoteObject implements Target {
 	 * Calls a method of the bound variant over the link; one outside it fails `invalid/member`. Only a live object is
 	 * called: bound on an open link.
 	 */
-	async call(method: string, args: unknown, context: Context, binding: Binding): Promise<unknown> {
+	async call(method: string, args: unknown, binding: Binding, context: Context): Promise<unknown> {
 		const bound = this.#bound!;
 		const hold = this.#hold!;
 		const data = bound.methods.get(method);

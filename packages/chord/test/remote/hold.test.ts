@@ -5,7 +5,15 @@ import { broken, ChordError } from "../../src/data/index.ts";
 import type * as Delta from "../../src/delta/index.ts";
 import { decoder } from "../../src/delta/index.ts";
 import { defineState } from "../../src/documents/index.ts";
-import { type Ctx, createHost, defineFacet, type FacetHost, type Host, type Self } from "../../src/host/index.ts";
+import {
+	type Ctx,
+	createHost,
+	defineFacet,
+	type FacetHost,
+	type Host,
+	type RefIn,
+	type Self,
+} from "../../src/host/index.ts";
 import type { ChordHost } from "../../src/host/internal.ts";
 import { ChordObject } from "../../src/host/object.ts";
 import { defineJob } from "../../src/jobs/index.ts";
@@ -1321,6 +1329,51 @@ describe("holds across a reload (slice 7b §6)", () => {
 		await transported();
 		expect(notes.state.value).toEqual({ kind: "live" });
 		expect(states.at(-1)).toBe("live");
+		await server.close(context);
+	});
+
+	it('a reference made during a version-dropping reload\'s drain joins the old live binding: no fresh admission (decision "References share one wire hold", accepted difference 2)', async () => {
+		const gate = Promise.withResolvers<void>();
+		const { server, client } = await linked((h) =>
+			h.serve(Shown, () => ({
+				variant: "v",
+				members: {
+					label: constant("v1"),
+					n: constant(0),
+					bump: async () => {
+						await gate.promise;
+						return 1;
+					},
+				},
+			})),
+		);
+		const a = (await client.get(Shown, {}, context)) as RefIn<typeof Shown, "v">;
+		// A running call keeps the old attempt open: it drains after the reload commits.
+		const running = a.bump(context);
+		await transported();
+		await reloadServer(server, (h) => serveShownV2(h, "v2", false));
+		await transported();
+		expect(a.state.value).toEqual({ kind: "live" });
+		const b = client.hold(Shown, {}, context);
+		expect([b.state.value, b.label.value, server.activity.value.references]).toEqual([{ kind: "live" }, "v1", 1]);
+		// A separate consumer's new hold is admitted against the new code: v1 is no longer accepted.
+		const other = createHost<TestPrincipal>({ onError: () => {} });
+		await other.load([], context);
+		const [near, far] = memoryLinkPair();
+		server.accept(near, { principal: { kind: "owner" }, codec: testCodec() }, context);
+		other.connect(far, { principal: { kind: "server" }, codec: testCodec() }, context);
+		const fresh = other.hold(Shown, {}, context);
+		await transported();
+		expect(fresh.state.value).toMatchObject({ kind: "failed", cause: { error: { code: "contract_mismatch" } } });
+		gate.resolve();
+		expect(await running).toBe(1);
+		await transported();
+		// After the drain both references leave the old binding together.
+		expect([a.state.value, b.state.value]).toMatchObject([
+			{ kind: "failed", cause: { error: { code: "contract_mismatch" } } },
+			{ kind: "failed", cause: { error: { code: "contract_mismatch" } } },
+		]);
+		await other.close(context);
 		await server.close(context);
 	});
 

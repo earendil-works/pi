@@ -1,7 +1,9 @@
 // Benchmark of remote references sharing one wire hold (decision "References share one wire hold"): a first reference
 // over a memory link got and released (a hold, its `bound`, its `release`); a reference joining a held object got and
 // released (no message); a commit fanned out to ten references of one object (time, bytes on the wire, encodes); and
-// the heap retained per reference held. Time and heap per step are medians of seven bursts after a warm-up. The same
+// the heap retained per reference held. Time and the observed heap growth per step (`heapUsed` after a burst minus
+// before it, divided by its steps: not allocated bytes, a collection may run inside a burst) are medians of seven bursts
+// after a warm-up. The same
 // script runs unchanged against a checkout of an earlier commit (a git worktree) for a baseline, where every reference
 // is its own hold.
 // Run by hand from packages/chord (not in CI):
@@ -84,7 +86,7 @@ async function linked(): Promise<{ server: Host<P>; client: Host<P>; sent: { byt
 	return { server, client, sent, encodes };
 }
 
-/** Median time (µs) and heap (B) per step of `step`, after a warm-up burst. */
+/** Median time (µs) and observed heap growth (B) per step of `step`, after a warm-up burst (GC may run inside one). */
 async function measure(step: () => Promise<void>): Promise<{ time: number; heap: number }> {
 	for (let index = 0; index < 200; index++) await step();
 	const times: number[] = [];
@@ -169,7 +171,7 @@ async function retained(): Promise<string> {
 	return `| ${RETAINED} references held: heap per reference | | ${Math.round(per)} B | |`;
 }
 
-console.log("| Step | Per step | Heap per step | Server's bytes (per step) |");
+console.log("| Step | Per step | Heap growth per step | Server's bytes (per step) |");
 console.log("| --- | --- | --- | --- |");
 console.log(await first());
 console.log(await join());

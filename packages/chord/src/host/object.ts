@@ -454,7 +454,7 @@ export class ChordObject implements Target {
 	}
 
 	/** Calls a method of the live object for a reference's `binding`: as its caller, at its version (`callAs`). */
-	call(method: string, args: unknown, context: Context, binding: Binding): Promise<unknown> {
+	call(method: string, args: unknown, binding: Binding, context: Context): Promise<unknown> {
 		return this.callAs(method, args, context, binding.caller, binding.contract.version);
 	}
 

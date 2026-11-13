@@ -1095,10 +1095,11 @@ binding, here or over a link").
 `test/bench/shared-holds.ts` (decision "References share one wire hold"), Node 24.4.1, CPU 32, medians of seven bursts
 of 2,000 steps after a warm-up, a server and a client host over a memory link (binary codec), two runs each, measured
 on the build and on the commit before it (`275dde410`, a temporary worktree with the same bench file). Time and heap
-per step include everything both hosts do (the getter's wait, the hold's `bound` and its `ack`); heap is allocated per
-step, including what the collections during a burst freed. Bytes are what the server sends per step.
+per step include everything both hosts do (the getter's wait, the hold's `bound` and its `ack`). Heap is the observed
+heap growth per step (`heapUsed` after a burst minus before it, divided by its steps), not allocated bytes: a collection
+may run inside a burst and free part of what the burst allocated. Bytes are what the server sends per step.
 
-| Step | Before | After |
+| Step (time, heap growth, server's bytes) | Before | After |
 | --- | --- | --- |
 | first reference over a link: get and release (its own hold) | 101.3-104.2 µs, 17.4 KB, 10 B | 108.1-110.3 µs, 15.4-15.9 KB, 10 B |
 | a reference joining a held object: get and release | 46.6-47.5 µs, 11.2 KB, 10 B | 13.2-13.3 µs, 14.4 KB, 0 B |
@@ -1107,8 +1108,8 @@ step, including what the collections during a burst freed. Bytes are what the se
 
 A joining reference sends nothing and waits for no round trip: about a quarter of a new hold's time, no bytes, and a
 fifth of the memory per held reference (no replica, decoder or hold record of its own; what remains is its binding,
-reference object and member records). A commit to ten references is one encode and one `state` message instead of
-ten. A first reference pays the sharing key and its table entry: about 5 µs more (the key, its parts escaped and
+reference object and member records). A commit to ten references is one hold entry and one encode in its `state`
+message instead of ten (one message either way: a commit touching several holds on one link travels as one). A first reference pays the sharing key and its table entry: about 5 µs more (the key, its parts escaped and
 joined, measured at about 1.2 µs per key in the profile; the rest in the binding path, not attributed further). The
 release of a non-final reference makes no `released` error unless it has calls to cancel (an error with its stack is
 the largest single cost of a release). `test/bench/state-binding.ts`'s "over a link: get and release" keeps one

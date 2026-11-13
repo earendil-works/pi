@@ -107,7 +107,7 @@ export interface Target {
 	 * Calls a method of the live object for `binding` (its caller, at its contract's version: an older one is mapped,
 	 * Q10); over a link the call is the binding's own, cancelled with its release.
 	 */
-	call(method: string, args: unknown, context: Context, binding: Binding): Promise<unknown>;
+	call(method: string, args: unknown, binding: Binding, context: Context): Promise<unknown>;
 	/**
 	 * What a reference of `version` follows for state member `member` now (decision "References are the only
 	 * indirection"): the live instance's member (a replica over a link), or nothing (`loading`, or `failed` with the
@@ -902,7 +902,7 @@ export class Binding implements Holder, UnboundRequest {
 		const { target } = this.#state as Extract<BindingState, { readonly kind: "bound" }>;
 		this.#calls ??= new AbortController();
 		const linked = withLinkedAbortSignal(this.#calls.signal, context);
-		return target.call(method, args, linked.context, this).finally(linked.release);
+		return target.call(method, args, this, linked.context).finally(linked.release);
 	}
 
 	/**
