@@ -43,7 +43,7 @@ const builtinAgents: AgentDefinition[] = [
 		source: "builtin",
 	},
 	{
-		name: "scout",
+		name: "librarian",
 		description: "Read-only codebase investigation with concise, evidence-backed handoff.",
 		tools: readTools,
 		systemPrompt:
@@ -59,8 +59,9 @@ const builtinAgents: AgentDefinition[] = [
 		source: "builtin",
 	},
 	{
-		name: "planner",
-		description: "Read-only implementation planning grounded in the current codebase.",
+		name: "philosopher",
+		description:
+			"Read-only implementation planning grounded in the current codebase. Prepare questions, clarifications for the output to help if something seems off the user achieve the desired plan. Do not recommend new major architectural decisions without clarifying with the user.",
 		tools: readTools,
 		systemPrompt:
 			"Inspect the relevant code and propose a concrete implementation plan. Identify interfaces, affected callers, risks, and verification. Do not change files.",
