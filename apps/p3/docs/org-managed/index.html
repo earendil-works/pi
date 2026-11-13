@@ -109,7 +109,7 @@ table{max-width:100%}
 </head>
 <body><div class="book">
 <section class="cover">
-  <div class="kicker">A design book · p3 · second edition · 2026-11-13</div>
+  <div class="kicker">A design book · p3 · third edition · 2026-11-13</div>
   <h1>Org-Managed<br>Pis</h1>
   <p class="subtitle">How Acme gives every member&#39;s Pi its plugins, MCP servers and models, and closes what it must, without a policy language</p>
   <div class="cover-stats"><div class="stat"><b>1</b><span>write path for every setting, Settings.set</span></div><div class="stat"><b>2</b><span>locks a managed setting can have, default and locked</span></div><div class="stat"><b>5</b><span>gate states, from unmanaged to revoked</span></div><div class="stat"><b>8</b><span>traces from a click or a tool call to what Dana sees</span></div></div>
@@ -120,7 +120,9 @@ from the consultation <code>org-opus</code> and the good parts of <code>org-fabl
 <em>review</em> are corrections to the consultation or points still open. The second edition adds, at the owner&#39;s request,
 chapter IV (Acme end to end: the admin&#39;s form, the full profile, the code of every file involved, eight traces) and
 chapter VI (locking down the machine: a signed install, a service user, tools as the member, execution control, a
-device-bound key).</p>
+device-bound key). The third edition, after the owner&#39;s discussion with Armin (2026-11-13), answers &quot;can&#39;t I just
+patch out the check?&quot;, runs the agent&#39;s tools only in Gondolin sandboxes with org-chosen folders (replacing the sudo
+rule that ran them as the member), and adds restriction plugins picked in Radius.</p>
 </div>
 </section><div class="inner">
 <nav class="toc"><h2>Contents</h2><ol>
@@ -180,8 +182,9 @@ expensive part.</li>
 plugin, writing one, sharing outside Acme, a live removal, and a lock on Acme&#39;s own plugin&#39;s setting all end in
 <code>Settings.set</code>, <code>admit</code> or a setting a plugin follows. Chapter IV traces each one through the code.</li>
 <li><strong>On an Org Device the shell is moved out of reach.</strong> The Pi runs as a service under its own Unix user, from a
-   root-owned install; the agent&#39;s tools run as the member through <code>pi-env</code>; Radius serves org resources only to a Pi
-   that proves a device-bound key. Then a member&#39;s agent can no longer edit the Pi&#39;s files at all.</li>
+   root-owned install; the agent&#39;s tools run only in Gondolin sandboxes with the folders Acme allows; Radius serves org
+   resources only to a Pi that proves a device-bound key. A patched copy gets nothing from Acme, and a member&#39;s agent
+   can no longer touch the Pi&#39;s files at all. Restriction plugins, picked in Radius, narrow it further.</li>
 </ol>
 <h3 id="words-used-throughout">Words used throughout</h3>
 <p>A <strong>member</strong> is a person in an org, and the owner of one Pi. A <strong>setting</strong> is a named, typed piece of configuration a
@@ -193,7 +196,8 @@ to an org. The <strong>profile</strong> is the org&#39;s managed layer for one m
 last good one as its <strong>cache</strong>. The <strong>gate</strong> is the Pi&#39;s org state. <strong>Admit</strong> is the kit&#39;s check that decides at
 discovery which plugins load. A <strong>guardrail</strong> holds against the member&#39;s agent and well-behaved code; a <strong>wall</strong> holds
 even against a modified Pi, because Radius enforces it. On a locked-down machine the Pi runs as a <strong>service user</strong> of its own, and the
-agent&#39;s tools run as the member through <strong><code>pi-env</code></strong>, the tool daemon of <code>packages/env</code>.</p>
+agent&#39;s tools run in <strong>sandboxes</strong>, Gondolin VMs with chosen folders mounted. A <strong>restriction plugin</strong> is a required
+org plugin that narrows what members and their agents can do.</p>
 <div class="note"><b class="tag">What this supersedes</b><p>The decision &quot;Resource model direction&quot; (2026-11-08) planned one replaceable policy plugin that guards create, bring
 and add-member operations. It is dropped: an org restricts by locking settings. Company resources of the decision
 &quot;Instance resources&quot; (2026-11-13: a shared login, a team server) become org-managed entries of the setting that holds
@@ -217,7 +221,7 @@ company laptops) delivers it. Without the file, a Pi is personal and unmanaged, 
   <span class="tk-s">"name"</span>: <span class="tk-s">"Acme"</span>,
   <span class="tk-s">"server"</span>: <span class="tk-s">"https://radius.example.com/orgs/acme"</span>,
   <span class="tk-s">"orgKey"</span>: <span class="tk-s">"ed25519:MCowBQYDK2VwAyEAq4…"</span>,
-  <span class="tk-s">"pluginSources"</span>: [<span class="tk-s">"https://github.com/acme/"</span>]
+  <span class="tk-s">"pluginSources"</span>: [<span class="tk-s">"https://github.com/acme/"</span>, <span class="tk-s">"https://github.com/earendil-works/"</span>]
 }</code></pre>
 <p>It holds no secrets. <code>orgKey</code> is the public key profiles are signed with. <code>pluginSources</code> limits where the org may push
 code from: a profile naming a plugin outside these prefixes is refused, even when signed. The path is fixed in the base
@@ -654,6 +658,18 @@ pi-schema&#39;s <code>compile</code>.</p>
 <td><code>maxOffline</code></td>
 </tr>
 <tr>
+<td>Environments</td>
+<td>Kinds allowed; folders that may be mounted (path, writable); hosts sandboxes may reach</td>
+<td>sandboxes only; <code>~/work/acme</code> writable, <code>~/Documents/acme-specs</code> read-only; GitHub, npm, <code>*.acme.internal</code></td>
+<td><code>environments.kinds</code>, <code>sandbox.folders</code>, <code>sandbox.allowHosts</code>, locked (chapter VI)</td>
+</tr>
+<tr>
+<td>Restriction plugins</td>
+<td>Earendil&#39;s catalog and Acme&#39;s own; each with its settings</td>
+<td>sandbox environments; tool rules blocking <code>mcp__linear__delete_*</code> and <code>session_export</code></td>
+<td>required <code>p3.plugins</code> entries; <code>toolRules.blocked</code> (chapter VI)</td>
+</tr>
+<tr>
 <td>Other settings</td>
 <td>Setting name, value, lock</td>
 <td><code>deploy.targets</code>: staging and production, locked</td>
@@ -744,7 +760,7 @@ proves it holds the private half.</p>
   <span class="tk-s">"name"</span>: <span class="tk-s">"Acme"</span>,
   <span class="tk-s">"server"</span>: <span class="tk-s">"https://radius.example.com/orgs/acme"</span>,
   <span class="tk-s">"orgKey"</span>: <span class="tk-s">"ed25519:MCowBQYDK2VwAyEAq4…"</span>,
-  <span class="tk-s">"pluginSources"</span>: [<span class="tk-s">"https://github.com/acme/"</span>]
+  <span class="tk-s">"pluginSources"</span>: [<span class="tk-s">"https://github.com/acme/"</span>, <span class="tk-s">"https://github.com/earendil-works/"</span>]
 }</code></pre>
 <h3 id="the-files-that-take-part">The files that take part</h3>
 <table>
@@ -1701,8 +1717,8 @@ principal <code>{ kind: &quot;worker&quot;, session }</code> is let in by the vi
 <pre class="plain"><code>Managed by Acme: mcp.servers is locked. The setting mcp.servers is managed by Acme and locked. Do not retry or look
 for another way; tell the user to ask Acme's admin.</code></pre>
 <p>The model answers Dana that Acme manages the MCP servers. If it tries <code>bash</code> instead, to edit a config file: there is
-none (MCP servers are a setting, not a file), and with the lock-down of chapter VI its shell runs as Dana, who cannot
-write the Pi&#39;s data directory.</p>
+none (MCP servers are a setting, not a file), and with the lock-down of chapter VI its shell runs in a sandbox that sees
+only Acme&#39;s allowed folders, not the Pi&#39;s data directory.</p>
 <h4>(iii) Acme&#39;s Jira entry appears, connects, and cannot be edited</h4>
 <ol>
 <li>At the first sync <code>OrgGate</code> writes revision 42 as the cache; <code>gate</code> turns <code>ready</code>.</li>
@@ -1749,7 +1765,7 @@ and locked. Do not retry or look for another way; tell the user to ask Acme&#39;
 <li>Without the lock-down, a determined agent could still write the files with its own file tools into the member
 root and call <code>plugin_apply</code>. Apply runs, the plugin is discovered, <code>admits</code> returns <code>false</code>, and the apply tool&#39;s
 result lists <code>weather: left out: plugins written on this Pi do not load (managed by Acme)</code>. With the lock-down, the
-write itself fails: the member root belongs to the Pi&#39;s service user, and the agent&#39;s shell runs as Dana.</li>
+write itself fails: the member root belongs to the Pi&#39;s service user and is in no sandbox&#39;s folders.</li>
 </ol>
 <h4>(vi) Dana shares a session with an outside email</h4>
 <p>Dana opens the share sheet of a session and types <code>sam@partner.example</code>.</p>
@@ -1805,7 +1821,7 @@ An edited cache fails its signature, and the gate falls back to <code>pending</c
 Pi that runs as Dana&#39;s own user, is <code>bash</code> under the Pi&#39;s Unix user: it can start a modified copy of the Pi on the same
 data directory, with Dana&#39;s token, ignoring the gate. On a personal Pi that is the decided trust line (&quot;The agent
 writes plugins&quot;: the boundary is access to the server). On an Org Device chapter VI moves it: the Pi runs as a user of
-its own and the agent&#39;s shell runs as Dana, so the shell cannot reach the Pi&#39;s files.</p>
+its own and the agent&#39;s shell runs in a sandbox, so the shell cannot reach the Pi&#39;s files.</p>
 <p><strong>A third-party plugin</strong> is server code in the Pi&#39;s process. It can do anything the process can. Admitting it is the
 trust decision, and the only control is <code>p3.plugins</code>. A plugin that keeps its configuration through settings is covered
 without knowing it.</p>
@@ -1862,14 +1878,44 @@ at the price of a Pi that locks itself after that long without the server.</p>
 </div>
 </section>
 
-<section class="chapter" id="lockdown"><header class="opener"><div class="numeral">VI</div><h2>Locking Down the Machine</h2><p class="lede">How a managed Pi holds against a member or an agent with a shell: a signed install, a service user, tools that run as the member, execution control, and a key Radius checks.</p></header>
+<section class="chapter" id="lockdown"><header class="opener"><div class="numeral">VI</div><h2>Locking Down the Machine</h2><p class="lede">How a managed Pi holds against a member or an agent with a shell: a signed install, a service user, tools only in sandboxes, execution control, a key Radius checks, and restriction plugins the org picks.</p></header>
 <p class="dropcap">Chapter V ends at one line: <code>bash</code> under the Pi&#39;s Unix user defeats every check in the Pi. On a personal Pi that line
 is fine, it is the decided trust boundary. On an Org Device it is the first thing a curious agent finds. Dana&#39;s agent
 runs <code>bash</code> as the user the Pi runs as, so it can edit the profile cache, read the Radius token, write into the org
 root, or start a patched copy of the Pi on the same data directory with Dana&#39;s token.</p>
 <p>The fix is not more checks inside the Pi. It is to move the Pi out of reach of the shell: the Pi runs as a user of its
-own, from files nobody else can write, and the agent&#39;s tools run as Dana, who owns none of the Pi&#39;s files. Five
-pieces do that. Each stops some adversaries and not others; the table at the end says which.</p>
+own, from files nobody else can write, and the agent&#39;s tools run in sandboxes that see only the folders Acme allows,
+never as the Pi&#39;s user and never as Dana&#39;s. Five pieces do that, and a sixth lets Acme narrow what members can do
+further. Each stops some adversaries and not others; the table at the end says which.</p>
+<h3 id="quot-can-39-t-i-just-patch-out-the-check-quot">&quot;Can&#39;t I just patch out the check?&quot;</h3>
+<p>Armin asked it on 2026-11-13: &quot;in practice surely the only way to enforce a lock down status is after user signs in
+with their org? otherwise i just patch out that check&quot;. The owner&#39;s answer: &quot;not if pi runs as a different provisioned
+user on the machine.&quot; Both are right, about different things, and the pieces below are why.</p>
+<p><strong>Armin is right that Radius is where org resources are gated.</strong> Whatever a Pi does locally, Acme&#39;s models, Acme&#39;s
+MCP credentials, the sharing relay and peer links come from Radius, and Radius gives them only to a Pi that signed in
+as a member of Acme and proves its device key (piece (e)). A Pi that skips every local check gets nothing from Acme.</p>
+<p><strong>The owner is right that the managed Pi itself cannot be patched by Armin.</strong> The check Armin would patch runs in a
+process he does not own, from files he cannot write:</p>
+<ol>
+<li>The binary is installed by the admin into a system location and signed (a). Armin cannot change it in place.</li>
+<li>It runs as <code>p3-armin</code>, not as <code>armin</code> (b). Armin cannot attach a debugger to it, read its memory, edit its profile
+cache, its store or its plugin roots, or read its Radius token: the operating system refuses all of that across
+users.</li>
+<li>Armin can run his own patched copy, as himself. Execution control (d) can stop a patched binary from starting. If
+it starts anyway (from source, with a <code>node</code> Armin needs for his work), it has no access to the managed Pi&#39;s data
+directory, no Radius token and no device key. It is a personal, unmanaged Pi with Armin&#39;s own provider keys and
+none of Acme&#39;s resources.</li>
+<li>His agent cannot help him: its tools run in a sandbox (c) that sees only the folders Acme allows and none of the
+Pi&#39;s files.</li>
+</ol>
+<p><strong>What a member with local admin rights can still do:</strong> everything on that machine. Root can stop the service, replace
+the binary, edit the data directory, read the process&#39;s memory, and use the device key from a patched Pi (a TPM or
+Secure Enclave key cannot be exported, but root on the same machine can use it). Such a Pi ignores every Pi-side lock
+and still gets Acme&#39;s resources, on that machine. What still holds then is what Radius enforces from the profile it
+signed: who sessions can be shared with, which Pis can connect, what the model gateway and the MCP credentials allow.
+That is why Org Devices give members no root, and why laptops in the MDM&#39;s care do not make members administrators.
+Measured boot (a TPM attesting the system&#39;s state) could let Radius notice a modified machine; it is not part of this
+design.</p>
 <h3 id="a-one-signed-executable-in-a-system-location">(a) One signed executable in a system location</h3>
 <p>The Pi is installed by the machine&#39;s admin (on a laptop: the MDM, the tool an IT department uses to push software and
 settings to company machines) into a directory only an administrator can write: <code>/opt/p3</code> on Linux,
@@ -1913,7 +1959,7 @@ own mechanism: one Node binary with the bundled server injected into it), and it
 </tr>
 <tr>
 <td><code>pi-env</code></td>
-<td>the tool daemon of <code>packages/env</code> (Rust), started as the member, (c) below</td>
+<td>the tool daemon of <code>packages/env</code> (Rust), copied into each sandbox VM, (c) below</td>
 <td>yes</td>
 </tr>
 <tr>
@@ -1968,7 +2014,7 @@ setup when Dana&#39;s Pi is created:</p>
 </tr>
 </tbody></table>
 <p>The profile cache, the Radius token and both plugin roots now belong to <code>p3-dana</code>. Dana&#39;s user cannot read or write
-them, and neither can anything running as Dana: her shell, her editor, her agent&#39;s tools.</p>
+them, and neither can anything running as Dana: her shell, her editor.</p>
 <p><strong>How Dana&#39;s clients sign in.</strong> The kit already has the pieces: device sign-ins, the owner token file (a device
 sign-in of the owner, mode 0600, <code>ownerTokenFile</code> in <code>packages/chord/src/node/app/owner.ts</code>), and one-time owner links
 for the browser. Only where the token lives changes:</p>
@@ -1989,41 +2035,155 @@ identity to the owner.</li>
 credentials (<code>SO_PEERCRED</code>, <code>LOCAL_PEERCRED</code>), and the kit listens on TCP only (<code>ListenAddress</code> is a host and a port).
 The token file gives the same guarantee through the file system: only Dana can read it. Her agent can read it too,
 and that is fine: it then talks to the Pi as the owner, and the owner is held by the locks.</p>
-<h3 id="c-the-agent-39-s-tools-run-as-dana">(c) The agent&#39;s tools run as Dana</h3>
+<h3 id="c-the-agent-39-s-tools-run-only-in-sandboxes">(c) The agent&#39;s tools run only in sandboxes</h3>
 <p>A Pi running as <code>p3-dana</code> that runs <code>bash</code> in its own process would hand <code>p3-dana</code>&#39;s rights to the agent, and the
-service user would protect nothing. So the session&#39;s tools never run as the service user. Every session&#39;s execution
-environment is the <code>pi-env</code> daemon from <code>packages/env</code>, started as Dana:</p>
-<pre><code><span class="tk-c">// PROPOSED · apps/p3/plugins/environments/server.ts: the member's environment of a service-run Pi.</span>
-<span class="tk-c">// pi-env API as on origin/main: Connection (a command speaking the daemon's protocol on stdin/stdout), RemoteExecutionEnv.</span>
-<span class="tk-k">import</span> { <span class="tk-t">Connection</span>, <span class="tk-t">RemoteExecutionEnv</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/pi-env"</span>;
+service user would protect nothing. Running the tools as Dana instead (a sudo rule that lets <code>p3-dana</code> start <code>pi-env</code>
+as <code>dana</code>, as the first draft of this chapter proposed) protects the Pi, but hands the agent everything Dana has: her
+SSH keys, her browser profile, every file in her home, any host on the network. Prompt injection then reaches all of
+it.</p>
+<p>So, at the owner&#39;s suggestion, the agent&#39;s tools run <strong>only in sandbox environments</strong>: Gondolin VMs with chosen local
+folders mounted into them, never directly as the Pi&#39;s service user and never as Dana&#39;s user. This is a profile setting,
+enforced by the environments plugin, which Earendil ships as a Pi plugin that Acme selects in Radius like any other.</p>
+<p><strong>What Gondolin is, as it exists today.</strong> <code>@earendil-works/gondolin</code> (0.14.0 in this repo&#39;s lockfile) is Earendil&#39;s
+sandbox: &quot;Local Linux micro-VMs with a fully programmable network stack and filesystem&quot;, running on macOS or Linux with
+QEMU by default (an experimental <code>krun</code> backend exists), guest images of about 200 MB (Alpine Linux by default),
+Node 22.19 or newer on the host. Its network stack and virtual file system are TypeScript in the host process: a VM sees
+only the folders it is given (<code>RealFSProvider</code>, <code>ReadonlyProvider</code> in <code>vfs.mounts</code>) and reaches only the hosts
+<code>createHttpHooks</code> allows, and secrets are injected into outbound HTTP headers by the host, so the VM sees placeholders
+only. Its README lists no Windows support.</p>
+<p><strong>p2 already runs it.</strong> p2&#39;s environments plugin (<code>apps/p2/plugins/envs/</code>) has a <code>gondolin</code> environment kind
+(<code>GondolinEnvConfigSchema</code> in <code>schema.ts</code>: a host, an image, up to 16 <code>mounts</code> of a host folder at a guest path with
+<code>readonly</code>, <code>allowHosts</code>, CPUs, memory, a disk). Its launcher (<code>sandbox/p2-sandbox.sh</code>, <code>p2-sandbox.mjs</code>) keeps one
+long-lived VM per sandbox in a supervisor process, copies the <code>pi-env</code> daemon into the VM and speaks pi-env&#39;s protocol
+to it, so the session&#39;s tools run inside the VM exactly as on an SSH machine. It checks host names before DNS
+resolution (<code>isRequestAllowed</code>), keeps the VM&#39;s own disk across restarts, refuses a writable mount of <code>~</code> or <code>~/.pi</code>,
+and today needs Linux with a usable <code>/dev/kvm</code> and QEMU 7.2 or newer (<code>sandboxSupport</code> in <code>manager.ts</code>). p3&#39;s
+environments plugin takes this code; the difference is that the VM runs on the Pi&#39;s own machine, under the service
+user, instead of on an SSH host.</p>
+<p><strong>The settings.</strong> Three settings, declared by the environments plugin, carry Acme&#39;s rules:</p>
+<pre><code><span class="tk-c">// PROPOSED · @earendil/p3-environments (github.com/earendil-works/p3-environments), contract.ts</span>
+<span class="tk-k">import</span> { arr, bool, obj, oneOf, str } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/chord"</span>;
+<span class="tk-k">import</span> { defineSetting } <span class="tk-k">from</span> <span class="tk-s">"@p3/app/v1/settings"</span>;
 
-<span class="tk-c">/** The member's machine environment: the daemon started as the member through the one rule the setup wrote. */</span>
-<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">memberEnvironment</span>(member: string, cwd: string): <span class="tk-t">RemoteExecutionEnv</span> {
-	<span class="tk-k">const</span> connection = <span class="tk-k">new</span> <span class="tk-t">Connection</span>({ command: [<span class="tk-s">"/usr/bin/sudo"</span>, <span class="tk-s">"-n"</span>, <span class="tk-s">"-u"</span>, member, <span class="tk-s">"/opt/p3/bin/pi-env"</span>] });
-	<span class="tk-k">return</span> <span class="tk-k">new</span> <span class="tk-t">RemoteExecutionEnv</span>({ connection, id: <span class="tk-s">`pi-env:member:${member}`</span>, cwd });
-}</code></pre>
-<pre class="plain"><code># PROPOSED · /etc/sudoers.d/p3-dana, written by the root setup when Dana's Pi is created.
-# p3-dana may start exactly one program as dana, with no arguments ("" forbids any).
-p3-dana ALL=(dana) NOPASSWD: /opt/p3/bin/pi-env ""</code></pre>
-<p><code>bash</code>, <code>read</code>, <code>write</code> and <code>edit</code> go through <code>RemoteExecutionEnv</code> as they do for an SSH machine today. Terminals use
-<code>openTerminal</code> and local MCP servers (the stdio kind) use <code>openProcess</code> on the same connection, so they run as Dana
-too. Dana&#39;s agent can do everything Dana can do on the machine, and nothing the Pi&#39;s user can.</p>
-<p><strong>How each platform starts a process as another user:</strong></p>
-<ul>
-<li><strong>Linux:</strong> the sudoers rule above. sudo is the privileged helper; the rule names one binary with no arguments.</li>
-<li><strong>macOS:</strong> the same rule works. A root launchd helper that starts <code>pi-env</code> for the console user is the alternative
-when an org disables sudo for service accounts.</li>
-<li><strong>Windows:</strong> a service account cannot start processes as a logged-in user without that user&#39;s token. So the
-direction turns around: a per-user launcher (a logon task in Dana&#39;s session) starts <code>pi-env</code> as Dana and connects it
-to the service over a named pipe whose ACL admits Dana only. Tools work only while Dana is logged in, and terminals
-are not supported by <code>pi-env</code> on Windows yet.</li>
-</ul>
-<p><strong>What it costs.</strong> One <code>pi-env</code> process per session environment (a small Rust daemon, a few MB, an estimate), started
-once per connection, not per command; sudo adds its start time to that first start only. Every file operation becomes
-a message on a pipe instead of a call in the process, which the coding agent&#39;s SSH environments already pay. And the
-setup grows: a Unix user and a sudoers file per member Pi.</p>
-<p><strong>What it does not fix.</strong> Plugins are Pi code: they run in the service as <code>p3-dana</code>, can read the token and could
-start <code>pi-env</code> as Dana themselves. The plugin list stays the control for them.</p>
+<span class="tk-c">/** Which kinds of environment sessions may use. `local` is the Pi's own process user. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">EnvironmentKinds</span> = <span class="tk-f">defineSetting</span>(<span class="tk-s">"environments.kinds"</span>, <span class="tk-f">arr</span>(<span class="tk-f">oneOf</span>(<span class="tk-s">"local"</span>, <span class="tk-s">"ssh"</span>, <span class="tk-s">"sandbox"</span>)), {
+	merge: <span class="tk-s">"value"</span>,
+	initial: [<span class="tk-s">"local"</span>, <span class="tk-s">"ssh"</span>, <span class="tk-s">"sandbox"</span>],
+});
+
+<span class="tk-c">/** The host folders a sandbox may mount, and whether writable; a mount must be inside one of them. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SandboxFolders</span> = <span class="tk-f">defineSetting</span>(<span class="tk-s">"sandbox.folders"</span>, <span class="tk-f">arr</span>(<span class="tk-f">obj</span>({ path: <span class="tk-f">str</span>(), writable: <span class="tk-f">bool</span>() })), {
+	merge: <span class="tk-s">"value"</span>,
+	initial: [{ path: <span class="tk-s">"~"</span>, writable: <span class="tk-k">true</span> }],
+});
+
+<span class="tk-c">/** The hosts sandboxes may reach over HTTP(S) (`*` wildcards), passed to Gondolin's `createHttpHooks`. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SandboxHosts</span> = <span class="tk-f">defineSetting</span>(<span class="tk-s">"sandbox.allowHosts"</span>, <span class="tk-f">arr</span>(<span class="tk-f">str</span>()), { merge: <span class="tk-s">"value"</span>, initial: [<span class="tk-s">"*"</span>] });</code></pre>
+<p>Acme&#39;s profile locks them:</p>
+<pre><code><span class="tk-c">// PROPOSED · in Dana's profile, beside the settings of chapter IV</span>
+<span class="tk-s">"environments.kinds"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: [<span class="tk-s">"sandbox"</span>] },
+<span class="tk-s">"sandbox.folders"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: [
+  { <span class="tk-s">"path"</span>: <span class="tk-s">"~/work/acme"</span>, <span class="tk-s">"writable"</span>: <span class="tk-k">true</span> },
+  { <span class="tk-s">"path"</span>: <span class="tk-s">"~/Documents/acme-specs"</span>, <span class="tk-s">"writable"</span>: <span class="tk-k">false</span> }
+] },
+<span class="tk-s">"sandbox.allowHosts"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: [
+  <span class="tk-s">"github.com"</span>, <span class="tk-s">"*.github.com"</span>, <span class="tk-s">"registry.npmjs.org"</span>, <span class="tk-s">"*.acme.internal"</span>
+] }</code></pre>
+<p><strong>The enforcement</strong>, in the environments plugin&#39;s server object, at the two places an environment comes to exist or
+starts:</p>
+<pre><code><span class="tk-c">// PROPOSED · @earendil/p3-environments, server.ts (excerpt). Chord API: host.serve, self.on, setting(), refusedBy.</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">Environments</span>, (_params, self) =&gt; {
+	<span class="tk-k">const</span> kinds = <span class="tk-f">setting</span>(self, <span class="tk-t">EnvironmentKinds</span>);
+	<span class="tk-k">const</span> folders = <span class="tk-f">setting</span>(self, <span class="tk-t">SandboxFolders</span>);
+	<span class="tk-k">const</span> hosts = <span class="tk-f">setting</span>(self, <span class="tk-t">SandboxHosts</span>);
+	<span class="tk-k">const</span> list = self.<span class="tk-f">state</span>(<span class="tk-t">EnvironmentList</span>);
+
+	<span class="tk-c">// A tightened profile stops every running sandbox whose kind or folders no longer conform.</span>
+	self.<span class="tk-f">on</span>(self.<span class="tk-f">derive</span>([kinds, folders], (values) =&gt; values), <span class="tk-k">async</span> ({ value: [allowedKinds, allowed] }, ctx) =&gt; {
+		<span class="tk-k">for</span> (<span class="tk-k">const</span> env <span class="tk-k">of</span> list.value.envs) {
+			<span class="tk-k">if</span> (allowedKinds.<span class="tk-f">includes</span>(env.kind) &amp;&amp; (env.kind !== <span class="tk-s">"sandbox"</span> || <span class="tk-f">mountsAllowed</span>(env.mounts, allowed))) <span class="tk-k">continue</span>;
+			<span class="tk-k">await</span> <span class="tk-f">stopEnvironment</span>(env.name, ctx);   <span class="tk-c">// calls in flight end like a disconnect</span>
+		}
+	});
+
+	<span class="tk-k">return</span> {
+		envs: self.<span class="tk-f">derive</span>([list, kinds], ([doc, allowedKinds]) =&gt; doc.envs.<span class="tk-f">filter</span>((env) =&gt; allowedKinds.<span class="tk-f">includes</span>(env.kind))),
+		create: <span class="tk-k">async</span> (config, ctx) =&gt; {
+			<span class="tk-k">if</span> (!kinds.value.<span class="tk-f">includes</span>(config.kind)) <span class="tk-k">throw</span> <span class="tk-f">refusedBy</span>(<span class="tk-t">EnvironmentKinds</span>, <span class="tk-s">`Environments of kind ${config.kind} are not allowed`</span>);
+			<span class="tk-k">if</span> (config.kind === <span class="tk-s">"sandbox"</span>) {
+				<span class="tk-c">// Real paths: a symlink inside an allowed folder must not lead out of it.</span>
+				<span class="tk-k">for</span> (<span class="tk-k">const</span> mount <span class="tk-k">of</span> config.mounts) {
+					<span class="tk-k">const</span> where = <span class="tk-k">await</span> <span class="tk-f">realHostPath</span>(mount.host);
+					<span class="tk-k">const</span> rule = folders.value.<span class="tk-f">find</span>((folder) =&gt; <span class="tk-f">isInside</span>(where, <span class="tk-f">expand</span>(folder.path)));
+					<span class="tk-k">if</span> (rule === <span class="tk-k">undefined</span>) <span class="tk-k">throw</span> <span class="tk-f">refusedBy</span>(<span class="tk-t">SandboxFolders</span>, <span class="tk-s">`${mount.host} may not be mounted into a sandbox`</span>);
+					<span class="tk-k">if</span> (!mount.<span class="tk-k">readonly</span> &amp;&amp; !rule.writable) <span class="tk-k">throw</span> <span class="tk-f">refusedBy</span>(<span class="tk-t">SandboxFolders</span>, <span class="tk-s">`${mount.host} may only be mounted read-only`</span>);
+				}
+			}
+			<span class="tk-k">await</span> list.<span class="tk-f">change</span>((draft) =&gt; { draft.envs.<span class="tk-f">push</span>(config); }, ctx);
+		},
+		<span class="tk-c">// Starting a sandbox passes the effective hosts, never the config's own list: Acme's list wins.</span>
+		start: (name, ctx) =&gt; <span class="tk-f">startSandbox</span>(name, { allowHosts: hosts.value }, ctx),
+	};
+});</code></pre>
+<p>The session side needs one rule in the base: a session&#39;s environment comes only from <code>Environments.envs</code>, and the
+Pi&#39;s own process user (<code>local</code>) is an environment like any other, so with <code>environments.kinds</code> locked to <code>[&quot;sandbox&quot;]</code>
+no session gets <code>bash</code> in the service&#39;s process. A tool call made before a session picked a sandbox has no environment
+and fails.</p>
+<p><strong>Which folders the Pi can reach at all.</strong> The VM&#39;s file system is served by the Pi&#39;s process, which runs as
+<code>p3-dana</code>, and <code>p3-dana</code> cannot read Dana&#39;s home. So Dana grants the Pi her chosen folders herself, with the operating
+system&#39;s access lists: <code>p3 folders add ~/work/acme</code> runs, as Dana, <code>setfacl -R -m u:p3-dana:rwX,d:u:p3-dana:rwX,d:u:dana:rwX ~/work/acme</code> on Linux (<code>chmod +a</code> on macOS). That gives three layers, each with its own owner: Dana decides which of
+her folders the Pi can reach, Acme decides which of those may be mounted, and each sandbox mounts what its session
+needs.</p>
+<p><strong>Compared with running the tools as Dana:</strong></p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Tools as Dana (sudo rule, first draft)</th>
+<th>Tools only in sandboxes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Privilege crossing</td>
+<td><code>p3-dana</code> starts processes as <code>dana</code>: a root-written sudoers rule per Pi</td>
+<td>none: the VM runs as <code>p3-dana</code>; Dana grants folders with her own access lists</td>
+</tr>
+<tr>
+<td>What the agent&#39;s <code>bash</code> can read</td>
+<td>everything Dana can: home, SSH keys, browser profile</td>
+<td>only the mounted folders</td>
+</tr>
+<tr>
+<td>Network</td>
+<td>anything Dana&#39;s user can reach</td>
+<td>only <code>sandbox.allowHosts</code>, checked before DNS</td>
+</tr>
+<tr>
+<td>Secrets</td>
+<td>in Dana&#39;s environment and files</td>
+<td>outside the VM, injected into requests for their hosts</td>
+</tr>
+<tr>
+<td>Set by the org</td>
+<td>no: Dana&#39;s rights are Dana&#39;s</td>
+<td>yes: three settings in the profile</td>
+</tr>
+<tr>
+<td>Platforms</td>
+<td>Linux, macOS; Windows needs a logon launcher</td>
+<td>where Gondolin runs: Linux with KVM, macOS; not Windows</td>
+</tr>
+<tr>
+<td>Costs</td>
+<td>small: one daemon process per environment</td>
+<td>a VM per sandbox (memory, the image download on first start), and tools run in Alpine Linux, not on Dana&#39;s host toolchain</td>
+</tr>
+</tbody></table>
+<p>The sandbox is simpler because nothing crosses users: no sudoers file, no helper with privileges, no launcher. It is
+stronger because the agent&#39;s reach is what Acme wrote down, not everything Dana happens to have. Its cost is real:
+virtualization must be available (on a cloud Org Device that means nested virtualization or a bare-metal host with
+<code>/dev/kvm</code>), every sandbox is a VM with its own memory, and a Mac developer&#39;s local toolchain is not inside the VM.
+Dana&#39;s own terminal work is unaffected: only the agent&#39;s tools are sandboxed.</p>
 <h3 id="d-execution-control">(d) Execution control</h3>
 <p>(a) to (c) protect the managed Pi. They do not stop Dana from running a different Pi: a patched copy of the binary,
 or pi from source, as her own user, with her own provider keys. Execution control is the MDM&#39;s job, not the Pi&#39;s:</p>
@@ -2049,6 +2209,44 @@ Radius token, to another machine gives a Pi that cannot get one. The key handle 
 Linux the TPM device is opened by the service, in the <code>tss</code> group; Dana is not).</p>
 <p>For Dec 18 a simpler form is enough: a key file in the data directory, mode 0600, owner <code>p3-dana</code>. It stops Dana and
 her agent (they cannot read it) but not root, which could copy it; the TPM form stops the copy too.</p>
+<h3 id="restriction-plugins">Restriction plugins</h3>
+<p>Some limits are not about configuration but about what the agent may do: never call a tool that deletes Linear
+issues, never export a session, require a review before a deploy. These are plugins too, and Acme picks them in Radius
+the way it picks its own plugins. The admin form has a section <strong>Restriction plugins</strong>: a catalog of plugins Earendil
+publishes (the sandbox environments above among them) plus Acme&#39;s own. Selecting one adds a required, hash-pinned entry
+to <code>p3.plugins</code> and shows the plugin&#39;s settings, whose schemas Radius knows from the published plugin. In the profile it
+is nothing new:</p>
+<pre><code><span class="tk-c">// PROPOSED · in Dana's profile</span>
+<span class="tk-s">"p3.plugins"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: {
+  <span class="tk-s">"environments"</span>: { <span class="tk-s">"source"</span>: { <span class="tk-s">"git"</span>: <span class="tk-s">"https://github.com/earendil-works/p3-environments"</span>, <span class="tk-s">"ref"</span>: <span class="tk-s">"v1.0.0"</span> }, <span class="tk-s">"hash"</span>: <span class="tk-s">"sha256-0a5c…"</span>, <span class="tk-s">"required"</span>: <span class="tk-k">true</span> },
+  <span class="tk-s">"tool-rules"</span>:   { <span class="tk-s">"source"</span>: { <span class="tk-s">"git"</span>: <span class="tk-s">"https://github.com/earendil-works/p3-tool-rules"</span>, <span class="tk-s">"ref"</span>: <span class="tk-s">"v1.0.0"</span> },   <span class="tk-s">"hash"</span>: <span class="tk-s">"sha256-d71f…"</span>, <span class="tk-s">"required"</span>: <span class="tk-k">true</span> }
+} },
+<span class="tk-s">"toolRules.blocked"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: [<span class="tk-s">"mcp__linear__delete_*"</span>, <span class="tk-s">"session_export"</span>] }</code></pre>
+<p>(The plugin entries sit beside Acme&#39;s own in the same <code>p3.plugins</code> record; the enrollment file&#39;s <code>pluginSources</code> then
+lists <code>https://github.com/earendil-works/</code> too.) A restriction plugin limits through the harness&#39;s hooks, which Durable
+has today: a <code>beforeTool</code> hook on the built-in tool task may return <code>{ block: reason }</code>, and the call ends as a
+blocked tool result the model sees.</p>
+<pre><code><span class="tk-c">// PROPOSED · @earendil/p3-tool-rules, worker.ts. Durable API: defineExtension, hook, ToolTask, beforeTool's { block }.</span>
+<span class="tk-k">import</span> { defineExtension, hook, <span class="tk-t">ToolTask</span> } <span class="tk-k">from</span> <span class="tk-s">"@earendil-works/pi-durable"</span>;
+
+<span class="tk-c">/** Blocks every tool whose name matches the effective `toolRules.blocked`, in every session. */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">toolRules</span>(blocked: () =&gt; <span class="tk-k">readonly</span> string[]) {
+	<span class="tk-k">return</span> <span class="tk-f">defineExtension</span>({
+		name: <span class="tk-s">"tool-rules"</span>,
+		hooks: [
+			<span class="tk-f">hook</span>(<span class="tk-t">ToolTask</span>, {
+				beforeTool: (call) =&gt; {
+					<span class="tk-k">const</span> rule = <span class="tk-f">blocked</span>().<span class="tk-f">find</span>((pattern) =&gt; <span class="tk-f">matches</span>(pattern, call.name));
+					<span class="tk-k">return</span> rule === <span class="tk-k">undefined</span> ? {} : { block: <span class="tk-s">`Blocked by the setting toolRules.blocked (${rule})`</span> };
+				},
+			}),
+		],
+	});
+}</code></pre>
+<p>Two things make such a plugin a restriction and not a suggestion. It is required and pinned, so it loads on every
+start and cannot be edited (<code>admit</code> and the hash). And its extension must apply to every session whatever the
+session&#39;s own selection says, which the base has to provide: a harness registry of <strong>required extensions</strong>, filled
+only by plugins from the org root. Without that, a session that does not select the extension would escape it.</p>
 <h3 id="which-piece-stops-whom">Which piece stops whom</h3>
 <table>
 <thead>
@@ -2075,11 +2273,11 @@ her agent (they cannot read it) but not root, which could copy it; the TPM form 
 <td>no: it runs as the service user</td>
 </tr>
 <tr>
-<td>(c) tools as Dana</td>
-<td>its shell and files are Dana&#39;s, not the Pi&#39;s</td>
-<td>not needed: she is Dana</td>
+<td>(c) tools only in sandboxes</td>
+<td>sees only the mounted folders and allowed hosts; never the Pi&#39;s files, never all of Dana&#39;s</td>
+<td>not needed: her own shell is hers</td>
 <td>no</td>
-<td>no: it can start <code>pi-env</code> itself</td>
+<td>no: it runs in the Pi&#39;s process, outside any VM</td>
 </tr>
 <tr>
 <td>(d) execution control</td>
@@ -2096,6 +2294,13 @@ her agent (they cannot read it) but not root, which could copy it; the TPM form 
 <td>can use it from inside</td>
 </tr>
 <tr>
+<td>Restriction plugins</td>
+<td>its blocked tools stay blocked in every session</td>
+<td>same, inside the managed Pi</td>
+<td>no</td>
+<td>no: it runs beside them</td>
+</tr>
+<tr>
 <td>Plugin list (<code>admit</code>, hashes)</td>
 <td>its plugins do not load</td>
 <td>same</td>
@@ -2110,23 +2315,30 @@ her agent (they cannot read it) but not root, which could copy it; the TPM form 
 <td>holds</td>
 </tr>
 </tbody></table>
-<p>Read by column: an agent is held by (b) and (c) alone. A member with a shell is held by (a), (b) and (e). A member
-with admin rights is held only by Radius, and on that machine not even by (e), which then only stops copies to other
-machines. A third-party plugin is held only by the plugin list and Radius.</p>
+<p>Read by column: an agent is held by (b) and (c), and by restriction plugins for what they block. A member with a shell
+is held by (a), (b), (d) for binaries, and (e). A member with admin rights is held only by Radius, and on that machine
+not even by (e), which then only stops copies to other machines. A third-party plugin is held only by the plugin list
+and Radius.</p>
 <h3 id="what-dec-18-needs-and-what-waits-for-laptops">What Dec 18 needs, and what waits for laptops</h3>
 <p><strong>Dec 18, Linux Org Devices:</strong></p>
 <ul>
 <li>(b) a systemd unit and a Unix user per member Pi, data in <code>/var/lib/p3/&lt;member&gt;</code>;</li>
 <li>(a) a root-owned install directory <code>/opt/p3</code>, installed by the Device setup: Node, the bundled server, esbuild,
-<code>pi-env</code>; not yet a single executable, not yet signed (on Linux, file ownership already does the work);</li>
-<li>(c) <code>pi-env</code> as the member through one sudoers rule per Pi; the local environment of the service user is never
-offered to sessions;</li>
+<code>pi-env</code>, Gondolin&#39;s runtime; not yet a single executable, not yet signed (on Linux, file ownership already does the
+work);</li>
+<li>(c) sandbox-only environments from Earendil&#39;s environments plugin, built from p2&#39;s <code>gondolin</code> kind: QEMU 7.2 or
+newer and <code>/dev/kvm</code> on the Device (for a cloud Device: nested virtualization or bare metal), the service user in the
+<code>kvm</code> group, <code>p3 folders add</code> for the member&#39;s folders, the three settings in the profile; the service user&#39;s own
+<code>local</code> environment never offered;</li>
+<li>restriction plugins: the Radius catalog section, the tool-rules plugin, and the base&#39;s required-extensions registry;</li>
 <li><code>~&lt;member&gt;/.p3/pi.json</code> for the TUI and <code>p3 open</code>, and Radius sign-in through the relay for the browser;</li>
 <li>(e) the key-file form of the device key.</li>
 </ul>
 <p><strong>Later, for laptops:</strong> the single executable and its signing and notarization; launchd daemons and Windows services;
-the Windows launcher and named pipe; the Secure Enclave and TPM forms of the device key; installs from complete,
-hashed plugin artifacts without <code>npm</code> and <code>git</code>; and execution control, which is the MDM&#39;s, configured by the org.</p>
+sandboxes on macOS (Gondolin runs there with QEMU; its runner needs the hypervisor entitlement in a signed install);
+Windows, where Gondolin lists no support, has no sandbox-only mode yet; the Secure Enclave and TPM forms of the device
+key; installs from complete, hashed plugin artifacts without <code>npm</code> and <code>git</code>; and execution control, which is the
+MDM&#39;s, configured by the org.</p>
 </section>
 
 <section class="chapter" id="failures"><header class="opener"><div class="numeral">VII</div><h2>When Things Fail</h2><p class="lede">Every failure the consultations found, and what the Pi does.</p></header>
@@ -2275,9 +2487,9 @@ Apply.</li>
 here&quot;, and enforcement of sharing and peers from the same profile.</li>
 <li>On Org Devices: the Device setup writes the enrollment file; its supervisor refuses to start a member Pi without it.</li>
 <li>The lock-down of chapter VI for Linux Org Devices: a service user and systemd unit per member Pi, the root-owned
-install in <code>/opt/p3</code>, the agent&#39;s tools as the member through <code>pi-env</code> and one sudoers rule, the client token file in
-the member&#39;s home, and the key-file form of the device key. The single signed executable, launchd and Windows
-services, hardware keys and execution control wait for laptops.</li>
+install in <code>/opt/p3</code>, sandbox-only environments (Gondolin, KVM on the Device), restriction plugins with the base&#39;s
+required-extensions registry, the client token file in the member&#39;s home, and the key-file form of the device key.
+The single signed executable, launchd and Windows services, hardware keys and execution control wait for laptops.</li>
 </ul>
 </section>
 
@@ -2306,14 +2518,17 @@ with the key id in the profile so an admin-held key can replace it later.</li>
 <li><strong>Instructions as entries.</strong> <code>prompt.instructions</code> is drawn here as an entries setting so Acme&#39;s text and Dana&#39;s sit
 side by side. The harness&#39;s prompt design may want a different owner for it.</li>
 <li><strong>What <code>revoked</code> does to data on an Org Device.</strong> Keep it (as here), export it to the org, or delete it.</li>
-<li><strong>Lock-down on laptops.</strong> A per-member system service (chapter VI) protects the Pi&#39;s files from the member&#39;s shell,
-but costs a service user, a helper to start tools as the member, and on Windows a logon launcher. The alternative
-is a Pi under the member&#39;s own user with Radius-side enforcement only. Recommended: the service on Org Devices from
-Dec 18; decide for laptops once an org asks for MDM deployment.</li>
+<li><strong>Lock-down on laptops.</strong> A per-member system service with sandbox-only tools (chapter VI) protects the Pi&#39;s files
+from the member&#39;s shell, but costs a service user, a signed install and a VM per sandbox, and has no Windows form
+yet. The alternative is a Pi under the member&#39;s own user with Radius-side enforcement only. Recommended: the
+service on Org Devices from Dec 18; decide for laptops once an org asks for MDM deployment.</li>
+<li><strong>Hosts without virtualization.</strong> Sandbox-only needs <code>/dev/kvm</code> (or macOS&#39;s hypervisor) and has no Windows support.
+On such a host an org can allow <code>ssh</code> environments to a machine it controls, or no tools at all; running tools as
+the member (the sudo rule this edition dropped) is the fallback only if the owner wants one.</li>
 </ol>
 </section>
 
-<p class="colophon">p3 org-managed Pis · design, second edition · 2026-11-13 · sources: org consultations (opus, fable, astra, sol), apps/p3/docs/decisions.md, packages/chord/src</p>
+<p class="colophon">p3 org-managed Pis · design, third edition · 2026-11-13 · sources: org consultations (opus, fable, astra, sol), apps/p3/docs/decisions.md, packages/chord/src</p>
 </div></div>
 <script>(function activate(root) {
 	const replay = (f) => {
