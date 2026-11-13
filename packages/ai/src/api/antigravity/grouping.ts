@@ -30,6 +30,7 @@ type RuntimeGroup = {
 const THINKING_SUFFIXES: Array<{ suffix: string; level: ThinkingLevel }> = [
 	{ suffix: "extra-low", level: ThinkingEffort.Low },
 	{ suffix: "extra-high", level: ThinkingEffort.Xhigh },
+	{ suffix: "xhigh", level: ThinkingEffort.Xhigh },
 	{ suffix: "thinking", level: ThinkingEffort.High },
 	{ suffix: "minimal", level: ThinkingEffort.Minimal },
 	{ suffix: "medium", level: ThinkingEffort.Medium },
@@ -40,6 +41,7 @@ const THINKING_SUFFIXES: Array<{ suffix: string; level: ThinkingLevel }> = [
 const DISPLAY_LEVELS: Array<{ pattern: RegExp; level: ThinkingLevel }> = [
 	{ pattern: /\(\s*extra\s*low\s*\)/i, level: ThinkingEffort.Low },
 	{ pattern: /\(\s*extra\s*high\s*\)/i, level: ThinkingEffort.Xhigh },
+	{ pattern: /\(\s*x\s*high\s*\)/i, level: ThinkingEffort.Xhigh },
 	{ pattern: /\(\s*thinking\s*\)/i, level: ThinkingEffort.High },
 	{ pattern: /\(\s*minimal\s*\)/i, level: ThinkingEffort.Minimal },
 	{ pattern: /\(\s*medium\s*\)/i, level: ThinkingEffort.Medium },
@@ -243,7 +245,7 @@ function modelDisplayName(info: ModelInfoRaw | undefined): string | undefined {
 function displayFamily(displayName: string | undefined): string | undefined {
 	if (!displayName) return undefined;
 	return displayName
-		.replace(/\s*\((?:extra\s*low|extra\s*high|low|medium|high|minimal|thinking)\)\s*$/i, "")
+		.replace(/\s*\((?:extra\s*low|extra\s*high|x\s*high|low|medium|high|minimal|thinking)\)\s*$/i, "")
 		.trim()
 		.toLowerCase();
 }
@@ -333,6 +335,12 @@ function familyTemplate(publicId: string, fallbackModels: ProviderModelConfig[])
 	if (/^gemini-.*-flash/i.test(publicId)) {
 		return fallbackModels.find((model) => /^gemini-.*-flash/i.test(model.id));
 	}
+	if (/^gemini-.*-hydrogen/i.test(publicId)) {
+		return (
+			fallbackModels.find((model) => model.id === publicId) ??
+			fallbackModels.find((model) => /^gemini-.*-hydrogen/i.test(model.id))
+		);
+	}
 	if (/^gemini-.*-(?:pro|argon|carbon)/i.test(publicId)) {
 		return (
 			fallbackModels.find((model) => model.id === publicId) ??
@@ -379,13 +387,16 @@ function extractBrand(s: string): string {
 	return match ? match[1] : "";
 }
 
-function extractGeminiTier(s: string): "flash-lite" | "flash" | "pro" | "ultra" | "argon" | "carbon" | undefined {
+function extractGeminiTier(
+	s: string,
+): "flash-lite" | "flash" | "pro" | "ultra" | "argon" | "carbon" | "hydrogen" | undefined {
 	if (/\bflash[- ]?lite\b/i.test(s)) return "flash-lite";
 	if (/\bflash\b/i.test(s)) return "flash";
 	if (/\bpro\b/i.test(s)) return "pro";
 	if (/\bultra\b/i.test(s)) return "ultra";
 	if (/\bargon\b/i.test(s)) return "argon";
 	if (/\bcarbon\b/i.test(s)) return "carbon";
+	if (/\bhydrogen\b/i.test(s)) return "hydrogen";
 	return undefined;
 }
 
@@ -503,7 +514,7 @@ function modelRank(id: string): [number, number] {
 	if (id.startsWith("claude-opus")) return [1, -claudeVer];
 	if (id.startsWith("claude-sonnet")) return [2, -claudeVer];
 	if (id.startsWith("claude-")) return [3, -claudeVer];
-	if (/^gemini-.*(?:pro|argon|carbon)/i.test(id)) return [4, -version];
+	if (/^gemini-.*(?:pro|argon|carbon|hydrogen)/i.test(id)) return [4, -version];
 	if (id.startsWith("gemini-")) return [5, -version];
 	if (id.startsWith("gpt-oss")) return [6, 0];
 	return [7, 0];

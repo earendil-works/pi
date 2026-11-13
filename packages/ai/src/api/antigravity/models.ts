@@ -34,6 +34,17 @@ export const PROVIDER_NAME = "Antigravity";
  * advertised by the backend for each model.
  */
 export const ANTIGRAVITY_ROUTING: Record<string, AntigravityRouting> = {
+	"gemini-4-hydrogen": {
+		off: "gemini-4-hydrogen-low",
+		routing: {
+			minimal: "gemini-4-hydrogen-low",
+			low: "gemini-4-hydrogen-low",
+			medium: "gemini-4-hydrogen-medium",
+			high: "gemini-4-hydrogen-high",
+			xhigh: "gemini-4-hydrogen-xhigh",
+		},
+		defaultRequestId: "gemini-4-hydrogen-low",
+	},
 	"gemini-4-carbon": {
 		off: "gemini-4-carbon-low",
 		routing: {
@@ -174,6 +185,11 @@ export const ANTIGRAVITY_ROUTING: Record<string, AntigravityRouting> = {
  * Requesting more than these limits returns a 400 Bad Request from the API.
  */
 export const RUNTIME_MAX_OUTPUT_TOKENS: Record<string, number> = {
+	"gemini-4-hydrogen": 262144,
+	"gemini-4-hydrogen-low": 262144,
+	"gemini-4-hydrogen-medium": 262144,
+	"gemini-4-hydrogen-high": 262144,
+	"gemini-4-hydrogen-xhigh": 262144,
 	"gemini-4-carbon": 262144,
 	"gemini-4-carbon-low": 262144,
 	"gemini-4-carbon-medium": 262144,
@@ -230,7 +246,7 @@ export function getMaxOutputTokens(modelId: string, runtimeModel?: string): numb
 		if (runtimeModel.startsWith("claude-opus-5") || runtimeModel.startsWith("claude-sonnet-5")) return 128000;
 		if (runtimeModel.startsWith("claude-")) return 64000;
 		if (runtimeModel.startsWith("gpt-oss-")) return 32768;
-		if (runtimeModel.startsWith("gemini-4-carbon")) return 262144;
+		if (runtimeModel.startsWith("gemini-4-carbon") || runtimeModel.startsWith("gemini-4-hydrogen")) return 262144;
 		if (runtimeModel.startsWith("gemini-3.1-pro") || runtimeModel === "gemini-pro-agent") return 65535;
 		if (runtimeModel.startsWith("gemini-")) return 65536;
 	}
@@ -238,6 +254,7 @@ export function getMaxOutputTokens(modelId: string, runtimeModel?: string): numb
 }
 
 const geminiFlashCost = { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0 };
+const geminiHydrogenCost = { input: 1.5, output: 7.5, cacheRead: 0.075, cacheWrite: 0 };
 const geminiProCost = { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 0 };
 const claudeSonnetCost = { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 };
 const claudeOpusCost = { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 };
@@ -246,6 +263,15 @@ const gptOssCost = { input: 0.6, output: 2.4, cacheRead: 0.15, cacheWrite: 0.6 }
 // A null entry is intentionally hidden by Pi. Do not collapse levels that happen to
 // route to the same runtime ID: the UI must reflect the levels the backend advertises.
 const thinkingLevelMaps = {
+	lowMediumHighXhigh: {
+		off: null,
+		minimal: null,
+		low: "low",
+		medium: "medium",
+		high: "high",
+		xhigh: "xhigh",
+		max: null,
+	},
 	lowMediumHigh: {
 		off: null,
 		minimal: null,
@@ -337,6 +363,16 @@ export const ANTIGRAVITY_MODELS: ProviderModelConfig[] = [
 		maxTokens: 262144,
 	},
 	{
+		id: "gemini-4-hydrogen",
+		name: "Gemini 4 Hydrogen (Antigravity)",
+		reasoning: true,
+		thinkingLevelMap: thinkingLevelMaps.lowMediumHighXhigh,
+		input: ["text", "image"],
+		cost: geminiHydrogenCost,
+		contextWindow: 1048576,
+		maxTokens: 262144,
+	},
+	{
 		id: "gemini-3.5-flash",
 		name: "Gemini 3.5 Flash (Antigravity)",
 		reasoning: true,
@@ -386,6 +422,12 @@ export function getAntigravityRequestModelId(modelId: string, effort: string | u
 export type { ThinkingWire };
 
 export const ANTIGRAVITY_MODEL_ENUM: Record<string, string> = {
+	// Gemini 4 Hydrogen
+	"gemini-4-hydrogen": "MODEL_PLACEHOLDER_M525",
+	"gemini-4-hydrogen-xhigh": "MODEL_PLACEHOLDER_M528",
+	"gemini-4-hydrogen-high": "MODEL_PLACEHOLDER_M525",
+	"gemini-4-hydrogen-medium": "MODEL_PLACEHOLDER_M526",
+	"gemini-4-hydrogen-low": "MODEL_PLACEHOLDER_M527",
 	// Gemini 4 Carbon
 	"gemini-4-carbon": "MODEL_PLACEHOLDER_M437",
 	"gemini-4-carbon-high": "MODEL_PLACEHOLDER_M427",

@@ -367,71 +367,75 @@ describe("native image registration", () => {
 	});
 });
 
-it.each(["gemini-2.5-flash", "gemini-3-flash", "gemini-3.8-flash", "gemini-4-argon", "gemini-4-carbon"])(
-	"encodes tool image responses for %s",
-	(id) => {
-		const chat = { ...antigravityProvider().getModels()[0], id };
-		const nested = !id.startsWith("gemini-2");
-		const result = convertMessages(
-			chat,
-			normalizeContext({
-				messages: [
-					{ role: "user", content: "Inspect", timestamp: 0 },
-					{
-						role: "assistant",
-						api: chat.api,
-						provider: chat.provider,
-						model: id,
-						content: [{ type: "toolCall", id: "call/1", name: "screen", arguments: {} }],
-						usage: {
-							input: 0,
-							output: 0,
-							cacheRead: 0,
-							cacheWrite: 0,
-							totalTokens: 0,
-							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-						},
-						stopReason: "toolUse",
-						timestamp: 1,
+it.each([
+	"gemini-2.5-flash",
+	"gemini-3-flash",
+	"gemini-3.8-flash",
+	"gemini-4-argon",
+	"gemini-4-carbon",
+	"gemini-4-hydrogen",
+])("encodes tool image responses for %s", (id) => {
+	const chat = { ...antigravityProvider().getModels()[0], id };
+	const nested = !id.startsWith("gemini-2");
+	const result = convertMessages(
+		chat,
+		normalizeContext({
+			messages: [
+				{ role: "user", content: "Inspect", timestamp: 0 },
+				{
+					role: "assistant",
+					api: chat.api,
+					provider: chat.provider,
+					model: id,
+					content: [{ type: "toolCall", id: "call/1", name: "screen", arguments: {} }],
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 					},
-					{
-						role: "toolResult",
-						toolCallId: "call/1",
-						toolName: "screen",
-						content: [{ type: "text", text: "screen" }, image],
-						isError: false,
-						timestamp: 2,
+					stopReason: "toolUse",
+					timestamp: 1,
+				},
+				{
+					role: "toolResult",
+					toolCallId: "call/1",
+					toolName: "screen",
+					content: [{ type: "text", text: "screen" }, image],
+					isError: false,
+					timestamp: 2,
+				},
+			],
+		}),
+		id,
+	);
+	const part = { inlineData: { data: image.data, mimeType: image.mimeType } };
+	expect(JSON.parse(JSON.stringify(result))).toEqual([
+		{ role: "user", parts: [{ text: "Inspect" }] },
+		{
+			role: "model",
+			parts: [
+				{
+					functionCall: { name: "screen", args: {}, ...(nested ? { id: "call_1" } : {}) },
+					// Gemini 3+ history replays unsigned calls with the validator bypass; 2.x has no signatures.
+					...(nested ? { thoughtSignature: SKIP_THOUGHT_SIGNATURE_VALIDATOR } : {}),
+				},
+			],
+		},
+		{
+			role: "user",
+			parts: [
+				{
+					functionResponse: {
+						name: "screen",
+						response: { output: "screen" },
+						...(nested ? { id: "call_1", parts: [part] } : {}),
 					},
-				],
-			}),
-			id,
-		);
-		const part = { inlineData: { data: image.data, mimeType: image.mimeType } };
-		expect(JSON.parse(JSON.stringify(result))).toEqual([
-			{ role: "user", parts: [{ text: "Inspect" }] },
-			{
-				role: "model",
-				parts: [
-					{
-						functionCall: { name: "screen", args: {}, ...(nested ? { id: "call_1" } : {}) },
-						// Gemini 3+ history replays unsigned calls with the validator bypass; 2.x has no signatures.
-						...(nested ? { thoughtSignature: SKIP_THOUGHT_SIGNATURE_VALIDATOR } : {}),
-					},
-				],
-			},
-			{
-				role: "user",
-				parts: [
-					{
-						functionResponse: {
-							name: "screen",
-							response: { output: "screen" },
-							...(nested ? { id: "call_1", parts: [part] } : {}),
-						},
-					},
-					...(nested ? [] : [part]),
-				],
-			},
-		]);
-	},
-);
+				},
+				...(nested ? [] : [part]),
+			],
+		},
+	]);
+});

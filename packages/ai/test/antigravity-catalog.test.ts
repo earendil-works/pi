@@ -303,12 +303,20 @@ describe("Antigravity native catalog", () => {
 		expect(found).toEqual({ id: "gemini-alias-agent", model: "MODEL_REAL_ENUM" });
 	});
 
-	it("exposes gemini-4-carbon, gemini-4-argon, claude-opus-5-5, and claude-sonnet-5-5 natively and prevents stale models-store entries from downgrading baseline limits", async () => {
+	it("exposes gemini-4-hydrogen, gemini-4-carbon, gemini-4-argon, claude-opus-5-5, and claude-sonnet-5-5 natively and prevents stale models-store entries from downgrading baseline limits", async () => {
 		const { models, modelsStore } = await setup("project-a");
+		const hydrogen = models.getModel("antigravity", "gemini-4-hydrogen")!;
 		const carbon = models.getModel("antigravity", "gemini-4-carbon")!;
 		const argon = models.getModel("antigravity", "gemini-4-argon")!;
 		const opus55 = models.getModel("antigravity", "claude-opus-5-5")!;
 		const sonnet55 = models.getModel("antigravity", "claude-sonnet-5-5")!;
+		expect(hydrogen).toMatchObject({
+			name: "Gemini 4 Hydrogen (Antigravity)",
+			contextWindow: 1048576,
+			maxTokens: 262144,
+			cost: { input: 1.5, output: 7.5, cacheRead: 0.075, cacheWrite: 0 },
+			thinkingLevelMap: { low: "low", medium: "medium", high: "high", xhigh: "xhigh" },
+		});
 		expect(carbon).toMatchObject({
 			name: "Gemini 4 Carbon (Antigravity)",
 			contextWindow: 1048576,
@@ -331,6 +339,34 @@ describe("Antigravity native catalog", () => {
 			thinkingLevelMap: { low: "low", medium: "medium", high: "high" },
 		});
 
+		expect(await sentModel(models, "gemini-4-hydrogen", "low")).toMatchObject({
+			model: "gemini-4-hydrogen-low",
+			request: {
+				generationConfig: { maxOutputTokens: 262144 },
+				labels: { model_enum: "MODEL_PLACEHOLDER_M527" },
+			},
+		});
+		expect(await sentModel(models, "gemini-4-hydrogen", "medium")).toMatchObject({
+			model: "gemini-4-hydrogen-medium",
+			request: {
+				generationConfig: { maxOutputTokens: 262144 },
+				labels: { model_enum: "MODEL_PLACEHOLDER_M526" },
+			},
+		});
+		expect(await sentModel(models, "gemini-4-hydrogen", "high")).toMatchObject({
+			model: "gemini-4-hydrogen-high",
+			request: {
+				generationConfig: { maxOutputTokens: 262144 },
+				labels: { model_enum: "MODEL_PLACEHOLDER_M525" },
+			},
+		});
+		expect(await sentModel(models, "gemini-4-hydrogen", "xhigh")).toMatchObject({
+			model: "gemini-4-hydrogen-xhigh",
+			request: {
+				generationConfig: { maxOutputTokens: 262144 },
+				labels: { model_enum: "MODEL_PLACEHOLDER_M528" },
+			},
+		});
 		expect(await sentModel(models, "gemini-4-carbon", "low")).toMatchObject({
 			model: "gemini-4-carbon-low",
 			request: {
@@ -366,6 +402,10 @@ describe("Antigravity native catalog", () => {
 			checkedAt: Date.now(),
 			models: [
 				{
+					...hydrogen,
+					maxTokens: 65536,
+				},
+				{
 					...carbon,
 					maxTokens: 65536,
 				},
@@ -378,6 +418,10 @@ describe("Antigravity native catalog", () => {
 		});
 		const restored = await setup("project-a", modelsStore);
 		await restored.models.refresh({ allowNetwork: false });
+		expect(restored.models.getModel("antigravity", "gemini-4-hydrogen")).toMatchObject({
+			contextWindow: 1048576,
+			maxTokens: 262144,
+		});
 		expect(restored.models.getModel("antigravity", "gemini-4-carbon")).toMatchObject({
 			contextWindow: 1048576,
 			maxTokens: 262144,
@@ -493,7 +537,13 @@ describe("Antigravity native catalog", () => {
 		const m25 = restored.models.getModel("antigravity", "gemini-2.5-flash");
 		expect(m25?.name).toBe("Gemini 2.5 Flash (Antigravity)");
 
-		// Baseline models not present in the store (e.g. gemini-4-carbon, gemini-4-argon) are preserved
+		// Baseline models not present in the store (e.g. gemini-4-hydrogen, gemini-4-carbon, gemini-4-argon) are preserved
+		const hydrogen = restored.models.getModel("antigravity", "gemini-4-hydrogen");
+		expect(hydrogen).toBeDefined();
+		expect(hydrogen?.name).toBe("Gemini 4 Hydrogen (Antigravity)");
+		expect((hydrogen as any)?.antigravityModelEnums?.["gemini-4-hydrogen"]).toBe("MODEL_PLACEHOLDER_M525");
+		expect((hydrogen as any)?.antigravityModelEnums?.["gemini-4-hydrogen-xhigh"]).toBe("MODEL_PLACEHOLDER_M528");
+		expect((hydrogen as any)?.antigravityModelEnums?.["gemini-4-hydrogen-low"]).toBe("MODEL_PLACEHOLDER_M527");
 		const carbon = restored.models.getModel("antigravity", "gemini-4-carbon");
 		expect(carbon).toBeDefined();
 		expect(carbon?.name).toBe("Gemini 4 Carbon (Antigravity)");
@@ -533,6 +583,9 @@ describe("Antigravity native catalog", () => {
 		expect(isFamilyVersionMismatch("gemini-4-argon", "Gemini 4 Flash")).toBe(true);
 		expect(isFamilyVersionMismatch("gemini-4-carbon", "Gemini 4 Argon")).toBe(true);
 		expect(isFamilyVersionMismatch("gemini-4-carbon", "Gemini 4 Flash")).toBe(true);
+		expect(isFamilyVersionMismatch("gemini-4-hydrogen", "Gemini 4 Argon")).toBe(true);
+		expect(isFamilyVersionMismatch("gemini-4-hydrogen", "Gemini 4 Carbon")).toBe(true);
+		expect(isFamilyVersionMismatch("gemini-4-hydrogen", "Gemini 4 Flash")).toBe(true);
 
 		// Claude sub-family tier mismatches
 		expect(isFamilyVersionMismatch("claude-opus-5-5", "Claude Sonnet 5.5")).toBe(true);
@@ -555,6 +608,7 @@ describe("Antigravity native catalog", () => {
 		expect(isFamilyVersionMismatch("gemini-2.5-flash", "Gemini 2.5 Flash")).toBe(false);
 		expect(isFamilyVersionMismatch("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite")).toBe(false);
 		expect(isFamilyVersionMismatch("gemini-4-carbon", "Gemini 4 Carbon")).toBe(false);
+		expect(isFamilyVersionMismatch("gemini-4-hydrogen", "Gemini 4 Hydrogen")).toBe(false);
 		expect(isFamilyVersionMismatch("claude-opus-5-5", "Claude Opus 5.5")).toBe(false);
 		expect(isFamilyVersionMismatch("gpt-oss-120b", "GPT-OSS 120B")).toBe(false);
 
@@ -693,6 +747,10 @@ describe("Antigravity catalog retirement", () => {
 		"gemini-4-carbon-low": { ...flash("New"), displayName: "Gemini 4 Carbon (Low)" },
 		"gemini-4-carbon-medium": { ...flash("New"), displayName: "Gemini 4 Carbon (Medium)" },
 		"gemini-4-carbon-high": { ...flash("New"), displayName: "Gemini 4 Carbon (High)" },
+		"gemini-4-hydrogen-low": { ...flash("New"), displayName: "Gemini 4 Hydrogen (Low)" },
+		"gemini-4-hydrogen-medium": { ...flash("New"), displayName: "Gemini 4 Hydrogen (Medium)" },
+		"gemini-4-hydrogen-high": { ...flash("New"), displayName: "Gemini 4 Hydrogen (High)" },
+		"gemini-4-hydrogen-xhigh": { ...flash("New"), displayName: "Gemini 4 Hydrogen (XHigh)" },
 		"claude-opus-5-5-low": { ...flash(), displayName: "Claude Opus 5.5 (Low)" },
 		"claude-opus-5-5-high": { ...flash(), displayName: "Claude Opus 5.5 (High)" },
 		"claude-sonnet-5-5-low": { ...flash(), displayName: "Claude Sonnet 5.5 (Low)" },
@@ -708,6 +766,7 @@ describe("Antigravity catalog retirement", () => {
 			"gemini-3.8-flash",
 			"gemini-4-argon",
 			"gemini-4-carbon",
+			"gemini-4-hydrogen",
 			"gpt-oss-120b",
 		]);
 	});
@@ -724,8 +783,31 @@ describe("Antigravity catalog retirement", () => {
 			"gemini-3.8-flash",
 			"gemini-4-argon",
 			"gemini-4-carbon",
+			"gemini-4-hydrogen",
 			"gpt-oss-120b",
 		]);
+	});
+
+	it("groups -xhigh variants into the parent family instead of splitting a separate model", () => {
+		const catalog = buildAntigravityCatalog(
+			{
+				"gemini-4-hydrogen-low": { ...flash("New"), displayName: "Gemini 4 Hydrogen (Low)" },
+				"gemini-4-hydrogen-medium": { ...flash("New"), displayName: "Gemini 4 Hydrogen (Medium)" },
+				"gemini-4-hydrogen-high": { ...flash("New"), displayName: "Gemini 4 Hydrogen (High)" },
+				"gemini-4-hydrogen-xhigh": { ...flash("New"), displayName: "Gemini 4 Hydrogen (XHigh)" },
+				"gemini-9-nova-low": { ...flash("New"), displayName: "Gemini 9 Nova (Low)", maxOutputTokens: 262144 },
+				"gemini-9-nova-xhigh": { ...flash("New"), displayName: "Gemini 9 Nova (XHigh)", maxOutputTokens: 262144 },
+			},
+			{ models: ANTIGRAVITY_MODELS, routing: ANTIGRAVITY_ROUTING },
+		);
+		expect(catalog.models.find((m) => m.id === "gemini-4-hydrogen-xhigh")).toBeUndefined();
+		expect(catalog.models.find((m) => m.id === "gemini-9-nova-xhigh")).toBeUndefined();
+		expect(catalog.models.find((m) => m.id === "gemini-9-nova")).toMatchObject({
+			name: "Gemini 9 Nova (Antigravity)",
+			maxTokens: 262144,
+			thinkingLevelMap: { low: "low", medium: null, high: null, xhigh: "xhigh" },
+		});
+		expect(catalog.routing["gemini-9-nova"]?.routing?.xhigh).toBe("gemini-9-nova-xhigh");
 	});
 
 	it("keeps removed families hidden after an offline restart from the models store", async () => {
