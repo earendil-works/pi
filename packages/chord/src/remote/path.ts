@@ -22,20 +22,33 @@ const RELEASED: PathEvent = { kind: "released" };
 
 const DROPPED: PathEvent = { kind: "dropped" };
 
+/** A path no route suspends: the parent's, the host's unplaced one. */
+const NEVER = (): boolean => false;
+
 /**
  * The parent link or one route address: its current link and its holders, held on that link and again on every next
  * one. `changed` runs when it gets a holder without a link, loses its link or its last holder (a route decides whether
- * to resolve), saying which.
+ * to resolve), saying which; `suspended` tells whether its route resolves nothing for it now (none for the parent's).
  */
 export class Path {
 	readonly #holders = new Set<Upstream>();
 	readonly #changed: (event: PathEvent) => void;
+	readonly #suspended: () => boolean;
 	#link: HostLink | undefined;
 	/** Whether it ever had a link: a host never connected to a parent has no parent path to wait on. */
 	#linked = false;
 
-	constructor(changed: (event: PathEvent) => void) {
+	constructor(changed: (event: PathEvent) => void, suspended: () => boolean = NEVER) {
 		this.#changed = changed;
+		this.#suspended = suspended;
+	}
+
+	/**
+	 * Whether its route suspended it: a new remote reference then holds on its own instead of sharing a held object's
+	 * state (decision "References share one wire hold").
+	 */
+	get suspended(): boolean {
+		return this.#suspended();
 	}
 
 	/** The current link while one is open. */
@@ -58,6 +71,14 @@ export class Path {
 		this.#holders.add(holder);
 		if (this.#link === undefined) this.#changed({ kind: "attached", holder });
 		else holder.attach(this.#link);
+	}
+
+	/**
+	 * A reference joined `holder`, which it holds already (decision "References share one wire hold"): without a link
+	 * it counts as a new request, as an attach does (a route whose resolve failed resolves again).
+	 */
+	requested(holder: Upstream): void {
+		if (this.#link === undefined) this.#changed({ kind: "attached", holder });
 	}
 
 	/** `holder` was released or ended; no later link holds it. */

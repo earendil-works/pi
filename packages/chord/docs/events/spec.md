@@ -43,7 +43,9 @@ WebTransport datagrams are the later path.
 A contract member is state (a JSON value: snapshot and ops, folded), a method (a call and its answer), or now an
 **event**: a JSON value an object emits, delivered once to each reference that was bound to the object before the
 emit and still is when the event is sent, never folded, never kept, never sent to a later holder, and dropped for a
-holder that cannot keep up.
+holder that cannot keep up. Over a link the provider's holder is the wire hold: several references of one host sharing
+it (design §7, decision "References share one wire hold", 2026-11-12) are one holder there, and each gets what arrives
+at its host after it bound.
 
 ### 2.1 Contracts
 
@@ -154,7 +156,9 @@ host.serve(Match, ({ match }, principal, self) => {
 - **Who gets an event:** each binding records the counter's value when it is made: a hold when its `bound` is sent, a
   same-host reference when it binds to the instance, a re-exposing reference likewise (counter values are each host's
   own: an event arriving over a link takes the receiving host's next counter value as it arrives, and that host's
-  bindings are judged by it); it gets only entries with
+  bindings are judged by it; a binding joining a shared remote object, design §7, records it when it binds, so it gets
+  the events that arrive after it bound, also one emitted before it joined that was still in transit, and none
+  already received and queued for its host's flush before it bound); it gets only entries with
   `n` greater than that value, and only while it stays that binding. At the flush, each entry goes to the bindings of
   its source's object instance that pass this test, and through re-exposure to the bindings of the re-exposing
   objects by the same test. A binding that ended before the flush (released, `loading`, `failed`, ended, or unbound

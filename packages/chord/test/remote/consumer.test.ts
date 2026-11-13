@@ -2,8 +2,8 @@ import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context, withCancel } from "../../src/context/index.ts";
 import { type EventMember, evolve, int, local, map, method, remote, str } from "../../src/contracts/index.ts";
-import { PluginError } from "../../src/data/index.ts";
-import { type Ctx, createHost, defineFacet, type FacetHost, type HostError } from "../../src/host/index.ts";
+import { type ChordError, PluginError } from "../../src/data/index.ts";
+import { type Ctx, createHost, defineFacet, type FacetHost, type HostError, type RefIn } from "../../src/host/index.ts";
 import { resolveWatchable } from "../../src/host/reference.ts";
 import { type Compression, memoryLinkPair, type PartLimits } from "../../src/link/index.ts";
 import { DeflatedPart, jsonPart, type Part, wireError } from "../../src/link/internal.ts";
@@ -24,6 +24,7 @@ import {
 	metered,
 	Notes,
 	PlacedNotes,
+	partValue,
 	RawPeer,
 	rawParent,
 	rawProvider,
@@ -37,6 +38,7 @@ import {
 	type TestPrincipal,
 	testCodec,
 	transported,
+	waitLive,
 	wireNames,
 } from "../support.ts";
 
@@ -1084,5 +1086,83 @@ forEachCodec(() => {
 				vi.unstubAllGlobals();
 			}
 		});
+	});
+});
+
+describe('cancelling one reference\'s calls on a shared hold (decision "References share one wire hold")', () => {
+	/** A client on a raw parent announcing a call window of `calls`, and two references sharing one live hold. */
+	const shared = async (calls: number) => {
+		const client = createHost<TestPrincipal>({ onError: () => {} });
+		await client.load([], context);
+		const [near, far] = memoryLinkPair();
+		client.connect(near, { principal: { kind: "server" }, codec: testCodec() }, context);
+		const peer = new RawPeer(far, { calls });
+		await peer.next("hello");
+		const a = client.hold(Notes, { session: "S1" }, context) as unknown as RefIn<typeof Notes, "editor">;
+		const b = client.hold(Notes, { session: "S1" }, context) as unknown as RefIn<typeof Notes, "editor">;
+		const hold = await bindNext(peer);
+		await waitLive(b);
+		return { peer, a, b, hold };
+	};
+
+	/** The calls, aborts and releases on the wire, as `call:<text>`, `abort:<id>`, `release`. */
+	const wire = (peer: RawPeer, texts: Map<number, string>): string[] =>
+		peer.received.flatMap((message) => {
+			if (message.kind === "call") {
+				const text = (partValue(message.args!) as { text: string }).text;
+				texts.set(message.call, text);
+				return [`call:${text}`];
+			}
+			if (message.kind === "abort") return [`abort:${texts.get(message.call)}`];
+			return message.kind === "release" ? ["release"] : [];
+		});
+
+	it("a finite window: the released one's queued call leaves unsent, its sent one is aborted, the other's queued call goes out", async () => {
+		const { peer, a, b } = await shared(1);
+		const results = [rejection(a.add({ text: "A1" }, context)), rejection(a.add({ text: "A2" }, context))];
+		const sibling = b.add({ text: "B1" }, context);
+		await transported();
+		const texts = new Map<number, string>();
+		expect(wire(peer, texts)).toEqual(["call:A1"]);
+		a.release();
+		await transported();
+		expect(wire(peer, texts)).toEqual(["call:A1", "abort:A1", "call:B1"]);
+		expect((await Promise.all(results)).map((error) => (error as ChordError).code)).toEqual(["released", "released"]);
+		const { call } = peer.received.filter((message) => message.kind === "call").at(-1) as { call: number };
+		peer.send({ kind: "result", call, value: jsonPart(3) });
+		expect(await sibling).toBe(3);
+	});
+
+	it("several sent calls are aborted newest first, a reply crossing the release is ignored, the last release sends release", async () => {
+		const { peer, a, b } = await shared(3);
+		const settled: string[] = [];
+		const track = (tag: string, call: Promise<unknown>): Promise<void> =>
+			call.then(
+				() => void settled.push(`${tag}:ok`),
+				(error: ChordError) => void settled.push(`${tag}:${error.code}`),
+			);
+		const tracked = [
+			track("A1", a.add({ text: "A1" }, context)),
+			track("B1", b.add({ text: "B1" }, context)),
+			track("A2", a.add({ text: "A2" }, context)),
+			track("B2", b.add({ text: "B2" }, context)),
+		];
+		await transported();
+		const texts = new Map<number, string>();
+		expect(wire(peer, texts)).toEqual(["call:A1", "call:B1", "call:A2"]);
+		const ids = new Map([...texts].map(([id, text]) => [text, id]));
+		a.release();
+		// The provider answered A1 before it saw the abort: the reply crosses the release and is dropped here.
+		peer.send({ kind: "result", call: ids.get("A1")!, value: jsonPart(1) });
+		await transported();
+		expect(wire(peer, texts)).toEqual(["call:A1", "call:B1", "call:A2", "abort:A2", "abort:A1", "call:B2"]);
+		peer.send({ kind: "result", call: ids.get("B1")!, value: jsonPart(2) });
+		await transported();
+		b.release();
+		await Promise.all(tracked);
+		await transported();
+		expect(wire(peer, texts).slice(6)).toEqual(["release"]);
+		// Each call settled once: the released one's with `released`, B2 by the last release.
+		expect(settled.sort()).toEqual(["A1:released", "A2:released", "B1:ok", "B2:released"]);
 	});
 });
