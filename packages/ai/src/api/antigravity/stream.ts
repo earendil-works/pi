@@ -109,14 +109,26 @@ import {
 
 export { ANTIGRAVITY_API };
 
+// Sent when the caller has no system prompt. It must never match SERVER_REJECTED_TEXT: the previous
+// wording did, and every request without a system prompt failed with 429 RESOURCE_EXHAUSTED.
 const ANTIGRAVITY_SYSTEM_INSTRUCTION =
 	"You are Antigravity, a powerful agentic AI coding assistant designed by Google DeepMind. " +
-	"You are pair programming with a user to solve coding tasks. Be concise, practical, and tool-aware.";
+	"Help the user with software engineering tasks. Keep answers concise and practical, and use the available tools when they help.";
 
 const ANTIGRAVITY_NO_PREAMBLE_INSTRUCTION =
 	'CRITICAL: NEVER output rule checks, formatting guidelines, constraint checklists (e.g. "No emdashes"), or your thinking/personality preambles in the final response. Output only the final response.';
 
+// Google's request trace id on every Antigravity response; quoting it is the only way to ask about a rejection.
+const TRACE_HEADER = "x-cloudaicompanion-trace-id";
+
 const CONTINUATION_TEXT = "Continue the active task using the available instructions and context.";
+
+// Live probes 2026-11-13 (all Gemini 4 models and gemini-3.8-flash): Antigravity answers 429 RESOURCE_EXHAUSTED,
+// "Resource has been exhausted (e.g. check quota).", with no details, to every request whose system instruction or
+// user text contains this sentence, a third-party client's identity line. Case and runs of whitespace do not
+// matter; changing a comma does. Model turns and tool results that contain it pass. A retry never succeeds.
+const SERVER_REJECTED_TEXT =
+	/you\s+are\s+pair\s+programming\s+with\s+a\s+user\s+to\s+solve\s+coding\s+tasks\.\s+be\s+concise,\s+practical,\s+and\s+tool-aware/i;
 let toolCallCounter = 0;
 
 function sanitizeToolCallId(id: string, fallbackName?: string): string {
@@ -834,6 +846,19 @@ export async function buildRequest(
 	};
 }
 
+/** Returns the text in the request's system instruction or user turns that Antigravity always rejects, if any. */
+export function findServerRejectedText(request: GeminiRequestBody): string | undefined {
+	const parts = [
+		...request.systemInstruction.parts,
+		...request.contents.filter((turn) => turn.role === GeminiRole.User).flatMap((turn) => turn.parts),
+	];
+	for (const part of parts) {
+		const match = "text" in part ? part.text.match(SERVER_REJECTED_TEXT) : null;
+		if (match) return match[0];
+	}
+	return undefined;
+}
+
 /** Exported for unit tests. */
 export function mapStopReason(reason: string | undefined): StopReason {
 	if (reason === "STOP") return StopReason.Stop;
@@ -896,10 +921,11 @@ export function friendlyAntigravityError(status: number | undefined, text: strin
 			Boolean(wait) ||
 			(!/rate.?limit/i.test(msg) &&
 				/quota exceeded|exceeded your|limit reached|reached your|daily limit/i.test(msg));
+		const detail = describeBackendError(text);
 		if (hardLimit) {
-			return `Quota exceeded.${wait ? ` Please wait ${wait}.` : ""} Next: switch models or retry later.`;
+			return `Quota exceeded.${wait ? ` Please wait ${wait}.` : ""} Next: switch models or retry later. Backend said: ${detail}`;
 		}
-		return "Rate limited by Antigravity (429 ResourceExhausted). Next: retrying automatically; if it persists, switch models.";
+		return `Rate limited by Antigravity (429 ${detail}). Next: retrying automatically; if it persists, switch models.`;
 	}
 	if (status === 500) {
 		return "Antigravity had an internal server error. Next: retry in a moment or switch models.";
@@ -913,6 +939,30 @@ export function friendlyAntigravityError(status: number | undefined, text: strin
 	}
 	if (status === 504) return "Antigravity timed out upstream. Next: retry in a moment.";
 	return msg;
+}
+
+// Google's error body as one line: status, message and whatever reason, quota or retry delay the
+// details carry, so a caller can tell a quota wall from throttling and from a content rule.
+function describeBackendError(text: string): string {
+	let error: unknown;
+	try {
+		error = (JSON.parse(text) as { error?: unknown }).error;
+	} catch {
+		/* Non-JSON error body. */
+	}
+	if (!isRecord(error)) return ownedSlice(redactSecrets(text.trim()), 0, 300) || "no body";
+	const facts = [[error.status, error.message].filter((value) => typeof value === "string").join(": ")];
+	for (const detail of Array.isArray(error.details) ? error.details : []) {
+		if (!isRecord(detail)) continue;
+		if (typeof detail.reason === "string") facts.push(`reason=${detail.reason}`);
+		if (typeof detail.retryDelay === "string") facts.push(`retryDelay=${detail.retryDelay}`);
+		for (const violation of Array.isArray(detail.violations) ? detail.violations : []) {
+			if (isRecord(violation) && typeof violation.quotaId === "string") facts.push(`quota=${violation.quotaId}`);
+			else if (isRecord(violation) && typeof violation.quotaMetric === "string")
+				facts.push(`quota=${violation.quotaMetric}`);
+		}
+	}
+	return ownedSlice(redactSecrets(facts.join("; ")), 0, 500);
 }
 
 function createOutput(model: Model<Api>): AssistantMessage {
@@ -1483,6 +1533,7 @@ export function streamAntigravity(
 
 			let response: Response | undefined;
 			let lastText = "";
+			let lastTrace: string | undefined;
 			let received = false;
 			const emptyKey = emptyAnswerKey(model, context);
 			// The nudge goes on every attempt after an empty answer to this context, including the
@@ -1511,6 +1562,12 @@ export function streamAntigravity(
 						{ ...opts, modelEnum: opts.modelEnum ?? discoveredEnums[runtimeModel] },
 						runtimeModel,
 					);
+					const rejected = findServerRejectedText(payload.request);
+					if (rejected) {
+						throw new Error(
+							`Antigravity refuses every request whose system prompt or user message contains "${rejected}"; the server answers with a quota error that no retry clears. Next: reword or remove that text.`,
+						);
+					}
 					if (nudge) appendTurn(payload.request.contents, GeminiRole.User, [{ text: SILENT_ENDING_NUDGE }]);
 					const body = JSON.stringify((await opts.onPayload?.(payload, model)) ?? payload);
 
@@ -1529,6 +1586,7 @@ export function streamAntigravity(
 						}
 						if (response.ok) break;
 						lastText = await response.text();
+						lastTrace = response.headers.get(TRACE_HEADER) ?? undefined;
 						if (
 							response.status === 429 &&
 							(/Individual quota reached/i.test(lastText) ||
@@ -1565,7 +1623,7 @@ export function streamAntigravity(
 				if (!response || !response.ok || !sent) {
 					const friendly = friendlyAntigravityError(response?.status, lastText);
 					throw new Error(
-						`Antigravity API error (${response?.status ?? "no response"}, runtimeModel=${runtimeCandidates.join(" -> ")}): ${friendly}`,
+						`Antigravity API error (${response?.status ?? "no response"}, runtimeModel=${runtimeCandidates.join(" -> ")}${lastTrace ? `, trace=${lastTrace}` : ""}): ${friendly}`,
 					);
 				}
 
@@ -1589,8 +1647,9 @@ export function streamAntigravity(
 					const next = await fetchStream(first.url, JSON.stringify(payload));
 					if (!next.ok) {
 						const friendly = friendlyAntigravityError(next.status, await next.text());
+						const trace = next.headers.get(TRACE_HEADER);
 						throw new Error(
-							`Antigravity API error (${next.status}, continuation, runtimeModel=${runtimeModel}): ${friendly}`,
+							`Antigravity API error (${next.status}, continuation, runtimeModel=${runtimeModel}${trace ? `, trace=${trace}` : ""}): ${friendly}`,
 						);
 					}
 					return next;

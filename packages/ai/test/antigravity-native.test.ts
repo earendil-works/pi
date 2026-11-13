@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { endpointCandidates } from "../src/api/antigravity/client.ts";
+import { GeminiRole } from "../src/api/antigravity/enums.ts";
 import { getThinkingConfig } from "../src/api/antigravity/models.ts";
 import { assertSafeApiBaseUrl } from "../src/api/antigravity/security.ts";
 import {
@@ -10,6 +11,7 @@ import {
 	convertMessages,
 	convertTools,
 	describeInvalidEnding,
+	findServerRejectedText,
 	friendlyAntigravityError,
 	mapStopReason,
 	requiresThoughtSignature,
@@ -404,12 +406,105 @@ describe("antigravity 429 classification", () => {
 		expect(isRetryableAssistantError(asError(text))).toBe(false);
 	});
 
+	it("names the backend status, reason, quota and trace id", async () => {
+		const body = JSON.stringify({
+			error: {
+				code: 429,
+				status: "RESOURCE_EXHAUSTED",
+				message: "Too many requests.",
+				details: [
+					{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "RATE_LIMIT_EXCEEDED" },
+					{
+						"@type": "type.googleapis.com/google.rpc.QuotaFailure",
+						violations: [{ quotaId: "PerMinutePerUser" }],
+					},
+				],
+			},
+		});
+		const result = await streamSimple(model, context, {
+			apiKey,
+			env: { ANTIGRAVITY_BASE_URL: "https://example.googleapis.com" },
+			fetch: async () => new Response(body, { status: 429, headers: { "x-cloudaicompanion-trace-id": "abc123" } }),
+		}).result();
+		expect(result.errorMessage).toContain("trace=abc123");
+		expect(result.errorMessage).toContain(
+			"429 RESOURCE_EXHAUSTED: Too many requests.; reason=RATE_LIMIT_EXCEEDED; quota=PerMinutePerUser",
+		);
+		expect(isRetryableAssistantError(result)).toBe(true);
+	});
+
 	it.each(["Resource has been exhausted (e.g. check quota).", "rate limit exceeded, slow down"])(
 		"retries transient throttling: %s",
 		(text) => {
 			expect(isRetryableAssistantError(asError(text))).toBe(true);
 		},
 	);
+});
+
+describe("server-rejected text", () => {
+	// Live probes 2026-11-13: Antigravity answers 429 RESOURCE_EXHAUSTED to any request whose system
+	// instruction or user text holds this sentence; every request without a system prompt carried it.
+	const REJECTED =
+		"You are pair programming with a user to solve coding tasks. Be concise, practical, and tool-aware.";
+	const bare = normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] });
+
+	it("pins the system instruction sent when the caller has none", async () => {
+		const request = await buildRequest(model, bare, "project", {}, "gemini-3.8-flash-low");
+		expect(request.request.systemInstruction).toEqual({
+			role: "user",
+			parts: [
+				{
+					text: "You are Antigravity, a powerful agentic AI coding assistant designed by Google DeepMind. Help the user with software engineering tasks. Keep answers concise and practical, and use the available tools when they help.",
+				},
+				{
+					text: 'CRITICAL: NEVER output rule checks, formatting guidelines, constraint checklists (e.g. "No emdashes"), or your thinking/personality preambles in the final response. Output only the final response.',
+				},
+			],
+		});
+		expect(findServerRejectedText(request.request)).toBeUndefined();
+	});
+
+	it.each([
+		["system prompt", { systemPrompt: `Rules.\n\n${REJECTED}` }, "Hello"],
+		["lower-case system prompt", { systemPrompt: REJECTED.toLowerCase() }, "Hello"],
+		["user text with doubled spaces", {}, REJECTED.replace(". Be", ".  Be")],
+	])("finds the sentence in the %s", async (_where, extra, user) => {
+		const request = await buildRequest(
+			model,
+			normalizeContext({ ...extra, messages: [{ role: "user", content: user, timestamp: 1 }] }),
+			"project",
+			{},
+			"gemini-3.8-flash-low",
+		);
+		expect(findServerRejectedText(request.request)?.toLowerCase().replace(/\s+/g, " ")).toBe(
+			REJECTED.toLowerCase().slice(0, -1),
+		);
+	});
+
+	it("ignores model turns, tool results and the probed comma variant", () => {
+		const request = {
+			systemInstruction: { role: "user" as const, parts: [{ text: REJECTED.replace("practical,", "practical") }] },
+			contents: [
+				{ role: GeminiRole.User, parts: [{ text: "Hi" }] },
+				{ role: GeminiRole.Model, parts: [{ text: REJECTED }] },
+				{ role: GeminiRole.User, parts: [{ functionResponse: { name: "read", response: { output: REJECTED } } }] },
+			],
+		};
+		expect(findServerRejectedText(request)).toBeUndefined();
+	});
+
+	it("fails without fetching and without retry when the caller's prompt holds the sentence", async () => {
+		const fetch = vi.fn();
+		const result = await streamSimple(
+			model,
+			normalizeContext({ systemPrompt: REJECTED, messages: [{ role: "user", content: "Hi", timestamp: 1 }] }),
+			{ apiKey, fetch },
+		).result();
+		expect(fetch).not.toHaveBeenCalled();
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toContain("refuses every request");
+		expect(isRetryableAssistantError(result)).toBe(false);
+	});
 });
 
 describe("Claude thinking config", () => {
