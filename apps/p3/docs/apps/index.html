@@ -109,17 +109,19 @@ table{max-width:100%}
 </head>
 <body><div class="book">
 <section class="cover">
-  <div class="kicker">A design note · p3 · 2026-11-13</div>
+  <div class="kicker">A design note · p3 · 2026-11-13 · second edition</div>
   <h1>Apps<br>Users<br>Guests</h1>
   <p class="subtitle">The owner builds apps for his family, his club and his team; each person reaches only what an app gives them</p>
-  <div class="cover-stats"><div class="stat"><b>1</b><span>owner per Pi, who installs every plugin</span></div><div class="stat"><b>3</b><span>kinds of people: owner, users of an app, guests of a session</span></div><div class="stat"><b>1</b><span>session check for every session view and object</span></div><div class="stat"><b>0</b><span>permission engines, settings layers or rule tables</span></div></div>
+  <div class="cover-stats"><div class="stat"><b>1</b><span>owner per Pi, who installs every plugin</span></div><div class="stat"><b>3</b><span>kinds of people: owner, users of an app, guests of a session</span></div><div class="stat"><b>1</b><span>session check, run in three places</span></div><div class="stat"><b>0</b><span>permission engines, settings layers or rule tables</span></div></div>
   <div class="cover-note"><p>The owner&#39;s direction of 2026-11-13, worked out with three reviewers (Opus: product, Astra: adversarial, Sol:
-Chord&#39;s API). Replaces the decision &quot;Org-managed Pis through managed settings&quot; of the same day. Every code block is
-PROPOSED: p3 has no code. Chord calls named in the code exist in <code>packages/chord/src</code> (<code>defineFacet</code>, <code>host.serve</code>,
-<code>local</code>, <code>remote</code>, <code>self.get</code>, <code>self.state</code>, <code>self.on</code>, <code>self.onLive</code>, <code>self.writable</code>, <code>self.contribute</code>,
-<code>defineRegistry</code>, <code>defineState</code> with <code>keyed</code>, keyed members&#39; <code>.at</code>, <code>forbidden</code>); p3 names (<code>Apps</code>, <code>Sessions</code>,
-<code>defineAppUsers</code>, <code>HarnessFilters</code>, <code>WebViews</code>) are proposals. Sources: <code>apps/p3/docs/views.md</code>,
-<code>apps/p3/docs/sharing.md</code>, <code>apps/p3/docs/apps/web-ui-direction.html</code>, the base-inventory explainer (harness filters).</p>
+Chord&#39;s API), who then reviewed the first edition; this edition takes in their findings. Replaces the decision
+&quot;Org-managed Pis through managed settings&quot; of the same day. Every code block is PROPOSED: p3 has no code. Chord calls
+named in the code exist in <code>packages/chord/src</code> (<code>defineFacet</code>, <code>host.serve</code>, <code>host.registry</code>, <code>local</code>, <code>remote</code>,
+<code>self.get</code>, <code>self.state</code>, <code>self.onLive</code>, <code>self.contribute</code>, <code>self.derive</code>, <code>defineRegistry</code>, <code>keyedEntries</code>,
+<code>defineState</code>, keyed members&#39; <code>.at</code>, <code>forbidden</code>); p3 names (<code>Apps</code>, <code>Sessions</code>, <code>SessionAccess</code>, <code>defineAppUsers</code>,
+<code>HarnessFilters</code>, <code>WebViews</code>) are proposals, and their signatures here are schematic where marked. Sources:
+<code>apps/p3/docs/views.md</code>, <code>apps/p3/docs/sharing.md</code>, <code>apps/p3/docs/apps/web-ui-direction.html</code>, the base-inventory
+explainer (harness filters).</p>
 </div>
 </section><div class="inner">
 <nav class="toc"><h2>Contents</h2><ol>
@@ -138,22 +140,23 @@ PROPOSED: p3 has no code. Chord calls named in the code exist in <code>packages/
 <p class="dropcap">One Pi, one owner. The owner, or his agent, builds <strong>apps</strong> and shares them:</p>
 <ul>
 <li><strong>The robot</strong> for his son, who cannot read: a friendly face, hold to talk, one long-running session in a fixed
-folder with its own skills and AGENTS.md, no shell.</li>
+folder with its own instructions and skills, no tools.</li>
 <li><strong>Family</strong> for his wife: her calendars and mail, a simple voice chat, the family files; her own journal.</li>
-<li><strong>The football club:</strong> shared match sessions, a team roster only coaches change.</li>
+<li><strong>The football club:</strong> shared match sessions, a roster only coaches change.</li>
 <li><strong>Coding:</strong> the app Pi ships with, for himself and his team.</li>
 <li><strong>Guests:</strong> a friend watches one session, or joins it, through a link.</li>
 </ul>
-<p>An app decides what you see (its layout and views), what its sessions get (machine and folder, skills, tools, models,
-accounts) and who may use it. People reach only what the app gives them.</p>
+<p>An app decides what you see (its layout and views), what its sessions get (machine and folder, instructions and
+skills, tools, models, accounts) and who may use it. People reach only what the app gives them.</p>
 <h3 id="six-rules">Six rules</h3>
 <ol class="findings">
 <li><strong>An app is a plugin.</strong> It creates the layouts, views and objects it needs and reuses any other plugin&#39;s. The owner
 installs it; the agent writes one when asked (&quot;make a robot app for my son&quot;).</li>
 <li><strong>Plugins are trusted, people are confined.</strong> Apps call each other and every plugin freely. Only users and guests
 are limited, by their principal.</li>
-<li><strong>Every object serves only the principals it knows.</strong> The terminal, mail and settings serve the owner; a user who
-holds them directly gets <code>forbidden</code>, whatever pane he opens.</li>
+<li><strong>Every object serves only the principals it knows.</strong> Owner-only objects (terminals, mail, settings) admit the owner
+and the host&#39;s own code (<code>server</code>, <code>worker</code>); a user or guest who holds one directly gets <code>forbidden</code>, whatever pane
+it opens. A plugin that apps reuse offers a <code>local</code> service (or a variant for <code>server</code>).</li>
 <li><strong>Users reach the rest through their app&#39;s objects.</strong> An app&#39;s object for its users calls the app&#39;s local store,
 which acts as the host and reaches any plugin. The app chooses exactly what each user sees.</li>
 <li><strong>One session check</strong> for every session view and object: the owner always; a user if the session&#39;s app says so;
@@ -163,7 +166,7 @@ code mode alike.</li>
 </ol>
 </section>
 
-<section class="chapter" id="people"><header class="opener"><div class="numeral">I</div><h2>People</h2><p class="lede">Three kinds of people, each a principal the link stamps; who may reach what follows from it.</p></header>
+<section class="chapter" id="people"><header class="opener"><div class="numeral">I</div><h2>People</h2><p class="lede">Three kinds of people, each a principal the link stamps.</p></header>
 <pre><code><span class="tk-c">// PROPOSED · @p3/v1: p3's principal kinds</span>
 <span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">P3Principal</span> =
 	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"server"</span> }
@@ -173,172 +176,231 @@ code mode alike.</li>
 	| {                                                                         <span class="tk-c">// a guest of shared sessions (p2's)</span>
 			<span class="tk-k">readonly</span> kind: <span class="tk-s">"guest"</span>;
 			<span class="tk-k">readonly</span> id: string;
+			<span class="tk-k">readonly</span> name: string;                                                <span class="tk-c">// as typed when joining, unverified</span>
 			<span class="tk-k">readonly</span> sessions: <span class="tk-t">Readonly</span>&lt;<span class="tk-t">Record</span>&lt;string, <span class="tk-s">"read"</span> | <span class="tk-s">"write"</span>&gt;&gt;;
 			<span class="tk-k">readonly</span> revision: number;
 	  };</code></pre>
 <ul>
 <li><strong>The owner</strong> signs in with the kit&#39;s owner link, token file or pairing.</li>
 <li><strong>A user</strong> belongs to one app. The owner invites them; they sign up on the app&#39;s page; the server issues a sign-in
-for <code>{ kind: &quot;user&quot;, app, id }</code>. What they may do inside the app is the app&#39;s data, not the principal.</li>
+for <code>{ kind: &quot;user&quot;, app, id }</code>. Their page always opens their app (no app switcher). What they may do inside the
+app is the app&#39;s data, not the principal: objects give every user of an app the same variant shape and check the
+right in each method, exposing it as state for the UI (<code>canEdit</code>, <code>maySend</code>). Coach versus player is such a right.</li>
 <li><strong>A guest</strong> gets one or more sessions, each read or write, in the principal itself, so a factory picks the viewer or
-the participant variant synchronously (Chord&#39;s factory rule). A change bumps the revision: the old objects end and
-the guest reconnects with the new principal, as in p2.</li>
-<li><strong>The owner is not protected against.</strong> He passes every session check, shares any session, and can read the store.
-An app may still refuse him in its own objects (her journal view), as a courtesy of its UI.</li>
+the participant variant synchronously. A change bumps the revision: the old objects end and the guest reconnects as
+the new principal, as in p2.</li>
+<li><strong>The owner is not protected against.</strong> He passes every session check, shares any session, and can read the stores
+and run code on the machine. An app may still refuse him in its own objects (her journal view), as a courtesy of its
+UI.</li>
 </ul>
 </section>
 
-<section class="chapter" id="access"><header class="opener"><div class="numeral">II</div><h2>The Session Check</h2><p class="lede">One question every session view and object asks: may this principal see or send in this session?</p></header>
-<p class="dropcap">The base records each session&#39;s app when the session is created (it never changes). Transcript, composer,
-artifacts, files, search, export and cross-session tools all ask one function:</p>
-<pre><code><span class="tk-c">// PROPOSED · plugins/sessions: the one session check (server and worker)</span>
+<section class="chapter" id="access"><header class="opener"><div class="numeral">II</div><h2>The Session Check</h2><p class="lede">One question: may this principal see or send in this session? Answered in three places.</p></header>
+<p class="dropcap"><code>Sessions</code> (a core plugin on the server) creates sessions and records each one&#39;s facts: its app and its creator,
+fixed for its life. The answer:</p>
+<pre><code><span class="tk-c">// PROPOSED · plugins/sessions/access.ts (server)</span>
 <span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Access</span> = { <span class="tk-k">readonly</span> see: boolean; <span class="tk-k">readonly</span> send: boolean };
+<span class="tk-k">const</span> ALL: <span class="tk-t">Access</span> = { see: <span class="tk-k">true</span>, send: <span class="tk-k">true</span> };
 <span class="tk-k">const</span> NONE: <span class="tk-t">Access</span> = { see: <span class="tk-k">false</span>, send: <span class="tk-k">false</span> };
 
-<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">access</span>(principal: <span class="tk-t">P3Principal</span>, session: <span class="tk-t">SessionFacts</span>, apps: <span class="tk-t">AppTable</span>): <span class="tk-t">Access</span> {
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">access</span>(principal: <span class="tk-t">P3Principal</span>, session: <span class="tk-t">SessionFacts</span>, facts: <span class="tk-t">SessionIndex</span>, apps: <span class="tk-t">AppTable</span>): <span class="tk-t">Access</span> {
 	<span class="tk-k">switch</span> (principal.kind) {
 		<span class="tk-k">case</span> <span class="tk-s">"owner"</span>:
 		<span class="tk-k">case</span> <span class="tk-s">"server"</span>:
-			<span class="tk-k">return</span> { see: <span class="tk-k">true</span>, send: <span class="tk-k">true</span> };
-		<span class="tk-k">case</span> <span class="tk-s">"worker"</span>:
-			<span class="tk-k">return</span> principal.session === session.id ? { see: <span class="tk-k">true</span>, send: <span class="tk-k">true</span> } : apps.<span class="tk-f">get</span>(session.app)?.<span class="tk-f">access</span>(principal, session) ?? NONE;
-		<span class="tk-k">case</span> <span class="tk-s">"user"</span>:
-			<span class="tk-k">return</span> principal.app === session.app ? apps.<span class="tk-f">get</span>(session.app)?.<span class="tk-f">access</span>(principal, session) ?? NONE : NONE;
-		<span class="tk-k">case</span> <span class="tk-s">"guest"</span>: {
-			<span class="tk-k">const</span> mode = principal.sessions[session.id];
-			<span class="tk-k">return</span> mode === <span class="tk-k">undefined</span> ? NONE : { see: <span class="tk-k">true</span>, send: mode === <span class="tk-s">"write"</span> };
+			<span class="tk-k">return</span> ALL;
+		<span class="tk-k">case</span> <span class="tk-s">"worker"</span>: {
+			<span class="tk-k">if</span> (principal.session === session.id) <span class="tk-k">return</span> ALL;
+			<span class="tk-c">// A session's agent reaching another session asks as its own session's creator: the owner's agent passes.</span>
+			<span class="tk-k">const</span> own = facts.<span class="tk-f">get</span>(principal.session);
+			<span class="tk-k">return</span> own === <span class="tk-k">undefined</span> ? NONE : <span class="tk-f">access</span>(own.creator, session, facts, apps);
 		}
+		<span class="tk-k">case</span> <span class="tk-s">"user"</span>:
+			<span class="tk-k">return</span> principal.app === session.app ? (apps.<span class="tk-f">get</span>(session.app)?.<span class="tk-f">access</span>(principal, session) ?? NONE) : NONE;
+		<span class="tk-k">case</span> <span class="tk-s">"guest"</span>:
+			<span class="tk-k">if</span> (!<span class="tk-t">Object</span>.<span class="tk-f">hasOwn</span>(principal.sessions, session.id)) <span class="tk-k">return</span> NONE;
+			<span class="tk-k">return</span> { see: <span class="tk-k">true</span>, send: principal.sessions[session.id] === <span class="tk-s">"write"</span> };
 	}
 }</code></pre>
-<p>The session worker&#39;s route applies it in its synchronous <code>authorize</code>, so every object a session&#39;s worker serves is
-covered; methods that send check <code>send</code> again at the call, and HTTP routes (downloads, exports) at the request.</p>
+<p>For users the answer depends on data (the app&#39;s members, the session&#39;s facts), and a Chord factory decides only from
+params and principal. So the check never runs in a factory for a user. It runs in three places:</p>
+<ol>
+<li><p><strong>The session worker&#39;s route.</strong> People reach a session&#39;s data through the objects its worker serves (transcript,
+composer, artifacts, files). The route&#39;s synchronous <code>authorize</code> reads the server&#39;s in-memory session index and the
+composed <code>Apps</code> table (held by base code with <code>host.registry(Apps, ctx)</code>); until both are loaded it refuses users.
+Owner and guests pass or fail from the principal alone.</p>
+</li>
+<li><p><strong>Methods and derives, at use.</strong> A method that sends checks <code>send</code> when it runs; state that depends on access is a
+derive over it. A worker cannot evaluate app rules (<code>Apps</code> lives on the server), so it asks:</p>
+<pre><code><span class="tk-c">// PROPOSED · plugins/sessions/contract.ts: the server answers a worker about the caller it serves</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SessionAccess</span> = <span class="tk-f">remote</span>(<span class="tk-s">"sessions.access"</span>, {
+    version: <span class="tk-n">1</span>,
+    params: {},
+    hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+    variants: {
+        worker: {
+            state: { rules: <span class="tk-t">AccessRulesSchema</span> },             <span class="tk-c">// the current answers for the people holding this session</span>
+            methods: { check: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ caller: <span class="tk-t">PrincipalSchema</span> }), <span class="tk-t">AccessSchema</span>) },
+        },
+    },
+});</code></pre>
+<p>The worker passes the caller as data (a worker&#39;s upward calls arrive as the worker, Chord §4), and follows <code>rules</code>
+so an open pane loses <code>send</code> when an app&#39;s rule changes.</p>
+</li>
+<li><p><strong>HTTP handlers</strong> (downloads, exports) at the request.</p>
+</li>
+</ol>
+<p>A guest&#39;s page shows the layout of the session&#39;s app with every pane dropped whose session fails <code>see</code> for it, and
+every global pane dropped; list objects (the sidebar&#39;s) refuse guests.</p>
 </section>
 
 <section class="chapter" id="app"><header class="opener"><div class="numeral">III</div><h2>An App Is a Plugin</h2><p class="lede">What an app contributes, and the robot in four files.</p></header>
-<p class="dropcap">An app contributes one entry to the <code>Apps</code> registry: its id, title, layout and the <code>access</code> rule above. It keeps no
-other configuration: everything else is its own code and objects.</p>
-<pre><code><span class="tk-c">// PROPOSED · @p3/v1/server</span>
+<p class="dropcap">An app contributes one entry to the <code>Apps</code> registry. The entry is a plain value whose functions read live state at
+use, so it never needs republishing.</p>
+<pre><code><span class="tk-c">// PROPOSED · plugins/apps/contract.server.ts (the apps core plugin defines and serves the registry)</span>
 <span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">AppContribution</span> = {
 	<span class="tk-k">readonly</span> id: string;                                                  <span class="tk-c">// also the `app` of its users and sessions</span>
 	<span class="tk-k">readonly</span> title: string;
 	<span class="tk-k">readonly</span> layout: (principal: <span class="tk-t">P3Principal</span>) =&gt; <span class="tk-t">Layout</span>;                  <span class="tk-c">// panes: view kind, session, item</span>
 	<span class="tk-k">readonly</span> access: (principal: <span class="tk-t">P3Principal</span>, session: <span class="tk-t">SessionFacts</span>) =&gt; <span class="tk-t">Access</span>;
-	<span class="tk-k">readonly</span> users?: <span class="tk-t">AppUsersAdmin</span>;                                       <span class="tk-c">// its user pool's admin object, if it has users</span>
+	<span class="tk-k">readonly</span> users?: <span class="tk-t">AppUsersAdmin</span>;                                       <span class="tk-c">// its user pool's admin object</span>
 };
-<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Apps</span> = defineRegistry&lt;<span class="tk-t">AppContribution</span> | <span class="tk-t">Watchable</span>&lt;<span class="tk-t">AppContribution</span>&gt;, <span class="tk-t">AppTable</span>&gt;(<span class="tk-s">"p3.apps"</span>, { version: <span class="tk-n">1</span> });</code></pre>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Apps</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">AppContribution</span>, <span class="tk-t">AppTable</span>&gt;(<span class="tk-s">"p3.apps"</span>, { version: <span class="tk-n">1</span> });
+
+<span class="tk-c">// plugins/apps/server.ts: one app per id; a second plugin claiming an id is reported, the first by plugin name wins</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">Apps</span>, { compose: (table, { report }) =&gt; <span class="tk-f">keyedEntries</span>(table, (app) =&gt; ({ [app.id]: app }), report) });
+
+<span class="tk-c">// plugins/apps/contract.ts: the page gets its layout from the server</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">AppLayout</span> = <span class="tk-f">remote</span>(<span class="tk-s">"apps.layout"</span>, { version: <span class="tk-n">1</span>, params: { app: <span class="tk-f">str</span>() }, hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: { person: { state: { layout: <span class="tk-t">LayoutSchema</span> } } } });</code></pre>
 <h3 id="the-robot">The robot</h3>
 <pre><code><span class="tk-c">// PROPOSED · plugins/robot/contract.ts</span>
 <span class="tk-k">export</span> <span class="tk-k">const</span> APP = <span class="tk-s">"robot"</span>;
-<span class="tk-k">export</span> <span class="tk-k">const</span> SESSION = <span class="tk-s">"robot-main"</span>;
 <span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Users</span> = <span class="tk-f">defineAppUsers</span>(APP, {
-	profile: <span class="tk-f">obj</span>({ name: <span class="tk-f">str</span>() }),                       <span class="tk-c">// what he enters when signing up</span>
 	config: <span class="tk-f">obj</span>({ voice: <span class="tk-f">str</span>() }),                       <span class="tk-c">// what the owner sets for him</span>
 	initialConfig: () =&gt; ({ voice: <span class="tk-s">"friendly"</span> }),
 });
-<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Place</span> = { environment: <span class="tk-s">"kidbox"</span>, cwd: <span class="tk-s">"/srv/son"</span> };       <span class="tk-c">// its AGENTS.md and skills live there</span></code></pre>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Place</span> = { environment: <span class="tk-s">"kidbox"</span>, cwd: <span class="tk-s">"/srv/son"</span> };       <span class="tk-c">// its AGENTS.md and skills live there</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Model</span> = { provider: <span class="tk-s">"anthropic"</span>, id: <span class="tk-s">"claude-haiku-5-5"</span> };</code></pre>
 <pre><code><span class="tk-c">// PROPOSED · plugins/robot/server.ts</span>
+<span class="tk-k">const</span> <span class="tk-t">Home</span> = <span class="tk-f">defineState</span>(<span class="tk-s">"robot.home"</span>, {
+	schema: <span class="tk-f">obj</span>({ session: <span class="tk-f">nullable</span>(<span class="tk-f">str</span>()) }), version: <span class="tk-n">1</span>, initial: () =&gt; ({ session: <span class="tk-k">null</span> }),
+	persist: <span class="tk-k">true</span>, checkpointWhen: () =&gt; <span class="tk-k">true</span>,
+});
 <span class="tk-k">const</span> <span class="tk-t">Robot</span> = <span class="tk-f">local</span>(<span class="tk-s">"robot.app"</span>, { version: <span class="tk-n">1</span>, params: {}, members: {} });
 
 <span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((host, self) =&gt; {
-	<span class="tk-t">Users</span>.<span class="tk-f">serve</span>(host, self);                                            <span class="tk-c">// the user pool: admin, store, sign-up page</span>
+	<span class="tk-t">Users</span>.<span class="tk-f">serve</span>(host);                                                  <span class="tk-c">// the pool: admin, store, sign-up page</span>
 	host.<span class="tk-f">serve</span>(<span class="tk-t">Robot</span>, (_params, self) =&gt; {
 		<span class="tk-k">const</span> users = self.<span class="tk-f">get</span>(<span class="tk-t">Users</span>.<span class="tk-t">Store</span>, {});
 		<span class="tk-k">const</span> sessions = self.<span class="tk-f">get</span>(<span class="tk-t">Sessions</span>, {});
-		<span class="tk-k">const</span> app = (members: <span class="tk-k">readonly</span> <span class="tk-t">AppUser</span>[]): <span class="tk-t">AppContribution</span> =&gt; ({
+		<span class="tk-k">const</span> home = self.<span class="tk-f">state</span>(<span class="tk-t">Home</span>);
+		<span class="tk-k">const</span> member = (p: <span class="tk-t">P3Principal</span>) =&gt; p.kind === <span class="tk-s">"user"</span> &amp;&amp; users.list.value.<span class="tk-f">some</span>((u) =&gt; u.id === p.id);
+		self.<span class="tk-f">contribute</span>(<span class="tk-t">Apps</span>, {
 			id: APP,
 			title: <span class="tk-s">"Robot"</span>,
 			users: <span class="tk-t">Users</span>.<span class="tk-t">Admin</span>,
 			layout: (p) =&gt; {
-				<span class="tk-k">const</span> voice = p.kind === <span class="tk-s">"user"</span> ? members.<span class="tk-f">find</span>((u) =&gt; u.id === p.id)?.config.voice : <span class="tk-k">undefined</span>;
-				<span class="tk-k">return</span> [{ kind: <span class="tk-s">"robot.face"</span>, session: SESSION, item: { voice: voice ?? <span class="tk-s">"friendly"</span> } }];
+				<span class="tk-k">const</span> voice = p.kind === <span class="tk-s">"user"</span> ? users.list.value.<span class="tk-f">find</span>((u) =&gt; u.id === p.id)?.config.voice : <span class="tk-k">undefined</span>;
+				<span class="tk-k">return</span> [{ kind: <span class="tk-s">"robot.face"</span>, session: home.value.session, item: { voice: voice ?? <span class="tk-s">"friendly"</span> } }];
 			},
 			access: (p, session) =&gt; {
-				<span class="tk-k">const</span> ok = session.id === SESSION &amp;&amp; p.kind === <span class="tk-s">"user"</span> &amp;&amp; members.<span class="tk-f">some</span>((u) =&gt; u.id === p.id);
+				<span class="tk-k">const</span> ok = session.id === home.value.session &amp;&amp; <span class="tk-f">member</span>(p);   <span class="tk-c">// read at the call: a removed user loses it</span>
 				<span class="tk-k">return</span> { see: ok, send: ok };
 			},
 		});
-		<span class="tk-k">const</span> entry = self.<span class="tk-f">writable</span>(<span class="tk-f">app</span>([]));
-		self.<span class="tk-f">on</span>(users.list, ({ value }) =&gt; entry.<span class="tk-f">set</span>(<span class="tk-f">app</span>(value)));     <span class="tk-c">// a removed user loses access at once</span>
-		self.<span class="tk-f">contribute</span>(<span class="tk-t">Apps</span>, entry);
-		self.<span class="tk-f">onLive</span>((ctx) =&gt; sessions.<span class="tk-f">ensure</span>({ id: SESSION, app: APP, ...<span class="tk-t">Place</span> }, ctx));   <span class="tk-c">// the one session</span>
+		<span class="tk-c">// The one session, made once (idempotent by key), with its place and model.</span>
+		self.<span class="tk-f">onLive</span>(<span class="tk-k">async</span> (ctx) =&gt; {
+			<span class="tk-k">const</span> { id } = <span class="tk-k">await</span> sessions.<span class="tk-f">ensure</span>({ app: APP, key: <span class="tk-s">"main"</span>, ...<span class="tk-t">Place</span>, model: <span class="tk-t">Model</span> }, ctx);
+			<span class="tk-k">await</span> home.<span class="tk-f">change</span>((draft) =&gt; { draft.session = id; }, ctx);
+		});
 		<span class="tk-k">return</span> {};
 	});
 });</code></pre>
 <pre><code><span class="tk-c">// PROPOSED · plugins/robot/worker.ts: what the robot's session gets</span>
+<span class="tk-k">const</span> mine = (scope: <span class="tk-t">FilterScope</span>) =&gt; scope.app === APP;
 <span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; {
 	self.<span class="tk-f">contribute</span>(<span class="tk-t">HarnessFilters</span>, {
-		tools: (tools, scope) =&gt; (scope.app === APP ? [] : tools),                       <span class="tk-c">// no tools at all</span>
-		models: (models, scope) =&gt; (scope.app === APP ? models.<span class="tk-f">filter</span>((m) =&gt; m.id === <span class="tk-s">"child-chat"</span>) : models),
-		environments: (envs, scope) =&gt; (scope.app === APP ? envs.<span class="tk-f">filter</span>((e) =&gt; e.id === <span class="tk-t">Place</span>.environment) : envs),
-		location: (chosen, scope) =&gt; scope.app !== APP || (chosen.environment === <span class="tk-t">Place</span>.environment &amp;&amp; chosen.cwd === <span class="tk-t">Place</span>.cwd),
+		tools: (tools, scope) =&gt; (<span class="tk-f">mine</span>(scope) ? [] : tools),
+		<span class="tk-c">// Only the AGENTS.md and skills found at its place (the instructions plugin loads them as sections, skills</span>
+		<span class="tk-c">// inline): never the owner's global instructions.</span>
+		sections: (sections, scope) =&gt; (<span class="tk-f">mine</span>(scope) ? sections.<span class="tk-f">filter</span>((s) =&gt; s.source !== <span class="tk-s">"instance"</span>) : sections),
+		models: (models, scope) =&gt; (<span class="tk-f">mine</span>(scope) ? models.<span class="tk-f">filter</span>((m) =&gt; m.provider === <span class="tk-t">Model</span>.provider &amp;&amp; m.id === <span class="tk-t">Model</span>.id) : models),
+		environments: (envs, scope) =&gt; (<span class="tk-f">mine</span>(scope) ? envs.<span class="tk-f">filter</span>((e) =&gt; e.id === <span class="tk-t">Place</span>.environment) : envs),
+		location: (chosen, scope) =&gt; !<span class="tk-f">mine</span>(scope) || (chosen.environment === <span class="tk-t">Place</span>.environment &amp;&amp; chosen.cwd === <span class="tk-t">Place</span>.cwd),
 	});
 });</code></pre>
 <pre><code><span class="tk-c">// PROPOSED · plugins/robot/web.tsx: the face, around the ordinary voice chat</span>
 <span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; {
 	self.<span class="tk-f">contribute</span>(<span class="tk-t">WebViews</span>, {
-		<span class="tk-s">"robot.face"</span>: ({ app, session, item }) =&gt; (
-			&lt;<span class="tk-t">VoiceChat</span> app={app} session={session} voice={item.voice} transcript=<span class="tk-s">"hidden"</span>&gt;
+		<span class="tk-s">"robot.face"</span>: ({ session, item }) =&gt; (
+			&lt;<span class="tk-t">VoiceChat</span> session={session} voice={item.voice} transcript=<span class="tk-s">"hidden"</span>&gt;
 				&lt;<span class="tk-t">RobotFace</span> /&gt;
 			&lt;/<span class="tk-t">VoiceChat</span>&gt;
 		),
 	});
 });</code></pre>
 <p>The owner installs it, opens Users, invites his son and sets his voice. The son signs up on the link and gets one
-hold-to-talk session. He holds <code>Terminals</code> or <code>Mail</code> directly? <code>forbidden</code>: those serve the owner only.</p>
-<p><strong>Coding</strong> is the plugin Pi ships: its access rule gives its sessions to the owner (and to users of a team it invites),
-its layout the sidebar, transcript and changes, no filters.</p>
+hold-to-talk session. He holds <code>Terminals</code> or <code>Mail</code> directly? <code>forbidden</code>: those admit the owner and the host only.</p>
+<p><strong>Coding</strong> is the plugin Pi ships. Sessions from before apps belong to it (<code>app: &quot;coding&quot;</code>). Its rule gives its
+sessions to the owner and to users of a team it invites; team users create sessions through coding&#39;s own object, not
+the owner&#39;s session service. Its layout is the sidebar, transcript and changes; no filters.</p>
 </section>
 
 <section class="chapter" id="users"><header class="opener"><div class="numeral">IV</div><h2>Users and Invites</h2><p class="lede">Each app has its own user pool; the owner invites, configures, removes.</p></header>
-<pre><code><span class="tk-c">// PROPOSED · @p3/v1: an app's user pool, built on the kit's users, invites and sign-ins</span>
-<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">defineAppUsers</span>&lt;P <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span>, C <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span>&gt;(app: string, shape: {
-	profile: <span class="tk-t">Schema</span>&lt;P&gt;; config: <span class="tk-t">Schema</span>&lt;C&gt;; initialConfig: () =&gt; C;
-}): {
-	<span class="tk-c">/** Owner only: invite (returns the sign-up URL), the users, set a user's config, remove a user. */</span>
-	<span class="tk-k">readonly</span> <span class="tk-t">Admin</span>: <span class="tk-t">RemoteContract</span>;        <span class="tk-c">// `${app}.users.admin`</span>
-	<span class="tk-c">/** For the app's own objects: the users, and one user by id (`users.at(principal.id)`), absent when removed. */</span>
-	<span class="tk-k">readonly</span> <span class="tk-t">Store</span>: <span class="tk-t">LocalContract</span>;         <span class="tk-c">// `${app}.users.store`</span>
-	<span class="tk-c">/** Serves both and the public sign-up page `/apps/&lt;app&gt;/join#&lt;token&gt;`. */</span>
-	<span class="tk-f">serve</span>(host: <span class="tk-t">FacetHost</span>, self: <span class="tk-t">FacetSelf</span>): <span class="tk-k">void</span>;
+<pre><code><span class="tk-c">// PROPOSED · @p3/v1 (contracts) and @p3/v1/server (serve): an app's user pool, on the kit's users, invites and sign-ins.</span>
+<span class="tk-c">// Schematic: the real types keep `C` in the contracts' schemas.</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">AppUser</span>&lt;C&gt; = { <span class="tk-k">readonly</span> id: string; <span class="tk-k">readonly</span> name: string; <span class="tk-k">readonly</span> config: C };
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">defineAppUsers</span>&lt;C <span class="tk-k">extends</span> <span class="tk-t">JsonValue</span>&gt;(app: string, shape: { config: <span class="tk-t">Schema</span>&lt;C&gt;; initialConfig: () =&gt; C }): {
+	<span class="tk-c">/** Owner only: invite (the sign-up URL), list, setConfig (schema-checked), remove. */</span>
+	<span class="tk-k">readonly</span> <span class="tk-t">Admin</span>: <span class="tk-t">AppUsersAdmin</span>;                     <span class="tk-c">// remote `${app}.users.admin` on the server</span>
+	<span class="tk-c">/** For the app's own objects: `list` (every user) and `user` (one by id: `users.user.at(principal.id)`, absent once removed). */</span>
+	<span class="tk-k">readonly</span> <span class="tk-t">Store</span>: <span class="tk-t">AppUsersStore</span>;                     <span class="tk-c">// local `${app}.users.store`; it also contributes the join routes</span>
+	<span class="tk-c">/** Serves both (server facet only). */</span>
+	<span class="tk-f">serve</span>(host: <span class="tk-t">FacetHost</span>): <span class="tk-k">void</span>;
 };</code></pre>
 <ol>
 <li><strong>Invite:</strong> the owner calls <code>Admin.invite({ label, config? })</code> and sends the link.</li>
-<li><strong>Sign up:</strong> the page asks for the profile (her name), checks the token, stores the user, and issues a sign-in for
-<code>{ kind: &quot;user&quot;, app, id }</code>. The browser never chooses the app, the id or the config.</li>
+<li><strong>Sign up:</strong> the page <code>/apps/&lt;app&gt;/join#&lt;token&gt;</code> asks for a name, checks the token, stores the user and issues a
+sign-in for <code>{ kind: &quot;user&quot;, app, id }</code>. The browser never chooses the app, the id or the config.</li>
 <li><strong>Configure:</strong> the owner sets what is hers in this app (<code>setConfig</code>: which calendars, which mail account).</li>
-<li><strong>Use:</strong> the app&#39;s objects pin her record: <code>self.get(Users.Store, {}).users.at(principal.id)</code>.</li>
-<li><strong>Remove:</strong> deletes the record, revokes her sign-ins and ends her open objects.</li>
+<li><strong>Use:</strong> the app&#39;s objects pin her record: <code>self.get(Users.Store, {}).user.at(principal.id)</code>.</li>
+<li><strong>Remove:</strong> deletes the record, invalidates her pending invites (a redeem after the removal is refused), revokes
+her sign-ins and ends her open objects.</li>
 </ol>
 <h3 id="reaching-other-plugins">Reaching other plugins</h3>
 <p>A remote object keeps its caller&#39;s principal when it calls <code>self.get</code> (Chord §4); only a <code>local</code> object acts as the
 host. So an app gives its users a slice of another plugin through its own local store:</p>
-<pre><code><span class="tk-c">// PROPOSED · plugins/family/server.ts: her calendars, chosen by the owner's config for her</span>
+<pre><code><span class="tk-c">// PROPOSED · plugins/family/server.ts: her calendars, as the owner configured them for her</span>
 host.<span class="tk-f">serve</span>(<span class="tk-t">MyCalendars</span>, (_params, principal, self) =&gt; {
 	<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"user"</span> || principal.app !== <span class="tk-s">"family"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"Family only."</span>);
-	<span class="tk-k">const</span> me = self.<span class="tk-f">get</span>(<span class="tk-t">FamilyUsers</span>.<span class="tk-t">Store</span>, {}).users.<span class="tk-f">at</span>(principal.id);
+	<span class="tk-k">const</span> me = self.<span class="tk-f">get</span>(<span class="tk-t">FamilyUsers</span>.<span class="tk-t">Store</span>, {}).user.<span class="tk-f">at</span>(principal.id);
 	<span class="tk-k">const</span> calendars = self.<span class="tk-f">get</span>(<span class="tk-t">FamilyCalendars</span>, {});      <span class="tk-c">// the family app's local store: it reads the calendar plugin as the host</span>
 	<span class="tk-k">return</span> { variant: <span class="tk-s">"mine"</span>, members: { events: self.<span class="tk-f">derive</span>([me, calendars.events], ([u, all]) =&gt; <span class="tk-f">onlyThese</span>(all, u)) } };
 });
 
-<span class="tk-c">// her journal: keyed by her id; nobody else's principal reaches it (the owner refused as a courtesy)</span>
+<span class="tk-c">// Her journal: keyed by her id; no other principal reaches it (the owner refused as a courtesy).</span>
 host.<span class="tk-f">serve</span>(<span class="tk-t">Journal</span>, (_params, principal, self) =&gt; {
 	<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"user"</span> || principal.app !== <span class="tk-s">"family"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"Your own journal only."</span>);
-	<span class="tk-k">const</span> journals = self.<span class="tk-f">get</span>(<span class="tk-t">JournalStore</span>, {});           <span class="tk-c">// the app's local store</span>
-	<span class="tk-k">const</span> journal = journals.entries.<span class="tk-f">at</span>(principal.id);
-	<span class="tk-k">return</span> { variant: <span class="tk-s">"mine"</span>, members: { text: journal, write: (text, ctx) =&gt; journals.<span class="tk-f">write</span>({ id: principal.id, text }, ctx) } };
+	<span class="tk-k">const</span> journals = self.<span class="tk-f">get</span>(<span class="tk-t">JournalStore</span>, {});          <span class="tk-c">// the app's local store</span>
+	<span class="tk-k">return</span> {
+		variant: <span class="tk-s">"mine"</span>,
+		members: {
+			text: journals.entries.<span class="tk-f">at</span>(principal.id),
+			write: (text, ctx) =&gt; journals.<span class="tk-f">write</span>({ id: principal.id, text }, ctx),
+		},
+	};
 });</code></pre>
-<p>The calendar plugin must serve its local store to the server (or a server variant); a plugin that serves only the
-owner&#39;s remote object cannot be reused by apps until it does.</p>
 </section>
 
 <section class="chapter" id="guests"><header class="opener"><div class="numeral">V</div><h2>Guests</h2><p class="lede">Sharing one session, read or write, with the same invite and sign-in path.</p></header>
-<p class="dropcap">The sharing plugin uses the same join path as app users (invite or reusable link, a page for the name, a sign-in) and
-issues guest principals. Read or write lives in the principal; a change bumps the revision, revokes the old objects,
-and the guest reconnects as the new principal. A guest sees the layout of the app the session belongs to, cut to that
-session. A share link many people open makes one guest per browser, never one shared identity.</p>
+<p class="dropcap">The sharing plugin uses the same join path as app users (an invite, or a reusable link; a page for the name; a
+sign-in) and issues guest principals. Read or write lives in the principal; a change bumps the revision, revokes the
+old objects, and the guest reconnects as the new principal (admission checks the current revision, as p2 does). A
+reusable link makes one guest per browser, never one shared identity. What the guest sees: the session&#39;s app layout,
+cut as above.</p>
 </section>
 
-<section class="chapter" id="gaps"><header class="opener"><div class="numeral">VI</div><h2>What the Base Must Add</h2><p class="lede">Chord and the kit are enough with these small changes.</p></header>
+<section class="chapter" id="gaps"><header class="opener"><div class="numeral">VI</div><h2>What the Base Must Add</h2><p class="lede">Chord and the kit are enough with these changes.</p></header>
 <table>
 <thead>
 <tr>
@@ -349,13 +411,13 @@ session. A share link many people open makes one guest per browser, never one sh
 </thead>
 <tbody><tr>
 <td>kit</td>
-<td><code>defineUsers</code> exists once (fixed name <code>chord.app.users</code>), no record by id</td>
-<td>a namespace per pool; keyed records (profile, config)</td>
+<td><code>defineUsers</code> is one pool per server (fixed name <code>chord.app.users</code>); no keyed record to pin; no config</td>
+<td>a namespace per pool; <code>list</code> and keyed <code>user</code> with name and config</td>
 </tr>
 <tr>
 <td>kit</td>
-<td>invites: HTTP only, one principal chosen up front, single use, in memory, no sign-up form</td>
-<td>reusable issue and redeem, a sign-up step; reusable share links</td>
+<td>invites: HTTP only, a principal chosen up front, single use, in memory, no sign-up step, not cancellable</td>
+<td>reusable issue and redeem with a sign-up step, cancellation, reusable share links</td>
 </tr>
 <tr>
 <td>kit</td>
@@ -365,22 +427,17 @@ session. A share link many people open makes one guest per browser, never one sh
 <tr>
 <td>kit</td>
 <td>a sign-in keeps its principal forever, so a guest never gets a new revision</td>
-<td>resolve the current principal at sign-in use; admission checks the current revision (p2 does)</td>
-</tr>
-<tr>
-<td>Chord</td>
-<td>a changed rule does not reach panes already open (<code>authorize</code> runs when a hold starts)</td>
-<td>methods and derives check at use; or <code>route.reauthorize(address)</code></td>
+<td>resolve the current principal at use; admission checks the current revision (p2 does)</td>
 </tr>
 <tr>
 <td>p3</td>
-<td>harness filters do not know the session&#39;s app, nor a fixed folder, accounts or MCP</td>
-<td><code>scope.app</code>, a <code>location</code> check at choice and at resolution, filters for accounts and MCP</td>
+<td>the session check</td>
+<td><code>Sessions</code> (facts, index, <code>ensure</code> by key), <code>SessionAccess</code> for workers, the route&#39;s <code>authorize</code>, HTTP; applied to transcript, composer, artifacts, files, search, export, downloads, cross-session tools</td>
 </tr>
 <tr>
 <td>p3</td>
-<td>the session check everywhere</td>
-<td>transcript, composer, artifacts, files, search, export, downloads, cross-session tools</td>
+<td>harness filters know neither the session&#39;s app nor a fixed place</td>
+<td><code>scope.app</code>; a <code>location</code> check at choice and at resolution; sections carry their source; filters for accounts and MCP</td>
 </tr>
 </tbody></table>
 </section>
@@ -390,12 +447,12 @@ session. A share link many people open makes one guest per browser, never one sh
 <li><strong>Org-managed Pis</strong> (an employer setting up and restricting its members&#39; Pis) are redone on top of apps later; the
 settings layer of this morning&#39;s decision is withdrawn.</li>
 <li><strong>One browser, one sign-in:</strong> signing up for a second app in the same browser replaces the first sign-in.</li>
-<li><strong>Privacy from the owner</strong> is a courtesy of an app&#39;s UI, never a guarantee: he owns the machine and the code.</li>
+<li><strong>Privacy from the owner</strong> is a courtesy of an app&#39;s UI, never a guarantee.</li>
 <li><strong>Discord</strong> is an app whose session gets narrow filters; its people are authors of input, not principals.</li>
 </ul>
 </section>
 
-<p class="colophon">p3 apps · design note, first edition · 2026-11-13</p>
+<p class="colophon">p3 apps · design note, second edition · 2026-11-13</p>
 </div></div>
 
 </body></html>

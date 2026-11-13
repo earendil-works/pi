@@ -175,7 +175,7 @@ and its working rules are in `handoff.md`.
 - **Apps are plugins; users and guests are the confined people (owner, 2026-11-13: "an app is code, which creates
   layouts/views/objects it needs, and can reuse existing shit"; "the point of apps is that I the owner can construct
   it such that members (users) can only access what I give the app and its sessions"; "no defensive shit" for privacy
-  against the owner):** one Pi, one owner, who installs every plugin; apps (the robot for his son, family, a football
+  against the owner; supersedes "Org-managed Pis through managed settings" of the same day):** one Pi, one owner, who installs every plugin; apps (the robot for his son, family, a football
   club, coding as the built-in app) are plugins and trusted: they call each other and any plugin freely. Only people
   are confined, by their principal: `owner`, `user { app, id }` (a member of one app's own user pool: invited by the
   owner, signs up on the app's page, configured by the owner per app), `guest { id, sessions: read | write, revision }`
@@ -183,7 +183,9 @@ and its working rules are in `handoff.md`.
   default); users reach the rest through their app's objects (a remote object for users, the app's local store acting
   as the host behind it). One session check for every session view and object: the owner always; a user if the
   session's app says so (`Apps` registry: id, title, layout, `access`); a guest from its principal. What an app's
-  sessions get is its worker facet's harness filters. Each app's own access rules are its own objects (her journal
+  sessions get is its worker facet's harness filters. For users the check depends on data, so it never runs in a
+  factory: it runs in the session worker's route `authorize`, in methods and derives at use (workers ask the server's
+  `SessionAccess`), and in HTTP handlers. Each app's own access rules are its own objects (her journal
   keyed by her id). Privacy against the owner is only an app's UI courtesy (he owns the machine and the code; no base
   machinery). Design and gaps (kit: per-app user pools and invites, revocation, current principals; harness:
   `scope.app`, fixed folder): `apps/book.md`.
