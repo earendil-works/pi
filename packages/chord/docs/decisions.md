@@ -793,7 +793,7 @@ validation and copies the v2 kernel added around Delta.
   order, `tx.update` per row, chunks of N rows per commit; table version `migrating` → `ready`; a crash resumes the
   scan). Indexes are local and created after `ready` (**superseded in part** by "Index definitions are recorded": the
   index changes after `ready` are recorded).
-- **S18, group commit (owner, 2026-11-04):** the commits queued behind a running commit step form one group, which the
+- **S18, group commit (owner, 2026-11-04; folded into design §10, 2026-11-13):** the commits queued behind a running commit step form one group, which the
   next turn of the commit queue admits at its entry and writes in one backend transaction: each commit keeps its own
   step, seq and outbox commit, the metadata is written once, and after `COMMIT` memory follows commit by commit, each
   adopted when memory stands at it, in queue order, before the next turn (S1 as for lone steps). Fewer transactions are
@@ -2382,7 +2382,7 @@ validation and copies the v2 kernel added around Delta.
   or `github:bob/plugins#<commit>`, installed by plain npm), imported by path into it (`@bob/plugins/notes/contract.ts`)
   or through its `exports`. Removed: the dependency form of `chord.plugins` (`"name": "github:...#ref:subfolder"`) and
   its own clone-and-link installer (it could delete outside `node_modules`).
-- **Looks and themes (owner, 2026-11-02: "i suppose", then "do all the things"; proposal `docs/theming/`):**
+- **Looks and themes (owner, 2026-11-02: "i suppose", then "do all the things"; proposal `docs/theming/`; folded into design §23, 2026-11-13):**
   shared components come from the app's per-kind API modules (one instance in the base bundle); looks are design
   tokens, CSS custom properties on `:root` on the web, which the app's components and plugins' CSS read; plugins scope
   their CSS with CSS modules (`*.module.css`); the terminal gets the app's components and a theme lookup by role. A
@@ -2415,7 +2415,7 @@ validation and copies the v2 kernel added around Delta.
   call; model, tools and location may differ; the tool's description names the cost (prompt cache only with the same
   model). pi's `/tree` (in-session branches) is wanted for p3: proposed as forks inside the session's store (edit an
   earlier message to fork, a branch list to switch; a full navigator and branch summaries later).
-- **Sync applies batches with the host stopped (owner, 2026-11-02: "sure"; sync example `60-session-sync`):**
+- **Sync applies batches with the host stopped (owner, 2026-11-02: "sure"; sync example `60-session-sync`; folded into design §10, 2026-11-13):**
   `applyBatch` refuses while a host holds claims on the store; the sync layer stops the session's worker, applies,
   restarts it. Usually nothing runs: Radius receiving uploads runs no host for a session it does not drive, and taking
   a session back pulls before its worker starts. A live view of a replica (watching a session continue elsewhere) is a
@@ -2518,7 +2518,7 @@ validation and copies the v2 kernel added around Delta.
   acts as the method's caller (decision of slice 4a, unchanged): a server object acting as itself towards a worker
   takes the reference with `self.get` in its own object or a server root; documented with p2's `Search.rebuildIndex`
   example in the guide and the porting notes.
-- **Tutorial gaps (owner, 2026-11-03: "4. export", "3. ok", "1. b"; the tutorial's findings):** (4) Chord's root
+- **Tutorial gaps (owner, 2026-11-03: "4. export", "3. ok", "1. b"; the tutorial's findings; (4) folded into design §5, 2026-11-13):** (4) Chord's root
   exports `invalid` and `forbidden`; an app's API re-exports them, so a plugin throws a decided `ChordError`. (3) An app's
   API is a real package (`"name": "@acme/app"`, `"exports": { "./v1": ..., "./v1/web": ... }`), so Node,
   TypeScript and plugin builds resolve it alike and tests import plugins' contract files; the tutorial and

@@ -718,7 +718,8 @@ host.serve(Notes, ({ session }, principal, self) =>
   pi-schema's message; `~` and `/` in keys escaped as `~0`, `~1`). Plugins throw `PluginError(code, message,
   details?)` for codes of their own; anything else crosses a link as the plugin code `internal` with its message, never
   a stack or a cause; plugin errors never use Chord's codes. An error rebuilt from the wire is not copied and only its
-  envelope is checked; a malformed envelope is a protocol error.
+  envelope is checked; a malformed envelope is a protocol error. Chord's root exports `invalid` and `forbidden`, which an
+  app's API re-exports, so a plugin throws a decided `ChordError` (decision "Tutorial gaps" (4)).
 - **Methods return data,** never objects; an object is handed out as its address and the receiver does `ctx.get`.
 - **No callbacks as arguments,** on either kind: behaviour goes through registries, multi-step work through jobs,
   input through flows, runtime services through core objects. Real schemas instead of `Type.Unsafe`.
@@ -1378,6 +1379,18 @@ host.serve(DraftStore, (_, self) => {               // local, empty params: may 
   each `json(...)` column's) in the outbox and in archives, a `table` write its state, a `latest` document its current
   value; the applier never infers a version. The encoding is pluggable; plain JSONL ships first. Sync is not export:
   it ships outbox batches as commits happen.
+- **Group commit (S18, owner, 2026-11-04):** the commits queued behind a running commit step form one group, written in
+  one backend transaction at the queue's next turn: each keeps its own step, seq and outbox commit, and memory follows
+  commit by commit after `COMMIT`, in queue order. A refusal in a group rolls it back whole and its commits run again
+  one by one, so only the refusing commit is refused (`store/book.md`).
+- **`store.onCommitted(listener, onError)`** (built with p2's backup coordinator, 2026-11-11; no decision): calls
+  `listener` with the new `lastSeq` once commits are durable and adopted (a commit, a group, a series, an applied
+  batch), in a microtask of its own, never inside a commit, once for however many commits it covers; a listener that
+  throws is removed and its error handed to `onError`, never to the commit. Returns its removal.
+- **Session sync** (`@earendil-works/chord/sync`, experimental): uploads of a store's outbox batches to a remote, pulls
+  applied with `applyBatch` (one transaction per chunk), restores from an archive. A batch is applied with the host
+  stopped (decision "Sync applies batches with the host stopped", 2026-11-02): `applyBatch` refuses (`invalid/args`)
+  while an owner holds a claim on the store.
 - **`json(schema, { version, migrate? })` columns (owner, 2026-10-26):** schema and version required, `migrate`
   optional and pure, on access (W11), its result checked once (R8); without it (or failing) the read is refused and
   the owner fails `broken`; each column's version and schema fingerprint are recorded in the table definition and
@@ -2582,7 +2595,7 @@ The core is one Web-standard handler built from the registry `Http` (decision "T
 ```ts
 const http = createHttp(server, {                    // settings are arguments, fixed for the component's life
 	listen: { host: "127.0.0.1", port: 8788 },        // Chord's own Node listener; none: the app mounts `fetch`
-	links: { path: "/chord", options: (request, principal) => ({ limits, maxPayload }) },
+	links: { path: "/chord", options: (request, principal) => ({ limits, maxPayload }), opened: (request, principal) => onClosed },
 	closeTimeout: 30_000,
 	onError,                                          // HttpError
 }, ctx);
@@ -2659,7 +2672,9 @@ route's checks, never instead of them.
 - **Sockets** (D6): `sockets: { "/terminal/:id": (socket, request, ctx) => … }`, a `ws` WebSocket after admission
   and the authenticators (no principal: 403 before plugin code), `maxPayload` per contribution (1 MiB), pinged after
   15 s of silence and terminated 15 s later. **Links:** `links.path` upgrades to `host.accept(webSocketLink(socket), {
-  principal, limits })`; a client that stops reading is cut off past 4 MiB waiting. **What is removed is closed at
+  principal, limits })`; a client that stops reading is cut off past 4 MiB waiting; `links.opened(request, principal)`,
+  when given, hears each link opened and may return what to call when it closes (the kit counts an ephemeral sign-in's
+  links with it; a throw is reported as the hook `links.opened`). **What is removed is closed at
   once** (decisions Q6, "allowed hosts only through contributions"): a link or socket whose host, relay or socket
   handler leaves the router is terminated and its scope sealed; an upgrade is checked again against the current router
   after its authenticators answered.
@@ -2752,7 +2767,12 @@ entry. Opinionated and small: an app is its API, its built-in plugins and a star
   and revokes its old sign-in; deny by default (the HTTP component refuses requests without a principal unless the route
   or socket is public); `SignIns` issues and revokes sign-ins (one browser or device signed in as a principal: its
   cookie or token, its expiry, its revocation; decision "Sign-ins, not sessions"); command-line clients send a token in a header (an
-  owner token file readable only by the app's OS user; a device pairing flow from other machines).
+  owner token file readable only by the app's OS user; a device pairing flow from other machines). A token is
+  `<id>.<secret>`, only the secret's hash kept; a browser carries it in the signed cookie `chord-sign-in`. Browser and
+  device sign-ins persist in the server's store and end unused after 400 days (a browser's cookie is renewed once it is
+  a day old); ephemeral ones (the pick-a-name login) live in memory only, at most `limits.ephemeralSignIns` (1,000;
+  past it the oldest ends), each ending with its client's connection (its last link closed and none opened for a
+  minute) and with the server's run.
 - **Storage:** one store for the server, a directory per worker under its kind and address with its store; plugins
   never use data-directory paths. `Files`, one per host (decision "Files v2"), is the default file storage: its
   bytes as immutable blobs in the host's `files/`, its index in tables of the host's store; every file in a space at
@@ -2820,17 +2840,39 @@ Decision "Slice 11's points", "Slice 11, P3" to "P9", and "Tutorial gaps" (1) (p
 - `chord/surfaces` serves the client surfaces (web and terminal) from the server; `chord/web` is a page's client host
   with its connection loop (p2's `keepConnected`), loading and applying the plugins' web facets. A base bundle per
   client kind built on the server from the app's entry (content-hashed; packages resolved with the server process's
-  conditions unless the app gives its own, so a page runs the Chord source the server runs); at page load the kind's
+  conditions unless the app gives its own, so a page runs the Chord source the server runs; the fonts, images and
+  WebAssembly its stylesheets name are files under `assets/`, named by their content); at page load the kind's
   current plugin set as one combined file named by its hash, later changed plugins one script each, each a script that
   registers itself (no eval); new scripts apply in place (`host.reload` in the page), their stylesheets (named by their
   content) loaded before and each plugin left with the stylesheet of the code it runs; pages learn of them through an
-  object the web component serves (the current set); a base code change reloads the page.
+  object the web component serves (the current set); a base code change reloads the page. A client starts without its
+  server (a page renders offline, a service worker's kept page): it follows the scripts object in the background and
+  applies the set shown when following begins as well as later ones.
+- **The connection loop** (`surfaces/connection.ts`, decision "Slice 11, P6"; the same loop in a page and a terminal's
+  sandbox, its clock, timers and wakes given): after a drop it reconnects after 250 ms doubling to 5 s (reset by a
+  connection open 10 s; the longest pause while the device is offline), at once on a wake (visible again, back online,
+  restored from the back/forward cache, a network change) and for the first drop after a wake (the socket that was
+  away); on a wake it replaces an open socket silent past the server's pings (25 s) once its next ping is overdue (at
+  least 1 s, for frames held while frozen); it gives up a socket not open after 20 s. After a close it asks the app's
+  `canRetry` beside the next attempt, never before it (a page's check asks the server's base over HTTP: seconds on a
+  network just woken), one question at a time (closes while one is open ask nothing more); a "no" stops the loop, and
+  an attempt it ends is reported `waiting`. A client asks the server's base there: another one stops the loop, then
+  calls `outdated` (a page reloads). States: `connecting`, `connected` (the socket opened), `waiting`.
 - An app with an HTTP stack of its own (p2) serves the surface's files itself (`webSurface(..., { routes: false })`:
   the surface contributes no `Http` routes and gives `file`, `pageAssets` and `base`); a page styling itself turns the
-  kit's themes off (`startPage({ themes: false })`); a page built offline and served elsewhere (p2's Cloud Brain page)
+  kit's themes off (`startPage({ themes: false })`: no `Themes` provider, nothing written on `:root`); a page built
+  offline and served elsewhere (p2's Cloud Brain page)
   is static (`startPage({ follow: false })`: its combined plugins only, no updates, never outdated); a server whose
   loader resolves packages through a tsconfig's `paths` (a source checkout without `dist/`) names it (`tsconfig`), and
   the base resolves through them too. Decision "Surfaces for an app with its own HTTP stack and styling".
+- **Looks and themes** (decision "Looks and themes", 2026-11-02; `src/surfaces/`): a theme is data in one registry,
+  `Themes` (version 1; `Theme`: `{ id, name, mode, colors, web?, tui? }`), with the base roles `accent`, `bg`, `fg`,
+  `muted`, `error`, `warning`, `success` (apps add roles; a later role is a version bump mapping old entries from the
+  fallback theme); plugins contribute themes, never the app's base CSS or components. A principal picks one dark and
+  one light theme (`ThemeChoice`, remote on the server, a preference kept per principal key like the locale choice),
+  the system preference chooses between them; a page writes the active theme as CSS variables on `:root`
+  (`--<role>`, its `web` extras), a terminal looks a role up (`terminalColor`: true colour or the nearest of 256).
+  Plugins scope their CSS with CSS modules.
 - `chord/react`: `HostProvider`, `useHold`, `useWatch`, `useRegistry`, `useRefState`, `useEvents(member, listener)`
   (an event member subscribed while mounted, below "Channels"), and `usePageState(key, initial)`:
   `useState`'s pair kept by the page's host under a key, so a component remounted by a plugin reload (a new function)
@@ -3272,7 +3314,8 @@ Chord reports traces, events and metrics through `@earendil-works/pi-telemetry`;
   which a recorder migrates a version 1 file in place (its rows' milliseconds multiplied), since several processes
   share one file and a new store version would strand the rows already there.
 - **The server is the one place telemetry is stored** (decisions "Telemetry from browser pages", "The server is the
-  one place telemetry is stored", "Who a span was for"; `src/telemetry-ingest/`): the server's store is the only
+  one place telemetry is stored", "Who a span was for"; `src/telemetry-ingest/`, exported as
+  `@earendil-works/chord/telemetry-ingest` for an app with its own hosts): the server's store is the only
   writer of its file. Pages and workers record with Chord's in-memory `TelemetryRecorder` (the SQLite store records
   with it too: one carrier format, one bounded queue of settled spans and metric aggregates per 10 s) and send finished
   spans in batches over the link they already have to the server's `PageTelemetry` and `WorkerTelemetry`
