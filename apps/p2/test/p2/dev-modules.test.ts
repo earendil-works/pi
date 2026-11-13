@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { fork } from "node:child_process";
 import { once } from "node:events";
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { contentHash, LoadedModules } from "../../src/hosts/dev-modules.ts";
 import { type DevModule, parseDevModules } from "../../src/runtime/dev-protocol.ts";
 import { poll } from "./helpers.ts";
@@ -109,4 +110,27 @@ test("worker baselines stay separate until each worker exits; deleting or revert
 	modules.delete("worker:new");
 	await writeFile(file, "three");
 	assert.deepEqual(modules.changed(), [], "Stopped workers do not contribute restart requirements");
+});
+
+test("reports of another server run's workers are discarded, even when their pid is alive again", async (t) => {
+	const reports = await mkdtemp(join(tmpdir(), "p2-dev-reports-"));
+	t.after(() => rm(reports, { recursive: true, force: true }));
+	// A loaded app file with a hash it does not have: a report naming it means "restart needed".
+	const stale = JSON.stringify({
+		type: "dev-modules",
+		modules: [
+			{ file: fileURLToPath(new URL("../../src/hosts/dev-modules.ts", import.meta.url)), hash: "0".repeat(64) },
+		],
+		pluginFiles: [],
+	});
+	// This test's pid is alive: an earlier run's worker pid reused by an unrelated process. The layout before server
+	// pids, and another server's report.
+	const earlier = [`${process.pid}.json`, `${process.pid + 1}-${process.pid}.json`];
+	for (const name of earlier) await writeFile(join(reports, name), stale);
+	const modules = new LoadedModules(undefined, undefined, reports);
+	assert.deepEqual(modules.changed(), []);
+	assert.deepEqual(await readdir(reports), []);
+	// This run's worker (named with this server's pid) still counts.
+	await writeFile(join(reports, `${process.pid}-${process.pid}.json`), stale);
+	assert.equal(modules.changed().length, 1);
 });
