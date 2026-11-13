@@ -54,6 +54,11 @@ const readStructuredOutputSchema = union([
 export type ReadToolDetails = {
 	/** How the shown text was cut; the text itself is the result content. */
 	truncation?: Omit<TruncationResult, "content">;
+	/**
+	 * Id of the conversation's model when the image was read, if it has no image input. For UIs only: the model gets
+	 * pi-ai's placeholder per request, so the stored result stays right after a switch to a vision model.
+	 */
+	imageUnsupportedByModel?: string;
 };
 
 const READ_CHUNK = 64 * 1024;
@@ -146,7 +151,8 @@ export function createReadTool(options: ReadToolOptions = {}): ToolRegistration<
 /**
  * One image block, prepared by `processor` or, without one, as it is when its format is inline and it fits the limits
  * (its size is checked before reading it, its dimensions from its header); otherwise an error result saying why. What happened to the image is an `info` diagnostic, so programs get the
- * bare `ImageContent`. A model without image input sees pi-ai's placeholder instead, decided per request.
+ * bare `ImageContent`. A model without image input sees pi-ai's placeholder instead, decided per request; `details`
+ * names it for UIs.
  */
 async function readImage(
 	reader: BinaryReader,
@@ -154,7 +160,7 @@ async function readImage(
 	path: string,
 	mimeType: string,
 	processor: ImageProcessor | undefined,
-	{ limits }: ImageModel,
+	{ limits, imageUnsupportedByModel }: ImageModel,
 	context: Context,
 ): Promise<ToolExecutionResult<ReadToolDetails>> {
 	let image: { readonly data: string; readonly mimeType: string };
@@ -200,21 +206,27 @@ async function readImage(
 		{ severity: "info", code: "image", message: [`Read image file [${image.mimeType}].`, ...notes].join(" ") },
 	];
 	const block = { type: "image" as const, data: image.data, mimeType: image.mimeType };
-	return { output: [block], structuredOutput: block, diagnostics };
+	return {
+		output: [block],
+		structuredOutput: block,
+		...(imageUnsupportedByModel === undefined ? {} : { details: { imageUnsupportedByModel } }),
+		diagnostics,
+	};
 }
 
-/** The image limits of the conversation's model. */
-type ImageModel = { readonly limits: ImageLimits };
+/** The conversation's model as images see it: its limits, and its id if it has no image input. */
+type ImageModel = { readonly limits: ImageLimits; readonly imageUnsupportedByModel?: string };
 
 /**
- * The conversation model's image limits: `DEFAULT_IMAGE_LIMITS` overridden by its `inputLimits.images.resize`. Without
- * a resolvable model, the defaults.
+ * The conversation model's image limits, `DEFAULT_IMAGE_LIMITS` overridden by its `inputLimits.images.resize`, and its
+ * id if it has no image input. Without a resolvable model, the defaults and no id.
  */
 async function imageModel(api: ToolExecutionApi, context: Context): Promise<ImageModel> {
 	const ref = (await api.agent(context)).model;
 	const model = ref === undefined ? undefined : api.models.getModel(ref.provider, ref.modelId);
 	const resize = model?.inputLimits?.images?.resize;
 	return {
+		...(model === undefined || model.input.includes("image") ? {} : { imageUnsupportedByModel: model.id }),
 		limits: {
 			maxWidth: resize?.maxWidth ?? DEFAULT_IMAGE_LIMITS.maxWidth,
 			maxHeight: resize?.maxHeight ?? DEFAULT_IMAGE_LIMITS.maxHeight,

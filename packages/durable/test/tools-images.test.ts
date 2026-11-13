@@ -194,6 +194,7 @@ async function read(
 ): Promise<ToolExecutionResult> {
 	writeFileSync(join(directory, name), bytes);
 	const model = {
+		id: "test",
 		input: options.input ?? ["text", "image"],
 		...(options.resize === undefined ? {} : { inputLimits: { images: { resize: options.resize } } }),
 	} as unknown as Model<never>;
@@ -256,10 +257,15 @@ describe("read of images, without an image processor", () => {
 		]);
 	});
 
-	it("keeps the image without a note about the current model's image support", async () => {
+	it("names a text-only model in details for UIs, not in what the model gets", async () => {
 		const result = await read("a.png", encode(4, 4, "png"), { input: ["text"] });
+		// The result is replayed after a switch to a vision model, so it keeps the image and no note that the model
+		// cannot see it; pi-ai replaces the image per request instead (#12131).
 		expect(onlyImage(result).mimeType).toBe("image/png");
 		expect(messages(result)).toEqual(["Read image file [image/png]."]);
+		expect(result.details).toEqual({ imageUnsupportedByModel: "test" });
+		const vision = await read("a.png", encode(4, 4, "png"));
+		expect(vision.details).toBeUndefined();
 	});
 
 	it("applies the model's image limits instead of the defaults", async () => {
