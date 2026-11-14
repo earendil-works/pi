@@ -4,8 +4,19 @@
 sessions; each session's worker runs and follows its own facts from the server. The test tiers exist from here on, and
 so do the numbers.
 
-State: details filled out 2026-11-14; decisions marked **(owner)** below are open. The scaffold (package, principal,
-API v1, `node:test`) is built and committed (4cc9fd409).
+State: built 2026-11-14, in review (round 1); not committed. The owner accepted every recommendation below
+(2026-11-14). The scaffold (package, principal, API v1, `node:test`) is committed (4cc9fd409).
+
+As built, differences from the plan below: `SessionFacts` is in `contract.ts` (the worker facet holds it, so it cannot be
+a server-only contract file); the creator is one `json` column; the kit exports `appInfoFacet` and `workerInfoFacet`
+(`packages/chord/src/node/app/index.ts`, README); `src/app.ts` holds `API` and `KINDS`; `server.ts` exports
+`mayReachSession`, which the topology's route uses too.
+
+Measured on slayer (Linux x64, Node 24.4.1), `bench/slice-1.ts`: server listening 46 ms after `startP3` began (module
+loading not included); the server process (server and the bench's client) 120.8 MiB `RssAnon`; worker start cold 377 ms
+(with the worker base's build), warm 99 ms (median of 10); an idle worker 37.3 MiB `RssAnon`. The phone and p2's
+numbers follow once the code is on main (the phone deploys from git). Tests: 12 plugin and topology tests and 1 end-to-end
+test, `npm test` 0.97 s wall.
 
 ## What is built
 
