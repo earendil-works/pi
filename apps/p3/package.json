@@ -1,0 +1,25 @@
+{
+	"name": "@p3/app",
+	"version": "0.0.1",
+	"private": true,
+	"description": "p3: the successor of p2 on Chord v2 (its API, base code and built-in plugins)",
+	"type": "module",
+	"exports": {
+		"./v1": "./src/api/v1/index.ts",
+		"./v1/server": "./src/api/v1/server.ts",
+		"./v1/worker": "./src/api/v1/worker.ts"
+	},
+	"scripts": {
+		"check": "node ../../scripts/biome-check.mjs && tsc --noEmit",
+		"format": "node ../../scripts/biome-check.mjs --write",
+		"test": "node --conditions=source --test --test-reporter=dot \"test/**/*.test.ts\" \"plugins/**/*.test.ts\""
+	},
+	"engines": {
+		"node": ">=24.4.0"
+	},
+	"dependencies": {
+		"@earendil-works/chord": "1.5.2",
+		"@earendil-works/pi-schema": "1.5.2",
+		"@earendil-works/pi-telemetry": "1.5.2"
+	}
+}

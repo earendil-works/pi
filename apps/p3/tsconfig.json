@@ -1,0 +1,12 @@
+{
+	"extends": "../../tsconfig.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"lib": ["ES2024", "DOM", "DOM.Iterable"],
+		"jsx": "react-jsx",
+		"customConditions": ["source"]
+	},
+	"include": ["*.ts", "src/**/*.ts", "plugins/**/*.ts", "test/**/*.ts"]
+}
