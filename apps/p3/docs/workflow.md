@@ -11,10 +11,11 @@ does the final review.
    real Chord and kit APIs, named by file, or defined right there), how it works, the tests case by case, the numbers
    it must meet (below), and a "Read first, in full" list (below). For every part: could a third-party plugin provide
    this, or an alternative, the same way? Docs are committed without review.
-3. **Build.** On a branch of a worktree off origin/main (open: the owner said "no worktree" on 2026-11-06, when p3 had
-   its own branch; the shared checkout's main is far behind). Chord v2 code style (root `AGENTS.md`) for p3 code too.
-   `cd apps/p3 && npm run check` (the root check skips `apps/`) and the slice's tests pass. From slice 2 on, every
-   plugin the slice touches is edited and applied while used in the reload tests: nothing lost, the restart mark off.
+3. **Build.** In the shared checkout `/home/badlogic/pi` on main, no worktree (owner, 2026-11-14, confirming
+   2026-11-06); other sessions work there too: commit only your own files, never `git add -A`. Chord v2 code style
+   (root `AGENTS.md`) for p3 code too. `cd apps/p3 && npm run check` (the root check skips `apps/`) and the slice's
+   tests pass. From slice 2 on, every plugin the slice touches is edited and applied while used in the reload tests:
+   nothing lost, the restart mark off.
 4. **Review, round 1.** GPT-6.1 Sol (fit with Chord's design and code), GPT-6 Astra (adversarial: races, failures,
    cost) and Fable 5.2 (simplicity, a second opinion) read the code against the brief. Not overzealous: what matters,
    not esoteric cases.
