@@ -3,7 +3,7 @@
 // reachable. Other Pis load from Radius's forwarded origin for them (`https://<label>.rdtun.com`), as the page itself,
 // through a grant the app gets with the shared Radius credential; when the origin's view cookie has expired it sends
 // the page to Radius's `/pi/forward`, and the app gets a fresh grant instead. A window keeps the pages of its recent
-// brains (PiWindowController), so switching tabs is instant.
+// brains (PiWindowController), so switching tabs is instant. Every page gets the host bridge (HostBridge.swift).
 import AppKit
 import WebKit
 
@@ -54,6 +54,7 @@ final class BrainPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadD
 				webView?.interactive = rects
 			}
 		}
+		HostBridge.install(in: configuration.userContentController, for: self)
 		for subview in [webView, placeholder] as [NSView] {
 			subview.translatesAutoresizingMaskIntoConstraints = false
 			view.addSubview(subview)
@@ -86,6 +87,19 @@ final class BrainPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadD
 		if brain.isDirect { return brain.route.contains(url) }
 		guard let remoteOrigin else { return false }
 		return url.scheme == remoteOrigin.scheme && url.host == remoteOrigin.host
+	}
+
+	/// Whether a frame on `origin` is this Pi's own: only those get the microphone and the host bridge.
+	func owns(_ origin: WKSecurityOrigin) -> Bool {
+		let page: URL? = brain.isDirect ? brain.route.url("/") : remoteOrigin
+		guard let page else { return false }
+		return origin.protocol == page.scheme && origin.host == page.host && origin.port == (page.port ?? 0)
+	}
+
+	/// Tells the page the app's light/dark preference changed, if a page of this Pi is loaded.
+	func appearanceChanged(_ preference: Appearance) {
+		guard let url = webView.url, owns(url) else { return }
+		HostBridge.themeChanged(preference, in: webView)
 	}
 
 	/// Opens `path` on a remote Pi through a fresh grant.
@@ -270,9 +284,7 @@ final class BrainPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadD
 		_ webView: WKWebView, decideMediaCapturePermissionsFor origin: WKSecurityOrigin, initiatedBy frame: WKFrameInfo,
 		type: WKMediaCaptureType
 	) async -> WKPermissionDecision {
-		let page: URL? = brain.isDirect ? brain.route.url("/") : remoteOrigin
-		guard let page else { return .deny }
-		return origin.protocol == page.scheme && origin.host == page.host && origin.port == (page.port ?? 0) ? .grant : .deny
+		owns(origin) ? .grant : .deny
 	}
 
 	private func alert(_ message: String, buttons: [String], accessory: NSView? = nil) async -> NSApplication.ModalResponse {
@@ -336,7 +348,6 @@ private final class Placeholder: NSView {
 	init() {
 		super.init(frame: .zero)
 		wantsLayer = true
-		layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 		title.font = .systemFont(ofSize: 20, weight: .semibold)
 		detail.textColor = .secondaryLabelColor
 		detail.alignment = .center
@@ -359,6 +370,12 @@ private final class Placeholder: NSView {
 
 	@available(*, unavailable)
 	required init?(coder: NSCoder) { fatalError("not used") }
+
+	// Drawn, not a layer colour resolved once: AppKit redraws the view when the app's appearance changes.
+	override func draw(_ dirtyRect: NSRect) {
+		NSColor.windowBackgroundColor.setFill()
+		dirtyRect.fill()
+	}
 
 	func show(for server: ServerController) {
 		switch server.phase {

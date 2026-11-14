@@ -4,7 +4,7 @@ import AppKit
 
 @MainActor
 enum MainMenu {
-	/// The app's main menu: Pi, File, Edit, View, Window.
+	/// The app's main menu: Pi, File, Edit, View (with Appearance: the app's light/dark preference), Window.
 	static func build() -> NSMenu {
 		let main = NSMenu()
 		main.addItem(submenu("Pi", [
@@ -37,6 +37,12 @@ enum MainMenu {
 			item("Actual Size", "actualSize:", "0"),
 			item("Zoom In", "zoomIn:", "+"),
 			item("Zoom Out", "zoomOut:", "-"),
+			.separator(),
+			submenu("Appearance", Appearance.allCases.map { preference in
+				let entry = item(preference.title, "chooseAppearance:")
+				entry.representedObject = preference.rawValue
+				return entry
+			}),
 			.separator(),
 			item("Enter Full Screen", "toggleFullScreen:", "f", [.command, .control]),
 		]))

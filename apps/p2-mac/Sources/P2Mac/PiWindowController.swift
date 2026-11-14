@@ -89,6 +89,11 @@ final class PiWindowController: NSWindowController, NSWindowDelegate {
 		for page in pages.values { page.serverChanged(app.server) }
 	}
 
+	/// Tells every page of the window that the light/dark preference changed.
+	func appearanceChanged(_ preference: Appearance) {
+		for page in pages.values { page.appearanceChanged(preference) }
+	}
+
 	private func show(_ id: String, path: String) {
 		selected = id
 		recent.removeAll { $0 == id }
