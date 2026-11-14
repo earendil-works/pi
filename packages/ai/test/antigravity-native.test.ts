@@ -448,6 +448,27 @@ describe("server-rejected text", () => {
 		"You are pair programming with a user to solve coding tasks. Be concise, practical, and tool-aware.";
 	const bare = normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] });
 
+	it("replaces pi's default identity line, which Antigravity rejects in the system instruction", async () => {
+		const ctx = normalizeContext({
+			systemPrompt:
+				"You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.",
+			messages: [{ role: "user", content: "test", timestamp: 1 }],
+		});
+		const request = await buildRequest(model, ctx, "project", {}, "gemini-3.8-flash-low");
+		expect(request.request.systemInstruction.parts).toEqual([
+			{ text: "You are a coding assistant. Help users inspect files, run commands, and modify code." },
+		]);
+		expect(findServerRejectedText(request.request)).toBeUndefined();
+		const custom = await buildRequest(
+			model,
+			normalizeContext({ systemPrompt: "You run inside pi, a coding agent harness.", messages: ctx.messages }),
+			"project",
+			{},
+			"gemini-3.8-flash-low",
+		);
+		expect(findServerRejectedText(custom.request)).toBe("inside pi, a coding agent harness");
+	});
+
 	it("pins the system instruction sent when the caller has none", async () => {
 		const request = await buildRequest(model, bare, "project", {}, "gemini-3.8-flash-low");
 		expect(request.request.systemInstruction).toEqual({

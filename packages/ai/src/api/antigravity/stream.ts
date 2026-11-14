@@ -129,6 +129,17 @@ const CONTINUATION_TEXT = "Continue the active task using the available instruct
 // matter; changing a comma does. Model turns and tool results that contain it pass. A retry never succeeds.
 const SERVER_REJECTED_TEXT =
 	/you\s+are\s+pair\s+programming\s+with\s+a\s+user\s+to\s+solve\s+coding\s+tasks\.\s+be\s+concise,\s+practical,\s+and\s+tool-aware/i;
+// Live probes 2026-11-14 (gemini-4-carbon and gemini-4-hydrogen at -high, gemini-3.8-flash): Antigravity answers the
+// same detail-less 429 to a system instruction holding pi's default identity line, "You are a coding assistant running
+// inside pi, a coding agent harness.", and to parts of it such as "inside pi, a coding agent harness". The same text in
+// a user turn passes. The full default prompt with tools passes once that sentence reads "You are a coding assistant."
+const PI_DEFAULT_IDENTITY =
+	/you\s+are\s+a\s+coding\s+assistant\s+running\s+inside\s+pi,\s+a\s+coding\s+agent\s+harness\./gi;
+const PI_DEFAULT_IDENTITY_REPLACEMENT = "You are a coding assistant.";
+const SYSTEM_REJECTED_TEXT = [
+	/you\s+are\s+a\s+coding\s+assistant\s+running\s+inside\s+pi\b/i,
+	/inside\s+pi,\s+a\s+coding\s+agent\s+harness/i,
+];
 let toolCallCounter = 0;
 
 function sanitizeToolCallId(id: string, fallbackName?: string): string {
@@ -750,7 +761,7 @@ export async function buildRequest(
 	const systemPromptText = resolveCurrentSystemPrompt(context);
 	const declaredTools = resolveCurrentTools(context);
 	const systemParts = systemPromptText
-		? [{ text: sanitizeText(systemPromptText) }]
+		? [{ text: sanitizeText(systemPromptText).replace(PI_DEFAULT_IDENTITY, PI_DEFAULT_IDENTITY_REPLACEMENT) }]
 		: [{ text: ANTIGRAVITY_SYSTEM_INSTRUCTION }, { text: ANTIGRAVITY_NO_PREAMBLE_INSTRUCTION }];
 
 	const contents = convertMessages(model, context, runtimeModel);
@@ -855,6 +866,12 @@ export function findServerRejectedText(request: GeminiRequestBody): string | und
 	for (const part of parts) {
 		const match = "text" in part ? part.text.match(SERVER_REJECTED_TEXT) : null;
 		if (match) return match[0];
+	}
+	for (const part of request.systemInstruction.parts) {
+		for (const pattern of SYSTEM_REJECTED_TEXT) {
+			const match = "text" in part ? part.text.match(pattern) : null;
+			if (match) return match[0];
+		}
 	}
 	return undefined;
 }
