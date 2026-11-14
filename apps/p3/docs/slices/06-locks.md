@@ -42,3 +42,7 @@ the ids change).
 - The one check at the call: the server checks `locks.manage` in `set` (locks review S3), against "no check at the
   call": an owner call.
 - Whether locks carry `version`/`migrate` is open (decisions.md's "Locks" entry lists no version).
+- From the resource model, per Fable's comparison (`research/resources-vs-locks-adm-fable.md`): the harness enforces
+  (a tool or extension names its lock and is left out when composed) instead of each plugin; fail closed (an unknown
+  lock reads closed); one allow/deny shape and one `allows(value, name)` for every lock that is a set of names. Not
+  covered by locks: several people's logins in one session, giving (how an org's shared login reaches a Pi), expiry.

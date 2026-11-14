@@ -278,5 +278,7 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
   measures worker start, idle RSS, server start and bytes on the wire (p2's worker starts take seconds on the phone).
   The kit's plugin loading is kept.
 - **No worktree (owner, 2026-11-14):** p3 is built in the shared checkout `/home/badlogic/pi` on main, as decided on
-  2026-11-06 for the then branch; commit only your own files. The resource model stays superseded by locks unless
-  Fable's comparison (asked 2026-11-14) finds it better.
+  2026-11-06 for the then branch; commit only your own files. The resource model stays superseded by locks: Fable's comparison
+  (2026-11-14, private: `research/p3-people-2026-11-13/resources-vs-locks-adm-fable.md`) recommends locks (one owner
+  leaves only restriction; several times smaller to build and for plugin authors) and three of its ideas for locks,
+  open in slice 6.
