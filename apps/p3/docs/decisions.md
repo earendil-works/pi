@@ -204,3 +204,12 @@ and its working rules are in `handoff.md`.
   learns the locks from member Pis' reports and by loading selected plugins' server facets in a sandbox. Design, kit
   changes, open questions: `people/book.md` (second edition). The owner: "this still seems overly complex".
 
+- **Docs, slices and the workflow (owner, 2026-11-14):** `apps/p3/docs/` holds only the current working set
+  (`README.md`, `overview.md`, `names.md`, `workflow.md`, `decisions.md`, `slices/`); everything older moved to
+  `archive/`. p3 is built in small slices, each with a brief; before a slice is built its brief is filled out in
+  detail; then build, review by Sol, Astra and Fable, fix, review again, fix, a walkthrough, and the owner's review with
+  Fable; work stops whenever a decision comes up (`workflow.md`). The p3 session is the builder. Names are one per
+  thing, everywhere (`names.md`): `transcript` (not chat), `person` (not user or guest), a run is the agent's work from
+  an input to its answer, a turn one assistant answer plus its tool calls. Fast and low memory is a goal: every slice
+  measures worker start, idle RSS, server start and bytes on the wire (p2's worker starts take seconds on the phone).
+  The kit's plugin loading is kept.
