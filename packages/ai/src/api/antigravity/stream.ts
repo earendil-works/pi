@@ -1386,7 +1386,7 @@ async function streamResponse(
 }
 
 /** Finish reasons Google's Gemini CLI retries; the stream content is a transient bad generation. */
-const RETRYABLE_FINISH_REASONS = new Set(["MALFORMED_FUNCTION_CALL", "UNEXPECTED_TOOL_CALL"]);
+const RETRYABLE_FINISH_REASONS = new Set(["MALFORMED_FUNCTION_CALL", "MALFORMED_RESPONSE", "UNEXPECTED_TOOL_CALL"]);
 
 /**
  * Endings that look complete but are not, worded to contain "ended without" so the agent's retry

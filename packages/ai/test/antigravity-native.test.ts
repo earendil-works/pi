@@ -788,7 +788,7 @@ describe("bad endings the Gemini CLI retries", () => {
 		expect(result.stopReason).toBe("stop");
 	});
 
-	it.each(["MALFORMED_FUNCTION_CALL", "UNEXPECTED_TOOL_CALL"])(
+	it.each(["MALFORMED_FUNCTION_CALL", "MALFORMED_RESPONSE", "UNEXPECTED_TOOL_CALL"])(
 		"makes %s on a codemode call retryable",
 		async (finish) => {
 			const result = await streamSimple(model, context, {

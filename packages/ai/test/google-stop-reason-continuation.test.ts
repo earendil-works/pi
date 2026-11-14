@@ -87,3 +87,30 @@ describe("Google CONTINUATION finish reason", () => {
 		}
 	});
 });
+
+describe("Google malformed generations", () => {
+	it("maps MALFORMED_RESPONSE and unknown finish reasons to error instead of throwing", () => {
+		expect(mapStopReason("MALFORMED_RESPONSE" as FinishReason)).toBe("error");
+		expect(mapStopReason("SOME_FUTURE_REASON" as FinishReason)).toBe("error");
+	});
+
+	it.each(["MALFORMED_RESPONSE", "MALFORMED_FUNCTION_CALL"])("words %s so the agent retries it", async (finish) => {
+		const sse = () =>
+			new Response(
+				`data: ${JSON.stringify({ candidates: [{ content: { role: "model", parts: [] }, finishReason: finish }] })}\n\n`,
+				{ headers: { "content-type": "text/event-stream" } },
+			);
+		const google = await streamGoogleGenerativeAI(createModel("google-generative-ai"), context, {
+			apiKey: "test-key",
+			fetch: async () => sse(),
+		}).result();
+		const vertex = await streamGoogleVertex(createModel("google-vertex"), context, {
+			apiKey: "test-key",
+			fetch: async () => sse(),
+		}).result();
+		expect(google.stopReason).toBe("error");
+		expect(google.errorMessage).toContain(`ended without a valid function call (${finish})`);
+		expect(vertex.stopReason).toBe("error");
+		expect(vertex.errorMessage).toContain(`ended without a valid function call (${finish})`);
+	});
+});

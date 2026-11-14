@@ -288,9 +288,15 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 				);
 			}
 			if (output.stopReason === "aborted" || output.stopReason === "error") {
-				const errorMessage = output.rawStopReason
-					? `Provider stopped with: ${output.rawStopReason}`
-					: "An unknown error occurred";
+				const retryable =
+					output.rawStopReason === "MALFORMED_FUNCTION_CALL" ||
+					output.rawStopReason === "MALFORMED_RESPONSE" ||
+					output.rawStopReason === "UNEXPECTED_TOOL_CALL";
+				const errorMessage = retryable
+					? `Google stream ended without a valid function call (${output.rawStopReason})`
+					: output.rawStopReason
+						? `Provider stopped with: ${output.rawStopReason}`
+						: "An unknown error occurred";
 				throw new Error(errorMessage);
 			}
 
