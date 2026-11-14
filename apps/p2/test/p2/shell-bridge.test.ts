@@ -1,10 +1,12 @@
 // The frame's side of the Radius shell's `pi-shell` channel (src/web/shell-bridge.ts): it reports the app's address to
-// the shell that frames it, takes the shell's base for link addresses, and does nothing for anyone else. A fake window
-// stands in for the browser: the page itself, its parent (the shell) and an unrelated window.
+// the shell that frames it, takes the shell's base for link addresses, passes the shell's theme on and sends the user's
+// pick, and does nothing for anyone else. A fake window stands in for the browser: the page itself, its parent (the
+// shell) and an unrelated window. theme.test.ts runs the theme module behind it.
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { HOME, linkHref, type Route } from "../../src/web/navigation.ts";
 import { startShellBridge } from "../../src/web/shell-bridge.ts";
+import type { ShellTheme, ShellThemeLink, ThemePreference } from "../../src/web/theme.ts";
 
 const SHELL = "https://radius.earendil.com";
 const BASE = `${SHELL}/pi/acme/11111111-0000-4000-8000-000000000000`;
@@ -55,7 +57,34 @@ function framedPage(options: { meta?: string; framed?: boolean } = {}) {
 	return { posted, send, listeners };
 }
 
-const hello = (base: string) => ({ channel: "pi-shell", type: "hello", version: 1, base });
+/** A theme side that records what the bridge passes on; `send` is the last `hello`'s. */
+function fakeTheme() {
+	const calls: ({ hello: ShellTheme | undefined } | { changed: ShellTheme })[] = [];
+	let send: ((preference: ThemePreference) => void) | undefined;
+	const link: ShellThemeLink = {
+		hello(theme, sender) {
+			calls.push({ hello: theme });
+			send = sender;
+		},
+		changed: (theme) => calls.push({ changed: theme }),
+	};
+	return { link, calls, send: (preference: ThemePreference) => send?.(preference) };
+}
+
+const hello = (base: string, extra: Record<string, unknown> = {}) => ({
+	channel: "pi-shell",
+	type: "hello",
+	version: 1,
+	base,
+	...extra,
+});
+const themeMessage = (preference: unknown, scheme: unknown) => ({
+	channel: "pi-shell",
+	type: "theme",
+	version: 1,
+	preference,
+	scheme,
+});
 const messages = (posted: Posted[]) => posted.map(({ message }) => message);
 
 describe("shell bridge", () => {
@@ -72,7 +101,7 @@ describe("shell bridge", () => {
 	it("announces itself to the shell's origin only and reports each new address", () => {
 		const page = framedPage({ meta: SHELL });
 		const navigation = fakeNavigation({ session: SESSION, conversation: 1, layers: [] });
-		stop = startShellBridge(navigation);
+		stop = startShellBridge(navigation, fakeTheme().link);
 		navigation.go({ session: SESSION, conversation: 2, layers: [] });
 		// A change that keeps the address (a sheet, a panel) reports nothing.
 		navigation.go({ session: SESSION, conversation: 2, layers: [{ kind: "sheet", name: "settings" }] });
@@ -92,7 +121,7 @@ describe("shell bridge", () => {
 
 	it("puts links under the base the shell names, and reports again for it", () => {
 		const page = framedPage({ meta: SHELL });
-		stop = startShellBridge(fakeNavigation());
+		stop = startShellBridge(fakeNavigation(), fakeTheme().link);
 		const route: Route = { session: SESSION, conversation: 1, layers: [] };
 		assert.equal(linkHref(route), `/s/${SESSION}`);
 		page.send(hello(BASE));
@@ -107,7 +136,7 @@ describe("shell bridge", () => {
 
 	it("takes a base only from the parent, from the shell's origin, on that origin", () => {
 		const page = framedPage({ meta: SHELL });
-		stop = startShellBridge(fakeNavigation());
+		stop = startShellBridge(fakeNavigation(), fakeTheme().link);
 		page.send(hello(BASE), "https://evil.test");
 		page.send(hello(BASE), SHELL, {});
 		page.send(hello("https://evil.test/pi/acme/x"));
@@ -126,11 +155,69 @@ describe("shell bridge", () => {
 		]) {
 			const page = framedPage(options);
 			const navigation = fakeNavigation();
-			const end = startShellBridge(navigation);
+			const theme = fakeTheme();
+			const end = startShellBridge(navigation, theme.link);
 			navigation.go({ session: SESSION, conversation: 1, layers: [] });
 			assert.deepEqual(page.posted, [], JSON.stringify(options));
 			assert.equal(page.listeners.size, 0);
+			theme.send("dark");
+			assert.deepEqual(page.posted, []);
 			end();
 		}
+	});
+
+	describe("theme", () => {
+		const dark = { preference: "dark", scheme: "dark" } as const;
+
+		it("passes the hello's theme on, or none from an older shell", () => {
+			const page = framedPage({ meta: SHELL });
+			const theme = fakeTheme();
+			stop = startShellBridge(fakeNavigation(), theme.link);
+			page.send(hello(BASE, { theme: dark }));
+			page.send(hello(BASE));
+			// Unknown values count as no theme: the page keeps its own.
+			page.send(hello(BASE, { theme: { preference: "blue", scheme: "dark" } }));
+			page.send(hello(BASE, { theme: { preference: "system" } }));
+			assert.deepEqual(theme.calls, [
+				{ hello: dark },
+				{ hello: undefined },
+				{ hello: undefined },
+				{ hello: undefined },
+			]);
+		});
+
+		it("passes each theme message on and sends the user's pick to the shell's origin", () => {
+			const page = framedPage({ meta: SHELL });
+			const theme = fakeTheme();
+			stop = startShellBridge(fakeNavigation(), theme.link);
+			page.send(hello(BASE, { theme: dark }));
+			theme.send("light");
+			page.send(themeMessage("light", "light"));
+			page.send(themeMessage("system", "dark"));
+			assert.deepEqual(theme.calls, [
+				{ hello: dark },
+				{ changed: { preference: "light", scheme: "light" } },
+				{ changed: { preference: "system", scheme: "dark" } },
+			]);
+			assert.deepEqual(page.posted.at(-1), {
+				message: { channel: "pi-shell", version: 1, type: "set-theme", preference: "light" },
+				origin: SHELL,
+			});
+		});
+
+		it("takes a theme only from the parent, from the shell's origin, with known values", () => {
+			const page = framedPage({ meta: SHELL });
+			const theme = fakeTheme();
+			stop = startShellBridge(fakeNavigation(), theme.link);
+			page.send(hello(BASE, { theme: dark }), "https://evil.test");
+			page.send(hello(BASE, { theme: dark }), SHELL, {});
+			page.send(themeMessage("dark", "dark"), "https://evil.test");
+			page.send(themeMessage("dark", "dark"), SHELL, {});
+			page.send({ ...themeMessage("dark", "dark"), channel: "other" });
+			page.send(themeMessage("dark", "blue"));
+			page.send(themeMessage("auto", "dark"));
+			page.send(themeMessage(undefined, undefined));
+			assert.deepEqual(theme.calls, []);
+		});
 	});
 });

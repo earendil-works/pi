@@ -559,9 +559,32 @@ tab's sessionStorage; URLs identify conversations (`/s/<id>` and `/s/<id>/c/<con
   (`…/pi/acme/<brain>/s/<id>`), not the frame's. The shell only replaces its URL with each report; the app's history
   entries stay the tab's, so Back moves the frame. Messages go to the shell's origin only; nothing is posted when the
   page is not framed or not relayed. The shell's side and the contract: Radius,
-  `client/src/views/pi-shell/frame-bridge.ts`. `test/p2/shell-bridge.test.ts` (origins, reports, base) and
-  `test/p2/ui-shell-frame.test.ts` (the real bundle framed by a stand-in shell on another site: mirrored URL, links,
-  one history entry per step, Back and Forward).
+  `client/src/views/pi-shell/frame-bridge.ts`. `test/p2/shell-bridge.test.ts` (origins, reports, base, theme
+  messages) and `test/p2/ui-shell-frame.test.ts` (the real bundle framed by a stand-in shell on another site:
+  mirrored URL, links, one history entry per step, Back and Forward, the shell's theme).
+- **Theme** (`src/web/theme.ts`). The light/dark preference lives in the outermost host, and the page picks a backend at
+  startup: `native` when p2-mac's `window.webkit.messageHandlers.piHost` exists (the app's `appearance`; `theme` and
+  `set-theme` messages with replies, `pi-host-theme` events; "system" resolves with `matchMedia`, which follows the
+  app's appearance), `shell` when the Radius shell frames the page (the meta, a plain origin, and a parent) and its
+  `hello` carries `theme` (the shell's `pi-theme`; the page applies the shell's resolved `scheme`, sends `set-theme`,
+  takes the `theme` echo), else `local` (the origin's localStorage `pi-theme`, as before). Hosted pages never read or
+  write their own stored value; the first-paint scripts skip it by the same rule (the app page's in `src/hosts/web.ts`;
+  the server pages' in `src/runtime/page.ts` skip it in any frame, since the CSP lets only the shell frame them). Picks
+  apply at once and the host's answer wins; two quick picks never flicker back: the shell answers each `set-theme`
+  with one `theme`, and the page drops `theme` messages until its last pick's answer (the count resets on `hello`);
+  with p2-mac it ignores `pi-host-theme` while a `set-theme` is unanswered and takes the latest request's answer.
+  Before `hello` a framed page follows the system, ignores its storage and `storage` events and keeps a pick in
+  memory: a `hello` with `theme` sends that pick as `set-theme` (else takes the shell's preference), a `hello` without
+  `theme` (an older shell) stores the pick or, without one, reads the stored value; without any `hello` the pick stays
+  in memory. Before `hello` a framed page shows the scheme the shell hinted in the URL it framed
+  (`#pi-shell-scheme=light|dark`): WebKit (26.6) resolves a cross-site frame's `prefers-color-scheme` with the
+  system's, not the embedder's `color-scheme` as Chrome does, so a shell forcing the opposite of the system would
+  otherwise paint the frame wrong until `hello`. The app page's first-paint script reads the hint only in a shell
+  frame (exactly that fragment; any other stays), paints it, keeps it for `theme.ts` as `<html data-pi-shell-scheme>`
+  and removes the fragment with `history.replaceState(history.state, "", pathname + search)` before the app reads the
+  URL (navigation.ts reads `location` when the bundle starts; nothing reads the fragment). Without a hint: the
+  system's scheme. `test/p2/theme.test.ts` (backends, races, picks and the hint before `hello`),
+  `test/p2/first-paint.test.ts` (both first-paint scripts, the hint) and `test/p2/ui-shell-frame.test.ts`.
 - `push`: one step at the tap; `replace`: lateral changes and server/startup corrections. A correction can pass
   its captured route as `replace(next, expected)` so it cannot overwrite a later queued destination.
 - `close`: whole-modal ×/scrim/Escape, or a sheet/file parent; `reset`: workspace tabs, dropping visited files/commits.

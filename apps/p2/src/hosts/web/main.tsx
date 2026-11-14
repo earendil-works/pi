@@ -22,7 +22,7 @@ import type { LinkClient } from "../../runtime/stale-page.ts";
 import { getNavigation, HostContext, Slot, setConnected, setShareEnded, webCoreFacet } from "../../runtime/web.tsx";
 import { AppBoundary, reportClientError, startErrorReports } from "../../web/app-boundary.tsx";
 import { startShellBridge } from "../../web/shell-bridge.ts";
-import { startTheme } from "../../web/theme.ts";
+import { shellTheme, startTheme } from "../../web/theme.ts";
 import type { WEB_PACKAGES } from "./packages.ts";
 
 /** The modules the plugins' web scripts import (`WEB_PACKAGES`), one instance each: this page's. */
@@ -74,8 +74,9 @@ export function startP2Page(): void {
 	if (cloud === undefined && "serviceWorker" in navigator)
 		void navigator.serviceWorker.register("/sw.js").catch(() => {});
 	startTheme();
-	// Through Radius, the shell's URL follows the app's and links open the shell (no-op elsewhere).
-	startShellBridge(getNavigation());
+	// Through Radius, the shell's URL follows the app's, links open the shell and the theme is the shell's (no-op
+	// elsewhere).
+	startShellBridge(getNavigation(), shellTheme);
 	startErrorReports();
 	const element = document.getElementById("root");
 	if (!element) throw new Error("Missing application root");

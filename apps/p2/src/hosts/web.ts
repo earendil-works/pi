@@ -65,8 +65,9 @@ const escapeAttribute = (value: string): string =>
 	value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 /**
- * The app page. The inline style and theme script run before any CSS so the first paint has the right background;
- * the surface's bootstrap, stylesheets and deferred scripts (`pageScripts`) follow them, so the stylesheets' rules win.
+ * The app page. The inline style and theme script run before any CSS so the first paint has the right background (by
+ * theme.ts's rule: a hosted page ignores its own stored theme); the surface's bootstrap, stylesheets and deferred
+ * scripts (`pageScripts`) follow them, so the stylesheets' rules win.
  * `data-web-version` names the base bundle (the service worker keeps the page's files under it); `#root`'s
  * `data-p2-telemetry` makes an owner's page record its telemetry (src/hosts/web/main.tsx; the server admits owners only),
  * while settings.json's `telemetry` is on.
@@ -104,16 +105,33 @@ function page(nonce: string, base: string, assets: PageAssets, viewer: Viewer, t
 			}
 		</style>
 		<script nonce="${nonce}">
-			let theme;
-			try {
-				theme = localStorage.getItem("pi-theme");
-			} catch {}
-			document.documentElement.dataset.theme = document.documentElement.dataset.colorScheme =
-				theme === "light" || theme === "dark"
-					? theme
-					: matchMedia("(prefers-color-scheme: dark)").matches
-						? "dark"
-						: "light";
+			{
+				// The preference is the host's when the Radius shell frames the page or p2-mac shows it (src/web/theme.ts):
+				// the page's stored one is not read, and the shell's hint or the system's scheme stands until the host says.
+				// The same check as shellFrame() in src/web/shell-bridge.ts; src/runtime/page.ts has the server pages' version.
+				const shell = document.querySelector('meta[name="p2-shell-origin"]')?.content;
+				let framed = false;
+				try {
+					framed = window.parent !== window && new URL(shell).origin === shell;
+				} catch {}
+				const hosted = framed || Boolean(window.webkit?.messageHandlers?.piHost);
+				// The shell's scheme when it framed the page, in the frame's URL: WebKit does not resolve a frame's
+				// prefers-color-scheme with the embedder's color-scheme. A colour only; kept for theme.ts until the shell's
+				// hello, and removed before the app reads the URL. Any other fragment stays.
+				const hint = framed ? /^#pi-shell-scheme=(light|dark)$/.exec(location.hash)?.[1] : undefined;
+				if (hint) {
+					document.documentElement.dataset.piShellScheme = hint;
+					history.replaceState(history.state, "", location.pathname + location.search);
+				}
+				let theme;
+				try {
+					if (!hosted) theme = localStorage.getItem("pi-theme");
+				} catch {}
+				document.documentElement.dataset.theme = document.documentElement.dataset.colorScheme =
+					theme === "light" || theme === "dark"
+						? theme
+						: (hint ?? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+			}
 		</script>
 		${pageScripts(assets, nonce).replaceAll("\n", "\n\t\t")}
 	</head>
