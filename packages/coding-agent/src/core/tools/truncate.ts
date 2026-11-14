@@ -10,6 +10,46 @@
 
 export const DEFAULT_MAX_LINES = 2000;
 export const DEFAULT_MAX_BYTES = 50 * 1024; // 50KB
+
+export interface ToolOutputLimits {
+	maxBytes: number;
+	maxLines: number;
+}
+
+/** Absolute tool-excerpt ceilings. Missing or invalid settings keep the upstream defaults. */
+export function resolveToolOutputLimits(settings?: {
+	toolOutput?: { maxBytes?: number; maxLines?: number };
+}): ToolOutputLimits {
+	const maxBytes = settings?.toolOutput?.maxBytes;
+	const maxLines = settings?.toolOutput?.maxLines;
+	return {
+		maxBytes: Number.isSafeInteger(maxBytes) && (maxBytes as number) > 0 ? (maxBytes as number) : DEFAULT_MAX_BYTES,
+		maxLines: Number.isSafeInteger(maxLines) && (maxLines as number) > 0 ? (maxLines as number) : DEFAULT_MAX_LINES,
+	};
+}
+
+/**
+ * Append a notice without letting the model-facing excerpt exceed the ceilings.
+ * The omitted bytes stay in the caller-named full output.
+ */
+export function appendNoticeWithinLimits(content: string, notice: string, limits: ToolOutputLimits): string {
+	const noticeText = notice ?? "";
+	const noticeLines = noticeText === "" ? 0 : noticeText.split("\n").length;
+	const lineBudget = Math.max(noticeText === "" ? 1 : 0, limits.maxLines - noticeLines);
+	let lines = content.split("\n");
+	if (lines.length > lineBudget) lines = lines.slice(0, lineBudget);
+	let body = lines.join("\n");
+	const noticeBytes = Buffer.byteLength(noticeText, "utf-8");
+	const bodyBudget = Math.max(0, limits.maxBytes - noticeBytes);
+	if (Buffer.byteLength(body, "utf-8") > bodyBudget) {
+		body = Buffer.from(body, "utf-8").subarray(0, bodyBudget).toString("utf-8");
+	}
+	const combined = body && noticeText ? `${body}${noticeText}` : body || noticeText;
+	if (Buffer.byteLength(combined, "utf-8") <= limits.maxBytes && combined.split("\n").length <= limits.maxLines) {
+		return combined;
+	}
+	return Buffer.from(combined, "utf-8").subarray(0, limits.maxBytes).toString("utf-8");
+}
 export const GREP_MAX_LINE_LENGTH = 500; // Max chars per grep match line
 
 export interface TruncationResult {

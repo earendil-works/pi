@@ -11,6 +11,10 @@ export const SETTINGS_DEFAULTS = {
 		reserveTokens: 16384,
 		keepRecentTokens: 20000,
 	},
+	toolOutput: {
+		maxBytes: 51200,
+		maxLines: 2000,
+	},
 	branchSummary: {
 		reserveTokens: 16384,
 		skipPrompt: false,

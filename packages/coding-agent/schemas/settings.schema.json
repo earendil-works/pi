@@ -148,6 +148,25 @@
         }
       }
     },
+    "toolOutput": {
+      "type": "object",
+      "properties": {
+        "maxBytes": {
+          "description": "Maximum bytes of a bash or read result included in the model-facing excerpt. The full output stays readable.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "default": 51200
+        },
+        "maxLines": {
+          "description": "Maximum lines of a bash or read result included in the model-facing excerpt.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "default": 2000
+        }
+      }
+    },
     "branchSummary": {
       "type": "object",
       "properties": {

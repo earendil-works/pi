@@ -10,6 +10,7 @@ import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 import { SETTINGS_DEFAULTS } from "./settings-defaults.ts";
+import { resolveToolOutputLimits, type ToolOutputLimits } from "./tools/truncate.ts";
 import type {
 	CacheWarmingMode,
 	CompactionModelOverride,
@@ -890,6 +891,11 @@ export class SettingsManager {
 			reserveTokens: this.getCompactionReserveTokens(model),
 			keepRecentTokens: this.getCompactionKeepRecentTokens(model),
 		};
+	}
+
+	/** Model-facing bash and read excerpt ceilings. Defaults stay 51200 bytes and 2000 lines. */
+	getToolOutputLimits(): ToolOutputLimits {
+		return resolveToolOutputLimits(this.settings);
 	}
 
 	getBranchSummarySettings(): { reserveTokens: number; skipPrompt: boolean } {

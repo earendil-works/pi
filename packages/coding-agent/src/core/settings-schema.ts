@@ -15,6 +15,21 @@ const CompactionModelOverrideSchema = Type.Object({
 	keepRecentTokens: Type.Optional(nonNegativeSafeInteger()),
 });
 
+const ToolOutputSettingsSchema = Type.Object({
+	maxBytes: Type.Optional(
+		nonNegativeSafeInteger({
+			description: "Maximum bytes of a bash or read result included in the model-facing excerpt. The full output stays readable.",
+			default: SETTINGS_DEFAULTS.toolOutput.maxBytes,
+		}),
+	),
+	maxLines: Type.Optional(
+		nonNegativeSafeInteger({
+			description: "Maximum lines of a bash or read result included in the model-facing excerpt.",
+			default: SETTINGS_DEFAULTS.toolOutput.maxLines,
+		}),
+	),
+});
+
 const CompactionSettingsSchema = Type.Object({
 	enabled: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.compaction.enabled })),
 	reserveTokens: Type.Optional(nonNegativeSafeInteger({ default: SETTINGS_DEFAULTS.compaction.reserveTokens })),
@@ -245,6 +260,7 @@ export const SettingsSchema = Type.Object(
 		),
 		theme: Type.Optional(Type.String()),
 		compaction: Type.Optional(CompactionSettingsSchema),
+		toolOutput: Type.Optional(ToolOutputSettingsSchema),
 		branchSummary: Type.Optional(BranchSummarySettingsSchema),
 		retry: Type.Optional(RetrySettingsSchema),
 		hideThinkingBlock: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.hideThinkingBlock })),
@@ -468,6 +484,7 @@ export const SettingsSchema = Type.Object(
 type SettingsInput = Static<typeof SettingsSchema>;
 
 export interface CompactionModelOverride extends Static<typeof CompactionModelOverrideSchema> {}
+export interface ToolOutputSettings extends Static<typeof ToolOutputSettingsSchema> {}
 export interface CompactionSettings extends Static<typeof CompactionSettingsSchema> {}
 export interface BranchSummarySettings extends Static<typeof BranchSummarySettingsSchema> {}
 export interface ProviderRetrySettings extends Static<typeof ProviderRetrySettingsSchema> {}
