@@ -81,14 +81,13 @@ host.serve(CodingTools, (_params, self) => {
 	self.contribute(HarnessExtensions, extension);
 	return {};
 });
-// and at the call: the bash tool's execute checks bash.value again (a turn may have pinned the old extension)
 ```
 
 The locks decided so far:
 
 | Lock | Plugin | Value | Enforced where |
 | --- | --- | --- | --- |
-| `harness.tools` | harness (base) | allow/deny globs over tool names | composing every session's tools, and at dispatch |
+| `harness.tools` | harness (base) | allow/deny globs over tool names | composing every session's tools |
 | `coding.bash` | coding-tools | switch | the extension and the tool's execute |
 | `conversations.reach` | conversations | list of session ids or null | listing and sending (a session's agent reaches other sessions only through it) |
 | `terminals.use` | terminals | switch | `Terminals.open` (pane and agent tool) |
@@ -96,6 +95,10 @@ The locks decided so far:
 | `prompt.instructions`, `prompt.skills`, `prompt.context` | prompt | sources; allow/deny globs with sources (`plugin:<p>/<s>`, `env:<e>/<s>`, `project:<s>`) | loading, listing, `/name` expansion |
 | `locations.places` | locations | `{ environment, cwd }[]` or null | every move and every spawn with `cwd`/`env` |
 | `subagents.use`, `subagents.environments` | subagents | switch, list | spawn and moves of subagents |
+
+**When a lock takes effect** (owner, 2026-11-13): from the next composition. Durable pins a snapshot of the tools per
+task phase (Chord §17), so a turn already running keeps what it had; the next turn uses the new value. Locks are no
+security boundary within a turn and get no check at the call.
 
 Subagents run in the session's worker: every session lock applies to them too. A place decides which instructions and
 skills load; it is not confinement (only an environment, e.g. a sandbox, confines).
@@ -181,5 +184,4 @@ plugin's list) as one source per type?
 1. Candidates (section 7).
 2. The page side of the plugin switch: how the page composes panes, slots and commands per `{ app, session }` (use
    sites filter by `pluginAllowed`; no second registry).
-3. The harness's `harness.tools` enforcement at dispatch together with Durable's selection (where in the harness).
-4. The kit change for the company ban (`plugins.admit`), and Radius reports (a Radius change).
+3. The kit change for the company ban (`plugins.admit`), and Radius reports (a Radius change).
