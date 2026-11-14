@@ -132,7 +132,7 @@ describe("Google raw stop reasons", () => {
 
 		expect(message.stopReason).toBe("error");
 		expect(message.rawStopReason).toBe("MALFORMED_FUNCTION_CALL");
-		expect(message.errorMessage).toBe("Provider stopped with: MALFORMED_FUNCTION_CALL");
+		expect(message.errorMessage).toBe("Google stream ended without a valid function call (MALFORMED_FUNCTION_CALL)");
 	});
 
 	it("preserves raw Gemini finish reasons for Google Vertex errors", async () => {
