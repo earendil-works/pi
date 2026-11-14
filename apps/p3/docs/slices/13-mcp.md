@@ -6,4 +6,6 @@
 
 **From the archive:** `archive/locks/design.md` (`mcp.*` locks), `archive/org-managed/book.md` (org-supplied MCP servers).
 
+**Read first:** `decisions.md` ("Models and credentials": accounts); `archive/accounts/book.md` (MCP); `archive/rundown/book.md` (one extension per MCP server, namespaces from configuration; no MCP process or credential in a worker); p2's `docs/mcp-durable.md`, `plugins/mcp/`; `packages/mcp/`.
+
 The brief is filled out when the slice is next.

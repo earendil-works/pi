@@ -5,32 +5,49 @@ each session's worker runs and knows its own facts. The tests' three tiers exist
 
 **Builds:**
 
-- `apps/p3/` as a workspace package `@p3/app`: `package.json` (exports `./v1`, `./v1/server`, `./v1/worker`),
-  `tsconfig.json`, scripts `check` and `test`.
-- Base code: `src/principals.ts` (`owner`, `person { id, name }`, `worker { session }`, `server`; nothing makes a
-  person yet), `src/api/v1/` (Chord's plugin surface re-exported once, `defineFacet` bound to the principal, the
-  `Session` host kind), `start.ts` (`startServer`, one worker kind), `worker.ts` (`startWorker`).
+- `apps/p3/` as the workspace package `@p3/app` (scaffold built 2026-11-14, not committed): `package.json`,
+  `tsconfig.json`, `biome.json`, `check` and `test` (`node:test`). `apps/*` is an npm workspace: the lockfile gains
+  p3's entries (commit with `PI_ALLOW_LOCKFILE_CHANGE=1`).
+- Base code: `src/principals.ts`, `src/api/v1/` (Chord's plugin surface re-exported once, `defineFacet` bound to the
+  principal, the `Session` host kind), `server.ts` (`startServer`, one worker kind), `worker.ts` (`startWorker`).
 - Plugin `sessions`: the sessions table on the server (id, title, app, creator, created, archived), the owner's view
-  (list, create, rename, archive), a session's facts for its own worker; a worker object proving the session runs and
+  (list, create, rename, archive), a session's facts for its own worker (the title is the server's: one write,
+  decision "Session data on the server as host-keyed documents"); a worker object that proves the session runs and
   follows its facts.
-- Tests: the topology harness (server and workers in one process over memory links), the first plugin, topology and
+- Kit changes: compression at the origin on the server and worker hosts; startup spans and `app.startup`
+  (`archive/startup-telemetry/book.md`).
+- Tests: the test topology (server and workers in one process over memory links), the first plugin, topology and
   end-to-end tests.
 - Numbers: worker start and idle RSS on slayer and the phone, and the same for a p2 worker on the phone, to learn
-  where p2's seconds go before p3's worker is shaped (owner, 2026-11-14: p2's worker starts on the phone take
-  seconds).
+  where p2's seconds go before p3's worker is shaped (owner, 2026-11-14).
 
 **Depends on:** nothing.
 
-**Read first:** `packages/chord/docs/design.md` §3–§7, §10 (data belonging to a host), §16–§18, §23 (the app kit,
-workers); the kit's `src/node/app/` (`app.ts`, `worker.ts`, `info.ts`) and `src/node/workers/`; the tutorial app
-`packages/chord/test/examples/61-tutorial/` (a complete kit app); `src/node/plugins/testing.ts`.
+**Read first, in full:**
 
-**From the archive:** `archive/map/book.md` (What Runs Where, Starting, The Session Catalog: the earlier skeleton draft; its `user` principal and chat are superseded), `archive/step-0/book.md` (the base's layout, the API package), `archive/base-inventory/explainer/book.md` (Sessions and Their Data: the session service; its metadata store is superseded by host-keyed documents), `archive/efficiency.md` §1 (memory per worker, from p2), `archive/startup-telemetry/book.md` (startup spans, for the numbers).
+- `packages/chord/docs/design.md` (all; for this slice above all §3–§7, §9–§11, §16–§18, §19, §21 "The plugin model",
+  §23 "The app kit" and "Workers", §29); `packages/chord/docs/plugin-authoring.md`; `packages/chord/docs/host-keyed/`.
+- Kit: `packages/chord/src/node/app/` (`README.md`, `app.ts`, `worker.ts`, `info.ts`, `layout.ts`, `data.ts`,
+  `index.ts`), `src/node/workers/` (`README.md`, `workers.ts`, `process.ts`, `child.ts`, `base.ts`),
+  `src/node/plugins/` (`README.md`, `testing.ts`), `src/link/link.ts` (`memoryLinkPair`).
+- The tutorial app `packages/chord/test/examples/61-tutorial/` (a complete kit app: start, worker, API, a plugin with
+  its test).
+- From the archive: `map/book.md` (What Runs Where, Starting, The Session Catalog: the earlier skeleton draft; its
+  `user` principal, chat and worker-owned title are superseded); `step-0/book.md` (the base's layout, the API package);
+  `base-inventory/explainer/book.md` (Sessions and Their Data: the session service; its metadata store is superseded
+  by host-keyed documents); `efficiency.md` (§1 item 1 and §3 are built); `startup-telemetry/book.md`.
 
-**Decided:** the kit is used for the real server (`startServer`, `startWorker`); plugins import only p3's API. The
-principal is identity only (decisions of 2026-11-13). A session belongs to one app (here always `coding`).
+**Decided:** the kit is used for the real server; plugins import only p3's API. The principal is identity only. A
+session belongs to one app (here always `coding`). Base entries are named after what they are (`server.ts`,
+`worker.ts`). Chord decision "a moved session: blocked tasks shown with a reason and an abort" applies when sessions
+move (later).
 
-**Open:** where the session facts live exactly (the admission design's `SessionsStore.facts`, keyed) is settled in
-the details.
+**Open:**
+
+- In-process workers for the topology tests: the kit's workers component only forks, and `workerInfoFacet`,
+  `hostDataFacet` and `startWorker`'s wiring are not exported. A kit entry for in-process workers, or p3 wires hosts
+  itself (and its tests then run another wiring than production).
+- Where a session's facts live exactly (the admission design's `SessionsStore.facts`, keyed).
+- Data directory `~/.p3` and port 8789 (proposed in `map/book.md`, never decided); how session ids are made.
 
 **Done when:** the tests pass in their tiers, the suite's time is reported, the numbers are in this brief.

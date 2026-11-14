@@ -1,11 +1,14 @@
 # p3 decisions
 
-The owner's decisions for p3, newest last. Chord decisions are in `packages/chord/docs/decisions.md`; the state of p3
-and its working rules are in `handoff.md`.
+The owner's decisions for p3, newest last. Chord decisions are in `packages/chord/docs/decisions.md`; the working
+rules are in `workflow.md`. An entry marked **(Superseded …)** is kept as the record; the entry it names wins. Paths in
+older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/docs/archive/<file>` (moved 2026-11-14).
 
-- **Work on branch `p3` in `/home/badlogic/pi`, no worktrees (owner, 2026-11-06: "no worktree. work in a branch in the
+- **(Superseded by "p3 lives on main", 2026-11-07.)** **Work on branch `p3` in `/home/badlogic/pi`, no worktrees (owner, 2026-11-06: "no worktree. work in a branch in the
   pi folder"):** the shared checkout is switched to `p3`; p3 work, and Chord changes p3 needs, are committed there and
   pushed to `origin/p3`; Chord changes are brought to main afterwards. Build subagents work in the same checkout.
+- **p3 lives on main (owner, 2026-11-07: "switch to main, p3 can live there too, branch sucks"; supersedes "Work on
+  branch p3"):** `apps/p3/` on main of earendil-works/pi; commit only your own files, never `git add -A`.
 - **Reloads first (owner, 2026-11-06: "first order is actually the whole reload shit. that needs to be smooth and
   perfect ... keep [server restarts] to its absolute minimum"):** base code is vocabulary (the API re-exports Chord's
   plugin surface once; the principal, `defineFacet`, host kinds; the start script, the worker entry, a web entry
@@ -13,13 +16,13 @@ and its working rules are in `handoff.md`.
   live in the contract file of the plugin that serves them. An object owning a native sits in a small plugin of its
   own; the logic around it in other plugins, read at use. A step is done only when editing each of its plugins during
   use loses nothing and leaves the kit's restart mark (`plugins.state.base`) false.
-- **Baby steps (owner, 2026-11-06: "we want baby steps, not humongous steps, we should start with something
+- **(The step order is superseded by `slices/`, 2026-11-14; baby steps stand.)** **Baby steps (owner, 2026-11-06: "we want baby steps, not humongous steps, we should start with something
   simple"):** step 0 is the kit server (own port and data directory), the owner's sign-in and one page plugin showing a
   value from a server object, done when editing it on the page and on the server reloads it in place without a
   restart (the reload test every later step keeps green). Then one small step each: a session list, a session worker,
   the harness with a fake model and a minimal chat, real models, and on. The first spec draft (the whole skeleton at once)
   moved to `docs/map/`: a map of where the steps lead, not a spec.
-- **Principals are `server`, `worker`, `user`, `guest` (owner, 2026-11-06):** `{ kind: "server" }`, `{ kind: "worker";
+- **(Superseded by "The principal is identity only", 2026-11-13.)** **Principals are `server`, `worker`, `user`, `guest` (owner, 2026-11-06):** `{ kind: "server" }`, `{ kind: "worker";
   session }`, `{ kind: "user"; id }`, `{ kind: "guest" }` reserved until sharing is designed. The owner is the first
   user: the kit's owner link signs in as the user p3 names (Chord decision "The kit's owner is a principal the app
   chooses").
@@ -59,7 +62,7 @@ and its working rules are in `handoff.md`.
   who may send in a session uses every resource in its selection, whoever started the run (as decided earlier: `origin`
   is out, illusory against prompt injection). The stress test's "authority per run" gap (`model-stress/report.md`, both
   reviews) is dropped; defining a session's resources (projects, lock-down, what is brought in) is the mechanism.
-- **Resource model direction (owner, 2026-11-08, voice walkthrough; to be specified and reviewed against p2's
+- **(Superseded by "Locks" and "Direction", 2026-11-13: one owner, only people confined, locks instead of resources and a policy plugin.)** **Resource model direction (owner, 2026-11-08, voice walkthrough; to be specified and reviewed against p2's
   features, then explained):** users (including a reserved instance user for company resources); resources, each owned
   by one user, with its own login or none, never changing whose login it uses (Cristina's own Radius login is her own
   resource); users create resources only for themselves, admins for the instance user; plugins create their built-in
@@ -77,7 +80,7 @@ and its working rules are in `handoff.md`.
   Configured resources cover fine-grained cases (conversation access to one session with chosen actions, expiring list
   entries). Rendering: renderers per contract and form (row, card, detail, ...) from any plugin, detail views assembled
   from panels several plugins contribute. No stringly-typed APIs.
-- **Session metadata store on the server (owner, 2026-11-09, voice):** a session's data lives in one of two places, and
+- **(Superseded by "Session data on the server as host-keyed documents", 2026-11-09.)** **Session metadata store on the server (owner, 2026-11-09, voice):** a session's data lives in one of two places, and
   a plugin picks one per fact. (1) The **session metadata store** on the server, provided by the base: everything about
   a session that is needed while its worker is not running (title, pin, archive, location, a Discord channel binding, a
   plugin's labels or settings for that session). Any plugin writes to it under its own typed key per session (a token
@@ -115,7 +118,7 @@ and its working rules are in `handoff.md`.
   request it has no script for fails the test. A test waits for an effect it caused (an entry newer than its own input,
   a result of its own call), never for a pattern that may already be there. A failure under load is a bug until its
   root cause is known.
-- **A view's frame is a Chord client with a view principal and its own socket (owner, 2026-11-10):** agent-made views
+- **(Superseded by "The agent writes plugins" and "Artifacts and views".)** **A view's frame is a Chord client with a view principal and its own socket (owner, 2026-11-10):** agent-made views
   run in sandboxed frames that connect to the server with their own link, authenticated by a short-lived token scoped to
   the view, as a principal `{ kind: "view", session, view, for }` that never gets the viewer's powers; objects serve view
   variants (the room for real-time collaboration among them). One WebSocket per view, not piggybacked on the page's:
@@ -145,7 +148,7 @@ and its working rules are in `handoff.md`.
   principal" and drops rooms and the view library. As built in p2: html artifacts keep the custom views' page API
   (`window.p2view`, state per artifact); a reader who may not change the session's views opens an item in the
   artifacts side panel on their own device; a session's clone and fork copy its artifacts.
-- **Instance resources, not an instance user (owner, 2026-11-13: "an instance user seems stupid. instance resources
+- **(Superseded by "Locks" and "Direction", 2026-11-13.)** **Instance resources, not an instance user (owner, 2026-11-13: "an instance user seems stupid. instance resources
   make more sense"; refines "Resource model direction"):** a resource's owner is `{ kind: "user", user }` or
   `{ kind: "instance" }`. Resources plugins create when installed (tools, prompt sections) and company resources (a
   shared login, a team server) are instance resources; the policy plugin decides who may create or bring them (default:
@@ -172,7 +175,7 @@ and its working rules are in `handoff.md`.
   the `managed` error, installs and Apply only through the base, the sharing and peer audience settings, and a gate
   that is always `unmanaged`. Company resources (a shared login, a team server) are org-managed entries of the setting
   that holds them; no policy plugin decides who may create or bring anything. Design: `org-managed/book.md`.
-- **Apps are plugins; users and guests are the confined people (owner, 2026-11-13: "an app is code, which creates
+- **(Superseded in its principals and session check by "People, apps and locks" and "The principal is identity only"; apps as trusted plugins stand.)** **Apps are plugins; users and guests are the confined people (owner, 2026-11-13: "an app is code, which creates
   layouts/views/objects it needs, and can reuse existing shit"; "the point of apps is that I the owner can construct
   it such that members (users) can only access what I give the app and its sessions"; "no defensive shit" for privacy
   against the owner; supersedes "Org-managed Pis through managed settings" of the same day):** one Pi, one owner, who installs every plugin; apps (the robot for his son, family, a football
@@ -189,7 +192,7 @@ and its working rules are in `handoff.md`.
   keyed by her id). Privacy against the owner is only an app's UI courtesy (he owns the machine and the code; no base
   machinery). Design and gaps (kit: per-app user pools and invites, revocation, current principals; harness:
   `scope.app`, fixed folder): `apps/book.md`.
-- **People, apps and locks (owner, 2026-11-13, evening; supersedes the per-app user pools of "Apps are plugins; users
+- **(The person principal with roles, sessions and revision is superseded by "The principal is identity only"; locks are refined by "Locks".)** **People, apps and locks (owner, 2026-11-13, evening; supersedes the per-app user pools of "Apps are plugins; users
   and guests are the confined people", and with it `self.choose`; replaces the settings layer of "Org-managed Pis"):**
   everyone besides the owner is a **person** `{ kind: "person", id, name, roles: app → role, sessions: id → read |
   write, revision }`, rights in the principal as p2's guests ("maybe guest is sufficient"); a change bumps the
@@ -248,6 +251,23 @@ and its working rules are in `handoff.md`.
   (every function shown is real, with its file, or defined right there); mark code BUILT or PROPOSED; never write
   about competing products in public repos; handoffs start with "Read first, in full"; docs may be committed, code
   only after the owner's review.
+- **Tool access (owner, 2026-11-06, recorded in the archived handoff of that day):** a turn's `origin` (owner-only
+  turns) is out, illusory against prompt injection; a tool's `scope` stays (structural: main conversation, subagents);
+  no new fields on tool declarations; no hardcoded tool lists; script-only tools through Durable's
+  `callers: ["tools"]`; without code mode the extensions registry's compose applies the `tool_search` fallback.
+- **Models and credentials (owner, 2026-11-06 and 2026-11-07):** plugins can provide model providers; workers get only
+  the access tokens of their session's providers, as view state, and the server refreshes them; each config file has
+  one owner on the server, others follow its state and write through its methods. Third parties integrate sign-in and
+  accounts; a plugin uses an account for an MCP sign-in or a provider (`archive/accounts/book.md`).
+- **No per-user environments (owner, 2026-11-10, repeated 2026-11-13):** a session in any app may use every
+  environment of the Pi; an app may limit its sessions to one; separation beyond that is a separate Pi.
+- **Rejected (owner, 2026-11-13; do not propose again):** managed settings (`defineSetting`, a managed layer), a plugin
+  manifest in `package.json`, per-plugin "features", permission levels, operation registries and policy rule tables,
+  resource rows, a `plugins: { only }` list in app code, a generic "pick plugins per session" sheet, per-app user pools
+  with `self.choose`, stamped principals, session lists in the principal, session ids that encode their app.
+- **Two research notes stay in the repo (owner, 2026-11-13):** `archive/hermes-opencode-teams.md` and
+  `archive/openclaw-teams.md` predate the rule against writing about competing products in public repos; the owner
+  kept them. Nothing new of that kind goes into the repo.
 - **Docs, slices and the workflow (owner, 2026-11-14):** `apps/p3/docs/` holds only the current working set
   (`README.md`, `overview.md`, `names.md`, `workflow.md`, `decisions.md`, `slices/`); everything older moved to
   `archive/`. p3 is built in small slices, each with a brief; before a slice is built its brief is filled out in

@@ -9,9 +9,12 @@ does the final review.
    to read, what is decided and what is open. Briefs are short.
 2. **Details.** Before building, the builder fills out the brief in detail: the files, the contracts and objects (only
    real Chord and kit APIs, named by file, or defined right there), how it works, the tests case by case, the numbers
-   it must meet (below). Docs are committed without review.
-3. **Build.** In a worktree off origin/main. Chord v2 code style (root `AGENTS.md`) for p3 code too. `npm run check`
-   and the slice's tests pass.
+   it must meet (below), and a "Read first, in full" list (below). For every part: could a third-party plugin provide
+   this, or an alternative, the same way? Docs are committed without review.
+3. **Build.** On a branch of a worktree off origin/main (open: the owner said "no worktree" on 2026-11-06, when p3 had
+   its own branch; the shared checkout's main is far behind). Chord v2 code style (root `AGENTS.md`) for p3 code too.
+   `cd apps/p3 && npm run check` (the root check skips `apps/`) and the slice's tests pass. From slice 2 on, every
+   plugin the slice touches is edited and applied while used in the reload tests: nothing lost, the restart mark off.
 4. **Review, round 1.** GPT-6.1 Sol (fit with Chord's design and code), GPT-6 Astra (adversarial: races, failures,
    cost) and Fable 5.2 (simplicity, a second opinion) read the code against the brief. Not overzealous: what matters,
    not esoteric cases.
@@ -21,6 +24,13 @@ does the final review.
    interactive): what was built, why and how, in the order to read the code.
 8. **Owner review.** The owner reviews the code with Fable. Code is committed only after his approval.
 9. **Update the docs:** the brief (as built), `overview.md`, `names.md`, `decisions.md`.
+
+## Reading
+
+A slice's brief lists what to read in full before detailing or building it: the docs (with sections), the Chord, kit,
+Durable and pi-ai source files, the p2 precedents, and the private reviews on slayer. Always also: `names.md`,
+`decisions.md` in full, and `packages/chord/docs/design.md` in full (root `AGENTS.md`). Archive docs use older names;
+translate them with `names.md`.
 
 ## Decisions
 
@@ -36,7 +46,8 @@ Fast and extensive, in three tiers:
 2. **Topology tests:** the server and session workers as hosts in one process, linked in memory, stores on SQLite
    `:memory:` (a temporary file where a restart is tested), the faux model scripted per test. Each test has its own
    topology. Most coverage lives here.
-3. **End-to-end tests:** a few, through the real app: `startServer`, forked workers, a client over WebSocket.
+3. **End-to-end tests:** a few, through the real app: `startServer`, forked workers, a client over WebSocket. Long
+   ones (browser) run only when asked or nightly, never in the default run.
 
 Isolated and deterministic (decision "Tests are isolated and deterministic"). Each slice reports the suite's time.
 
@@ -50,7 +61,10 @@ measures, on slayer and on the phone, what it touches:
 - the server's start and RSS;
 - bytes on the wire for common actions (opening a session, switching conversations, a streamed answer).
 
-A small benchmark script per slice, results in the brief. A slice that makes a number worse says why.
+A small benchmark script per slice, results in the brief. A slice that makes a number worse says why. The rules from
+p2's findings (`archive/efficiency.md`): page-wide objects held once, outside keyed subtrees; lists per session or
+paged, never all children of all sessions; compression at the origin on every Node host; a byte budget per common
+action.
 
 ## Handoff
 
