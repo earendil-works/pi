@@ -27,7 +27,8 @@ type Pending = { message: HostMessage; answer: (preference: unknown) => void };
 /**
  * Installs a browser: `stored` in localStorage, the system's scheme `dark` or not, framed by a shell when `framed` (the
  * server naming it when `meta`), with p2-mac's bridge when `native`, the shell's scheme hint `hint` kept by the inline
- * script.
+ * script. `fades`: view transitions (`"untyped"`: without types, as Safari 18.0), whose DOM changes wait for
+ * `runFades()`; `hidden` and `reducedMotion` as named.
  */
 function browser(options: {
 	stored?: string;
@@ -36,6 +37,9 @@ function browser(options: {
 	framed?: boolean;
 	native?: boolean;
 	hint?: string;
+	fades?: "typed" | "untyped";
+	hidden?: boolean;
+	reducedMotion?: boolean;
 }) {
 	const storage = new Map<string, string>(options.stored === undefined ? [] : [["pi-theme", options.stored]]);
 	const target = new EventTarget();
@@ -55,12 +59,33 @@ function browser(options: {
 			},
 		},
 	];
+	let frame: (() => void) | undefined;
 	const self: Record<string, unknown> = {
 		addEventListener: target.addEventListener.bind(target),
 		removeEventListener: target.removeEventListener.bind(target),
 		dispatchEvent: target.dispatchEvent.bind(target),
-		matchMedia: () => media,
+		matchMedia: (query: string) =>
+			query === "(prefers-reduced-motion: reduce)" ? { matches: options.reducedMotion ?? false } : media,
+		requestAnimationFrame: (callback: () => void) => {
+			frame = callback;
+			return 1;
+		},
+		cancelAnimationFrame: () => {
+			frame = undefined;
+		},
 	};
+	/** Each view transition started: its types, and its DOM change until `runFades` runs it. */
+	const fades: { types: unknown; update?: () => void }[] = [];
+	const transitions =
+		options.fades === undefined
+			? {}
+			: {
+					startViewTransition(argument: (() => void) | { update: () => void; types: string[] }) {
+						if (typeof argument === "function") fades.push({ types: undefined, update: argument });
+						else if (options.fades === "untyped") throw new TypeError("not a function");
+						else fades.push({ types: argument.types, update: argument.update });
+					},
+				};
 	self.parent = options.framed ? parent : self;
 	if (options.native)
 		self.webkit = {
@@ -79,6 +104,8 @@ function browser(options: {
 			removeItem: (key: string) => storage.delete(key),
 		},
 		document: {
+			...transitions,
+			visibilityState: options.hidden ? "hidden" : "visible",
 			documentElement: html,
 			querySelector: (selector: string) =>
 				selector === 'meta[name="p2-shell-origin"]' && options.meta ? { content: SHELL } : null,
@@ -93,6 +120,16 @@ function browser(options: {
 		posted,
 		asked,
 		fromShell,
+		fades,
+		/** The browser shows the page's first frame. */
+		frame: () => frame?.(),
+		/** Runs the started fades' DOM changes, in order. */
+		runFades() {
+			for (const fade of fades) {
+				fade.update?.();
+				fade.update = undefined;
+			}
+		},
 		/** The resolved theme on `<html>`, checked to agree with Elanor's attribute and the browser bar's colour. */
 		shown() {
 			assert.equal(html.dataset.colorScheme, html.dataset.theme);
@@ -417,6 +454,138 @@ describe("theme", () => {
 			setTheme("dark");
 			assert.ok(!page.posted.some((message) => message.type === "set-theme"));
 			assert.equal(page.asked.at(-1)!.message.type, "set-theme");
+		});
+	});
+
+	describe("fade", () => {
+		const typed = [{ types: ["pi-theme"] }];
+
+		it("fades a pick after the first frame, not what the page shows while it starts", () => {
+			const page = browser({ stored: "dark", fades: "typed" });
+			start();
+			setTheme("light");
+			assert.deepEqual([page.fades, page.shown()], [[], "light"]);
+			page.frame();
+			setTheme("dark");
+			// The old state stays until the browser has captured it.
+			assert.deepEqual([page.fades.map(({ types }) => ({ types })), page.shown()], [typed, "light"]);
+			page.runFades();
+			assert.equal(page.shown(), "dark");
+		});
+
+		it("fades a change of the shown scheme only", () => {
+			const page = browser({ fades: "typed" });
+			start();
+			page.frame();
+			// System (light) → Light: the same scheme.
+			setTheme("light");
+			setTheme("system");
+			assert.equal(page.fades.length, 0);
+			page.system(true);
+			page.otherTab("light");
+			assert.equal(page.fades.length, 2);
+			page.runFades();
+			assert.equal(page.shown(), "light");
+		});
+
+		it("shows the latest scheme when changes overtake a fade", () => {
+			const page = browser({ fades: "typed" });
+			start();
+			page.frame();
+			setTheme("dark");
+			setTheme("light");
+			setTheme("dark");
+			assert.equal(page.fades.length, 3);
+			page.runFades();
+			assert.equal(page.shown(), "dark");
+		});
+
+		it("keeps a change shown at once when a fade's DOM change runs after it", () => {
+			const page = browser({ meta: true, framed: true, fades: "typed" });
+			start();
+			page.frame();
+			page.system(true);
+			assert.equal(page.fades.length, 1);
+			page.fromShell(hello({ preference: "light", scheme: "light" }));
+			assert.equal(page.shown(), "light");
+			page.runFades();
+			assert.equal(page.shown(), "light");
+		});
+
+		it("does not repaint the scheme a pending fade is about to show", async () => {
+			// p2-mac: the answer to a pick and the appearance change it causes come before the fade's DOM change.
+			const page = browser({ native: true, fades: "typed" });
+			start();
+			page.frame();
+			setTheme("dark");
+			page.asked[1]!.answer("dark");
+			await settled();
+			page.system(true);
+			// The old state is still there for the fade to capture.
+			assert.deepEqual([page.fades.length, page.shown()], [1, "light"]);
+			page.hostReports({ preference: "dark" });
+			assert.equal(page.shown(), "light");
+			page.runFades();
+			assert.equal(page.shown(), "dark");
+		});
+
+		it("does not fade a hidden page, under reduced motion, or without view transitions", () => {
+			for (const options of [
+				{ fades: "typed", hidden: true },
+				{ fades: "typed", reducedMotion: true },
+				{},
+			] as const) {
+				const page = browser(options);
+				start();
+				page.frame();
+				setTheme("dark");
+				assert.deepEqual([page.fades, page.shown()], [[], "dark"], JSON.stringify(options));
+				for (const stop of stops.splice(0).reverse()) stop();
+			}
+		});
+
+		it("takes the update function alone where view transitions have no types", () => {
+			const page = browser({ fades: "untyped" });
+			start();
+			page.frame();
+			setTheme("dark");
+			assert.deepEqual(
+				page.fades.map(({ types }) => types),
+				[undefined],
+			);
+			page.runFades();
+			assert.equal(page.shown(), "dark");
+		});
+
+		it("does not fade the shell's hint or hello, and fades its later changes", () => {
+			const page = browser({ meta: true, framed: true, hint: "dark", fades: "typed" });
+			start();
+			page.frame();
+			page.fromShell(hello({ preference: "light", scheme: "light" }));
+			assert.deepEqual([page.fades, page.shown()], [[], "light"]);
+			page.fromShell(themeMessage("dark", "dark"));
+			setTheme("light");
+			page.fromShell(themeMessage("light", "light"));
+			assert.equal(page.fades.length, 2);
+			page.runFades();
+			assert.equal(page.shown(), "light");
+		});
+
+		it("does not fade p2-mac's first answer, and fades its reports and a differing answer", async () => {
+			const page = browser({ native: true, fades: "typed" });
+			start();
+			page.frame();
+			page.asked[0]!.answer("dark");
+			await settled();
+			assert.deepEqual([page.fades, page.shown()], [[], "dark"]);
+			page.hostReports({ preference: "light" });
+			assert.equal(page.fades.length, 1);
+			setTheme("dark");
+			page.asked[1]!.answer("light");
+			await settled();
+			assert.equal(page.fades.length, 3);
+			page.runFades();
+			assert.equal(page.shown(), "light");
 		});
 	});
 });

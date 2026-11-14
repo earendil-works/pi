@@ -583,8 +583,17 @@ tab's sessionStorage; URLs identify conversations (`/s/<id>` and `/s/<id>/c/<con
   frame (exactly that fragment; any other stays), paints it, keeps it for `theme.ts` as `<html data-pi-shell-scheme>`
   and removes the fragment with `history.replaceState(history.state, "", pathname + search)` before the app reads the
   URL (navigation.ts reads `location` when the bundle starts; nothing reads the fragment). Without a hint: the
-  system's scheme. `test/p2/theme.test.ts` (backends, races, picks and the hint before `hello`),
-  `test/p2/first-paint.test.ts` (both first-paint scripts, the hint) and `test/p2/ui-shell-frame.test.ts`.
+  system's scheme. A change of the shown scheme after load cross-fades: `theme.ts` makes the DOM change in
+  `document.startViewTransition({ update, types: ["pi-theme"] })` (the function form where types are missing), the
+  browser's default cross-fade of the page, about 250 ms; no CSS of its own (scope any to
+  `:active-view-transition-type(pi-theme)`). Each document fades its own pixels: the Radius shell keeps its frame out
+  of its snapshot, p2-mac fades only its native views. No fade for what the page shows while starting (first paint,
+  hint, before the first frame, `hello`, p2-mac's first answer), an unchanged scheme, a hidden page, reduced motion or
+  without the API; a change during a fade starts a new one, and a fade's late DOM change shows the latest scheme.
+  Nothing theme-related keys off `prefers-color-scheme` once `data-color-scheme` is set (Elanor's tokens use it only
+  without the attribute), so the old snapshot is the old theme. `test/p2/theme.test.ts` (backends, races, picks and
+  the hint before `hello`, fades), `test/p2/first-paint.test.ts` (both first-paint scripts, the hint),
+  `test/p2/ui-shell-frame.test.ts` and `test/p2/ui-theme-fade.test.ts` (a pick fades in Chrome, the first paint not).
 - `push`: one step at the tap; `replace`: lateral changes and server/startup corrections. A correction can pass
   its captured route as `replace(next, expected)` so it cannot overwrite a later queued destination.
 - `close`: whole-modal ×/scrim/Escape, or a sheet/file parent; `reset`: workspace tabs, dropping visited files/commits.

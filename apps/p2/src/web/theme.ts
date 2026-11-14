@@ -30,6 +30,13 @@ import { shellFrame } from "./shell-bridge.ts";
  * Hosted pages (shell, native) never read the stored value and never write it, so a stale forced value in the frame's
  * origin is ignored, never pushed up. A pick applies at once (optimistic); the host's answer replaces it, which
  * settles races between tabs or windows.
+ *
+ * A change of the shown scheme after load cross-fades: the DOM change runs in a view transition of type `pi-theme`
+ * (the browser's default cross-fade of the whole page). Each document fades its own pixels: the Radius shell keeps
+ * this frame out of its snapshot, and p2-mac fades only its native views. No fade for what the page shows while it
+ * starts (the first paint, the shell's hint, anything before the first frame was shown, the shell's `hello`, p2-mac's
+ * first answer), an unchanged scheme, a hidden document, reduced motion, or a browser without view transitions. A
+ * change during a fade starts a new one (the browser finishes the running one).
  */
 
 export type ThemePreference = "system" | "light" | "dark";
@@ -78,6 +85,13 @@ const listeners = new Set<() => void>();
 let backend: Backend = { kind: "local" };
 let preference: ThemePreference = "system";
 let system: MediaQueryList | undefined;
+/** Whether the page has shown a frame since `startTheme`: what it shows while starting never fades. */
+let shown = false;
+/** The scheme last asked to show; a fade's DOM change, which runs later, shows the latest one. */
+let showing: ThemeScheme | undefined;
+
+/** How a change shows: in one frame, or cross-faded when the rules above allow it. */
+type Show = "at once" | "fade";
 
 /** Called once from main.tsx, before the first render and before the shell bridge starts; returns a stop function. */
 export function startTheme(): () => void {
@@ -88,21 +102,24 @@ export function startTheme(): () => void {
 	if (host) backend = { kind: "native", host, turn: 0, unanswered: 0 };
 	else if (shellFrame()) backend = { kind: "framed", pick: undefined, hint: shellHint() };
 	else preference = read();
-	apply();
+	apply("at once");
+	const frame = window.requestAnimationFrame(() => {
+		shown = true;
+	});
 	const systemChanged = () => {
-		if (backend.kind !== "shell") apply();
+		if (backend.kind !== "shell") apply("fade");
 	};
 	// Another tab of this origin changed the theme.
 	const stored = (event: StorageEvent) => {
 		if (backend.kind !== "local" || (event.key !== KEY && event.key !== null)) return;
 		preference = read();
-		changed();
+		changed("fade");
 	};
 	const hostReported = (event: Event) => {
 		const reported = themePreference((event as CustomEvent<{ preference?: unknown } | null>).detail?.preference);
 		if (backend.kind !== "native" || backend.unanswered > 0 || reported === undefined) return;
 		backend.turn++;
-		set(reported);
+		set(reported, "fade");
 	};
 	media.addEventListener("change", systemChanged);
 	window.addEventListener("storage", stored);
@@ -111,6 +128,9 @@ export function startTheme(): () => void {
 		ask(backend, { type: "theme" });
 	}
 	return () => {
+		window.cancelAnimationFrame(frame);
+		shown = false;
+		showing = undefined;
 		media.removeEventListener("change", systemChanged);
 		window.removeEventListener("storage", stored);
 		window.removeEventListener("pi-host-theme", hostReported);
@@ -165,7 +185,8 @@ function ask(
 	const answered = (answer: unknown) => {
 		if (setting) native.unanswered--;
 		const given = themePreference((answer as { preference?: unknown } | null)?.preference);
-		if (given !== undefined && turn === native.turn && backend === native) set(given);
+		// The answer to the first question is what the page shows while it starts.
+		if (given !== undefined && turn === native.turn && backend === native) set(given, setting ? "fade" : "at once");
 	};
 	Promise.resolve(native.host.postMessage(message)).then(answered, () => answered(undefined));
 }
@@ -177,8 +198,32 @@ function askShell(shell: Extract<Backend, { kind: "shell" }>, next: ThemePrefere
 	shell.send(next);
 }
 
-function apply(): void {
-	const resolved = scheme();
+/** Shows the current scheme, `show`n as asked when the rules above allow it, else at once. */
+function apply(show: Show): void {
+	const next = scheme();
+	// Shown or about to be: painting it again now could land before a pending fade captures the old state (p2-mac's
+	// appearance change follows its answer within milliseconds), and the fade would show nothing.
+	if (next === showing) return;
+	const fade =
+		show === "fade" &&
+		shown &&
+		"startViewTransition" in document &&
+		document.visibilityState === "visible" &&
+		!window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+	showing = next;
+	if (!fade) paint();
+	else
+		try {
+			document.startViewTransition({ update: paint, types: ["pi-theme"] });
+		} catch {
+			// Browsers with view transitions but without types take only the update function.
+			document.startViewTransition(paint);
+		}
+}
+
+/** Writes the scheme last asked to show into the DOM. */
+function paint(): void {
+	const resolved = showing ?? scheme();
 	document.documentElement.dataset.theme = resolved;
 	document.documentElement.dataset.colorScheme = resolved;
 	// The page has one theme-color per system scheme; the resolved theme overrides both.
@@ -194,16 +239,16 @@ function scheme(): ThemeScheme {
 	return system?.matches ? "dark" : "light";
 }
 
-function changed(): void {
-	apply();
+function changed(show: Show): void {
+	apply(show);
 	for (const listener of listeners) listener();
 }
 
-function set(next: ThemePreference): void {
-	if (next === preference) apply();
+function set(next: ThemePreference, show: Show): void {
+	if (next === preference) apply(show);
 	else {
 		preference = next;
-		changed();
+		changed(show);
 	}
 }
 
@@ -213,23 +258,24 @@ export const shellTheme: ShellThemeLink = {
 		if (backend.kind === "shell" && theme) {
 			// A new `hello` (the shell answered another `ready`): it holds the shell's current theme.
 			backend.unanswered = 0;
-			shellTheme.changed(theme);
+			backend.scheme = theme.scheme;
+			set(theme.preference, "at once");
 		}
 		if (backend.kind !== "framed") return;
 		const { pick } = backend;
 		if (theme) {
 			const shell: Backend = { kind: "shell", send, scheme: theme.scheme, unanswered: 0 };
 			backend = shell;
-			if (pick === undefined) set(theme.preference);
+			if (pick === undefined) set(theme.preference, "at once");
 			else {
 				askShell(shell, pick);
-				apply();
+				apply("at once");
 			}
 			return;
 		}
 		// An older shell: the page owns the preference after all.
 		backend = { kind: "local" };
-		if (pick === undefined) set(read());
+		if (pick === undefined) set(read(), "at once");
 		else store(pick);
 	},
 	changed(theme) {
@@ -237,7 +283,7 @@ export const shellTheme: ShellThemeLink = {
 		// Each pick is answered by one `theme`; until the last pick's comes, the others would flicker back.
 		if (backend.unanswered > 0 && --backend.unanswered > 0) return;
 		backend.scheme = theme.scheme;
-		set(theme.preference);
+		set(theme.preference, "fade");
 	},
 };
 
@@ -267,5 +313,5 @@ export function setTheme(next: ThemePreference): void {
 			break;
 	}
 	preference = next;
-	changed();
+	changed("fade");
 }
