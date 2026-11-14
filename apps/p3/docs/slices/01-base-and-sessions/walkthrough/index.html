@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>p3 slice 1: base and sessions</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A walkthrough · p3 slice 1 · 2026-11-14</div>
+  <h1>Slice 1<br>Sessions</h1>
+  <p class="subtitle">The base code a restart changes, one plugin that owns sessions, a worker per session that follows its facts, and the tests that run all of it in one process</p>
+  <div class="cover-stats"><div class="stat"><b>9</b><span>source files of p3 (base and plugin), plus tests</span></div><div class="stat"><b>15</b><span>tests in about 1 s</span></div><div class="stat"><b>99 ms</b><span>a session worker&#39;s warm start on slayer</span></div><div class="stat"><b>29.5 MiB</b><span>an idle worker&#39;s anonymous memory</span></div></div>
+  <div class="cover-note"><p>A walkthrough of the code of slice 1 for the owner&#39;s review, in the order to read it. The brief is
+<code>apps/p3/docs/slices/01-base-and-sessions.md</code>; the reviews (Sol, Astra, Fable, two rounds) are in <code>/tmp/p3-s1-r*.md</code>
+on slayer. Every name here is in the code; nothing is proposed.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#before-we-begin">Before we begin</a></li>
+<li><a href="#principals">I. Who Is Who</a></li>
+<li><a href="#api">II. What Plugins Import</a></li>
+<li><a href="#starting">III. Starting</a></li>
+<li><a href="#store">IV. One Plugin Owns Sessions</a></li>
+<li><a href="#views">V. Views Decide Who Gets What</a></li>
+<li><a href="#worker">VI. A Worker Follows</a></li>
+<li><a href="#topology">VII. The Test Topology</a></li>
+<li><a href="#tests">VIII. The Tests</a></li>
+<li><a href="#numbers">IX. The Numbers</a></li>
+<li><a href="#open-questions">Open Questions</a></li>
+<li><a href="#files">Appendix A: Files</a></li>
+</ol></nav>
+
+<section class="preface" id="before-we-begin">
+<h2>Before we begin</h2>
+<p class="dropcap">Mario opens p3 on his phone and taps &quot;new session&quot;. Somewhere a row appears in a list, and somewhere a process starts
+that will one day run an agent for that session. Before any agent, transcript or UI exists, three things must already
+be right: who is who (the owner, a person, a session&#39;s worker, the server), where a session&#39;s data lives (and which
+process owns it), and how a session&#39;s worker learns about its own session without the server pushing it there.</p>
+<p>Slice 1 builds exactly that and nothing else: the base code (what a restart changes), one plugin, <code>sessions</code>, and the
+test setup every later slice runs on. There is no page yet; a client over WebSocket stands in for it.</p>
+<h3 id="seven-things-to-know">Seven things to know</h3>
+<ol class="findings">
+<li><strong>The base is small.</strong> A principal type, the API module plugins import, what p3 tells the kit, and two entries:
+<code>server.ts</code> and <code>worker.ts</code>. Everything else is a plugin.</li>
+<li><strong>One plugin owns sessions.</strong> <code>sessions</code> keeps every session as one table row and one facts document, written in
+one transaction by one local object, <code>SessionsStore</code>.</li>
+<li><strong>Views decide who gets what.</strong> The owner gets <code>Sessions</code> (list, create, rename, archive, restore); a session&#39;s
+worker gets <code>SessionFacts</code> (its own session, by its principal). Everyone else is refused in the factory.</li>
+<li><strong>A worker follows, the server owns.</strong> The worker holds <code>SessionFacts</code> as itself; a rename on the server reaches it
+live. Nothing about a session is written by its worker.</li>
+<li><strong>Facts carry no id.</strong> The session&#39;s address is the key; a copy under another address rewrites keys, not JSON.</li>
+<li><strong>The tests run the real thing in one process.</strong> Server and workers are Chord hosts linked in memory, with real
+SQLite stores; a test takes milliseconds.</li>
+<li><strong>One kit change:</strong> <code>appInfoFacet</code> and <code>workerInfoFacet</code> are exported, so the tests load the same start-data
+objects as production.</li>
+</ol>
+<h3 id="words-used-throughout">Words used throughout</h3>
+<p>The <strong>owner</strong> is the person who owns the Pi; a <strong>person</strong> is anyone else (none is let in yet). A <strong>principal</strong> is who
+calls, stamped by the link a call arrives on. A <strong>session</strong> is one agent workspace with its own <strong>worker</strong> process and
+store; its <strong>address</strong> is <code>Session({ id })</code>. A session&#39;s <strong>facts</strong> are what is known of it besides its id. A <strong>view</strong>
+is a remote object that serves one kind of principal what it may see. The <strong>test topology</strong> is the tests&#39; setup: the
+server and workers as hosts in one process.</p>
+</section>
+
+<section class="chapter" id="principals"><header class="opener"><div class="numeral">I</div><h2>Who Is Who</h2><p class="lede">Four kinds of principal, identity only, and who may reach a session&#39;s worker.</p></header>
+<p class="dropcap">Everything starts with <code>src/principals.ts</code>. A principal names who someone is, never what they may do: decision &quot;The
+principal is identity only&quot;.</p>
+<pre><code><span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">P3Principal</span> =
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"owner"</span> }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"person"</span>; <span class="tk-k">readonly</span> id: string; <span class="tk-k">readonly</span> name: string }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"worker"</span>; <span class="tk-k">readonly</span> session: string }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"server"</span> };</code></pre>
+<p><code>src/app.ts</code> is what p3 tells the kit about itself, shared by the server, the worker entry and the tests: the API
+module and its versions, the facet kinds (<code>server</code>, <code>worker</code>), the principals the kit stamps, and the one access rule
+this slice has.</p>
+<pre><code><span class="tk-k">export</span> <span class="tk-k">const</span> PRINCIPALS = {
+	server: { kind: <span class="tk-s">"server"</span> },
+	worker: (address) =&gt; ({ kind: <span class="tk-s">"worker"</span>, session: <span class="tk-t">String</span>(address.params.id) }),
+	owner: { kind: <span class="tk-s">"owner"</span> },
+};
+
+<span class="tk-c">/** Who may reach a session's worker: the owner and the server (persons come with admission, slice 5). */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">mayReachSession</span>(principal: <span class="tk-t">P3Principal</span>): boolean {
+	<span class="tk-k">return</span> principal.kind === <span class="tk-s">"owner"</span> || principal.kind === <span class="tk-s">"server"</span>;
+}</code></pre>
+<p><code>mayReachSession</code> is the route&#39;s <code>authorize</code>: it runs for every hold that goes to a session&#39;s worker, synchronously,
+before the worker starts. A person is refused there, so no worker starts for one.</p>
+</section>
+
+<section class="chapter" id="api"><header class="opener"><div class="numeral">II</div><h2>What Plugins Import</h2><p class="lede">The API module: Chord&#39;s surface once, the principal bound in, two host kinds.</p></header>
+<p class="dropcap">Plugins never import Chord. They import <code>@p3/app/v1</code>, whose instance each process passes in when it evaluates a
+plugin, so a plugin&#39;s build never copies Chord. <code>src/api/v1/index.ts</code> is three things:</p>
+<ul>
+<li><code>export * from &quot;@earendil-works/chord&quot;</code>: Chord&#39;s whole root, so a plugin that needs one more of Chord&#39;s exports never
+forces an API change. Whether to keep this or list names is open (decision 2 below).</li>
+<li><code>defineFacet</code>, bound to <code>P3Principal</code>, so every factory&#39;s <code>principal</code> is typed.</li>
+<li>The host kinds <code>Server</code> and <code>Session</code>. <code>Server</code> is defined here as well as in the kit, because this module also
+goes to pages later, which cannot import the Node kit; two <code>hostKind(&quot;server&quot;)</code> make equal addresses.</li>
+</ul>
+<p><code>server.ts</code> and <code>worker.ts</code> of the API add the kit&#39;s start data per kind: <code>AppInfo</code> on the server, <code>WorkerInfo</code> on a
+worker.</p>
+</section>
+
+<section class="chapter" id="starting"><header class="opener"><div class="numeral">III</div><h2>Starting</h2><p class="lede">server.ts gives the kit p3&#39;s decisions; worker.ts is one call.</p></header>
+<p class="dropcap"><code>server.ts</code> exports <code>startP3(context, { dataDir?, root?, port? })</code>. It passes the kit p3&#39;s name (so <code>~/.p3</code> by
+default), the API and kinds, <code>PRINCIPALS</code>, and one worker kind:</p>
+<pre><code>workers: [{
+	kind: <span class="tk-t">Session</span>,
+	entry: <span class="tk-f">fileURLToPath</span>(<span class="tk-k">new</span> <span class="tk-f">URL</span>(<span class="tk-s">"./worker.ts"</span>, <span class="tk-k">import</span>.meta.url)),
+	execArgv: [<span class="tk-s">"--conditions=source"</span>, <span class="tk-s">"--disable-warning=ExperimentalWarning"</span>],
+	start: () =&gt; ({}),
+	authorize: mayReachSession,
+}],</code></pre>
+<p>The kit does the rest: the data directory and its lock, the server&#39;s store, HTTP with deny by default, the owner&#39;s
+sign-in (a one-time link, the owner token file), building the plugins, and a workers component that forks one process
+per session address on its first hold and stops it when idle. Run as a script, <code>server.ts</code> serves <code>~/.p3</code> on port
+8789 (p2 keeps 8788) and prints the owner link. <code>worker.ts</code> is a single <code>startWorker</code> call with the same API and kinds.</p>
+<figure class="fig anim"><svg viewBox="0 0 720 342" width="100%" role="img" aria-label="The path of one hold: a client asks for a session's worker object; the server's route authorizes it and the kit forks the worker; the worker loads its plugins and asks the server for its facts." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f1m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f1a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f1b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><text x="16" y="22" font-size="10" fill="#7b7468" text-anchor="start" font-weight="600" letter-spacing="2">CLIENT</text><text x="16" y="144" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">SERVER</text><text x="16" y="266" font-size="10" fill="#b4472f" text-anchor="start" font-weight="600" letter-spacing="2">WORKER</text><g class="step" style="--i:1"><rect x="255" y="36" width="210" height="44" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="360" y="55.3" font-size="11" fill="#2a2723" text-anchor="middle">owner client</text><text x="360" y="69.3" font-size="9.5" fill="#7b7468" text-anchor="middle" font-family="Menlo,monospace">get(SessionWorker, { session })</text></g><g class="step" style="--i:3"><rect x="19" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="124" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">route `session`</text><text x="124" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle" font-family="Menlo,monospace">mayReachSession</text></g><g class="step" style="--i:5"><rect x="255" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="360" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">workers component</text><text x="360" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">fork, IPC link</text></g><g class="step" style="--i:11"><rect x="491" y="158" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="596" y="177.3" font-size="11" fill="#2a2723" text-anchor="middle">SessionsStore</text><text x="596" y="191.3" font-size="9.5" fill="#7b7468" text-anchor="middle">table + facts</text></g><g class="step" style="--i:7"><rect x="137" y="280" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="242" y="299.3" font-size="11" fill="#2a2723" text-anchor="middle">SessionWorker</text><text x="242" y="313.3" font-size="9.5" fill="#7b7468" text-anchor="middle">serves the owner</text></g><g class="step" style="--i:9"><rect x="373" y="280" width="210" height="44" rx="4" fill="#fff" stroke="#c9bfae"/><text x="478" y="299.3" font-size="11" fill="#2a2723" text-anchor="middle">SessionFacts hold</text><text x="478" y="313.3" font-size="9.5" fill="#7b7468" text-anchor="middle">as the worker</text></g><g class="step edge" style="--i:2"><path d="M360 80 L124 156" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="246" y="112" width="29.1" height="13" fill="#fbf8f2" opacity=".92"/><text x="250" y="122" font-size="9.5" fill="#7b7468" text-anchor="start">hold</text></g><g class="step edge" style="--i:4"><path d="M229 180 L253 180" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="211.7" y="163" width="60.7" height="13" fill="#fbf8f2" opacity=".92"/><text x="242" y="173" font-size="9.5" fill="#7b7468" text-anchor="middle">authorized</text></g><g class="step edge" style="--i:6"><path d="M360 202 L242 278" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="305" y="234" width="60.7" height="13" fill="#fbf8f2" opacity=".92"/><text x="309" y="244" font-size="9.5" fill="#7b7468" text-anchor="start">fork, load</text></g><g class="step edge" style="--i:8"><path d="M347 302 L371 302" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="334.9" y="285" width="50.1" height="13" fill="#fbf8f2" opacity=".92"/><text x="360" y="295" font-size="9.5" fill="#7b7468" text-anchor="middle">self.get</text></g><g class="step edge" style="--i:10"><path d="M478 280 L596 204" fill="none" stroke="#7b7468" marker-end="url(#f1m)"/><rect x="541" y="236" width="97.6" height="13" fill="#fbf8f2" opacity=".92"/><text x="545" y="246" font-size="9.5" fill="#7b7468" text-anchor="start">facts.at(Session)</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 1.</span> The path of one hold: a client asks for a session&#39;s worker object; the server&#39;s route authorizes it and the kit forks the worker; the worker loads its plugins and asks the server for its facts.</figcaption></figure>
+</section>
+
+<section class="chapter" id="store"><header class="opener"><div class="numeral">IV</div><h2>One Plugin Owns Sessions</h2><p class="lede">A table row and a facts document per session, written together.</p></header>
+<p class="dropcap"><code>plugins/sessions/server.ts</code> is the heart of the slice. Its local object <code>SessionsStore</code> (empty params, so one per
+server, living as long as the server) owns two kinds of data:</p>
+<ul>
+<li><strong>The table <code>sessions.rows</code></strong>, one row per session: <code>id</code> (a host column, <code>Session</code>), <code>title</code>, <code>app</code> (always
+<code>coding</code> for now), <code>creator</code> (a JSON column: the owner or a person), <code>createdAt</code>, <code>archivedAt</code> (absent while not
+archived). An index on <code>createdAt</code> serves the list.</li>
+<li><strong>The facts <code>sessions.facts-of</code></strong>, one document per session keyed by its address (<code>keyed: Session</code>): the session&#39;s
+info, or <code>{ session: null }</code> for an address the server does not know.</li>
+</ul>
+<p>Why both? The owner&#39;s list is a query, and lists are tables (decision &quot;Tables are first-class&quot;). A worker, and later
+an admission, needs one session&#39;s facts as a pinned value (<code>facts.at(Session({ id }))</code>), which only a keyed member
+gives. Both belong to the session&#39;s host, so the kit&#39;s export, import and delete of a session carry them. They never
+disagree, because every change writes both in one transaction:</p>
+<pre><code><span class="tk-k">const</span> update = (id: string, change: (row: <span class="tk-t">Row</span>) =&gt; <span class="tk-t">Row</span>, ctx: <span class="tk-t">Ctx</span>) =&gt;
+	self.<span class="tk-f">tx</span>(<span class="tk-k">async</span> (tx) =&gt; {
+		<span class="tk-k">const</span> old = <span class="tk-k">await</span> tx.<span class="tk-f">get</span>(rows, { id: <span class="tk-t">Session</span>({ id }) });
+		<span class="tk-k">if</span> (old === <span class="tk-k">undefined</span>) <span class="tk-k">throw</span> <span class="tk-f">invalid</span>(<span class="tk-s">"args"</span>, <span class="tk-s">`sessions: no session ${id}`</span>);
+		<span class="tk-k">const</span> row = <span class="tk-f">change</span>(old);
+		tx.<span class="tk-f">put</span>(rows, row);
+		<span class="tk-k">await</span> <span class="tk-f">writeFacts</span>(tx, facts, row);
+	}, ctx);</code></pre>
+<p><code>create</code> makes the id on the server (<code>crypto.randomUUID()</code>), so no client picks one. A new session&#39;s title is empty:
+each view will show &quot;New session&quot; in its viewer&#39;s language (decision 1 below). Rename, archive and restore are each
+one <code>update</code>. The list is a live query, the newest 200 by <code>createdAt</code> (ties broken by the key), re-run by Chord in the
+commit of every write to the table and mapped with <code>mapShared</code>, so an unchanged row stays the same object and a commit
+sends only what changed.</p>
+<h3 id="facts-without-an-id">Facts without an id</h3>
+<p>A session&#39;s facts hold <code>SessionInfo</code> (title, app, creator, times) and no id; a list row is the id plus that info. All
+three reviewers found the first version wrong: the facts repeated the id inside the JSON, and the kit&#39;s import as a
+copy (and later fork) rewrites host keys and host columns, never JSON, so a copy&#39;s facts would have named the old id.</p>
+</section>
+
+<section class="chapter" id="views"><header class="opener"><div class="numeral">V</div><h2>Views Decide Who Gets What</h2><p class="lede">Sessions for the owner, SessionFacts for a worker, refusals in the factory.</p></header>
+<p class="dropcap">The store is local: no client can reach it. Two remote objects on the server are its views, each a few lines:</p>
+<pre><code>host.<span class="tk-f">serve</span>(<span class="tk-t">Sessions</span>, (_params, principal, self) =&gt; {
+	<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"owner"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"sessions: the owner's"</span>);
+	<span class="tk-k">const</span> store = self.<span class="tk-f">get</span>(<span class="tk-t">SessionsStore</span>, {});
+	<span class="tk-k">return</span> { variant: <span class="tk-s">"owner"</span>, members: { list: store.list, create: …, rename: …, archive: …, restore: … } };
+});
+
+host.<span class="tk-f">serve</span>(<span class="tk-t">SessionFacts</span>, (_params, principal, self) =&gt; {
+	<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"worker"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"sessions: a session's worker only"</span>);
+	<span class="tk-k">const</span> store = self.<span class="tk-f">get</span>(<span class="tk-t">SessionsStore</span>, {});
+	<span class="tk-k">return</span> { variant: <span class="tk-s">"worker"</span>, members: { facts: store.facts.<span class="tk-f">at</span>(<span class="tk-t">Session</span>({ id: principal.session })) } };
+});</code></pre>
+<p><code>SessionFacts</code> has no params: the session is the caller&#39;s principal, which the worker&#39;s link stamps. A worker cannot
+ask for another session&#39;s facts, because there is nothing to ask with. This is the shared-store pattern of Chord&#39;s
+design §6: data once, per-principal views.</p>
+</section>
+
+<section class="chapter" id="worker"><header class="opener"><div class="numeral">VI</div><h2>A Worker Follows</h2><p class="lede">SessionWorker on the worker: what it shows comes from the server, live.</p></header>
+<p class="dropcap"><code>plugins/sessions/worker.ts</code> serves <code>SessionWorker { session }</code> on the session&#39;s worker, for the owner. It is this
+slice&#39;s proof that a worker runs per session and follows its facts:</p>
+<pre><code>host.<span class="tk-f">serve</span>(<span class="tk-t">SessionWorker</span>, (_params, principal, self) =&gt; {
+	<span class="tk-k">if</span> (principal.kind !== <span class="tk-s">"owner"</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"sessions: the owner's"</span>);
+	<span class="tk-k">const</span> facts = self.<span class="tk-f">get</span>(<span class="tk-t">SessionFacts</span>, {});
+	<span class="tk-k">return</span> { variant: <span class="tk-s">"owner"</span>, members: { facts: facts.facts } };
+});</code></pre>
+<p>The object serves the owner, yet its <code>self.get(SessionFacts, {})</code> reaches the server as the worker: a worker&#39;s hold
+of a server type goes up its parent link, and the server stamps that link&#39;s principal (design §4, &quot;upward is a
+boundary&quot;). The member <code>facts</code> is the server&#39;s document re-exposed, so a rename commits on the server, travels to the
+worker as one state message, and on to the owner.</p>
+<figure class="fig anim"><svg viewBox="0 0 720 246" width="100%" role="img" aria-label="A rename: the owner's call commits on the server; the worker's replica of the facts updates; the owner's SessionWorker shows it." xmlns="http://www.w3.org/2000/svg" style="font-family:'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif;max-width:760px"><defs><marker id="f2m" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7b7468"/></marker><marker id="f2a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b4472f"/></marker><marker id="f2b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e6a8a"/></marker></defs><line x1="130.7" y1="52" x2="130.7" y2="238" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="45.7" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#2e6a8a" stroke-width="1.5"/><text x="130.7" y="27" font-size="11" fill="#2a2723" text-anchor="middle">owner client</text><text x="130.7" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">Sessions, SessionWorker</text><line x1="360" y1="52" x2="360" y2="238" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="275" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#b4472f" stroke-width="1.5"/><text x="360" y="27" font-size="11" fill="#2a2723" text-anchor="middle">server</text><text x="360" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">SessionsStore</text><line x1="589.3" y1="52" x2="589.3" y2="238" stroke="#c9bfae" stroke-dasharray="3 3"/><rect x="504.3" y="10" width="170" height="42" rx="4" fill="#fff" stroke="#c9bfae"/><text x="589.3" y="27" font-size="11" fill="#2a2723" text-anchor="middle">worker</text><text x="589.3" y="41" font-size="9.5" fill="#7b7468" text-anchor="middle">SessionWorker</text><g class="step edge" style="--i:1"><line x1="130.7" y1="78" x2="357" y2="78" stroke="#7b7468" marker-end="url(#f2m)"/><text x="245.3" y="72" font-size="10" fill="#2a2723" text-anchor="middle">Sessions.rename({ id, title })</text></g><g class="step edge" style="--i:2"><path d="M360 104 h34 v14 h-32" fill="none" stroke="#b4472f" marker-end="url(#f2a)"/><text x="402" y="114" font-size="10" fill="#b4472f" text-anchor="start">tx: put row, draft facts</text></g><g class="step edge" style="--i:3"><line x1="360" y1="150" x2="586.3" y2="150" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="474.7" y="144" font-size="10" fill="#2a2723" text-anchor="middle">state: facts (one op)</text></g><g class="step edge" style="--i:4"><line x1="589.3" y1="182" x2="133.7" y2="182" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="360" y="176" font-size="10" fill="#2a2723" text-anchor="middle">state: facts (relayed through the server)</text></g><g class="step edge" style="--i:5"><line x1="360" y1="214" x2="133.7" y2="214" stroke="#7b7468" stroke-dasharray="4 3" marker-end="url(#f2m)"/><text x="245.3" y="208" font-size="10" fill="#2a2723" text-anchor="middle">result</text></g></svg><figcaption><button class="replay" type="button">Replay</button><span class="fignum">Figure 2.</span> A rename: the owner&#39;s call commits on the server; the worker&#39;s replica of the facts updates; the owner&#39;s SessionWorker shows it.</figcaption></figure>
+</section>
+
+<section class="chapter" id="topology"><header class="opener"><div class="numeral">VII</div><h2>The Test Topology</h2><p class="lede">Server and workers as hosts in one process: production&#39;s objects, test speed.</p></header>
+<p class="dropcap"><code>test/topology.ts</code> builds what the kit builds, minus processes and HTTP: a server host at <code>Server()</code> with a SQLite
+store (in memory, or a file when a test restarts), a route for <code>Session</code> that makes a worker host per address on its
+first hold and links it in memory (connected first, then loaded, as the kit&#39;s worker does), and clients connected as
+any principal. Plugins are imported as modules, so nothing is built with esbuild in this tier. The kit&#39;s start-data
+facets are exported now (two lines in <code>packages/chord/src/node/app/index.ts</code>), so the topology serves the same
+<code>AppInfo</code> and <code>WorkerInfo</code> as production.</p>
+<p>Two guards came from the reviews. A server plugin whose setup fails fails the topology&#39;s start and closes what it
+opened (as the kit&#39;s required root fails a start); a worker&#39;s load failure is recorded. And every host waits at most
+5 s for an object, so a mistake fails a test in seconds, not after a minute.</p>
+</section>
+
+<section class="chapter" id="tests"><header class="opener"><div class="numeral">VIII</div><h2>The Tests</h2><p class="lede">Three tiers, fifteen tests, about one second.</p></header>
+<ul>
+<li><strong>Plugin tier</strong> (<code>plugins/sessions/sessions.test.ts</code>): the server facet built as production builds it
+(<code>testPlugin</code>) and loaded alone: the owner&#39;s operations, refusals of persons and workers, a worker&#39;s own facts.</li>
+<li><strong>Topology tier</strong> (<code>test/sessions.test.ts</code>), each test its own topology: a created session&#39;s worker follows its
+facts; a rename reaches the worker; two sessions, two workers; archive and restore change row and facts together;
+an unknown session&#39;s rename is refused; the list keeps the newest 200; persons are refused (no worker starts); a
+worker sees only its own facts; a restart on the same store keeps everything. After every test, nothing may have
+failed in the background but the refusals the test asked for.</li>
+<li><strong>End-to-end tier</strong> (<code>test/app.test.ts</code>): the real <code>startP3</code> on a temporary directory, a client over WebSocket
+with the owner token file&#39;s bearer token, a forked worker answering, then a restart on the same directory.</li>
+</ul>
+<p><code>test/until.ts</code> waits for a value a change elsewhere caused; after a call on the same reference no wait is needed,
+because a call&#39;s answer follows its state (design §3).</p>
+</section>
+
+<section class="chapter" id="numbers"><header class="opener"><div class="numeral">IX</div><h2>The Numbers</h2><p class="lede">Measured on slayer; the phone follows once the code is on main.</p></header>
+<div class="stats"><div class="stat"><b>45 ms</b><span>server listening after <code>startP3</code> began</span></div><div class="stat"><b>292 ms</b><span>first worker (with the worker base&#39;s build)</span></div><div class="stat"><b>99 ms</b><span>a worker&#39;s warm start, median of 10</span></div><div class="stat"><b>29.5 MiB</b><span>an idle worker&#39;s <code>RssAnon</code></span></div></div>
+<p><code>bench/slice-1.ts</code> measures them with the real server and a WebSocket client. <code>RssAnon</code> is anonymous resident memory,
+what Node does not share between processes. Module loading before <code>startP3</code> is not in the first number. The phone&#39;s
+numbers, and a p2 worker&#39;s on the phone (where starts take seconds), follow once the code is on main.</p>
+</section>
+
+<section class="chapter epilogue" id="open-questions"><header class="opener"><div class="numeral">∴</div><h2>Open Questions</h2><p class="lede">Four decisions from the reviews, and what is carried.</p></header>
+<ol>
+<li><strong>A new session&#39;s title:</strong> empty, each view renders &quot;New session&quot; in its viewer&#39;s language (recommended,
+implemented), or English text stored.</li>
+<li><strong>API v1 re-exports all of Chord&#39;s root:</strong> keep and record that v1 follows Chord&#39;s root (recommended), or an
+explicit list.</li>
+<li><strong>&quot;app&quot; for p3 itself</strong> (<code>@p3/app</code>, <code>src/app.ts</code>, the kit&#39;s word) against <code>names.md</code>&#39;s app: a line in <code>names.md</code>
+(recommended), or renaming to <code>@p3/api</code>.</li>
+<li><strong>Archive only marks the session;</strong> stopping its worker needs a way for plugins to stop a worker: carry it to the
+lifecycle slice with delete (recommended by Astra and Sol).</li>
+</ol>
+<p>Carried: a hold for a session id never created still starts a worker (admission or the session service&#39;s <code>open</code>
+decides it later); the list has no paging past the newest 200.</p>
+</section>
+
+<section class="chapter appendix" id="files"><header class="opener"><div class="numeral">A</div><h2>Files</h2></header>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>What</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>apps/p3/src/principals.ts</code></td>
+<td><code>P3Principal</code></td>
+</tr>
+<tr>
+<td><code>apps/p3/src/app.ts</code></td>
+<td><code>API</code>, <code>KINDS</code>, <code>PRINCIPALS</code>, <code>mayReachSession</code></td>
+</tr>
+<tr>
+<td><code>apps/p3/src/api/v1/index.ts</code>, <code>server.ts</code>, <code>worker.ts</code></td>
+<td>the API module plugins import</td>
+</tr>
+<tr>
+<td><code>apps/p3/server.ts</code>, <code>worker.ts</code></td>
+<td>the entries</td>
+</tr>
+<tr>
+<td><code>apps/p3/plugins/sessions/contract.ts</code></td>
+<td><code>Creator</code>, <code>SessionInfo</code>, <code>SessionRow</code>, <code>Facts</code>, <code>Sessions</code>, <code>SessionFacts</code>, <code>SessionWorker</code></td>
+</tr>
+<tr>
+<td><code>apps/p3/plugins/sessions/server.ts</code></td>
+<td><code>SessionsStore</code>, the views</td>
+</tr>
+<tr>
+<td><code>apps/p3/plugins/sessions/worker.ts</code></td>
+<td><code>SessionWorker</code></td>
+</tr>
+<tr>
+<td><code>apps/p3/test/topology.ts</code>, <code>until.ts</code>, <code>client.ts</code></td>
+<td>the test setup</td>
+</tr>
+<tr>
+<td><code>apps/p3/test/sessions.test.ts</code>, <code>app.test.ts</code>, <code>plugins/sessions/sessions.test.ts</code></td>
+<td>the tests</td>
+</tr>
+<tr>
+<td><code>apps/p3/bench/slice-1.ts</code></td>
+<td>the numbers</td>
+</tr>
+<tr>
+<td><code>packages/chord/src/node/app/index.ts</code>, <code>README.md</code>, <code>packages/chord/CHANGELOG.md</code></td>
+<td>the kit change</td>
+</tr>
+</tbody></table>
+</section>
+
+<p class="colophon">p3 slice 1 walkthrough · 2026-11-14 · apps/p3 and packages/chord/src/node/app</p>
+</div></div>
+<script>(function activate(root) {
+	const replay = (f) => {
+		f.classList.remove("play");
+		void f.getBoundingClientRect();
+		f.classList.add("play");
+	};
+	const io = new IntersectionObserver(
+		(es) => {
+			for (const e of es)
+				if (e.isIntersecting) {
+					e.target.classList.add("play");
+					io.unobserve(e.target);
+				}
+		},
+		{ threshold: 0.3 },
+	);
+	root.querySelectorAll(".anim:not(.armed)").forEach((f) => {
+		f.classList.add("armed");
+		io.observe(f);
+		const b = f.querySelector(".replay");
+		if (b) b.onclick = () => replay(f);
+	});
+	root.querySelectorAll(".steps:not(.js)").forEach((s) => {
+		s.classList.add("js");
+		const ps = [...s.querySelectorAll(":scope>.step-panel")];
+		let i = 0;
+		const c = s.querySelector(".count"),
+			p = s.querySelector(".prev"),
+			n = s.querySelector(".next");
+		const show = () => {
+			ps.forEach((x, j) => x.classList.toggle("on", j === i));
+			c.textContent = `${i + 1} / ${ps.length}`;
+			p.disabled = i === 0;
+			n.disabled = i === ps.length - 1;
+			ps[i].querySelectorAll(".anim").forEach(replay);
+		};
+		p.onclick = () => {
+			i--;
+			show();
+		};
+		n.onclick = () => {
+			i++;
+			show();
+		};
+		show();
+	});
+})(document)</script>
+</body></html>
