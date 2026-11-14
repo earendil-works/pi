@@ -456,9 +456,26 @@ describe("server-rejected text", () => {
 		});
 		const request = await buildRequest(model, ctx, "project", {}, "gemini-3.8-flash-low");
 		expect(request.request.systemInstruction.parts).toEqual([
-			{ text: "You are a coding assistant. Help users inspect files, run commands, and modify code." },
+			{ text: "You are a fast, precise coding assistant. Help users inspect files, run commands, and modify code." },
 		]);
 		expect(findServerRejectedText(request.request)).toBeUndefined();
+		for (const variant of [
+			"You are a coding assistant running inside a coding agent harness. Help users.",
+			"You are a coding assistant running inside Pi. Help users.",
+			"You are a coding assistant. Help users.",
+		]) {
+			const user = [{ role: "user" as const, content: "test", timestamp: 1 }];
+			const v = await buildRequest(
+				model,
+				normalizeContext({ systemPrompt: variant, messages: user }),
+				"project",
+				{},
+				"gemini-3.8-flash-low",
+			);
+			expect(v.request.systemInstruction.parts).toEqual([
+				{ text: "You are a fast, precise coding assistant. Help users." },
+			]);
+		}
 		const custom = await buildRequest(
 			model,
 			normalizeContext({ systemPrompt: "You run inside pi, a coding agent harness.", messages: ctx.messages }),

@@ -132,10 +132,12 @@ const SERVER_REJECTED_TEXT =
 // Live probes 2026-11-14 (gemini-4-carbon and gemini-4-hydrogen at -high, gemini-3.8-flash): Antigravity answers the
 // same detail-less 429 to a system instruction holding pi's default identity line, "You are a coding assistant running
 // inside pi, a coding agent harness.", and to parts of it such as "inside pi, a coding agent harness". The same text in
-// a user turn passes. The full default prompt with tools passes once that sentence reads "You are a coding assistant."
+// a user turn passes. The guard matches loosely, so any variant of that identity sentence (with or without "pi" or
+// "a coding agent harness") is replaced. Live probe 2026-11-14 23:15Z: the full default prompt with 17 tools returns 200
+// on gemini-4-carbon-high and gemini-4-hydrogen-high with the replacement below.
 const PI_DEFAULT_IDENTITY =
-	/you\s+are\s+a\s+coding\s+assistant\s+running\s+inside\s+pi,\s+a\s+coding\s+agent\s+harness\./gi;
-const PI_DEFAULT_IDENTITY_REPLACEMENT = "You are a coding assistant.";
+	/you\s+are\s+a\s+coding\s+assistant(?:\s+running\s+inside\s+[^,.\n]+)?(?:,\s+a\s+coding\s+agent\s+harness)?\./gi;
+const PI_DEFAULT_IDENTITY_REPLACEMENT = "You are a fast, precise coding assistant.";
 const SYSTEM_REJECTED_TEXT = [
 	/you\s+are\s+a\s+coding\s+assistant\s+running\s+inside\s+pi\b/i,
 	/inside\s+pi,\s+a\s+coding\s+agent\s+harness/i,
