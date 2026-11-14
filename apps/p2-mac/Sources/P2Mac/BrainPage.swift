@@ -96,6 +96,11 @@ final class BrainPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadD
 		return origin.protocol == page.scheme && origin.host == page.host && origin.port == (page.port ?? 0)
 	}
 
+	/// Cross-fades the placeholder into the next appearance; the page fades itself.
+	func crossFadeNativeViews() {
+		Appearance.crossFade(placeholder)
+	}
+
 	/// Tells the page the app's light/dark preference changed, if a page of this Pi is loaded.
 	func appearanceChanged(_ preference: Appearance) {
 		guard let url = webView.url, owns(url) else { return }

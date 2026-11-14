@@ -158,9 +158,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 
 	// MARK: - Appearance
 
-	/// Makes `preference` the app's light/dark preference: stores it, applies it, and tells every page.
+	/// Makes `preference` the app's light/dark preference: stores it, applies it (cross-fading the native views), and
+	/// tells every page.
 	func setAppearance(_ preference: Appearance) {
 		appearance = preference
+		for window in windows { window.crossFadeNativeViews() }
 		preference.apply()
 		preference.save()
 		for window in windows { window.appearanceChanged(preference) }

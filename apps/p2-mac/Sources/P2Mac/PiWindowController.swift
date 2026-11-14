@@ -89,6 +89,12 @@ final class PiWindowController: NSWindowController, NSWindowDelegate {
 		for page in pages.values { page.serverChanged(app.server) }
 	}
 
+	/// Cross-fades the views the window draws itself (the tab bar, the pages' placeholders) into the next appearance.
+	func crossFadeNativeViews() {
+		Appearance.crossFade(tabBar)
+		for page in pages.values { page.crossFadeNativeViews() }
+	}
+
 	/// Tells every page of the window that the light/dark preference changed.
 	func appearanceChanged(_ preference: Appearance) {
 		for page in pages.values { page.appearanceChanged(preference) }

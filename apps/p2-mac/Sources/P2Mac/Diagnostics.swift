@@ -98,7 +98,8 @@ enum Diagnostics {
 
 	/// Drives the bridge of `controller`'s page with P2MAC_DIAG_BRIDGE=<preference>: writes `bridge-N.json` and the
 	/// snapshots after the change (`page-N-bridge.png`, `window-N-bridge.png`), picks System in View > Appearance,
-	/// clicks p2's theme button, then reloads the page over a stale stored theme (removed after the reload's record).
+	/// clicks p2's theme button, grabs the window during two fades, then reloads the page over a stale stored theme
+	/// (removed after the reload's record).
 	private static func probeBridge(_ controller: BrainPage, preference: String, index: Int, in directory: URL) async {
 		let webView = controller.webView
 		var record: [String: Any] = [:]
@@ -117,6 +118,7 @@ enum Diagnostics {
 		}
 		record["menu"] = await probeMenu(webView)
 		record["switch"] = await probeSwitch(webView)
+		record["fade"] = await probeFade(controller, index: index, in: directory)
 		write(record, to: directory.appending(path: "bridge-\(index).json"))
 		// A stale forced value in the page's own storage, the opposite of what it shows: the reload (page-N+1.json)
 		// must ignore it. That record removes it again, so the run leaves no state in the brain's data store.
@@ -155,6 +157,96 @@ enum Diagnostics {
 			results.append(result)
 		}
 		return results
+	}
+
+	// Logs in epoch milliseconds (the app's clock too) the page's view transitions (when called, when their DOM change
+	// ran, ready, finished), theme events, `data-theme` writes and scheme media changes; returns what the engine supports.
+	private static let fadeHook = """
+		const now = () => performance.timeOrigin + performance.now();
+		const log = window.piDiagFade = { transitions: [], events: [], themeWrites: [], mediaChanges: [] };
+		const start = document.startViewTransition?.bind(document);
+		if (start) document.startViewTransition = (argument) => {
+			const entry = { called: now(), form: typeof argument === "function" ? "function" : "object", types: argument?.types ?? null };
+			log.transitions.push(entry);
+			// When the DOM change runs: after the old state was captured.
+			const update = typeof argument === "function" ? argument : argument.update;
+			const wrapped = () => { entry.update = now(); return update(); };
+			const transition = start(typeof argument === "function" ? wrapped : { ...argument, update: wrapped });
+			transition.ready.then(() => { entry.ready = now(); }, (error) => { entry.readyError = String(error); });
+			transition.finished.then(() => { entry.finished = now(); });
+			return transition;
+		};
+		addEventListener("pi-host-theme", (event) => log.events.push({ at: now(), preference: event.detail?.preference }));
+		new MutationObserver(() => log.themeWrites.push({ at: now(), theme: document.documentElement.dataset.theme }))
+			.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+		matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (event) => log.mediaChanges.push({ at: now(), dark: event.matches }));
+		// A clock in the page, so a grab shows when it was taken (ms since the trigger; the page paints a frame late).
+		const clock = document.createElement("div");
+		clock.style.cssText = "position:fixed;right:24px;bottom:120px;z-index:2147483647;font:600 40px ui-monospace,monospace;padding:4px 12px;background:#e33;color:#fff;pointer-events:none";
+		document.body.append(clock);
+		const tick = () => { clock.textContent = log.posted ? `${Math.round(now() - log.posted)} ms` : "-"; requestAnimationFrame(tick); };
+		tick();
+		return {
+			startViewTransition: typeof start === "function",
+			types: typeof ViewTransition !== "undefined" && "types" in ViewTransition.prototype,
+			typeSelector: CSS.supports("selector(:active-view-transition-type(pi-theme))"),
+			reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
+			visibility: document.visibilityState,
+		};
+		"""
+
+	// The triggers, after the switch probe left the page on Light: p2's own button (the page fades at once,
+	// optimistically) and the app's change through the bridge (the page fades on the event), each way.
+	private static let fadeTriggers: [(name: String, script: String)] = {
+		let mark = "window.piDiagFade.posted = performance.timeOrigin + performance.now(); "
+		let click = mark + "document.querySelector('.theme-toggle').click()"
+		let bridge = { (preference: String) in
+			mark + "window.webkit.messageHandlers.piHost.postMessage({ type: 'set-theme', preference: '\(preference)' })"
+		}
+		return [("button-to-dark", click), ("bridge-to-light", bridge("light")), ("bridge-to-dark", bridge("dark")), ("button-to-system", click)]
+	}()
+
+	/// Changes the theme with each of `fadeTriggers` and grabs the windows with `screencapture` 0, 80, 160 and
+	/// 300 ms after each (`fade-N-<trigger>-<ms>[-other-K].png`). Records when each grab was launched, when the page's view
+	/// transitions ran, and when the `pi-host-theme` event arrived, which the app sends right after it starts its
+	/// native fade; all in epoch milliseconds.
+	private static func probeFade(_ controller: BrainPage, index: Int, in directory: URL) async -> [String: Any] {
+		let webView = controller.webView
+		guard let window = webView.window else { return [:] }
+		// An occluded page is hidden to WebKit: it paints nothing and p2 skips its fade. A run started from a terminal
+		// is not the active app, so the window goes in front of other apps' windows without activating.
+		window.orderFrontRegardless()
+		try? await Task.sleep(for: .milliseconds(500))
+		let others = NSApp.windows.filter { $0.delegate is PiWindowController && $0 !== window && $0.isVisible }
+		let tabBar = window.contentView?.subviews.first { $0 is BrainTabBar }
+		var record: [String: Any] = ["support": (try? await webView.callAsyncJavaScript(fadeHook, contentWorld: .page)) ?? NSNull()]
+		let epoch = { Date().timeIntervalSince1970 * 1000 }
+		for trigger in fadeTriggers {
+			_ = try? await webView.callAsyncJavaScript("window.piDiagFade.transitions = []; window.piDiagFade.events = []", contentWorld: .page)
+			let start = epoch()
+			webView.evaluateJavaScript(trigger.script, in: nil, in: .page)
+			var grabs: [[String: Any]] = []
+			for offset in [0, 80, 160, 300] {
+				let wait = start + Double(offset) - epoch()
+				if wait > 0 { try? await Task.sleep(for: .milliseconds(Int(wait))) }
+				let launched = epoch()
+				for (number, grabbed) in ([window] + others).enumerated() {
+					let name = "fade-\(index)-\(trigger.name)-\(offset)\(number == 0 ? "" : "-other-\(number)").png"
+					_ = try? Process.run(
+						URL(fileURLWithPath: "/usr/sbin/screencapture"),
+						arguments: ["-x", "-o", "-l", "\(grabbed.windowNumber)", directory.appending(path: name).path])
+				}
+				grabs.append(["offset": offset, "launched": launched - start])
+			}
+			let fading = tabBar?.layer?.animationKeys() ?? []
+			try? await Task.sleep(for: .milliseconds(700))
+			let page = try? await webView.callAsyncJavaScript("return window.piDiagFade", contentWorld: .page)
+			record[trigger.name] = [
+				"start": start, "grabs": grabs, "page": page ?? NSNull(), "appPreference": controller.app.appearance.rawValue,
+				"tabBarAnimationsAt300": fading, "tabBarAnimationsAt1000": tabBar?.layer?.animationKeys() ?? [],
+			]
+		}
+		return record
 	}
 
 	/// View > Appearance: its checkmark after the page's change, then the change it makes itself (System) and the event
