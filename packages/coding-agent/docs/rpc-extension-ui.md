@@ -38,12 +38,15 @@ Prompt the user to choose from a list. Dialog methods with a `timeout` field inc
   "id": "uuid-1",
   "method": "select",
   "title": "Allow dangerous command?",
+  "description": "This command will run `rm -rf` in the project root.",
   "options": ["Allow", "Block"],
   "timeout": 10000
 }
 ```
 
 Expected response: `extension_ui_response` with `value` (the selected option string) or `cancelled: true`.
+
+The optional `description` field provides context for the client to render below the title.
 
 ### confirm
 

@@ -2824,6 +2824,11 @@ For custom components, focus, overlays, themes, and rendering performance, see [
 // Select from options
 const choice = await ctx.ui.select("Pick one:", ["A", "B", "C"]);
 
+// Select with context shown below the title
+const choice = await ctx.ui.select("Pick one:", ["A", "B", "C"], {
+  description: "Choosing A keeps the current behavior.",
+});
+
 // Confirm dialog
 const ok = await ctx.ui.confirm("Delete?", "This cannot be undone");
 

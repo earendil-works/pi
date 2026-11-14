@@ -120,6 +120,12 @@ export interface ExtensionUIDialogOptions {
 	timeout?: number;
 }
 
+/** Options for the `select` dialog. */
+export interface ExtensionUISelectOptions extends ExtensionUIDialogOptions {
+	/** Context shown below the title in normal text. */
+	description?: string;
+}
+
 /** Placement for extension widgets. */
 export type WidgetPlacement = "aboveEditor" | "belowEditor";
 
@@ -163,7 +169,7 @@ export interface KeybindingHints {
  */
 export interface ExtensionUIContext {
 	/** Show a selector and return the user's choice. */
-	select(title: string, options: string[], opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
+	select(title: string, options: string[], opts?: ExtensionUISelectOptions): Promise<string | undefined>;
 
 	/** Show a confirmation dialog. */
 	confirm(title: string, message: string, opts?: ExtensionUIDialogOptions): Promise<boolean>;

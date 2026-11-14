@@ -23,6 +23,11 @@ type DialogContext = {
 
 type DialogMethods = {
 	showExtensionConfirm(title: string, message: string, opts?: { signal?: AbortSignal }): Promise<boolean>;
+	showExtensionSelector(
+		title: string,
+		options: string[],
+		opts?: { signal?: AbortSignal; description?: string },
+	): Promise<string | undefined>;
 	showExtensionCustom<T>(
 		factory: (tui: unknown, theme: unknown, keybindings: unknown, done: (result: T) => void) => Component,
 		options?: {
@@ -113,6 +118,18 @@ describe("InteractiveMode extension dialogs", () => {
 		await expect(first).resolves.toBe(true);
 		expect(context.focused).toBe(context.editor);
 		expect(context.programStatus.setBlocked).toHaveBeenLastCalledWith("extension-dialog", undefined);
+	});
+
+	it("passes a select description through to the selector", async () => {
+		const context = createContext();
+		const choice = context.showExtensionSelector("Pick", ["one", "two"], {
+			description: "Context for the selection",
+		});
+
+		expect(visible(context)).toContain("Context for the selection");
+
+		context.focused?.handleInput?.("\r");
+		await expect(choice).resolves.toBe("one");
 	});
 
 	it("removes a hidden dialog when its signal aborts", async () => {

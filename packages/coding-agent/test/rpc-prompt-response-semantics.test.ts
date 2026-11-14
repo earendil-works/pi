@@ -452,6 +452,58 @@ describe("RPC prompt response semantics", () => {
 	});
 });
 
+describe("RPC extension UI requests", () => {
+	afterEach(() => {
+		rpcIo.outputLines = [];
+		rpcIo.lineHandler = undefined;
+	});
+
+	it("forwards the select description and returns the client's choice", async () => {
+		let selected: string | undefined;
+		const { lineHandler, cleanup } = await startRpcMode({
+			withAuth: false,
+			responseDelayMs: 0,
+			extensionsResult: await createTestExtensionsResult([
+				(pi) => {
+					pi.registerCommand("select-desc", {
+						handler: async (_args, ctx) => {
+							selected = await ctx.ui.select("Pick", ["one", "two"], {
+								description: "Context for the selection",
+							});
+						},
+					});
+				},
+			]),
+		});
+
+		try {
+			lineHandler(JSON.stringify({ id: "sel", type: "prompt", message: "/select-desc" }));
+
+			await vi.waitFor(() => {
+				const request = parseOutputLines(rpcIo.outputLines).find(
+					(record) => record.type === "extension_ui_request" && record.method === "select",
+				);
+				expect(request).toMatchObject({
+					type: "extension_ui_request",
+					method: "select",
+					title: "Pick",
+					options: ["one", "two"],
+					description: "Context for the selection",
+				});
+			});
+
+			const request = parseOutputLines(rpcIo.outputLines).find(
+				(record) => record.type === "extension_ui_request" && record.method === "select",
+			)!;
+			lineHandler(JSON.stringify({ type: "extension_ui_response", id: request.id, value: "two" }));
+
+			await vi.waitFor(() => expect(selected).toBe("two"));
+		} finally {
+			await cleanup();
+		}
+	});
+});
+
 describe("RPC extension shutdown requests", () => {
 	afterEach(() => {
 		rpcIo.outputLines = [];
