@@ -13,5 +13,6 @@ Read by slice briefs (each brief says which part): `people/book.md`, `locks/desi
 `direction-pi-roam.md`.
 
 The record only (superseded designs and raw inputs): `resource-model/`, `resources-code/`, `model-stress/`,
-`base-inventory/*-{astra,opus,sol,brief}.md`, `authz-research.md`, `plan-2026-11-11.md`, and the two research notes
+`base-inventory/*-{astra,opus,sol,brief}.md`, `authz-research.md`, `plan-2026-11-11.md`, the 2026-11-13 sketches never committed before (`users-sketch.md`,
+`multiuser-walkthrough.md`, `operation-gates-sketch.md`: superseded by the identity-only principal and admission), and the two research notes
 kept by the owner (`hermes-opencode-teams.md`, `openclaw-teams.md`).
