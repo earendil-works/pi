@@ -12,4 +12,6 @@ re-exports it; reload tests for the sessions plugin (server and worker facets) i
 **Read first:** design.md §21 (reload and rollout, the plugins component); the kit's `app.ts` (`applyChanges`) and
 `src/node/plugins/` in full; `archive/step-0/book.md` (decision 1 there).
 
+**From the archive:** `archive/reload-loop/book.md` (what bundles what, what each edit does), `archive/step-0/book.md` (decision 1 and the reload suite's table), `archive/step-0a/book.md` (stylesheets, conditions, the content-compared restart mark: built).
+
 **Open:** whether startup builds need a cache (measure first: every start builds every plugin).

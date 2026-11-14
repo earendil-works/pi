@@ -25,6 +25,8 @@ each session's worker runs and knows its own facts. The tests' three tiers exist
 workers); the kit's `src/node/app/` (`app.ts`, `worker.ts`, `info.ts`) and `src/node/workers/`; the tutorial app
 `packages/chord/test/examples/61-tutorial/` (a complete kit app); `src/node/plugins/testing.ts`.
 
+**From the archive:** `archive/map/book.md` (What Runs Where, Starting, The Session Catalog: the earlier skeleton draft; its `user` principal and chat are superseded), `archive/step-0/book.md` (the base's layout, the API package), `archive/base-inventory/explainer/book.md` (Sessions and Their Data: the session service; its metadata store is superseded by host-keyed documents), `archive/efficiency.md` §1 (memory per worker, from p2), `archive/startup-telemetry/book.md` (startup spans, for the numbers).
+
 **Decided:** the kit is used for the real server (`startServer`, `startWorker`); plugins import only p3's API. The
 principal is identity only (decisions of 2026-11-13). A session belongs to one app (here always `coding`).
 

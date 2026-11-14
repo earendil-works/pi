@@ -14,3 +14,5 @@ links, pairing for persons (a browser gets its cookie).
 stamps and session check are superseded by admission and the identity-only principal); `decisions.md` (2026-11-13);
 the admission design §7; the kit's `sign-ins.ts`, `pairing.ts`, `invite.ts`, `users.ts`; p2's
 `plugins/sharing/server.ts`, `store.ts`, `src/runtime/principals.ts` as precedent.
+
+**From the archive:** `archive/sharing.md` (sharing, the owner's direction of 2026-11-10), `archive/apps/book.md` (the superseded per-app user pools: the record), `archive/apps/web-ui-direction.html` (the apps mockup: robot, family, club).

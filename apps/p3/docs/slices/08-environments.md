@@ -4,4 +4,6 @@
 
 **Depends on:** slices 3.
 
+**From the archive:** `archive/base-inventory/explainer/book.md` (The Harness: environment providers), `archive/rundown/book.md` (Subagents and Places), `archive/org-managed/book.md` (sandboxes, Gondolin, krun).
+
 The brief is filled out when the slice is next.

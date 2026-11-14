@@ -4,4 +4,6 @@
 
 **Depends on:** slices 3.
 
+**From the archive:** `archive/base-inventory/explainer/book.md` (Waiting Costs Nothing, Building Features: an approval before bash), `archive/status-2026-11-09.md` §5 (suspendable work in Durable).
+
 The brief is filled out when the slice is next.

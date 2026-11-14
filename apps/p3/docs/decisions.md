@@ -204,6 +204,50 @@ and its working rules are in `handoff.md`.
   learns the locks from member Pis' reports and by loading selected plugins' server facets in a sandbox. Design, kit
   changes, open questions: `people/book.md` (second edition). The owner: "this still seems overly complex".
 
+- **Direction (owner, 2026-11-13):** one Pi per person, one owner who installs every plugin; plugins (apps among them)
+  are trusted code; only people are confined. Pi must be "super malleable, with basic primitives that allow almost
+  everything": keep extension points cheap. Colin's plan: Dec 1 Pi Roam, Dec 18 Org Devices (each member their own Pi
+  on an org machine), February hosted.
+- **The principal is identity only (owner, 2026-11-13, late; supersedes the person principal with roles, sessions and
+  revision of "People, apps and locks", the stamped principals, session lists in the principal and string-encoded
+  session ids discussed that day):** `{ kind: "owner" }`, `{ kind: "person", id, name }`, plus `worker { session }`
+  and `server`. Roles, shares and private sessions are data of apps and plugins, read live by admissions (below); a
+  role change bumps no revision and revokes nothing. Identity is pluggable: identity-provider registries the people
+  plugin owns (server; a web button; a terminal flow optional, a pairing code by default); built in: Radius (a
+  verified email; Google or GitHub happen at Radius) and this device; more devices by pairing. No defensive machinery
+  against the owner (privacy from him is an app's UI courtesy). A session's agent reaches other sessions only as its
+  session's lock `conversations.reach` allows; it inherits no rights from its creator or sender.
+- **Apps and sessions (owner, 2026-11-13):** an app is a plugin (its layouts, views, objects; it reuses any other
+  plugin's); coding is the built-in app. A session belongs to exactly one app; any app may show any session; moving a
+  session to another app is allowed (its app is a fact admissions read live; the locks of the new app's layer apply
+  from the next turn). `defaultApp`: a Pi setting, per person a preference; new sessions without a choice and the start
+  page go there; fallback coding. An app may admit another app's people (the robot lets family members watch).
+- **Admission before the factory (owner, 2026-11-13; Chord):** `host.serve(Type, factory, { admit })`; `admit`
+  declares references, registries and derives and returns a watchable `allow(level) | deny(reason)`; the factory gets
+  the level. Design: `packages/chord/docs/admission/design.md` (reviewed by Opus, Astra, Sol, Fable; Fable's round 2
+  not yet folded in). Open for the owner: the staging rule, dropping last values on a denial, the route staying coarse
+  (recommendations in slice 4's brief). p3 use: `SessionsStore.facts` (keyed, server), `SessionAccess { session,
+  person }` (server, held by the session's worker), each app's `access` rule in the `Apps` registry.
+- **Locks (owner, 2026-11-13; refines "People, apps and locks"):** design in `archive/locks/design.md` (with Fable's
+  review, slice 6). A plugin declares a lock (id, title and description as `MessageData`, schema, open, closed,
+  `narrow`), registers it with the server (`Locks`), reads it (`lockValue`, `lockValueFor`) and enforces it where it
+  hands things out; locks are static declarations, runtime things are values. Layers org > Pi > app (the app's code
+  defaults, then the owner's app configuration) > session, only narrowing; one sheet per layer; `LockEditors`; the
+  agent's `locks_*` tools from the owner's sessions. Locks take effect from the next turn: a running turn keeps its
+  snapshot, no check at the call ("that's not a security boundary we need"). Plugins outside Pi's own root have a
+  plugin switch per app and session (`otherPlugins: "on" | "off"` per app, the install dialog chooses the apps; an
+  app's own plugin is always on); base plugins have none; an org's ban is the loader's admission. Every user-visible
+  text in p3 is a message (`MessageData`, rendered per viewer); Radius gets the texts in reports. Radius learns locks
+  from member Pis' reports, or when the admin says "analyse this plugin" (Radius loads its server facets in a sandbox
+  and collects its `Locks`). Open: candidates (the sheet's possible values; Fable proposes a function next to the
+  lock, called when the picker opens), the page side of the plugin switch, the kit and Radius changes.
+- **The org profile is the top layer (owner, 2026-11-13):** enrollment file on disk (an initial copy), then what Radius
+  delivers, signed, cached, followed live (`archive/org-managed/book.md` for enrollment, the gate and machine
+  lock-down; its settings layer is superseded by locks).
+- **Process rules (owner, 2026-11-13):** read docs and code in full before designing; never present invented APIs
+  (every function shown is real, with its file, or defined right there); mark code BUILT or PROPOSED; never write
+  about competing products in public repos; handoffs start with "Read first, in full"; docs may be committed, code
+  only after the owner's review.
 - **Docs, slices and the workflow (owner, 2026-11-14):** `apps/p3/docs/` holds only the current working set
   (`README.md`, `overview.md`, `names.md`, `workflow.md`, `decisions.md`, `slices/`); everything older moved to
   `archive/`. p3 is built in small slices, each with a brief; before a slice is built its brief is filled out in

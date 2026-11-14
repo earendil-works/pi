@@ -4,4 +4,6 @@
 
 **Depends on:** slices 3.
 
+**From the archive:** `archive/views.md` (inline artifacts), `decisions.md` ("Artifacts and views", 2026-11-12), design.md §23 (Files v2).
+
 The brief is filled out when the slice is next.

@@ -4,4 +4,6 @@
 
 **Depends on:** slices 8.
 
+**From the archive:** `archive/status-2026-11-09.md` (instruction scopes), `archive/locks/design.md` (`prompt.*` locks).
+
 The brief is filled out when the slice is next.

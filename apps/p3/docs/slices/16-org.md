@@ -4,4 +4,6 @@
 
 **Depends on:** slices 6.
 
+**From the archive:** `archive/org-managed/book.md` and its `details.md`, `archive/locks/design.md` §8 (companies and Radius), `archive/direction-pi-roam.md`.
+
 The brief is filled out when the slice is next.

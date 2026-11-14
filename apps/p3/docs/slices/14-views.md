@@ -4,4 +4,6 @@
 
 **Depends on:** slices 2, 3.
 
+**From the archive:** `archive/views.md`, `archive/apps/web-ui-direction.html`, `archive/apps/views-mockup.html`, `archive/layouts/mocks.html`, `decisions.md` ("The agent writes plugins", "Artifacts and views").
+
 The brief is filled out when the slice is next.

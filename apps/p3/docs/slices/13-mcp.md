@@ -4,4 +4,6 @@
 
 **Depends on:** slices 3, 6.
 
+**From the archive:** `archive/locks/design.md` (`mcp.*` locks), `archive/org-managed/book.md` (org-supplied MCP servers).
+
 The brief is filled out when the slice is next.

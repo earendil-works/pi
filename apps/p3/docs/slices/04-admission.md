@@ -11,6 +11,8 @@ tests and an example.
 `/home/badlogic/chord-notes/research/p3-people-2026-11-13/admission-review*.md` (round 2 by Fable: three blocking
 fixes, six should-fixes, not yet folded into the design).
 
+**From the archive:** `archive/people/book.md` (why admission: the session check it replaces), `archive/rundown/book.md` (The Rule Under Everything).
+
 **Open (owner):** the staging rule (recommended: stage the new admit's declarations, rehearse the new factory with the
 current level); drop last values on a denial (recommended: yes); the route stays coarse (recommended: yes); what a lost
 decision source does (Fable's S4: seal with `unavailable`, or keep the decision while the source only loads).
