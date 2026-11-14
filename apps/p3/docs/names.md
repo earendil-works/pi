@@ -38,3 +38,10 @@ meaning from `packages/chord/docs/design.md` §2.
 | invite | a link that lets a person join | |
 | sign-in | one browser or device signed in as someone | session (for logins) |
 | admission | Chord's decision, before an object's factory, whether and at which level a principal gets it | access check |
+
+Names still to choose (docs audit, 2026-11-14): a word for a provider's login (here "sign-in" means a signed-in
+device); a word for the loader refusing a plugin (here "admission" is Chord's pre-factory decision); Durable's
+conversation "view" against the pane "view"; p2's "workspace" (files and diffs) against "session: one agent
+workspace"; groupings (sidebar sections), shares, the org profile, the plugin registries (`ViewKinds`,
+`ArtifactKinds`). Lock ids must follow plugin names (`coding.bash`, `conversations.reach`, `locations.places`,
+`terminals.use` do not yet).

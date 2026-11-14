@@ -34,3 +34,26 @@ Filters). Chord decision on subagents and `/tree` branches (`packages/chord/docs
 **Done when:** a run's answer arrives in order; a message during a run is queued; reloading `transcript` during a run
 loses nothing (the run continues, the view catches up); reloading `harness` during a run recovers it from its last
 commit; a server restart keeps the transcript; branches as forks in the session's store (or moved to a later slice).
+
+**Also read (docs audit, 2026-11-14; "Chord dec." is `packages/chord/docs/decisions.md` by entry title and line, "archive" is `../archive/`, "research" is `/home/badlogic/chord-notes/research/p3-people-2026-11-13/` on slayer):**
+
+- **blocking:** `map/book.md:381-438` (HostRuntime/KeepAlive), `merged.md` §2 #14, design §18; an owner decision.
+- **Chord dec.:** "Slice 8 is Registries and `host.root`" (1710), "Slice 6b: owner names and claims" (1730) and
+  "claims per table" (1750) (`StoreStorage.open(store, Harness.name, ctx)`), "Slice 8 D2 and D3" (1766: `host.root`,
+  `chord(fn, context)`), "Q6" (633), "p3 notes, 2026-11-02" (2413: branches as forks, `context: "inherit"`), "Note for
+  p3, moving a session" (573), "App authoring rules confirmed by the p2 audit" (2651).
+- **design:** §8 `ctx`, §20 "Input into running work", §14-§15.
+- **source:** `packages/durable/src/harness/types.ts`, `registry.ts`; `packages/chord/src/node/app/worker.ts:30`
+  (`busy`).
+- **archive:** `handoff.md:65-67` (tool access), `map/book.md:239-265` (`chord()`/`ChordRoot`), `:290-295`
+  (providers shape), `:853-856` (pi-ai and Durable as worker host packages), `merged.md` §2 #6, #7, §4 Q4-Q6, Q9,
+  `rundown/book.md:1524-1608` (the worker acts as itself, `authorOf`, the `<sender>` block).
+- **p2:** `apps/p2/plugins/chat/`, `drafts/`, `tree/`, `status/`; `apps/p2/src/runtime/tool-access.ts`.
+- **decide:** filters versus locks (2.2 #10), `scope` and new tool fields (2.2 #11).
+
+**Open or to carry (docs audit):**
+
+- Tool access (decision "Tool access"): `scope` stays; no new fields on tool declarations (this conflicts with the
+  locks review's "a tool names its lock": an owner call in slice 6).
+- Branches as forks in the session's store, `context: "inherit"` for subagents (Chord dec. 2413).
+- A session moved between Pis: blocked tasks shown with their reason and an abort (Chord dec. 573).

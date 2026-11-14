@@ -22,3 +22,15 @@ current level); drop last values on a denial (recommended: yes); the route stays
 decision source does (Fable's S4: seal with `unavailable`, or keep the decision while the source only loads).
 
 **Done when:** the design §8 tests pass, the design is updated with round 2, design.md §6, §7, §16, §19, §21 say it.
+
+**Also read (docs audit, 2026-11-14; "Chord dec." is `packages/chord/docs/decisions.md` by entry title and line, "archive" is `../archive/`, "research" is `/home/badlogic/chord-notes/research/p3-people-2026-11-13/` on slayer):**
+
+- **Chord source** (from `status-2026-11-13.md:19-22` and review2 S1/builder notes): `src/host/attempt.ts`,
+  `object.ts`, `dependencies.ts`, `parked.ts`, `staging.ts`, `revocation.ts`, `reference.ts`, `reference-source.ts`,
+  `presence.ts`, `members.ts`, `host.ts`, `facet.ts`; `src/remote/hold.ts`, `provider.ts`, `remote-object.ts`;
+  `src/link/message.ts`, `binary.ts`, `text.ts` (the protocol bump for `denied`); `src/data/failure.ts`;
+  `src/state/derive.ts`, `watchable.ts`.
+- **design:** §4, §6, §7, §16, §19, §21 (staging), §22 (wire, protocol version), §31.
+- **Chord docs:** `docs/shared-holds/design.md` and Chord dec. "References share one wire hold" (3506); "Reload
+  restarts every affected object" (2620); `docs/slices.md` (add the slice and its carry-over, root AGENTS.md).
+-  root `AGENTS.md` "Chord v2 Code Style" (tests per file, examples `test/examples/NN-topic.ts`).

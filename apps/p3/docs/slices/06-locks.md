@@ -21,3 +21,24 @@ new fields on tool declarations, decision "Tool access"), dropping `coding.bash`
 `harness.tools`, `maximumLock`; candidates as a function next to the lock, called when the picker opens. Lock ids
 follow `names.md` (`locations.places` becomes a location; plugins `conversations`, `subagents`, `terminals` exist or
 the ids change).
+
+**Also read (docs audit, 2026-11-14; "Chord dec." is `packages/chord/docs/decisions.md` by entry title and line, "archive" is `../archive/`, "research" is `/home/badlogic/chord-notes/research/p3-people-2026-11-13/` on slayer):**
+
+- **research:** `org-session-os-opus.md:6-19` (inventory A-J), `org-session-draft.md` (p2's lock facts).
+- **p2:** `apps/p2/src/runtime/session-lock.ts`, `tool-access.ts`, `apps/p2/plugins/mcp/placement.ts`,
+  `prompt/worker.ts`, `envs/schema.ts`, `sessions/` (its locks store), `views/worker.ts` (any pane kind).
+- **Chord:** `src/surfaces/messages.ts` (`renderKey` 124-140, the foreign-namespace report 165-171), design §23
+  "Messages and languages", §17 Registries, `src/registries/entries.ts` (`keyedEntries`).
+- **archive:** `people/book.md:306-308, 334, 392`; `model-stress/report.md:864-886`; `merged.md` §4 Q15 (plugin trust
+  in locked sessions); `rundown/book.md` review "plugin tools in a locked session" (The Filters, end).
+
+**Open or to carry (docs audit):**
+
+- What locks must cover: the inventory of what a plugin puts into a session (`research/org-session-os-opus.md` 6-19,
+  groups A-J; e.g. p2's `views/worker.ts` opens a pane of any kind).
+- A lock that closes mid-session: each plugin stops what it started (`archive/model-stress/report.md` 864-886).
+- From `archive/people/book.md`: value formats `glob()` and `ref(kind)`; `terminals.use` hides the button; the owner may
+  change an app's defaults in either direction within the org and Pi values.
+- The one check at the call: the server checks `locks.manage` in `set` (locks review S3), against "no check at the
+  call": an owner call.
+- Whether locks carry `version`/`migrate` is open (decisions.md's "Locks" entry lists no version).

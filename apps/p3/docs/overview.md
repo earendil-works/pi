@@ -60,7 +60,9 @@ work (owner, 2026-11-14).
 
 **Not yet sliced** (from p2 and earlier step lists): terminals, ports, the workspace and file index, search, Discord,
 Radius (relay, remote access, whole-Pi backups), voice, the telemetry viewer, groupings (rollups, projects), drafts,
-status, session delete, export, import and fork.
+status, session delete, export, import and fork, stats; and base pieces: the wake bridge and worker liveness
+(Durable's wake state to the server), secrets, backup and restore with the supervisor, tunnel ingress and a public
+origin, the agent's typed surface. Sources: `archive/base-inventory/base-inventory-sol.md` §4 and `merged.md` §2.
 
 **Tests:** the test topology (server and workers in one process), the faux model, a few end-to-end runs.
 
