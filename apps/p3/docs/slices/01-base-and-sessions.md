@@ -4,19 +4,46 @@
 sessions; each session's worker runs and follows its own facts from the server. The test tiers exist from here on, and
 so do the numbers.
 
-State: built 2026-11-14, in review (round 1); not committed. The owner accepted every recommendation below
-(2026-11-14). The scaffold (package, principal, API v1, `node:test`) is committed (4cc9fd409).
+State: built 2026-11-14; review round 1 (Sol, Astra, Fable: no blocking findings) done and fixed; round 2 next. Not
+committed. The owner accepted every recommendation of the plan (2026-11-14). The scaffold is committed (4cc9fd409).
 
-As built, differences from the plan below: `SessionFacts` is in `contract.ts` (the worker facet holds it, so it cannot be
-a server-only contract file); the creator is one `json` column; the kit exports `appInfoFacet` and `workerInfoFacet`
-(`packages/chord/src/node/app/index.ts`, README); `src/app.ts` holds `API` and `KINDS`; `server.ts` exports
-`mayReachSession`, which the topology's route uses too.
+As built, differences from the plan below:
 
-Measured on slayer (Linux x64, Node 24.4.1), `bench/slice-1.ts`: server listening 46 ms after `startP3` began (module
-loading not included); the server process (server and the bench's client) 120.8 MiB `RssAnon`; worker start cold 377 ms
-(with the worker base's build), warm 99 ms (median of 10); an idle worker 37.3 MiB `RssAnon`. The phone and p2's
-numbers follow once the code is on main (the phone deploys from git). Tests: 12 plugin and topology tests and 1 end-to-end
-test, `npm test` 0.97 s wall.
+- `SessionFacts` is in `contract.ts` (the worker facet holds it, so it cannot be a server-only contract file).
+- `SessionHere` is `SessionWorker` (`sessions.worker`), with only `facts` (round 1: `startedAt` was unused).
+- A session's facts hold `SessionInfo` (title, app, creator, `createdAt`, `archivedAt`), no id: the address is the key,
+  and a copy under another address rewrites keys, never JSON (round 1, all three reviewers). A list row is the id plus
+  that info. Times are named `createdAt` and `archivedAt` (round 1).
+- The creator is one `json` column; the table has an index on `createdAt` and the list maps rows with `mapShared` (round
+  1: no full scan per write, unchanged rows stay the same objects).
+- A new session's title is empty: each view shows its own "New session" in the viewer's language (round 1, decision
+  open below). Titles take at most 200 characters.
+- The kit exports `appInfoFacet` and `workerInfoFacet` (`packages/chord/src/node/app/index.ts`, README, CHANGELOG).
+- `src/app.ts` holds `API`, `KINDS`, `PRINCIPALS` and `mayReachSession`; `server.ts` and the test topology both use them.
+- The test topology fails its start when a server plugin fails to load (as the kit's required root), records a worker's
+  load failures, and its hosts wait at most 5 s for an object.
+- `tsconfig.json` sets `declaration: false`: p3 emits nothing, and declaration checks of contracts inferred through a
+  workspace symlink fail with TS2883.
+
+Measured on slayer (Linux x64, Node 24.4.1), `bench/slice-1.ts`, after round 1: server listening 45 ms after `startP3`
+began (module loading not included); the server process (server and the bench's client) 111.3 MiB `RssAnon`; worker
+start cold 292 ms (with the worker base's build), warm 99 ms (median of 10); an idle worker 29.5 MiB `RssAnon`. The
+phone and p2's numbers follow once the code is on main (the phone deploys from git). Tests: 15, `npm test` about 1 s.
+
+Decisions from round 1 for the owner (recommendations implemented where marked):
+
+1. A new session's title: empty, each view renders "New session" in its viewer's language (recommended, implemented),
+   or English text stored.
+2. API v1 re-exports all of Chord's root (`export *`): keep, and record that v1 follows Chord's root (recommended), or an
+   explicit list as the tutorial has.
+3. "app" for p3 itself (`@p3/app`, `src/app.ts`, the kit's word) against `names.md`'s app: a line in `names.md`
+   (recommended) or renaming to `@p3/api`.
+4. Archive only sets `archivedAt`; stopping the worker (design §25) needs a way for plugins to stop a worker: carry it to
+   the lifecycle slice with delete (recommended by Astra and Sol).
+
+Carried from round 1: a hold of `SessionWorker` for an id never created starts a worker (the route's `authorize` cannot
+ask the table: admission or the session service's `open` decides it); archive does not stop the worker (above); the list
+is the newest 200, archived ones included, without paging.
 
 ## What is built
 
