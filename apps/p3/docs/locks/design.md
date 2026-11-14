@@ -176,8 +176,8 @@ plugin's list) as one source per type?
 - Radius learns locks from member Pis' reports: per lock id, plugin, version, JSON Schema, `open`, `closed`, the
   title and description as `MessageData` plus the plugin's catalogs for those keys (Radius renders in the admin's
   language, English as fallback). Radius renders switches, fixed lists and text; references to a member's things
-  (sessions) only as `open`/`closed`. Loading plugins' server facets in a sandbox on Radius to learn locks before
-  any member installed them: later, if the admin panel needs it.
+  (sessions) only as `open`/`closed`. Or the admin says "analyse this plugin": Radius loads its server facets in a sandbox (as `testPlugin`
+  collects contributions) and reads its `Locks`, before any member installed it.
 
 ## 9. Open
 
