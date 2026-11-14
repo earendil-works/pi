@@ -68,6 +68,8 @@ export type InstanceSpec = {
 	readonly connect: Connect;
 	/** Per-request timeout from the configuration, in milliseconds. */
 	readonly timeoutMs: number | undefined;
+	/** The configuration's `description`, trimmed (undefined: none). */
+	readonly description: string | undefined;
 };
 
 /** One lease placed: the instance of each server it uses, by server name, and why entries of its project were refused. */
@@ -164,6 +166,7 @@ function ownerSpec(
 			runsOn: "host",
 			connect: { kind: "http", url, headers, oauth: oauthServerOf(server) },
 			timeoutMs,
+			description: descriptionOf(server.config),
 		};
 	}
 	const at = owned?.location ?? null;
@@ -216,9 +219,10 @@ function stdioSpec(
 	const machine = runsOn === "host" ? null : runsOn.env;
 	const base = location !== null && location.env === machine ? location.cwd : null;
 	const hostVariables = source === "owner";
+	const description = descriptionOf(config);
 	if (runsOn === "host") {
 		const key = ["stdio", source, server, owner, runsOn, hash];
-		const spec = { id: idOf(key), server, source, location, runsOn, timeoutMs };
+		const spec = { id: idOf(key), server, source, location, runsOn, timeoutMs, description };
 		return {
 			...spec,
 			connect: {
@@ -236,7 +240,7 @@ function stdioSpec(
 	// An edited environment (or a sandbox's edited host) is another connection: its instances start again on it.
 	const revision = envConfig === undefined ? null : connectionRevision(envs, envConfig);
 	const key = ["stdio", source, server, owner, runsOn, revision, hash];
-	const spec = { id: idOf(key), server, source, location, runsOn, timeoutMs };
+	const spec = { id: idOf(key), server, source, location, runsOn, timeoutMs, description };
 	if (envConfig === undefined || revision === null)
 		return { ...spec, connect: { kind: "unplaced", reason: `environment "${runsOn.env}" is not in envs.json` } };
 	return {
@@ -254,6 +258,11 @@ function stdioSpec(
 			hostVariables,
 		},
 	};
+}
+
+/** A server configuration's `description`, trimmed; undefined when it has none. */
+function descriptionOf(config: { readonly description?: string }): string | undefined {
+	return config.description?.trim() || undefined;
 }
 
 /** `~` and `~/…` name the home directory, as in a shell (and in pi). */

@@ -1681,11 +1681,26 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   does). The worker object (`p2.mcp-worker`) sends `setLocations` with every location its conversations work at (the
   session's, active subagents' own) at start, after moves and subagent commits, and whenever the view re-activates (a
   refusal because a newer generation runs ends it), and
-  contributes one Durable extension per configured server, `mcp:<server>` with the code-mode namespace `mcp__<server>`
-  (`createMcpExtensions`, a `self.writable`, rebuilt only when the tool list changes). The namespace's description
-  comes from the configuration only (and the sign-in hint for OAuth servers), so the prompt's code-mode section is the
-  same before and after a server connects (the KV cache holds); a server's `instructions` (`Mcp` version 3, the
-  instance's `instructions`) are reachable through `describeNamespace()`. There is no `mcp_servers` section. Deferred
+  contributes one composing Durable extension, `mcp` (`createMcpExtension`, a `self.writable`, rebuilt only when an
+  instance, its tools, summary or instructions, or a lease change; `Mcp` version 4 gives the worker its `leases`, the
+  instances each location uses, since a project override decides per lease even for instances serving every location).
+  Durable gives every conversation of a worker the same tools, so the extension registers every variant of every tool
+  (a tool as one instance describes it, `toolDescriptor`: title, description, schemas; instances describing it alike
+  share it) and cuts each conversation's view with wraps: the `codemode` section renders, and the `codemode` and
+  `tool_search` tools run (an `api` whose `agent()` is cut; its getters and symbol keys kept), with the servers of the
+  lease at the conversation's location only, each as its own namespace `mcp__<server>` with that instance's summary
+  and instructions. A server only another location has is not there (the main conversation's prompt does not change
+  when a subagent works elsewhere), a variant another location's instance describes is not there, and a call reaches
+  the caller's instance only as the variant it describes (else `MCP tool … is not offered at …`). Names as pi's, the
+  variant the session's lease uses keeping the plain name, other variants of a tool suffixed with a hash of their
+  descriptor. Still the union: Durable's own agent (hooks, `Conversation.agent()`, nested-call resolution, subagent tool
+  choice), and without code mode a loaded tool stays declared after a move. The namespace's description is pi's
+  one-line summary (`mcpServerSummary`: the configured `description` (`Mcp` version 4, the instance's `description`),
+  else the first line of the server's `instructions` (version 3), at most 250 characters), then where the tools are and
+  the sign-in hint for OAuth servers; it changes once when a server without a `description` first sends instructions (a
+  reloaded manager keeps the instructions it listed). The full
+  instructions come from `describeNamespace()`. Without code mode, the `mcp` extension's `mcp_servers` section lists
+  the conversation's servers with their summaries, as pi's does for `tool_search` servers. Deferred
   tools named by `createMcpToolName` (every tool of a colliding name gets the hash suffix, as in pi), results through
   `toLlmContent` and `limitMcpContent`, `structuredOutput` only for tools with an output schema. Without code mode,
   `tool_search` is installed by the worker's registry (`durableRegistry`: once, while code mode is off and any extension
@@ -1694,7 +1709,7 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   it: `npm run build:daemon` in `packages/env`, or `PI_ENV_DAEMON`), `mcp-instances.test.ts` (the supervisor with a
   short backoff), `mcp-leases.test.ts`, `mcp-environments.test.ts`, `mcp-project.test.ts`,
   `mcp-windows-command.test.ts`, `mcp-tools.test.ts`, `mcp-worker.test.ts` (fake provider: a project file, `tool_search`,
-  a call, a relocation).
+  a call, a relocation, a subagent's project server kept out of the main conversation, the `mcp_servers` section).
 - **MCP sign-in** (`plugins/mcp/sign-in.ts`, `routes.ts`, `probe.ts`, `pages.ts`, `credentials.ts`; as built:
   `docs/mcp-durable.md` section 4.7): HTTP servers without an `Authorization` header use OAuth with pi-mcp's auth
   provider (stored tokens, refreshed, never a browser) and credentials in `<P2_DATA_DIR>/mcp-auth.json` (0600, keyed like

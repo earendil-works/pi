@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createMcpToolName, mcpNamespace } from "../src/index.ts";
+import { createMcpToolName, mcpNamespace, mcpServerSummary } from "../src/index.ts";
 
 describe("createMcpToolName", () => {
 	it("joins server and tool and replaces characters outside [A-Za-z0-9_]", () => {
@@ -33,5 +33,16 @@ describe("mcpNamespace", () => {
 		expect(mcpNamespace("my-server")).toBe("mcp__my_server");
 		expect(mcpNamespace("my-server")).toBe(mcpNamespace("my_server"));
 		expect(createMcpToolName("my-server", "search").startsWith(`${mcpNamespace("my-server")}__`)).toBe(true);
+	});
+});
+
+describe("mcpServerSummary", () => {
+	it("takes the first line of the configured description, else of the instructions", () => {
+		expect(mcpServerSummary(" Docs search.\nMore. ", "Ignored.")).toBe("Docs search.");
+		expect(mcpServerSummary(undefined, "\n  Web search for current information.\nDetails.")).toBe(
+			"Web search for current information.",
+		);
+		expect(mcpServerSummary("  ", "From instructions.")).toBe("From instructions.");
+		expect(mcpServerSummary(undefined, undefined)).toBe("");
 	});
 });

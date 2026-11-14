@@ -32,8 +32,11 @@ export const RECONNECT: Backoff = { firstMs: 1000, maxMs: 60_000, stableMs: 60_0
 export class Instances {
 	readonly #client: ClientInfo;
 	readonly #backoff: Backoff;
-	/** Tools last listed per instance ID (a reload's previous supervisor): listed until the server answers again. */
-	readonly #seed: ReadonlyMap<string, readonly McpTool[]>;
+	/**
+	 * Tools and instructions last listed per instance ID (a reload's previous supervisor): listed until the server
+	 * answers again, so the prompt does not change meanwhile.
+	 */
+	readonly #seed: ReadonlyMap<string, Seed>;
 	readonly #envs: EnvConnections;
 	readonly #auth: AuthProviders;
 	readonly #running = new Map<string, Connection>();
@@ -53,7 +56,12 @@ export class Instances {
 	) {
 		this.#client = client;
 		this.#backoff = backoff;
-		this.#seed = new Map(seed.map((instance) => [instance.id, instance.tools]));
+		this.#seed = new Map(
+			seed.map(({ id, tools, instructions }) => [
+				id,
+				{ tools, ...(instructions === undefined ? {} : { instructions }) },
+			]),
+		);
 		this.#envs = new EnvConnections(connect);
 		this.#auth = auth;
 	}
@@ -86,7 +94,7 @@ export class Instances {
 					transports,
 					this.#client,
 					this.#backoff,
-					this.#seed.get(id) ?? [],
+					this.#seed.get(id) ?? { tools: [] },
 					() => this.#changed(),
 				);
 				this.#running.set(id, connection);
@@ -135,6 +143,9 @@ export class Instances {
 	}
 }
 
+/** What an instance lists before its server answers: its tools and instructions as last listed. */
+type Seed = { readonly tools: readonly McpTool[]; readonly instructions?: string };
+
 /** How much of a stdio server's stderr the owner's error shows. */
 const STDERR_TAIL_CHARS = 300;
 
@@ -176,14 +187,15 @@ class Connection {
 		transports: Transports,
 		info: ClientInfo,
 		backoff: Backoff,
-		tools: readonly McpTool[],
+		seed: Seed,
 		changed: () => void,
 	) {
 		this.#spec = spec;
 		this.#transports = transports;
 		this.#info = info;
 		this.#backoff = backoff;
-		this.#tools = tools;
+		this.#tools = seed.tools;
+		this.#instructions = seed.instructions;
 		this.#changed = changed;
 		this.#delayMs = backoff.firstMs;
 	}
@@ -199,7 +211,7 @@ class Connection {
 	}
 
 	view(): Instance {
-		const { id, server, source, location, runsOn, connect } = this.#spec;
+		const { id, server, source, location, runsOn, connect, description } = this.#spec;
 		const failure = this.#failure;
 		return {
 			id,
@@ -214,6 +226,7 @@ class Connection {
 				: { error: failure.stderr ? `${failure.message} (stderr: ${failure.stderr})` : failure.message }),
 			tools: [...this.#tools],
 			...(this.#instructions === undefined ? {} : { instructions: this.#instructions }),
+			...(description === undefined ? {} : { description }),
 		};
 	}
 
