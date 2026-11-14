@@ -46,3 +46,5 @@ plans/
 .pi/settings.json
 collect.sh
 packages/agent/docs/extensions/pi-server-artifact/index.md
+/result
+/result-*

@@ -98,6 +98,8 @@ jobs:
             system: aarch64-linux
           - runner: macos-latest
             system: aarch64-darwin
+          - runner: macos-15-intel
+            system: x86_64-darwin
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -124,6 +126,12 @@ jobs:
 
       - name: Build
         run: nix build -L .
+
+      - name: Checks
+        run: |
+          nix build -L --no-link \
+            .#checks.${{ matrix.system }}.smoke \
+            .#checks.${{ matrix.system }}.repo-hygiene
 
       - name: Smoke-test
         run: |
