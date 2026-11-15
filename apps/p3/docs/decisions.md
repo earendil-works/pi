@@ -369,3 +369,7 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
 - **Sign-in with Radius comes right after slice 1 (owner, 2026-11-15):** its own slice (25), with a small web and
   terminal scaffold and its own plain styles until Elanor's components arrive; the research is private
   (`/home/badlogic/chord-notes/research/p3-radius-signin.md`).
+- **Slice 1's review round 1 (owner, 2026-11-15):** the p3 kit has exactly one worker kind, sessions
+  (`src/kit/session-workers.ts`). A sign-in that ends (revoked, or expired unused) closes its own links at once,
+  through the close function Chord's HTTP component now hands `links.opened(request, principal, close)`; not through
+  `host.revoke`, which ends objects by principal and so would end the owner's shared objects for every device.

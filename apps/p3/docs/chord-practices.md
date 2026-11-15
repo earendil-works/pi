@@ -33,7 +33,7 @@ export const SessionsStore = local("sessions.store", { version: 1, params: {}, m
 
 ```ts
 const Rows = defineTable("sessions.rows", { version: 1, columns: ROW, key: ["id"],
-	indexes: { by_app: ["app", "archivedAt", "lastTouch"] } });       // one index serves both lists
+	indexes: { active: ["app", "archivedAt", "lastTouch"], archived: ["app", "archivedAt"] } });   // one index per list's order
 
 host.serve(SessionsStore, (_params, self) => {
 	const rows = self.table(Rows);
@@ -45,7 +45,7 @@ host.serve(SessionsStore, (_params, self) => {
 	}, ctx);
 	return {
 		sessions: self.queries(rows, { map: shown }, {
-			// Index `by_app`: `app` and `archivedAt` fixed, in the order of `lastTouch`.
+			// Index `active`: `app` and `archivedAt` fixed, in the order of `lastTouch`, then the key.
 			active: ({ app }) => query(Rows).where((s) => and(eq(s.app, app), eq(s.archivedAt, 0))).orderBy((s) => s.lastTouch, "desc"),
 			archived: ({ app }) => query(Rows).where((s) => and(eq(s.app, app), gt(s.archivedAt, 0))).orderBy((s) => s.archivedAt, "desc"),
 			one: ({ id }) => query(Rows).where((s) => eq(s.id, Session({ id }))),
@@ -97,8 +97,10 @@ needs a reference or a native). No stale-worker check exists or is needed (below
 - **No hidden caps.** A list is `self.list` with `more`; a set that decides access is read whole or fails closed when
   it has more rows than it read. Never `{ first: 1000 }` and hope.
 - Index and order columns are never optional (store "none" as 0, show `null`). Every named query says in a comment
-  which index serves its condition and order; an `inArray` on one column with an order on another walks the order's
-  index (order by the `inArray` column first).
+  which index serves its condition and order, and a plan test (`EXPLAIN QUERY PLAN` on the statements Chord runs, as
+  `apps/p3/test/plans.test.ts` does) proves it. A list's whole order, the key Chord appends included, must be its
+  index's order, or SQLite sorts every page: one index per list's order. An `inArray` on one column with an order on
+  another walks the order's index (order by the `inArray` column first).
 - A write that changes a few columns is a `tx.update` (a touch, a rename), never a `put`: readers that depend on none
   of the columns skip, the others probe once.
 - Hot details (tokens streaming, tool progress, timers) never reach a table a list reads. A session's row holds
@@ -182,6 +184,8 @@ needs a reference or a native). No stale-worker check exists or is needed (below
 | Seven plugins checking a worker's generation by hand | the workers component guarantees it |
 | A list cost measured once, after a start (2.3 ms, cold) | medians of 20 or more runs (0.7 ms warm), the cold run apart |
 | A mutation copy that still resolved `@p3/app` to the checkout | its own package links |
+| One index for two lists: the archived list's tie-break on the key was not in its index, so SQLite sorted every page | one index per list's order, and a plan test |
+| A revoked device's open socket kept working (inherited from Chord's kit) | a sign-in closes its own links (`links.opened`'s `close`), never `host.revoke` (it ends shared objects for every device) |
 
 ## How we work
 
