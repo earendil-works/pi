@@ -158,6 +158,38 @@ describe("conversations (fake provider)", () => {
 		assert.equal((await call(a, { action: "list" })).isError, false);
 	});
 
+	it("Stop keeps queued peer messages as context without a run and gives people their text back", async () => {
+		const gamma = (await sessions.create({ cwd: fixture.workspace, title: "Gamma" }, BACKGROUND_CONTEXT)).id;
+		const chat = await holdIn(owner, Chat, { session: gamma, conversation: 1 }, "participant");
+		await chat.send({ text: "slow-tool", requestId: "busy" }, BACKGROUND_CONTEXT);
+		await until(chat.view, (view) => JSON.stringify(view?.docs["pi.live"]).includes("tool-running"));
+		await chat.send({ text: "owner queued", requestId: "queued", whenBusy: "followUp" }, BACKGROUND_CONTEXT);
+		await broker(alpha, "kept", { action: "send", to: gamma, message: "kept peer", followUp: true });
+		await until(chat.view, (view) => JSON.stringify(view?.docs["pi.inbox"]).includes("kept peer"));
+		assert.deepEqual(await chat.stop(BACKGROUND_CONTEXT), { restored: ["owner queued"] });
+		const stopped = await until(chat.view, (view) => peers(view).length === 1);
+		const kept = peers(stopped)[0]!;
+		assert.deepEqual(kept.data, { from: { id: alpha, title: "Alpha" }, text: "kept peer" });
+		assert.deepEqual(kept.model?.[0]?.content, [
+			{ type: "text", text: `<sender kind="session" id="${alpha}" title="Alpha"/>` },
+			{ type: "text", text: "kept peer" },
+		]);
+		// Placed as context, not as input: no run answers it.
+		await until(status.statuses, (value) => value?.[gamma]?.tasks === 0);
+		const idle = await until(chat.view, Boolean);
+		assert.equal((idle?.docs["pi.live"] as { run?: unknown })?.run, undefined);
+		assert.equal(JSON.stringify(idle?.docs["pi.inbox"] ?? {}).includes("kept peer"), false);
+		assert.equal(idle?.entries.at(-1)?.id, kept.id);
+		// The next input follows it in the context and starts the run.
+		await chat.send({ text: "next", requestId: "next" }, BACKGROUND_CONTEXT);
+		const answered = await until(chat.view, (view) =>
+			Boolean(view?.entries.some((entry) => entry.id > kept.id && entry.kind === "pi.assistant")),
+		);
+		const context = (answered?.entries ?? []).filter((entry) => entry.id >= kept.id).map((entry) => entry.kind);
+		assert.deepEqual(context.slice(0, 2), [PEER_MESSAGE_ENTRY, "p2.input"]);
+		chat.release();
+	});
+
 	it("creates sessions in a project or a folder, stops, archives and restores them", async () => {
 		await writeFile(join(fixture.dataDir, "projects.json"), JSON.stringify({ ws: [{ path: fixture.workspace }] }));
 		const projects = await holdIn(owner, Projects, {}, "owner");

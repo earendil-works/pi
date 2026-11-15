@@ -1100,7 +1100,9 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   `<sender kind="owner|guest|session|subagent" …/>` block (`src/runtime/sender.ts`, values escaped; a subagent's
   text follows as `[<intent>] <text>`), which the preamble explains and nothing reads back: readers use the entry data.
   Stop/dequeue restore text only to its author; removing a queued input (×,
-  no restore) discards it, as in Pi Mobile.
+  no restore) discards it, as in Pi Mobile. Stop keeps queued peer and subagent messages: after the abort they are
+  written as context entries (same kind and data, no run), since their senders cannot take them back; the agent reads
+  them with the next input. A main agent's queued task for a subagent is withdrawn (its reporter says so).
 - **Windowed conversation view** (`plugins/chat/worker.ts`, `src/web/history.ts`, `src/runtime/conversation-stats.ts`):
   `Chat.view` is Durable's view with image references: a window over the transcript (the fork-aware history in entry
   ID order, head markers in place), the newest 50 entries, then appends, back to 50 past 100, `before` the entry just

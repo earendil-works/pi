@@ -77,7 +77,7 @@ const conversationsExtension = (worker: () => WorkerParts) => {
 					"send (to = stable session ID, message; optional followUp): deliver an attributed message; steering by default, followUp queues after current work.",
 					"answer (to): read the latest completed answer without sending input or waiting for current work.",
 					"create (message, and project or cwd; optional env, title, model 'provider/modelId': a signed-in one, default your own): start a new session there with message as its first input, from you. Returns its ID.",
-					"stop (to): abort the session's current run; its queued messages are dropped.",
+					"stop (to): abort the session's current run; queued messages from people are withdrawn, those from agents and sessions stay as context without a run.",
 					"archive (to) / restore (to): archive a session (its worker stops, its history stays) or bring it back.",
 					"Replies arrive only when the peer explicitly uses send back to your ID. No automatic reports. Do not poll or create reply loops.",
 				].join("\n"),
@@ -201,7 +201,8 @@ export default defineFacet((host) => {
 						const durable = harness().durable;
 						const main = await mainConversation(durable, ctx);
 						const stopped = (await durable.snapshot(LiveDoc, main, ctx))?.run !== undefined;
-						// As Stop in the chat: queued inputs are withdrawn (their text goes to nobody here), then the run ends.
+						// As Stop in the chat: queued inputs are withdrawn (people's text goes to nobody here; messages from agents and
+						// sessions stay as context), then the run ends.
 						await (await ctx.get(Conversation, { conversation: main })).stop(ctx);
 						return { stopped };
 					}),

@@ -27,7 +27,7 @@ export const QuerySchema = union([
 		model: opt(str({ minLength: 1 })),
 		title: opt(str({ minLength: 1, maxLength: 120 })),
 	}),
-	/** Aborts the destination's current run; its queued inputs are withdrawn. */
+	/** Aborts the destination's current run; its queued inputs are withdrawn, agents' and sessions' kept as context. */
 	obj({ action: literal("stop"), to: To }),
 	obj({ action: literal("archive"), to: To }),
 	obj({ action: literal("restore"), to: To }),
