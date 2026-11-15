@@ -2728,6 +2728,16 @@ validation and copies the v2 kernel added around Delta.
   failure), diffed from that kept value. Every change still marks its dependents (a derive may have read the value
   between two changes). It covers `failWith` and every user of the class (lists, live queries). (`state/framed.ts`;
   `test/state/framed.test.ts`, `test/host/list.test.ts`.)
+- **A derive read between two changes of its source in one batch publishes one frame (owner, 2026-11-15; found with
+  the framed source's fix, reproduced):** the same defect in `Derive.invalidate`. A derive is marked dirty by a
+  change of a source; a read inside the batch (a reference of the host keeping or binding the member in that
+  commit) makes it clean again, and the source's next change in the batch marked it again: the value kept for its
+  frame was overwritten with the one read in between and the derive was listed a second time. A watched derive then
+  delivered two frames, the first diffed from the wrong value (ops that do not apply to what its watches have), and
+  a link got `member twice in one state` and closed. The rule, as for a framed source: a watched derive is listed by
+  its first marking in a batch only, which keeps what its watches have; its one frame is its value (or failure) at
+  the end of the batch, diffed from that. Every marking still marks its dependents. (`state/derive.ts`;
+  `test/state/derive.test.ts`, `test/remote/provider.test.ts`.)
 - **Swaps: dependents first; calls during a swap never see `not_ready` (owner, 2026-11-04: "if swaps can be invisible
   to dependents that's cool, but I fear correctness bugs"; analysis `/tmp/swap-analysis.md`):** the problem: a reload
   swapping a provider and its pure dependent (61's `todo.store` and `todo.todos(groceries)`) parked the dependent

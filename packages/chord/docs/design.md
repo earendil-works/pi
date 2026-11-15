@@ -1823,8 +1823,9 @@ published before it runs.**
 diffed into ops for the wire. Sources are `Watchable`s and `NativeWatchable`s (documents, other derives, reference
 members, Durable's views, registry values); the result is always JSON (state is JSON only; bytes only in method arguments and results). A derive is marked dirty in the
 commit step and recomputed in the owner's flush right after it, so its change travels in the same message as its
-source (W1); a dirty derive nobody holds recomputes on its next read. A throwing derive fails only its member
-(`broken`). There is no `previous` (W14): `mapShared` keeps unchanged elements identical.
+source (W1); a dirty derive nobody holds recomputes on its next read. One commit is one frame of a derive, its
+value at the end of the commit diffed from the value before it, however often its sources changed in the commit and
+whoever read it in between. A throwing derive fails only its member (`broken`). There is no `previous` (W14): `mapShared` keeps unchanged elements identical.
 
 - **Built on what exists:** derives sit on Chord's internal publication primitive (not today's `cell.ts` or
   `replicatedState`); the diff is

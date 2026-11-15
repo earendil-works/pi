@@ -29,6 +29,7 @@
 
 ### Fixed
 
+- A watched derive that was read between two changes of its source in one commit published two frames, the first diffed from the value read in between; over a link that was the protocol error `member twice in one state`, which closed the link. It publishes one frame per commit now, diffed from the value before the commit.
 - A list or live query whose value was set several times in one commit (a list's row moving from one loaded page to another) published one frame per set; over a link that was two entries for one member in one state message, the protocol error `member twice in one state`, which closed the link. It publishes one frame per commit now: its last value, diffed from the value before the commit.
 - The workers component closes a worker's link when the worker exits, before it publishes the exit in `state` and before the address's next worker starts: a call the worker sent that was not handled yet is dropped and a running one is aborted, so nothing an exited worker reported is handled or commits after `state` says it is gone. Apps need no stale-worker check of their own.
 - The optional peer dependencies on `react`, `ws` and `esbuild` are ranges (`^19.3.0`, `^8.21.0`, `^0.28.2`), not exact versions: npm no longer refuses to install Chord in a project with another patch release of them, such as react 19.3.1 ([#12008](https://github.com/earendil-works/pi/issues/12008)).

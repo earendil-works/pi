@@ -22,6 +22,7 @@ import { DeflatedPart, jsonPart, type Message } from "../../src/link/internal.ts
 import { nodeCompression } from "../../src/node/compression.ts";
 import { ProviderSide } from "../../src/remote/provider.ts";
 import { constant } from "../../src/state/index.ts";
+import type { Batch } from "../../src/state/internal.ts";
 import {
 	addNote,
 	countInflated,
@@ -30,6 +31,7 @@ import {
 	failLive,
 	forEachCodec,
 	instancesOf,
+	linked,
 	Match,
 	type MatchProbe,
 	MatchV2,
@@ -316,6 +318,40 @@ forEachCodec(() => {
 			// No validation or walk of state on the provider: only the argument checks of `add` and the store's `add`.
 			expect(counts()["chord.data.validations"]).toBe(2);
 			expect(counts()["chord.data.walks"]).toBeUndefined();
+		});
+
+		it("a derive read between two changes of its source in one commit travels once: no protocol error, the link stays open", async () => {
+			const Gauge = remote("test.gauge", {
+				version: 1,
+				params: {},
+				hostAddress: () => Server(),
+				variants: { main: { state: { reading: obj({ n: int() }) } } },
+			});
+			let level: { set(value: number): void } | undefined;
+			let reading: { readonly value: unknown } | undefined;
+			const { server, client, errors } = await linked((h) =>
+				h.serve(Gauge, (_params, _principal, self) => {
+					const source = self.writable(1);
+					const derived = self.derive([source], ([n]) => ({ n }));
+					level = source;
+					reading = derived;
+					return { variant: "main", members: { reading: derived } };
+				}),
+			);
+			const held = await client.get(Gauge, {}, context);
+			expect(held.reading.value).toEqual({ n: 1 });
+			// One commit of the server: its source changes, something reads the derive (as a reference of the host that
+			// keeps or binds the member in that commit does), its source changes again.
+			(server as unknown as { readonly batch: Batch }).batch.commit(() => {
+				level?.set(2);
+				expect(reading?.value).toEqual({ n: 2 });
+				level?.set(3);
+			}, context);
+			await transported();
+			expect(errors).toEqual({ server: [], client: [] });
+			expect(held.state.value).toEqual({ kind: "live" });
+			expect(held.reading.value).toEqual({ n: 3 });
+			held.release();
 		});
 
 		it("a derive travels with its source in the same part", async () => {
