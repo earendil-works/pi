@@ -114,7 +114,7 @@ describe("files (fake provider)", () => {
 		assert.deepEqual(await readdir(fixture.workspace), [], "nothing is written into the project");
 	});
 
-	it("attaches uploads to messages by ID, materialized on this machine: paths listed, images inline", async () => {
+	it("attaches uploads to messages by ID, materialized on this machine: marked with their paths, images inline", async () => {
 		const text = JSON.parse((await upload(session.id, "notes.txt", "hello")).body) as Uploaded;
 		const image = JSON.parse((await upload(session.id, "dot.png", PNG)).body) as Uploaded;
 		assert.equal(image.mimeType, "image/png");
@@ -135,8 +135,16 @@ describe("files (fake provider)", () => {
 		// This machine's copies: under the data directory's `uploads/<session>/`, private, outside the project.
 		const textPath = join(fixture.dataDir, "uploads", session.id, `${text.id}-notes.txt`);
 		const imagePath = join(fixture.dataDir, "uploads", session.id, `${image.id}-dot.png`);
-		const note = content.find((part) => part.type === "text" && part.text.includes("<attachments>"));
-		assert(note?.type === "text" && note.text.includes(textPath) && note.text.includes(imagePath));
+		// Without references in the text, the files follow it, marked with their copies' paths; the image inside its tag.
+		const marks = content.findIndex((part) => part.type === "text" && part.text.includes(textPath));
+		assert.deepEqual(
+			content.slice(marks).map((part) => (part.type === "text" ? part.text : part.type)),
+			[
+				`<file name=[File #1] path="${textPath}" />\n<image name=[Image #1] path="${imagePath}">`,
+				"image",
+				"</image>",
+			],
+		);
 		assert.equal(await readFile(textPath, "utf8"), "hello");
 		assert.equal((await stat(textPath)).mode & 0o777, 0o600);
 		// The fake model accepts images, so the PNG is also inlined; the view carries a reference to it, which loads it.
@@ -160,9 +168,13 @@ describe("files (fake provider)", () => {
 		const view = await until(chat.view, (value) => userMessages(value).length > 1);
 		const content = userMessages(view)[1]?.content;
 		assert(Array.isArray(content));
-		const note = content.find((part) => part.type === "text" && part.text.includes("<attachments>"));
-		assert(note?.type === "text", "the attachments note");
-		assert.match(note.text, /wide\.png, \d+ bytes\) \[Resized from 2400x8 to 2000x7\. Multiply coordinates by 1\.20/);
+		const open = content.findIndex((part) => part.type === "text" && part.text.includes("wide.png"));
+		const tag = content[open];
+		assert(tag?.type === "text", "the image's tag");
+		assert.match(tag.text, /^wide\n\n<image name=\[Image #1\] path="[^"]+-wide\.png">$/);
+		const note = content[open + 2];
+		assert(note?.type === "text", "the note inside the tag");
+		assert.match(note.text, /^Resized from 2400x8 to 2000x7\. Multiply coordinates by 1\.20.*<\/image>$/s);
 		const inline = content.find((part) => part.type === "image");
 		assert(inline?.type === "image");
 		const shown = shownImage(inline);
@@ -218,11 +230,38 @@ describe("files (fake provider)", () => {
 		const content = userMessages(view)[2]?.content;
 		assert(Array.isArray(content));
 		assert(!content.some((part) => part.type === "image"));
-		const note = content.find((part) => part.type === "text" && part.text.includes("<attachments>"));
+		const note = content.find((part) => part.type === "text" && part.text.includes("broken.png"));
 		assert(note?.type === "text");
 		assert.match(
 			note.text,
-			/broken\.png, 12 bytes\) \[An image \(image\/png\) cannot be prepared for the model and was left out\.\]/,
+			/<image name=\[Image #1\] path="[^"]+-broken\.png">An image \(image\/png\) cannot be prepared for the model and was left out\.<\/image>$/,
+		);
+	});
+
+	it("puts each referenced file where the text references it, marked with its copy's path", async () => {
+		const notes = JSON.parse((await upload(session.id, "plan.txt", "plan")).body) as Uploaded;
+		const dot = JSON.parse((await upload(session.id, "dot.png", PNG)).body) as Uploaded;
+		const text = [
+			`compare ![dot.png](attachment:${dot.id}) with [plan.txt](attachment:${notes.id})`,
+			// Not one of the message's attachments: text, as written.
+			" and ![other](attachment:unknown),",
+			// A second reference to a file shown before: its name alone.
+			` again ![dot.png](attachment:${dot.id}).`,
+		].join("");
+		await chat.send({ text, requestId: "placed", attachments: [notes.id, dot.id] }, BACKGROUND_CONTEXT);
+		const view = await until(chat.view, (value) => userMessages(value).length > 3);
+		const content = userMessages(view)[3]?.content;
+		assert(Array.isArray(content));
+		const dotPath = join(fixture.dataDir, "uploads", session.id, `${dot.id}-dot.png`);
+		const notesPath = join(fixture.dataDir, "uploads", session.id, `${notes.id}-plan.txt`);
+		// After the sender block: the text up to the image's tag, the image, the rest with the plan marked in place.
+		assert.deepEqual(
+			content.slice(1).map((part) => (part.type === "text" ? part.text : part.type)),
+			[
+				`compare <image name=[Image #1] path="${dotPath}">`,
+				"image",
+				`</image> with <file name=[File #1] path="${notesPath}" /> and ![other](attachment:unknown), again [Image #1].`,
+			],
 		);
 	});
 

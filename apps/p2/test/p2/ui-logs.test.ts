@@ -5,7 +5,7 @@ import { Catalog, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { processLogs } from "../../src/runtime/logs.ts";
 import { ServerNatives } from "../../src/runtime/server.ts";
-import { Browser, browserTests } from "./browser.ts";
+import { Browser, browserTests, COMPOSER } from "./browser.ts";
 import { holdIn, startFixture, until } from "./helpers.ts";
 
 test(
@@ -117,9 +117,7 @@ test(
 		await browser.evaluate(
 			"[...document.querySelectorAll('.worker-start-error button')].find(e=>e.textContent==='Retry').click()",
 		);
-		await browser.wait(
-			"!document.querySelector('.worker-start-error') && document.querySelector('.composer textarea')",
-		);
+		await browser.wait(`!document.querySelector('.worker-start-error') && document.querySelector('${COMPOSER}')`);
 		await until(
 			status.statuses,
 			(value) => value?.[session.id]?.running === true && value[session.id].error === undefined,

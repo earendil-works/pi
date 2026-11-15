@@ -16,7 +16,7 @@ import { localSystem, terminalDaemon } from "../../plugins/terminals/daemon.ts";
 import { connectTerminalHost } from "../../plugins/terminals/detached.ts";
 import { encodeFrame } from "../../plugins/terminals/protocol.ts";
 import type { RefIn } from "../../src/runtime/chord.ts";
-import { Browser, browserTests } from "./browser.ts";
+import { Browser, browserTests, COMPOSER } from "./browser.ts";
 import { APP, type Fixture, holdIn, startFixture, until } from "./helpers.ts";
 
 /** Whether the menu is open or closed, as expressions. */
@@ -81,7 +81,7 @@ describe("command menu: workspace, terminal and folders", { skip: !browserTests 
 	};
 
 	/** Opens `path` at 1280×800 as a page on macOS and waits for `ready` (a selector) while online. */
-	const load = async (path: string, ready = ".composer textarea") => {
+	const load = async (path: string, ready = COMPOSER) => {
 		await browser.metrics(1280, 800);
 		await browser.call("Emulation.setUserAgentOverride", { userAgent, platform: "MacIntel" });
 		await browser.open(`${base}${path}`);
@@ -360,7 +360,7 @@ describe("command menu: workspace, terminal and folders", { skip: !browserTests 
 					`(() => { const input = document.querySelector('#name'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'Reader'); input.dispatchEvent(new Event('input', { bubbles: true })); })()`,
 				);
 				await guest.click("#join button");
-				await guest.wait(`document.querySelector('.subagent-bar, .composer textarea')`);
+				await guest.wait(`document.querySelector('.subagent-bar, ${COMPOSER}')`);
 				for (const type of ["rawKeyDown", "keyUp"])
 					await guest.call("Input.dispatchKeyEvent", {
 						type,

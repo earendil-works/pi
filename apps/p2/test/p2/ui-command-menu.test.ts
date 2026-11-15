@@ -20,7 +20,7 @@ import { localSystem, terminalDaemon } from "../../plugins/terminals/daemon.ts";
 import { connectTerminalHost } from "../../plugins/terminals/detached.ts";
 import { encodeFrame } from "../../plugins/terminals/protocol.ts";
 import type { Host, RefIn } from "../../src/runtime/chord.ts";
-import { Browser, browserTests } from "./browser.ts";
+import { Browser, browserTests, COMPOSER, composerText } from "./browser.ts";
 import { APP, type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
 
 type Platform = "mac" | "other";
@@ -136,7 +136,7 @@ describe("command menu", { skip: !browserTests }, () => {
 	 * Opens `path` at 1280×800 as a page on `platform` (the menu's key table reads navigator.platform at load) and waits
 	 * for `ready` (a selector) while online.
 	 */
-	const load = async (path: string, platform: Platform = "mac", ready = ".composer textarea") => {
+	const load = async (path: string, platform: Platform = "mac", ready = COMPOSER) => {
 		await browser.metrics(1280, 800);
 		await browser.call("Emulation.setUserAgentOverride", {
 			userAgent,
@@ -206,9 +206,11 @@ describe("command menu", { skip: !browserTests }, () => {
 				// A session per platform: the composer's draft is kept per session.
 				await openSession(await create(`Keys ${platform}`), `Keys ${platform}`, platform);
 				// The composer has the focus and a caret in the middle of its text.
-				await browser.evaluate(`document.querySelector('.composer textarea').focus()`);
+				await browser.evaluate(`document.querySelector('${COMPOSER}').focus()`);
 				await type("hello world");
-				await browser.evaluate(`document.querySelector('.composer textarea').setSelectionRange(5, 5)`);
+				await browser.evaluate(
+					`(() => { const r = document.createRange(); r.setStart(document.querySelector('${COMPOSER}').firstChild, 5); getSelection().removeAllRanges(); getSelection().addRange(r); })()`,
+				);
 				// The other platform's chord does nothing.
 				await press("k", platform === "mac" ? { ctrl: true } : { meta: true });
 				await new Promise((resolve) => setTimeout(resolve, 200));
@@ -225,7 +227,7 @@ describe("command menu", { skip: !browserTests }, () => {
 				await browser.wait(CLOSED);
 				assert.deepEqual(
 					await browser.evaluate(
-						`(() => { const e = document.querySelector('.composer textarea'); return [document.activeElement === e, e.selectionStart, e.selectionEnd, e.value]; })()`,
+						`(() => { const e = document.querySelector('${COMPOSER}'); const r = getSelection().getRangeAt(0); const at = (node, offset) => { const p = document.createRange(); p.setStart(e, 0); p.setEnd(node, offset); return p.toString().length; }; return [document.activeElement === e, at(r.startContainer, r.startOffset), at(r.endContainer, r.endOffset), ${composerText}]; })()`,
 					),
 					[true, 5, 5, "hello world"],
 					platform,
@@ -235,9 +237,7 @@ describe("command menu", { skip: !browserTests }, () => {
 				await press("Escape");
 				await browser.wait(CLOSED);
 				assert.equal(
-					await browser.evaluate<boolean>(
-						`document.activeElement === document.querySelector('.composer textarea')`,
-					),
+					await browser.evaluate<boolean>(`document.activeElement === document.querySelector('${COMPOSER}')`),
 					true,
 				);
 				await openMenu(platform);
@@ -502,7 +502,7 @@ describe("command menu", { skip: !browserTests }, () => {
 			await browser.wait(`${CLOSED} && location.pathname==='/s/${to}'`);
 			// Its composer takes the focus, also when the menu opened from a list page's search field, which goes, for the
 			// session shown before the list page.
-			await browser.wait(`document.activeElement === document.querySelector('.composer textarea')`);
+			await browser.wait(`document.activeElement === document.querySelector('${COMPOSER}')`);
 			const search = 'input[aria-label="Search sessions and messages"]';
 			await browser.click(".sidebar-section[data-key=recent] a.group-label");
 			await browser.wait(`document.querySelector(${JSON.stringify(search)})`);
@@ -510,7 +510,7 @@ describe("command menu", { skip: !browserTests }, () => {
 			await openMenu();
 			await run("quokka", "Quokka notes");
 			await browser.wait(`${CLOSED} && location.pathname==='/s/${to}'`);
-			await browser.wait(`document.activeElement === document.querySelector('.composer textarea')`);
+			await browser.wait(`document.activeElement === document.querySelector('${COMPOSER}')`);
 		});
 
 		it("lists the sessions a query matches under Sessions, after the commands, the open one checked", async () => {

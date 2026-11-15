@@ -57,5 +57,5 @@ export function useNewSessionState(): State {
 export function startNewSession(start: { location?: NewSessionLocation; join?: NewSessionJoin } = {}): void {
 	change({ choice: undefined, join: start.join, ...(start.location ? { location: start.location } : {}) });
 	openNewSession();
-	setTimeout(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus(), 50);
+	setTimeout(() => document.querySelector<HTMLElement>(".composer .draft-editor")?.focus(), 50);
 }

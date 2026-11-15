@@ -18,7 +18,7 @@ import { Sharing } from "../../plugins/sharing/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
 import { SessionTree } from "../../plugins/tree/contract.ts";
-import { Browser, browserTests } from "./browser.ts";
+import { Browser, browserTests, COMPOSER, composerText, setComposer } from "./browser.ts";
 import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
 
 const setInput = (selector: string, value: string) =>
@@ -44,7 +44,7 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 	it("hides the new-session title, opens sign-in and the model sheet, selects cwd, and sends an attached first message", async () => {
 		await browser.metrics(390, 844);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
-		await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
+		await browser.wait(`document.querySelector('${COMPOSER}') && !document.querySelector('.offline')`);
 		assert.equal(
 			await browser.evaluate<string>(`getComputedStyle(document.querySelector('.topbar .title')).visibility`),
 			"hidden",
@@ -76,6 +76,8 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		await browser.click(".directory-use");
 		await browser.wait(`!document.querySelector('[role=dialog]')`);
 		writeFileSync(join(fixture.workspace, "first.txt"), "First-message attachment\n");
+		// The picked file's pill goes at the caret, after the text.
+		await browser.evaluate(setComposer("First prompt "));
 		const document = (await browser.call("DOM.getDocument")) as { root: { nodeId: number } };
 		const node = (await browser.call("DOM.querySelector", {
 			nodeId: document.root.nodeId,
@@ -85,15 +87,14 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 			nodeId: node.nodeId,
 			files: [join(fixture.workspace, "first.txt")],
 		});
-		await browser.wait(`document.querySelector('.attachment-name')?.textContent==='first.txt'`);
-		await browser.evaluate(setInput(".composer textarea", "First prompt"));
+		await browser.wait(`document.querySelector('.draft-pill')?.textContent==='first.txt'`);
 		await browser.click("button[aria-label=Send]");
 		await browser.wait(
-			`location.pathname.startsWith('/s/') && document.querySelector('.messages .bubble-files')?.textContent.includes('first.txt')`,
+			`location.pathname.startsWith('/s/') && document.querySelector('.messages .bubble .message-ref')?.textContent==='first.txt'`,
 		);
 		await browser.wait(`document.querySelector('.messages .assistant')?.textContent.includes('Echo: First prompt')`);
 		await browser.wait(`document.querySelector('.topbar h1')?.textContent.startsWith('First prompt')`);
-		assert.equal(await browser.evaluate<string>(`document.querySelector('.composer textarea').value`), "");
+		assert.equal(await browser.evaluate<string>(composerText), "");
 	});
 
 	it("collapses and reopens the desktop sidebar without a navigation step; closes the phone drawer through Back and scrim", async () => {

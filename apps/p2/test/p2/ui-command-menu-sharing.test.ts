@@ -14,7 +14,7 @@ import { Chat } from "../../plugins/chat/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import type { Host, RefIn } from "../../src/runtime/chord.ts";
-import { Browser, browserTests } from "./browser.ts";
+import { Browser, browserTests, COMPOSER } from "./browser.ts";
 import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
 
 /** What the open menu shows, or null while it is closed. */
@@ -93,7 +93,7 @@ describe("command menu: sharing and artifacts", { skip: !browserTests }, () => {
 	};
 
 	/** Opens `path` at 1280×800 as a macOS page and waits for the composer while online. */
-	const load = async (path: string, ready = ".composer textarea", page = browser) => {
+	const load = async (path: string, ready = COMPOSER, page = browser) => {
 		await page.metrics(1280, 800);
 		await page.call("Emulation.setUserAgentOverride", { userAgent, platform: "MacIntel" });
 		await page.open(`${base}${path}`);

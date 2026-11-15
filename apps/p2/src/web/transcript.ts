@@ -20,6 +20,7 @@ type ConversationPeer = { id: string; title: string };
 
 import { type AssistantCost, cacheHitRate } from "../runtime/conversation-stats.ts";
 import { type MessageData, messageData } from "../runtime/input.ts";
+import { fileReferences } from "../runtime/references.ts";
 import type { Author } from "../runtime/sender.ts";
 import { SHELL_ENTRY, shellData } from "../runtime/shell.ts";
 import { isInterruptedError } from "../runtime/tool-calls.ts";
@@ -345,7 +346,8 @@ export function buildTranscript(
 		images,
 		author: person.author,
 		text: person.text,
-		files: person.attachments.map((file) => file.name),
+		// Files the text references show in it; the others (clients without references) below it.
+		files: unreferenced(person),
 		...(chat ? { chat } : {}),
 		...display?.(entry.kind, entry.data),
 	});
@@ -563,4 +565,10 @@ export function buildTranscript(
 		),
 		agent: (view.docs["pi.agent"] ?? {}) as AgentState,
 	};
+}
+
+/** The names of a message's files its text does not reference. */
+function unreferenced(person: MessageData): string[] {
+	const referenced = new Set(fileReferences(person.text).map((reference) => reference.id));
+	return person.attachments.filter((file) => !referenced.has(file.id)).map((file) => file.name);
 }

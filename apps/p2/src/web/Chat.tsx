@@ -11,6 +11,7 @@ import {
 	useState,
 } from "react";
 import type { ShownImage } from "../runtime/entry-images.ts";
+import { plainReferences, referenceParts } from "../runtime/references.ts";
 import { ActivityRow } from "./activity/ActivityRow.tsx";
 import { ActivityLayer } from "./activity/ActivitySheet.tsx";
 import {
@@ -411,7 +412,7 @@ function Incoming({ item }: { item: Extract<Item, { type: "user" }> }) {
 					{agent?.intent === "failed" ? (
 						<div className="incoming-plain">{item.text}</div>
 					) : (
-						<Markdown text={item.text} />
+						<Markdown text={plainReferences(item.text)} />
 					)}
 				</Clamped>
 				{item.files.length > 0 && (
@@ -452,6 +453,19 @@ function Clamped({ text, children }: { text: string; children: ReactNode }) {
 	);
 }
 
+/** A person's text with each file reference shown as the file's name, where the message placed it. */
+function MessageText({ text }: { text: string }) {
+	return referenceParts(text).map((part) =>
+		part.kind === "text" ? (
+			part.text
+		) : (
+			<span key={part.start} className="message-ref" title={part.label}>
+				<span>{part.label}</span>
+			</span>
+		),
+	);
+}
+
 /** The owner's message (or an input without an author): a bubble. People's messages can be replied to. */
 function UserMessage({ item }: { item: Extract<Item, { type: "user" }> }) {
 	const reveal = useContext(RevealEntry);
@@ -483,7 +497,7 @@ function UserMessage({ item }: { item: Extract<Item, { type: "user" }> }) {
 							{item.chat && " · chat"}
 						</div>
 					)}
-					{item.text}
+					<MessageText text={item.text} />
 					{item.files.length > 0 && (
 						<div className="bubble-files">
 							{item.files.map((file) => (
@@ -510,7 +524,7 @@ function UserMessage({ item }: { item: Extract<Item, { type: "user" }> }) {
 							<PencilIcon />
 						</button>
 					)}
-					{text && <CopyButton text={text} />}
+					{text && <CopyButton text={plainReferences(text)} />}
 				</div>
 			)}
 		</div>

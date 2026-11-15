@@ -42,6 +42,7 @@ import {
 	isOwner,
 	type MessageData,
 	messageData,
+	referenceParts,
 	senderText,
 	serveKeyed,
 } from "@p2/app/v1";
@@ -91,9 +92,12 @@ const Live = defineTypedState("p2.conversation.stats", {
 });
 
 /**
- * The message text plus attachments: a path list the agent can read with its tools (uploads stay outside the
- * project), and images inline when the conversation's model accepts them, fitted to its limits as pi fits them; what
- * fitting changed is noted next to the file.
+ * The message text with its files in place, marked as Codex marks local images: each `attachment:` reference becomes
+ * `<image name=[Image #N] path="…">`, the image itself (when the conversation's model accepts images, fitted to its
+ * limits as pi fits them), then `</image>`; a file of another type becomes `<file name=[File #N] path="…" />`. The
+ * path is the file's copy where the conversation's tools run; a later reference to the same file is its name alone.
+ * What fitting changed, or why an image is not shown, goes inside its tag. Files the text does not reference (clients
+ * without references) follow the text. With a cap, the newest (last) images are inlined; the others are only marked.
  */
 async function content(
 	text: string,
@@ -107,25 +111,60 @@ async function content(
 	if (!files.length) return [{ type: "text", text }];
 	const { model: ref } = await conversation.agent(ctx);
 	const model = ref ? models?.getModel(ref.provider, ref.modelId) : undefined;
-	const eligible = model?.input.includes("image") ? files.filter((file) => file.mimeType) : [];
-	// With a cap, the newest images (the last ones) are inlined; the rest are only listed.
-	const inline = new Set(maxImages > 0 ? eligible.slice(-maxImages) : []);
+	const accepts = model?.input.includes("image") ?? false;
+	const byId = new Map(files.map((file) => [file.id, file]));
+	const referenced = referenceParts(text, (id) => byId.has(id)).flatMap((part) =>
+		part.kind === "ref" ? [byId.get(part.id)!] : [],
+	);
+	// Placement order: the text's references, then the files it does not reference.
+	const order = [...new Set([...referenced, ...files])];
+	const images = order.filter((file) => file.mimeType);
+	const inline = new Set(accepts && maxImages > 0 ? images.slice(-maxImages) : []);
+	const names = new Map<Attachment, string>();
+	for (const file of order) {
+		const kind = file.mimeType ? "Image" : "File";
+		names.set(file, `[${kind} #${order.filter((other) => !other.mimeType === !file.mimeType).indexOf(file) + 1}]`);
+	}
 	const limits = imageLimits(model);
-	const images: ImageContent[] = [];
-	const lines: string[] = [];
-	for (const file of files) {
-		const line = `- ${file.path} (${file.name}, ${file.size} bytes)`;
-		if (!file.mimeType || !inline.has(file)) {
-			lines.push(line);
-			continue;
+	const parts: (ImageContent | TextContent)[] = [];
+	const placed = new Set<Attachment>();
+	let pending = "";
+	const place = async (file: Attachment) => {
+		const name = names.get(file)!;
+		if (placed.has(file)) {
+			pending += name;
+			return;
+		}
+		placed.add(file);
+		if (!file.mimeType) {
+			pending += `<file name=${name} path="${file.path}" />`;
+			return;
+		}
+		pending += `<image name=${name} path="${file.path}">`;
+		if (!inline.has(file)) {
+			pending += accepts ? "(not shown: over this message's image limit)</image>" : "</image>";
+			return;
 		}
 		const fitted = await fitImage(await readFile(file.localPath ?? file.path), file.mimeType, limits, processor);
-		if (fitted.kind === "fitted") images.push(fitted.image);
+		if (fitted.kind === "fitted") {
+			parts.push({ type: "text", text: pending }, fitted.image);
+			pending = "";
+		}
 		const notes = fitted.kind === "fitted" ? fitted.notes : [fitted.note];
-		lines.push(notes.length ? `${line} [${notes.join(" ")}]` : line);
+		pending += `${notes.join(" ")}</image>`;
+	};
+	for (const part of referenceParts(text, (id) => byId.has(id))) {
+		if (part.kind === "text") pending += part.text;
+		else await place(byId.get(part.id)!);
 	}
-	const note = `<attachments>\nThe user attached these files:\n${lines.join("\n")}\n</attachments>`;
-	return [{ type: "text", text: text.trim() ? `${text}\n\n${note}` : note }, ...images];
+	const rest = order.filter((file) => !placed.has(file));
+	for (const [index, file] of rest.entries()) {
+		if (index > 0) pending += "\n";
+		else if (pending.trim()) pending += "\n\n";
+		await place(file);
+	}
+	if (pending) parts.push({ type: "text", text: pending });
+	return parts;
 }
 
 export default defineFacet((host) => {

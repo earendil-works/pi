@@ -11,7 +11,7 @@ import { WebSocket } from "ws";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Devices } from "../../plugins/devices/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
-import { browserTests } from "./browser.ts";
+import { browserTests, COMPOSER, setComposer } from "./browser.ts";
 import { type Fixture, holdIn, http, poll, startFixture, until } from "./helpers.ts";
 
 const termux = process.env.PREFIX !== undefined;
@@ -78,12 +78,10 @@ class Browser {
 		// Do not let the old document's still-connected DOM satisfy readiness during a reload.
 		if (navigation.loaderId) await poll(() => this.loaded.has(navigation.loaderId!), 30_000, "new document loaded");
 		try {
-			await this.wait(
-				'Boolean(document.querySelector(".composer textarea") && !document.querySelector(".offline"))',
-			);
+			await this.wait(`Boolean(document.querySelector('${COMPOSER}') && !document.querySelector('.offline'))`);
 		} catch (error) {
 			const state = await this.evaluate(
-				'({ ready: document.readyState, textareas: document.querySelectorAll("textarea").length, offline: Boolean(document.querySelector(".offline")), title: document.querySelector("h1")?.textContent, hero: document.querySelector(".hero")?.className, dialogs: document.querySelectorAll("[role=dialog]").length, rootChildren: document.querySelector("#root")?.childElementCount })',
+				'({ ready: document.readyState, editors: document.querySelectorAll(".draft-editor").length, offline: Boolean(document.querySelector(".offline")), title: document.querySelector("h1")?.textContent, hero: document.querySelector(".hero")?.className, dialogs: document.querySelectorAll("[role=dialog]").length, rootChildren: document.querySelector("#root")?.childElementCount })',
 			);
 			throw new Error(
 				`browser readiness failed: ${JSON.stringify(state)}; ${[...new Set(this.failures)].join("; ")}`,
@@ -339,10 +337,8 @@ describe("Pi Mobile UI regressions", { skip: !browserTests }, () => {
 				),
 				"the final answer must not be covered by the composer",
 			);
-			await browser.evaluate(
-				`(() => { const input=document.querySelector('.composer textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'slow\\none\\ntwo\\nthree');input.dispatchEvent(new Event('input',{bubbles:true})); })()`,
-			);
-			await browser.wait(`document.querySelector('.composer textarea')?.clientHeight >= 96`);
+			await browser.evaluate(setComposer("slow\none\ntwo\nthree"));
+			await browser.wait(`document.querySelector('${COMPOSER}')?.clientHeight >= 96`);
 			await browser.evaluate(`document.querySelector('.composer').requestSubmit()`);
 			await browser.wait(`document.querySelector('.streaming .elanor-markdown')?.textContent.length > 100`);
 			await browser.call("Input.dispatchMouseEvent", {

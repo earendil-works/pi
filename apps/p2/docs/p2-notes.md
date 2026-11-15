@@ -1287,9 +1287,19 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   through the worker's `Attachments` local (only uploads of that session): each is materialized before admission into
   the data directory's `uploads/<session>/` on this machine (for the default data directory that is
   `~/.pi/p2/uploads/<session>/`) and, when the receiving conversation works on another environment, into
-  `~/.pi/p2/uploads/<session>/` there; the message lists those paths, with images inline (from this machine's copy)
-  when the model accepts them, fitted to its limits before submission with the worker's image processor
-  (`WorkerParts.images`, Durable's `fitImage`; a resize, or an image left out, is noted next to the file). `read`
+  `~/.pi/p2/uploads/<session>/` there. The message's text places its files: a reference
+  `![name](attachment:<upload id>)` (images) or `[name](attachment:<upload id>)` (other files) counts when its ID is one
+  of the message's attachments (`src/runtime/references.ts`). The model reads each file where it is referenced, marked
+  as Codex marks local images: `<image name=[Image #N] path="<copy>">`, the image (from this machine's copy, when the
+  model accepts images, fitted to its limits before submission with the worker's image processor,
+  `WorkerParts.images`, Durable's `fitImage`), what fitting changed or why it is left out, `</image>`; other files as
+  `<file name=[File #N] path="<copy>" />`; a second reference as `[Image #N]` alone; unreferenced uploads (the TUI,
+  Discord) after the text. The web composer (`plugins/chat/draft-editor.tsx`) shows references as pills: files are
+  placed at the caret or a drop's point, moved by dragging or the pill's menu (Earlier, Later, Remove), and every
+  change, typing and pills alike, goes through the composer's own undo history (`draft-history.ts`); the browser's
+  undo (keys, Edit menu, iOS shake) never runs. Picked files are referenced by their local keys until the send
+  renames them to upload IDs; references to this session's uploads (a message brought back by Edit or from the queue)
+  go as they are. Transcript, previews, titles and the TUI show references by the files' names. `read`
   (coding-tools) and the `fit-images` plugin (Durable's `afterTool` extension, for every tool result) fit the images of
   tool results with the same processor before they are committed: the transcript never changes later. `DownloadStore` (server local) snapshots a server file into the session's files;
   producers on the worker (send_file) write there directly (space `downloads`, key the snapshot's UUID). `GET|HEAD

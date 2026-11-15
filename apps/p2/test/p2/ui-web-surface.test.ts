@@ -16,7 +16,7 @@ import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Views } from "../../plugins/views/contract.ts";
 import { type P2Server, startServer } from "../../src/hosts/server.ts";
 import { LINK_CLIENTS, STALE_PAGE_CODE } from "../../src/runtime/stale-page.ts";
-import { Browser, browserTests } from "./browser.ts";
+import { Browser, browserTests, COMPOSER } from "./browser.ts";
 import { clientHost, holdIn, type LocalOwner, localOwner, until, webAssets } from "./helpers.ts";
 
 describe("pages on the web surface", { skip: !browserTests }, () => {
@@ -100,7 +100,7 @@ describe("pages on the web surface", { skip: !browserTests }, () => {
 
 	it("reloads the page when the server's base bundle changed", async () => {
 		await browser.open(`http://127.0.0.1:${port}/s/${session}`);
-		await browser.wait(`${shows("two")} && document.querySelector('.composer textarea')`);
+		await browser.wait(`${shows("two")} && document.querySelector('${COMPOSER}')`);
 		await browser.evaluate("window.__sameDocument = true");
 		// The page asks the server's base when it reconnects; here CDP answers another one once, after a restart.
 		let answered = false;
@@ -126,9 +126,7 @@ describe("pages on the web surface", { skip: !browserTests }, () => {
 		try {
 			await server!.close();
 			await start();
-			await browser.wait(
-				`!window.__sameDocument && ${shows("two")} && document.querySelector('.composer textarea')`,
-			);
+			await browser.wait(`!window.__sameDocument && ${shows("two")} && document.querySelector('${COMPOSER}')`);
 			assert.equal(answered, true);
 		} finally {
 			await browser.call("Fetch.disable");

@@ -20,6 +20,7 @@ import {
 	local,
 	messageData,
 	peerMessage,
+	plainReferences,
 	SHELL_ENTRY,
 	signalOf,
 	until,
@@ -50,11 +51,13 @@ function indexedMessage(entry: EntryRecord): IndexedMessage | undefined {
 	if (entry.kind === SHELL_ENTRY) return undefined;
 	if (role === "assistant" && !AssistantEntry.is(entry)) return undefined;
 	const messages = entry.model?.filter((message) => message.role === role) ?? [];
+	const person = role === "user" ? messageData(entry.data) : undefined;
 	const typed =
 		role === "user"
-			? (messageData(entry.data)?.text ??
-				peerMessage(entry.kind, entry.data)?.text ??
-				agentMessage(entry.kind, entry.data)?.text)
+			? // File references are indexed (and titled) by the files' names.
+				person
+				? plainReferences(person.text)
+				: (peerMessage(entry.kind, entry.data)?.text ?? agentMessage(entry.kind, entry.data)?.text)
 			: undefined;
 	const text =
 		typed ??

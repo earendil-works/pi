@@ -84,6 +84,7 @@ export * from "../../runtime/link-limits.ts";
 export * from "../../runtime/location.ts";
 export * from "../../runtime/notices.ts";
 export * from "../../runtime/principals.ts";
+export * from "../../runtime/references.ts";
 export * from "../../runtime/refs.ts";
 export * from "../../runtime/schema.ts";
 export * from "../../runtime/schemas.ts";
