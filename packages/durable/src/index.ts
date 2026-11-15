@@ -39,7 +39,7 @@ export {
 	GenerationTask,
 } from "./harness/generation.ts";
 export { DEFAULT_HARNESS_IDENTITY, Harness } from "./harness/harness.ts";
-export { InboxDoc, type InboxItem, type InboxState, type WithdrawnInput } from "./harness/inbox.ts";
+export { InboxDoc, type InboxItem, type InboxState } from "./harness/inbox.ts";
 export {
 	type CompactionFailure,
 	type CompactionStatus,
@@ -88,7 +88,6 @@ export type {
 	ContextView,
 	Conversation,
 	ConversationAbortOptions,
-	ConversationAbortResult,
 	ConversationCreateOptions,
 	ConversationHandle,
 	ConversationInit,

@@ -346,30 +346,30 @@ export default defineFacet((host) => {
 					return { submissionId: submission.id };
 				},
 				stop: async (ctx) => {
-					const { conversation: current } = target();
-					// The abort withdraws the queued inputs in the commit that marks the run, so none arrives in between
-					// unseen. Each author gets their text back; inputs of conversations the run owns go with it.
-					const { withdrawn } = await current.abort(ctx, { background: false });
+					const { harness: durable, conversation: current } = target();
+					// Conversation.abort() discards queued inputs. Withdraw them first, one by one, so each author gets
+					// their text back; already placed ones are skipped. An input that arrives after this loop is still
+					// discarded by the abort.
 					const restored: { author: Author; text: string }[] = [];
-					for (const item of withdrawn) {
-						if (item.conversationId !== current.id) continue;
+					const kept: (QueuedInput & { entry: NonNullable<QueuedInput["entry"]> })[] = [];
+					for (const item of await queued(ctx)) {
+						if ((await durable.abortSubmission(item.id as SubmissionId, ctx, current.id)) !== "aborted") continue;
 						const input = restoredInput(item);
 						if (input) restored.push(input);
-						// Messages from agents and sessions become context without a run, as their input would have been
-						// placed: the transcript shows them, and the agent reads them with the next input.
-						else if (item.entry && KEPT_ON_STOP.has(item.entry.kind))
-							await current.submit(
-								{
-									type: "write",
-									entry: {
-										...item.entry,
-										model: [{ role: "user", content: item.content, timestamp: Date.now() }],
-									},
-									requestId: `stop-kept:${item.id}`,
-								},
-								ctx,
-							);
+						else if (item.entry && KEPT_ON_STOP.has(item.entry.kind)) kept.push({ ...item, entry: item.entry });
 					}
+					await current.abort(ctx, { background: false });
+					// Messages from agents and sessions become context without a run, as their input would have been placed:
+					// the transcript shows them, and the agent reads them with the next input.
+					for (const { id, entry, content } of kept)
+						await current.submit(
+							{
+								type: "write",
+								entry: { ...entry, model: [{ role: "user", content, timestamp: Date.now() }] },
+								requestId: `stop-kept:${id}`,
+							},
+							ctx,
+						);
 					await status.push(ctx);
 					return { restored };
 				},

@@ -48,13 +48,11 @@ import type {
 } from "../types.ts";
 import { agentHooks, DEFAULT_RESTART_LIMIT } from "./agent.ts";
 import { advanceRange, type ContextRange, rangeEntry, readContextFrom } from "./context.ts";
-import type { WithdrawnInput } from "./inbox.ts";
 import { providerSessionsByRuntime } from "./provider.ts";
 import { DURABLE_TELEMETRY_SCHEMA } from "./telemetry.ts";
 import type {
 	Agent,
 	AnyTask,
-	ConversationAbortResult,
 	ConversationHandle,
 	HarnessInspection,
 	HarnessOptions,
@@ -260,7 +258,7 @@ export type TaskSchedulerOptions = {
 	/** Harness cleanup staged in the commit that makes an outcome the scheduler wrote itself terminal. */
 	readonly settleOutcome: (tx: Transaction, record: AnyTaskRecord, outcome: SchedulerOutcome) => Promise<void>;
 	/** Withdraw a conversation's queued inputs, for conversation abort and abort cascades. */
-	readonly withdrawInputs: (tx: Transaction, conversationId: ConversationId) => Promise<readonly WithdrawnInput[]>;
+	readonly withdrawInputs: (tx: Transaction, conversationId: ConversationId) => Promise<void>;
 	/** Invocation-bound handle of an existing conversation, for task runtimes and tools. */
 	readonly conversation: (
 		id: ConversationId,
@@ -701,14 +699,10 @@ export class TaskScheduler {
 	/**
 	 * `Conversation.abort()`: in one commit, withdraw the queued inputs and mark every live non-background task that
 	 * ordinary traversal from the conversation reaches; resolves once the scope is idle. With `background`, traversal
-	 * crosses background boundaries, and the wait also covers every task it reached. Returns the inputs it withdrew.
+	 * crosses background boundaries, and the wait also covers every task it reached.
 	 */
-	async abortConversation(
-		conversationId: ConversationId,
-		background: boolean,
-		context: Context,
-	): Promise<ConversationAbortResult> {
-		const { reached, withdrawn } = await this.#session.commitWith(async (tx) => {
+	async abortConversation(conversationId: ConversationId, background: boolean, context: Context): Promise<void> {
+		const reached = await this.#session.commitWith(async (tx) => {
 			await this.#published();
 			const queued = await this.#loadScopes(true);
 			const scope = { conversation: conversationId };
@@ -719,16 +713,13 @@ export class TaskScheduler {
 				reached.push(live.id);
 				if (!live.abortRequested || live.abortReason !== undefined) tx.setTask(withAbortMark(live));
 			}
-			const withdrawn: WithdrawnInput[] = [];
 			for (const id of queued) {
-				if (this.#inScope({ conversation: id }, scope, background) === true)
-					withdrawn.push(...(await this.#withdrawInputs(tx, id)));
+				if (this.#inScope({ conversation: id }, scope, background) === true) await this.#withdrawInputs(tx, id);
 			}
-			return { reached, withdrawn };
+			return reached;
 		}, context);
 		if (background) for (const id of reached) await this.waitForTask(id, context);
 		await this.waitForIdle(conversationId, context);
-		return { withdrawn };
 	}
 
 	/**

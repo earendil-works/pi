@@ -245,18 +245,8 @@ describe("input entries", () => {
 		const aborted = await root.submit({ type: "input", content: "x", entry: mention("x") }, context);
 		expect(await withdrawn.abort(context)).toBe("aborted");
 		expect((await inboxItems(harness, root)).map((item) => item.id)).toEqual([aborted.id]);
-		const later = await root.submit(
-			{ type: "input", content: [{ type: "text", text: "y" }], whenBusy: "followUp" },
-			context,
-		);
-		// The abort returns what it withdrew, in ID order: a host can hand each input back.
-		expect(await root.abort(context)).toEqual({
-			withdrawn: [
-				{ conversationId: root.id, id: aborted.id, mode: "followUp", content: "x", entry: mention("x") },
-				{ conversationId: root.id, id: later.id, mode: "followUp", content: [{ type: "text", text: "y" }] },
-			],
-		});
-		for (const submission of [withdrawn, aborted, later]) {
+		await root.abort(context);
+		for (const submission of [withdrawn, aborted]) {
 			expect(await submission.wait(context)).toMatchObject({ status: "unanswered", reason: "aborted" });
 		}
 		expect(await input.wait(context)).toMatchObject({ status: "unanswered", reason: "aborted" });

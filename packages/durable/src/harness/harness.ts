@@ -62,7 +62,6 @@ import type {
 	ContextView,
 	Conversation,
 	ConversationAbortOptions,
-	ConversationAbortResult,
 	ConversationCreateOptions,
 	ConversationHandle,
 	ConversationInit,
@@ -176,7 +175,7 @@ class ConversationImpl<Tool extends ToolRegistration> implements Conversation {
 		return this.#host.create({ kind: "fork", parentId: this.id, at, ownership: options.ownership }, options, context);
 	}
 
-	async abort(context: Context, options?: ConversationAbortOptions): Promise<ConversationAbortResult> {
+	async abort(context: Context, options?: ConversationAbortOptions): Promise<void> {
 		this.#host.tasks.resume();
 		return this.#host.tasks.abortConversation(this.id, options?.background === true, context);
 	}

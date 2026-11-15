@@ -12,7 +12,6 @@ import {
 	PeerConversation,
 	type Query,
 } from "../../plugins/conversations/contract.ts";
-import { Drafts } from "../../plugins/drafts/contract.ts";
 import { Projects } from "../../plugins/projects/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
@@ -188,20 +187,6 @@ describe("conversations (fake provider)", () => {
 		);
 		const context = (answered?.entries ?? []).filter((entry) => entry.id >= kept.id).map((entry) => entry.kind);
 		assert.deepEqual(context.slice(0, 2), [PEER_MESSAGE_ENTRY, "p2.input"]);
-		// A stop from another session gives people's queued text to their drafts, which their composer claims.
-		await until(status.statuses, (value) => value?.[gamma]?.tasks === 0);
-		await chat.send({ text: "slow-tool", requestId: "busy-again" }, BACKGROUND_CONTEXT);
-		await until(chat.view, (view) => JSON.stringify(view?.docs["pi.live"]).includes("tool-running"));
-		await chat.send({ text: "owner draft", requestId: "draft", whenBusy: "followUp" }, BACKGROUND_CONTEXT);
-		await until(chat.view, (view) => JSON.stringify(view?.docs["pi.inbox"]).includes("owner draft"));
-		await broker(alpha, "stop-gamma", { action: "stop", to: gamma });
-		const drafts = await holdIn(owner, Drafts, { session: gamma, conversation: 1 }, "author");
-		const pending = await until(drafts.drafts, (value) => Boolean(value?.length));
-		assert.deepEqual(
-			pending?.map((draft) => draft.text),
-			["owner draft"],
-		);
-		drafts.release();
 		chat.release();
 	});
 

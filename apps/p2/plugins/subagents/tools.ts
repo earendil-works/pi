@@ -336,7 +336,7 @@ export async function placeTarget(
 
 /** What archiving needs: a tool call's API, or the worker's Harness. */
 type ArchiveTarget = {
-	conversation(id: ConversationId, context: Context): Promise<Pick<ConversationHandle, "abort"> | undefined>;
+	conversation(id: ConversationId, context: Context): Promise<{ abort(context: Context): Promise<void> } | undefined>;
 	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context): Promise<T>;
 };
 

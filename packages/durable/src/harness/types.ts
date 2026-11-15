@@ -55,7 +55,6 @@ import type {
 	TypedEntry,
 	WakeReason,
 } from "../types.ts";
-import type { WithdrawnInput } from "./inbox.ts";
 import type { TaskGraph, TaskGraphWatch } from "./task-graph.ts";
 import type { UsageState } from "./usage.ts";
 import type { ConversationView, ConversationWindow } from "./view.ts";
@@ -155,15 +154,6 @@ export type AnyTask = {
 	};
 };
 
-/** What `Conversation.abort()` did besides marking tasks. */
-export type ConversationAbortResult = {
-	/**
-	 * The queued inputs it withdrew in its commit, settled `unanswered` with reason `aborted`: the conversation's and those
-	 * of the other conversations it reached, each conversation's in ID order. A host can hand them back to their senders.
-	 */
-	readonly withdrawn: readonly WithdrawnInput[];
-};
-
 /** Options of `Conversation.abort()`. */
 export type ConversationAbortOptions = {
 	/**
@@ -189,7 +179,7 @@ export interface ConversationHandle {
 	submit(submission: SubmissionDraft, context: Context): Promise<Submission>;
 	submit(tx: Tx, submission: SubmissionDraft): Promise<SubmissionId>;
 	/** `Conversation.abort()`: withdraw queued inputs, abort the ordinary ownership scope, and wait until it is idle. */
-	abort(context: Context, options?: ConversationAbortOptions): Promise<ConversationAbortResult>;
+	abort(context: Context, options?: ConversationAbortOptions): Promise<void>;
 	/** Resolve when the conversation's ordinary ownership scope has no live non-background task. */
 	waitForIdle(context: Context): Promise<void>;
 }
@@ -973,10 +963,9 @@ export interface Conversation {
 	fork(at: EntryId, options: ConversationCreateOptions, context: Context): Promise<Conversation>;
 	/**
 	 * Withdraw queued inputs (queued writes stay), mark every live non-background task of the ordinary ownership scope,
-	 * signal them, and resolve once the scope is idle, with the inputs it withdrew. Background subtrees survive unless
-	 * `background` is set.
+	 * signal them, and resolve once the scope is idle. Background subtrees survive unless `background` is set.
 	 */
-	abort(context: Context, options?: ConversationAbortOptions): Promise<ConversationAbortResult>;
+	abort(context: Context, options?: ConversationAbortOptions): Promise<void>;
 	/**
 	 * Resolve when the ordinary ownership scope has no live non-background task: this conversation and the conversations
 	 * owned, transitively, by its non-background tasks.

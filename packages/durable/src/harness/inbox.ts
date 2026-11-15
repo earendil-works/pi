@@ -16,9 +16,6 @@ export type InboxItem =
 	/** `entry` is an `EntryDraft`, stored as plain JSON. */
 	| { id: SubmissionId; mode: "write"; entry: JsonObject };
 
-/** A queued input that an abort withdrew: its inbox item as stored, and its conversation. */
-export type WithdrawnInput = Exclude<InboxItem, { mode: "write" }> & { readonly conversationId: ConversationId };
-
 /** Built-in queue of one conversation's submissions waiting for a boundary, in ID order. */
 export type InboxState = { items: InboxItem[] };
 
@@ -169,23 +166,14 @@ export async function removeInboxItem(tx: Tx, conversationId: ConversationId, id
 
 /**
  * Withdraw every queued input of a conversation, as `Conversation.abort()` and abort cascades do: each settles
- * `unanswered` with `reason` (default `aborted`) and leaves the inbox; queued writes stay for later placement. Returns
- * the withdrawn inputs in ID order, copied out of the draft, which ends with the transaction.
+ * `unanswered` with `reason` (default `aborted`) and leaves the inbox; queued writes stay for later placement.
  */
-export async function withdrawQueuedInputs(
-	tx: Tx,
-	conversationId: ConversationId,
-	reason = "aborted",
-): Promise<WithdrawnInput[]> {
+export async function withdrawQueuedInputs(tx: Tx, conversationId: ConversationId, reason = "aborted"): Promise<void> {
 	const items = (await tx.doc(InboxDoc, conversationId)).items;
-	const withdrawn: WithdrawnInput[] = [];
 	for (let index = items.length - 1; index >= 0; index--) {
 		const item = items[index]!;
 		if (item.mode === "write") continue;
 		tx.settleSubmission(item.id, { status: "unanswered", reason });
-		// `copyJson()` returns untyped JSON; a copy of an inbox item is that item's JSON representation.
-		withdrawn.push({ ...(copyJson(item) as Exclude<InboxItem, { mode: "write" }>), conversationId });
 		items.splice(index, 1);
 	}
-	return withdrawn.reverse();
 }
