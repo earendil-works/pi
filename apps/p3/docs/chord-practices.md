@@ -114,6 +114,11 @@ needs a reference or a native). No stale-worker check exists or is needed (below
   `self.list`; an `exists` is never the selective part of a list.
 - A screen composed from several plugins (the sidebar) is a server object per person composing small reads in
   memory; the client gets a range.
+- An open list grows with what is created: a new row enters its first page, so a list can show more than one page
+  without `more`. A test that wants "the first page, then `more`" opens the list after creating the rows.
+- Reads are not shared between readers yet (Chord's carry-over): two objects reading the same named query with the
+  same arguments are two reads, and a write runs both. When it matters, one local object per entity holds the read
+  and the others read it.
 
 **Access**
 - A person's data comes from admission, never from params. Params only narrow inside what the admission allows
@@ -148,8 +153,14 @@ needs a reference or a native). No stale-worker check exists or is needed (below
   fail for each. A rule no test catches is untested.
 - Where a rule is subtle (skip rules, tiling), a randomized test compares the optimized result with a fresh run,
   across several owners and group commits, checked after every frame.
-- Numbers: `bench/slice-<n>.ts`, at the sizes the brief states (1k, 10k, 100k rows), medians, on slayer; a worker's
-  memory as its private memory (USS), not RSS.
+- Numbers: `bench/slice-<n>.ts`, at the sizes the brief states (1k, 10k, 100k rows), medians of 20 or more runs,
+  the first (cold) run reported apart, on slayer; a worker's memory as its private memory (USS), and its total for
+  several workers at once.
+- The mutation copy needs its own package links: copy `apps/p3` to `/tmp/x/apps/p3`, then link
+  `/tmp/x/node_modules/@p3/app` to the copy and `/tmp/x/node_modules/@earendil-works` to the repository's (a plain copy
+  resolves `@p3/app` back to the checkout, and mutations in `src/` take no effect).
+- Reload tests reload every facet the slice touches while it is used: the server's (a list open) and the worker's (the
+  owner holding the worker's object).
 
 ## Mistakes we made (and the fix)
 
@@ -169,6 +180,8 @@ needs a reference or a native). No stale-worker check exists or is needed (below
 | A count behind a hot column | count only what a key or an index bounds, never behind a column every touch writes |
 | A whole store exposed as a remote contract | an explicit contract and `forward` |
 | Seven plugins checking a worker's generation by hand | the workers component guarantees it |
+| A list cost measured once, after a start (2.3 ms, cold) | medians of 20 or more runs (0.7 ms warm), the cold run apart |
+| A mutation copy that still resolved `@p3/app` to the checkout | its own package links |
 
 ## How we work
 
