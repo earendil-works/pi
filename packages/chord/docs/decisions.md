@@ -2718,6 +2718,16 @@ validation and copies the v2 kernel added around Delta.
   loading between them was never rendered. Why it is nothing shows in `useRefState`. It is true of the render that
   read it, no guarantee across an `await`. References themselves get no `expectVariant` or `inVariant` (C15
   unchanged).
+- **A framed source set several times in one batch publishes one frame (2026-11-15; found by Astra in p3's slice 1
+  review, reproduced):** the problem: a list sets its value once per page a commit adopted, so a row moving from
+  one page to another set it twice in one batch. `FramedSource.set` listed the source in the batch each time, the
+  batch delivered it twice, and a link got two entries for one member in one state message: the protocol error
+  `member 0 twice in one state`, which closes the link (p3: 51 archived sessions, `more` once, the last row archived
+  again closed the owner's connection). The rule: a framed source is listed in a batch by its first change only,
+  which keeps the value its watches have; the batch's one frame is the state the batch left (its last value, or its
+  failure), diffed from that kept value. Every change still marks its dependents (a derive may have read the value
+  between two changes). It covers `failWith` and every user of the class (lists, live queries). (`state/framed.ts`;
+  `test/state/framed.test.ts`, `test/host/list.test.ts`.)
 - **Swaps: dependents first; calls during a swap never see `not_ready` (owner, 2026-11-04: "if swaps can be invisible
   to dependents that's cool, but I fear correctness bugs"; analysis `/tmp/swap-analysis.md`):** the problem: a reload
   swapping a provider and its pure dependent (61's `todo.store` and `todo.todos(groceries)`) parked the dependent

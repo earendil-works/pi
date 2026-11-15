@@ -7,15 +7,28 @@
 
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
-import { arr, bool, int, local, method, obj, queries, str } from "../../src/contracts/index.ts";
-import { createHost, defineFacet, type FacetHost, type Host, type StoreSelf } from "../../src/host/index.ts";
+import { arr, bool, hostKind, int, local, method, obj, queries, remote, str } from "../../src/contracts/index.ts";
+import { applyImmutable } from "../../src/delta/index.ts";
+import {
+	createHost,
+	defineFacet,
+	type FacetHost,
+	type Host,
+	type HostError,
+	type StoreSelf,
+} from "../../src/host/index.ts";
 import { List } from "../../src/host/list.ts";
 import { ownQueries } from "../../src/host/named-query.ts";
+import { resolveWatchable } from "../../src/host/reference.ts";
+import type { JsonValue } from "../../src/json.ts";
+import { memoryLinkPair } from "../../src/link/index.ts";
+import type { Source, Subscriber } from "../../src/state/internal.ts";
 import { eq } from "../../src/store/expression.ts";
 import { query } from "../../src/store/query.ts";
 import type { ChordStore } from "../../src/store/store.ts";
 import { defineTable } from "../../src/store/table.ts";
-import { changesOf, delivered, expectCollected, flushed, instancesOf, memoryStore } from "../support.ts";
+import type { WatchCall } from "../../src/watch.ts";
+import { changesOf, delivered, expectCollected, flushed, instancesOf, memoryStore, transported } from "../support.ts";
 
 const Rows = defineTable("rows", {
 	version: 1,
@@ -45,6 +58,16 @@ const Screen = local("app.screen", {
 		more: method(),
 		show: method(str()),
 	},
+});
+
+const Server = hostKind("server");
+
+/** The screen as a client holds it over a link: the list of group "a" and `more`. */
+const Board = remote("app.board", {
+	version: 1,
+	params: {},
+	hostAddress: () => Server(),
+	variants: { main: { state: { list: obj({ rows: arr(Item), moreAfter: bool() }) }, methods: { more: method() } } },
 });
 
 /** What the tests count: how often the screen's factory ran. */
@@ -242,6 +265,75 @@ describe("pages", () => {
 		expect(calls).toHaveLength(1);
 		watch.stop();
 		await close();
+	});
+
+	it("a row moving between two pages sets the list once per page and publishes one frame, diffed from the value before the commit", async () => {
+		const { rows, screen, close } = await hosted(3, 9);
+		await screen.more(context);
+		await screen.more(context);
+		const before = screen.list.value as unknown as JsonValue;
+		// As a link's provider side follows it: every frame in its batch, none folded (a watch folds them).
+		const source = resolveWatchable(screen.list) as Source;
+		const calls: WatchCall<JsonValue>[] = [];
+		const subscriber: Subscriber = {
+			advance: (call) => void calls.push(call),
+			end: () => {},
+			endAfterDelivery: () => {},
+		};
+		source.subscribe(subscriber);
+		// Row 2 leaves the third page and enters the first: both pages adopt in one commit.
+		await rows.touch({ id: 2, at: 100 }, context);
+		await flushed();
+		expect(calls).toHaveLength(1);
+		const [call] = calls;
+		if (call?.kind !== "value") throw new Error("no value call");
+		expect(ids(call.value as never)).toEqual([2, 9, 8, 7, 6, 5, 4, 3, 1]);
+		expect(applyImmutable(before, call.ops)).toEqual(call.value);
+		source.unsubscribe(subscriber);
+		await close();
+	});
+
+	it("over a link, the last row of a second page moving to the top is one state message: no protocol error, the link stays open", async () => {
+		const store: ChordStore = await memoryStore();
+		const errors: HostError[] = [];
+		const server: Host = createHost({
+			address: Server(),
+			principal: { kind: "server" },
+			store,
+			onError: (error) => errors.push(error),
+		});
+		const board = defineFacet((h) =>
+			h.serve(Board, (_params, _principal, self) => {
+				const args = self.derive([self.writable("a")], ([group]) => ({ group }));
+				const list = self.list("rows", [[self.get(Store, {}).rows.ofGroup, args]], { first: 3 });
+				return { variant: "main", members: { list: list.value, more: (ctx) => list.more(ctx) } };
+			}),
+		);
+		await server.load([storePlugin(), { name: "@test/board", facet: board }], context);
+		const rows = await server.get(Store, {}, context);
+		await rows.write(
+			[1, 2, 3, 4].map((id) => ({ put: { id, group: "a", touched: id } })),
+			context,
+		);
+		const client: Host = createHost({ onError: (error) => errors.push(error) });
+		await client.load([], context);
+		const [up, down] = memoryLinkPair();
+		server.accept(up, { principal: { kind: "owner" } }, context);
+		client.connect(down, { principal: { kind: "server" } }, context);
+		const held = await client.get(Board, {}, context);
+		await held.more(context);
+		await transported();
+		expect(ids(held.list.value)).toEqual([4, 3, 2, 1]);
+		// The one row of the second page becomes the first row of the first.
+		await rows.touch({ id: 1, at: 100 }, context);
+		await transported();
+		expect(errors).toEqual([]);
+		expect(held.state.value).toEqual({ kind: "live" });
+		expect(ids(held.list.value)).toEqual([1, 4, 3, 2]);
+		held.release();
+		await client.close(context);
+		await server.close(context);
+		await store.close(context);
 	});
 
 	it("keeps the last page open while no row is behind it: empty, short and exactly full lists take a new row", async () => {
