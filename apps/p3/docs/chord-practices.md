@@ -15,7 +15,7 @@ own contract.
 ```ts
 // contract.ts: what other plugins and facets import
 export const Sessions = remote("sessions.sessions", { version: 1, params: {}, hostAddress: () => Server(),
-	variants: { owner: { methods: { create: method(obj({ title: opt(str(TITLE)) }), str()), rename: …, archive: …, restore: … } } } });
+	variants: { owner: { methods: { create: method(obj({ title: opt(Title) }), str()), rename: …, archive: …, restore: … } } } });
 export const SessionsList = remote("sessions.list", { version: 1,
 	params: { app: str(), set: oneOf("active", "archived"), view: str() },          // view: the screen's own id
 	hostAddress: () => Server(),
@@ -82,7 +82,7 @@ host.serve(SessionFacts, (_params, principal, self) => {
 ```
 
 **No worker starts for a session that does not exist.** The session route's admission reads data through a contract the API owns
-(`SessionRoute`, `@p3/app/v1/server`), served by the sessions plugin (`src/app.ts`, `sessionExists`).
+(`SessionRoute`, `@p3/app/v1/server`), served by the sessions plugin (`src/session-route.ts`, `sessionExists`).
 
 **Helpers in p3's API** (`src/kit/`): `forward(store, Remote, variant, own?)` (a view's members from a store,
 by the remote contract's names; never derive a public contract from a store: it would publish whatever internal
