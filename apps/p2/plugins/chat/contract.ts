@@ -244,7 +244,7 @@ export const Chat = remote("p2.chat", {
 				send: method(SendSchema, obj({ submissionId: num() })),
 				/**
 				 * Aborts the current run; queued inputs are withdrawn and the caller's own come back as text. Messages from
-				 * subagents and peer sessions stay as context, without a run.
+				 * subagents and peer sessions stay queued for the next input.
 				 */
 				stop: method(undefined, obj({ restored: arr(str()) })),
 				/** Withdraws a queued input; with `restore`, returns its text if the caller wrote it. */
