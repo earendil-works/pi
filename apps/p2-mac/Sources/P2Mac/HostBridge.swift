@@ -5,6 +5,7 @@
 //   page → app  { type: "theme" }                        reply { preference }
 //   page → app  { type: "set-theme", preference }        stores, applies, reply { preference }
 //   app → page  CustomEvent "pi-host-theme", detail { preference }   after every change, to all pages of all windows
+//   app → page  CustomEvent "pi-host-menu", detail { item }           a menu item p2 carries out ("settings")
 //
 // The resolved scheme is never sent: the page reads it from `matchMedia`, which follows the app's appearance. WebKit
 // exposes the handler to every frame of the page, not only the main one: it is answered for the main frame of a page
@@ -25,6 +26,13 @@ enum HostBridge {
 		webView.callAsyncJavaScript(
 			#"window.dispatchEvent(new CustomEvent("pi-host-theme", { detail: { preference } }))"#,
 			arguments: ["preference": preference.rawValue], in: nil, in: .page)
+	}
+
+	/// Tells the page in `webView` that the menu item `item` was chosen.
+	static func menuChosen(_ item: String, in webView: WKWebView) {
+		webView.callAsyncJavaScript(
+			#"window.dispatchEvent(new CustomEvent("pi-host-menu", { detail: { item } }))"#,
+			arguments: ["item": item], in: nil, in: .page)
 	}
 
 	/// Holds the page weakly for WebKit, which retains its message handlers.

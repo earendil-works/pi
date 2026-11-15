@@ -138,13 +138,14 @@
 	border-radius: var(--semantic-dimension-radius-default);
 	background: var(--semantic-color-background-fill-secondary);
 }
+/* Long lines wrap: the panel is narrow, and a command or its output scrolled sideways hides most of it. */
 .detail-command,
 .detail-output {
 	margin: 0;
 	padding: var(--semantic-dimension-space-padding-medium) var(--semantic-dimension-space-padding-large);
-	overflow-x: auto;
 	font: var(--semantic-typography-code-secondary);
-	white-space: pre;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
 }
 .detail-command {
 	color: var(--semantic-color-text-primary);
@@ -436,6 +437,20 @@
 }
 .nested-detail {
 	padding-inline: var(--s3);
+}
+/* Code, a file's lines and diffs in a detail wrap too, as the workspace's wrap mode does: a patch's wrapped line keeps
+   its indent beside the gutter. */
+.activity-detail .code-block pre,
+.activity-detail .diff-line,
+.activity-detail .diff-code {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+.activity-detail .diff-lines {
+	width: auto;
+}
+.activity-detail .patch .diff-line {
+	grid-template-columns: var(--gutter, 3ch) minmax(0, 1fr);
 }
 .el-timeline-item[data-expanded="true"] > .el-timeline-step {
 	background: var(--hover);

@@ -97,6 +97,13 @@ export type SubmissionDraft = {
 			 * answered and waits for its `afterRun` tasks is still busy, and such an input queues and starts the next run.
 			 */
 			readonly whenIdle?: "reject";
+			/**
+			 * What `Conversation.abort()` and abort cascades do with the input while it is queued: `withdraw` (default)
+			 * settles it `unanswered` with reason `aborted`; `keep` leaves it queued, as a failed run leaves its queue under
+			 * `afterFailedRun: "keep"`, so the next input places it and that run answers it. For input its sender cannot
+			 * take back, such as another agent's message. `Submission.abort()` withdraws it either way.
+			 */
+			readonly onAbort?: "withdraw" | "keep";
 			/** Place the input as this entry; default `pi.user` without data. The kind must not start with `pi.`. */
 			readonly entry?: InputEntry;
 	  }

@@ -107,6 +107,12 @@ final class BrainPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadD
 		HostBridge.themeChanged(preference, in: webView)
 	}
 
+	/// Hands a menu item p2 carries out (Settings…) to the page, if a page of this Pi is loaded.
+	func menuChosen(_ item: String) {
+		guard let url = webView.url, owns(url) else { return }
+		HostBridge.menuChosen(item, in: webView)
+	}
+
 	/// Opens `path` on a remote Pi through a fresh grant.
 	private func openRemote() async {
 		guard case .remote(let organization, let server) = brain.route else { return }

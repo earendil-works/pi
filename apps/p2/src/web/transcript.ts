@@ -124,6 +124,12 @@ export type Transcript = {
 	agent: AgentState;
 };
 
+/** A queued subagent message as its queue row reads: who sent it and its text, without the model's sender block. */
+function queuedAgentText(kind: string, data: unknown): string | undefined {
+	const message = agentMessage(kind, data);
+	return message && `${message.from.name}: ${message.text}`;
+}
+
 function text(content: string | readonly { type: string; text?: string }[]): string {
 	return typeof content === "string"
 		? content
@@ -559,6 +565,7 @@ export function buildTranscript(
 							text:
 								messageData(item.entry?.data)?.text ??
 								(item.entry && peerMessage(item.entry.kind, item.entry.data)?.text) ??
+								(item.entry && queuedAgentText(item.entry.kind, item.entry.data)) ??
 								text(item.content),
 						},
 					],

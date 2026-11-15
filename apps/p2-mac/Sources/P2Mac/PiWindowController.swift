@@ -165,6 +165,7 @@ final class PiWindowController: NSWindowController, NSWindowDelegate {
 	// MARK: - Menu actions (first responder chain: the window's delegate)
 
 	@objc func reloadPage(_ sender: Any?) { page?.reload() }
+	@objc func openSettings(_ sender: Any?) { page?.menuChosen("settings") }
 	@objc func zoomIn(_ sender: Any?) { page.map { $0.setZoom(min($0.webView.pageZoom + 0.1, 3)) } }
 	@objc func zoomOut(_ sender: Any?) { page.map { $0.setZoom(max($0.webView.pageZoom - 0.1, 0.5)) } }
 	@objc func actualSize(_ sender: Any?) { page?.setZoom(1) }

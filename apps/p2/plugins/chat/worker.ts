@@ -333,17 +333,18 @@ export default defineFacet((host) => {
 				},
 				stop: async (ctx) => {
 					const { harness: durable, conversation: current } = target();
-					// Conversation.abort() discards queued inputs. Withdraw them first, one by one, so each author gets
-					// their text back; already placed ones are skipped.
-					const restored: { author: Author; text: string }[] = [];
-					const inbox = await durable.snapshot(InboxDoc, current.id, ctx);
-					for (const item of inbox?.items ?? []) {
-						if (item.mode === "write") continue;
-						if ((await durable.abortSubmission(item.id as SubmissionId, ctx, current.id)) !== "aborted") continue;
-						const input = restoredInput(item);
-						if (input) restored.push(input);
-					}
+					// The abort withdraws the queued inputs in the commit that marks the run, except other agents' and
+					// sessions' messages (`onAbort: "keep"`), which stay queued for the next input. Each author gets back
+					// the text of their inputs it withdrew; one admitted after this read goes without.
+					const before = await queued(ctx);
 					await current.abort(ctx, { background: false });
+					const restored: { author: Author; text: string }[] = [];
+					for (const item of before) {
+						const input = restoredInput(item);
+						if (!input) continue;
+						const record = await (await durable.submission(item.id as SubmissionId, ctx))?.status(ctx);
+						if (record?.status === "unanswered" && record.reason === "aborted") restored.push(input);
+					}
 					await status.push(ctx);
 					return { restored };
 				},

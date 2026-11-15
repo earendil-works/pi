@@ -34,7 +34,7 @@ import {
 	useSettingsSections,
 	useWide,
 } from "@p2/app/v1/web";
-import { createContext, type ReactNode, useCallback, useContext, useId, useMemo, useState } from "react";
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useId, useMemo, useState } from "react";
 import { Models } from "../models/contract.ts";
 import { SETTINGS_COMMANDS, SETTINGS_PAGES, SETTINGS_SEARCH } from "./commands.tsx";
 import { type MobileSettings, Settings } from "./contract.ts";
@@ -77,12 +77,23 @@ const HeldSettings = createContext<{
 	readonly serverName: Held<typeof ServerNameSettings> | undefined;
 }>({ settings: undefined, serverName: undefined });
 
+/** Opens Settings on p2-mac's Pi > Settings… (Cmd+,): its bridge sends "pi-host-menu" (HostBridge.swift). */
+function listenForMenuSettings(): () => void {
+	const chosen = (event: Event) => {
+		// Trust boundary: any script of the page can dispatch the event; only the item's name is read.
+		if ((event as CustomEvent<{ item?: unknown } | null>).detail?.item === "settings") openSettings();
+	};
+	window.addEventListener("pi-host-menu", chosen);
+	return () => window.removeEventListener("pi-host-menu", chosen);
+}
+
 function GearButton() {
 	const owner = useOwner();
 	const open = useSettingsSection() !== undefined;
 	const settings = useObject(Settings, owner ? {} : undefined);
 	const serverName = useObject(ServerNameSettings, owner ? {} : undefined);
 	const held = useMemo(() => ({ settings, serverName }), [settings, serverName]);
+	useEffect(() => (owner ? listenForMenuSettings() : undefined), [owner]);
 	if (!owner) return null;
 	return (
 		<HeldSettings.Provider value={held}>

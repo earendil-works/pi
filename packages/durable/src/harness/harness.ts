@@ -46,7 +46,7 @@ import { ROOT_CONVERSATION_ID } from "../types.ts";
 import { AgentDoc, configure, createAgent, resolveAgent, resolveSettings } from "./agent.ts";
 import { createCompaction } from "./compaction.ts";
 import { readContext } from "./context.ts";
-import { InboxDoc, withdrawQueuedInputs } from "./inbox.ts";
+import { InboxDoc, withdrawAbortedInputs } from "./inbox.ts";
 import { LIMITS_RESTARTS, LiveDoc, settleSchedulerOutcome } from "./live.ts";
 import { ProviderDoc } from "./provider.ts";
 import { BUILTIN_TASKS } from "./registry.ts";
@@ -256,7 +256,7 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 			keepsAbandoned: keepsChildren,
 			gated: gatedCall,
 			settleOutcome: settleSchedulerOutcome,
-			withdrawInputs: withdrawQueuedInputs,
+			withdrawInputs: withdrawAbortedInputs,
 			conversation: async (id, binding, callContext) => {
 				const record = await this.readOnLine((line) => line.conversation(id, callContext));
 				return record === undefined ? undefined : boundConversation(id, binding, this.#submissions, this.#tasks);

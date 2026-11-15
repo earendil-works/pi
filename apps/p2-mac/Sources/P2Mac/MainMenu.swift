@@ -4,11 +4,14 @@ import AppKit
 
 @MainActor
 enum MainMenu {
-	/// The app's main menu: Pi, File, Edit, View (with Appearance: the app's light/dark preference), Window.
+	/// The app's main menu: Pi (with Settings…, which p2's page opens), File, Edit, View (with Appearance: the app's
+	/// light/dark preference), Window.
 	static func build() -> NSMenu {
 		let main = NSMenu()
 		main.addItem(submenu("Pi", [
 			item("About Pi", "orderFrontStandardAboutPanel:"),
+			.separator(),
+			item("Settings…", "openSettings:", ","),
 			.separator(),
 			item("Hide Pi", "hide:", "h"),
 			item("Hide Others", "hideOtherApplications:", "h", [.command, .option]),

@@ -292,7 +292,7 @@ export async function admitSubmission(
 			const mode = draft.whenBusy === "steer" ? "steer" : "followUp";
 			const content = value as JsonRepresentation<UserInput>;
 			const entry = draft.entry === undefined ? {} : { entry: pickInputEntry(draft.entry) };
-			items.push({ id, mode, content, ...entry });
+			items.push({ id, mode, content, ...entry, ...(draft.onAbort === "keep" ? { onAbort: "keep" as const } : {}) });
 		}
 		if (boundary === undefined) return { id, status: "queued" };
 		const { users, first } = await applyBoundary(tx, boundary, "final", now);

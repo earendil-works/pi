@@ -12,6 +12,7 @@ import {
 	PeerConversation,
 	type Query,
 } from "../../plugins/conversations/contract.ts";
+import { Drafts } from "../../plugins/drafts/contract.ts";
 import { Projects } from "../../plugins/projects/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
@@ -156,6 +157,50 @@ describe("conversations (fake provider)", () => {
 			assert.equal((await call(a, query)).isError, true);
 		await fixture.server.reload(["conversations"]);
 		assert.equal((await call(a, { action: "list" })).isError, false);
+	});
+
+	it("Stop keeps queued peer messages queued for the next input and gives people their text back", async () => {
+		const gamma = (await sessions.create({ cwd: fixture.workspace, title: "Gamma" }, BACKGROUND_CONTEXT)).id;
+		const chat = await holdIn(owner, Chat, { session: gamma, conversation: 1 }, "participant");
+		const inbox = (view: ConversationView | null | undefined) => JSON.stringify(view?.docs["pi.inbox"] ?? {});
+		const running = (view: ConversationView | null | undefined) =>
+			(view?.docs["pi.live"] as { run?: unknown } | undefined)?.run !== undefined;
+		await chat.send({ text: "slow-tool", requestId: "busy" }, BACKGROUND_CONTEXT);
+		await until(chat.view, (view) => JSON.stringify(view?.docs["pi.live"]).includes("tool-running"));
+		await chat.send({ text: "owner queued", requestId: "queued", whenBusy: "followUp" }, BACKGROUND_CONTEXT);
+		await broker(alpha, "kept", { action: "send", to: gamma, message: "kept peer", followUp: true });
+		await until(chat.view, (view) => inbox(view).includes("kept peer"));
+		assert.deepEqual(await chat.stop(BACKGROUND_CONTEXT), { restored: ["owner queued"] });
+		// Kept as a failed run keeps its queue: still queued, no run answers it.
+		await until(status.statuses, (value) => value?.[gamma]?.tasks === 0);
+		const idle = await until(chat.view, (view) => !running(view));
+		assert.ok(inbox(idle).includes("kept peer") && !inbox(idle).includes("owner queued"));
+		assert.equal(peers(idle).length, 0);
+		// The next input places it first; a run answers each.
+		await chat.send({ text: "next", requestId: "next" }, BACKGROUND_CONTEXT);
+		const answered = await until(
+			chat.view,
+			(view) =>
+				!running(view) && !inbox(view).includes("kept peer") && view?.entries.at(-1)?.kind === "pi.assistant",
+		);
+		const kinds = (answered?.entries ?? []).map((entry) => entry.kind).filter((kind) => kind !== "pi.assistant");
+		assert.deepEqual(kinds.slice(-2), [PEER_MESSAGE_ENTRY, "p2.input"]);
+		assert.deepEqual(peers(answered)[0]?.data, { from: { id: alpha, title: "Alpha" }, text: "kept peer" });
+		// A stop from another session gives people's queued text to their drafts, which their composer claims.
+		await until(status.statuses, (value) => value?.[gamma]?.tasks === 0);
+		await chat.send({ text: "slow-tool", requestId: "busy-again" }, BACKGROUND_CONTEXT);
+		await until(chat.view, (view) => JSON.stringify(view?.docs["pi.live"]).includes("tool-running"));
+		await chat.send({ text: "owner draft", requestId: "draft", whenBusy: "followUp" }, BACKGROUND_CONTEXT);
+		await until(chat.view, (view) => JSON.stringify(view?.docs["pi.inbox"]).includes("owner draft"));
+		await broker(alpha, "stop-gamma", { action: "stop", to: gamma });
+		const drafts = await holdIn(owner, Drafts, { session: gamma, conversation: 1 }, "author");
+		const pending = await until(drafts.drafts, (value) => Boolean(value?.length));
+		assert.deepEqual(
+			pending?.map((draft) => draft.text),
+			["owner draft"],
+		);
+		drafts.release();
+		chat.release();
 	});
 
 	it("creates sessions in a project or a folder, stops, archives and restores them", async () => {
