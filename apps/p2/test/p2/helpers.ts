@@ -586,7 +586,13 @@ export async function poll(
 	}
 }
 
-export type HttpResult = { status: number; headers: Record<string, string | string[] | undefined>; body: string };
+export type HttpResult = {
+	status: number;
+	headers: Record<string, string | string[] | undefined>;
+	body: string;
+	/** The body as sent, for binary responses. */
+	bytes: Buffer;
+};
 export type HttpOptions = { method?: string; headers?: Record<string, string>; body?: string | Buffer };
 
 /** An HTTP request to the fixture's server (any Host, cookie and body). */
@@ -597,13 +603,15 @@ export function http(port: number, path: string, options: HttpOptions = {}): Pro
 			(response) => {
 				const chunks: Buffer[] = [];
 				response.on("data", (chunk: Buffer) => chunks.push(chunk));
-				response.on("end", () =>
+				response.on("end", () => {
+					const bytes = Buffer.concat(chunks);
 					resolve({
 						status: response.statusCode ?? 0,
 						headers: response.headers,
-						body: Buffer.concat(chunks).toString("utf8"),
-					}),
-				);
+						body: bytes.toString("utf8"),
+						bytes,
+					});
+				});
 			},
 		);
 		req.on("error", reject);

@@ -3,6 +3,7 @@
 // label with the guest "unverified name" note, peer attribution, reply quote, plugin note, files and image count.
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { Box, Container, Markdown, MouseRegion, Spacer, Text } from "@earendil-works/pi-tui";
+import { plainReferences } from "../../runtime/references.ts";
 import type { TuiSettings } from "../../runtime/tui-preferences.ts";
 import { createMarkdownTransform, type MarkdownTransformer } from "../../runtime/tui-renderers.ts";
 import type { Item } from "../../web/transcript.ts";
@@ -84,7 +85,8 @@ export class UserMessageComponent extends Themed {
 		const bg = (text: string) => theme.bg("userMessageBg", text);
 		const markdown = (paddingY: number) =>
 			new Markdown(
-				safeText(item.text),
+				// File references show as the files' names where the message placed them.
+				safeText(plainReferences(item.text)),
 				paddingY ? pad : 0,
 				paddingY,
 				this.ctx.theme.markdown,

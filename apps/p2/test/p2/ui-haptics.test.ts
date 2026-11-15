@@ -50,11 +50,12 @@ describe("haptics", { skip: !browserTests }, () => {
 		writeFileSync(settings, JSON.stringify({ ...JSON.parse(readFileSync(settings, "utf8")), detail: 1 }));
 		await browser.metrics(390, 844);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session}`);
-		await browser.wait("document.querySelector('textarea[aria-label=Message]')");
+		await browser.wait("document.querySelector('[role=textbox][aria-label=Message]')");
 		await browser.evaluate(`(() => {
-			const box = document.querySelector('textarea[aria-label=Message]');
-			Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(box, ${JSON.stringify(`codemode ${SCRIPT}`)});
-			box.dispatchEvent(new Event('input', { bubbles: true }));
+			const box = document.querySelector('[role=textbox][aria-label=Message]');
+			box.focus();
+			box.textContent = ${JSON.stringify(`codemode ${SCRIPT}`)};
+			box.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));
 		})()`);
 		await browser.click("button[aria-label=Send]");
 		const chat = await holdIn(fixture.browser(), Chat, { session, conversation: 1 }, "participant");

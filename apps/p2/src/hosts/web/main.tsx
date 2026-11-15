@@ -16,6 +16,7 @@ import * as api from "../../api/v1/index.ts";
 import * as apiWeb from "../../api/v1/web.ts";
 import { Access } from "../../runtime/access.ts";
 import type { Host } from "../../runtime/chord.ts";
+import { SERVER_PART_LIMITS } from "../../runtime/link-limits.ts";
 import type { P2Principal } from "../../runtime/principals.ts";
 import { whenLive } from "../../runtime/refs.ts";
 import type { LinkClient } from "../../runtime/stale-page.ts";
@@ -82,6 +83,7 @@ export function startP2Page(): void {
 	if (!element) throw new Error("Missing application root");
 	void startPage<P2Principal>({
 		connect: () => new WebSocket(url),
+		limits: SERVER_PART_LIMITS,
 		modules: MODULES,
 		core: [{ name: "@p2/web-core", facet: webCoreFacet }],
 		themes: false,

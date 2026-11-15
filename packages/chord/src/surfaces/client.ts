@@ -10,7 +10,7 @@ import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import { BACKGROUND_CONTEXT, type Context, withAbortSignal } from "../context/index.ts";
 import type { Principal } from "../data/index.ts";
 import { createHost, type Host, type HostError, type PluginFacet, type PluginFailure } from "../host/index.ts";
-import type { Link } from "../link/index.ts";
+import type { Link, PartLimits } from "../link/index.ts";
 import { type ConnectionState, keepConnected, type LoopEnvironment, type SocketEvents } from "./connection.ts";
 import type { MessagesReport } from "./language.ts";
 import { LoadedFacets, type SetEntry } from "./loaded.ts";
@@ -49,6 +49,8 @@ export type ClientOptions<P extends Principal> = {
 	readonly core: readonly PluginFacet<P>[];
 	/** Opens one socket to the server and its link; the socket reports to `events`. */
 	readonly open: (events: SocketEvents) => Link;
+	/** The limits per part of what arrives from the server (default: an untrusted link's, 16 MiB on the wire). */
+	readonly limits?: PartLimits;
 	/** Fetches a plugin's script of a set (at its `url`), which registers itself. */
 	readonly fetchScript: (entry: ScriptEntry) => Promise<RegisteredScript>;
 	/**
@@ -148,7 +150,12 @@ function connect<P extends Principal>(
 			// The loop and the host both follow the link's close; a link has one close listener.
 			const link = new SharedClose(options.open(events));
 			// A client's parent is the server; the principal only labels the link (a client serves no remote types).
-			host.connect(link, { principal: { kind: "server" } as unknown as P }, BACKGROUND_CONTEXT);
+			const principal = { kind: "server" } as unknown as P;
+			host.connect(
+				link,
+				options.limits === undefined ? { principal } : { principal, limits: options.limits },
+				BACKGROUND_CONTEXT,
+			);
 			return link;
 		},
 		onState: (state) => {

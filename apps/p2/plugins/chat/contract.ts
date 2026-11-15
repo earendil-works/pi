@@ -23,7 +23,8 @@ import type { ActiveStats } from "@p2/app/v1/worker";
 /**
  * Durable's conversation view as clients hold it: a window over the transcript (the newest 50 to 100 entries, `before`
  * the entry just before it) and the conversation's documents; null until the watch delivered it. Clients render it
- * through `ConversationTranscript`, which pages in what lies before the window or in a gap (`Chat.entries`).
+ * through `ConversationTranscript`, which pages in what lies before the window or in a gap (`Chat.entries`). Image parts
+ * of its entries' messages are references (`ImageRef`, src/runtime/entry-images.ts), loaded through `ChatImages`.
  */
 export const ViewSchema = unsafe<ConversationView | null>(unknown());
 
@@ -158,6 +159,16 @@ export const SubmitSchema = obj({
 });
 export type Submit = Static<typeof SubmitSchema>;
 
+/** One image part of an entry: the entry, the message in its `model`, the part in that message's content. */
+export const ImagePlaceSchema = obj({
+	entry: int({ minimum: 1 }),
+	message: int({ minimum: 0 }),
+	part: int({ minimum: 0 }),
+});
+
+/** An image part's bytes as the entry holds them: base64 `data`. */
+export const ImageBytesSchema = obj({ mimeType: str(), data: str() });
+
 /**
  * One Durable conversation of this worker (host-internal, shared by every viewer): its view mirrored from a Durable
  * watch, and the operations that need an author, which callers pass explicitly.
@@ -190,6 +201,8 @@ export const Conversation = local("p2.conversation", {
 		stop: method(undefined, obj({ restored: RestoredSchema })),
 		dequeue: method(obj({ submissionId: num(), restore: bool() }), obj({ restored: RestoredSchema })),
 		entries: method(EntriesQuerySchema, EntriesPageSchema),
+		/** An image part of an entry (`ChatImages`); throws when there is none there. */
+		image: method(ImagePlaceSchema, ImageBytesSchema),
 		configure: method(ConversationConfigureSchema),
 		/** The current model's metadata (see `ModelMetaSchema`), following the view's `pi.agent` and the catalog. */
 		model: ModelStateSchema,
@@ -268,6 +281,19 @@ export const ChatCosts = remote("p2.chat-costs", {
 	hostAddress: sessionHost,
 	variants: {
 		viewer: { methods: { costs: method(undefined, arr(AssistantCostSchema)) } },
+	},
+});
+
+/**
+ * The images of a conversation's entries for the server's `/entry-image` route (plugins/chat/server.ts), which checks
+ * who may view the session; the view carries references to them instead of their bytes.
+ */
+export const ChatImages = remote("p2.chat-images", {
+	version: 1,
+	params: { session: param.str(), conversation: param.int() },
+	hostAddress: sessionHost,
+	variants: {
+		server: { methods: { image: method(ImagePlaceSchema, ImageBytesSchema) } },
 	},
 });
 

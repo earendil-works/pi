@@ -92,7 +92,10 @@ export class ToolExecutionComponent extends Container {
 		if (tool.status === "pending" && !this.calls?.length) return undefined;
 		const text = tool.output || (tool.status === "interrupted" ? "Not run: the answer was interrupted." : "");
 		return {
-			content: [...(text ? [{ type: "text" as const, text }] : []), ...tool.images],
+			content: [
+				...(text ? [{ type: "text" as const, text }] : []),
+				...tool.images.map((image) => ({ type: "image" as const, ...image })),
+			],
 			details: tool.details,
 		};
 	}

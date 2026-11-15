@@ -36,7 +36,8 @@ from `@earendil-works/chord`.
   `base` calls `outdated`. At each reconnect, beside the next attempt, it asks the server's base (`serverBase`): another
   one stops the loop (ending an attempt made meanwhile), then calls `outdated` (a new link protocol comes with a new base
   bundle, Chord being in it). A static client
-  (`follow: false`) neither follows the scripts object nor asks the server's base.
+  (`follow: false`) neither follows the scripts object nor asks the server's base. `limits` sets the limits per part of
+  what arrives from the server (an untrusted link's by default).
 - **Themes** (`themes.ts`, `theme-choice.ts`, `active-theme.ts`): `Theme` (`{ id, name, mode, colors, web?, tui? }`; the
   base roles `accent`, `bg`, `fg`, `muted`, `error`, `warning`, `success`, apps add roles), the `Themes` registry
   (version 1; a later role is a version bump mapping old entries from the fallback theme), `themesFacet` serving it on a

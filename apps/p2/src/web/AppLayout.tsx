@@ -88,7 +88,7 @@ function Layout() {
 					event.preventDefault();
 					dragDepth.current = 0;
 					setDraggingFiles(false);
-					addFiles([...event.dataTransfer.files]);
+					addFiles([...event.dataTransfer.files], { x: event.clientX, y: event.clientY });
 					focus();
 				}}
 			>

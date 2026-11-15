@@ -15,7 +15,7 @@ import { ProviderLogin } from "../../plugins/login/contract.ts";
 import { Catalog } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import type { ServerResourceOptions } from "../../src/runtime/server.ts";
-import { browserTests } from "./browser.ts";
+import { browserTests, COMPOSER } from "./browser.ts";
 import { type Fixture, poll, startFixture, until } from "./helpers.ts";
 
 const termux = process.env.PREFIX !== undefined;
@@ -135,7 +135,7 @@ describe("sheet parity", { skip: !browserTests }, () => {
 			sameSite: "Lax",
 		});
 		await call("Page.navigate", { url: `http://127.0.0.1:${fixture.server.port}/` });
-		await wait(`document.querySelector('textarea') && !document.querySelector('.offline')`);
+		await wait(`document.querySelector('${COMPOSER}') && !document.querySelector('.offline')`);
 	});
 	after(async () => {
 		await call("Browser.close").catch(() => {});

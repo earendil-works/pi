@@ -32,14 +32,17 @@ import {
 	defineFacet,
 	defineTypedState,
 	deriveTyped,
+	entryImageRefs,
 	expectVariant,
 	type Factory,
 	forbidden,
 	INPUT_ENTRY,
+	imageAt,
 	isGuest,
 	isOwner,
 	type MessageData,
 	messageData,
+	referenceParts,
 	senderText,
 	serveKeyed,
 } from "@p2/app/v1";
@@ -62,6 +65,7 @@ import { StatusReport } from "../status/contract.ts";
 import {
 	Chat,
 	ChatCosts,
+	ChatImages,
 	Conversation,
 	type EntriesPage,
 	type ModelMeta,
@@ -88,9 +92,12 @@ const Live = defineTypedState("p2.conversation.stats", {
 });
 
 /**
- * The message text plus attachments: a path list the agent can read with its tools (uploads stay outside the
- * project), and images inline when the conversation's model accepts them, fitted to its limits as pi fits them; what
- * fitting changed is noted next to the file.
+ * The message text with its files in place, marked as Codex marks local images: each `attachment:` reference becomes
+ * `<image name=[Image #N] path="…">`, the image itself (when the conversation's model accepts images, fitted to its
+ * limits as pi fits them), then `</image>`; a file of another type becomes `<file name=[File #N] path="…" />`. The
+ * path is the file's copy where the conversation's tools run; a later reference to the same file is its name alone.
+ * What fitting changed, or why an image is not shown, goes inside its tag. Files the text does not reference (clients
+ * without references) follow the text. With a cap, the newest (last) images are inlined; the others are only marked.
  */
 async function content(
 	text: string,
@@ -104,25 +111,60 @@ async function content(
 	if (!files.length) return [{ type: "text", text }];
 	const { model: ref } = await conversation.agent(ctx);
 	const model = ref ? models?.getModel(ref.provider, ref.modelId) : undefined;
-	const eligible = model?.input.includes("image") ? files.filter((file) => file.mimeType) : [];
-	// With a cap, the newest images (the last ones) are inlined; the rest are only listed.
-	const inline = new Set(maxImages > 0 ? eligible.slice(-maxImages) : []);
+	const accepts = model?.input.includes("image") ?? false;
+	const byId = new Map(files.map((file) => [file.id, file]));
+	const referenced = referenceParts(text, (id) => byId.has(id)).flatMap((part) =>
+		part.kind === "ref" ? [byId.get(part.id)!] : [],
+	);
+	// Placement order: the text's references, then the files it does not reference.
+	const order = [...new Set([...referenced, ...files])];
+	const images = order.filter((file) => file.mimeType);
+	const inline = new Set(accepts && maxImages > 0 ? images.slice(-maxImages) : []);
+	const names = new Map<Attachment, string>();
+	for (const file of order) {
+		const kind = file.mimeType ? "Image" : "File";
+		names.set(file, `[${kind} #${order.filter((other) => !other.mimeType === !file.mimeType).indexOf(file) + 1}]`);
+	}
 	const limits = imageLimits(model);
-	const images: ImageContent[] = [];
-	const lines: string[] = [];
-	for (const file of files) {
-		const line = `- ${file.path} (${file.name}, ${file.size} bytes)`;
-		if (!file.mimeType || !inline.has(file)) {
-			lines.push(line);
-			continue;
+	const parts: (ImageContent | TextContent)[] = [];
+	const placed = new Set<Attachment>();
+	let pending = "";
+	const place = async (file: Attachment) => {
+		const name = names.get(file)!;
+		if (placed.has(file)) {
+			pending += name;
+			return;
+		}
+		placed.add(file);
+		if (!file.mimeType) {
+			pending += `<file name=${name} path="${file.path}" />`;
+			return;
+		}
+		pending += `<image name=${name} path="${file.path}">`;
+		if (!inline.has(file)) {
+			pending += accepts ? "(not shown: over this message's image limit)</image>" : "</image>";
+			return;
 		}
 		const fitted = await fitImage(await readFile(file.localPath ?? file.path), file.mimeType, limits, processor);
-		if (fitted.kind === "fitted") images.push(fitted.image);
+		if (fitted.kind === "fitted") {
+			parts.push({ type: "text", text: pending }, fitted.image);
+			pending = "";
+		}
 		const notes = fitted.kind === "fitted" ? fitted.notes : [fitted.note];
-		lines.push(notes.length ? `${line} [${notes.join(" ")}]` : line);
+		pending += `${notes.join(" ")}</image>`;
+	};
+	for (const part of referenceParts(text, (id) => byId.has(id))) {
+		if (part.kind === "text") pending += part.text;
+		else await place(byId.get(part.id)!);
 	}
-	const note = `<attachments>\nThe user attached these files:\n${lines.join("\n")}\n</attachments>`;
-	return [{ type: "text", text: text.trim() ? `${text}\n\n${note}` : note }, ...images];
+	const rest = order.filter((file) => !placed.has(file));
+	for (const [index, file] of rest.entries()) {
+		if (index > 0) pending += "\n";
+		else if (pending.trim()) pending += "\n\n";
+		await place(file);
+	}
+	if (pending) parts.push({ type: "text", text: pending });
+	return parts;
 }
 
 export default defineFacet((host) => {
@@ -166,10 +208,15 @@ export default defineFacet((host) => {
 				() => {},
 			);
 			// Durable's default window (the newest 50, appends, back to 50 past 100), shared by every viewer.
-			const view = deriveTyped(
+			const durableView = deriveTyped(
 				self,
 				[self.follow((observer, ctx) => harness().durable.observeConversation(id, observer, ctx))],
 				([value]) => value as ConversationView | null,
+			);
+			const withRefs = entryImageRefs(worker().init.values.session.id, conversation);
+			/** The window as clients get it: image parts are references, their bytes stay here (`image`). */
+			const view = deriveTyped(self, [durableView], ([value]) =>
+				value === null ? null : { ...value, entries: value.entries.map(withRefs) },
 			);
 			const modelState = deriveTyped(self, [view, config], ([value]) => modelMeta(value));
 			/**
@@ -180,12 +227,12 @@ export default defineFacet((host) => {
 			 */
 			const tally = new ContextTally();
 			let counted = false;
-			self.on(view, async ({ value }, ctx) => {
+			self.on(durableView, async ({ value }, ctx) => {
 				if (!value) return;
 				if (!counted || !tally.advance(value)) {
 					tally.reset(await conversationResource.value.conversation.context(ctx));
 					counted = true;
-					const newest = view.value;
+					const newest = durableView.value;
 					if (newest) tally.advance(newest);
 				}
 				const next = tally.stats;
@@ -326,18 +373,32 @@ export default defineFacet((host) => {
 						undefined,
 						ctx,
 					);
-					// Cut at about a megabyte (images make entries large); the loader asks again from where it ends.
+					// Cut at about a megabyte (long outputs make entries large); the loader asks again from where it ends.
 					const items: EntryRecord[] = [];
 					let bytes = 0;
 					for (const entry of page.items) {
 						if (items.length > 0 && bytes >= ENTRIES_PAGE_BYTES) break;
-						items.push(entry);
-						bytes += JSON.stringify(entry).length;
+						const shown = withRefs(entry);
+						items.push(shown);
+						bytes += JSON.stringify(shown).length;
 					}
 					return {
 						items,
 						more: items.length < page.items.length || page.next !== undefined,
 					} satisfies EntriesPage;
+				},
+				image: async (place, ctx) => {
+					const entryId = place.entry as EntryId;
+					const page = await target().conversation.entries(
+						{ minEntryId: entryId, maxEntryId: entryId },
+						1,
+						undefined,
+						ctx,
+					);
+					const entry = page.items[0];
+					const image = entry === undefined ? undefined : imageAt(entry, place);
+					if (image === undefined) throw new Error("No such image");
+					return { mimeType: image.mimeType, data: image.data };
 				},
 				configure: async ({ model, thinkingLevel }, ctx) => {
 					if (model && !models()?.getModel(model.provider, model.modelId)) throw new Error("Unknown model");
@@ -500,4 +561,9 @@ export default defineFacet((host) => {
 		return { variant: "viewer", members: { costs: (ctx) => chat.costs(ctx) } };
 	});
 	host.serve(Chat, chatFactory);
+	host.serve(ChatImages, ({ conversation }, principal, self) => {
+		if (principal.kind !== "server") throw forbidden("server only");
+		const chat = self.get(Conversation, { conversation });
+		return { variant: "server", members: { image: (place, ctx) => chat.image(place, ctx) } };
+	});
 });
