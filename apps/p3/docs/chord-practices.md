@@ -81,7 +81,7 @@ host.serve(SessionFacts, (_params, principal, self) => {
 });
 ```
 
-**No worker starts for nobody.** The session route's admission reads data through a contract the API owns
+**No worker starts for a session that does not exist.** The session route's admission reads data through a contract the API owns
 (`SessionRoute`, `@p3/app/v1/server`), served by the sessions plugin (`src/app.ts`, `sessionExists`).
 
 **Helpers in p3's API** (`src/kit/`): `forward(store, Remote, variant, own?)` (a view's members from a store,
@@ -137,8 +137,8 @@ needs a reference or a native). No stale-worker check exists or is needed (below
   worker's runs is tagged with `ctx.incarnation`.
 
 **Reload**
-- Everything a plugin keeps across a reload is in its store's tables and documents (a list keeps its bookmarks);
-  writables start over. Readers of a restarting store re-read on its successor; nothing is stale.
+- Everything a plugin keeps across a reload is in its store's tables and documents; writables start over. A list's
+  bookmarks are kept by its object in memory: they survive a reload, not a server restart (the screen opens it anew). Readers of a restarting store re-read on its successor; nothing is stale.
 - Every slice edits and reloads each plugin it touches while it is used (a list open, a worker running), in a test:
   nothing lost, no error.
 
