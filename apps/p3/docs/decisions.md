@@ -332,6 +332,6 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
 - **A plugin guide for agents (owner, 2026-11-15):** p3 gets a guide for agents (and people) writing p3 plugins, as
   `packages/coding-agent/docs/extensions.md` is for extension-writing agents: the few patterns a plugin needs (a store
   and its named queries, a view with its admission, a list, a contribution), each as a complete example, the rules and
-  the footguns. It is written once the API settles (after admission) and kept current with every slice. It is also
+  the footguns. It is its own slice (23, after locks), written as the API settles and kept current with every slice. It is also
   the test of whether Chord apps are easy to reason about: a fresh agent given only the guide writes a few plugins
   (a private journal, a sidebar grouping, a shared board), and the lines, concepts and mistakes are counted.

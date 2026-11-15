@@ -31,6 +31,3 @@ The brief is filled out when the slice is next.
 - From the t3code comparison (if the owner agrees): theme tokens and themes as data with a tested contract of stable
   markup hooks, a CSS filter against exfiltration, safe mode, the agent seeing a screenshot of what it changed, a
   personal layer per person or device.
-
-**Also (owner, 2026-11-15):** the plugin guide for agents (decision "A plugin guide for agents"), written once admission
-has landed and tested with a fresh agent writing a journal, a grouping and a shared board.
