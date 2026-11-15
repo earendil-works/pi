@@ -25,16 +25,27 @@ does the final review.
    not esoteric cases.
 5. **Fix.** Findings are fixed. A finding that needs a decision goes to the owner first (below).
 6. **Review, round 2,** by the same three on the fixed code; **fix** again.
-7. **Walkthrough.** A book-style explainer (`slices/NN-name/walkthrough/`, built with the explainer skill, not
-   interactive): what was built, why and how, in the order to read the code.
+7. **Walkthrough** (`slices/NN-name/walkthrough/`; owner, 2026-11-15). Its one goal: the owner understands what was
+   built, how and why, in full, so he can take ownership of it. Rules:
+   - **Self-contained:** the reader has no access to the source. Everything needed to understand it is in the
+     walkthrough.
+   - **Code over prose:** the real code of each part, shown and explained piece by piece; prose only where code cannot
+     say it.
+   - **It starts with the list of every source file created and touched**, each with one line on what it is for, and
+     its size.
+   - **Be creative where it explains better:** follow one request through every file; traces of real runs; diagrams of
+     who talks to whom; before and after; "what breaks if this line goes"; the tests that pin each rule.
+   - Not a book of paragraphs; whatever form makes it understood. Built with the explainer skill only where its layout
+     helps.
 8. **Owner review.** The owner reviews the code with Fable. Code is committed only after his approval.
 9. **Update the docs:** the brief (as built), `overview.md`, `names.md`, `decisions.md`.
 
 ## Reading
 
 A slice's brief lists what to read in full before detailing or building it: the docs (with sections), the Chord, kit,
-Durable and pi-ai source files, the p2 precedents, and the private reviews on slayer. Always also: `names.md`,
-`decisions.md` in full, and `packages/chord/docs/design.md` in full (root `AGENTS.md`). Archive docs use older names;
+Durable and pi-ai source files, the p2 precedents, and the private reviews on slayer. Always also: `chord-practices.md`
+(p3's practices on Chord, kept current with every slice), `names.md`, `decisions.md` in full, and
+`packages/chord/docs/design.md` in full (root `AGENTS.md`). Archive docs use older names;
 translate them with `names.md`.
 
 ## Decisions

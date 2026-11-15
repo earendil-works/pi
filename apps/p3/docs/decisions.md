@@ -344,3 +344,34 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
   is gone. The workers component closes a worker's link and aborts its calls before it publishes the exit or starts a
   successor, and records each running worker's incarnation before its first call. p2's hand-written generation
   checks become unnecessary (bookkeeping that is not a staleness check stays).
+- **Slice 1's redo (owner, 2026-11-15):** p3's kit (`apps/p3/src/kit/`) is typed to p3: no principal parameter, it
+  imports p3's name, API, kinds and principals, and `startServer` takes only what the start script decides. `forward`
+  takes a fourth argument, the members a view implements itself. The session row's `state` and `lastTouch` get their
+  writers with the harness (slice 3). The copied kit's names are p3's (`p3.info`, `p3.worker-info`, `p3.sign-ins`, the
+  cookie `p3-sign-in`, `/_p3/owner`). The default data directory is `~/.pi/p3` (supersedes `~/.p3` of the first plan).
+  Chord exports `memberNames(contract, variant)` for `forward`; p3's API wraps nothing of Chord's `remote`.
+- **The p3 kit, slice 1 redo (owner, 2026-11-15, decisions A to F):** the kit copied into p3 is typed to p3 (no
+  principal parameter; it imports p3's name, API, kinds and principals; `startServer` takes only `dataDir`, `root`,
+  `listen`, the session worker kind and `onError`) and keeps only what slice 1 uses (later slices add back what they
+  need). `forward(store, Remote, variant, own?)` takes the members a view implements itself as a fourth argument. A
+  session's state and last touch have no writer before the harness (slice 3). p3's own names in the kit (`p3.info`,
+  `p3.sign-ins`, cookie `p3-sign-in`, `/_p3/owner`): a browser shares cookies across ports of one host. p3's default
+  data directory is `~/.pi/p3`. `forward` reads a contract's member names through Chord's `memberNames(contract,
+  variant)`.
+- **p2's plugin patterns, fixed (owner, 2026-11-15; reviewed by Fable, Sol and Astra):** views of a store are
+  explicit remote contracts filled by `forward` (never a public contract derived from a store); a contribution that
+  needs a reference or a native uses p3's `contribute` helper; one audience per contract (workers and the server get
+  their own contracts; variants are levels of one audience); `useVariant(ref, variant)` in `chord/react` and the
+  terminal scope, typed, the UI's way to read a variant (a UI-only exception to Chord's C15); stale-worker checks are
+  Chord's (decision "Stale workers are Chord's problem").
+- **Chord is cut down at the end, if needed (owner, 2026-11-15):** no removal of Chord parts (jobs, sync, telemetry
+  ingest) now; a size audit only once p3 is built, and only where needed.
+- **Walkthroughs make the owner the owner (owner, 2026-11-15):** a slice's walkthrough exists so the owner understands
+  what was built, how and why, in full: self-contained (no source access assumed), code over prose, the list of every
+  file created and touched first, creative where that explains better (`workflow.md`, step 7).
+- **p3's practices on Chord (owner, 2026-11-15):** `chord-practices.md` holds the shape of a p3 plugin, the rules and
+  the mistakes made with their fixes; it is read before every slice and in every handoff, and kept current.
+- **The builder (owner, 2026-11-15):** the p3 session is the builder from here on; subagents review (and research).
+- **Sign-in with Radius comes right after slice 1 (owner, 2026-11-15):** its own slice (25), with a small web and
+  terminal scaffold and its own plain styles until Elanor's components arrive; the research is private
+  (`/home/badlogic/chord-notes/research/p3-radius-signin.md`).

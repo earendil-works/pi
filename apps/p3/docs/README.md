@@ -7,6 +7,7 @@ we got here; not a reference for building).
 | --- | --- |
 | `overview.md` | what p3 is, its goals, the parts we build, in what order |
 | `names.md` | one name per thing, used everywhere (code, contracts, panes, docs) |
+| `chord-practices.md` | how p3 is built on Chord: the shape of a plugin, the rules, the mistakes made and their fixes (read before every slice) |
 | `workflow.md` | how a slice is specified, built, reviewed and handed over |
 | `decisions.md` | the owner's decisions, newest last (the record; older entries may be superseded by newer ones) |
 | `slices/` | one brief per slice; a slice's brief is filled out in detail before it is built |
