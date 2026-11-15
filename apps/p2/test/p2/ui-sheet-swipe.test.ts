@@ -11,7 +11,7 @@ import { type Fixture, holdIn, startFixture } from "./helpers.ts";
 
 const point = (selector: string) =>
 	`(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + Math.min(r.height / 2, 12) }; })()`;
-const open = `Boolean(document.querySelector('[role=dialog][aria-label="Model"]'))`;
+const open = `Boolean(document.querySelector('[role=dialog][aria-label="Share"]'))`;
 
 describe("swiping a bottom sheet down", { skip: !browserTests }, () => {
 	let fixture: Fixture;
@@ -55,10 +55,10 @@ describe("swiping a bottom sheet down", { skip: !browserTests }, () => {
 		});
 		await browser.call("Emulation.setTouchEmulationEnabled", { enabled: true });
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session.id}`);
-		// The chip is disabled until the model resources arrive; a click before that does nothing.
-		await browser.wait(`document.querySelector('button[aria-label="Model and thinking"]')?.disabled === false`);
+		// The viewer count opens the Share sheet.
+		await browser.wait(`document.querySelector('.session-stats .client-count')`);
 		const openSheet = async () => {
-			await browser.evaluate(`document.querySelector('button[aria-label="Model and thinking"]').click()`);
+			await browser.evaluate(`document.querySelector('.session-stats .client-count').click()`);
 			await browser.wait(open);
 			// The opening slide is over.
 			await browser.evaluate("new Promise((resolve) => setTimeout(resolve, 400))");

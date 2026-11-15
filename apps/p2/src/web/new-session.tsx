@@ -2,7 +2,7 @@
 // command run outside React (the command menu's New session) starts a fresh one too.
 import { useSyncExternalStore } from "react";
 import { openNewSession } from "../runtime/web.tsx";
-import type { ModelChoice } from "./ModelPicker.tsx";
+import type { ModelChoice } from "./model-choice.ts";
 
 /**
  * A project the new session joins (a sidebar project group's "+"): its name, shown on the new-session screen, and how

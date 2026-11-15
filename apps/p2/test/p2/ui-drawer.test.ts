@@ -41,7 +41,7 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		await fixture?.close();
 	});
 
-	it("hides the new-session title, opens sign-in and the model sheet, selects cwd, and sends an attached first message", async () => {
+	it("hides the new-session title, opens sign-in and the model page, selects cwd, and sends an attached first message", async () => {
 		await browser.metrics(390, 844);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.wait(`document.querySelector('${COMPOSER}') && !document.querySelector('.offline')`);
@@ -59,13 +59,15 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		await browser.click(".test-signin");
 		await browser.wait(`document.querySelector('[role=dialog][aria-label=Providers]')`);
 		await browser.click("[role=dialog] button[aria-label=Close]");
-		await browser.click('button[aria-label="Model and thinking"]');
-		await browser.wait(`document.querySelector('[role=dialog][aria-label=Model] input[aria-label="Search models"]')`);
-		await browser.evaluate(setInput('input[aria-label="Search models"]', "faux"));
+		// The footer's model link opens the command menu's model page, which lists signed-in providers' models only.
+		await browser.click('button[aria-label="Model"]');
+		await browser.wait(`document.querySelector('.command-menu input')?.placeholder==='Search models…'`);
+		await browser.evaluate(setInput(".command-menu input", "faux"));
 		await browser.wait(
-			`document.querySelector('.model-list .empty-note')?.textContent==='No models match. Only signed-in providers are listed.'`,
+			`document.querySelector('.command-menu .empty-note')?.textContent==='No models match. Only signed-in providers are listed.'`,
 		);
-		await browser.click("[role=dialog] button[aria-label=Close]");
+		await browser.evaluate(`document.querySelector('.command-layer .scrim').click()`);
+		await browser.wait(`!document.querySelector('.command-menu')`);
 		await browser.click(".cwd-pick");
 		await browser.wait(`document.querySelector('.directory-use:not(:disabled)')`);
 		await browser.evaluate(setInput("input[aria-label=Directory]", fixture.workspace));
