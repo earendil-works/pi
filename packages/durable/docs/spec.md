@@ -757,8 +757,14 @@ interface Conversation {
   ): Promise<Conversation>;
   compact(instructions: string | undefined, context: Context): Promise<TaskId<CompactionResult>>;
   reset(handoff: string | undefined, context: Context): Promise<void>;
-  /** `{ background: true }` also aborts background work under the conversation (section 5.4). */
-  abort(context: Context, options?: { readonly background?: boolean }): Promise<void>;
+  /**
+   * `{ background: true }` also aborts background work under the conversation (section 5.4). Resolves with the
+   * queued inputs it withdrew.
+   */
+  abort(
+    context: Context,
+    options?: { readonly background?: boolean },
+  ): Promise<{ readonly withdrawn: readonly WithdrawnInput[] }>;
   waitForIdle(context: Context): Promise<void>;
   /** The structural view (section 9.3) as a watch; `window` bounds its entries. */
   watch(context: Context, window?: ConversationWindow): Promise<ConversationWatch>;
@@ -2537,7 +2543,11 @@ background boundaries: it marks every live task that traversal ignoring the
 background flag reaches when the operation is admitted and withdraws the queued
 inputs of every conversation it reaches. It then waits until every task it
 marked is terminal and the conversation is ordinarily idle; background work
-created afterwards is neither marked nor awaited. `Conversation.waitForIdle()` waits until
+created afterwards is neither marked nor awaited. It resolves with the inputs it
+withdrew (`withdrawn`), each its `pi.inbox` item (mode, content, entry) with its
+conversation, in ID order per conversation: the withdrawal and the marks are one
+commit, so a host that hands withdrawn inputs back to their senders misses none
+that arrived while it prepared the abort. `Conversation.waitForIdle()` waits until
 that traversal contains no live non-background task. Harness idle performs the
 same traversal from every ownerless conversation root rather than globally
 counting tasks, so ordinary work below a background owner does not block it.
@@ -3101,6 +3111,9 @@ type InboxItem =
   | { readonly id: SubmissionId; readonly mode: "write"; readonly entry: JsonObject };
 
 type InboxState = { items: InboxItem[] };
+
+/** A queued input `Conversation.abort()` withdrew, with its conversation. */
+type WithdrawnInput = Exclude<InboxItem, { mode: "write" }> & { readonly conversationId: ConversationId };
 ```
 
 | field | value |
@@ -3931,7 +3944,7 @@ interface ConversationHandle {
    * appended entries carry the task's `byTaskId`. Rejects once the invocation is aborted or ended.
    */
   submit(tx: Tx, submission: SubmissionDraft): Promise<SubmissionId>;
-  abort(context: Context): Promise<void>;
+  abort(context: Context): Promise<{ readonly withdrawn: readonly WithdrawnInput[] }>;
   waitForIdle(context: Context): Promise<void>;
 }
 
