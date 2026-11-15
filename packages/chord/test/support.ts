@@ -44,6 +44,7 @@ import {
 	type PluginFailure,
 	type RefState,
 	type RouteHandle,
+	type RouteOptions,
 	type Self,
 	type StoreSelf,
 } from "../src/host/index.ts";
@@ -967,6 +968,8 @@ export async function relayed(
 	options: {
 		readonly tab?: TestPrincipal;
 		readonly authorize?: (principal: TestPrincipal, address: { readonly key: string }) => boolean;
+		/** The route's admission (slice 14 §2.3). */
+		readonly admit?: RouteOptions<TestPrincipal, typeof Session>["admit"];
 		readonly trusted?: boolean;
 		readonly codecs?: { readonly tab?: Codec; readonly route?: Codec };
 		readonly server?: (host: FacetHost<TestPrincipal>) => void;
@@ -1043,6 +1046,7 @@ export async function relayed(
 		{
 			authorize: options.authorize ?? (() => true),
 			resolve: (address, routing) => resolve(address, () => worker(address), routing),
+			...(options.admit === undefined ? {} : { admit: options.admit }),
 		},
 		context,
 	);

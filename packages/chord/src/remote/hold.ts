@@ -7,7 +7,9 @@
 // every affected object"), then unbound (`loading` or `failed`, then a fresh `bound`; a `loading` one keeps its calls
 // in flight and takes more by its old names); a version no longer bound or a removed type leaves it waiting unbound. A
 // hold of an older version follows its object's adapted members (Q10). A bound hold taps its instance's event members
-// from the counter value of its `bound` (decision "Events: fire-and-forget members"), until it unbinds.
+// from the counter value of its `bound` (decision "Events: fire-and-forget members"), until it unbinds. Its calls are
+// decoded by what its consumer had applied when it sent them: one binding fence per unacknowledged `bound` (design
+// §22; slice 14, where an admission may rebind a hold several times before the first `ack`).
 
 import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import type { Context } from "../context/index.ts";
@@ -24,6 +26,7 @@ import {
 	type RefState,
 	type Removal,
 	retryWalk,
+	revoked,
 	type Serving,
 	type Tap,
 	type UnboundRequest,
@@ -73,16 +76,13 @@ type Followed = {
 /**
  * Where a hold stands: `unplaced` in the unbound index until the host's publication places it; `pending` until its
  * object is live (the activation, parking and retries; `told`: the failure its consumer was told, so the next attempt
- * is announced with `loading` and a call that crossed the failure on the wire gets it); `binding` while its object is live and its `bound` waits for a slot;
- * `bound` with the object's variant and the members it follows. A `pending` hold unbound with `loading` and the
- * `binding` after it keep the names it was bound with, `previous`: its consumer's calls sent by those names (before it
- * learnt of the `loading`) wait at its object's gate and are answered by name, design §22; only contract data, so the
- * old instance and its sources go meanwhile.
+ * is announced with `loading`); `binding` while its object is live and its `bound` waits for a slot; `bound` with the
+ * object's variant and the members it follows.
  */
 type HoldState =
 	| { readonly kind: "unplaced"; readonly request: HoldRequest }
-	| { readonly kind: "pending"; readonly told?: ChordError; readonly previous?: BoundNames }
-	| { readonly kind: "binding"; readonly previous?: BoundNames }
+	| { readonly kind: "pending"; readonly told?: ChordError }
+	| { readonly kind: "binding" }
 	| {
 			readonly kind: "bound";
 			/** The bound variant's data at the hold's version. */
@@ -93,11 +93,6 @@ type HoldState =
 			readonly followed: Followed[];
 			/** The instance it was bound to: it follows it on while it still changes (a restart's open old attempt). */
 			readonly instance: unknown;
-			/**
-			 * A rebinding's names before it (`until`: its `bound`, this host's own message number): calls its consumer sent
-			 * before it applied that `bound` carry their indexes, so they are decoded by them until its `ack`.
-			 */
-			readonly previous?: BoundNames & { readonly until: number };
 	  }
 	/**
 	 * Refused where it arrived, with `cause`: `waiting` (not served here, another version, placed elsewhere by the
@@ -110,8 +105,26 @@ type HoldState =
 /** A bound hold's state. */
 type Bound = Extract<HoldState, { readonly kind: "bound" }>;
 
-/** What calls need of a binding: its variant's data at the hold's version and the names the wire's indexes point into. */
+/**
+ * What calls need of a binding: its variant's data at the hold's version and the names the wire's indexes point into.
+ * Only contract data: kept after an unbind, it keeps no instance and no source.
+ */
 type BoundNames = { readonly variant: VariantData; readonly names: VariantNames };
+
+/**
+ * What a call is decoded by: the names of a binding (while the hold rebinds after a `loading` its object's gate takes
+ * the call by name, design §22), or the failure its consumer was told (the call is refused with it: sent before the
+ * consumer learnt of the failure, its indexes are of a binding that is gone).
+ */
+type Decoding =
+	| { readonly kind: "names"; readonly bound: BoundNames }
+	| { readonly kind: "refused"; readonly error: ChordError };
+
+/**
+ * A binding fence (design §22): until its consumer acknowledged the `bound` numbered `until` (this host's own message
+ * number), a call it sends was made before it applied that `bound`, so it is decoded by `before`.
+ */
+type Fence = { readonly until: number; readonly before: Decoding };
 
 /** No event taps: a variant without event members, a binding no longer shown live. */
 const NO_TAPS: readonly (readonly [EventNode, Tap])[] = [];
@@ -146,6 +159,17 @@ export class Hold implements Holder, UnboundRequest {
 	#request: HoldRequest | undefined;
 	/** The held object, from its binding until the hold is released. */
 	#object: ChordObject | undefined;
+	/**
+	 * What decodes a call of a consumer that applied everything sent so far: the names of the last `bound`, or the
+	 * failure it was told since; `undefined` before either.
+	 */
+	#latest: Decoding | undefined;
+	/**
+	 * One fence per `bound` its consumer has not acknowledged, oldest first: A, B, C sent before the first `ack` are two
+	 * fences, and a call sent between B's and C's application is decoded by B's names. Each goes with the `ack` of
+	 * its `bound` (`acknowledged`).
+	 */
+	readonly #fences: Fence[] = [];
 	/** The members the current batch changed, with their ops, in order. */
 	#changes: (readonly [Followed, readonly Op[]])[] = [];
 	/** The members that failed since the last message that carried this hold. */
@@ -181,31 +205,46 @@ export class Hold implements Holder, UnboundRequest {
 	 * unbind: its fresh `bound` not sent yet).
 	 */
 	get callable(): boolean {
-		return this.#names() !== undefined;
+		return this.#decoding()?.kind === "names";
 	}
 
 	/**
-	 * What a call it does not take is refused with: the failure its consumer was told (refused, or failed while pending:
-	 * the call crossed that `failed` on the wire, and its consumer shows that cause), else `not_ready` (not bound yet).
+	 * What a call it does not take is refused with: the failure its consumer was told (the call crossed that `failed` on
+	 * the wire, and its consumer shows that cause), else `not_ready` (not bound yet).
 	 */
 	get refusal(): ChordError {
 		const state = this.#state;
 		if (state.kind === "refused") return state.cause.error;
-		if (state.kind === "pending" && state.told !== undefined) return state.told;
+		const decoding = this.#decoding();
+		if (decoding?.kind === "refused") return decoding.error;
 		return new ChordError({ code: "not_ready", message: `hold ${this.id}: not bound yet` });
 	}
 
 	/**
-	 * The names its calls are decoded by: its binding's (its previous ones until its consumer acknowledged the `bound`
-	 * that brought them: another variant's indexes name other methods), or the ones it was bound with while it rebinds.
+	 * What a call arriving now is decoded by: what its consumer had applied when it sent it, which is what the oldest
+	 * `bound` it has not acknowledged replaced (another variant's indexes name other methods), else the latest.
 	 */
-	#names(): BoundNames | undefined {
-		const state = this.#state;
-		if (state.kind === "bound") {
-			const { previous } = state;
-			return previous !== undefined && !this.#provider.acknowledged(previous.until) ? previous : state;
-		}
-		return state.kind === "pending" || state.kind === "binding" ? state.previous : undefined;
+	#decoding(): Decoding | undefined {
+		const fences = this.#acknowledge();
+		return fences.length > 0 ? fences[0]!.before : this.#latest;
+	}
+
+	/**
+	 * Its consumer acknowledged one of this host's own messages: the fences that `ack` ends go (and what they keep: a
+	 * binding's names, a failure). Whether none is left: its provider side asks it no more until it is fenced again.
+	 */
+	acknowledged(): boolean {
+		return this.#acknowledge().length === 0;
+	}
+
+	/**
+	 * Drops the fences its consumer acknowledged (acks arrive in order: they are the first ones) and returns the rest:
+	 * a hold keeps one fence per `bound` not acknowledged yet, never one per rebinding of its life.
+	 */
+	#acknowledge(): Fence[] {
+		const fences = this.#fences;
+		while (fences.length > 0 && this.#provider.acknowledged(fences[0]!.until)) fences.shift();
+		return fences;
 	}
 
 	/** Whom it acts for (the unbound index's revocation). */
@@ -306,7 +345,7 @@ export class Hold implements Holder, UnboundRequest {
 				this.#untap();
 				return;
 			}
-			this.#unbind(shown.kind === "failed" ? shown.cause.error : undefined);
+			this.#unbind(shown.kind === "failed" ? shown.cause : undefined, object);
 		}
 		this.#pending(object);
 	}
@@ -337,30 +376,28 @@ export class Hold implements Holder, UnboundRequest {
 
 	/**
 	 * Its object no longer shows it live (a restart, a live failure): no longer subscribed or waiting for a slot,
-	 * pending again. With `error` (a failure, sent by `#pending`, which a consumer applies to a bound hold as a rebinding
-	 * too, model §5) its calls in flight are rejected. Without (`loading`, which tells the consumer it rebinds) they stay,
+	 * pending again. With `cause` (a failure, sent by `#pending`, which a consumer applies to a bound hold as a rebinding
+	 * too, model §5) its calls in flight are rejected with its error, `forbidden/revoked` for a denial (slice 14 §2.2:
+	 * access withdrawn under a running call). Without (`loading`, which tells the consumer it rebinds) they stay,
 	 * and calls by the names it was bound with keep arriving (sent before its consumer learnt of the `loading`): each gets
 	 * exactly one answer from what it waits on, the instance it already runs on (its result, or `released` at the seal)
 	 * or its object's gate (the new instance's result, its failure, `park_timeout`, its end), design §22.
 	 */
-	#unbind(error: ChordError | undefined): void {
-		const previous = this.#names();
+	#unbind(cause: FailureCause | undefined, object: ChordObject): void {
 		const state = this.#state;
 		if (state.kind === "bound") this.#unfollow(state);
 		this.#changes = [];
 		this.#failed = [];
 		this.#retired = NO_RETIRED;
 		this.#touched = false;
-		if (error !== undefined) {
-			this.#provider.unbound(this, error);
+		if (cause !== undefined) {
+			const { error } = cause;
+			this.#provider.unbound(this, cause.kind === "denied" ? revoked(object.label, error) : error);
 			this.#state = PENDING;
 			return;
 		}
 		this.#provider.unbind(this);
-		this.#state =
-			previous === undefined
-				? PENDING
-				: { kind: "pending", previous: { variant: previous.variant, names: previous.names } };
+		this.#state = PENDING;
 		this.#provider.send({ kind: "loading", hold: this.id });
 	}
 
@@ -385,8 +422,7 @@ export class Hold implements Holder, UnboundRequest {
 		if (current.kind !== "pending") return;
 		const state = this.#shown(object);
 		if (state.kind === "live") {
-			// Calls by the names it was bound with are still answered until the fresh `bound` is sent.
-			this.#state = current.previous === undefined ? BINDING : { kind: "binding", previous: current.previous };
+			this.#state = BINDING;
 			this.#provider.bind(this, this.#provider.link.context);
 		} else if (state.kind === "failed") {
 			// Each failure and each new cause (a parked object's blocker changed) is a message of its own.
@@ -395,6 +431,10 @@ export class Hold implements Holder, UnboundRequest {
 			const failed = { kind: cause.kind, error: wireError(cause.error) };
 			this.#provider.send({ kind: "failed", hold: this.id, cause: failed, ...retryIn });
 			// Told a failure, its consumer rejects what it still waits on: calls by the old names are not taken any more.
+			// One that still arrives was sent before its consumer learnt of the failure; for a denial that is access
+			// withdrawn under the call (`forbidden/revoked`), whether it had reached this host or not.
+			const refusal = cause.kind === "denied" ? revoked(object.label, cause.error) : cause.error;
+			this.#latest = { kind: "refused", error: refusal };
 			this.#state = { kind: "pending", told: cause.error };
 		} else if (state.kind === "loading" && current.told !== undefined) {
 			this.#provider.send({ kind: "loading", hold: this.id });
@@ -420,7 +460,8 @@ export class Hold implements Holder, UnboundRequest {
 	 * the variant (a protocol error); a hold that is not callable has none.
 	 */
 	method(index: number): { readonly name: string; readonly resultBytes: boolean } {
-		const bound = this.#names();
+		const decoding = this.#decoding();
+		const bound = decoding?.kind === "names" ? decoding.bound : undefined;
 		const name = bound?.names.methods[index];
 		if (name === undefined) throw new Error(`hold ${this.id}: no method ${index}`);
 		return { name, resultBytes: bound!.variant.methods.get(name)!.result.bytes };
@@ -546,23 +587,20 @@ export class Hold implements Holder, UnboundRequest {
 	}
 
 	/**
-	 * The binding: its variant and names at the hold's version, with no member followed yet, and the names its consumer
-	 * still has (a rebinding's) until it acknowledged this `bound`, the next of this host's own messages.
+	 * The binding: its variant and names at the hold's version, with no member followed yet. What its consumer's calls
+	 * were decoded by so far is fenced until it acknowledged this `bound`, the next of this host's own messages.
 	 */
 	#bindTo(instance: Attempt): Bound {
 		// A live remote object's instance has its variant.
 		const variant = variantsAt(instance.served.contract, this.contract.version).get(instance.variant!)!;
-		const previous = this.#names();
-		const state: Bound = {
-			kind: "bound",
-			variant,
-			names: variantNames(variant),
-			followed: [],
-			instance,
-			...(previous === undefined
-				? {}
-				: { previous: { variant: previous.variant, names: previous.names, until: this.#provider.nextOwn } }),
-		};
+		const names = variantNames(variant);
+		const state: Bound = { kind: "bound", variant, names, followed: [], instance };
+		const latest = this.#latest;
+		if (latest !== undefined) {
+			this.#fences.push({ until: this.#provider.nextOwn, before: latest });
+			this.#provider.fenced(this);
+		}
+		this.#latest = { kind: "names", bound: { variant, names } };
 		this.#state = state;
 		return state;
 	}
@@ -696,6 +734,7 @@ export class Hold implements Holder, UnboundRequest {
 	 */
 	#refuse(request: HoldRequest, cause: FailureCause): void {
 		this.#state = { kind: "refused", request: owned(request), cause };
+		this.#latest = { kind: "refused", error: cause.error };
 		if (cause.kind === "waiting") this.#provider.link.host.index(request.type, this, cause);
 		this.#provider.send({
 			kind: "failed",

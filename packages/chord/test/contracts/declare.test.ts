@@ -1,5 +1,6 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
+	type AdmittedOf,
 	arr,
 	bytes,
 	type EventMember,
@@ -17,7 +18,7 @@ import {
 	remote,
 	str,
 } from "../../src/contracts/index.ts";
-import { currentVariants, LOCAL } from "../../src/contracts/internal.ts";
+import { contractData, currentVariants, LOCAL } from "../../src/contracts/internal.ts";
 
 const Note = obj({ text: str() });
 
@@ -198,6 +199,56 @@ describe("declaration checks", () => {
 				members: { s: { type: "object", properties: { a: str() }, required: ["a"] } },
 			}),
 		).not.toThrow();
+	});
+});
+
+describe("admission (slice 14 §2.1)", () => {
+	const variants = { a: { state: { n: int() } } };
+
+	it("is typed by its schema and never part of the fingerprint", () => {
+		const Plain = remote("doc", { version: 1, params: {}, hostAddress, variants });
+		const Admitted = remote("doc", {
+			version: 1,
+			params: {},
+			hostAddress,
+			admission: obj({ mode: str() }),
+			variants,
+		});
+		expect(Admitted.fingerprint).toBe(Plain.fingerprint);
+		expectTypeOf<AdmittedOf<typeof Admitted>>().toEqualTypeOf<{ mode: string }>();
+		expectTypeOf<AdmittedOf<typeof Plain>>().toEqualTypeOf<never>();
+		const other = remote("doc", { version: 1, params: {}, hostAddress, admission: obj({ mode: int() }), variants });
+		// Its own fingerprint, which a reload's staging compares.
+		expect(contractData(Admitted).admission?.fingerprint).not.toBe(contractData(other).admission?.fingerprint);
+		expect(contractData(Plain).admission).toBe(undefined);
+	});
+
+	it("is JSON only, and belongs to remote contracts", () => {
+		const declaration = { version: 1, params: {}, hostAddress, variants };
+		expect(() => untyped.remote("doc", { ...declaration, admission: obj({ data: bytes() }) })).toThrow(
+			"doc.admission: an admission's value is JSON only (no bytes())",
+		);
+		expect(() => untyped.local("doc", { version: 1, params: {}, members: {}, admission: obj({}) })).toThrow(
+			'doc: unknown key "admission"',
+		);
+	});
+
+	it("is replaced by evolve's admission(schema), the last edit of a version; the wire fingerprint stays an edit's", () => {
+		const V1 = remote("doc", { version: 1, params: {}, hostAddress, admission: obj({ mode: str() }), variants });
+		const V2 = evolve(V1, (e) => e.addState("a", "m", int()));
+		const V3 = evolve(V2, (e) => e.admission(obj({ mode: str(), since: int() })));
+		expectTypeOf<AdmittedOf<typeof V2>>().toEqualTypeOf<{ mode: string }>();
+		expectTypeOf<AdmittedOf<typeof V3>>().toEqualTypeOf<{ mode: string; since: number }>();
+		// Carried over unchanged by an edit that is not its own.
+		expect(contractData(V2).admission).toBe(contractData(V1).admission);
+		expect(contractData(V3).admission?.fingerprint).not.toBe(contractData(V1).admission?.fingerprint);
+		// A version whose only edit is its admission has the previous version's members.
+		expect(V3.fingerprint).toBe(V2.fingerprint);
+		const Gained = evolve(remote("doc", { version: 1, params: {}, hostAddress, variants }), (e) =>
+			e.admission(obj({ mode: str() })),
+		);
+		expectTypeOf<AdmittedOf<typeof Gained>>().toEqualTypeOf<{ mode: string }>();
+		expect(contractData(Gained).admission).not.toBe(undefined);
 	});
 });
 

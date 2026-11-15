@@ -94,6 +94,12 @@ const park = {
 	attributes: { cause: { type: "string", required: true, description: "`loading`, or the waiting cause's message." } },
 } as const;
 
+const admit = {
+	description:
+		"An admission's decision (slice 14): an admitted type's attempt read it, or a route's for the hold's principal.",
+	attributes: { outcome: { type: "string", required: true, description: "`allow` or `deny`." } },
+} as const;
+
 const fate = {
 	description: "One object's fate in a reload.",
 	attributes: {
@@ -163,6 +169,7 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 				"upstream.kind": { type: "string", required: true, description: "The kind of the upstream host." },
 			},
 			endAttributes: { outcome: outcome(["ok", "error", "aborted"]) },
+			events: { "chord.admit": admit },
 			status: { default: "ok", errorWhen: ERRORS },
 		},
 		"chord.hold": {
@@ -175,6 +182,7 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 				"address.kind": { type: "string", required: true, description: "The kind of the provider's host." },
 			},
 			endAttributes: { outcome: outcome(["bound", "failed", "ended"]) },
+			events: { "chord.admit": admit },
 			status: { default: "ok", errorWhen: ERRORS },
 		},
 		"chord.activate": {
@@ -188,7 +196,7 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 				attempt: { type: "number", required: true, description: "The object's attempt, from 1." },
 			},
 			endAttributes: { outcome: outcome(["live", "failed", "parked", "ended"]) },
-			events: { "chord.park": park, "chord.retry": retry },
+			events: { "chord.park": park, "chord.retry": retry, "chord.admit": admit },
 			status: { default: "ok", errorWhen: ERRORS },
 		},
 		"chord.open": {

@@ -1,7 +1,8 @@
-// Hosts for apps: creating a host, facets, factories, natives, references and the ctx of method handlers, routines and
-// their waiting helpers, revocation, presence and keep-alive counts, root scopes.
+// Hosts for apps: creating a host, facets, factories, admissions, natives, references and the ctx of method handlers,
+// routines and their waiting helpers, revocation, presence and keep-alive counts, root scopes.
 
 export type { ActivityCounts } from "./activity.ts";
+export { type Admission, type Admit, type AdmitSelf, allow, deny } from "./admission.ts";
 export type {
 	BuiltQuery,
 	Factory,
@@ -19,6 +20,7 @@ export {
 	createHost,
 	type GetOptions,
 	type Host,
+	type HostDeleteOptions,
 	type HostError,
 	type HostOptions,
 	type LinkOptions,

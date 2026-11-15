@@ -1,10 +1,12 @@
 # Slice 14: admission with a value, named live queries, lists, joins by key
 
-Status: fifth version (2026-11-16), after review rounds 1 to 4 and the decisions taken on them. **Built in parts.**
-Built (2026-11-16, not committed): parts B (named queries, `self.liveQuery`, `self.count`, the skip test and the
+Status: fifth version (2026-11-15), after review rounds 1 to 4 and the decisions taken on them. **Built in parts.**
+Built (2026-11-15, committed `92e1db6ca`): parts B (named queries, `self.liveQuery`, `self.count`, the skip test and the
 probe), C for one source (`self.list`), D (column sets, `exists`, the join) and E's conditions as data, with their
-tests, examples 70, 71 and 72 and the bench; code review rounds 1 and 2 are fixed (2026-11-16). Not built yet: lists over several sources, A (admission, route
-admission), `deleteHostData({ plugin })`; `slices.md`, "Carry-over", lists them with what the built parts left.
+tests, examples 70, 71 and 72 and the bench; code review rounds 1 and 2 are fixed (2026-11-15). Built in a second
+part (2026-11-15, not committed): A (admission, route admission) and `deleteHostData({ plugin })`, with their tests
+and example 69. Not built yet: lists over several sources, examples 73 to 75; `slices.md`, "Carry-over", lists them
+with what the built parts left.
 p3 calls it "slice 0": the Chord changes it needs before its first slice is redone (`apps/p3/docs/decisions.md`,
 "Slice 0 changes Chord first"). The changes to `design.md` are in `slice-14-design.md`.
 
@@ -121,7 +123,9 @@ createWorkers(host, Session, { …, admit });        // passed through (src/node
   decision until a restart. A plugin serves the contract. The admission's references act as the host. It may not hold a type placed behind its own
   route (it would wait on itself): that hold fails `invalid/cycle`. A throwing `admit` fails the hold `broken`.
 - **`deny`:** the principal's holds to that address show `failed { denied }`; the relay releases them upstream and
-  rejects their calls in flight and waiting `forbidden/revoked`.
+  rejects their calls in flight and waiting `forbidden/revoked`. So does every denial (owner, 2026-11-15): a call
+  made before its caller learnt of it, waiting for a call-window slot or crossing the `failed` on the wire, is
+  answered `forbidden/revoked` as one in flight; a call first made after it gets the plain `forbidden`.
 - **Deny, then allow: a fence, no new id.** The denial sent `release` upstream. On the next allow the relay sends
   a `ping` and forwards the hold again, under its id, only after that ping's `pong`. A link is ordered and a peer
   answers a `ping` after everything sent before it (`src/link/channel.ts:59-61`), so every reply of the released
@@ -132,7 +136,9 @@ createWorkers(host, Session, { …, admit });        // passed through (src/node
   contract requires. A resolver that returns an intermediate relay voids it: that relay can answer the `ping`
   before the final provider's old replies have drained.
 - **A failed or ended source** fails new holds `failed { waiting }` and leaves bound ones alone. Loading keeps the
-  last decision (2.2).
+  last decision (2.2). **A new link fails closed** (owner, 2026-11-15): the holds forwarded under the last allow
+  stay on the link they are bound on; once that link is gone they are forwarded on a new one only under an allow
+  that can be read, and wait `failed { waiting }` until the source recovers.
 - **`RouteHandle.retry(address)`** (a rollout reaching workers calls it) resolves nothing while every hold of that
   address is denied or undecided. A new link of the route forwards a hold again only under its current decision.
   A reload of an object behind the route is an ordinary rebind on the open link: nothing is asked or resolved.
@@ -660,7 +666,7 @@ times slower). Two kinds, so a miss says which went wrong:
 - and their sum: **an ordinary commit's step at the mix at most 5 ms.** The step at ten times the mix is reported
   without a budget (probes are linear in the open reads).
 
-**Measured** (2026-11-16, `benchmarks.md`, with each source of a list over several sources as a list of its own
+**Measured** (2026-11-15, `benchmarks.md`, with each source of a list over several sources as a list of its own
 until those are built): 9 runs, 101 probes, 3.5 ms for the touch; a probe 4 µs; every kind of read inside its
 per-run budget; ten times the mix 31 ms; the subagents' list: first page 0.64 ms, a message 0.6 ms, 26 pages for
 1,000 loaded rows after 10,000 touches. The estimate this was planned from: SQLite alone (node:sqlite in memory, this data, 2026-11-15) takes about 1.6 ms for the 9

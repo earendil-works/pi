@@ -1115,7 +1115,7 @@ release of a non-final reference makes no `released` error unless it has calls t
 the largest single cost of a release). `test/bench/state-binding.ts`'s "over a link: get and release" keeps one
 reference alive, so it now measures a join.
 
-## Slice 14: named queries, the skip test and the probe, lists (2026-11-16)
+## Slice 14: named queries, the skip test and the probe, lists (2026-11-15)
 
 `test/bench/slice-14.ts`, Node 24.4.1 on the development server (slayer), a SQLite `:memory:` store, `slice-14.md`
 §9's data (10,000 session rows: a club of 3,000 in ten teams of 300 and one of 20, a family of 3,000, 4,000 archived

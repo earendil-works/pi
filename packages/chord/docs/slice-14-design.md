@@ -1,8 +1,8 @@
 # Slice 14: the changes to `design.md`, and what they supersede
 
-Status: fifth version (2026-11-16), with `slice-14.md`. Nothing here is folded into `design.md`,
-`decisions.md` or `slices.md` yet; that happens in the commit that records the owner's decision (with the slice's
-row in `slices.md`'s table and feature map). Line numbers are `design.md`'s at the time of writing.
+Status: fifth version (2026-11-15), with `slice-14.md`. The built parts are folded into `design.md`, `decisions.md`
+and `slices.md` (both parts on 2026-11-15: the first part, then admission, route admission and
+`deleteHostData({ plugin })`); what follows is kept as the record of what changed. Lists over several sources are not built. Line numbers are `design.md`'s at the time of writing.
 
 ## 1. Decisions and rules this slice changes
 

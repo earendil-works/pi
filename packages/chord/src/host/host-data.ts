@@ -18,6 +18,7 @@ import {
 	hostDataOwners,
 	importHostData,
 	readHostArchive,
+	tableOwner,
 	tablesToMigrate,
 } from "../store/host-data.ts";
 import type { Read, ReadRun } from "../store/read.ts";
@@ -147,7 +148,7 @@ export async function importInto(
 				const section = await exclusive(async (): Promise<ImportSection> => {
 					const migrating = tablesToMigrate(site.store, archive);
 					const histories = historiesOf([...site.objects()], migrating);
-					const missing = migrating.filter((table) => !histories.has(table)).map(ownerOf);
+					const missing = migrating.filter((table) => !histories.has(table)).map(tableOwner);
 					if (missing.length > 0) return { kind: "activate", owners: new Set(missing) };
 					const owners = await hostDataOwners(site.store, target, archive, context);
 					const plan = { target, existing, histories };
@@ -175,17 +176,23 @@ type ImportSection =
 	| { readonly kind: "activate"; readonly owners: ReadonlySet<string> }
 	| { readonly kind: "done"; readonly counts: HostDataCounts };
 
-/** The owner of table `table` (its SQL name `<owner>:<table>`). */
-function ownerOf(table: string): string {
-	return table.slice(0, table.indexOf(":"));
-}
-
-/** Deletes the data of `address` from the site's store, coordinated with the live owners (spec §5). */
-export function deleteFrom(site: HostDataSite, address: Address, context: Context): Promise<HostDataCounts> {
+/**
+ * Deletes the data of `address` from the site's store, coordinated with the live owners (spec §5); with `only`, the
+ * data of those owners (the object types of one plugin: slice 14 §6) and nothing else.
+ */
+export function deleteFrom(
+	site: HostDataSite,
+	address: Address,
+	context: Context,
+	only?: ReadonlySet<string>,
+): Promise<HostDataCounts> {
 	const key = storedText(address.key, "deleteHostData: address");
 	const run = async (): Promise<HostDataCounts> => {
-		const owners = await hostDataOwners(site.store, key, undefined, context);
-		return coordinated(site, owners, key, context, (commit) => deleteHostData(site.store, key, commit, context));
+		const all = await hostDataOwners(site.store, key, undefined, context);
+		const owners = only === undefined ? all : new Set([...all].filter((owner) => only.has(owner)));
+		return coordinated(site, owners, key, context, (commit) =>
+			deleteHostData(site.store, key, commit, context, only),
+		);
 	};
 	return site.gate.turn((exclusive) => exclusive(run), context);
 }

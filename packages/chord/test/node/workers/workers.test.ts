@@ -14,9 +14,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { withAbortSignal } from "../../../src/context/index.ts";
-import { createHost } from "../../../src/host/index.ts";
+import { allow, createHost, deny } from "../../../src/host/index.ts";
 import { memoryLinkPair } from "../../../src/link/index.ts";
 import type { RolloutHost } from "../../../src/node/plugins/index.ts";
+import { constant } from "../../../src/state/index.ts";
 import { expectCollected } from "../../support.ts";
 import { Control } from "../fixtures/workers/control.ts";
 import { context, ENTRY, fleet, Notes, Session, type TestPrincipal, until } from "./support.ts";
@@ -46,6 +47,24 @@ describe("starts on demand", () => {
 		expect(notes.label.value).toBe("S1 v1");
 		await until(() => stateOf(workers.state.value, "S1")?.status === "running");
 		expect(starts).toEqual(["session|S1"]);
+		notes.release();
+	});
+
+	it("passes admit to its route: a denied principal starts no worker, an allowed one does (slice 14 §2.3)", async () => {
+		const denied = await fleet({ admit: () => constant(deny("no workers for you")) });
+		const refused = denied.server.hold(Notes, { id: "S1" }, context);
+		await until(() => refused.state.value.kind === "failed");
+		expect(refused.state.value).toMatchObject({
+			kind: "failed",
+			cause: { kind: "denied", error: { code: "forbidden", message: "no workers for you" } },
+		});
+		// Nothing forked, nothing even asked to start.
+		expect([denied.starts, stateOf(denied.workers.state.value, "S1")]).toEqual([[], undefined]);
+		refused.release();
+		const allowed = await fleet({ admit: () => constant(allow(null)) });
+		const notes = allowed.server.hold(Notes, { id: "S1" }, context);
+		await until(() => notes.state.value.kind === "live");
+		expect(allowed.starts).toEqual(["session|S1"]);
 		notes.release();
 	});
 

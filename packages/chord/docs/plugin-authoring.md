@@ -143,6 +143,43 @@ await store.sessions.visible.page(args, 100, ctx, { after })    // not live: for
 - **A source of access fails closed.** A read that decides what someone may see throws when it has `more` rows
   than it read.
 
+## Who may do what: admission
+
+A factory is synchronous: it cannot read rows about its caller before it builds the caller's object. A remote type
+whose access depends on data declares an **admission** (slice 14): the contract names the value, `admit` reads the
+data and decides, and the factory is handed the value.
+
+```ts
+// contract.ts
+export const Transcript = remote("notes.transcript", { version: 1, params: { session: str() },
+	hostAddress: ({ session }) => Session({ id: session }),
+	admission: obj({ mode: oneOf("read", "write") }),
+	variants: { viewer: { … }, participant: { … } } });
+// worker.ts: `PersonHere` is a local object on the worker that follows the server's answer for this person (it
+// holds a remote object of the server, in a contract the app's API owns)
+host.serve(Transcript, (params, principal, admitted, self) =>
+	admitted.mode === "read" ? { variant: "viewer", members: … } : { variant: "participant", members: … },
+	{ admit: ({ session }, principal, self) =>
+		self.derive([self.get(PersonHere, { session, person: principal.id }).mode], ([mode]) =>
+			mode === "none" ? deny("no access") : allow({ mode })) });
+```
+
+- `admit` declares only `self.get` (and `at(key)`), `self.registry`, `self.derive` and `self.liveQuery`, and returns
+  a watchable of `allow(value)` or `deny(reason)`. It runs first in every attempt; the reason is shown to the person.
+- **The value is small and changes rarely** (a mode, a role). It selects the variant and the members. Another value
+  rebuilds the person's object; an equal one changes nothing. What a list shows is not in it: a list's condition is
+  an argument of its named query.
+- A denial shows `failed { denied }` and keeps no value: reads throw `forbidden`, running calls reject
+  `forbidden/revoked`. What your UI already rendered is yours to hide: watch `ref.state`. An object that had failed
+  shows the denial too; when the person is allowed again it is retried.
+- **No `self.job` in an admitted type.** Work for a person lives in a `local` store, carries the person in its
+  arguments, and asks the person's access again on every run.
+- **The objects an admission reads `accept` their previous version.** A reader whose version is refused is sealed
+  until its own code follows (a rollout's gap). While such an object only restarts, the last decision is kept.
+- The principal is identity only. Plugins never branch on principal kinds beyond "a person"; they read the value.
+- A route's `admit` (the app's base code, `createWorkers`' `admit`) decides who reaches a worker at all; it reads
+  only contracts the app's API owns.
+
 ## What a plugin may import
 
 | Import | Resolves to |
@@ -330,6 +367,8 @@ of plugins it has no files of, it declares again, as `Notes` above.
 5. Live rows of a table through `self.query(table, q, limit)` (your own windows) or a named query read with
    `self.liveQuery` (other objects), never a read in `self.open`; an index named for every named query; touches as
    `update`.
+5a. Access that depends on data in an admission (`admission` in the contract, `admit` in `serve`), never in every
+   method; no jobs in an admitted type; admission sources `accept` their previous version.
 6. Files of one kind named `*.<kind>.ts(x)`.
 7. A test with `testPlugin` and stubs for every name `t.unserved()` lists.
 8. Texts people read in `messages.ts` (`defineMessages`), its catalogs contributed from each facet that renders, state

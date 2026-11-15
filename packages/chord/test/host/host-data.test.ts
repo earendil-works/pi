@@ -256,6 +256,74 @@ describe("live owners", () => {
 	});
 });
 
+describe("a delete limited to one plugin (slice 14 §6, test 16)", () => {
+	/** `setup()` over two plugins: `@test/board` serves the board and its view, `@test/ledger` the ledger. */
+	async function twoPlugins(store: ChordStore) {
+		const only = (names: readonly string[]) =>
+			defineFacet((facet) => {
+				const serve = ((Type: { readonly name: string }, ...rest: unknown[]) => {
+					// The setup serves every type: this plugin takes its own.
+					if (names.includes(Type.name)) (facet.serve as (...args: unknown[]) => void)(Type, ...rest);
+				}) as FacetHost["serve"];
+				setup()({ serve, references: facet.references });
+			});
+		const h = createHost({ store, onError: () => {} });
+		await h.load(
+			[
+				{ name: "@test/board", facet: only([Board.name, View.name]) },
+				{ name: "@test/ledger", facet: only([Ledger.name]) },
+			],
+			context,
+		);
+		const live = await h.get(Board, {}, context);
+		const ledger = await h.get(Ledger, {}, context);
+		await live.write({ id: "S1", title: "one", labels: ["a"] }, context);
+		await ledger.put("S1", context);
+		return { host: h, board: live, ledger };
+	}
+
+	it("removes that plugin's records and rows of the address in one commit and leaves the others'", async () => {
+		const store = await memoryStore();
+		const { host: h, board: live, ledger } = await twoPlugins(store);
+		const before = store.lastSeq;
+		expect(await h.deleteHostData(S1, context, { plugin: "@test/ledger" })).toEqual({ documents: 0, rows: 1 });
+		expect(store.lastSeq).toBe(before + 1);
+		expect(await ledger.count("S1", context)).toBe(0);
+		// The board's plugin keeps its document and its rows of the address.
+		expect(live.meta.value).toEqual({ title: "one" });
+		expect(live.labels.value.map((row) => row.label)).toEqual(["a"]);
+		await h.close(context);
+	});
+
+	it("runs the reads over its tables again: the owner's live query and pinned key follow in that commit", async () => {
+		const store = await memoryStore();
+		const { host: h, board: live, ledger } = await twoPlugins(store);
+		const frames = framesOf(await live.summary.watch(context));
+		expect(await h.deleteHostData(S1, context, { plugin: "@test/board" })).toEqual({ documents: 1, rows: 1 });
+		await delivered();
+		expect(live.meta.value).toEqual({ title: "" });
+		expect(live.labels.value).toEqual([]);
+		// One frame: the document and the query adopted in the delete's batch.
+		expect(frames.map(([value]) => value)).toEqual([":0"]);
+		expect(await ledger.count("S1", context)).toBe(1);
+		await h.close(context);
+	});
+
+	it("refuses a plugin that is not loaded here, and changes nothing", async () => {
+		const store = await memoryStore();
+		const { host: h, ledger } = await twoPlugins(store);
+		const before = store.lastSeq;
+		expect(await rejection(h.deleteHostData(S1, context, { plugin: "@test/gone" }))).toMatchObject({
+			code: "invalid",
+			reason: "args",
+			message: 'deleteHostData: plugin "@test/gone" is not loaded here',
+		});
+		expect(store.lastSeq).toBe(before);
+		expect(await ledger.count("S1", context)).toBe(1);
+		await h.close(context);
+	});
+});
+
 describe("lifecycle", () => {
 	it("an abort before the commit was admitted writes nothing", async () => {
 		const store = await memoryStore();

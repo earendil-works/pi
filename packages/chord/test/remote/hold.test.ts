@@ -2020,6 +2020,69 @@ describe('calls in flight across a `loading` unbind (decision "Calls in flight s
 		await server.close(context);
 	});
 
+	it("fences each unacknowledged bound: A, B, C before any ack, a call between is decoded by what its consumer had applied (slice 14 §2.4)", async () => {
+		const ran: string[] = [];
+		const { server, peer, reload } = await keptServer({ n: 1, ran }, { ack: false });
+		peer.ack();
+		// A (variant a, acknowledged), then B (variant b) and C (variant a again), neither acknowledged.
+		await reload({ n: 2, variant: "b", ran });
+		expect((await peer.next("bound")).holds[0]!.variant).toBe(1);
+		await reload({ n: 3, variant: "a", ran });
+		expect((await peer.next("bound")).holds[0]!.variant).toBe(0);
+		// Sent before B was applied: index 0 is A's `bump`.
+		peer.send({ kind: "call", call: 0, hold: 0, method: 0 });
+		expect(partValue((await peer.next("result")).value!)).toBe(3);
+		expect(ran).toEqual(["bump"]);
+		// B applied and acknowledged, C not yet: index 0 is B's `ping` (one fence would still decode it by A's names).
+		peer.ack();
+		peer.send({ kind: "call", call: 1, hold: 0, method: 0 });
+		expect(partValue((await peer.next("result")).value!)).toBe(3);
+		expect(ran).toEqual(["bump", "ping"]);
+		// C acknowledged: index 0 is `bump` again.
+		peer.ack();
+		peer.send({ kind: "call", call: 2, hold: 0, method: 0 });
+		expect(partValue((await peer.next("result")).value!)).toBe(3);
+		expect(ran).toEqual(["bump", "ping", "bump"]);
+		expect(peer.closed).toBe(false);
+		await server.close(context);
+	});
+
+	it("drops a fence with the ack of its bound: a consumer that never calls keeps none (GC)", async () => {
+		// The live attempt alone: a sealed one keeps the error it was sealed with.
+		let self: Self<TestPrincipal> | undefined;
+		const server = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
+		const facet = defineFacet<TestPrincipal>((h) =>
+			h.serve(Kept, (_, _principal, declared) => {
+				self = declared;
+				return { variant: "a", members: { label: constant("v1"), bump: async () => 1, ping: async () => 1 } };
+			}),
+		);
+		await server.load([{ name: "@test/app", facet }], context);
+		const objects = instancesOf(ChordObject, "attempt");
+		const [a, b] = memoryLinkPair();
+		server.accept(a, { principal: { kind: "owner" }, codec: testCodec() }, context);
+		// It acknowledges every `bound` and sends no call.
+		const peer = new RawPeer(b);
+		await peer.next("hello");
+		hold(peer, 0, Kept);
+		await peer.next("bound");
+		// Each failure it is told is what the fence of the next `bound` keeps for calls sent before it.
+		const failures: WeakRef<ChordError>[] = [];
+		for (let round = 0; round < 4; round++) {
+			const error = new ChordError({ code: "unavailable", message: `failure ${round}` });
+			failures.push(new WeakRef(error));
+			failLive(objects, self!, error);
+			await peer.next("failed");
+			peer.send({ kind: "retry", hold: 0, hops: 16 });
+			await peer.next("bound");
+			await transported();
+		}
+		// Every `bound` was acknowledged: no fence is left to keep what the consumer was told before it. (The last
+		// failure is still reachable from this test's own frame, fences or not.)
+		await expectCollected(...failures.slice(0, -1));
+		await server.close(context);
+	});
+
 	it("a call crossing a removal's failed gets the removal's cause, never not_ready (audit F3)", async () => {
 		const { server, peer } = await keptServer({ n: 1 });
 		await server.reload([], context);

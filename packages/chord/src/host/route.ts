@@ -2,18 +2,22 @@
 // makes the link of one address, at most once at a time. No timer (slice 10 R2): an address resolves for a new hold,
 // on `RouteHandle.retry`, or once after its link dropped while held; a rejected `resolve` (or a link closed before its
 // handshake) fails its holders `failed { waiting }` until then, and a suspended address resolves nothing while held.
-// Each `resolve` is a `chord.resolve` root span linked to the hold that started it (slice 9).
+// Each `resolve` is a `chord.resolve` root span linked to the hold that started it (slice 9). A route with an
+// admission (slice 14 §2.3, `route-admission.ts`) resolves an address only for holds its decisions allow.
 
 import type { TelemetrySpan } from "@earendil-works/pi-telemetry";
 import { type Context, withTelemetry } from "../context/index.ts";
 import type { Address, HostKind, KindShape } from "../contracts/index.ts";
 import { kindParams, type ParamsData } from "../contracts/internal.ts";
 import { ChordError, forbidden, type Principal } from "../data/index.ts";
-import { asChordError, checkAddress } from "../data/internal.ts";
+import { asChordError, checkAddress, invalid } from "../data/internal.ts";
 import type { Codec, Link, PartLimits } from "../link/index.ts";
 import { type HostLink, Path, type PathEvent, type Upstream } from "../remote/internal.ts";
 import { capped, OpenSpan, spanFailed, untraced } from "../telemetry.ts";
+import type { Watchable } from "../watch.ts";
+import type { Admission, AdmitSelf } from "./admission.ts";
 import type { AnyHost } from "./host.ts";
+import { RouteAdmission } from "./route-admission.ts";
 
 /** What `host.route` takes for a kind. */
 export type RouteOptions<P extends Principal, K extends KindShape> = {
@@ -34,13 +38,30 @@ export type RouteOptions<P extends Principal, K extends KindShape> = {
 		readonly codec?: Codec;
 		readonly limits?: PartLimits;
 	}>;
+	/**
+	 * The route's admission (slice 14 §2.3): asked once per principal and address with holds on the route, after
+	 * `authorize`, before anything is resolved or forwarded for that principal. It declares what it reads (references,
+	 * registries, derives, live queries, acting as this host) and returns a watchable of `allow(null)` or
+	 * `deny(reason)`: until its first allow a hold is `loading`; a denial fails the principal's holds to the address
+	 * `failed { denied }`, releases them at the address's host and rejects their calls `forbidden/revoked`; a later allow
+	 * shows them `loading` and forwards them again. While what it reads has failed, the holds bound on the address's
+	 * link stay, new ones wait, and a new link of the address holds nothing until it can be read again (fail closed).
+	 * **It reads only contracts the app's API owns**: a route is base
+	 * code, it never reloads and keeps the contract tokens it was built with. It may hold nothing placed behind this
+	 * route (`invalid/cycle`). **With `admit`, `resolve` must return the link to the final provider that serves the
+	 * address**, never to another relay: a hold released by a denial is forwarded again under its id once a `ping`
+	 * sent on the allow was answered, which proves the released hold's replies have all arrived only when the peer
+	 * that answers is the one that sent them.
+	 */
+	admit?(principal: P, address: Address<K>, self: AdmitSelf): Watchable<Admission<null>>;
 };
 
 /** What `host.route` returns: the app's controls of its addresses (D10b, R1). */
 export type RouteHandle<K extends KindShape> = {
 	/**
 	 * Resolves `address` again now if it has holders and no link: its failure and its suspension end (a Retry button);
-	 * an address nobody holds resolves at its next hold.
+	 * an address nobody holds resolves at its next hold, and so does one whose holds the route's admission all denies
+	 * or has not decided yet (nothing starts for them).
 	 */
 	retry(address: Address<K>): void;
 	/**
@@ -79,6 +100,8 @@ export class Route {
 	readonly #addresses = new Map<string, Routed>();
 	/** The addresses' links, which tell their address when they close, and whether each completed its handshake. */
 	readonly #links = new Map<HostLink, { readonly routed: Routed; greeted: boolean }>();
+	/** Its admission's decisions, when it has an `admit`. */
+	readonly #admission: RouteAdmission | undefined;
 
 	constructor(kind: HostKind, options: RouteOptions<Principal, KindShape>, host: AnyHost, context: Context) {
 		this.kind = kind.kind;
@@ -86,16 +109,26 @@ export class Route {
 		this.#options = options;
 		this.#host = host;
 		this.#context = context;
+		const { admit } = options;
+		if (admit !== undefined) {
+			const asked = (principal: Principal, address: Address, self: AdmitSelf) => admit(principal, address, self);
+			this.#admission = new RouteAdmission(host, this, asked, context);
+		}
 	}
 
 	/**
 	 * The path to the address with `params`, for a hold acting as `principal`: the params checked against the kind
-	 * (`invalid/host_address`), then `authorize` (`forbidden` when it refuses; a throw is the hold's failure).
+	 * (`invalid/host_address`), then `authorize` (`forbidden` when it refuses; a throw is the hold's failure). A hold
+	 * this route's own admission makes is refused `invalid/cycle`: it would wait on itself.
 	 */
 	path(params: unknown, principal: Principal | undefined, context: Context): Path {
 		const address = checkAddress(this.kind, this.#params, params, context);
 		if (principal === undefined || !this.#options.authorize(principal, address)) {
 			throw forbidden(`${address.key}: not authorized`);
+		}
+		const admission = this.#admission;
+		if (admission?.admitting(context) === true) {
+			throw invalid("cycle", `${address.key}: a route's admission holds a type placed behind its own route`);
 		}
 		let routed = this.#addresses.get(address.key);
 		if (routed === undefined) {
@@ -104,6 +137,7 @@ export class Route {
 				path: new Path(
 					(event) => this.#changed(made, event),
 					() => made.suspended,
+					admission?.gate(address, () => made.path),
 				),
 				resolving: false,
 				span: undefined,
@@ -182,16 +216,21 @@ export class Route {
 				return;
 			case "dropped":
 				if (!routed.path.held) this.#addresses.delete(routed.address.key);
+				// Held only by holds its admission holds back: nothing resolves for them.
+				else if (!routed.path.wanted) return;
 				else if (routed.suspended) routed.path.unreachable(suspended(routed));
 				else if (routed.failure !== undefined) routed.path.unreachable(routed.failure);
 				else void this.#resolve(routed);
 		}
 	}
 
-	/** Resolves the address if it has holders, no link, no running `resolve` and no suspension. */
+	/**
+	 * Resolves the address if a holder wants its link (one the route's admission allows; any without an admission) and
+	 * it has no link, no running `resolve` and no suspension.
+	 */
 	#resolveIfHeld(routed: Routed): void {
 		const { path } = routed;
-		if (!path.held || path.link !== undefined || routed.resolving || this.#host.closing) return;
+		if (!path.wanted || path.link !== undefined || routed.resolving || this.#host.closing) return;
 		void this.#resolve(routed);
 	}
 

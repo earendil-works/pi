@@ -2,15 +2,59 @@
 // check and build. The checks are pure, so an attempt and staging's recording `self` make the same ones (a reload
 // whose new code declares a read wrongly keeps the plugin on its old code); the builders make what an attempt opens.
 
+import type { Context } from "../context/index.ts";
 import type { Snapshot } from "../contracts/internal.ts";
 import { snapshotArguments } from "../contracts/internal.ts";
+import { ChordError } from "../data/index.ts";
+import { asChordError, waitingFor } from "../data/internal.ts";
 import type { JsonValue } from "../json.ts";
+import type { Dependent } from "../state/internal.ts";
 import { LiveQuery, type LiveShape } from "../store/live-query.ts";
 import type { ReadSite } from "../store/open-query.ts";
+import { type Blocked, type Parking, waitingOn } from "./dependencies.ts";
+import type { AnyHost } from "./host.ts";
 import { List, type ListMemory } from "./list.ts";
 import { NamedQueryHandle } from "./named-query.ts";
 import { type GivenArguments, GivenQuery, Reader } from "./query-reader.ts";
+import { LOADING } from "./ref-state.ts";
 import { resolveWatchable } from "./reference.ts";
+
+/** Every reader has a value: the shared answer. */
+const READY: Parking = { kind: "ready" };
+
+/**
+ * Opens each of `readers` in turn (slice 14 §3.2), named to `long` as `label` while its first run is awaited, as one
+ * step of a parked attempt (or of an admission): ready once all have values; else parked on the first that is not,
+ * `loading` while its read has not run yet (a table it reads is being created or migrated), `failed { waiting }` on
+ * a read it waits on; or broken (its own code). Parked, it says why (`cause`), as a parked dependency does: an
+ * admission parked on a read is its attempt's first check, which a reload's report waits for. A reader that is not
+ * ready is followed by `wake` from then on: its next adoption (its table ready, a good run after a failed one)
+ * checks again.
+ */
+export async function openReaders(
+	readers: readonly Reader[],
+	wake: Dependent,
+	long: Blocked,
+	label: string,
+	context: Context,
+): Promise<Parking> {
+	for (const reader of readers) {
+		long.blockedBy({ label, state: "loading" });
+		const opened = await reader.open(context);
+		if (opened.kind === "ready") continue;
+		reader.source.dependents.add(wake);
+		if (opened.kind === "loading") {
+			const loading = new ChordError({ code: "unavailable", message: `${label} is loading` });
+			return { kind: "parked", shown: LOADING, firstPass: false, cause: waitingFor(label, loading) };
+		}
+		long.blockedBy({ label, state: "failed" });
+		const error = asChordError(opened.error, label);
+		if (opened.kind === "broken") return { kind: "broken", error };
+		const shown = waitingOn(label, error);
+		return { kind: "parked", shown, firstPass: true, cause: shown.cause };
+	}
+	return READY;
+}
 
 /** One entry of `self.queries`' builders, checked: its builder, and its argument schema when it brings one. */
 export type NamedBuilder = {
@@ -88,6 +132,35 @@ export type ReaderSite = {
 	/** Tells the attempt, waiting on a reader, to open it again. */
 	wake(): void;
 };
+
+/**
+ * Where the readers `label` declares on `host` live (an attempt's, an admission's): a reader needs the host's store.
+ * `wake` tells whoever waits on a reader to open it again.
+ */
+export function readerSite(host: AnyHost, label: string, wake: () => void): ReaderSite {
+	if (host.store === undefined) throw new Error(`${label}: reading a named query needs a store`);
+	return {
+		site: { store: host.store, batch: host.batch },
+		label,
+		report: (query, error) => host.report({ kind: "query_failed", object: label, query, error }),
+		wake,
+	};
+}
+
+/** The reader of `self.liveQuery(query, args, range)`: its value the first `range.first` rows as `{ rows, more }`. */
+export function rowsReader(
+	at: ReaderSite,
+	query: unknown,
+	args: unknown,
+	range: unknown,
+): { readonly reader: Reader; readonly source: LiveQuery } {
+	const shape = {
+		kind: "rows",
+		range: { limit: firstOf(at.label, "liveQuery", range) },
+		present: (rows: JsonValue[], more: boolean): JsonValue => ({ rows, more }),
+	} as const;
+	return liveReader(at, "liveQuery", query, args, shape);
+}
 
 /** The reader of `self.liveQuery(query, args, range)` (shape `rows`) or of `self.count(query, args)` (`count`). */
 export function liveReader(

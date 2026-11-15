@@ -12,7 +12,7 @@ import { awaitWithContext, BACKGROUND_CONTEXT, withAbortSignal } from "../../con
 import type { Address, HostKind, KindShape } from "../../contracts/index.ts";
 import type { Params } from "../../contracts/internal.ts";
 import { ChordError, type Principal } from "../../data/index.ts";
-import type { Host, RouteHandle } from "../../host/index.ts";
+import type { Host, RouteHandle, RouteOptions } from "../../host/index.ts";
 import type { JsonValue } from "../../json.ts";
 import { Batch, type BatchError, Source } from "../../state/internal.ts";
 import type { Watchable } from "../../watch.ts";
@@ -48,6 +48,11 @@ export type WorkersOptions<P extends Principal, K extends KindShape> = {
 	readonly compileCache?: string;
 	/** The route's `authorize`: whether `principal` may reach `address` (synchronous). */
 	readonly authorize: (principal: P, address: Address<K>) => boolean;
+	/**
+	 * The route's admission (`RouteOptions.admit`, slice 14 §2.3), passed through: no worker starts for a principal the
+	 * decision does not allow. It reads only contracts the app's API owns (base code never reloads).
+	 */
+	readonly admit?: RouteOptions<P, K>["admit"];
 	/** Who the worker at `address` is (stamped on its link). */
 	readonly principal: (address: Address<K>) => P;
 	/** The worker's start data (JSON), before each start; abortable (`close`), a throw fails the start. */
@@ -161,6 +166,7 @@ export function createWorkers<P extends Principal, N extends string, Q extends P
 					principal: P;
 					trusted: true;
 				}>,
+			...(options.admit === undefined ? {} : { admit: options.admit }),
 		},
 		context,
 	);

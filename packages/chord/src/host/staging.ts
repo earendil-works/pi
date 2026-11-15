@@ -23,9 +23,10 @@ import { tableSqlName } from "../store/sql.ts";
 import type { ChordStore } from "../store/store.ts";
 import type { TableDefinition } from "../store/table.ts";
 import type { Watchable } from "../watch.ts";
+import { type AdmitSelf, refuseAdmittedJob } from "./admission.ts";
 import type { StoreSelf } from "./attempt.ts";
 import { type Facet, type FacetContribution, type ServedEntry, setUp } from "./facet.ts";
-import type { ChordObject, LocalContract, RemoteContract, Served } from "./object.ts";
+import type { ChordObject, LocalContract, RemoteContract, Served, ServedAdmission } from "./object.ts";
 import type { Presence } from "./presence.ts";
 import {
 	firstOf,
@@ -162,6 +163,7 @@ function stageEntry(
 	}
 	const provider = bindProvider(contract, options.accepts ?? {});
 	const common = { plugin, provider, linger: options.linger ?? 0, traced: options.untraced !== true };
+	const admission = servedAdmission(contract, options.admit);
 	// The contract's kind decides the factory's signature and the contract's shape.
 	const served: Served =
 		contract.kind === "local"
@@ -177,8 +179,24 @@ function stageEntry(
 					kind: "remote",
 					contract: contract as RemoteContract,
 					factory: factory as Extract<Served, { kind: "remote" }>["factory"],
+					admission,
 				};
 	types.set(contract.name, served);
+}
+
+/**
+ * A served type's admission (slice 14 §2.1; declaration policy): a remote contract that declares an `admission` is
+ * served with `admit`, and only such a contract is; anything else refuses the plugin.
+ */
+function servedAdmission(contract: Contract, admit: unknown): ServedAdmission | undefined {
+	const declared = contractData(contract).admission;
+	if (declared === undefined && admit === undefined) return undefined;
+	const { name } = contract;
+	if (contract.kind === "local") throw new Error(`${name}: only a remote type takes an admission (admit)`);
+	if (declared === undefined) throw new Error(`${name}: admit needs the contract to declare its admission`);
+	if (typeof admit !== "function") throw new Error(`${name}: its contract declares an admission: serve it with admit`);
+	// Plugin code: what it returns is checked when an attempt runs it.
+	return { admit: admit as ServedAdmission["admit"], fingerprint: declared.fingerprint };
 }
 
 /** What a recorded factory declared: what a reload's fate and checks need, nothing activated. */
@@ -203,15 +221,31 @@ export type Request =
  * host-lifetime objects, or twice; `retryOn` sources that do not outlive the attempt; params; a document or job
  * declared at an older version than the object's, or at its version with another schema); a throw is the factory's.
  * Handles it hands out are inert, except registry values (the host's own, which `retryOn` checks by kind).
+ *
+ * An admitted type (slice 14 §2.5): its new `admit` runs first, against what an admission declares with; its new
+ * factory is rehearsed with the object's current admitted value only when that value was decided under an admission
+ * schema of the new one's fingerprint. Otherwise (another fingerprint; an object denied, parked or failed) the factory
+ * is not rehearsed, a limit accepted: its declaration errors appear at its activation, and its requests are not
+ * recorded.
  */
 export function recordFactory(object: ChordObject, served: Served, context: Context): Recorded {
 	const recording = new RecordingSelf(object, served, context);
 	// A recording `self` takes every declaration a factory makes, its handles inert.
 	const self = recording as unknown as StoreSelf;
 	try {
-		if (served.kind === "local") served.factory(object.params, self);
-		// A remote object's identity has its principal.
-		else served.factory(object.params, object.principal!, self);
+		if (served.kind === "local") {
+			served.factory(object.params, self);
+		} else if (served.admission === undefined) {
+			// A remote object's identity has its principal.
+			served.factory(object.params, object.principal!, self);
+		} else {
+			const { admit, fingerprint } = served.admission;
+			admit(object.params, object.principal!, recording.admitSelf());
+			const admitted = object.admitted;
+			if (admitted?.fingerprint === fingerprint) {
+				served.factory(object.params, object.principal!, admitted.value, self);
+			}
+		}
 	} catch (error) {
 		throw named(error, `plugin "${served.plugin}", ${object.label}`);
 	} finally {
@@ -265,6 +299,17 @@ class RecordingSelf {
 		this.#object = object;
 		this.#served = served;
 		this.#context = context;
+	}
+
+	/** What a recorded `admit` declares with: references, registries, derives and live queries, recorded as its own. */
+	admitSelf(): AdmitSelf {
+		// A recording `self` takes these declarations; its handles are inert.
+		return {
+			get: (Type: Contract, params: unknown) => this.get(Type, params),
+			registry: (R: Registry<unknown, unknown>) => this.registry(R),
+			derive: () => this.derive(),
+			liveQuery: (query: unknown, args: unknown, range: unknown) => this.liveQuery(query, args, range),
+		} as unknown as AdmitSelf;
 	}
 
 	get recorded(): Recorded {
@@ -426,6 +471,7 @@ class RecordingSelf {
 	job(definition: JobDefinition<unknown, unknown, unknown>): never {
 		this.#assertDeclaring("job");
 		const object = this.#object;
+		refuseAdmittedJob(this.#served, object.label);
 		if (this.#jobs.has(definition.name))
 			throw new Error(`${object.label}: job "${definition.name}" is declared twice`);
 		if (definition.persist !== undefined) {

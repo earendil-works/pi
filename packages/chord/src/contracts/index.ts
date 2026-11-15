@@ -2,6 +2,7 @@
 
 export type { AcceptsTable } from "./accepts.ts";
 export type {
+	AdmittedOf,
 	Contract,
 	EventMember,
 	EventSource,

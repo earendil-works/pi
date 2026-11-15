@@ -79,7 +79,7 @@ export const CHAIN = 32;
 export const RETRY_HOPS = 16;
 
 /** The kinds of a `failed` message's cause, in their codes' order (the binary codec's byte, the text codec's letter). */
-export const CAUSE_KINDS: ["transient", "broken", "waiting"] = ["transient", "broken", "waiting"];
+export const CAUSE_KINDS: ["transient", "broken", "waiting", "denied"] = ["transient", "broken", "waiting", "denied"];
 
 /** The protocol's messages, one tagged union. Parts are opaque here (the owners parse them). */
 const MESSAGE = union([

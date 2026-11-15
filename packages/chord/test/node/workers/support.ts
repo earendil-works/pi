@@ -12,7 +12,12 @@ import { createHost, type Host, type HostError } from "../../../src/host/index.t
 import * as chord from "../../../src/index.ts";
 import type { JsonValue } from "../../../src/json.ts";
 import { createPlugins, type Plugins } from "../../../src/node/plugins/index.ts";
-import { createWorkers, type Workers, type WorkersError } from "../../../src/node/workers/index.ts";
+import {
+	createWorkers,
+	type Workers,
+	type WorkersError,
+	type WorkersOptions,
+} from "../../../src/node/workers/index.ts";
 import { Session, type WorkerBehaviour } from "../fixtures/workers/control.ts";
 import { settleFileEvents } from "../plugins/support.ts";
 
@@ -75,6 +80,8 @@ export async function fleet(
 		readonly start?: (address: { readonly key: string }, context: Context) => Promise<JsonValue>;
 		readonly principal?: () => TestPrincipal;
 		readonly authorize?: () => boolean;
+		/** The route's admission, passed through `createWorkers` (slice 14 §2.3). */
+		readonly admit?: WorkersOptions<TestPrincipal, typeof Session>["admit"];
 	} = {},
 ): Promise<Fleet> {
 	const root = await mkdtemp(join(tmpdir(), "chord-workers-"));
@@ -104,6 +111,7 @@ export async function fleet(
 			entry: options.entry ?? ENTRY,
 			execArgv: ["--conditions=source", "--experimental-strip-types", "--no-warnings"],
 			authorize: options.authorize ?? (() => true),
+			...(options.admit === undefined ? {} : { admit: options.admit }),
 			principal: options.principal ?? ((address) => ({ kind: "worker", id: address.params.id }) as const),
 			start: async (address, startContext) => {
 				starts.push(address.key);

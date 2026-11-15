@@ -174,11 +174,13 @@ type BindingEvents = { readonly host: HostEvents; at: EventsAt | undefined; taps
  * What a reference follows of its target for one state member (`Target.followed`): the member of the instance it
  * follows (`instance`, still changing), a member its live variant lacks (`invalid/member`), or nothing: its target loads
  * (no call) or failed (one `failed` call with the cause's error); `last` is the member of `instance`, which stopped
- * changing, that a reference attached to it takes a last value from (never one it never attached to).
+ * changing, that a reference attached to it takes a last value from (never one it never attached to). `denied`: an
+ * admission refused its caller (slice 14 §2.2): no value is kept, reads throw the error.
  */
 export type Followed =
 	| { readonly kind: "live"; readonly source: DeriveSource; readonly instance: unknown }
 	| { readonly kind: "lacking"; readonly error: ChordError }
+	| { readonly kind: "denied"; readonly error: ChordError }
 	| { readonly kind: "loading"; readonly last: DeriveSource | undefined; readonly instance: unknown }
 	| {
 			readonly kind: "failed";
@@ -620,12 +622,16 @@ export class Binding implements Holder, UnboundRequest {
 		return this.#until((state) => (done(state) ? DONE : WAIT), context);
 	}
 
-	/** Resolves when the reference is live; rejects with a broken failure's error, or its end. Getters wait for it. */
+	/**
+	 * Resolves when the reference is live; rejects with a broken or denied failure's error (neither heals by waiting),
+	 * or its end. Getters wait for it.
+	 */
 	live(context: Context): Promise<void> {
 		return this.#until((state) => {
 			if (state.kind === "live") return DONE;
-			const broken = state.kind === "failed" && state.cause.kind === "broken";
-			return broken ? { kind: "failed", error: state.cause.error } : WAIT;
+			if (state.kind !== "failed") return WAIT;
+			const { kind, error } = state.cause;
+			return kind === "broken" || kind === "denied" ? { kind: "failed", error } : WAIT;
 		}, context);
 	}
 
@@ -1206,6 +1212,9 @@ function place(source: ReferenceSource, followed: Followed, attached: unknown): 
 			return;
 		case "lacking":
 			source.vanish(followed.error, BACKGROUND_CONTEXT);
+			return;
+		case "denied":
+			source.deny(followed.error, BACKGROUND_CONTEXT);
 			return;
 		case "loading":
 			if (source.unbound && followed.last !== undefined && followed.instance === attached)

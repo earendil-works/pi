@@ -62,13 +62,20 @@ slice spec's section citations are for orientation, not a reading limit (owner, 
   `host/adapted.ts`, the `event` message and `ack.events` (both codecs), event windows and tickets in
   `remote/provider.ts`, `useEvents`, `TuiScope.on`; `callWindow` (none announced on trusted links) and relayed calls
   queued per upstream window; example 67; `test/bench/events.ts`.
-- **Slice 14, first part** (built 2026-11-16, `slice-14.md`; not committed): column sets (`defineColumns`,
+- **Slice 14, first part** (built 2026-11-15, `slice-14.md`; committed `92e1db6ca`): column sets (`defineColumns`,
   `exposes`), `exists`, `existsNode`, the one-to-one `join`, conditions as data (`compile`, `whereNode`) in
   `src/store/` (`column-set.ts`, `expression.ts`, `query.ts`, `read-plan.ts`); the store's reads with the skip test
   and the keyed probe (`read.ts`, `reads.ts`, `skip.ts`, `open-query.ts`, `page.ts`), `self.query` rebuilt over
   them; the `queries` member kind and `self.queries`, `self.liveQuery`, `self.count`, `page` (`host/named-query.ts`,
   `host/query-reader.ts`, `host/read-declarations.ts`); lists over one source, `self.list` (`host/list.ts`,
   `host/tiling.ts`; `state/framed.ts`); examples 70, 71 and 72; `test/bench/slice-14.ts`. The rest of the slice is under "Carry-over".
+- **Slice 14, second part** (built 2026-11-15, `slice-14.md` §2, §6; not committed): admission with a typed value
+  (`admission` in a remote contract, `host.serve(Type, factory, { admit })`, `host/admission.ts`: the decision an
+  attempt parks on, hands its factory and follows; the seal on a change in `host/object.ts`; staging's rehearsal by
+  admission fingerprint), the failure kind `denied` in both codecs, the binding fence per acknowledgement
+  (`remote/hold.ts`), a route's admission (`host/route-admission.ts`, the gated path and its fence in
+  `remote/path.ts`, `Channel.fence`, `createWorkers`' `admit`), `deleteHostData(address, ctx, { plugin })`; example
+  69.
 - **Chord's shared code** (upstream pi): `src/watch.ts` (`Watch`, `NativeWatch`, `WatchHandle`, `WatchEnd`,
   `NativeWatchable`), Delta (`track`, `diffRevisions`, `applyImmutable`, encoders, `PendingOps`, `appendText`),
   context, JSON, output, SQLite drivers.
@@ -170,7 +177,10 @@ pattern, no code. Decided cuts are noted where they apply.
 | 11 | named queries (`queries`, `self.queries`), `self.liveQuery` (arguments that follow a value), `self.count`, `page` | 14 |
 | 11 | lists over one named query (`self.list`: pages between bookmarks, `more`, splits and merges, overflow, bookmarks across a reload) | 14 |
 | 11 | lists over several named queries merged into one | 14 (carry-over) |
-| 6 | admission with a typed value; a route's admission | 14 (carry-over) |
+| 6 | admission with a typed value (`admission`, `admit`, the watch table, staging's rehearsal, no jobs in an admitted object) | 14 |
+| 3 | a route's admission (`RouteOptions.admit`, one decision per principal and address, the fence after a denial, `createWorkers`' `admit`) | 14 |
+| 10 | `deleteHostData(address, ctx, { plugin })` | 14 |
+| 22 | the failure kind `denied`; binding fences per acknowledgement | 14 |
 | 11 | events: the emit counter, the event flush after published state, eligibility per binding, listeners outside the fence, re-exposure, `self.events` | events |
 | 12 | `self.derive`, failures per member, lazy when unwatched, `mapShared` | 1 |
 | 12 | container-width benchmark (R24) | 9 |
@@ -255,23 +265,32 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
   build read (`BuiltFacet.inputs` already holds their hashes), as `base` now does. (p3 step 0a,
   `apps/p3/docs/step-0a/book.md`.)
 
-### Slice 14: what its first part left (spec `slice-14.md`; the build's report, 2026-11-16)
+### Slice 14: what its two parts left (spec `slice-14.md`; the builds' reports, 2026-11-15)
 
-Not built yet, in the order the owner set:
+Not built yet:
 
-- **Admission with a typed value** (§2.1, §2.2, §2.4, §2.5): `admission: schema`, `host.serve(Type, factory, {
-  admit })`, the `denied` failure kind in both codecs, the binding fence per acknowledgement, staging's rehearsal;
-  tests 14 and 20; examples 69 and 74.
-- **`deleteHostData(address, ctx, { plugin })`** (§6; test 16).
-- **A route's admission, with the fence** (§2.3; `createWorkers`' `admit`; tests 15 and 21). The owner allowed it to
-  wait.
 - **Lists over several sources** (§4 "Sources"; a third of the list tests; §9 item 3's merged list). The owner
   allowed it to wait; until then a sparse person's drivers are separate reads (`test/bench/slice-14.ts` measures
   them so).
-- Examples `73-sidebar.ts` and `75-reload.ts`; the page, server and worker reload suite's cases of tests 17 to 22
-  (the first part has the kernel-level reload tests of named queries, column sets and lists in
-  `test/host/query-reader.test.ts`, `test/host/named-query.test.ts`, `test/host/list.test.ts` and
-  `test/host/tiling.test.ts`); a list's re-hold within `linger` over a link (§9 item 8).
+- Examples `73-sidebar.ts`, `74-access.ts` and `75-reload.ts` (§9 items 1, 7, 9, 10, 11); the page, server and
+  worker reload suite's cases of tests 17 to 22 (the kernel-level reload tests exist: named queries, column sets and
+  lists in `test/host/query-reader.test.ts`, `named-query.test.ts`, `list.test.ts` and `tiling.test.ts`; admission
+  and route admission in `test/host/admission.test.ts` and `route-admission.test.ts`); a list's re-hold within
+  `linger` over a link (§9 item 8); "a server restart with a new `admit` uses it" (test 21's integration case).
+
+Left by the second part (admission, route admission, `deleteHostData({ plugin })`; built 2026-11-15):
+
+- **A failed admitted object follows a denial and another allowed value, nothing else:** a source that fails
+  while the object is failed changes nothing, and an object whose admission itself broke (a value that is no
+  decision, an `admit` that threw) follows nothing until `ref.retry()` or a reload.
+- **An ended admission source** (revoked, its host closed) breaks the attempt as an ended dependency does
+  (`broken`, design §6), not `failed { waiting }` as §2.2's table words it; it never comes back, so nothing would
+  wake a waiting attempt. Tested through the dependency check, not by an admission test of its own.
+- **`AdmitSelf` has no type parameter** (the spec writes `AdmitSelf<P>`): nothing of it depends on the principal
+  type.
+- **Two persons cannot widen a read by params** (§10 test 13) is still not written: it wants the worked example's
+  `PersonAccess` (the condition from the admission's sources), which is p3's.
+- Bump `PROTOCOL_VERSION` for `denied` with p3's first release.
 
 Left by the first part itself:
 
@@ -296,8 +315,6 @@ Left by the first part itself:
 - **`store/reads.ts` holds three things** (the index of reads, the set bindings with held tables and their
   watchers, `ReadRefresh`): to split into `reads.ts`, `set-bindings.ts` and `read-refresh.ts` with the next change
   there. Not done in code review round 2: `store.reads` is the name the reviews' reproductions use.
-- **Two persons cannot widen a read by params** (§10 test 13) is not written: it needs admission, which decides
-  the condition.
 - **Small leftovers of code review round 1:** `QueryPage` (contracts) and `Page` (store) are one shape with two
   names; a list decodes every loaded row's identity on each page adoption (0.6 ms a message at 20 pages); a list's
   method is `more` beside the values `more` and `moreAfter`, as the spec has it.
@@ -317,7 +334,7 @@ Left by the first part itself:
   user asks.
 - `self.list`'s carry-over of the spec's §12 (opening at a bookmark, `more` towards the start, a live `moreAfter`,
   sources that follow a value, offsets), a probe for counts, an in-memory evaluator before the probe, a left join,
-  aggregates, `matches`; `PROTOCOL_VERSION` for `denied` with p3's first release.
+  aggregates, `matches`.
 
 ### Later: live queries (when a case needs it)
 

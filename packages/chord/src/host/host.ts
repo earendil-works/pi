@@ -354,8 +354,10 @@ export interface Host<P extends Principal = Principal, R extends JsonValue = Jso
 	 * How this host reaches hosts of `Kind` (called before `load`, once per kind): `authorize` admits every hold routed
 	 * over it, `resolve` makes the link of an address, for a new hold, on `retry`, or once after a link that completed
 	 * its handshake dropped while held (no timer). A rejected `resolve`, or a link closed before its handshake, fails the
-	 * address's holders `failed { waiting }` (they stay on its path). `context` is the parent of the route's work (its
-	 * `resolve`s, the holds and calls on its links), aborted for it when this host closes. Returns the address controls.
+	 * address's holders `failed { waiting }` (they stay on its path). With `admit` (slice 14 §2.3) nothing is resolved
+	 * or forwarded for a principal before the route's decision allows it. `context` is the parent of the route's work
+	 * (its `resolve`s, the holds and calls on its links, its admission's references), aborted for it when this host
+	 * closes. Returns the address controls.
 	 */
 	route<N extends string, Q extends Params>(
 		Kind: HostKind<N, Q>,
@@ -414,14 +416,23 @@ export interface Host<P extends Principal = Principal, R extends JsonValue = Jso
 		context: Context,
 		options?: HostImportOptions,
 	): Promise<HostDataCounts>;
-	/** Deletes the records and rows belonging to `address` in one commit, coordinated as `importHostData`. */
-	deleteHostData(address: Address, context: Context): Promise<HostDataCounts>;
+	/**
+	 * Deletes the records and rows belonging to `address` in one commit, coordinated as `importHostData`. With
+	 * `options.plugin` (slice 14 §6), only what that plugin's objects own: the documents and tables of the types it
+	 * serves here now (a session moving to another app drops the old app's data of it). Data under a type the plugin
+	 * served before and serves no more (a renamed type) is not its any more and stays; a plugin not loaded here is
+	 * `invalid/args`.
+	 */
+	deleteHostData(address: Address, context: Context, options?: HostDeleteOptions): Promise<HostDataCounts>;
 	/**
 	 * Closes its links, seals its root scopes, then ends every object at once, then drains and closes them one by one,
 	 * the last to go live first (reason `close`). Rejects with an `AggregateError` of the closes that threw.
 	 */
 	close(context: Context): Promise<void>;
 }
+
+/** What `host.deleteHostData` takes besides the address: the one plugin whose data of it is deleted. */
+export type HostDeleteOptions = { readonly plugin?: string };
 
 /** A plugin left out at `load`, or whose new code failed at a reload (it kept its old code, if it had any), and why. */
 export type PluginFailure = { readonly plugin: string; readonly error: unknown };
@@ -1232,8 +1243,15 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		return importInto(this.#dataSite("importHostData"), parts, context, options);
 	}
 
-	async deleteHostData(address: Address, context: Context): Promise<HostDataCounts> {
-		return deleteFrom(this.#dataSite("deleteHostData"), address, context);
+	async deleteHostData(address: Address, context: Context, options: HostDeleteOptions = {}): Promise<HostDataCounts> {
+		const site = this.#dataSite("deleteHostData");
+		const { plugin } = options;
+		if (plugin === undefined) return deleteFrom(site, address, context);
+		if (!this.#plugins.has(plugin)) throw invalid("args", `deleteHostData: plugin "${plugin}" is not loaded here`);
+		// A plugin's data is what the types it serves own: their names are the owners in the store.
+		const owners = new Set<string>();
+		for (const [name, served] of this.#types) if (served.plugin === plugin) owners.add(name);
+		return deleteFrom(site, address, context, owners);
 	}
 
 	/** What a host data operation needs of this host; `invalid/args` without a store. */
@@ -1606,6 +1624,12 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		const labels = new Map([...this.#objects.values()].map((each) => [each.activationId, each.label]));
 		const cycle = chain.slice(chain.indexOf(id)).map((entry) => labels.get(entry) ?? "…");
 		return invalid("cycle", `dependency cycle: ${[...cycle, ...closing].join(" → ")}`);
+	}
+
+	/** The principal key of `principal` (`HostOptions.principalKey`): a route's admission keeps one decision per key. */
+	principalKeyOf(principal: Principal, context: Context): string {
+		// Principals on this host are `P`s: its own, and the ones its links stamp.
+		return principalKey(principal as P, context, this.#principalKey);
 	}
 
 	/** A new origin number for `side`, which relays holds upstream; registered in `relays` until it closes. */

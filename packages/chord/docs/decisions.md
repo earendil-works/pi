@@ -2542,9 +2542,9 @@ validation and copies the v2 kernel added around Delta.
   only when a removal empties the window or a bulk write hides which rows changed) is carry-over for when a case
   needs it. Rejected: a window document written beside the table (rows stored twice; app code mirroring every update
   and delete).
-- **Slice 14: reads across owners, named queries, column sets (owner, 2026-11-14 to 2026-11-16: four review rounds
+- **Slice 14: reads across owners, named queries, column sets (owner, 2026-11-14 to 2026-11-15: four review rounds
   by Opus, Sol, Astra and Fable on `slice-14.md`; "no raw SQL, ever"; "no hidden caps"; "the owner dislikes mirrored
-  values"; "counts exist but are marked know what you're doing"; first part built 2026-11-16):** extends "Live
+  values"; "counts exist but are marked know what you're doing"; first part built 2026-11-15):** extends "Live
   queries over an object's own tables" and supersedes its sentence "only it writes them, so its commits are the exact
   invalidation". (1) `self.query(table, q, limit)` stays the owner's private unnamed read; **named queries** are
   added (`queries(Item, { name: argsSchema })` in a `local` contract, `self.queries` in the owner,
@@ -2568,7 +2568,7 @@ validation and copies the v2 kernel added around Delta.
   a query language or a condition sent by a client; raw SQL in any plugin-facing API and `RETURNING` in the
   backend interface; a cap on a count; column-set versions; a substring filter in a query. Still to build of the
   slice: `slices.md`, "Carry-over". (Design §9, §10, §11, §21, §27, §29, §30; `slice-14.md`; `benchmarks.md`.)
-- **Slice 14, code review round 1 (2026-11-16; Opus, Sol, Astra, Fable; four blockers, each reproduced):** refines
+- **Slice 14, code review round 1 (2026-11-15; Opus, Sol, Astra, Fable; four blockers, each reproduced):** refines
   the entry above. (1) **A run belongs to the interval it read.** A list's runs of one commit, and of a commit
   group, are computed before any is adopted; a run for a page an earlier adoption cut or merged is applied to the
   pages covering its interval, which then **know its rows** (the skip test's knowledge is replaced with them) and
@@ -2589,7 +2589,7 @@ validation and copies the v2 kernel added around Delta.
   keys and no ordering; `TableHandle.page` and `count` refuse a joined query; the mapping gets only the columns
   `reads` and `partnerReads` list; readers open before natives (an attempt waiting on a read holds none); a reload
   whose new code declares a read wrongly fails in staging and keeps the old code; `query_failed` names the query.
-- **Slice 14, code review round 2 (2026-11-16; two blockers, each reproduced):** (1) **A run belongs to the
+- **Slice 14, code review round 2 (2026-11-15; two blockers, each reproduced):** (1) **A run belongs to the
   registration that computed it.** A commit's step may run a read, then a binding changes (the set is withdrawn,
   moved, its table ready) before the commit adopts: the run is of a plan the query no longer has and is dropped;
   the registration made since reads for itself. Closing a read registers nothing, so the run a commit made for a
@@ -2611,6 +2611,79 @@ validation and copies the v2 kernel added around Delta.
   name for `self.query`, the named query's label otherwise), not `table`; a live query's range is part of its shape;
   staging's recorded handles say whether they stand for a table or a named query of the object, so a table given
   to a reader and a named query given to `self.query` fail the reload in staging and keep the old code.
+- **Slice 14, second part: admission, a route's admission, a delete per plugin (built 2026-11-15 as `slice-14.md`
+  §2 and §6 say; owner's decisions of 2026-11-14 in `apps/p3/docs/decisions.md`: "Admission hands the factory its
+  data", "Slice 0 changes Chord first"):** supersedes design §7's "there is no async activation guard" and §3's
+  "`authorize` is a route's only check"; narrows §15 (no jobs in an admitted object); the one exception to §31's
+  "object restart for state changes". (1) **Admission with a typed value, remote types only.** The contract
+  declares `admission: schema` (never in the wire fingerprint, never validated; its own fingerprint is what a
+  reload's staging compares), the type is served with `{ admit }`, the factory is `(params, principal, admitted,
+  self)`. `admit` declares references, registries, derives and live queries; it runs first in every attempt, one
+  microtask after its start, without waiting for the previous attempt's teardown. (2) **One decision object
+  (`host/admission.ts`)** per attempt, and per principal and address for a route: what `admit` declared, what it
+  says, its watch. It keeps the last allow or denial as one object while the value stays equal (canonical JSON; a
+  denial by its reason), so "nothing changed" is an identity comparison. A source that only loads keeps the last
+  decision; a failed or ended one, and a decision that throws when read, do not (fail closed). (3) **The seal**
+  (`ChordObject.readmit`): a decision that changed after the allow seals the attempt in the flush of the batch
+  that changed it, with no drain: calls rejected `unavailable`, or `forbidden/revoked` for a denial, which the
+  object shows at once (`failed { denied }`, no `loading` between); a new attempt admits afresh. The sealed
+  attempt's teardown still waits for its handlers as any ending does (bounded by `closeTimeout`): a handler that
+  ignores its `ctx` delays the rebuild, not the denial. (4) **A denial keeps no value:** a reference's sources are
+  denied (`ReferenceSource.deny`), a consumer drops its replicas; what application code already took stays with
+  it. (5) **Admissions' requests are the object's to release:** a sealed attempt's stay until a later attempt's
+  admission bound its own (also when that later one never comes: they go with the object). (6) **Wire:** the cause
+  kind `denied` (binary 3, text `d`); **one binding fence per unacknowledged `bound`** in `remote/hold.ts`, and a
+  call sent after its consumer was told a failure is refused with it (before: one previous name table, so a call
+  sent with B's indexes could be decoded by A's). `PROTOCOL_VERSION` stays 1 until p3 ships. (7) **A route's
+  admission** gates its paths (`remote/path.ts`): a hold is on no link until its decision allows it; a denial
+  releases it upstream; the next allow forwards it again under its id behind a fence (`ping`, then the hold after
+  that ping's `pong`; pings and pongs counted in the channel), **which relies on `resolve` returning the link to
+  the final provider**. A failed source fails the holds held back and leaves the forwarded ones alone. A hold
+  behind the route itself is `invalid/cycle`, found through the context its admission binds under. Its `admit`
+  reads only contracts the app's API owns. `createWorkers` passes `admit` through. (8) **Staging** runs the new
+  `admit` against a recording `self` of an admission's four declarations and rehearses the new factory only with
+  a value of an equal admission fingerprint (two stated limits, `slice-14.md` §2.5). (9)
+  **`deleteHostData(address, ctx, { plugin })`** limits a host-data delete to the owners (object types) the plugin
+  serves on the host. Rejected in the build: a second parking loop for admissions (the attempt's one loop takes a
+  step function); a per-holder decision for routes (one per principal key and address); a new hold id after a
+  denial (the fence). Left open: `slices.md`, "Carry-over". (Design §3, §5, §6, §7, §10, §15, §16, §19, §21, §22,
+  §27, §29, §30, §31; `slice-14.md`.)
+- **Slice 14, second part, code review round 1 (2026-11-15; Opus, Sol, Astra, Fable; one blocker, reproduced
+  twice):** refines the entry above. (1) **A route's verdict is told only when nothing it reads changed while it
+  was settled.** A settle is asynchronous; a denial arriving between its read and its continuation was answered
+  with the allow read before, which resolved the address, started its host and left the hold live with nobody to
+  correct it. The settle now repeats until one is stable, as an attempt's parking loop does. (2) **What a route
+  forwarded is kept by holder, not by the previous verdict:** a source that fails a second time (it changed for
+  another principal and still throws) withdrew the holds the first failure had left alone. (3) **A denial of a
+  restart's draining old attempt is the denial's flush**, as any: shown, no value, out of presence, then and not
+  when the successor's admission finds it. Found with it: that path released the sealed attempt's admission
+  inside the batch (`invalid/reentrant`, reported, the cut skipped); its end releases it. (4) **A binding
+  fence goes with the `ack` of its `bound`** (the provider side tells its fenced holds), not only when a call is
+  decoded: a consumer that only reads state kept one per rebinding of its life. (5) **Decided by the reviewers' majority: a failed admitted object follows
+  a denial** (`failed { denied }` in place of its failure, no value, out of presence, its failed factory not run),
+  and another allowed value retries it; a failed source changes nothing. (6) **Decided so too: an allow after a
+  route's denial shows `loading`** at once (`RelayedHold.admitted`, `RemoteObject.admitted`), as a type's
+  admission does: the caller has access again and is not shown "no access" through the fence and a host's start.
+  (7) **Dates are the days things happened:** the slice-14 entries said 2026-11-16 (the first part's included);
+  the machine and `git log` say 2026-11-15. (8) One loop, one reader: `openReaders` returns a `Parking`, so the
+  wait on an attempt's readers is the attempt's one parking loop, and `Decision.liveQuery` and
+  `Attempt.liveQuery` build their reader in one place (`read-declarations.ts`). Two points the reviewers
+  split on 2 to 2 went to the owner (next entry). (Design §3, §6, §10, §22.)
+- **A new route link fails closed; every call made before a denial is `forbidden/revoked` (owner, 2026-11-15, on
+  the two open points of the round above):** (1) **A failing admission source and a new link.** A hold is
+  forwarded on a new link only under a current allow that can be read. The holds forwarded under the last allow
+  stay on the link they are bound on while the source is failed (availability: a failed source changes no access);
+  when that link drops, or the source fails while the next link is on its way, they are taken back, `failed
+  { waiting }` on the source, and nothing is resolved for them until it recovers (`PathGate.unlinked`,
+  `RouteAdmission`). The trace it prevents: the source fails, a worker crashes, and the route starts a new worker
+  for a person whose access nobody can read. A source that only loads keeps its allow. Rejected: forwarding again
+  ("a hold, once forwarded, is taken back only by a denial"), which the build had. (2) **Calls at a denial.** A
+  call made before its caller learnt of the denial rejects `forbidden/revoked`, wherever it was: in flight, waiting
+  for a call-window slot at the consumer, waiting at a relay for its upstream window, or crossing the `failed` on
+  the wire (the provider and a relay refuse it so). Whether a call had got a slot is congestion, not access, so the
+  reason no longer depends on it. A call first made after the denial meets the denied reference and gets the plain
+  `forbidden`. Rejected: `forbidden` without the reason for calls that never ran. (Design §3, §22; `slice-14.md`
+  §2.3.)
 - **Swaps: dependents first; calls during a swap never see `not_ready` (owner, 2026-11-04: "if swaps can be invisible
   to dependents that's cool, but I fear correctness bugs"; analysis `/tmp/swap-analysis.md`):** the problem: a reload
   swapping a provider and its pure dependent (61's `todo.store` and `todo.todos(groceries)`) parked the dependent

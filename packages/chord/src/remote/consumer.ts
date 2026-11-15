@@ -12,6 +12,7 @@ import type { Context } from "../context/index.ts";
 import { type MethodData, takesNoArgs } from "../contracts/internal.ts";
 import { ChordError, isChordError } from "../data/index.ts";
 import { asChordError } from "../data/internal.ts";
+import { revoked } from "../host/internal.ts";
 import {
 	type BoundEntry,
 	type ConsumerMessage,
@@ -430,13 +431,16 @@ export class ConsumerSide {
 
 	/**
 	 * `failed`: its holder fails; its calls still waiting for a slot reject with the cause (a bound hold is unbound by it,
-	 * slice 7b; its calls in flight are rejected by the provider).
+	 * slice 7b; its calls in flight are rejected by the provider). A denial is access withdrawn under those calls as
+	 * under the ones in flight (slice 14 §2.3): `forbidden/revoked` for both; a call made after it meets the denied
+	 * reference and gets its plain `forbidden`.
 	 */
 	#failed(message: Extract<Message, { readonly kind: "failed" }>): void {
 		const holder = this.#entries.get(message.hold);
 		if (holder === undefined) return;
 		const error = asChordError(errorFromWire(message.cause.error), `hold ${message.hold}`);
-		for (const call of this.#window.removeHold(message.hold)) call.reject(error);
+		const rejected = message.cause.kind === "denied" ? revoked(holder.label, error) : error;
+		for (const call of this.#window.removeHold(message.hold)) call.reject(rejected);
 		holder.failed(message);
 	}
 

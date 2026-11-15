@@ -298,10 +298,9 @@ export async function hostDataOwners(
 	const chord = store as ChordStore;
 	const kind = kindOfKey(key);
 	const owners = new Set<string>();
-	const ownerOf = (table: string) => table.slice(0, table.indexOf(":"));
 	for (const record of chord.tables.values())
-		if (hostColumn(record, kind) !== undefined) owners.add(ownerOf(record.table));
-	for (const { write } of archive?.tables ?? []) owners.add(ownerOf(write.table));
+		if (hostColumn(record, kind) !== undefined) owners.add(tableOwner(record.table));
+	for (const { write } of archive?.tables ?? []) owners.add(tableOwner(write.table));
 	for (const { record } of archive?.documents ?? []) owners.add(record.owner);
 	const rows = await chord.read(
 		(executor) =>
@@ -339,17 +338,19 @@ export async function importHostData(
 
 /**
  * Deletes the data of host `key` (canonical) from `store` in one commit: every record whose `host` is the key retired,
- * every row holding it in a `host(...)` column of its kind deleted (`deleteWhere`, counted). Internal, as import.
+ * every row holding it in a `host(...)` column of its kind deleted (`deleteWhere`, counted); with `owners`, only the
+ * records and tables of those owners (object types). Internal, as import.
  */
 export async function deleteHostData(
 	store: Store,
 	key: string,
 	commit: HostCommit,
 	context: Context,
+	owners?: ReadonlySet<string>,
 ): Promise<HostDataCounts> {
 	let counts: HostDataCounts = { documents: 0, rows: 0 };
 	const apply = async (step: Step, writes: StoreWrite[]): Promise<void> => {
-		counts = await removeHostData(step, key, writes);
+		counts = await removeHostData(step, key, writes, owners);
 	};
 	await commitOperation(store, apply, commit, context);
 	return counts;
@@ -466,12 +467,22 @@ async function importTable(
 	return placed.length;
 }
 
-/** Retires the records of host `key` and deletes its rows in `step`, recording the writes; returns the counts. */
-async function removeHostData(step: Step, key: string, writes: StoreWrite[]): Promise<HostDataCounts> {
-	const records = await listHostRecords(step, key, 0, Number.MAX_SAFE_INTEGER);
+/**
+ * Retires the records of host `key` and deletes its rows in `step`, recording the writes; with `owners`, only those
+ * owners' records and tables. Returns the counts.
+ */
+async function removeHostData(
+	step: Step,
+	key: string,
+	writes: StoreWrite[],
+	owners?: ReadonlySet<string>,
+): Promise<HostDataCounts> {
+	const all = await listHostRecords(step, key, 0, Number.MAX_SAFE_INTEGER);
+	const records = owners === undefined ? all : all.filter(({ owner }) => owners.has(owner));
 	for (const { id, revision } of records) writes.push(...(await retireDocument(id, revision).apply(step)));
 	let rows = 0;
 	for (const [table, column] of hostTables(step, kindOfKey(key))) {
+		if (owners !== undefined && !owners.has(tableOwner(table))) continue;
 		const count = await step.runCounted(`DELETE FROM ${quote(table)} WHERE ${quote(column)} = ?`, key);
 		step.rows += count;
 		rows += count;
@@ -488,6 +499,11 @@ async function hasHostData(step: Step, key: string): Promise<boolean> {
 		if (found !== undefined) return true;
 	}
 	return false;
+}
+
+/** The owner (object type) of table `table`, from its SQL name `<owner>:<table>`. */
+export function tableOwner(table: string): string {
+	return table.slice(0, table.indexOf(":"));
 }
 
 /** The recorded tables with a `host(...)` column of `kind`, with that column's name. */
