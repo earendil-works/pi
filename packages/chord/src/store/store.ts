@@ -319,6 +319,16 @@ export class ChordStore implements Store {
 		return taken;
 	}
 
+	/**
+	 * Resolves once every commit queued before the call settled (stored and adopted, or rejected), also on a stopped or
+	 * closed store; commits queued later are not waited for. For a caller that has ended a source of commits and must
+	 * not go on while one it queued can still be adopted (the workers component, at a worker's exit).
+	 */
+	settled(): Promise<void> {
+		// Every turn of the queue ends its own failures: the tail never rejects.
+		return this.#tail;
+	}
+
 	/** The recorded table `name` (its SQL name), as of the last commit. */
 	table(name: string): TableRecord | undefined {
 		return this.#catalog.get(name);

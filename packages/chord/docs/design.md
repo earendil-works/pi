@@ -325,7 +325,7 @@ section 21), a job `finish` backs off 1 s to 60 s, provider-side `linger` is per
 host.route(Session, {
   authorize(principal: P, address: Address<typeof Session>): boolean;
   resolve(address: Address<typeof Session>, context: Context):
-    Promise<{ link: Link; principal: P; trusted?: boolean; codec?: Codec }>;
+    Promise<{ link: Link; principal: P; trusted?: boolean; codec?: Codec; opened?(incarnation: string): void }>;
   admit?(principal: P, address: Address<typeof Session>, self: AdmitSelf): Watchable<Admission<null>>;   // slice 14
 });
 ```
@@ -337,6 +337,10 @@ host.route(Session, {
   aborted only when the host closes; a link it returns after that is closed at once. A `resolve` whose holds were all
   released meanwhile finishes and its link is kept (a worker start that produced a link finishes even if its first
   requester left). A `resolve` that never settles is the app's (it bounds its own `fork`); getters still time out.
+  `opened(incarnation)`, when returned, is called once at the link's handshake with the incarnation of the host at
+  the other end (its calls' `ctx.incarnation`), before anything else that host sent is handled and before this host
+  sends on the link (the workers component records it in its state, §23); never for a link that closes before its
+  handshake.
 - **Failure and re-resolve** (slice 10 R2, owner, 2026-10-30; replaces the per-address backoff): a route has no
   timer. A rejected `resolve` (reported `resolve_failed`) or a returned link already closed fails the route's holders
   with its error (`failed`, not an endless `loading`); the route resolves again only for a new hold (a reference
@@ -1040,7 +1044,9 @@ location are dropped.
   `ref.state`; code that needs the object now gets it, with the patience it passes. There is no `state: false` option
   (C8) and no `optional` flag.
 - **Narrowing by variant:** `ref.variant` is the discriminant (C15: no `inVariant`/`expectVariant`); `RefIn<C, V>`
-  narrows to some variants (strict unions, never weakened).
+  narrows to some variants (strict unions, never weakened). A UI reads a held reference's variant through its
+  binding (`useVariant`, `TuiScope.variant`, §23), which follows the reference's state: the variant is `undefined`
+  until it binds, changes with an admission's other allowed value, and stays the last one while it loads.
 - **References are the only indirection** (owner, 2026-10-29; supersedes 6a's member source per object and 7b's
   hand-over): a consumer's watches and derives over `ref.member` attach through the reference's member, which passes
   the subscription straight through to the object's own document or derive (no extra hop, no copy: the commit's value
@@ -2926,8 +2932,9 @@ route's checks, never instead of them.
 ### Workers (`@earendil-works/chord/workers`)
 
 `await createWorkers(host, Kind, { kind, entry, execArgv?, env?, authorize, admit?, principal, start, lock, idleMs?,
-plugins, onOutput?, onError }, ctx)` (`admit`: the route's admission, passed through, slice 14: no worker starts for a
-principal it does not allow) bundles the kind's worker base, then routes `Kind` itself (`host.route`, keeping its
+store, plugins, onOutput?, onError }, ctx)` (`admit`: the route's admission, passed through, slice 14: no worker starts
+for a principal it does not allow; `store`: the server host's, required, `undefined` only without one, see "A
+worker's exit" below) bundles the kind's worker base, then routes `Kind` itself (`host.route`, keeping its
 `RouteHandle`): a forked worker per address over IPC, the link made at the fork, a start message `{ address, start,
 scripts, lock }` with the app's start data and the kind's complete current scripts (`plugins.scripts(kind)`); the 60 s
 start timer covers fork, lock and connect only (Q4). `workers.state` (a JSON watchable per address key), `inputs`,
@@ -2974,6 +2981,17 @@ draining old holder without polling).
   the held ones (Q2). `stop` suspends the address while it has holders (R1, Q3). A running worker's lost link (killed
   after a 5 s grace) is a stop its holders start a new worker after (`worker_link_lost`); a second within a minute of
   the last recovery fails the address (`worker lost its link`; decision "A lost worker link is recovered from").
+- **A worker's exit** (decision "A worker's exit is published after its link's work ended", 2026-11-15): when a
+  worker process exits, its link is closed first (what it sent and was not handled yet is dropped; the calls it made
+  are aborted, so a transaction under a call's `ctx` not yet at its commit is refused), then the commits those calls
+  had already queued in the server's store settle (`store`, a required option; the kit passes its own), and only
+  then the exit shows in
+  `state` and the address's next start goes on. Nothing an exited worker reported is handled or lands after `state`
+  says it is gone: **a plugin needs no stale-worker check of its own.** Not covered: a call the server relayed to
+  another host (cancelled there when the cancel arrives) and work started outside the call's `ctx`. A running
+  worker's `state` entry carries its `incarnation` (its host's, the `ctx.incarnation` of its calls) from its link's
+  handshake on, so before its first call is handled, also one its startup makes long before `ready` (the route's
+  `opened`, §3): a store keeping reports across worker runs tags them with `ctx.incarnation` and compares.
 - **Errors in public and private** (decision "worker errors in public"): `state` and holders get a fixed message
   (`worker failed to start`, `worker exited (SIGSEGV)`) or the child's redacted `fatal`; the full error and the stderr
   tail go only to `onError` (`worker_failed`). Every app hook of a start (`start`, `principal`, `lock`, the fork) is
@@ -3117,7 +3135,13 @@ Decision "Slice 11's points", "Slice 11, P3" to "P9", and "Tutorial gaps" (1) (p
 - `chord/react`: `HostProvider`, `useHold`, `useWatch`, `useRegistry`, `useRefState`, `useEvents(member, listener)`
   (an event member subscribed while mounted, below "Channels"), and `usePageState(key, initial)`:
   `useState`'s pair kept by the page's host under a key, so a component remounted by a plugin reload (a new function)
-  keeps it (§21, "UI on client hosts").
+  keeps it (§21, "UI on client hosts"). `useVariant(ref, variant)` (decision "C15 stands; the UI bindings follow
+  the variant"): the reference narrowed to `variant` while it is live in it, `undefined` otherwise (loading, failed
+  or denied, ended, another variant), re-rendering when that changes: a held reference binds after the first render,
+  an admission's other allowed value binds another variant while the component is mounted (§6), and a reference
+  keeps its last variant while it loads, so `ref.variant === "editor"` alone would keep an editor's controls up.
+  The terminal's is `TuiScope.variant(ref, variant)`, a reader. References themselves get no such helper (§5,
+  C15).
 - `chord/tui/launcher`: a Node client connecting with a token, always running the downloaded code (the app's terminal
   entry on `chord/tui`) in a sandbox (decision "The terminal's sandbox is a child process": a child process on pipes
   with an empty environment, `--permission` granting nothing and no SQLite; the builtin allowlist and a frozen

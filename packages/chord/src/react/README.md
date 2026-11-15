@@ -9,6 +9,12 @@ peer), non-React apps never load it. No components, no styling.
 - `useWatch(watchable)`: its current value (`undefined` while it has none), re-rendering on change
   (`useSyncExternalStore` over `watchStore`).
 - `useRegistry(R)`: the registry's composed value; `useRefState(ref)`: the reference's state.
+- `useVariant(ref, variant)` (decision "C15 stands; the UI bindings follow the variant"): `ref` narrowed to
+  `variant` while it is live in it, `undefined` otherwise (no reference, loading, failed or denied, ended, another
+  variant), re-rendering when that changes. Use it instead of `ref.variant === "editor"`: a held reference's variant
+  is `undefined` until it binds, changes while the component is mounted (an admission's other allowed value), and
+  stays the last one while it loads. `useRefState(ref)` says why there is none. True of the render that read it,
+  not across an `await`.
 - `useEvents(member, listener)`: an event member (a reference's, decision "Events: fire-and-forget members")
   subscribed while the component is mounted (and while `member` stays the same object): each event calls the latest
   `listener` (a new function per render subscribes nothing again); nothing without a member; events re-render nothing
@@ -26,4 +32,4 @@ peer), non-React apps never load it. No components, no styling.
   reloaded plugin is a new function and remounts, its `useState` starting over: what must survive is page state.
 
 Tests: `test/node/react/` (`stores.test.ts` in Node, `hooks.test.ts` in a real browser); the page state alone in
-`test/surfaces/page-state.test.ts`.
+`test/surfaces/page-state.test.ts`, the narrowing alone in `test/surfaces/variant.test.ts`.

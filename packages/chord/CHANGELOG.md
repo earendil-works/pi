@@ -4,6 +4,7 @@
 
 ### Breaking Changes
 
+- `createWorkers` requires `store`, the store given to the server host's `createHost` (`undefined` only for a host without one): a worker's exit is published only once the commits queued in it before the exit settled. The app kit passes its own.
 - `telemetryIngestFacet` requires `admit(principal)`: only the pages of principals it admits may send their spans to `PageTelemetry`; a refused principal's hold fails `forbidden`. The app kit admits every signed-in page. Migration: pass `admit` (`() => true` keeps the old behaviour).
 - `HostError` `query_failed` carries `query` (the table's name for `self.query`, the named query's label for `self.liveQuery`, `self.count` and `self.list`) in place of `table`.
 
@@ -17,6 +18,9 @@
 - Admission (slice 14): a remote contract may declare `admission: schema`, the value its factory is handed about a caller; its type is served with `host.serve(Type, (params, principal, admitted, self) => …, { admit })`, where `admit(params, principal, self)` reads data about the caller (`self.get`, `self.registry`, `self.derive`, `self.liveQuery`) and returns a watchable of `allow(value)` or `deny(reason)`. A denial shows `failed { denied }` (a new failure cause kind, also on the wire; getters reject at once, no value is kept, running calls reject `forbidden/revoked`); another value rebuilds the object. `evolve` gains `admission(schema)`. `self.job` is refused in an admitted factory.
 - A route's admission: `host.route(Kind, { authorize, resolve, admit })` and `createWorkers(host, Kind, { ..., admit })` ask one decision per principal and address before anything is resolved or forwarded, so no worker starts for a caller who is denied; a denial releases the principal's holds upstream.
 - `host.deleteHostData(address, ctx, { plugin })` deletes only the records and rows of the address that the named plugin's objects own.
+- `useVariant(ref, variant)` in `@earendil-works/chord/react` and `TuiScope.variant(ref, variant)` in `@earendil-works/chord/tui`: a held reference narrowed to one variant while it is live in it, `undefined` otherwise (loading, failed or denied, ended, another variant), following the reference's state, so a component follows a variant that changes while it is mounted.
+- `WorkerState` carries the running worker's `incarnation` (the `ctx.incarnation` of its calls), from its link's handshake on: before the worker's first call is handled, also one its startup makes.
+- A route's `resolve` may return `opened(incarnation)`, called once at the link's handshake with the incarnation of the host at the other end, before anything else that host sent is handled.
 - `@earendil-works/chord/app` exports `appInfoFacet` and `workerInfoFacet`, the facets serving the kit's start-data objects `AppInfo` and `WorkerInfo`, for an app that runs hosts of its own (its tests with the server and workers in one process).
 
 ### Changed
@@ -25,6 +29,7 @@
 
 ### Fixed
 
+- The workers component closes a worker's link when the worker exits, before it publishes the exit in `state` and before the address's next worker starts: a call the worker sent that was not handled yet is dropped and a running one is aborted, so nothing an exited worker reported is handled or commits after `state` says it is gone. Apps need no stale-worker check of their own.
 - The optional peer dependencies on `react`, `ws` and `esbuild` are ranges (`^19.3.0`, `^8.21.0`, `^0.28.2`), not exact versions: npm no longer refuses to install Chord in a project with another patch release of them, such as react 19.3.1 ([#12008](https://github.com/earendil-works/pi/issues/12008)).
 
 ## [1.5.2] - 2026-11-10

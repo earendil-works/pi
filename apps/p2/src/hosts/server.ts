@@ -283,6 +283,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 	const workers = await SessionWorkers.create(
 		{
 			host,
+			store,
 			plugins: chordPlugins,
 			app: APP,
 			dataDir,

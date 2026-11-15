@@ -1,5 +1,6 @@
 // Tests of worker processes (slice 10 §3): forked with their output piped (the stderr tail kept), the link made at the
-// fork (an early frame queued), control messages told, and the whole tree killed.
+// fork (an early frame queued), control messages told, the whole tree killed, and the link closed at the exit before
+// the exit is told.
 
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -42,5 +43,30 @@ describe("a worker process", () => {
 		child.kill();
 		expect(await child.exited).toEqual({ code: null, signal: "SIGKILL" });
 		await until(() => !alive(grandchild), 2_000);
+	});
+
+	it("closes its link at its exit, before the exit is told, as neither a lost nor a closed link", async () => {
+		const events: string[] = [];
+		const child = new WorkerProcess(
+			{
+				entry: CHILD,
+				execArgv: ["--conditions=source", "--experimental-strip-types", "--no-warnings"],
+				onOutput: () => {},
+			},
+			{
+				control: () => events.push("started"),
+				linkLost: () => events.push("link lost"),
+				linkClosed: () => events.push("link closed"),
+				exited: () => events.push("exited"),
+			},
+		);
+		child.link.onClose(() => events.push("closed"));
+		await until(() => events.length > 0);
+		// Only the leader ends: its grandchild holds the channel, which closes by itself only once the tree was killed,
+		// at the exit.
+		process.kill(child.pid, "SIGTERM");
+		expect(await child.exited).toEqual({ code: null, signal: "SIGTERM" });
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		expect(events).toEqual(["started", "closed", "exited"]);
 	});
 });

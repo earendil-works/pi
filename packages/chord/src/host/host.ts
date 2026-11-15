@@ -1641,10 +1641,15 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 
 	/**
 	 * A route's link, its work under the route's `context`: registered with the host and its heartbeat; one closed
-	 * already is returned closed.
+	 * already is returned closed. `opened` is told the peer's incarnation once its `hello` arrived.
 	 */
-	routeLink(link: Link, options: LinkOptions<Principal>, context: Context): HostLink {
-		return this.#link(link, "route", options, context);
+	routeLink(
+		link: Link,
+		options: LinkOptions<Principal>,
+		context: Context,
+		opened?: (incarnation: string) => void,
+	): HostLink {
+		return this.#link(link, "route", options, context, opened);
 	}
 
 	/** A link completed its handshake: a route's address resolves again once if it drops. */
@@ -1780,13 +1785,19 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 	}
 
 	/** A new link of `role`, registered with the heartbeat while open. */
-	#link(link: Link, role: LinkRole, options: LinkOptions<Principal>, context: Context): HostLink {
+	#link(
+		link: Link,
+		role: LinkRole,
+		options: LinkOptions<Principal>,
+		context: Context,
+		opened?: (incarnation: string) => void,
+	): HostLink {
 		const { principal, trusted = false, codec = binaryCodec } = options;
 		const limits = linkLimits(trusted, options.limits);
 		const made = new HostLink(
 			this,
 			link,
-			{ role, principal, trusted, codec, limits },
+			{ role, principal, trusted, codec, limits, ...(opened === undefined ? {} : { opened }) },
 			this.#counted(withoutAbortSignal(context)),
 		);
 		if (!made.open) return made;

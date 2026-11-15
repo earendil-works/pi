@@ -437,6 +437,68 @@ forEachCodec(() => {
 		});
 	});
 
+	describe("resolve's `opened`", () => {
+		it("is told the peer's incarnation at the handshake, before the peer's first call is handled; never for a link closed before it", async () => {
+			const Who = remote("app.who", {
+				version: 1,
+				params: {},
+				hostAddress: () => Server(),
+				variants: { v: { methods: { incarnation: method(undefined, str()) } } },
+			});
+			const events: string[] = [];
+			let worker: Host<TestPrincipal> | undefined;
+			const server = createHost<TestPrincipal>({
+				address: Server(),
+				principal: { kind: "server" },
+				onError: () => {},
+			});
+			server.route(
+				Session,
+				{
+					authorize: () => true,
+					resolve: async (address) => {
+						const [a, b] = memoryLinkPair();
+						const principal = { kind: "worker", session: address.params.id } as const;
+						const opened = (incarnation: string) => void events.push(`opened ${incarnation}`);
+						if (address.params.id === "dead") {
+							b.close();
+							return { link: a, principal, opened };
+						}
+						worker = createHost<TestPrincipal>({ address, principal, onError: () => {} });
+						worker.connect(b, { principal: { kind: "server" } }, context);
+						await worker.load([], context);
+						// Its first call, made before the server has the link: it goes out with the handshake.
+						void worker
+							.get(Who, {}, context)
+							.then(async (who) => events.push(`answered ${await who.incarnation(context)}`));
+						return { link: a, principal, opened };
+					},
+				},
+				context,
+			);
+			const facet = defineFacet<TestPrincipal>((h) =>
+				h.serve(Who, () => ({
+					variant: "v",
+					members: {
+						incarnation: async (ctx) => {
+							events.push(`handled ${ctx.incarnation}`);
+							return ctx.incarnation;
+						},
+					},
+				})),
+			);
+			await server.load([{ name: "@test/server", facet }], context);
+			server.hold(PlacedNotes, { session: "S1" }, context);
+			await transported();
+			await transported();
+			const incarnation = worker!.incarnation;
+			expect(events).toEqual([`opened ${incarnation}`, `handled ${incarnation}`, `answered ${incarnation}`]);
+			server.hold(PlacedNotes, { session: "dead" }, context);
+			await transported();
+			expect(events).toHaveLength(3);
+		});
+	});
+
 	describe("GC", () => {
 		it("a failed or suspended address keeps no route state once its holders are released", async () => {
 			const { refs, server } = await (async () => {

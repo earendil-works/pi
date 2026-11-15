@@ -405,7 +405,7 @@ export async function startServer<P extends Principal>(options: AppOptions<P>, c
 	};
 	try {
 		for (const kind of options.workers ?? []) {
-			workers.set(kind.kind.kind, workersOf(host, kind, options, layout, plugins, workerHosts, context));
+			workers.set(kind.kind.kind, workersOf(host, store, kind, options, layout, plugins, workerHosts, context));
 		}
 		for (const surface of surfacesOf(host, options, plugins)) {
 			surfaces.push(surface);
@@ -593,6 +593,7 @@ function modulesOf(api: AppApi, kind: AppKind | undefined): HostPackages {
  */
 function workersOf<P extends Principal>(
 	host: Host<P>,
+	store: Store,
 	kind: AppWorkerKind<P>,
 	options: AppOptions<P>,
 	layout: AppLayout,
@@ -616,6 +617,8 @@ function workersOf<P extends Principal>(
 			...(kind.env === undefined ? {} : { env: kind.env }),
 			baseDir: join(layout.workerBases, kind.kind.kind),
 			compileCache: layout.compileCache,
+			// The server's: a worker's exit is published after the commits its calls queued there.
+			store,
 			// The server reaches its workers' kit objects (`HostData`) whatever the app admits.
 			authorize: (principal, address) =>
 				samePrincipal(principal, server, context) || kind.authorize(principal, address),

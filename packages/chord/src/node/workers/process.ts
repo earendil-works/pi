@@ -1,7 +1,8 @@
 // A worker process as the server sees it (slice 10 §3): forked with V8 serialization as a
 // detached process group (the whole tree can be killed), stdout and stderr piped (the stderr tail kept, both mirrored to
 // the server's own when the app takes no output), its IPC link made at the fork so the child's `hello` and early holds
-// are queued, never lost; control messages, the link's close and the exit are told as they happen.
+// are queued, never lost; control messages, the link's close and the exit are told as they happen. Its link is closed
+// at its exit, before the exit is told (decision "A worker's exit is published after its link's work ended").
 
 import { type ChildProcess, fork } from "node:child_process";
 import type { Link } from "../../link/index.ts";
@@ -27,6 +28,7 @@ export type ProcessEvents = {
 	readonly linkLost: () => void;
 	/** Its link was closed by the child's side (it exits, or it closed its IPC channel and may live on). */
 	readonly linkClosed: () => void;
+	/** It exited; its link is closed already (told by neither `linkLost` nor `linkClosed` when the exit closed it). */
 	readonly exited: (exit: Exit) => void;
 };
 
@@ -42,7 +44,7 @@ export class WorkerProcess {
 	readonly startedAt = Date.now();
 	/** The link to the child's host, made at the fork. */
 	readonly link: Link;
-	/** Resolves with its exit; every process it spawned is killed then. */
+	/** Resolves with its exit; every process it spawned is killed then, and its link closed. */
 	readonly exited: Promise<Exit>;
 	readonly #child: ChildProcess;
 	#stderr = "";
@@ -64,7 +66,8 @@ export class WorkerProcess {
 				else process[stream].write(chunk);
 			});
 		}
-		this.link = new TellingLink(ipcLink(child), events);
+		const link = new TellingLink(ipcLink(child), events);
+		this.link = link;
 		child.on("message", (message: unknown) => {
 			const control = controlOf<FromWorker>(message);
 			if (control !== undefined) events.control(control);
@@ -73,6 +76,9 @@ export class WorkerProcess {
 			const ended = (exit: Exit): void => {
 				// However the leader ended, nothing it spawned outlives it.
 				this.#killGroup();
+				// Before anyone hears of the exit: what it sent and the channel still holds is never handled, and the
+				// calls it made are aborted (the channel closes by itself only later, on its own event).
+				link.end();
 				resolve(exit);
 				events.exited(exit);
 			};
@@ -140,6 +146,13 @@ class TellingLink implements Link {
 		if (this.#closed) return;
 		this.#closed = true;
 		this.#events.linkLost();
+		this.#inner.close();
+	}
+
+	/** Closes the link without telling: its child exited, which the exit tells. */
+	end(): void {
+		if (this.#closed) return;
+		this.#closed = true;
 		this.#inner.close();
 	}
 

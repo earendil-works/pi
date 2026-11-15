@@ -201,6 +201,8 @@ pattern, no code. Decided cuts are noted where they apply.
 | 22 | trace carriers (R5) | 9 |
 | 22 | the `event` message, `ack.events`, both codecs, part limits and compression for event values | events |
 | 23 | `useEvents` (`chord/react`), `TuiScope.on` | events |
+| 23 | `useVariant` (`chord/react`), `TuiScope.variant`: a reference read in one variant (decision "C15 stands; the UI bindings follow the variant") | after 14 (2026-11-15) |
+| 23 | workers: a worker's exit published after its link's work ended, its incarnation in `WorkerState`; a route's `opened(incarnation)` (§3) | after 14 (2026-11-15) |
 | 27 | event edits (`event`, `addEvent`, `removeEvent`), `accepts.events`, one mapping per emit per older version (`event_mapping_failed`) | events |
 | 23 | HTTP (routes, wraps, responses as descriptions, request bodies, plugin sockets), workers; channels and chunked transfers stay owner patterns until a second user | 10 |
 | 23 | the app kit: `startServer`, `startWorker`, start-data objects, deny by default, sign-ins (`SignIns`), owner link and token file, device pairing, files (with chunked transfers), export and import per address, plugin roots and "apply changes", optional users, invite and ephemeral-login plugins | 13 |
@@ -254,6 +256,16 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
   any test: the events GC tests clear what they keep of an attempt before collecting (`test/remote/provider.test.ts`,
   "retire a provider side's record only once its event tickets drained"). Whether an ended attempt should cut what it
   reaches (its object, its links' records) is undecided. (Events build reviews.)
+
+### Workers: what the exit order left (decision "A worker's exit is published after its link's work ended")
+
+- **A call an exited worker made that the server relayed** to another host is cancelled there when the cancel
+  arrives: its transaction on that host may commit after the server published the exit. Waiting for it needs the
+  other host's answer; build it when a case reports through a relay.
+- **p2 keeps its hand-written generation checks** (its principal's `generation`, the checks in its report methods)
+  until it is ported: it passes `store` to `createWorkers` now, so they are redundant, not wrong.
+- **`useVariant`'s snapshot** (the narrowed reference, so two `live` states in different variants differ to React)
+  is tested through the page (a variant change while mounted), not with a forced coalesced render.
 
 ### Later: reload (when a case needs it)
 

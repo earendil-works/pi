@@ -88,7 +88,8 @@ call and at its turn while an owner holds a claim or once the store diverged, an
 ## For Chord's layers
 
 `ChordStore` (`store.ts`: `commit(staged, fence, ctx)`, `read(fn, ctx)` guarded as Durable's `GuardedStorage`,
-`take()` for an export, the catalog), the commit `Step` and `StagedWrite`s in their `WriteOrder` (`step.ts`), the documents engine
+`take()` for an export, `settled()` (every commit queued before the call settled: the workers component waits for it
+before it publishes a worker's exit), the catalog), the commit `Step` and `StagedWrite`s in their `WriteOrder` (`step.ts`), the documents engine
 (`engine.ts`), the catalog (`catalog.ts`), the write vocabulary (`writes.ts`, `table-writes.ts`), rows and columns
 (`rows.ts`, `columns.ts`, `json-column.ts`), the compiled where/set vocabulary (`expression.ts`) and its JS evaluator (`evaluate.ts`),
 SQL (`sql.ts`), the table handle and a transaction's table changes (`table-handle.ts`, `table-changes.ts`), live

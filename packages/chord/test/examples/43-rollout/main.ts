@@ -47,6 +47,8 @@ const workers = createWorkers(
 		principal: (address) => ({ kind: "worker", session: address.params.id }),
 		start: () => ({}),
 		lock: (address) => `example-43:${process.pid}:${address.key}`,
+		// The server host has no store.
+		store: undefined,
 		plugins,
 		onError: console.error,
 	},

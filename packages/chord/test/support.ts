@@ -22,6 +22,7 @@ import {
 	method,
 	num,
 	obj,
+	oneOf,
 	opt,
 	type ParamsOf,
 	remote,
@@ -34,9 +35,11 @@ import type { Op } from "../src/delta/index.ts";
 import { defineState } from "../src/documents/index.ts";
 import type { Attempt } from "../src/host/attempt.ts";
 import {
+	allow,
 	type Ctx,
 	createHost,
 	defineFacet,
+	deny,
 	type FacetHost,
 	type FacetSelf,
 	type Host,
@@ -1223,4 +1226,63 @@ export async function exported(store: Store): Promise<ArchivePart[]> {
 	const parts: ArchivePart[] = [];
 	for await (const part of store.export(BACKGROUND_CONTEXT)) parts.push(part);
 	return parts;
+}
+
+/** A desk its caller reads or edits by its admitted mode: a variant each (the UI bindings' variant tests). */
+export const Desk = remote("test.desk", {
+	version: 1,
+	params: {},
+	hostAddress: () => Server(),
+	admission: oneOf("reader", "editor"),
+	variants: {
+		reader: { state: { text: str() } },
+		editor: { state: { text: str() }, methods: { write: method(str()) } },
+	},
+});
+
+/** The mode `Desk`'s admission reads. */
+const DeskMode = local("test.desk.mode", { version: 1, params: {}, members: { mode: str(), set: method(str()) } });
+
+/**
+ * A server serving `Desk` and a client connected to it (`linked`), which is admitted as the desk's mode says: `reader`
+ * at first; `admit(mode)` changes it (`none`: denied).
+ */
+export async function desk(): Promise<{
+	readonly server: Host<TestPrincipal>;
+	readonly client: Host<TestPrincipal>;
+	admit(mode: "reader" | "editor" | "none"): Promise<void>;
+}> {
+	const { server, client } = await linked((h) => {
+		h.serve(DeskMode, (_params, self) => {
+			const mode = self.writable("reader");
+			return {
+				mode: self.derive([mode], ([value]) => value),
+				set: async (next) => {
+					mode.set(next);
+					return null;
+				},
+			};
+		});
+		h.serve(
+			Desk,
+			(_params, _principal, mode, self) => {
+				const text = self.writable("a desk");
+				const shown = self.derive([text], ([value]) => value);
+				if (mode === "reader") return { variant: "reader", members: { text: shown } };
+				const write = async (next: string) => {
+					text.set(next);
+					return null;
+				};
+				return { variant: "editor", members: { text: shown, write } };
+			},
+			{
+				admit: (_params, _principal, self) =>
+					self.derive([self.get(DeskMode, {}).mode], ([mode]) =>
+						mode === "reader" || mode === "editor" ? allow(mode) : deny("no access"),
+					),
+			},
+		);
+	});
+	const mode = await server.get(DeskMode, {}, BACKGROUND_CONTEXT);
+	return { server, client, admit: (next) => mode.set(next, BACKGROUND_CONTEXT).then(() => {}) };
 }

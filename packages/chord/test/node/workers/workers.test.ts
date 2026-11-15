@@ -4,7 +4,8 @@
 // once a minute, idle stops and `busy`, `stop` and its suspension, the per-address queue, `close`, the rollout step,
 // stale lock files cleared, nothing kept of 1,000 addresses, and the worker base (an edit after its build runs in no
 // worker; forks without source maps; a start waits for the build; a broken entry fails every start; close keeps the
-// files until its workers exited).
+// files until its workers exited), a worker's exit published only after its link's work ended, and its incarnation in
+// the state before its first call is handled.
 
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -14,12 +15,16 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { withAbortSignal } from "../../../src/context/index.ts";
-import { allow, createHost, deny } from "../../../src/host/index.ts";
+import { arr, local, method, obj, str } from "../../../src/contracts/index.ts";
+import { isChordError } from "../../../src/data/index.ts";
+import { defineState } from "../../../src/documents/index.ts";
+import { allow, createHost, defineFacet, deny } from "../../../src/host/index.ts";
 import { memoryLinkPair } from "../../../src/link/index.ts";
 import type { RolloutHost } from "../../../src/node/plugins/index.ts";
+import type { Workers } from "../../../src/node/workers/index.ts";
 import { constant } from "../../../src/state/index.ts";
-import { expectCollected } from "../../support.ts";
-import { Control } from "../fixtures/workers/control.ts";
+import { expectCollected, holdNextCommit, memoryStore } from "../../support.ts";
+import { Control, Reports } from "../fixtures/workers/control.ts";
 import { context, ENTRY, fleet, Notes, Session, type TestPrincipal, until } from "./support.ts";
 
 /** A step's hosts as `[host, what]`. */
@@ -35,7 +40,76 @@ const LOCK_MODULE = fileURLToPath(new URL("../../../src/node/workers/lock.ts", i
 
 /** The state entry of `id`. */
 const stateOf = (state: unknown, id: string) =>
-	(state as Record<string, { status: string; error?: { message: string } }>)[`session|${id}`];
+	(state as Record<string, { status: string; pid?: number; incarnation?: string; error?: { message: string } }>)[
+		`session|${id}`
+	];
+
+/** The server's journal of its workers' reports. */
+const Journal = local("test.journal", {
+	version: 1,
+	params: {},
+	members: { lines: arr(str()), append: method(str()) },
+});
+
+const LINES = { schema: obj({ lines: arr(str()) }), version: 1, initial: () => ({ lines: [] }) } as const;
+
+const Lines = defineState("lines", LINES);
+
+const StoredLines = defineState("lines", { ...LINES, persist: true, checkpointWhen: () => false });
+
+/**
+ * A server facet serving `Reports` into `Journal` (persisted when `persist`): a report is `received` (with what
+ * `seen` says of its call), waits for `before`, then appends its text in a transaction under its call's `ctx`;
+ * `outcomes` gets how that ended.
+ */
+function reporting(
+	log: { readonly received: string[]; readonly outcomes: string[] },
+	options: {
+		readonly persist?: boolean;
+		readonly before?: Promise<void>;
+		readonly seen?: (incarnation: string) => string;
+	} = {},
+) {
+	return defineFacet<TestPrincipal>((facet) => {
+		facet.serve(Journal, (_, self) => {
+			const lines = self.state(options.persist === true ? StoredLines : Lines);
+			return {
+				lines: self.derive([lines], ([value]) => value.lines),
+				append: async (text, ctx) => {
+					await lines.change((draft) => void draft.lines.push(text), ctx);
+					return null;
+				},
+			};
+		});
+		facet.serve(Reports, (_params, _principal, self) => {
+			const journal = self.get(Journal, {});
+			return {
+				variant: "main",
+				members: {
+					report: async (text, ctx) => {
+						log.received.push(options.seen === undefined ? text : `${text} ${options.seen(ctx.incarnation)}`);
+						await options.before;
+						await journal.append(text, ctx).then(
+							() => log.outcomes.push(`${text} committed`),
+							(error: unknown) => log.outcomes.push(`${text} ${isChordError(error) ? error.code : "threw"}`),
+						);
+						return null;
+					},
+				},
+			};
+		});
+	});
+}
+
+/** Whether process `pid` lives. */
+function alive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
 
 describe("starts on demand", () => {
 	it("starts a worker for the first hold: starting, then running; its link binds the holder", async () => {
@@ -758,5 +832,147 @@ describe("fix round 1", () => {
 		const failure = errors.find(({ kind }) => kind === "worker_failed");
 		expect(failure).toMatchObject({ stderrTail: expect.stringContaining("secret-token-123") });
 		notes.release();
+	});
+});
+
+describe("a worker's exit (decision \"A worker's exit is published after its link's work ended\")", () => {
+	it("a worker that reports and exits in the same turn: its link is closed before its exit is published, no transaction of its reports commits", async () => {
+		const published = Promise.withResolvers<void>();
+		const log = { received: [] as string[], outcomes: [] as string[] };
+		const { server, workers, behaviours } = await fleet({
+			// Each report's transaction runs right after the exit was published.
+			facets: [{ name: "@test/reports", facet: reporting(log, { before: published.promise }) }],
+			onError: (error) => {
+				if (error.kind === "worker_exited") published.resolve();
+			},
+		});
+		// The channel outlives the worker: nothing but the component closes its link at the exit.
+		behaviours.set("S1", { holdsChannel: true });
+		const journal = await server.get(Journal, {}, context);
+		const control = await server.get(Control, { id: "S1" }, context);
+		// One report whose handler waits when the worker exits, one sent in the turn of the exit.
+		await control.report("waiting", context);
+		await until(() => log.received.includes("waiting"));
+		control.reportAndExit("last", context).catch(() => {});
+		await until(() => stateOf(workers.state.value, "S1")?.status === "failed");
+		await until(() => log.outcomes.length > 0);
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		// `last` was handled before the exit and aborted with it, or never handled.
+		expect(log.outcomes.filter((outcome) => outcome !== "last unavailable")).toEqual(["waiting unavailable"]);
+		expect(journal.lines.value).toEqual([]);
+		journal.release();
+		control.release();
+	});
+
+	it("a commit a report queued in the store before the exit lands before the exit is published; until then the state shows the worker and nothing starts", async () => {
+		const store = await memoryStore();
+		const log = { received: [] as string[], outcomes: [] as string[] };
+		let journal: Awaited<ReturnType<typeof holdJournal>> | undefined;
+		let atExit: readonly string[] | undefined;
+		const { server, workers, starts, errors } = await fleet({
+			store,
+			facets: [{ name: "@test/reports", facet: reporting(log, { persist: true }) }],
+			onError: (error) => {
+				if (error.kind === "worker_exited") atExit = journal?.lines.value;
+			},
+		});
+		const holdJournal = () => server.get(Journal, {}, context);
+		journal = await holdJournal();
+		const notes = await server.get(Notes, { id: "S1" }, context);
+		const control = await server.get(Control, { id: "S1" }, context);
+		const running = stateOf(workers.state.value, "S1");
+		const held = holdNextCommit(store);
+		await control.report("queued", context);
+		await held.entered;
+		await control.crash(7, context);
+		// Its link is closed at its exit: the holder sees that at once.
+		await until(() => notes.state.value.kind !== "live" && !alive(running!.pid!));
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		expect(stateOf(workers.state.value, "S1")).toEqual(running);
+		expect(errors).toEqual([]);
+		expect(starts).toEqual(["session|S1"]);
+		held.release();
+		await until(() => stateOf(workers.state.value, "S1")?.status === "failed");
+		expect(atExit).toEqual(["queued"]);
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		expect(starts).toEqual(["session|S1"]);
+		journal.release();
+		notes.release();
+		control.release();
+		await workers.close(context);
+		await server.close(context);
+		await store.close(context);
+	});
+
+	it("a stop resolves once the exit was published, after the commits its worker queued", async () => {
+		const store = await memoryStore();
+		const log = { received: [] as string[], outcomes: [] as string[] };
+		const { server, workers } = await fleet({
+			store,
+			facets: [{ name: "@test/reports", facet: reporting(log, { persist: true }) }],
+		});
+		const journal = await server.get(Journal, {}, context);
+		const control = await server.get(Control, { id: "S1" }, context);
+		const { pid } = stateOf(workers.state.value, "S1")!;
+		const held = holdNextCommit(store);
+		await control.report("queued", context);
+		await held.entered;
+		let stopped = false;
+		const stop = (workers as Workers<typeof Session>).stop(Session({ id: "S1" }), context).then(() => {
+			stopped = true;
+		});
+		await until(() => !alive(pid!));
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		expect(stopped).toBe(false);
+		expect(stateOf(workers.state.value, "S1")?.status).toBe("stopping");
+		held.release();
+		await stop;
+		expect(stateOf(workers.state.value, "S1")).toBeUndefined();
+		expect(journal.lines.value).toEqual(["queued"]);
+		journal.release();
+		control.release();
+		await workers.close(context);
+		await server.close(context);
+		await store.close(context);
+	});
+});
+
+describe("a worker's incarnation", () => {
+	it("is in the state before its first call is handled: a report its startup sends finds it, long before ready", async () => {
+		const log = { received: [] as string[], outcomes: [] as string[] };
+		let workers: Workers<typeof Session> | undefined;
+		const seen = (incarnation: string): string => {
+			const state = stateOf(workers?.state.value, "S1");
+			return `${state?.status} ${state?.incarnation === incarnation ? "known" : "unknown"}`;
+		};
+		const env = await fleet({ facets: [{ name: "@test/reports", facet: reporting(log, { seen }) }] });
+		workers = env.workers;
+		env.behaviours.set("S1", { reportAtStart: "startup" });
+		// What the state's watchers are told, as `status known?`.
+		const published: string[] = [];
+		const watch = await workers.state.watch(context);
+		watch.start(async () => {
+			const state = stateOf(workers?.state.value, "S1");
+			if (state !== undefined) published.push(`${state.status} ${state.incarnation !== undefined}`);
+		});
+		const control = await env.server.get(Control, { id: "S1" }, context);
+		// The startup's call was answered: the worker went on to `ready`.
+		await until(() => stateOf(workers?.state.value, "S1")?.status === "running");
+		await control.report("later", context);
+		await until(() => log.received.length === 2);
+		expect(log.received).toEqual(["startup starting known", "later running known"]);
+		// Published at the handshake, not only with the next change of the worker's status.
+		expect(published).toContain("starting true");
+		watch.stop();
+		const first = stateOf(workers.state.value, "S1")!.incarnation;
+		expect(first).toEqual(expect.any(String));
+		// Another run of the worker is another incarnation.
+		await control.crash(7, context);
+		await until(() => stateOf(workers?.state.value, "S1")?.status === "failed");
+		expect(stateOf(workers.state.value, "S1")).not.toHaveProperty("incarnation");
+		await workers.retry(Session({ id: "S1" }), context);
+		await until(() => stateOf(workers?.state.value, "S1")?.status === "running");
+		expect(stateOf(workers.state.value, "S1")!.incarnation).not.toBe(first);
+		control.release();
 	});
 });
