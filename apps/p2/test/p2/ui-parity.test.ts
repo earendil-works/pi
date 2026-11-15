@@ -216,7 +216,14 @@ describe("Pi Mobile UI regressions", { skip: !browserTests }, () => {
 		await browser.evaluate(
 			`(() => { const send=WebSocket.prototype.send;window.originalPickerSend=send;WebSocket.prototype.send=function(data){setTimeout(()=>send.call(this,data),300)}; })()`,
 		);
+		// The folder button opens the menu's folder page; Select folder… opens the picker.
 		await browser.evaluate('document.querySelector(".cwd-pick").click()');
+		await browser.wait(
+			'Boolean([...document.querySelectorAll(".command-menu [role=option]")].find((row) => row.textContent.includes("Select folder…")))',
+		);
+		await browser.evaluate(
+			'[...document.querySelectorAll(".command-menu [role=option]")].find((row) => row.textContent.includes("Select folder…")).click()',
+		);
 		await browser.wait('Boolean(document.querySelector(".directory-loading"))');
 		assert(
 			await browser.evaluate<boolean>('document.querySelector("input[aria-label=Directory]").disabled'),

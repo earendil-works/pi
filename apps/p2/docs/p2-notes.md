@@ -56,8 +56,8 @@ P2_FAKE=1 npm start          # http://127.0.0.1:8788, data in ~/.pi/p2
   (`/chord?web=<base>`); every other client names itself (`?client=tui`, `cloud`, `script` for scripts and tests;
   `src/runtime/stale-page.ts`). The server refuses a link naming another base, or neither a base nor a known client (a
   page from before 2026-11-12, which would re-hold types removed since), at once (close code 4001; the page reloads)
-  and the owner gets a notice (source `stale-pages`) naming who it was: the owner's access or device, or the guest,
-  the browser and its address. A TUI launcher from before the marker is refused too (it retries until updated). The last four plugin sets' files stay served. Web facets must not share module state with
+  and the server logs (source `stale-pages`, a log line, not a notice: nothing to act on) who it was: the owner's
+  access or device, or the guest, the browser and its address. A TUI launcher from before the marker is refused too (it retries until updated). The last four plugin sets' files stay served. Web facets must not share module state with
   another plugin's files (each plugin's script holds its own copy of a file it imports from another plugin):
   `plugin-practices.md`. The TUI launcher still polls `/__p2_tui` (p2's own TUI bundle). There is no Vite,
   source-module server or `index.html`.

@@ -29,6 +29,7 @@ import {
 	ContextUsage,
 	CostPanel,
 	closeLayers,
+	commandPageLayer,
 	conversationKey,
 	conversationRoute,
 	type Detail,
@@ -42,6 +43,7 @@ import {
 	FolderIcon,
 	forgetSession,
 	type Gap,
+	getNavigation,
 	type Kept,
 	KeyboardKey,
 	KeyboardShortcut,
@@ -1756,8 +1758,11 @@ function NewSession() {
 		choice: selectedChoice,
 		setChoice,
 	} = useNewSessionState();
+	// Unless chosen, the session starts where the latest session that is not archived works: the first of the recent
+	// folders the folder button lists.
+	const latest = recent.find((session) => session.archivedAt === null);
 	const location =
-		selectedLocation ?? (recent[0] ? { env: recent[0].env ?? null, cwd: recent[0].cwd } : { env: null, cwd: "~" });
+		selectedLocation ?? (latest ? { env: latest.env ?? null, cwd: latest.cwd } : { env: null, cwd: "~" });
 	const choice = newSessionChoice(selectedChoice, resources, recent[0]);
 	useCommandRouteTarget(NEW_SESSION_TARGET);
 	useModelScreen(owner ? NEW_SESSION_TARGET : undefined, choice, {
@@ -1906,14 +1911,18 @@ function NewSession() {
 				<DirectoryPicker
 					value={location.cwd}
 					env={location.env}
-					recent={(env) => [
-						...new Set(recent.filter((session) => (session.env ?? null) === env).map((session) => session.cwd)),
-					]}
 					onChange={(env, cwd) => {
 						setLocation({ env, cwd });
 						closeLayers();
 					}}
 					onClose={closeLayers}
+					// Back returns to the recent folders (the command menu's folder page), in place of the picker.
+					onBack={() =>
+						void getNavigation().closeThenPush((route) => ({
+							...route,
+							layers: [commandPageLayer("new-session-folder", NEW_SESSION_TARGET)],
+						}))
+					}
 				/>
 			)}
 			<ErrorToast />
@@ -1930,7 +1939,7 @@ function NewSession() {
 							<button
 								type="button"
 								className="cwd-pick"
-								onClick={() => openLayer(directoryPickerLayer(location.env, location.cwd))}
+								onClick={() => openCommandPage("new-session-folder", NEW_SESSION_TARGET)}
 							>
 								<FolderIcon />
 								<span>{locationLabel(location.env, location.cwd)}</span>

@@ -417,9 +417,9 @@ describe("command menu", { skip: !browserTests }, () => {
 				),
 				true,
 			);
-			// A query starts again at its first row; Enter runs "New session".
-			await run("new sess", "New session");
-			await browser.wait(`${CLOSED} && location.pathname==='/new'`);
+			// A query starts again at its first row; Enter runs "New session…".
+			await run("new sess", "New session…");
+			await browser.wait(`document.querySelector('.command-menu .command-crumb')?.textContent==='New session'`);
 		});
 
 		it("keeps the first row highlighted when rows appear above it later; a real mouse move highlights the row under it", async () => {
@@ -469,7 +469,7 @@ describe("command menu", { skip: !browserTests }, () => {
 			// At the root's empty input: the chip goes, and the session's commands with it.
 			await press("Backspace");
 			await browser.wait(`!document.querySelector('.command-menu .command-chip')`);
-			await browser.wait(`${TITLES}.includes('New session') && !${TITLES}.includes('Archive session')`);
+			await browser.wait(`${TITLES}.includes('New session…') && !${TITLES}.includes('Archive session')`);
 			// Nothing more to remove: the menu stays.
 			await press("Backspace");
 			assert.equal(await browser.evaluate<boolean>(OPEN), true);
@@ -494,11 +494,18 @@ describe("command menu", { skip: !browserTests }, () => {
 	});
 
 	describe("session commands", () => {
-		it("starts a new session", async () => {
+		it("starts a new session in the open session's folder by default", async () => {
 			const id = await create("From here");
 			await openSession(id, "From here");
 			await openMenu();
-			await run("new", "New session");
+			await run("new", "New session…");
+			await browser.wait(`document.querySelector('.command-menu .command-crumb')?.textContent==='New session'`);
+			// Select folder… comes first; the open session's folder is highlighted and checked.
+			await browser.wait(`${TITLES}[0]==='Select folder…'`);
+			await browser.wait(
+				`document.querySelector('.command-menu [role=option][aria-selected=true]')?.getAttribute('aria-checked')==='true'`,
+			);
+			await press("Enter");
 			await browser.wait(`${CLOSED} && location.pathname==='/new' && document.querySelector('.new-session-view')`);
 		});
 
@@ -877,7 +884,7 @@ describe("command menu", { skip: !browserTests }, () => {
 			await guest.wait(`${TITLES}.includes('Switch session…')`);
 			const titles = await guest.evaluate<string[]>(TITLES);
 			for (const title of [
-				"New session",
+				"New session…",
 				"Rename session…",
 				"Archive session",
 				"Restore session",

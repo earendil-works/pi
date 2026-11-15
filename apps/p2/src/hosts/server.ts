@@ -874,7 +874,10 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		if (sent === null) return { sent, current };
 		return current !== undefined && sent !== current ? { sent, current } : undefined;
 	};
-	/** Stale pages already reported, by who and which version: each is told the owner once per server run. */
+	/**
+	 * Stale pages already logged, by who and which version: each is logged once per server run. A log line, not a notice:
+	 * the page reloads by itself, so the owner has nothing to act on.
+	 */
 	const staleReported = new Set<string>();
 	const reportStalePage = (request: IncomingMessage, principal: P2Principal, { sent, current }: StalePage): void => {
 		const who = principalText(principal);
@@ -883,7 +886,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 		const key = `${who}\n${agent}\n${sent}`;
 		if (staleReported.has(key)) return;
 		staleReported.add(key);
-		processLogs.notice("stale-pages", text);
+		processLogs.append("stale-pages", "event", text);
 	};
 	// Mobile's limits: frames up to 1 MiB, 4 MiB unsent output (socket-limits.ts); Chord queues calls behind its window.
 	sockets.on("connection", (socket, request: IncomingMessage) => {

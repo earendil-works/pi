@@ -41,8 +41,11 @@ export function pushMenu(target: CommandTarget | undefined): void {
  */
 export function openCommandPage(name: string, target: CommandTarget | undefined): void {
 	const nav = getNavigation();
-	void nav.push({ ...nav.route, layers: [...nav.route.layers, rootLayer(target, name)] });
+	void nav.push({ ...nav.route, layers: [...nav.route.layers, commandPageLayer(name, target)] });
 }
+
+/** The menu opened right on the page `name` for `target`, as a layer: for a route that replaces another layer with it. */
+export const commandPageLayer = (name: string, target: CommandTarget | undefined): Layer => rootLayer(target, name);
 
 /** Closes the menu: removes its layers and nothing under them (a sheet the menu opened over stays). */
 export function closeMenu(): Promise<void> {

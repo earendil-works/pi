@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
-import { LogNotices } from "../../plugins/logs/contract.ts";
+import { LogNotices, Logs } from "../../plugins/logs/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Views } from "../../plugins/views/contract.ts";
 import { type P2Server, startServer } from "../../src/hosts/server.ts";
@@ -134,7 +134,7 @@ describe("pages on the web surface", { skip: !browserTests }, () => {
 		}
 	});
 
-	it("refuses a link naming another base or nothing at once, and tells the owner which device", async () => {
+	it("refuses a link naming another base or nothing at once, and logs which device", async () => {
 		await browser.open(`http://127.0.0.1:${port}/`);
 		await browser.wait("document.documentElement.dataset.webVersion");
 		const closeOf = (query: string) =>
@@ -145,12 +145,10 @@ describe("pages on the web surface", { skip: !browserTests }, () => {
 			})`);
 		const host = clientHost(owner);
 		try {
+			const logs = await holdIn(host, Logs, { source: "stale-pages" }, "owner");
 			const notices = await holdIn(host, LogNotices, {}, "owner");
-			/** The owner's newest notice about stale pages once it matches `pattern`. */
-			const told = (pattern: RegExp) =>
-				until(notices.notices, (value) =>
-					value.some((each) => each.source === "stale-pages" && pattern.test(each.message)),
-				);
+			/** The stale-pages log once a line matches `pattern`. */
+			const told = (pattern: RegExp) => until(logs.lines, (value) => value.some((each) => pattern.test(each.text)));
 			assert.equal(await closeOf("?web=0123abcd"), STALE_PAGE_CODE);
 			await told(/web bundle 0123abcd.*the owner \(local\).*Chrome.*from 127\.0\.0\.1 \(WebSocket \/chord\)/);
 			// A page from before pages named their base names nothing: refused too. Other clients name themselves.
@@ -158,6 +156,11 @@ describe("pages on the web surface", { skip: !browserTests }, () => {
 			await told(/web bundle unnamed: from before/);
 			assert.equal(await closeOf("?client=nobody"), STALE_PAGE_CODE);
 			for (const client of LINK_CLIENTS) assert.equal(await closeOf(`?client=${client}`), -1, client);
+			// The page reloads by itself: nothing for the owner to act on, so no notice.
+			assert.equal(
+				notices.notices.value.some((each) => each.source === "stale-pages"),
+				false,
+			);
 		} finally {
 			await host.close(BACKGROUND_CONTEXT);
 		}
