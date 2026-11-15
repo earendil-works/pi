@@ -6,7 +6,9 @@
 		"moduleResolution": "NodeNext",
 		"lib": ["ES2024", "DOM", "DOM.Iterable"],
 		"jsx": "react-jsx",
-		"customConditions": ["source"]
+		"customConditions": ["source"],
+		"declaration": false,
+		"declarationMap": false
 	},
-	"include": ["*.ts", "src/**/*.ts", "plugins/**/*.ts", "test/**/*.ts"]
+	"include": ["*.ts", "src/**/*.ts", "plugins/**/*.ts", "test/**/*.ts", "bench/**/*.ts"]
 }

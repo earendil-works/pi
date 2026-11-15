@@ -19,6 +19,6 @@
 		}
 	},
 	"files": {
-		"includes": ["*.ts", "src/**", "plugins/**", "test/**", "*.json", "!package-lock.json"]
+		"includes": ["*.ts", "src/**", "plugins/**", "test/**", "bench/**", "*.json", "!package-lock.json"]
 	}
 }

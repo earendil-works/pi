@@ -12,7 +12,7 @@
 	"scripts": {
 		"check": "node ../../scripts/biome-check.mjs && tsc --noEmit",
 		"format": "node ../../scripts/biome-check.mjs --write",
-		"test": "node --conditions=source --test --test-reporter=dot \"test/**/*.test.ts\" \"plugins/**/*.test.ts\""
+		"test": "node --conditions=source --disable-warning=ExperimentalWarning --test --test-reporter=dot \"test/**/*.test.ts\" \"plugins/**/*.test.ts\""
 	},
 	"engines": {
 		"node": ">=24.4.0"

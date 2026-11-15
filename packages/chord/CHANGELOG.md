@@ -14,6 +14,7 @@
 - Lists: `self.list(name, [[namedQuery, args]], { first })` returns `{ value, more }`, a list a screen loads more of. Its pages lie between fixed bookmarks, so loaded rows stay live, `more` sends only the new rows, and a row that moves leaves no gap and no duplicate; a reload keeps the pages it had.
 - Column sets: `defineColumns(name, { columns, key, indexes? })` and `defineTable(..., { exposes })` let another plugin's query test `exists(Set, match, condition)`, `existsNode(Set, match, node)` or join one row with `query(Table).join(Set, match)`. `compile(Set, condition)` and `query(Table).whereNode(Set, node)` pass a condition as data (`whereNode` and `existsNode` take the node as `unknown` and check it). A table handle's `page` and `count` take a query with `exists` and refuse one with a join. `evolveTable` takes `{ exposes }`.
 - Telemetry counters `chord.query.probes`, `chord.query.skips` and `chord.query.rows`.
+- `@earendil-works/chord/app` exports `appInfoFacet` and `workerInfoFacet`, the facets serving the kit's start-data objects `AppInfo` and `WorkerInfo`, for an app that runs hosts of its own (its tests with the server and workers in one process).
 
 ### Changed
 
