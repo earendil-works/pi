@@ -68,7 +68,6 @@ import type { ArchivePart } from "../src/store/archive.ts";
 import { sqliteBackend } from "../src/store/backend.ts";
 import { changeDocument, createDocument, retireDocument } from "../src/store/engine.ts";
 import { json } from "../src/store/json-column.ts";
-import { LiveQueries } from "../src/store/live-query.ts";
 import type { StagedWrite } from "../src/store/step.ts";
 import { type ChordStore, openStore, type Store } from "../src/store/store.ts";
 import { defineTable, type TableDefinition } from "../src/store/table.ts";
@@ -339,7 +338,6 @@ export function tableOwner(failures: ChordError[] = []): TableOwner & { readonly
 	return {
 		label: "app.store",
 		scope: {},
-		queries: new LiveQueries(),
 		assertLive: () => {},
 		fail: (error) => void failures.push(error),
 		failures,

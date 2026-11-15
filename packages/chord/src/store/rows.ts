@@ -6,7 +6,7 @@ import type { Context } from "../context/index.ts";
 import { invalid } from "../data/internal.ts";
 import type { JsonValue } from "../json.ts";
 import type { SqliteValue } from "../sqlite/index.ts";
-import type { Column, ColumnType, HostColumnOf } from "./columns.ts";
+import type { Column, ColumnType, HostColumnOf, ScalarColumn } from "./columns.ts";
 import { storedText } from "./text.ts";
 
 /** A scalar cell as the store keeps it in rows, writes and operands: a well-formed string, a number or a boolean. */
@@ -143,13 +143,10 @@ export class RowCodec {
 		for (const column of this.#columns) {
 			const value = stored[column.name];
 			if (value === null || value === undefined) continue;
-			if (column.type === "bool") row[column.name] = value === 1;
-			else if (column.type === "str" && column.host !== undefined)
-				row[column.name] = column.host.address(value as string);
-			else if (column.type === "json") {
+			if (column.type === "json") {
 				const version = stored[versionColumn(column.name)] as number;
 				row[column.name] = column.json.read(value as string, version, `${this.#table}.${column.name}`, context);
-			} else row[column.name] = value;
+			} else row[column.name] = decodeScalar(column, value);
 		}
 		return row;
 	}
@@ -185,6 +182,14 @@ export class RowCodec {
 		// Checked above: a plain object with known fields.
 		return value as { readonly [field: string]: unknown };
 	}
+}
+
+/** A stored scalar cell (not `NULL`) as reads return it: a boolean from 0 and 1, an address from a `host(...)` key. */
+export function decodeScalar(column: ScalarColumn, value: SqliteValue): unknown {
+	if (column.type === "bool") return value === 1;
+	// A `host(...)` column holds the keys of addresses of its kind.
+	if (column.type === "str" && column.host !== undefined) return column.host.address(value as string);
+	return value;
 }
 
 /** A checked cell: what is bound and what is recorded. */

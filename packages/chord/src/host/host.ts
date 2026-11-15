@@ -209,10 +209,11 @@ export type HostError =
 	 */
 	| { readonly kind: "derive_failed"; readonly object: string; readonly member?: string; readonly error: unknown }
 	/**
-	 * A live query's run in a commit threw (a row its code cannot read), once per failure episode (a good run ends it):
-	 * the query is a failed member until then (`self.query`).
+	 * A live read's run failed after its object went live (a row its code cannot read, a set nobody serves), once per
+	 * failure episode (a good run ends it): the member is failed until then. `query` is the table's name for
+	 * `self.query`, the named query's label for `self.liveQuery`, `self.count` and `self.list`.
 	 */
-	| { readonly kind: "query_failed"; readonly object: string; readonly table: string; readonly error: unknown }
+	| { readonly kind: "query_failed"; readonly object: string; readonly query: string; readonly error: unknown }
 	/** A routine's call threw, or its source failed for good; `routine` is its kind and position. */
 	| { readonly kind: "routine_failed"; readonly object: string; readonly routine: Position; readonly error: unknown }
 	/** A job's `run` threw (not after an abort): its outcome is `failed { threw }`. */
@@ -1852,10 +1853,12 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		this.#publication.resolve();
 		this.backoff.clear();
 		// Every object is sealed before any teardown releases a reference, so none ends in the background.
-		const teardowns = [...this.#objects.values()].reverse().map((object) => object.stop());
+		const objects = [...this.#objects.values()].reverse();
+		const teardowns = objects.map((object) => object.stop());
 		await Promise.all(this.#endings.values());
 		const failures: CloseFailed[] = [];
 		for (const tearDown of teardowns) failures.push(...(await tearDown()));
+		for (const object of objects) object.unbindSets();
 		this.#types.clear();
 		// Their facets keep their factories' closures (which may keep objects' handles).
 		this.#plugins.clear();

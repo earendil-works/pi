@@ -11,7 +11,9 @@ import {
 	keyed,
 	local,
 	method,
+	type NamedQuery,
 	obj,
+	queries,
 	remote,
 	str,
 } from "../../src/contracts/index.ts";
@@ -299,6 +301,49 @@ describe("keyed members (slice 6a §12)", () => {
 				variants: { editor: { state: { notes: keyed(Note) } } },
 			}),
 		).toThrow("app.notes.editor.state.notes: keyed members are only in local contracts");
+	});
+});
+
+describe("queries members (slice 14 §3.1)", () => {
+	const args = { ofBoard: obj({ board: str() }), one: obj({ id: int() }) };
+	const Store = local("app.store", { version: 1, params: {}, members: { notes: queries(Note, args), add: method() } });
+
+	it("declare named queries in a local contract: their own kind, each query's argument schema in the fingerprint", () => {
+		const variant = currentVariants(Store).get(LOCAL)!;
+		expect([...variant.queries.get("notes")!.args.keys()]).toEqual(["ofBoard", "one"]);
+		expect([...variant.state.keys()]).toEqual([]);
+		const other = { ...args, one: obj({ id: str() }) };
+		const Changed = local("app.store", {
+			version: 1,
+			params: {},
+			members: { notes: queries(Note, other), add: method() },
+		});
+		expect(Changed.fingerprint).not.toBe(Store.fingerprint);
+		// A contract without one keeps its fingerprint: the pinned value in fingerprint.test.ts did not move.
+		// Evolving the contract carries its queries members over unchanged (their edits are a later slice's).
+		const next = evolve(Store, (e) => e.addMethod("clear", str(), str()));
+		expect(currentVariants(next).get(LOCAL)!.queries.has("notes")).toBe(true);
+		expect(() => evolve(Store, (e) => e.addState("notes", str()))).toThrow("already declared");
+	});
+
+	it("type the implementation as one named query per listed name", () => {
+		type Notes = Implementation<typeof Store>["notes"];
+		expectTypeOf<Notes["one"]>().toEqualTypeOf<NamedQuery<{ text: string }, { id: number }>>();
+		expectTypeOf<Notes["ofBoard"]>().toEqualTypeOf<NamedQuery<{ text: string }, { board: string }>>();
+	});
+
+	it("refuse a queries member in a remote contract and argument schemas that are not closed", () => {
+		expect(() =>
+			untyped.remote("app.notes", {
+				version: 1,
+				params: {},
+				hostAddress,
+				variants: { editor: { state: { notes: queries(Note, {}) } } },
+			}),
+		).toThrow("app.notes.editor.state.notes: queries members are only in local contracts");
+		expect(() =>
+			untyped.local("app.store", { version: 1, params: {}, members: { notes: queries(Note, { one: 5 as never }) } }),
+		).toThrow("app.store.members.notes.args.one");
 	});
 });
 

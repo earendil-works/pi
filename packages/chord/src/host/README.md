@@ -198,8 +198,9 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   `activation_failed` (`object`, `failure`: every failed attempt), `object_failed` (`object`, `failure`: a live object
   failed, slice 6a), `storage_failed` (`error`: the host's store stopped; the host closes itself), `derive_failed`
   (`object`, `member?`, `error`: a derive's compute threw, once per failure episode, watched or not; `member` when it is
-  an exposed state member), `query_failed` (`object`, `table`, `error`: a live query's run in a commit threw, once per
-  failure episode; the query is a failed member until a good run), `close_failed` (`object`, `native` position,
+  an exposed state member), `query_failed` (`object`, `query`, `error`: a live read's run failed after its object went live,
+  once per failure episode; the member is failed until a good run; `query` is the table's name for `self.query`, the
+  named query's label otherwise), `close_failed` (`object`, `native` position,
   `error`: a close that threw while nobody waited), `close_timeout` (`object`, `native`: a close still running at its `closeTimeout`, a possible leak), `drain_timeout` (`object`: calls still running at `closeTimeout`, or at `reloadDrainTimeout` for a reload's restart; their natives close anyway),
   `listener_error` (a throwing watch listener or event listener: its subscription ends), `event_mapping_failed`
   (`object`, `member`, `version`, `error`: an event mapping for an older consumer threw; that emit is dropped for that
@@ -397,6 +398,21 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   factory did not declare. A run that fails (a row its code cannot read) makes it a failed member, as a throwing
   derive: one failure call, `query_failed` once, `[["r", rows]]` at the next good run; the object stays live. It is
   no native: a reload's restart runs the successor's live queries again at its activation.
+- Named queries (slice 14; `named-query.ts`, `query-reader.ts`, `read-declarations.ts`): a `local` contract lists them with `queries(Item,
+  { name: argsSchema })`; the table's owner returns `self.queries(table, { map, reads?, partnerReads? }, { name:
+  builder })` for the member (a query not listed is private and given as `[argsSchema, builder]`). Any object on
+  the host reads one in its factory with `self.liveQuery(ref.member.name, args, { first })` (`{ rows, more }`) or
+  `self.count(ref.member.name, args)` (exact, every matching row read on each run), or anywhere with `page(args, n,
+  ctx, { after })`. `args` may be a watchable: the member keeps its rows until the read for the new arguments has
+  run. Readers open during activation, after the member check and before the natives (a waiting attempt holds
+  none); a first run that fails parks the object `failed { waiting }` until a later run succeeds; refused arguments and a throwing builder fail it `broken`. A
+  provider's restart does not restart its readers: they read the successor's query and give one frame, none when
+  the rows are equal. `self.query` given a named query, and `self.liveQuery` given a table, throw naming the other.
+- Lists (slice 14; `list.ts`, `tiling.ts`): `self.list(name, [[namedQuery, args]], { first })` returns `{ value, more }` for a
+  state member of `{ rows, moreAfter }` and a method. Pages tile the query's order between fixed bookmarks, one
+  read of the store each; the last page is open at its end while no row is known behind it. Pages split and merge
+  in the adoption of their runs; a run belongs to the interval it read. The object keeps a list's bookmarks by its
+  name across attempts (`ChordObject.listMemory`), so a reload opens the pages the list had. One source for now.
 - A table or document the code cannot read (a newer version, a history edited in place, a failed `rows` step or
   `migrate`) fails the object `broken`; a live object whose read fails so fails while live (`object_failed`), keeping
   its documents for the next attempt.

@@ -58,7 +58,11 @@ versions and adapters · 28 building: slices · 29 telemetry · 30 cost model ·
 | event member | a JSON value an object emits (`self.events`), delivered once to the references bound to it before the emit (over a link, per wire hold: references sharing one get what arrives after they bound, §7), never kept; read with `ref.member.on(listener, ctx)`, a subscription (section 11) |
 | document | a named JSON value an object owns, written in transactions |
 | derive | a value computed from watchables |
-| live query | a bounded query of an object's own table, kept current by its commits (`self.query`, section 11) |
+| named query | a query a store offers under a name, its argument schema in the contract (`queries`, `self.queries`, section 11; slice 14) |
+| live query | rows kept current by commits: the owner's own window (`self.query`), or a named query read by any object on the store's host (`self.liveQuery`) (section 11) |
+| list | a named query a screen loads more of: pages between fixed bookmarks, tiled (`self.list`, section 11; slice 14) |
+| column set | the columns of a table its contract declares for other plugins' conditions and joins (`defineColumns`, section 10; slice 14) |
+| probe | one keyed statement by which a commit asks whether a written row can be in a read, before running the read again (section 10; slice 14) |
 | native | an OS-level value opened with `self.open`; only in objects |
 | routine | standing behaviour of an object: `self.on(source, fn)`, `self.onLive(fn)` |
 | job | owned work a call starts that outlives it: intent, run, finish; optional state document per run |
@@ -650,6 +654,9 @@ host.serve(Notes, ({ session }, principal, self) =>
   counted pin: the key stays loaded while the consumer lives) or `ref.notes.watch(key, ctx)`/`get(key, ctx)` anywhere;
   an absent key reads `initial()`, a retirement arrives as the `retired` flag (a derive over it carries the flag on).
   Across links, a view per entity (`NoteView { session, id }`) is held as an ordinary remote object.
+  **Named queries** (slice 14; `local` contracts only): `members: { sessions: queries(SessionRow, { visible:
+  argsSchema, one: argsSchema }) }`; the provider returns what `self.queries` gave; a consumer on the same host reads
+  one with `self.liveQuery`, `self.count` or `page` (section 11).
   **Host-keyed members** (decision "Documents and table rows can belong to a host", 2026-11-09; spec
   `host-keyed/spec.md` §1): `keyed(schema, Session)` keys the member by addresses of a host kind; its implementation is
   a handle of a definition keyed by that kind (`keyed: Session`; another key kind fails the activation), the
@@ -1135,8 +1142,9 @@ host.serve(DraftStore, (_, self) => {               // local, empty params: may 
   synchronous; the handle is an exposable `Watchable`.
 - **Keyed:** addressed by a short key local to the object, loaded on demand; `await handle.get(key, ctx)` reads (creates
   nothing); `for await (const key of handle.keys(ctx))` pages keys (both take a context, owner, 2026-10-26) (indexed per owner and definition, also in memory). No
-  live key list: a collection shown live is a singleton (an object holding a list or map); large collections are
-  methods returning pages.
+  live key list: keyed documents are read by key. A collection shown live is a table with a named query, read as
+  a list (section 11; slice 14); a small one may still be a singleton (an object holding a list or map). Methods
+  returning pages stay for jobs and scripts; a screen does not chain them.
 - **Host-keyed documents** (decision "Documents and table rows can belong to a host", 2026-11-09; spec
   `host-keyed/spec.md`): `keyed: Session` keys documents by addresses of a host kind: `KeyedHandle<T, Address<K>>`,
   `tx.draft(meta, Session({ id }))`; `keys()` yields addresses. Only addresses of the kind are taken (a string, the
@@ -1273,6 +1281,8 @@ host.serve(DraftStore, (_, self) => {               // local, empty params: may 
 - **No plugin reads or writes another plugin's documents** (Chord or Durable). Data crosses plugins only through
   state and methods. Data core enforces lives in a format core owns and is handed to core through its API when the data is
   created (`createConversation` with `init`), never written into core's documents directly.
+- **Column sets (slice 14):** a plugin's contract may declare a column set of one of its tables (section 10);
+  another plugin's condition or join may read those columns, in queries only. Nobody writes through one.
 - **Invariants across owners** are enforced by the owner of the dependent data, which reconciles from the other
   owner's state with an idempotent routine. No cross-owner transactions, no "notify the other owner" calls that can
   be lost:
@@ -1354,13 +1364,21 @@ host.serve(DraftStore, (_, self) => {               // local, empty params: may 
   }, ctx);
   await edits.get({ id }, ctx);                                    // outside: committed state, ctx last
   ```
-- **Live queries in the commit step (owner, 2026-11-03; section 11):** a transaction that writes a table with live
-  queries (`self.query`) stages one more step write after its own writes: it reads each such query on the step's
-  backend transaction (so it sees the commit's rows, one `SELECT` counted in `chord.store.statements` and
-  `chord.query.runs`), writes nothing and records nothing in the outbox; the rows are adopted with the documents in the
-  commit's batch. A refused step adopts nothing. At activation the queries run right after the tables are prepared,
-  before the references are bound. A transaction writing no table with a live query stages nothing (one map lookup per
-  written table).
+- **Reads in the commit step (owner, 2026-11-03; slice 14; section 11):** the store keeps which reads read which
+  table (`store.reads`: the owner's `self.query` windows, named queries read with `self.liveQuery`, counts),
+  whoever owns them. A transaction that wrote tables stages one more step write after its own. Inside the commit
+  step it takes the reads over those tables from the index as it is then (a read opened while the commit waited in
+  the queue is refreshed by it), runs the skip test for each, and runs the others again on the step's backend
+  transaction (one `SELECT` each, `chord.query.runs`); it writes nothing and records nothing in the outbox; the rows
+  are adopted with the documents in the commit's batch. A refused step adopts nothing.
+- **The skip test (slice 14 §3.3):** a skip proves the result unchanged by the row before the write (the keys and
+  matched values the read kept of its last run, the row past its bound included) and by the row after it (the
+  **probe**: the read's own statement, its condition and range, limited to the rows the written row pairs with,
+  asking for one row; `chord.query.probes`, at most eight per read and step: past that the read runs). An `update`
+  that assigns none of the columns a read depends on skips without a probe. Where the value before is unknown and matters (a matched column outside the set's key), the read
+  runs. There is no second evaluator: the database decides with the real condition. The store's backend interface
+  gains nothing SQL-specific. `deleteWhere`, an `updateWhere` of a column a read depends on, and a host data import
+  or delete run every read of the table.
 - **The outbox (owner, 2026-10-26):** optional, `openStore(backend, ctx, { outbox: true })` (an omitted option keeps the
   persisted setting; switching needs an explicit `true` or `false`), persisted in the store's
   metadata (turning it on starts sync from an archive at the current `lastSeq`); a table in the store's backend,
@@ -1427,7 +1445,31 @@ Spec `host-keyed/spec.md` §2 to §5.
   `host`.
 - **`host(Kind)` columns:** a non-`opt` `str` column holding canonical address keys (`{ type: "str", host: "<kind>" }`
   in the catalog and the fingerprint), at most one per table, read as addresses. The definition adds the index `host`
-  over it unless the key starts with it; `evolveTable` cannot add a host column (no default). Queries compare it with `eq`, `ne`, `inArray` only.
+  over it unless the key starts with it; `evolveTable` cannot add a host column (no default). Queries compare it with
+  `eq`, `ne`, `inArray` only, and match it in `exists` and `join` as any column of a set's key or declared index.
+- **Column sets (slice 14):** `defineColumns(name, { columns, key, indexes? })` in a contract file names the scalar
+  columns of a table others may use, its key, and the indexes others may match by. The table spreads
+  `...Set.columns` into its columns and declares `exposes: Set` (`evolveTable(previous, edit, { exposes })` for a
+  later version); `defineTable` checks both at declaration. No versions: the columns a read uses are checked by name
+  and type when it opens, and again when the binding changes: a joined set's key must still be the key the read
+  matches whole, and the columns an `exists` compares must still have their types. The store's binding of the name to a table follows the
+  committed code: made when the owner's attempt has prepared the table, moved or dropped by its successor, dropped
+  when the object ends; two tables exposing one name fail the second owner's activation, naming both. A read over a
+  set nobody serves fails `unavailable` and runs when one appears; a run a commit's step made before a binding
+  changed is dropped when that commit adopts (it is of a statement the read no longer has). While a bound table is created or migrated, other
+  owners' reads over it are held (not run, their rows kept); when it is ready they compile again and run once.
+- **`exists` and `join` (slice 14):** `exists(Set, { setColumn: column, … }, (t) => condition)` is true for a row
+  when the set's table has a row equal in the matched columns that satisfies the condition; `existsNode(Set, match,
+  node)` takes the condition as data. `query(Table).join(Set, (row) => ({ keyColumn: row.column, … }))` pairs each
+  row with the one row of that key, as an inner join driven from the query's own table; the partner's columns may
+  be compared, ordered by and handed to the mapping. **Two tables are matched only by equality to the set's key or
+  to one of its declared indexes** (a leading prefix for `exists`, the whole key for `join`). A `NULL` in a matched
+  column matches nothing. `updateWhere`, `deleteWhere` and a `when` take neither.
+- **Conditions as data (slice 14):** `compile(Set, condition)` gives a condition as plain data; a builder takes one
+  with `query(Table).whereNode(Set, node)`, for the query's own set or a joined one, which checks the whole node
+  before anything is rendered (one known kind per node, operand types, every column, a depth bound). Conditions are
+  built by server code, never taken from a client. There is no substring filter: filtering as you type goes
+  through a search plugin's method.
 - **Filtered archives:** `exportHostData(store, address)` writes the address's records and rows in the archive
   format (the tables with a host column of its kind, only its rows; its records), holding the commit queue.
 - **Import** (the host's `importHostData(parts, ctx, { address?, existing? })`, one commit): the archive is
@@ -1461,7 +1503,11 @@ Spec `host-keyed/spec.md` §2 to §5.
 | Durable's views | the conversation view, task graph and Durable documents | `Watchable`s through Durable's watches; feed derives and state members |
 | paged method | large or queryable collections | a method returning pages (chat history) |
 | table | a plugin's own records with queries (owner, 2026-10-21) | `self.table`, the store's query DSL |
-| live query | a bounded window of the object's own table, live (owner, 2026-11-03) | `self.query(table, q, limit)` |
+| live query (own) | the owner's own bounded window, live (owner, 2026-11-03) | `self.query(table, q, limit)` |
+| named query | a store's records as others read them (slice 14) | `queries(Item, { name: argsSchema })`, `self.queries` |
+| live query (named) | the first `n` rows of a named query, live | `self.liveQuery(namedQuery, args, { first })` |
+| count | the exact number of rows of a named query: every matching row read on each run | `self.count(namedQuery, args)` |
+| list | a named query a screen loads more of | `self.list(name, [[namedQuery, args]], { first })` |
 | plugin database | derived data only: full-text search, caches (rebuilt, never synced) | a native opened by its owner |
 
 App state lives in Chord documents; only transcript-bound data (entries, documents that fork and rewind with a
@@ -1470,20 +1516,67 @@ conversation) lives in Durable.
 **Live queries** (decision "Live queries over an object's own tables", owner, 2026-11-03): `self.query(table, q,
 limit)` in the factory of the table's owner returns a `Watchable` of `q`'s rows (at most `limit`, in its order): a
 state member, a derive source, an `on` source. Chord runs it before the object goes live (with its documents and
-tables, section 10) and again in the commit step of every commit of the object whose staged writes touch that table;
+tables, section 10) and again in the commit step of every commit that can change it (the skip test, section 10);
 the rows are adopted in the commit's batch and published as `diffRevisions` ops (W1), unchanged rows kept the same
-objects so the diff compares them by identity. Rules: only the object's own tables (only it writes them, so its
-commits are the exact invalidation: a commit not writing the table runs nothing); the query is fixed for the attempt
-(params decide it); **a limit is required** (`invalid/args` at declaration; the store's query language keeps the limit
+objects so the diff compares them by identity. Rules: its own unnamed read (other objects read named queries); the
+query is fixed for the attempt (params decide it); **a limit is required** (`invalid/args` at declaration; the store's query language keeps the limit
 an argument of the runner, as `page` has it). A run that fails (a row the code cannot read) is a failed member, as a
 throwing derive (one failure call, `query_failed` once per episode, `[["r", rows]]` at the next good run); the object
 stays live. It is no native: a restart's successor runs its live queries again at its activation (section 21). A host
-data import or delete (§10) is the one other writer of an object's tables: it re-runs the object's live queries over
-tables with a host column of its kind inside its commit step and adopts them in its batch. Cost: one query per
-touching commit, bounded by the limit (100 rows: about 60 µs unwatched, 80 µs watched, `benchmarks.md`); **there may
-be dragons** for tables written hundreds of times a second. Incremental maintenance of the result (row-level changes
-kept in memory, a re-run only when a removal empties the window or a bulk write hides which rows changed) is left for
+data import or delete (§10) is the one other writer of an object's tables: it runs every read over a table with a
+host column of its kind again (joined and `exists` tables included) inside its commit step and adopts them in its
+batch. Cost: a bound limits the rows a run returns; what it reads depends on the index its order and condition can
+use, and every run blocks its host (the store's backend is synchronous). 100 rows: about 60 µs unwatched, 80 µs
+watched (`benchmarks.md`). **There may be dragons** for a table written hundreds of times a second with many live
+queries the skip test cannot skip. Maintaining a page from the written rows instead of running it again is left for
 when a case needs it.
+
+**Named queries** (slice 14, `slice-14.md` §3): a `local` contract lists them, `members: { sessions:
+queries(SessionRow, { visible: argsSchema, one: argsSchema }) }`, the argument schemas part of the fingerprint. The
+table's owner returns what `self.queries(table, { map, reads?, partnerReads? }, { name: builder })` gives: one
+builder per listed query, a pure function of its arguments returning a query of the table (joined or not); a query
+the contract does not list is private to its owner and brings its schema (`name: [argsSchema, builder]`). `map`
+gets only the columns `reads` (and `partnerReads`) list: a change of another column is no change of an item. Any
+object on the store's host declares `self.liveQuery(ref.sessions.one, args, { first })` in its factory (its member
+is `{ rows, more }`), `self.count(…)` (the exact number, expensive: every run reads every matching row, and every
+write to its tables runs it again except an `update` that assigns none of its condition's columns), or calls
+`ref.sessions.visible.page(args, n, ctx, { after })` anywhere (not live). `args` may be a watchable of the
+arguments: the member shows the previous rows until the read for the new arguments has run, then switches in one
+frame. A reader's reads open during its activation, after the member check and before its natives (a waiting
+attempt holds none; arguments computed from a followed source or a native have no value there and fail the attempt
+`broken`); one whose first
+run fails (a column set nobody serves) parks its object `failed { waiting }` until a later run
+succeeds; arguments the schema refuses and a builder that throws fail it `broken`. A `queries` member cannot be
+re-exposed and exists in `local` contracts only. The wrong form of each call throws naming the other
+(`self.query` given a named query, `self.liveQuery` given a table). The index rule: a named query names, in a
+comment, the index its order and its condition's selective part run on; an `inArray` on one column with an order on
+another walks the order's index (measured: 2.3 ms instead of 0.07 ms at 10,000 rows), so every named query gets a
+plan test.
+
+**Lists** (slice 14, `slice-14.md` §4): `self.list(name, [[namedQuery, args]], { first })` returns `{ value, more }`:
+`value` is a `Watchable` of `{ rows, moreAfter }` (a state member), `more(ctx)` a method's body. "Load more" must
+send only the new rows, loaded rows must stay live, and a row that moves (a list by last touch) must leave no gap
+and no duplicate; a range by count cannot do that (when a row moves to the top, "the first 50" loses its old last
+row to no page). So a list's pages tile the query's order between fixed **bookmarks** (positions: the order
+columns' values): page 1 is `(start, b1]`, page 2 `(b1, b2]`, each one read of the store with its bounds, and the
+last page is open at its end while no row is known behind it. The open last page reads `first + 1` rows; when a run
+finds a row behind what it shows, its bound is fixed at its last shown row and `moreAfter` turns true until `more`
+opens the next page (`moreAfter` true may be stale: the `more` that loads nothing turns it false). A touched row
+leaves its page's range and enters the first page's: both run in that commit and the value changes by one move.
+Pages split and merge when their runs are adopted, from the rows just read, with no I/O (a page of more than two
+pages' rows is cut; neighbours with at most one page's rows together become one); a run belongs to the interval it
+read, so in a commit group a later run lands in whatever pages cover its interval after an earlier one's cut or
+merge, which then know its rows and whether it was cut by its limit. A failed page fails the list until a run of
+that page succeeds; arguments the builder refuses fail it until arguments build again, and nothing read before may
+heal either. A bounded page reads at most four pages' rows: a bulk write past that is cut, the rest of its range loads
+next, and the value ends at the cut meanwhile, a prefix, never a hole. One list object per screen (a remote object
+with the screen's own id in its params); a re-hold sends everything it has loaded. The object keeps each list's
+bookmarks by the list's name across its attempts: a reload's successor opens the pages the list had and goes live
+once each ran, one frame; arguments that follow a value and a provider's restart reopen every page under its
+bookmark and switch in one frame (a `more` called while such a switch is pending or the provider restarts waits and loads behind
+the pages the list shows next), and so does a change of a column set's binding the query names (a publisher's migration may change every
+page's rows and order: the pages are never read again one by one); another order starts the list again with a first page. A keyed document's keys
+still have no live list. Lists over several named queries merged into one are carry-over (`slices.md`).
 
 ### Watchables (owner, 2026-10-21; log "Watchable and one watch API", W1-W4)
 
@@ -2179,8 +2272,9 @@ type ReloadReport = {
   and jobs it declares with their versions, its contributions and requests, runs the checks an
   attempt makes without effects (declared twice; persisted data outside a stable identity; contributions outside a
   host-lifetime object; a document or job at an older version, or at its version with another schema), and hands out
-  inert handles. Staging is synchronous, so no request or arriving hold meets it half done (audit A1: model §1's
-  `installing` is cut).
+  inert handles (`self.queries`, `self.liveQuery` and `self.count` among them: a recorded `exposes` makes or changes
+  no column-set binding; a column set is checked when a read opens, not by the closure rule). Staging is
+  synchronous, so no request or arriving hold meets it half done (audit A1: model §1's `installing` is cut).
 - **The commit** (one batch): the served types become the staged ones (an unchanged plugin's entries stay as they
   are); a removed plugin's registry provider goes (its readers wait `not_served`), a reloaded one's replaces the old
   (`RegistryRecord.serve` replaces), the reloaded plugins' facet contributions are replaced by plugin (object
@@ -2201,6 +2295,16 @@ type ReloadReport = {
   A restarted object gets a new instance id (an old activation chain never matches it); a retried one keeps it as
   any retry does. Cycles are checked again for the new attempts; `parked_long` is unchanged. Live queries are no
   natives (section 11): the successor's run at its activation.
+- **Reads across a restart (slice 14 §3.2, §5):** a restarted provider of named queries does not restart its
+  readers: when its old attempt ends (its admitted work settled, before the successor prepares the tables), the
+  reads of its queries leave the store's index and the readers keep their last values; when the successor is live,
+  each reader reads its query for the current arguments and gives one frame, or none when the rows are equal. While
+  the successor creates or migrates a table, every read over it is held. A restarted owner of a table with `exposes` binds the set again once its tables are
+  prepared: while it creates or migrates the table, other owners' reads over it are held, then compile again and
+  run once; a column a read uses that is gone or retyped fails exactly that read (`invalid/args`), and a set exposed
+  no more fails its reads `unavailable` until one serves it. A reader restarted in the same reload opens its reads
+  when the table is ready, showing `loading` meanwhile. A list's bookmarks are its object's, by the list's name:
+  the successor opens the pages the list had, and bookmarks of another order start it again.
 - **Fates start in the plan's order**, removals first; the restarts' readiness and successors start once every fate
   started, so the requests they bind meet the new served types only.
 - **Old work** (decision "Reload restarts every affected object; old work finishes on old code", rule 2): the calls
@@ -3108,6 +3212,8 @@ Apps (p3), from the functionality map, decided per domain when p3 is designed:
 | document | `version` plus schema fingerprint | pure `migrate`, on access; a schema change without a bump fails the object `broken` |
 | job | `version` | `accepts` maps older args and results forwards (`finish`, `running`); the state document's own `migrate`; `blocked` without an adapter or for a newer version |
 | native | none | the object restarts on reload |
+| column set (slice 14) | none | checked by column name and type when a read opens, and again when its binding changes |
+| named query (slice 14) | its contract's (the argument schemas are in the fingerprint) | as any member; edits and `accepts` for named queries are carry-over |
 | Durable tasks and documents | `version` | Durable's `migrate` |
 | link protocol | protocol version | refused; hosts update together |
 | UI components, Chord and app APIs | none yet | exposed as they are; versioned with an SDK later |
@@ -3240,7 +3346,8 @@ Chord reports traces, events and metrics through `@earendil-works/pi-telemetry`;
 
 - **The schema:** `CHORD_TELEMETRY_SCHEMA` (root export, `defineTelemetrySchema`) declares every span, event and metric
   Chord records with its attributes; the cost counters (`chord.data.*`, `chord.link.*`, `chord.store.*`,
-  `chord.query.runs`, `chord.cycle.visits`, `chord.derive.*`, `chord.registry.*`, `chord.contract.adapts`) are recorded
+  `chord.query.runs`, `chord.query.probes`, `chord.query.skips`, `chord.query.rows` (rows returned to Chord: output,
+  not what the backend scanned), `chord.cycle.visits`, `chord.derive.*`, `chord.registry.*`, `chord.contract.adapts`) are recorded
   through it (`chordMetrics(metrics)`: typed instruments made once per adapter's metrics object and name, a `WeakMap`;
   the NOOP metrics share one set). Ids (object labels, run ids, address keys) are span attributes only.
 - **Spans:** `chord.call` (a consumer's call of a remote member, until its reply), `chord.method` (a provider running a
@@ -3371,6 +3478,11 @@ before/after per hop: `apps/p2/docs/p3-reviews/v2-cost-model.md`.
 | emit | one entry on the host's list, no Delta encoder, pending queue or diff; at the flush each value JSON-encoded (and compressed above the threshold) once per representation sent (the current version, each mapped version), the part reused for every hold and link; each `event` envelope then writes it, per recipient (measured, `benchmarks.md`: 13 µs delivered to one client, 64 µs to ten, one encode either way) |
 | relay, per event message | as any message (envelope only, parts never parsed), one ticket per message; never an ack of its own |
 | contracts without events | nothing per binding: no event record on a reference, no event nodes on a remote binding, no taps on a hold, shared empty event names (measured against the commit before events, `benchmarks.md`: equal time, a few dozen bytes per binding for the added fields) |
+| a commit writing a table nothing reads live | one map lookup per written table |
+| a commit writing a table with reads (slice 14) | per read the skip test: a set lookup, then at most one keyed probe (about 4 µs through Chord, `benchmarks.md`); one run per read not skipped. Linear in the reads the assigned columns cannot rule out |
+| `exists` | one index probe per row tested |
+| a join | the own rows the own condition admits, one key lookup each, a sort when the order uses a partner column (a team page of 300: 0.4 ms a run) |
+| a count | every row matching its condition, on each run |
 | memory | one authoritative value per document per host; replicas and derived values share structure; one cached value per adapted member, object instance and version (while a reference of the version holds it); events: the host's list until the flush, per link and origin the ticket FIFO (one entry per `event` message in flight), per mapped version one mapping while bound |
 
 **Cost guards:** Chord reports full-value walks, deep copies, encodes, schema validations and materializations as

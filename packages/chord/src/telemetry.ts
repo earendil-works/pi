@@ -325,6 +325,21 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 		"chord.store.commits": { kind: "counter", description: "Store commits.", attributes: {} },
 		"chord.store.statements": { kind: "counter", description: "SQL statements of store commits.", attributes: {} },
 		"chord.query.runs": { kind: "counter", description: "Live query runs.", attributes: {} },
+		"chord.query.probes": {
+			kind: "counter",
+			description: "Keyed probes a commit asked before running a live query again.",
+			attributes: {},
+		},
+		"chord.query.skips": {
+			kind: "counter",
+			description: "Live queries a commit writing their tables did not run again.",
+			attributes: {},
+		},
+		"chord.query.rows": {
+			kind: "counter",
+			description: "Rows live query runs returned (output, not what the backend scanned).",
+			attributes: {},
+		},
 		"chord.cycle.visits": { kind: "counter", description: "Objects a cycle check visited.", attributes: {} },
 		"chord.derive.computes": { kind: "counter", description: "Derive computations.", attributes: {} },
 		"chord.derive.diffs": { kind: "counter", description: "Derive diffs.", attributes: {} },

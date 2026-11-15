@@ -16,6 +16,7 @@ import type { AnyDefinition } from "../documents/internal.ts";
 import type { JobDefinition } from "../jobs/index.ts";
 import type { Registry, RegistryProvider } from "../registries/index.ts";
 import { checkProvider, type RegistryValueSource } from "../registries/internal.ts";
+import { checkExposedOnce } from "../store/column-set.ts";
 import { checkLiveQuery } from "../store/live-query.ts";
 import type { Query } from "../store/query.ts";
 import { tableSqlName } from "../store/sql.ts";
@@ -26,6 +27,15 @@ import type { StoreSelf } from "./attempt.ts";
 import { type Facet, type FacetContribution, type ServedEntry, setUp } from "./facet.ts";
 import type { ChordObject, LocalContract, RemoteContract, Served } from "./object.ts";
 import type { Presence } from "./presence.ts";
+import {
+	firstOf,
+	listName,
+	namedBuilders,
+	namedQueryExpected,
+	oneSource,
+	tableExpected,
+	undeclaredTable,
+} from "./read-declarations.ts";
 import { retrySource } from "./retry-on.ts";
 
 /** A plugin's facet as `load` and `reload` take it: its name (its `package.json` name) and its facet. */
@@ -217,13 +227,26 @@ function named(error: unknown, what: string): Error {
 }
 
 /**
- * The value of every handle a recording `self` hands out: any property or call gives it again, and it is never a
- * thenable. Typed `never` (a cast: it stands for every handle type, and nothing reads it as one).
+ * The value of the handles a recording `self` hands out: any property or call gives `inside(handle)` (the handle
+ * itself by default), and it is never a thenable. Typed `never` (a cast: it stands for every handle type, and
+ * nothing reads it as one).
  */
-const INERT: never = new Proxy(() => {}, {
-	get: (_target, property) => (property === "then" ? undefined : INERT),
-	apply: () => INERT,
-}) as never;
+function inert(inside: (handle: never) => never = (handle) => handle): never {
+	const handle: never = new Proxy(() => {}, {
+		get: (_target, property) => (property === "then" ? undefined : inside(handle)),
+		apply: () => inside(handle),
+	}) as never;
+	return handle;
+}
+
+/** Any handle whose kind staging does not follow: a reference and everything reached through one, a derive. */
+const INERT = inert();
+
+/** A declared table's handle: what `self.query` and `self.queries` take, and no reader does. */
+const INERT_TABLE = inert(() => INERT);
+
+/** What `self.queries` returns and each named query of it: what readers take, and `self.query` does not. */
+const INERT_NAMED = inert();
 
 /** A factory's `self` during staging: it records declarations and checks them; it activates nothing. */
 class RecordingSelf {
@@ -236,6 +259,7 @@ class RecordingSelf {
 	readonly #jobs = new Map<string, JobDefinition<unknown, unknown, unknown>>();
 	readonly #contributions = new Map<string, Registry<unknown, unknown>>();
 	readonly #requests: Request[] = [];
+	readonly #listed = new Set<string>();
 
 	constructor(object: ChordObject, served: Served, context: Context) {
 		this.#object = object;
@@ -271,18 +295,64 @@ class RecordingSelf {
 		}
 		const object = this.#object;
 		store.claims.assertTable(tableSqlName(object.served.contract.name, definition.name), object);
+		checkExposedOnce(definition, this.#tables.values(), object.label);
 		this.#tables.set(definition.name, definition);
+		return INERT_TABLE;
+	}
+
+	/** A live query over a table this factory declared (the query names which), limited. */
+	query(table: unknown, q: Query, limit: unknown): never {
+		this.#assertDeclaring("query");
+		const label = this.#object.label;
+		if (table === INERT_NAMED) throw tableExpected(label);
+		const declared = this.#tables.get(q.table.name);
+		if (table !== INERT_TABLE || declared !== q.table) throw undeclaredTable(label, "query");
+		checkLiveQuery(declared, q, limit, label);
 		return INERT;
 	}
 
-	/** A live query over a table this factory declared (its handle is inert: the query names the table), limited. */
-	query(_table: unknown, q: Query, limit: unknown): never {
-		this.#assertDeclaring("query");
-		const label = this.#object.label;
-		const table = this.#tables.get(q.table.name);
-		if (table !== q.table) throw new Error(`${label}: self.query: the table is not one this factory declared`);
-		checkLiveQuery(table, q, limit, label);
+	/**
+	 * Named queries, their readers and lists: the checks an attempt makes on its declarations
+	 * (`read-declarations.ts`), then inert handles. A recorded handle says what it stands for (a table, a named query
+	 * of this object, anything else), so a table given to a reader and a named query given to `self.query` are
+	 * refused here as an attempt refuses them. What a reference's member is, is known only when it is bound: a
+	 * reader given a member that is no named query fails at activation. Staging has no effects: nothing is compiled,
+	 * read or bound, and no bookmark is touched.
+	 */
+	queries(table: unknown, _options: unknown, builders: unknown): never {
+		this.#assertDeclaring("queries");
+		const { label } = this.#object;
+		if (table !== INERT_TABLE) throw undeclaredTable(label, "queries");
+		namedBuilders(label, builders);
+		return INERT_NAMED;
+	}
+
+	liveQuery(query: unknown, _args: unknown, range: unknown): never {
+		this.#assertDeclaring("liveQuery");
+		const { label } = this.#object;
+		firstOf(label, "liveQuery", range);
+		this.#checkNamed(query, "liveQuery");
 		return INERT;
+	}
+
+	count(query: unknown): never {
+		this.#assertDeclaring("count");
+		this.#checkNamed(query, "count");
+		return INERT;
+	}
+
+	list(name: unknown, sources: unknown, options: unknown): never {
+		this.#assertDeclaring("list");
+		const { label } = this.#object;
+		firstOf(label, "list", options);
+		const [query] = oneSource(label, sources);
+		this.#checkNamed(query, `list "${listName(label, name, this.#listed)}"`);
+		return INERT;
+	}
+
+	/** Refuses what a reader was given when it cannot be a named query: a table, or no handle of this `self`. */
+	#checkNamed(query: unknown, declaration: string): void {
+		if (query !== INERT_NAMED && query !== INERT) throw namedQueryExpected(this.#object.label, declaration);
 	}
 
 	derive(): never {

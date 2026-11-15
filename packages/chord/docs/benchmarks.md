@@ -1114,3 +1114,69 @@ joined, measured at about 1.2 µs per key in the profile; the rest in the bindin
 release of a non-final reference makes no `released` error unless it has calls to cancel (an error with its stack is
 the largest single cost of a release). `test/bench/state-binding.ts`'s "over a link: get and release" keeps one
 reference alive, so it now measures a join.
+
+## Slice 14: named queries, the skip test and the probe, lists (2026-11-16)
+
+`test/bench/slice-14.ts`, Node 24.4.1 on the development server (slayer), a SQLite `:memory:` store, `slice-14.md`
+§9's data (10,000 session rows: a club of 3,000 in ten teams of 300 and one of 20, a family of 3,000, 4,000 archived
+elsewhere) and its mix of open reads: 10 family members, 10 club members in two teams each, a guest with 2 shares, a
+member of the team of 20, 20 workers (194 reads: 152 lists with their first page loaded, 21 team counts, 20 workers'
+reads of one row, and the rest). Lists over several sources are not built, so each source of such a list is a list
+of its own here. The script exits 1 when a budget is missed.
+
+```
+slice 14, §9: per run (one read of a page of 50 rows through `page`, Chord's decoding and mapping included)
+  ok   a family member's list, the rule's source (dense): 0.086 ms (budget 2)
+  ok   the team page, T = 300, ordered by the sessions' last touch: 0.393 ms (budget 2)
+  ok   a club member's list, the teams' source (two teams, 600 rows): 0.666 ms (budget 2)
+  ok   a club member's list, the source of what they created: 0.120 ms (budget 2)
+  ok   sparse: a guest with 2 shares among 3,000: 0.050 ms (budget 0.2)
+  ok   sparse: a member of one team of 20 in a club of 3,000: 0.112 ms (budget 0.2)
+  ok   a sidebar's active list, a club member: 0.214 ms (budget 2)
+  ok   a sidebar's recent list, a club member: 0.224 ms (budget 2)
+  ok   a sidebar's active list, the guest: 0.104 ms (budget 2)
+
+slice 14, §9: a touch of a club session at the mix
+  194 reads open; a touch with no read open takes 0.044 ms
+  ok   runs a touch causes: 9 (expected 9)
+  ok   keyed probes a touch causes: 101 (expected 101)
+  ok   reads a touch skips: 185 (expected 185)
+  ok   an ordinary commit, every re-run included: 3.496 ms (budget 5)
+  a touch of a session nobody shows: 0 runs and 109 probes per touch
+  ok   a probe: 0.004 ms (budget 0.02)
+  ok   runs a touch of a session nobody shows causes: 0 (expected 0)
+  reported: an archive of a club session: 21 runs, 32 probes, 6.256 ms
+
+slice 14, §9: reported without a budget: the same touch at ten times the mix
+  1940 reads open: 81 runs, 1010 probes, 31.155 ms
+
+slice 14, §9: a session's 5,000 subagents (a list by last touch, 20 pages loaded)
+  ok   the first page of 50 of 5,000 (the object's activation included): 0.641 ms (budget 2)
+  ok   rows loaded by 20 pages: 1000 (expected 1000)
+  ok   runs a message causes (the page the child left, the first page): 2 (expected 2)
+  ok   a message: one child to the top, 20 pages loaded: 0.630 ms (budget 5)
+  after 10,000 touches: 1000 rows loaded in 26 pages
+  ok   pages for the loaded rows after 10,000 touches: 26.000 pages (budget 41)
+
+all of §9's numbers for the built parts are met
+```
+
+- **Per run** (through `page`, which also compiles the plan each time; a live read compiles once): every kind of
+  read is inside its budget. The slowest are the reads driven from a team's rows and ordered by the sessions' last
+  touch: they read and sort all the driver's rows (300 rows 0.40 ms, 600 rows 0.68 ms).
+- **A touch** (`update(S, { lastTouch, state })` of a club session in one team): 9 runs and 101 keyed probes for
+  194 open reads, 3.5 ms, inside the 5 ms budget. About 3 ms of it are the nine runs (two team pages, two club
+  lists' team sources, four sidebar lists, the session's worker); the 101 probes take about 0.4 ms (4 µs each:
+  about 2 µs in SQLite, the rest binding and the call). With the statement texts rendered on every call, and plain
+  live queries in place of lists, the same touch took 5.07 ms and missed the budget; caching the texts per plan
+  brought it to 4.4 ms, a list's bounded first page to 3.6 ms.
+- **Without the skip test** every read over the session table would run: about 150 runs, estimated at 14 ms from
+  the per-run numbers.
+- **Ten times the mix** (1,940 reads, no budget): 81 runs, 1,010 probes, 31 ms. The step is linear in the open reads
+  the assigned columns cannot rule out; a host with thousands of open lists over one hot table is where "maintain a
+  page from the written rows" (carry-over) or more hosts come in.
+- **An archive** of a club session assigns a condition column of the team counts: all 21 run, 6 ms (reported).
+- **A session's 5,000 subagents:** the first page, the list object's activation included, 0.64 ms; a message to a
+  child in the middle of 20 loaded pages runs two pages (the one it left, the first) in 0.6 ms (one compiled plan
+  per list since code review round 1; 0.9 ms with a plan per page); after 10,000 such
+  touches the 1,000 loaded rows are in 26 pages (at most 2 × rows / page size, by the merge rule).

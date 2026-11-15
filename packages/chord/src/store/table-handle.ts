@@ -7,8 +7,9 @@ import { ChordError } from "../data/index.ts";
 import { invalid } from "../data/internal.ts";
 import type { SqliteValue } from "../sqlite/index.ts";
 import type { Columns, RowOf } from "./columns.ts";
-import type { LiveQueries } from "./live-query.ts";
-import { decodeCursor, encodeCursor, type Query } from "./query.ts";
+import { readPage } from "./page.ts";
+import type { Query } from "./query.ts";
+import { ReadPlan } from "./read-plan.ts";
 import { TableSql } from "./sql.ts";
 import type { ChordStore } from "./store.ts";
 import type { KeyOf, TableDefinition } from "./table.ts";
@@ -38,15 +39,12 @@ export interface Table<C extends Columns, K extends readonly string[]> {
 export type TableOf<D> = D extends TableDefinition<infer C, infer K> ? Table<C, K> : never;
 
 /**
- * Who owns a table handle: its object (whose transactions alone write it), its live queries, liveness check and live
- * failure.
+ * Who owns a table handle: its object (whose transactions alone write it), its liveness check and live failure.
  */
 export type TableOwner = {
 	readonly label: string;
 	/** The object's documents: a transaction of another object refuses the handle. */
 	readonly scope: object;
-	/** The object's live queries, across its attempts: what a commit writing the table re-runs. */
-	readonly queries: LiveQueries;
 	/** Throws `released` once the object ended. */
 	assertLive(): void;
 	/** A row the code cannot read (a `json(...)` cell, slice 6a §9) fails the owner `broken` (§1.4). */
@@ -71,32 +69,9 @@ export class TableHandle implements Table<Columns, readonly string[]> {
 	}
 
 	async page(q: Query, limit: number, context: Context, options: PageOptions = {}): Promise<Page<RowOf<Columns>>> {
-		this.owner.assertLive();
-		this.assertVersion();
-		this.#assertQuery(q);
-		if (!Number.isSafeInteger(limit) || limit < 1)
-			throw invalid("args", `${this.definition.name}: limit is a positive integer`);
-		const order = q.order;
-		const after =
-			options.after === undefined ? undefined : decodeCursor(this.definition, this.sql.table, order, options.after);
-		const statement = this.sql.select(q.condition, order, after, limit + 1);
-		const stored = await this.store.read(
-			(executor) => executor.all<{ [column: string]: SqliteValue }>(statement.sql, ...statement.params),
-			context,
-		);
-		const more = stored.length > limit;
-		if (more) stored.length = limit;
-		const items = stored.map((row) => this.decode(row, context));
-		if (!more) return { items };
-		const last = stored[limit - 1]!;
-		return {
-			items,
-			next: encodeCursor(
-				this.sql.table,
-				order,
-				order.columns.map((column) => last[column]!),
-			),
-		};
+		const page = await readPage(this.store, this.#plan(q, "rows"), limit, options.after, context);
+		const items = page.stored.map((row) => this.decode(row, context));
+		return page.next === undefined ? { items } : { items, next: page.next };
 	}
 
 	async *rows(q: Query, context: Context): AsyncIterable<RowOf<Columns>> {
@@ -120,15 +95,32 @@ export class TableHandle implements Table<Columns, readonly string[]> {
 	}
 
 	async count(q: Query, context: Context): Promise<number> {
-		this.owner.assertLive();
-		this.assertVersion();
-		this.#assertQuery(q);
-		const statement = this.sql.count(q.condition);
+		const statement = this.#plan(q, "count").count();
 		const row = await this.store.read(
 			(executor) => executor.get<{ readonly count: number }>(statement.sql, ...statement.params),
 			context,
 		);
 		return row?.count ?? 0;
+	}
+
+	/**
+	 * The plan of a read of `q` through this handle, checked: the object is live, the handle's version is the store's,
+	 * the query is of this table and joins nothing (a handle reads its own table's rows; a joined query is a named
+	 * query's, which maps the pair). Its `exists` are compiled against the store's bindings.
+	 */
+	#plan(q: Query, shape: "rows" | "count"): ReadPlan {
+		this.owner.assertLive();
+		this.assertVersion();
+		if (q.table !== this.definition) {
+			throw invalid(
+				"args",
+				`${this.owner.label}: a query of table "${q.table.name}" run on "${this.definition.name}"`,
+			);
+		}
+		if (q.joined !== undefined) {
+			throw invalid("args", `${this.owner.label}: a joined query is read as a named query, not through a table`);
+		}
+		return new ReadPlan(q, this.sql.table, {}, shape, this.store.reads);
 	}
 
 	/**
@@ -156,16 +148,6 @@ export class TableHandle implements Table<Columns, readonly string[]> {
 					: new ChordError({ code: "unavailable", message: String(error) }, { cause: error });
 			this.owner.fail(failure);
 			throw failure;
-		}
-	}
-
-	/** A query of another table is refused (`invalid/args`). */
-	#assertQuery(q: Query): void {
-		if (q.table !== this.definition) {
-			throw invalid(
-				"args",
-				`${this.owner.label}: a query of table "${q.table.name}" run on "${this.definition.name}"`,
-			);
 		}
 	}
 }

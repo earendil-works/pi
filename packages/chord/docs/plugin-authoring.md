@@ -85,6 +85,64 @@ host.serve(Store, (_params, self) => {                 // a local type with empt
 - Never read a table in `self.open` to fill a window: a live query reruns by itself after every commit and at a
   reload's restart; a read in `self.open` is a one-time snapshot.
 
+## Queries other objects read
+
+`self.query` is for your own windows. What other objects read, a store offers under names (slice 14):
+
+```ts
+// contract: the queries, each with the schema of its arguments (part of the fingerprint)
+sessions: queries(SessionRow, { visible: obj({ app: str(), condition: unknown() }), one: obj({ id: str() }) }),
+
+// the table's owner: one builder per listed query; `reads` are the columns the mapping gets
+const sessions = self.queries(rows, { map: rowOf, reads: ["id", "title", "state", "lastTouch"] }, {
+	visible: ({ app, condition }) => query(Rows).where((s) => eq(s.app, app))      // index by_app (app, lastTouch)
+		.whereNode(SessionColumns, condition).orderBy((s) => s.lastTouch, "desc"),
+	one: ({ id }) => query(Rows).where((s) => eq(s.id, id)),
+});
+
+// any object on the store's host
+const store = self.get(SessionsStore, {});
+self.liveQuery(store.sessions.visible, args, { first: 50 })     // Watchable<{ rows, more }>; `args` may be a watchable
+self.count(store.sessions.visible, args)                        // Watchable<number>: read the rule below first
+await store.sessions.visible.page(args, 100, ctx, { after })    // not live: for jobs and scripts
+```
+
+- **Name the index.** Each builder says, in a comment, which index its order and its condition's selective part run
+  on, and gets a plan test. An `inArray` on one column with an order on another walks the order's index: order by
+  the `inArray` column first.
+- **A write names what it changes.** `tx.update(table, key, { lastTouch })` tells every reader which columns
+  changed: the ones that depend on none of them skip for free, the others ask one keyed probe before they run. A
+  `put` tells them nothing. A touch is an `update`.
+- **`reads` is a projection.** A column the mapping does not list is absent (also one the query orders or matches
+  by), and its changes re-run nothing. `partnerReads` is the same for a joined set's row.
+- **A transaction of many rows runs the reads over its table.** A read asks at most eight probes per commit; past
+  that it runs. Imports and bulk writes cost one run per open read, not one probe per row.
+- **A reader's arguments come from what is there when the object activates:** params, references, registries,
+  writables. Reads open before natives and followed sources, so an object waiting on a read holds no native;
+  arguments computed from one fail the object `broken`, with this rule in the message.
+- **A count is exact and expensive.** Every run reads every matching row, nothing caps it, and every write to its
+  tables runs it again unless it is an `update` of no condition column. Count what a key or an index bounds (a
+  team's sessions), never behind a hot condition column. The number of loaded rows is free: `rows.length`, with
+  "+" while `more`.
+- **Another plugin's rows: a column set.** Its contract declares the columns you may use (`defineColumns`), its
+  table `exposes` them. Test `exists(Set, { setColumn: column }, (t) => condition)`, or join one row by its key:
+  `query(Mine).join(Set, (row) => ({ id: row.session }))`. Tables are matched only by equality to the set's key or
+  a declared index.
+- **The driver finds, the condition decides.** Drive a list from rows the person has (their teams, their shares,
+  what they created) and apply their whole condition to what the rows point at. An `exists` is never the selective
+  part of a list: it walks the table for a person who sees few of many rows.
+- **Conditions are built by server code** (`compile(Set, condition)`, `whereNode`, `existsNode`). Clients send
+  values (an app id, a team), never a condition.
+- **No substring filter.** The only text operator is `prefix`. Filtering as you type goes through a search
+  plugin's method, its hits read with a named query; never read everything and filter in a derive.
+- **A screen's list is `self.list`.** `self.list("sessions", [[store.sessions.visible, args]], { first: 50 })`
+  returns `{ value, more }`: `value` (`{ rows, moreAfter }`) is the state member, `more` the method's body. One
+  remote object per screen, with the screen's own id in its params (a fresh id is a fresh list). Never chain
+  `liveQuery` calls or page methods to build a list, and never read "the first n" with a growing n: a row that moves
+  would leave a gap. `moreAfter` may be stale after a delete: a `more` that loads nothing turns it false.
+- **A source of access fails closed.** A read that decides what someone may see throws when it has `more` rows
+  than it read.
+
 ## What a plugin may import
 
 | Import | Resolves to |
@@ -269,7 +327,9 @@ of plugins it has no files of, it declares again, as `Notes` above.
 3. Imports: the app's API at one version, own files, same-root contract files by relative path, other repositories'
    by package name pinned in `dependencies`.
 4. Contracts prefixed with the plugin's name; a version bump for every change of shape.
-5. Live rows of a table through `self.query(table, q, limit)`, never a read in `self.open`.
+5. Live rows of a table through `self.query(table, q, limit)` (your own windows) or a named query read with
+   `self.liveQuery` (other objects), never a read in `self.open`; an index named for every named query; touches as
+   `update`.
 6. Files of one kind named `*.<kind>.ts(x)`.
 7. A test with `testPlugin` and stubs for every name `t.unserved()` lists.
 8. Texts people read in `messages.ts` (`defineMessages`), its catalogs contributed from each facet that renders, state

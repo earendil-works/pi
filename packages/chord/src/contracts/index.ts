@@ -8,7 +8,9 @@ export type {
 	EventSubscription,
 	Implementation,
 	KeyedWatchable,
+	NamedQuery,
 	ParamsOf,
+	QueryPage,
 } from "./contract.ts";
 export { local, remote } from "./declare.ts";
 export { evolve } from "./evolve.ts";
@@ -37,6 +39,8 @@ export {
 	obj,
 	oneOf,
 	opt,
+	type QueriesMember,
+	queries,
 	type Schema,
 	type Static,
 	type StringSchema,

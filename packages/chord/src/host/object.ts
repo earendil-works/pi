@@ -23,7 +23,6 @@ import type { JsonValue } from "../json.ts";
 import { CHAIN } from "../link/internal.ts";
 import type { RegistryContribution } from "../registries/internal.ts";
 import type { DeriveSource } from "../state/internal.ts";
-import { LiveQueries } from "../store/live-query.ts";
 import type { TableDefinition } from "../store/table.ts";
 import { chordMetrics } from "../telemetry.ts";
 import { refusal } from "./adapted.ts";
@@ -31,6 +30,8 @@ import { Attempt, type PinnedKey, type Self } from "./attempt.ts";
 import type { Caller } from "./ctx.ts";
 import type { Dependency } from "./dependencies.ts";
 import type { AnyHost } from "./host.ts";
+import type { ListMemory } from "./list.ts";
+import type { OwnQuery } from "./named-query.ts";
 import type { CloseFailed, NativeCloseReason } from "./native.ts";
 import { OPENING } from "./old-work.ts";
 import { Readiness } from "./readiness.ts";
@@ -257,10 +258,10 @@ export class ChordObject implements Target {
 	#startSuccessor: (() => void) | undefined;
 	/** The objects whose gate its activation's opener waits at now: its wait edges for reload cycles. */
 	#gateWaits: Set<ChordObject> | undefined;
-	/** Its live queries by table, across its attempts; made by the first table it declares. */
-	#liveQueries: LiveQueries | undefined;
 	/** Resolves at its next change of state, for calls waiting at the gate; made by the first one. */
 	#changed: PromiseWithResolvers<void> | undefined;
+	/** What its lists keep across its attempts (slice 14 §4), by list name; made by the first list. */
+	#lists: Map<string, ListMemory> | undefined;
 
 	constructor(
 		host: AnyHost,
@@ -627,6 +628,25 @@ export class ChordObject implements Target {
 		return this.#live().keyedMember(member);
 	}
 
+	/**
+	 * What its list `name` keeps across its attempts: its bookmarks, so a reload's successor opens the pages the
+	 * list had. It goes with the object.
+	 */
+	listMemory(name: string): ListMemory {
+		this.#lists ??= new Map();
+		let memory = this.#lists.get(name);
+		if (memory === undefined) {
+			memory = { signature: "", bookmarks: [], open: true };
+			this.#lists.set(name, memory);
+		}
+		return memory;
+	}
+
+	/** The named query `name` of `queries` member `member` of the live object (slice 14 §3.1). */
+	queryMember(member: string, name: string): OwnQuery {
+		return this.#live().queryMember(member, name);
+	}
+
 	/** Pins `key` of keyed member `member` on the live instance, as a consumer of `version` reads it (`Attempt.pinKey`). */
 	pinKey(member: string, key: string, version: number, context: Context): Promise<PinnedKey> {
 		return this.#live().pinKey(member, key, version, context);
@@ -707,12 +727,6 @@ export class ChordObject implements Target {
 	/** The live instance's declaration of table `table` (SQL name), if it has one (a host data import's history). */
 	declaredTable(table: string): TableDefinition | undefined {
 		return this.instance?.declaredTable(table);
-	}
-
-	/** Its live queries by table (`self.query`), across its attempts: what its commits writing a table re-run. */
-	get liveQueries(): LiveQueries {
-		this.#liveQueries ??= new LiveQueries();
-		return this.#liveQueries;
 	}
 
 	/** Claims this object's documents in `namespace` of the host's store, as `claimTable`. */
@@ -889,7 +903,21 @@ export class ChordObject implements Target {
 	 */
 	remove(cause: FailureCause): void {
 		const teardown = this.#seal({ kind: "removed", error: this.ended(), cause });
+		this.unbindSets();
 		if (teardown.kind !== "none") this.host.ending(this.identity, this.#reported(this.#tearDown(teardown, END)));
+	}
+
+	/**
+	 * The column sets its tables exposed are served no more (slice 14 §5): reads over them fail `unavailable`. A
+	 * table's owner has empty params, so it lives as long as its host serves its type; it leaves in two ways. An
+	 * object whose type a reload removed drops its sets at its seal, so another object may bind the name at once (a
+	 * reload moving a set to another plugin's table ends this object and starts that one in one commit; this object's
+	 * teardown runs later). A closing host drops them when every object is torn down: the readers end with their
+	 * objects, not on a read that failed because its publisher was torn down first.
+	 */
+	unbindSets(): void {
+		const reads = this.host.store?.reads;
+		for (const set of reads?.boundBy(this) ?? []) reads!.unbind(set, this);
 	}
 
 	/** What a reload does to this object, whose type is still served: a live object restarts, any other is retried. */

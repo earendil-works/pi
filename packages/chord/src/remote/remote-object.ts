@@ -389,6 +389,11 @@ export class RemoteObject implements Target {
 		return this.keyedMember(member);
 	}
 
+	/** `queries` members are only in local contracts, as keyed ones (slice 14 §3.1). */
+	queryMember(member: string): never {
+		throw invalid("member", `${this.label} has no queries member "${member}": named queries are local`);
+	}
+
 	/** Keyed members are only in local contracts, whose objects are never held over a link (slice 6a §12). */
 	keyedMember(member: string): never {
 		throw invalid("member", `${this.label} has no keyed member "${member}": keyed members are local`);

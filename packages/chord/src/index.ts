@@ -39,8 +39,6 @@ export {
 	type StoredDocument,
 	writeContent,
 } from "./store/engine.ts";
-/** @internal */
-export type { WhereNode } from "./store/expression.ts";
 export * from "./store/index.ts";
 /** @internal */
 export type { EncodedRow } from "./store/rows.ts";

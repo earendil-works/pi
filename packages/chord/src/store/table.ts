@@ -5,6 +5,7 @@
 
 import type { Address, KindShape } from "../contracts/index.ts";
 import { checkName, hash64 } from "../contracts/internal.ts";
+import { type ColumnSet, checkExposes } from "./column-set.ts";
 import {
 	type Column,
 	type ColumnRecord,
@@ -28,6 +29,8 @@ export type TableOptions<C extends Columns, K extends readonly OrderColumn<C>[],
 	readonly key: K;
 	/** Secondary indexes by name (`[a-z0-9_]+`); each ends with the primary key. */
 	readonly indexes?: { readonly [name: string]: readonly OrderColumn<C>[] };
+	/** The column set other plugins read this table through (slice 14 §5): its columns spread into `columns`. */
+	readonly exposes?: ColumnSet;
 };
 
 /** The key of a row of a table with columns `C` and key `K`: an object with exactly the key columns. */
@@ -93,13 +96,15 @@ export class TableDefinition<
 	readonly hostColumn: HostColumnOf | undefined;
 	/** The version before this one and the migration from it; `undefined` for a base. */
 	readonly evolution: Evolution | undefined;
+	/** The column set this version exposes to other plugins, if any (not part of the fingerprint). */
+	readonly exposes: ColumnSet | undefined;
 	/** Type only: the columns and key. */
 	declare readonly "~columns"?: C;
 	declare readonly "~key"?: K;
 
 	constructor(name: string, options: TableOptions<C, K & readonly OrderColumn<C>[], V>, evolution?: Evolution) {
 		checkName(name, "table");
-		const { version, columns, key, indexes = {} } = options;
+		const { version, columns, key, indexes = {}, exposes } = options;
 		// Declaration policy: JavaScript callers reach these checks.
 		if (!Number.isSafeInteger(version) || version < 1)
 			throw new Error(`${name}: version ${version} is not a positive integer`);
@@ -123,6 +128,8 @@ export class TableDefinition<
 		this.rows = new RowCodec(this.columns, this.key, name);
 		this.refs = columnRefs(this.columns);
 		this.evolution = evolution;
+		if (exposes !== undefined) checkExposes(this, exposes);
+		this.exposes = exposes;
 	}
 
 	/** The column `name`; an unknown one throws (`what` names the use). */

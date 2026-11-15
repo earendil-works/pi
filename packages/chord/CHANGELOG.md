@@ -5,10 +5,19 @@
 ### Breaking Changes
 
 - `telemetryIngestFacet` requires `admit(principal)`: only the pages of principals it admits may send their spans to `PageTelemetry`; a refused principal's hold fails `forbidden`. The app kit admits every signed-in page. Migration: pass `admit` (`() => true` keeps the old behaviour).
+- `HostError` `query_failed` carries `query` (the table's name for `self.query`, the named query's label for `self.liveQuery`, `self.count` and `self.list`) in place of `table`.
 
 ### Added
 
 - `@earendil-works/chord/telemetry-ingest`: the telemetry recorder, the page and worker batches and objects, the ingest facet and the senders, for an app wiring telemetry into hosts of its own.
+- Named queries (slice 14, first part): a `local` contract lists them with `queries(Item, { name: argsSchema })`, the table's owner implements the member with `self.queries(table, { map, reads?, partnerReads? }, builders)`, and any object on the store's host reads one live with `self.liveQuery(namedQuery, args, { first })`, counts it with `self.count(namedQuery, args)` or reads a page with `namedQuery.page(...)`. Arguments may be a watchable.
+- Lists: `self.list(name, [[namedQuery, args]], { first })` returns `{ value, more }`, a list a screen loads more of. Its pages lie between fixed bookmarks, so loaded rows stay live, `more` sends only the new rows, and a row that moves leaves no gap and no duplicate; a reload keeps the pages it had.
+- Column sets: `defineColumns(name, { columns, key, indexes? })` and `defineTable(..., { exposes })` let another plugin's query test `exists(Set, match, condition)`, `existsNode(Set, match, node)` or join one row with `query(Table).join(Set, match)`. `compile(Set, condition)` and `query(Table).whereNode(Set, node)` pass a condition as data (`whereNode` and `existsNode` take the node as `unknown` and check it). A table handle's `page` and `count` take a query with `exists` and refuse one with a join. `evolveTable` takes `{ exposes }`.
+- Telemetry counters `chord.query.probes`, `chord.query.skips` and `chord.query.rows`.
+
+### Changed
+
+- A commit runs a live query again only when it can change it: the store indexes every live read by the tables it uses, whoever owns it, and a commit's step skips the reads its writes cannot affect, by the columns an `update` assigns or by one keyed probe. `self.query` is rebuilt over this; a `put` of a row outside a window costs one more statement (the probe) than before.
 
 ### Fixed
 

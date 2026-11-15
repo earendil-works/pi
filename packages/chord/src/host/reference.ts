@@ -28,6 +28,7 @@ import type { PinnedKey } from "./attempt.ts";
 import { type Caller, withLinkedAbortSignal } from "./ctx.ts";
 import { type EventListener, type EventNode, type HostEvents, subscribe } from "./events.ts";
 import type { KeyedBinding } from "./members.ts";
+import { type OwnQuery, ReferenceQuery } from "./named-query.ts";
 import type { ChordObject, Holder, Removal } from "./object.ts";
 import { ParkedCalls } from "./parked.ts";
 import { type Ended, type Failed, LOADING, ReferenceState, type RefState } from "./ref-state.ts";
@@ -120,6 +121,8 @@ export interface Target {
 	readonly instance: unknown;
 	/** The keyed member `member` of the live object: its ultimate slot (slice 6a §12; only local objects have any). */
 	keyedMember(member: string): KeyedSlot;
+	/** The named query `name` of `queries` member `member` of the live object (slice 14 §3.1; local objects only). */
+	queryMember(member: string, name: string): OwnQuery;
 	/**
 	 * How a consumer of `version` reads keyed member `member`'s documents: mapped back to its version when older
 	 * (slice 7b §7), `undefined` when as they are; `contract_mismatch` when the provider refuses it.
@@ -295,6 +298,10 @@ export class Binding implements Holder, UnboundRequest {
 	 * then (decision "References share one wire hold"); one is seen once that count passes. Made at the join.
 	 */
 	#unseen: Map<string, number> | undefined;
+	/** Who reads its object's named queries: each told when another instance is live (`followInstance`). */
+	#instanceFollowers: Set<() => void> | undefined;
+	/** The instance its followers were told of last, held weakly: an ended instance is kept by nothing here. */
+	#followedInstance: WeakRef<object> | undefined;
 
 	constructor(
 		contract: Contract,
@@ -321,6 +328,10 @@ export class Binding implements Holder, UnboundRequest {
 			}
 			for (const member of variant.state.keys()) reference[member] = new ReferenceMember(this, member);
 			for (const [member, { key }] of variant.keyed) reference[member] = new ReferenceKeyed(this, member, key);
+			for (const [member, { args }] of variant.queries) {
+				const named = [...args.keys()].map((name) => [name, new ReferenceQuery(this, member, name)] as const);
+				reference[member] = Object.fromEntries(named);
+			}
 			for (const [member, method] of variant.methods) methods.set(member, method);
 		}
 		for (const [member, method] of methods) {
@@ -453,6 +464,32 @@ export class Binding implements Holder, UnboundRequest {
 		// Its last values taken: it keeps no node of that instance (GC).
 		if (attachable === undefined) this.#attached = undefined;
 		this.#heldKeys?.follow(BACKGROUND_CONTEXT);
+		this.#toldOfInstance(target.instance);
+	}
+
+	/** Tells the readers of its object's named queries of another live instance (not of none: they keep their rows). */
+	#toldOfInstance(instance: unknown): void {
+		const followers = this.#instanceFollowers;
+		if (followers === undefined || followers.size === 0) return;
+		// A live instance is an object (an attempt, a remote object's binding).
+		if (typeof instance !== "object" || instance === null || instance === this.#followedInstance?.deref()) return;
+		this.#followedInstance = new WeakRef(instance);
+		for (const moved of [...followers]) moved();
+	}
+
+	/**
+	 * Calls `moved` whenever its object has another live instance than the one it was told of last (a restart's
+	 * successor: the readers of its named queries read that one's, slice 14 §3.2), until the returned release.
+	 */
+	followInstance(moved: () => void): () => void {
+		this.#instanceFollowers ??= new Set();
+		const followers = this.#instanceFollowers;
+		followers.add(moved);
+		const instance: unknown = this.target?.instance;
+		if (this.#followedInstance === undefined && typeof instance === "object" && instance !== null) {
+			this.#followedInstance = new WeakRef(instance);
+		}
+		return () => void followers.delete(moved);
 	}
 
 	/**
@@ -683,6 +720,11 @@ export class Binding implements Holder, UnboundRequest {
 	/** The keyed member `member`'s slot (slice 6a §12), as `member` resolves a state member. */
 	keyedSlot(member: string): KeyedSlot {
 		return this.#target().keyedMember(member);
+	}
+
+	/** The named query `name` of `queries` member `member` of the live object, as `keyedSlot` resolves a keyed one. */
+	queryMember(member: string, name: string): OwnQuery {
+		return this.#target().queryMember(member, name);
 	}
 
 	/** How this reference reads keyed member `member`'s documents (`Target.keyedMapping`), as `keyedSlot` resolves. */

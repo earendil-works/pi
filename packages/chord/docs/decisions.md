@@ -2542,6 +2542,75 @@ validation and copies the v2 kernel added around Delta.
   only when a removal empties the window or a bulk write hides which rows changed) is carry-over for when a case
   needs it. Rejected: a window document written beside the table (rows stored twice; app code mirroring every update
   and delete).
+- **Slice 14: reads across owners, named queries, column sets (owner, 2026-11-14 to 2026-11-16: four review rounds
+  by Opus, Sol, Astra and Fable on `slice-14.md`; "no raw SQL, ever"; "no hidden caps"; "the owner dislikes mirrored
+  values"; "counts exist but are marked know what you're doing"; first part built 2026-11-16):** extends "Live
+  queries over an object's own tables" and supersedes its sentence "only it writes them, so its commits are the exact
+  invalidation". (1) `self.query(table, q, limit)` stays the owner's private unnamed read; **named queries** are
+  added (`queries(Item, { name: argsSchema })` in a `local` contract, `self.queries` in the owner,
+  `self.liveQuery(namedQuery, args, { first })` and `self.count` in any object on the store's host); both forms
+  are one mechanism. (2) The store keeps which reads read which table; a commit of any owner chooses the reads it
+  refreshes **inside its commit step** and runs those the skip test cannot rule out. (3) **The skip test has no
+  second evaluator** (round 4, Opus's cut): structural rules (an `update` that assigns none of the columns a read
+  depends on; a key or matched value among the kept ones runs; a matched column outside the set's key runs) plus
+  **the probe**, the read's own statement limited to the rows the written row pairs with. Chosen over mirroring a
+  hot order column into the list's own row (no copies) and over a partial-row evaluator (it caused two of round 1's
+  bugs). An oracle test compares every read with a fresh run after every commit of randomized runs. (4) **Column
+  sets** (`defineColumns`, `exposes`): data crosses plugins also through the columns a contract declares, in
+  queries only; `exists` and a one-to-one inner `join`, matched only by equality to the set's key or a declared
+  index; no versions (checked when a read opens); conditions as data (`compile`, `whereNode`, `existsNode`), built
+  by server code. (5) **Counts are exact, uncapped and expensive**, with no opt-in list (round 4). (6) Argument
+  schemas are the contract's (round 3). (7) A touch is an `update` of the columns it changes: it tells readers what
+  changed. (8) **Lists** (`self.list`, built for one source): pages between fixed bookmarks, tiled, the last
+  page open at its end; splits and merges in the adoption; `moreAfter` may be stale, corrected by a `more` that
+  loads nothing (round 4, Fable's cut of the page that is not shown); the object keeps the bookmarks. Supersedes
+  design §9's "large collections are methods returning pages" for screens. Rejected: a left join; a condition between two tables other than equality to a key or a declared index;
+  a query language or a condition sent by a client; raw SQL in any plugin-facing API and `RETURNING` in the
+  backend interface; a cap on a count; column-set versions; a substring filter in a query. Still to build of the
+  slice: `slices.md`, "Carry-over". (Design §9, §10, §11, §21, §27, §29, §30; `slice-14.md`; `benchmarks.md`.)
+- **Slice 14, code review round 1 (2026-11-16; Opus, Sol, Astra, Fable; four blockers, each reproduced):** refines
+  the entry above. (1) **A run belongs to the interval it read.** A list's runs of one commit, and of a commit
+  group, are computed before any is adopted; a run for a page an earlier adoption cut or merged is applied to the
+  pages covering its interval, which then **know its rows** (the skip test's knowledge is replaced with them) and
+  keep **whether it was cut by its limit** (the rows behind are loaded, not assumed absent). The bug: a merged page
+  kept the keys of its own older run, so a later rename or delete of a patched-in row was skipped. (2) **A
+  provider's reads end with its attempt** (`Reads.retire`): its named queries leave the store's index when the
+  attempt detaches, readers keep their last values and read the successor when it is live; and **every table being
+  created or migrated is held**, not only those exposing a set. The bug: an old statement ran against a renamed
+  column between a migration's commits. (3) **A list or live query shows only what its current arguments read.**
+  A switch is promoted when every page of the new arguments has run; a failed page fails the list until that page
+  runs well; arguments the builder or the schema refuses close the previous reads. (4) **What a read was written
+  for is checked whenever its bindings change:** a joined set's key must be the key the read matches whole, the
+  columns an `exists` compares must keep their types; an object's bindings are reconciled also when its new code
+  declares no table, and dropped at its seal. Also decided there: probes are bounded per read and step (eight,
+  then the read runs: a bulk of puts must not probe per row); no `Change` is built for a transaction whose tables
+  nothing reads; one compiled plan per query, one read per range; `whereNode` and `existsNode` take `unknown` (the
+  check is the trust boundary, so no caller casts); a condition as data on a `host(...)` column takes canonical
+  keys and no ordering; `TableHandle.page` and `count` refuse a joined query; the mapping gets only the columns
+  `reads` and `partnerReads` list; readers open before natives (an attempt waiting on a read holds none); a reload
+  whose new code declares a read wrongly fails in staging and keeps the old code; `query_failed` names the query.
+- **Slice 14, code review round 2 (2026-11-16; two blockers, each reproduced):** (1) **A run belongs to the
+  registration that computed it.** A commit's step may run a read, then a binding changes (the set is withdrawn,
+  moved, its table ready) before the commit adopts: the run is of a plan the query no longer has and is dropped;
+  the registration made since reads for itself. Closing a read registers nothing, so the run a commit made for a
+  list's retired page still reaches the tiling (round 1's rule). The bug: a read failed `unavailable` was healed by
+  the old plan's run. (2) **A closed query registers no read.** A read asked of a closed query is born closed; a
+  list's `more` waits while the list is about to show other pages (its provider restarts; a tiling of new
+  arguments or of a changed binding is pending, its pages perhaps held) and loads behind those, as a call waits at
+  the gate during a swap; its caller's wait is bounded by the caller's context (round 3, Sol: a `more` during a
+  held switch loaded behind the old arguments' pages and was lost). The bug: `more` during a
+  migration registered a read of the old statement, which failed on every later commit. (3) **A binding change
+  reads a list again as one tiling.** When a set a list's query names is bound, moved or its table becomes ready
+  after a migration, rows and their order may be others in every page: the query is compiled again, its owner is
+  told, and the list reads its target again under its bookmarks and switches in one frame, as for new arguments (a
+  live query's one read just runs again). The bug: each page was loaded again on its own, the first adoption cut
+  and merged the others with the rows they had and closed their loads, and a row stayed twice for good. Also: a failed page a
+  retired page's run is patched into stays without a result (the next commit over its tables runs it); a reader's
+  arguments that have no value when it opens (a followed source, a native: opened after the readers) fail the
+  attempt `broken` instead of waiting for what cannot come; `HostError` `query_failed` carries `query` (the table's
+  name for `self.query`, the named query's label otherwise), not `table`; a live query's range is part of its shape;
+  staging's recorded handles say whether they stand for a table or a named query of the object, so a table given
+  to a reader and a named query given to `self.query` fail the reload in staging and keep the old code.
 - **Swaps: dependents first; calls during a swap never see `not_ready` (owner, 2026-11-04: "if swaps can be invisible
   to dependents that's cool, but I fear correctness bugs"; analysis `/tmp/swap-analysis.md`):** the problem: a reload
   swapping a provider and its pure dependent (61's `todo.store` and `todo.todos(groceries)`) parked the dependent

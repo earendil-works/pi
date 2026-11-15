@@ -13,6 +13,7 @@ import {
 	LOCAL,
 	type MemberKind,
 	type MethodData,
+	type QueriesData,
 	type ShapeOf,
 } from "./contract.ts";
 import { checkMembers, eventSnapshot, keyedSnapshot, memberPath, readMethod } from "./declare.ts";
@@ -257,6 +258,8 @@ type DraftVariant = {
 	readonly methods: Map<string, MethodData>;
 	readonly keyed: Map<string, KeyedSnapshot>;
 	readonly events: Map<string, Snapshot>;
+	/** `queries` members are carried over as they are: no edit changes one yet (slice 14, carry-over). */
+	readonly queries: ReadonlyMap<string, QueriesData>;
 };
 
 /** The next version under construction, and the remote editor. Every edit is checked as it is made. */
@@ -278,9 +281,15 @@ class Draft {
 		this.#version = current.version + 1;
 		this.path = `${data.name} v${this.#version}`;
 		this.#variants = new Map(
-			[...current.variants].map(([name, { state, methods, keyed, events }]) => [
+			[...current.variants].map(([name, { state, methods, keyed, events, queries }]) => [
 				name,
-				{ state: new Map(state), methods: new Map(methods), keyed: new Map(keyed), events: new Map(events) },
+				{
+					state: new Map(state),
+					methods: new Map(methods),
+					keyed: new Map(keyed),
+					events: new Map(events),
+					queries,
+				},
 			]),
 		);
 		this.#kinds = new Map(data.kinds);
@@ -426,8 +435,8 @@ class Draft {
 	}
 
 	#refuseDeclared(variant: string, member: string, kind: MemberKind): void {
-		const { state, methods, keyed, events } = this.#variant(variant);
-		if (state.has(member) || methods.has(member) || keyed.has(member) || events.has(member)) {
+		const { state, methods, keyed, events, queries } = this.#variant(variant);
+		if (state.has(member) || methods.has(member) || keyed.has(member) || events.has(member) || queries.has(member)) {
 			throw new Error(`${this.#path(variant, member, kind)}: already declared`);
 		}
 	}
