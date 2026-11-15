@@ -344,12 +344,6 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
   is gone. The workers component closes a worker's link and aborts its calls before it publishes the exit or starts a
   successor, and records each running worker's incarnation before its first call. p2's hand-written generation
   checks become unnecessary (bookkeeping that is not a staleness check stays).
-- **Slice 1's redo (owner, 2026-11-15):** p3's kit (`apps/p3/src/kit/`) is typed to p3: no principal parameter, it
-  imports p3's name, API, kinds and principals, and `startServer` takes only what the start script decides. `forward`
-  takes a fourth argument, the members a view implements itself. The session row's `state` and `lastTouch` get their
-  writers with the harness (slice 3). The copied kit's names are p3's (`p3.info`, `p3.worker-info`, `p3.sign-ins`, the
-  cookie `p3-sign-in`, `/_p3/owner`). The default data directory is `~/.pi/p3` (supersedes `~/.p3` of the first plan).
-  Chord exports `memberNames(contract, variant)` for `forward`; p3's API wraps nothing of Chord's `remote`.
 - **The p3 kit, slice 1 redo (owner, 2026-11-15, decisions A to F):** the kit copied into p3 is typed to p3 (no
   principal parameter; it imports p3's name, API, kinds and principals; `startServer` takes only `dataDir`, `root`,
   `listen`, the session worker kind and `onError`) and keeps only what slice 1 uses (later slices add back what they
