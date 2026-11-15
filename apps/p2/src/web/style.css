@@ -2664,6 +2664,15 @@ button.diff-number:hover {
 	align-items: center;
 	gap: var(--s1);
 }
+/* The model ellipsizes; the thinking level and the star stay whole. */
+.model-controls {
+	display: flex;
+	align-items: center;
+	gap: var(--s1);
+	min-width: 0;
+	color: var(--muted);
+	font-size: var(--fs-xs);
+}
 .model-control {
 	min-width: 0;
 	max-width: 100%;
@@ -2672,6 +2681,26 @@ button.diff-number:hover {
 	font-size: var(--fs-xs);
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+.thinking-control {
+	flex: none;
+	color: var(--muted);
+	font-size: var(--fs-xs);
+}
+.default-control {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	padding: 0 var(--s1);
+	color: var(--faint);
+}
+.default-control:active {
+	color: var(--text);
+}
+@media (hover: hover) {
+	.default-control:hover {
+		color: var(--text);
+	}
 }
 .model-control.static {
 	cursor: default;
@@ -3001,9 +3030,6 @@ button.diff-number:hover {
 .sheet-sticky .search {
 	border-bottom: 0;
 }
-.model-default {
-	margin: var(--s2) 0 0;
-}
 @media (min-width: 700px) {
 	.sheet-layer {
 		align-items: var(--layer-align, center);
@@ -3063,27 +3089,6 @@ button.diff-number:hover {
 	font-size: var(--fs-sm);
 }
 
-/* Thinking level: text tabs aligned on the inset. */
-.segments {
-	display: flex;
-	flex-wrap: wrap;
-	gap: var(--s4);
-	min-width: 0;
-	margin: 0;
-	padding: 0;
-	border: 0;
-}
-.segments button {
-	height: var(--control-sm);
-	color: var(--muted);
-	font-size: var(--fs-sm);
-	text-transform: capitalize;
-}
-.segments button[aria-pressed="true"] {
-	box-shadow: inset 0 -1px var(--text);
-	color: var(--text);
-	font-weight: var(--fw-strong);
-}
 .model-list section h3 {
 	padding-top: var(--s4);
 }
@@ -3630,7 +3635,6 @@ button.history-edge:disabled {
 	.workspace-row,
 	.foot-button,
 	.text-action,
-	.segments button,
 	.detail-more,
 	.queued > div,
 	.file-completion > [role="option"],

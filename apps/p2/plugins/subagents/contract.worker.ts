@@ -166,14 +166,13 @@ export function resolveTools(
 ): ToolChoice | string {
 	const all = everyTool(caller);
 	const choosable = choosableTools(caller, access);
-	const unknown = (names ?? []).filter((name) => !choosable.some((tool) => tool.name === name));
+	const named = (names ?? []).map((name) => ({ name, tool: toolNamed(choosable, name) }));
+	const unknown = named.filter((each) => !each.tool).map((each) => each.name);
 	if (unknown.length)
 		return `Unknown tools: ${unknown.join(", ")}. Choose from your own tools: ${choosable.map((tool) => tool.name).join(", ")}.`;
 	// In the order given, each once.
-	const chosen =
-		names === undefined
-			? choosable
-			: [...new Set(names)].flatMap((name) => choosable.filter((tool) => tool.name === name));
+	const chosen = names === undefined ? choosable : [...new Set(named.flatMap((each) => each.tool ?? []))];
+	const toLoad = new Set(load.map((name) => toolNamed(choosable, name)));
 	const scripts = chosen.some((tool) => tool.name === CODEMODE_TOOL)
 		? all.filter((tool) => !calledByModel(tool) && scopeOf(tool, access) !== "main")
 		: [];
@@ -181,8 +180,19 @@ export function resolveTools(
 	return {
 		chosen: chosen.map((tool) => tool.name),
 		tools: [...chosen, ...scripts, ...own],
-		loaded: [...own, ...chosen.filter((tool) => tool.deferred && load.includes(tool.name))],
+		loaded: [...own, ...chosen.filter((tool) => tool.deferred && toLoad.has(tool))],
 	};
+}
+
+/**
+ * The tool `name` names: the exact match, else the only one matching regardless of case. Providers may show the model
+ * other casings (Anthropic subscriptions show `read` as `Read`), and the model passes back the names it saw.
+ */
+function toolNamed(tools: readonly ToolRegistration[], name: string): ToolRegistration | undefined {
+	const exact = tools.find((tool) => tool.name === name);
+	if (exact) return exact;
+	const folded = tools.filter((tool) => tool.name.toLowerCase() === name.toLowerCase());
+	return folded.length === 1 ? folded[0] : undefined;
 }
 
 /** A caller's resolved agent: the tools offered to its model, its deferred ones and the ones scripts call. */

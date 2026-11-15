@@ -57,7 +57,6 @@ import {
 	MenuIcon,
 	Messages,
 	type ModelChoice,
-	ModelPicker,
 	modelName,
 	NEW_SESSION,
 	navigate,
@@ -65,6 +64,7 @@ import {
 	OpenConversation,
 	OpenTerminal,
 	OpenWorkspaceFile,
+	openCommandPage,
 	openLayer,
 	openSidebar,
 	type PickedFile,
@@ -82,12 +82,14 @@ import {
 	Slot,
 	SlotList,
 	Slots,
+	StarIcon,
 	StopIcon,
 	seedSizes,
 	ToolActivities,
 	ToolActivityContext,
 	type Transcript,
 	takeReveal,
+	thinkingLevels,
 	transcriptOf,
 	transcriptRows,
 	useChatScroll,
@@ -137,10 +139,11 @@ import { SessionMetrics, SessionStatus, WorkerControl } from "../status/contract
 import { type Child, conversationLocation, SubagentControl, Subagents } from "../subagents/contract.ts";
 import { openMain } from "../subagents/contract.web.ts";
 import { SessionTree } from "../tree/contract.ts";
-import { MODEL_COMMANDS, MODEL_PAGES } from "./commands.tsx";
+import { configure, MODEL_COMMANDS, MODEL_PAGES } from "./commands.tsx";
 import { Chat, ChatCosts, conversationTargetId, TranscriptEntries } from "./contract.ts";
 import { DraftEditor } from "./draft-editor.tsx";
-import { newSessionChoice, thinkingLevelOf } from "./model-choice.ts";
+import { isDefaultChoice, newSessionChoice, thinkingLevelOf } from "./model-choice.ts";
+import { useModelScreen } from "./model-screens.ts";
 import { type Outgoing, outboxOf } from "./outbox.ts";
 import { sessionStart } from "./session-start.ts";
 
@@ -310,24 +313,68 @@ function useDetail(resources: ResourceSnapshot | undefined): Detail | undefined 
 	}
 }
 
-/** The model and thinking chip that opens the model sheet. */
-function ModelControl({ resources, choice }: { resources: ResourceSnapshot | undefined; choice?: ModelChoice }) {
+/**
+ * The footer's model links: the model and the thinking level open the command menu's pages for `target` (what the
+ * screen shows), and while the two are not the default for new sessions a star saves them as the default. Without a
+ * target (a read-only screen) or before the catalog arrived the links are disabled.
+ */
+function ModelControls({
+	resources,
+	choice,
+	target,
+	onDefault,
+}: {
+	resources: ResourceSnapshot | undefined;
+	choice: ModelChoice | undefined;
+	target: CommandTarget | undefined;
+	onDefault: (choice: ModelChoice) => void;
+}) {
 	const name = choice ? modelName(resources, choice.model) : "Choose model";
-	const level = choice && choice.thinkingLevel !== "off" ? choice.thinkingLevel : undefined;
+	// A model without adjustable thinking has no thinking link.
+	const level = choice && thinkingLevels(resources, choice.model).length > 1 ? choice.thinkingLevel : undefined;
+	const disabled = !resources || !target;
+	const described = `${name}${level ? ` · ${level}` : ""}`;
 	return (
-		<button
-			type="button"
-			className="model-control footer-action"
-			aria-label="Model and thinking"
-			title={`${name}${level ? ` · ${level}` : ""}`}
-			onClick={() => openLayer({ kind: "sheet", name: "model" })}
-			disabled={!resources}
-		>
-			<span>
+		<span className="model-controls">
+			<button
+				type="button"
+				className="model-control footer-action"
+				aria-label="Model"
+				title={name}
+				onClick={() => openCommandPage("models", target)}
+				disabled={disabled}
+			>
 				{name}
-				{level && ` · ${level}`}
-			</span>
-		</button>
+			</button>
+			{level && (
+				<>
+					<span className="model-separator" aria-hidden="true">
+						·
+					</span>
+					<button
+						type="button"
+						className="thinking-control footer-action"
+						aria-label="Thinking level"
+						title={`Thinking: ${level}`}
+						onClick={() => openCommandPage("thinking", target)}
+						disabled={disabled}
+					>
+						{level}
+					</button>
+				</>
+			)}
+			{!disabled && choice && !isDefaultChoice(resources, choice) && (
+				<button
+					type="button"
+					className="default-control"
+					aria-label="Make default for new sessions"
+					title={`Make ${described} the default for new sessions`}
+					onClick={() => onDefault(choice)}
+				>
+					<StarIcon size={13} />
+				</button>
+			)}
+		</span>
 	);
 }
 
@@ -889,7 +936,8 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	const child = children?.[sessionId]?.find((entry) => entry.conversationId === conversationId);
 	// A code mode script's one-shot agent: read-only, opened from the script's tool card.
 	const oneShot = child?.kind === "agent";
-	useCommandRouteTarget(viewTarget(session, conversationId, child));
+	const target = viewTarget(session, conversationId, child);
+	useCommandRouteTarget(target);
 	// Where the viewed conversation works: a subagent may have its own location (e.g. a git worktree, or another machine).
 	const viewLocation = conversationLocation(session, child);
 	const viewCwd = viewLocation?.cwd;
@@ -1027,7 +1075,6 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	const clients = useReadable(metrics?.clients) ?? 0;
 	const usage = useReadable(metrics?.usage) ?? undefined;
 	const cwdSheet = useSheet("cwd");
-	const modelSheet = useSheet("model");
 	const costSheet = useSheet("cost");
 	/**
 	 * Restored text goes into the composer, which takes the focus, as in Pi Mobile; sending it again is a new message
@@ -1389,8 +1436,19 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 		(items, submissionId: number) => items.filter((item) => item.id !== submissionId),
 		fail,
 	);
+	// The menu's model pages and commands change the model through here, so the footer shows it at once; before the
+	// chat is live the change goes through a hold of its own.
+	useModelScreen(owner ? target : undefined, choice, {
+		choose: (next) =>
+			chooseModel(next, () =>
+				writer ? writer.configure(next, BACKGROUND_CONTEXT) : configure(host, sessionId, conversationId, next),
+			),
+		makeDefault: () => {
+			if (choice) setDefault(choice);
+		},
+	});
 	const modelControl = owner ? (
-		<ModelControl resources={resources} {...(choice ? { choice } : {})} />
+		<ModelControls resources={resources} choice={choice} target={target} onDefault={setDefault} />
 	) : (
 		<span className="model-control static">{grant?.name} · guest</span>
 	);
@@ -1572,17 +1630,6 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 					}}
 				/>
 			)}
-			{modelSheet && owner && (
-				<ModelPicker
-					resources={resources}
-					value={choice}
-					onChange={(next) => {
-						if (writer) chooseModel(next, () => writer.configure(next, BACKGROUND_CONTEXT));
-					}}
-					onDefault={setDefault}
-					onClose={closeLayers}
-				/>
-			)}
 			{costSheet && (
 				<CostPanel
 					load={async () => {
@@ -1713,13 +1760,18 @@ function NewSession() {
 		selectedLocation ?? (recent[0] ? { env: recent[0].env ?? null, cwd: recent[0].cwd } : { env: null, cwd: "~" });
 	const choice = newSessionChoice(selectedChoice, resources, recent[0]);
 	useCommandRouteTarget(NEW_SESSION_TARGET);
+	useModelScreen(owner ? NEW_SESSION_TARGET : undefined, choice, {
+		choose: setChoice,
+		makeDefault: () => {
+			if (choice) setDefault(choice);
+		},
+	});
 	const contextWindow = resources?.models.find(
 		(entry) => entry.provider === choice?.model.provider && entry.modelId === choice?.model.modelId,
 	)?.contextWindow;
 	const composer = useComposerState();
 	const { draft, setDraft, files, setFiles, setError, setStopped } = composer;
 	const cwdSheet = useSheet("cwd");
-	const modelSheet = useSheet("model");
 	const attaching = attachingOf(composer);
 	// The first messages, shown at once while the session is created (session-start.ts).
 	const start = useSyncExternalStore(sessionStart.subscribe, sessionStart.snapshot);
@@ -1735,7 +1787,7 @@ function NewSession() {
 		const text = draft.trim();
 		if (!text || !owner) return;
 		if (!choice) {
-			openLayer({ kind: "sheet", name: "model" });
+			openCommandPage("models", NEW_SESSION_TARGET);
 			return;
 		}
 		lightTap();
@@ -1825,7 +1877,12 @@ function NewSession() {
 						footer: (
 							<div className="session-usage">
 								<div className="session-controls">
-									<ModelControl resources={resources} {...(choice ? { choice } : {})} />
+									<ModelControls
+										resources={resources}
+										choice={choice}
+										target={NEW_SESSION_TARGET}
+										onDefault={setDefault}
+									/>
 								</div>
 								{/* The session's context bar, empty: the dock keeps its height when Send opens the session. */}
 								<ContextUsage {...(contextWindow ? { used: 0, limit: contextWindow } : {})} />
@@ -1856,15 +1913,6 @@ function NewSession() {
 						setLocation({ env, cwd });
 						closeLayers();
 					}}
-					onClose={closeLayers}
-				/>
-			)}
-			{modelSheet && owner && (
-				<ModelPicker
-					resources={resources}
-					value={choice}
-					onChange={setChoice}
-					onDefault={setDefault}
 					onClose={closeLayers}
 				/>
 			)}

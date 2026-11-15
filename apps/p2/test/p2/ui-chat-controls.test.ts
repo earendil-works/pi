@@ -40,9 +40,10 @@ describe("chat control parity", { skip: !browserTests }, () => {
 			),
 			["Sessions", "Annotate", "Terminal", "Workspace files and changes", "Session options"],
 		);
-		await browser.click('button[aria-label="Model and thinking"]');
-		await browser.wait(`document.querySelector('[role=dialog][aria-label=Model]')`);
-		await browser.click("[role=dialog] button[aria-label=Close]");
+		await browser.click('button[aria-label="Model"]');
+		await browser.wait(`document.querySelector('.command-menu input')?.placeholder==='Search models…'`);
+		await browser.evaluate(`document.querySelector('.command-layer .scrim').click()`);
+		await browser.wait(`!document.querySelector('.command-menu')`);
 		const second = await Browser.start();
 		await second.signIn(fixture.owner);
 		try {
