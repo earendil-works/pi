@@ -335,3 +335,12 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
   the footguns. It is its own slice (23, after locks), written as the API settles and kept current with every slice. It is also
   the test of whether Chord apps are easy to reason about: a fresh agent given only the guide writes a few plugins
   (a private journal, a sidebar grouping, a shared board), and the lines, concepts and mistakes are counted.
+- **Pluggable worker runners (owner, 2026-11-15):** where a session's worker runs is a plugin: a runner registry in
+  p3's kit, local fork the default, remote machines next, Durable Objects once their profile is decided. A runner is
+  easy to write and gets everything from the server (the full worker bundle, then changed plugin bundles as rollout
+  steps, start data). One runner may host several sessions. The server as the hub is the scale-up bottleneck; a
+  solution is wanted later, not now. Slice 24.
+- **Stale workers are Chord's problem (owner, 2026-11-15):** no plugin checks whether a call comes from a worker that
+  is gone. The workers component closes a worker's link and aborts its calls before it publishes the exit or starts a
+  successor, and records each running worker's incarnation before its first call. p2's hand-written generation
+  checks become unnecessary (bookkeeping that is not a staleness check stays).

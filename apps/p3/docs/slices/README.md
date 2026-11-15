@@ -27,6 +27,7 @@ before it is built, the brief is filled out in detail, starting with p2's featur
 | 5 | People and apps | `05-people-and-apps.md` | designed in part |
 | 6 | Locks | `06-locks.md` | designed |
 | 23 | The plugin guide | `23-plugin-guide.md` | brief |
+| 24 | Worker runners | `24-runners.md` | brief |
 | 17 | Org | `17-org.md` | later |
 
 Rows are in build order (the numbers are ids): p2's features first, then what p3 adds (decision "Fundamentals first; Chord fixed
