@@ -68,7 +68,14 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		);
 		await browser.evaluate(`document.querySelector('.command-layer .scrim').click()`);
 		await browser.wait(`!document.querySelector('.command-menu')`);
+		// The folder button opens the menu's folder page; Select folder… opens the picker.
 		await browser.click(".cwd-pick");
+		await browser.wait(
+			`Boolean([...document.querySelectorAll(".command-menu [role=option]")].find((row) => row.textContent.includes("Select folder…")))`,
+		);
+		await browser.evaluate(
+			`[...document.querySelectorAll(".command-menu [role=option]")].find((row) => row.textContent.includes("Select folder…")).click()`,
+		);
 		await browser.wait(`document.querySelector('.directory-use:not(:disabled)')`);
 		await browser.evaluate(setInput("input[aria-label=Directory]", fixture.workspace));
 		await browser.evaluate(`document.querySelector('input[aria-label=Directory]').form.requestSubmit()`);

@@ -1,7 +1,7 @@
-// The sessions plugin's part of the command menu: New session, Switch session…, and on a session
+// The sessions plugin's part of the command menu: New session…, Switch session…, and on a session
 // target Rename session…, Change working directory… (also on the new-session screen), Archive session and Restore
-// session; on a `/tree` branch row's target Rename branch…; New session in folder… and Open folder…; their pages, and
-// the sessions the root's query matches by title.
+// session; on a `/tree` branch row's target Rename branch…; Open folder…; their pages (with the new-session screen's
+// folder page), and the sessions the root's query matches by title.
 import { BACKGROUND_CONTEXT, withHeld } from "@p2/app/v1";
 import {
 	ArchiveIcon,
@@ -12,12 +12,12 @@ import {
 	type CommandSearch,
 	FolderIcon,
 	FolderMoveIcon,
-	FolderPlusIcon,
 	getNavigation,
 	knownMain,
 	ListIcon,
 	locationLabel,
 	NEW_SESSION,
+	type NewSessionLocation,
 	navigate,
 	openLayer,
 	openLayerIn,
@@ -31,26 +31,28 @@ import {
 	useCommandQuery,
 	useComposerState,
 	useHost,
+	useNewSessionState,
 	useRoute,
 } from "@p2/app/v1/web";
 import { type ReactNode, useMemo, useState } from "react";
-import { DIRECTORY_PICKER } from "../envs/contract.web.tsx";
+import { DIRECTORY_PICKER, directoryPickerLayer } from "../envs/contract.web.tsx";
 import { branchSheetLayer } from "./BranchSheet.tsx";
 import { commandSession, NotArchived, useCommandSession, useOpenFromMenu, useSessions } from "./command-session.tsx";
 import { type Session, Sessions } from "./contract.ts";
-import { FOLDERS, type NewTarget } from "./sidebar/model.ts";
+import { FOLDERS, folderKey, type NewTarget } from "./sidebar/model.ts";
 import { usePageData } from "./sidebar/page-data.ts";
 import { ago, folderName } from "./sidebar/Row.tsx";
 
 /** The commands, by id. */
 export const SESSION_COMMANDS: Readonly<Record<string, Command>> = {
 	"sessions.new": {
-		title: "New session",
+		title: "New session…",
 		group: "Session",
 		order: 10,
 		icon: PlusIcon,
+		keywords: ["start session in folder", "new session in folder"],
 		owner: true,
-		action: { kind: "run", run: () => startNewSession() },
+		action: { kind: "page", page: "new-session" },
 	},
 	"sessions.switch": {
 		title: "Switch session…",
@@ -112,15 +114,6 @@ export const SESSION_COMMANDS: Readonly<Record<string, Command>> = {
 		Shown: Archived,
 		action: { kind: "run", run: restore },
 	},
-	"sessions.new-in-folder": {
-		title: "New session in folder…",
-		group: "Folder",
-		order: 36,
-		icon: FolderPlusIcon,
-		keywords: ["start session in folder"],
-		owner: true,
-		action: { kind: "page", page: "new-in-folder" },
-	},
 	"sessions.open-folder": {
 		title: "Open folder…",
 		group: "Folder",
@@ -136,7 +129,8 @@ export const SESSION_COMMANDS: Readonly<Record<string, Command>> = {
 export const SESSION_PAGES: Readonly<Record<string, CommandPage>> = {
 	sessions: { label: "Sessions", placeholder: "Search sessions…", Body: SessionsPage },
 	"rename-session": { label: "Rename", placeholder: "New title…", empty: "Type the new title", Body: RenamePage },
-	"new-in-folder": { label: "New session", placeholder: "Search folders…", Body: NewInFolderPage },
+	"new-session": { label: "New session", placeholder: "Search folders…", Body: NewSessionPage },
+	"new-session-folder": { label: "Folder", placeholder: "Search folders…", Body: NewSessionFolderPage },
 	folders: { label: "Folders", placeholder: "Search folders…", Body: FoldersPage },
 };
 
@@ -296,28 +290,118 @@ function useFolders(): readonly Folder[] {
 const folderPath = (folder: Folder): string => locationLabel(folder.target.env, folder.target.cwd);
 const folderText = (folder: Folder): string => `${folder.name} ${folderPath(folder)}`;
 
-/** The folders; picking one opens the new-session screen in it, as its "+" in the sidebar does. */
-function NewInFolderPage() {
-	const { close } = useCommandMenu();
-	const onNewIn = usePageData()?.onNewIn;
-	const matches = useCommandMatches(useFolders(), folderText);
-	if (!onNewIn) return null;
+/** New session…: picking a folder opens the new-session screen there; Select folder… opens it with the picker over it. */
+function NewSessionPage() {
 	return (
-		<CommandMenu.Group heading="Folders">
-			{matches.map((folder) => (
-				<CommandMenu.Row
-					key={folder.key}
-					title={folder.name}
-					suffix={folderPath(folder)}
-					onSelect={async () => {
-						await close();
-						onNewIn(folder.target);
-					}}
-				/>
-			))}
-		</CommandMenu.Group>
+		<StartFolders
+			choose={(location) => startNewSession({ location })}
+			browse={(location) => startNewSession({ location, layer: directoryPickerLayer(location.env, location.cwd) })}
+		/>
 	);
 }
+
+/**
+ * The new-session screen's folder (its folder button): picking one changes where the session starts and keeps the
+ * screen's model and project; Select folder… opens the picker over the screen.
+ */
+function NewSessionFolderPage() {
+	const { setLocation } = useNewSessionState();
+	return (
+		<StartFolders
+			choose={setLocation}
+			browse={(location) => openLayer(directoryPickerLayer(location.env, location.cwd))}
+		/>
+	);
+}
+
+/** The browse row, matched by what it does. */
+const SELECT_FOLDER = ["Select folder… browse directory"];
+const selectText = (text: string): string => text;
+
+/**
+ * Where a new session can start: Select folder… (the directory picker), then the folders sessions work in, the most
+ * recently active first, with the current one (`useCurrentFolder`) at their top, checked and highlighted first. Both
+ * callbacks run once the menu closed.
+ */
+function StartFolders({
+	choose,
+	browse,
+}: {
+	choose: (location: NewSessionLocation) => void;
+	browse: (location: NewSessionLocation) => void;
+}) {
+	const { close } = useCommandMenu();
+	const current = useCurrentFolder();
+	const known = useFolders();
+	const folders = useMemo(() => withCurrent(known, current), [known, current]);
+	const matches = useCommandMatches(folders, folderText);
+	const select = useCommandMatches(SELECT_FOLDER, selectText);
+	const first = folders[0];
+	return (
+		<>
+			{select.length > 0 && (
+				<CommandMenu.Group heading="Browse">
+					<CommandMenu.Row
+						title="Select folder…"
+						icon={FolderMoveIcon}
+						onSelect={async () => {
+							await close();
+							browse(first ? locationOf(first) : { env: null, cwd: "~" });
+						}}
+					/>
+				</CommandMenu.Group>
+			)}
+			<CommandMenu.Group heading="Recent folders">
+				{matches.map((folder) => (
+					<CommandMenu.Row
+						key={folder.key}
+						title={folder.name}
+						icon={FolderIcon}
+						suffix={folderPath(folder)}
+						checked={current !== undefined && sameFolder(folder, current)}
+						preferred={folder === first}
+						onSelect={async () => {
+							await close();
+							choose(locationOf(folder));
+						}}
+					/>
+				))}
+			</CommandMenu.Group>
+		</>
+	);
+}
+
+/**
+ * The folder a new session starts in now: the command's session's (a new session beside it), else the new-session
+ * screen's choice while it shows; none elsewhere (the most recent folder is then the first).
+ */
+function useCurrentFolder(): NewSessionLocation | undefined {
+	const { session } = useCommandSession();
+	const { location } = useNewSessionState();
+	const shows = useRoute().newSession === true;
+	return useMemo(
+		() => (session ? { env: session.env ?? null, cwd: session.cwd } : shows ? location : undefined),
+		[session, shows, location],
+	);
+}
+
+/** `folders` with `current` first: moved to the top, or added there when no session works in it yet. */
+function withCurrent(folders: readonly Folder[], current: NewSessionLocation | undefined): readonly Folder[] {
+	if (current === undefined) return folders;
+	const known = folders.find((folder) => sameFolder(folder, current));
+	const top: Folder = known ?? {
+		key: folderKey(current.env, current.cwd),
+		name: folderName(current.env, current.cwd, 1),
+		target: { kind: "folder", ...current },
+		active: 0,
+	};
+	return [top, ...folders.filter((folder) => folder !== known)];
+}
+
+const sameFolder = (folder: Folder, location: NewSessionLocation): boolean =>
+	folder.target.env === location.env && folder.target.cwd === location.cwd;
+
+const locationOf = (folder: Folder): NewSessionLocation => ({ env: folder.target.env, cwd: folder.target.cwd });
 
 /** The folders, the one whose list is open checked; picking one opens its list of sessions in the main area. */
 function FoldersPage() {

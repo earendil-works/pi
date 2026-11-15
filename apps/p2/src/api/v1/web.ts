@@ -16,7 +16,7 @@ export {
 	useCommandTarget,
 } from "../../web/command-menu/context.ts";
 export { type KeyBinding, matchesBinding } from "../../web/command-menu/keys.ts";
-export { openCommandPage } from "../../web/command-menu/layers.ts";
+export { commandPageLayer, openCommandPage } from "../../web/command-menu/layers.ts";
 export { useCommandMatches } from "../../web/command-menu/match.ts";
 export {
 	type CommandMenuRow,

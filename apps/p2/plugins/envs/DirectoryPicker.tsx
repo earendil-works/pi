@@ -39,6 +39,7 @@ export function DirectoryPicker({
 	recent = () => [],
 	onChange,
 	onClose,
+	onBack,
 }: {
 	/** The environment browsed: a remote env's name, or null for this device. */
 	env: string | null;
@@ -48,6 +49,8 @@ export function DirectoryPicker({
 	recent?: (env: string | null) => string[];
 	onChange: (env: string | null, value: string) => void;
 	onClose: () => void;
+	/** Where the sheet's Back leads (the new-session screen's recent folders); no Back control without it. */
+	onBack?: () => void;
 }) {
 	const service = useObject(Envs, {});
 	const envs = useReadable(service?.envs) ?? [];
@@ -147,7 +150,7 @@ export function DirectoryPicker({
 	const use = listing && `${moves ? "Move session to" : "Use"} ${locationLabel(env, listing.path)}`;
 
 	return (
-		<Sheet title="Working directory" onClose={onClose}>
+		<Sheet title="Working directory" onClose={onClose} {...(onBack ? { onBack } : {})}>
 			{/* Path and the choice stay pinned while the folder list scrolls with the sheet. */}
 			<div className="sheet-sticky directory-head">
 				{envs.length > 0 && (
