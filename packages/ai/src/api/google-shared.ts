@@ -577,7 +577,13 @@ export function resolveGoogleFunctionCallingMode(
 	toolChoice: string | undefined,
 	supportsStrictMode: boolean,
 ): FunctionCallingConfigMode | undefined {
-	const useStrictMode = tools.some((tool) => resolveJsonSchemaStrictSampling(tool, supportsStrictMode) === true);
+	// VALIDATED applies to the whole toolset. Do not force it when a grammar tool such as codemode
+	// shares the request: live Gemini 4 calls then end with MALFORMED_RESPONSE instead of the call.
+	const hasGrammarTools = tools.some(
+		(tool) => tool.constrainedSampling && tool.constrainedSampling.type === "grammar",
+	);
+	const useStrictMode =
+		!hasGrammarTools && tools.some((tool) => resolveJsonSchemaStrictSampling(tool, supportsStrictMode) === true);
 	if (toolChoice === "none" || toolChoice === "any") {
 		return mapToolChoice(toolChoice);
 	}

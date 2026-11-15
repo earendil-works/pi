@@ -1,5 +1,5 @@
 import { defineProvider, modelsDevModels } from "../define.ts";
-import { googleThinkingLevels } from "../families/google.ts";
+import { GOOGLE_COMPACTION_CONTEXT_WINDOWS, googleThinkingLevels } from "../families/google.ts";
 import { modelsDevChatModels } from "../sources/models-dev.ts";
 import { GOOGLE_ALIAS_TARGETS } from "./google.ts";
 
@@ -34,7 +34,7 @@ export default defineProvider({
 						cacheRead: model.id === "gemini-2.5-flash" ? 0.03 : source.cost.cacheRead || 0,
 						cacheWrite: 0,
 					},
-					contextWindow: source.contextWindow || 4096,
+					contextWindow: GOOGLE_COMPACTION_CONTEXT_WINDOWS[model.id] ?? (source.contextWindow || 4096),
 					maxTokens: source.maxTokens || 4096,
 				};
 			},

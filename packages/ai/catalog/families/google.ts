@@ -4,6 +4,12 @@ import type { ThinkingLevelMap } from "../../src/types.ts";
 import { getEffortThinkingLevelMap } from "../reasoning.ts";
 import type { ModelsDevReasoningOption } from "../sources/models-dev.ts";
 
+// Smaller working context used for Pi's compaction, not the advertised API maximum. Live replays on
+// 2026-11-15 failed at 332,078 tokens; one 98,353-token suffix succeeded with HIGH and the full toolset.
+export const GOOGLE_COMPACTION_CONTEXT_WINDOWS: Record<string, number> = {
+	"gemini-4-hydrogen": 131072,
+};
+
 function isGemma4Model(modelId: string): boolean {
 	return /gemma-?4/.test(modelId.toLowerCase());
 }

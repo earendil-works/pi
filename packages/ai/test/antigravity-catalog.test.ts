@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchAvailableRuntimeModel, resolveAntigravityClientVersion } from "../src/api/antigravity/client.ts";
+import {
+	antigravityUserAgent,
+	fetchAvailableRuntimeModel,
+	resolveAntigravityClientVersion,
+} from "../src/api/antigravity/client.ts";
 import { buildAntigravityCatalog } from "../src/api/antigravity/grouping.ts";
 import { ANTIGRAVITY_MODELS, ANTIGRAVITY_ROUTING } from "../src/api/antigravity/models.ts";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
@@ -273,7 +277,10 @@ describe("Antigravity native catalog", () => {
 	});
 
 	it("pins the client version from ANTIGRAVITY_CLIENT_VERSION, like the Anthropic version env", async () => {
-		expect(resolveAntigravityClientVersion({})).toBe("1.3.5");
+		expect(resolveAntigravityClientVersion({})).toBe("1.5.9");
+		expect(antigravityUserAgent({})).toBe(
+			"antigravity/cli/1.5.9 (aidev_client; os_type=linux; arch=amd64; cl=1021519450; auth_method=consumer)",
+		);
 		expect(resolveAntigravityClientVersion({ ANTIGRAVITY_CLIENT_VERSION: "2.0.1" })).toBe("2.0.1");
 		expect(resolveAntigravityClientVersion({ NOAGY_CLIENT_VERSION: "2.0.2" })).toBe("2.0.2");
 		expect(() => resolveAntigravityClientVersion({ ANTIGRAVITY_CLIENT_VERSION: "latest" })).toThrow(

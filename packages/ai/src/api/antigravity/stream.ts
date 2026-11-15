@@ -138,6 +138,10 @@ const SERVER_REJECTED_TEXT =
 const PI_DEFAULT_IDENTITY =
 	/you\s+are\s+a\s+coding\s+assistant(?:\s+running\s+inside\s+[^,.\n]+)?(?:,\s+a\s+coding\s+agent\s+harness)?\./gi;
 const PI_DEFAULT_IDENTITY_REPLACEMENT = "You are a fast, precise coding assistant.";
+// Live probe 2026-11-15: Antigravity answers the same detail-less 429 to this generated docs clause,
+// including with one user turn and no history. Shortening only this clause returns STOP.
+const PI_CODEMODE_MODEL_LIST =
+	/codemode scripts and non-LLM models such as classifiers and image models \(docs\/codemode\.md\)/gi;
 const SYSTEM_REJECTED_TEXT = [
 	/you\s+are\s+a\s+coding\s+assistant\s+running\s+inside\s+pi\b/i,
 	/inside\s+pi,\s+a\s+coding\s+agent\s+harness/i,
@@ -763,7 +767,13 @@ export async function buildRequest(
 	const systemPromptText = resolveCurrentSystemPrompt(context);
 	const declaredTools = resolveCurrentTools(context);
 	const systemParts = systemPromptText
-		? [{ text: sanitizeText(systemPromptText).replace(PI_DEFAULT_IDENTITY, PI_DEFAULT_IDENTITY_REPLACEMENT) }]
+		? [
+				{
+					text: sanitizeText(systemPromptText)
+						.replace(PI_DEFAULT_IDENTITY, PI_DEFAULT_IDENTITY_REPLACEMENT)
+						.replace(PI_CODEMODE_MODEL_LIST, "codemode (docs/codemode.md)"),
+				},
+			]
 		: [{ text: ANTIGRAVITY_SYSTEM_INSTRUCTION }, { text: ANTIGRAVITY_NO_PREAMBLE_INSTRUCTION }];
 
 	const contents = convertMessages(model, context, runtimeModel);

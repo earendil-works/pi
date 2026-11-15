@@ -17,7 +17,7 @@ const ENDPOINTS = [
 // ANTIGRAVITY_CLIENT_VERSION (bare X.Y.Z, NOAGY_CLIENT_VERSION also works),
 // or override the whole header with ANTIGRAVITY_USER_AGENT.
 export const ANTIGRAVITY_CLIENT_VERSION_ENV = "ANTIGRAVITY_CLIENT_VERSION";
-const BUNDLED_CLIENT_VERSION = "1.3.5";
+const BUNDLED_CLIENT_VERSION = "1.5.9";
 const CLIENT_VERSION = /^\d+\.\d+\.\d+$/;
 
 export function resolveAntigravityClientVersion(env?: ProviderEnv): string {
@@ -31,7 +31,7 @@ export function resolveAntigravityClientVersion(env?: ProviderEnv): string {
 export function antigravityUserAgent(env?: ProviderEnv): string {
 	return (
 		antigravityEnv("USER_AGENT", env) ||
-		`antigravity/cli/${resolveAntigravityClientVersion(env)} (aidev_client; os_type=linux; arch=amd64; cl=982146307; auth_method=consumer)`
+		`antigravity/cli/${resolveAntigravityClientVersion(env)} (aidev_client; os_type=linux; arch=amd64; cl=1021519450; auth_method=consumer)`
 	);
 }
 

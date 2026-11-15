@@ -1,5 +1,5 @@
 import { defineProvider, modelsDevModels, withInputLimits } from "../define.ts";
-import { googleThinkingLevels } from "../families/google.ts";
+import { GOOGLE_COMPACTION_CONTEXT_WINDOWS, googleThinkingLevels } from "../families/google.ts";
 import { modelsDevChatModels, modelsDevCost } from "../sources/models-dev.ts";
 
 // Rolling aliases take their metadata from the model they currently point to.
@@ -33,7 +33,7 @@ export default defineProvider({
 					...(thinkingLevelMap ? { thinkingLevelMap } : {}),
 					input: source.imageInput ? ["text", "image"] : ["text"],
 					cost: modelsDevCost(source.cost),
-					contextWindow: source.contextWindow || 4096,
+					contextWindow: GOOGLE_COMPACTION_CONTEXT_WINDOWS[model.id] ?? (source.contextWindow || 4096),
 					maxTokens: MEASURED_MAX_TOKENS[model.id] ?? (source.maxTokens || 4096),
 				};
 			},

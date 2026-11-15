@@ -268,6 +268,22 @@ describe("google-shared convertTools", () => {
 		}
 	});
 
+	it("does not force validated calling when grammar tools share the toolset", () => {
+		const jsonTool = makeTool({ type: "object", properties: {} });
+		jsonTool.constrainedSampling = { type: "json_schema", strict: "prefer" };
+		const grammarTool = makeTool({
+			type: "object",
+			properties: { code: { type: "string" } },
+			required: ["code"],
+		});
+		grammarTool.constrainedSampling = {
+			type: "grammar",
+			variants: { openai_lark: "start: SOURCE\nSOURCE: /[\\s\\S]+/" },
+		};
+
+		expect(resolveGoogleFunctionCallingMode([jsonTool, grammarTool], undefined, true)).toBeUndefined();
+	});
+
 	it("returns undefined for empty tool list", () => {
 		expect(convertTools([])).toBeUndefined();
 		expect(convertTools([], true)).toBeUndefined();

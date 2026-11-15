@@ -486,6 +486,20 @@ describe("server-rejected text", () => {
 		expect(findServerRejectedText(custom.request)).toBe("inside pi, a coding agent harness");
 	});
 
+	it("rewrites the codemode model-list clause that Antigravity rejects", async () => {
+		const ctx = normalizeContext({
+			systemPrompt:
+				"Before.\n" +
+				"codemode scripts and non-LLM models such as classifiers and image models (docs/codemode.md)\n" +
+				"After.",
+			messages: [{ role: "user", content: "test", timestamp: 1 }],
+		});
+		const request = await buildRequest(model, ctx, "project", {}, "gemini-3.8-flash-low");
+		expect(request.request.systemInstruction.parts).toEqual([
+			{ text: "Before.\ncodemode (docs/codemode.md)\nAfter." },
+		]);
+	});
+
 	it("pins the system instruction sent when the caller has none", async () => {
 		const request = await buildRequest(model, bare, "project", {}, "gemini-3.8-flash-low");
 		expect(request.request.systemInstruction).toEqual({
