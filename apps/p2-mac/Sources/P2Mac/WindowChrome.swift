@@ -40,11 +40,11 @@ final class ChromeWebView: WKWebView {
 	static let barHeight: CGFloat = 52
 
 	private func inDragStrip(_ event: NSEvent) -> Bool {
-		let strip = Self.barHeight * pageZoom * magnification
+		let strip = Self.barHeight * pageZoom
 		let local = convert(event.locationInWindow, from: nil)
 		let top = isFlipped ? local.y : bounds.height - local.y
 		guard top < strip else { return false }
-		let scale = pageZoom * magnification
+		let scale = pageZoom
 		let point = CGPoint(x: local.x / scale, y: top / scale)
 		return !interactive.contains { $0.insetBy(dx: -2, dy: -2).contains(point) }
 	}
