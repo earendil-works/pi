@@ -7,6 +7,7 @@ import {
 	type JsonRpcMessage,
 	McpAbortError,
 	McpConnectionClosedError,
+	normalizeOwnRequestId,
 	parseJsonRpcMessage,
 	toError,
 } from "../protocol/jsonrpc.ts";
@@ -441,7 +442,7 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 		const cursor: StreamCursor = { lastEventId: undefined, retryMs: undefined, received: false };
 		let answered = false;
 		const onMessage = (message: JsonRpcMessage) => {
-			if (isJsonRpcResponse(message) && message.id === requestId) answered = true;
+			if (isJsonRpcResponse(message) && normalizeOwnRequestId(message.id) === requestId) answered = true;
 		};
 		let stream: ReadableStream<Uint8Array> | undefined = body;
 		let failure: unknown;

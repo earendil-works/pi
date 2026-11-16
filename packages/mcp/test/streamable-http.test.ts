@@ -292,6 +292,29 @@ describe("StreamableHttpTransport", () => {
 		await client.close();
 	});
 
+	it("matches a streamed response that echoes the request id as a string", async () => {
+		const { url, requests } = await startServer(async (request, response, requests) => {
+			if (request.method !== "POST") return protocolHandler(request, response, requests);
+			const message = JSON.parse(await readBody(request)) as Record<string, unknown>;
+			if (message.method !== "tools/call") return protocolHandler(request, response, requests, message);
+			response.writeHead(200, { "content-type": "text/event-stream" });
+			response.end(
+				`id: e1\nretry: 5\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: String(message.id), result: { content: [{ type: "text", text: "hello" }] } })}\n\n`,
+			);
+		});
+		const client = new McpClient({ name: "http-test", version: "1.0.0" });
+		const errors: Error[] = [];
+		client.onError((error) => errors.push(error));
+		await client.connect(new StreamableHttpTransport({ url, openGetStream: false }));
+		expect(await client.callTool("echo", {}, { timeoutMs: 2_000 })).toEqual({
+			content: [{ type: "text", text: "hello" }],
+		});
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect(errors).toEqual([]);
+		expect(requests.some((entry) => entry.method === "GET")).toBe(false);
+		await client.close();
+	});
+
 	it("fails a request whose response stream ends without an answer", async () => {
 		const { url } = await startServer(async (request, response, requests) => {
 			if (request.method !== "POST") return protocolHandler(request, response, requests);
