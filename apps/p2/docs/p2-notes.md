@@ -965,12 +965,13 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
     `ROLLUPS` are the built-in ones, `ordered` puts them in the owner's order. `sectionsOf` shows every rollup and
     applies relevance (pinned, open, working, unread, a failed worker, an operation, or `updatedAt` within the rollup's
     window: `1d`, `3d` (default), `1w`, `forever`): a session shows in every rollup and group that has it, a group only
-    with relevant sessions, a collapsed rollup or group only its row. `listPageOf` makes a rollup's or a group's list
-    page: every session, the aged ones (outside the window) after the others, by group for a rollup of groups; the
-    archived ones newest archived first. Keys: `recent`, `projects`, `folders`, `archive`, `project:<name>`,
-    `folder:<base64url of JSON [env, cwd]>` (no slash, for `/list/<key>`). Folders take as many trailing path segments
-    as tell same-named ones apart. Rollup order never follows activity. `glyphsOf` picks project glyphs by the glyphs
-    plugin's `placeSeed` (below); a group's tooltip is its path (a project's: its places), a Recents session's its cwd.
+    with relevant sessions or `keep` (every project's: a new one's "+" must be reachable), a collapsed rollup or group
+    only its row. `listPageOf` makes a rollup's or a group's list page: every session, the aged ones (outside the
+    window) after the others, by group for a rollup of groups; the archived ones newest archived first. Keys: `recent`,
+    `projects`, `folders`, `archive`, `project:<name>`, `folder:<base64url of JSON [env, cwd]>` (no slash, for
+    `/list/<key>`). Folders take as many trailing path segments as tell same-named ones apart. Rollup order never
+    follows activity. `glyphsOf` picks project glyphs by the glyphs plugin's `placeSeed` (below); a group's tooltip is
+    its path (a project's: its places), a Recents session's its cwd.
   - **View** (`Sidebar.tsx`, `Row.tsx`, `ListPage.tsx`, `RollupSheet.tsx`), on Elanor's `Sidebar` and
     `SideNavigation` and icons (re-exported by `src/web/navigation-components.ts`). Every row is a `NavRow`: a marker
     column as wide as an icon (a session's working mark, a group's project glyph, folder or lock, a Recents session's

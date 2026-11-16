@@ -79,12 +79,19 @@ function short(section: Section): unknown[] {
 }
 
 describe("sectionsOf", () => {
-	it("shows every rollup: Recents flat, projects and folders as groups with relevant sessions, the Archive as a link", () => {
+	it("shows every rollup: Recents flat, every project and folders with relevant sessions as groups, the Archive as a link", () => {
 		assert.deepEqual(sectionsOf(ROLLUPS, ROWS, CONTEXT, VIEW).map(short), [
 			// Pinned first, then the most recently active; a session shows in every rollup and group that has it.
 			[RECENT, "sessions", ["p", "b", "free", "a"]],
-			// "web" has no session: no group in the sidebar (its list page has it, with its "+").
-			[PROJECTS, "groups", [[projectKey("pi"), ["p", "b", "a"]]]],
+			// "web" has no session but shows anyway: its "+" starts a new project's first session.
+			[
+				PROJECTS,
+				"groups",
+				[
+					[projectKey("pi"), ["p", "b", "a"]],
+					[projectKey("web"), []],
+				],
+			],
 			// The sandbox folder of "stale" has no relevant session: no group in the sidebar.
 			[
 				FOLDERS,

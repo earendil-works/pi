@@ -154,6 +154,8 @@ export const ROLLUPS: readonly Rollup[] = [
 					name: project.name,
 					sandboxed: false,
 					members: byProject.get(project.name) ?? [],
+					// Shown without sessions too: its "+" is where a new project's first session starts.
+					keep: true,
 					target: { kind: "project", project },
 				})),
 			};
