@@ -2,11 +2,17 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- `Component.render()` now returns `readonly string[]`, and `Container.render()` returns the same cached array while its children are unchanged, like `Text`, `Markdown`, and `Box` already did. Code that modifies render output in place, including `super.render()` in a `Container` subclass, must copy it first ([#9549](https://github.com/earendil-works/pi/issues/9549))
+
 ### Fixed
 
 - Fixed fullscreen Kitty images disappearing after a full redraw such as a window resize. Clearing the screen made Kitty free the cached image data that the redraw then tried to reuse ([#12010](https://github.com/earendil-works/pi/issues/12010))
 - Fixed text after a multi-row inline image in Markdown drawing over the image when the image's rows were joined with hard line breaks ([#12017](https://github.com/earendil-works/pi/issues/12017))
 - Fixed Kitty and iTerm2 images covering overlays drawn over them. An image that an overlay overlaps by row and column is now removed while the overlay is open and drawn again when it closes. Images beside an overlay, such as a sidebar, stay visible ([#11584](https://github.com/earendil-works/pi/issues/11584))
+- Fixed fullscreen scrolling re-rendering the whole transcript on every wheel event and key press, which saturated a CPU core in long sessions; scroll frames now reuse the previous output ([#9549](https://github.com/earendil-works/pi/issues/9549))
+- Fixed containers copying every rendered line on every frame, and sped up column slicing for ASCII and other text without combining characters ([#9549](https://github.com/earendil-works/pi/issues/9549))
 
 ## [1.5.2] - 2026-11-10
 
