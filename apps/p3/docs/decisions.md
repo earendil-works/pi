@@ -404,3 +404,7 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
   its own instead of the chunk it shares with the server (esbuild's JS API, `ws`, `node:http`, the server side of
   Chord's workers): about 1.5 MiB less per worker and a faster warm start (mem-audit, `p3-memory.md`). Built after slice
   26's round-3 fixes, in slice 26.
+- **No build cache (owner, 2026-11-16):** nothing built is kept between starts, as Chord's decision "A" says: every
+  start builds the server's plugins and the worker base again (about 30 ms and 120 ms today). A cache keyed by what a
+  build read would save that, at the risk of serving old code after an edit; not built. To be measured again once p3
+  has many plugins.
