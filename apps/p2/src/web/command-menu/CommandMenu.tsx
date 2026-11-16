@@ -124,7 +124,7 @@ function Dialog({ menu }: { menu: OpenMenu }) {
 			const back =
 				previous instanceof HTMLElement && previous.isConnected
 					? previous
-					: document.querySelector<HTMLElement>(".composer textarea");
+					: document.querySelector<HTMLElement>(".composer .draft-editor");
 			back?.focus({ preventScroll: true });
 		};
 	}, []);

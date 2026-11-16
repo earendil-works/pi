@@ -1,6 +1,6 @@
 // The type-level history of a contract: every version's members and the changes that produced it.
 
-import type { Method, Schema } from "./schema.ts";
+import type { Method, QueriesMember, Schema } from "./schema.ts";
 
 /** One variant's members at one version: state schemas, method signatures and event schemas. */
 export type VariantShape = {
@@ -10,6 +10,8 @@ export type VariantShape = {
 	readonly keyed?: { readonly [member: string]: Schema };
 	/** Event members: the schemas of the values the object emits (decision "Events: fire-and-forget members"). */
 	readonly events?: { readonly [member: string]: Schema };
+	/** A local contract's `queries` members (slice 14 §3.1). */
+	readonly queries?: { readonly [member: string]: QueriesMember };
 };
 
 /** Variants by name. A local contract has the single variant `members`. */

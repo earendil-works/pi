@@ -7,7 +7,7 @@ import { BACKGROUND_CONTEXT, follow } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
-import { Browser, browserTests } from "./browser.ts";
+import { Browser, browserTests, COMPOSER } from "./browser.ts";
 import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
 
 describe("the app without its server", { skip: !browserTests }, () => {
@@ -67,6 +67,6 @@ describe("the app without its server", { skip: !browserTests }, () => {
 		await browser.open(page);
 		await browser.wait(`Boolean(document.querySelector('.offline'))`);
 		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: still here offline')`);
-		assert.ok(await browser.evaluate<boolean>(`Boolean(document.querySelector('.composer textarea'))`));
+		assert.ok(await browser.evaluate<boolean>(`Boolean(document.querySelector('${COMPOSER}'))`));
 	});
 });

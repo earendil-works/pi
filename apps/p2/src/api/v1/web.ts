@@ -15,6 +15,8 @@ export {
 	useCommandQuery,
 	useCommandTarget,
 } from "../../web/command-menu/context.ts";
+export { type KeyBinding, matchesBinding } from "../../web/command-menu/keys.ts";
+export { commandPageLayer, openCommandPage } from "../../web/command-menu/layers.ts";
 export { useCommandMatches } from "../../web/command-menu/match.ts";
 export {
 	type CommandMenuRow,
@@ -34,8 +36,8 @@ export * from "../../web/history.ts";
 export * from "../../web/icons.tsx";
 export { type LongPress, type LongPressHandlers, useLongPress } from "../../web/long-press.ts";
 export * from "../../web/Markdown.tsx";
-export * from "../../web/ModelPicker.tsx";
 export * from "../../web/menu-components.ts";
+export * from "../../web/model-choice.ts";
 export * from "../../web/navigation.ts";
 export * from "../../web/navigation-components.ts";
 export * from "../../web/new-session.tsx";

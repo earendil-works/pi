@@ -3,7 +3,7 @@
 // data), logs and owner notices, restarts after a crash (as v1), and the lifecycle steps of relocation and cloning,
 // serialized per session.
 import { realpathSync } from "node:fs";
-import type { FollowAttachment, FollowObserver } from "@earendil-works/chord";
+import type { FollowAttachment, FollowObserver, Store } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
 import type { BaseInputs, Plugins } from "@earendil-works/chord/plugins";
@@ -22,10 +22,14 @@ import type { WorkerInit } from "../runtime/worker.ts";
 
 export type SessionWorkersOptions = {
 	readonly host: Host;
+	/** The server host's store: a worker's exit is published after the commits its calls queued there. */
+	readonly store: Store;
 	readonly plugins: Plugins;
 	readonly app: string;
 	readonly dataDir: string;
 	readonly fake: boolean;
+	/** Whether workers record and send telemetry (`WorkerInit.telemetry`; settings.json's `telemetry`). */
+	readonly telemetry: boolean;
 	readonly entry: string;
 	readonly execArgv: readonly string[];
 	readonly env?: Readonly<Record<string, string>>;
@@ -112,6 +116,7 @@ export class SessionWorkers implements SessionWorkerControl {
 			{
 				kind: "worker",
 				entry: options.entry,
+				store: options.store,
 				execArgv: options.execArgv,
 				...(options.env === undefined ? {} : { env: options.env }),
 				// Owners reach every session, the server's own code too (`SERVER`); guests only the sessions their grant names.
@@ -132,6 +137,7 @@ export class SessionWorkers implements SessionWorkerControl {
 						app: options.app,
 						dataDir: options.dataDir,
 						fake: options.fake,
+						telemetry: options.telemetry,
 						generation,
 						values,
 					};

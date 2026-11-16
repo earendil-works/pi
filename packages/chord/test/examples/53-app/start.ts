@@ -1,5 +1,5 @@
 // The notes app's start: everything the app itself decides, given to `startServer`. The kit does the rest: the data
-// directory, the store, the host, HTTP with sessions and the owner link, a workers component for projects, and the
+// directory, the store, the host, HTTP with sign-ins and the owner link, a workers component for projects, and the
 // plugins (`plugins/` here, the app's required root, and `<dataDir>/plugins/`, the user's).
 // Examples 53 to 55 call `startNotes`; a real app's `start.ts` calls it with `process.argv[2]` and prints the link.
 

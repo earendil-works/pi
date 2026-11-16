@@ -52,20 +52,20 @@ await startWorker<P>({ api, kinds, onError });   // reads the start message, ope
   (address, start data) on workers as core objects plugins `get`.
 - Zero worker kinds: no workers component.
 
-## 2. Principals and sessions
+## 2. Principals and sign-ins
 
 - The app's principal type `P`; the kit needs only `principal.server` and `principal.worker(address)`. The kit adds
   one variant for its owner: `{ kind: "owner" }` must be assignable to `P` (a type check). (Superseded: decision "The
   kit's owner is a principal the app chooses".)
-- **Sessions** (`app/sessions.ts`, a kit object on the server, persisted in the server store): `issue(principal,
+- **Sign-ins** (`SignIns`, `app/sign-ins.ts`; named `Sessions` until 2026-11-13, decision "Sign-ins, not sessions"; a kit object on the server, persisted in the server store): `issue(principal,
   { label, kind: "browser" | "device" }, ctx)` returns a token; tokens stored hashed; `revoke(id)`; `list` (watchable:
-  label, kind, created, last used). The kit's authenticator (contributed to `Authenticators`) reads the session cookie
+  label, kind, created, last used). The kit's authenticator (contributed to `Authenticators`) reads the sign-in cookie
   (signed, `HttpOnly`, `SameSite=Strict`) or an `Authorization: Bearer` header, and gives its principal.
 - **Owner link:** at start the kit issues a one-time token (random, single use, valid 10 minutes, replaced at each
   start) and `app.ownerLink()` returns `http://127.0.0.1:8788/_chord/owner#<token>`; the start script prints it. The
   route `GET /_chord/owner` serves a page that posts the token (from the fragment, never sent in a URL to logs) to
-  `POST /_chord/owner`, which consumes it and sets a browser session cookie for the owner. No owner by loopback alone.
-- **Owner token file:** `<dataDir>/owner-token` (mode 0600, created at first start, a device session of the owner) for
+  `POST /_chord/owner`, which consumes it and sets a browser sign-in cookie for the owner. No owner by loopback alone.
+- **Owner token file:** `<dataDir>/owner-token` (mode 0600, created at first start, a device sign-in of the owner) for
   command-line clients on the same machine.
 - **Device pairing** (for remote command-line and TUI clients): `POST /_chord/pair` (public) returns `{ code, poll }`;
   the owner approves the code in a browser (`GET /_chord/pair/<code>`, owner only, a confirm page); the client polls
@@ -81,7 +81,7 @@ Shipped as plugins (in `packages/chord/plugins/` or exported facets the app adds
 why): `users` (accounts keyed by id, a profile schema the app passes in, `self.get(Users, {})` with `get`, `update`,
 `list`), `invite` (invite links issuing a session for a principal the owner chooses), `ephemeral-login` (a public
 route taking a name, issuing a session for `{ kind: "user", id: <fresh>, name }` that ends with the connection; the
-app's `P` must allow it). Each contributes to `Authenticators` or issues sessions through §2.
+app's `P` must allow it). Each contributes to `Authenticators` or issues sign-ins through §2.
 
 ## 4. Storage, files, export
 
@@ -112,10 +112,10 @@ project plugins (§26 #14).
 ## 7. Tests, examples, docs
 
 - One test file per source file: start and close order; a server without workers; two worker kinds; the owner link
-  (single use, expiry, the fragment), sessions (issue, revoke, list, hashed storage), the token file mode, device
+  (single use, expiry, the fragment), sign-ins (issue, revoke, list, hashed storage), the token file mode, device
   pairing, deny by default (a route without principal 401, a public route served, `/chord` refused anonymous), Files
   (small and chunked, caps, list, remove), export and import (a worker with documents, tables and files round-trips;
   importing over an existing address refused), `applyChanges`, required root failure stopping `startApp`.
-- Examples: `53-app` (a small app: start script, API, two plugins, a worker kind, the owner link), `54-app-sessions`
+- Examples: `53-app` (a small app: start script, API, two plugins, a worker kind, the owner link), `54-app-sign-ins`
   (pairing a command-line client), `55-app-export` (export and import a worker's address).
 - `src/node/app/README.md`; the guide "Hosts and Plugins" gets a closing chapter on the app kit.

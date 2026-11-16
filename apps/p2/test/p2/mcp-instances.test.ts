@@ -139,7 +139,7 @@ test("close and restart end a connect under way", async (t) => {
 	assert.deepEqual(instances.list(), []);
 });
 
-test("a new supervisor lists the tools its predecessor listed until the server answers", async (t) => {
+test("a new supervisor lists the tools and instructions its predecessor listed until the server answers", async (t) => {
 	const first = supervisor(t, { MCP_FIXTURE_HANG: "1" });
 	const seed: Instance = {
 		id: first.id,
@@ -149,12 +149,42 @@ test("a new supervisor lists the tools its predecessor listed until the server a
 		runsOn: "host",
 		status: "connected",
 		tools: [{ name: "echo", inputSchema: { type: "object" } }],
+		instructions: "Echoes.",
 	};
 	const instances = new Instances(CLIENT, BACKOFF, [seed], NO_ENVIRONMENTS, NO_OAUTH);
 	t.after(() => instances.close());
 	instances.reconcile(first.placement);
+	// The prompt shows the summary from the instructions: it does not change while the server starts again.
 	assert.deepEqual(
-		instances.list().map((instance) => [instance.status, instance.tools.map((tool) => tool.name)]),
-		[["starting", ["echo"]]],
+		instances
+			.list()
+			.map((instance) => [instance.status, instance.tools.map((tool) => tool.name), instance.instructions]),
+		[["starting", ["echo"], "Echoes."]],
+	);
+});
+
+test("an instance lists its configuration's description, trimmed", () => {
+	const config = parseOwnerConfig(
+		JSON.stringify({
+			mcpServers: {
+				a: { command: "a", description: "  Searches the docs. " },
+				b: { command: "b", description: " " },
+			},
+		}),
+	);
+	const lease = {
+		session: "s1",
+		location: { env: null, cwd: "/w" },
+		project: { kind: "none" as const },
+		generation: 1,
+		incarnation: "i",
+	};
+	const placement = place(config, [lease], {}, { s1: [null] });
+	assert.deepEqual(
+		[...placement.instances.values()].map((spec) => [spec.server, spec.description]),
+		[
+			["a", "Searches the docs."],
+			["b", undefined],
+		],
 	);
 });

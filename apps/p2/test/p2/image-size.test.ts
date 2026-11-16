@@ -1,7 +1,7 @@
-// The transcript reserves an image's box from its header (src/web/image-size.ts), so decoding never moves the reader.
+// The transcript reserves an image's box from its header (src/runtime/image-size.ts), so decoding never moves the reader.
 import assert from "node:assert/strict";
 import { it } from "node:test";
-import { imageSize } from "../../src/web/image-size.ts";
+import { imageSize } from "../../src/runtime/image-size.ts";
 
 const base64 = (bytes: number[]) => Buffer.from(bytes).toString("base64");
 const ascii = (text: string) => [...text].map((char) => char.charCodeAt(0));

@@ -29,6 +29,8 @@ function truth(node: WhereNode, row: EvaluatedRow): Truth {
 		return inner === null ? null : !inner;
 	}
 	if ("isNull" in node) return row[node.isNull] === undefined;
+	// Only a read's condition tests `exists`, and reads run in the database (slice 14 §3.3: no second evaluator).
+	if ("exists" in node) throw new Error("exists is not evaluated in memory");
 	// The row is checked against the table the condition was compiled for: its columns hold scalars.
 	if ("inArray" in node) {
 		const [column, values] = node.inArray;

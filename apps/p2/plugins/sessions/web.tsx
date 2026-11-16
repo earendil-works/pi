@@ -24,9 +24,7 @@ import {
 	navigate,
 	openLayer,
 	openPage,
-	PiLogo,
 	rememberMains,
-	Slot,
 	SlotList,
 	Slots,
 	startNewSession,
@@ -90,10 +88,12 @@ const subscribeVisibility = (listener: () => void) => {
 /** Whether the page is shown (not a background tab or a hidden app). */
 const usePageVisible = () => useSyncExternalStore(subscribeVisibility, () => document.visibilityState === "visible");
 
-/** The owner's sidebar header start: the Pi logo, unless a plugin puts its own there (the Familiar's). */
-const brand = <Slot name="drawer-brand" fallback={<PiLogo compact />} />;
+/** Rows before the sidebar's "New session", each a list item (`sidebar-start:<name>`, e.g. the Familiar's). */
+const startRows = <SlotList prefix="sidebar-start" />;
 /** Icon buttons at the footer's end, before the theme switch (`sidebar-actions:<name>`, e.g. the Settings gear). */
 const actions = <SlotList prefix="sidebar-actions" />;
+/** Icon buttons in the header, before the collapse button (`sidebar-header:<name>`, e.g. the scope prompt's). */
+const headerActions = <SlotList prefix="sidebar-header" />;
 
 /** The sidebar's New session: the new-session screen, without the project or model chosen before. */
 const newSession = () => startNewSession();
@@ -353,7 +353,7 @@ function Sidebar() {
 	const { focusWhenOpen } = useComposerState();
 	// Project glyphs for groups and the sessions of flat lists; the owner's only (guests read no projects).
 	const glyphs = useMemo(() => (owner ? glyphsOf(context) : undefined), [owner, context]);
-	// Sessions a plugin's sidebar entry shows (the Familiar's, in `drawer-brand`) are left out of the rollups.
+	// Sessions a plugin's sidebar entry shows (the Familiar's, a `sidebar-start` row) are left out of the rollups.
 	const [apart, setApart] = useState<Readonly<Record<string, readonly string[]>>>({});
 	const listApart = useCallback(
 		(key: string, ids: readonly string[]) => setApart((current) => ({ ...current, [key]: ids })),
@@ -555,7 +555,7 @@ function Sidebar() {
 				now={view.now}
 				page={route.page}
 				newSession={route.newSession === true}
-				brand={brand}
+				startRows={startRows}
 				guest={guest}
 				activeId={route.session}
 				conversationId={route.conversation}
@@ -570,6 +570,7 @@ function Sidebar() {
 				onCollapse={owner ? onCollapse : undefined}
 				onPage={openPage}
 				onCollapseSidebar={toggleSidebar}
+				headerActions={headerActions}
 				footerActions={actions}
 			/>
 			{optionsOf && (

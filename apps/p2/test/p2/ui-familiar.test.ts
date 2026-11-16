@@ -1,5 +1,6 @@
-// The Familiar in the owner's page (plugins/familiar/web.tsx), named "Ask Pi": home and the Pi logo in the sidebar header
-// open its session (made on first use), which no rollup lists; an archived one stays archived until the logo is used.
+// The Familiar in the owner's page (plugins/familiar/web.tsx), named "Ask Pi": home and its row above the sidebar's "New
+// session" open its session (made on first use), which no rollup lists; an archived one stays archived until the row is
+// used.
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { after, before, describe, it } from "node:test";
@@ -27,7 +28,7 @@ describe("the Familiar as home", { skip: !browserTests }, () => {
 		await fixture?.close();
 	});
 
-	it("is home and the header's Pi logo, made on first use, and leaves the rollups", async () => {
+	it("is home and the sidebar's first row, made on first use, and leaves the rollups", async () => {
 		const owner = fixture.browser();
 		const sessions = await holdIn(owner, Sessions, {}, "owner");
 		await sessions.create({ cwd: fixture.workspace, title: "Ordinary" }, BACKGROUND_CONTEXT);
@@ -42,14 +43,18 @@ describe("the Familiar as home", { skip: !browserTests }, () => {
 				?.title,
 			"Ask Pi",
 		);
-		// The header's logo is its entry, selected while it shows; the list starts with "New session".
+		// The list starts with its row (the Pi logo as its icon), selected while it shows, then "New session"; the header's
+		// logo is only a logo.
 		await browser.wait(
-			`document.querySelector('.drawer-top .brand > .familiar-entry.active[title="Ask Pi"] > .pi-logo')`,
+			`document.querySelector('.sidebar-start .nav-row.selected:has(.nav-marker .pi-logo) > .familiar-entry.active')`,
 		);
-		assert.equal(
-			await browser.evaluate<string>(`document.querySelector('.sidebar-nav .nav-row').textContent`),
-			"New session",
+		assert.deepEqual(
+			await browser.evaluate<string[]>(
+				`[...document.querySelectorAll('.sidebar-start .nav-label')].map((label) => label.textContent)`,
+			),
+			["Ask Pi", "New session"],
 		);
+		assert.ok(await browser.evaluate<boolean>(`document.querySelector('.drawer-top .brand > .pi-logo') !== null`));
 		// No rollup lists it.
 		await browser.wait(
 			`[...new Set([...document.querySelectorAll('.sidebar-nav .session-main .session-title')].map(e=>e.textContent))].join()==='Ordinary'`,
@@ -58,7 +63,7 @@ describe("the Familiar as home", { skip: !browserTests }, () => {
 			const { data } = (await browser.call("Page.captureScreenshot", { format: "png" })) as { data: string };
 			writeFileSync(process.env.P2_SCREENSHOT, Buffer.from(data, "base64"));
 		}
-		// "New session" opens the new-session screen at /new; the logo returns.
+		// "New session" opens the new-session screen at /new; its row returns.
 		await browser.click(".new-session");
 		await browser.wait(
 			`location.pathname === '/new' && document.querySelector('.nav-row.selected > .new-session') && !document.querySelector('.familiar-entry.active')`,
@@ -67,7 +72,7 @@ describe("the Familiar as home", { skip: !browserTests }, () => {
 		await browser.wait(
 			`location.pathname.startsWith('/s/${id}') && document.querySelector('.familiar-entry.active')`,
 		);
-		// Archived, home leaves it archived and shows the new-session screen; the logo restores it.
+		// Archived, home leaves it archived and shows the new-session screen; its row restores it.
 		await sessions.archive({ id: String(id) }, BACKGROUND_CONTEXT);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
 		await browser.wait(`location.pathname === '/new'`);

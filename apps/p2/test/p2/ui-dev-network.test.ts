@@ -16,7 +16,7 @@ import { Devices } from "../../plugins/devices/contract.ts";
 import { PROXY_MARKER_HEADER } from "../../plugins/proxy-marker/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
-import { Browser, browserTests } from "./browser.ts";
+import { Browser, browserTests, COMPOSER } from "./browser.ts";
 import { type Fixture, holdIn, http, startFixture, until } from "./helpers.ts";
 
 function localNetwork(url: string): boolean {
@@ -223,7 +223,7 @@ describe("clients through a public-origin proxy", { skip: !browserTests }, () =>
 		const { browser, requests, websockets } = await startBrowser(ownerCookie);
 		await browser.metrics(1280, 900);
 		await browser.open(origin);
-		await browser.wait('document.querySelector(".composer textarea") && !document.querySelector(".offline")');
+		await browser.wait(`document.querySelector('${COMPOSER}') && !document.querySelector('.offline')`);
 		// Remote owners (not only the device) may sign in to model providers.
 		await browser.click(".drawer-foot .settings-open");
 		await browser.wait(

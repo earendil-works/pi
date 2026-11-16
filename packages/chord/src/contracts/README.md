@@ -27,6 +27,10 @@ type NotesProvider = Implementation<typeof Notes>; // { variant: "editor"; membe
   `clear(context)`) and `events` (schemas of the JSON values the object emits, decision "Events: fire-and-forget
   members"). `local(name, { version, params, members })`: one flat map, where a schema is state, `method(...)` a
   method, `keyed(schema)` a keyed member and `event(schema)` an event member.
+- `admission: schema` (remote only, optional; slice 14): the JSON value the type's admission hands its factory about
+  a caller (`AdmittedOf<C>`; JSON only, no `bytes()`). Never part of the fingerprint and never validated; it has a
+  fingerprint of its own (`contractData(contract).admission`), which a reload's staging compares. `evolve`'s
+  `admission(schema)` replaces it, as the last edit of a version.
 - `hostAddress(params) => Address` (remote only, required; a declaration error without it): the address of the host that serves the object for these
   params (`host/`'s routing table). The caller computes it and sends it with its hold, so a relay routes by the address
   alone. It is not part of the normal form or the fingerprint and `evolve` carries it.

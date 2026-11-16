@@ -885,7 +885,12 @@ describe("discord ingress (fake provider)", () => {
 		assert.deepEqual(data.attachments, [{ id: "discord:500:0", name: "notes.txt" }]);
 		const content = (entry?.model?.[0] as UserMessage).content;
 		assert(Array.isArray(content));
-		assert(content.some((part) => part.type === "text" && part.text.includes("<attachments>")));
+		// The file follows the text, marked with its copy's path.
+		assert(
+			content.some(
+				(part) => part.type === "text" && /<file name=\[File #1\] path="[^"]+notes\.txt" \/>/.test(part.text),
+			),
+		);
 	});
 
 	it("a turn's answer lists the files its conversation offered during it, readable through the ingress", async () => {

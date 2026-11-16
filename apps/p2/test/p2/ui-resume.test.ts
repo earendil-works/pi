@@ -6,7 +6,7 @@ import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Familiar } from "../../plugins/familiar/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
-import { Browser, browserTests } from "./browser.ts";
+import { Browser, browserTests, COMPOSER } from "./browser.ts";
 import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
 
 describe("reopening the last conversation", { skip: !browserTests }, () => {
@@ -36,7 +36,7 @@ describe("reopening the last conversation", { skip: !browserTests }, () => {
 		);
 		const url = (path: string) => `http://127.0.0.1:${fixture.server.port}${path}`;
 		await browser.open(url(`/s/${session.id}`));
-		await browser.wait(`document.querySelector('.composer textarea')`);
+		await browser.wait(`document.querySelector('${COMPOSER}')`);
 
 		// A launch at home shortly after: the conversation again.
 		await browser.open(url("/"));
@@ -55,7 +55,7 @@ describe("reopening the last conversation", { skip: !browserTests }, () => {
 
 		// The new-session screen forgets it: the next launch is at home.
 		await browser.open(url(`/s/${session.id}`));
-		await browser.wait(`document.querySelector('.composer textarea')`);
+		await browser.wait(`document.querySelector('${COMPOSER}')`);
 		await browser.open(url("/"));
 		await browser.wait(`location.pathname === '/s/${session.id}'`);
 		await browser.metrics(1280, 900);
@@ -66,7 +66,7 @@ describe("reopening the last conversation", { skip: !browserTests }, () => {
 
 		// A browser tab opening `/` starts at home, however recent the conversation.
 		await browser.open(url(`/s/${session.id}`));
-		await browser.wait(`document.querySelector('.composer textarea')`);
+		await browser.wait(`document.querySelector('${COMPOSER}')`);
 		await browser.evaluate(`sessionStorage.setItem("tab", "1")`);
 		await browser.open(url("/"));
 		await browser.wait(`location.pathname === '${home}'`);

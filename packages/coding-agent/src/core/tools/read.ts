@@ -1,4 +1,4 @@
-import type { Api, ImageContent, Model, ModelImageResizeOptions, TextContent } from "@earendil-works/pi-ai";
+import type { ImageContent, ModelImageResizeOptions, TextContent } from "@earendil-works/pi-ai";
 import { constants } from "fs";
 import { access as fsAccess, open as fsOpen, readFile as fsReadFile } from "fs/promises";
 import { type Static, Type } from "typebox";
@@ -39,6 +39,11 @@ export type ReadToolOutput = Static<typeof readOutputSchema>;
 
 export interface ReadToolDetails {
 	truncation?: TruncationResult;
+	/**
+	 * Id of the model that was selected when the image was read, if it has no image input. Shown to the user only:
+	 * the model gets pi-ai's placeholder per request, so the stored result stays right after a model switch.
+	 */
+	imageUnsupportedByModel?: string;
 }
 
 /**
@@ -100,13 +105,6 @@ function toReadOutput(content: (TextContent | ImageContent)[]): ReadToolOutput {
 	const text = content.find((block) => block.type === "text")?.text ?? "";
 	const image = content.find((block) => block.type === "image");
 	return image ? { type: "image", data: image.data, mimeType: image.mimeType, note: text } : text;
-}
-
-function getNonVisionImageNote(model: Model<Api> | undefined): string | undefined {
-	if (!model || model.input.includes("image")) {
-		return undefined;
-	}
-	return "[Current model does not support images. The image will be omitted from this request.]";
 }
 
 /** The lines a read shows, with the file's line count; line counts follow `text.split("\n")`. */
@@ -274,7 +272,6 @@ export function createReadToolDefinition(
 							const mimeType = ops.detectImageMimeType ? await ops.detectImageMimeType(absolutePath) : undefined;
 							let content: (TextContent | ImageContent)[];
 							let details: ReadToolDetails | undefined;
-							const nonVisionImageNote = getNonVisionImageNote(ctx?.model);
 							if (mimeType) {
 								// Read image as binary.
 								const buffer = await ops.readFile(absolutePath);
@@ -283,17 +280,18 @@ export function createReadToolDefinition(
 									resizeOptions: ctx?.model?.inputLimits?.images?.resize ?? fallbackResizeOptions,
 								});
 								if (!processed.ok) {
-									let textNote = `Read image file [${mimeType}]\n${processed.message}`;
-									if (nonVisionImageNote) textNote += `\n${nonVisionImageNote}`;
+									const textNote = `Read image file [${mimeType}]\n${processed.message}`;
 									content = [{ type: "text", text: textNote }];
 								} else {
 									let textNote = `Read image file [${processed.mimeType}]`;
 									if (processed.hints.length > 0) textNote += `\n${processed.hints.join("\n")}`;
-									if (nonVisionImageNote) textNote += `\n${nonVisionImageNote}`;
 									content = [
 										{ type: "text", text: textNote },
 										{ type: "image", data: processed.data, mimeType: processed.mimeType },
 									];
+									if (ctx?.model && !ctx.model.input.includes("image")) {
+										details = { imageUnsupportedByModel: ctx.model.id };
+									}
 								}
 							} else {
 								// Read text content. Convert offset from 1-indexed input to 0-indexed line access.

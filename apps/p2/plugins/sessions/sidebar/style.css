@@ -167,7 +167,7 @@
 }
 /* A run's mark where the row has no icon (RunMark): a hollow ring while idle, a spinner rotating on the compositor
    while it works, in one box with one stroke, so nothing moves when it starts or stops. Working on its own (a group's
-   sessions, a collapsed rollup, the Familiar's logo) it is the spinner alone. How a run ended is in the row's end. */
+   sessions, a collapsed rollup) it is the spinner alone. How a run ended is in the row's end. */
 .run-mark {
 	flex: none;
 	width: 10px;
@@ -464,15 +464,15 @@
 	text-align: left;
 }
 
-/* A group's row (a folder, a project), and the "New session" row in the same type: medium weight, above its sessions
+/* A group's row (a folder, a project), and the rows before the rollups ("New session") in the same type: medium weight, above its sessions
    in the hierarchy. */
 .group-row {
 	font-weight: var(--fw-medium);
 }
-/* The "New session" row: a step below the header, apart from the first rollup as a rollup from the next (Elanor's
-   group padding). */
+/* The rows before the rollups (a plugin's, "New session"): a step below the header and a step, plus the navigation's
+   gap, above the first rollup; closer to it than a rollup is to the next (Elanor's group padding). */
 .sidebar-start {
-	padding-block: var(--s2) var(--semantic-dimension-space-padding-x-large);
+	padding-block: var(--s2);
 }
 /* A hidden list stays hidden: Elanor's lists are flex boxes, which would override the attribute. */
 .sidebar-nav ul[hidden] {

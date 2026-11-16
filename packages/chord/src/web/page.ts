@@ -8,7 +8,7 @@
 import { BACKGROUND_CONTEXT } from "../context/index.ts";
 import type { Principal } from "../data/index.ts";
 import type { PluginFacet } from "../host/index.ts";
-import { type WebSocketLike, webSocketLink } from "../link/index.ts";
+import { type PartLimits, type WebSocketLike, webSocketLink } from "../link/index.ts";
 import {
 	type Client,
 	type ClientError,
@@ -30,11 +30,13 @@ import { followThemes } from "./themes.ts";
 export type PageOptions<P extends Principal> = {
 	/** Opens the page's socket to the server's links endpoint (`/chord`). */
 	readonly connect: () => WebSocketLike;
+	/** The limits per part of what arrives from the server (default: an untrusted link's, 16 MiB on the wire). */
+	readonly limits?: PartLimits;
 	/** The modules the web plugins import, by specifier: the app's API modules for the web kind, React, ... */
 	readonly modules: ClientModules;
 	/** The app's own web facets. */
 	readonly core?: readonly PluginFacet<P>[];
-	/** Asked before each reconnect; `false` stops reconnecting (a guest's ended share). */
+	/** Asked at each reconnect, beside the next attempt; `false` stops reconnecting (a guest's ended share). */
 	readonly canRetry?: () => Promise<boolean>;
 	readonly onConnection?: (state: ConnectionState) => void;
 	/** Renders the app with its host, once the plugins are loaded. */
@@ -99,6 +101,7 @@ export async function startPage<P extends Principal>(options: PageOptions<P>): P
 			socket.addEventListener("message", () => events.received());
 			return webSocketLink(socket);
 		},
+		...(options.limits === undefined ? {} : { limits: options.limits }),
 		fetchScript: (entry) => scripts.fetch(entry),
 		serverBase,
 		outdated: () => location.reload(),

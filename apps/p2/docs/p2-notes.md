@@ -50,13 +50,14 @@ P2_FAKE=1 npm start          # http://127.0.0.1:8788, data in ~/.pi/p2
   503. A plugin reload rolls web facets out with the server's and workers' (the surface's step last): an open page
   fetches the changed scripts and applies them in place (`host.reload` in the page; each plugin's stylesheet swapped
   with its code), so the transcript's scroll and the other panes stay; only base code (the entry, `src/web`,
-  `src/runtime`, the API, Chord, React) needs a restart, and pages reload onto the new base: before reconnecting a
-  page asks `/_chord/web/base`, another one reloads it. No polling. A page's link names its base
+  `src/runtime`, the API, Chord, React) needs a restart, and pages reload onto the new base: when its link drops a
+  page asks `/_chord/web/base` alongside the reconnect (never before it: one check at a time, a drop while one runs
+  asks nothing more), and another base stops the reconnecting and reloads the page. No polling. A page's link names its base
   (`/chord?web=<base>`); every other client names itself (`?client=tui`, `cloud`, `script` for scripts and tests;
   `src/runtime/stale-page.ts`). The server refuses a link naming another base, or neither a base nor a known client (a
   page from before 2026-11-12, which would re-hold types removed since), at once (close code 4001; the page reloads)
-  and the owner gets a notice (source `stale-pages`) naming who it was: the owner's access or device, or the guest,
-  the browser and its address. A TUI launcher from before the marker is refused too (it retries until updated). The last four plugin sets' files stay served. Web facets must not share module state with
+  and the server logs (source `stale-pages`, a log line, not a notice: nothing to act on) who it was: the owner's
+  access or device, or the guest, the browser and its address. A TUI launcher from before the marker is refused too (it retries until updated). The last four plugin sets' files stay served. Web facets must not share module state with
   another plugin's files (each plugin's script holds its own copy of a file it imports from another plugin):
   `plugin-practices.md`. The TUI launcher still polls `/__p2_tui` (p2's own TUI bundle). There is no Vite,
   source-module server or `index.html`.
@@ -558,9 +559,41 @@ tab's sessionStorage; URLs identify conversations (`/s/<id>` and `/s/<id>/c/<con
   (`…/pi/acme/<brain>/s/<id>`), not the frame's. The shell only replaces its URL with each report; the app's history
   entries stay the tab's, so Back moves the frame. Messages go to the shell's origin only; nothing is posted when the
   page is not framed or not relayed. The shell's side and the contract: Radius,
-  `client/src/views/pi-shell/frame-bridge.ts`. `test/p2/shell-bridge.test.ts` (origins, reports, base) and
-  `test/p2/ui-shell-frame.test.ts` (the real bundle framed by a stand-in shell on another site: mirrored URL, links,
-  one history entry per step, Back and Forward).
+  `client/src/views/pi-shell/frame-bridge.ts`. `test/p2/shell-bridge.test.ts` (origins, reports, base, theme
+  messages) and `test/p2/ui-shell-frame.test.ts` (the real bundle framed by a stand-in shell on another site:
+  mirrored URL, links, one history entry per step, Back and Forward, the shell's theme).
+- **Theme** (`src/web/theme.ts`). The light/dark preference lives in the outermost host, and the page picks a backend at
+  startup: `native` when p2-mac's `window.webkit.messageHandlers.piHost` exists (the app's `appearance`; `theme` and
+  `set-theme` messages with replies, `pi-host-theme` events; "system" resolves with `matchMedia`, which follows the
+  app's appearance), `shell` when the Radius shell frames the page (the meta, a plain origin, and a parent) and its
+  `hello` carries `theme` (the shell's `pi-theme`; the page applies the shell's resolved `scheme`, sends `set-theme`,
+  takes the `theme` echo), else `local` (the origin's localStorage `pi-theme`, as before). Hosted pages never read or
+  write their own stored value; the first-paint scripts skip it by the same rule (the app page's in `src/hosts/web.ts`;
+  the server pages' in `src/runtime/page.ts` skip it in any frame, since the CSP lets only the shell frame them). Picks
+  apply at once and the host's answer wins; two quick picks never flicker back: the shell answers each `set-theme`
+  with one `theme`, and the page drops `theme` messages until its last pick's answer (the count resets on `hello`);
+  with p2-mac it ignores `pi-host-theme` while a `set-theme` is unanswered and takes the latest request's answer.
+  Before `hello` a framed page follows the system, ignores its storage and `storage` events and keeps a pick in
+  memory: a `hello` with `theme` sends that pick as `set-theme` (else takes the shell's preference), a `hello` without
+  `theme` (an older shell) stores the pick or, without one, reads the stored value; without any `hello` the pick stays
+  in memory. Before `hello` a framed page shows the scheme the shell hinted in the URL it framed
+  (`#pi-shell-scheme=light|dark`): WebKit (26.6) resolves a cross-site frame's `prefers-color-scheme` with the
+  system's, not the embedder's `color-scheme` as Chrome does, so a shell forcing the opposite of the system would
+  otherwise paint the frame wrong until `hello`. The app page's first-paint script reads the hint only in a shell
+  frame (exactly that fragment; any other stays), paints it, keeps it for `theme.ts` as `<html data-pi-shell-scheme>`
+  and removes the fragment with `history.replaceState(history.state, "", pathname + search)` before the app reads the
+  URL (navigation.ts reads `location` when the bundle starts; nothing reads the fragment). Without a hint: the
+  system's scheme. A change of the shown scheme after load cross-fades: `theme.ts` makes the DOM change in
+  `document.startViewTransition({ update, types: ["pi-theme"] })` (the function form where types are missing), the
+  browser's default cross-fade of the page, about 250 ms; no CSS of its own (scope any to
+  `:active-view-transition-type(pi-theme)`). Each document fades its own pixels: the Radius shell keeps its frame out
+  of its snapshot, p2-mac fades only its native views. No fade for what the page shows while starting (first paint,
+  hint, before the first frame, `hello`, p2-mac's first answer), an unchanged scheme, a hidden page, reduced motion or
+  without the API; a change during a fade starts a new one, and a fade's late DOM change shows the latest scheme.
+  Nothing theme-related keys off `prefers-color-scheme` once `data-color-scheme` is set (Elanor's tokens use it only
+  without the attribute), so the old snapshot is the old theme. `test/p2/theme.test.ts` (backends, races, picks and
+  the hint before `hello`, fades), `test/p2/first-paint.test.ts` (both first-paint scripts, the hint),
+  `test/p2/ui-shell-frame.test.ts` and `test/p2/ui-theme-fade.test.ts` (a pick fades in Chrome, the first paint not).
 - `push`: one step at the tap; `replace`: lateral changes and server/startup corrections. A correction can pass
   its captured route as `replace(next, expected)` so it cannot overwrite a later queued destination.
 - `close`: whole-modal ×/scrim/Escape, or a sheet/file parent; `reset`: workspace tabs, dropping visited files/commits.
@@ -670,7 +703,13 @@ syntax/startup errors are retained too. Focused tests: `logs.test.ts`, `ui-logs.
 `test-host.test.ts`; the browser regression exercises the original `Unknown p2 plugin: settings` failure, sticky
 startup fencing, the list marker, owner notice, worker-filtered Show logs and recovery through Retry.
 
-**Telemetry** (Chord §29; always on, no sampling: Chord offers none): the server records to `<data>/telemetry.sqlite`
+**Telemetry** (Chord §29; off unless settings.json's `telemetry` is `true`, read once at the server's start; no
+sampling: Chord offers none; recording everything cost the phone 1.8M spans, 1 GB and a third of a core in 15 h, so it
+is opt-in since 2026-11-13). Off, the server opens no store and its ingest objects refuse everyone (a page loaded while it
+was on fails `forbidden` at once and stops sending, never waits unbound), `WorkerInit.telemetry` is
+false (the worker's host has no recorder and sends nothing), no page is marked, every host uses Chord's NOOP adapter,
+and `Traces` answers `unavailable` "telemetry is off (settings.json telemetry)" (the pane and the tools show it;
+`telemetry-off.test.ts`). On: the server records to `<data>/telemetry.sqlite`
 (`openTelemetry`, `src/runtime/host-dirs.ts`; Chord's SQLite store, 7 days, a queue of 10,000 spans, a flush every
 second; its own private file, never in a backup), its only writer. Each session worker records in memory (its host's
 spans and metrics, and Durable's `pi.durable.*` and pi-ai's `pi.ai.*`: the Harness gets the same adapter) and sends
@@ -751,7 +790,7 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   envs plugin's directory picker `plugins/envs/contract.web.tsx`); a contract imports only the API, shared packages
   and its own plugin's files. What two plugins share otherwise lives in the base and reaches them through the API
   (`src/runtime/schemas.ts`, `entries.ts`, `notices.ts`, `origin.ts`, `environments.ts`, `downloads.ts`,
-  `tui-chat.ts`). Base code imports no plugin code; only the page's shared components (`ModelPicker.tsx`) read
+  `tui-chat.ts`). Base code imports no plugin code; only the page's shared components (`model-choice.ts`) read
   plugin contract types (`import type`). A plugin's own files stay in the plugin, assets
   included (`plugins/terminals/vendor/ghostty`). Facets use no `import.meta`: the p2 app directory is start data
   (`Server.info.app`, `WorkerInit.app`). The terminal host (`plugins/terminals/main.ts`) is its own program, not a
@@ -942,9 +981,10 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
     backgrounds (Elanor's ghost fills) span the row; the label's hit area covers it. Labels are one line, cut with "…" at
     the end (`.nav-label`). No leading disclosure column, so nothing is indented by it: a group's row shows or hides
     its sessions, not indented (every session's working mark is in one column); a group's row is medium weight. The
-    owner's list starts with a "New session" row in a group's type ("+" marker, a link to `/new`, the new-session
-    screen, selected while it shows); the header holds the Pi logo (the Familiar's button) and the
-    collapse trigger. A session's row is a link to its main conversation,
+    owner's list starts with the rows plugins put there (the `sidebar-start:<name>` slots, each a list item: the
+    Familiar's "Ask Pi") and a "New session" row, all in a group's type ("+" marker, a link to `/new`, the new-session
+    screen, selected while it shows), 16px above the first rollup (rollups are 24px apart); the header holds the Pi
+    logo and the collapse trigger. A session's row is a link to its main conversation,
     selected while that shows (the label's hit area covers the row: the label is not positioned, so its `::after` is
     laid out on the row). Its other conversations (its branches, then its subagents and one-shot agents, the most
     recently active first) are below it, shown or hidden only by its chevron (`Toggle`, a button after the label;
@@ -959,7 +999,7 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   - **State marks** (`Row.tsx`, the top of `style.css`): a row says two things in two places. The marker says whether
     a session runs: `IconMarker` frames the row's icon (a glyph, a folder, a lock) with a dash travelling around it
     (22px, 3px outside the icon, clear of a glyph's corner cells), `WorkingMark` is a spinner where a row has no icon (a
-    group's sessions, conversations, the Familiar's logo, a collapsed rollup's details). That is the sidebar's only
+    group's sessions, conversations, a collapsed rollup's details). That is the sidebar's only
     motion. The row's end says whether it wants the owner, steady: an unread answer makes the title bold
     (`.session-title.unread`) with a blue dot before the time (`UnreadMark`); a failed worker shows a warning sign and
     "Failed" (`FailedMark`, the error in its tooltip). Each state has its own shape, not only a colour (spinner or
@@ -1060,10 +1100,15 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   `<sender kind="owner|guest|session|subagent" …/>` block (`src/runtime/sender.ts`, values escaped; a subagent's
   text follows as `[<intent>] <text>`), which the preamble explains and nothing reads back: readers use the entry data.
   Stop/dequeue restore text only to its author; removing a queued input (×,
-  no restore) discards it, as in Pi Mobile.
+  no restore) discards it, as in Pi Mobile. Stop is Durable's `Conversation.abort()`, which withdraws the queue in the
+  commit that marks the run; people's text it withdrew goes back to its authors (the caller's to the composer,
+  others' to their drafts; `conversations stop`, which has no author, gives all to drafts). Peer and subagent messages
+  are submitted with `onAbort: "keep"`, since their senders cannot take them back: they stay queued, as after a failed
+  run, and go with the next input. A main agent's queued task for a subagent is withdrawn (its reporter says so).
 - **Windowed conversation view** (`plugins/chat/worker.ts`, `src/web/history.ts`, `src/runtime/conversation-stats.ts`):
-  `Chat.view` is Durable's view as is: a window over the transcript (the fork-aware history in entry ID order, head
-  markers in place), the newest 50 entries, then appends, back to 50 past 100, `before` the entry just before it. The
+  `Chat.view` is Durable's view with image references: a window over the transcript (the fork-aware history in entry
+  ID order, head markers in place), the newest 50 entries, then appends, back to 50 past 100, `before` the entry just
+  before it. The
   worker holds one Durable watch per conversation (default window), shared by every viewer. Clients (web and TUI)
   keep a `TranscriptStore` per host and conversation over Durable's `ConversationTranscript`: every value of the view
   is merged in, so entries that leave the window stay; scrolling up loads earlier pages (`Chat.entries`, 100 entries
@@ -1081,6 +1126,14 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   sheet reads `ChatCosts`, from `context()` when it opens. Measured with 3,000 seeded entries (fake provider, slayer):
   opening sends 50 entries (125 KiB, 14 ms) instead of 101 (251 KiB, 33 ms); paging to the start 30 pages, 244 ms
   (before: 29, 186 ms); building the whole transcript 1.3 ms (before: 10.9 ms).
+- **Image references** (`src/runtime/entry-images.ts`, `plugins/chat/server.ts`): the view's and `Chat.entries`'s
+  image parts are `{ type: "image", mimeType, src, width, height }` instead of base64 data; pages load them from
+  `GET /entry-image?session&conversation&entry&message&part` (viewers of the session only, same-site, cached as
+  immutable), which reads the entry through `ChatImages` on the worker. Why: a window of 50 entries with screenshots
+  came to 38 MB, past a page link's part limit, so the session could not be opened; through Radius the brain's loopback
+  socket closed on it and the page reconnected in a loop. Clients read image parts through `shownImage` (inline parts
+  of kept copies become data URLs). Pages take parts up to 32 MiB from the server (`SERVER_PART_LIMITS`, Chord's
+  default is 16 MiB); Radius's relay limits one data message to 32 MiB by default (Radius ee560a41; 16 MiB before).
 - **Run failures** (`pi.live.runFailure`): why the newest run ended without an answer shows as a failure notice at the
   end of the transcript (web and TUI, the error notice style) until the next run starts: `model_error` and `no_model`
   "The model could not answer this input. <detail>", `faulted` "The run failed: <detail>", `orphaned` "The run could
@@ -1238,8 +1291,21 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   through the worker's `Attachments` local (only uploads of that session): each is materialized before admission into
   the data directory's `uploads/<session>/` on this machine (for the default data directory that is
   `~/.pi/p2/uploads/<session>/`) and, when the receiving conversation works on another environment, into
-  `~/.pi/p2/uploads/<session>/` there; the message lists those paths, with images inline (from this machine's copy)
-  when the model accepts them. `DownloadStore` (server local) snapshots a server file into the session's files;
+  `~/.pi/p2/uploads/<session>/` there. The message's text places its files: a reference
+  `![name](attachment:<upload id>)` (images) or `[name](attachment:<upload id>)` (other files) counts when its ID is one
+  of the message's attachments (`src/runtime/references.ts`). The model reads each file where it is referenced, marked
+  as Codex marks local images: `<image name=[Image #N] path="<copy>">`, the image (from this machine's copy, when the
+  model accepts images, fitted to its limits before submission with the worker's image processor,
+  `WorkerParts.images`, Durable's `fitImage`), what fitting changed or why it is left out, `</image>`; other files as
+  `<file name=[File #N] path="<copy>" />`; a second reference as `[Image #N]` alone; unreferenced uploads (the TUI,
+  Discord) after the text. The web composer (`plugins/chat/draft-editor.tsx`) shows references as pills: files are
+  placed at the caret or a drop's point, moved by dragging or the pill's menu (Earlier, Later, Remove), and every
+  change, typing and pills alike, goes through the composer's own undo history (`draft-history.ts`); the browser's
+  undo (keys, Edit menu, iOS shake) never runs. Picked files are referenced by their local keys until the send
+  renames them to upload IDs; references to this session's uploads (a message brought back by Edit or from the queue)
+  go as they are. Transcript, previews, titles and the TUI show references by the files' names. `read`
+  (coding-tools) and the `fit-images` plugin (Durable's `afterTool` extension, for every tool result) fit the images of
+  tool results with the same processor before they are committed: the transcript never changes later. `DownloadStore` (server local) snapshots a server file into the session's files;
   producers on the worker (send_file) write there directly (space `downloads`, key the snapshot's UUID). `GET|HEAD
   /download?session=&id=` serves them through `SessionFiles` to the owner and the session's guests (no
   `Sec-Fetch-Site: cross-site`; ranges for audio/video). An archived or unknown session's downloads and artifacts
@@ -1525,10 +1591,34 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   worker runs; an idle worker stops after 5 minutes without viewers or warming) and at each start, else in an
   `InputGate` before the next input is admitted, which waits for the summary. Web: home (the `home` slot: `/` replaces
   itself with its session, made on first use; while the owner has it archived, with the new-session screen) and the
-  `drawer-brand` slot, the Pi logo at the start of the owner's sidebar header (a button titled "Ask Pi" that opens it,
-  restoring it when archived; the session's working spinner or unread dot on its corner); the sessions plugin's `DrawerRowsContext` (`plugins/sessions/contract.web.tsx`) gives it the
-  rows, `SessionDot` and `listApart`, which leaves its session out of the rollups. The TUI lists it as an ordinary session. Tests:
+  `sidebar-start:familiar` slot, the "Ask Pi" row above the owner's "New session" (the Pi logo as its icon, framed
+  while its session works; bold with a dot for an unread answer; it opens the session, restoring it when archived); the
+  sessions plugin's web contract (`plugins/sessions/contract.web.tsx`) gives it the rows and `listApart`
+  (`DrawerRowsContext`), which leaves its session out of the rollups, and the row's shape and marks (`NavRow`,
+  `IconMarker`, `UnreadMark`). The TUI lists it as an ordinary session. Tests:
   `familiar.test.ts`, `ui-familiar.test.ts`, the conversations actions in `conversations.test.ts`.
+- **Scope prompt** (`plugins/scope-prompt`, experiment; owner only, web only): an overlay (`overlay:` slots, the
+  `SlotList` at the end of `AppLayout`) that leaves the page as it is until pointing mode is on (`mode.ts`): a double tap
+  of the bare primary modifier (Cmd on macOS, Ctrl elsewhere: each press released within 300 ms, the second within
+  450 ms of the first, no other key, click or focus loss between, so Cmd+V sent by a dictation tool never counts), the
+  binding `p2.scope-prompt.toggle` (Cmd+.), the command menu's "Prompt anywhere", or its button (`Toggle.tsx`: in the
+  sidebar's header before the collapse button, the `sidebar-header:` slots; in the top bars of the chat and the list
+  pages while the sidebar is not shown docked, the `topbar-start:` slots), which also switches it off. Holding the modifier does nothing,
+  so Cmd+click still opens links in new tabs. While on, a pill says so, frames take no pointer events (they count as
+  their pane), the thing under the mouse is outlined with its chain of labels, and a click (touch too) is taken before
+  the page sees it and opens a small composer there, whose steps widen the scope (a touch: its tap outlines what it is
+  on, a second tap on that opens the composer; a drag scrolls as always); Escape, Stop, leaving the window or
+  the pick end the mode. `scopes.ts` reads the chain from attributes the page already renders: `.drawer`,
+  `.sidebar-section` and `.sidebar-group` `[data-key]`, `[data-session]` (session rows), `[data-view-pane]` with
+  `data-view-kind/-item/-title` (Workbench), `[data-path]` (a file of the changes view), `.diff-line`, `[data-entry]`
+  (transcript entries). Where it goes (`message.ts`; the composer's "To" switches): a target in the open session's
+  page (its chat, a view) goes to the open conversation as the person's message, as the composer sends it: the page
+  stages the `<scope>` block on the session (`ScopeStage`, worker facet, by `requestId`, dropped after a minute) and
+  the views' send router carries it with that message (`MessageContexts`, which now get the routed input), so the
+  transcript shows the text with the note "with scope Chat › Message". Anything else (the sidebar) goes to the
+  Familiar: opened as its sidebar row does, the text queued on its main conversation followed by the block with the page's
+  session, conversation and title or list, which its prompt section explains. Not yet: frames' insides (an html
+  artifact is its pane). Test: `ui-scope-prompt.test.ts`.
 - **Subagents** (`plugins/subagents`): owns its protocol-independent Durable extension (persistent
   anchor conversations and exactly-once background reporter tasks, model/thinking/tool validation). The worker
   facet (an object of lifetime "host") contributes it to `Extensions` and catches up child metadata after relevant commits, retrying
@@ -1629,11 +1719,26 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   does). The worker object (`p2.mcp-worker`) sends `setLocations` with every location its conversations work at (the
   session's, active subagents' own) at start, after moves and subagent commits, and whenever the view re-activates (a
   refusal because a newer generation runs ends it), and
-  contributes one Durable extension per configured server, `mcp:<server>` with the code-mode namespace `mcp__<server>`
-  (`createMcpExtensions`, a `self.writable`, rebuilt only when the tool list changes). The namespace's description
-  comes from the configuration only (and the sign-in hint for OAuth servers), so the prompt's code-mode section is the
-  same before and after a server connects (the KV cache holds); a server's `instructions` (`Mcp` version 3, the
-  instance's `instructions`) are reachable through `describeNamespace()`. There is no `mcp_servers` section. Deferred
+  contributes one composing Durable extension, `mcp` (`createMcpExtension`, a `self.writable`, rebuilt only when an
+  instance, its tools, summary or instructions, or a lease change; `Mcp` version 4 gives the worker its `leases`, the
+  instances each location uses, since a project override decides per lease even for instances serving every location).
+  Durable gives every conversation of a worker the same tools, so the extension registers every variant of every tool
+  (a tool as one instance describes it, `toolDescriptor`: title, description, schemas; instances describing it alike
+  share it) and cuts each conversation's view with wraps: the `codemode` section renders, and the `codemode` and
+  `tool_search` tools run (an `api` whose `agent()` is cut; its getters and symbol keys kept), with the servers of the
+  lease at the conversation's location only, each as its own namespace `mcp__<server>` with that instance's summary
+  and instructions. A server only another location has is not there (the main conversation's prompt does not change
+  when a subagent works elsewhere), a variant another location's instance describes is not there, and a call reaches
+  the caller's instance only as the variant it describes (else `MCP tool … is not offered at …`). Names as pi's, the
+  variant the session's lease uses keeping the plain name, other variants of a tool suffixed with a hash of their
+  descriptor. Still the union: Durable's own agent (hooks, `Conversation.agent()`, nested-call resolution, subagent tool
+  choice), and without code mode a loaded tool stays declared after a move. The namespace's description is pi's
+  one-line summary (`mcpServerSummary`: the configured `description` (`Mcp` version 4, the instance's `description`),
+  else the first line of the server's `instructions` (version 3), at most 250 characters), then where the tools are and
+  the sign-in hint for OAuth servers; it changes once when a server without a `description` first sends instructions (a
+  reloaded manager keeps the instructions it listed). The full
+  instructions come from `describeNamespace()`. Without code mode, the `mcp` extension's `mcp_servers` section lists
+  the conversation's servers with their summaries, as pi's does for `tool_search` servers. Deferred
   tools named by `createMcpToolName` (every tool of a colliding name gets the hash suffix, as in pi), results through
   `toLlmContent` and `limitMcpContent`, `structuredOutput` only for tools with an output schema. Without code mode,
   `tool_search` is installed by the worker's registry (`durableRegistry`: once, while code mode is off and any extension
@@ -1642,7 +1747,7 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   it: `npm run build:daemon` in `packages/env`, or `PI_ENV_DAEMON`), `mcp-instances.test.ts` (the supervisor with a
   short backoff), `mcp-leases.test.ts`, `mcp-environments.test.ts`, `mcp-project.test.ts`,
   `mcp-windows-command.test.ts`, `mcp-tools.test.ts`, `mcp-worker.test.ts` (fake provider: a project file, `tool_search`,
-  a call, a relocation).
+  a call, a relocation, a subagent's project server kept out of the main conversation, the `mcp_servers` section).
 - **MCP sign-in** (`plugins/mcp/sign-in.ts`, `routes.ts`, `probe.ts`, `pages.ts`, `credentials.ts`; as built:
   `docs/mcp-durable.md` section 4.7): HTTP servers without an `Authorization` header use OAuth with pi-mcp's auth
   provider (stored tokens, refreshed, never a browser) and credentials in `<P2_DATA_DIR>/mcp-auth.json` (0600, keyed like

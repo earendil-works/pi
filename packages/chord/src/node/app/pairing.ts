@@ -1,7 +1,7 @@
 // Device pairing (slice 13 §2, decision "The app kit, point 3" (c)): a command-line or terminal client on another
 // machine asks for a code (`POST /_chord/pair`, public) and polls with a secret it got with it; the owner (the
 // principal the app names) opens `/_chord/pair/<code>` in a signed-in browser and approves; the next poll returns a
-// token of the owner's new device session, once. Codes are short, random, single use and expire after 10 minutes; the
+// token of the owner's new device sign-in, once. Codes are short, random, single use and expire after 10 minutes; the
 // poll secret is kept only hashed. Asking is public, so pairings anonymous clients start are capped: `maxPending` in
 // all (100 by default) and `perAddress` per client address (10). The trade: a party filling the caps locks pairing out
 // for others for up to 10 minutes (behind a tunnel every remote client has the tunnel's address), instead of growing
@@ -13,7 +13,7 @@ import { samePrincipal } from "../../data/principal.ts";
 import { defineFacet, type Facet } from "../../host/index.ts";
 import { Http, type HttpRequest, type HttpResponse } from "../http/index.ts";
 import { hashToken, newToken } from "./secrets.ts";
-import { Sessions } from "./sessions.ts";
+import { SignIns } from "./sign-ins.ts";
 
 /** How long a pairing code is valid: 10 minutes. */
 const PAIRING_MS = 10 * 60_000;
@@ -127,7 +127,7 @@ export const PAIR_PATH = "/_chord/pair";
  * The kit's facet for device pairing: `POST /_chord/pair` (public: `{ label? }` → `{ code, poll }`, 429 past a limit
  * unless the owner asks), `POST /_chord/pair/poll` (public: `{ poll }` → `{ status: "waiting" }`, `{ status:
  * "approved", token }` once, else 404), `GET` and `POST /_chord/pair/:code` (`owner`'s confirm page and approval: a
- * device session of `owner`).
+ * device sign-in of `owner`).
  */
 export function pairingFacet<P extends Principal>(pairings: Pairings, owner: P): Facet<P> {
 	return defineFacet<P>((_host, self) =>
@@ -167,8 +167,8 @@ export function pairingFacet<P extends Principal>(pairings: Pairings, owner: P):
 					const pairing = pairings.waiting(request.params.code ?? "");
 					if (pairing === undefined)
 						return { kind: "html", status: 404, body: "<p>No such pairing (or it expired).</p>" };
-					const sessions = await ctx.get(Sessions, {});
-					const { token } = await sessions.issue({ principal: owner, label: pairing.label, kind: "device" }, ctx);
+					const signIns = await ctx.get(SignIns, {});
+					const { token } = await signIns.issue({ principal: owner, label: pairing.label, kind: "device" }, ctx);
 					pairing.token = token;
 					return {
 						kind: "html",
@@ -189,7 +189,7 @@ async function labelOf(request: HttpRequest): Promise<string> {
 	return typeof body?.label === "string" && body.label.trim() !== "" ? body.label.trim().slice(0, 100) : "device";
 }
 
-/** The owner's confirm page for pairing `code` (a form posting to itself: same origin, the session cookie). */
+/** The owner's confirm page for pairing `code` (a form posting to itself: same origin, the sign-in cookie). */
 function confirmPage(code: string, label: string): string {
 	return [
 		"<!doctype html><title>Pair a device</title>",

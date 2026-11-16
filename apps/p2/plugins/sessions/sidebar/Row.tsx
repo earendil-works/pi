@@ -5,9 +5,7 @@
 // its `/tree` branches drawn as a tree, then its subagents as a list.
 import {
 	BranchIcon,
-	type CommandTargetRow,
 	HOME,
-	inPage,
 	locationLabel,
 	NavDisclosureIcon,
 	NavEditIcon,
@@ -43,8 +41,9 @@ import {
 	conversationRows,
 	type SubagentItem,
 } from "./conversation-tree.ts";
-import { RunMark, UnreadMark, WorkingMark } from "./marks.tsx";
+import { IconMarker, RunMark, UnreadMark, WorkingMark } from "./marks.tsx";
 import type { Activity, GlyphSeed, SidebarRow } from "./model.ts";
+import { NavRow } from "./NavRow.tsx";
 import {
 	failureWords,
 	type SubagentState,
@@ -58,28 +57,6 @@ import {
 // icon, or a spinner where it has none; the only motion in the sidebar. The end of the row says whether it wants the
 // owner: a bold title and a blue dot for an unread answer, "Failed" for a failed worker. Every state has its own shape,
 // not only its own colour.
-
-/**
- * A row's 16px icon (a project glyph, a folder, a lock, a branch), framed while `working`: a rounded frame just outside
- * the icon, clear of its corners, whose dash travels around it (a still dashed frame with reduced motion).
- */
-export function IconMarker({ working, children }: { working: boolean; children: ReactNode }) {
-	return (
-		<span className={`nav-icon ${working ? "working" : ""}`}>
-			{children}
-			{working && (
-				<svg className="working-frame" viewBox="0 0 22 22" role="img" aria-label="Working">
-					<title>Working</title>
-					<rect className="working-frame-track" {...FRAME} />
-					<rect className="working-frame-dash" {...FRAME} />
-				</svg>
-			)}
-		</span>
-	);
-}
-
-/** The frame's outline: 22px around a 16px icon, its 1.5px stroke inside the box; one unit per percent of its length. */
-const FRAME = { x: 0.75, y: 0.75, width: 20.5, height: 20.5, rx: 5.5, pathLength: 100 } as const;
 
 /** A failure that wants the owner: a warning sign and `label`, in the error colour; `title` says what failed. */
 export function FailedMark({ label, title, className = "" }: { label: string; title: string; className?: string }) {
@@ -191,91 +168,6 @@ const subscribeScopes = (listener: () => void) => {
 /** The places this tab opened sessions from, by session. */
 export const useOpenedFrom = (): Readonly<Record<string, string>> =>
 	useSyncExternalStore(subscribeScopes, () => openedFrom);
-
-/**
- * One row: a marker (a session's working mark, a group's icon; its column is kept when empty, so labels line up; absent:
- * no column, as a rollup's), the label (on one line, cut with "…" at its end), then details and controls at the
- * trailing end. The label is a link to `href`, an action without one, or with `expanded`, the control that shows or
- * hides what is below the row (its chevron right after the label). The whole row is one control: its hover and selected
- * background spans it, and the label's hit area covers it (the controls stay above it). `after`: a control right after
- * the label (a rollup's or a session's chevron, `Toggle`). `target`: the command menu's target while the row is hovered
- * or has focus (`useCommandTargetRow`), or that also opens the menu on itself (`useCommandMenuRow`).
- */
-export function NavRow({
-	selected = false,
-	className = "",
-	linkClassName = "",
-	marker,
-	href,
-	title,
-	expanded,
-	controlsId,
-	onActivate,
-	label,
-	after,
-	details,
-	controls,
-	target,
-	guides,
-}: {
-	selected?: boolean;
-	className?: string;
-	linkClassName?: string;
-	/** The marker column (absent: the row has none): a mark or an icon, or `null` for its empty space. */
-	marker?: ReactNode;
-	/** The address the label links to; absent: the label is an action (restore, switch a branch, show or hide). */
-	href?: string;
-	title?: string;
-	/** Whether what the row shows or hides is shown; absent: the row does not show or hide anything. */
-	expanded?: boolean;
-	/** The element the row shows or hides. */
-	controlsId?: string;
-	onActivate: () => void;
-	label: ReactNode;
-	after?: ReactNode;
-	/** Information after the label (state, time last), not interactive. */
-	details?: ReactNode;
-	/** Buttons at the trailing end. */
-	controls?: ReactNode;
-	target?: CommandTargetRow;
-	/** A tree row's connector guides (`TreeGuides`), drawn on the row outside its layout. */
-	guides?: ReactNode;
-}) {
-	const link = `nav-link ${linkClassName} ${selected ? "active" : ""}`;
-	return (
-		<div className={`nav-row ${selected ? "selected" : ""} ${className}`} {...target}>
-			{guides}
-			{marker !== undefined && <span className="nav-marker">{marker}</span>}
-			{href === undefined ? (
-				<button
-					type="button"
-					className={link}
-					title={title}
-					aria-expanded={expanded}
-					aria-controls={controlsId}
-					onClick={onActivate}
-				>
-					<span className="nav-label">{label}</span>
-					{expanded !== undefined && <NavDisclosureIcon className="nav-chevron" size={16} aria-hidden="true" />}
-				</button>
-			) : (
-				<SideNavigation.Link
-					className={link}
-					href={href}
-					title={title}
-					active={selected}
-					onClick={inPage(onActivate)}
-				>
-					<span className="nav-label">{label}</span>
-				</SideNavigation.Link>
-			)}
-			{after}
-			<span className="nav-fill" />
-			{details && <span className="nav-details">{details}</span>}
-			{controls}
-		</div>
-	);
-}
 
 /** The chevron right after a row's label that shows or hides what is below the row, as its own button. */
 export function Toggle({
@@ -413,7 +305,7 @@ export function SessionItem({
 	) : null;
 	const target = useCommandTargetRow({ type: "session", id: session.id, kind: "Session", label: session.title });
 	return (
-		<SideNavigation.Item className={`session-row ${aged ? "aged" : ""}`}>
+		<SideNavigation.Item className={`session-row ${aged ? "aged" : ""}`} data-session={session.id}>
 			<NavRow
 				selected={active && conversationId === main}
 				className={`session-header ${nested ? "has-subagents" : ""}`}

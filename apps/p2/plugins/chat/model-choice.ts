@@ -14,8 +14,22 @@ export function newSessionChoice(
 ): ModelChoice | undefined {
 	if (selected) return selected;
 	const model = resources?.settings.defaultModel ?? latest?.model;
-	return model && { model, thinkingLevel: resources?.settings.thinkingLevel ?? "high" };
+	return model && { model, thinkingLevel: defaultThinking(resources) };
 }
+
+/** Whether `choice` is the default for new sessions as settings.json says: its model and its thinking level. */
+export function isDefaultChoice(resources: ResourceSnapshot, choice: ModelChoice): boolean {
+	const saved = resources.settings.defaultModel;
+	return (
+		saved?.provider === choice.model.provider &&
+		saved.modelId === choice.model.modelId &&
+		defaultThinking(resources) === choice.thinkingLevel
+	);
+}
+
+/** The thinking level for new sessions: settings.json's, else high (as the server creates them). */
+const defaultThinking = (resources: ResourceSnapshot | undefined): ModelThinkingLevel =>
+	resources?.settings.thinkingLevel ?? "high";
 
 /** A thinking level as stored (catalog rows and subagents keep text); anything unknown is off. */
 export const thinkingLevelOf = (level: string): ModelThinkingLevel => (isThinkingLevel(level) ? level : "off");

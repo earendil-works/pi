@@ -1,5 +1,6 @@
 // The command menu's route layers: the menu is the route's trailing run of `commands` sheet layers, the root first
-// (its locator holds the target captured when the menu opened) and one more per open page. Read back as untrusted.
+// (its locator holds the target captured when the menu opened, and the page it opened on, if any) and one more per
+// page opened on top. Read back as untrusted.
 
 import { getNavigation } from "../../runtime/web.tsx";
 import type { CommandTarget } from "../../runtime/web-core.ts";
@@ -8,7 +9,10 @@ import type { Layer, Route } from "../navigation.ts";
 /** The open menu as its layers say: the captured target and the names of the pages opened on top of the root. */
 export type OpenMenu = {
 	readonly target: CommandTarget | undefined;
-	/** One per page layer; `undefined` for a locator that does not name a page. */
+	/**
+	 * The page the root opened on (`openCommandPage`), then one per page layer; `undefined` for a page layer whose
+	 * locator does not name a page.
+	 */
 	readonly pages: readonly (string | undefined)[];
 };
 
@@ -19,7 +23,10 @@ export function openMenu(route: Route): OpenMenu | undefined {
 	const start = menuStart(route.layers);
 	const [root, ...pages] = route.layers.slice(start).map((layer) => parse(layer));
 	if (root === undefined) return undefined;
-	return { target: root.target, pages: pages.map((page) => page?.page) };
+	return {
+		target: root.target,
+		pages: [...(root.page === undefined ? [] : [root.page]), ...pages.map((page) => page.page)],
+	};
 }
 
 /** Opens the menu on the current route, with `target` captured in its root layer. */
@@ -27,6 +34,18 @@ export function pushMenu(target: CommandTarget | undefined): void {
 	const nav = getNavigation();
 	void nav.push({ ...nav.route, layers: [...nav.route.layers, rootLayer(target)] });
 }
+
+/**
+ * Opens the menu right on the page `name` for `target` (a footer's model link): one layer, so Back and Escape close
+ * the menu instead of showing its root.
+ */
+export function openCommandPage(name: string, target: CommandTarget | undefined): void {
+	const nav = getNavigation();
+	void nav.push({ ...nav.route, layers: [...nav.route.layers, commandPageLayer(name, target)] });
+}
+
+/** The menu opened right on the page `name` for `target`, as a layer: for a route that replaces another layer with it. */
+export const commandPageLayer = (name: string, target: CommandTarget | undefined): Layer => rootLayer(target, name);
 
 /** Closes the menu: removes its layers and nothing under them (a sheet the menu opened over stays). */
 export function closeMenu(): Promise<void> {
@@ -49,7 +68,9 @@ export function popMenu(): Promise<void> {
 export function dropMenuTarget(): Promise<void> {
 	const nav = getNavigation();
 	const start = menuStart(nav.route.layers);
-	const layers = nav.route.layers.map((layer, index) => (index === start ? rootLayer(undefined) : layer));
+	const layers = nav.route.layers.map((layer, index) =>
+		index === start ? rootLayer(undefined, parse(layer).page) : layer,
+	);
 	return nav.replace({ ...nav.route, layers });
 }
 
@@ -62,10 +83,10 @@ function menuStart(layers: readonly Layer[]): number {
 
 const isMenuLayer = (layer: Layer): boolean => layer.kind === "sheet" && layer.name === NAME;
 
-const rootLayer = (target: CommandTarget | undefined): Layer => ({
+const rootLayer = (target: CommandTarget | undefined, page?: string): Layer => ({
 	kind: "sheet",
 	name: NAME,
-	locator: JSON.stringify(target ? { target } : {}),
+	locator: JSON.stringify({ ...(target ? { target } : {}), ...(page === undefined ? {} : { page }) }),
 });
 
 type Locator = { readonly target?: CommandTarget; readonly page?: string };

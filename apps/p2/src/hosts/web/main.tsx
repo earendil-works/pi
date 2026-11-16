@@ -16,13 +16,14 @@ import * as api from "../../api/v1/index.ts";
 import * as apiWeb from "../../api/v1/web.ts";
 import { Access } from "../../runtime/access.ts";
 import type { Host } from "../../runtime/chord.ts";
+import { SERVER_PART_LIMITS } from "../../runtime/link-limits.ts";
 import type { P2Principal } from "../../runtime/principals.ts";
 import { whenLive } from "../../runtime/refs.ts";
 import type { LinkClient } from "../../runtime/stale-page.ts";
 import { getNavigation, HostContext, Slot, setConnected, setShareEnded, webCoreFacet } from "../../runtime/web.tsx";
 import { AppBoundary, reportClientError, startErrorReports } from "../../web/app-boundary.tsx";
 import { startShellBridge } from "../../web/shell-bridge.ts";
-import { startTheme } from "../../web/theme.ts";
+import { shellTheme, startTheme } from "../../web/theme.ts";
 import type { WEB_PACKAGES } from "./packages.ts";
 
 /** The modules the plugins' web scripts import (`WEB_PACKAGES`), one instance each: this page's. */
@@ -74,13 +75,15 @@ export function startP2Page(): void {
 	if (cloud === undefined && "serviceWorker" in navigator)
 		void navigator.serviceWorker.register("/sw.js").catch(() => {});
 	startTheme();
-	// Through Radius, the shell's URL follows the app's and links open the shell (no-op elsewhere).
-	startShellBridge(getNavigation());
+	// Through Radius, the shell's URL follows the app's, links open the shell and the theme is the shell's (no-op
+	// elsewhere).
+	startShellBridge(getNavigation(), shellTheme);
 	startErrorReports();
 	const element = document.getElementById("root");
 	if (!element) throw new Error("Missing application root");
 	void startPage<P2Principal>({
 		connect: () => new WebSocket(url),
+		limits: SERVER_PART_LIMITS,
 		modules: MODULES,
 		core: [{ name: "@p2/web-core", facet: webCoreFacet }],
 		themes: false,

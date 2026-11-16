@@ -7,6 +7,8 @@ export type KeyChord = { readonly key: string };
 /** The default bindings by id. */
 export const DEFAULT_KEYS = {
 	"p2.commands.open": [{ key: "k" }],
+	/** Switches the scope prompt's pointing mode (plugins/scope-prompt) on or off. */
+	"p2.scope-prompt.toggle": [{ key: "." }],
 } as const satisfies Readonly<Record<string, readonly KeyChord[]>>;
 
 export type KeyBinding = keyof typeof DEFAULT_KEYS;

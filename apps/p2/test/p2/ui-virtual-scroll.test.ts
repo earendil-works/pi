@@ -130,6 +130,21 @@ describe("virtual transcript", { skip: !browserTests }, () => {
 		await fixture?.close();
 	});
 
+	it("loads the transcript's images from the server, not from the view", async () => {
+		await browser.metrics(1200, 900);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session}`);
+		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Fixed module')`);
+		await browser.wait(`document.querySelectorAll('.images img').length > 0`);
+		await browser.wait(`[...document.querySelectorAll('.images img')].every((img) => img.complete)`);
+		const images = await browser.evaluate<{ src: string; width: number }[]>(
+			`[...document.querySelectorAll('.images img')].map((img) => ({ src: img.getAttribute('src'), width: img.naturalWidth }))`,
+		);
+		for (const image of images) {
+			assert.match(image.src, /^\/entry-image\?session=/);
+			assert.ok(image.width > 0, `${image.src} loaded`);
+		}
+	});
+
 	it("keeps a fast wheel scroll going into each older page until the conversation's start", async () => {
 		// Older pages load ahead of the reader, and one arriving mid-scroll never stops it at the top edge: without
 		// either, a scroll that never pauses stays at the first page's top.

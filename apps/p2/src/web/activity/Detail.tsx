@@ -2,8 +2,8 @@
 // or the generic one: the input as JSON, then the output. The parts tools build theirs from are here too: sections,
 // a command and its output as a terminal, a file with a way into the workspace, images, prose, a call's own calls.
 import { Button } from "@earendil-works/elanor-react";
-import type { ImageContent } from "@earendil-works/pi-ai";
 import { type ReactNode, useContext, useState } from "react";
+import type { ShownImage } from "../../runtime/entry-images.ts";
 import { CodeBlock } from "../Code.tsx";
 import { OpenWorkspaceFile, relativePath, ToolActivityContext, WorkingDirectory } from "../chat-context.ts";
 import { Timeline } from "../elanor-extra/timeline.tsx";
@@ -60,31 +60,15 @@ export function OutputBlock({ output, failed }: { output: string; failed?: boole
 	);
 }
 
-/** Data URLs by image: a result's images keep their identity while unchanged (transcript.ts). */
-const imageUrls = new WeakMap<ImageContent, string>();
-
-/**
- * An image's data URL, made once per image: a screenshot's base64 is large, and a new string on every render would be
- * compared and set again by React.
- */
-export function imageUrl(image: ImageContent): string {
-	let url = imageUrls.get(image);
-	if (url === undefined) {
-		url = `data:${image.mimeType};base64,${image.data}`;
-		imageUrls.set(image, url);
-	}
-	return url;
-}
-
 /** Images a tool returned (a screenshot it read), each at the sheet's width. */
-export const DetailImages = ({ images }: { images: readonly ImageContent[] }) => (
+export const DetailImages = ({ images }: { images: readonly ShownImage[] }) => (
 	<div className="detail-images">
 		{images.map((image, index) => (
 			<img
 				// biome-ignore lint/suspicious/noArrayIndexKey: a result's images never move.
 				key={index}
 				className="detail-image"
-				src={imageUrl(image)}
+				src={image.src}
 				alt=""
 			/>
 		))}

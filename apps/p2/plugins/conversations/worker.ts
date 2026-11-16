@@ -23,6 +23,7 @@ import {
 	workerOf,
 } from "@p2/app/v1/worker";
 import { Conversation } from "../chat/contract.ts";
+import { DraftStore } from "../drafts/contract.ts";
 import { StatusReport } from "../status/contract.ts";
 import { Conversations, PeerConversation, type Query, type Reply } from "./contract.ts";
 
@@ -77,7 +78,7 @@ const conversationsExtension = (worker: () => WorkerParts) => {
 					"send (to = stable session ID, message; optional followUp): deliver an attributed message; steering by default, followUp queues after current work.",
 					"answer (to): read the latest completed answer without sending input or waiting for current work.",
 					"create (message, and project or cwd; optional env, title, model 'provider/modelId': a signed-in one, default your own): start a new session there with message as its first input, from you. Returns its ID.",
-					"stop (to): abort the session's current run; its queued messages are dropped.",
+					"stop (to): abort the session's current run; queued messages from people go back to their authors' composers, those from agents and sessions stay queued for its next input.",
 					"archive (to) / restore (to): archive a session (its worker stops, its history stays) or bring it back.",
 					"Replies arrive only when the peer explicitly uses send back to your ID. No automatic reports. Do not poll or create reply loops.",
 				].join("\n"),
@@ -157,6 +158,8 @@ export default defineFacet((host) => {
 								},
 								requestId: `conversation:${source}:${requestId}`,
 								whenBusy: followUp ? "followUp" : "steer",
+								// A Stop keeps it queued for the next input: the sending session cannot take it back.
+								onAbort: "keep",
 							},
 							ctx,
 						);
@@ -201,8 +204,11 @@ export default defineFacet((host) => {
 						const durable = harness().durable;
 						const main = await mainConversation(durable, ctx);
 						const stopped = (await durable.snapshot(LiveDoc, main, ctx))?.run !== undefined;
-						// As Stop in the chat: queued inputs are withdrawn (their text goes to nobody here), then the run ends.
-						await (await ctx.get(Conversation, { conversation: main })).stop(ctx);
+						// As Stop in the chat: the run ends, messages from agents and sessions stay queued. No author is the caller
+						// here, so every person's queued text waits in their drafts for their composer.
+						const { restored } = await (await ctx.get(Conversation, { conversation: main })).stop(ctx);
+						if (restored.length)
+							await (await ctx.get(DraftStore, {})).add({ conversation: main, items: restored }, ctx);
 						return { stopped };
 					}),
 			},

@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>p3 views model: interactive mockups</title>
+<style>
+/* p2 design tokens (apps/p2/src/web/style.css, dark theme) */
+:root{--bg:#151413;--text:#ecebe8;--muted:#9b958d;--faint:#6c6761;--line:#2c2a27;--hover:#22201e;--user:#252321;--code:#1a1918;--ok:#5cc493;--unread:#5b9cf0;--working:#f59e42;--bad:#f07a72;--add:#17301f;--add-ink:#7fd8a3;--del:#3a1d1b;--del-ink:#f4a19a;--scrim:rgb(0 0 0/.45);
+--x:16px;--bar:52px;--row:44px;--radius:4px;--fs-xs:11px;--fs-sm:13px;--fs-md:15px;--fs-lg:17px;--fs-code:12px;
+--sans:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,sans-serif;--mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,monospace;
+/* mockup-only: ownership colours */
+--wb:#5b9cf0;--pl:#f59e42}
+*{box-sizing:border-box}
+html,body{margin:0;background:#0e0d0c;color:var(--text);font:var(--fs-sm)/1.45 var(--sans)}
+button{font:inherit;color:inherit;cursor:pointer}
+code,.mono{font-family:var(--mono);font-size:var(--fs-code)}
+.muted{color:var(--muted)}.faint{color:var(--faint)}
+/* page nav */
+nav.screens{position:sticky;top:0;z-index:100;background:rgba(14,13,12,.96);border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:2px;padding:8px 14px;align-items:center}
+nav.screens .brand{font-weight:600;margin-right:12px}
+nav.screens button{background:none;border:1px solid transparent;color:var(--muted);padding:4px 10px;border-radius:var(--radius);font-size:12.5px}
+nav.screens button:hover{color:var(--text)}
+nav.screens button.on{color:var(--text);border-color:var(--line);background:var(--hover)}
+nav.screens .own{margin-left:auto;display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px}
+main{padding:16px 18px 40px;max-width:1400px;margin:0 auto}
+section.screen{display:none}section.screen.on{display:block}
+.cap{max-width:1000px;margin:0 0 12px;color:var(--muted)}
+.cap b{color:var(--text);font-weight:600}
+.cap .src{font-size:var(--fs-xs);color:var(--faint);margin-top:4px}
+/* app window */
+.win{position:relative;height:680px;border:1px solid var(--line);border-radius:8px;background:var(--bg);overflow:hidden;display:flex;flex-direction:column}
+.fixedbar{height:30px;flex:none;display:flex;align-items:center;gap:2px;padding:0 6px;background:#0f0e0d;border-bottom:1px solid var(--line);font-size:12px}
+.fixedbar .fb{background:none;border:1px solid transparent;border-radius:var(--radius);color:var(--muted);padding:2px 8px}
+.fixedbar .fb:hover{color:var(--text);background:var(--hover)}
+.fixedbar .fb.on{color:var(--working);border-color:rgba(245,158,66,.4)}
+.fixedbar .title{color:var(--faint);margin:0 8px}
+.fixedbar .sp{flex:1}
+.body{flex:1;display:flex;min-height:0;position:relative}
+/* panes */
+.split{display:flex;min-width:0;min-height:0;flex:1}
+.split.col{flex-direction:column}
+.split>*+*{border-left:1px solid var(--line)}
+.split.col>*+*{border-left:0;border-top:1px solid var(--line)}
+.pane{display:flex;flex-direction:column;min-width:0;min-height:0;flex:1;position:relative}
+.chrome{height:34px;flex:none;display:flex;align-items:stretch;background:#191817;border-bottom:1px solid var(--line);font-size:12.5px}
+.chrome .tab{display:flex;align-items:center;gap:6px;padding:0 12px;color:var(--muted);border-right:1px solid var(--line);background:none;border-top:0;border-bottom:0;border-left:0;white-space:nowrap}
+.chrome .tab.on{color:var(--text);background:var(--bg);box-shadow:inset 0 2px 0 var(--text)}
+.chrome .tab .x{opacity:.5;font-size:11px;padding:0 2px}
+.chrome .tab .x:hover{opacity:1}
+.chrome .ptitle{display:flex;align-items:center;padding:0 12px;color:var(--text)}
+.chrome .sp{flex:1}
+.chrome .act{background:none;border:0;color:var(--muted);padding:0 10px}
+.chrome .act:hover{color:var(--text)}
+.content{flex:1;min-height:0;overflow:auto;position:relative}
+.badge{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;padding:0 6px;border-radius:3px;border:1px solid var(--line);color:var(--muted);height:18px;white-space:nowrap}
+.badge.sk{color:var(--working);border-color:rgba(245,158,66,.45)}
+.badge.pl{color:var(--ok);border-color:rgba(92,196,147,.45)}
+.badge.gl{color:var(--unread);border-color:rgba(91,156,240,.45)}
+/* ownership overlay */
+body.own .wbo{outline:1.5px dashed var(--wb);outline-offset:-2px}
+body.own .plo{outline:1.5px dashed var(--pl);outline-offset:-3px}
+body.own .owntag{display:block}
+.owntag{display:none;position:absolute;right:6px;bottom:6px;font-size:10px;padding:1px 6px;border-radius:3px;z-index:5;pointer-events:none}
+.owntag.w{background:var(--wb);color:#0b1220}.owntag.p{background:var(--pl);color:#1d1205}
+.legend{display:inline-flex;gap:10px;font-size:11px}
+.legend i{display:inline-block;width:10px;height:10px;border:1.5px dashed;margin-right:4px;vertical-align:-1px}
+/* sidebar */
+.side{width:250px;flex:none;border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.side .head{height:var(--bar);display:flex;align-items:center;gap:8px;padding:0 var(--x);border-bottom:1px solid var(--line)}
+.side .head select,.sel{background:var(--hover);border:1px solid var(--line);color:var(--text);border-radius:var(--radius);padding:3px 6px;font:inherit}
+.side .grp{padding:12px var(--x) 4px;font-size:var(--fs-xs);color:var(--faint);text-transform:uppercase;letter-spacing:.6px}
+.side .it{display:flex;align-items:center;gap:8px;padding:7px var(--x);color:var(--muted);cursor:pointer}
+.side .it:hover{background:var(--hover)}
+.side .it.on{color:var(--text);background:var(--hover)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--faint);flex:none}
+.dot.w{background:var(--working)}.dot.u{background:var(--unread)}.dot.ok{background:var(--ok)}.dot.bad{background:var(--bad)}
+/* transcript */
+.tx{padding:16px var(--x) 8px;display:flex;flex-direction:column;gap:12px;max-width:760px;margin:0 auto}
+.msg.user{align-self:flex-end;background:var(--user);padding:8px 12px;border-radius:10px;max-width:80%}
+.msg.agent{color:var(--text)}
+.msg.agent p{margin:0 0 6px}
+.toolrow{font-family:var(--mono);font-size:var(--fs-code);color:var(--muted);display:flex;gap:8px;align-items:center}
+.toolrow b{color:var(--text);font-weight:500}
+.composer{flex:none;border-top:1px solid var(--line);padding:10px var(--x);position:relative}
+.composer .box{border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:#1a1918}
+.composer .ph{color:var(--faint);min-height:22px}
+.composer .row{display:flex;gap:6px;align-items:center;margin-top:6px}
+.composer .send{margin-left:auto;background:var(--text);color:var(--bg);border:0;border-radius:var(--radius);padding:3px 12px;font-weight:600}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:2px 8px;border-radius:999px;background:var(--hover);border:1px solid var(--line);color:var(--muted)}
+.chip .x{cursor:pointer}
+/* diff */
+.diff{font-family:var(--mono);font-size:var(--fs-code);line-height:1.6;white-space:pre}
+.diff .f{padding:8px var(--x);color:var(--text);border-bottom:1px solid var(--line);background:#181716;position:sticky;top:0}
+.diff .h{color:var(--unread);padding:0 var(--x)}
+.diff .a{background:var(--add);color:var(--add-ink);padding:0 var(--x)}
+.diff .d{background:var(--del);color:var(--del-ink);padding:0 var(--x)}
+.diff .c{color:var(--muted);padding:0 var(--x)}
+.diff .sel{background:rgba(91,156,240,.25);outline:1px solid var(--unread)}
+/* markdown */
+.md{padding:16px 20px;max-width:680px;font-size:14px}
+.md h1{font-size:20px;margin:0 0 10px;font-family:Georgia,serif}
+.md h2{font-size:15px;margin:16px 0 6px}
+.md p,.md li{color:#d6d3cd}
+.md code{background:var(--code);padding:1px 4px;border-radius:3px}
+/* sketch frame */
+.frame{margin:10px;border:1px solid var(--line);border-radius:6px;background:#121110;position:relative;overflow:hidden}
+.frame .fhd{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--faint);padding:4px 8px;border-bottom:1px dashed var(--line)}
+.ck{padding:10px 14px}
+.ck label{display:flex;gap:8px;align-items:center;padding:5px 0;cursor:pointer}
+.ck input{accent-color:var(--ok)}
+.ck label.done span{color:var(--muted);text-decoration:line-through}
+/* toast */
+.toast{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);background:#2a2826;border:1px solid #3d3a36;border-radius:8px;padding:9px 12px 9px 14px;display:flex;gap:14px;align-items:center;box-shadow:0 10px 30px rgba(0,0,0,.5);z-index:20;white-space:nowrap}
+.toast .b{background:none;border:1px solid #4a4642;border-radius:var(--radius);padding:2px 10px}
+.btn{background:var(--hover);border:1px solid var(--line);border-radius:var(--radius);padding:4px 12px;color:var(--text)}
+.btn:hover{border-color:#47433e}
+.btn.p{background:var(--text);color:var(--bg);border-color:var(--text);font-weight:600}
+.btn.ok{color:var(--ok);border-color:rgba(92,196,147,.45)}
+.btn.bad{color:var(--bad);border-color:rgba(240,122,114,.45)}
+/* error boundary */
+.eb{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:repeating-linear-gradient(135deg,#171615 0 10px,#1a1817 10px 20px)}
+.eb .card{border:1px solid rgba(240,122,114,.5);background:#1c1a19;border-radius:8px;padding:16px 18px;max-width:380px}
+.eb h3{margin:0 0 6px;font-size:14px;color:var(--bad)}
+.eb pre{font-family:var(--mono);font-size:11px;color:var(--muted);background:#141312;border:1px solid var(--line);border-radius:4px;padding:6px 8px;white-space:pre-wrap;margin:8px 0 12px}
+/* banner */
+.banner{flex:none;display:flex;align-items:center;gap:12px;padding:8px 14px;background:rgba(245,158,66,.1);border-bottom:1px solid rgba(245,158,66,.4);color:#f3d2ab}
+.banner .sp{flex:1}
+/* plugin manager */
+.pm{padding:12px var(--x)}
+.pm .row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
+.pm .row .nm{font-weight:500}
+.pm .row .sp{flex:1}
+.tog{width:32px;height:18px;border-radius:9px;background:#3a3733;position:relative;border:0;flex:none}
+.tog:after{content:"";position:absolute;left:2px;top:2px;width:14px;height:14px;border-radius:50%;background:#bbb;transition:left .15s}
+.tog.on{background:var(--ok)}.tog.on:after{left:16px;background:#fff}
+/* glyph */
+.glyph{display:grid;grid-template-columns:repeat(8,26px);gap:2px;padding:12px;justify-content:center}
+.glyph i{width:26px;height:26px;background:#24221f;border-radius:2px;cursor:pointer}
+.glyph i.on{background:var(--text)}
+.glyph.p3 i{border-radius:3px}
+.preview{display:flex;gap:14px;align-items:center;justify-content:center;padding:4px 0 12px;color:var(--muted);font-size:11px}
+.preview canvas{image-rendering:pixelated;background:#24221f;border-radius:2px}
+/* inbox */
+.ib{padding:6px 0}
+.ib .q{padding:10px var(--x);border-bottom:1px solid var(--line);cursor:pointer}
+.ib .q:hover{background:var(--hover)}
+.ib .q.on{background:var(--hover);box-shadow:inset 2px 0 0 var(--working)}
+.ib .q .s{font-size:11px;color:var(--faint);display:flex;gap:6px;align-items:center}
+.ib .q .t{margin:3px 0 6px}
+/* approval entry */
+.appr{border:1px solid var(--line);border-radius:8px;overflow:hidden;position:relative}
+.appr .hd{display:flex;gap:8px;align-items:center;padding:8px 12px;background:#1b1a18;border-bottom:1px solid var(--line);font-size:12px}
+.appr .bd{padding:10px 12px}
+.appr pre{margin:0 0 10px;font-family:var(--mono);font-size:var(--fs-code);background:var(--code);padding:8px 10px;border-radius:4px;border:1px solid var(--line);white-space:pre-wrap}
+.slotnote{font-size:10.5px;color:var(--faint);font-family:var(--mono)}
+/* phone */
+.phonewrap{display:flex;gap:40px;justify-content:center;align-items:flex-start}
+.phone{width:380px;height:760px;border-radius:44px;border:10px solid #2a2826;background:var(--bg);overflow:hidden;display:flex;flex-direction:column;position:relative;box-shadow:0 0 0 1px #3a3733}
+.phone .status{height:34px;flex:none;display:flex;justify-content:space-between;align-items:center;padding:0 24px;font-size:12px;font-weight:600}
+.phone .top{height:var(--bar);flex:none;display:flex;align-items:center;gap:8px;padding:0 8px;border-bottom:1px solid var(--line)}
+.phone .ic{width:40px;height:40px;display:flex;align-items:center;justify-content:center;background:none;border:0;color:var(--muted);font-size:18px}
+.phone .strip{display:flex;overflow-x:auto;border-bottom:1px solid var(--line);flex:none}
+.phone .strip button{background:none;border:0;color:var(--muted);padding:9px 14px;white-space:nowrap;border-bottom:2px solid transparent}
+.phone .strip button.on{color:var(--text);border-bottom-color:var(--text)}
+.phone .pbody{flex:1;min-height:0;overflow:auto;position:relative}
+.phone .pfixed{flex:none;display:flex;justify-content:space-around;border-top:1px solid var(--line);background:#0f0e0d;padding:6px 0 18px;font-size:11px}
+.phone .pfixed button{background:none;border:0;color:var(--muted);display:flex;flex-direction:column;align-items:center;gap:2px}
+.drawer{position:absolute;inset:0;z-index:30;display:none}
+.drawer.open{display:block}
+.drawer .scrim{position:absolute;inset:0;background:var(--scrim)}
+.drawer .panel{position:absolute;left:0;top:0;bottom:0;width:82%;background:var(--bg);border-right:1px solid var(--line);display:flex;flex-direction:column}
+/* terminal */
+.term{background:#0b0b0a;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-family:var(--mono);font-size:12.5px;line-height:1.38;color:#d6d3cd;white-space:pre;overflow:auto}
+.term .k{color:var(--working)}.term .g{color:var(--ok)}.term .r{color:var(--bad)}.term .b{color:var(--unread)}.term .m{color:#6c6761}.term .inv{background:#d6d3cd;color:#0b0b0a}
+.term .bx{display:inline-block;width:1ch;text-align:center;overflow:visible}
+.term .lnk{color:var(--unread);text-decoration:underline}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-bottom:10px}
+.seg button{background:none;border:0;padding:4px 12px;color:var(--muted)}
+.seg button.on{background:var(--hover);color:var(--text)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.lbl{font-size:var(--fs-xs);color:var(--faint);text-transform:uppercase;letter-spacing:.6px;margin:0 0 6px}
+</style>
+</head>
+<body>
+<nav class="screens" id="nav"><span class="brand">p3 views</span>
+<span class="own"><label><input type="checkbox" id="owntog"> show who draws what</label><span class="legend"><span><i style="border-color:var(--wb)"></i>workbench</span><span><i style="border-color:var(--pl)"></i>plugin view</span></span></span></nav>
+<main id="main"></main>
+<script>
+"use strict";
+const $=(s,r=document)=>r.querySelector(s);
+const esc=s=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+
+/* ---------- shared fake content ---------- */
+const SESSIONS=[["p3 views proposal","w",1],["kit-owner build","bad"],["astra review","w"],["Discord plugin design","ok"],["Journal",""],["slayer CVE check","ok"]];
+function sidebar(active="p3 views proposal",{kindSelect=true}={}){
+  return `<div class="side plo" style="position:relative"><div class="head">${kindSelect?`<select class="sel" data-act="globalkind"><option>Sessions</option><option>Inbox</option><option>Dashboard</option></select>`:"<b>Sessions</b>"}<span style="flex:1"></span><span class="muted">+</span></div>
+  <div class="grp">pi · slayer:~/pi</div>
+  ${SESSIONS.map(([n,d])=>`<div class="it ${n===active?"on":""}"><span class="dot ${d}"></span>${n}</div>`).join("")}
+  <div class="grp">journal · phone</div><div class="it"><span class="dot"></span>Journal: weekly</div>
+  <span class="owntag p">Sidebar({}) · global view · plugin sessions</span></div>`;
+}
+function transcript({extra="",composerExtra="",compact=false}={}){
+  return `<div class="tx">
+  <div class="msg user">Mock up the views model from apps/p3/docs/views.md. Keep the Changes pane and the doc open.</div>
+  <div class="msg agent"><p>Opened the proposal and the working tree's changes. The model has three concepts: <b>view kinds</b> (typed, with params), <b>renderers</b> per surface, and <b>slots</b> inside views.</p>
+  <div class="toolrow">▸ <b>view</b> open Markdown({ path: "apps/p3/docs/views.md" })</div>
+  <div class="toolrow">▸ <b>view</b> open Changes({ session, path: "plugins/changes" })</div>
+  <div class="toolrow">▸ <b>view</b> open sketch "Release checklist"</div></div>
+  ${compact?"":`<div class="msg user">Why is the session decided by the params?</div>
+  <div class="msg agent"><p>A kind whose params name a <code>session</code> belongs to that session's workspace; a kind without one is global, such as <code>Sidebar({})</code> or <code>Inbox({})</code>. No flag to keep in sync.</p></div>`}
+  ${extra}
+  </div>`;
+}
+function composer(extra=""){return `<div class="composer plo"><div class="box"><div class="ph">Message p3 views proposal…</div><div class="row">${extra}<button class="send">Send</button></div></div><span class="owntag p">Composer · slots: ComposerParts</span></div>`}
+const DIFF=`<div class="diff"><div class="f">plugins/changes/contract.web.ts  <span class="muted">+6 −1</span></div><div class="h">@@ -1,4 +1,9 @@</div><div class="c">  import { defineViewKind, str } from "../views/contract.ts"</div><div class="d">- export const CHANGES = "changes"</div><div class="a">+ /** The working tree's diffs, optionally below a path. */</div><div class="a">+ export const Changes = defineViewKind("changes", {</div><div class="a">+   session: str(),</div><div class="a">+   path: str(),</div><div class="a">+ })</div><div class="c"> </div><div class="f">plugins/changes/web.tsx  <span class="muted">+3 −0</span></div><div class="h">@@ -12,6 +12,9 @@ export default definePlugin(…)</div><div class="c">   self.contribute(WebViews, {</div><div class="a">+    [Changes.name]: ({ params }) =&gt;</div><div class="a">+      &lt;ChangesPane session={params.session} path={params.path} /&gt;,</div><div class="c">   })</div><div class="f">plugins/views/registries.ts  <span class="muted">+8 −0</span></div><div class="h">@@ -0,0 +1,8 @@</div><div class="a">+ export const WebViews = defineRegistry&lt;WebViewRenderer&gt;("WebViews")</div><div class="a">+ export const TuiViews = defineRegistry&lt;TuiViewRenderer&gt;("TuiViews")</div></div>`;
+const MD=`<div class="md"><h1>p3 views: the web and terminal UI model</h1><p class="muted" style="font-size:12px">apps/p3/docs/views.md · proposal</p><h2>2. The model: three concepts</h2><ol><li><b>View kind:</b> a name and params, <code>Transcript({ session, conversation })</code>, <code>Changes({ session, path })</code>, <code>Sidebar({})</code>.</li><li><b>Renderer:</b> a component per kind and surface, in <code>WebViews</code> and <code>TuiViews</code>.</li><li><b>Slot:</b> named extension points a kind declares, such as <code>TranscriptEntries</code> and <code>ComposerParts</code>.</li></ol><h2>3. The workbench and the escape hatch</h2><p>Pane chrome is the workbench's. Every pane renders inside an error boundary. A small fixed bar stays: views menu, layout reset, safe mode.</p></div>`;
+function checklist(id){const items=[["Workbench owns pane chrome",1],["Error boundary per pane",1],["Safe mode flag",0],["Phone drawer for global views",0],["TUI fallback for kinds without renderer",0]];
+  return `<div class="ck" data-ck="${id}"><div style="font-weight:600;margin-bottom:6px">Release checklist</div>${items.map(([t,d],i)=>`<label class="${d?"done":""}"><input type="checkbox" ${d?"checked":""} data-act="ck"><span>${t}</span></label>`).join("")}<div class="muted" style="font-size:11px;margin-top:8px">state: JSON, saved through the bridge</div></div>`}
+function sketch(id){return `<div class="frame"><div class="fhd"><span class="badge sk">sketch, sandboxed</span><span>iframe · opaque origin · p3 tokens + components injected</span></div>${checklist(id)}</div>`}
+
+/* ---------- pane helper: workbench chrome + plugin content ---------- */
+function pane({tabs,active=0,id,content,kindLabel,menu=true,flex=1}){
+  const t=tabs.map((x,i)=>`<button class="tab ${i===active?"on":""}" data-act="tab" data-pane="${id}" data-i="${i}">${x}<span class="x" data-act="closetab">✕</span></button>`).join("");
+  const c=Array.isArray(content)?content:[content];
+  return `<div class="pane" style="flex:${flex}" data-pane-id="${id}"><div class="chrome wbo" style="position:relative">${t}<span class="sp"></span>${menu?`<button class="act" title="pane menu">⋯</button><button class="act" title="split">◫</button><button class="act" title="close pane">✕</button>`:""}<span class="owntag w">pane chrome · workbench</span></div>
+  ${c.map((x,i)=>`<div class="content plo" data-tabc="${id}" style="${i===active?"":"display:none"}">${x}<span class="owntag p">${(kindLabel&&kindLabel[i])||"plugin view"}</span></div>`).join("")}</div>`;
+}
+function fixedbar(title="p3 views proposal",{safe=false}={}){
+  return `<div class="fixedbar wbo" style="position:relative"><button class="fb" data-act="viewsmenu">▤ Views</button><button class="fb" data-act="reset">↺ Reset layout</button><button class="fb ${safe?"on":""}" data-act="safe">⛨ Safe mode</button><span class="title">${title}</span><span class="sp"></span><span class="faint" style="font-size:11px">fixed bar · always present</span><span class="owntag w">fixed bar · workbench</span></div>`;
+}
+function transcriptPane(id,opts={}){return `<div class="pane" style="flex:${opts.flex||1.25}" data-pane-id="${id}"><div class="chrome wbo" style="position:relative"><span class="ptitle">Transcript</span><span class="sp"></span><button class="act">⋯</button><span class="owntag w">pane chrome · workbench</span></div><div class="content plo">${transcript(opts)}<span class="owntag p">Transcript({ session, conversation })</span></div>${composer(opts.composerExtra||"")}</div>`}
+const RIGHT_TABS=["Changes","views.md",`Checklist <span class="badge sk" style="margin-left:2px">sketch</span>`];
+const RIGHT_KINDS=["Changes({ session, path })","Markdown({ session, path })","sketch · sandboxed iframe"];
+
+/* ---------- screens ---------- */
+const S=[];
+S.push({t:"1 Desktop workbench",cap:`<b>Default layout.</b> The default layout plugin places the session sidebar (a global view), the transcript, and a right area with tabs: Changes, a Markdown file, an agent sketch. The tab strip, titles, ⋯ / split / close are drawn by the <b>workbench</b>, never by the view; the thin top bar (Views, Reset layout, Safe mode) is the fixed bar no layout or plugin removes. Toggle "show who draws what" in the header to outline both. Click tabs and checklist items.`,
+ html:()=>`<div class="win">${fixedbar()}<div class="body">${sidebar()}<div class="split">${transcriptPane("t1")}${pane({tabs:RIGHT_TABS,id:"r1",content:[DIFF,MD,sketch("a")],kindLabel:RIGHT_KINDS})}</div></div></div>`});
+
+function arranged(){return `<div class="split">${transcriptPane("t2",{flex:1,compact:true,extra:`<div class="toolrow">▸ <b>view</b> arrange { row: ["transcript", { column: ["changes", "views.md"] }], sizes: [0.45, 0.55] }</div>`})}<div class="split col" style="flex:1.2">${pane({tabs:["Changes"],id:"c2a",content:DIFF,kindLabel:["Changes({ session, path })"]})}${pane({tabs:["views.md"],id:"c2b",content:MD,kindLabel:["Markdown({ session, path })"]})}</div></div>`}
+S.push({t:"2 Agent arrangement",cap:`<b>After the agent's <code>arrange</code>.</b> A row of transcript and a column of two panes. The device adopts the arrangement once and says so; <b>Undo</b> restores the person's layout (the panes are only repositioned, nothing remounts, the transcript keeps its scroll). The checklist sketch is hidden on this device, not closed.`,
+ html:()=>`<div class="win">${fixedbar()}<div class="body">${sidebar()}<div id="arr" style="display:flex;flex:1;min-width:0">${arranged()}</div><div class="toast" id="toast2"><span>The agent arranged your panes</span><button class="b" data-act="undo2">Undo</button><button class="b" data-act="dismiss" style="border:0;color:var(--muted)">✕</button></div></div></div>`});
+
+function broken(){return `<div class="eb"><div class="card"><h3>This view failed</h3><div class="muted">Changes({ session, path: "plugins/changes" }) · plugin <code>changes-plus</code> 0.3.1</div><pre>TypeError: Cannot read properties of undefined (reading 'hunks')
+    at ChangesPane (changes-plus/web.tsx:41:22)</pre><div style="display:flex;gap:8px"><button class="btn" data-act="ebclose">Close</button><button class="btn p" data-act="ebreload">Reload</button><button class="btn" data-act="ebreport">Report</button></div><div id="ebmsg" class="muted" style="font-size:12px;margin-top:8px"></div></div></div>`}
+S.push({t:"3 Broken view",cap:`<b>One view throws; the rest keep working.</b> Every pane renders inside the workbench's error boundary, and the chrome above it still works, so the pane can always be closed. <b>Report</b> sends the error to the session's agent (as p2 sends a custom view's errors). Try Reload (it works the second time), Close or Report; the transcript and the other panes are untouched.`,
+ html:()=>`<div class="win">${fixedbar()}<div class="body">${sidebar()}<div class="split">${transcriptPane("t3",{compact:true})}<div class="split col" id="col3" style="flex:1.1">${pane({tabs:["Changes"],id:"b3",content:`<div id="b3c" style="position:absolute;inset:0">${broken()}</div>`,kindLabel:["error boundary · workbench"]})}${pane({tabs:["views.md"],id:"m3",content:MD,kindLabel:["Markdown({ session, path })"]})}</div></div></div></div>`});
+
+const PLUGINS=[["transcript","base",1,""],["composer","base",1,""],["plugin manager","base",1,""],["sessions (sidebar)","prebuilt view · off in safe mode",1,""],["changes-plus","user plugin · replaces Changes renderer",1,"threw at 14:02 · 3 errors"],["glyph-editor","promoted view · session plugin",1,""],["dense-layout","layout plugin",1,""],["approvals","TranscriptEntries: approval.request",1,""]];
+function safeScreen(){return `<div class="win">${fixedbar("p3 views proposal",{safe:true})}<div class="banner"><b>Safe mode.</b><span>Only base views run: transcript, composer, plugin manager. Agent-made views, plugin views and layouts are off until you leave. Disable what broke the page, then leave.</span><span class="sp"></span><button class="btn p" data-act="leavesafe">Leave safe mode</button></div><div class="body"><div class="split">${transcriptPane("t4",{compact:true})}${pane({tabs:["Plugin manager"],id:"pm4",menu:false,content:`<div class="pm"><div class="muted" style="margin-bottom:6px">Plugins that contribute views, layouts or slots. Off here means off after you leave safe mode.</div>${PLUGINS.map(([n,d,on,err],i)=>`<div class="row"><div><div class="nm">${n} ${err?`<span class="badge" style="color:var(--bad);border-color:rgba(240,122,114,.5)">${err}</span>`:""}</div><div class="muted" style="font-size:12px">${d}</div></div><span class="sp"></span>${d==="base"?`<span class="faint" style="font-size:12px">required</span>`:`<button class="tog ${on?"on":""}" data-act="tog"></button>`}</div>`).join("")}<div class="muted" style="margin-top:10px;font-size:12px">Also off: 1 agent arrangement, 1 sketch (Release checklist). Entry: <code>?safe=1</code> or the fixed bar.</div></div>`,kindLabel:["PluginManager({}) · base"]})}</div></div></div>`}
+S.push({t:"4 Safe mode",cap:`<b>Safe mode.</b> Entered from the fixed bar or <code>?safe=1</code>. Only the transcript, the composer and the plugin manager render; no sidebar, layout plugin or agent arrangement. The banner says why and offers the way out. Turn off <code>changes-plus</code>, then <b>Leave safe mode</b>.`,html:safeScreen});
+
+function glyph(id,cls=""){const on=new Set([10,11,12,13,17,22,25,30,33,34,35,36,37,38,41,46,49,54]);let g="";for(let i=0;i<64;i++)g+=`<i class="${on.has(i)?"on":""}" data-act="px"></i>`;return `<div class="glyph ${cls}" data-glyph="${id}">${g}</div><div class="preview"><canvas width="8" height="8" style="width:32px;height:32px" data-prev="${id}"></canvas><canvas width="8" height="8" style="width:16px;height:16px" data-prev="${id}"></canvas><span>glyph "A" · 8×8</span></div>`}
+S.push({t:"5 Sketch vs promoted",cap:`<b>Two tiers of agent-made views.</b> Left: the agent's sketch, HTML + JSON state in a sandboxed frame with p3's tokens and components injected, so it looks like p3 without reaching p3. Right: the same glyph editor after <b>Keep as a view</b>: the agent turned it into a plugin (web facet, in the session's plugins), built and loaded by the plugin loader, running in p3's realm. Installing it is the owner's choice. Click pixels; click Keep as a view.`,
+ html:()=>`<div class="two"><div><div class="lbl">Sketch</div><div class="win" style="height:520px">${fixedbar()}<div class="body"><div class="split">${pane({tabs:[`Glyph editor <span class="badge sk">sketch, sandboxed</span>`],id:"g5a",content:`<div class="frame"><div class="fhd"><span class="badge sk">sketch, sandboxed</span><span>/view-frame?session&amp;view=glyph&amp;version=4 · CSP sandbox</span></div>${glyph("a")}<div style="display:flex;gap:8px;justify-content:center;padding-bottom:12px"><button class="btn">Clear</button><button class="btn">Invert</button></div></div><div style="padding:0 10px 10px"><div class="muted" style="font-size:12px;margin-bottom:8px">No access to p3 objects or credentials; talks to p3 only through the bridge (state, selection, annotations).</div><button class="btn p" data-act="promote">Keep as a view</button></div>`,kindLabel:["sketch · sandboxed iframe"]})}</div></div></div></div>
+ <div><div class="lbl">Promoted</div><div class="win" style="height:520px">${fixedbar()}<div class="body"><div class="split" id="promo5">${pane({tabs:["(empty)"],id:"g5b",menu:false,content:`<div style="display:flex;height:100%;align-items:center;justify-content:center;color:var(--faint);padding:30px;text-align:center">Not promoted yet.<br>Press "Keep as a view" on the left.</div>`})}</div></div></div></div></div>`});
+
+const INBOX=[["kit-owner build","slayer:~/pi","3 tests fail in owner.ts. Reorder rebind() first, or wait for Colin's fix?",["Reorder","Wait"]],["p3 views proposal","slayer:~/pi","Sketches: inject p3's components as custom elements, or only the CSS tokens?",["Components","Tokens only"]],["astra review","slayer:~/pi","Approve git push to astra/review-fixes (4 commits)?",["Allow","Deny"]],["Discord plugin design","slayer:~/pi","Grant Charlotta read access in #radius for 1 hour?",["Grant 1h","Decline"]]];
+function inboxSide(){return `<div class="side plo" style="position:relative;width:320px"><div class="head"><select class="sel" data-act="globalkind6"><option>Inbox</option><option>Sessions</option><option>Dashboard</option></select><span class="badge gl">global view</span><span style="flex:1"></span><span class="muted">4</span></div><div class="ib">${INBOX.map(([s,e,q,o],i)=>`<div class="q ${i===1?"on":""}" data-act="ibq" data-s="${s}"><div class="s"><span class="dot w"></span>${s} · ${e}</div><div class="t">${q}</div><div style="display:flex;gap:6px">${o.map((x,j)=>`<button class="btn ${j?"":"p"}" style="padding:2px 9px;font-size:12px" data-act="ans">${x}</button>`).join("")}</div></div>`).join("")}</div><span class="owntag p">Inbox({}) · no session param → global</span></div>`}
+S.push({t:"6 Global view",cap:`<b>A global view in the sidebar's place.</b> <code>Inbox({})</code> has no <code>session</code> param, so it is global: open questions across all sessions. It replaces <code>Sidebar({})</code> via the sidebar header's picker; the session area beside it is unchanged. Clicking a question opens that session; answering removes the card.`,
+ html:()=>`<div class="win">${fixedbar()}<div class="body">${inboxSide()}<div class="split" id="sess6">${transcriptPane("t6",{compact:true})}${pane({tabs:RIGHT_TABS,id:"r6",content:[DIFF,MD,sketch("b")],kindLabel:RIGHT_KINDS})}</div></div></div>`});
+
+const APPROVAL=`<div class="appr plo" id="appr7"><div class="hd"><span class="dot w"></span><b>Approval needed</b><span class="muted">bash on slayer:~/pi</span><span style="flex:1"></span><span class="slotnote">TranscriptEntries["approval.request"] · plugin approvals</span></div><div class="bd"><pre>git push origin p3/views-mockup  # 3 commits, touches apps/p3/docs</pre><div style="display:flex;gap:8px;align-items:center" id="apprbtns"><button class="btn ok" data-act="allow">Allow</button><button class="btn" data-act="allow1">Allow for this session</button><button class="btn bad" data-act="deny">Deny</button></div></div><span class="owntag p">entry renderer · plugin approvals</span></div>`;
+S.push({t:"7 Slots",cap:`<b>Slots instead of replacing whole views.</b> The transcript declares <code>TranscriptEntries</code> (a renderer per entry kind) and <code>ComposerParts</code>. Here the <code>approvals</code> plugin renders the <code>approval.request</code> entry as a card, and the composer shows two contributed parts: an attachment chip (plugin <code>attachments</code>) and the views selection chip (plugin <code>views</code>). Try Allow/Deny and the chips' ✕.`,
+ html:()=>`<div class="win">${fixedbar()}<div class="body">${sidebar()}<div class="split">${transcriptPane("t7",{compact:true,extra:`<div class="msg agent"><p>Ready to push the mockup branch.</p></div>${APPROVAL}`,composerExtra:`<span class="chip plo" style="position:relative" data-chip>⎘ screenshot-14-02.png · 212 KB <span class="x" data-act="rmchip">✕</span><span class="owntag p" style="bottom:-16px;right:0">ComposerParts · attachments</span></span><span class="chip plo" style="position:relative" data-chip>1 selection from Changes <span class="x" data-act="rmchip">✕</span></span>`})}${pane({tabs:["Changes"],id:"r7",content:DIFF.replace('<div class="a">+ export const Changes','<div class="a sel">+ export const Changes'),kindLabel:["Changes({ session, path })"]})}</div></div></div>`});
+
+function phoneTab(i){return [`<div>${transcript({compact:true})}</div>${composer()}`,DIFF,MD,sketch("c")][i]}
+S.push({t:"8 Phone",cap:`<b>Phone: one pane at a time.</b> The tab strip picks the pane (p2's rule); the global view (sessions sidebar, or the inbox) opens as a drawer from ☰; the fixed bar stays at the bottom. Hidden panes stay mounted but release heavy state (the diff stream) while hidden. Tap tabs, ☰, and the drawer's picker.`,
+ html:()=>`<div class="phonewrap"><div class="phone"><div class="status"><span>14:03</span><span>5G 64%</span></div><div class="top wbo" style="position:relative"><button class="ic" data-act="drawer">☰</button><b style="flex:1">p3 views proposal</b><button class="ic">⋯</button></div><div class="strip wbo">${["Chat","Changes","views.md","Checklist"].map((x,i)=>`<button class="${i?"":"on"}" data-act="ptab" data-i="${i}">${x}</button>`).join("")}</div><div class="pbody plo" id="pbody">${phoneTab(0)}</div><div class="pfixed wbo"><button data-act="viewsmenu"><span>▤</span>Views</button><button data-act="reset"><span>↺</span>Reset</button><button data-act="safe"><span>⛨</span>Safe mode</button></div>
+ <div class="drawer" id="drawer"><div class="scrim" data-act="drawer"></div><div class="panel">${sidebar().replace('style="position:relative"','style="position:relative;width:100%;border:0"')}</div></div></div>
+ <div style="max-width:360px" class="muted"><div class="lbl">Rules shown</div><ul style="padding-left:18px;line-height:1.7"><li>Layout is per device class and per device.</li><li>A phone switches to a view only if the agent showed it in the last minute; opening a session shows its chat.</li><li>The agent's arrangement is adopted but rendered one pane at a time.</li><li>Global views never take a tab: they live in the drawer.</li><li>The fixed bar is the same three actions as on desktop.</li></ul></div></div>`});
+
+/* terminal */
+const TW={
+ transcript:[
+ "<span class=\"m\">you</span>  Mock up the views model from views.md.",
+ "",
+ "<span class=\"k\">pi</span>   Opened the proposal and the working tree's",
+ "     changes. Three concepts: view kinds, renderers",
+ "     per surface, and slots inside views.",
+ "     <span class=\"m\">▸ view open Markdown(views.md)</span>",
+ "     <span class=\"m\">▸ view open Changes(plugins/changes)</span>",
+ "     <span class=\"m\">▸ view open sketch \"Release checklist\"</span>",
+ "",
+ "<span class=\"m\">you</span>  Why is the session decided by the params?",
+ "",
+ "<span class=\"k\">pi</span>   A kind whose params name a session belongs to",
+ "     that session; without one it is global."],
+ changes:[
+ "plugins/changes/contract.web.ts  <span class=\"m\">+6 −1</span>",
+ "<span class=\"b\">@@ -1,4 +1,9 @@</span>",
+ "<span class=\"r\">- export const CHANGES = \"changes\"</span>",
+ "<span class=\"g\">+ export const Changes = defineViewKind(\"changes\", {</span>",
+ "<span class=\"g\">+   session: str(),</span>",
+ "<span class=\"g\">+   path: str(),</span>",
+ "<span class=\"g\">+ })</span>",
+ "plugins/changes/web.tsx  <span class=\"m\">+3 −0</span>",
+ "<span class=\"g\">+    [Changes.name]: ({ params }) =&gt;</span>",
+ "<span class=\"g\">+      &lt;ChangesPane … /&gt;,</span>",
+ "","",""],
+ md:[
+ "<b>p3 views: the web and terminal UI model</b>",
+ "",
+ "2. The model: three concepts",
+ "  1. View kind: a name and params",
+ "  2. Renderer: per kind and surface",
+ "  3. Slot: named extension points",
+ "","3. The workbench and the escape hatch",
+ "  Pane chrome is the workbench's.","","","",""],
+ sketch:[
+ "",
+ "  <b>Release checklist</b>  <span class=\"k\">[sketch]</span>",
+ "",
+ "  This view has no terminal renderer.",
+ "  Sketches are HTML; they render only in a browser.",
+ "",
+ "  Summary: 2 of 5 done",
+ "",
+ "  Open in browser:",
+ "  <span class=\"lnk\">https://p3.local/s/8b6ab5cc/view/checklist</span>",
+ "  <span class=\"m\">o</span> open   <span class=\"m\">y</span> copy link","",""]
+};
+const TNAMES=[["transcript","Transcript"],["changes","Changes"],["md","views.md"],["sketch","Checklist"]];
+function bx(s){return s.replace(/[─│┌┐└┘▸›…−]/g,c=>`<span class="bx">${c}</span>`)}
+function vis(s){return s.replace(/<[^>]+>/g,"").replace(/&gt;/g,">").replace(/&lt;/g,"<").replace(/&amp;/g,"&")}
+function padTo(s,w){const n=vis(s).length;return n>=w?s:s+" ".repeat(w-n)}
+function boxPane(title,lines,w,focus){const top=(focus?"<span class=\"k\">":"")+"┌─ "+title+" "+"─".repeat(Math.max(0,w-5-vis(title).length))+"┐"+(focus?"</span>":"");
+ const body=lines.map(l=>"│ "+padTo(l,w-3)+"│");const bot="└"+"─".repeat(w-2)+"┘";return [top,...body,bot]}
+function termNarrow(active){const W=78;const sw=TNAMES.map(([k,n],i)=>k===active?`<span class="inv"> ${i+1} ${n} </span>`:` <span class="m">${i+1}</span> ${n} `).join("");
+ const nm=TNAMES.find(x=>x[0]===active)[1];
+ return [" "+sw,...boxPane(nm,TW[active],W,true),"<span class=\"m\">›</span> Message p3 views proposal…",
+ "<span class=\"m\">─".repeat(1)+"─".repeat(W-1)+"</span>","<span class=\"inv\"> p3 </span> views proposal · slayer:~/pi   <span class=\"m\">1-4 pane · tab next · v views · r reset · S safe mode</span>"].join("\n")}
+function termWide(){const L=boxPane("Transcript",TW.transcript,62,true),R1=boxPane("Changes",TW.changes.slice(0,5),62,false),R2=boxPane("Checklist [sketch]",["no terminal renderer · 2 of 5 done","<span class=\"lnk\">open in browser: p3.local/s/8b6ab5cc/view/checklist</span>"],62,false);
+ const R=[...R1,...R2];const n=Math.max(L.length,R.length);const out=[" <span class=\"inv\"> 1 Transcript </span>  <span class=\"m\">2</span> Changes   <span class=\"m\">3</span> views.md   <span class=\"m\">4</span> Checklist   <span class=\"m\">· split: row(transcript, column(changes, checklist)) from the agent</span>"];
+ for(let i=0;i<n;i++)out.push(padTo(L[i]||"",62)+" "+(R[i]||""));
+ out.push("<span class=\"m\">›</span> Message p3 views proposal…");
+ out.push("<span class=\"inv\"> p3 </span> views proposal · slayer:~/pi   <span class=\"m\">1-4 focus · ctrl-w split · v views · r reset · S safe mode</span>");return out.join("\n")}
+S.push({t:"9 Terminal",cap:`<b>Terminal: same kinds, same arrangement, rendered by <code>TuiViews</code>.</b> On a narrow terminal, one pane at a time with a switcher (keys 1-4); on a wide terminal, the agent's arrangement as a split. The checklist is a sketch (HTML), so it has no terminal renderer: it shows its title, a text summary and "open in browser". Switch width and panes.`,
+ html:()=>`<div class="seg"><button class="on" data-act="tw" data-w="n">80 columns</button><button data-act="tw" data-w="w">160 columns</button></div> <span class="seg" id="tsw">${TNAMES.map(([k,n],i)=>`<button class="${i?"":"on"}" data-act="tp" data-k="${k}">${i+1} ${n}</button>`).join("")}</span><div class="term" id="term">${bx(termNarrow("transcript"))}</div>`});
+
+/* ---------- render ---------- */
+const nav=$("#nav"),main=$("#main");
+S.forEach((s,i)=>{const b=document.createElement("button");b.textContent=s.t;b.dataset.i=i;nav.insertBefore(b,nav.querySelector(".own"));
+ const sec=document.createElement("section");sec.className="screen";sec.id="scr"+(i+1);sec.innerHTML=`<p class="cap">${s.cap}</p>${s.html()}`;main.appendChild(sec)});
+function show(){const m=/^#s(\d+)$/.exec(location.hash);const n=m?+m[1]:1;document.querySelectorAll("section.screen").forEach((s,i)=>s.classList.toggle("on",i===n-1));nav.querySelectorAll("button").forEach((b,i)=>b.classList.toggle("on",i===n-1));}
+nav.addEventListener("click",e=>{const b=e.target.closest("button");if(b&&b.dataset.i)history.replaceState(null,"","#s"+(+b.dataset.i+1)),show()});
+window.addEventListener("hashchange",show);show();
+$("#owntog").addEventListener("change",e=>document.body.classList.toggle("own",e.target.checked));
+document.querySelectorAll("[data-glyph]").forEach(g=>drawPrev(g.dataset.glyph));
+function drawPrev(id){const g=document.querySelector(`[data-glyph="${id}"]`);if(!g)return;document.querySelectorAll(`[data-prev="${id}"]`).forEach(c=>{const x=c.getContext("2d");x.clearRect(0,0,8,8);x.fillStyle="#ecebe8";[...g.children].forEach((p,i)=>{if(p.classList.contains("on"))x.fillRect(i%8,Math.floor(i/8),1,1)})})}
+function toast(win,text,undoAct){const old=win.querySelector(".toast");if(old)old.remove();const t=document.createElement("div");t.className="toast";t.innerHTML=`<span>${text}</span>${undoAct?`<button class="b" data-act="${undoAct}">Undo</button>`:""}<button class="b" data-act="dismiss" style="border:0;color:var(--muted)">✕</button>`;(win.querySelector(".body")||win).appendChild(t);}
+
+/* ---------- interactions ---------- */
+document.addEventListener("click",e=>{
+ const el=e.target.closest("[data-act]");if(!el)return;const a=el.dataset.act;const win=el.closest(".win");
+ switch(a){
+ case "tab":{if(e.target.dataset.act==="closetab")return;const id=el.dataset.pane,i=+el.dataset.i;el.parentElement.querySelectorAll(".tab").forEach((t,j)=>t.classList.toggle("on",j===i));document.querySelectorAll(`[data-tabc="${id}"]`).forEach((c,j)=>c.style.display=j===i?"":"none");break}
+ case "closetab":{e.stopPropagation();const tab=el.closest(".tab");const strip=tab.parentElement;const tabs=[...strip.querySelectorAll(".tab")];if(tabs.length<2){toast(win,"Last tab: use the pane's ✕ to close the pane");break}const i=tabs.indexOf(tab);const id=tab.dataset.pane;const cs=[...document.querySelectorAll(`[data-tabc="${id}"]`)];cs[i].remove();tab.remove();strip.querySelectorAll(".tab").forEach((t,j)=>t.dataset.i=j);strip.querySelector(".tab").click();toast(win,"Closed the view on this device","");break}
+ case "ck":{el.closest("label").classList.toggle("done",el.checked);break}
+ case "undo2":{$("#arr").innerHTML=`<div class="split">${transcriptPane("t2u")}${pane({tabs:RIGHT_TABS,id:"r2u",content:[DIFF,MD,sketch("d")],kindLabel:RIGHT_KINDS})}</div>`;toast(win,"Restored your layout. The agent's arrangement stays available in ▤ Views.","redo2");break}
+ case "redo2":{$("#arr").innerHTML=arranged();toast(win,"The agent arranged your panes","undo2");break}
+ case "dismiss":{el.closest(".toast").remove();break}
+ case "ebreload":{const c=$("#b3c");if(c.dataset.tries){c.innerHTML=DIFF;c.style.position="static";$("[data-pane-id=b3] .owntag.p").textContent="Changes({ session, path })"}else{c.dataset.tries="1";$("#ebmsg").textContent="Reloaded; failed again at 14:03:12. Reload once more, or disable changes-plus in safe mode."}break}
+ case "ebclose":{el.closest(".pane").remove();toast(win,"Closed the failed pane. Reopen it from ▤ Views.","");break}
+ case "ebreport":{$("#ebmsg").innerHTML="Sent to the agent as the view's error: <code>TypeError … web.tsx:41</code>";break}
+ case "safe":{if(win&&!win.querySelector(".banner")){toast(win,"Safe mode is shown on screen 4. Here it would reload with ?safe=1.","")}else if(!win){alert("Safe mode: reload with ?safe=1 (see screen 4)")}break}
+ case "reset":{if(win)toast(win,"Layout reset to the default layout plugin","undoreset");else alert("Layout reset to the default (one pane at a time on phones)");break}
+ case "undoreset":{el.closest(".toast").remove();break}
+ case "viewsmenu":{if(win)toast(win,"▤ Views: Transcript · Changes · views.md · Checklist (sketch) · Saved views… · Agent's arrangement","");break}
+ case "leavesafe":{const sec=el.closest("section");const w=sec.querySelector(".win");const off=[...w.querySelectorAll(".pm .row")].filter(r=>r.querySelector(".tog")&&!r.querySelector(".tog.on")).map(r=>r.querySelector(".nm").firstChild.textContent.trim());
+   w.outerHTML=`<div class="win" id="w4">${fixedbar()}<div class="body">${sidebar()}<div class="split">${transcriptPane("t4b",{compact:true})}${pane({tabs:RIGHT_TABS,id:"r4b",content:[off.includes("changes-plus")?DIFF:`<div style="position:relative;height:100%">${broken()}</div>`,MD,sketch("e")],kindLabel:RIGHT_KINDS})}</div></div></div>`;
+   const nw=sec.querySelector(".win");toast(nw,off.length?`Left safe mode. Off: ${off.join(", ")}.`:"Left safe mode. Nothing was disabled, so Changes fails again.","enter4");break}
+ case "enter4":{const sec=el.closest("section");sec.querySelector(".win").outerHTML=safeScreen();break}
+ case "tog":{el.classList.toggle("on");break}
+ case "px":{el.classList.toggle("on");drawPrev(el.parentElement.dataset.glyph);break}
+ case "promote":{const box=$("#promo5");box.innerHTML=`<div class="pane" style="flex:1"><div class="chrome wbo" style="position:relative"><button class="tab on">Glyph editor <span class="badge pl">plugin</span></button><span class="sp"></span><button class="act">⋯</button><button class="act">✕</button><span class="owntag w">pane chrome · workbench</span></div><div class="content plo"><div style="padding:10px;font-size:12px" class="muted">GlyphEditor({ session, font: "pi-mono", glyph: "A" }) · plugin <code>glyph-editor</code> in the session's plugins · runs in p3's realm</div>${glyph("b","p3")}<div style="display:flex;gap:8px;justify-content:center;padding:0 0 10px"><button class="btn">Clear</button><button class="btn">Invert</button><button class="btn">Save to font</button></div><div style="padding:0 12px 12px;font-size:12px" class="muted">Has a terminal facet too: renders as a text grid in TuiViews.</div><span class="owntag p">promoted view · plugin glyph-editor</span></div></div>`;
+   const src=document.querySelector('[data-glyph="a"]'),dst=document.querySelector('[data-glyph="b"]');[...src.children].forEach((p,i)=>dst.children[i].classList.toggle("on",p.classList.contains("on")));drawPrev("b");
+   el.outerHTML=`<div class="muted" style="font-size:12px">Promoted to plugin <code>glyph-editor</code>: built and loaded by the plugin loader. Install for all sessions? <button class="btn" style="padding:1px 8px">Install</button></div>`;break}
+ case "ibq":{if(e.target.closest("button"))return;el.parentElement.querySelectorAll(".q").forEach(q=>q.classList.toggle("on",q===el));const s=el.dataset.s;const t=$("#sess6 .ptitle");if(t)t.textContent="Transcript · "+s;break}
+ case "ans":{const q=el.closest(".q");q.style.opacity=".4";q.querySelector(".t").insertAdjacentHTML("beforeend",` <span class="badge pl">answered: ${el.textContent}</span>`);q.querySelectorAll("button").forEach(b=>b.disabled=true);break}
+ case "allow":case "allow1":case "deny":{const ok=a!=="deny";$("#apprbtns").innerHTML=`<span class="badge ${ok?"pl":""}" style="${ok?"":"color:var(--bad);border-color:rgba(240,122,114,.5)"}">${ok?(a==="allow1"?"Allowed for this session":"Allowed"):"Denied"} by you · 14:03</span><button class="btn" data-act="reappr" style="padding:1px 8px">Change</button>`;break}
+ case "reappr":{$("#apprbtns").innerHTML=`<button class="btn ok" data-act="allow">Allow</button><button class="btn" data-act="allow1">Allow for this session</button><button class="btn bad" data-act="deny">Deny</button>`;break}
+ case "rmchip":{el.closest("[data-chip]").remove();break}
+ case "ptab":{el.parentElement.querySelectorAll("button").forEach(b=>b.classList.toggle("on",b===el));$("#pbody").innerHTML=phoneTab(+el.dataset.i);break}
+ case "drawer":{$("#drawer").classList.toggle("open");break}
+ case "tw":{el.parentElement.querySelectorAll("button").forEach(b=>b.classList.toggle("on",b===el));const w=el.dataset.w;$("#tsw").style.display=w==="n"?"":"none";$("#term").innerHTML=bx(w==="n"?termNarrow($("#tsw .on").dataset.k):termWide());break}
+ case "tp":{el.parentElement.querySelectorAll("button").forEach(b=>b.classList.toggle("on",b===el));$("#term").innerHTML=bx(termNarrow(el.dataset.k));break}
+ }
+});
+document.addEventListener("change",e=>{
+ const a=e.target.dataset.act;
+ if(a==="globalkind"||a==="globalkind6"){const v=e.target.value;const win=e.target.closest(".win")||e.target.closest(".phone");
+   if(v==="Inbox"&&a==="globalkind"){location.hash="#s6";e.target.value="Sessions"}
+   else if(v==="Sessions"&&a==="globalkind6"){location.hash="#s1";e.target.value="Inbox"}
+   else if(v==="Dashboard"){const w=e.target.closest(".win");if(w)toast(w,"Dashboard({}) is another global view; not mocked here","");e.target.value=a==="globalkind6"?"Inbox":"Sessions"}}
+});
+</script>
+</body>
+</html>

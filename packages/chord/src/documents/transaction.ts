@@ -9,8 +9,8 @@ import type { JobHandle, Outcome, Run, StartOptions } from "../jobs/index.ts";
 import type { Job } from "../jobs/internal.ts";
 import type { Columns, PutRowOf, RowOf } from "../store/columns.ts";
 import type { Condition, SetOf } from "../store/expression.ts";
-import { refreshOf } from "../store/live-query.ts";
 import type { ColumnRefs, Query } from "../store/query.ts";
+import { ReadRefresh } from "../store/reads.ts";
 import { refusalOf } from "../store/refusal.ts";
 import type { StagedWrite } from "../store/step.ts";
 import type { ChordStore } from "../store/store.ts";
@@ -547,13 +547,14 @@ export class Transaction implements Tx {
 	}
 
 	/**
-	 * Stages the re-run of the live queries over the tables this transaction wrote (decision "Live queries over an
-	 * object's own tables"): read in the commit step after every table write staged so far (the callback's), published
-	 * in the commit's batch. None when no written table has a live query.
+	 * Stages the refresh of the store's reads over the tables this transaction wrote (slice 14 §3.2): the reads are
+	 * chosen and tested in the commit step, after every table write staged so far (the callback's), and published in
+	 * the commit's batch. Staged whether or not a read exists now: one opened while this commit waits is refreshed too.
 	 */
 	#refreshQueries(tables: ReadonlyMap<TableHandle, TableChanges>): void {
-		const refresh = refreshOf(tables.keys(), this.#context);
-		if (refresh === undefined) return;
+		const written = [...tables.keys()].map((handle) => handle.sql.table);
+		const changes = () => [...tables.values()].flatMap((each) => each.changes());
+		const refresh = new ReadRefresh(this.#writes!.store.reads, written, changes, this.#context);
 		this.#writes!.staged.push(refresh.write);
 		this.stage(refresh, () => refresh);
 	}

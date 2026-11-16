@@ -5,7 +5,15 @@ import { broken, ChordError } from "../../src/data/index.ts";
 import type * as Delta from "../../src/delta/index.ts";
 import { decoder } from "../../src/delta/index.ts";
 import { defineState } from "../../src/documents/index.ts";
-import { type Ctx, createHost, defineFacet, type FacetHost, type Host, type Self } from "../../src/host/index.ts";
+import {
+	type Ctx,
+	createHost,
+	defineFacet,
+	type FacetHost,
+	type Host,
+	type RefIn,
+	type Self,
+} from "../../src/host/index.ts";
 import type { ChordHost } from "../../src/host/internal.ts";
 import { ChordObject } from "../../src/host/object.ts";
 import { defineJob } from "../../src/jobs/index.ts";
@@ -1324,6 +1332,51 @@ describe("holds across a reload (slice 7b §6)", () => {
 		await server.close(context);
 	});
 
+	it('a reference made during a version-dropping reload\'s drain joins the old live binding: no fresh admission (decision "References share one wire hold", accepted difference 2)', async () => {
+		const gate = Promise.withResolvers<void>();
+		const { server, client } = await linked((h) =>
+			h.serve(Shown, () => ({
+				variant: "v",
+				members: {
+					label: constant("v1"),
+					n: constant(0),
+					bump: async () => {
+						await gate.promise;
+						return 1;
+					},
+				},
+			})),
+		);
+		const a = (await client.get(Shown, {}, context)) as RefIn<typeof Shown, "v">;
+		// A running call keeps the old attempt open: it drains after the reload commits.
+		const running = a.bump(context);
+		await transported();
+		await reloadServer(server, (h) => serveShownV2(h, "v2", false));
+		await transported();
+		expect(a.state.value).toEqual({ kind: "live" });
+		const b = client.hold(Shown, {}, context);
+		expect([b.state.value, b.label.value, server.activity.value.references]).toEqual([{ kind: "live" }, "v1", 1]);
+		// A separate consumer's new hold is admitted against the new code: v1 is no longer accepted.
+		const other = createHost<TestPrincipal>({ onError: () => {} });
+		await other.load([], context);
+		const [near, far] = memoryLinkPair();
+		server.accept(near, { principal: { kind: "owner" }, codec: testCodec() }, context);
+		other.connect(far, { principal: { kind: "server" }, codec: testCodec() }, context);
+		const fresh = other.hold(Shown, {}, context);
+		await transported();
+		expect(fresh.state.value).toMatchObject({ kind: "failed", cause: { error: { code: "contract_mismatch" } } });
+		gate.resolve();
+		expect(await running).toBe(1);
+		await transported();
+		// After the drain both references leave the old binding together.
+		expect([a.state.value, b.state.value]).toMatchObject([
+			{ kind: "failed", cause: { error: { code: "contract_mismatch" } } },
+			{ kind: "failed", cause: { error: { code: "contract_mismatch" } } },
+		]);
+		await other.close(context);
+		await server.close(context);
+	});
+
 	it('two references sharing one hold (decision "References share one wire hold") follow a restart, a dropped version and a removal together', async () => {
 		const { server, client } = await linked((h) => serveShown(h, "v1", true));
 		const a = await client.get(Shown, {}, context);
@@ -1964,6 +2017,69 @@ describe('calls in flight across a `loading` unbind (decision "Calls in flight s
 		expect(partValue((await peer.next("result")).value!)).toBe(2);
 		expect(ran).toEqual(["ping", "ping"]);
 		expect(peer.closed).toBe(false);
+		await server.close(context);
+	});
+
+	it("fences each unacknowledged bound: A, B, C before any ack, a call between is decoded by what its consumer had applied (slice 14 §2.4)", async () => {
+		const ran: string[] = [];
+		const { server, peer, reload } = await keptServer({ n: 1, ran }, { ack: false });
+		peer.ack();
+		// A (variant a, acknowledged), then B (variant b) and C (variant a again), neither acknowledged.
+		await reload({ n: 2, variant: "b", ran });
+		expect((await peer.next("bound")).holds[0]!.variant).toBe(1);
+		await reload({ n: 3, variant: "a", ran });
+		expect((await peer.next("bound")).holds[0]!.variant).toBe(0);
+		// Sent before B was applied: index 0 is A's `bump`.
+		peer.send({ kind: "call", call: 0, hold: 0, method: 0 });
+		expect(partValue((await peer.next("result")).value!)).toBe(3);
+		expect(ran).toEqual(["bump"]);
+		// B applied and acknowledged, C not yet: index 0 is B's `ping` (one fence would still decode it by A's names).
+		peer.ack();
+		peer.send({ kind: "call", call: 1, hold: 0, method: 0 });
+		expect(partValue((await peer.next("result")).value!)).toBe(3);
+		expect(ran).toEqual(["bump", "ping"]);
+		// C acknowledged: index 0 is `bump` again.
+		peer.ack();
+		peer.send({ kind: "call", call: 2, hold: 0, method: 0 });
+		expect(partValue((await peer.next("result")).value!)).toBe(3);
+		expect(ran).toEqual(["bump", "ping", "bump"]);
+		expect(peer.closed).toBe(false);
+		await server.close(context);
+	});
+
+	it("drops a fence with the ack of its bound: a consumer that never calls keeps none (GC)", async () => {
+		// The live attempt alone: a sealed one keeps the error it was sealed with.
+		let self: Self<TestPrincipal> | undefined;
+		const server = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
+		const facet = defineFacet<TestPrincipal>((h) =>
+			h.serve(Kept, (_, _principal, declared) => {
+				self = declared;
+				return { variant: "a", members: { label: constant("v1"), bump: async () => 1, ping: async () => 1 } };
+			}),
+		);
+		await server.load([{ name: "@test/app", facet }], context);
+		const objects = instancesOf(ChordObject, "attempt");
+		const [a, b] = memoryLinkPair();
+		server.accept(a, { principal: { kind: "owner" }, codec: testCodec() }, context);
+		// It acknowledges every `bound` and sends no call.
+		const peer = new RawPeer(b);
+		await peer.next("hello");
+		hold(peer, 0, Kept);
+		await peer.next("bound");
+		// Each failure it is told is what the fence of the next `bound` keeps for calls sent before it.
+		const failures: WeakRef<ChordError>[] = [];
+		for (let round = 0; round < 4; round++) {
+			const error = new ChordError({ code: "unavailable", message: `failure ${round}` });
+			failures.push(new WeakRef(error));
+			failLive(objects, self!, error);
+			await peer.next("failed");
+			peer.send({ kind: "retry", hold: 0, hops: 16 });
+			await peer.next("bound");
+			await transported();
+		}
+		// Every `bound` was acknowledged: no fence is left to keep what the consumer was told before it. (The last
+		// failure is still reachable from this test's own frame, fences or not.)
+		await expectCollected(...failures.slice(0, -1));
 		await server.close(context);
 	});
 

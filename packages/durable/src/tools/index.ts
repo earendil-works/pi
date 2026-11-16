@@ -19,6 +19,7 @@ export {
 	DEFAULT_IMAGE_LIMITS,
 	type ImageLimits,
 	type ImageProcessor,
+	imageLimits,
 	type PreparedImage,
 } from "./image-processor.ts";
 export { createReadTool, type ReadToolDetails, type ReadToolInput, type ReadToolOptions } from "./read.ts";

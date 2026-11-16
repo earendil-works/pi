@@ -1,7 +1,7 @@
-// What the sessions plugin shares with other plugins' web facets: for entries in the sidebar (the `drawer-brand` slot)
-// the rows as the sidebar shows them, their state mark, and listing sessions apart from the rollups because an entry of
-// their own shows them; for session commands in the command menu, the session a command acts on (command-session.tsx);
-// for conversation rows, the mark a subagent's row has.
+// What the sessions plugin shares with other plugins' web facets: for rows of their own in the sidebar (the
+// `sidebar-start:<name>` slots) the rows as the sidebar shows them, a row's shape and state marks, and listing sessions
+// apart from the rollups because a row of their own shows them; for session commands in the command menu, the session a
+// command acts on (command-session.tsx); for conversation rows, the mark a subagent's row has.
 import { sharedContext } from "@p2/app/v1/web";
 import type { SidebarRow } from "./sidebar/model.ts";
 
@@ -13,8 +13,9 @@ export {
 	useOpenFromMenu,
 	useSessions,
 } from "./command-session.tsx";
-export { RunMark, SessionDot, WorkingMark } from "./sidebar/marks.tsx";
+export { IconMarker, RunMark, UnreadMark, WorkingMark } from "./sidebar/marks.tsx";
 export type { SidebarRow } from "./sidebar/model.ts";
+export { NavRow } from "./sidebar/NavRow.tsx";
 
 export type DrawerRows = {
 	/** Every row of the sidebar, with its worker state, including the ones listed apart. */

@@ -158,7 +158,11 @@ describe("chat mode (server, sharing, fake provider)", () => {
 	});
 
 	it("gives a mention the chat no mention passed on yet, with authors, attachments and capped images", async () => {
-		const png = Buffer.from("89504e470d0a1a0a", "hex");
+		// A real 1x1 PNG: inline images are decoded, and bytes that are not one are left out.
+		const png = Buffer.from(
+			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+			"base64",
+		);
 		const alice = await joinAs("full", "Alice");
 		const [aliceChat, aliceMode] = await Promise.all([
 			holdIn(alice.host, Chat, { session, conversation: 1 }, "participant"),

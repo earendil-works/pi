@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>p3: org-managed Pis</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">A design note · p3 · fifth edition · 2026-11-13</div>
+  <h1>Org-Managed<br>Pis</h1>
+  <p class="subtitle">A small base, Earendil plugins on top, and a deployment profile Acme edits in Radius without ever seeing a plugin</p>
+  <div class="cover-stats"><div class="stat"><b>3</b><span>base mechanisms</span></div><div class="stat"><b>6</b><span>Earendil plugins</span></div><div class="stat"><b>1</b><span>write path for every setting</span></div></div>
+  <div class="cover-note"><p>The owner&#39;s model of 2026-11-13: &quot;a nice base system in p3 that allows us to model all this as Earendil plugins we can
+provide to enterprise users when they configure deployment profiles for their employees. the Radius UI might even hide
+the fact that things are implemented as plugins behind the scenes.&quot; Code is PROPOSED; Chord, Durable and Gondolin APIs
+in it exist on origin/main. Full traces, platform lock-down, failure modes and kit details: <code>details.md</code> next to this
+file (not part of this page).</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#the-model">I. The Model</a></li>
+<li><a href="#the-base">II. The Base</a></li>
+<li><a href="#acme-s-deployment-profile">III. Acme&#39;s Deployment Profile</a></li>
+<li><a href="#one-trace-dana-adds-an-mcp-server">IV. One Trace: Dana Adds an MCP Server</a></li>
+<li><a href="#what-really-holds">V. What Really Holds</a></li>
+<li><a href="#open-decisions">Open Decisions</a></li>
+</ol></nav>
+
+<section class="chapter" id="the-model"><header class="opener"><div class="numeral">I</div><h2>The Model</h2></header>
+<p>Each person has one Pi. An org configures its members&#39; Pis through a <strong>deployment profile</strong>: a list of Earendil
+plugins plus their settings, each preset (the member may change it) or locked. The machine&#39;s admin writes a root-owned
+<strong>enrollment file</strong> (&quot;this machine belongs to Acme, its server is this Radius URL, its key is this&quot;). An enrolled Pi
+stays locked until its first sync with Radius has delivered and applied the signed profile; after that it starts from
+its cached copy and follows changes live. Radius shows the plugins as features with forms generated from their declared
+settings, so Acme&#39;s admin configures &quot;Agent sandboxes&quot; and &quot;Sharing&quot;, not plugins. p2 already has the hard parts
+(Gondolin sandboxes in <code>apps/p2/plugins/envs</code>, session locks in <code>apps/p2/src/runtime/session-lock.ts</code>); p3 needs the base
+that lets an org set them.</p>
+</section>
+
+<section class="chapter" id="the-base"><header class="opener"><div class="numeral">II</div><h2>The Base</h2></header>
+<p>Three mechanisms, none of which knows about orgs. A personal Pi uses them too.</p>
+<h3 id="1-settings-declared-by-plugins-preset-or-locked-one-write-path">1. Settings: declared by plugins, preset or locked, one write path</h3>
+<p>A plugin declares each setting once. A trusted plugin (the <code>org</code> plugin, installed by the admin) provides one managed
+layer over the member&#39;s values. Every write, from the page, the agent&#39;s tools or another plugin, goes through
+<code>Settings.set</code>, which refuses a locked setting or a managed entry.</p>
+<pre><code><span class="tk-c">// PROPOSED · plugins/mcp/contract.ts: what a plugin author writes. Nothing about orgs.</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">McpServers</span> = <span class="tk-f">defineSetting</span>(<span class="tk-s">"mcp.servers"</span>, <span class="tk-f">map</span>(<span class="tk-t">McpServerConfig</span>), {
+	title: <span class="tk-s">"MCP servers"</span>,
+	description: <span class="tk-s">"Remote MCP servers whose tools the agent can use."</span>,
+	merge: <span class="tk-s">"entries"</span>, <span class="tk-c">// a record by name; "value" for one value</span>
+	initial: {},
+});
+
+<span class="tk-c">// PROPOSED · plugins/settings/server.ts (base): the check inside Settings.set.</span>
+<span class="tk-k">const</span> managed = layer?.settings[write.name]; <span class="tk-c">// { lock: "preset" | "locked", value }</span>
+<span class="tk-k">if</span> (managed?.lock === <span class="tk-s">"locked"</span>)
+	<span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">PluginError</span>(<span class="tk-s">"managed"</span>, <span class="tk-s">`Managed by ${layer.source}: ${write.name} is locked`</span>, { setting: write.name });
+<span class="tk-k">if</span> (write.kind === <span class="tk-s">"entry"</span> &amp;&amp; managed !== <span class="tk-k">undefined</span> &amp;&amp; <span class="tk-t">Object</span>.<span class="tk-f">hasOwn</span>(managed.value <span class="tk-k">as</span> object, write.entry))
+	<span class="tk-k">throw</span> <span class="tk-k">new</span> <span class="tk-t">PluginError</span>(<span class="tk-s">"managed"</span>, <span class="tk-s">`Managed by ${layer.source}: the entry ${write.entry}`</span>, { setting: write.name });</code></pre>
+<p>Effective value: locked → the managed value; preset → the member&#39;s value, else the managed one (entries: both,
+managed entries read-only); while the startup is held → the initial value. Locked member values are kept, not deleted.</p>
+<h3 id="2-plugin-admission-required-allowed-forbidden-own">2. Plugin admission: required, allowed, forbidden, own</h3>
+<p>The plugin list is two base settings, filled by the profile like any other. The kit asks <code>admits</code> at every discovery
+(kit change: <code>startServer</code> takes plugin roots and an <code>admit</code> function).</p>
+<pre><code><span class="tk-c">// PROPOSED · src/admit.ts (base). Roots: app (base), system (Earendil, admin-installed), org (pinned), member.</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">admits</span>(state: <span class="tk-t">AdmitState</span>, plugin: <span class="tk-t">Plugin</span>, roots: <span class="tk-t">Roots</span>): boolean {
+	<span class="tk-k">if</span> (plugin.root === roots.app) <span class="tk-k">return</span> <span class="tk-k">true</span>;
+	<span class="tk-k">const</span> entry = state.entries[plugin.name]; <span class="tk-c">// effective "p3.plugins": required | allowed | forbidden, with source and hash</span>
+	<span class="tk-k">if</span> (entry?.mode === <span class="tk-s">"forbidden"</span>) <span class="tk-k">return</span> <span class="tk-k">false</span>;
+	<span class="tk-k">if</span> (plugin.root === roots.system) <span class="tk-k">return</span> <span class="tk-k">true</span>;
+	<span class="tk-k">if</span> (state.held) <span class="tk-k">return</span> <span class="tk-k">false</span>; <span class="tk-c">// nothing the profile or the member brings runs before the holds release</span>
+	<span class="tk-k">if</span> (plugin.root === roots.org) <span class="tk-k">return</span> entry !== <span class="tk-k">undefined</span> &amp;&amp; state.verified[plugin.name] === entry.hash;
+	<span class="tk-k">return</span> state.own; <span class="tk-c">// effective "p3.plugins.own": installed-from-anywhere and agent-written plugins</span>
+}</code></pre>
+<p>Installs, writes and Apply go only through the base&#39;s <code>Plugins</code> service, which installs pinned entries into the org
+root and keeps them only if their tree hash matches.</p>
+<h3 id="3-startup-gate-a-trusted-plugin-holds-the-pi-until-it-is-ready">3. Startup gate: a trusted plugin holds the Pi until it is ready</h3>
+<pre><code><span class="tk-c">// PROPOSED · app/v1/startup.ts (base). Only system-root plugins' holds count.</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Hold</span> = <span class="tk-f">obj</span>({ title: <span class="tk-f">str</span>(), why: <span class="tk-f">str</span>() });
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">StartupHolds</span> = defineRegistry&lt;<span class="tk-t">Hold</span> | <span class="tk-k">null</span>, <span class="tk-k">readonly</span> <span class="tk-t">TableItem</span>&lt;<span class="tk-t">Hold</span> | <span class="tk-k">null</span>&gt;[]&gt;(<span class="tk-s">"p3.startup-holds"</span>, { version: <span class="tk-n">1</span> });
+
+<span class="tk-c">// PROPOSED · plugins/org/server.ts (Earendil): held until a verified profile is applied.</span>
+self.<span class="tk-f">contribute</span>(<span class="tk-t">StartupHolds</span>, self.<span class="tk-f">derive</span>([org], ([o]) =&gt; (o.applied === <span class="tk-k">null</span> ? { title: <span class="tk-s">"Acme"</span>, why: o.why } : <span class="tk-k">null</span>)));</code></pre>
+<p>While held: no session worker starts, only the app and system roots load, settings read their initial values, and the
+page shows the hold (&quot;Connect to Acme&quot;, with a Radius sign-in). When the last hold goes, the base readmits and applies.</p>
+</section>
+
+<section class="chapter" id="acme-s-deployment-profile"><header class="opener"><div class="numeral">III</div><h2>Acme&#39;s Deployment Profile</h2></header>
+<p>What Acme&#39;s admin sees in Radius as a few feature forms is, underneath, this signed document:</p>
+<pre><code><span class="tk-c">// PROPOSED · served by Radius to Dana's Pi</span>
+{
+  <span class="tk-s">"payload"</span>: {
+    <span class="tk-s">"org"</span>: <span class="tk-s">"acme"</span>, <span class="tk-s">"orgName"</span>: <span class="tk-s">"Acme"</span>, <span class="tk-s">"member"</span>: <span class="tk-s">"dana@acme.com"</span>, <span class="tk-s">"pi"</span>: <span class="tk-s">"pi_7f3a"</span>, <span class="tk-s">"revision"</span>: <span class="tk-n">42</span>,
+    <span class="tk-s">"plugins"</span>: {
+      <span class="tk-s">"org"</span>:           { <span class="tk-s">"mode"</span>: <span class="tk-s">"required"</span>, <span class="tk-s">"source"</span>: { <span class="tk-s">"system"</span>: <span class="tk-k">true</span> } },
+      <span class="tk-s">"device-key"</span>:    { <span class="tk-s">"mode"</span>: <span class="tk-s">"required"</span>, <span class="tk-s">"source"</span>: { <span class="tk-s">"system"</span>: <span class="tk-k">true</span> } },
+      <span class="tk-s">"environments"</span>:  { <span class="tk-s">"mode"</span>: <span class="tk-s">"required"</span>, <span class="tk-s">"source"</span>: { <span class="tk-s">"system"</span>: <span class="tk-k">true</span> }, <span class="tk-s">"settings"</span>: {
+        <span class="tk-s">"environments.kinds"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: [<span class="tk-s">"sandbox"</span>] },
+        <span class="tk-s">"sandbox.folders"</span>:    { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: [{ <span class="tk-s">"path"</span>: <span class="tk-s">"~/work/acme"</span>, <span class="tk-s">"writable"</span>: <span class="tk-k">true</span> }] },
+        <span class="tk-s">"sandbox.allowHosts"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: [<span class="tk-s">"github.com"</span>, <span class="tk-s">"registry.npmjs.org"</span>, <span class="tk-s">"*.acme.internal"</span>] } } },
+      <span class="tk-s">"tool-rules"</span>:    { <span class="tk-s">"mode"</span>: <span class="tk-s">"required"</span>, <span class="tk-s">"source"</span>: { <span class="tk-s">"system"</span>: <span class="tk-k">true</span> }, <span class="tk-s">"settings"</span>: {
+        <span class="tk-s">"tools.blocked"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: [<span class="tk-s">"mcp__linear__delete_*"</span>, <span class="tk-s">"session_export"</span>] } } },
+      <span class="tk-s">"sharing"</span>:       { <span class="tk-s">"mode"</span>: <span class="tk-s">"required"</span>, <span class="tk-s">"source"</span>: { <span class="tk-s">"system"</span>: <span class="tk-k">true</span> }, <span class="tk-s">"settings"</span>: {
+        <span class="tk-s">"sharing.audience"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: <span class="tk-s">"org"</span> } } },
+      <span class="tk-s">"mcp"</span>:           { <span class="tk-s">"mode"</span>: <span class="tk-s">"required"</span>, <span class="tk-s">"source"</span>: { <span class="tk-s">"system"</span>: <span class="tk-k">true</span> }, <span class="tk-s">"settings"</span>: {
+        <span class="tk-s">"mcp.servers"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: {
+          <span class="tk-s">"jira"</span>:   { <span class="tk-s">"url"</span>: <span class="tk-s">"https://mcp.atlassian.com/v1/sse"</span>, <span class="tk-s">"auth"</span>: { <span class="tk-s">"radius"</span>: <span class="tk-s">"jira"</span> } },
+          <span class="tk-s">"linear"</span>: { <span class="tk-s">"url"</span>: <span class="tk-s">"https://mcp.linear.app/mcp"</span>, <span class="tk-s">"auth"</span>: { <span class="tk-s">"radius"</span>: <span class="tk-s">"linear"</span> } } } } } },
+      <span class="tk-s">"acme-deploy"</span>:   { <span class="tk-s">"mode"</span>: <span class="tk-s">"required"</span>, <span class="tk-s">"source"</span>: { <span class="tk-s">"git"</span>: <span class="tk-s">"https://github.com/acme/p3-deploy"</span>, <span class="tk-s">"ref"</span>: <span class="tk-s">"v0.9.2"</span> },
+                         <span class="tk-s">"hash"</span>: <span class="tk-s">"sha256-41b0…"</span>, <span class="tk-s">"settings"</span>: {
+        <span class="tk-s">"deploy.targets"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: { <span class="tk-s">"staging"</span>: { <span class="tk-s">"host"</span>: <span class="tk-s">"deploy.staging.acme.internal"</span> } } } } },
+      <span class="tk-s">"acme-reviews"</span>:  { <span class="tk-s">"mode"</span>: <span class="tk-s">"allowed"</span>, <span class="tk-s">"source"</span>: { <span class="tk-s">"git"</span>: <span class="tk-s">"https://github.com/acme/p3-reviews"</span>, <span class="tk-s">"ref"</span>: <span class="tk-s">"v2.0.1"</span> },
+                         <span class="tk-s">"hash"</span>: <span class="tk-s">"sha256-77de…"</span> }
+    },
+    <span class="tk-s">"ownPlugins"</span>: { <span class="tk-s">"lock"</span>: <span class="tk-s">"locked"</span>, <span class="tk-s">"value"</span>: <span class="tk-k">false</span> }
+  },
+  <span class="tk-s">"signature"</span>: { <span class="tk-s">"alg"</span>: <span class="tk-s">"ed25519"</span>, <span class="tk-s">"key"</span>: <span class="tk-s">"acme-2026-11"</span>, <span class="tk-s">"value"</span>: <span class="tk-s">"Zm9v…"</span> }
+}</code></pre>
+<p>The <code>org</code> plugin checks the signature and the binding to Dana and her Pi, then turns this into the managed layer: the
+plugin entries become <code>p3.plugins</code>, <code>ownPlugins</code> becomes <code>p3.plugins.own</code>, each plugin&#39;s settings go in as they are.
+Radius builds the admin forms from each catalog plugin&#39;s manifest: its feature title and its <code>defineSetting</code> metadata
+(title, description, JSON schema), with a &quot;members choose / preset / locked&quot; control per setting.</p>
+<table>
+<thead>
+<tr>
+<th>Earendil plugin</th>
+<th>What it does</th>
+<th>Settings</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>org</code></td>
+<td>reads the enrollment file, follows the profile from Radius, checks the signature, holds the startup until the first sync, provides the managed layer</td>
+<td><code>org.maxOffline</code></td>
+</tr>
+<tr>
+<td><code>environments</code></td>
+<td>runs the agent&#39;s tools only in Gondolin sandboxes with allowed folders and hosts (p2&#39;s <code>plugins/envs</code>, <code>GondolinEnvConfigSchema</code>); Gondolin runs its VMs on QEMU or krun (libkrun, <code>sandbox.vmm = &quot;krun&quot;</code>, prebuilt runners for macOS arm64 and Linux x64, the macOS runner signed with the hypervisor entitlement)</td>
+<td><code>environments.kinds</code>, <code>sandbox.folders</code>, <code>sandbox.allowHosts</code></td>
+</tr>
+<tr>
+<td><code>mcp</code></td>
+<td>MCP connections; the &quot;MCP lock&quot; is just this setting, locked</td>
+<td><code>mcp.servers</code></td>
+</tr>
+<tr>
+<td><code>sharing</code></td>
+<td>shares sessions through the Radius relay; Radius applies the same audience</td>
+<td><code>sharing.audience</code></td>
+</tr>
+<tr>
+<td><code>tool-rules</code></td>
+<td>blocks tools in every session through Durable&#39;s <code>beforeTool</code> hook (<code>{ block }</code>), built on p2&#39;s session lock and tool guard (<code>tool-access.ts</code>)</td>
+<td><code>tools.blocked</code>, <code>sessions.lock</code></td>
+</tr>
+<tr>
+<td><code>device-key</code></td>
+<td>keeps a key in the TPM or Secure Enclave; Radius issues tokens for Acme&#39;s models, MCP accounts, relay and peers only against it</td>
+<td><code>deviceKey.required</code></td>
+</tr>
+</tbody></table>
+</section>
+
+<section class="chapter" id="one-trace-dana-adds-an-mcp-server"><header class="opener"><div class="numeral">IV</div><h2>One Trace: Dana Adds an MCP Server</h2></header>
+<p><strong>From the page.</strong> The MCP settings section renders from the settings view, so it knows the list is locked before
+anyone clicks:</p>
+<pre><code><span class="tk-c">// PROPOSED · plugins/mcp/web.tsx</span>
+<span class="tk-k">const</span> view = <span class="tk-f">useHold</span>(<span class="tk-t">SettingsView</span>, {});
+<span class="tk-k">const</span> servers = <span class="tk-f">useWatch</span>(view?.effective)?.[<span class="tk-t">McpServers</span>.name] ?? {}; <span class="tk-c">// { jira, linear }</span>
+<span class="tk-k">const</span> mark = <span class="tk-f">useWatch</span>(view?.managed)?.[<span class="tk-t">McpServers</span>.name]; <span class="tk-c">// { source: "Acme", lock: "locked", entries: [...] }</span>
+<span class="tk-c">// Rows in mark.entries get a lock icon; "Add" is disabled with the title "Managed by Acme".</span>
+<span class="tk-k">const</span> add = (name: string, url: string) =&gt;
+	view?.<span class="tk-f">set</span>({ kind: <span class="tk-s">"entry"</span>, name: <span class="tk-t">McpServers</span>.name, entry: name, value: { url, auth: <span class="tk-k">null</span> } }, BACKGROUND_CONTEXT)
+		.<span class="tk-k">catch</span>((error) =&gt; <span class="tk-f">setError</span>(error <span class="tk-k">instanceof</span> <span class="tk-t">PluginError</span> ? error.message : <span class="tk-t">String</span>(error)));</code></pre>
+<p>A tab opened before the lock still shows &quot;Add&quot;. The click calls <code>Settings.set</code>, which reads the current layer, finds
+<code>mcp.servers</code> locked, and throws <code>managed</code>. The page shows <strong>&quot;Managed by Acme: mcp.servers is locked.&quot;</strong></p>
+<p><strong>From the agent.</strong> Dana asks it to connect a GitHub MCP server. Its <code>mcp_add_server</code> tool calls the same <code>set</code> through
+the same view, and the harness turns the refusal into the tool result:</p>
+<pre class="plain"><code>Managed by Acme: mcp.servers is locked. The setting mcp.servers is managed by Acme and locked. Do not retry or look
+for another way; tell the user to ask Acme's admin.</code></pre>
+<p>The other cases, in one line each:</p>
+<ul>
+<li><strong>Editing Acme&#39;s Jira entry:</strong> <code>set</code> refuses a write to a managed entry, also when the list is only preset.</li>
+<li><strong>Installing <code>acme-reviews</code>:</strong> allowed in the profile, so <code>Plugins</code> installs it into the org root, the hash matches,
+<code>admits</code> loads it.</li>
+<li><strong>Installing anything else, or the agent writing a plugin:</strong> <code>p3.plugins.own</code> is locked off, so <code>Plugins</code> refuses, and
+<code>admits</code> would leave the files out anyway.</li>
+<li><strong>Sharing with <code>sam@partner.example</code>:</strong> the sharing plugin refuses (not an Acme member), and Radius refuses the invite
+from the same profile even if a modified Pi skipped the check.</li>
+<li><strong>Acme removes Linear:</strong> the new revision changes the layer, the MCP plugin&#39;s routine on its effective setting closes
+the connection, and running sessions lose Linear&#39;s tools at their next request.</li>
+<li><strong>Acme locks <code>deploy.targets</code>:</strong> its own plugin reads the setting through <code>setting()</code> and never learns it is locked.</li>
+<li><strong>The agent tries to mount <code>~/.ssh</code>:</strong> the environments plugin refuses: not under <code>sandbox.folders</code>.</li>
+</ul>
+</section>
+
+<section class="chapter" id="what-really-holds"><header class="opener"><div class="numeral">V</div><h2>What Really Holds</h2></header>
+<p>In the Pi, all of this is a guardrail. It becomes a wall where the operating system or Radius enforces it: on an Org
+Device the Pi runs as its own service user from a root-owned, signed install; the agent&#39;s tools run in sandboxes; Radius
+serves Acme&#39;s resources only to a Pi proving its device key. Answering Armin&#39;s &quot;can&#39;t I just patch out the check?&quot;: not
+in the managed Pi, which he cannot write or debug; a patched copy he runs himself gets nothing from Acme.</p>
+<table>
+<thead>
+<tr>
+<th>Adversary</th>
+<th>Held by</th>
+<th>Not held</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Dana&#39;s agent</td>
+<td><code>Settings.set</code>, admission, sandboxes (sees only allowed folders and hosts), the service user</td>
+<td>nothing it reaches through supported paths</td>
+</tr>
+<tr>
+<td>Dana with a shell</td>
+<td>the service user and root-owned install (cannot edit or debug the Pi), the device key (a copy gets nothing from Acme)</td>
+<td>running her own unmanaged Pi with her own keys, unless the MDM&#39;s execution control stops it</td>
+</tr>
+<tr>
+<td>Dana with admin rights</td>
+<td>Radius only: sharing audience, peers, what the model gateway and MCP accounts allow</td>
+<td>everything on that machine, including using the device key from a patched Pi</td>
+</tr>
+<tr>
+<td>A third-party plugin</td>
+<td>the plugin list: unlisted code never loads</td>
+<td>everything once admitted: it runs inside the Pi</td>
+</tr>
+</tbody></table>
+</section>
+
+<section class="chapter epilogue" id="open-decisions"><header class="opener"><div class="numeral">∴</div><h2>Open Decisions</h2></header>
+<ol>
+<li>Who holds the org key: the admin in the browser (Radius cannot forge profiles) or Radius per org (simpler).</li>
+<li>A default <code>maxOffline</code> for Org Devices, or none (offline work always continues).</li>
+<li>Which Gondolin backend per platform (krun on macOS arm64 and Linux x64, QEMU elsewhere), and what to do where neither has hardware virtualization (Windows; cloud machines without KVM, where QEMU falls back to slow software emulation): SSH environments, no tools, or tools as the member.</li>
+<li>Laptops: a per-member service and signed install like Org Devices, or a Pi under the member&#39;s own user with Radius-side checks only.</li>
+<li>What <code>revoked</code> does to a member&#39;s data on an Org Device: keep, export to the org, or delete.</li>
+<li>Which Earendil plugins ship in the system root by default, and which are installed only when a profile requires them.</li>
+</ol>
+</section>
+
+<p class="colophon">p3 org-managed Pis · fifth edition, short · 2026-11-13</p>
+</div></div>
+
+</body></html>

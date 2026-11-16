@@ -48,6 +48,12 @@
 			"import": "./dist/images/index.js",
 			"default": "./dist/images/index.js"
 		},
+		"./images/fit": {
+			"source": "./src/images/fit.ts",
+			"types": "./dist/images/fit.d.ts",
+			"import": "./dist/images/fit.js",
+			"default": "./dist/images/fit.js"
+		},
 		"./images/node": {
 			"source": "./src/images/node.ts",
 			"types": "./dist/images/node.d.ts",

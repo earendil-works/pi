@@ -329,6 +329,12 @@ export const BookmarkIcon = ({ size = 16 }: { size?: number }) => (
 		<path d="M6 3h12v18l-6-4-6 4z" />
 	</Icon>
 );
+/** A star: make a choice the default (the footer's model). */
+export const StarIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
+		<path d="M12 3l2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9z" />
+	</Icon>
+);
 /** A folder with a plus: a new session in a folder. */
 export const FolderPlusIcon = ({ size = 16 }: { size?: number }) => (
 	<Icon size={size}>

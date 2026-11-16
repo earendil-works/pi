@@ -9,9 +9,16 @@
 
 import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import { type Context, withAbortSignal } from "../context/index.ts";
-import { ChordError, isChordError, type Principal } from "../data/index.ts";
+import { ChordError, type FailureCause, isChordError, type Principal } from "../data/index.ts";
 import { asChordError } from "../data/internal.ts";
-import { asRemoteOldWork, type Caller, type EventEntry, type EventFlush, type EventSender } from "../host/internal.ts";
+import {
+	asRemoteOldWork,
+	type Caller,
+	type EventEntry,
+	type EventFlush,
+	type EventSender,
+	revoked,
+} from "../host/internal.ts";
 import {
 	type BoundEntry,
 	type ConsumerMessage,
@@ -85,6 +92,12 @@ export class ProviderSide implements EventSender {
 	readonly #sent: Sender[] = [];
 	/** This host's own messages in flight. */
 	#inFlight = 0;
+	/**
+	 * The served holds with a binding fence not acknowledged yet (design §22): each drops its fences as the `ack`s of
+	 * this host's own messages arrive. Only holds that rebind are ever in it, and only until their `bound` is
+	 * acknowledged.
+	 */
+	readonly #fenced = new Set<Hold>();
 	/** How many of this host's own `bound` and `state` messages it sent, and how many its consumer acknowledged. */
 	#ownSent = 0;
 	#ownAcked = 0;
@@ -268,12 +281,23 @@ export class ProviderSide implements EventSender {
 				if (hold === undefined) return;
 				const error =
 					forwarded.kind === "failed"
-						? asChordError(errorFromWire(forwarded.cause.error), `hold ${hold.id}`)
+						? this.#failure(hold, forwarded.cause)
 						: new ChordError({ code: "unavailable", message: `hold ${hold.id}: rebinding` });
 				this.#rejectRelayed(hold, error, "queued");
 				this.send(forwarded);
 			}
 		}
+	}
+
+	/**
+	 * What the calls of relayed hold `hold` still waiting for the upstream window are answered when upstream fails it
+	 * with `cause`: its error, `forbidden/revoked` for a denial (access withdrawn under a call that waits, as under
+	 * one in flight: slice 14 §2.3).
+	 */
+	#failure(hold: RelayedHold, cause: Extract<Message, { readonly kind: "failed" }>["cause"]): ChordError {
+		const label = `hold ${hold.id}`;
+		const error = asChordError(errorFromWire(cause.error), label);
+		return cause.kind === "denied" ? revoked(label, error) : error;
 	}
 
 	/** An upstream link closed: nothing more is relayed to it, nor accepted from it. */
@@ -288,6 +312,17 @@ export class ProviderSide implements EventSender {
 	upstreamDropped(hold: RelayedHold, error: ChordError): void {
 		this.#rejectRelayed(hold, error, "all");
 		this.send({ kind: "loading", hold: hold.id });
+	}
+
+	/**
+	 * A route's admission holds relayed hold `hold` back with `cause` (slice 14 §2.3): its calls, in flight or waiting,
+	 * are answered with the cause's error (`forbidden/revoked` for a denial: access withdrawn under a running call), and
+	 * the hold is told `failed` with the cause.
+	 */
+	withheld(hold: RelayedHold, cause: FailureCause): void {
+		const { error } = cause;
+		this.#rejectRelayed(hold, cause.kind === "denied" ? revoked(`hold ${hold.id}`, error) : error, "all");
+		this.send({ kind: "failed", hold: hold.id, cause: { kind: cause.kind, error: wireError(error) } });
 	}
 
 	/**
@@ -324,7 +359,10 @@ export class ProviderSide implements EventSender {
 		}
 		// The forwarded ones end upstream with the hold (its `release`, sent before this, or the upstream's `gone`).
 		if (relayed !== undefined) endAll(relayed);
-		if (hold.kind === "served") this.unbind(hold);
+		if (hold.kind === "served") {
+			this.unbind(hold);
+			this.#fenced.delete(hold);
+		}
 		this.#settle();
 	}
 
@@ -654,6 +692,7 @@ export class ProviderSide implements EventSender {
 			case "local":
 				this.#inFlight--;
 				this.#ownAcked++;
+				for (const hold of this.#fenced) if (hold.acknowledged()) this.#fenced.delete(hold);
 				this.#slotFreed();
 				return;
 			case "bound":
@@ -690,6 +729,14 @@ export class ProviderSide implements EventSender {
 		}
 		// A relayed ticket implies the relay's number.
 		for (const [link, events] of returned ?? []) link.send({ kind: "ack", origin: this.#relay!.origin, events });
+	}
+
+	/**
+	 * `hold` has a binding fence its consumer has not acknowledged (a rebinding's `bound` is about to go out): the
+	 * `ack`s of this host's own messages tell it until none is left.
+	 */
+	fenced(hold: Hold): void {
+		this.#fenced.add(hold);
 	}
 
 	/** The number the next of this host's own `bound` and `state` messages gets (counted from 1). */

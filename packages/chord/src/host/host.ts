@@ -209,10 +209,11 @@ export type HostError =
 	 */
 	| { readonly kind: "derive_failed"; readonly object: string; readonly member?: string; readonly error: unknown }
 	/**
-	 * A live query's run in a commit threw (a row its code cannot read), once per failure episode (a good run ends it):
-	 * the query is a failed member until then (`self.query`).
+	 * A live read's run failed after its object went live (a row its code cannot read, a set nobody serves), once per
+	 * failure episode (a good run ends it): the member is failed until then. `query` is the table's name for
+	 * `self.query`, the named query's label for `self.liveQuery`, `self.count` and `self.list`.
 	 */
-	| { readonly kind: "query_failed"; readonly object: string; readonly table: string; readonly error: unknown }
+	| { readonly kind: "query_failed"; readonly object: string; readonly query: string; readonly error: unknown }
 	/** A routine's call threw, or its source failed for good; `routine` is its kind and position. */
 	| { readonly kind: "routine_failed"; readonly object: string; readonly routine: Position; readonly error: unknown }
 	/** A job's `run` threw (not after an abort): its outcome is `failed { threw }`. */
@@ -353,8 +354,10 @@ export interface Host<P extends Principal = Principal, R extends JsonValue = Jso
 	 * How this host reaches hosts of `Kind` (called before `load`, once per kind): `authorize` admits every hold routed
 	 * over it, `resolve` makes the link of an address, for a new hold, on `retry`, or once after a link that completed
 	 * its handshake dropped while held (no timer). A rejected `resolve`, or a link closed before its handshake, fails the
-	 * address's holders `failed { waiting }` (they stay on its path). `context` is the parent of the route's work (its
-	 * `resolve`s, the holds and calls on its links), aborted for it when this host closes. Returns the address controls.
+	 * address's holders `failed { waiting }` (they stay on its path). With `admit` (slice 14 §2.3) nothing is resolved
+	 * or forwarded for a principal before the route's decision allows it. `context` is the parent of the route's work
+	 * (its `resolve`s, the holds and calls on its links, its admission's references), aborted for it when this host
+	 * closes. Returns the address controls.
 	 */
 	route<N extends string, Q extends Params>(
 		Kind: HostKind<N, Q>,
@@ -413,14 +416,23 @@ export interface Host<P extends Principal = Principal, R extends JsonValue = Jso
 		context: Context,
 		options?: HostImportOptions,
 	): Promise<HostDataCounts>;
-	/** Deletes the records and rows belonging to `address` in one commit, coordinated as `importHostData`. */
-	deleteHostData(address: Address, context: Context): Promise<HostDataCounts>;
+	/**
+	 * Deletes the records and rows belonging to `address` in one commit, coordinated as `importHostData`. With
+	 * `options.plugin` (slice 14 §6), only what that plugin's objects own: the documents and tables of the types it
+	 * serves here now (a session moving to another app drops the old app's data of it). Data under a type the plugin
+	 * served before and serves no more (a renamed type) is not its any more and stays; a plugin not loaded here is
+	 * `invalid/args`.
+	 */
+	deleteHostData(address: Address, context: Context, options?: HostDeleteOptions): Promise<HostDataCounts>;
 	/**
 	 * Closes its links, seals its root scopes, then ends every object at once, then drains and closes them one by one,
 	 * the last to go live first (reason `close`). Rejects with an `AggregateError` of the closes that threw.
 	 */
 	close(context: Context): Promise<void>;
 }
+
+/** What `host.deleteHostData` takes besides the address: the one plugin whose data of it is deleted. */
+export type HostDeleteOptions = { readonly plugin?: string };
 
 /** A plugin left out at `load`, or whose new code failed at a reload (it kept its old code, if it had any), and why. */
 export type PluginFailure = { readonly plugin: string; readonly error: unknown };
@@ -1231,8 +1243,15 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		return importInto(this.#dataSite("importHostData"), parts, context, options);
 	}
 
-	async deleteHostData(address: Address, context: Context): Promise<HostDataCounts> {
-		return deleteFrom(this.#dataSite("deleteHostData"), address, context);
+	async deleteHostData(address: Address, context: Context, options: HostDeleteOptions = {}): Promise<HostDataCounts> {
+		const site = this.#dataSite("deleteHostData");
+		const { plugin } = options;
+		if (plugin === undefined) return deleteFrom(site, address, context);
+		if (!this.#plugins.has(plugin)) throw invalid("args", `deleteHostData: plugin "${plugin}" is not loaded here`);
+		// A plugin's data is what the types it serves own: their names are the owners in the store.
+		const owners = new Set<string>();
+		for (const [name, served] of this.#types) if (served.plugin === plugin) owners.add(name);
+		return deleteFrom(site, address, context, owners);
 	}
 
 	/** What a host data operation needs of this host; `invalid/args` without a store. */
@@ -1607,6 +1626,12 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		return invalid("cycle", `dependency cycle: ${[...cycle, ...closing].join(" → ")}`);
 	}
 
+	/** The principal key of `principal` (`HostOptions.principalKey`): a route's admission keeps one decision per key. */
+	principalKeyOf(principal: Principal, context: Context): string {
+		// Principals on this host are `P`s: its own, and the ones its links stamp.
+		return principalKey(principal as P, context, this.#principalKey);
+	}
+
 	/** A new origin number for `side`, which relays holds upstream; registered in `relays` until it closes. */
 	relayOrigin(side: ProviderSide): number {
 		const origin = this.#nextOrigin++;
@@ -1616,10 +1641,15 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 
 	/**
 	 * A route's link, its work under the route's `context`: registered with the host and its heartbeat; one closed
-	 * already is returned closed.
+	 * already is returned closed. `opened` is told the peer's incarnation once its `hello` arrived.
 	 */
-	routeLink(link: Link, options: LinkOptions<Principal>, context: Context): HostLink {
-		return this.#link(link, "route", options, context);
+	routeLink(
+		link: Link,
+		options: LinkOptions<Principal>,
+		context: Context,
+		opened?: (incarnation: string) => void,
+	): HostLink {
+		return this.#link(link, "route", options, context, opened);
 	}
 
 	/** A link completed its handshake: a route's address resolves again once if it drops. */
@@ -1755,13 +1785,19 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 	}
 
 	/** A new link of `role`, registered with the heartbeat while open. */
-	#link(link: Link, role: LinkRole, options: LinkOptions<Principal>, context: Context): HostLink {
+	#link(
+		link: Link,
+		role: LinkRole,
+		options: LinkOptions<Principal>,
+		context: Context,
+		opened?: (incarnation: string) => void,
+	): HostLink {
 		const { principal, trusted = false, codec = binaryCodec } = options;
 		const limits = linkLimits(trusted, options.limits);
 		const made = new HostLink(
 			this,
 			link,
-			{ role, principal, trusted, codec, limits },
+			{ role, principal, trusted, codec, limits, ...(opened === undefined ? {} : { opened }) },
 			this.#counted(withoutAbortSignal(context)),
 		);
 		if (!made.open) return made;
@@ -1852,10 +1888,12 @@ export class ChordHost<P extends Principal = Principal, R extends JsonValue = Js
 		this.#publication.resolve();
 		this.backoff.clear();
 		// Every object is sealed before any teardown releases a reference, so none ends in the background.
-		const teardowns = [...this.#objects.values()].reverse().map((object) => object.stop());
+		const objects = [...this.#objects.values()].reverse();
+		const teardowns = objects.map((object) => object.stop());
 		await Promise.all(this.#endings.values());
 		const failures: CloseFailed[] = [];
 		for (const tearDown of teardowns) failures.push(...(await tearDown()));
+		for (const object of objects) object.unbindSets();
 		this.#types.clear();
 		// Their facets keep their factories' closures (which may keep objects' handles).
 		this.#plugins.clear();

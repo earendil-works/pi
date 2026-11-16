@@ -18,6 +18,7 @@ import { readCatalog, type TableRecord, writeCatalog } from "./catalog.ts";
 import { Claims } from "./claims.ts";
 import { StoreExport } from "./export.ts";
 import { OUTBOX_FORMAT, Outbox } from "./outbox.ts";
+import { Reads } from "./reads.ts";
 import { applyStoreSchema, type MetaRow, TABLES } from "./schema.ts";
 import { type StagedWrite, Step, type WriteOrder } from "./step.ts";
 import type { StoreWrite } from "./writes.ts";
@@ -190,6 +191,8 @@ export class ChordStore implements Store {
 	readonly #ids: IdAllocator;
 	/** The claims of its tables and documents (slice 6b). */
 	readonly claims = new Claims();
+	/** Its reads by table and its column-set bindings (slice 14). */
+	readonly reads = new Reads();
 	#outbox: Outbox | undefined;
 	#state: StoreState = { kind: "open" };
 	/**
@@ -314,6 +317,16 @@ export class ChordStore implements Store {
 		});
 		this.#tail = taken.then(() => held.promise);
 		return taken;
+	}
+
+	/**
+	 * Resolves once every commit queued before the call settled (stored and adopted, or rejected), also on a stopped or
+	 * closed store; commits queued later are not waited for. For a caller that has ended a source of commits and must
+	 * not go on while one it queued can still be adopted (the workers component, at a worker's exit).
+	 */
+	settled(): Promise<void> {
+		// Every turn of the queue ends its own failures: the tail never rejects.
+		return this.#tail;
 	}
 
 	/** The recorded table `name` (its SQL name), as of the last commit. */

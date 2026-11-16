@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT as context } from "../../../../src/context/index.ts";
 import { arr, bool, hostKind, method, obj, remote, str } from "../../../../src/contracts/index.ts";
-import { Sessions } from "../../../../src/node/app/index.ts";
+import { SignIns } from "../../../../src/node/app/index.ts";
 import type { RolloutResult } from "../../../../src/node/plugins/index.ts";
 import { tempDir, testApp } from "../../app/support.ts";
 import { writePlugin } from "../../plugins/support.ts";
@@ -202,16 +202,16 @@ export class ReloadPage {
 	}
 
 	/**
-	 * Signs in with a new owner browser session (the owner link is single use: a second page needs its own session)
+	 * Signs in with a new owner browser sign-in (the owner link is single use: a second page needs its own sign-in)
 	 * and waits as `signIn` does, and until each view (each holding the counter) registered its reference.
 	 */
 	async signInAgain(app: ReloadApp, views: readonly string[]): Promise<void> {
-		const sessions = await app.app.host.get(Sessions, {}, context);
-		const { cookie } = await sessions.issue(
+		const signIns = await app.app.host.get(SignIns, {}, context);
+		const { cookie } = await signIns.issue(
 			{ principal: { kind: "owner" }, label: "second page", kind: "browser" },
 			context,
 		);
-		sessions.release();
+		signIns.release();
 		const [pair] = cookie.split(";");
 		const at = pair!.indexOf("=");
 		const url = `http://127.0.0.1:${app.port}/`;

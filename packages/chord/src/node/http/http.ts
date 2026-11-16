@@ -62,7 +62,7 @@ export type LinksOptions = {
 	readonly options?: LinkOptions | ((request: HttpRequest, principal: Principal) => LinkOptions);
 	/**
 	 * Called when a link is accepted, with its request and principal; what it returns is called when that link closes
-	 * (the app tracking its clients' links: the kit ends an ephemeral session with its last link).
+	 * (the app tracking its clients' links: the kit ends an ephemeral sign-in with its last link).
 	 */
 	readonly opened?: (request: HttpRequest, principal: Principal) => (() => void) | undefined;
 };

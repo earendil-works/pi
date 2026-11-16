@@ -11,6 +11,8 @@ export const MAX_TRACES = 50;
 export const MAX_SPANS = 2000;
 /** The most metric rows one search returns. */
 export const MAX_METRICS = 1000;
+/** What every read says while settings.json's `telemetry` is off (no store was opened at the server's start). */
+export const TELEMETRY_OFF = "telemetry is off (settings.json telemetry)";
 /** The most attributes one search filters by. */
 export const MAX_FILTERS = 8;
 

@@ -156,7 +156,7 @@ not carried over.
 | Shell commands | `!cmd` and `!!cmd` in the conversation's environment | in chat | **base**, web too (TUI only today) |
 | Chat mode | people talk without a turn, `@pi` mentions | 876 | later |
 | Sharing and guests | share links, guest names, revocation | 1,047 | later (the app kit's users and invites cover the start) |
-| Devices and owner login | owner links, device cookies | 684 | **base**, replaced by the app kit's sessions and pairing |
+| Devices and owner login | owner links, device cookies | 684 | **base**, replaced by the app kit's sign-ins and pairing |
 | Models, credentials, provider login | picker, scope, API keys, OAuth flows | 3,828 | **base** |
 | Settings | `settings.json`, hot reload | 87 | **base** |
 | Prompt resources | AGENTS.md, skills, templates, read in the session's environment | 958 | **base** |

@@ -838,7 +838,7 @@ Plugins still import only the app's API; the API re-exports the kit's objects it
   the start data `start(address)` made): the **start-data objects**. Process values reach plugins only through them.
 - `Files`, one per host: `put` for small files, `begin`, `append` and `finish` for large ones, ranged `read`, `remove`
   and a watchable `list`, stored in the host's directory with caps per host.
-- `Sessions` on the server: `issue`, `revoke`, `list`.
+- `SignIns` on the server: `issue`, `revoke`, `list`.
 
 This finishes what the previous chapter started. Base code is the API, the start script and the worker's entry. The
 providers of the app's own registries live in its required root: example 53's API declares a `Sections` registry, and
@@ -847,10 +847,11 @@ its home plugin serves it and reads `AppInfo`, so it reloads like any other plug
 ## Who may come in
 
 HTTP **denies by default**: a request without a principal gets 401 before any plugin code runs, unless the route says
-`public: true`. Someone gets a principal through a **session**: a random token, kept in the store only as a hash, sent
-as a signed cookie by a browser or as `Authorization: Bearer` by a command-line client.
+`public: true`. Someone gets a principal through a **sign-in** (one browser or device signed in as that principal): a
+random token, kept in the store only as a hash, sent as a signed cookie by a browser or as `Authorization: Bearer` by a
+command-line client.
 
-The first session is the owner's, the principal the app names in `principal.owner` (a variant of its own, as here, or
+The first sign-in is the owner's, the principal the app names in `principal.owner` (a variant of its own, as here, or
 one of its users). At each start the kit makes a one-time **owner link**,
 `http://127.0.0.1:8788/_chord/owner#<token>`, valid ten minutes; the start script prints it. The token is in the
 fragment, which browsers never send, so it never reaches a log: the page posts it, the kit consumes it and sets the
@@ -954,4 +955,4 @@ which opens it read-only and offers only the read interface (`findTraces`, `getT
 | `startWorker({ api, kinds, busy?, onError })` | a worker's entry, with the kit |
 | `app.ownerLink()`, `app.applyChanges(ctx)`, `app.plugins.install(source, ctx)` | sign in, apply changes, install |
 | `app.exportData(address, path, ctx)`, `app.importData(path, address, ctx)` | move a worker's data |
-| `AppInfo`, `WorkerInfo`, `Files`, `Sessions` | the kit's objects plugins get |
+| `AppInfo`, `WorkerInfo`, `Files`, `SignIns` | the kit's objects plugins get |

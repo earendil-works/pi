@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +19,7 @@ import {
 } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { NativeWatchable, Watchable } from "@earendil-works/chord/watch";
+import type { ImageProcessor } from "@earendil-works/pi-durable/tools";
 import { WebSocket as NodeWebSocket } from "ws";
 import { type P2Server, type ServerOptions, startServer } from "../../src/hosts/server.ts";
 import {
@@ -132,11 +133,21 @@ export type Fixture = {
 /** The p2 app directory, as the server tells facets (`Server.info.app`, `WorkerInit.app`). */
 export const APP = fileURLToPath(new URL("../../", import.meta.url));
 
-export async function startFixture(options: ServerOptions = {}): Promise<Fixture> {
+export async function startFixture(
+	options: ServerOptions & {
+		/** settings.json written into the data directory before the server starts (keys read at the start: `telemetry`). */
+		readonly settings?: Readonly<Record<string, unknown>>;
+	} = {},
+): Promise<Fixture> {
 	const root = mkdtempSync(join(tmpdir(), "p2-test-"));
 	const dataDir = join(root, "data");
 	const workspace = join(root, "workspace");
 	mkdirSync(workspace, { recursive: true });
+	const { settings, ...serverOptions } = options;
+	if (settings !== undefined) {
+		mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+		writeFileSync(join(dataDir, "settings.json"), JSON.stringify(settings), { mode: 0o600 });
+	}
 	let server: P2Server;
 	try {
 		server = await startServer({
@@ -144,7 +155,7 @@ export async function startFixture(options: ServerOptions = {}): Promise<Fixture
 			port: 0,
 			fake: true,
 			web: false,
-			...options,
+			...serverOptions,
 		});
 	} catch (error) {
 		rmSync(root, { recursive: true, force: true });
@@ -348,6 +359,13 @@ const NO_WORKERS: SessionWorkerControl = {
 	observe: () => ({ value: {}, detach: () => {} }),
 };
 
+/** The image processor of test workers: one that is asked to prepare an image fails the test. */
+export const NO_IMAGES: ImageProcessor = {
+	prepare: async () => {
+		throw new Error("no image processor in this test worker");
+	},
+};
+
 /**
  * A worker host's natives for a bare test host (`kind: "worker"`): the session's Harness (`harnessOf`) and the worker
  * process (`workerOf`). Unset parts are inert: no location moves, liveness counts nothing, roots run on `TEST`.
@@ -374,6 +392,7 @@ export function workerFacet(parts: {
 			copyFilesTo: async () => {
 				throw new Error("no files in this test worker");
 			},
+			images: NO_IMAGES,
 			...parts.worker,
 		});
 	});
@@ -567,7 +586,13 @@ export async function poll(
 	}
 }
 
-export type HttpResult = { status: number; headers: Record<string, string | string[] | undefined>; body: string };
+export type HttpResult = {
+	status: number;
+	headers: Record<string, string | string[] | undefined>;
+	body: string;
+	/** The body as sent, for binary responses. */
+	bytes: Buffer;
+};
 export type HttpOptions = { method?: string; headers?: Record<string, string>; body?: string | Buffer };
 
 /** An HTTP request to the fixture's server (any Host, cookie and body). */
@@ -578,13 +603,15 @@ export function http(port: number, path: string, options: HttpOptions = {}): Pro
 			(response) => {
 				const chunks: Buffer[] = [];
 				response.on("data", (chunk: Buffer) => chunks.push(chunk));
-				response.on("end", () =>
+				response.on("end", () => {
+					const bytes = Buffer.concat(chunks);
 					resolve({
 						status: response.statusCode ?? 0,
 						headers: response.headers,
-						body: Buffer.concat(chunks).toString("utf8"),
-					}),
-				);
+						body: bytes.toString("utf8"),
+						bytes,
+					});
+				});
 			},
 		);
 		req.on("error", reject);

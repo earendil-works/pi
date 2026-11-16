@@ -16,7 +16,7 @@ import {
 	AppInfo,
 	type AppOptions,
 	Files,
-	Sessions,
+	SignIns,
 	startServer,
 	WorkerInfo,
 } from "../../../src/node/app/index.ts";
@@ -40,7 +40,7 @@ export type UserPrincipal =
 export const Project = hostKind("project", { id: str() });
 
 /** The tests' API v1: Chord's surface and the kit's objects, as an app's API re-exports them. */
-export const API_V1 = { ...chord, AppInfo, WorkerInfo, Files, Sessions };
+export const API_V1 = { ...chord, AppInfo, WorkerInfo, Files, SignIns };
 
 /** The tests' API, as the server and the fixture worker have it. */
 export const API = {
@@ -231,13 +231,13 @@ export const WHOAMI = [
 	'export default defineFacet((_host, self) => self.contribute(Http, { routes: { "GET /whoami": async (_request, ctx) => ({ kind: "json", value: ctx.principal ?? null }) } }));',
 ].join("\n");
 
-/** The `Authorization` header of a new device session for `principal` on `app`. */
+/** The `Authorization` header of a new device sign-in for `principal` on `app`. */
 export async function bearerFor<P extends Principal>(
 	app: App<P>,
 	principal: P,
 ): Promise<{ readonly authorization: string }> {
 	const { token } = await app.host.root(
-		async (ctx) => (await ctx.get(Sessions, {})).issue({ principal, label: "test", kind: "device" }, ctx),
+		async (ctx) => (await ctx.get(SignIns, {})).issue({ principal, label: "test", kind: "device" }, ctx),
 		context,
 	);
 	return { authorization: `Bearer ${token}` };

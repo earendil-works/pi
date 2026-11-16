@@ -167,9 +167,10 @@ failure (a provider's `failed { broken }` too) before anything is told (teardown
 - **§2 and §5 event concepts, §11 "Who gets an event", events spec §2 opening rule and §2.4:** the provider's
   eligibility is per wire hold; a binding joining a held remote object gets the events that arrive at its host after
   it bound, also one emitted before that was in transit. Same-host eligibility unchanged; no wire field or fence.
-- **§19 entry lifetime and §3 `host.activity`:** one entry and count per bound holder on the provider: a same-host
-  binding or an arriving wire hold; several consuming-host bindings behind one hold are one entry until it ends; a
-  non-final consumer release removes nothing there. Local, `self.get`, private-retry, other-key and separate
+- **§19 entry lifetime and §3 `host.activity`:** presence lists bound holders on the provider (same-host bindings and
+  arriving wire holds); `host.activity.references` counts the incoming served wire holds, from arrival to end (bound
+  or not; same-host bindings do not count). Several consuming-host bindings behind one hold are one entry in the first
+  and one count in the second until that hold ends; a non-final consumer release removes nothing there. Local, `self.get`, private-retry, other-key and separate
   downstream holds are not deduplicated. No provider code change: incoming holds already are the unit.
 - **§22 "Size limits per part":** a joiner receives no snapshot and checks none; an oversized snapshot or state part
   fails the shared object and all its bindings; only a binding that retries moves to a new private hold. No message,

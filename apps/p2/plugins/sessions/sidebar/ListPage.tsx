@@ -12,6 +12,7 @@ import {
 	SearchIcon,
 	SideNavigation,
 	Slot,
+	SlotList,
 	useLinkHref,
 	useScrollMemory,
 } from "@p2/app/v1/web";
@@ -159,6 +160,7 @@ export function ListPage({
 					<MenuIcon />
 					<Slot name="menu-badge" />
 				</button>
+				<SlotList prefix="topbar-start" />
 				<div className="title">
 					<h1>{data?.name ?? "Sessions"}</h1>
 					<p className="list-page-subtitle">{subtitle(data)}</p>

@@ -72,7 +72,7 @@ describe("the owner's telemetry read back", () => {
 	const worker = (id: string) => fixture.as({ kind: "worker", session: id, generation: 1 });
 
 	before(async () => {
-		fixture = await startFixture({ web: browserTests });
+		fixture = await startFixture({ web: browserTests, settings: { telemetry: true } });
 		owner = fixture.browser();
 		sessions = await holdIn(owner, Sessions, {}, "owner");
 		// Traces to read: a session's turn (the worker's, Durable's and pi-ai's spans), written within a second.

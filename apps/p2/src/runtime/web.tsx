@@ -45,6 +45,7 @@ export {
 
 import { Access, grantMode } from "./access.ts";
 import type { KeyedRegistry } from "./chord.ts";
+import { ConnectionStore, showsOffline } from "./connection-state.ts";
 import { canonicalJson } from "./json.ts";
 import { follow, followRegistry, type HeldIn, type HeldRef, knownRegistry, liveIn, UI_LINGER } from "./refs.ts";
 import { Slots } from "./web-core.ts";
@@ -358,24 +359,37 @@ export function useStatus(ref: HeldRef | undefined): string | undefined {
 
 // ─── connection ───
 
-type ConnectionState = { readonly connected: boolean };
-let connection: ConnectionState = { connected: false };
-const connectionListeners = new Set<() => void>();
+/** The page's link (`setConnected` from `startPage`'s `onConnection`, src/hosts/web/main.tsx). */
+const connection = new ConnectionStore();
 
+/** The page's link opened or closed (Chord's connection loop: `connecting` and `waiting` are closed). */
 export function setConnected(connected: boolean): void {
-	if (connection.connected === connected) return;
-	connection = { connected };
-	for (const listener of connectionListeners) listener();
+	connection.set(connected);
 }
 
+function subscribeConnection(listener: () => void): () => void {
+	return connection.subscribe(listener);
+}
+
+/** Whether the page's link is open now: what may be sent or opened. */
 export function useConnected(): boolean {
-	return useSyncExternalStore(
-		(listener) => {
-			connectionListeners.add(listener);
-			return () => connectionListeners.delete(listener);
-		},
-		() => connection.connected,
-	);
+	return useSyncExternalStore(subscribeConnection, () => connection.state.connected);
+}
+
+/** Whether the page should say it is offline (`showsOffline`): not for a link closed only briefly. */
+export function useOffline(): boolean {
+	const state = useSyncExternalStore(subscribeConnection, () => connection.state);
+	const online = useSyncExternalStore(subscribeOnline, () => navigator.onLine);
+	return showsOffline(state, online);
+}
+
+function subscribeOnline(listener: () => void): () => void {
+	addEventListener("online", listener);
+	addEventListener("offline", listener);
+	return () => {
+		removeEventListener("online", listener);
+		removeEventListener("offline", listener);
+	};
 }
 
 // ─── a guest's share that ended ───
@@ -446,9 +460,12 @@ export function openPage(page: string): void {
 	void getNavigation().closeThenPush(() => ({ ...HOME, page }));
 }
 
-/** The new-session screen (`NEW_SESSION`). As opening a conversation, it closes the phone drawer and modal layers. */
-export function openNewSession(): void {
-	void getNavigation().closeThenPush(() => NEW_SESSION);
+/**
+ * The new-session screen (`NEW_SESSION`), with `layers` over it (the directory picker). As opening a conversation, it
+ * closes the phone drawer and modal layers.
+ */
+export function openNewSession(layers: readonly Layer[] = []): void {
+	void getNavigation().closeThenPush(() => ({ ...NEW_SESSION, layers: [...layers] }));
 }
 
 /** Named plugin modal: locators are small serialized values, not component state. */

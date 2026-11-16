@@ -26,7 +26,9 @@ startTerminalRuntime<P>({
   `onChange`). `runtime.ts`: the client (`startClient` with `TuiScripts`; scripts run with `vm`; no wakes), the kit's
   themes and translations, the language followed from the user's pick and the launcher's `locales` (the bridge's
   start).
-- `scope.ts`: `TuiScope(host, changed)`: `hold`, `watch` (a reader, `undefined` while no value), `registry`, `on(member,
+- `scope.ts`: `TuiScope(host, changed)`: `hold`, `watch` (a reader, `undefined` while no value), `registry`,
+  `variant(ref, variant)` (a reader of `ref` narrowed to `variant` while it is live in it, `undefined` otherwise; its
+  state is followed, so a change of its variant calls `changed`; React's `useVariant`), `on(member,
   listener)` (an event member subscribed until `dispose`; events call the listener only, never `changed`),
   `pageState(key, initial)` (the host's value at `key`, shared with React's `usePageState`: a scope opened again after a
   plugin reload finds it), `messages(t)` (a plugin's messages in the host's language at each call; a change of the

@@ -94,6 +94,12 @@ const park = {
 	attributes: { cause: { type: "string", required: true, description: "`loading`, or the waiting cause's message." } },
 } as const;
 
+const admit = {
+	description:
+		"An admission's decision (slice 14): an admitted type's attempt read it, or a route's for the hold's principal.",
+	attributes: { outcome: { type: "string", required: true, description: "`allow` or `deny`." } },
+} as const;
+
 const fate = {
 	description: "One object's fate in a reload.",
 	attributes: {
@@ -163,6 +169,7 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 				"upstream.kind": { type: "string", required: true, description: "The kind of the upstream host." },
 			},
 			endAttributes: { outcome: outcome(["ok", "error", "aborted"]) },
+			events: { "chord.admit": admit },
 			status: { default: "ok", errorWhen: ERRORS },
 		},
 		"chord.hold": {
@@ -175,6 +182,7 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 				"address.kind": { type: "string", required: true, description: "The kind of the provider's host." },
 			},
 			endAttributes: { outcome: outcome(["bound", "failed", "ended"]) },
+			events: { "chord.admit": admit },
 			status: { default: "ok", errorWhen: ERRORS },
 		},
 		"chord.activate": {
@@ -188,7 +196,7 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 				attempt: { type: "number", required: true, description: "The object's attempt, from 1." },
 			},
 			endAttributes: { outcome: outcome(["live", "failed", "parked", "ended"]) },
-			events: { "chord.park": park, "chord.retry": retry },
+			events: { "chord.park": park, "chord.retry": retry, "chord.admit": admit },
 			status: { default: "ok", errorWhen: ERRORS },
 		},
 		"chord.open": {
@@ -325,6 +333,21 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 		"chord.store.commits": { kind: "counter", description: "Store commits.", attributes: {} },
 		"chord.store.statements": { kind: "counter", description: "SQL statements of store commits.", attributes: {} },
 		"chord.query.runs": { kind: "counter", description: "Live query runs.", attributes: {} },
+		"chord.query.probes": {
+			kind: "counter",
+			description: "Keyed probes a commit asked before running a live query again.",
+			attributes: {},
+		},
+		"chord.query.skips": {
+			kind: "counter",
+			description: "Live queries a commit writing their tables did not run again.",
+			attributes: {},
+		},
+		"chord.query.rows": {
+			kind: "counter",
+			description: "Rows live query runs returned (output, not what the backend scanned).",
+			attributes: {},
+		},
 		"chord.cycle.visits": { kind: "counter", description: "Objects a cycle check visited.", attributes: {} },
 		"chord.derive.computes": { kind: "counter", description: "Derive computations.", attributes: {} },
 		"chord.derive.diffs": { kind: "counter", description: "Derive diffs.", attributes: {} },

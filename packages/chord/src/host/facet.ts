@@ -2,10 +2,12 @@
 // registries it serves, its contributions to registries (slice 8) and the host's presence lists; it has no documents,
 // routines or natives, so a facet cannot fail after `load`.
 
-import type { AcceptsTable, Contract } from "../contracts/index.ts";
+import type { AcceptsTable, Contract, Schema } from "../contracts/index.ts";
+import type { ShapeOf } from "../contracts/internal.ts";
 import type { Principal } from "../data/index.ts";
 import type { Contribution, Registry, RegistryProvider } from "../registries/index.ts";
 import type { Watchable } from "../watch.ts";
+import type { Admit } from "./admission.ts";
 import type { Factory } from "./attempt.ts";
 import type { Presence } from "./presence.ts";
 
@@ -14,9 +16,10 @@ export interface FacetHost<P extends Principal = Principal> {
 	/**
 	 * Serves a type on this host with `factory`; a remote type's factory gets the principal its object is for.
 	 * `options.accepts` maps the older versions it still serves (checked here: a declaration error rejects the load or
-	 * the reload).
+	 * the reload). A remote type whose contract declares an `admission` takes `options.admit` (required), and its
+	 * factory the admitted value (slice 14 §2.1).
 	 */
-	serve<C extends Contract>(Type: C, factory: Factory<C, P>, options?: ServeOptions<C>): void;
+	serve<C extends Contract>(Type: C, factory: Factory<C, P>, ...options: ServeArguments<C, P>): void;
 	/**
 	 * Serves registry `R` on this host (its defining plugin's facet, the one provider, D1): `compose` builds the value
 	 * from the table, `accepts` adapts older versions. A second serve of a registry is refused at `load`.
@@ -26,8 +29,24 @@ export interface FacetHost<P extends Principal = Principal> {
 	references<C extends Contract>(Type: C): Watchable<readonly Presence<C, P>[]>;
 }
 
+/**
+ * `host.serve`'s options argument: required, with `admit`, for a contract that declares an `admission`; optional
+ * otherwise.
+ */
+export type ServeArguments<C extends Contract, P extends Principal = Principal> = ShapeOf<C> extends {
+	readonly admission: Schema;
+}
+	? [options: ServeOptions<C, P> & { readonly admit: Admit<C, P> }]
+	: [options?: ServeOptions<C, P>];
+
 /** What `host.serve` takes besides the type and the factory. */
-export type ServeOptions<C extends Contract = Contract> = {
+export type ServeOptions<C extends Contract = Contract, P extends Principal = Principal> = {
+	/**
+	 * The type's admission (slice 14 §2.1; remote types whose contract declares an `admission`, and only those: either
+	 * without the other, or on a `local` type, is a declaration error): run first in every attempt, it reads data about
+	 * the caller and returns a watchable of `allow(value)` or `deny(reason)`; the factory is handed the value.
+	 */
+	readonly admit?: Admit<C, P>;
 	/**
 	 * The older versions of `C` this provider still binds, with the mappings their edits need (Q10, `checkAccepts`):
 	 * an older consumer's state members mapped per binding, its calls' arguments and results mapped.
@@ -60,7 +79,7 @@ export type ServedEntry =
 			readonly kind: "type";
 			readonly contract: Contract;
 			readonly factory: ServedFactory;
-			readonly options: ServeOptions;
+			readonly options: ServedOptions;
 	  }
 	| {
 			readonly kind: "registry";
@@ -71,8 +90,11 @@ export type ServedEntry =
 /** A contribution a setup declared. */
 export type FacetContribution = { readonly registry: Registry<unknown, unknown>; readonly value: unknown };
 
-/** A factory as a setup served it, of either kind (the host dispatches on its contract's kind). */
-type ServedFactory = (params: never, principalOrSelf: never, self: never) => unknown;
+/** A factory as a setup served it, of either kind (the host dispatches on its contract's kind and admission). */
+type ServedFactory = (...args: never[]) => unknown;
+
+/** A type's options as a setup served them: its `admit` plugin code staging checks and calls. */
+type ServedOptions = Omit<ServeOptions, "admit"> & { readonly admit?: (...args: never[]) => unknown };
 
 /** A plugin's facet for hosts of the app's principal type `P` (type only: nothing is checked at runtime). */
 export type Facet<P extends Principal> = {
@@ -102,7 +124,7 @@ export function setUp<P extends Principal>(
 		if (!open) throw new Error(`${name}: ${what} is valid only in the facet's setup`);
 	};
 	const host: FacetHost<P> = {
-		serve: (Type: Contract | Registry<unknown, unknown>, implementation: unknown, options: ServeOptions = {}) => {
+		serve: (Type: Contract | Registry<unknown, unknown>, implementation: unknown, options: ServedOptions = {}) => {
 			assertOpen("host.serve");
 			// Served types and registries are dispatched by their kind; a factory matches its own contract, a provider
 			// its own registry.

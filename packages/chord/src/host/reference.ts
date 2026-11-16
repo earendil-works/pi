@@ -28,6 +28,7 @@ import type { PinnedKey } from "./attempt.ts";
 import { type Caller, withLinkedAbortSignal } from "./ctx.ts";
 import { type EventListener, type EventNode, type HostEvents, subscribe } from "./events.ts";
 import type { KeyedBinding } from "./members.ts";
+import { type OwnQuery, ReferenceQuery } from "./named-query.ts";
 import type { ChordObject, Holder, Removal } from "./object.ts";
 import { ParkedCalls } from "./parked.ts";
 import { type Ended, type Failed, LOADING, ReferenceState, type RefState } from "./ref-state.ts";
@@ -107,7 +108,7 @@ export interface Target {
 	 * Calls a method of the live object for `binding` (its caller, at its contract's version: an older one is mapped,
 	 * Q10); over a link the call is the binding's own, cancelled with its release.
 	 */
-	call(method: string, args: unknown, context: Context, binding: Binding): Promise<unknown>;
+	call(method: string, args: unknown, binding: Binding, context: Context): Promise<unknown>;
 	/**
 	 * What a reference of `version` follows for state member `member` now (decision "References are the only
 	 * indirection"): the live instance's member (a replica over a link), or nothing (`loading`, or `failed` with the
@@ -120,6 +121,8 @@ export interface Target {
 	readonly instance: unknown;
 	/** The keyed member `member` of the live object: its ultimate slot (slice 6a §12; only local objects have any). */
 	keyedMember(member: string): KeyedSlot;
+	/** The named query `name` of `queries` member `member` of the live object (slice 14 §3.1; local objects only). */
+	queryMember(member: string, name: string): OwnQuery;
 	/**
 	 * How a consumer of `version` reads keyed member `member`'s documents: mapped back to its version when older
 	 * (slice 7b §7), `undefined` when as they are; `contract_mismatch` when the provider refuses it.
@@ -171,11 +174,13 @@ type BindingEvents = { readonly host: HostEvents; at: EventsAt | undefined; taps
  * What a reference follows of its target for one state member (`Target.followed`): the member of the instance it
  * follows (`instance`, still changing), a member its live variant lacks (`invalid/member`), or nothing: its target loads
  * (no call) or failed (one `failed` call with the cause's error); `last` is the member of `instance`, which stopped
- * changing, that a reference attached to it takes a last value from (never one it never attached to).
+ * changing, that a reference attached to it takes a last value from (never one it never attached to). `denied`: an
+ * admission refused its caller (slice 14 §2.2): no value is kept, reads throw the error.
  */
 export type Followed =
 	| { readonly kind: "live"; readonly source: DeriveSource; readonly instance: unknown }
 	| { readonly kind: "lacking"; readonly error: ChordError }
+	| { readonly kind: "denied"; readonly error: ChordError }
 	| { readonly kind: "loading"; readonly last: DeriveSource | undefined; readonly instance: unknown }
 	| {
 			readonly kind: "failed";
@@ -295,6 +300,10 @@ export class Binding implements Holder, UnboundRequest {
 	 * then (decision "References share one wire hold"); one is seen once that count passes. Made at the join.
 	 */
 	#unseen: Map<string, number> | undefined;
+	/** Who reads its object's named queries: each told when another instance is live (`followInstance`). */
+	#instanceFollowers: Set<() => void> | undefined;
+	/** The instance its followers were told of last, held weakly: an ended instance is kept by nothing here. */
+	#followedInstance: WeakRef<object> | undefined;
 
 	constructor(
 		contract: Contract,
@@ -321,6 +330,10 @@ export class Binding implements Holder, UnboundRequest {
 			}
 			for (const member of variant.state.keys()) reference[member] = new ReferenceMember(this, member);
 			for (const [member, { key }] of variant.keyed) reference[member] = new ReferenceKeyed(this, member, key);
+			for (const [member, { args }] of variant.queries) {
+				const named = [...args.keys()].map((name) => [name, new ReferenceQuery(this, member, name)] as const);
+				reference[member] = Object.fromEntries(named);
+			}
 			for (const [member, method] of variant.methods) methods.set(member, method);
 		}
 		for (const [member, method] of methods) {
@@ -453,6 +466,32 @@ export class Binding implements Holder, UnboundRequest {
 		// Its last values taken: it keeps no node of that instance (GC).
 		if (attachable === undefined) this.#attached = undefined;
 		this.#heldKeys?.follow(BACKGROUND_CONTEXT);
+		this.#toldOfInstance(target.instance);
+	}
+
+	/** Tells the readers of its object's named queries of another live instance (not of none: they keep their rows). */
+	#toldOfInstance(instance: unknown): void {
+		const followers = this.#instanceFollowers;
+		if (followers === undefined || followers.size === 0) return;
+		// A live instance is an object (an attempt, a remote object's binding).
+		if (typeof instance !== "object" || instance === null || instance === this.#followedInstance?.deref()) return;
+		this.#followedInstance = new WeakRef(instance);
+		for (const moved of [...followers]) moved();
+	}
+
+	/**
+	 * Calls `moved` whenever its object has another live instance than the one it was told of last (a restart's
+	 * successor: the readers of its named queries read that one's, slice 14 §3.2), until the returned release.
+	 */
+	followInstance(moved: () => void): () => void {
+		this.#instanceFollowers ??= new Set();
+		const followers = this.#instanceFollowers;
+		followers.add(moved);
+		const instance: unknown = this.target?.instance;
+		if (this.#followedInstance === undefined && typeof instance === "object" && instance !== null) {
+			this.#followedInstance = new WeakRef(instance);
+		}
+		return () => void followers.delete(moved);
 	}
 
 	/**
@@ -583,12 +622,16 @@ export class Binding implements Holder, UnboundRequest {
 		return this.#until((state) => (done(state) ? DONE : WAIT), context);
 	}
 
-	/** Resolves when the reference is live; rejects with a broken failure's error, or its end. Getters wait for it. */
+	/**
+	 * Resolves when the reference is live; rejects with a broken or denied failure's error (neither heals by waiting),
+	 * or its end. Getters wait for it.
+	 */
 	live(context: Context): Promise<void> {
 		return this.#until((state) => {
 			if (state.kind === "live") return DONE;
-			const broken = state.kind === "failed" && state.cause.kind === "broken";
-			return broken ? { kind: "failed", error: state.cause.error } : WAIT;
+			if (state.kind !== "failed") return WAIT;
+			const { kind, error } = state.cause;
+			return kind === "broken" || kind === "denied" ? { kind: "failed", error } : WAIT;
 		}, context);
 	}
 
@@ -683,6 +726,11 @@ export class Binding implements Holder, UnboundRequest {
 	/** The keyed member `member`'s slot (slice 6a §12), as `member` resolves a state member. */
 	keyedSlot(member: string): KeyedSlot {
 		return this.#target().keyedMember(member);
+	}
+
+	/** The named query `name` of `queries` member `member` of the live object, as `keyedSlot` resolves a keyed one. */
+	queryMember(member: string, name: string): OwnQuery {
+		return this.#target().queryMember(member, name);
 	}
 
 	/** How this reference reads keyed member `member`'s documents (`Target.keyedMapping`), as `keyedSlot` resolves. */
@@ -902,7 +950,7 @@ export class Binding implements Holder, UnboundRequest {
 		const { target } = this.#state as Extract<BindingState, { readonly kind: "bound" }>;
 		this.#calls ??= new AbortController();
 		const linked = withLinkedAbortSignal(this.#calls.signal, context);
-		return target.call(method, args, linked.context, this).finally(linked.release);
+		return target.call(method, args, this, linked.context).finally(linked.release);
 	}
 
 	/**
@@ -1164,6 +1212,9 @@ function place(source: ReferenceSource, followed: Followed, attached: unknown): 
 			return;
 		case "lacking":
 			source.vanish(followed.error, BACKGROUND_CONTEXT);
+			return;
+		case "denied":
+			source.deny(followed.error, BACKGROUND_CONTEXT);
 			return;
 		case "loading":
 			if (source.unbound && followed.last !== undefined && followed.instance === attached)

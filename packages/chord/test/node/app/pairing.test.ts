@@ -3,7 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
-import { Sessions } from "../../../src/node/app/index.ts";
+import { SignIns } from "../../../src/node/app/index.ts";
 import { Pairings } from "../../../src/node/app/pairing.ts";
 import { send } from "../http/support.ts";
 import { bearerFor, testApp, type UserPrincipal, userOwnerApp } from "./support.ts";
@@ -50,9 +50,9 @@ describe("pairing over HTTP", () => {
 		const approved = json(await post(port, "/_chord/pair/poll", { poll })) as { status: string; token: string };
 		expect(approved.status).toBe("approved");
 		expect((await post(port, "/_chord/pair/poll", { poll })).status).toBe(404);
-		const listed = await app.host.root(async (ctx) => (await ctx.get(Sessions, {})).list.value, context);
+		const listed = await app.host.root(async (ctx) => (await ctx.get(SignIns, {})).list.value, context);
 		const id = approved.token.slice(0, approved.token.indexOf("."));
-		expect(listed.find((session) => session.id === id)).toMatchObject({
+		expect(listed.find((signIn) => signIn.id === id)).toMatchObject({
 			label: "laptop",
 			kind: "device",
 			principal: { kind: "owner" },
@@ -69,7 +69,7 @@ describe("pairing over HTTP", () => {
 });
 
 describe("an owner the app chooses", () => {
-	it("lets only that principal approve, issues the device session for it, and does not count its pairings", async () => {
+	it("lets only that principal approve, issues the device sign-in for it, and does not count its pairings", async () => {
 		const ada: UserPrincipal = { kind: "user", id: "u1" };
 		const { app, port } = await userOwnerApp(ada, { limits: { pendingPairings: 1, pairingsPerAddress: 1 } });
 		const owner = await bearerFor(app, ada);
@@ -85,9 +85,9 @@ describe("an owner the app chooses", () => {
 		expect((await send(port, "GET", `/_chord/pair/${code}`, { headers: owner })).status).toBe(200);
 		expect((await send(port, "POST", `/_chord/pair/${code}`, { headers: owner })).status).toBe(200);
 		const approved = json(await post(port, "/_chord/pair/poll", { poll })) as { token: string };
-		const listed = await app.host.root(async (ctx) => (await ctx.get(Sessions, {})).list.value, context);
+		const listed = await app.host.root(async (ctx) => (await ctx.get(SignIns, {})).list.value, context);
 		const id = approved.token.slice(0, approved.token.indexOf("."));
-		expect(listed.find((session) => session.id === id)).toMatchObject({ label: "phone", principal: ada });
+		expect(listed.find((signIn) => signIn.id === id)).toMatchObject({ label: "phone", principal: ada });
 		await app.close(context);
 	});
 });

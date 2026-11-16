@@ -1,8 +1,9 @@
 // React bindings (slice 11 §3, decision "Slice 11, P7"; p2's `useObject`, `useReadable`, `useRegistry`): a host in
-// context, references held for a component's life, watchables read with `useSyncExternalStore`, event members
-// subscribed while mounted, page state kept for the host's life, and a plugin's messages in the host's language. A
-// component unmounted by a reload has not left (design §21): its releases are plain releases, presence is the app's. A component of a reloaded plugin is a new
-// function and remounts, its `useState` starting over; what must survive is page state (decision "Tutorial gaps" (1)).
+// context, references held for a component's life, watchables read with `useSyncExternalStore`, a reference read in
+// one variant, event members subscribed while mounted, page state kept for the host's life, and a plugin's messages
+// in the host's language. A component unmounted by a reload has not left (design §21): its releases are plain
+// releases, presence is the app's. A component of a reloaded plugin is a new function and remounts, its `useState`
+// starting over; what must survive is page state (decision "Tutorial gaps" (1)).
 // No components, no styling.
 
 import {
@@ -25,6 +26,7 @@ import type { Held, Host, RefState } from "../host/index.ts";
 import type { Registry } from "../registries/index.ts";
 import { hostLanguage, type Messages, type Translator } from "../surfaces/index.ts";
 import { pageState } from "../surfaces/page-state.ts";
+import { type InVariant, liveIn, type VariantOf, type VariantRef } from "../surfaces/variant.ts";
 import type { NativeWatchable, Watchable } from "../watch.ts";
 import { watchStore } from "./stores.ts";
 
@@ -106,6 +108,24 @@ export function useRegistry<C, V>(R: Registry<C, V>): V | undefined {
 /** The state of `ref` (loading, live, failed, ended), re-rendering on change; `undefined` without a reference. */
 export function useRefState(ref: { readonly state: NativeWatchable<RefState> } | undefined): RefState | undefined {
 	return useWatch(ref?.state);
+}
+
+/**
+ * `ref` narrowed to `variant` while it is live in it, else `undefined` (no reference, loading, failed or denied,
+ * ended, another variant), re-rendering when that changes: a reference held while mounted binds later and may bind
+ * another variant (an admission's other allowed value), and it keeps its last variant while it loads. The UI's
+ * way to read a variant (decision "C15 stands; the UI bindings follow the variant"); `useRefState` says why there is
+ * none. True of the render that read it: a call made after an `await` may find another variant.
+ */
+export function useVariant<R extends VariantRef, const V extends VariantOf<R>>(
+	ref: R | undefined,
+	variant: V,
+): InVariant<R, V> | undefined {
+	const store = useMemo(() => watchStore(ref?.state), [ref]);
+	// The snapshot is the narrowing, not the state: live in one variant, then live in another, is one `live` to React
+	// when the loading between them was never rendered.
+	const snapshot = (): InVariant<R, V> | undefined => liveIn(ref, variant);
+	return useSyncExternalStore(store.subscribe, snapshot, snapshot);
 }
 
 /**

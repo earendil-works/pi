@@ -15,7 +15,7 @@ import { Chat } from "../../plugins/chat/contract.ts";
 import { LogNotices } from "../../plugins/logs/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import type { Host, RefIn } from "../../src/runtime/chord.ts";
-import { Browser, browserTests } from "./browser.ts";
+import { Browser, browserTests, COMPOSER } from "./browser.ts";
 import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
 
 /** The owner's artifact of the night it happened (a table, inline code). */
@@ -165,7 +165,7 @@ describe("page recovery and old state", { skip: !browserTests }, () => {
 			"[...document.querySelectorAll('[data-testid=page-failed] button')].find((button) => button.textContent.startsWith('Reset')).click()",
 		);
 		await browser.wait(
-			"!document.querySelector('[data-testid=page-failed]') && document.querySelector('.composer textarea')",
+			`!document.querySelector('[data-testid=page-failed]') && document.querySelector('${COMPOSER}')`,
 		);
 		assert.deepEqual(
 			await browser.evaluate<(string | null)[]>(

@@ -48,7 +48,8 @@ Their selections and annotations reach the agent with their next message. Plugin
   - Drawings are drawn over their pane, stretched with it.
 - **What the next message carries**: the send router `views` adds a `<views>` block after the person's text. The block
   holds the selections and annotations no message carried yet. Other plugins add their own blocks through
-  `MessageContexts` (`contract.ts`, keyed by plugin; e.g. the artifacts plugin's new page errors), each carried once
+  `MessageContexts` (`contract.ts`, keyed by plugin, given the message being sent; e.g. the artifacts plugin's new
+  page errors, the scope prompt's scope staged for that message), each carried once
   and noted on the message. The model sees the blocks, but the transcript shows only the person's text, with a note
   (entry kind `p2.view-input`, `TranscriptEntries`). The composer's chip shows what will go along; its × drops it. In
   chat mode, the chat-mode router takes the message first, so no context goes along.

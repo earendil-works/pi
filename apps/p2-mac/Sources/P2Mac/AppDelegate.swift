@@ -3,7 +3,9 @@
 import AppKit
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemValidation {
+	/// The light/dark preference every window and page follows.
+	private(set) var appearance = Appearance.load()
 	private(set) var server: ServerController!
 	private(set) var directory: BrainDirectory!
 	private(set) var radius: RadiusAccount!
@@ -21,6 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 	private var signals: [DispatchSourceSignal] = []
 
 	func applicationDidFinishLaunching(_ notification: Notification) {
+		// Before the first window, so nothing paints in the other appearance first.
+		appearance.apply()
 		NSApp.mainMenu = MainMenu.build()
 		NotificationCenter.default.addObserver(forName: BrainDirectory.changed, object: nil, queue: .main) { notification in
 			MainActor.assumeIsolated {
@@ -150,6 +154,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 	@objc func newWindow(_ sender: Any?) {
 		let current = (NSApp.keyWindow?.delegate as? PiWindowController)?.selected
 		if let id = current ?? directory.local?.id { openWindow(id, path: "/") }
+	}
+
+	// MARK: - Appearance
+
+	/// Makes `preference` the app's light/dark preference: stores it, applies it (cross-fading the native views), and
+	/// tells every page.
+	func setAppearance(_ preference: Appearance) {
+		appearance = preference
+		for window in windows { window.crossFadeNativeViews() }
+		preference.apply()
+		preference.save()
+		for window in windows { window.appearanceChanged(preference) }
+	}
+
+	/// View > Appearance: the item's preference.
+	@objc func chooseAppearance(_ sender: NSMenuItem) {
+		if let preference = (sender.representedObject as? String).flatMap(Appearance.init) { setAppearance(preference) }
+	}
+
+	func validateMenuItem(_ item: NSMenuItem) -> Bool {
+		if item.action == #selector(chooseAppearance) {
+			item.state = item.representedObject as? String == appearance.rawValue ? .on : .off
+		}
+		return true
 	}
 
 	private func serverChanged() {

@@ -221,7 +221,23 @@ export class ReferenceSource extends Source implements Dependent {
 	vanish(error: ChordError, context: Context): void {
 		const state = this.#state;
 		if (state.kind === "ended") return;
-		const last = state.kind === "unbound" ? undefined : this.#lastGood();
+		this.#failWith(error, state.kind === "unbound" ? undefined : this.#lastGood(), context);
+	}
+
+	/**
+	 * An admission refused its reference's caller (slice 14 §2.2), inside a batch: it keeps no value (reads throw
+	 * `error`, a watch opened now has nothing to start at); watches and subscribers get one failure call per denial and
+	 * stay open, and derives over it fail until the next allow brings a value (`[["r", value]]`). What application code
+	 * already took from it stays with that code.
+	 */
+	deny(error: ChordError, context: Context): void {
+		const state = this.#state;
+		if (state.kind === "ended" || (state.kind === "failed" && state.error === error)) return;
+		this.#failWith(error, undefined, context);
+	}
+
+	/** Fails with `error`, keeping `last` as its last good value: one failure call, and its dependents marked. */
+	#failWith(error: ChordError, last: JsonValue | undefined, context: Context): void {
 		this.#leave();
 		this.#state = { kind: "failed", error: handedOut(error), last };
 		this.#call({ kind: "failed", error }, context);

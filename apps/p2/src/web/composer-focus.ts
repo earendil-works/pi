@@ -1,4 +1,4 @@
-// Who focuses the composer's textarea: actions that ask for it now (a reply, restored text, dropped files), and opening
+// Who focuses the composer's input: actions that ask for it now (a reply, restored text, dropped files), and opening
 // a conversation, whose composer takes the focus once its screen shows, unless a touch opened it (that would open the
 // keyboard; a tap on the composer does).
 import type { Route } from "./navigation.ts";
@@ -15,11 +15,11 @@ export function conversationKey(route: ComposerTarget): string {
 type Request = { readonly key: string; readonly from: string | undefined };
 
 /**
- * The composer's textarea, the screen the chat shows, the person's last input and the pending open's focus; one per
+ * The composer's input, the screen the chat shows, the person's last input and the pending open's focus; one per
  * page (`ComposerState`).
  */
 export class ComposerFocus {
-	#textarea: HTMLTextAreaElement | null = null;
+	#input: { focus(): void } | null = null;
 	#shown: string | undefined;
 	#touch = false;
 	#request: Request | undefined;
@@ -46,14 +46,14 @@ export class ComposerFocus {
 		};
 	};
 
-	/** The textarea's callback ref. */
-	readonly register = (element: HTMLTextAreaElement | null): void => {
-		this.#textarea = element;
+	/** The composer's input, as it mounts (and null as it goes). */
+	readonly register = (input: { focus(): void } | null): void => {
+		this.#input = input;
 	};
 
 	/** Focuses the composer now, for an action in the conversation shown. */
 	readonly focus = (): void => {
-		this.#textarea?.focus();
+		this.#input?.focus();
 	};
 
 	/**
@@ -83,7 +83,7 @@ export class ComposerFocus {
 		const request = this.#request;
 		// The screen shown at the press renders again until the navigation arrives; without a chat screen, nothing shows.
 		if (!request || screen === undefined || (screen === request.from && screen !== request.key)) return;
-		if (screen === request.key) this.#textarea?.focus();
+		if (screen === request.key) this.#input?.focus();
 		this.#request = undefined;
 	};
 }

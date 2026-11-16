@@ -18,9 +18,10 @@ import {
 	hostDataOwners,
 	importHostData,
 	readHostArchive,
+	tableOwner,
 	tablesToMigrate,
 } from "../store/host-data.ts";
-import type { LiveQueries, LiveQuery } from "../store/live-query.ts";
+import type { Read, ReadRun } from "../store/read.ts";
 import type { StagedWrite } from "../store/step.ts";
 import type { ChordStore } from "../store/store.ts";
 import type { TableDefinition } from "../store/table.ts";
@@ -108,7 +109,6 @@ export type HostDataObject = {
 	/** The object's type: the owner of its documents and tables in the store. */
 	readonly owner: string;
 	readonly documents: Documents;
-	readonly liveQueries: LiveQueries;
 	/** Its live attempt's declaration of table `table` (SQL name), if it has one. */
 	declaredTable(table: string): TableDefinition | undefined;
 };
@@ -148,7 +148,7 @@ export async function importInto(
 				const section = await exclusive(async (): Promise<ImportSection> => {
 					const migrating = tablesToMigrate(site.store, archive);
 					const histories = historiesOf([...site.objects()], migrating);
-					const missing = migrating.filter((table) => !histories.has(table)).map(ownerOf);
+					const missing = migrating.filter((table) => !histories.has(table)).map(tableOwner);
 					if (missing.length > 0) return { kind: "activate", owners: new Set(missing) };
 					const owners = await hostDataOwners(site.store, target, archive, context);
 					const plan = { target, existing, histories };
@@ -176,17 +176,23 @@ type ImportSection =
 	| { readonly kind: "activate"; readonly owners: ReadonlySet<string> }
 	| { readonly kind: "done"; readonly counts: HostDataCounts };
 
-/** The owner of table `table` (its SQL name `<owner>:<table>`). */
-function ownerOf(table: string): string {
-	return table.slice(0, table.indexOf(":"));
-}
-
-/** Deletes the data of `address` from the site's store, coordinated with the live owners (spec §5). */
-export function deleteFrom(site: HostDataSite, address: Address, context: Context): Promise<HostDataCounts> {
+/**
+ * Deletes the data of `address` from the site's store, coordinated with the live owners (spec §5); with `only`, the
+ * data of those owners (the object types of one plugin: slice 14 §6) and nothing else.
+ */
+export function deleteFrom(
+	site: HostDataSite,
+	address: Address,
+	context: Context,
+	only?: ReadonlySet<string>,
+): Promise<HostDataCounts> {
 	const key = storedText(address.key, "deleteHostData: address");
 	const run = async (): Promise<HostDataCounts> => {
-		const owners = await hostDataOwners(site.store, key, undefined, context);
-		return coordinated(site, owners, key, context, (commit) => deleteHostData(site.store, key, commit, context));
+		const all = await hostDataOwners(site.store, key, undefined, context);
+		const owners = only === undefined ? all : new Set([...all].filter((owner) => only.has(owner)));
+		return coordinated(site, owners, key, context, (commit) =>
+			deleteHostData(site.store, key, commit, context, only),
+		);
 	};
 	return site.gate.turn((exclusive) => exclusive(run), context);
 }
@@ -206,8 +212,8 @@ function historiesOf(objects: readonly HostDataObject[], tables: readonly string
 /** A host-keyed slot's key a change reads again and adopts. */
 type SlotRead = { readonly slot: KeyedSlot; changed: ChangedDocument };
 
-/** A live query a change re-runs and adopts. */
-type QueryRead = { readonly query: LiveQuery; run: Awaited<ReturnType<LiveQuery["rerun"]>> | undefined };
+/** A read of the store a change runs again and adopts. */
+type QueryRead = { readonly read: Read; run: ReadRun | undefined };
 
 /**
  * Runs `change` (one commit changing the data of host `key`) holding the lines of the live objects of `owners` and of
@@ -237,16 +243,18 @@ async function coordinated<T>(
 				.filter((slot) => slot.holds(key))
 				.map((slot) => ({ slot, changed: { kind: "unchanged" } as ChangedDocument })),
 		);
-		const queries: QueryRead[] = objects.flatMap((object) =>
-			object.liveQueries.onHostKind(kind).map((query) => ({ query, run: undefined })),
-		);
+		// Every read over a table with a host column of the kind, joined and `exists` tables included (slice 14 §5).
+		const queries: QueryRead[] = site.store.reads.onHostKind(kind).map((read) => ({ read, run: undefined }));
 		// Counted and adopted under the caller's telemetry; nothing after admission is cancelled by its signal.
 		const quiet = withoutAbortSignal(context);
 		const reads: StagedWrite = {
 			order: "write",
 			apply: async (step) => {
 				for (const read of slots) read.changed = await read.slot.readChanged(key, step, quiet);
-				for (const read of queries) read.run = await read.query.rerun(step, quiet);
+				for (const each of queries) {
+					each.run = await each.read.run(step, quiet);
+					each.read.ran(step.executor, each.run);
+				}
 				return [];
 			},
 		};
@@ -261,7 +269,7 @@ async function coordinated<T>(
 							if (changed.kind === "failed") failed.push([slot, changed.error]);
 						}
 						// Each read ran in the step before `COMMIT`.
-						for (const { query, run } of queries) query.adopt(run!);
+						for (const { read, run } of queries) read.adopt(run!);
 					}, quiet);
 					// Outside the batch: failing an object ends its attempt, which publishes on its own.
 					for (const [slot, error] of failed) slot.owner.fail(error);

@@ -1,5 +1,5 @@
 // Chord v2's app kit (`@earendil-works/chord/app`; slice 13): `startServer` on the server and `startWorker` in a
-// worker's entry, the start-data objects, sessions and the owner's sign-in, device pairing, the files of each host,
+// worker's entry, the start-data objects, sign-ins and the owner's sign-in, device pairing, the files of each host,
 // export, import and delete per address, and the optional plugins (users, invites, ephemeral login).
 
 export {
@@ -30,9 +30,9 @@ export {
 	type SpaceSummary,
 } from "./files.ts";
 export { copyFiles } from "./files-copy.ts";
-export { AppInfo, WorkerInfo } from "./info.ts";
+export { AppInfo, appInfoFacet, WorkerInfo, workerInfoFacet } from "./info.ts";
 export { inviteFacet } from "./invite.ts";
 export { privateDirectory, privateStore } from "./layout.ts";
-export { SESSION_COOKIE, type SessionInfo, type SessionKind, Sessions } from "./sessions.ts";
+export { SIGN_IN_COOKIE, type SignInInfo, type SignInKind, SignIns } from "./sign-ins.ts";
 export { defineUsers } from "./users.ts";
 export { startWorker, type WorkerOptions } from "./worker.ts";

@@ -112,3 +112,118 @@ describe("a path", () => {
 		expect(routed.suspended).toBe(true);
 	});
 });
+
+describe("a gated path (slice 14 §2.3)", () => {
+	/** A holder recording what it is told, and a link whose fences the test runs by hand. */
+	function gated(admitted: Set<string>) {
+		const log: string[] = [];
+		const fences: (() => void)[] = [];
+		const events: string[] = [];
+		const made = (name: string): Upstream =>
+			({
+				name,
+				attach: (link: { readonly name: string }) => void log.push(`${name}@${link.name}`),
+				dropped: () => void log.push(`${name} dropped`),
+				unreachable: () => void log.push(`${name} unreachable`),
+				withheld: (cause: { readonly kind: string }) => void log.push(`${name} ${cause.kind}`),
+				admitted: () => void log.push(`${name} admitted`),
+			}) as unknown as Upstream;
+		const gate = {
+			joined: (holder: Upstream) => admitted.has((holder as unknown as { name: string }).name),
+			left: (holder: Upstream) => void log.push(`${(holder as unknown as { name: string }).name} left`),
+			unlinked: () => void events.push("unlinked"),
+		};
+		const path = new Path(({ kind }) => void events.push(kind), undefined, gate);
+		const link = (name: string) =>
+			({
+				name,
+				fence: (then: () => void) => {
+					const entry = () => then();
+					fences.push(entry);
+					return () => void fences.splice(fences.indexOf(entry), 1);
+				},
+			}) as unknown as HostLink;
+		return { log, fences, events, path, made, link };
+	}
+
+	const denied = { kind: "denied", error: new ChordError({ code: "forbidden", message: "no" }) } as const;
+
+	it("holds only what its gate admits on its links, and wants a link only for those", () => {
+		const { log, events, path, made, link } = gated(new Set(["a"]));
+		const [a, b] = [made("a"), made("b")];
+		path.attach(b);
+		// Withheld: no link is asked for it.
+		expect([events, path.held, path.wanted]).toEqual([[], true, false]);
+		path.attach(a);
+		expect([events, path.wanted]).toEqual([["attached"], true]);
+		path.connected(link("1"));
+		expect(log).toEqual(["a@1"]);
+		path.forward(b);
+		expect(log).toEqual(["a@1", "b admitted", "b@1"]);
+		path.disconnected(path.link!);
+		// Its gate is told after the holders, before the route: it may take back what it cannot forward on a new link.
+		expect(events).toEqual(["attached", "unlinked", "dropped"]);
+		path.unreachable(new ChordError({ code: "unavailable", message: "down" }));
+		expect(log.slice(3)).toEqual(["b dropped", "a dropped", "b unreachable", "a unreachable"]);
+		path.detach(a);
+		expect(log.at(-1)).toBe("a left");
+	});
+
+	it("forwards a holder a denial released on the link only behind a fence; one never forwarded needs none", () => {
+		const { log, fences, path, made, link } = gated(new Set(["a"]));
+		const [a, b] = [made("a"), made("b")];
+		path.attach(a);
+		path.attach(b);
+		path.connected(link("1"));
+		path.withhold(a, denied);
+		path.withhold(b, denied);
+		expect(log).toEqual(["a@1", "a denied", "b denied"]);
+		path.forward(b);
+		path.forward(a);
+		// `b` was never on the link: held at once. `a` is told it is admitted, and waits for its fence.
+		expect([log.slice(3), fences.length]).toEqual([["b admitted", "b@1", "a admitted"], 1]);
+		fences[0]!();
+		expect(log.slice(6)).toEqual(["a@1"]);
+		// Denied again and allowed: it was on the link again, so a new fence.
+		path.withhold(a, denied);
+		path.forward(a);
+		expect(fences.length).toBe(2);
+	});
+
+	it("a holder its gate takes back when the link is lost wants no link, and is on none until it is forwarded again", () => {
+		const { log, events, path, made, link } = gated(new Set(["a"]));
+		const a = made("a");
+		path.attach(a);
+		const first = link("1");
+		path.connected(first);
+		path.disconnected(first);
+		// What a gate does in `unlinked` when it cannot read an allow.
+		path.withhold(a, { kind: "waiting", error: new ChordError({ code: "unavailable", message: "source failed" }) });
+		expect([path.withholds(a), path.wanted]).toEqual([true, false]);
+		path.connected(link("2"));
+		expect(log).toEqual(["a@1", "a dropped", "a waiting"]);
+		// Never on the second link: forwarded there with no fence.
+		path.forward(a);
+		expect(log.slice(3)).toEqual(["a admitted", "a@2"]);
+		expect(events.filter((event) => event === "unlinked").length).toBe(1);
+	});
+
+	it("a denial before the fence ran cancels it; a lost link drops it, and the next link holds what is admitted", () => {
+		const { log, fences, path, made, link } = gated(new Set(["a"]));
+		const a = made("a");
+		path.attach(a);
+		const first = link("1");
+		path.connected(first);
+		path.withhold(a, denied);
+		path.forward(a);
+		path.withhold(a, denied);
+		expect(fences.length).toBe(0);
+		path.forward(a);
+		expect(fences.length).toBe(1);
+		path.disconnected(first);
+		expect(fences.length).toBe(0);
+		// Not held on the lost link (its fence was pending): not told of the drop twice, held on the next at once.
+		path.connected(link("2"));
+		expect(log).toEqual(["a@1", "a denied", "a admitted", "a denied", "a admitted", "a dropped", "a@2"]);
+	});
+});

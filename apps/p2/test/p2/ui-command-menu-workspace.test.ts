@@ -16,7 +16,7 @@ import { localSystem, terminalDaemon } from "../../plugins/terminals/daemon.ts";
 import { connectTerminalHost } from "../../plugins/terminals/detached.ts";
 import { encodeFrame } from "../../plugins/terminals/protocol.ts";
 import type { RefIn } from "../../src/runtime/chord.ts";
-import { Browser, browserTests } from "./browser.ts";
+import { Browser, browserTests, COMPOSER } from "./browser.ts";
 import { APP, type Fixture, holdIn, startFixture, until } from "./helpers.ts";
 
 /** Whether the menu is open or closed, as expressions. */
@@ -81,7 +81,7 @@ describe("command menu: workspace, terminal and folders", { skip: !browserTests 
 	};
 
 	/** Opens `path` at 1280×800 as a page on macOS and waits for `ready` (a selector) while online. */
-	const load = async (path: string, ready = ".composer textarea") => {
+	const load = async (path: string, ready = COMPOSER) => {
 		await browser.metrics(1280, 800);
 		await browser.call("Emulation.setUserAgentOverride", { userAgent, platform: "MacIntel" });
 		await browser.open(`${base}${path}`);
@@ -314,12 +314,34 @@ describe("command menu: workspace, terminal and folders", { skip: !browserTests 
 			await create("In folder two", folder("folder-new-two"));
 			await openSession(await create("Folders from"), "Folders from");
 			await openMenu();
-			await run("new session in", "New session in folder…");
+			await run("new session", "New session…");
 			await browser.wait(`document.querySelector('.command-menu .command-crumb')?.textContent==='New session'`);
 			await browser.wait(`${TITLES}.includes('folder-new-one') && ${TITLES}.includes('folder-new-two')`);
 			await run("new-one", "folder-new-one");
 			await browser.wait(`${CLOSED} && location.pathname==='/new'`);
 			await browser.wait(`document.querySelector('.cwd-pick span')?.textContent.endsWith('/folder-new-one')`);
+		});
+
+		it("changes the new-session screen's folder from its folder button, or browses with Select folder…", async () => {
+			await create("Recent folder", folder("folder-recent"));
+			await load("/new");
+			await browser.click(".cwd-pick");
+			await browser.wait(`document.querySelector('.command-menu .command-crumb')?.textContent==='Folder'`);
+			await run("folder-recent", "folder-recent");
+			await browser.wait(
+				`${CLOSED} && document.querySelector('.cwd-pick span')?.textContent.endsWith('/folder-recent')`,
+			);
+			await browser.click(".cwd-pick");
+			await run("select folder", "Select folder…");
+			await browser.wait(`${CLOSED} && ${SHEET}==='Working directory'`);
+			await browser.wait(`document.querySelector('.directory-use')?.textContent.endsWith('/folder-recent')`);
+			// The picker's Back returns to the recent folders, in its place.
+			await browser.click(".sheet-head .back");
+			await browser.wait(
+				`!document.querySelector('.sheet-head') && document.querySelector('.command-menu .command-crumb')?.textContent==='Folder'`,
+			);
+			await press("Escape");
+			await browser.wait(`${CLOSED} && location.pathname==='/new'`);
 		});
 
 		it("opens a folder's list page, the open one checked", async () => {
@@ -360,7 +382,7 @@ describe("command menu: workspace, terminal and folders", { skip: !browserTests 
 					`(() => { const input = document.querySelector('#name'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'Reader'); input.dispatchEvent(new Event('input', { bubbles: true })); })()`,
 				);
 				await guest.click("#join button");
-				await guest.wait(`document.querySelector('.subagent-bar, .composer textarea')`);
+				await guest.wait(`document.querySelector('.subagent-bar, ${COMPOSER}')`);
 				for (const type of ["rawKeyDown", "keyUp"])
 					await guest.call("Input.dispatchKeyEvent", {
 						type,
@@ -380,7 +402,7 @@ describe("command menu: workspace, terminal and folders", { skip: !browserTests 
 					"Open terminal",
 					"New terminal",
 					"Change working directory…",
-					"New session in folder…",
+					"New session…",
 					"Open folder…",
 				])
 					assert.ok(!titles.includes(title), `${mode} guest sees ${title}: ${titles}`);

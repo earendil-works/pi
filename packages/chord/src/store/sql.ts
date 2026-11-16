@@ -4,7 +4,7 @@
 
 import type { SqliteValue } from "../sqlite/index.ts";
 import type { Column, ColumnRecord } from "./columns.ts";
-import type { ExprNode, SetNode, WhereNode } from "./expression.ts";
+import type { ExistsNode, ExprNode, SetNode, WhereNode } from "./expression.ts";
 import { physicalColumns, ROW_VERSION, toSqlite, versionColumn } from "./rows.ts";
 import { prefixUpperBound } from "./text.ts";
 
@@ -249,26 +249,42 @@ function exprSql(node: ExprNode, params: SqliteValue[]): string {
 
 const COMPARISONS = { eq: "=", ne: "<>", lt: "<", lte: "<=", gt: ">", gte: ">=" } as const;
 
+/** How a condition's parts that depend on where it runs are rendered: a column's name, and an `exists`. */
+export type ConditionSql = {
+	column(name: string): string;
+	exists(node: ExistsNode, params: SqliteValue[]): string;
+};
+
+/** A write's condition: its table's columns unqualified; an `exists` never reaches one (refused when compiled). */
+const OWN_COLUMNS: ConditionSql = {
+	column: quote,
+	exists: () => {
+		throw new Error("exists is rendered by a read");
+	},
+};
+
 /** A condition with its operands bound; SQL's `NULL` rules are the vocabulary's. */
-export function whereSql(node: WhereNode, params: SqliteValue[]): string {
+export function whereSql(node: WhereNode, params: SqliteValue[], render: ConditionSql = OWN_COLUMNS): string {
+	const name = render.column;
 	if ("and" in node)
-		return node.and.length === 0 ? "1" : `(${node.and.map((each) => whereSql(each, params)).join(" AND ")})`;
+		return node.and.length === 0 ? "1" : `(${node.and.map((each) => whereSql(each, params, render)).join(" AND ")})`;
 	if ("or" in node)
-		return node.or.length === 0 ? "0" : `(${node.or.map((each) => whereSql(each, params)).join(" OR ")})`;
-	if ("not" in node) return `(NOT ${whereSql(node.not, params)})`;
-	if ("isNull" in node) return `${quote(node.isNull)} IS NULL`;
+		return node.or.length === 0 ? "0" : `(${node.or.map((each) => whereSql(each, params, render)).join(" OR ")})`;
+	if ("not" in node) return `(NOT ${whereSql(node.not, params, render)})`;
+	if ("exists" in node) return render.exists(node.exists, params);
+	if ("isNull" in node) return `${name(node.isNull)} IS NULL`;
 	if ("inArray" in node) {
 		const [column, values] = node.inArray;
 		params.push(JSON.stringify(values.map(toSqlite)));
-		return `${quote(column)} IN (SELECT value FROM json_each(?))`;
+		return `${name(column)} IN (SELECT value FROM json_each(?))`;
 	}
 	if ("prefix" in node) {
 		const [column, prefix] = node.prefix;
 		const upper = prefixUpperBound(prefix);
 		params.push(prefix);
-		if (upper === undefined) return `${quote(column)} >= ?`;
+		if (upper === undefined) return `${name(column)} >= ?`;
 		params.push(upper);
-		return `(${quote(column)} >= ? AND ${quote(column)} < ?)`;
+		return `(${name(column)} >= ? AND ${name(column)} < ?)`;
 	}
 	// The remaining nodes are the comparisons, one entry each; `Object.entries` loses that.
 	const [op, [column, value]] = Object.entries(node)[0] as [
@@ -276,5 +292,5 @@ export function whereSql(node: WhereNode, params: SqliteValue[]): string {
 		readonly [string, string | number | boolean],
 	];
 	params.push(toSqlite(value));
-	return `${quote(column)} ${COMPARISONS[op]} ?`;
+	return `${name(column)} ${COMPARISONS[op]} ?`;
 }

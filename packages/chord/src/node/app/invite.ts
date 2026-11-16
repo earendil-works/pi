@@ -1,8 +1,8 @@
 // The invite plugin (slice 13 §3, decision "The app kit, point 2"): the owner (`AppInfo.owner`, the principal the app
 // names) makes an invite link for a principal of the app it chooses (`POST /_chord/invites`, owner only: `{ principal,
 // label }` → `{ path }`); the invitee opens it, its page posts the token (the URL's fragment, never logged) to `POST
-// /_chord/invite`, which consumes it (single use, 7 days) and answers with a browser session for that principal (§2's
-// sessions). Invites wait in memory: a restart drops the ones not used. An exported facet, as `defineUsers` (see there
+// /_chord/invite`, which consumes it (single use, 7 days) and answers with a browser sign-in for that principal (§2's
+// sign-ins). Invites wait in memory: a restart drops the ones not used. An exported facet, as `defineUsers` (see there
 // why).
 
 import type { Principal } from "../../data/index.ts";
@@ -13,7 +13,7 @@ import { Http } from "../http/index.ts";
 import { AppInfo } from "./info.ts";
 import { fragmentPage } from "./owner.ts";
 import { hashToken, newToken } from "./secrets.ts";
-import { Sessions } from "./sessions.ts";
+import { SignIns } from "./sign-ins.ts";
 
 /** How long an invite is valid: 7 days. */
 const INVITE_MS = 7 * 24 * 60 * 60_000;
@@ -62,9 +62,9 @@ export function inviteFacet<P extends Principal>(): Facet<P> {
 						if (hash === undefined || invite === undefined) return { kind: "error", status: 403 };
 						invites.delete(hash);
 						if (invite.expires <= Date.now()) return { kind: "error", status: 403 };
-						const sessions = await ctx.get(Sessions, {});
+						const signIns = await ctx.get(SignIns, {});
 						const secure = request.provenance.kind !== "local";
-						const issued = await sessions.issue(
+						const issued = await signIns.issue(
 							{ principal: invite.principal, label: invite.label, kind: "browser", secure },
 							ctx,
 						);

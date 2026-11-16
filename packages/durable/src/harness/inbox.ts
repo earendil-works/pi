@@ -12,6 +12,8 @@ export type InboxItem =
 			mode: "steer" | "followUp";
 			content: JsonRepresentation<UserInput>;
 			entry?: JsonRepresentation<InputEntry>;
+			/** Submitted with `onAbort: "keep"`: an abort leaves it queued. */
+			onAbort?: "keep";
 	  }
 	/** `entry` is an `EntryDraft`, stored as plain JSON. */
 	| { id: SubmissionId; mode: "write"; entry: JsonObject };
@@ -165,14 +167,33 @@ export async function removeInboxItem(tx: Tx, conversationId: ConversationId, id
 }
 
 /**
- * Withdraw every queued input of a conversation, as `Conversation.abort()` and abort cascades do: each settles
- * `unanswered` with `reason` (default `aborted`) and leaves the inbox; queued writes stay for later placement.
+ * Withdraw the queued inputs of a conversation as `Conversation.abort()` and abort cascades do: each settles
+ * `unanswered` with reason `aborted` and leaves the inbox, except those submitted with `onAbort: "keep"`; queued writes
+ * stay for later placement.
  */
-export async function withdrawQueuedInputs(tx: Tx, conversationId: ConversationId, reason = "aborted"): Promise<void> {
+export function withdrawAbortedInputs(tx: Tx, conversationId: ConversationId): Promise<void> {
+	return withdrawInputs(tx, conversationId, "aborted", (item) => item.onAbort !== "keep");
+}
+
+/**
+ * Withdraw every queued input of a conversation, as a failed run does under `afterFailedRun: "withdraw"`: each settles
+ * `unanswered` with `reason` and leaves the inbox; queued writes stay for later placement.
+ */
+export function withdrawQueuedInputs(tx: Tx, conversationId: ConversationId, reason: string): Promise<void> {
+	return withdrawInputs(tx, conversationId, reason, () => true);
+}
+
+/** Settle and remove the queued inputs `withdraws` selects, keeping the order of the items that stay. */
+async function withdrawInputs(
+	tx: Tx,
+	conversationId: ConversationId,
+	reason: string,
+	withdraws: (item: Exclude<InboxItem, { mode: "write" }>) => boolean,
+): Promise<void> {
 	const items = (await tx.doc(InboxDoc, conversationId)).items;
 	for (let index = items.length - 1; index >= 0; index--) {
 		const item = items[index]!;
-		if (item.mode === "write") continue;
+		if (item.mode === "write" || !withdraws(item)) continue;
 		tx.settleSubmission(item.id, { status: "unanswered", reason });
 		items.splice(index, 1);
 	}

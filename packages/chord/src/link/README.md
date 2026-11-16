@@ -130,6 +130,10 @@ tab.connect(webSocketLink(new WebSocket(url)), { principal: { kind: "server" } }
   that returns a promise (a message waiting for an asynchronous inflate) holds every later message, `ping` included,
   until it settles; they are then handled in order, and dropped when the link closes meanwhile; a rejection is a
   protocol error.
+- `Channel.fence(then)` (slice 14): sends a `ping` and runs `then` when its `pong` arrived, so everything the peer
+  sent before it saw the `ping` has arrived by then. Pings and pongs are counted: a liveness `pong` in transit ends
+  no fence. It returns what cancels it; a link that closes first runs none. A `failed` message's cause kinds are
+  `transient`, `broken`, `waiting` and `denied` (the binary codec's byte 0 to 3, the text codec's first letter).
 - The heartbeat, in `Channel`: every received message stamps `lastReceived` (sends do not count); the host's one
   interval timer calls `tick(now, paused, ping, close)` on every link: a link silent for `close` ms (30 s by default),
   the handshake included, closes; an open one silent for `ping` ms (15 s) sends one `ping`. `paused` is the time this

@@ -2,7 +2,8 @@
 // Ctrl elsewhere, emulated through navigator.platform) from anywhere and from the composer, focus and caret back on
 // close, a key a focused component consumed (the terminal's Ctrl+K) left alone, filtering and ranking, the keys, pages
 // with Backspace and Back, the target chip, and the sessions' and the chat's commands (new, switch, rename, archive and
-// restore, session search, change model, thinking level, default model) for the owner and a guest. Fake provider with a
+// restore, session search, change model, thinking level, default model, current model as default), the footer's model
+// links that open the model pages, for the owner and a guest. Fake provider with a
 // second, reasoning model from models.json and a key in auth.json (the pickers list signed-in providers only);
 // disposable data, every test makes its own sessions.
 
@@ -20,7 +21,7 @@ import { localSystem, terminalDaemon } from "../../plugins/terminals/daemon.ts";
 import { connectTerminalHost } from "../../plugins/terminals/detached.ts";
 import { encodeFrame } from "../../plugins/terminals/protocol.ts";
 import type { Host, RefIn } from "../../src/runtime/chord.ts";
-import { Browser, browserTests } from "./browser.ts";
+import { Browser, browserTests, COMPOSER, composerText } from "./browser.ts";
 import { APP, type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
 
 type Platform = "mac" | "other";
@@ -63,6 +64,8 @@ const CLOSED = `!document.querySelector('.command-menu')`;
 const TITLES = `[...document.querySelectorAll('.command-menu [role=option] .command-title')].map((e) => e.textContent)`;
 const SELECTED = `document.querySelector('.command-menu [role=option][aria-selected=true] .command-title')?.textContent`;
 const RECENTS = "p2-command-recents-v1";
+/** The footer's model and thinking links, as "Model · level". */
+const FOOTER = `[...document.querySelectorAll('.model-controls .footer-action')].map((e) => e.textContent).join(' · ')`;
 /** Whether the announced count is the number of rows shown. */
 const COUNTED = `(() => { const n = document.querySelectorAll('.command-menu [role=option]').length; return document.querySelector('.command-menu .command-count')?.textContent === (n === 1 ? '1 result' : n + ' results'); })()`;
 
@@ -76,12 +79,21 @@ const KEYS: Record<string, { code: string; keyCode: number }> = {
 	Tab: { code: "Tab", keyCode: 9 },
 };
 
-/** The models.json of the fixture: the faux model with thinking, and a second one, so a change is visible. */
+/**
+ * The models.json of the fixture: the faux model with thinking, and a second one, so a change is visible; and a second
+ * provider with a model of the same name (as Bedrock has Anthropic's), never called.
+ */
 const MODELS_JSON = {
 	providers: {
 		faux: {
 			modelOverrides: { "faux-1": { reasoning: true } },
 			models: [{ id: "faux-2", name: "Faux Two", reasoning: true }],
+		},
+		mirror: {
+			baseUrl: "http://127.0.0.1:9/v1",
+			api: "openai-completions",
+			apiKey: "fixture",
+			models: [{ id: "mirror-two", name: "Faux Two" }],
 		},
 	},
 };
@@ -106,15 +118,19 @@ describe("command menu", { skip: !browserTests }, () => {
 		fixture = await startFixture({ web: true });
 		writeFileSync(join(fixture.dataDir, "models.json"), JSON.stringify(MODELS_JSON));
 		// The pickers list signed-in providers' models only: a key for the faux provider (no real provider is called).
-		writeFileSync(join(fixture.dataDir, "auth.json"), JSON.stringify({ faux: { type: "api_key", key: "fixture" } }), {
-			mode: 0o600,
-		});
+		writeFileSync(
+			join(fixture.dataDir, "auth.json"),
+			JSON.stringify({ faux: { type: "api_key", key: "fixture" }, mirror: { type: "api_key", key: "fixture" } }),
+			{ mode: 0o600 },
+		);
 		owner = fixture.browser();
 		const models = await holdIn(owner, Models, {}, "owner");
 		await until(models.resources, (resources) =>
 			Boolean(
 				resources?.models.some((model) => model.modelId === "faux-2") &&
-					resources.credentials.some((credential) => credential.providerId === "faux"),
+					resources.models.some((model) => model.modelId === "mirror-two") &&
+					resources.credentials.some((credential) => credential.providerId === "faux") &&
+					resources.credentials.some((credential) => credential.providerId === "mirror"),
 			),
 		);
 		await models.setDefault({ provider: "faux", modelId: "faux-1", thinkingLevel: "off" }, BACKGROUND_CONTEXT);
@@ -132,11 +148,18 @@ describe("command menu", { skip: !browserTests }, () => {
 	const create = async (title: string) =>
 		(await sessions.create({ cwd: fixture.workspace, title }, BACKGROUND_CONTEXT)).id;
 
+	/** Waits until the catalog says session `id` runs `modelId` at `level`. */
+	const configured = (id: string, modelId: string, level: string) =>
+		until(sessions.sessions, (rows) => {
+			const row = rows?.find((each) => each.id === id);
+			return row?.model.modelId === modelId && row.thinkingLevel === level;
+		});
+
 	/**
 	 * Opens `path` at 1280×800 as a page on `platform` (the menu's key table reads navigator.platform at load) and waits
 	 * for `ready` (a selector) while online.
 	 */
-	const load = async (path: string, platform: Platform = "mac", ready = ".composer textarea") => {
+	const load = async (path: string, platform: Platform = "mac", ready = COMPOSER) => {
 		await browser.metrics(1280, 800);
 		await browser.call("Emulation.setUserAgentOverride", {
 			userAgent,
@@ -206,9 +229,11 @@ describe("command menu", { skip: !browserTests }, () => {
 				// A session per platform: the composer's draft is kept per session.
 				await openSession(await create(`Keys ${platform}`), `Keys ${platform}`, platform);
 				// The composer has the focus and a caret in the middle of its text.
-				await browser.evaluate(`document.querySelector('.composer textarea').focus()`);
+				await browser.evaluate(`document.querySelector('${COMPOSER}').focus()`);
 				await type("hello world");
-				await browser.evaluate(`document.querySelector('.composer textarea').setSelectionRange(5, 5)`);
+				await browser.evaluate(
+					`(() => { const r = document.createRange(); r.setStart(document.querySelector('${COMPOSER}').firstChild, 5); getSelection().removeAllRanges(); getSelection().addRange(r); })()`,
+				);
 				// The other platform's chord does nothing.
 				await press("k", platform === "mac" ? { ctrl: true } : { meta: true });
 				await new Promise((resolve) => setTimeout(resolve, 200));
@@ -225,7 +250,7 @@ describe("command menu", { skip: !browserTests }, () => {
 				await browser.wait(CLOSED);
 				assert.deepEqual(
 					await browser.evaluate(
-						`(() => { const e = document.querySelector('.composer textarea'); return [document.activeElement === e, e.selectionStart, e.selectionEnd, e.value]; })()`,
+						`(() => { const e = document.querySelector('${COMPOSER}'); const r = getSelection().getRangeAt(0); const at = (node, offset) => { const p = document.createRange(); p.setStart(e, 0); p.setEnd(node, offset); return p.toString().length; }; return [document.activeElement === e, at(r.startContainer, r.startOffset), at(r.endContainer, r.endOffset), ${composerText}]; })()`,
 					),
 					[true, 5, 5, "hello world"],
 					platform,
@@ -235,9 +260,7 @@ describe("command menu", { skip: !browserTests }, () => {
 				await press("Escape");
 				await browser.wait(CLOSED);
 				assert.equal(
-					await browser.evaluate<boolean>(
-						`document.activeElement === document.querySelector('.composer textarea')`,
-					),
+					await browser.evaluate<boolean>(`document.activeElement === document.querySelector('${COMPOSER}')`),
 					true,
 				);
 				await openMenu(platform);
@@ -394,9 +417,9 @@ describe("command menu", { skip: !browserTests }, () => {
 				),
 				true,
 			);
-			// A query starts again at its first row; Enter runs "New session".
-			await run("new sess", "New session");
-			await browser.wait(`${CLOSED} && location.pathname==='/new'`);
+			// A query starts again at its first row; Enter runs "New session…".
+			await run("new sess", "New session…");
+			await browser.wait(`document.querySelector('.command-menu .command-crumb')?.textContent==='New session'`);
 		});
 
 		it("keeps the first row highlighted when rows appear above it later; a real mouse move highlights the row under it", async () => {
@@ -446,7 +469,7 @@ describe("command menu", { skip: !browserTests }, () => {
 			// At the root's empty input: the chip goes, and the session's commands with it.
 			await press("Backspace");
 			await browser.wait(`!document.querySelector('.command-menu .command-chip')`);
-			await browser.wait(`${TITLES}.includes('New session') && !${TITLES}.includes('Archive session')`);
+			await browser.wait(`${TITLES}.includes('New session…') && !${TITLES}.includes('Archive session')`);
 			// Nothing more to remove: the menu stays.
 			await press("Backspace");
 			assert.equal(await browser.evaluate<boolean>(OPEN), true);
@@ -471,11 +494,18 @@ describe("command menu", { skip: !browserTests }, () => {
 	});
 
 	describe("session commands", () => {
-		it("starts a new session", async () => {
+		it("starts a new session in the open session's folder by default", async () => {
 			const id = await create("From here");
 			await openSession(id, "From here");
 			await openMenu();
-			await run("new", "New session");
+			await run("new", "New session…");
+			await browser.wait(`document.querySelector('.command-menu .command-crumb')?.textContent==='New session'`);
+			// Select folder… comes first; the open session's folder is highlighted and checked.
+			await browser.wait(`${TITLES}[0]==='Select folder…'`);
+			await browser.wait(
+				`document.querySelector('.command-menu [role=option][aria-selected=true]')?.getAttribute('aria-checked')==='true'`,
+			);
+			await press("Enter");
 			await browser.wait(`${CLOSED} && location.pathname==='/new' && document.querySelector('.new-session-view')`);
 		});
 
@@ -502,7 +532,7 @@ describe("command menu", { skip: !browserTests }, () => {
 			await browser.wait(`${CLOSED} && location.pathname==='/s/${to}'`);
 			// Its composer takes the focus, also when the menu opened from a list page's search field, which goes, for the
 			// session shown before the list page.
-			await browser.wait(`document.activeElement === document.querySelector('.composer textarea')`);
+			await browser.wait(`document.activeElement === document.querySelector('${COMPOSER}')`);
 			const search = 'input[aria-label="Search sessions and messages"]';
 			await browser.click(".sidebar-section[data-key=recent] a.group-label");
 			await browser.wait(`document.querySelector(${JSON.stringify(search)})`);
@@ -510,7 +540,7 @@ describe("command menu", { skip: !browserTests }, () => {
 			await openMenu();
 			await run("quokka", "Quokka notes");
 			await browser.wait(`${CLOSED} && location.pathname==='/s/${to}'`);
-			await browser.wait(`document.activeElement === document.querySelector('.composer textarea')`);
+			await browser.wait(`document.activeElement === document.querySelector('${COMPOSER}')`);
 		});
 
 		it("lists the sessions a query matches under Sessions, after the commands, the open one checked", async () => {
@@ -676,24 +706,21 @@ describe("command menu", { skip: !browserTests }, () => {
 		it("changes the model and the thinking level of the open session", async () => {
 			const id = await create("Model change");
 			await openSession(id, "Model change");
-			await browser.wait(`document.querySelector('.model-control')?.getAttribute('title')==='Faux Model'`);
+			await browser.wait(`${FOOTER}==='Faux Model · off'`);
 			await openMenu();
 			await run("change model", "Change model…");
 			await browser.wait(`document.querySelector('.command-menu input')?.placeholder==='Search models…'`);
 			await run("two", "Faux Two");
-			await browser.wait(
-				`${CLOSED} && document.querySelector('.model-control')?.getAttribute('title')==='Faux Two'`,
-			);
+			await browser.wait(`${CLOSED} && ${FOOTER}==='Faux Two · off'`);
 			await openMenu();
 			await run("thinking", "Thinking level…");
 			await browser.wait(`document.querySelector('.command-menu .command-crumb')`);
 			await run("high", "high");
-			await browser.wait(
-				`${CLOSED} && document.querySelector('.model-control')?.getAttribute('title')==='Faux Two · high'`,
-			);
-			// The session keeps it: the page loads it again from the server.
+			await browser.wait(`${CLOSED} && ${FOOTER}==='Faux Two · high'`);
+			// The footer shows the change at once; the session keeps it once its worker applied it.
+			await configured(id, "faux-2", "high");
 			await openSession(id, "Model change");
-			await browser.wait(`document.querySelector('.model-control')?.getAttribute('title')==='Faux Two · high'`);
+			await browser.wait(`${FOOTER}==='Faux Two · high'`);
 			// The default for new sessions is untouched.
 			const models = await holdIn(owner, Models, {}, "owner");
 			assert.deepEqual(models.defaultModel.value, { provider: "faux", modelId: "faux-1", thinkingLevel: "off" });
@@ -708,24 +735,20 @@ describe("command menu", { skip: !browserTests }, () => {
 			const helper = children![session]![0]!;
 			chat.release();
 			await load(`/s/${session}/c/${helper.conversationId}`);
-			await browser.wait(`document.querySelector('.model-control')?.getAttribute('title')==='Faux Model · high'`);
+			await browser.wait(`${FOOTER}==='Faux Model · high'`);
 			await openMenu();
 			assert.equal((await menu())?.chip, "Conversation · helper");
 			await run("change model", "Change model…");
 			await run("two", "Faux Two");
-			await browser.wait(
-				`${CLOSED} && document.querySelector('.model-control')?.getAttribute('title')==='Faux Two · high'`,
-			);
+			await browser.wait(`${CLOSED} && ${FOOTER}==='Faux Two · high'`);
 			await openMenu();
 			await run("thinking", "Thinking level…");
 			await browser.wait(`document.querySelector('.command-menu .command-crumb')`);
 			await run("low", "low");
-			await browser.wait(
-				`${CLOSED} && document.querySelector('.model-control')?.getAttribute('title')==='Faux Two · low'`,
-			);
+			await browser.wait(`${CLOSED} && ${FOOTER}==='Faux Two · low'`);
 			// The session's main conversation keeps its model.
 			await openSession(session, "With helper");
-			await browser.wait(`document.querySelector('.model-control')?.getAttribute('title')==='Faux Model'`);
+			await browser.wait(`${FOOTER}==='Faux Model · off'`);
 		});
 
 		it("sets the default model for new sessions", async () => {
@@ -739,10 +762,95 @@ describe("command menu", { skip: !browserTests }, () => {
 			await browser.wait(CLOSED);
 			await until(models.defaultModel, (choice) => choice?.modelId === "faux-2");
 			// The open session keeps its model.
+			assert.equal(await browser.evaluate(FOOTER), "Faux Model · off");
+			await models.setDefault({ provider: "faux", modelId: "faux-1", thinkingLevel: "off" }, BACKGROUND_CONTEXT);
+		});
+
+		it("opens the model and thinking pages from the footer's links, closing with Back and Escape", async () => {
+			const id = await create("Footer links");
+			await openSession(id, "Footer links");
+			await browser.wait(`${FOOTER}==='Faux Model · off'`);
+			await browser.click('button[aria-label="Model"]');
+			await browser.wait(`${OPEN} && document.activeElement?.matches('.command-menu input')`);
+			const models = (await menu())!;
+			assert.equal(models.chip, "Session · Footer links");
+			assert.deepEqual(models.crumbs, ["Models"]);
+			assert.equal(models.placeholder, "Search models…");
+			// One layer: Back closes the menu instead of showing its root.
+			await browser.evaluate("history.back()");
+			await browser.wait(CLOSED);
+			await browser.click('button[aria-label="Thinking level"]');
+			await browser.wait(`${OPEN} && document.activeElement?.matches('.command-menu input')`);
+			assert.deepEqual((await menu())!.crumbs, ["Thinking level"]);
+			await press("Escape");
+			await browser.wait(CLOSED);
+			await browser.click('button[aria-label="Thinking level"]');
+			await browser.wait(`${OPEN} && document.activeElement?.matches('.command-menu input')`);
+			await run("high", "high");
+			await browser.wait(`${CLOSED} && ${FOOTER}==='Faux Model · high'`);
+			await browser.click('button[aria-label="Model"]');
+			await browser.wait(`${OPEN} && document.activeElement?.matches('.command-menu input')`);
+			await run("two", "Faux Two");
+			await browser.wait(`${CLOSED} && ${FOOTER}==='Faux Two · high'`);
+			await configured(id, "faux-2", "high");
+			await openSession(id, "Footer links");
+			await browser.wait(`${FOOTER}==='Faux Two · high'`);
+		});
+
+		it("lists the models of the current provider first", async () => {
+			/** The open model page's rows as "title provider". */
+			const rows = `[...document.querySelectorAll('.command-menu [role=option]')].map((e) => e.querySelector('.command-title').textContent + ' ' + e.querySelector('.command-suffix-text').textContent)`;
+			const id = await create("Provider first");
+			await openSession(id, "Provider first");
+			await browser.wait(`${FOOTER}==='Faux Model · off'`);
+			await browser.click('button[aria-label="Model"]');
+			await browser.wait(`${OPEN} && document.activeElement?.matches('.command-menu input')`);
+			await type("two");
+			await browser.wait(`${rows}.join()==='Faux Two faux,Faux Two mirror'`);
+			// On the other provider's model, its models come first: without a query and with one.
+			await browser.wait(`${SELECTED}==='Faux Two'`);
+			await press("ArrowDown");
+			await press("Enter");
+			await browser.wait(`${CLOSED} && ${FOOTER}==='Faux Two'`);
+			await browser.click('button[aria-label="Model"]');
+			await browser.wait(`${OPEN} && document.activeElement?.matches('.command-menu input')`);
+			await browser.wait(`${rows}.join()==='Faux Two mirror,Faux Model faux,Faux Two faux'`);
+			await type("two");
+			await browser.wait(`${rows}.join()==='Faux Two mirror,Faux Two faux'`);
+			await press("Escape");
+			await browser.wait(CLOSED);
+		});
+
+		it("saves the current model and thinking level as the default, from the footer's star or the menu", async () => {
+			const id = await create("Make default");
+			await openSession(id, "Make default");
+			const models = await holdIn(owner, Models, {}, "owner");
+			const STAR = `document.querySelector('.model-controls .default-control')`;
+			// The session has the default (faux-1, off): no star.
+			await browser.wait(`${FOOTER}==='Faux Model · off'`);
+			assert.equal(await browser.evaluate(`${STAR}===null`), true);
+			// Another thinking level: the star shows, and the menu's command saves both.
+			await browser.click('button[aria-label="Thinking level"]');
+			await browser.wait(`${OPEN} && document.activeElement?.matches('.command-menu input')`);
+			await run("high", "high");
+			await browser.wait(`${CLOSED} && ${FOOTER}==='Faux Model · high' && ${STAR}`);
+			await openMenu();
+			await run("current model", "Set current model as default");
+			await browser.wait(CLOSED);
+			await until(models.defaultModel, (choice) => choice?.modelId === "faux-1" && choice.thinkingLevel === "high");
+			await browser.wait(`${STAR}===null`);
+			// Another model: the star saves it.
+			await browser.click('button[aria-label="Model"]');
+			await browser.wait(`${OPEN} && document.activeElement?.matches('.command-menu input')`);
+			await run("two", "Faux Two");
+			await browser.wait(`${CLOSED} && ${FOOTER}==='Faux Two · high' && ${STAR}`);
 			assert.equal(
-				await browser.evaluate(`document.querySelector('.model-control').getAttribute('title')`),
-				"Faux Model",
+				await browser.evaluate(`${STAR}.getAttribute('title')`),
+				"Make Faux Two · high the default for new sessions",
 			);
+			await browser.click(".model-controls .default-control");
+			await browser.wait(`${STAR}===null`);
+			await until(models.defaultModel, (choice) => choice?.modelId === "faux-2" && choice.thinkingLevel === "high");
 			await models.setDefault({ provider: "faux", modelId: "faux-1", thinkingLevel: "off" }, BACKGROUND_CONTEXT);
 		});
 	});
@@ -776,7 +884,7 @@ describe("command menu", { skip: !browserTests }, () => {
 			await guest.wait(`${TITLES}.includes('Switch session…')`);
 			const titles = await guest.evaluate<string[]>(TITLES);
 			for (const title of [
-				"New session",
+				"New session…",
 				"Rename session…",
 				"Archive session",
 				"Restore session",

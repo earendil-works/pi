@@ -697,13 +697,13 @@ textarea.input {
 	overflow-anchor: none;
 }
 .scroller::-webkit-scrollbar,
-.composer textarea::-webkit-scrollbar {
+.draft-editor::-webkit-scrollbar {
 	width: 4px;
 	height: 4px;
 	background: transparent;
 }
 .scroller::-webkit-scrollbar-thumb,
-.composer textarea::-webkit-scrollbar-thumb {
+.draft-editor::-webkit-scrollbar-thumb {
 	border-radius: 999px;
 	background: var(--scrollbar);
 }
@@ -2368,55 +2368,150 @@ button.diff-number:hover {
 .queue-remove:hover {
 	color: var(--text);
 }
-.composer textarea {
+/* The draft's editor (plugins/chat/draft-editor.tsx): text with its files as pills where their references are. */
+.draft-editor-box {
+	position: relative;
+}
+.draft-editor {
 	display: block;
 	width: 100%;
+	min-height: 24px;
 	max-height: 200px;
-	margin: 0;
-	padding: 0;
-	border: 0;
+	overflow-y: auto;
 	outline: 0;
-	resize: none;
-	overflow-y: hidden;
-	background: transparent;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
 	font-size: 16px;
 	line-height: 1.5;
+	cursor: text;
 }
-.attachments {
-	display: flex;
-	flex-wrap: wrap;
-	gap: var(--s1);
-	margin-bottom: var(--s2);
+.draft-editor:empty::before {
+	content: attr(data-placeholder);
+	color: var(--faint);
+	pointer-events: none;
 }
-.attachment {
+.draft-pill {
 	display: inline-flex;
 	align-items: center;
-	gap: var(--s2);
-	max-width: 100%;
+	gap: var(--s1);
+	max-width: 200px;
+	height: 22px;
+	margin: 0 1px;
+	padding: 0 var(--s2) 0 2px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg);
+	vertical-align: -4px;
+	font-size: var(--fs-sm);
+	font-weight: var(--fw-strong);
+	line-height: 1;
+	white-space: nowrap;
+	user-select: none;
+	-webkit-user-select: none;
+	touch-action: none;
+	cursor: grab;
+}
+.draft-pill:not(:has(img)) {
+	padding-left: var(--s2);
+}
+.draft-pill > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.draft-pill img {
+	width: 16px;
+	height: 16px;
+	border-radius: 2px;
+	object-fit: cover;
+	pointer-events: none;
+}
+.draft-pill.dragging {
+	opacity: 0.35;
+}
+@media (hover: hover) {
+	.draft-editor .draft-pill:hover {
+		background: var(--hover);
+	}
+}
+.draft-pill-ghost {
+	position: fixed;
+	z-index: 60;
+	transform: translate(-50%, -130%);
+	pointer-events: none;
+}
+.draft-drop-caret {
+	position: fixed;
+	z-index: 59;
+	width: 2px;
+	border-radius: 1px;
+	background: var(--text);
+	pointer-events: none;
+}
+/* A pill's menu: its preview, its name and size, Earlier/Later/Remove; a p2 popover (1px line, no shadow). */
+.draft-pill-menu {
+	position: absolute;
+	z-index: 20;
+	width: 260px;
+	padding: var(--s2);
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg);
+}
+.draft-pill-menu img {
+	display: block;
+	width: 100%;
+	max-height: 160px;
+	border-radius: var(--radius);
+	background: var(--code);
+	object-fit: contain;
+}
+.draft-pill-meta {
+	margin: var(--s2) 0;
+	overflow: hidden;
+	color: var(--muted);
+	font-size: var(--fs-sm);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.draft-pill-actions {
+	display: flex;
+	gap: var(--s1);
+}
+.draft-pill-actions button {
+	flex: 1;
 	height: var(--control-sm);
-	padding-left: var(--s1);
 	border: 1px solid var(--line);
 	border-radius: var(--radius);
 	font-size: var(--fs-sm);
 }
-.attachment img {
-	width: 24px;
-	height: 24px;
-	border-radius: var(--radius);
-	object-fit: cover;
+.draft-pill-actions button:disabled {
+	color: var(--faint);
 }
-.attachment-name {
-	max-width: 160px;
+.draft-pill-actions button:active:not(:disabled) {
+	background: var(--hover);
+}
+@media (hover: hover) {
+	.draft-pill-actions button:hover:not(:disabled) {
+		background: var(--hover);
+	}
+}
+/* A file reference in a sent message (src/web/Chat.tsx): the file's name where the message placed it. */
+.message-ref {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--s1);
+	max-width: 100%;
+	padding: 0 var(--s1);
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	vertical-align: -2px;
+	font-size: var(--fs-sm);
+	line-height: 1.4;
+}
+.message-ref > span {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-}
-.attachment button {
-	display: grid;
-	place-items: center;
-	width: var(--control-sm);
-	height: 100%;
-	color: var(--muted);
 }
 /* 40px targets; the outer buttons hug the inset so glyphs align with text. */
 .composer-bar {
@@ -2569,6 +2664,15 @@ button.diff-number:hover {
 	align-items: center;
 	gap: var(--s1);
 }
+/* The model ellipsizes; the thinking level and the star stay whole. */
+.model-controls {
+	display: flex;
+	align-items: center;
+	gap: var(--s1);
+	min-width: 0;
+	color: var(--muted);
+	font-size: var(--fs-xs);
+}
 .model-control {
 	min-width: 0;
 	max-width: 100%;
@@ -2577,6 +2681,26 @@ button.diff-number:hover {
 	font-size: var(--fs-xs);
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+.thinking-control {
+	flex: none;
+	color: var(--muted);
+	font-size: var(--fs-xs);
+}
+.default-control {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	padding: 0 var(--s1);
+	color: var(--faint);
+}
+.default-control:active {
+	color: var(--text);
+}
+@media (hover: hover) {
+	.default-control:hover {
+		color: var(--text);
+	}
 }
 .model-control.static {
 	cursor: default;
@@ -2906,9 +3030,6 @@ button.diff-number:hover {
 .sheet-sticky .search {
 	border-bottom: 0;
 }
-.model-default {
-	margin: var(--s2) 0 0;
-}
 @media (min-width: 700px) {
 	.sheet-layer {
 		align-items: var(--layer-align, center);
@@ -2968,27 +3089,6 @@ button.diff-number:hover {
 	font-size: var(--fs-sm);
 }
 
-/* Thinking level: text tabs aligned on the inset. */
-.segments {
-	display: flex;
-	flex-wrap: wrap;
-	gap: var(--s4);
-	min-width: 0;
-	margin: 0;
-	padding: 0;
-	border: 0;
-}
-.segments button {
-	height: var(--control-sm);
-	color: var(--muted);
-	font-size: var(--fs-sm);
-	text-transform: capitalize;
-}
-.segments button[aria-pressed="true"] {
-	box-shadow: inset 0 -1px var(--text);
-	color: var(--text);
-	font-weight: var(--fw-strong);
-}
 .model-list section h3 {
 	padding-top: var(--s4);
 }
@@ -3535,7 +3635,6 @@ button.history-edge:disabled {
 	.workspace-row,
 	.foot-button,
 	.text-action,
-	.segments button,
 	.detail-more,
 	.queued > div,
 	.file-completion > [role="option"],

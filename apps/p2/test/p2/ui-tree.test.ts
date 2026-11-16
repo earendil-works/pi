@@ -11,15 +11,12 @@ import { Chat } from "../../plugins/chat/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
 import { SessionTree } from "../../plugins/tree/contract.ts";
-import { Browser, browserTests } from "./browser.ts";
+import { Browser, browserTests, COMPOSER, composerText, setComposer } from "./browser.ts";
 import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
 import { type BaselineOffset, baselineOffsets } from "./sidebar-baselines.ts";
 
 /** A page function: a row's mark: the fork icon, the idle ring, the spinner, or none. */
 const GLYPH = `((e) => e.querySelector('.nav-marker .nav-icon svg circle') ? 'fork' : e.querySelector('.nav-marker > .run-mark[data-state=idle]') ? 'ring' : e.querySelector('.nav-marker > .run-mark[data-state=working]') ? 'spinner' : 'none')`;
-
-const input = (value: string) =>
-	`(()=>{const e=document.querySelector('.composer textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`;
 
 const idle = (view: { docs: Record<string, unknown> } | null | undefined) =>
 	!(view?.docs["pi.live"] as { run?: unknown } | undefined)?.run;
@@ -67,7 +64,7 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		await browser.evaluate(
 			`[...document.querySelectorAll('.user')].find(e=>e.textContent.includes('second')).querySelector('[aria-label=Edit]').click()`,
 		);
-		await browser.wait(`document.querySelector('.composer textarea')?.value==='second'`);
+		await browser.wait(`${composerText}==='second'`);
 		const main = (await until((await holdIn(fixture.browser(), Sessions, {}, "owner")).sessions, (list) =>
 			Boolean(list?.find((each) => each.id === id && each.main !== 1)),
 		))!.find((each) => each.id === id)!.main;
@@ -123,7 +120,7 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		);
 		await browser.wait(`location.pathname==='/s/${id}'`);
 		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: second')`);
-		await browser.wait(`document.activeElement === document.querySelector('.composer textarea')`);
+		await browser.wait(`document.activeElement === document.querySelector('${COMPOSER}')`);
 		assert.equal((await row()).main, 1);
 		// Conversation 1 working: its fork icon is framed.
 		const root = `[...document.querySelectorAll('.sidebar-section[data-key=recent] .nav-row:has(> .branch-row)')].find(e=>e.querySelector('.session-title').textContent==='Branches')`;
@@ -382,15 +379,15 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		);
 		const before = (await row()).branches.length;
 		// Alt+Enter: a fork of conversation 1 at its end becomes the main conversation, labelled with the message.
-		await browser.evaluate(input("a side question"));
+		await browser.evaluate(setComposer("a side question"));
 		await browser.evaluate(
-			`document.querySelector('.composer textarea').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',altKey:true,bubbles:true,cancelable:true}))`,
+			`document.querySelector('${COMPOSER}').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',altKey:true,bubbles:true,cancelable:true}))`,
 		);
 		await browser.wait(`location.pathname.startsWith('/s/${id}/c/')`);
 		await browser.wait(
 			`document.querySelector('.messages')?.textContent.includes('Echo: a side question') && document.querySelector('.messages').textContent.includes('Echo: last answer')`,
 		);
-		assert.equal(await browser.evaluate<string>(`document.querySelector('.composer textarea').value`), "");
+		assert.equal(await browser.evaluate<string>(composerText), "");
 		const branched = await row();
 		assert.notEqual(branched.main, 1);
 		assert.equal(branched.branches.length, before + 1);
@@ -420,7 +417,7 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 				windowsVirtualKeyCode: code,
 			});
 		};
-		await browser.evaluate(input("from the menu"));
+		await browser.evaluate(setComposer("from the menu"));
 		await browser.evaluate(`document.querySelector('.composer button.send').focus()`);
 		await key("ArrowUp", 38);
 		await browser.wait(`document.activeElement === ${options}[0]`);
@@ -448,10 +445,7 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		await browser.call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
 		await browser.wait(`${options}.length === 2`);
 		await new Promise((resolve) => setTimeout(resolve, 300));
-		assert.equal(
-			await browser.evaluate<string>(`document.querySelector('.composer textarea').value`),
-			"from the menu",
-		);
+		assert.equal(await browser.evaluate<string>(composerText), "from the menu");
 		await browser.evaluate(`${options}.find(e=>e.textContent.includes('new branch')).click()`);
 		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: from the menu')`);
 		await browser.call("Emulation.setTouchEmulationEnabled", { enabled: false });
@@ -463,7 +457,7 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: a side question')`);
 		// A tap sends in the conversation shown.
 		await browser.wait(`!document.querySelector('.composer button.stop')`);
-		await browser.evaluate(input("a tap"));
+		await browser.evaluate(setComposer("a tap"));
 		await browser.click(".composer button.send");
 		await browser.wait(`document.querySelector('.messages')?.textContent.includes('Echo: a tap')`);
 		assert.equal((await row()).branches.length, before + 2);
@@ -488,25 +482,22 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 			return browser.evaluate<string[]>(`${options}.map(e=>e.querySelector('span').textContent)`);
 		};
 		await browser.wait(`!document.querySelector('.composer button.stop')`);
-		await browser.evaluate(input("right-clicked"));
+		await browser.evaluate(setComposer("right-clicked"));
 		assert.deepEqual(await rightClick(), ["Send", "Send in a new branch"]);
 		await key("Escape", 27);
 		await browser.wait(`!document.querySelector('.send-options')`);
-		assert.equal(
-			await browser.evaluate<string>(`document.querySelector('.composer textarea').value`),
-			"right-clicked",
-		);
+		assert.equal(await browser.evaluate<string>(composerText), "right-clicked");
 		// While a run is busy: steer, or queue as a follow-up.
-		await browser.evaluate(input("slow busy"));
+		await browser.evaluate(setComposer("slow busy"));
 		await browser.click(".composer button.send");
 		await browser.wait(`document.querySelector('.composer button.stop')`);
-		await browser.evaluate(input("while busy"));
+		await browser.evaluate(setComposer("while busy"));
 		assert.deepEqual(await rightClick(), ["Steer", "Follow up"]);
 		await key("Escape", 27);
 		await browser.wait(`!document.querySelector('.send-options')`);
 		await browser.click(".composer button.stop");
 		await browser.wait(`!document.querySelector('.composer button.stop')`);
-		await browser.evaluate(input(""));
+		await browser.evaluate(setComposer(""));
 		tree.release();
 	});
 

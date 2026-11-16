@@ -22,6 +22,7 @@ import {
 	method,
 	num,
 	obj,
+	oneOf,
 	opt,
 	type ParamsOf,
 	remote,
@@ -34,9 +35,11 @@ import type { Op } from "../src/delta/index.ts";
 import { defineState } from "../src/documents/index.ts";
 import type { Attempt } from "../src/host/attempt.ts";
 import {
+	allow,
 	type Ctx,
 	createHost,
 	defineFacet,
+	deny,
 	type FacetHost,
 	type FacetSelf,
 	type Host,
@@ -44,6 +47,7 @@ import {
 	type PluginFailure,
 	type RefState,
 	type RouteHandle,
+	type RouteOptions,
 	type Self,
 	type StoreSelf,
 } from "../src/host/index.ts";
@@ -68,7 +72,6 @@ import type { ArchivePart } from "../src/store/archive.ts";
 import { sqliteBackend } from "../src/store/backend.ts";
 import { changeDocument, createDocument, retireDocument } from "../src/store/engine.ts";
 import { json } from "../src/store/json-column.ts";
-import { LiveQueries } from "../src/store/live-query.ts";
 import type { StagedWrite } from "../src/store/step.ts";
 import { type ChordStore, openStore, type Store } from "../src/store/store.ts";
 import { defineTable, type TableDefinition } from "../src/store/table.ts";
@@ -339,7 +342,6 @@ export function tableOwner(failures: ChordError[] = []): TableOwner & { readonly
 	return {
 		label: "app.store",
 		scope: {},
-		queries: new LiveQueries(),
 		assertLive: () => {},
 		fail: (error) => void failures.push(error),
 		failures,
@@ -969,6 +971,8 @@ export async function relayed(
 	options: {
 		readonly tab?: TestPrincipal;
 		readonly authorize?: (principal: TestPrincipal, address: { readonly key: string }) => boolean;
+		/** The route's admission (slice 14 §2.3). */
+		readonly admit?: RouteOptions<TestPrincipal, typeof Session>["admit"];
 		readonly trusted?: boolean;
 		readonly codecs?: { readonly tab?: Codec; readonly route?: Codec };
 		readonly server?: (host: FacetHost<TestPrincipal>) => void;
@@ -1045,6 +1049,7 @@ export async function relayed(
 		{
 			authorize: options.authorize ?? (() => true),
 			resolve: (address, routing) => resolve(address, () => worker(address), routing),
+			...(options.admit === undefined ? {} : { admit: options.admit }),
 		},
 		context,
 	);
@@ -1221,4 +1226,63 @@ export async function exported(store: Store): Promise<ArchivePart[]> {
 	const parts: ArchivePart[] = [];
 	for await (const part of store.export(BACKGROUND_CONTEXT)) parts.push(part);
 	return parts;
+}
+
+/** A desk its caller reads or edits by its admitted mode: a variant each (the UI bindings' variant tests). */
+export const Desk = remote("test.desk", {
+	version: 1,
+	params: {},
+	hostAddress: () => Server(),
+	admission: oneOf("reader", "editor"),
+	variants: {
+		reader: { state: { text: str() } },
+		editor: { state: { text: str() }, methods: { write: method(str()) } },
+	},
+});
+
+/** The mode `Desk`'s admission reads. */
+const DeskMode = local("test.desk.mode", { version: 1, params: {}, members: { mode: str(), set: method(str()) } });
+
+/**
+ * A server serving `Desk` and a client connected to it (`linked`), which is admitted as the desk's mode says: `reader`
+ * at first; `admit(mode)` changes it (`none`: denied).
+ */
+export async function desk(): Promise<{
+	readonly server: Host<TestPrincipal>;
+	readonly client: Host<TestPrincipal>;
+	admit(mode: "reader" | "editor" | "none"): Promise<void>;
+}> {
+	const { server, client } = await linked((h) => {
+		h.serve(DeskMode, (_params, self) => {
+			const mode = self.writable("reader");
+			return {
+				mode: self.derive([mode], ([value]) => value),
+				set: async (next) => {
+					mode.set(next);
+					return null;
+				},
+			};
+		});
+		h.serve(
+			Desk,
+			(_params, _principal, mode, self) => {
+				const text = self.writable("a desk");
+				const shown = self.derive([text], ([value]) => value);
+				if (mode === "reader") return { variant: "reader", members: { text: shown } };
+				const write = async (next: string) => {
+					text.set(next);
+					return null;
+				};
+				return { variant: "editor", members: { text: shown, write } };
+			},
+			{
+				admit: (_params, _principal, self) =>
+					self.derive([self.get(DeskMode, {}).mode], ([mode]) =>
+						mode === "reader" || mode === "editor" ? allow(mode) : deny("no access"),
+					),
+			},
+		);
+	});
+	const mode = await server.get(DeskMode, {}, BACKGROUND_CONTEXT);
+	return { server, client, admit: (next) => mode.set(next, BACKGROUND_CONTEXT).then(() => {}) };
 }

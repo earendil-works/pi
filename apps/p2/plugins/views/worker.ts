@@ -63,12 +63,13 @@ export default defineFacet((host) => {
 		// copy only: the transcript shows what the person wrote, and a note). Others go on to the next router, or become
 		// plain inputs.
 		self.contribute(SendRouters, {
-			views: async ({ conversation, author, text, requestId, whenBusy, attachments }, ctx) => {
+			views: async (input, ctx) => {
+				const { conversation, author, text, requestId, whenBusy, attachments } = input;
 				const durable = harness().durable;
 				const carried = viewContext(await readViews(durable, ctx));
 				const others: MessageContext[] = [];
 				for (const context of contexts.value.values()) {
-					const added = await context(ctx);
+					const added = await context(input, ctx);
 					if (added) others.push(added);
 				}
 				if (!carried && !others.length) return undefined;

@@ -355,6 +355,50 @@ describe("a block's steps and active thought", { skip: !browserTests }, () => {
 		);
 	});
 
+	it("wraps long lines in details instead of scrolling them sideways", async () => {
+		const long = "word ".repeat(80) + "x".repeat(300);
+		const entries: ConversationView["entries"][number][] = [];
+		respond(
+			entries,
+			[
+				call("b", "bash", { command: `echo ${long}` }),
+				call("r", "read", { path: "src/a.ts" }),
+				call("e", "edit", { path: "src/a.ts", edits: [] }),
+				call("g", "web_fetch", { url: `https://example.com/${long}` }),
+			],
+			"toolUse",
+			{
+				b: { content: [{ type: "text", text: long }] },
+				r: { content: [{ type: "text", text: `1\tconst a = "${long}";` }] },
+				e: {
+					content: [{ type: "text", text: "Edited" }],
+					details: { diff: `-1 const a = 1;\n+1 const a = "${long}";` },
+				},
+			},
+		);
+		await show({ conversation, entries, docs: {} });
+		await browser.click("[data-testid=activity]");
+		await browser.wait("document.querySelectorAll('[data-testid=step]').length===4");
+		for (const id of ["b", "r", "e", "g"])
+			await browser.evaluate(`document.querySelector('${step(id)} > button').click()`);
+		await browser.wait("document.querySelectorAll('[data-testid=step] > .activity-detail').length===4");
+		assert.deepEqual(
+			await browser.evaluate(
+				`[...document.querySelectorAll('[data-testid=activity-sheet] .activity-detail pre')].filter(e=>e.scrollWidth>e.clientWidth).map(e=>e.className)`,
+			),
+			[],
+		);
+		// The read's wrapped line stays beside its gutter.
+		assert.equal(
+			await browser.evaluate(
+				`(() => { const n=document.querySelector('${step("r")} .diff-number').getBoundingClientRect(), code=document.querySelector('${step("r")} .diff-code'), c=code.getBoundingClientRect(); return c.left>n.right && c.height>2*parseFloat(getComputedStyle(code).lineHeight); })()`,
+			),
+			true,
+		);
+		await browser.evaluate("history.back()");
+		await browser.wait(`!${panel}`);
+	});
+
 	it("shows a step's images as thumbnails in its collapsed row: the last four (two on phones), +N, outside its name", async () => {
 		const svg = (fill: string) =>
 			Buffer.from(

@@ -6,7 +6,7 @@ import type { Watchable, WatchHandle } from "../watch.ts";
 import type { Change, CurrentStep, History, VariantShape } from "./history.ts";
 import type { Address, KindShape } from "./host-kind.ts";
 import type { Params, ParamsData } from "./params.ts";
-import type { Method, NullSchema, Static } from "./schema.ts";
+import type { Method, NullSchema, QueriesMember, Schema, Static } from "./schema.ts";
 import type { Snapshot } from "./snapshot.ts";
 
 export type Kind = "remote" | "local";
@@ -14,12 +14,16 @@ export type Kind = "remote" | "local";
 /** The variant name of a local contract's members. */
 export const LOCAL = "members";
 
-/** Everything the types know about a contract: kind, name, params and the whole history. */
+/**
+ * Everything the types know about a contract: kind, name, params, the whole history and, for a remote contract that
+ * declares one, the schema of its admission's value.
+ */
 export type ContractShape = {
 	readonly kind: Kind;
 	readonly name: string;
 	readonly params: Params;
 	readonly history: History;
+	readonly admission?: Schema;
 };
 
 /** A declared contract: a branded handle, immutable by convention. Spread or hand-built copies are refused. */
@@ -36,6 +40,14 @@ export type ShapeOf<C extends Contract> = NonNullable<C["~shape"]>;
 
 /** The variants of a contract's current version. */
 export type CurrentVariants<C extends Contract> = CurrentStep<ShapeOf<C>["history"]>["variants"];
+
+/**
+ * The value a contract's admission hands its factory (slice 14 §2.1): what its `admission` schema describes; `never`
+ * for a contract without one.
+ */
+export type AdmittedOf<C extends Contract> = ShapeOf<C> extends { readonly admission: infer A extends Schema }
+	? Static<A>
+	: never;
 
 /** The params object of a contract. */
 export type ParamsOf<C extends Contract> = { [F in keyof ShapeOf<C>["params"]]: Static<ShapeOf<C>["params"][F]> };
@@ -62,14 +74,15 @@ type ImplementationOf<
 /**
  * One variant's members: a `Watchable` per state member, a function per method, an `EventMember` per event member (an
  * object's own `EventSource`, or a reference's member it re-exposes) and, in a local contract, a `KeyedWatchable` per
- * keyed member.
+ * keyed member and the named queries of a `queries` member.
  */
 export type VariantImplementation<V extends VariantShape, X extends Context = Context> = {
 	[M in
 		| keyof V["state"]
 		| keyof V["methods"]
 		| keyof NonNullable<V["keyed"]>
-		| keyof NonNullable<V["events"]>]: M extends keyof V["methods"]
+		| keyof NonNullable<V["events"]>
+		| keyof NonNullable<V["queries"]>]: M extends keyof V["methods"]
 		? MethodFunction<V["methods"][M], X>
 		: M extends keyof V["state"]
 			? Watchable<Static<V["state"][M]>>
@@ -77,8 +90,29 @@ export type VariantImplementation<V extends VariantShape, X extends Context = Co
 				? KeyedWatchable<Static<NonNullable<V["keyed"]>[M]>, KeyOfMember<NonNullable<V["keyed"]>[M]>>
 				: M extends keyof NonNullable<V["events"]>
 					? EventMember<Static<NonNullable<V["events"]>[M]>>
-					: never;
+					: M extends keyof NonNullable<V["queries"]>
+						? NamedQueriesOf<NonNullable<V["queries"]>[M]>
+						: never;
 };
+
+/** The named queries of a `queries` member declaration: one per listed name, typed by its item and arguments. */
+export type NamedQueriesOf<Q> = Q extends QueriesMember<infer I, infer A>
+	? { readonly [N in keyof A]: NamedQuery<Static<I>, Static<A[N]>> }
+	: never;
+
+/** A page of a named query's items and, when more follow, the cursor to continue after it. */
+export type QueryPage<T> = { readonly items: T[]; readonly next?: string };
+
+/**
+ * A named query (slice 14 §3.1): a query a store offers under a name, with arguments of `A` and items of `T`. Read
+ * live with `self.liveQuery`, counted with `self.count`, shown as a list with `self.list`, or read a page at a time.
+ */
+export interface NamedQuery<T, A> {
+	/** Up to `limit` items for `args` (after `options.after`), and the cursor of the next page when there is one. */
+	page(args: A, limit: number, context: Context, options?: { readonly after?: string }): Promise<QueryPage<T>>;
+	/** Type only: the arguments. */
+	readonly "~args"?: A;
+}
 
 /**
  * A subscription to an event member (`EventMember.on`): it lives until `stop()`, its context's abort or its reference's
@@ -154,9 +188,17 @@ export type ContractData = {
 	readonly versions: readonly VersionData[];
 	/** The kind of every member name ever declared in the history. */
 	readonly kinds: ReadonlyMap<string, MemberKind>;
+	/** A remote contract's admission, as its current version declares it; none without one, and for local. */
+	readonly admission: AdmissionData | undefined;
 };
 
-export type MemberKind = "state" | "method" | "keyed" | "event";
+/**
+ * A contract's admission (slice 14 §2.1): the schema of the value its factory is handed, and that schema's
+ * fingerprint. Never part of the contract's fingerprint; a reload's staging compares it (the value is never checked).
+ */
+export type AdmissionData = { readonly schema: Snapshot; readonly fingerprint: string };
+
+export type MemberKind = "state" | "method" | "keyed" | "event" | "queries";
 
 /** A `hostAddress` as Chord calls it: with checked params. Plugin code: what it returns is checked where routed. */
 export type HostAddress = (params: ParamsOf<Contract>) => Address;
@@ -176,7 +218,12 @@ export type VariantData = {
 	readonly keyed: ReadonlyMap<string, KeyedSnapshot>;
 	/** Event members: their values' schemas (JSON only). */
 	readonly events: ReadonlyMap<string, Snapshot>;
+	/** `queries` members (slice 14 §3.1): only a local contract has any. */
+	readonly queries: ReadonlyMap<string, QueriesData>;
 };
+
+/** A `queries` member's snapshots: its items' schema, and each named query's arguments. */
+export type QueriesData = { readonly item: Snapshot; readonly args: ReadonlyMap<string, Snapshot> };
 
 /** A keyed member's schema snapshot and, for a host-keyed one, the host kind its keys are addresses of. */
 export type KeyedSnapshot = Snapshot & { readonly key?: KindShape & { readonly kind: string } };

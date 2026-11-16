@@ -1,12 +1,12 @@
 // Tests of the owner's sign-in (slice 13 §2): the owner link (single use, expiry, replaced at each start, the token
-// only in the fragment), the owner token file (mode 0600, kept while its session lives, replaced once revoked), and an
+// only in the fragment), the owner token file (mode 0600, kept while its sign-in lives, replaced once revoked), and an
 // owner the app chooses (decision "The kit's owner is a principal the app chooses": recognized by canonical JSON, its
-// token file replaced and its session revoked when it changes).
+// token file replaced and its sign-in revoked when it changes).
 
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
-import { Sessions } from "../../../src/node/app/index.ts";
+import { SignIns } from "../../../src/node/app/index.ts";
 import { OwnerLink } from "../../../src/node/app/owner.ts";
 import { send } from "../http/support.ts";
 import { bearerFor, testApp, type UserPrincipal, userOwnerApp, WHOAMI } from "./support.ts";
@@ -39,7 +39,7 @@ describe("the owner link", () => {
 		const whoami = await send(port, "GET", "/whoami", { headers: { cookie } });
 		expect(JSON.parse(whoami.body.toString())).toEqual({ kind: "owner" });
 		expect((await postToken(port, token)).status).toBe(403);
-		const listed = await app.host.root(async (ctx) => (await ctx.get(Sessions, {})).list.value, context);
+		const listed = await app.host.root(async (ctx) => (await ctx.get(SignIns, {})).list.value, context);
 		expect(listed.filter(({ kind }) => kind === "browser").map(({ label }) => label)).toEqual(["owner browser"]);
 		await app.close(context);
 	});
@@ -84,7 +84,7 @@ describe("the owner token file", () => {
 		await second.app.close(context);
 	});
 
-	it("is replaced at the next start when its secret no longer matches its session (review L6)", async () => {
+	it("is replaced at the next start when its secret no longer matches its sign-in (review L6)", async () => {
 		const first = await testApp();
 		const token = (await readFile(first.app.ownerTokenFile, "utf8")).trim();
 		await first.app.close(context);
@@ -96,13 +96,13 @@ describe("the owner token file", () => {
 		await second.app.close(context);
 	});
 
-	it("is replaced at the next start once its session was revoked", async () => {
+	it("is replaced at the next start once its sign-in was revoked", async () => {
 		const first = await testApp();
 		const token = (await readFile(first.app.ownerTokenFile, "utf8")).trim();
 		await first.app.host.root(async (ctx) => {
-			const sessions = await ctx.get(Sessions, {});
+			const signIns = await ctx.get(SignIns, {});
 			const id = token.slice(0, token.indexOf("."));
-			await sessions.revoke(id, ctx);
+			await signIns.revoke(id, ctx);
 		}, context);
 		await first.app.close(context);
 		const second = await testApp({ dataDir: first.dataDir, root: first.root });
@@ -141,7 +141,7 @@ describe("an owner the app chooses", () => {
 		await second.app.close(context);
 	});
 
-	it("replaces the owner token file when the owner changes and revokes its session; the old owner's others stay, not the owner", async () => {
+	it("replaces the owner token file when the owner changes and revokes its sign-in; the old owner's others stay, not the owner", async () => {
 		const first = await userOwnerApp(ada, { plugins: { whoami: { "server.ts": WHOAMI } } });
 		const old = (await readFile(first.app.ownerTokenFile, "utf8")).trim();
 		const other = await bearerFor(first.app, ada);
@@ -156,7 +156,7 @@ describe("an owner the app chooses", () => {
 			401,
 		);
 		expect(await whoami(second.port, other)).toEqual(ada);
-		// An owner-only route: the old owner's session is refused, the new owner's accepted.
+		// An owner-only route: the old owner's sign-in is refused, the new owner's accepted.
 		const { code } = JSON.parse((await send(second.port, "POST", "/_chord/pair")).body.toString()) as {
 			code: string;
 		};

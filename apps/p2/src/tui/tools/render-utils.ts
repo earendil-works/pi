@@ -1,6 +1,6 @@
 // Copied from coding-agent core/tools/render-utils.ts without `node:os` homedir, `pathToFileURL` hyperlinks or local
 // path resolution (section 11): paths display relative to the session cwd. Output text is sanitized server text.
-import { getImageDimensions, imageFallback } from "@earendil-works/pi-tui";
+import { imageFallback } from "@earendil-works/pi-tui";
 import { keyHint, type RenderContext, safeText } from "../render-context.ts";
 import type { Theme } from "../theme/theme.ts";
 import type { ToolResultView } from "./types.ts";
@@ -43,8 +43,10 @@ export function getTextOutput(result: ToolResultView | undefined): string {
 		const indicators = images
 			.map((image) =>
 				imageFallback(
-					safeText(image.mimeType ?? "image/unknown"),
-					image.data ? (getImageDimensions(image.data, image.mimeType) ?? undefined) : undefined,
+					safeText(image.mimeType),
+					image.width === undefined || image.height === undefined
+						? undefined
+						: { widthPx: image.width, heightPx: image.height },
 				),
 			)
 			.join("\n");

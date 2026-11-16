@@ -102,7 +102,7 @@ verifying an agent's files on their own before committing. Node 24: `~/node-v24.
 - **Runtime** (`src/runtime`): shared contracts and helpers (principals, worker and Harness, Durable registry,
   extension switches, input entries, settings, logs, fetch).
 - **Plugins**: chat, chat-mode, sessions, familiar (the session above the others), subagents, agent (one-shot agents),
-  codemode, cache-warming, coding-tools, prompt, models, login, search, status, drafts, files, send-file, artifacts,
+  codemode, cache-warming, coding-tools, fit-images, prompt, models, login, search, status, drafts, files, send-file, artifacts,
   workspace, file-index, terminals, envs, mcp, ports, radius, sharing, devices, settings, proxy-marker, logs, dev-tools,
   powershell, web-shell, projects, views, rollups (sidebar sections made from code). Before writing one, read Chord's
   tutorial (`packages/chord/docs/tutorial/`) and plugin guide (`packages/chord/docs/plugin-authoring.md`), then an
@@ -165,8 +165,10 @@ From `AGENTS.md` and this project's history:
    decide one behavior each.
 4. **MCP:** `plugins/mcp` (WP6-8 of `docs/mcp-durable.md`: owner `mcp.json`, host stdio and HTTP, code mode
    tools (`tool_search` without code mode), servers on environments, project `.pi/mcp.json`, OAuth sign-in); code mode
-   namespaces are done (one extension per server, namespace `mcp__<server>`, described from configuration so the
-   prompt stays the same when servers connect; the `mcp_servers` section is gone); whether Radius sends its cookie on a
+   namespaces are done (one composing `mcp` extension whose wraps show each conversation the servers of its
+   location's lease, each namespace `mcp__<server>` with pi's one-line summary; `mcp_servers` only without code mode;
+   design and the Durable alternative: Radius artifact `01m7czh2mtetn9n716pzqnd7mk`); owner and account qualifiers for
+   same-named servers of several people are p3's; whether Radius sends its cookie on a
    sign-in's redirect back is unverified.
 5. **npm:** deprecate `@earendil-works/pi-client`, `pi-protocol` and `pi-server` (1.1.0), which no longer exist.
 6. `docs/p2-notes.md` TODO: the TypeScript 5.9.3 pin (Termux), an isolating plugin loader, sandboxing third-party

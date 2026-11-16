@@ -31,7 +31,7 @@ If a p2 already answers on the port, the app adopts it instead: it opens that se
 
 ### Settings
 
-Each setting is a user default (`defaults write com.earendil.pi <key> <value>`), and an environment variable overrides it for test runs:
+Each setting is a user default (`defaults write com.earendil.pi <key> <value>`). An environment variable overrides most of them for test runs:
 
 | Default | Variable | Default value |
 |---|---|---|
@@ -42,8 +42,9 @@ Each setting is a user default (`defaults write com.earendil.pi <key> <value>`),
 | `mode` | `P2MAC_MODE` | `start` (`dev`: the dev supervisor) |
 | `fake` | `P2MAC_FAKE` | off (`1`: the faux provider) |
 | `source`, `attachedPort`, `attachedDataDir` | `P2MAC_ATTACH` (a port; `P2MAC_DATA_DIR` is then its data directory) | the app's own server |
+| `appearance` | none | `system` (`light`, `dark`) |
 
-`P2MAC_DIAG_DIR` makes every finished page load write `page-N.json` (what the page sees) and `page-N.png` (a snapshot) into that directory.
+`P2MAC_DIAG_DIR` makes every finished page load write `page-N.json` (what the page sees, its theme included) and snapshots of the page and the window (`page-N.png`, `window-N.png`) into that directory. With `P2MAC_DIAG_BRIDGE=<preference>` as well, the first page drives the host bridge once (`bridge-N.json`): it reads and sets the preference, checks the event, has an invalid value, a frame inside the page and a page on another origin refused, picks System in View > Appearance, clicks p2's theme button twice and then double-clicks it, changes the theme four more times (p2's button and the bridge, each way) while grabbing the windows with `screencapture` 0, 80, 160 and 300 ms after each change (`fade-N-*.png`, with a millisecond clock stamped into the page, and the page's view transition timing in `bridge-N.json`), and reloads over a stale stored theme, which the reload's record removes again. The grabs bring the window in front of other apps' windows and need the terminal's Screen Recording permission.
 
 The server's output goes to `~/Library/Logs/Pi/server-<port>.log`, which the menu bar item opens with **Show Server Log**.
 
@@ -96,7 +97,13 @@ Ctrl-C quits it like the Quit command, which also stops its server. A checkout u
   - **Links:** Cmd-click, middle-click and `target=_blank` on the brain's origin open a new window. Every other origin opens in the default browser.
   - **Native handling:** downloads go to ~/Downloads; `<input type=file>` gets a file panel; `alert`, `confirm` and `prompt` are sheets; the microphone is allowed for the brain origin only; the page reloads when the web process crashes.
   - **Placeholder:** while there is no page, a native view shows the server's state with Start Pi or Try Again.
-- **Menus** (`MainMenu.swift`): Edit (without it, copy and paste do nothing), Reload, zoom, full screen, windows.
+- **Appearance** (`Appearance.swift`, `HostBridge.swift`): the app owns the light/dark preference for every brain page, as the Radius shell does for the pages it frames.
+  - The preference (System, Light, Dark) is the user default `appearance`. The app sets `NSApp.appearance` from it before the first window, so the tab bar, the placeholder and every page in "system" mode follow without a flash: WKWebView's `prefers-color-scheme` follows the app's appearance.
+  - **View > Appearance** changes it, with a checkmark on the current one.
+  - **Fade:** a change the app makes (the menu, the bridge) cross-fades in about 250 ms. Each document and the app fade their own pixels: the page runs a view transition when its scheme changes, and the app adds a Core Animation fade only to the views it draws itself (the tab bar, the placeholder), never to the content view or the webview's layer, which would stack a second fade over the page's. No fade at launch, with Reduce Motion, or for the system's own switch (macOS fades the screen).
+  - **Page bridge:** every brain page, direct and remote, has `window.webkit.messageHandlers.piHost` in its own world, so p2 (`apps/p2/src/web/theme.ts`) knows at startup that the app owns the preference and ignores the one stored in its origin. `postMessage({ type: "theme" })` resolves to `{ preference }`; `postMessage({ type: "set-theme", preference })` stores and applies it and resolves to `{ preference }`. After every change, from either side, all pages of all windows get the event `pi-host-theme` with `detail: { preference }`. The resolved scheme is never sent: the page reads it from `matchMedia`.
+  - WebKit exposes the handler to every frame of the page, not only the main one. It is answered for the main frame of a page on the brain's own origin only; frames inside the page, other origins and invalid values get an error. The worst a page can do is change the app's appearance.
+- **Menus** (`MainMenu.swift`): Edit (without it, copy and paste do nothing), Reload, zoom, Appearance, full screen, windows.
 - **Icons** (`PiGlyph.swift`, `scripts/make-icon.swift`): the Pi logo's shape as a template image in the menu bar, and in black on a white plate as the app icon.
 
 ## What the spike showed
