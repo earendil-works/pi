@@ -397,6 +397,6 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
   already signed in (`p3 pair <code>`, the local page, the terminal client), and the waiting device gets its own
   sign-in, revocable on its own. No link travels, so the Pi never needs to know the address it is reached by (a
   tunnel's domain, a LAN address). Passwords for the owner are out: a Pi exposed to the web would make them phishable
-  and guessable. The owner link printed at start stays as the first sign-in. Open, for slice 25: Chord's HTTP baseline
-  accepts remote requests only for declared host names (against DNS rebinding); how a Pi behind a tunnel is reached
-  without declaring its domain.
+  and guessable. The owner link printed at start stays as the first sign-in. Remote requests are accepted for any host name
+  (owner, 2026-11-16, same day): authority comes only from host-bound sign-ins; pairing codes expire within minutes,
+  the approval shows everything needed to judge the request, and pairing is rate-limited (slice 25, "Decided since").
