@@ -144,6 +144,19 @@ needs a reference or a native). No stale-worker check exists or is needed (below
 - Every slice edits and reloads each plugin it touches while it is used (a list open, a worker running), in a test:
   nothing lost, no error.
 
+## Releases
+
+p3 runs two ways: from the checkout (TypeScript through `--conditions=source`) and as the installed release
+(`npm run release:p3:local`, slice 26: base code bundled with Chord inlined, plugins as source). Both must work.
+
+- Base code asks `src/install.ts` where p3's files are; it never builds paths from `import.meta` itself.
+- Plugins ship as source: they import only the API and their own files, and their tests end in `.test.ts` (the build
+  leaves those out).
+- A new base-code dependency is inlined into the bundle or added to the build's list of allowed externals (the build
+  fails on any other).
+- Node flags go into the launcher or the session worker's `execArgv`, never only into `npm test`.
+- A slice that touches base code runs `release:p3:local` (its release tests) before reporting.
+
 ## Tests
 
 - Three tiers: plugin (`testPlugin`), topology (server and workers in one process, `test/topology.ts`), end to end
