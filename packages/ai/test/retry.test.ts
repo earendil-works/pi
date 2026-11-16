@@ -14,8 +14,37 @@ const wrappedDnsLookupError =
 	"The pending stream has been canceled (caused by: getaddrinfo ENOTFOUND bedrock-runtime.us-east-1.amazonaws.com)";
 const azurePeakLoadError =
 	"The system is currently experiencing high demand and cannot process your request. Your request exceeds the maximum usage size allowed during peak load. For improved capacity reliability, consider switching to Provisioned Throughput.";
+const codexConnectionLimitError =
+	"Codex error: Responses websocket connection limit reached (60 minutes). Create a new websocket connection to continue.";
 
 describe("provider retry classification", () => {
+	// Regression for #12124: a connection's lifetime limit is recoverable with a fresh connection.
+	it.each([
+		codexConnectionLimitError,
+		"websocket_connection_limit_reached",
+		"Codex error: websocket_connection_limit_reached",
+	])("matches the Codex websocket connection lifetime limit: %s", (errorMessage) => {
+		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(true);
+	});
+
+	it.each([
+		"connection limit reached",
+		"Unknown field prefix_websocket_connection_limit_reached",
+		"Unknown field websocket_connection_limit_reached_suffix",
+		"websocket_connection_limit_reached: insufficient_quota",
+		"websocket_connection_limit_reached: subscription_sharing_usage_limit_exceeded",
+	])("keeps unrelated identifiers and account limits non-retryable: %s", (errorMessage) => {
+		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(false);
+	});
+
+	it("does not classify an aborted connection-limit response as retryable", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "aborted", errorMessage: codexConnectionLimitError }),
+			),
+		).toBe(false);
+	});
+
 	it("matches explicit provider retry guidance", () => {
 		expect(
 			isRetryableAssistantError(

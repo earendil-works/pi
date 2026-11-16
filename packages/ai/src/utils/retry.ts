@@ -98,6 +98,9 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	// WebSocket transports can report close/error text instead of HTTP/fetch text.
 	"websocket.?closed",
 	"websocket.?error",
+	// Codex connection lifetime limits recover on a fresh connection (#12124).
+	"(?<![a-z0-9_])websocket_connection_limit_reached(?![a-z0-9_])",
+	"responses websocket connection limit reached",
 
 	// Premature stream endings from SDKs and transports. Anthropic can throw
 	// "stream ended without ..." and "Anthropic stream ended before message_stop"
