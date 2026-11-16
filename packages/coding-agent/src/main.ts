@@ -51,6 +51,7 @@ import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dis
 import { resolveCliModel, resolveModelScopeWithDiagnostics, type ScopedModel } from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
+import type { ProgressEvent } from "./core/package-manager.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
 import type { CreateAgentSessionOptions } from "./core/sdk.ts";
 import {
@@ -783,6 +784,16 @@ export async function main(args: string[], options?: MainOptions) {
 	const resolvedSkillPaths = resolveCliPaths(cwd, parsed.skills);
 	const resolvedPromptTemplatePaths = resolveCliPaths(cwd, parsed.promptTemplates);
 	const resolvedThemePaths = resolveCliPaths(cwd, parsed.themes);
+	// Interactive mode installs and refreshes packages again on /reload, /new, /resume and /fork while the TUI
+	// draws on the terminal, where git and npm output would corrupt its screen (#11264). Their output is
+	// captured, and until the TUI starts each install is announced on stderr instead.
+	const packageCommandOutput = appMode === "interactive" ? "capture" : "inherit";
+	let announcePackageInstalls = packageCommandOutput === "capture";
+	const onPackageProgress = (event: ProgressEvent) => {
+		if (announcePackageInstalls && event.type === "start" && event.message) {
+			console.error(chalk.dim(event.message));
+		}
+	};
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
 		cwd,
 		agentDir,
@@ -831,6 +842,8 @@ export async function main(args: string[], options?: MainOptions) {
 					}
 				: undefined,
 			resourceLoaderOptions: {
+				packageCommandOutput,
+				onPackageProgress,
 				additionalExtensionPaths: resolvedExtensionPaths,
 				additionalSkillPaths: resolvedSkillPaths,
 				additionalPromptTemplatePaths: resolvedPromptTemplatePaths,
@@ -1017,6 +1030,7 @@ export async function main(args: string[], options?: MainOptions) {
 		printTimings();
 		await runRpcMode(runtime);
 	} else if (appMode === "interactive") {
+		announcePackageInstalls = false;
 		const interactiveMode = new InteractiveMode(runtime, {
 			migratedProviders,
 			startupDiagnostics,
