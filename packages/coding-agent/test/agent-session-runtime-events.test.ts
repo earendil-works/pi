@@ -206,6 +206,26 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		runtimeHost.setRebindSession(undefined);
 	});
 
+	it("emits session_start after reload when extensions were bound without bindings", async () => {
+		const events: RecordedSessionEvent[] = [];
+		const { runtimeHost } = await createRuntimeHost((pi) => {
+			pi.on("session_shutdown", (event) => {
+				events.push(event);
+			});
+			pi.on("session_start", (event) => {
+				events.push(event);
+			});
+		});
+		events.length = 0;
+
+		await runtimeHost.session.reload();
+
+		expect(events).toEqual([
+			{ type: "session_shutdown", reason: "reload" },
+			{ type: "session_start", reason: "reload" },
+		]);
+	});
+
 	it("emits session_before_fork and session_start and honors cancellation", async () => {
 		const events: RecordedSessionEvent[] = [];
 		let cancelNextFork = false;
