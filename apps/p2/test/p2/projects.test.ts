@@ -1,9 +1,9 @@
 // Projects (`projects.json`): parsing and validation, the observed file keeping its last valid state, the owner-only
-// `Projects` with this device's label, and finding a session's project and a project's place on a machine.
+// `Projects` with this device's label, creating a project, and finding a session's project and a project's place on a machine.
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -142,4 +142,51 @@ test("membership: assigned to projects.json's projects only, followed by copies,
 	await writeFile(join(fixture.dataDir, "projects.json"), "{}");
 	await until(projects.projects, (list) => list?.length === 0);
 	assert.equal(projects.sessions.value?.[source.id], "pi");
+});
+
+test("create: a project after the others in projects.json, refused for a taken name, a bad place or an invalid file", async (t) => {
+	const fixture = await startFixture({ plugins: ["devices", "projects"] });
+	t.after(() => fixture.close());
+	const file = join(fixture.dataDir, "projects.json");
+	await writeFile(file, JSON.stringify(PI));
+	const projects = await holdIn(fixture.browser(), Projects, {}, "owner");
+	await until(projects.projects, (list) => list?.length === 1);
+	await projects.create({ name: " web ", place: { env: null, path: "/srv/web" } }, BACKGROUND_CONTEXT);
+	await projects.create({ name: "gpu-app", place: { env: "gpu", path: "~/app" } }, BACKGROUND_CONTEXT);
+	const list = await until(projects.projects, (value) => value?.length === 3);
+	assert.deepEqual(
+		list.map((project) => project.name),
+		["pi", "web", "gpu-app"],
+	);
+	assert.deepEqual(JSON.parse(await readFile(file, "utf8")), {
+		...PI,
+		web: [{ path: "/srv/web" }],
+		"gpu-app": [{ env: "gpu", path: "~/app" }],
+	});
+	for (const [name, place, error] of [
+		["pi", { env: null, path: "/a" }, /A project "pi" exists already/],
+		["rel", { env: null, path: "relative" }, /absolute or start with ~/],
+		["bad-env", { env: "Mac", path: "/a" }, /invalid environment name Mac/],
+		["  ", { env: null, path: "/a" }, /Invalid project name/],
+	] as const)
+		await assert.rejects(projects.create({ name, place }, BACKGROUND_CONTEXT), error, name);
+	await writeFile(file, "{");
+	await until(projects.failure, (failure) => Boolean(failure));
+	await assert.rejects(
+		projects.create({ name: "late", place: { env: null, path: "/late" } }, BACKGROUND_CONTEXT),
+		/projects\.json is invalid; fix it first/,
+	);
+	assert.equal(await readFile(file, "utf8"), "{");
+});
+
+test("create: the first project writes projects.json", async (t) => {
+	const fixture = await startFixture({ plugins: ["devices", "projects"] });
+	t.after(() => fixture.close());
+	const projects = await holdIn(fixture.browser(), Projects, {}, "owner");
+	await until(projects.projects, (list) => list !== undefined);
+	await projects.create({ name: "first", place: { env: null, path: "~/first" } }, BACKGROUND_CONTEXT);
+	await until(projects.projects, (list) => list?.[0]?.name === "first");
+	assert.deepEqual(JSON.parse(await readFile(join(fixture.dataDir, "projects.json"), "utf8")), {
+		first: [{ path: "~/first" }],
+	});
 });

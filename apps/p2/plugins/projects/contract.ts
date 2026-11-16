@@ -2,7 +2,7 @@
 // the helpers that find a project's place on a machine and a directory's subpath below a place. Browser-safe: the
 // sessions TUI uses them.
 import { arr, nul, obj, type Static, str, union } from "@earendil-works/pi-schema";
-import { LOCAL, local, method, record, remote, serverHost } from "@p2/app/v1";
+import { evolve, LOCAL, local, method, record, remote, serverHost } from "@p2/app/v1";
 
 /** Where a project lives on one machine: `env` null is this device; `path` may start with `~` (that machine's home). */
 export const ProjectPlaceSchema = obj({ env: union([str(), nul()]), path: str() });
@@ -14,6 +14,12 @@ export type Project = Static<typeof ProjectSchema>;
 
 /** Session `session` belongs to project `project` from now on. */
 const Assign = obj({ session: str({ maxLength: 64 }), project: str({ maxLength: 64 }) });
+
+/** A new project at one place; projects.json's rules check the name and the place. */
+const Create = obj({
+	name: str({ minLength: 1, maxLength: 64 }),
+	place: obj({ env: union([str({ maxLength: 32 }), nul()]), path: str({ minLength: 1, maxLength: 4096 }) }),
+});
 
 /**
  * `projects.json` as last read validly (in the file's order), why the last read failed, and the sessions' projects by
@@ -32,14 +38,13 @@ export const ProjectService = local("p2.project-service", {
 		assign: method(Assign),
 		/** `copy` belongs to `source`'s project, if it has one. */
 		copy: method(obj({ source: str(), copy: str() })),
+		/** Adds a project after the others in projects.json; refused while the file is invalid or has the name. */
+		create: method(Create),
 	},
 });
 
-/**
- * The owner's projects, the last read's failure, this device's name in place labels (the server's hostname) and the
- * sessions' projects by session ID; `assign` is the TUI's project rows starting a session.
- */
-export const Projects = remote("p2.projects", {
+/** Version 1, as b58642efa released it: without `create`. */
+const ProjectsV1 = remote("p2.projects", {
 	version: 1,
 	params: {},
 	hostAddress: serverHost,
@@ -55,6 +60,13 @@ export const Projects = remote("p2.projects", {
 		},
 	},
 });
+
+/**
+ * The owner's projects, the last read's failure, this device's name in place labels (the server's hostname) and the
+ * sessions' projects by session ID; `assign` is the TUI's project rows starting a session. 2: `create` (the web
+ * sidebar's New project). The provider still serves 1 (its `accepts`).
+ */
+export const Projects = evolve(ProjectsV1, (e) => e.addMethod("owner", "create", Create, nul()));
 
 /** How a place's machine reads: its environment's name, or this device's label. */
 export const placeLabel = (place: ProjectPlace, localLabel: string): string => place.env ?? localLabel;

@@ -244,7 +244,9 @@ A project is one codebase in several places, one per environment. `<P2_DATA_DIR>
 
 Object order is display order; array order is preference. A place without `env` is this device; `path` is absolute or
 starts with `~` (that machine's home); a project has at most one place per environment. p2 watches the file: valid edits
-apply at once, an invalid one keeps the last valid projects and shows why. Projects are owner-only; the TUI's session
+apply at once, an invalid one keeps the last valid projects and shows why. In the web sidebar, the Projects section's
+**⋯** has **New project…**: pick a folder (on this device or an environment), name it, and p2 adds it at the end of
+projects.json (rewriting the file: its comments go; add more places by hand). Projects are owner-only; the TUI's session
 selector and the web sidebar (below) group sessions by them:
 
 - A session belongs to a project only when it was started from the project's row (below) or its section's **+** in

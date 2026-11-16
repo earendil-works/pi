@@ -180,6 +180,10 @@ function stubs(macGate: Promise<void>, down: Set<string>) {
 						record("assign", args);
 						sessions.replace(ctx, { ...sessions.value, [args.session]: args.project });
 					},
+					// The web sidebar's New project; the TUI never creates one.
+					create: () => {
+						throw new Error("not in the TUI");
+					},
 				};
 			},
 		],

@@ -19,6 +19,7 @@ import {
 	Commands,
 	closeLayers,
 	getNavigation,
+	type Layer,
 	MoreIcon,
 	NEW_SESSION,
 	navigate,
@@ -42,8 +43,8 @@ import {
 } from "@p2/app/v1/web";
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Envs } from "../envs/contract.ts";
-import { directoryPickerLayer } from "../envs/contract.web.tsx";
-import { Projects, placeOn } from "../projects/contract.ts";
+import { DirectoryPicker, directoryPickerLayer } from "../envs/contract.web.tsx";
+import { type ProjectPlace, Projects, placeOn } from "../projects/contract.ts";
 import { SidebarRollups } from "../rollups/contract.ts";
 import { Search, SessionReads } from "../search/contract.ts";
 import { SessionStatus } from "../status/contract.ts";
@@ -63,6 +64,7 @@ import {
 	moved,
 	type NewTarget,
 	ordered,
+	PROJECTS,
 	ROLLUPS,
 	type RollupContext,
 	type SidebarRow,
@@ -70,6 +72,7 @@ import {
 	type Wanting,
 	wantingOf,
 } from "./sidebar/model.ts";
+import { NEW_PROJECT, NewProjectSheet, newProjectLayer, PROJECT_FOLDER, placeOf } from "./sidebar/NewProjectSheet.tsx";
 import { publishPage, usePageData } from "./sidebar/page-data.ts";
 import { type CodeSource, RollupSheet } from "./sidebar/RollupSheet.tsx";
 import { folderName } from "./sidebar/Row.tsx";
@@ -532,6 +535,19 @@ function Sidebar() {
 			...(live ? { onRefresh: refresh } : {}),
 		};
 	};
+	const projectFolder = useSheet(PROJECT_FOLDER);
+	const newProject = useSheet(NEW_PROJECT);
+	const newPlace = placeOf(newProject?.locator);
+	/** Each step of New project is a layer over the rollup's options: Back returns to the previous one. */
+	const pushLayer = (layer: Layer) => {
+		const nav = getNavigation();
+		void nav.push({ ...nav.route, layers: [...nav.route.layers, layer] });
+	};
+	const createProject = async (name: string, place: ProjectPlace) => {
+		const live = projectsHeld && liveIn(projectsHeld, "owner");
+		if (!live) throw new Error("Not connected");
+		await live.create({ name, place }, BACKGROUND_CONTEXT);
+	};
 	/** A rollup's options: its window, and moving it among the rollups. */
 	const rollupActions = (key: string) => {
 		const at = rollups.findIndex((rollup) => rollup.key === key);
@@ -579,7 +595,29 @@ function Sidebar() {
 					section={optionsOf}
 					code={codeOf(optionsOf.key)}
 					now={view.now}
+					{...(optionsOf.key === PROJECTS
+						? { onNewProject: () => pushLayer(directoryPickerLayer(null, "~", PROJECT_FOLDER)) }
+						: {})}
 					{...rollupActions(optionsOf.key)}
+					onClose={closeLayers}
+				/>
+			)}
+			{projectFolder && (
+				<DirectoryPicker
+					sheet={PROJECT_FOLDER}
+					title="Project folder"
+					env={null}
+					value="~"
+					onChange={(env, path) => pushLayer(newProjectLayer({ env, path }))}
+					onClose={closeLayers}
+				/>
+			)}
+			{newProject && newPlace && (
+				<NewProjectSheet
+					key={newProject.locator}
+					place={newPlace}
+					taken={context.projects.map((project) => project.name)}
+					onCreate={(name) => createProject(name, newPlace)}
 					onClose={closeLayers}
 				/>
 			)}

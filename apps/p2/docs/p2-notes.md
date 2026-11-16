@@ -918,6 +918,12 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   environment (README, Configuration). The server observes it as envs.json is observed (`ProjectService`: one observer,
   the last valid projects and the reason the last read failed); `Projects` serves them to owners with `local`, the
   server's hostname, which the TUI writes for this device.
+  - **New project** (`Projects.create`, v2; v1 without it is still served): the web sidebar's Projects rollup options
+    (`RollupSheet`'s "New project…") open the folder picker as its own layer (`project-folder`: the chat's `cwd`
+    picker would move the open session), then `NewProjectSheet` (layer `new-project`, locator the place) names it,
+    the folder's name first. `addProject` (`config.ts`) appends it with one place and writes the file anew (temp file,
+    rename; comments and formatting go), one create at a time; refused while the file is invalid, for a taken name and
+    for what `parseProjects` refuses. The observer then applies it as any edit. More places: by hand.
   - **Membership** is explicit, never derived from a path: `ProjectService` keeps session ID → project name in a
     persisted document of the server's Chord store (`p2.project-sessions`), not in the session catalog, so the
     catalog's schema and the `Sessions`/`Catalog` contracts stay as they are and dropping the plugin leaves only an

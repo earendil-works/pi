@@ -4,6 +4,7 @@
 import { hostname } from "node:os";
 import { obj, str } from "@earendil-works/pi-schema";
 import {
+	type AcceptsTable,
 	contribute,
 	defineFacet,
 	defineState,
@@ -15,6 +16,7 @@ import {
 } from "@p2/app/v1";
 import { Server } from "@p2/app/v1/server";
 import { SessionCopied } from "../sessions/contract.ts";
+import { addProject } from "./config.ts";
 import { ProjectService, Projects } from "./contract.ts";
 import { ProjectStore } from "./store.ts";
 
@@ -29,6 +31,9 @@ const Memberships = defineState("p2.project-sessions", {
 	persist: true,
 	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 20,
 });
+
+/** Version 1 lacks only `create`: nothing to map. */
+const PROJECTS_ACCEPTS: AcceptsTable<typeof Projects> = { 1: {} };
 
 export default defineFacet((host) => {
 	host.serve(ProjectService, (_params, self) => {
@@ -47,6 +52,8 @@ export default defineFacet((host) => {
 			(changed) => store.value.subscribe(changed),
 			() => store.value.snapshot,
 		);
+		// One write at a time: two creates must not both read the file before either wrote it.
+		let writing: Promise<unknown> = Promise.resolve();
 		return {
 			projects: deriveTyped(self, [snapshot], ([value]) => value.projects),
 			failure: self.derive([snapshot], ([value]) => value.error),
@@ -59,6 +66,16 @@ export default defineFacet((host) => {
 				}, ctx);
 				return null;
 			},
+			create: ({ name, place }) => {
+				const added = writing.then(() =>
+					addProject(server.info.value.dataDir, {
+						name: name.trim(),
+						places: [{ env: place.env, path: place.path.trim() }],
+					}),
+				);
+				writing = added.catch(() => {});
+				return added.then(() => null);
+			},
 			copy: async ({ source, copy }, ctx) => {
 				const project = memberships.value.sessions[source];
 				if (project !== undefined)
@@ -70,22 +87,27 @@ export default defineFacet((host) => {
 		};
 	});
 
-	host.serve(Projects, (_params, principal, self) => {
-		if (!isOwner(principal)) throw forbidden("projects are owner-only");
-		const service = self.get(ProjectService, {});
-		const label = hostname();
-		return {
-			variant: "owner",
-			members: {
-				projects: service.projects,
-				failure: service.failure,
-				// A constant: a derive of no sources.
-				local: self.derive([], () => label),
-				sessions: service.sessions,
-				assign: (args, ctx) => service.assign(args, ctx),
-			},
-		};
-	});
+	host.serve(
+		Projects,
+		(_params, principal, self) => {
+			if (!isOwner(principal)) throw forbidden("projects are owner-only");
+			const service = self.get(ProjectService, {});
+			const label = hostname();
+			return {
+				variant: "owner",
+				members: {
+					projects: service.projects,
+					failure: service.failure,
+					// A constant: a derive of no sources.
+					local: self.derive([], () => label),
+					sessions: service.sessions,
+					assign: (args, ctx) => service.assign(args, ctx),
+					create: (args, ctx) => service.create(args, ctx),
+				},
+			};
+		},
+		{ accepts: PROJECTS_ACCEPTS },
+	);
 
 	// A copy keeps its source's project; the copy goes on if that cannot be recorded.
 	contribute(host, "p2.projects-copied", (self) => {
