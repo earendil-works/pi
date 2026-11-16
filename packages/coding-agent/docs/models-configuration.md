@@ -190,6 +190,7 @@ Also applies to `azure-openai-responses` and `openai-codex-responses`.
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `supportsMidConvoSystemMessages` | boolean | `false` | Whether the exact model accepts system messages after the conversation has started. When false, later system messages are folded into the leading system message. |
+| `supportsStrictMode` | boolean | `false` | Whether the model supports strict (schema-constrained) function tools. |
 
 ### `typesafe-system-one`
 
