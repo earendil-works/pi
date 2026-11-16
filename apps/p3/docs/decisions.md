@@ -408,3 +408,7 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
   start builds the server's plugins and the worker base again (about 30 ms and 120 ms today). A cache keyed by what a
   build read would save that, at the risk of serving old code after an edit; not built. To be measured again once p3
   has many plugins.
+- **Chord's package is installed beside p3, accepted (owner, 2026-11-16):** an install of p3 also installs Chord's
+  whole package (about 15 MB: its sources, compiled components and declarations), because the shipped plugin API's
+  declarations and JavaScript import Chord (a plugin's type check and its own tests outside the server). The server
+  never loads it (its Chord is in the bundle). Accepted as it is; slimming Chord's package is a matter for publishing.
