@@ -82,7 +82,7 @@ host.serve(SessionFacts, (_params, principal, self) => {
 ```
 
 **No worker starts for a session that does not exist.** The session route's admission reads data through a contract the API owns
-(`SessionRoute`, `@p3/app/v1/server`), served by the sessions plugin (`src/session-route.ts`, `sessionExists`).
+(`SessionRoute`, `@earendil-works/p3/v1/server`), served by the sessions plugin (`src/session-route.ts`, `sessionExists`).
 
 **Helpers in p3's API** (`src/kit/`): `forward(store, Remote, variant, own?)` (a view's members from a store,
 by the remote contract's names; never derive a public contract from a store: it would publish whatever internal
@@ -171,9 +171,13 @@ p3 runs two ways: from the checkout (TypeScript through `--conditions=source`) a
 - Numbers: `bench/slice-<n>.ts`, at the sizes the brief states (1k, 10k, 100k rows), medians of 20 or more runs,
   the first (cold) run reported apart, on slayer; a worker's memory as its private memory (USS), and its total for
   several workers at once.
-- The mutation copy needs its own package links: copy `apps/p3` to `/tmp/x/apps/p3`, then link
-  `/tmp/x/node_modules/@p3/app` to the copy and `/tmp/x/node_modules/@earendil-works` to the repository's (a plain copy
-  resolves `@p3/app` back to the checkout, and mutations in `src/` take no effect).
+- The mutation copy needs its own package links: copy `apps/p3` to `/tmp/x/apps/p3` and make
+  `/tmp/x/node_modules/@earendil-works/` a directory of links: `p3` to the copy, every other entry to the repository's
+  (a mutation in Chord copies `packages/chord` too and links `chord` to it). Linking the whole scope resolves p3 back to
+  the checkout, and mutations take no effect. A mutation must keep its imports used: an unused import trips the
+  build's externals check.
+- A failed case leaves no socket or launched process open (`finally`, `t.after`, `--test-force-exit`): one leak hangs
+  the whole runner. Supervisors are detached, so a mutation runner kills them by command line.
 - Reload tests reload every facet the slice touches while it is used: the server's (a list open) and the worker's (the
   owner holding the worker's object).
 
@@ -196,7 +200,7 @@ p3 runs two ways: from the checkout (TypeScript through `--conditions=source`) a
 | A whole store exposed as a remote contract | an explicit contract and `forward` |
 | Seven plugins checking a worker's generation by hand | the workers component guarantees it |
 | A list cost measured once, after a start (2.3 ms, cold) | medians of 20 or more runs (0.7 ms warm), the cold run apart |
-| A mutation copy that still resolved `@p3/app` to the checkout | its own package links |
+| A mutation copy that still resolved `@earendil-works/p3` to the checkout | its own package links |
 | One index for two lists: the archived list's tie-break on the key was not in its index, so SQLite sorted every page | one index per list's order, and a plan test |
 | A revoked device's open socket kept working (inherited from Chord's kit) | a sign-in closes its own links (`links.opened`'s `close`), never `host.revoke` (it ends shared objects for every device) |
 

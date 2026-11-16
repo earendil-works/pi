@@ -383,3 +383,5 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
 - **Fable plans and reviews, never builds (owner, 2026-11-15):** builders are Opus; Fable writes designs, briefs and
   reviews only. (Slice 14, the frame fixes, slice 1's redo and slice 26's first part were built by Fable before this
   rule; each went through review rounds by Opus, Sol and Astra with mutation checks.)
+- **Correction (2026-11-15):** p3's sign-in cookie is `p3-<id>`, named after the Pi's random id (slice 26, several
+  Pis on one machine), not `p3-sign-in` as the slice 1 redo entry says. The API package is `@earendil-works/p3`.
