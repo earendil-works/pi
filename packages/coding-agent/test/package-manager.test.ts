@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { PassThrough } from "node:stream";
@@ -99,6 +99,7 @@ describe("DefaultPackageManager", () => {
 		}
 		vi.restoreAllMocks();
 		vi.unstubAllGlobals();
+		vi.unstubAllEnvs();
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
@@ -2559,6 +2560,78 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			// Should only find the valid top-level extension
 			expect(result.extensions.some((r) => pathEndsWith(r.path, "valid.ts") && r.enabled)).toBe(true);
 			expect(result.extensions.filter((r) => r.enabled).length).toBe(1);
+		});
+	});
+
+	// #11264: interactive mode runs installs while the TUI draws on the terminal, so their output is captured.
+	describe("captured command output", () => {
+		const createCapturingManager = () =>
+			new DefaultPackageManager({
+				cwd: tempDir,
+				agentDir,
+				settingsManager,
+				commandOutput: "capture",
+			}) as unknown as {
+				runCommand(command: string, args: string[], options?: { cwd?: string }): Promise<void>;
+			};
+
+		it("reports the end of a failing command's output in the error", async () => {
+			const script =
+				"process.stdout.write('npm out\\n'); process.stderr.write('npm ERR! broken\\n'); process.exit(3)";
+
+			await expect(createCapturingManager().runCommand(process.execPath, ["-e", script])).rejects.toThrow(
+				/failed with code 3:\nnpm out\nnpm ERR! broken/,
+			);
+		});
+
+		it("returns when the command exits although a background process still holds its output", async () => {
+			const script =
+				"require('child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], { stdio: 'inherit', detached: true }).unref()";
+			const started = Date.now();
+
+			await createCapturingManager().runCommand(process.execPath, ["-e", script]);
+
+			expect(Date.now() - started).toBeLessThan(3000);
+		});
+
+		it.skipIf(process.platform === "win32")(
+			"stops git and ssh from prompting and names the fix when git could not ask for credentials",
+			async () => {
+				const binDir = join(tempDir, "bin");
+				mkdirSync(binDir, { recursive: true });
+				const fakeGit = join(binDir, "git");
+				writeFileSync(
+					fakeGit,
+					'#!/bin/sh\necho "prompt=$GIT_TERMINAL_PROMPT ssh=$GIT_SSH_COMMAND"\necho "fatal: could not read Username for \'https://example.com\': terminal prompts disabled" >&2\nexit 128\n',
+				);
+				chmodSync(fakeGit, 0o755);
+				vi.stubEnv("PATH", `${binDir}:${process.env.PATH ?? ""}`);
+				vi.stubEnv("GIT_SSH_COMMAND", undefined);
+
+				const error = await createCapturingManager()
+					.runCommand("git", ["clone", "https://example.com/private.git"])
+					.catch((caught: Error) => caught);
+
+				expect(error).toBeInstanceOf(Error);
+				expect((error as Error).message).toContain("prompt=0 ssh=ssh -o BatchMode=yes");
+				expect((error as Error).message).toContain("Set up a git credential helper or an ssh agent");
+			},
+		);
+
+		it("announces a package that resolve() installs", async () => {
+			settingsManager.setProjectPackages(["npm:new-package"]);
+			vi.spyOn(packageManager as any, "installParsedSource").mockResolvedValue(undefined);
+			const events: ProgressEvent[] = [];
+			packageManager.setProgressCallback((event) => events.push(event));
+
+			await packageManager.resolve();
+
+			expect(events).toContainEqual({
+				type: "start",
+				action: "install",
+				source: "npm:new-package",
+				message: "Installing npm:new-package...",
+			});
 		});
 	});
 

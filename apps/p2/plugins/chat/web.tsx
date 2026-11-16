@@ -19,6 +19,7 @@ import {
 	whenLive,
 } from "@p2/app/v1";
 import {
+	ALT_KEY,
 	BranchFrom,
 	buildTranscript,
 	ChevronIcon,
@@ -60,6 +61,7 @@ import {
 	Messages,
 	type ModelChoice,
 	modelName,
+	moreVerb,
 	NEW_SESSION,
 	navigate,
 	OneShotAgents,
@@ -107,6 +109,7 @@ import {
 	useOffline,
 	useOptimisticCall,
 	useOwner,
+	usePointerKind,
 	useReadable,
 	useRegistry,
 	useRoute,
@@ -432,6 +435,7 @@ function Composer({
 	const press = useLongPress(() => {
 		if (offered) setChoosing(true);
 	});
+	const pointer = usePointerKind();
 	// Opened from the keyboard or a mouse, the menu's first item takes the focus (no trigger tells Elanor's menu how it
 	// opened); a touch leaves it on the menu.
 	const popup = useRef<HTMLDivElement>(null);
@@ -537,16 +541,19 @@ function Composer({
 										<Menu.Item
 											key={choice.label}
 											onClick={choice.run}
+											// A touch-only device sends with the button, never with Enter (onKeyDown above).
 											endAdornment={
-												<KeyboardShortcut>
-													{index === 0 ? (
-														<KeyboardKey>Enter</KeyboardKey>
-													) : (
-														<>
-															<KeyboardKey>Alt</KeyboardKey>+<KeyboardKey>Enter</KeyboardKey>
-														</>
-													)}
-												</KeyboardShortcut>
+												pointer !== "touch" && (
+													<KeyboardShortcut>
+														{index === 0 ? (
+															<KeyboardKey>Enter</KeyboardKey>
+														) : (
+															<>
+																<KeyboardKey>{ALT_KEY}</KeyboardKey>+<KeyboardKey>Enter</KeyboardKey>
+															</>
+														)}
+													</KeyboardShortcut>
+												)
 											}
 										>
 											{choice.label}
@@ -563,7 +570,7 @@ function Composer({
 						type="submit"
 						className="round send"
 						aria-label="Send"
-						title={choices ? `${send.label} (long press for more)` : send.label}
+						title={choices ? `${send.label} (${moreVerb(pointer)} for more)` : send.label}
 						disabled={!content || disabled}
 						{...(choices ? { "aria-haspopup": "menu" as const, "aria-expanded": choosing } : {})}
 						{...press.handlers}

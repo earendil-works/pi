@@ -141,7 +141,7 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 		if (tui) this.stopAnimation = startBrandAnimation(tui, () => this.getSelectedBrandStyle() !== undefined);
 	}
 
-	override render(width: number): string[] {
+	override render(width: number): readonly string[] {
 		// The list is built from styled text, so an animated row needs a rebuild for each frame.
 		if (this.stopAnimation && this.getSelectedBrandStyle()) this.updateList();
 		return super.render(width);
