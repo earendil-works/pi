@@ -385,3 +385,8 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
   rule; each went through review rounds by Opus, Sol and Astra with mutation checks.)
 - **Correction (2026-11-15):** p3's sign-in cookie is `p3-<id>`, named after the Pi's random id (slice 26, several
   Pis on one machine), not `p3-sign-in` as the slice 1 redo entry says. The API package is `@earendil-works/p3`.
+- **Stack traces in the release: names kept, no source maps (owner, 2026-11-16):** the release bundle keeps
+  identifiers (`minifySyntax` and `minifyWhitespace` only), as coding-agent's bundle does, so a raw stack names real
+  functions; no source maps ship. Mapping stacks to source positions (maps beside the bundle, a short-lived mapper
+  process for crashes and `p3 report`) is a nice-to-have for later, not planned. Whether to minify identifiers waits for
+  the measurement of its effect on process memory.
