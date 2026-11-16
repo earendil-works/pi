@@ -78,6 +78,44 @@ To route a built-in provider through a proxy, set only its `baseUrl`. Its models
 
 [Models Configuration](models-configuration.md) lists every field.
 
+### Point Pi at a hosted gateway
+
+Hosted gateways and relays work through the same `models.json` mechanism as local servers. A dual-protocol gateway serves two wire APIs on different paths, so it is registered once per protocol under the same key:
+
+```json
+{
+  "$schema": "https://pi.dev/schemas/models.schema.json",
+  "providers": {
+    "teapot": {
+      "baseUrl": "https://api.teapotrouter.com/v1",
+      "api": "openai-completions",
+      "apiKey": "${TEAPOT_KEY}",
+      "models": [
+        { "id": "gpt-6-astra" },
+        { "id": "gpt-6.1-sol" },
+        { "id": "gpt-6.1-terra" }
+      ]
+    },
+    "anthropic": {
+      "baseUrl": "https://api.teapotrouter.com",
+      "apiKey": "${TEAPOT_KEY}"
+    }
+  }
+}
+```
+
+Overriding the built-in `anthropic` provider with only `baseUrl` and `apiKey` keeps its model catalog and adds the gateway's Claude-family IDs (`claude-sonnet-5-5`, `claude-opus-5-5`, `claude-haiku-4-5`, `claude-fable-5-2`) on the `anthropic-messages` API. Opening `/model` after saving reloads the file.
+
+> **Disclosure:** the gateway in this example is TeapotRouter, which I help develop. The same configuration works for any endpoint speaking these protocols; the placeholder-host variant above it is the vendor-neutral version of exactly these steps.
+
+### Common pitfalls with compatible endpoints
+
+- **Wrong `baseUrl` shape.** OpenAI-compatible endpoints usually want the base URL with `/v1`; Anthropic-compatible endpoints usually want the bare host. A 404 on the first request is almost always this — try the other form before debugging anything else.
+- **`api` mismatch.** `openai-completions` and `anthropic-messages` are different wire protocols. Pick the value by what the *endpoint* serves, not by the model vendor behind it — many gateways serve both, on different paths.
+- **Model IDs belong to the endpoint.** IDs are the gateway's own names and don't always match the vendor's public names. Fetch `{baseUrl}/models` (for the OpenAI-compatible path) and copy them exactly.
+- **Literal keys in `models.json`.** Prefer `${ENV_VAR}` interpolation over pasting keys; the file lives in your agent directory and is easy to commit by accident.
+
+
 ### Describe model input and caching
 
 Use `inputLimits.images.resize` to control how Pi encodes new image attachments, `read` results, and tool-result images before storing them in conversation history:
