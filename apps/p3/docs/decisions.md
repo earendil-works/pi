@@ -391,3 +391,12 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
   process for crashes and `p3 report`) is a nice-to-have for later, not planned. Identifiers stay unminified (owner,
   2026-11-16, after the measurement: minifying them in the release and the worker base saves 1.1 MiB per idle worker
   and 2.4 MiB on the server, 5 ms of a warm worker start; not worth unreadable stacks).
+- **Signing in a new device: the new device shows a code, a signed-in one approves it (owner, 2026-11-16):** a
+  browser or terminal without a sign-in gets the sign-in screen with the registered identity providers: Radius, and
+  pairing. Pairing shows a short single-use code on the new device (`K7QM-2PXF`); the owner approves it on a device
+  already signed in (`p3 pair <code>`, the local page, the terminal client), and the waiting device gets its own
+  sign-in, revocable on its own. No link travels, so the Pi never needs to know the address it is reached by (a
+  tunnel's domain, a LAN address). Passwords for the owner are out: a Pi exposed to the web would make them phishable
+  and guessable. The owner link printed at start stays as the first sign-in. Open, for slice 25: Chord's HTTP baseline
+  accepts remote requests only for declared host names (against DNS rebinding); how a Pi behind a tunnel is reached
+  without declaring its domain.

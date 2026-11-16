@@ -55,6 +55,15 @@ A visit through the relay needs no sign-in: the relay's identity maps to the sam
 
 Until then, the screens can run on today's device code, for the owner only.
 
+## Decided since (owner, 2026-11-16)
+
+- The sign-in screen lists the registered identity providers: Radius and pairing.
+- Pairing: the new device shows a short code, a signed-in device approves it (`p3 pair <code>`, the local page, the
+  terminal client); no link travels, so the Pi never needs its public address (decision "Signing in a new device").
+- No owner password.
+- Open here: accepting remote requests behind a tunnel without declaring its host name, given Chord's HTTP baseline
+  against DNS rebinding.
+
 ## Open (owner decisions, one at a time, with the details)
 
 - Which Radius changes to ask for, or whether to accept the interim for persons.
