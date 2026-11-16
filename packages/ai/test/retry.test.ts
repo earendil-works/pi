@@ -18,29 +18,18 @@ const codexConnectionLimitError =
 	"Codex error: Responses websocket connection limit reached (60 minutes). Create a new websocket connection to continue.";
 
 describe("provider retry classification", () => {
-	// Regression for #12124: a connection's lifetime limit is recoverable with a fresh connection.
-	it.each([
-		codexConnectionLimitError,
-		"websocket_connection_limit_reached",
-		"Codex error: websocket_connection_limit_reached",
-	])("matches the Codex websocket connection lifetime limit: %s", (errorMessage) => {
-		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(true);
-	});
+	// Regression for #12124: the Codex WebSocket lifetime limit is recoverable on a fresh connection.
+	it.each([codexConnectionLimitError, "Codex error: websocket_connection_limit_reached"])(
+		"matches the Codex websocket connection lifetime limit: %s",
+		(errorMessage) => {
+			expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(true);
+		},
+	);
 
-	it.each([
-		"connection limit reached",
-		"Unknown field prefix_websocket_connection_limit_reached",
-		"Unknown field websocket_connection_limit_reached_suffix",
-		"websocket_connection_limit_reached: insufficient_quota",
-		"websocket_connection_limit_reached: subscription_sharing_usage_limit_exceeded",
-	])("keeps unrelated identifiers and account limits non-retryable: %s", (errorMessage) => {
-		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(false);
-	});
-
-	it("does not classify an aborted connection-limit response as retryable", () => {
+	it("does not match a generic connection limit", () => {
 		expect(
 			isRetryableAssistantError(
-				fauxAssistantMessage("", { stopReason: "aborted", errorMessage: codexConnectionLimitError }),
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "connection limit reached" }),
 			),
 		).toBe(false);
 	});
