@@ -792,6 +792,7 @@ function TopBar({
 			{offline && <span className="offline">Offline</span>}
 			<Slot name="view-actions" />
 			<Slot name="artifact-actions" />
+			<Slot name="tree-actions" />
 			<Slot name="terminal-actions" />
 			<Slot name="workspace-actions" />
 			<Slot name="session-options" />
