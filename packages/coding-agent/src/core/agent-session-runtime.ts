@@ -79,7 +79,7 @@ export class AgentSessionRuntime {
 	private readonly createRuntime: CreateAgentSessionRuntimeFactory;
 	private _diagnostics: AgentSessionRuntimeDiagnostic[];
 	private _modelFallbackMessage?: string;
-	/** `type\0message` of diagnostics already reported to the user: the startup ones and earlier takes. */
+	/** `type\0message` of every diagnostic takeUnreportedDiagnostics() returned so far. */
 	private readonly reportedDiagnosticKeys = new Set<string>();
 
 	constructor(
@@ -94,8 +94,6 @@ export class AgentSessionRuntime {
 		this.createRuntime = createRuntime;
 		this._diagnostics = _diagnostics;
 		this._modelFallbackMessage = _modelFallbackMessage;
-		// The host reports the first runtime's diagnostics at startup (main.ts, InteractiveMode startupDiagnostics).
-		this.takeUnreportedDiagnostics();
 	}
 
 	get services(): AgentSessionServices {
@@ -121,10 +119,10 @@ export class AgentSessionRuntime {
 	/**
 	 * Return the current runtime's diagnostics that were not reported yet, and mark them reported.
 	 *
-	 * Modes call this after a session replacement (/new, /resume, /fork, import), whose runtime
-	 * collects its diagnostics again. A diagnostic with the same type and message as one reported
-	 * at startup or after an earlier replacement is left out, so an unchanged settings warning is
-	 * not repeated on every replacement.
+	 * The host calls this at startup and after each session replacement (/new, /resume, /fork,
+	 * import), whose runtime collects its diagnostics again. A diagnostic with the same type and
+	 * message as one returned before is left out, so an unchanged settings warning is not repeated
+	 * on every replacement.
 	 */
 	takeUnreportedDiagnostics(): AgentSessionRuntimeDiagnostic[] {
 		return this._diagnostics.filter((diagnostic) => {

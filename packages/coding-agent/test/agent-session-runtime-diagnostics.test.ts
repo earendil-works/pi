@@ -69,13 +69,13 @@ describe("AgentSessionRuntime.takeUnreportedDiagnostics", () => {
 
 	// The runtime factory runs again on every session replacement, but modes only reported the startup
 	// diagnostics, so a problem that first appeared on /new or /resume was never shown. Found while fixing #11264.
-	it("returns only diagnostics that were not reported at startup or after an earlier replacement", async () => {
+	it("returns each diagnostic once, at startup and after replacements", async () => {
 		const settingsWarning: AgentSessionRuntimeDiagnostic = { type: "warning", message: "settings warning" };
 		const extensionError: AgentSessionRuntimeDiagnostic = { type: "error", message: "extension failed" };
 		const nextDiagnostics = { current: [settingsWarning] };
 		const runtime = await createRuntimeForTest(nextDiagnostics);
 
-		// The host reports startup diagnostics itself.
+		expect(runtime.takeUnreportedDiagnostics()).toEqual([settingsWarning]);
 		expect(runtime.takeUnreportedDiagnostics()).toEqual([]);
 
 		nextDiagnostics.current = [settingsWarning, extensionError];
