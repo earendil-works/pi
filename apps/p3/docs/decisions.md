@@ -400,3 +400,7 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
   and guessable. The owner link printed at start stays as the first sign-in. Remote requests are accepted for any host name
   (owner, 2026-11-16, same day): authority comes only from host-bound sign-ins; pairing codes expire within minutes,
   the approval shows everything needed to judge the request, and pairing is rate-limited (slice 25, "Decided since").
+- **The release gets a worker-only entry (owner, 2026-11-16):** a session worker (and the supervisor) loads a bundle of
+  its own instead of the chunk it shares with the server (esbuild's JS API, `ws`, `node:http`, the server side of
+  Chord's workers): about 1.5 MiB less per worker and a faster warm start (mem-audit, `p3-memory.md`). Built after slice
+  26's round-3 fixes, in slice 26.
