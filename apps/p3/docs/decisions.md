@@ -373,3 +373,10 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
   (`src/kit/session-workers.ts`). A sign-in that ends (revoked, or expired unused) closes its own links at once,
   through the close function Chord's HTTP component now hands `links.opened(request, principal, close)`; not through
   `host.revoke`, which ends objects by principal and so would end the owner's shared objects for every device.
+- **The basics before iterating (owner, 2026-11-15):** slice 26 (the release build, the shipped package
+  `@earendil-works/p3` with types third-party plugins type-check against, the `p3` command with `server`, `status`,
+  `stop`, `restart`, a background supervisor, and several Pis on one machine by `--pi`/`--dir`), then slice 27 (a
+  terminal client scaffold that `p3` connects to), then slice 25 (sign-in with Radius); further arguments (mirroring
+  coding-agent's where sensible) are iterations on that base. The API is `@earendil-works/p3/v1`, no shorthand; the
+  built-in plugin is `@earendil-works/p3-sessions`; Chord exports the `Method` and `LiteralsSchema` types so
+  contracts can be named in declarations. The lockfile change of the rename is OK.
