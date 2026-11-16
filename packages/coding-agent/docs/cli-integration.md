@@ -43,7 +43,7 @@ This is structured event output, not a single JSON result or a constraint on the
 
 All prompts are supplied when the process starts. The process streams events for that run and then exits; it does not accept later commands.
 
-A failed or aborted assistant response appears in the event stream but does not by itself produce a nonzero exit status. Inspect the events when success or failure matters. Pi still exits nonzero if the invocation throws an error.
+Exit status follows print mode. A final assistant response with an `error`, `aborted`, or `length` stop reason appears in the event stream, writes its error or a truncation warning to stderr, and produces a nonzero exit status. Pi also exits nonzero if the invocation throws an error.
 
 Streaming `message_update` records contain deltas rather than a growing message snapshot. Assemble live output from the delta events, then replace it with the authoritative message from `message_end`.
 
