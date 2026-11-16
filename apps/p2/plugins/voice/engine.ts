@@ -24,6 +24,7 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { follow, type Watchable } from "@p2/app/v1";
+import { pointerKind, pressVerb } from "@p2/app/v1/web";
 import { BargeInDetector, type BargeInPhase, Pcm16kResampler } from "./barge-in.ts";
 import { Interruption } from "./interruption.ts";
 import { SpeechPlayback } from "./playback.ts";
@@ -104,7 +105,6 @@ const RESUME_WAIT_MS = 1500;
 /** How long the last transcript and a passing error stay visible. */
 const HEARD_MS = 5000;
 const ERROR_MS = 8000;
-const AUDIO_BLOCKED = "Audio is blocked: tap the orb";
 const LOG_FLUSH_MS = 2000;
 /** Events kept while the server cannot be reached; older ones are dropped (and counted). */
 const LOG_BUFFER = 500;
@@ -615,7 +615,7 @@ export class VoiceEngine {
 		this.#log("audio blocked");
 		this.#cancelSpeech("audio blocked");
 		this.audioBlocked = true;
-		this.#report(AUDIO_BLOCKED, true);
+		this.#report(`Audio is blocked: ${pressVerb(pointerKind())} the orb`, true);
 	}
 
 	#connect(): void {

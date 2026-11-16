@@ -8,13 +8,16 @@ import {
 	FileIcon,
 	FolderIcon,
 	type Navigation,
+	pressVerb,
 	QueryCache,
 	RefreshIcon,
 	routeKey,
 	SearchIcon,
 	Slot,
 	TerminalIcon,
+	upperFirst,
 	useDragSize,
+	usePointerKind,
 	useScrollMemory,
 	type WorkspaceFileRoute,
 	type WorkspaceRoute,
@@ -193,6 +196,7 @@ export function WorkspacePanel({
 	/** Deliver review comments as the user's next message; absent for viewers who cannot send. */
 	onSend?: (text: string) => Promise<void>;
 }) {
+	const pointer = usePointerKind();
 	const { tab, directory, file: selection, commit: openCommit, search: submitted } = route;
 	// Docked with room for a file beside the list (measured below): Files, Changes and Search then show the open file
 	// to the left of their list instead of in its place. Phones and narrow windows keep one column.
@@ -936,7 +940,9 @@ export function WorkspacePanel({
 				))}
 			</div>
 		) : (
-			<p className="notice workspace-note">No unsent comments. Tap a line number in a file or diff to comment.</p>
+			<p className="notice workspace-note">
+				No unsent comments. {upperFirst(pressVerb(pointer))} a line number in a file or diff to comment.
+			</p>
 		);
 	} else if (tab === "search") {
 		const value = search.value;
