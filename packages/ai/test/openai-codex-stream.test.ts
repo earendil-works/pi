@@ -2256,7 +2256,7 @@ describe("openai-codex streaming", () => {
 			sessionId,
 			transport: "websocket-cached",
 		}).result();
-		vi.setSystemTime(new Date(startedAt.getTime() + 56 * 60 * 1000));
+		vi.setSystemTime(new Date(startedAt.getTime() + 46 * 60 * 1000));
 		const secondContext = normalizeContext({
 			messages: [...firstContext.messages, first, { role: "user", content: "Now finish", timestamp: 2 }],
 		});
