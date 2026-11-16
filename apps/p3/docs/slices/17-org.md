@@ -24,3 +24,12 @@ The brief is filled out when the slice is next.
   `pluginSources` bounds what a stolen org key can push.
 - Roots: the locks design's two kinds (base, user) against org-managed's four (app, system, org, member, pinned hashes):
   reconcile.
+
+## To discuss with Armin and Colin (owner, 2026-11-16)
+
+**Org sign-in.** An org wants its members to sign in to their Pis only with the org's own SSO. Identity providers
+are a registry the people plugin owns, so an org could write its own identity-provider plugin (OIDC or SAML against
+its IdP) and lock its members' Pis to that provider alone: the org profile sets the lock of offered providers, and
+pairing, Radius or anything else is not offered. Locks only narrow, so a member cannot widen it. The alternative is
+Radius as the one broker: the org configures its SSO in Radius and the Pis speak only Radius; whether Radius supports
+enterprise SSO today is not known. Open: which of the two, or both.
