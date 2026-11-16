@@ -12,8 +12,9 @@ import {
 	stream as streamOpenAICodexResponses,
 	streamSimple as streamSimpleOpenAICodexResponses,
 } from "../src/api/openai-codex-responses.ts";
-import type { Api, Context, Model } from "../src/types.ts";
+import type { Api, AssistantMessage, Context, Model } from "../src/types.ts";
 import { formatUserAgent } from "../src/utils/identity.ts";
+import { retryAssistantCall } from "../src/utils/retry.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -1856,6 +1857,133 @@ describe("openai-codex streaming", () => {
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
+	// Regression for #12124: metadata and thinking already mark the provider stream as started.
+	it.each([
+		{
+			name: "response metadata",
+			events: [{ type: "response.created", response: { id: "resp_expired" } }],
+		},
+		{
+			name: "rate-limit metadata",
+			events: [{ type: "codex.rate_limits", rate_limits: { allowed: true, limit_reached: false } }],
+		},
+		{
+			name: "partial thinking",
+			events: [
+				{ type: "response.output_item.added", item: { type: "reasoning", id: "rs_1", summary: [] } },
+				{ type: "response.reasoning_summary_part.added", part: { type: "summary_text", text: "" } },
+				{ type: "response.reasoning_summary_text.delta", delta: "unfinished thinking" },
+			],
+		},
+	])("retries a connection lifetime limit after $name on a fresh websocket", async ({ name, events }) => {
+		let connections = 0;
+		const closed: number[] = [];
+		const sentBodies: Array<{ previous_response_id?: string }> = [];
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+
+		class MockWebSocket extends EventTarget {
+			private readonly connectionId = ++connections;
+			readyState = 1;
+
+			constructor() {
+				super();
+				queueMicrotask(() => this.dispatchEvent(new Event("open")));
+			}
+
+			send(data: string): void {
+				sentBodies.push(JSON.parse(data) as { previous_response_id?: string });
+				const responseEvents =
+					this.connectionId === 1
+						? [
+								...events,
+								{
+									type: "error",
+									error: {
+										code: "websocket_connection_limit_reached",
+										message:
+											"Responses websocket connection limit reached (60 minutes). Create a new websocket connection to continue.",
+									},
+								},
+							]
+						: [
+								{
+									type: "response.output_item.added",
+									item: { type: "message", id: "msg_2", role: "assistant", content: [] },
+								},
+								{
+									type: "response.output_item.done",
+									item: {
+										type: "message",
+										id: "msg_2",
+										role: "assistant",
+										content: [{ type: "output_text", text: "Recovered" }],
+									},
+								},
+								{
+									type: "response.completed",
+									response: {
+										id: "resp_2",
+										status: "completed",
+										usage: { input_tokens: 5, output_tokens: 3, total_tokens: 8 },
+									},
+								},
+							];
+				queueMicrotask(() => {
+					for (const event of responseEvents) {
+						this.dispatchEvent(Object.assign(new Event("message"), { data: JSON.stringify(event) }));
+					}
+				});
+			}
+
+			close(): void {
+				closed.push(this.connectionId);
+				this.readyState = 3;
+			}
+		}
+
+		vi.stubGlobal("WebSocket", MockWebSocket);
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.1-codex",
+			name: "GPT-5.1 Codex",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+		const attempts: AssistantMessage[] = [];
+		const result = await retryAssistantCall(
+			async () => {
+				const message = await streamOpenAICodexResponses(model, normalizeContext({ messages: [] }), {
+					apiKey: mockToken(),
+					sessionId: `connection-limit-${name}`,
+					transport: "websocket-cached",
+				}).result();
+				attempts.push(message);
+				return message;
+			},
+			{ enabled: true, maxRetries: 1, baseDelayMs: 0 },
+			undefined,
+		);
+
+		expect(result.stopReason).toBe("stop");
+		expect(result.content).toMatchObject([{ type: "text", text: "Recovered" }]);
+		expect(attempts).toHaveLength(2);
+		expect(attempts[0].stopReason).toBe("error");
+		if (name === "partial thinking") {
+			expect(attempts[0].content).toMatchObject([{ type: "thinking", thinking: "unfinished thinking" }]);
+		}
+		expect(connections).toBe(2);
+		expect(closed).toContain(1);
+		expect(sentBodies).toHaveLength(2);
+		expect(sentBodies[1].previous_response_id).toBeUndefined();
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
 	it("falls back to SSE when a websocket is idle before the first event", async () => {
 		vi.useFakeTimers();
 		const token = mockToken();
@@ -2128,7 +2256,7 @@ describe("openai-codex streaming", () => {
 			sessionId,
 			transport: "websocket-cached",
 		}).result();
-		vi.setSystemTime(new Date(startedAt.getTime() + 56 * 60 * 1000));
+		vi.setSystemTime(new Date(startedAt.getTime() + 46 * 60 * 1000));
 		const secondContext = normalizeContext({
 			messages: [...firstContext.messages, first, { role: "user", content: "Now finish", timestamp: 2 }],
 		});
