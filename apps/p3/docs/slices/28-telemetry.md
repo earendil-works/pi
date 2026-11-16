@@ -11,6 +11,12 @@ State: brief with measurements (2026-11-16). Nothing is built in p3: the p3 kit 
 (2026-11-06) needs it. Most of the work is in Chord and pi-telemetry, and each Chord change needs its own Chord
 decision (below).
 
+**When the slice starts** (owner, 2026-11-16: the decisions wait for the slice): take the ten decisions below with
+the owner, one at a time, from the recommendations given; record each in `../decisions.md` (and the Chord ones in
+`packages/chord/docs/decisions.md`); rerun the measurements on the code as it is then (`batch.sh` in the measurement
+directory: p2's stack, telemetry on and off, the faux provider) and on the phone, since the disk writes and the CPU
+cost on the phone are the open numbers; then fill out "How it works", "Files" and "Tests" from the decisions.
+
 Everything marked **BUILT** exists, with its file. Everything marked **PROPOSED** is a design for this slice. No
 proposed name is a real API yet.
 
@@ -36,14 +42,14 @@ From p2's code (`plugins/telemetry/`, `src/hosts/server.ts`, `src/hosts/worker.t
 
 ### How it was measured
 
-On slayer (Linux x64, Node 24.4.1), 2026-11-16. Raw data and scripts: `/tmp/tele/` (`README.md` there). No real
+On slayer (Linux x64, Node 24.4.1), 2026-11-16. Raw data and scripts: `/home/badlogic/chord-notes/research/p3-telemetry/` (`README.md` there). No real
 provider, no keys.
 
 - **The stack is p2's own:** `startServer` from `apps/p2/src/hosts/server.ts` (`fake: true`, `web: true`,
   `settings.json` `telemetry: true` or `false`), a forked session worker, and the real web UI in headless Chromium,
   signed in as the owner and sending through the composer (p2's `test/p2/browser.ts`). Model: p2's faux provider (200
   tokens a second, 4 characters a token).
-- **One run of the script** (`/tmp/tele/run.ts`): the setup, the page load (the worker's start and the page's holds),
+- **One run of the script** (`/home/badlogic/chord-notes/research/p3-telemetry/run.ts`): the setup, the page load (the worker's start and the page's holds),
   8 prompts (`steps`, `codemode`, `slow`, `hello`, twice each), 60 s idle with the page open, 30 s with it closed.
   - `steps` is 3 turns: thinking and a `read`, text and a `read`, thinking and a 400-character answer.
   - `codemode` is 2 turns, with one `codemode` call making two nested calls.
@@ -109,7 +115,7 @@ Share of spans over the five runs (7,471 spans):
   `p2.discord-store`, `p2.voice-service-store`, `chord.app.files`) last up to 81.5 s, the whole run. Holds last until
   they are bound.
 
-### What a keep rule would keep (`/tmp/tele/sample.ts`)
+### What a keep rule would keep (`/home/badlogic/chord-notes/research/p3-telemetry/sample.ts`)
 
 A **local tree** is a span with no parent in its own process, with its descendants in that process. It is what one
 process can decide about alone.
@@ -140,7 +146,7 @@ process can decide about alone.
   | `hello` | 36 / 37 ms | 29 / 26 ms |
 
   At these rates (up to about 70 spans a second during a prompt), the per-span cost does not show.
-- **Per span** (`/tmp/tele/bench.ts`, 1,499 replayed spans, medians of 20 rounds):
+- **Per span** (`/home/badlogic/chord-notes/research/p3-telemetry/bench.ts`, 1,499 replayed spans, medians of 20 rounds):
   - recording: 3.0 µs;
   - the batch's JSON: 1.0 µs;
   - writing to a small store: 4.8 µs.
@@ -148,7 +154,7 @@ process can decide about alone.
   - Worker USS: 128 to 157 MiB on, 134 to 158 off.
   - Server USS: 206 to 208 MiB on, 208 to 210 off. Both run from source, with the web bundles built.
   - The worker's recorder holds at most one second of spans.
-- **Disk writes grow with the file** (`/tmp/tele/bench-large.ts`). A flush of 35 spans, which is the phone's 33
+- **Disk writes grow with the file** (`/home/badlogic/chord-notes/research/p3-telemetry/bench-large.ts`). A flush of 35 spans, which is the phone's 33
   spans a second, writes:
 
   | Store file | CPU per flush | Written per flush |
@@ -239,7 +245,7 @@ The owner's proposal (2026-11-16), point by point.
 
 ## Decisions
 
-Each goes to the owner one at a time. His answers are recorded in `../decisions.md`. Those marked **Chord** also go
+Postponed to the slice's start (owner, 2026-11-16). Each goes to the owner one at a time. His answers are recorded in `../decisions.md`. Those marked **Chord** also go
 into `packages/chord/docs/decisions.md`, since they change Chord or pi-telemetry.
 
 ### 1. What is recorded by default (Chord)
@@ -525,7 +531,7 @@ p3 (topology tier, then end to end):
   `web.ts`, `src/runtime/principals.ts`, `settings.ts`; `apps/p2/plugins/telemetry/` (all); `scripts/traces.ts`;
   `test/p2/telemetry.test.ts`, `telemetry-off.test.ts`, `telemetry-traces.test.ts`.
 - p3's kit: `apps/p3/src/kit/start-server.ts`, `worker.ts`, `session-workers.ts`.
-- The measurements: `/tmp/tele/README.md` and its scripts on slayer (raw; rerun with `batch.sh`).
+- The measurements: `/home/badlogic/chord-notes/research/p3-telemetry/README.md` and its scripts on slayer (raw; rerun with `batch.sh`).
 
 ## Carried (not in this slice)
 
