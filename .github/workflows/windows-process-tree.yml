@@ -1,0 +1,75 @@
+name: Windows process trees
+
+# The bash and PowerShell tools run commands through pi-job.exe on Windows (packages/coding-agent/native/win32).
+# The main CI runs on Linux only, so this workflow runs the process-tree tests on Windows x64 and arm64, and checks
+# that the committed prebuilds are what the source builds to.
+on:
+  push:
+    branches: [main]
+    paths: ["packages/coding-agent/native/win32/**", "packages/coding-agent/src/utils/shell.ts", "packages/coding-agent/src/core/tools/bash.ts", "packages/coding-agent/test/shell-process-tree*", "packages/coding-agent/test/bash-close-hang-windows.test.ts", "packages/coding-agent/test/suite/regressions/11613-*", ".github/workflows/windows-process-tree.yml"]
+  pull_request:
+    branches: [main]
+    paths: ["packages/coding-agent/native/win32/**", "packages/coding-agent/src/utils/shell.ts", "packages/coding-agent/src/core/tools/bash.ts", "packages/coding-agent/test/shell-process-tree*", "packages/coding-agent/test/bash-close-hang-windows.test.ts", "packages/coding-agent/test/suite/regressions/11613-*", ".github/workflows/windows-process-tree.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: windows-process-tree-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Test
+        working-directory: packages/coding-agent
+        run: >-
+          node ../../node_modules/vitest/dist/cli.js --run
+          test/shell-process-tree.test.ts
+          test/shell-process-tree-unusable-helper.test.ts
+          test/bash-close-hang-windows.test.ts
+          test/suite/regressions/11613-bash-timeout-after-shell-exit.test.ts
+
+  # zig links deterministically, so rebuilding must reproduce the committed binaries byte for byte.
+  prebuilds:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Install zig
+        shell: pwsh
+        run: |
+          $archive = "$env:RUNNER_TEMP\zig.zip"
+          Invoke-WebRequest https://ziglang.org/download/0.17.1/zig-x86_64-windows-0.17.1.zip -OutFile $archive
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne "b03f477a1943673e02aca0f570e8030dffd536ce1f45cbc4d3326ec31159562e") { throw "zig checksum mismatch: $hash" }
+          Expand-Archive $archive -DestinationPath $env:RUNNER_TEMP
+          "ZIG=$env:RUNNER_TEMP\zig-x86_64-windows-0.17.1\zig.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Rebuild prebuilds
+        run: node packages/coding-agent/native/win32/build.mjs
+
+      - name: Compare with the committed prebuilds
+        run: git diff --exit-code --stat -- packages/coding-agent/native/win32/prebuilds

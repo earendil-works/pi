@@ -159,6 +159,10 @@ for platform in "${PLATFORMS[@]}"; do
     native_path="native/${native_platform%-*}/prebuilds"
     mkdir -p "$OUTPUT_DIR/$platform/$native_path"
     cp -R "../tui/$native_path/$native_platform" "$OUTPUT_DIR/$platform/$native_path/"
+    if [[ "$platform" == windows-* ]]; then
+        # pi-job.exe runs shell commands in a job object so they can be killed as a tree.
+        cp "$native_path/$native_platform/pi-job.exe" "$OUTPUT_DIR/$platform/$native_path/$native_platform/"
+    fi
 done
 
 # Create archives

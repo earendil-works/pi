@@ -9,7 +9,7 @@
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
 import { flushRawStdout, waitForRawStdoutBackpressure, writeRawStdout } from "../core/output-guard.ts";
-import { killTrackedDetachedChildren } from "../utils/shell.ts";
+import { killTrackedProcessTrees } from "../utils/shell.ts";
 import { toJsonEvent } from "./json-event.ts";
 
 /**
@@ -61,7 +61,7 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 			const exitCode = signal === "SIGHUP" ? 129 : 143;
 			const handler = () => {
 				signalCount++;
-				killTrackedDetachedChildren();
+				killTrackedProcessTrees();
 				if (signalCount > 1) process.exit(exitCode);
 				void disposeRuntime().finally(() => {
 					process.exit(exitCode);

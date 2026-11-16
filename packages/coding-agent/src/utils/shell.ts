@@ -1,7 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { accessSync, constants } from "node:fs";
 import { delimiter, join, win32 } from "node:path";
-import { spawn, spawnSync } from "child_process";
-import { getBinDir } from "../config.ts";
+import { type ChildProcess, type SpawnOptions, spawn, spawnSync } from "child_process";
+import { getBinDir, getWindowsJobHelperPath } from "../config.ts";
 
 export interface ShellConfig {
 	shell: string;
@@ -193,25 +194,112 @@ export function sanitizeBinaryOutput(str: string): string {
 	return str.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\uFFF9-\uFFFB]/g, "");
 }
 
+/** A spawned command whose processes, including ones it started in the background, can be killed as one unit. */
+export interface ProcessTree {
+	readonly child: ChildProcess;
+	/** Kill the command and every process it started; also works after the command itself exited. */
+	kill(): void;
+}
+
 /**
- * Detached child processes must be tracked so they can be killed on parent
- * shutdown signals (SIGHUP/SIGTERM).
+ * Spawn a command as a process tree: on Unix in a new process group, on Windows in a named job object.
+ *
+ * Windows has no process groups, and `taskkill /T` finds descendants through their parent pid. Once the shell
+ * exits, a background process it started has no living parent and cannot be found: in
+ * `(while true; do echo tick; sleep 1; done) & exit 1`, killing the shell's pid leaves the loop writing to
+ * pi's pipes (#11613). pi-job.exe starts the command in a job object, which every descendant joins and cannot
+ * leave, and `kill()` terminates the job by name. Without a usable helper, the taskkill path remains. A missing
+ * command also takes it, so it fails with Node's spawn error (ENOENT) instead of an exit code.
  */
-const trackedDetachedChildPids = new Set<number>();
-
-export function trackDetachedChildPid(pid: number): void {
-	trackedDetachedChildPids.add(pid);
-}
-
-export function untrackDetachedChildPid(pid: number): void {
-	trackedDetachedChildPids.delete(pid);
-}
-
-export function killTrackedDetachedChildren(): void {
-	for (const pid of trackedDetachedChildPids) {
-		killProcessTree(pid);
+export function spawnProcessTree(command: string, args: string[], options: SpawnOptions): ProcessTree {
+	const helper = process.platform === "win32" ? getUsableWindowsJobHelper() : undefined;
+	if (helper && shellPathExists(command)) {
+		const jobName = `pi-${process.pid}-${randomUUID()}`;
+		const child = spawn(helper, ["run", jobName, command, ...args], options);
+		return {
+			child,
+			kill: () => {
+				// taskkill /T on pi-job reaches the command while pi-job runs, also when pi-job could not put it in
+				// a job, and kills pi-job before it created one. `terminate` reaches processes left in the job after
+				// the command exited.
+				killRunningProcessTree(child);
+				spawnCleanup(helper, ["terminate", jobName]);
+			},
+		};
 	}
-	trackedDetachedChildPids.clear();
+	if (process.platform === "win32") {
+		const child = spawn(command, args, options);
+		return { child, kill: () => killRunningProcessTree(child) };
+	}
+	// The process group outlives its leader: killing it after the shell exited still reaches background processes.
+	const child = spawn(command, args, { ...options, detached: true });
+	return {
+		child,
+		kill: () => {
+			if (child.pid) killProcessTree(child.pid);
+		},
+	};
+}
+
+/**
+ * `taskkill /T` on a Windows child that has not exited. Windows reuses pids quickly, so after the child exited its pid
+ * may name an unrelated process, whose tree taskkill would kill.
+ */
+function killRunningProcessTree(child: ChildProcess): void {
+	if (child.pid && child.exitCode === null && child.signalCode === null) killProcessTree(child.pid);
+}
+
+let windowsJobHelper: string | null | undefined;
+
+/**
+ * pi-job.exe if it can run here, checked once per process. Security software can quarantine it or block it from
+ * running; commands then run as before job objects instead of failing.
+ */
+function getUsableWindowsJobHelper(): string | undefined {
+	if (windowsJobHelper === undefined) {
+		const helper = getWindowsJobHelperPath();
+		// `terminate` of a job that does not exist exits with 1 and changes nothing.
+		const probe = shellPathExists(helper)
+			? spawnSync(helper, ["terminate", `pi-probe-${process.pid}`], {
+					stdio: "ignore",
+					timeout: 5000,
+					windowsHide: true,
+				})
+			: undefined;
+		windowsJobHelper = probe && !probe.error && probe.status === 1 ? helper : null;
+	}
+	return windowsJobHelper ?? undefined;
+}
+
+/**
+ * Process trees of running commands, killed on parent shutdown signals (SIGHUP/SIGTERM).
+ */
+const trackedProcessTrees = new Set<ProcessTree>();
+
+export function trackProcessTree(tree: ProcessTree): void {
+	trackedProcessTrees.add(tree);
+}
+
+export function untrackProcessTree(tree: ProcessTree): void {
+	trackedProcessTrees.delete(tree);
+}
+
+export function killTrackedProcessTrees(): void {
+	for (const tree of trackedProcessTrees) {
+		tree.kill();
+	}
+	trackedProcessTrees.clear();
+}
+
+/** Start a cleanup command that outlives pi (detached) and whose failure is ignored. */
+function spawnCleanup(command: string, args: string[]): void {
+	try {
+		const child = spawn(command, args, { stdio: "ignore", detached: true, windowsHide: true });
+		// A failed spawn emits "error" asynchronously; consume it to avoid crashing Node.
+		child.once("error", () => {});
+	} catch {
+		// Ignore errors if the cleanup command cannot start.
+	}
 }
 
 /**
@@ -220,21 +308,12 @@ export function killTrackedDetachedChildren(): void {
 export function killProcessTree(pid: number): void {
 	if (process.platform === "win32") {
 		// Use the trusted System32 executable so cleanup does not depend on PATH.
-		try {
-			const child = spawn(
-				join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe"),
-				["/F", "/T", "/PID", String(pid)],
-				{
-					stdio: "ignore",
-					detached: true,
-					windowsHide: true,
-				},
-			);
-			// A failed spawn emits "error" asynchronously; consume it to avoid crashing Node.
-			child.once("error", () => {});
-		} catch {
-			// Ignore errors if taskkill fails.
-		}
+		spawnCleanup(join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe"), [
+			"/F",
+			"/T",
+			"/PID",
+			String(pid),
+		]);
 	} else {
 		if (process.platform === "darwin") {
 			// macOS signals group members individually after releasing the group lock. A killed
