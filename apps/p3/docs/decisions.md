@@ -380,3 +380,6 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
   coding-agent's where sensible) are iterations on that base. The API is `@earendil-works/p3/v1`, no shorthand; the
   built-in plugin is `@earendil-works/p3-sessions`; Chord exports the `Method` and `LiteralsSchema` types so
   contracts can be named in declarations. The lockfile change of the rename is OK.
+- **Fable plans and reviews, never builds (owner, 2026-11-15):** builders are Opus; Fable writes designs, briefs and
+  reviews only. (Slice 14, the frame fixes, slice 1's redo and slice 26's first part were built by Fable before this
+  rule; each went through review rounds by Opus, Sol and Astra with mutation checks.)

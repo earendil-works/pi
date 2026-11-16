@@ -204,6 +204,8 @@ p3 runs two ways: from the checkout (TypeScript through `--conditions=source`) a
 
 `workflow.md` is the process; this is what it means for the builder:
 
+- **Models:** builders are Opus. Fable plans and reviews, never builds (owner, 2026-11-15). Sol and Astra review.
+
 - Read the brief's "Read first" list and this file in full before touching code. Never present an invented API: real
   with its file, or marked PROPOSED.
 - Fill out the brief before building: p2's features first. Every decision goes to the owner, one at a time, with an
