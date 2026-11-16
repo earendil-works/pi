@@ -417,3 +417,11 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
   recorded port with the owner token, who it is, and getting the record's own run id back: a reused pid cannot answer
   as the server, on any platform. Process start times remain only for what does not listen (a starting server, a
   supervisor), read on Windows through PowerShell; there `ps` does not exist.
+- **Slice 1 approved (owner, 2026-11-16):** the walkthrough is fine; slice 1 is committed together with slice 26.
+- **Session worker memory levers and a budget (owner, 2026-11-16):** workers get the measured safe levers: the
+  worker-only entry with splitting, the provider SDKs bundled, Chord's worker base minified, a warm compile cache
+  (`flushCompileCache()` after start), and `--liftoff-only`, `--optimize-for-size` and `--max-semi-space-size=4` in
+  their `execArgv`; background recompilation stays on (turning it off saves 1.5 to 2.5 MiB for up to 25% more CPU).
+  p3 enforces its minimum Node version at start, and every flag is checked in the supported versions. A memory test
+  in the release tests runs a real worker with Durable and pi-ai (stub provider), a burst and five parallel subagents,
+  and fails if the worker's USS ever exceeds 45 MiB.
