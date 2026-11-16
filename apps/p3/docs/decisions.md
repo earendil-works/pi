@@ -412,3 +412,8 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
   whole package (about 15 MB: its sources, compiled components and declarations), because the shipped plugin API's
   declarations and JavaScript import Chord (a plugin's type check and its own tests outside the server). The server
   never loads it (its Chord is in the bundle). Accepted as it is; slimming Chord's package is a matter for publishing.
+- **Windows is a target; a running server proves its identity over HTTP (owner, 2026-11-16):** p3 runs on Linux,
+  macOS, Windows and Android. A command trusts a listening server's record only after asking that server, on the
+  recorded port with the owner token, who it is, and getting the record's own run id back: a reused pid cannot answer
+  as the server, on any platform. Process start times remain only for what does not listen (a starting server, a
+  supervisor), read on Windows through PowerShell; there `ps` does not exist.
