@@ -34,6 +34,7 @@ export * from "../../web/file-completion.tsx";
 export * from "../../web/haptics.ts";
 export * from "../../web/history.ts";
 export * from "../../web/icons.tsx";
+export * from "../../web/input-hints.ts";
 export { type LongPress, type LongPressHandlers, useLongPress } from "../../web/long-press.ts";
 export * from "../../web/Markdown.tsx";
 export * from "../../web/menu-components.ts";
