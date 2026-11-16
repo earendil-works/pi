@@ -1,10 +1,10 @@
 // Pages, TUIs, workers and plugins built before a deploy keep working: the providers of `Sessions`, `SessionTree`,
-// `Catalog`, `Envs`, `SessionStatus` and `Subagents` still bind the versions released before, through their `accepts`,
+// `Catalog`, `Envs`, `SessionStatus`, `Subagents` and `Projects` still bind the versions released before, through their `accepts`,
 // and map the current state, arguments and results between versions. The old contracts below are copied verbatim from
 // the releases that bundled them (`Sessions` v3 and `Catalog` v2 from 0a730c8a7, `Sessions` v4, `Catalog` v3 and
 // `SessionTree` v1 from e88525506, `SessionTree` v2 from 7670c8be4, `Sessions` v5 from 9ff0ebfd0, `Catalog` v4 from
 // 0a180b049, `Sessions` v6 from 20d86c365, `Envs` v1 from 2a32a605a and v2 from d07548004, `SessionStatus` v1 and
-// `Subagents` v2 from 6e11a00a0), so their fingerprints are the ones old bundles send.
+// `Subagents` v2 from 6e11a00a0, `Projects` v1 from b58642efa), so their fingerprints are the ones old bundles send.
 
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
@@ -388,6 +388,24 @@ const EnvConfigSchemaV2 = union([
 	}),
 ]);
 
+/** b58642efa's `Projects` (version 1): without `create`. */
+const ProjectsV1 = remote("p2.projects", {
+	version: 1,
+	params: {},
+	hostAddress: serverHost,
+	variants: {
+		owner: {
+			state: {
+				projects: arr(obj({ name: str(), places: arr(obj({ env: union([str(), nul()]), path: str() })) })),
+				failure: union([str(), nul()]),
+				local: str(),
+				sessions: record(str()),
+			},
+			methods: { assign: method(obj({ session: str({ maxLength: 64 }), project: str({ maxLength: 64 }) })) },
+		},
+	},
+});
+
 /** 2a32a605a's `Envs` (version 1): rows without `users`, `delete` without `force`. */
 const EnvName = obj({ name: str() });
 const EnvKey = obj({ publicKey: str(), identityFile: str() });
@@ -638,6 +656,16 @@ describe("older contract versions against the current server (fake provider)", (
 		await until(ref.envs, (list) => !list.some((row) => row.name === "old-tab"));
 		ref.release();
 		current.release();
+	});
+
+	it("binds Projects v1: the projects and their sessions, without create", async () => {
+		const ref = await boundIn(owner, ProjectsV1, {}, "owner");
+		assert.deepEqual(await until(ref.projects, (list) => list !== undefined), []);
+		await assert.rejects(
+			ref.assign({ session: session.id, project: "nope" }, BACKGROUND_CONTEXT),
+			/No project "nope"/,
+		);
+		ref.release();
 	});
 
 	it("binds Envs v2: rows with users, sandboxes without a disk size", async () => {

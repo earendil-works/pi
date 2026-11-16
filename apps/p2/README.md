@@ -244,7 +244,9 @@ A project is one codebase in several places, one per environment. `<P2_DATA_DIR>
 
 Object order is display order; array order is preference. A place without `env` is this device; `path` is absolute or
 starts with `~` (that machine's home); a project has at most one place per environment. p2 watches the file: valid edits
-apply at once, an invalid one keeps the last valid projects and shows why. Projects are owner-only; the TUI's session
+apply at once, an invalid one keeps the last valid projects and shows why. In the web sidebar, the Projects section's
+**⋯** has **New project…**: pick a folder (on this device or an environment), name it, and p2 adds it at the end of
+projects.json (rewriting the file: its comments go; add more places by hand). Projects are owner-only; the TUI's session
 selector and the web sidebar (below) group sessions by them:
 
 - A session belongs to a project only when it was started from the project's row (below) or its section's **+** in
@@ -282,7 +284,8 @@ name>&size=<px>` serves the same glyph as an SVG file, for embedding elsewhere (
 group that has it, and is selected in the place you opened it from. The sidebar shows the sessions that matter now:
 pinned ones, the open one, working ones, ones with an unread answer or a failure, and those active within the rollup's
 window (its **⋯**: **Show sessions active within** 24 hours, 3 days by default, 1 week, or Forever; the same menu moves
-the rollup up or down); a group without such a session is left out, and a rollup without any says **No activity**.
+the rollup up or down); a group without such a session is left out (a project's group always shows, so a new project's
+"+" is there), and a rollup without any says **No activity**.
 Every row has one shape: the working mark or the group's icon in one column, the name (cut with "…" when long), then
 the details with the time of the last activity last. A click on a group's row (its name in medium weight) shows or hides its
 sessions (an arrow after the name says which), their working marks in the same column as every other session's. A click anywhere on a session's row opens its main conversation and selects the row.
