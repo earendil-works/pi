@@ -841,6 +841,40 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	// #9549: scroll frames reuse earlier output; search must still see content that changed in between.
+	it("keeps search matches current across view-only scroll frames and content changes", async () => {
+		const terminal = new RecordingTerminal(60, 8);
+		const tui = new TuiAltScreen(terminal);
+		const lines = Array.from({ length: 12 }, (_, index) => (index === 4 ? "line 5 needle one" : `line ${index + 1}`));
+		const transcriptText = new Text(lines.join("\n"), 0, 0);
+		const transcript = new ScrollView(transcriptText, { follow: "end", primary: true });
+		tui.setLayoutRoot(transcript);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[102;6u");
+		terminal.sendInput("needle");
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport().some((line) => line.includes("1/1")));
+
+		for (let index = 0; index < 3; index++) terminal.sendInput("\x1b[<65;1;4M");
+		await terminal.waitForRender();
+		const scrolledTop = transcript.scrollTop;
+		assert.ok(scrolledTop > 0);
+
+		lines[10] = "line 11 needle two";
+		transcriptText.setText(lines.join("\n"));
+		tui.requestRender();
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport().some((line) => line.includes("1/2")));
+
+		terminal.sendInput("\x1b[103;6u");
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport().some((line) => line.includes("2/2")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("line 11 needle two")));
+		tui.stop();
+	});
+
 	it("searches the transcript with Ctrl+Shift+F and restores editor focus on close", async () => {
 		const terminal = new RecordingTerminal(60, 8);
 		const tui = new TuiAltScreen(terminal);

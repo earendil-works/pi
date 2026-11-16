@@ -58,6 +58,8 @@ export interface ScrollbarGeometry {
 interface LayoutContext {
 	viewport: { width: number; height: number };
 	renderCache: LayoutRenderCache;
+	/** Output of an earlier frame with the same content; entries are copied into `renderCache` when used. */
+	reusableOutput: LayoutRenderCache | undefined;
 	requestRender: () => void;
 	primaryScrollView: ScrollView | undefined;
 }
@@ -79,7 +81,7 @@ function renderCached(context: LayoutContext, component: Component, width: numbe
 	}
 	let lines = widths.get(safeWidth);
 	if (!lines) {
-		lines = component.render(safeWidth);
+		lines = context.reusableOutput?.get(component)?.get(safeWidth) ?? component.render(safeWidth);
 		widths.set(safeWidth, lines);
 	}
 	return lines;
@@ -388,22 +390,25 @@ function paintBox(box: LayoutBox, screen: string[], totalWidth: number): void {
 /**
  * Lay out and paint one frame.
  *
- * `renderCache` reuses component output from an earlier frame instead of calling `render()`. Pass it
- * only when no component changed since that frame, e.g. when only a scroll position moved: the
- * frame then costs O(viewport) instead of re-rendering the whole scrollable document.
+ * `reusableOutput` is an earlier frame's `renderCache`; its output is used instead of calling
+ * `render()`. Pass it only when no component changed since that frame, e.g. when only a scroll
+ * position moved: the frame then costs O(viewport) instead of re-rendering the whole scrollable
+ * document. Each frame keeps only the output it used, so reuse never accumulates across frames.
  */
 export function renderLayoutFrame(
 	root: Component,
 	width: number,
 	height: number,
 	requestRender: () => void,
-	renderCache: LayoutRenderCache = new Map(),
+	reusableOutput?: LayoutRenderCache,
 ): LayoutFrame {
 	const safeWidth = Math.max(1, Math.floor(width));
 	const safeHeight = Math.max(1, Math.floor(height));
+	const renderCache: LayoutRenderCache = new Map();
 	const context: LayoutContext = {
 		viewport: { width: safeWidth, height: safeHeight },
 		renderCache,
+		reusableOutput,
 		requestRender,
 		primaryScrollView: undefined,
 	};
