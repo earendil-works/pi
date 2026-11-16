@@ -552,6 +552,10 @@ const MistralConversationsCompatProperties = {
 			"Whether the exact model accepts system messages after the conversation has started. When false, later system messages are folded into the leading system message.",
 		default: false,
 	}),
+	supportsStrictMode: optionalCompatBoolean({
+		description: "Whether the model supports strict (schema-constrained) function tools.",
+		default: false,
+	}),
 };
 
 export const MistralConversationsCompatSchema = openObject(MistralConversationsCompatProperties, {
