@@ -97,7 +97,13 @@ describe("google-shared convertMessages — signed empty blocks", () => {
 				makeContext(model, [
 					{ type: "thinking", thinking: "" },
 					{ type: "text", text: "   " },
-					{ type: "toolCall", id: "call_1", name: "bash", arguments: { command: "ls" } },
+					{
+						type: "toolCall",
+						id: "call_1",
+						name: "bash",
+						arguments: { command: "ls" },
+						thoughtSignature: VALID_SIG,
+					},
 				]),
 			),
 		);
@@ -118,9 +124,9 @@ describe("google-shared convertMessages — signed empty blocks", () => {
 				]),
 			),
 		);
+		// The turn keeps no usable signature, so its call is left out as well (replayed as an observation).
 		const modelTurn = contents.find((c) => c.role === "model");
-		expect(modelTurn?.parts).toHaveLength(1);
-		expect(modelTurn?.parts?.[0]?.functionCall).toBeTruthy();
-		expect(JSON.stringify(modelTurn)).not.toContain(VALID_SIG);
+		expect(modelTurn?.parts).toEqual([{ text: "[Earlier tool call omitted because its signature is unavailable.]" }]);
+		expect(JSON.stringify(contents)).not.toContain(VALID_SIG);
 	});
 });

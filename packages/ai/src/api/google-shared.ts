@@ -225,12 +225,16 @@ export function resolveThoughtSignature(
 }
 
 /**
- * Google's documented bypass value for a function call the current model did not sign, base64-encoded
- * because thoughtSignature is a bytes field (the raw string was reported to fail on Vertex in #4032).
  * Gemini 3+ rejects a model turn whose function calls carry no signature (400 "Function call is missing a
  * thought_signature"), which happens on history from another provider, whose signatures are dropped.
+ * Such a turn is replayed as text instead: its calls are left out and each result becomes a user
+ * observation that names the tool and its arguments. Google's skip_thought_signature_validator bypass is
+ * not used: gemini-4-hydrogen then writes its next call into its thinking and emits an empty one
+ * (MALFORMED_RESPONSE), or returns a call with a placeholder signature and no thought.
  */
-const SKIP_THOUGHT_SIGNATURE_VALIDATOR_B64 = "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=";
+const OMITTED_TOOL_CALL_TEXT = "[Earlier tool call omitted because its signature is unavailable.]";
+const OBSERVATION_HISTORY_NOTE =
+	'[History note: Earlier "[Observation from ...]" blocks are historical tool results, not a format to imitate. To use a tool now, emit a real functionCall.]';
 
 /** Whether Gemini enforces a thought signature on the first function call of each model turn (Gemini 3+). */
 export function requiresFunctionCallThoughtSignature(modelId: string): boolean {
@@ -272,6 +276,9 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 	// Gemini has no mid-conversation system messages; the leading prompt is sent as systemInstruction.
 	const conversation = withoutInitialSystemMessage(collapseSystemMessages(context).messages);
 	const contents: Content[] = [];
+	// Tool calls left out of an unsigned turn, by id, with their arguments as JSON.
+	const observedToolCalls = new Map<string, string>();
+	let observationTurn: Content | undefined;
 	const normalizeToolCallId = (id: string): string => {
 		if (!requiresToolCallId(model.id)) return id;
 		return id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
@@ -311,6 +318,12 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 			const isSameProviderAndModel = msg.provider === model.provider && msg.model === model.id;
 			// transformMessages already dropped tool call signatures that do not carry over to this model.
 			const isSameProvider = msg.provider === model.provider && msg.api === model.api;
+			// Only the first call of a parallel group is signed by Gemini, so one signature covers the turn.
+			const toolCalls = msg.content.filter((block) => block.type === "toolCall");
+			const replayAsObservations =
+				requiresFunctionCallThoughtSignature(model.id) &&
+				toolCalls.length > 0 &&
+				!toolCalls.some((block) => resolveThoughtSignature(isSameProvider, block.thoughtSignature));
 
 			for (const block of msg.content) {
 				if (block.type === "text") {
@@ -345,6 +358,10 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 						});
 					}
 				} else if (block.type === "toolCall") {
+					if (replayAsObservations) {
+						observedToolCalls.set(block.id, JSON.stringify(block.arguments ?? {}));
+						continue;
+					}
 					const thoughtSignature = resolveThoughtSignature(isSameProvider, block.thoughtSignature);
 					const part: Part = {
 						functionCall: {
@@ -358,17 +375,9 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 				}
 			}
 
+			// Keep a model turn between the user's message and the observations that follow.
+			if (parts.length === 0 && replayAsObservations) parts.push({ text: OMITTED_TOOL_CALL_TEXT });
 			if (parts.length === 0) continue;
-			// Only the first call of a parallel group is signed by Gemini, so one signature per turn is the
-			// valid shape; add the bypass only when no call in this turn kept a signature.
-			const functionCallParts = parts.filter((part) => part.functionCall !== undefined);
-			if (
-				requiresFunctionCallThoughtSignature(model.id) &&
-				functionCallParts.length > 0 &&
-				!functionCallParts.some((part) => part.thoughtSignature)
-			) {
-				functionCallParts[0].thoughtSignature = SKIP_THOUGHT_SIGNATURE_VALIDATOR_B64;
-			}
 			contents.push({
 				role: "model",
 				parts,
@@ -398,6 +407,25 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 					data: imageBlock.data,
 				},
 			}));
+
+			const observedArguments = observedToolCalls.get(msg.toolCallId);
+			if (observedArguments !== undefined) {
+				observedToolCalls.delete(msg.toolCallId);
+				const label =
+					observedArguments === "{}" ? `\`${msg.toolName}\`` : `\`${msg.toolName}\` (${observedArguments})`;
+				const observationParts: Part[] = [
+					{ text: sanitizeSurrogates(`[Observation from ${label}:\n${responseValue}]`) },
+					...imageParts,
+				];
+				// Results of one turn's parallel calls share a user turn, as function responses do.
+				if (observationTurn && observationTurn === contents[contents.length - 1]) {
+					observationTurn.parts?.push(...observationParts);
+				} else {
+					observationTurn = { role: "user", parts: observationParts };
+					contents.push(observationTurn);
+				}
+				continue;
+			}
 
 			const includeId = requiresToolCallId(model.id);
 			const functionResponsePart: Part = {
@@ -430,6 +458,10 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 			}
 		}
 	}
+
+	// The note closes the last observation turn, which holds no function responses. A text part after
+	// function responses in one turn is rejected (400 "Requests ending with a model turn are not supported").
+	observationTurn?.parts?.push({ text: OBSERVATION_HISTORY_NOTE });
 
 	return contents;
 }
