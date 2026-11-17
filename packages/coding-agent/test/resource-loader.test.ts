@@ -319,9 +319,59 @@ Project skill`,
 
 			const skill = loader.getSkills().skills.find((s) => s.name === "collision-skill");
 			expect(skill?.filePath).toBe(projectSkillPath);
+			// The project resource is the declared winner, not an ambiguous collision.
+			expect(loader.getSkills().diagnostics.filter((d) => d.type === "collision")).toEqual([]);
 
 			const theme = loader.getThemes().themes.find((t) => t.name === "collision-theme");
 			expect(theme?.sourcePath).toBe(projectThemePath);
+		});
+
+		it("should warn for skill collisions at the same precedence", async () => {
+			for (const source of ["first", "second"]) {
+				const dir = join(agentDir, "skills", source, "collision-skill");
+				mkdirSync(dir, { recursive: true });
+				writeFileSync(
+					join(dir, "SKILL.md"),
+					`---\nname: collision-skill\ndescription: ${source}\n---\n${source} skill`,
+				);
+			}
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			await loader.reload();
+
+			expect(loader.getSkills().skills.filter((s) => s.name === "collision-skill")).toHaveLength(1);
+			const collisions = loader.getSkills().diagnostics.filter((d) => d.type === "collision");
+			expect(collisions).toHaveLength(1);
+			expect(collisions[0].collision?.name).toBe("collision-skill");
+		});
+
+		it("should not warn when a top-level skill overrides a package skill", async () => {
+			const packageRoot = join(tempDir, "skill-package");
+			const packageSkillDir = join(packageRoot, "skills", "collision-skill");
+			const userSkillDir = join(agentDir, "skills", "collision-skill");
+			mkdirSync(packageSkillDir, { recursive: true });
+			mkdirSync(userSkillDir, { recursive: true });
+			writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name: "skill-package", version: "1.0.0" }));
+			writeFileSync(
+				join(packageSkillDir, "SKILL.md"),
+				"---\nname: collision-skill\ndescription: package\n---\nPackage skill",
+			);
+			writeFileSync(
+				join(userSkillDir, "SKILL.md"),
+				"---\nname: collision-skill\ndescription: user\n---\nUser skill",
+			);
+
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				settingsManager: SettingsManager.inMemory({ packages: [packageRoot] }),
+			});
+			await loader.reload();
+
+			expect(loader.getSkills().skills.find((s) => s.name === "collision-skill")?.filePath).toBe(
+				join(userSkillDir, "SKILL.md"),
+			);
+			expect(loader.getSkills().diagnostics.filter((d) => d.type === "collision")).toEqual([]);
 		});
 
 		it("should load symlinked user and project extensions once", async () => {

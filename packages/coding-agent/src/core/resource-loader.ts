@@ -32,6 +32,7 @@ import {
 	type PathMetadata,
 	type ProgressCallback,
 	type ResolvedResource,
+	resourcePrecedenceRank,
 } from "./package-manager.ts";
 import type { PromptTemplate } from "./prompt-templates.ts";
 import { loadPromptTemplates } from "./prompt-templates.ts";
@@ -895,6 +896,19 @@ export class DefaultResourceLoader implements ResourceLoader {
 				agentDir: this.agentDir,
 				skillPaths,
 				includeDefaults: false,
+			});
+		}
+		if (metadataByPath) {
+			// Resource ordering already defines intentional overrides: project beats
+			// user, and top-level resources beat package resources. Only collisions
+			// between resources at the same precedence are ambiguous and actionable.
+			skillsResult.diagnostics = skillsResult.diagnostics.filter((diagnostic) => {
+				const collision = diagnostic.collision;
+				if (diagnostic.type !== "collision" || collision?.resourceType !== "skill") return true;
+				const winner = metadataByPath.get(collision.winnerPath);
+				const loser = metadataByPath.get(collision.loserPath);
+				if (!winner || !loser) return true;
+				return resourcePrecedenceRank(winner) === resourcePrecedenceRank(loser);
 			});
 		}
 		const resolvedSkills = this.skillsOverride ? this.skillsOverride(skillsResult) : skillsResult;

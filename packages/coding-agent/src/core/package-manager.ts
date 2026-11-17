@@ -259,7 +259,7 @@ interface ResourceAccumulator {
  *   3  user + auto-discovered (source: "auto", scope: "user")
  *   4  package resource (origin: "package")
  */
-function resourcePrecedenceRank(m: PathMetadata): number {
+export function resourcePrecedenceRank(m: PathMetadata): number {
 	// Built-in extensions load after file and package extensions, whichever scope enables them.
 	if (m.source === "builtin") return 5;
 	if (m.origin === "package") return 4;
