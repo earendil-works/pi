@@ -143,7 +143,7 @@ describe("getSupportedThinkingLevels", () => {
 		["gpt-6.1-sol", { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 }, 500000],
 		["gpt-6.1-terra", { input: 1, output: 5, cacheRead: 0.05, cacheWrite: 1.25 }, 500000],
 		["gpt-6.2-astra", { input: 8, output: 40, cacheRead: 0.4, cacheWrite: 10 }, 272000],
-		["gpt-6.2-sol", { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 }, 272000],
+		["gpt-6.2-sol", { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 }, 500000],
 	] as const)("includes official metadata for OpenAI and Codex %s", (modelId, cost, codexContextWindow) => {
 		for (const provider of ["openai", "openai-codex"] as const) {
 			const model = getModel(provider, modelId);
