@@ -207,6 +207,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private lastDocument: string[] = [];
 	private previousScreenWidth = 0;
 	private previousScreenHeight = 0;
+	private hardwareCursorPosition: { row: number; col: number } | undefined;
 	private layoutRoot: Component | undefined;
 	private currentLayout: LayoutFrame | undefined;
 	private readonly implicitDocument: Component;
@@ -382,7 +383,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				? ENABLE_BUTTON_MOTION_MOUSE
 				: ENABLE_ALL_MOTION_MOUSE;
 		this.terminal.write(
-			`${ENTER_ALT_SCREEN}${DISABLE_AUTOWRAP}${this.mouseEnabled ? mouseSequence : ""}\x1b[2J\x1b[H\x1b[?25l`,
+			`${ENTER_ALT_SCREEN}${DISABLE_AUTOWRAP}${this.mouseEnabled ? mouseSequence : ""}\x1b[2J\x1b[H${this.getTerminalCursorVisibilitySequence(false)}`,
 		);
 	}
 
@@ -404,8 +405,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	protected override afterTerminalStop(options: TuiStopOptions): void {
 		if (!this.altScreenActive) return;
 		this.altScreenActive = false;
+		this.resetTerminalCursorVisibility();
+		const showCursor = this.getTerminalCursorVisibilitySequence(true);
 		if (options.preserveScreen) {
-			this.terminal.write(`${BEGIN_SYNCHRONIZED_OUTPUT}${EXIT_ALT_SCREEN}\x1b[?25h${END_SYNCHRONIZED_OUTPUT}`);
+			this.terminal.write(`${BEGIN_SYNCHRONIZED_OUTPUT}${EXIT_ALT_SCREEN}${showCursor}${END_SYNCHRONIZED_OUTPUT}`);
 		} else {
 			const width = Math.max(1, this.terminal.columns);
 			const documentLines = this.resolveFakeCursors(this.render(width)).map((line) =>
@@ -419,7 +422,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				if (row > 0) buffer += "\r\n";
 				buffer += `\r\x1b[2K${this.lastDocument[row] ?? ""}`;
 			}
-			buffer += `\x1b[0m${ENABLE_AUTOWRAP}\r\n\x1b[?25h${END_SYNCHRONIZED_OUTPUT}`;
+			buffer += `\x1b[0m${ENABLE_AUTOWRAP}\r\n${showCursor}${END_SYNCHRONIZED_OUTPUT}`;
 			this.terminal.write(buffer);
 		}
 		if (this.savedCapabilities) {
@@ -498,6 +501,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.previousScreenWidth = 0;
 		this.previousScreenHeight = 0;
 		this.currentLayout = undefined;
+		this.hardwareCursorPosition = undefined;
 	}
 
 	scrollBy(lines: number): void {
@@ -1790,13 +1794,23 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		}
 
 		if (cursorPos) {
-			buffer += `\x1b[${cursorPos.row + 1};${Math.min(width, cursorPos.col) + 1}H`;
-			buffer += this.getShowHardwareCursor() ? "\x1b[?25h" : "\x1b[?25l";
-		} else {
-			buffer += "\x1b[?25l";
+			const col = Math.max(0, Math.min(width - 1, cursorPos.col));
+			if (
+				buffer !== BEGIN_SYNCHRONIZED_OUTPUT ||
+				this.hardwareCursorPosition?.row !== cursorPos.row ||
+				this.hardwareCursorPosition.col !== col
+			) {
+				buffer += `\x1b[${cursorPos.row + 1};${col + 1}H`;
+			}
+			this.hardwareCursorPosition = { row: cursorPos.row, col };
+		} else if (buffer !== BEGIN_SYNCHRONIZED_OUTPUT) {
+			this.hardwareCursorPosition = undefined;
 		}
-		buffer += END_SYNCHRONIZED_OUTPUT;
-		this.terminal.write(buffer);
+		buffer += this.getTerminalCursorVisibilitySequence(cursorPos !== null && this.getShowHardwareCursor());
+		if (buffer !== BEGIN_SYNCHRONIZED_OUTPUT) {
+			buffer += END_SYNCHRONIZED_OUTPUT;
+			this.terminal.write(buffer);
+		}
 
 		this.previousScreen = screen;
 		this.previousScreenWidth = width;

@@ -605,6 +605,7 @@ export abstract class TuiBase extends Container implements TUI {
 	private lastRenderAt = 0;
 	private static readonly MIN_RENDER_INTERVAL_MS = 16;
 	private showHardwareCursor = false;
+	private terminalCursorVisible: boolean | undefined;
 	private clearOnShrink = false;
 	protected fullRedrawCount = 0;
 	protected stopped = false;
@@ -640,6 +641,28 @@ export abstract class TuiBase extends Container implements TUI {
 	protected abstract doRender(): void;
 
 	protected resetRenderState(): void {}
+
+	private resetAllRenderState(): void {
+		this.resetRenderState();
+		this.resetTerminalCursorVisibility();
+	}
+
+	protected resetTerminalCursorVisibility(): void {
+		this.terminalCursorVisible = undefined;
+	}
+
+	// Repeated DECTCEM sequences reset the blink timer on some terminals.
+	protected getTerminalCursorVisibilitySequence(visible: boolean): string {
+		if (this.terminalCursorVisible === visible) return "";
+		this.terminalCursorVisible = visible;
+		return visible ? "\x1b[?25h" : "\x1b[?25l";
+	}
+
+	private writeTerminalCursorVisibility(visible: boolean): void {
+		if (!this.getTerminalCursorVisibilitySequence(visible)) return;
+		if (visible) this.terminal.showCursor();
+		else this.terminal.hideCursor();
+	}
 
 	protected beforeTerminalStart(): void {}
 
@@ -956,7 +979,7 @@ export abstract class TuiBase extends Container implements TUI {
 
 	/** Hide the cursor while running. After stop(), the shell owns the cursor and it must stay visible. */
 	private hideTerminalCursor(): void {
-		if (!this.stopped) this.terminal.hideCursor();
+		if (!this.stopped) this.writeTerminalCursorVisibility(false);
 	}
 
 	/** Check if there are any visible overlays */
@@ -1039,6 +1062,7 @@ export abstract class TuiBase extends Container implements TUI {
 
 	start(): void {
 		this.stopped = false;
+		this.resetTerminalCursorVisibility();
 		process.off("exit", this.exitRestoreHandler);
 		process.on("exit", this.exitRestoreHandler);
 		this.beforeTerminalStart();
@@ -1047,7 +1071,7 @@ export abstract class TuiBase extends Container implements TUI {
 			() => this.requestRender(),
 		);
 		this.afterTerminalStart();
-		this.terminal.hideCursor();
+		this.writeTerminalCursorVisibility(false);
 		if (this.terminalColorSchemeNotificationsEnabled) {
 			this.terminal.write("\x1b[?2031h");
 		}
@@ -1102,12 +1126,13 @@ export abstract class TuiBase extends Container implements TUI {
 		}
 		this.beforeTerminalStop(options);
 		this.terminal.showCursor();
+		this.terminalCursorVisible = true;
 		this.terminal.stop();
 		this.afterTerminalStop(options);
 	}
 
 	renderNow(force = false): void {
-		if (force) this.resetRenderState();
+		if (force) this.resetAllRenderState();
 		this.contentChanged = true;
 		this.renderRequested = false;
 		this.cancelRenderTimer();
@@ -1117,7 +1142,7 @@ export abstract class TuiBase extends Container implements TUI {
 
 	requestRender(force = false): void {
 		if (force) {
-			this.resetRenderState();
+			this.resetAllRenderState();
 			this.requestImmediateRender();
 			return;
 		}
