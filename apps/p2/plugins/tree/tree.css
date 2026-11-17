@@ -1,0 +1,78 @@
+/* The tree panel (TreePanel.tsx): Elanor's table of contents, one item per turn. The current branch is the top level in
+   the primary text colour; branches are inset one step per level in the secondary colour. */
+.tree-toc {
+	margin: 0 calc(-1 * var(--s2));
+}
+.tree-toc ol ol {
+	padding-inline-start: var(--s4);
+}
+.tree-toc a {
+	flex-direction: column;
+	align-items: stretch;
+	min-height: var(--row);
+	justify-content: center;
+	padding-inline: var(--s3) var(--s2);
+	border-radius: var(--radius);
+	/* Elanor's link sets its own font: the panel uses the interface's, as the sidebar does. */
+	font: inherit;
+	font-size: var(--fs-sm);
+}
+.tree-toc .current > a {
+	color: var(--text);
+}
+.tree-toc .inset > a {
+	color: var(--muted);
+}
+.tree-line {
+	display: flex;
+	align-items: center;
+	gap: var(--s2);
+	min-width: 0;
+}
+.tree-text,
+.tree-answer {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+.tree-text {
+	flex: 1;
+}
+.tree-answer {
+	display: block;
+	color: var(--muted);
+	font-size: var(--fs-xs);
+}
+.tree-ref {
+	flex: none;
+	max-width: 50%;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	padding: 0 var(--s2);
+	border-radius: var(--radius);
+	background: var(--hover);
+	color: var(--muted);
+	font-size: var(--fs-xs);
+}
+.tree-ref.main {
+	color: var(--text);
+	font-weight: var(--fw-strong);
+}
+.tree-note {
+	color: var(--muted);
+	font-size: var(--fs-xs);
+}
+.tree-detached > li > .tree-note {
+	display: block;
+	padding: var(--s2) var(--s3) 0;
+}
+@media (hover: hover) {
+	.tree-toc a:hover {
+		background: var(--hover);
+	}
+}
+.tree-toc a:active {
+	background: var(--hover);
+}

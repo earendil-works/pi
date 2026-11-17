@@ -154,7 +154,48 @@ node:
   pushes `p2.main` (`treeSelf`: `main` and the branches with their labels) at start and inside each `SessionTree`
   method that changes it, before the method answers (nothing else changes `p2.main`).
 - TUI: `app.message.followUp` (Alt+Enter) sends in a new branch while idle (`ChatSurface.sendAlternate`).
+- Web: the tree panel (below).
 - Search indexes each branch's own entries (after its fork point).
+
+### Tree panel
+
+The web's view of the whole tree, as a table of contents beside the transcript (`plugins/tree/web.tsx`,
+`TreePanel.tsx`, `toc.ts`, `entry-in-view.ts`; Elanor's `TableOfContents`). The top bar's branch button (slot
+`tree-actions`, beside the terminal's and the workspace's) opens it in the side panel (`Route.panel` "tree"; a sheet
+on phones). The owner's only, as `SessionTree` is.
+
+```
+first / Echo: first
+    [Session title] second / Echo: second    ← conversation 1, inset under the turn it left, secondary colour
+┃ [Current: retry] other / Echo: other         ← the current branch at the top level; ┃ the turn in view
+```
+
+- **Order:** oldest first, as the transcript beside it reads; a panel in the opposite direction moves against the chat
+  while scrolling.
+- **Turns:** one item per turn: a user message with its final answer as a second line (an answer that is a turn of its
+  own: one something was forked from, or one starting a branch). The agent's intermediate steps (the text it wrote
+  before calling tools, which the chat shows inside the turn's collapsed steps) are left out. The tree does not mark
+  them, so the shape does: an answer followed by exactly one message, another answer, is a step; a final answer is
+  followed by a user message or ends a branch. An answer something was forked from stays.
+- **Branches:** the current branch's turns are the top level, in the primary text colour. Every other branch is a list
+  nested under the turn it was forked after, inset one step per level, in the secondary colour; a branch's chain
+  continues in its own conversation, branches of it nest deeper. Branches started before the first message are listed
+  apart at the top.
+- **Indicator:** Elanor's bar marks the turn in view in the main conversation's transcript (the last turn of the
+  current branch starting above the middle of the transcript, where a revealed message is centred; read from the rows'
+  `data-entry`), and the panel scrolls to keep it visible. A chosen turn stays marked until the reader scrolls the
+  transcript (wheel, touch, its scrollbar, keys): near the transcript's end the reveal cannot centre it, so the turn in
+  view would be an earlier one.
+- **Labels:** at each branch's last turn (null: the session title); the main one reads "Current: …". A main branch
+  without messages of its own yet sits at the turn it continues. Other branches without own messages are not shown:
+  the tree does not say where they were forked.
+- **Jumping:** the panel only moves through the tree (owner decision: Edit and Branch from here are the transcript's,
+  not repeated here). Choosing a turn of the current branch shows it in the transcript. Choosing a turn of another
+  branch switches the session to the branch storing the turn's first message (`SessionTree.select`: the session
+  continues at that branch's end), then shows the turn there. On phones the panel, a sheet over the chat, closes.
+- **Updates:** the panel reads the tree again when the session row's `main`, `branches` or `updatedAt` (a new
+  message) changes, not per streamed part: a read scans the whole history.
+- Tests: `tree-toc.test.ts` (turns and nesting), `ui-tree-panel.test.ts`.
 
 ## Later
 
