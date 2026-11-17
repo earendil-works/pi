@@ -9,7 +9,7 @@ import {
 	withAbortSignal,
 	withoutAbortSignal,
 } from "@p2/app/v1";
-import { fromOrigin, type RouteHandler, Routes, sendJson, serverOf } from "@p2/app/v1/server";
+import { crossSiteRead, fromOrigin, type RouteHandler, Routes, sendJson, serverOf } from "@p2/app/v1/server";
 import { Catalog } from "../sessions/contract.ts";
 import { WorkspaceTransfer } from "./contract.ts";
 import { WORKSPACE_DOWNLOAD_LIMIT, WORKSPACE_READ_CHUNK, workspacePath } from "./protocol.ts";
@@ -22,11 +22,7 @@ export default defineFacet((host) => {
 			const params = new URL(request.url ?? "/", "http://localhost").searchParams;
 			const session = params.get("session") ?? "";
 			const uploading = request.method === "POST";
-			if (
-				!canSend(principal, session) ||
-				request.headers["sec-fetch-site"] === "cross-site" ||
-				(uploading && !fromOrigin(request, origin))
-			) {
+			if (!canSend(principal, session) || crossSiteRead(request) || (uploading && !fromOrigin(request, origin))) {
 				request.resume();
 				response.writeHead(403);
 				response.end("Forbidden");
