@@ -90,13 +90,16 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 
 /**
  * Event stream of one assistant response. It also times the response: the final message (`done` or `error` event, or
- * the result passed to `end()`) gets `durationMs`, measured with a monotonic clock from the stream's creation, unless
- * the message already has one or its `timestamp` predates the stream. A stream that forwards a response which started
- * elsewhere, such as a deferred result fetched later, therefore leaves it untimed.
+ * the result passed to `end()`) gets `durationMs` (and `ttftMs` / `ttfaMs` when content deltas arrived), measured with
+ * a monotonic clock from the stream's creation, unless the message already has `durationMs` or its `timestamp` predates
+ * the stream. A stream that forwards a response which started elsewhere, such as a deferred result fetched later,
+ * therefore leaves it untimed.
  */
 export class AssistantMessageEventStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
 	readonly #startedAt = Date.now();
 	readonly #startedAtMonotonic = performance.now();
+	#ttftMs: number | undefined;
+	#ttfaMs: number | undefined;
 
 	constructor() {
 		super(
@@ -113,6 +116,19 @@ export class AssistantMessageEventStream extends EventStream<AssistantMessageEve
 	}
 
 	override push(event: AssistantMessageEvent): void {
+		if (!this.done) {
+			if (
+				event.type === "thinking_delta" ||
+				event.type === "text_delta" ||
+				event.type === "toolcall_start" ||
+				event.type === "toolcall_delta"
+			) {
+				this.#ttftMs ??= this.#elapsed();
+			}
+			if (event.type === "text_delta" || event.type === "toolcall_start" || event.type === "toolcall_delta") {
+				this.#ttfaMs ??= this.#elapsed();
+			}
+		}
 		if (event.type === "done") this.#time(event.message);
 		else if (event.type === "error") this.#time(event.error);
 		super.push(event);
@@ -123,9 +139,19 @@ export class AssistantMessageEventStream extends EventStream<AssistantMessageEve
 		super.end(result);
 	}
 
+	#elapsed(): number {
+		return Math.max(0, Math.round(performance.now() - this.#startedAtMonotonic));
+	}
+
 	#time(message: AssistantMessage): void {
 		if (this.done || message.durationMs !== undefined || message.timestamp < this.#startedAt) return;
-		message.durationMs = Math.max(0, Math.round(performance.now() - this.#startedAtMonotonic));
+		message.durationMs = this.#elapsed();
+		if (this.#ttftMs !== undefined && message.ttftMs === undefined) {
+			message.ttftMs = this.#ttftMs;
+		}
+		if (this.#ttfaMs !== undefined && message.ttfaMs === undefined) {
+			message.ttfaMs = this.#ttfaMs;
+		}
 	}
 }
 

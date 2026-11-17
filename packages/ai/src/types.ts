@@ -621,6 +621,18 @@ export interface AssistantMessage {
 	 * for deferred results fetched later.
 	 */
 	durationMs?: number;
+	/**
+	 * Milliseconds from `timestamp` until the first content delta (thinking, text, or tool call) arrived,
+	 * measured with a monotonic clock by `AssistantMessageEventStream`. Absent when no content delta arrived,
+	 * for legacy messages, and for deferred results fetched later.
+	 */
+	ttftMs?: number;
+	/**
+	 * Milliseconds from `timestamp` until the first non-thinking content delta (text or tool call) arrived,
+	 * measured with a monotonic clock by `AssistantMessageEventStream`. Absent when no answer/tool delta arrived,
+	 * for legacy messages, and for deferred results fetched later.
+	 */
+	ttfaMs?: number;
 }
 
 /** A tool call that another tool made while it ran, for example from a codemode script. */

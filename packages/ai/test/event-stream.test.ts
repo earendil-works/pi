@@ -166,4 +166,67 @@ describe("AssistantMessageEventStream timing", () => {
 		stream.push({ type: "done", reason: "stop", message: late });
 		expect(late.durationMs).toBeUndefined();
 	});
+
+	it("records ttftMs, ttfaMs, and durationMs when thinking precedes text", async () => {
+		const stream = new AssistantMessageEventStream();
+		const answer = message(Date.now());
+		await sleep(10);
+		stream.push({ type: "thinking_delta", contentIndex: 0, delta: "hmm", partial: answer });
+		await sleep(20);
+		stream.push({ type: "text_delta", contentIndex: 1, delta: "hi", partial: answer });
+		await sleep(10);
+		stream.push({ type: "done", reason: "stop", message: answer });
+
+		expect(answer.ttftMs).toBeDefined();
+		expect(answer.ttfaMs).toBeDefined();
+		expect(answer.durationMs).toBeDefined();
+		expect(answer.ttftMs!).toBeGreaterThanOrEqual(0);
+		expect(answer.ttftMs!).toBeLessThan(answer.ttfaMs!);
+		expect(answer.ttfaMs!).toBeLessThanOrEqual(answer.durationMs!);
+	});
+
+	it("records ttftMs equal to ttfaMs when text arrives without prior thinking", async () => {
+		const stream = new AssistantMessageEventStream();
+		const answer = message(Date.now());
+		await sleep(10);
+		stream.push({ type: "text_delta", contentIndex: 0, delta: "hi", partial: answer });
+		stream.push({ type: "done", reason: "stop", message: answer });
+
+		expect(answer.ttftMs).toBeDefined();
+		expect(answer.ttfaMs).toBe(answer.ttftMs);
+	});
+
+	it("leaves ttftMs and ttfaMs undefined when no content deltas arrive", () => {
+		const stream = new AssistantMessageEventStream();
+		const answer = message(Date.now());
+		stream.push({ type: "start", partial: answer });
+		stream.push({ type: "done", reason: "stop", message: answer });
+
+		expect(answer.durationMs).toBeDefined();
+		expect(answer.ttftMs).toBeUndefined();
+		expect(answer.ttfaMs).toBeUndefined();
+	});
+
+	it("preserves inner stream ttftMs and ttfaMs when forwarded through an outer stream", async () => {
+		const outer = new AssistantMessageEventStream();
+		await sleep(20);
+		const inner = new AssistantMessageEventStream();
+		const answer = message(Date.now());
+		inner.push({ type: "thinking_delta", contentIndex: 0, delta: "hmm", partial: answer });
+		await sleep(15);
+		inner.push({ type: "text_delta", contentIndex: 1, delta: "hi", partial: answer });
+		inner.push({ type: "done", reason: "stop", message: answer });
+
+		const innerTtft = answer.ttftMs;
+		const innerTtfa = answer.ttfaMs;
+		const innerDuration = answer.durationMs;
+
+		outer.push({ type: "thinking_delta", contentIndex: 0, delta: "hmm", partial: answer });
+		outer.push({ type: "text_delta", contentIndex: 1, delta: "hi", partial: answer });
+		outer.push({ type: "done", reason: "stop", message: answer });
+
+		expect(answer.ttftMs).toBe(innerTtft);
+		expect(answer.ttfaMs).toBe(innerTtfa);
+		expect(answer.durationMs).toBe(innerDuration);
+	});
 });
