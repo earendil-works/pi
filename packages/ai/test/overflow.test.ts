@@ -236,6 +236,41 @@ describe("isContextOverflow", () => {
 		expect(isContextOverflow(message, 200000)).toBe(false);
 	});
 
+	it("does not treat multi-hop re-billed prompt sums as silent overflow when single-turn prompt fits", () => {
+		const multiHopStop: AssistantMessage = {
+			...createLengthStopMessage({
+				input: 550_000 + 615_209,
+				cacheRead: 0,
+				output: 70_000,
+				api: "google-generative-ai",
+				provider: "google",
+				model: "gemini-4-hydrogen",
+			}),
+			stopReason: "stop",
+			usage: {
+				input: 1_165_209,
+				output: 70_000,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 620_000,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+		};
+		expect(isContextOverflow(multiHopStop, 1_048_576)).toBe(false);
+
+		const zaiSilentOverflow: AssistantMessage = {
+			...multiHopStop,
+			provider: "zai",
+			usage: {
+				...multiHopStop.usage,
+				input: 1_100_000,
+				output: 500,
+				totalTokens: 1_100_500,
+			},
+		};
+		expect(isContextOverflow(zaiSilentOverflow, 1_048_576)).toBe(true);
+	});
+
 	it("does not treat zero-output length stops far below context as context overflow", () => {
 		const message = createLengthStopMessage({ input: 100, cacheRead: 0, output: 0 });
 		expect(isContextOverflow(message, 200000)).toBe(false);

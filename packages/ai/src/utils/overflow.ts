@@ -156,10 +156,16 @@ export function isContextOverflow(message: AssistantMessage, contextWindow?: num
 		}
 	}
 
-	// Case 2: Silent overflow (z.ai style) - successful but usage exceeds context
+	// Case 2: Silent overflow (z.ai style) - successful but usage exceeds context.
+	// Across continuation hops usage.input sums every hop's re-billed prompt, while totalTokens
+	// holds the single-turn context (initialPrompt + output); bound by totalTokens - output.
 	if (contextWindow && message.stopReason === "stop") {
 		const inputTokens = message.usage.input + message.usage.cacheRead;
-		if (inputTokens > contextWindow) {
+		const promptTokens =
+			message.usage.totalTokens > 0
+				? Math.min(inputTokens, Math.max(0, message.usage.totalTokens - message.usage.output))
+				: inputTokens;
+		if (promptTokens > contextWindow) {
 			return true;
 		}
 	}

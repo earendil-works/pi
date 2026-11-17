@@ -1,18 +1,11 @@
 import { defineProvider, modelsDevModels, withInputLimits } from "../define.ts";
-import { GOOGLE_COMPACTION_CONTEXT_WINDOWS, googleThinkingLevels } from "../families/google.ts";
+import { GOOGLE_LONG_DECODE_MAX_TOKENS, googleThinkingLevels } from "../families/google.ts";
 import { modelsDevChatModels, modelsDevCost } from "../sources/models-dev.ts";
 
 // Rolling aliases take their metadata from the model they currently point to.
 export const GOOGLE_ALIAS_TARGETS: Record<string, string> = {
 	"gemini-flash-latest": "gemini-3.5-flash",
 	"gemini-flash-lite-latest": "gemini-3.1-flash-lite",
-};
-
-// models.dev copies AI Studio's outputTokenLimit (32768) for these, but one request decodes up to
-// 65536 output tokens (live, 2026-11-13: MAX_TOKENS at 65536, CONTINUATION above it).
-const MEASURED_MAX_TOKENS: Record<string, number> = {
-	"gemini-4-argon": 65536,
-	"gemini-4-carbon": 65536,
 };
 
 export default defineProvider({
@@ -33,8 +26,8 @@ export default defineProvider({
 					...(thinkingLevelMap ? { thinkingLevelMap } : {}),
 					input: source.imageInput ? ["text", "image"] : ["text"],
 					cost: modelsDevCost(source.cost),
-					contextWindow: GOOGLE_COMPACTION_CONTEXT_WINDOWS[model.id] ?? (source.contextWindow || 4096),
-					maxTokens: MEASURED_MAX_TOKENS[model.id] ?? (source.maxTokens || 4096),
+					contextWindow: source.contextWindow || 4096,
+					maxTokens: GOOGLE_LONG_DECODE_MAX_TOKENS[model.id] ?? (source.maxTokens || 4096),
 				};
 			},
 		});

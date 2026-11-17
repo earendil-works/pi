@@ -4,9 +4,11 @@ import type { ThinkingLevelMap } from "../../src/types.ts";
 import { getEffortThinkingLevelMap } from "../reasoning.ts";
 import type { ModelsDevReasoningOption } from "../sources/models-dev.ts";
 
-// Smaller working context used for Pi's compaction, not the advertised API maximum. Live replays on
-// 2026-11-15 failed at 332,078 tokens; one 98,353-token suffix succeeded with HIGH and the full toolset.
-export const GOOGLE_COMPACTION_CONTEXT_WINDOWS: Record<string, number> = {
+// Gemini 4 models decode at most 65,536 output tokens per request and emit finishReason CONTINUATION
+// above that cap. Default to a two-hop (131,072-token) whole-turn budget across Google and Vertex.
+export const GOOGLE_LONG_DECODE_MAX_TOKENS: Record<string, number> = {
+	"gemini-4-argon": 131072,
+	"gemini-4-carbon": 131072,
 	"gemini-4-hydrogen": 131072,
 };
 
