@@ -39,7 +39,8 @@ import { wholeView } from "../fixtures/whole-view.ts";
 import { type Cell, holdIn, poll, startFixture } from "./helpers.ts";
 import { SESSION, type Stub, sessionsStub, topology } from "./tui-fixture.ts";
 
-const plain = (lines: string[]): string => lines.map((line) => stripTerminalSequences(line).trimEnd()).join("\n");
+const plain = (lines: readonly string[]): string =>
+	lines.map((line) => stripTerminalSequences(line).trimEnd()).join("\n");
 const CTRL_C = "\x03";
 const CTRL_D = "\x04";
 const CTRL_END = "\x1b[1;5F";
