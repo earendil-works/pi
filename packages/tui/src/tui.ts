@@ -121,7 +121,16 @@ export function retargetMouseEvent(event: TuiMouseEvent, target: TuiMouseDispatc
 	};
 }
 
+export interface ScrollbackRenderState {
+	mutable: boolean;
+	revision: number;
+}
+
 export interface Component {
+	// Archive lifecycle-aware conversation components when complete; revision changes explicitly refresh history.
+	getScrollbackState?(): ScrollbackRenderState;
+	setScrollbackArchived?(archived: boolean): void;
+
 	/**
 	 * Render the component to lines for the given viewport width
 	 * @param width - Current viewport width

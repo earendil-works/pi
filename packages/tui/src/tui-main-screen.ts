@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { ScrollbackLayout } from "./scrollback-layout.ts";
 import { deleteKittyImage, isImageLine } from "./terminal-image.ts";
 import { type TUI, TuiBase, type TuiStopOptions } from "./tui.ts";
 import { visibleWidth } from "./utils.ts";
@@ -10,6 +11,8 @@ const OSC133_ZONE_PREFIX = /^(?:\x1b\]133;[ABC](?:\x07|\x1b\\))+/;
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
 const MAX_RENDER_WRITE_CHARS = 1024 * 1024;
+const DISABLE_AUTOWRAP = "\x1b[?7l";
+const ENABLE_AUTOWRAP = "\x1b[?7h";
 
 /**
  * Streams terminal output in 1 MiB chunks so a full render never forms one string large enough to exceed V8's limit.
@@ -127,6 +130,7 @@ export interface TuiMainScreenRenderState {
 export class TuiMainScreen extends TuiBase implements TUI {
 	readonly mode = "regular" as const;
 	private previousLines: string[] = [];
+	private readonly scrollbackLayout = new ScrollbackLayout();
 	private previousKittyImageIds = new Set<number>();
 	private previousWidth = 0;
 	private previousHeight = 0;
@@ -148,6 +152,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 	}
 
 	restoreRenderState(state: TuiMainScreenRenderState): void {
+		this.scrollbackLayout.invalidate();
 		this.previousLines = state.previousLines.map((line) => (isImageLine(line) ? "" : line));
 		this.previousKittyImageIds = new Set();
 		this.previousWidth = state.previousWidth;
@@ -158,7 +163,13 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		this.previousViewportTop = state.previousViewportTop;
 	}
 
+	override invalidate(): void {
+		this.scrollbackLayout.invalidate();
+		super.invalidate();
+	}
+
 	protected override resetRenderState(): void {
+		this.scrollbackLayout.invalidate();
 		this.previousLines = [];
 		this.previousWidth = -1;
 		this.previousHeight = -1;
@@ -168,7 +179,12 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		this.previousViewportTop = 0;
 	}
 
+	protected override getExitRestorePrefix(): string {
+		return `\x1b[?2026l${ENABLE_AUTOWRAP}${super.getExitRestorePrefix()}`;
+	}
+
 	protected override beforeTerminalStop(options: TuiStopOptions): void {
+		this.terminal.write(`${ENABLE_AUTOWRAP}\x1b[?2026l`);
 		if (options.preserveScreen || this.previousLines.length === 0) return;
 		this.terminal.write(" ");
 		const targetRow = this.previousLines.length;
@@ -266,7 +282,9 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		// Render all components to get new lines
 		// Resolve fake cursors before compositing so overlays and line slicing see plain SGR codes
 		// Drop OSC 133 markers: the terminal reads 133;A as a new shell prompt, which ends program status (OSC 7501)
-		let newLines = this.resolveFakeCursors(this.render(width).map((line) => line.replace(OSC133_ZONE_PREFIX, "")));
+		let newLines = this.resolveFakeCursors(
+			this.scrollbackLayout.render(this, width, height).map((line) => line.replace(OSC133_ZONE_PREFIX, "")),
+		);
 
 		// Composite overlays into the rendered lines (before differential compare)
 		if (this.hasOverlayEntries) {
@@ -282,7 +300,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		const fullRender = (clear: boolean): void => {
 			this.fullRedrawCount += 1;
 			const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
-			output.append("\x1b[?2026h"); // Begin synchronized output
+			output.append(`\x1b[?2026h${DISABLE_AUTOWRAP}`); // Begin synchronized output
 			if (clear) {
 				output.append(this.deleteKittyImages(this.previousKittyImageIds));
 				output.append("\x1b[2J\x1b[H\x1b[3J"); // Clear screen, home, then clear scrollback
@@ -304,7 +322,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				}
 				output.append(line);
 			}
-			output.append("\x1b[?2026l"); // End synchronized output
+			output.append(`${ENABLE_AUTOWRAP}\x1b[?2026l`); // End synchronized output
 			output.flush();
 			this.cursorRow = Math.max(0, newLines.length - 1);
 			this.hardwareCursorRow = this.cursorRow;
@@ -405,7 +423,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		if (firstChanged >= newLines.length) {
 			if (this.previousLines.length > newLines.length) {
 				const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
-				output.append("\x1b[?2026h");
+				output.append(`\x1b[?2026h${DISABLE_AUTOWRAP}`);
 				output.append(this.deleteChangedKittyImages(firstChanged, lastChanged));
 				// Move to end of new content (clamp to 0 for empty content)
 				const targetRow = Math.max(0, newLines.length - 1);
@@ -437,7 +455,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				if (moveBack > 0) {
 					output.append(`\x1b[${moveBack}A`);
 				}
-				output.append("\x1b[?2026l");
+				output.append(`${ENABLE_AUTOWRAP}\x1b[?2026l`);
 				output.flush();
 				this.cursorRow = targetRow;
 				this.hardwareCursorRow = targetRow;
@@ -462,7 +480,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		// Render from first changed line to end
 		// Keep updates wrapped in synchronized output while writing bounded chunks.
 		const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
-		output.append("\x1b[?2026h"); // Begin synchronized output
+		output.append(`\x1b[?2026h${DISABLE_AUTOWRAP}`); // Begin synchronized output
 		output.append(this.deleteChangedKittyImages(firstChanged, lastChanged));
 		const prevViewportBottom = prevViewportTop + height - 1;
 		const moveTargetRow = appendStart ? firstChanged - 1 : firstChanged;
@@ -569,7 +587,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			output.append(`\x1b[${extraLines}A`);
 		}
 
-		output.append("\x1b[?2026l"); // End synchronized output
+		output.append(`${ENABLE_AUTOWRAP}\x1b[?2026l`); // End synchronized output
 
 		if (process.env.PI_TUI_DEBUG === "1") {
 			const debugDir = "/tmp/tui";

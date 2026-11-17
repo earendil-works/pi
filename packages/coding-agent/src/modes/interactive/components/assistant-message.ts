@@ -5,6 +5,7 @@ import {
 	Markdown,
 	type MarkdownTheme,
 	MouseRegion,
+	type ScrollbackRenderState,
 	Spacer,
 	Text,
 } from "@earendil-works/pi-tui";
@@ -38,6 +39,7 @@ export class AssistantMessageComponent extends Container {
 	private lastMessage?: AssistantMessage;
 	private hasToolCalls = false;
 	private isStreaming = false;
+	private renderRevision = 0;
 	private messageId?: string;
 	private timestamp?: string;
 	private thinkingVisibilityOverrides = new Map<number, boolean>();
@@ -71,6 +73,10 @@ export class AssistantMessageComponent extends Container {
 		if (message) {
 			this.updateContent(message);
 		}
+	}
+
+	getScrollbackState(): ScrollbackRenderState {
+		return { mutable: this.isStreaming, revision: this.renderRevision };
 	}
 
 	override invalidate(): void {
@@ -121,6 +127,7 @@ export class AssistantMessageComponent extends Container {
 	}
 
 	updateContent(message: AssistantMessage, isStreaming = this.isStreaming): void {
+		this.renderRevision++;
 		this.lastMessage = message;
 		this.isStreaming = isStreaming;
 

@@ -5,6 +5,7 @@ import {
 	getCapabilities,
 	Image,
 	MouseRegion,
+	type ScrollbackRenderState,
 	Spacer,
 	Text,
 	type TUI,
@@ -49,6 +50,9 @@ export class ToolExecutionComponent extends Container {
 	private imageWidthCells: number;
 	private outputPad: number;
 	private isPartial = true;
+	private pendingRenders = 0;
+	private renderRevision = 0;
+	private scrollbackArchived = false;
 	private toolDefinition?: ToolRenderers;
 	private ui: TUI;
 	private cwd: string;
@@ -103,6 +107,23 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	getScrollbackState(): ScrollbackRenderState {
+		return { mutable: this.isPartial || this.pendingRenders > 0, revision: this.renderRevision };
+	}
+
+	setScrollbackArchived(archived: boolean): void {
+		this.scrollbackArchived = archived;
+	}
+
+	private beginPendingRender = (): (() => void) => {
+		this.renderRevision++;
+		this.pendingRenders++;
+		return () => {
+			this.pendingRenders--;
+			this.ui.requestRender();
+		};
+	};
+
 	private getCallRenderer(): ToolDefinition<any, any>["renderCall"] | undefined {
 		return this.toolDefinition?.renderCall;
 	}
@@ -121,9 +142,12 @@ export class ToolExecutionComponent extends Container {
 
 	private getRenderContext(lastComponent: Component | undefined): ToolRenderContext {
 		return {
+			beginPendingRender: this.beginPendingRender,
 			args: this.args,
 			toolCallId: this.toolCallId,
 			invalidate: () => {
+				// Keep historical task cards archived; the viewport task area displays live status.
+				if (this.scrollbackArchived && this.pendingRenders === 0) return;
 				this.invalidate();
 				this.ui.requestRender();
 			},
@@ -176,6 +200,7 @@ export class ToolExecutionComponent extends Container {
 	 * frames runs its renderer once per frame, not once per delta (#9265).
 	 */
 	updateArgs(args: any): void {
+		this.renderRevision++;
 		this.args = args;
 		this.argsPending = true;
 		this.ui.requestRender();
@@ -203,32 +228,39 @@ export class ToolExecutionComponent extends Container {
 		},
 		isPartial = false,
 	): void {
+		this.renderRevision++;
+		this.scrollbackArchived = false;
 		this.result = result;
 		this.isPartial = isPartial;
 		this.updateDisplay();
 	}
 
 	setExpanded(expanded: boolean): void {
+		this.renderRevision++;
 		this.expanded = expanded;
 		this.updateDisplay();
 	}
 
 	setOutputPad(outputPad: number): void {
+		this.renderRevision++;
 		this.outputPad = outputPad;
 		this.updateDisplay();
 	}
 
 	setShowImages(show: boolean): void {
+		this.renderRevision++;
 		this.showImages = show;
 		this.updateDisplay();
 	}
 
 	setImageWidthCells(width: number): void {
+		this.renderRevision++;
 		this.imageWidthCells = Math.max(1, Math.floor(width));
 		this.updateDisplay();
 	}
 
 	override invalidate(): void {
+		this.renderRevision++;
 		super.invalidate();
 		this.updateDisplay();
 	}
@@ -384,10 +416,11 @@ export class ToolExecutionComponent extends Container {
 									{ maxWidthCells: source.widthCells },
 								);
 					if (source.mimeType !== "image/png") {
+						const finishPending = this.beginPendingRender();
 						ensurePngTranscoder(() => {
 							this.invalidate();
 							this.ui.requestRender();
-						});
+						}, finishPending);
 					}
 					this.imageComponents.push(imageComponent);
 					this.imageSources.push(source);

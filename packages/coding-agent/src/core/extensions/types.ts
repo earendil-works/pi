@@ -486,6 +486,8 @@ export interface ToolRenderResultOptions {
 
 /** Context passed to tool renderers. */
 export interface ToolRenderContext<TState = any, TArgs = any> extends KeybindingHints {
+	// Register deferred rendering; call the returned callback once on completion or failure before archiving.
+	beginPendingRender?: () => () => void;
 	/** Current tool call arguments. Shared across call/result renders for the same tool call. */
 	args: TArgs;
 	/** Unique id for this tool execution. Stable across call/result renders for the same tool call. */

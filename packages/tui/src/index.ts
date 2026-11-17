@@ -170,6 +170,7 @@ export {
 	type OverlayOptions,
 	type OverlayUnfocusOptions,
 	renderFakeCursor,
+	type ScrollbackRenderState,
 	type SizeValue,
 	type TUI,
 	type TuiInputListener,

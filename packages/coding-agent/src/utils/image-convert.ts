@@ -75,15 +75,20 @@ let pngTranscoderRegistered = false;
  * Loads photon once. `onRegistered` runs after registration so callers can re-render images that
  * showed text fallbacks; it is not called if the transcoder was already registered or cannot load.
  */
-export function ensurePngTranscoder(onRegistered: () => void): void {
-	if (pngTranscoderRegistered || getCapabilities().images !== "kitty") return;
+export function ensurePngTranscoder(onRegistered: () => void, onSettled?: () => void): void {
+	if (pngTranscoderRegistered || getCapabilities().images !== "kitty") {
+		onSettled?.();
+		return;
+	}
 	pngTranscoderLoad ??= loadPngTranscoder().then((transcoder) => {
 		if (!transcoder) return false;
 		setImageTranscoder(transcoder);
 		pngTranscoderRegistered = true;
 		return true;
 	});
-	void pngTranscoderLoad.then((registered) => {
-		if (registered) onRegistered();
-	});
+	void pngTranscoderLoad
+		.then((registered) => {
+			if (registered) onRegistered();
+		})
+		.finally(onSettled);
 }
