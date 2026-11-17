@@ -36,9 +36,11 @@ case "${1:-focused}" in
 			openai-completions-tool-choice images-models
 			native-providers-catalog native-providers-kimi-wire
 		)
-		core_agent_tests=(agent-loop)
+		core_agent_tests=(agent-loop agent-request-update)
 		agent_tests=(
 			add-endpoint-provider remote-catalog-names anthropic-oauth-prompt-drift references
+			virtual-models interactive-mode-suppressed-messages
+			suite/virtual-models suite/virtual-model-substrate suite/suppress-text-display
 		)
 		# vitest skips a listed file that does not exist, so a branch missing from next would pass silently.
 		missing=()

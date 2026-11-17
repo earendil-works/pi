@@ -4,4 +4,5 @@ feat/native-google
 feat/native-meta
 feat/native-openai
 feat/native-providers
+feat/virtual-models
 fork/tooling
