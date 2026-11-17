@@ -13,6 +13,10 @@ import {
 // accounts: GPT-5.5 and GPT-5.3 Codex Spark are rejected with "not supported
 // when using Codex with a ChatGPT account".
 const MODELS = [
+	// GPT-6.2 is not in Codex's bundled catalog yet; use Codex's 272k default until
+	// /backend-api/codex/models is checked.
+	{ id: "gpt-6.2-astra", name: "GPT-6.2 Astra", contextWindow: 272000 },
+	{ id: "gpt-6.2-sol", name: "GPT-6.2 Sol", contextWindow: 272000 },
 	// GPT-6.1 uses the 500k default returned by /backend-api/codex/models.
 	{ id: "gpt-6.1-sol", name: "GPT-6.1 Sol", contextWindow: 500000 },
 	{ id: "gpt-6.1-terra", name: "GPT-6.1 Terra", contextWindow: 500000 },
@@ -35,6 +39,8 @@ const ADDITIONAL_TOOLS_MODEL_IDS = new Set([
 	"gpt-6-luna",
 	"gpt-6.1-sol",
 	"gpt-6.1-terra",
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
 ]);
 
 export default defineProvider({
