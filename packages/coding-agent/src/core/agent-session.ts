@@ -940,7 +940,7 @@ export class AgentSession {
 			},
 			(entries) => this._buildBoundaryContext(entries, "turn_end"),
 		);
-		this._commitBoundaryDrafts(boundary.entries);
+		await this._commitBoundaryDrafts(boundary.entries);
 		if (boundary.continue && !this._buildBoundaryContext([], "turn_end").canContinue) {
 			this._reportInvalidBoundaryContinuation("turn_end");
 			return false;
@@ -1086,10 +1086,23 @@ export class AgentSession {
 		};
 	}
 
-	private _commitBoundaryDrafts(drafts: SessionBoundaryDraft[]): void {
+	private async _commitBoundaryDrafts(drafts: SessionBoundaryDraft[]): Promise<void> {
 		const appended = this._applyBoundaryDrafts(this.sessionManager, drafts);
 		this._refreshFinalizedContext();
-		for (const entry of appended) this._emit({ type: "entry_appended", entry });
+		for (const entry of appended) {
+			this._emit({ type: "entry_appended", entry });
+			// Boundary-draft compactions rewrite history just like manual/auto compaction, so
+			// extensions (e.g. providers mirroring the session elsewhere) must hear about them.
+			if (entry.type === "compaction" && this._extensionRunner.hasHandlers("session_compact")) {
+				await this._extensionRunner.emit({
+					type: "session_compact",
+					compactionEntry: entry,
+					fromExtension: true,
+					reason: "threshold",
+					willRetry: false,
+				});
+			}
+		}
 	}
 
 	private _reportInvalidBoundaryContinuation(event: "turn_end" | "agent_before_settle"): void {
@@ -2108,7 +2121,7 @@ export class AgentSession {
 				{ type: "agent_before_settle", outcome: this._lastActivityOutcome },
 				(entries) => this._buildBoundaryContext(entries, "agent_before_settle"),
 			);
-			this._commitBoundaryDrafts(result.entries);
+			await this._commitBoundaryDrafts(result.entries);
 			this._flushPendingCustomMessages();
 			const finalContext = this._buildBoundaryContext([], "agent_before_settle");
 			if (this._abortDuringBeforeSettle) return false;

@@ -2,6 +2,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { SessionCompactEvent } from "../../src/core/extensions/types.ts";
 import { createHarness, getMessageText, type Harness } from "./harness.ts";
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
@@ -1059,5 +1060,105 @@ describe("durable length recovery", () => {
 				.messages.some((message) => getMessageText(message) === "partial response"),
 		).toBe(false);
 		expect(harness.faux.state.callCount).toBe(2);
+	});
+});
+
+describe("AgentSession boundary-draft compaction events", () => {
+	const harnesses: Harness[] = [];
+
+	afterEach(() => {
+		while (harnesses.length > 0) harnesses.pop()?.cleanup();
+	});
+
+	it("emits session_compact when a turn_end boundary draft commits a compaction", async () => {
+		const compactEvents: SessionCompactEvent[] = [];
+		let handled = false;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("turn_end", () => {
+						if (handled) return;
+						handled = true;
+						return {
+							entries: [{ type: "compaction", summary: "handoff summary", firstKeptEntryId: null }],
+							continue: true,
+						};
+					});
+				},
+				(pi) => {
+					pi.on("session_compact", (event) => {
+						compactEvents.push(event);
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("second")]);
+
+		await harness.session.prompt("start");
+
+		expect(compactEvents).toHaveLength(1);
+		expect(compactEvents[0]).toMatchObject({ fromExtension: true, reason: "threshold", willRetry: false });
+		expect(compactEvents[0]?.compactionEntry).toMatchObject({ type: "compaction", summary: "handoff summary" });
+	});
+
+	it("emits session_compact when an agent_before_settle boundary draft commits a compaction", async () => {
+		const compactEvents: SessionCompactEvent[] = [];
+		let handled = false;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("agent_before_settle", () => {
+						if (handled) return;
+						handled = true;
+						return {
+							entries: [{ type: "compaction", summary: "settle summary", firstKeptEntryId: null }],
+						};
+					});
+				},
+				(pi) => {
+					pi.on("session_compact", (event) => {
+						compactEvents.push(event);
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("only response")]);
+
+		await harness.session.prompt("start");
+
+		expect(compactEvents).toHaveLength(1);
+		expect(compactEvents[0]).toMatchObject({ fromExtension: true, reason: "threshold", willRetry: false });
+		expect(compactEvents[0]?.compactionEntry).toMatchObject({ type: "compaction", summary: "settle summary" });
+	});
+
+	it("does not emit session_compact for boundary drafts without a compaction", async () => {
+		const compactEvents: SessionCompactEvent[] = [];
+		let handled = false;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("turn_end", () => {
+						if (handled) return;
+						handled = true;
+						return {
+							entries: [{ type: "custom", customType: "note", data: { a: 1 } }],
+						};
+					});
+				},
+				(pi) => {
+					pi.on("session_compact", (event) => {
+						compactEvents.push(event);
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("only response")]);
+
+		await harness.session.prompt("start");
+
+		expect(compactEvents).toHaveLength(0);
 	});
 });
