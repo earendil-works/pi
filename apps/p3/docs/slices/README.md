@@ -6,7 +6,7 @@ before it is built, the brief is filled out in detail, starting with p2's featur
 | # | Slice | Brief | State |
 | --- | --- | --- | --- |
 | 1 | Base and sessions | `01-base-and-sessions.md` | redone on Chord's slice 14 with p3's own kit (2026-11-15), built, reviews next |
-| 26 | The release build, the command and several Pis | `26-release.md` | built (first part), reviews; second part briefed |
+| 26 | The release build, the command and several Pis | `26-release.md` | built (all three parts, with review round 1's fixes), review round 2 next |
 | 27 | The terminal client scaffold | (brief to come) | next after 26 |
 | 25 | Sign-in with Radius | `25-radius-sign-in.md` | brief, research done (2026-11-15) |
 | 28 | Telemetry: metrics always, traces kept by outcome, full tracing on demand, a size budget | `28-telemetry.md` | brief, measured on p2 (2026-11-16); decisions open |

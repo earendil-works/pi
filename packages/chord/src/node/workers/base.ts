@@ -78,6 +78,10 @@ export async function buildWorkerBase(entry: string, execArgv: readonly string[]
 		ignoreAnnotations: true,
 		// Function and class names as the source has them (`name` stays what unbundled code sees).
 		keepNames: true,
+		// Minified but for the names: every worker holds the base's source text, and V8 keeps a text with any non-ASCII
+		// character (a comment's `§`) as UTF-16, twice its size.
+		minifyWhitespace: true,
+		minifySyntax: true,
 		sourcemap: "linked",
 		sourcesContent: false,
 		sourceRoot: pathToFileURL(root).href,

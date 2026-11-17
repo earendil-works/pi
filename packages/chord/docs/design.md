@@ -596,8 +596,8 @@ drops, folds or resets.
   unversioned (owner, 2026-10-22): Chord never persists principals, base code changes every host at once, links stamp
   them. Objects persist a projection with its own schema, never the principal (p2: chat's `Author { kind, id, name }`).
   p2: `owner` (`access: "local" | "relay" | "device"`), `guest` (`session`, `mode`, grant revision), `server`,
-  `worker` (`session`). p3: `user`, `guest`, `worker`, `server`, no `owner` kind: the kit's owner is one of its users
-  (§23, decision "The kit's owner is a principal the app chooses").
+  `worker` (`session`). p3: `owner`, `person`, `worker`, `server` (p3's decisions "The principal is identity only" and "Persons, guests
+  and links": no guest kind; what a person may reach is data, read by admissions).
 - **Links stamp principals.** A caller's own data never sets its principal.
 - **The principal key** maps a principal to its object identity (`principalKey`, default canonical JSON; cached per
   principal object; the same function on every host). It should include connection provenance and grant revision, so
@@ -2921,8 +2921,9 @@ route's checks, never instead of them.
 - **Sockets** (D6): `sockets: { "/terminal/:id": (socket, request, ctx) => … }`, a `ws` WebSocket after admission
   and the authenticators (no principal: 403 before plugin code), `maxPayload` per contribution (1 MiB), pinged after
   15 s of silence and terminated 15 s later. **Links:** `links.path` upgrades to `host.accept(webSocketLink(socket), {
-  principal, limits })`; a client that stops reading is cut off past 4 MiB waiting; `links.opened(request, principal)`,
-  when given, hears each link opened and may return what to call when it closes (the kit counts an ephemeral sign-in's
+  principal, limits })`; a client that stops reading is cut off past 4 MiB waiting; `links.opened(request, principal, close)`,
+  when given, hears each link opened (`close()` terminates it at once, as a revocation does) and may return what to
+  call when it closes (the kit counts an ephemeral sign-in's
   links with it; a throw is reported as the hook `links.opened`). **What is removed is closed at
   once** (decisions Q6, "allowed hosts only through contributions"): a link or socket whose host, relay or socket
   handler leaves the router is terminated and its scope sealed; an upgrade is checked again against the current router

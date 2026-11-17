@@ -1,49 +1,33 @@
-// The p3 server (decision "Base entries are named after what they are"): `startP3` gives the kit what p3 decides (its
-// name, API, kinds, principals, its one worker kind), the kit does the rest. Run as a script it serves `~/.p3` (or the
-// directory its first argument names) on port 8789 and prints the owner link.
+// The p3 server (decision "Base entries are named after what they are"): `startP3` gives the kit what the start
+// decides (the data directory, the plugins root, the port, the session worker's entry), the kit does the rest. The
+// command that calls it is `bin.ts`.
 
-import { fileURLToPath } from "node:url";
-import { type App, startServer } from "@earendil-works/chord/app";
-import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
-import { Session } from "@p3/app/v1";
-import { API, KINDS, mayReachSession, PRINCIPALS } from "./src/app.ts";
-import type { P3Principal } from "./src/principals.ts";
+import type { Context } from "@earendil-works/chord/context";
+import { PLUGINS, version, WORKER } from "./src/install.ts";
+import type { App } from "./src/kit/app.ts";
+import { startServer } from "./src/kit/start-server.ts";
+import { firstPort } from "./src/pi.ts";
 
-/** p3's port: p2 keeps 8788. */
-const PORT = 8789;
-
-/** Starts p3 on `dataDir` (`~/.p3` by default) with its built-in plugins from `root`, listening on `port`. */
+/**
+ * Starts p3 on `dataDir` (`~/.pi/p3` by default) with its built-in plugins from `root`, listening on `port` for this
+ * start, else on the Pi's own port (`firstPort`); `onStop` is what the owner's stop over HTTP does.
+ */
 export function startP3(
 	context: Context,
-	options: { readonly dataDir?: string; readonly root?: string; readonly port?: number } = {},
-): Promise<App<P3Principal>> {
-	return startServer<P3Principal>(
+	options: { readonly onStop: () => void; readonly dataDir?: string; readonly root?: string; readonly port?: number },
+): Promise<App> {
+	const host = "127.0.0.1";
+	return startServer(
 		{
-			name: "p3",
 			...(options.dataDir === undefined ? {} : { dataDir: options.dataDir }),
-			root: options.root ?? fileURLToPath(new URL("./plugins/", import.meta.url)),
-			listen: { host: "127.0.0.1", port: options.port ?? PORT },
-			api: API,
-			kinds: KINDS,
-			principal: PRINCIPALS,
-			workers: [
-				{
-					kind: Session,
-					entry: fileURLToPath(new URL("./worker.ts", import.meta.url)),
-					execArgv: ["--conditions=source", "--disable-warning=ExperimentalWarning"],
-					start: () => ({}),
-					authorize: mayReachSession,
-				},
-			],
+			root: options.root ?? PLUGINS,
+			listen:
+				options.port === undefined ? { host, firstPort: firstPort(options.dataDir) } : { host, port: options.port },
+			version: version(),
+			worker: WORKER,
+			onStop: options.onStop,
 			onError: (error) => console.error("p3:", error),
 		},
 		context,
 	);
-}
-
-if (import.meta.main) {
-	const app = await startP3(BACKGROUND_CONTEXT, {
-		...(process.argv[2] === undefined ? {} : { dataDir: process.argv[2] }),
-	});
-	console.log(`p3 on ${app.dataDir}. Open ${app.ownerLink()}`);
 }

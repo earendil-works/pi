@@ -1,171 +1,144 @@
-// The sessions plugin on the server. Every session is one row of a table (listed, queried) and one document of facts
-// keyed by its address (what its worker, and later admissions, pin): both belong to the session's host, so its export,
-// import and delete carry them, and both are written in one transaction. One local store owns them; the owner's
-// `Sessions` and each worker's `SessionFacts` are views of it.
+// The sessions plugin on the server. Every session is one row of a table keyed by its address, so a session's export,
+// import and delete carry it. One local store (`SessionsStore`, `contract.server.ts`) owns the table, writes it and
+// offers its rows as named queries; the owner's `Sessions` and `SessionsList`, each worker's `SessionFacts` and the
+// route's `SessionRoute` read them.
 
 import {
-	arr,
+	and,
 	type Ctx,
 	defineFacet,
-	defineState,
 	defineTable,
+	eq,
 	forbidden,
-	type HandleOf,
+	forward,
+	gt,
 	host as hostColumn,
 	int,
 	invalid,
 	json,
-	keyed,
-	local,
-	mapShared,
-	method,
-	obj,
-	opt,
 	query,
 	type RowOf,
 	Session,
 	str,
-	type Tx,
-} from "@p3/app/v1";
+} from "@earendil-works/p3/v1";
+import { SessionRoute } from "@earendil-works/p3/v1/server";
+import { SessionsStore } from "./contract.server.ts";
 import {
+	CODING,
 	Creator,
-	Facts,
 	SessionFacts,
-	type SessionInfo,
 	type SessionRow,
-	SessionRow as SessionRowSchema,
+	type SessionState,
 	Sessions,
+	SessionsList,
 } from "./contract.ts";
 
-/** A session's row: its address, title, app, creator, when it was made, and when it was archived (absent: not). */
+/**
+ * A session's row: its address, title, app, creator, when it was made, its state, when it was last touched, and when
+ * it was archived. `archivedAt` is 0 while it is not archived: both lists need it in their index, and index and order
+ * columns are never optional.
+ */
 const ROW = {
 	id: hostColumn(Session),
 	title: str(),
 	app: str(),
 	creator: json(Creator, { version: 1 }),
 	createdAt: int(),
-	archivedAt: opt(int()),
+	state: str(),
+	lastTouch: int(),
+	archivedAt: int(),
 };
 
 /** A row of `Rows`. */
 type Row = RowOf<typeof ROW>;
 
-/** Every session, one row each, by its address. */
+/**
+ * Every session, one row each, by its address. One index per list: a list's whole order (its column, then the key)
+ * must be its index's after the columns its condition fixes, or SQLite sorts every page it reads.
+ */
 const Rows = defineTable("sessions.rows", {
 	version: 1,
 	columns: ROW,
 	key: ["id"],
-	indexes: { created: ["createdAt"] },
+	indexes: { active: ["app", "archivedAt", "lastTouch"], archived: ["app", "archivedAt"] },
 });
 
-/** A session's facts by its address; a session the server does not know has `{ session: null }`. */
-const FactsDocs = defineState("sessions.facts-of", {
-	schema: Facts,
-	version: 1,
-	initial: () => ({ session: null }),
-	keyed: Session,
-	persist: true,
-	checkpointWhen: () => true,
-});
-
-/** A row as lists show it, the same object for a row that did not change (`mapShared`: the list's diff stays small). */
-const shown = mapShared(rowOf);
-
-/** How many sessions the owner's list holds: the newest. */
-const LIST = 200;
-
-/** The newest sessions first (the key breaks ties of one millisecond). */
-const NEWEST = query(Rows).orderBy((row) => row.createdAt, "desc");
-
-/** The sessions and their facts, once per server. */
-const SessionsStore = local("sessions.store", {
-	version: 1,
-	params: {},
-	members: {
-		list: arr(SessionRowSchema),
-		facts: keyed(Facts, Session),
-		create: method(obj({ title: str(), creator: Creator }), str()),
-		rename: method(obj({ id: str(), title: str() })),
-		archive: method(obj({ id: str() })),
-		restore: method(obj({ id: str() })),
-	},
-});
+/** How many sessions a page of a list holds. */
+const PAGE = 50;
 
 export default defineFacet((host) => {
 	host.serve(SessionsStore, (_params, self) => {
 		const rows = self.table(Rows);
-		const facts = self.state(FactsDocs);
-		const newest = self.query(rows, NEWEST, LIST);
-		/** Replaces session `id`'s row by `change(row)` and writes its facts from the new row, in one transaction. */
-		const update = (id: string, change: (row: Row) => Row, ctx: Ctx) =>
+		/** Sets `change` on session `id`'s row: an `update`, so only the reads that depend on those columns run. */
+		const update = (id: string, change: Partial<Row>, ctx: Ctx) =>
 			self.tx(async (tx) => {
-				const old = await tx.get(rows, { id: Session({ id }) });
-				if (old === undefined) throw invalid("args", `sessions: no session ${id}`);
-				const row = change(old);
-				tx.put(rows, row);
-				await writeFacts(tx, facts, row);
+				const key = { id: Session({ id }) };
+				if ((await tx.get(rows, key)) === undefined) throw invalid("args", `sessions: no session ${id}`);
+				tx.update(rows, key, change);
+				return null;
 			}, ctx);
 		return {
-			list: self.derive([newest], ([found]) => shown(found)),
-			facts,
+			sessions: self.queries(
+				rows,
+				{ map: shown },
+				{
+					// Index `active`: `app` and `archivedAt` fixed, in the order of `lastTouch`, then the key.
+					active: ({ app }: { app: string }) =>
+						query(Rows)
+							.where((s) => and(eq(s.app, app), eq(s.archivedAt, 0)))
+							.orderBy((s) => s.lastTouch, "desc"),
+					// Index `archived`: `app` fixed, a range of `archivedAt` in its order, then the key.
+					archived: ({ app }: { app: string }) =>
+						query(Rows)
+							.where((s) => and(eq(s.app, app), gt(s.archivedAt, 0)))
+							.orderBy((s) => s.archivedAt, "desc"),
+					// The key.
+					one: ({ id }: { id: string }) => query(Rows).where((s) => eq(s.id, Session({ id }))),
+				},
+			),
 			create: async ({ title, creator }, ctx) => {
 				const id = crypto.randomUUID();
-				const row: Row = { id: Session({ id }), title, app: "coding", creator, createdAt: Date.now() };
-				await self.tx(async (tx) => {
-					tx.put(rows, row);
-					await writeFacts(tx, facts, row);
-				}, ctx);
+				const now = Date.now();
+				const state: SessionState = "settled";
+				const row = { id: Session({ id }), title, app: CODING, creator, state };
+				await self.tx(async (tx) => tx.put(rows, { ...row, createdAt: now, lastTouch: now, archivedAt: 0 }), ctx);
 				return id;
 			},
-			rename: async ({ id, title }, ctx) => {
-				await update(id, (row) => ({ ...row, title }), ctx);
-				return null;
-			},
-			archive: async ({ id }, ctx) => {
-				await update(id, (row) => ({ ...row, archivedAt: Date.now() }), ctx);
-				return null;
-			},
-			restore: async ({ id }, ctx) => {
-				await update(id, ({ archivedAt: _, ...row }) => row, ctx);
-				return null;
-			},
+			rename: ({ id, title }, ctx) => update(id, { title }, ctx),
+			archive: ({ id }, ctx) => update(id, { archivedAt: Date.now() }, ctx),
+			restore: ({ id }, ctx) => update(id, { archivedAt: 0 }, ctx),
 		};
 	});
 
 	host.serve(Sessions, (_params, principal, self) => {
 		if (principal.kind !== "owner") throw forbidden("sessions: the owner's");
 		const store = self.get(SessionsStore, {});
-		return {
-			variant: "owner",
-			members: {
-				list: store.list,
-				create: ({ title }, ctx) => store.create({ title: title ?? "", creator: { kind: "owner" } }, ctx),
-				rename: (args, ctx) => store.rename(args, ctx),
-				archive: (args, ctx) => store.archive(args, ctx),
-				restore: (args, ctx) => store.restore(args, ctx),
-			},
-		};
+		return forward(store, Sessions, "owner", {
+			create: ({ title }, ctx) => store.create({ title: title ?? "", creator: { kind: "owner" } }, ctx),
+		});
+	});
+
+	host.serve(SessionsList, ({ app, set }, principal, self) => {
+		if (principal.kind !== "owner") throw forbidden("sessions: the owner's");
+		const list = self.list("sessions", [[self.get(SessionsStore, {}).sessions[set], { app }]], { first: PAGE });
+		return { variant: "owner", members: { list: list.value, more: (ctx) => list.more(ctx) } };
 	});
 
 	host.serve(SessionFacts, (_params, principal, self) => {
 		if (principal.kind !== "worker") throw forbidden("sessions: a session's worker only");
-		const store = self.get(SessionsStore, {});
-		return { variant: "worker", members: { facts: store.facts.at(Session({ id: principal.session })) } };
+		const one = self.get(SessionsStore, {}).sessions.one;
+		const found = self.liveQuery(one, { id: principal.session }, { first: 1 });
+		return { variant: "worker", members: { session: self.derive([found], ([{ rows }]) => rows[0] ?? null) } };
+	});
+
+	host.serve(SessionRoute, ({ session }, self) => {
+		const found = self.liveQuery(self.get(SessionsStore, {}).sessions.one, { id: session }, { first: 1 });
+		return { exists: self.derive([found], ([{ rows }]) => rows.length === 1) };
 	});
 });
 
-/** A table row as lists show it. */
-function rowOf(row: Row): SessionRow {
-	return { id: row.id.params.id, ...infoOf(row) };
-}
-
-/** What a table row says of its session besides its id. */
-function infoOf({ title, app, creator, createdAt, archivedAt }: Row): SessionInfo {
-	return { title, app, creator, createdAt, archivedAt: archivedAt ?? null };
-}
-
-/** Writes the facts of `row`'s session from it, inside `tx`. */
-async function writeFacts(tx: Tx, facts: HandleOf<typeof FactsDocs>, row: Row): Promise<void> {
-	const draft = await tx.draft(facts, row.id);
-	draft.session = infoOf(row);
+/** A table row as lists and a session's worker see it. */
+function shown({ id, state, archivedAt, ...row }: Row): SessionRow {
+	// `state` holds only what this plugin wrote: a `SessionState`.
+	return { id: id.params.id, ...row, state: state as SessionState, archivedAt: archivedAt === 0 ? null : archivedAt };
 }
