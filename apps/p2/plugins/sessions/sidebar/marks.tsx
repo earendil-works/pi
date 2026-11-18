@@ -1,27 +1,50 @@
 // The status marks of sidebar items, apart from the rows so other plugins' web facets (the Familiar's row, the command
 // menu's conversations) can show them through the sessions plugin's contract (`contract.web.tsx`) with nothing but
 // React.
-import { type ReactNode, useState } from "react";
+import { type CSSProperties, type ReactNode, useState } from "react";
 
 /** The frames of pi's working indicator (the terminal UI's loader, `packages/tui`'s `Loader`). */
 const PI_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/** Where braille dots 1 to 8 (bits 0 to 7 above U+2800) sit in the cell: [column, row], from 1. */
+const BRAILLE_DOTS = [
+	[1, 1],
+	[1, 2],
+	[1, 3],
+	[2, 1],
+	[2, 2],
+	[2, 3],
+	[1, 4],
+	[2, 4],
+] as const;
+
+/** Each frame with its lit dots as grid placements, drawn by style.css: a font may misplace a braille glyph's dots. */
+const PI_CELLS = PI_FRAMES.map((frame) => {
+	const bits = (frame.codePointAt(0) ?? 0x2800) - 0x2800;
+	const dots = BRAILLE_DOTS.filter((_, dot) => bits & (1 << dot));
+	return { frame, dots: dots.map(([column, row]): CSSProperties => ({ gridColumn: column, gridRow: row })) };
+});
 
 /** One cycle of the frames: style.css's `pi-dots` animation. */
 const PI_CYCLE_MS = 1600;
 
 /**
- * Working, as pi's terminal UI shows it: its braille dots, stepped by CSS through a strip of its frames (one frame
- * shows at a time; no timer per row). Slow and in the secondary colour, so a list of running agents stays calm; still
- * on its first frame with reduced motion. Each starts where the page's clock is in the cycle, so all of them step
- * together.
+ * Working, as pi's terminal UI shows it: its braille frames, each drawn as its cell's dots, stepped by CSS through a
+ * strip of them (one frame shows at a time; no timer per row). Slow and in the secondary colour, so a list of running
+ * agents stays calm; still on its first frame with reduced motion. Each starts where the page's clock is in the
+ * cycle, so all of them step together.
  */
 export function PiDots() {
 	const [phase] = useState(() => `${-(performance.now() % PI_CYCLE_MS)}ms`);
 	return (
 		<span className="pi-dots" role="img" aria-label="Working" title="Working">
 			<span className="pi-dots-strip" style={{ animationDelay: phase }} aria-hidden="true">
-				{PI_FRAMES.map((frame) => (
-					<span key={frame}>{frame}</span>
+				{PI_CELLS.map(({ frame, dots }) => (
+					<span key={frame}>
+						{dots.map((dot) => (
+							<i key={`${dot.gridColumn}-${dot.gridRow}`} style={dot} />
+						))}
+					</span>
 				))}
 			</span>
 		</span>
