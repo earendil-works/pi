@@ -452,3 +452,7 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
   network. Whether the minimum for running from a checkout rises to Node 26 is still open.
 - **Node 26 or newer everywhere (owner, 2026-11-18: "node 26+ all the way"):** p3's minimum Node is 26, also for running
   from a checkout and for its tests; Node 24 support goes (its branch in the workers' V8 flags, its test runs).
+- **The terminal's sandbox runs on p3's minimum Node; shipped p3 carries a fixed one (owner, 2026-11-18):** Node 26.5.1
+  fixed a high-severity hole in the permission model (CVE-2026-58043) that the terminal's sandbox (slice 27) relies on.
+  The sandbox accepts the older Nodes p3 supports (from 26.3.1, the phone's Termux Node) with that hole; the Node p3 ships
+  with is 26.5.1 or newer, so shipped installs have the fix.
