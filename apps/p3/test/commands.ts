@@ -814,11 +814,11 @@ async function oldNodeCase(cli: Cli): Promise<void> {
 		NODE_OPTIONS: `--import=${old} --disable-warning=ExperimentalWarning`,
 	});
 	for (const args of [["--version"], ["status"], ["server", "--dir", cli.dir("old")]]) {
-		const ran = await cli.p3In(env("24.3.9"), ...args);
+		const ran = await cli.p3In(env("26.3.0"), ...args);
 		assert.deepEqual(ran, {
 			code: 1,
 			stdout: "",
-			stderr: `p3: needs Node ${MINIMUM_NODE} or newer; this is Node 24.3.9\n`,
+			stderr: `p3: needs Node ${MINIMUM_NODE} or newer; this is Node 26.3.0\n`,
 		});
 	}
 	// Its oldest one is not refused.

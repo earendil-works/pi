@@ -1,7 +1,7 @@
 # p3
 
 One Pi per person: a server on your machine with a worker per session, and the command `p3` that runs it. The
-successor of p2 (Pi Mobile) on Chord v2, built in slices; so far it is headless (no page yet). Node 24.4 or newer.
+successor of p2 (Pi Mobile) on Chord v2, built in slices; so far it is headless (no page yet). Node 26.3.1 or newer.
 
 ## The command
 
@@ -38,7 +38,7 @@ p3 and "go to definition" lands in the API's code.
 - `test/`: tests of the whole (topology, end to end, the command) and of the kit (`test/kit/`); a plugin's own tests
   sit in its directory.
 
-From this directory, with Node 24: `npm run check`, `npm test`; `node --conditions=source
+From this directory, with Node 26.3.1 or newer: `npm run check`, `npm test`; `node --conditions=source
 --disable-warning=ExperimentalWarning src/bootstrap/bin.ts server --dir <path>` runs the server from source. A local
 release (p3 built, packed and installed outside the repository as it would ship, then tested): from the repository root,
 `npm run release:p3:local -- --out /tmp/p3-release --force [--bench]`; the command is then `/tmp/p3-release/p3`.

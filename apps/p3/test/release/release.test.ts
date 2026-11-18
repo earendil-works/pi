@@ -194,13 +194,11 @@ describe("the installed release", { concurrency: true, timeout: CASE_MS }, () =>
 			"--optimize-for-size",
 			"--max-semi-space-size=4",
 			"--gc-memory-reducer-start-delay-ms=8000",
+			"--managed-zone-memory",
 		];
 		for (const flag of flags) {
 			assert.ok(argv.includes(flag), `${flag}: ${argv.join(" ")}`);
 		}
-		// V8's managed zone memory on Node 26 only: Node 24's V8 would refuse to start with it.
-		const zones = Number(process.versions.node.split(".")[0]) >= 26;
-		assert.equal(argv.includes("--managed-zone-memory"), zones, argv.join(" "));
 		await launched.close("SIGTERM");
 		await client.close(context);
 		await assert.rejects(stat(`/proc/${launched.pid}`));

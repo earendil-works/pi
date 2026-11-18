@@ -43,7 +43,7 @@
 		"test:release": "node --conditions=source --disable-warning=ExperimentalWarning --test --test-concurrency=1 --test-timeout=900000 --test-force-exit \"test/release/*.test.ts\""
 	},
 	"engines": {
-		"node": ">=24.4.0"
+		"node": ">=26.3.1"
 	},
 	"dependencies": {
 		"@earendil-works/chord": "1.5.2",

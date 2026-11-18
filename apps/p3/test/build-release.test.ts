@@ -66,7 +66,7 @@ describe("the release build", () => {
 		// The check's own bundle imports nothing either.
 		const check = await readFile(join(built.dist, "minimum-node.js"), "utf8");
 		assert.doesNotMatch(check, /\bimport\s*[\s{*"'(]|\bfrom\s*"/);
-		assert.ok(check.includes('MINIMUM_NODE="24.4.0"') && check.includes("process.exit(1)"), check);
+		assert.ok(check.includes('MINIMUM_NODE="26.3.1"') && check.includes("process.exit(1)"), check);
 	});
 
 	it("leaves no workspace package and no TypeScript for the bundles to resolve at run time", async () => {

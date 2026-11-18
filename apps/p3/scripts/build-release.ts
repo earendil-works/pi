@@ -89,7 +89,7 @@ export function bundleOptions(dist: string) {
 		chunkNames: "chunks/[name]-[hash]",
 		format: "esm",
 		platform: "node",
-		target: "node24",
+		target: "node26",
 		// Workspace packages resolve to their sources, as in development.
 		conditions: ["source"],
 		// No path alias of the monorepo applies: imports resolve as an installed package's would.

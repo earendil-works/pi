@@ -795,24 +795,30 @@ restored in a copy for the comparison); "settled" is after 40 s (V8's memory red
   24's own default: the flag changes nothing there, and one list serves every Node (no choice by version; mem-audit
   thought the flag missing in Node 24, but `node --v8-options` of 24.4.1 lists it, and a worker starts with it).
   Background recompilation stays on.
-- **`--managed-zone-memory` on Node 26 only** (owner, 2026-11-18, after v8-flag-check: an ordinary V8 flag staged for
-  shipping, v8 commit 277d16f12e01, bug issues.chromium.org/409953791, a Chrome field trial for over a year, off by
-  default even on V8's main branch): V8 pools its compilers' zone memory itself instead of taking it from malloc, so
-  glibc keeps less freed memory, most after the five subagents. Node 24's V8 does not know the flag and refuses to
-  start with it, so `workerV8Flags(process.versions.node)` adds it from Node 26 on, once per process, by Node's major
-  version: no API asks V8 in process which flags it knows (a `node --v8-options` child would cost every p3 process a
-  spawn), and every Node 26 release carries the same V8 major. One line to drop. Not taken:
+- **`--managed-zone-memory`** (owner, 2026-11-18, after v8-flag-check: an ordinary V8 flag staged for shipping, v8
+  commit 277d16f12e01, bug issues.chromium.org/409953791, a Chrome field trial for over a year, off by default even on
+  V8's main branch): V8 pools its compilers' zone memory itself instead of taking it from malloc, so glibc keeps less
+  freed memory, most after the five subagents. Node 24's V8 does not know it; while p3 still ran on Node 24 it was
+  added from Node 26 on by Node's major version (`workerV8Flags`). Not taken:
   `--managed-zone-memory-for-isolate-independent-memory`, `--future`.
-- **Node versions:** each flag is in `node --v8-options` of the Node that gets it (24.4.1, 26.11.1), and
-  `test/install.test.ts` checks that on the Node it runs on (each flag listed, Node started with all of them) and the
-  choice for 24.4.0 to 25.9.0 and 26.0.0 to 100.0.0; the launched and release tests check the worker's command line,
-  the zones flag on Node 26 only; the release tests pass on both
-  (the memory test's numbers for each are below). `src/minimum-node.ts` refuses an older Node with one line and exit
-  1 (`p3: needs Node 24.4.0 or newer; this is Node …`); its version is `package.json`'s `engines`. In the release the
+- **Node 26.3.1 or newer, everywhere** (decision "Node 26 or newer everywhere", 2026-11-18): from a checkout, in the
+  tests and in a release. The five flags are one constant list; the Node 24 branch and its tests are gone. 26.3.1, the
+  newest Node Termux offers on the owner's phone (Android is a target), is the oldest p3 accepts: checked on slayer with
+  nodejs.org's 26.3.1 build (V8 14.6.202.34, as every Node 26 release): each of the five flags is in its
+  `--v8-options` and a Node starts with them, `node:sqlite` opens and queries a database, and `--permission` without
+  `--allow-net` refuses a TCP connection (`ERR_ACCESS_DENIED`; `--allow-net` came with Node 25.0.0), and `npm test`
+  passes on it. Chord's terminal sandbox (slice 27) asks for 26.5.1 (`requireSandboxNode`): that release fixed
+  permission-model CVEs (CVE-2026-58043 "avoid granting radix split nodes", High; two Low), which slice 27 has to weigh.
+  `test/install.test.ts` checks that the Node that runs the tests lists and accepts every flag; the launched and release
+  tests check the worker's command line flag by flag. `src/minimum-node.ts` refuses an older Node with one line and exit
+  1 (`p3: needs Node 26.3.1 or newer; this is Node …`); its version is `package.json`'s `engines`. (Before 2026-11-18:
+  Node 24.4.0, each flag checked on 24.4.1 and 26.11.1, the release tests run on both; the memory test's numbers for
+  each Node are below.) In the release the
   launcher `p3.js` runs it first and has no static import (Opus, round 5: ES modules are linked before any of them
   runs, so a builtin an old Node lacks failed the graph first: `node:sqlite` on Node 22.12, `enableCompileCache` on
   20): it loads `minimum-node.js`, a bundle of no imports, then Node's compile cache and the rest with `import()`.
-  Checked with Node 20.19.5, 22.12.0, 22.21.1 and 24.0.0: each gets the one line, for `--version` and `status`; a build
+  Checked with Node 20.19.5, 22.12.0, 22.21.1 and 24.0.0, and on 2026-11-18 against 26.3.1 with 20.19.5, 22.12.0,
+  24.0.0 and 24.4.1: each gets the one line, for `--version` and `status`; a build
   test asserts that `p3.js` has no static import. From a checkout `bin.ts` imports it first (an old Node there is a
   developer's). A worker never starts alone, so it has no check of its own.
 - **Two hooks** the memory test uses (owner: fine): `startWorker({ session })`, what runs on the worker's store and

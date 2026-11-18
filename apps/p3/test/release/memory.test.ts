@@ -29,10 +29,11 @@ if (P3_RELEASE === undefined)
 	throw new Error("memory.test.ts: set P3_RELEASE to the install directory (npm run release:p3:local)");
 
 /** The budget: no session worker's USS above it, in any phase. */
-// 55 MiB, one budget for every Node p3 supports (owner, 2026-11-16). Not 45: after the five parallel streams glibc
-// keeps about 10 MiB that it freed (`malloc`'s kept-free memory, 10 to 11 MiB against 4 to 6 after the burst), while
+// 55 MiB (owner, 2026-11-16), set when p3 still ran on Node 24 and 26. Not 45: after the five parallel streams glibc
+// kept about 10 MiB that it freed (`malloc`'s kept-free memory, 10 to 11 MiB against 4 to 6 after the burst), while
 // the session's data is about 4 MiB of the heap; a glibc setting would return it, on Linux only. Not 50: Node 26's
-// workers settle about 7 MiB above Node 24's (after the burst 42.5 against 35.0), and 50 failed one run in five there.
+// workers then settled about 7 MiB above Node 24's, and 50 failed one run in five there. Since p3 runs on Node 26 only
+// (26.3.1 and newer) with the memory reducer's delay and V8's managed zone memory, its workers peak at 45 to 48 MiB.
 const BUDGET_MIB = 55;
 
 /** How many workers run the schedule at once. */
