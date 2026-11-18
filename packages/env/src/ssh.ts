@@ -486,6 +486,31 @@ function launchCommand(remote: RemotePlatform, file: string, loginShell: boolean
 	return quotePosix(file);
 }
 
+/** Arguments a Windows shell takes unquoted: cmd.exe and PowerShell quote differently, so others are refused. */
+const WINDOWS_ARGUMENT = /^[A-Za-z0-9._:/=@+-]+$/;
+
+/**
+ * Run the daemon at `file` (as `deployDaemon` answered) once with `args` over `ssh`, `stdin` on its standard input, as
+ * the daemon starts for a connection (through the login shell with `loginShell`). Resolves with its stdout; rejects
+ * like the deployment, with its stderr in an `SshError`. For one-shot commands such as `pi-env install`; on Windows the
+ * arguments must be plain words (letters, digits and `._:/=@+-`).
+ */
+export function runDaemon(
+	target: SshConnectOptions,
+	remote: RemotePlatform,
+	file: string,
+	args: readonly string[],
+	options: { stdin?: string; timeoutMs?: number } = {},
+): Promise<string> {
+	if (remote.platform === "windows" && !args.every((arg) => WINDOWS_ARGUMENT.test(arg)))
+		return Promise.reject(new SshError("Arguments must be plain words on Windows", null, ""));
+	const quoted = remote.platform === "windows" ? args : args.map(quotePosix);
+	return runSsh(target, [launchCommand(remote, file, target.loginShell === true), ...quoted].join(" "), {
+		...(options.stdin === undefined ? {} : { stdin: Buffer.from(options.stdin) }),
+		timeoutMs: options.timeoutMs ?? SSH_TIMEOUT_MS,
+	});
+}
+
 /** What an SSH connection learned about its remote system, and the daemon it verified last. */
 type SshState = { remote?: RemotePlatform; verified?: string };
 

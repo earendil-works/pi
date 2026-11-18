@@ -24,6 +24,7 @@ export {
 	localDaemon,
 	packagedDaemon,
 	type RemotePlatform,
+	runDaemon,
 	type SshConnectOptions,
 	SshError,
 	type SshTarget,
