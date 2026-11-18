@@ -436,3 +436,9 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
 - **Base entries live in `src/bootstrap/` (owner, 2026-11-18; refines "Base entries are named after what they are"):**
   the process entries (the `p3` command, the server, a session worker, the supervisor, the single executable's main)
   move from `apps/p3/`'s root to `apps/p3/src/bootstrap/`, keeping their names; the root holds no `.ts` files.
+- **Packaging is its own work, later (owner, 2026-11-18; replaces the first step of "p3 ships as a single executable,
+  likely"):** the single-executable build made for the local release is taken out again; packaging p3 (an executable,
+  the native desktop apps) becomes a package of its own in p3 that someone takes on. The measurements stay as the
+  record: a Node 26 executable matched the npm install on Node 26 in every number, 156 MiB on disk (36 MB as xz); a
+  Node 24 executable cannot give workers their V8 flags and failed the memory budget; coding-agent's Bun binary is
+  117 MiB (42 MB as xz). The move of the entries to `src/bootstrap/` stays.
