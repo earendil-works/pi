@@ -142,3 +142,37 @@ describe("InteractiveMode tree navigation availability", () => {
 		expect(ui.session.navigateTree).not.toHaveBeenCalled();
 	});
 });
+
+// Regression for #12279: each navigation re-added the branch's prompts to Up-arrow history.
+describe("InteractiveMode tree navigation history", () => {
+	beforeEach(() => initTheme("dark"));
+
+	it("re-renders the branch without adding its prompts to editor history again", async () => {
+		const { ui, select } = createTreeUI();
+
+		await select();
+
+		expect(ui.renderInitialMessages).toHaveBeenCalledExactlyOnceWith({ populateHistory: false });
+	});
+
+	it("adds the branch's prompts to editor history only when asked to", () => {
+		const renderInitialMessages = Reflect.get(InteractiveMode.prototype, "renderInitialMessages") as (
+			this: object,
+			options?: { populateHistory?: boolean },
+		) => void;
+		const context = {
+			sessionManager: SessionManager.inMemory(),
+			renderSessionEntries: vi.fn(),
+			renderProjectTrustWarningIfNeeded: vi.fn(),
+			showStatus: vi.fn(),
+		};
+
+		renderInitialMessages.call(context);
+		renderInitialMessages.call(context, { populateHistory: false });
+
+		expect(context.renderSessionEntries.mock.calls.map(([, options]) => options)).toEqual([
+			{ updateFooter: true, populateHistory: true },
+			{ updateFooter: true, populateHistory: false },
+		]);
+	});
+});
