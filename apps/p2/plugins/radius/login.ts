@@ -2,7 +2,8 @@
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { loginToRadius, newServerId, radiusGatewayFromEnv, readRadiusConfig, writeRadiusConfig } from "./brain.ts";
+import { readRadiusConfig, writeRadiusConfig } from "../../src/runtime/radius-config.ts";
+import { loginToRadius, newServerId, radiusGatewayFromEnv } from "./brain.ts";
 
 const directory = process.env.P2_DATA_DIR ?? join(homedir(), ".pi", "p2");
 await mkdir(directory, { recursive: true, mode: 0o700 });

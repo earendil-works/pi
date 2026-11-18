@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { readFile, rename, writeFile } from "node:fs/promises";
 import { request as httpRequest, type IncomingMessage } from "node:http";
-import { join } from "node:path";
-import type { OAuthCredential } from "@earendil-works/pi-ai";
-import { radiusProvider } from "@earendil-works/pi-ai/providers/radius";
 import { DEFAULT_RADIUS_GATEWAY, normalizeRadiusGatewayUrl } from "@earendil-works/pi-ai/providers/radius-config";
 import { SERVER_PART_LIMITS } from "@p2/app/v1";
+import {
+	type RadiusBrainConfig,
+	radiusCredentialExpiring,
+	radiusOAuth,
+	readRadiusConfig,
+	writeRadiusConfig,
+} from "@p2/app/v1/node";
 import { WebSocket } from "ws";
 import type { Forwards } from "../ports/contract.ts";
 import {
@@ -160,7 +163,6 @@ const PROTOCOL_VERSION = 2;
 const DATA_HEADER_BYTES = 18;
 const FRAME = { binary: 1, text: 2, end: 3 } as const;
 const BODY_CHUNK_BYTES = 256 * 1024;
-const REFRESH_MARGIN_MS = 5 * 60_000;
 const SHELL_ORIGIN = /^https?:\/\/[^/\s]+$/;
 const RETRY_INITIAL_MS = 1_000;
 const RETRY_MAX_MS = 30_000;
@@ -187,24 +189,6 @@ const DROPPED_HEADERS = new Set([
 	RELAY_SHELL_HEADER,
 	RELAY_USER_HEADER,
 ]);
-
-export type RadiusBrainConfig = {
-	gateway: string;
-	serverId: string;
-	/**
-	 * The brain's own Radius origin (`https://<label>.rdtun.com`), as last seen on a relayed request for its UI. Saved so
-	 * forward links are known after a restart before anyone opens Pi through Radius again.
-	 */
-	publicOrigin?: string;
-	/**
-	 * This brain's page in the Radius shell (`<shell>/pi/<organization ID>/<server>`), as last seen on a relayed request
-	 * for its UI; a page of the brain's UI is below it (`…/s/<session>`). People sessions are shared with by email open
-	 * them there, signed in to Radius. The shell names organizations by slug when they have one and replaces this ID
-	 * form, but a link people keep names the organization by ID, which a slug change leaves valid.
-	 */
-	shellPage?: string;
-	credential: OAuthCredential;
-};
 
 export type RadiusStatus =
 	/** No radius.json: this p2 is local only. Checked again periodically, so a later login connects. */
@@ -255,30 +239,6 @@ type Channel = {
 	congested(paused: boolean): void;
 };
 
-export function radiusConfigPath(directory: string): string {
-	return join(directory, "radius.json");
-}
-
-export async function readRadiusConfig(directory: string): Promise<RadiusBrainConfig | undefined> {
-	let text: string;
-	try {
-		text = await readFile(radiusConfigPath(directory), "utf8");
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-		throw error;
-	}
-	const value = JSON.parse(text) as Partial<RadiusBrainConfig>;
-	if (typeof value.gateway !== "string" || typeof value.serverId !== "string" || value.credential?.type !== "oauth")
-		throw new Error("Invalid radius.json");
-	return value as RadiusBrainConfig;
-}
-
-export async function writeRadiusConfig(directory: string, config: RadiusBrainConfig): Promise<void> {
-	const path = radiusConfigPath(directory);
-	await writeFile(`${path}.tmp`, `${JSON.stringify(config, null, "\t")}\n`, { mode: 0o600 });
-	await rename(`${path}.tmp`, path);
-}
-
 /**
  * A saved shell page in the shell's current URL form: pages saved before its URLs dropped `/brains`
  * (`<shell>/pi/brains/<organization>/<server>`) no longer resolve. The next relayed request saves the current form.
@@ -294,12 +254,6 @@ export function radiusGatewayFromEnv(): string {
 
 export function newServerId(): string {
 	return randomUUID();
-}
-
-function radiusOAuth(gateway: string) {
-	const oauth = radiusProvider({ gateway }).auth.oauth;
-	if (!oauth) throw new Error("The Radius provider has no OAuth support");
-	return oauth;
 }
 
 export function loginToRadius(gateway: string, onDeviceCode: (url: string, code: string) => void, signal: AbortSignal) {
@@ -581,7 +535,7 @@ export class RadiusBrain {
 	async #freshConfig(): Promise<RadiusBrainConfig> {
 		const config = await readRadiusConfig(this.#directory);
 		if (!config) throw new Error("Not signed in to Radius; run npm run radius:login");
-		if (config.credential.expires - Date.now() > REFRESH_MARGIN_MS) return config;
+		if (!radiusCredentialExpiring(config.credential)) return config;
 		const credential = await radiusOAuth(config.gateway).refresh(
 			config.credential,
 			AbortSignal.any([this.#abort.signal, AbortSignal.timeout(30_000)]),
@@ -598,7 +552,7 @@ export class RadiusBrain {
 	/** The current configuration, its credential refreshed when about to expire; one refresh at a time. */
 	async #currentConfig(): Promise<RadiusBrainConfig> {
 		const config = this.#config;
-		if (config && config.credential.expires - Date.now() > REFRESH_MARGIN_MS) return config;
+		if (config && !radiusCredentialExpiring(config.credential)) return config;
 		this.#refreshing ??= this.#freshConfig().finally(() => {
 			this.#refreshing = undefined;
 		});

@@ -10,5 +10,7 @@ export { serverDirectory, sessionDirectory, userPluginsDirectory } from "../../r
 export * from "../../runtime/locked-file.ts";
 export * from "../../runtime/logs.ts";
 export * from "../../runtime/observe.ts";
+export * from "../../runtime/radius-client.ts";
+export * from "../../runtime/radius-config.ts";
 export * from "../../runtime/session-files.ts";
 export * from "../../runtime/settings.ts";

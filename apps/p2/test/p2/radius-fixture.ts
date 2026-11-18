@@ -10,11 +10,11 @@ import type { TestContext } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { type WebSocket, WebSocketServer } from "ws";
 import { ForwardsNative } from "../../plugins/ports/contract.ts";
-import { writeRadiusConfig } from "../../plugins/radius/brain.ts";
 import { RadiusConnections } from "../../plugins/radius/contract.ts";
 import { startServer } from "../../src/hosts/server.ts";
 import { defineFacet } from "../../src/runtime/chord.ts";
 import { isOwner } from "../../src/runtime/principals.ts";
+import { writeRadiusConfig } from "../../src/runtime/radius-config.ts";
 import { Routes } from "../../src/runtime/server.ts";
 import { poll } from "./helpers.ts";
 

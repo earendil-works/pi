@@ -9,17 +9,18 @@
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { OAuthCredential } from "@earendil-works/pi-ai";
-import { radiusProvider } from "@earendil-works/pi-ai/providers/radius";
 import { DEFAULT_RADIUS_GATEWAY, normalizeRadiusGatewayUrl } from "@earendil-works/pi-ai/providers/radius-config";
 import { WebSocket } from "ws";
+import {
+	type RadiusClient,
+	radiusClientChannel,
+	radiusCredentialExpiring,
+	radiusOAuth,
+} from "../runtime/radius-client.ts";
 import { configDirectory } from "./tui-config.ts";
 import type { TuiRequestInit, TuiSocket, TuiSocketEvents, TuiTransport } from "./tui-transport.ts";
 
-/** A signed-in Radius user: the gateway and a current access token. */
-export type RadiusClient = {
-	readonly gateway: string;
-	access(): Promise<string>;
-};
+export type { RadiusClient } from "../runtime/radius-client.ts";
 
 /** A transport through Radius, and the server's origin as its last answer named it (see `TunnelHead.origin`). */
 export type RadiusTransport = TuiTransport & { readonly origin: string | undefined };
@@ -59,7 +60,7 @@ export async function radiusClient(
 	return {
 		gateway: current.gateway,
 		access: async () => {
-			if (current.credential.expires - Date.now() > REFRESH_MARGIN_MS) return current.credential.access;
+			if (!radiusCredentialExpiring(current.credential)) return current.credential.access;
 			refreshing ??= radiusOAuth(current.gateway)
 				.refresh(current.credential, AbortSignal.timeout(30_000))
 				.then((credential) => {
@@ -75,8 +76,6 @@ export async function radiusClient(
 		},
 	};
 }
-
-const REFRESH_MARGIN_MS = 5 * 60_000;
 
 function readLogin(path: string): RadiusLogin | undefined {
 	let text: string;
@@ -97,12 +96,6 @@ function saveLogin(directory: string, path: string, login: RadiusLogin): void {
 	mkdirSync(directory, { recursive: true, mode: 0o700 });
 	writeFileSync(path, `${JSON.stringify(login, null, "\t")}\n`, { mode: 0o600 });
 	chmodSync(path, 0o600);
-}
-
-function radiusOAuth(gateway: string) {
-	const oauth = radiusProvider({ gateway }).auth.oauth;
-	if (!oauth) throw new Error("The Radius provider has no OAuth support");
-	return oauth;
 }
 
 /** The server to connect to: `serverId`, else this user's only server Radius reports online. */
@@ -131,16 +124,7 @@ export async function radiusServer(client: RadiusClient, serverId: string | unde
  */
 export function radiusTransport(client: RadiusClient, serverId: string): RadiusTransport {
 	let origin: string | undefined;
-	const connect = async (): Promise<WebSocket> => {
-		const url = new URL(`/v1/servers/${encodeURIComponent(serverId)}/connect`, client.gateway);
-		url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-		return new WebSocket(url, CLIENT_SUBPROTOCOL, {
-			headers: { authorization: `Bearer ${await client.access()}` },
-			maxPayload: MAX_MESSAGE_BYTES,
-			handshakeTimeout: 10_000,
-			followRedirects: false,
-		});
-	};
+	const connect = async (): Promise<WebSocket> => radiusClientChannel(client.gateway, serverId, await client.access());
 	const head = (data: Buffer): TunnelHead => {
 		const value = parseHead(data);
 		origin = value.origin;
@@ -155,9 +139,6 @@ export function radiusTransport(client: RadiusClient, serverId: string): RadiusT
 	};
 }
 
-const CLIENT_SUBPROTOCOL = "pi-server.client.v2";
-/** Radius's limit for one message. */
-const MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 const BODY_CHUNK_BYTES = 256 * 1024;
 /** A streamed request body waits while more than this is unsent. */
 const SEND_HIGH_BYTES = 1024 * 1024;

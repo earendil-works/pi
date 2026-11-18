@@ -11,13 +11,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Devices } from "../../plugins/devices/contract.ts";
 import { ProviderLogin } from "../../plugins/login/contract.ts";
-import {
-	currentShellPage,
-	RadiusBrain,
-	type RadiusStatus,
-	readRadiusConfig,
-	writeRadiusConfig,
-} from "../../plugins/radius/brain.ts";
+import { currentShellPage, RadiusBrain, type RadiusStatus } from "../../plugins/radius/brain.ts";
 import {
 	encodeRelayUser,
 	RELAY_ORIGIN_HEADER,
@@ -32,6 +26,7 @@ import { Sharing } from "../../plugins/sharing/contract.ts";
 import { Terminals } from "../../plugins/terminals/contract.ts";
 import { radiusTransport } from "../../src/hosts/tui-radius.ts";
 import { Access } from "../../src/runtime/access.ts";
+import { readRadiusConfig, writeRadiusConfig } from "../../src/runtime/radius-config.ts";
 import { ServerNameSettings } from "../../src/runtime/server-name.ts";
 import { clientHost, expectChord, holdIn, http, localOwner, poll, until } from "./helpers.ts";
 import { radiusFixture as fixture, OWNER, PUBLIC_ORIGIN } from "./radius-fixture.ts";
