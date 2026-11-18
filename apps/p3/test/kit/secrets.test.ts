@@ -1,7 +1,10 @@
-// Tests of the kit's secrets: tokens and their hashes, and secret files written with mode 0600 in one step.
+// Tests of the kit's secrets: tokens and their hashes, and secret files written with mode 0600 in one step, by a
+// rename and never a hard link.
 
 import assert from "node:assert/strict";
-import { readdir, readFile, stat } from "node:fs/promises";
+import fs from "node:fs";
+import { readdir, readFile, stat, symlink } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { hashToken, matchesHash, newToken, readSecret, secretFile, writeSecret } from "../../src/kit/secrets.ts";
@@ -59,5 +62,40 @@ describe("secret files", () => {
 			process.umask(previous);
 		}
 		assert.equal(await modeOf(join(dir, "s")), 0o600);
+		assert.deepEqual(await readdir(dir), ["s"]);
+	});
+
+	it("never replaces anything on create, a dangling link either, and leaves no temporary file then", async () => {
+		const dir = await tempDir();
+		await symlink(join(dir, "nowhere"), join(dir, "secret"));
+		assert.equal(await writeSecret(join(dir, "secret"), "one", "create"), "exists");
+		assert.deepEqual(await readdir(dir), ["secret"]);
+		assert.equal((await fs.promises.lstat(join(dir, "secret"))).isSymbolicLink(), true);
+	});
+
+	// The phone (owner, 2026-11-18): p3 could not start on Android; Android's app sandbox refuses hard links (EACCES),
+	// and the first start failed making `server/cookie-secret`. No write takes a hard link.
+	it("writes, creates and replaces where the system refuses hard links (Android)", async () => {
+		const dir = await tempDir();
+		const { link } = fs.promises;
+		const refused = Object.assign(new Error("EACCES: permission denied, link"), { code: "EACCES" });
+		fs.promises.link = async () => {
+			throw refused;
+		};
+		// The modules' `import { link } from "node:fs/promises"` see it too.
+		syncBuiltinESMExports();
+		try {
+			const secret = await secretFile(join(dir, "cookie-secret"));
+			assert.equal(await secretFile(join(dir, "cookie-secret")), secret);
+			assert.equal(await writeSecret(join(dir, "token"), "one", "create"), "written");
+			assert.equal(await writeSecret(join(dir, "token"), "two", "create"), "exists");
+			assert.equal(await writeSecret(join(dir, "token"), "three", "replace"), "written");
+			assert.equal(await readSecret(join(dir, "token")), "three");
+		} finally {
+			fs.promises.link = link;
+			syncBuiltinESMExports();
+		}
+		assert.deepEqual((await readdir(dir)).sort(), ["cookie-secret", "token"]);
+		assert.equal(await modeOf(join(dir, "cookie-secret")), 0o600);
 	});
 });
