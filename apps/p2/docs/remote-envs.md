@@ -128,26 +128,32 @@ in `envs.json` names the server:
 
 - **Getting one.** Envs sheet → **Your machines** lists the owner's machines at Radius (`GET /v1/pi/servers?kind=env`
   with this p2's owner credential); **Use** saves one as an environment under a name the owner picks (default: the
-  machine's name). **Add machine** mints an enrollment code (`POST /v1/pi/servers/enrollments`, single use, one hour)
+  machine's name; a name in use is refused, never replaced). **Add machine** mints an enrollment code (`POST /v1/pi/servers/enrollments`, single use, one hour)
   and shows the commands that download pi-env and install the agent with it (`curl … | sh` and PowerShell); the
   machine is listed once its agent connected.
 - **From an SSH environment.** A tested SSH environment offers **Install permanently through Radius**: p2 mints a
   code, deploys pi-env's daemon over SSH as for any connection and runs `<daemon> install --gateway <g> --name <env>
   --code-stdin` with the code on stdin (never on a command line), which copies the binary to `~/.pi/env/bin`, enrolls
-  and installs the user service (systemd user unit, LaunchAgent, scheduled task or Termux:Boot). After the owner
-  confirms, the entry becomes `{ "type": "radius", "server": … }` under the same name, keeping its shell settings.
+  and installs the user service (systemd user unit, LaunchAgent, scheduled task or Termux:Boot). The sheet shows the
+  installer's notes. When the agent runs as a service that outlives a logout, the owner may switch at once: the entry
+  becomes `{ "type": "radius", "server": … }` under the same name, keeping its shell settings. Without a service, or
+  on systemd without lingering, the switch is offered once Radius lists the machine online (**Check connection**).
+  An agent already enrolled there as one of the owner's machines (an earlier install) gets a re-enroll code bound to
+  it (`POST /v1/pi/servers/enrollments {server_id}`) and keeps its ID: installing twice never makes a second machine.
   An SSH environment hosting sandboxes stays one (sandboxes need SSH).
 - **Connection.** Every connection (worker, server, terminal host, MCP) opens a Radius client channel
   (`wss://<gateway>/v1/servers/<server>/connect`, `pi-server.client.v2`, the owner's bearer from `radius.json`,
   refreshed in memory when near expiry), sends `{"type":"pi-env","token":…}` and then speaks pi-env's protocol over
   the channel's binary messages exactly as over SSH's stdio (`Connection`'s `transport`, `radius-env.ts`). Closing it
-  ends what the agent started for it. Without a Radius sign-in, or while the machine is offline (Radius answers 503),
-  the operation fails with that reason and the next one tries again.
+  ends what the agent started for it. Without a Radius sign-in, while the machine is offline (Radius answers 503) or
+  after it was removed at Radius (404: "removed from Radius"), the operation fails with that reason and the next one
+  tries again.
 - **Ports.** A session working on a Radius machine forwards that machine's ports: the `ports` tool and the Ports sheet
   manage forwards the agent keeps (`forwards`, `forwardSet`, `forwardRemove`), at `fwd--`/`pub--` origins of the
   machine's own Radius row. Forwards a session opens are tagged `{ "p2": <this server's Radius ID>, "session": … }`;
-  archiving the session removes them from every Radius machine, in the background (an offline machine keeps them
-  until removed in the Ports sheet). They keep working while p2 is down.
+  archiving the session removes them from every Radius machine, after the archive (an offline machine is tried again
+  at the next archive or server start; the failure is reported to the host's error path). The owner adding a port in
+  the Ports sheet follows the tool's rule: one forward per port. They keep working while p2 is down.
 - **Removing.** Deleting the environment leaves the agent running and enrolled; removing the machine at Radius
   (the shell's Machines view) revokes it.
 

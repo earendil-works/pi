@@ -1,7 +1,9 @@
+import { arr, obj, str } from "@earendil-works/pi-schema";
 import {
 	type AcceptsTable,
 	contribute,
 	defineFacet,
+	defineState,
 	deriveTyped,
 	followNative,
 	forbidden,
@@ -10,10 +12,9 @@ import {
 	nativeOf,
 	serveNative,
 } from "@p2/app/v1";
-import { readRadiusConfig } from "@p2/app/v1/node";
+import { ownerRadiusAccess } from "@p2/app/v1/node";
 import { Hosts, Server } from "@p2/app/v1/server";
 import { EnvManagers, EnvService } from "../envs/contract.ts";
-import type { EnvManager } from "../envs/manager.ts";
 import { Catalog, SessionArchived } from "../sessions/contract.ts";
 import { ForwardStore, ForwardsNative, Ports } from "./contract.ts";
 import {
@@ -23,56 +24,78 @@ import {
 	machineForwardView,
 	openMachinePort,
 	removeMachineForwards,
-	setMachineForward,
+	setMachinePublic,
 } from "./machine-forwards.ts";
 import { forwardView, type PortsReply, type PortsRequest, validateForwardName } from "./protocol.ts";
 import { Forwards } from "./store.ts";
 
+const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
 /** Pages built with version 2 of `Ports` lack only the machines' methods. */
 const PORTS_ACCEPTS: AcceptsTable<typeof Ports> = { 2: {} };
 
-/** Requests to the agent of Radius machine `env` (the forwards of machines, machine-forwards.ts). */
-const agentOf =
-	(manager: EnvManager, env: string): AgentRequest =>
-	(op, json) =>
-		manager.agentRequest(env, op, json);
-
-/** This server's Radius ID, which tags the forwards its sessions open on machines; machines need the sign-in anyway. */
-async function ownRadiusId(directory: string): Promise<string> {
-	const config = await readRadiusConfig(directory);
-	if (!config) throw new Error("This p2 is not signed in to Radius (npm run radius:login)");
-	return config.serverId;
-}
+/**
+ * Sessions archived while their forwards on Radius machines are still to be closed: kept until every machine took it,
+ * so an offline machine is tried again when the next archive comes, or the server starts.
+ */
+const MachineCleanups = defineState("p2.ports-machine-cleanups", {
+	schema: obj({ sessions: arr(str()) }),
+	version: 1,
+	initial: () => ({ sessions: [] }),
+});
 
 export default defineFacet((host) => {
 	serveNative(host, ForwardsNative);
-	// Archiving a session closes the forwards it opened on machines too, on every machine (it may have moved). In the
-	// background: an offline machine must not hold up or fail the archive; its forwards stay until removed by hand.
+	// Archiving a session closes the forwards it opened on machines too, on every machine (it may have moved). Not in the
+	// archive itself: an offline machine must not hold it up or fail it. A machine that cannot be reached fails this
+	// routine (reported through the host's error path) and is tried again later.
 	contribute(host, "p2.ports-machines-archived", (self) => {
 		const server = self.get(Server, {});
 		const envs = self.get(EnvService, {});
 		const managers = nativeOf(self, EnvManagers, "The SSH manager");
+		const cleanups = self.state(MachineCleanups);
 		self.contribute(SessionArchived, {
-			"ports-machines": async (session) => {
-				const machines = Object.entries(envs.configs.value).flatMap(([name, config]) =>
-					config.type === "radius" ? [name] : [],
-				);
-				if (!machines.length) return;
-				void ownRadiusId(server.info.value.dataDir)
-					.then((p2) =>
-						Promise.allSettled(
-							machines.map((env) =>
-								removeMachineForwards(agentOf(managers().manager, env), { tag: { p2, session } }),
-							),
-						),
-					)
-					.then((results) => {
-						for (const result of results)
-							if (result.status === "rejected")
-								console.warn(`p2 ports: closing session ${session}'s forwards on a machine:`, result.reason);
-					})
-					.catch((error: unknown) => console.warn(`p2 ports: closing session ${session}'s forwards:`, error));
+			"ports-machines": async (session, ctx) => {
+				await cleanups.change((draft) => {
+					if (!draft.sessions.includes(session)) draft.sessions.push(session);
+				}, ctx);
 			},
+		});
+		self.on(cleanups, async ({ value: { sessions } }, ctx) => {
+			if (!sessions.length) return;
+			const machines = Object.entries(envs.configs.value).flatMap(([name, config]) =>
+				config.type === "radius" ? [name] : [],
+			);
+			// Without machines there is nothing to close.
+			if (!machines.length) {
+				await cleanups.change((draft) => {
+					draft.sessions = [];
+				}, ctx);
+				return;
+			}
+			const { serverId: p2 } = await ownerRadiusAccess(server.info.value.dataDir)();
+			const failures: string[] = [];
+			const done: string[] = [];
+			for (const session of sessions) {
+				const results = await Promise.allSettled(
+					machines.map((env) =>
+						managers().manager.withAgent(env, (request) =>
+							removeMachineForwards(request, { tag: { p2, session } }),
+						),
+					),
+				);
+				const failed = results.flatMap((result, index) =>
+					result.status === "rejected" ? [`${machines[index]}: ${errorText(result.reason)}`] : [],
+				);
+				if (failed.length) failures.push(...failed.map((text) => `session ${session} on ${text}`));
+				else done.push(session);
+			}
+			if (done.length)
+				await cleanups.change((draft) => {
+					draft.sessions = draft.sessions.filter((session) => !done.includes(session));
+				}, ctx);
+			if (failures.length)
+				throw new Error(`Closing archived sessions' forwards on machines failed: ${failures.join("; ")}`);
 		});
 	});
 	host.serve(ForwardStore, (_params, self) => {
@@ -124,38 +147,42 @@ export default defineFacet((host) => {
 			const envs = self.get(EnvService, {});
 			const managers = nativeOf(self, EnvManagers, "The SSH manager");
 			const title = (id: string) => catalog.sessions.value.find((entry) => entry.id === id)?.title;
-			/** A Radius machine's forwards, from its agent. */
-			const machine = async (env: string) => {
-				const p2 = await ownRadiusId(server.info.value.dataDir);
-				const { origin, forwards } = await listMachineForwards(agentOf(managers().manager, env));
+			const ownId = async () => (await ownerRadiusAccess(server.info.value.dataDir)()).serverId;
+			/** Radius machine `env`'s forwards after `change` (run with its agent, one change at a time), as views. */
+			const machine = async (env: string, change?: (request: AgentRequest) => Promise<unknown>) => {
+				const p2 = await ownId();
+				const { origin, forwards } = await managers().manager.withAgent(env, async (request) => {
+					await change?.(request);
+					return listMachineForwards(request);
+				});
 				return { origin, forwards: forwards.map((forward) => machineForwardView(forward, p2, title)) };
 			};
 			/** The `ports` tool on Radius machine `env`: its agent keeps the forwards, tagged with the opening session. */
-			const machineQuery = async (env: string, session: string, query: PortsRequest): Promise<PortsReply> => {
-				const request = agentOf(managers().manager, env);
-				const p2 = await ownRadiusId(server.info.value.dataDir);
-				const name = query.action === "open" ? validateForwardName(query.name) : undefined;
-				const forward =
-					query.action === "open"
-						? await openMachinePort(
-								request,
-								query.port,
-								{
-									...(name === undefined ? {} : { name }),
-									...(query.public === undefined ? {} : { public: query.public }),
-								},
-								{ p2, session },
-							)
-						: undefined;
-				const closed = query.action === "close" ? await closeMachinePort(request, query.port) : undefined;
-				const { origin, forwards } = await listMachineForwards(request);
-				return {
-					forwards: forwards.map((each) => machineForwardView(each, p2, title)),
-					addressesKnown: origin !== null,
-					...(forward ? { forward: machineForwardView(forward, p2, title) } : {}),
-					...(closed === undefined ? {} : { closed }),
-				};
-			};
+			const machineQuery = (env: string, session: string, query: PortsRequest): Promise<PortsReply> =>
+				managers().manager.withAgent(env, async (request) => {
+					const p2 = await ownId();
+					const name = query.action === "open" ? validateForwardName(query.name) : undefined;
+					const forward =
+						query.action === "open"
+							? await openMachinePort(
+									request,
+									query.port,
+									{
+										...(name === undefined ? {} : { name }),
+										...(query.public === undefined ? {} : { public: query.public }),
+									},
+									{ p2, session },
+								)
+							: undefined;
+					const closed = query.action === "close" ? await closeMachinePort(request, query.port) : undefined;
+					const { origin, forwards } = await listMachineForwards(request);
+					return {
+						forwards: forwards.map((each) => machineForwardView(each, p2, title)),
+						addressesKnown: origin !== null,
+						...(forward ? { forward: machineForwardView(forward, p2, title) } : {}),
+						...(closed === undefined ? {} : { closed }),
+					};
+				});
 			if (isOwner(principal))
 				return {
 					variant: "owner",
@@ -175,33 +202,21 @@ export default defineFacet((host) => {
 							return null;
 						},
 						machine: ({ env }) => machine(env),
-						machineAdd: async ({ env, port, name, public: open }) => {
+						machineAdd: ({ env, port, name, public: open }) => {
 							const valid = validateForwardName(name);
-							await setMachineForward(agentOf(managers().manager, env), {
-								port,
-								...(valid === undefined ? {} : { name: valid }),
-								public: open ?? false,
-							});
-							return null;
+							return machine(env, (request) =>
+								openMachinePort(request, port, {
+									...(valid === undefined ? {} : { name: valid }),
+									...(open === undefined ? {} : { public: open }),
+								}),
+							);
 						},
-						machineRemove: async ({ env, id }) => {
-							if ((await removeMachineForwards(agentOf(managers().manager, env), { id })) === 0)
-								throw new Error("Unknown forward");
-							return null;
-						},
-						machineSetPublic: async ({ env, id, public: open }) => {
-							const request = agentOf(managers().manager, env);
-							const forward = (await listMachineForwards(request)).forwards.find((each) => each.id === id);
-							if (!forward) throw new Error("Unknown forward");
-							await setMachineForward(request, {
-								id,
-								port: forward.port,
-								...(forward.name ? { name: forward.name } : {}),
-								public: open,
-								...(forward.tag === undefined ? {} : { tag: forward.tag }),
-							});
-							return null;
-						},
+						machineRemove: ({ env, id }) =>
+							machine(env, async (request) => {
+								if ((await removeMachineForwards(request, { id })) === 0) throw new Error("Unknown forward");
+							}),
+						machineSetPublic: ({ env, id, public: open }) =>
+							machine(env, (request) => setMachinePublic(request, id, open)),
 					},
 				};
 			const hosts = self.get(Hosts, {});

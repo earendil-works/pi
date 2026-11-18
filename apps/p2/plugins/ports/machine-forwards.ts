@@ -77,14 +77,15 @@ export async function removeMachineForwards(
 }
 
 /**
- * The `ports` tool's open on a machine, as on this device: one forward per port, which keeps its address and its tag
- * (who opened it) and takes the new name and visibility, whoever opened it; a new one is tagged as `tag`'s.
+ * Opening a port on a machine, as on this device: one forward per port, which keeps its address and its tag (who opened
+ * it) and takes the new name and visibility, whoever opens it; a new one is tagged `tag` (none: the owner's). Run it in
+ * `EnvManager.withAgent`: the list and the write must not interleave with another change.
  */
 export async function openMachinePort(
 	request: AgentRequest,
 	port: number,
 	options: { name?: string; public?: boolean },
-	tag: SessionTag,
+	tag?: SessionTag,
 ): Promise<AgentForward> {
 	const existing = (await listMachineForwards(request)).forwards.find((forward) => forward.port === port);
 	return setMachineForward(request, {
@@ -92,7 +93,20 @@ export async function openMachinePort(
 		port,
 		...(options.name === undefined ? (existing?.name ? { name: existing.name } : {}) : { name: options.name }),
 		public: options.public ?? existing?.public ?? false,
-		tag: existing ? existing.tag : tag,
+		...((existing ? existing.tag : tag) === undefined ? {} : { tag: existing ? existing.tag : tag }),
+	});
+}
+
+/** Makes forward `id` public or private, keeping the rest of it; rejects for an unknown forward. */
+export async function setMachinePublic(request: AgentRequest, id: string, open: boolean): Promise<void> {
+	const forward = (await listMachineForwards(request)).forwards.find((each) => each.id === id);
+	if (!forward) throw new Error("Unknown forward");
+	await setMachineForward(request, {
+		id,
+		port: forward.port,
+		...(forward.name ? { name: forward.name } : {}),
+		public: open,
+		...(forward.tag === undefined ? {} : { tag: forward.tag }),
 	});
 }
 
@@ -126,9 +140,10 @@ export function machineForwardView(
 	};
 }
 
+/** A session's tag, as any agent may hold it (wire input). */
+const SessionTagSchema = compile(obj({ p2: str(), session: str() }, { open: true }));
+
 /** The session of this server that `tag` names, if any. */
 function taggedSession(tag: unknown, p2: string): string | undefined {
-	if (typeof tag !== "object" || tag === null) return undefined;
-	const { p2: server, session } = tag as { p2?: unknown; session?: unknown };
-	return server === p2 && typeof session === "string" ? session : undefined;
+	return SessionTagSchema.check(tag) && tag.p2 === p2 ? tag.session : undefined;
 }

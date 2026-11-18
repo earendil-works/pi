@@ -209,6 +209,11 @@ async function onMachine(
 	});
 	const machine = await start(radius, envs);
 	t.after(() => machine.close());
+	// "Use" never replaces an environment of the same name.
+	await assert.rejects(
+		envs.save({ name: "hand", config: { type: "radius", server: machine.server }, create: true }, BACKGROUND_CONTEXT),
+		/An environment named "hand" exists/,
+	);
 	// What the machine's agent keeps, read over a connection of p2's own.
 	const direct = radiusEnvConnection(fixture.dataDir, "hand", { type: "radius", server: machine.server });
 	t.after(() => direct.close());
@@ -340,6 +345,19 @@ async function onMachine(
 		assert.equal((await radius.forward(machine.server, forwardId, "/open", { anonymous: true })).status, 200);
 	assert.equal((await kept()).length, 1, "opening a forwarded port again updates it");
 	assert.equal((await kept())[0]?.public, true);
+	// The owner adding the same port updates the session's forward, which stays the session's.
+	const ownerAdded = await (await holdIn(owner, Ports, {}, "owner")).machineAdd(
+		{ env: "hand", port: webPort, name: "site" },
+		BACKGROUND_CONTEXT,
+	);
+	assert.deepEqual(
+		ownerAdded.forwards.map((forward) => [forward.port, forward.name, forward.session]),
+		[[webPort, "site", session.id]],
+	);
+	assert.deepEqual(
+		(await kept()).map((forward) => forward.tag),
+		[{ p2, session: session.id }],
+	);
 	// The owner sees and changes the machine's forwards in the Ports sheet.
 	const ports = await holdIn(owner, Ports, {}, "owner");
 	const listed = await ports.machine({ env: "hand" }, BACKGROUND_CONTEXT);
@@ -364,4 +382,12 @@ async function onMachine(
 	// The machine going offline fails what needs it, and never runs anything here instead.
 	machine.close();
 	await poll(async () => !(await envs.test({ name: "hand" }, BACKGROUND_CONTEXT)).ok, 30_000);
+	const offline = await envs.test({ name: "hand" }, BACKGROUND_CONTEXT);
+	assert(!offline.ok);
+	assert.match(offline.error, /Machine "hand" is not connected to Radius/);
+	// Removed at Radius: p2 says so.
+	radius.removeMachine(machine.server);
+	const removed = await envs.test({ name: "hand" }, BACKGROUND_CONTEXT);
+	assert(!removed.ok);
+	assert.match(removed.error, /Machine "hand" was removed from Radius \(404/);
 }

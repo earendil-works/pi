@@ -32,6 +32,7 @@ import {
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Envs, EnvTestSchema, SandboxStatusSchema } from "../../plugins/envs/contract.ts";
 import { SandboxMountSchema, SshEnvConfigSchema } from "../../plugins/envs/schema.ts";
+import { ForwardSchema, Ports, QuerySchema, ReplySchema } from "../../plugins/ports/contract.ts";
 import { CreateSchema, MAX_TITLE, type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
@@ -499,6 +500,34 @@ const EnvsV3 = evolve(EnvsV2, (e) =>
 		.addMethod("owner", "sandboxResetDisk", EnvName, SandboxStatusSchema),
 );
 
+/** 2938a02e2's `Ports` (version 2), with the forward, query and reply schemas this branch leaves unchanged. */
+const PortsV2 = remote("p2.ports", {
+	version: 2,
+	params: {},
+	hostAddress: serverHost,
+	variants: {
+		owner: {
+			state: { forwards: arr(ForwardSchema), radiusOrigin: union([str(), nul()]) },
+			methods: {
+				add: method(
+					obj({
+						port: int({ minimum: 1, maximum: 65535 }),
+						name: opt(str({ maxLength: 40 })),
+						public: opt(bool()),
+					}),
+				),
+				remove: method(obj({ id: str() })),
+				setPublic: method(obj({ id: str(), public: bool() })),
+			},
+		},
+		worker: {
+			methods: {
+				query: method(obj({ conversation: literal(1), query: QuerySchema }), ReplySchema),
+			},
+		},
+	},
+});
+
 /** 6e11a00a0's `StatusSchema`, `StatusesSchema` and `ReportFields`: no per-conversation work. */
 const StatusSchemaV1 = obj({
 	/** A worker process runs for the session. */
@@ -732,9 +761,37 @@ describe("older contract versions against the current server (fake provider)", (
 			(await ref.list(BACKGROUND_CONTEXT)).some((row) => row.name === "v3-hand"),
 			false,
 		);
+		// It cannot see the Radius machine, so it may not replace or delete it.
+		await assert.rejects(
+			ref.save({ name: "v3-hand", config: { type: "ssh", host: "over.example" } }, BACKGROUND_CONTEXT),
+			/"v3-hand" is a Radius machine/,
+		);
+		await assert.rejects(ref.delete({ name: "v3-hand" }, BACKGROUND_CONTEXT), /"v3-hand" is a Radius machine/);
+		const v1 = await boundIn(owner, EnvsV1, {}, "owner");
+		await assert.rejects(v1.delete({ name: "v3-hand" }, BACKGROUND_CONTEXT), /"v3-hand" is a Radius machine/);
+		v1.release();
+		assert.equal(
+			(await current.list(BACKGROUND_CONTEXT)).find((row) => row.name === "v3-hand")?.config.type,
+			"radius",
+		);
 		await ref.save({ name: "v3-other", config: { type: "ssh", host: "other.example" } }, BACKGROUND_CONTEXT);
 		await until(ref.envs, (list) => list.some((row) => row.name === "v3-other"));
 		for (const name of ["v3-other", "v3-hand", "v3-host"]) await current.delete({ name }, BACKGROUND_CONTEXT);
+		ref.release();
+		current.release();
+	});
+
+	it("binds Ports v2: this device's forwards, without the machines' methods", async () => {
+		const current = await holdIn(owner, Ports, {}, "owner");
+		const ref = await boundIn(owner, PortsV2, {}, "owner");
+		await ref.add({ port: 4321, name: "v2" }, BACKGROUND_CONTEXT);
+		const added = await until(ref.forwards, (list) => list.some((forward) => forward.port === 4321));
+		const forward = added.find((each) => each.port === 4321)!;
+		assert.equal(forward.name, "v2");
+		await ref.setPublic({ id: forward.id, public: true }, BACKGROUND_CONTEXT);
+		await until(current.forwards, (list) => list.some((each) => each.id === forward.id && each.public === true));
+		await ref.remove({ id: forward.id }, BACKGROUND_CONTEXT);
+		await until(ref.forwards, (list) => !list.some((each) => each.id === forward.id));
 		ref.release();
 		current.release();
 	});

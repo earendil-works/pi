@@ -84,17 +84,19 @@ const PortsV2 = remote("p2.ports", {
 });
 
 const Env = obj({ env: str() });
+/** A machine's forwards, as its agent lists them; `origin` null while their addresses are unknown. */
+const MachineList = obj({ forwards: List, origin: union([str(), nul()]) });
 
 /**
  * Owner management and worker tool calls share one registry; worker identity fixes its session. 3: the forwards of
- * machines running `pi-env agent` (envs.json type `radius`), kept by their agents: `machine` lists one machine's
- * (`origin` null while its addresses are unknown), `machineAdd`, `machineRemove` and `machineSetPublic` change them. A
- * session working on such a machine opens and closes its forwards there with the worker's `query`. The provider still
- * serves 2.
+ * machines running `pi-env agent` (envs.json type `radius`), kept by their agents: `machine` lists one machine's,
+ * `machineAdd` (one forward per port, as the `ports` tool opens them), `machineRemove` and `machineSetPublic` change
+ * them and answer with the list after the change. A session working on such a machine opens and closes its forwards
+ * there with the worker's `query`. The provider still serves 2.
  */
 export const Ports = evolve(PortsV2, (e) =>
 	e
-		.addMethod("owner", "machine", Env, obj({ forwards: List, origin: union([str(), nul()]) }))
+		.addMethod("owner", "machine", Env, MachineList)
 		.addMethod(
 			"owner",
 			"machineAdd",
@@ -104,8 +106,8 @@ export const Ports = evolve(PortsV2, (e) =>
 				name: opt(str({ maxLength: 40 })),
 				public: opt(bool()),
 			}),
-			nul(),
+			MachineList,
 		)
-		.addMethod("owner", "machineRemove", obj({ env: str(), id: str() }), nul())
-		.addMethod("owner", "machineSetPublic", obj({ env: str(), id: str(), public: bool() }), nul()),
+		.addMethod("owner", "machineRemove", obj({ env: str(), id: str() }), MachineList)
+		.addMethod("owner", "machineSetPublic", obj({ env: str(), id: str(), public: bool() }), MachineList),
 );

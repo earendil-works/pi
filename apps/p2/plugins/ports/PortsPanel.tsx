@@ -217,22 +217,30 @@ function MachinePorts({ service, env }: { service: HeldIn<typeof Ports, "owner">
 	const [state, setState] = useState<MachineState>({ kind: "loading" });
 	const [port, setPort] = useState("");
 	const [name, setName] = useState("");
-	const [busy, setBusy] = useState(false);
 	const [publishing, setPublishing] = useState<string>();
 	const [error, setError] = useState<string>();
-	const load = () =>
-		service.machine({ env }, BACKGROUND_CONTEXT).then(
-			({ forwards, origin }) => setState({ kind: "listed", forwards, origin }),
-			(reason: unknown) => setState({ kind: "failed", error: errorText(reason) }),
+	useEffect(() => {
+		let current = true;
+		void service.machine({ env }, BACKGROUND_CONTEXT).then(
+			({ forwards, origin }) => current && setState({ kind: "listed", forwards, origin }),
+			(reason: unknown) => current && setState({ kind: "failed", error: errorText(reason) }),
 		);
-	// biome-ignore lint/correctness/useExhaustiveDependencies: read once per machine; load is recreated each render.
-	useEffect(() => void load(), [service, env]);
-	const run = (call: () => Promise<unknown>) => {
-		setBusy(true);
+		return () => {
+			current = false;
+		};
+	}, [service, env]);
+	// Changes show at once; each call answers with the machine's list after it, which replaces the guess as it settles.
+	const [forwards, change] = useOptimisticCall(
+		state.kind === "listed" ? state.forwards : undefined,
+		applyPort,
+		(reason) => setError(errorText(reason)),
+	);
+	const run = (guess: PortGuess, call: () => Promise<{ forwards: Forward[]; origin: string | null }>) => {
 		setError(undefined);
-		void call()
-			.then(load, (reason: unknown) => setError(errorText(reason)))
-			.finally(() => setBusy(false));
+		change(guess, async () => {
+			const { forwards: next, origin } = await call();
+			setState({ kind: "listed", forwards: next, origin });
+		});
 	};
 	return (
 		<div className="list">
@@ -242,8 +250,9 @@ function MachinePorts({ service, env }: { service: HeldIn<typeof Ports, "owner">
 			{state.kind === "listed" && !state.origin && (
 				<p className="muted small">Links appear once the machine's agent knows its address at Radius.</p>
 			)}
-			{state.kind === "listed" &&
-				state.forwards.map((forward) => (
+			{forwards?.map((forward) => {
+				const pending = forward.id.startsWith("adding-");
+				return (
 					<div className="forward" key={forward.id}>
 						<div className="guest-row forward-row">
 							<span>
@@ -259,8 +268,12 @@ function MachinePorts({ service, env }: { service: HeldIn<typeof Ports, "owner">
 								<button
 									type="button"
 									className="text-action"
-									disabled={busy}
-									onClick={() => run(() => service.machineRemove({ env, id: forward.id }, BACKGROUND_CONTEXT))}
+									disabled={pending}
+									onClick={() =>
+										run({ kind: "remove", id: forward.id }, () =>
+											service.machineRemove({ env, id: forward.id }, BACKGROUND_CONTEXT),
+										)
+									}
 								>
 									Remove
 								</button>
@@ -282,7 +295,7 @@ function MachinePorts({ service, env }: { service: HeldIn<typeof Ports, "owner">
 									className="text-action danger"
 									onClick={() => {
 										setPublishing(undefined);
-										run(() =>
+										run({ kind: "public", id: forward.id, open: true }, () =>
 											service.machineSetPublic({ env, id: forward.id, public: true }, BACKGROUND_CONTEXT),
 										);
 									}}
@@ -298,11 +311,11 @@ function MachinePorts({ service, env }: { service: HeldIn<typeof Ports, "owner">
 								<Switch
 									label="Public: no sign-in"
 									checked={forward.public ?? false}
-									disabled={busy}
+									disabled={pending}
 									onChange={(checked) =>
 										checked
 											? setPublishing(forward.id)
-											: run(() =>
+											: run({ kind: "public", id: forward.id, open: false }, () =>
 													service.machineSetPublic(
 														{ env, id: forward.id, public: false },
 														BACKGROUND_CONTEXT,
@@ -319,14 +332,17 @@ function MachinePorts({ service, env }: { service: HeldIn<typeof Ports, "owner">
 							</div>
 						)}
 					</div>
-				))}
-			{state.kind === "listed" && !state.forwards.length && <p className="empty-note">No ports forwarded.</p>}
+				);
+			})}
+			{forwards && !forwards.length && <p className="empty-note">No ports forwarded.</p>}
 			<form
 				className="inline-form"
 				onSubmit={(event) => {
 					event.preventDefault();
 					const added = { env, port: Number(port.trim()), ...(name.trim() ? { name: name.trim() } : {}) };
-					run(() => service.machineAdd(added, BACKGROUND_CONTEXT));
+					run({ kind: "add", key: `adding-${crypto.randomUUID()}`, port: added.port, name: added.name }, () =>
+						service.machineAdd(added, BACKGROUND_CONTEXT),
+					);
 					setPort("");
 					setName("");
 				}}
@@ -348,7 +364,11 @@ function MachinePorts({ service, env }: { service: HeldIn<typeof Ports, "owner">
 					placeholder="Name (optional)"
 					aria-label={`Name on ${env}`}
 				/>
-				<button type="submit" className="button primary" disabled={busy || !/^\d+$/.test(port.trim())}>
+				<button
+					type="submit"
+					className="button primary"
+					disabled={state.kind !== "listed" || !/^\d+$/.test(port.trim())}
+				>
 					Add
 				</button>
 			</form>
