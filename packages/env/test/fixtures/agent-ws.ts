@@ -128,7 +128,10 @@ export class WsPeer {
 	}
 
 	#handle(opcode: number, fin: boolean, payload: Buffer): void {
-		if (opcode === 9) return this.#frame(10, payload);
+		if (opcode === 9) {
+			this.#frame(10, payload);
+			return;
+		}
 		if (opcode === 10) return;
 		if (opcode === 8) {
 			const close =
@@ -137,7 +140,8 @@ export class WsPeer {
 					: { code: 1005, reason: "" };
 			if (!this.#sentClose) this.close(close.code === 1005 ? 1000 : close.code, close.reason);
 			this.#socket.end();
-			return this.#end(close);
+			this.#end(close);
+			return;
 		}
 		if (opcode === 1 || opcode === 2) {
 			this.#fragmentText = opcode === 1;
@@ -152,7 +156,10 @@ export class WsPeer {
 
 	#deliver(message: WsMessage): void {
 		const listener = this.#listeners[0];
-		if (listener) return listener(message);
+		if (listener) {
+			listener(message);
+			return;
+		}
 		const waiter = this.#waiters.shift();
 		if (waiter) waiter(message);
 		else this.#queue.push(message);

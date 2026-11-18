@@ -6,7 +6,7 @@ const url = process.argv[2] as string;
 const token = process.argv[process.argv.indexOf("--token") + 1] as string;
 const socket = new WebSocket(url, "pi-server.client.v2");
 socket.binaryType = "arraybuffer";
-const queued: Buffer[] = [];
+const queued: Uint8Array<ArrayBuffer>[] = [];
 socket.addEventListener("open", () => {
 	socket.send(JSON.stringify({ type: "pi-env", token }));
 	for (const chunk of queued.splice(0)) socket.send(chunk);
@@ -23,7 +23,8 @@ socket.addEventListener("error", () => {
 	process.exit(1);
 });
 process.stdin.on("data", (chunk: Buffer) => {
-	if (socket.readyState === WebSocket.OPEN) socket.send(chunk);
-	else queued.push(chunk);
+	const bytes = new Uint8Array(chunk);
+	if (socket.readyState === WebSocket.OPEN) socket.send(bytes);
+	else queued.push(bytes);
 });
 process.stdin.on("end", () => socket.close(1000));

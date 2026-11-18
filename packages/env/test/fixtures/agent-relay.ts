@@ -281,14 +281,26 @@ export class FakeRelay {
 		const protocols = offeredProtocols(request);
 		const connect = /^\/v1\/servers\/([^/]+)\/connect$/.exec(url.pathname);
 		const channel = /^\/v1\/servers\/([^/]+)\/channels\/([^/]+)$/.exec(url.pathname);
-		if (connect && url.searchParams.has("as")) return this.#client(request, socket, head, url.searchParams.get("as"));
-		if (!this.#access.has(token)) return refuseUpgrade(socket, 401, '{"error":"invalid_token"}');
+		if (connect && url.searchParams.has("as")) {
+			this.#client(request, socket, head, url.searchParams.get("as"));
+			return;
+		}
+		if (!this.#access.has(token)) {
+			refuseUpgrade(socket, 401, '{"error":"invalid_token"}');
+			return;
+		}
 		if (connect) {
 			const protocol = protocols.includes("pi-server.host.v5") ? "pi-server.host.v5" : undefined;
 			this.connects.push({ serverId: connect[1] as string, query: url.searchParams, token, protocol });
-			if (connect[1] !== this.serverId || !protocol) return refuseUpgrade(socket, 403, "forbidden");
+			if (connect[1] !== this.serverId || !protocol) {
+				refuseUpgrade(socket, 403, "forbidden");
+				return;
+			}
 			const replace = url.searchParams.get("replace") === "1";
-			if ((this.host || this.otherHost) && !replace) return refuseUpgrade(socket, 409, "host already connected");
+			if ((this.host || this.otherHost) && !replace) {
+				refuseUpgrade(socket, 409, "host already connected");
+				return;
+			}
 			this.otherHost = false;
 			const previous = this.host;
 			const host = acceptUpgrade(request, socket, head, protocol);
@@ -302,7 +314,10 @@ export class FakeRelay {
 			return;
 		}
 		const pending = channel && this.#pending.get(channel[2] as string);
-		if (!pending || !protocols.includes("pi-server.channel.v1")) return refuseUpgrade(socket, 404, "no such channel");
+		if (!pending || !protocols.includes("pi-server.channel.v1")) {
+			refuseUpgrade(socket, 404, "no such channel");
+			return;
+		}
 		this.#pending.delete(channel[2] as string);
 		pending(socket, request, head);
 	}
@@ -321,9 +336,15 @@ export class FakeRelay {
 	#fromHost(host: WsPeer, message: WsMessage): void {
 		if ("text" in message) {
 			const control = JSON.parse(message.text) as Record<string, unknown>;
-			if (control.type === "ping") return host.send(JSON.stringify({ version: 2, type: "pong" }));
+			if (control.type === "ping") {
+				host.send(JSON.stringify({ version: 2, type: "pong" }));
+				return;
+			}
 			const channel = this.#channels.get(control.connection_id as string);
-			if (channel?.kind === "http") return channel.control(control);
+			if (channel?.kind === "http") {
+				channel.control(control);
+				return;
+			}
 			if (channel?.kind === "ws" && control.type === "connection_close") {
 				this.#channels.delete(control.connection_id as string);
 				this.#pending.delete(control.connection_id as string);

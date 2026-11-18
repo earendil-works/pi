@@ -85,12 +85,11 @@ function alive(pid: number): boolean {
 	}
 }
 
+type Answer = { status?: number; headers?: Record<string, string>; body: Buffer | string };
+
 /** A local HTTP server for forwards: answers with what it received, or as `routes` say. */
 async function localServer(
-	routes: (
-		request: IncomingMessage,
-		body: Buffer,
-	) => { status?: number; headers?: Record<string, string>; body: Buffer | string } | undefined = () => undefined,
+	routes: (request: IncomingMessage, body: Buffer) => Answer | undefined = () => undefined,
 ): Promise<{ server: Server; port: number }> {
 	const server = createServer((request, response) => {
 		const chunks: Buffer[] = [];
@@ -260,7 +259,11 @@ describe.skipIf(process.platform === "win32")("pi-env agent", () => {
 			let output = "";
 			const result = await env.exec(
 				[process.execPath, "-e", "process.stdout.write(process.cwd() + ':' + 'x'.repeat(200000))"],
-				{ onOutput: (text: string) => void (output += text) },
+				{
+					onOutput: (text: string) => {
+						output += text;
+					},
+				},
 				context,
 			);
 			expect(getOrThrow(result).exitCode).toBe(0);
@@ -355,7 +358,7 @@ describe.skipIf(process.platform === "win32")("pi-env agent", () => {
 			await relay.waitForHost(true);
 			connection = new Connection({ command: [process.execPath, bridge, relay.clientUrl("owner")] });
 			cleanups.push(() => connection.close());
-			const echo = await localServer((request, body) => {
+			const echo = await localServer((request, body): Answer | undefined => {
 				if (request.url === "/redirect")
 					return { status: 302, headers: { location: `http://localhost:${echoPort}/next?a=1` }, body: "" };
 				if (request.url === "/big") return { headers: { "content-type": "application/octet-stream" }, body: big };
