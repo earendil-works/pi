@@ -22,9 +22,12 @@ import { RemoteExecutionEnv } from "../src/remote-env.ts";
 import {
 	acceptHostKey,
 	connectSsh,
+	deployDaemon,
+	detectPlatform,
 	forgetHostKey,
 	HostKeyChangedError,
 	HostKeyUnknownError,
+	runDaemon,
 	type SshTarget,
 	scanHostKey,
 	sshConnection,
@@ -150,6 +153,15 @@ describe.skipIf(sshd === undefined)("SSH bootstrap", () => {
 		} finally {
 			connection.close();
 		}
+	}, 60_000);
+
+	it("runs the deployed daemon once with arguments quoted for the remote shell", async () => {
+		const remote = await detectPlatform(target);
+		const file = await deployDaemon(target, remote, daemon);
+		const state = join(root, "state with 'quotes' and $HOME");
+		const output = await runDaemon(target, remote, file, ["status", "--state", state], { stdin: "unused\n" });
+		expect(JSON.parse(output.trim().split("\n").at(-1) ?? "")).toMatchObject({ enrolled: false, stateDir: state });
+		await expect(runDaemon(target, remote, file, ["no-such-command"])).rejects.toThrow(/exit code/);
 	}, 60_000);
 
 	it("reuses a verified daemon and replaces a tampered one", async () => {
