@@ -450,3 +450,5 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
   a single executable), so p3 controls the Node version a user runs; no install runs on a Node p3 did not choose.
   Slice 27's decision 1 is settled by it: the terminal's sandbox gets Node 26, whose permission model blocks the
   network. Whether the minimum for running from a checkout rises to Node 26 is still open.
+- **Node 26 or newer everywhere (owner, 2026-11-18: "node 26+ all the way"):** p3's minimum Node is 26, also for running
+  from a checkout and for its tests; Node 24 support goes (its branch in the workers' V8 flags, its test runs).
