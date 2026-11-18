@@ -446,3 +446,7 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
   locks into `harness.tools`, presets, the lock list; private: `/home/badlogic/chord-notes/research/p3-locks-sheet/`)
   are taken when locks are built, not before. The owner is not convinced locks are any good: slice 6 starts by
   questioning the mechanism itself, not only its details.
+- **p3 ships with its own Node (owner, 2026-11-18):** p3 is only shipped with a Node of its own (bundled beside it, or
+  a single executable), so p3 controls the Node version a user runs; no install runs on a Node p3 did not choose.
+  Slice 27's decision 1 is settled by it: the terminal's sandbox gets Node 26, whose permission model blocks the
+  network. Whether the minimum for running from a checkout rises to Node 26 is still open.
