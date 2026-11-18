@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import { startP3 } from "../server.ts";
+import { startP3 } from "../src/bootstrap/server.ts";
 import { endToEnd } from "./end-to-end.ts";
 
 describe("p3 end to end, in this process", () => {

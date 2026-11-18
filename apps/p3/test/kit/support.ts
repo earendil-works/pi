@@ -15,7 +15,7 @@ import { type ServerOptions, startServer } from "../../src/kit/start-server.ts";
 
 /** p3's worker entry and its flags, as `server.ts` gives them. */
 export const WORKER: WorkerOptions = {
-	entry: fileURLToPath(new URL("../../worker.ts", import.meta.url)),
+	entry: fileURLToPath(new URL("../../src/bootstrap/worker.ts", import.meta.url)),
 	execArgv: ["--conditions=source", "--disable-warning=ExperimentalWarning"],
 };
 

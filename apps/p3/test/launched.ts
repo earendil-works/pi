@@ -13,7 +13,7 @@ export const SOURCE: readonly string[] = [
 	process.execPath,
 	"--conditions=source",
 	"--disable-warning=ExperimentalWarning",
-	fileURLToPath(new URL("../bin.ts", import.meta.url)),
+	fileURLToPath(new URL("../src/bootstrap/bin.ts", import.meta.url)),
 ];
 
 /** The command that starts the release installed in `install` (a directory with `node_modules/`). */

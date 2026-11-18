@@ -32,13 +32,13 @@ p3 and "go to definition" lands in the API's code.
 ## In the repository
 
 - `docs/`: the working set (`docs/README.md`): overview, names, workflow, decisions, slice briefs.
-- `bin.ts`, `server.ts`, `worker.ts`, `supervisor.ts`, `src/`: base code (a restart changes it): the entries, the
-  principal, the API (`src/api/v1/`), the kit (`src/kit/`).
+- `src/`: base code (a restart changes it): the process entries (`src/bootstrap/`: `bin.ts`, `server.ts`,
+  `worker.ts`, `supervisor.ts`), the principal, the API (`src/api/v1/`), the kit (`src/kit/`).
 - `plugins/`: everything else, one directory per plugin.
 - `test/`: tests of the whole (topology, end to end, the command) and of the kit (`test/kit/`); a plugin's own tests
   sit in its directory.
 
 From this directory, with Node 24: `npm run check`, `npm test`; `node --conditions=source
---disable-warning=ExperimentalWarning bin.ts server --dir <path>` runs the server from source. A local release (p3
-built, packed and installed outside the repository as it would ship, then tested): from the repository root,
+--disable-warning=ExperimentalWarning src/bootstrap/bin.ts server --dir <path>` runs the server from source. A local
+release (p3 built, packed and installed outside the repository as it would ship, then tested): from the repository root,
 `npm run release:p3:local -- --out /tmp/p3-release --force [--bench]`; the command is then `/tmp/p3-release/p3`.

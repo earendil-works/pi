@@ -115,7 +115,7 @@ describe("the build's guards", () => {
 	/** An input importing `paths`, all left external. */
 	const importing = (...paths: string[]) => ({
 		inputs: {
-			"bin.ts": {
+			"src/bootstrap/bin.ts": {
 				bytes: 1,
 				imports: paths.map((path) => ({ path, kind: "import-statement" as const, external: true })),
 			},
@@ -137,8 +137,15 @@ describe("the build's guards", () => {
 			exports: [],
 			inputs: Object.fromEntries(inputs.map((input) => [input, { bytesInOutput: 1 }])),
 		});
-		checkPlacement({ outputs: { "dist/main.js": output("bin.ts", "src/install.ts") } }, "src/install.ts", "main.js");
-		const inChunk = { "dist/main.js": output("bin.ts"), "dist/chunks/chunk-A.js": output("src/install.ts") };
+		checkPlacement(
+			{ outputs: { "dist/main.js": output("src/bootstrap/bin.ts", "src/install.ts") } },
+			"src/install.ts",
+			"main.js",
+		);
+		const inChunk = {
+			"dist/main.js": output("src/bootstrap/bin.ts"),
+			"dist/chunks/chunk-A.js": output("src/install.ts"),
+		};
 		assert.throws(
 			() => checkPlacement({ outputs: inChunk }, "src/install.ts", "main.js"),
 			/src\/install\.ts must be bundled into main\.js, found in dist\/chunks\/chunk-A\.js$/,

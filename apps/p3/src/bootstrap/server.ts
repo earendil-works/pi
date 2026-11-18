@@ -3,10 +3,10 @@
 // command that calls it is `bin.ts`.
 
 import type { Context } from "@earendil-works/chord/context";
-import { PLUGINS, version, WORKER } from "./src/install.ts";
-import type { App } from "./src/kit/app.ts";
-import { startServer } from "./src/kit/start-server.ts";
-import { firstPort } from "./src/pi.ts";
+import { PLUGINS, version, WORKER } from "../install.ts";
+import type { App } from "../kit/app.ts";
+import { startServer } from "../kit/start-server.ts";
+import { firstPort } from "../pi.ts";
 
 /**
  * Starts p3 on `dataDir` (`~/.pi/p3` by default) with its built-in plugins from `root`, listening on `port` for this

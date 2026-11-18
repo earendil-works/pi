@@ -12,8 +12,8 @@ import { openSync, writeSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import { layoutOf } from "./src/kit/layout.ts";
-import { removeRecord, takeLock, writeRecord } from "./src/kit/running.ts";
+import { layoutOf } from "../kit/layout.ts";
+import { removeRecord, takeLock, writeRecord } from "../kit/running.ts";
 
 /** The wait before a crashed server starts again: 1 s, doubled for each crash in a row, at most 30 s. */
 const FIRST_DELAY_MS = 1000;

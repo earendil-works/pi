@@ -361,6 +361,10 @@ and its exit on a clean stop, the kept port).
 
 ## As built
 
+The process entries (`bin.ts`, `server.ts`, `worker.ts`, `supervisor.ts`) live in `src/bootstrap/` (decision "Base
+entries live in `src/bootstrap/`", 2026-11-18); `apps/p3/`'s root holds no `.ts` file. The names below without a
+directory are theirs; the release's files (`dist/main.js`, `worker.js`, `supervisor.js`, `p3.js`) keep their names.
+
 ### What ships
 
 ```text
@@ -368,7 +372,7 @@ and its exit on a clean stop, the kept port).
   package.json                          bin { p3: dist/p3.js }; exports ./v1, ./v1/server, ./v1/worker (source, types,
                                         import); dependencies: Chord, pi-schema, pi-telemetry, esbuild, ws (exact)
   dist/p3.js                            the launcher: the compile cache, the experimental-warning filter, main.js
-  dist/main.js                          the command (bin.ts) and the server: kit, Chord, pi-schema, pi-telemetry, ws inlined
+  dist/main.js                          the command (src/bootstrap/bin.ts) and the server: kit, Chord, pi-schema, pi-telemetry, ws inlined
   dist/worker.js                        a session worker's entry: a bundle of its own, none of the server's code
   dist/supervisor.js                    the background server's supervisor: a bundle of its own
   dist/api/v1/*.{js,d.ts,d.ts.map}      the API compiled by tsc, importing Chord from the dependency
@@ -395,11 +399,11 @@ How p3 runs from it:
 ### How it is built and tested
 
 - **`scripts/build-release.ts`** (`npm run build` in `apps/p3`): checks that every dependency is pinned to the
-  workspace's version; one esbuild build per process (`bin.ts`, `worker.ts`, `supervisor.ts`, in parallel, no shared
-  chunk), with the condition `source`, minified with names kept, no source maps; the externals check (Node builtins,
-  esbuild, `ws`'s two optional accelerators), the placement check of `src/install.ts` (in `main.js` and nowhere
-  else) and the lean check of the worker's and the supervisor's bundles (`checkLean`: no import of esbuild or Node's
-  HTTP, no `ws`, none of Chord's HTTP component, the server side of its workers or its plugin builds); the
+  workspace's version; one esbuild build per process (`src/bootstrap/bin.ts`, `worker.ts`, `supervisor.ts`, in
+  parallel, no shared chunk), with the condition `source`, minified with names kept, no source maps; the externals check (Node
+  builtins, esbuild, `ws`'s two optional accelerators), the placement check of `src/install.ts` (in `main.js` and
+  nowhere else) and the lean check of the worker's and the supervisor's bundles (`checkLean`: no import of esbuild or
+  Node's HTTP, no `ws`, none of Chord's HTTP component, the server side of its workers or its plugin builds); the
   launcher; then `tsc -p tsconfig.build.json` for the API. `scripts/` is TypeScript, run by Node, so `npm run check` covers it.
 - **`scripts/release-local.ts`** (`npm run release:p3:local -- --out <dir> [--force] [--skip-test] [--bench]` from the
   repository root): the output directory checked (below), Chord, pi-schema and pi-telemetry built, p3 built, the four
@@ -608,8 +612,9 @@ workers component takes `dist/worker.js` as its entry.
 
 ### The third part, against its specification
 
-- **`supervisor.ts` is at p3's root**, beside `bin.ts`, `server.ts` and `worker.ts` (decision "Base entries are named
-  after what they are"), not in `src/`; the build bundles it as `dist/supervisor.js`.
+- **`supervisor.ts` is beside `bin.ts`, `server.ts` and `worker.ts`** (decision "Base entries are named after what they
+  are"; at p3's root then, in `src/bootstrap/` since 2026-11-18), not in `src/` as planned; the build bundles it as
+  `dist/supervisor.js`.
 - **The supervisor has a lock and a record of its own** (`p3-supervisor:<dataDir>`, `supervisor.json`), as the server
   has (`p3-server:<dataDir>`, `server.json`): `stop` finds the supervisor also while no server runs (between a crash
   and the restart), two `p3` at once start one supervisor (the second cannot take the lock and exits, and its command
@@ -862,6 +867,9 @@ unminified, no compile cache flush), 3 runs × 4 workers. After: 10 runs × 4 wo
 - The idle maximum (25.4) is each run's first worker, whose compile cache is cold; the others start from its cache.
 
 ## Carried (not in this slice)
+
+Packaging: its own package, later; decision "Packaging is its own work, later"; the measurements are in
+`/home/badlogic/chord-notes/research/p3-sea-2026-11-18/`.
 
 Publishing the lockstep version of Chord, pi-schema and pi-telemetry that p3's types need (npm's 1.5.2 predates
 them), and p3's own version joining the lockstep; a build cache on disk (decided against for now, decision "No build cache"), or a ready worker base in the release (the

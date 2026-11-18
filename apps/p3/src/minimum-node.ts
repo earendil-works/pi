@@ -1,6 +1,6 @@
-// The oldest Node p3 runs on, checked before anything else: `bin.ts` imports this module first, so a Node too old for
-// p3 (or for a flag its workers start with) gets one clear line and exit 1, not a failure deep in a module. A session
-// worker never starts alone: only a server forks it, with the server's Node.
+// The oldest Node p3 runs on, checked before anything else: `src/bootstrap/bin.ts` imports this module first, so a
+// Node too old for p3 (or for a flag its workers start with) gets one clear line and exit 1, not a failure deep in a
+// module. A session worker never starts alone: only a server forks it, with the server's Node.
 
 /** The oldest Node p3 runs on: `engines.node` in its `package.json`. */
 export const MINIMUM_NODE = "24.4.0";
