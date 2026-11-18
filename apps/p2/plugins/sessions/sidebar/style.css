@@ -162,11 +162,14 @@
    transform, slowly (160ms a frame against pi's 80ms) and in the icons' colour, so many running agents stay calm.
    The strip starts at the box's left edge, left to right in any writing direction, so the box shows one whole frame
    at each step; every strip's delay puts it on the page's one clock (PiDots), so running items step together. Still
-   on its first frame without motion. */
+   on its first frame without motion. A frame is 1em rounded to whole pixels (--pi-frame): at 1em (16.1px in a row)
+   frame n sits n × 0.1px off the pixel grid, so each step draws its glyph at another subpixel offset and some frames
+   look shifted against the others. */
 .pi-dots {
+	--pi-frame: round(1em, 1px);
 	display: inline-block;
 	flex: none;
-	width: 1em;
+	width: var(--pi-frame);
 	height: 1.2em;
 	overflow: hidden;
 	direction: ltr;
@@ -177,17 +180,17 @@
 }
 .pi-dots-strip {
 	display: flex;
-	width: 10em;
+	width: calc(10 * var(--pi-frame));
 	animation: pi-dots 1.6s steps(10) infinite;
 }
 .pi-dots-strip > span {
 	flex: none;
-	width: 1em;
+	width: var(--pi-frame);
 	text-align: center;
 }
 @keyframes pi-dots {
 	to {
-		translate: -10em 0;
+		translate: calc(-10 * var(--pi-frame)) 0;
 	}
 }
 @media (prefers-reduced-motion: reduce) {
