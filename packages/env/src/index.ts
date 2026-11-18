@@ -7,6 +7,8 @@ export {
 	type RemoteInfo,
 	type Reply,
 	type RequestOptions,
+	type Transport,
+	type TransportEvents,
 } from "./connection.ts";
 export { LocalExecutionEnv, type LocalExecutionEnvOptions } from "./list-files.ts";
 export { openProcess, type ProcessOptions, RemoteProcess } from "./process.ts";

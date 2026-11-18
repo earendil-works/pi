@@ -1,4 +1,4 @@
-import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { stripVTControlCharacters } from "node:util";
 
@@ -73,16 +73,49 @@ export function nodePlatform(info: Pick<RemoteInfo, "os" | "arch">): { platform:
 	return { platform: platforms[info.os] ?? info.os, arch: archs[info.arch] ?? info.arch };
 }
 
-export interface ConnectionOptions {
+/** What a transport tells its connection; nothing after `end`. */
+export interface TransportEvents {
 	/**
-	 * Command that starts the daemon, before its `serve --token <hex>` arguments, e.g. `["ssh", "-T", "--", "host",
-	 * "~/.pi/mobile/tools/pi-env"]`. A function computes it at each start (detecting and deploying first, for example);
-	 * its failure fails that start, and the next request tries again.
+	 * Bytes from the daemon as `pi-env serve` writes them to stdout: its sync line `PI-ENV <token>\n` (anything before it
+	 * is logged as noise), then frames. Chunk boundaries carry no meaning.
 	 */
-	command: readonly string[] | (() => Promise<readonly string[]>);
+	data(chunk: Uint8Array): void;
+	/** Diagnostic text (the daemon's stderr); the end of what arrives before `hello` is part of a failed start's error. */
+	log(text: string): void;
+	/** The stream ended: a message (the connection counts as lost) or the error to fail with. */
+	end(reason: string | RemoteError): void;
+}
+
+/** A byte stream to one daemon, as its stdin and stdout are for `pi-env serve --token <token>`. */
+export interface Transport {
+	/** Bytes to the daemon: frames, as on its stdin. */
+	write(data: Uint8Array): void;
+	/** Ends the stream; the daemon then kills everything it started for it, as on stdin EOF. */
+	close(): void;
+}
+
+export type ConnectionOptions = (
+	| {
+			/**
+			 * Command that starts the daemon, before its `serve --token <hex>` arguments, e.g. `["ssh", "-T", "--", "host",
+			 * "~/.pi/mobile/tools/pi-env"]`. A function computes it at each start (detecting and deploying first, for
+			 * example); its failure fails that start, and the next request tries again.
+			 */
+			command: readonly string[] | (() => Promise<readonly string[]>);
+			transport?: undefined;
+	  }
+	| {
+			/**
+			 * Opens the byte stream to a daemon serving `token` (a relayed channel, say) instead of starting a command; its
+			 * events may begin once it resolved. A rejection fails that start, and the next request tries again.
+			 */
+			transport: (token: string, events: TransportEvents) => Promise<Transport>;
+			command?: undefined;
+	  }
+) & {
 	/** Receives the daemon's and the transport's diagnostic output. */
 	onLog?: (text: string) => void;
-}
+};
 
 export interface Reply {
 	json: Json;
@@ -181,7 +214,8 @@ function withStderr(message: string, stderr: string): string {
 /** One running daemon. */
 class Session {
 	readonly id: number;
-	readonly child: ChildProcessWithoutNullStreams;
+	/** Set once the transport is open, before anything is written. */
+	transport: Transport | undefined;
 	readonly token: string;
 	readonly pending = new Map<number, Pending>();
 	/** Received bytes not yet parsed, without concatenating on every chunk. */
@@ -193,9 +227,8 @@ class Session {
 	live = true;
 	stderrTail = "";
 
-	constructor(id: number, child: ChildProcessWithoutNullStreams, token: string) {
+	constructor(id: number, token: string) {
 		this.id = id;
-		this.child = child;
 		this.token = token;
 	}
 
@@ -326,50 +359,55 @@ export class Connection {
 	}
 
 	#write(session: Session, data: Buffer): void {
-		if (session.live) session.child.stdin.write(data);
+		if (session.live) session.transport?.write(data);
 	}
 
 	async #start(): Promise<{ info: RemoteInfo; session: Session }> {
-		let command: readonly string[];
+		const token = randomBytes(16).toString("hex");
+		const session = new Session(++this.#sessions, token);
+		let ready = false;
+		let fail: (error: Error) => void = () => {};
+		const failed = new Promise<never>((_resolve, reject) => {
+			fail = reject;
+		});
+		failed.catch(() => {});
+		const events: TransportEvents = {
+			data: (chunk) => this.#onData(session, Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength)),
+			log: (text) => {
+				if (!ready) session.stderrTail = (session.stderrTail + text).slice(-STDERR_TAIL_CHARS);
+				this.#options.onLog?.(text);
+			},
+			end: (reason) => {
+				const error = typeof reason === "string" ? lost(reason) : reason;
+				if (ready) this.#teardown(session, error);
+				else fail(error);
+			},
+		};
+		const option = this.#options;
 		try {
-			const option = this.#options.command;
-			command = typeof option === "function" ? await option() : option;
+			if (option.transport !== undefined) session.transport = await option.transport(token, events);
+			else {
+				const command = typeof option.command === "function" ? await option.command() : option.command;
+				if (this.#closed) throw closed();
+				session.transport = spawnTransport(command, token, events, () => ready);
+			}
 		} catch (error) {
+			if (this.#closed) throw closed();
+			// A transport's own errors stand; anything else failing the start is a spawn error the next request retries.
+			if (error instanceof RemoteError && (option.transport !== undefined || error.code === "spawn_error"))
+				throw error;
 			const message = error instanceof Error ? error.message : String(error);
 			throw new RemoteError({ code: "spawn_error", message, lost: true });
 		}
-		if (this.#closed) throw closed();
-		const [program, ...args] = command;
-		if (program === undefined) throw new RemoteError({ code: "spawn_error", message: "No daemon command" });
-		const token = randomBytes(16).toString("hex");
-		const child = spawn(program, [...args, "serve", "--token", token], { stdio: ["pipe", "pipe", "pipe"] });
-		const session = new Session(++this.#sessions, child, token);
+		if (this.#closed) {
+			session.transport.close();
+			throw closed();
+		}
 		this.#session = session;
-		let ready = false;
-		let startTimer: ReturnType<typeof setTimeout> | undefined;
-		const failed = new Promise<never>((_resolve, reject) => {
-			startTimer = setTimeout(
-				() => reject(lost(`pi-env did not answer within ${START_TIMEOUT_MS / 1000} s`)),
-				START_TIMEOUT_MS,
-			);
-			child.once("error", (error) =>
-				reject(new RemoteError({ code: "spawn_error", message: error.message, lost: true })),
-			);
-			child.once("close", (code) => reject(lost(`pi-env exited with code ${code} before it was ready`)));
-		});
-		failed.catch(() => {});
-		child.stdout.on("data", (chunk: Buffer) => this.#onData(session, chunk));
-		child.stderr.setEncoding("utf8").on("data", (text: string) => {
-			if (!ready) session.stderrTail = (session.stderrTail + text).slice(-STDERR_TAIL_CHARS);
-			this.#options.onLog?.(text);
-		});
-		child.on("error", () => this.#teardown(session, lost("pi-env connection lost")));
-		// A ready session fails as soon as the daemon exits, even while a process it started keeps a pipe open.
-		child.on("exit", () => {
-			if (ready) this.#teardown(session, lost("pi-env connection lost"));
-		});
-		child.on("close", () => this.#teardown(session, lost("pi-env connection lost")));
-		child.stdin.on("error", () => {});
+		const startTimer = setTimeout(
+			() => fail(lost(`pi-env did not answer within ${START_TIMEOUT_MS / 1000} s`)),
+			START_TIMEOUT_MS,
+		);
 		session.timer = setInterval(() => {
 			this.#write(session, frame(PING, 0, {}));
 			if (Date.now() - session.lastSeen > SILENCE_LIMIT_MS) {
@@ -406,8 +444,7 @@ export class Connection {
 			this.#session = undefined;
 			this.#ready = undefined;
 		}
-		session.child.stdin.end();
-		session.child.kill();
+		session.transport?.close();
 		const pending = [...session.pending.values()];
 		session.pending.clear();
 		for (const request of pending) request.reject(error);
@@ -475,4 +512,43 @@ export class Connection {
 		if (type === RESULT) pending.resolve({ json, payload, session: session.id });
 		else pending.reject(new RemoteError(json));
 	}
+}
+
+/**
+ * The default transport: `command` with `serve --token <token>`, over its stdin and stdout. Before the daemon is ready
+ * (`ready()`), its end waits for the pipes to close, so the error carries all of its stderr; after, the daemon's exit
+ * ends it at once, even while a process it started keeps a pipe open.
+ */
+function spawnTransport(
+	command: readonly string[],
+	token: string,
+	events: TransportEvents,
+	ready: () => boolean,
+): Transport {
+	const [program, ...args] = command;
+	if (program === undefined) throw new RemoteError({ code: "spawn_error", message: "No daemon command" });
+	const child = spawn(program, [...args, "serve", "--token", token], { stdio: ["pipe", "pipe", "pipe"] });
+	child.once("error", (error) =>
+		events.end(
+			ready()
+				? lost("pi-env connection lost")
+				: new RemoteError({ code: "spawn_error", message: error.message, lost: true }),
+		),
+	);
+	child.stdout.on("data", (chunk: Buffer) => events.data(chunk));
+	child.stderr.setEncoding("utf8").on("data", (text: string) => events.log(text));
+	child.on("exit", () => {
+		if (ready()) events.end("pi-env connection lost");
+	});
+	child.once("close", (code) =>
+		events.end(ready() ? "pi-env connection lost" : `pi-env exited with code ${code} before it was ready`),
+	);
+	child.stdin.on("error", () => {});
+	return {
+		write: (data) => child.stdin.write(data),
+		close: () => {
+			child.stdin.end();
+			child.kill();
+		},
+	};
 }

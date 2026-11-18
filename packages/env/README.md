@@ -72,6 +72,25 @@ const server = await openProcess(connection, {
 server.write(`${JSON.stringify(initialize)}\n`);
 ```
 
+A `Connection` starts its daemon with a command (`command`, which gets `serve --token <hex>` appended) or opens a byte
+stream to one some other way (`transport`): a function of the token that resolves to `{ write, close }` and reports the
+daemon's bytes, diagnostic text and the stream's end through the events it is given. The stream is what the daemon's
+stdout is: its sync line `PI-ENV <token>\n`, then frames, chunked anyhow; closing it ends everything the daemon started
+for it, as stdin EOF does. Framing, keepalive and lost-connection handling are the same for both. p2 uses it for a
+machine running `pi-env agent`, reached through a relayed channel:
+
+```ts
+const connection = new Connection({
+	transport: async (token, events) => {
+		const socket = await openChannel(); // anything carrying bytes both ways
+		socket.send(JSON.stringify({ type: "pi-env", token }));
+		socket.on("message", (bytes) => events.data(bytes));
+		socket.on("close", () => events.end("channel closed"));
+		return { write: (bytes) => socket.send(bytes), close: () => socket.close() };
+	},
+});
+```
+
 Supported remote systems: Linux, macOS, Android (Termux) and Windows, on x86-64 and arm64. On Windows, string commands
 run through Git Bash as `NodeExecutionEnv` runs them there; argv commands run directly.
 

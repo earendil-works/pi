@@ -1,8 +1,10 @@
+import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { Connection, isConnectionLost, RemoteError } from "../src/connection.ts";
+import { Connection, isConnectionLost, RemoteError, type Transport, type TransportEvents } from "../src/connection.ts";
+import { daemon } from "./daemon.ts";
 
 const connections: Connection[] = [];
 afterAll(() => {
@@ -219,5 +221,104 @@ describe("Connection of a ready daemon", () => {
 		expect(outcome.message).toBe("pi-env connection lost");
 		// The process the daemon started holds its pipes for 3 s; the request must not wait for them.
 		expect(Date.now() - started).toBeLessThan(2000);
+	});
+});
+
+describe("Connection over a transport", () => {
+	/**
+	 * A transport to the real daemon over its pipes, as a relay would carry them: noise before the sync line, every
+	 * chunk split into single bytes, so chunk boundaries carry no meaning.
+	 */
+	function pipeTransport(opened: Array<{ closed: boolean; end: (reason: string) => void }>) {
+		return async (token: string, events: TransportEvents): Promise<Transport> => {
+			const child = spawn(daemon, ["serve", "--token", token], { stdio: ["pipe", "pipe", "pipe"] });
+			const state = { closed: false, end: (reason: string) => events.end(reason) };
+			opened.push(state);
+			events.data(Buffer.from("relay banner\n"));
+			child.stdout.on("data", (chunk: Buffer) => {
+				for (const byte of chunk) events.data(Uint8Array.of(byte));
+			});
+			child.stderr.setEncoding("utf8").on("data", (text: string) => events.log(text));
+			child.on("close", () => events.end("pipe closed"));
+			return {
+				write: (data) => child.stdin.write(data),
+				close: () => {
+					state.closed = true;
+					child.kill();
+				},
+			};
+		};
+	}
+
+	it("speaks the daemon's protocol over the transport's byte stream", async () => {
+		const opened: Array<{ closed: boolean; end: (reason: string) => void }> = [];
+		const logged: string[] = [];
+		const connection = new Connection({ transport: pipeTransport(opened), onLog: (text) => logged.push(text) });
+		connections.push(connection);
+		const info = await connection.info();
+		expect(info.protocol).toBe(1);
+		const { json } = await connection.request("lstat", { path: info.home });
+		expect(json.kind).toBe("directory");
+		expect(logged).toContain("relay banner");
+		connection.close();
+		expect(opened.map((state) => state.closed)).toEqual([true]);
+	});
+
+	it("fails requests as lost with the transport's reason when it ends, and opens a new one at the next", async () => {
+		const opened: Array<{ closed: boolean; end: (reason: string) => void }> = [];
+		const connection = new Connection({ transport: pipeTransport(opened) });
+		connections.push(connection);
+		const first = await connection.session();
+		const pending = connection.request("exec", { command: "sleep 5", cwd: "/" }).catch((error: unknown) => error);
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		opened[0]?.end("the relay went away");
+		const error = await pending;
+		expect(isConnectionLost(error)).toBe(true);
+		expect((error as Error).message).toBe("the relay went away");
+		expect(await connection.session()).not.toBe(first);
+		expect(opened.length).toBe(2);
+	});
+
+	it("reports a failing transport as a lost spawn error and tries again; its own errors stand", async () => {
+		let attempts = 0;
+		const connection = new Connection({
+			transport: async () => {
+				attempts++;
+				throw new Error("Radius refused the channel (503)");
+			},
+		});
+		connections.push(connection);
+		const error = await startError(connection);
+		if (!(error instanceof RemoteError)) throw error;
+		expect(error.code).toBe("spawn_error");
+		expect(isConnectionLost(error)).toBe(true);
+		expect(error.message).toBe("Radius refused the channel (503)");
+		await startError(connection);
+		expect(attempts).toBe(2);
+		const refusing = new Connection({
+			transport: async () => {
+				throw new RemoteError({ code: "EACCES", message: "not yours" });
+			},
+		});
+		connections.push(refusing);
+		const refusal = await startError(refusing);
+		expect(refusal instanceof RemoteError && refusal.code).toBe("EACCES");
+		expect(isConnectionLost(refusal)).toBe(false);
+	});
+
+	it("fails the start with the end's reason and the logged text when the stream ends before hello", async () => {
+		const connection = new Connection({
+			transport: async (_token, events) => {
+				setTimeout(() => {
+					events.log("machine is offline\n");
+					events.end("channel closed (1011)");
+				}, 10);
+				return { write: () => {}, close: () => {} };
+			},
+		});
+		connections.push(connection);
+		const error = await startError(connection);
+		expect(isConnectionLost(error)).toBe(true);
+		expect(error.message).toBe("channel closed (1011)\nremote stderr:\nmachine is offline");
 	});
 });
