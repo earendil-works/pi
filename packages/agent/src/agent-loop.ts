@@ -567,12 +567,15 @@ async function executeToolCalls(
 	emit: AgentEventSink,
 ): Promise<ExecutedToolCallBatch> {
 	const toolCalls = assistantMessage.content.filter((c) => c.type === "toolCall");
+	// 扩展可以要求工具顺序执行。只要一个工具有此要求，整批调用就按顺序执行。
 	const hasSequentialToolCall = toolCalls.some(
 		(tc) => currentContext.tools?.find((t) => t.name === tc.name)?.executionMode === "sequential",
 	);
 	if (config.toolExecution === "sequential" || hasSequentialToolCall) {
+		// 顺序执行工具调用
 		return executeToolCallsSequential(currentContext, assistantMessage, toolCalls, config, signal, emit);
 	}
+	// 并行执行工具调用
 	return executeToolCallsParallel(currentContext, assistantMessage, toolCalls, config, signal, emit);
 }
 
@@ -656,6 +659,7 @@ async function executeToolCallsParallel(
 		});
 
 		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, config, signal);
+		// 准备阶段已经得出结果，立即发送工具调用结束事件。
 		if (preparation.kind === "immediate") {
 			const finalized = {
 				toolCall,
@@ -670,6 +674,7 @@ async function executeToolCallsParallel(
 			continue;
 		}
 
+		// 保存待执行的函数，等整批调用准备完毕后再启动。
 		finalizedCalls.push(async () => {
 			if (signal?.aborted) {
 				const finalized = {
@@ -680,7 +685,9 @@ async function executeToolCallsParallel(
 				await emitToolExecutionEnd(finalized, emit);
 				return finalized;
 			}
+			// executePreparedToolCall 执行工具
 			const executed = await executePreparedToolCall(preparation, signal, emitToolExecutionUpdate(toolCall, emit));
+			// 整理工具执行结果
 			const finalized = await finalizeExecutedToolCall(
 				currentContext,
 				assistantMessage,
@@ -697,9 +704,19 @@ async function executeToolCallsParallel(
 		}
 	}
 
+	/*
+	 * 例如准备完成后的数组可能是：
+	 * [
+	 * 执行 read 的函数,
+	 * “工具不存在”的结果对象,
+	 * 执行 bash 的函数,
+	 * ]
+	 */
+	// 并发执行工具，Promise.all 按原调用顺序返回结果。
 	const orderedFinalizedCalls = await Promise.all(
 		finalizedCalls.map((entry) => (typeof entry === "function" ? entry() : Promise.resolve(entry))),
 	);
+	// 按调用顺序发送工具结果消息。
 	const messages: ToolResultMessage[] = [];
 	for (const finalized of orderedFinalizedCalls) {
 		const toolResultMessage = createToolResultMessage(finalized);
@@ -883,6 +900,7 @@ async function executePreparedToolCall(
 	const elapsed = () => Math.round(performance.now() - startedAt);
 
 	try {
+		// 调用工具的 execute 方法。
 		const result = await prepared.tool.execute(
 			prepared.toolCall.id,
 			prepared.args as never,
