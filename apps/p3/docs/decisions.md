@@ -442,3 +442,7 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
   record: a Node 26 executable matched the npm install on Node 26 in every number, 156 MiB on disk (36 MB as xz); a
   Node 24 executable cannot give workers their V8 flags and failed the memory budget; coding-agent's Bun binary is
   117 MiB (42 MB as xz). The move of the entries to `src/bootstrap/` stays.
+- **Lock decisions wait for slice 6 (owner, 2026-11-18):** the lock sheet study's decisions (fewer layers, folding
+  locks into `harness.tools`, presets, the lock list; private: `/home/badlogic/chord-notes/research/p3-locks-sheet/`)
+  are taken when locks are built, not before. The owner is not convinced locks are any good: slice 6 starts by
+  questioning the mechanism itself, not only its details.
