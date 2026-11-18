@@ -16,6 +16,22 @@ export const SshEnvConfigSchema = obj({
 	shellEnv: opt(record(str())),
 });
 
+/** A Radius server ID: the lowercase UUID a machine running `pi-env agent` enrolled with. */
+export const RADIUS_SERVER_ID = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
+
+/**
+ * A machine running `pi-env agent` as a service, enrolled with the Radius this p2 is signed in to (`radius.json`) as
+ * server `server`: reached through Radius, never over SSH. `loginShell` is kept for an entry made from an SSH env; the
+ * agent starts programs with its user's login environment either way.
+ */
+export const RadiusEnvConfigSchema = obj({
+	type: literal("radius"),
+	server: str({ pattern: RADIUS_SERVER_ID }),
+	shellPath: opt(str({ minLength: 1, maxLength: 4096 })),
+	loginShell: opt(bool()),
+	shellEnv: opt(record(str())),
+});
+
 /** A folder of the host shared with a sandbox at `guest`; `host` is absolute or starts with `~` (the host user's home). */
 export const SandboxMountSchema = obj({
 	host: str({ minLength: 1, maxLength: 4096 }),
@@ -42,8 +58,9 @@ export const GondolinEnvConfigSchema = obj({
 /** The disk size of a sandbox without `diskGb`. */
 export const DEFAULT_DISK_GB = 32;
 
-export const EnvConfigSchema = union([SshEnvConfigSchema, GondolinEnvConfigSchema]);
+export const EnvConfigSchema = union([SshEnvConfigSchema, GondolinEnvConfigSchema, RadiusEnvConfigSchema]);
 export type SshEnvConfig = Static<typeof SshEnvConfigSchema>;
+export type RadiusEnvConfig = Static<typeof RadiusEnvConfigSchema>;
 export type GondolinEnvConfig = Static<typeof GondolinEnvConfigSchema>;
 export type SandboxMount = Static<typeof SandboxMountSchema>;
 export type EnvConfig = Static<typeof EnvConfigSchema>;

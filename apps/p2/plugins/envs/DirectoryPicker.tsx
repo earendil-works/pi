@@ -169,7 +169,7 @@ export function DirectoryPicker({
 						<option value="">This device</option>
 						{envs.map(
 							(entry) =>
-								entry.config.type === "ssh" && (
+								entry.config.type !== "gondolin" && (
 									<option key={entry.name} value={entry.name}>
 										{entry.name} (remote)
 									</option>

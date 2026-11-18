@@ -7,8 +7,11 @@ import { DirectoryListingSchema, literal, method, remote, serverHost } from "@p2
 /** One environment as an agent sees it: never keys or identity files. */
 export const EnvInfoSchema = obj({
 	name: str(),
-	/** `gondolin`: a sandbox, `host` naming the SSH environment it runs on; conversations working there cannot leave it. */
-	type: union([literal("ssh"), literal("gondolin")]),
+	/**
+	 * `gondolin`: a sandbox, `host` naming the SSH environment it runs on; conversations working there cannot leave it.
+	 * `radius`: a machine running `pi-env agent`, reached through Radius, `host` its Radius server ID.
+	 */
+	type: union([literal("ssh"), literal("gondolin"), literal("radius")]),
 	host: str(),
 	user: opt(str()),
 	port: opt(num()),

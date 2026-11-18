@@ -12,6 +12,7 @@ export {
 	type EnvsConfig,
 	type GondolinEnvConfig,
 	isSandbox,
+	type RadiusEnvConfig,
 	type SandboxMount,
 	type SshEnvConfig,
 } from "./schema.ts";
@@ -75,6 +76,7 @@ export function validateEnv(value: unknown): EnvConfig {
 			if (!/^[A-Za-z0-9*][A-Za-z0-9.*-]*$/.test(pattern)) throw new Error(`Invalid allowed host: ${pattern}`);
 		return config;
 	}
+	if (config.type === "radius") return config;
 	if (!sshField(config.host) || !sshField(config.user)) throw new Error("Invalid host or user");
 	if (hasControl(config.identityFile ?? "") || config.identityFile?.includes('"'))
 		throw new Error("Invalid identity file");

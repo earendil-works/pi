@@ -39,7 +39,9 @@ const describeEnv = (env: EnvInfo, here: Location): string => {
 	const target =
 		env.type === "gondolin"
 			? `sandbox (a VM on ${env.host})`
-			: `ssh ${env.user ? `${env.user}@` : ""}${env.host}${env.port ? `:${env.port}` : ""}`;
+			: env.type === "radius"
+				? "machine reached through Radius"
+				: `ssh ${env.user ? `${env.user}@` : ""}${env.host}${env.port ? `:${env.port}` : ""}`;
 	const tested =
 		env.tested === undefined
 			? "not tested"

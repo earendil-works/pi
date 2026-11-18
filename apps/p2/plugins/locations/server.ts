@@ -34,7 +34,7 @@ export default defineFacet((host) => {
 								return {
 									name,
 									type: config.type,
-									host: config.host,
+									host: config.type === "radius" ? config.server : config.host,
 									...(config.type !== "ssh" || config.user === undefined ? {} : { user: config.user }),
 									...(config.type !== "ssh" || config.port === undefined ? {} : { port: config.port }),
 									...(last === undefined

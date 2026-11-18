@@ -3,7 +3,7 @@
 // and map the current state, arguments and results between versions. The old contracts below are copied verbatim from
 // the releases that bundled them (`Sessions` v3 and `Catalog` v2 from 0a730c8a7, `Sessions` v4, `Catalog` v3 and
 // `SessionTree` v1 from e88525506, `SessionTree` v2 from 7670c8be4, `Sessions` v5 from 9ff0ebfd0, `Catalog` v4 from
-// 0a180b049, `Sessions` v6 from 20d86c365, `Envs` v1 from 2a32a605a and v2 from d07548004, `SessionStatus` v1 and
+// 0a180b049, `Sessions` v6 from 20d86c365, `Envs` v1 from 2a32a605a, v2 from d07548004 and v3 from 4ffe32c6f, `SessionStatus` v1 and
 // `Subagents` v2 from 6e11a00a0, `Projects` v1 from b58642efa), so their fingerprints are the ones old bundles send.
 
 import assert from "node:assert/strict";
@@ -468,6 +468,37 @@ const EnvsV2 = evolve(EnvsV1, (e) =>
 		.args("delete", obj({ name: str(), force: opt(bool()) })),
 );
 
+/** 4ffe32c6f's environment configuration (`Envs` v3): SSH environments and sandboxes with `diskGb`. */
+const EnvConfigSchemaV3 = union([
+	SshEnvConfigSchema,
+	obj({
+		type: literal("gondolin"),
+		host: str({ minLength: 1, maxLength: 32 }),
+		image: opt(str({ minLength: 1, maxLength: 255 })),
+		mounts: opt(arr(SandboxMountSchema, { maxItems: 16 })),
+		allowHosts: opt(arr(str({ minLength: 1, maxLength: 255 }), { maxItems: 256 })),
+		cpus: opt(int({ minimum: 1, maximum: 64 })),
+		memoryMb: opt(int({ minimum: 256, maximum: 262144 })),
+		diskGb: opt(int({ minimum: 1, maximum: 4096 })),
+	}),
+]);
+const EnvSummarySchemaV3 = obj({
+	name: str(),
+	config: EnvConfigSchemaV3,
+	sessions: num(),
+	users: opt(arr(obj({ id: str(), title: str(), main: num(), archived: bool() }))),
+	test: opt(EnvTestSchema),
+});
+
+/** 4ffe32c6f's `Envs` (version 3): sandboxes with `diskGb`, and `sandboxResetDisk`; no Radius machines. */
+const EnvsV3 = evolve(EnvsV2, (e) =>
+	e
+		.state("owner", "envs", arr(EnvSummarySchemaV3))
+		.result("list", arr(EnvSummarySchemaV3))
+		.args("save", obj({ name: str(), config: EnvConfigSchemaV3 }))
+		.addMethod("owner", "sandboxResetDisk", EnvName, SandboxStatusSchema),
+);
+
 /** 6e11a00a0's `StatusSchema`, `StatusesSchema` and `ReportFields`: no per-conversation work. */
 const StatusSchemaV1 = obj({
 	/** A worker process runs for the session. */
@@ -680,6 +711,30 @@ describe("older contract versions against the current server (fake provider)", (
 		assert.deepEqual(rows.find((row) => row.name === "v2-box")?.config, { type: "gondolin", host: "v2-host" });
 		assert(Array.isArray(rows.find((row) => row.name === "v2-box")?.users));
 		await current.delete({ name: "v2-box" }, BACKGROUND_CONTEXT).catch(() => {});
+		ref.release();
+		current.release();
+	});
+
+	it("binds Envs v3: Radius machines left out, its saves taken", async () => {
+		const current = await holdIn(owner, Envs, {}, "owner");
+		await current.save({ name: "v3-host", config: { type: "ssh", host: "v3.example" } }, BACKGROUND_CONTEXT);
+		await current.save(
+			{ name: "v3-hand", config: { type: "radius", server: "0b9a3c1e-5f2d-4e8a-9c7b-1d2e3f4a5b6c" } },
+			BACKGROUND_CONTEXT,
+		);
+		const ref = await boundIn(owner, EnvsV3, {}, "owner");
+		const rows = await until(ref.envs, (list) => list.some((row) => row.name === "v3-host"));
+		assert.equal(
+			rows.some((row) => row.name === "v3-hand"),
+			false,
+		);
+		assert.equal(
+			(await ref.list(BACKGROUND_CONTEXT)).some((row) => row.name === "v3-hand"),
+			false,
+		);
+		await ref.save({ name: "v3-other", config: { type: "ssh", host: "other.example" } }, BACKGROUND_CONTEXT);
+		await until(ref.envs, (list) => list.some((row) => row.name === "v3-other"));
+		for (const name of ["v3-other", "v3-hand", "v3-host"]) await current.delete({ name }, BACKGROUND_CONTEXT);
 		ref.release();
 		current.release();
 	});

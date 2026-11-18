@@ -18,7 +18,7 @@ import { Hosts, Server } from "@p2/app/v1/server";
 import { Catalog, type Session } from "../sessions/contract.ts";
 import { StatusStore } from "../status/contract.ts";
 import { type Child, ChildStore } from "../subagents/contract.ts";
-import { type EnvConfig, envRevision, sandboxesOn } from "./config.ts";
+import { type EnvConfig, envRevision, type RadiusEnvConfig, sandboxesOn } from "./config.ts";
 import { EnvManagers, EnvService, Envs, EnvTestSchema, SandboxSecrets } from "./contract.ts";
 import { EnvManager } from "./manager.ts";
 import { EnvStore } from "./store.ts";
@@ -37,33 +37,51 @@ export const sessionsUsing = (
 	);
 
 /** A configuration as versions 1 and 2 of `Envs` know it: sandboxes without `diskGb`. */
-const configV2 = (config: EnvConfig): EnvConfig => {
+const configV2 = (config: KnownConfig): KnownConfig => {
 	if (config.type !== "gondolin") return config;
 	const { diskGb: _diskGb, ...rest } = config;
 	return rest;
 };
 
+/** The configurations versions 1 to 3 of `Envs` know: SSH environments and sandboxes. */
+type KnownConfig = Exclude<EnvConfig, RadiusEnvConfig>;
+
+/** Rows as versions 1 to 3 of `Envs` see them: without machines reached through Radius, which they cannot show. */
+const knownRows = <R extends { readonly config: EnvConfig }>(rows: readonly R[]) =>
+	rows.flatMap(({ config, ...row }) => (config.type === "radius" ? [] : [{ ...row, config }]));
+
 /**
- * Pages built with older versions of `Envs`: 2 gets rows without sandbox disk sizes; 1 also without users, and its
- * delete is never forced. Their saves are a subset of the current ones.
+ * Pages built with older versions of `Envs`: none sees Radius machines; 2 also gets rows without sandbox disk sizes; 1
+ * also without users, and its delete is never forced. Their saves are a subset of the current ones.
  */
 const ENVS_ACCEPTS: AcceptsTable<typeof Envs> = {
 	1: {
 		state: {
-			owner: { envs: (rows) => rows.map(({ users: _users, ...row }) => ({ ...row, config: configV2(row.config) })) },
+			owner: {
+				envs: (rows) =>
+					knownRows(rows).map(({ users: _users, ...row }) => ({ ...row, config: configV2(row.config) })),
+			},
 		},
 		methods: {
 			list: {
-				result: (rows) => rows.map(({ users: _users, ...row }) => ({ ...row, config: configV2(row.config) })),
+				result: (rows) =>
+					knownRows(rows).map(({ users: _users, ...row }) => ({ ...row, config: configV2(row.config) })),
 			},
 			save: { args: (old) => old },
 			delete: { args: (old) => old },
 		},
 	},
 	2: {
-		state: { owner: { envs: (rows) => rows.map((row) => ({ ...row, config: configV2(row.config) })) } },
+		state: { owner: { envs: (rows) => knownRows(rows).map((row) => ({ ...row, config: configV2(row.config) })) } },
 		methods: {
-			list: { result: (rows) => rows.map((row) => ({ ...row, config: configV2(row.config) })) },
+			list: { result: (rows) => knownRows(rows).map((row) => ({ ...row, config: configV2(row.config) })) },
+			save: { args: (old) => old },
+		},
+	},
+	3: {
+		state: { owner: { envs: (rows) => knownRows(rows) } },
+		methods: {
+			list: { result: (rows) => knownRows(rows) },
 			save: { args: (old) => old },
 		},
 	},
@@ -259,6 +277,9 @@ export default defineFacet((host) => {
 					sandboxStart: ({ name }) => manager().manager.sandboxStart(name),
 					sandboxStop: ({ name }) => manager().manager.sandboxStop(name),
 					sandboxResetDisk: ({ name }) => manager().manager.sandboxResetDisk(name),
+					machines: () => manager().manager.machines(),
+					enroll: ({ name }) => manager().manager.enroll(name),
+					install: ({ name }) => manager().manager.install(name),
 				},
 			};
 		},

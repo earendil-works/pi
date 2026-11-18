@@ -207,15 +207,22 @@ async function connection(env: string | null): Promise<{ connection: Connection;
 	let entry = connections.get(env);
 	if (!entry || entry.revision !== revision) {
 		const started = (async () => {
-			// A sandbox runs its host's daemon in its VM (both Linux on the host's architecture).
-			const target =
-				config.type === "ssh" ? sshOptions(directory, env, config) : await sandboxHost(directory, env, config.host);
-			const remote = await detectPlatform(target);
-			const binary = await terminalDaemon(remote.platform, remote.arch, false);
+			const onLog = (text: string) => log(`pi-env ${env}: ${text}`);
+			let binary: string | undefined;
+			// A machine through Radius runs its own agent; over SSH, a daemon with terminals is deployed. A sandbox runs its
+			// host's daemon in its VM (both Linux on the host's architecture).
+			if (config.type !== "radius") {
+				const target =
+					config.type === "ssh"
+						? sshOptions(directory, env, config)
+						: await sandboxHost(directory, env, config.host);
+				const remote = await detectPlatform(target);
+				binary = await terminalDaemon(remote.platform, remote.arch, false);
+			}
 			const daemon = envConnection(directory, env, config, {
 				launcher: sandboxLauncher,
-				binary,
-				onLog: (text) => log(`pi-env ${env}: ${text}`),
+				...(binary === undefined ? {} : { binary }),
+				onLog,
 			}).connection;
 			try {
 				await requireTerminalSupport(daemon);
@@ -234,9 +241,9 @@ async function connection(env: string | null): Promise<{ connection: Connection;
 	return {
 		connection: await entry.connection,
 		shellEnv:
-			config.type === "ssh"
-				? { ...(config.shellEnv ?? {}), ...(config.shellPath ? { SHELL: config.shellPath } : {}) }
-				: {},
+			config.type === "gondolin"
+				? {}
+				: { ...(config.shellEnv ?? {}), ...(config.shellPath ? { SHELL: config.shellPath } : {}) },
 	};
 }
 

@@ -11,7 +11,7 @@ import {
 	serverHost,
 } from "@p2/app/v1";
 import type { EnvManager } from "./manager.ts";
-import { EnvConfigSchema, SandboxMountSchema, SshEnvConfigSchema } from "./schema.ts";
+import { EnvConfigSchema, GondolinEnvConfigSchema, SandboxMountSchema, SshEnvConfigSchema } from "./schema.ts";
 
 /**
  * Whether an SSH env can host sandboxes (`detail` says why or how). `docker` is no longer reported (launchers before
@@ -170,19 +170,66 @@ const EnvsV2 = evolve(EnvsV1, (e) =>
 		.args("delete", obj({ name: str(), force: opt(bool()) })),
 );
 
+/** The environment configuration of version 3 of `Envs`: SSH environments and sandboxes. */
+const EnvConfigSchemaV3 = union([SshEnvConfigSchema, GondolinEnvConfigSchema]);
+
+/** The `EnvSummarySchema` of version 3 of `Envs`. */
+const EnvSummarySchemaV3 = obj({
+	name: str(),
+	config: EnvConfigSchemaV3,
+	sessions: num(),
+	users: opt(arr(EnvUserSchema)),
+	test: opt(EnvTestSchema),
+});
+
+/** Version 3: a sandbox's `diskGb`, and `sandboxResetDisk`. */
+const EnvsV3 = evolve(EnvsV2, (e) =>
+	e
+		.state("owner", "envs", arr(EnvSummarySchemaV3))
+		.result("list", arr(EnvSummarySchemaV3))
+		.args("save", obj({ name: str(), config: EnvConfigSchemaV3 }))
+		.addMethod("owner", "sandboxResetDisk", Name, SandboxStatusSchema),
+);
+
+/** One of the owner's machines at Radius (a server of kind `env`, running `pi-env agent`), as Radius lists it. */
+export const RadiusMachineSchema = obj({
+	server: str(),
+	name: opt(str()),
+	status: union([literal("online"), literal("offline"), literal("unknown")]),
+	lastSeenAt: str(),
+});
+export type RadiusMachine = Static<typeof RadiusMachineSchema>;
+
+/** A one-time code that enrolls a machine with Radius (an hour), and the commands that install `pi-env agent` with it. */
+export const EnrollmentSchema = obj({
+	code: str(),
+	expiresAt: str(),
+	gateway: str(),
+	install: obj({ sh: str(), ps1: str() }),
+});
+export type Enrollment = Static<typeof EnrollmentSchema>;
+
+/** `pi-env agent` installed on an SSH environment: its Radius server ID and the service that runs it. */
+export const InstalledSchema = obj({ server: str(), service: str() });
+export type Installed = Static<typeof InstalledSchema>;
+
 /**
  * The owner's environments and sandboxes. 2: `EnvSummary.users` (the sessions using an environment), and `delete`'s
  * `force`: refused while sessions use the env unless `force`; their history stays, and their tools refuse to run until
  * they move to another location (never on this device instead). 3: a sandbox's `diskGb`, and `sandboxResetDisk`: stops
- * the VM and removes its disk, so the next start begins from the guest image again. The provider still serves 1 and 2
- * (its `accepts`).
+ * the VM and removes its disk, so the next start begins from the guest image again. 4: machines running `pi-env agent`
+ * through Radius (`type: "radius"`): `machines` lists the owner's machines at Radius, `enroll` mints a code with the
+ * commands that install the agent, `install` installs it as a service on an SSH environment (the owner then saves the
+ * environment as a Radius machine). The provider still serves 1 to 3 (its `accepts`), without Radius machines.
  */
-export const Envs = evolve(EnvsV2, (e) =>
+export const Envs = evolve(EnvsV3, (e) =>
 	e
 		.state("owner", "envs", arr(EnvSummarySchema))
 		.result("list", arr(EnvSummarySchema))
 		.args("save", obj({ name: str(), config: EnvConfigSchema }))
-		.addMethod("owner", "sandboxResetDisk", Name, SandboxStatusSchema),
+		.addMethod("owner", "machines", obj({}), arr(RadiusMachineSchema))
+		.addMethod("owner", "enroll", obj({ name: opt(str({ maxLength: 64 })) }), EnrollmentSchema)
+		.addMethod("owner", "install", Name, InstalledSchema),
 );
 
 /** Browser-safe display: the machine is part of a directory's identity. */

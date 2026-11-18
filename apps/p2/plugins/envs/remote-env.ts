@@ -11,6 +11,7 @@ import {
 	sshConnection,
 } from "@earendil-works/pi-env";
 import { type EnvConfig, envId, hostKeyAlias, knownHostsPath, loadEnvs, type SshEnvConfig } from "./config.ts";
+import { radiusEnvConnection } from "./radius-env.ts";
 import { deployedCommand, deployLauncher, runLauncher, sandboxArgument, sandboxKey } from "./sandbox-host.ts";
 import { sandboxSecrets } from "./secrets.ts";
 
@@ -38,13 +39,17 @@ export type EnvConnectOptions = {
 	onLog?: ConnectionOptions["onLog"];
 };
 
-/** A connection and, once it started, the system it runs on (a sandbox's: Linux on its host's architecture). */
+/**
+ * A connection and, once it started, the system it runs on as SSH detected it (a sandbox's: Linux on its host's
+ * architecture); a machine reached through Radius reports its system in `hello` only.
+ */
 export type EnvConnection = { connection: Connection; remote(): RemotePlatform | undefined };
 
 /**
  * A pi-env connection to env `name` that starts at its first request: over SSH for an SSH env; for a sandbox, over SSH
- * to its host, where p2's launcher starts the sandbox's VM if needed and runs the daemon in it. A sandbox's host
- * configuration is read from `directory`'s envs.json at each start.
+ * to its host, where p2's launcher starts the sandbox's VM if needed and runs the daemon in it; for a machine running
+ * `pi-env agent`, through Radius (`binary` does not apply: the agent is the daemon). A sandbox's host configuration is
+ * read from `directory`'s envs.json at each start.
  */
 export function envConnection(
 	directory: string,
@@ -58,6 +63,8 @@ export function envConnection(
 			...(options.binary === undefined ? {} : { binary: options.binary }),
 			...(options.onLog === undefined ? {} : { onLog: options.onLog }),
 		});
+	if (config.type === "radius")
+		return { connection: radiusEnvConnection(directory, name, config, options.onLog), remote: () => undefined };
 	let remote: RemotePlatform | undefined;
 	const { launcher } = options;
 	const connection = new Connection({
@@ -118,8 +125,8 @@ export function remoteSession(
 	options: Omit<EnvConnectOptions, "binary"> = {},
 ): RemoteSession {
 	const { connection, remote } = envConnection(directory, name, config, options);
-	const shellPath = config.type === "ssh" ? config.shellPath : undefined;
-	const shellEnv = config.type === "ssh" ? config.shellEnv : undefined;
+	const shellPath = config.type === "gondolin" ? undefined : config.shellPath;
+	const shellEnv = config.type === "gondolin" ? undefined : config.shellEnv;
 	const at = (directory: string) =>
 		new RemoteExecutionEnv({
 			connection,

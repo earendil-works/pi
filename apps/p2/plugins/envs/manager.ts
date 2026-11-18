@@ -8,10 +8,13 @@ import {
 	acceptHostKey,
 	type Connection,
 	connectSsh,
+	deployDaemon,
 	detectPlatform,
 	forgetHostKey,
 	HostKeyChangedError,
 	HostKeyUnknownError,
+	nodePlatform,
+	packagedDaemon,
 	RemoteExecutionEnv,
 	type RemotePlatform,
 	type SshTarget,
@@ -19,7 +22,7 @@ import {
 } from "@earendil-works/pi-env";
 import { compile } from "@earendil-works/pi-schema";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { remotePaths, value } from "@p2/app/v1/node";
+import { type OwnerRadius, ownerRadiusAccess, remotePaths, value } from "@p2/app/v1/node";
 import {
 	ENV_NAME,
 	type EnvConfig,
@@ -27,11 +30,22 @@ import {
 	envRevision,
 	type GondolinEnvConfig,
 	loadEnvs,
+	type RadiusEnvConfig,
 	type SshEnvConfig,
 	saveEnv,
 } from "./config.ts";
 import { connectionRevision } from "./connection-revision.ts";
-import type { DirectoryListing, EnvSummary, EnvTest, SandboxStatus, SandboxSupport } from "./contract.ts";
+import type {
+	DirectoryListing,
+	Enrollment,
+	EnvSummary,
+	EnvTest,
+	Installed,
+	RadiusMachine,
+	SandboxStatus,
+	SandboxSupport,
+} from "./contract.ts";
+import { enrollMachine, installAgent, listMachines } from "./radius-machines.ts";
 import { envConnection, type RemoteSession, remoteSession, sandboxHost, sshOptions } from "./remote-env.ts";
 import { launcherCommand, sandboxArgument, sandboxKey, sandboxRevision } from "./sandbox-host.ts";
 import { LauncherCheckSchema, LauncherStatusSchema } from "./sandbox-schema.ts";
@@ -64,6 +78,8 @@ export class EnvManager {
 	private readonly session: (name: string, config: EnvConfig) => RemoteSession;
 	/** The sandbox launcher's source directory (this plugin's sandbox/). */
 	private readonly launcher: string;
+	/** The owner at Radius: machines running `pi-env agent` and their enrollment. */
+	private readonly radius: () => Promise<OwnerRadius>;
 
 	/** `session` replaces SSH for tests: the environment that browses an env's directories. */
 	constructor(
@@ -77,6 +93,7 @@ export class EnvManager {
 		this.uses = uses;
 		this.launcher = launcher;
 		this.session = session;
+		this.radius = ownerRadiusAccess(directory);
 	}
 
 	async config(name: string): Promise<EnvConfig> {
@@ -86,10 +103,11 @@ export class EnvManager {
 		return config;
 	}
 
-	/** An SSH env's configuration; sandboxes have no host keys or SSH keys of their own. */
+	/** An SSH env's configuration; sandboxes and Radius machines have no host keys or SSH keys of their own. */
 	async sshConfig(name: string): Promise<SshEnvConfig> {
 		const config = await this.config(name);
-		if (config.type !== "ssh") throw new Error(`"${name}" is a sandbox; manage its host's SSH settings instead`);
+		if (config.type === "gondolin") throw new Error(`"${name}" is a sandbox; manage its host's SSH settings instead`);
+		if (config.type !== "ssh") throw new Error(`"${name}" is reached through Radius, not over SSH`);
 		return config;
 	}
 
@@ -228,7 +246,12 @@ export class EnvManager {
 	async test(name: string): Promise<EnvTest> {
 		const config = await this.config(name);
 		const key = `${name}@${envRevision(config)}`;
-		const result = config.type === "ssh" ? await this.testSsh(name, config) : await this.testSandbox(name, config);
+		const result =
+			config.type === "ssh"
+				? await this.testSsh(name, config)
+				: config.type === "radius"
+					? await this.testRadius(name, config)
+					: await this.testSandbox(name, config);
 		this.tests.set(key, result);
 		return result;
 	}
@@ -275,6 +298,51 @@ export class EnvManager {
 		} finally {
 			connection.close();
 		}
+	}
+
+	/** A machine through Radius reports its system in `hello`, in the daemon's spelling (`macos`, `aarch64`). */
+	private async testRadius(name: string, config: RadiusEnvConfig): Promise<EnvTest> {
+		const { connection } = envConnection(this.directory, name, config, { onLog: () => {} });
+		try {
+			const info = await connection.info();
+			const platform = info.os === "macos" ? "darwin" : info.os;
+			return await this.measure(name, config, connection, { platform, arch: nodePlatform(info).arch }, []);
+		} catch (error) {
+			return { ok: false, testedAt: Date.now(), error: errorMessage(error) };
+		} finally {
+			connection.close();
+		}
+	}
+
+	/** The owner's machines at Radius. */
+	machines(): Promise<RadiusMachine[]> {
+		return listMachines(this.radius);
+	}
+
+	/** A new enrollment code and the commands that install `pi-env agent` with it, for a machine named `name`. */
+	enroll(name: string | undefined): Promise<Enrollment> {
+		return enrollMachine(this.radius, name);
+	}
+
+	/**
+	 * Installs `pi-env agent` as a service on SSH environment `name`, enrolled with Radius under that name, and returns
+	 * the machine's server ID. The environment stays an SSH environment until the owner saves it as a Radius machine.
+	 */
+	async install(name: string): Promise<Installed> {
+		const options = sshOptions(this.directory, name, await this.sshConfig(name));
+		const remote = await detectPlatform(options);
+		const file = await deployDaemon(options, remote, packagedDaemon(remote));
+		return installAgent(this.radius, options, remote, file, name);
+	}
+
+	/**
+	 * One request to the agent of Radius machine `name` on the shared browsing connection, for what only an agent serves
+	 * (its port forwards: `forwards`, `forwardSet`, `forwardRemove`); resolves with its answer.
+	 */
+	async agentRequest(name: string, op: string, json: Record<string, unknown>): Promise<Record<string, unknown>> {
+		const config = await this.config(name);
+		if (config.type !== "radius") throw new Error(`"${name}" is not a machine reached through Radius`);
+		return (await (await this.browser(name)).connection.request(op, json)).json;
 	}
 
 	private async testSsh(name: string, config: SshEnvConfig): Promise<EnvTest> {
@@ -441,12 +509,12 @@ export class EnvManager {
 	}
 
 	/**
-	 * Start the connections of every SSH env in the background, so the first listing does not wait for ssh. Sandboxes
-	 * are left alone: connecting to one starts its VM.
+	 * Start the connections of every SSH env and Radius machine in the background, so the first listing does not wait for
+	 * them. Sandboxes are left alone: connecting to one starts its VM.
 	 */
 	async warm(): Promise<void> {
 		for (const [name, config] of Object.entries(await loadEnvs(this.directory)))
-			if (config.type === "ssh")
+			if (config.type !== "gondolin")
 				void this.browser(name)
 					.then((session) => session.connection.info())
 					.catch(() => {});

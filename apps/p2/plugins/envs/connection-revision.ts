@@ -6,7 +6,7 @@ import type { EnvConfig, EnvsConfig } from "./schema.ts";
 
 /** The connection revision of an environment configured as `config`, under `configs` (where a sandbox finds its host). */
 export function connectionRevision(configs: EnvsConfig, config: EnvConfig): string {
-	if (config.type === "ssh") return envRevision(config);
+	if (config.type !== "gondolin") return envRevision(config);
 	const host = Object.hasOwn(configs, config.host) ? configs[config.host] : undefined;
 	return `${envRevision(config)}+${host === undefined ? "" : envRevision(host)}`;
 }

@@ -18,13 +18,23 @@ import {
 	useReadable,
 } from "@p2/app/v1/web";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
-import { type EnvSummary, Envs, type EnvTest, type EnvUser, type SandboxStatus } from "./contract.ts";
+import {
+	type Enrollment,
+	type EnvSummary,
+	Envs,
+	type EnvTest,
+	type EnvUser,
+	type Installed,
+	type RadiusMachine,
+	type SandboxStatus,
+} from "./contract.ts";
 import { SecretsSection } from "./SecretsSection.tsx";
 import {
 	DEFAULT_DISK_GB,
 	ENV_NAME,
 	type EnvConfig,
 	type GondolinEnvConfig,
+	type RadiusEnvConfig,
 	type SandboxMount,
 	type SshEnvConfig,
 } from "./schema.ts";
@@ -58,19 +68,27 @@ function sshDraftOf(name: string, config: SshEnvConfig): SshDraft {
 		identityFile: config.identityFile ?? "",
 		shellPath: config.shellPath ?? "",
 		loginShell: config.loginShell ?? false,
-		shellEnv: Object.entries(config.shellEnv ?? {})
-			.map(([key, value]) => `${key}=${value}`)
-			.join("\n"),
+		shellEnv: shellEnvText(config.shellEnv),
 	};
 }
-function sshConfigOf(draft: SshDraft): EnvConfig {
+/** `KEY=value` lines as the form shows them. */
+const shellEnvText = (shellEnv: Record<string, string> | undefined): string =>
+	Object.entries(shellEnv ?? {})
+		.map(([key, value]) => `${key}=${value}`)
+		.join("\n");
+/** The form's `KEY=value` lines. */
+function parseShellEnv(text: string): Record<string, string> {
 	const shellEnv: Record<string, string> = {};
-	for (const line of draft.shellEnv.split("\n")) {
+	for (const line of text.split("\n")) {
 		if (!line.trim()) continue;
 		const separator = line.indexOf("=");
 		if (separator < 1) throw new Error(`Environment variables are KEY=value lines: ${line}`);
 		shellEnv[line.slice(0, separator).trim()] = line.slice(separator + 1);
 	}
+	return shellEnv;
+}
+function sshConfigOf(draft: SshDraft): EnvConfig {
+	const shellEnv = parseShellEnv(draft.shellEnv);
 	if (draft.port && !/^\d+$/.test(draft.port.trim())) throw new Error("Port must be a number");
 	return {
 		type: "ssh",
@@ -83,6 +101,38 @@ function sshConfigOf(draft: SshDraft): EnvConfig {
 		...(Object.keys(shellEnv).length ? { shellEnv } : {}),
 	};
 }
+/** A machine running `pi-env agent`, reached through Radius: its server and the shell settings commands get. */
+type RadiusDraft = { name: string; server: string; shellPath: string; loginShell: boolean; shellEnv: string };
+function radiusDraftOf(name: string, config: RadiusEnvConfig): RadiusDraft {
+	return {
+		name,
+		server: config.server,
+		shellPath: config.shellPath ?? "",
+		loginShell: config.loginShell ?? false,
+		shellEnv: shellEnvText(config.shellEnv),
+	};
+}
+function radiusConfigOf(draft: RadiusDraft): EnvConfig {
+	const shellEnv = parseShellEnv(draft.shellEnv);
+	return {
+		type: "radius",
+		server: draft.server,
+		...(draft.shellPath.trim() ? { shellPath: draft.shellPath.trim() } : {}),
+		...(draft.loginShell ? { loginShell: true } : {}),
+		...(Object.keys(shellEnv).length ? { shellEnv } : {}),
+	};
+}
+/** An environment name for a machine Radius names `name`: lowercase letters, digits, - and _ (at most 32). */
+function envNameFor(name: string | undefined): string {
+	const base = (name ?? "")
+		.toLowerCase()
+		.replace(/[^a-z0-9_-]+/g, "-")
+		.replace(/^[-_]+/, "")
+		.slice(0, 32)
+		.replace(/[-_]+$/, "");
+	return ENV_NAME.test(base) ? base : "machine";
+}
+
 /** An environment saved or deleted while its call is in flight. */
 type EnvGuess =
 	| { readonly kind: "save"; readonly name: string; readonly config: EnvConfig }
@@ -141,14 +191,16 @@ function sandboxConfigOf(draft: SandboxDraft): EnvConfig {
 	};
 }
 
-/** The edited screen: an SSH environment or a sandbox, new or saved. */
+/** The edited screen: an SSH environment, a sandbox or a Radius machine, new or saved. */
 type Editing =
 	| { kind: "ssh"; draft: SshDraft; existing: boolean }
-	| { kind: "gondolin"; draft: SandboxDraft; existing: boolean };
+	| { kind: "gondolin"; draft: SandboxDraft; existing: boolean }
+	| { kind: "radius"; draft: RadiusDraft; existing: boolean };
 function editingOf(env: EnvSummary): Editing {
-	return env.config.type === "ssh"
-		? { kind: "ssh", draft: sshDraftOf(env.name, env.config), existing: true }
-		: { kind: "gondolin", draft: sandboxDraftOf(env.name, env.config), existing: true };
+	if (env.config.type === "ssh") return { kind: "ssh", draft: sshDraftOf(env.name, env.config), existing: true };
+	if (env.config.type === "radius")
+		return { kind: "radius", draft: radiusDraftOf(env.name, env.config), existing: true };
+	return { kind: "gondolin", draft: sandboxDraftOf(env.name, env.config), existing: true };
 }
 /** Locator prefix of a new sandbox's screen, followed by its preset host (env names cannot start with `+`). */
 const NEW_SANDBOX = "+sandbox:";
@@ -164,6 +216,10 @@ function uptime(startedAt: number): string {
 	if (minutes < 48 * 60) return `${Math.floor(minutes / 60)} h`;
 	return `${Math.floor(minutes / 1440)} d`;
 }
+/** A list row's word on an environment's last test. */
+const testSummary = (test: EnvTest | undefined): string =>
+	test === undefined ? "Not tested" : test.ok ? `${test.platform} · ${test.latencyMs} ms` : "Failed";
+
 /** Whether an SSH env's last test found a runtime for sandboxes. */
 function hostsSandboxes(env: EnvSummary): boolean {
 	return env.test?.ok === true && env.test.sandboxes !== undefined && env.test.sandboxes.runtime !== "none";
@@ -443,6 +499,29 @@ function SshFields({
 					{...NO_AUTOCORRECT}
 				/>
 			</label>
+			<ShellFields draft={draft} update={update} />
+			<label className="check">
+				<input
+					type="checkbox"
+					checked={draft.loginShell}
+					onChange={(event) => update({ loginShell: event.target.checked })}
+				/>
+				Start through the login shell (loads ~/.profile, e.g. Homebrew's PATH on macOS)
+			</label>
+		</>
+	);
+}
+
+/** The shell commands run with and the variables they get, for SSH environments and Radius machines. */
+function ShellFields({
+	draft,
+	update,
+}: {
+	draft: { shellPath: string; shellEnv: string };
+	update: (patch: { shellPath?: string; shellEnv?: string }) => void;
+}) {
+	return (
+		<>
 			<label className="field">
 				<span className="label">Shell for commands (default: bash, else sh)</span>
 				<input
@@ -451,14 +530,6 @@ function SshFields({
 					onChange={(event) => update({ shellPath: event.target.value })}
 					{...NO_AUTOCORRECT}
 				/>
-			</label>
-			<label className="check">
-				<input
-					type="checkbox"
-					checked={draft.loginShell}
-					onChange={(event) => update({ loginShell: event.target.checked })}
-				/>
-				Start through the login shell (loads ~/.profile, e.g. Homebrew's PATH on macOS)
 			</label>
 			<label className="field">
 				<span className="label">Environment variables (KEY=value per line)</span>
@@ -471,6 +542,246 @@ function SshFields({
 				/>
 			</label>
 		</>
+	);
+}
+
+/** A Radius machine's screen: which machine it is, and the shell settings. */
+function RadiusFields({
+	draft,
+	existing,
+	machine,
+	update,
+}: {
+	draft: RadiusDraft;
+	existing: boolean;
+	machine: RadiusMachine | undefined;
+	update: (patch: Partial<RadiusDraft>) => void;
+}) {
+	return (
+		<>
+			{!existing && <NameField value={draft.name} placeholder="laptop" onChange={(name) => update({ name })} />}
+			<div className="notice env-test">
+				<p>
+					<strong>Radius machine</strong>
+					{machine?.name ? ` · ${machine.name}` : ""}
+					{machine ? ` · ${machine.status}` : ""}
+				</p>
+				<p className="muted small mono">{draft.server}</p>
+				<p className="muted small">
+					It runs pi-env agent as a service and is reached through Radius with this server's sign-in, never over
+					SSH.
+				</p>
+			</div>
+			<ShellFields draft={draft} update={update} />
+		</>
+	);
+}
+
+/** The owner's machines at Radius as last read, or why reading them failed (no Radius sign-in, offline). */
+type Machines = { kind: "listed"; list: RadiusMachine[] } | { kind: "failed"; error: string };
+
+/**
+ * The owner's machines at Radius, each usable as an environment, and "Add machine": an enrollment code with the
+ * commands that install pi-env agent on another machine.
+ */
+function MachinesSection({
+	service,
+	envs,
+	machines,
+	onUse,
+	onOpen,
+}: {
+	service: Held<typeof Envs>;
+	envs: readonly EnvSummary[];
+	machines: Machines | undefined;
+	onUse: (name: string, config: EnvConfig) => void;
+	onOpen: (name: string) => void;
+}) {
+	const [enrollment, setEnrollment] = useState<Enrollment>();
+	const [enrolling, setEnrolling] = useState(false);
+	const [error, setError] = useState<string>();
+	const [using, setUsing] = useState<{ server: string; name: string }>();
+	const usedBy = (server: string) =>
+		envs.find((env) => env.config.type === "radius" && env.config.server === server)?.name;
+	const enroll = () => {
+		setEnrolling(true);
+		setError(undefined);
+		void service
+			.enroll({}, BACKGROUND_CONTEXT)
+			.then(setEnrollment, (reason: unknown) => setError(errorText(reason)))
+			.finally(() => setEnrolling(false));
+	};
+	return (
+		<div className="list">
+			<span className="label">Your machines</span>
+			{machines?.kind === "failed" && (
+				<p className="muted small">Radius did not list your machines: {machines.error}</p>
+			)}
+			{machines?.kind === "listed" && !machines.list.length && <p className="empty-note">No machines yet.</p>}
+			{(machines?.kind === "listed" ? machines.list : []).map((machine) => {
+				const env = usedBy(machine.server);
+				return (
+					<div key={machine.server} className="stack">
+						<div className="guest-row">
+							<span>
+								<strong>{machine.name ?? machine.server}</strong>{" "}
+								<small className="muted">
+									{machine.status} · seen {new Date(machine.lastSeenAt).toLocaleString()}
+								</small>
+							</span>
+							{env ? (
+								<button type="button" className="text-action" onClick={() => onOpen(env)}>
+									As {env}
+								</button>
+							) : (
+								<button
+									type="button"
+									className="text-action"
+									onClick={() => setUsing({ server: machine.server, name: envNameFor(machine.name) })}
+								>
+									Use
+								</button>
+							)}
+						</div>
+						{using?.server === machine.server && (
+							<form
+								className="inline-form"
+								onSubmit={(event) => {
+									event.preventDefault();
+									onUse(using.name.trim(), { type: "radius", server: machine.server });
+									setUsing(undefined);
+								}}
+							>
+								<input
+									className="input mono"
+									aria-label="Environment name"
+									value={using.name}
+									onChange={(event) => setUsing({ ...using, name: event.target.value })}
+									{...NO_AUTOCORRECT}
+								/>
+								<button type="submit" className="button" disabled={!ENV_NAME.test(using.name.trim())}>
+									Add
+								</button>
+								<button type="button" className="text-action" onClick={() => setUsing(undefined)}>
+									Cancel
+								</button>
+							</form>
+						)}
+					</div>
+				);
+			})}
+			{enrollment ? (
+				<div className="stack env-enrollment">
+					<p className="muted small">
+						Run one of these on the machine; it installs pi-env agent as a service and enrolls it with Radius. The
+						code works once, until {new Date(enrollment.expiresAt).toLocaleTimeString()}.
+					</p>
+					<span className="label">Linux, macOS, Termux</span>
+					<textarea className="input mono" rows={3} readOnly value={enrollment.install.sh} />
+					<CopyButton text={enrollment.install.sh} label="Copy command" />
+					<span className="label">Windows (PowerShell)</span>
+					<textarea className="input mono" rows={3} readOnly value={enrollment.install.ps1} />
+					<CopyButton text={enrollment.install.ps1} label="Copy command" />
+					<p className="muted small">
+						The machine shows up here once its agent connected; reopen this sheet to list it.
+					</p>
+				</div>
+			) : (
+				<button type="button" className="row-button" disabled={enrolling} onClick={enroll}>
+					<span>
+						<PlusIcon size={14} /> {enrolling ? "Getting a code…" : "Add machine"}
+					</span>
+				</button>
+			)}
+			{error && (
+				<p className="notice error" role="alert">
+					{error}
+				</p>
+			)}
+		</div>
+	);
+}
+
+/**
+ * "Install permanently through Radius" on a tested SSH environment: installs pi-env agent there as a service, then,
+ * once the owner confirms, makes the environment a Radius machine under the same name, keeping its shell settings.
+ */
+function InstallSection({
+	service,
+	name,
+	config,
+	blocked,
+	onSwitch,
+}: {
+	service: Held<typeof Envs>;
+	name: string;
+	config: SshEnvConfig;
+	blocked: boolean;
+	onSwitch: (config: EnvConfig) => void;
+}) {
+	const [installing, setInstalling] = useState(false);
+	const [installed, setInstalled] = useState<Installed>();
+	const [error, setError] = useState<string>();
+	const install = () => {
+		setInstalling(true);
+		setError(undefined);
+		void service
+			.install({ name }, BACKGROUND_CONTEXT)
+			.then(setInstalled, (reason: unknown) => setError(errorText(reason)))
+			.finally(() => setInstalling(false));
+	};
+	return (
+		<div className="stack env-install">
+			<span className="label">Permanent</span>
+			{installed ? (
+				<>
+					<p className="small">
+						pi-env agent runs on {name} ({installed.service === "none" ? "not as a service" : installed.service}
+						), enrolled with Radius as <span className="mono">{installed.server}</span>.
+					</p>
+					<p className="muted small">
+						Reach {name} through Radius from now on? Sessions keep working there; SSH is no longer used.
+					</p>
+					<div className="inline-form">
+						<button
+							type="button"
+							className="button primary"
+							onClick={() =>
+								onSwitch({
+									type: "radius",
+									server: installed.server,
+									...(config.shellPath === undefined ? {} : { shellPath: config.shellPath }),
+									...(config.loginShell ? { loginShell: true } : {}),
+									...(config.shellEnv === undefined ? {} : { shellEnv: config.shellEnv }),
+								})
+							}
+						>
+							Use through Radius
+						</button>
+						<button type="button" className="text-action" onClick={() => setInstalled(undefined)}>
+							Keep SSH
+						</button>
+					</div>
+				</>
+			) : blocked ? (
+				<p className="muted small">Sandboxes run on {name} over SSH; it stays an SSH environment.</p>
+			) : (
+				<>
+					<p className="muted small">
+						Install pi-env agent on {name} as a service enrolled with Radius: the machine is then reachable
+						without SSH, from wherever this server runs.
+					</p>
+					<button type="button" className="button" disabled={installing} onClick={install}>
+						{installing ? "Installing…" : "Install permanently through Radius"}
+					</button>
+				</>
+			)}
+			{error && (
+				<p className="notice error" role="alert">
+					{error}
+				</p>
+			)}
+		</div>
 	);
 }
 
@@ -779,6 +1090,22 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 	);
 	const [confirmDelete, setConfirmDelete] = useState(false);
 	const [confirmReset, setConfirmReset] = useState(false);
+	const [machines, setMachines] = useState<Machines>();
+	// Read from Radius once per opened sheet; a machine enrolled meanwhile shows when the sheet opens again.
+	useEffect(() => {
+		let current = true;
+		void service?.machines({}, BACKGROUND_CONTEXT).then(
+			(list) => {
+				if (current) setMachines({ kind: "listed", list });
+			},
+			(reason: unknown) => {
+				if (current) setMachines({ kind: "failed", error: errorText(reason) });
+			},
+		);
+		return () => {
+			current = false;
+		};
+	}, [service]);
 	const filled = useRef<string | null | undefined>(null);
 	useEffect(() => {
 		if (filled.current === screen) return;
@@ -843,6 +1170,7 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 		}
 	};
 	const sshEnvs = (envs ?? []).filter((entry) => entry.config.type === "ssh");
+	const radiusEnvs = (envs ?? []).filter((entry) => entry.config.type === "radius");
 	const sandboxesOn = (host: string) =>
 		(envs ?? []).filter((entry) => entry.config.type === "gondolin" && entry.config.host === host);
 	const name = editing?.draft.name.trim() ?? "";
@@ -853,6 +1181,10 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 	const updateSandbox = (patch: Partial<SandboxDraft>) =>
 		setEditing((current) =>
 			current?.kind === "gondolin" ? { ...current, draft: { ...current.draft, ...patch } } : current,
+		);
+	const updateRadius = (patch: Partial<RadiusDraft>) =>
+		setEditing((current) =>
+			current?.kind === "radius" ? { ...current, draft: { ...current.draft, ...patch } } : current,
 		);
 	const testNow = async () => {
 		if (!service) return;
@@ -866,7 +1198,12 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 		setError(undefined);
 		let config: EnvConfig;
 		try {
-			config = editing.kind === "ssh" ? sshConfigOf(editing.draft) : sandboxConfigOf(editing.draft);
+			config =
+				editing.kind === "ssh"
+					? sshConfigOf(editing.draft)
+					: editing.kind === "radius"
+						? radiusConfigOf(editing.draft)
+						: sandboxConfigOf(editing.draft);
 		} catch (reason) {
 			setError(errorText(reason));
 			return undefined;
@@ -909,9 +1246,14 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 		const sandbox = editing.kind === "gondolin";
 		const hostedSandboxes = editing.kind === "ssh" && existing ? sandboxesOn(name) : [];
 		const vm = vms[name];
-		const ready = Boolean(name && editing.draft.host.trim());
+		const ready = Boolean(name && (editing.kind === "radius" ? editing.draft.server : editing.draft.host.trim()));
 		return (
-			<Sheet title={existing ? name : sandbox ? "New sandbox" : "New environment"} onClose={onClose}>
+			<Sheet
+				title={
+					existing ? name : sandbox ? "New sandbox" : editing.kind === "radius" ? "New machine" : "New environment"
+				}
+				onClose={onClose}
+			>
 				{editing.kind === "gondolin" && (
 					<>
 						{existing && saved?.config.type === "gondolin" && service && (
@@ -1017,6 +1359,17 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 				>
 					{editing.kind === "ssh" ? (
 						<SshFields draft={editing.draft} existing={existing} update={updateSsh} />
+					) : editing.kind === "radius" ? (
+						<RadiusFields
+							draft={editing.draft}
+							existing={existing}
+							machine={
+								machines?.kind === "listed"
+									? machines.list.find((machine) => machine.server === editing.draft.server)
+									: undefined
+							}
+							update={updateRadius}
+						/>
 					) : (
 						<SandboxFields
 							draft={editing.draft}
@@ -1050,6 +1403,20 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 				)}
 				{editing.kind === "ssh" && service && (
 					<KeySection service={service} name={name} onKey={(identityFile) => updateSsh({ identityFile })} />
+				)}
+				{editing.kind === "ssh" && existing && service && saved?.config.type === "ssh" && saved.test?.ok && (
+					<InstallSection
+						service={service}
+						name={name}
+						config={saved.config}
+						blocked={hostedSandboxes.length > 0}
+						onSwitch={(config) => {
+							setError(undefined);
+							edit({ kind: "save", name, config }, () => service.save({ name, config }, BACKGROUND_CONTEXT));
+							setEditing(editingOf({ ...saved, config }));
+							setTest(undefined);
+						}}
+					/>
 				)}
 				{test && service && (
 					<TestResult
@@ -1148,9 +1515,10 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 	return (
 		<Sheet title="Environments" onClose={onClose}>
 			<p className="muted small">
-				Sessions in a remote environment run their tools on that machine over SSH; the agent, its history and your
-				credentials stay here. Keys come from your SSH agent or identity file; passwords are not supported.
-				Sandboxes are VMs on a remote environment that sessions working in them cannot leave.
+				Sessions in a remote environment run their tools on that machine, over SSH or, for a machine running pi-env
+				agent, through Radius; the agent, its history and your credentials stay here. SSH keys come from your SSH
+				agent or identity file; passwords are not supported. Sandboxes are VMs on an SSH environment that sessions
+				working in them cannot leave.
 			</p>
 			{(error || loadError) && (
 				<p className="notice error" role="alert">
@@ -1165,13 +1533,7 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 								<strong>{entry.name}</strong>{" "}
 								<span className="muted mono small">{entry.config.type === "ssh" && entry.config.host}</span>
 							</span>
-							<small className="row-value">
-								{entry.test === undefined
-									? "Not tested"
-									: entry.test.ok
-										? `${entry.test.platform} · ${entry.test.latencyMs} ms`
-										: "Failed"}
-							</small>
+							<small className="row-value">{testSummary(entry.test)}</small>
 							<ChevronIcon />
 						</button>
 						{sandboxesOn(entry.name).map((sandbox) => (
@@ -1196,6 +1558,15 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 						)}
 					</div>
 				))}
+				{radiusEnvs.map((entry) => (
+					<button key={entry.name} type="button" className="row-button" onClick={() => toScreen(entry.name)}>
+						<span>
+							<strong>{entry.name}</strong> <span className="muted small">Radius machine</span>
+						</span>
+						<small className="row-value">{testSummary(entry.test)}</small>
+						<ChevronIcon />
+					</button>
+				))}
 				{envs && !envs.length && <p className="empty-note">No environments yet.</p>}
 				<button type="button" className="row-button" onClick={() => toScreen("")}>
 					<span>
@@ -1203,6 +1574,18 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 					</span>
 				</button>
 			</div>
+			{service && (
+				<MachinesSection
+					service={service}
+					envs={envs ?? []}
+					machines={machines}
+					onOpen={(name) => toScreen(name)}
+					onUse={(name, config) => {
+						setError(undefined);
+						edit({ kind: "save", name, config }, () => service.save({ name, config }, BACKGROUND_CONTEXT));
+					}}
+				/>
+			)}
 			<div className="list">
 				<span className="label">This device</span>
 				<SlotList prefix="envs-actions" />

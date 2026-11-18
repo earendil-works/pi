@@ -122,7 +122,9 @@ function openEnvs(ctx: TuiContext): void {
 						label: `${mark(env.name)}${env.name}  ${
 							env.config.type === "gondolin"
 								? `sandbox on ${env.config.host}`
-								: `${env.config.user ? `${env.config.user}@` : ""}${env.config.host}`
+								: env.config.type === "radius"
+									? "Radius machine"
+									: `${env.config.user ? `${env.config.user}@` : ""}${env.config.host}`
 						}`,
 						detail: `${current?.env === env.name ? "this session · " : ""}${detail(env)} · ${env.sessions} session${env.sessions === 1 ? "" : "s"}`,
 						...(env.test && !env.test.ok

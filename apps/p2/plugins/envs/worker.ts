@@ -32,6 +32,8 @@ export default defineFacet((host) => {
 					const configs = await loadEnvs(worker().init.dataDir);
 					const config = Object.hasOwn(configs, env) ? configs[env] : undefined;
 					if (config?.type === "ssh") return `the remote environment "${env}" (SSH host ${config.host})`;
+					if (config?.type === "radius")
+						return `the remote environment "${env}" (a machine reached through Radius)`;
 					if (config?.type === "gondolin")
 						return `the sandbox "${env}" (a VM on the environment "${config.host}"; you cannot leave it, and only its own folders and allowed hosts are reachable)`;
 					return undefined;

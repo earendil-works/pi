@@ -11,7 +11,15 @@ import { localDaemon } from "@earendil-works/pi-env";
 import { BACKGROUND_CONTEXT, statusOf, whenLive } from "@p2/app/v1";
 import { WebSocket } from "ws";
 import { Chat } from "../../plugins/chat/contract.ts";
-import { envId, envRevision, loadEnvs, parseEnvs, saveEnv, validateEnv } from "../../plugins/envs/config.ts";
+import {
+	type EnvConfig,
+	envId,
+	envRevision,
+	loadEnvs,
+	parseEnvs,
+	saveEnv,
+	validateEnv,
+} from "../../plugins/envs/config.ts";
 import { Envs, environmentPath } from "../../plugins/envs/contract.ts";
 import { remoteSession, sshOptions } from "../../plugins/envs/remote-env.ts";
 import { EnvStore } from "../../plugins/envs/store.ts";
@@ -27,6 +35,8 @@ import { Hosts } from "../../src/runtime/server.ts";
 import { expectChord, failureOf, holdIn, poll, startFixture, until } from "./helpers.ts";
 
 const config = { type: "ssh" as const, host: "box" };
+/** The host an environment names: SSH environments and sandboxes have one, Radius machines a server ID instead. */
+const hostOf = (env: EnvConfig | undefined) => (env === undefined || env.type === "radius" ? undefined : env.host);
 function which(program: string): string | undefined {
 	try {
 		return (
@@ -113,12 +123,12 @@ test(
 		// The answer follows its state: the saved environment is listed when the call resolves.
 		assert.equal(envs.envs.value[0]?.name, "gpu");
 		await writeFile(join(fixture.dataDir, "envs.json"), JSON.stringify({ gpu: { ...config, host: "changed" } }));
-		await until(envs.envs, (entries) => entries?.[0]?.config.host === "changed");
+		await until(envs.envs, (entries) => hostOf(entries?.[0]?.config) === "changed");
 		await writeFile(join(fixture.dataDir, "envs.json"), "{");
 		await until(envs.failure, (error) => Boolean(error));
 		assert.equal((await envs.listDirectory({ path: fixture.workspace }, BACKGROUND_CONTEXT)).path, fixture.workspace);
 		assert.equal(
-			(await until(envs.envs, (entries) => entries?.[0]?.config.host === "changed"))?.[0]?.config.host,
+			hostOf((await until(envs.envs, (entries) => hostOf(entries?.[0]?.config) === "changed"))?.[0]?.config),
 			"changed",
 		);
 		await writeFile(join(fixture.dataDir, "envs.json"), "{}");
@@ -177,10 +187,10 @@ test("independent env observer reads before watching and holds last valid state"
 	});
 	await saveEnv(directory, "gpu", config);
 	await store.observer.start();
-	assert.equal(store.snapshot.configs.gpu?.host, "box");
+	assert.equal(hostOf(store.snapshot.configs.gpu), "box");
 	await writeFile(join(directory, "envs.json"), "bad");
 	await poll(() => Boolean(store.snapshot.error));
-	assert.equal(store.snapshot.configs.gpu?.host, "box");
+	assert.equal(hostOf(store.snapshot.configs.gpu), "box");
 	await saveEnv(directory, "gpu", config).catch(() => {}); // Invalid files are not overwritten by a partial mutation.
 	assert.equal(await readFile(join(directory, "envs.json"), "utf8"), "bad");
 });
