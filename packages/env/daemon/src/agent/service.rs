@@ -131,7 +131,8 @@ fn stop_process(state: &State) {
     let _ = state;
 }
 
-/// Run a command; its stdout, or an error with its stderr.
+/// Run a command; its stdout, or an error with its stderr. (Termux needs no service manager.)
+#[cfg(not(target_os = "android"))]
 fn run(program: &str, args: &[&str]) -> Result<String, String> {
     let output = Command::new(program)
         .args(args)
