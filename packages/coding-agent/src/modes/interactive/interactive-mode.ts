@@ -4512,7 +4512,8 @@ export class InteractiveMode {
 
 		const resumeCommand = formatResumeCommand(this.sessionManager);
 		if (resumeCommand) {
-			process.stdout.write(`${chalk.dim("To resume this session:")} ${resumeCommand}\n`);
+			// Own line so the command can be selected with a triple-click (#12237).
+			process.stdout.write(`${chalk.dim("To resume this session:")}\n${resumeCommand}\n`);
 		}
 
 		process.exit(0);
