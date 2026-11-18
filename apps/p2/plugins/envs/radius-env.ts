@@ -52,8 +52,13 @@ async function openChannel(
 /** Resolves once Radius paired the channel with the machine; rejects with why it did not. */
 function opened(socket: WebSocket, name: string): Promise<void> {
 	return new Promise((resolve, reject) => {
+		// A refused connection to a host with several addresses is an AggregateError without a message, only a code.
 		socket.on("error", (error) =>
-			reject(new Error(`Could not reach Radius for machine "${name}": ${error.message}`)),
+			reject(
+				new Error(
+					`Could not reach Radius for machine "${name}": ${error.message || (error as NodeJS.ErrnoException).code || error.name}`,
+				),
+			),
 		);
 		socket.once("open", () => resolve());
 		// With this listener `ws` leaves a refused upgrade open: read why, then end it.
