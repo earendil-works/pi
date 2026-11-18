@@ -101,8 +101,12 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 	/** Machines: their host token, host socket once connected, and how Radius lists them. */
 	const machines = new Map<string, { token: string; name: string; socket?: WebSocket }>();
 	const machineWaiters = new Map<string, (socket: WebSocket) => void>();
-	const enrollments: Array<{ name?: string }> = [];
+	const enrollments: Array<{ name?: string; server_id?: string }> = [];
+	/** Machines the owner removed: clients of them get 404 `server_not_found`, as from Radius. */
+	const removedMachines = new Set<string>();
 	const redeemed = new Set<string>();
+	/** The refresh token of every refresh grant, in order. */
+	const refreshes: string[] = [];
 	/** Client upgrades waiting for their channel: nothing reads them, so a close must end them itself. */
 	const pendingUpgrades = new Set<Duplex>();
 	const channelWaiters = new Map<string, (socket: WebSocket) => void>();
@@ -112,6 +116,12 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 		const id = randomUUID();
 		const principal = request.headers.authorization === "Bearer fixture-token" ? OWNER : { ...OWNER, id: "usr_2" };
 		const server = /^\/v1\/servers\/([^/]+)\/connect/.exec(request.url ?? "")?.[1] ?? "";
+		if (removedMachines.has(server)) {
+			socket.end(
+				'HTTP/1.1 404 Not Found\r\ncontent-type: application/json\r\ncontent-length: 38\r\n\r\n{"error":{"code":"server_not_found"}}\n',
+			);
+			return;
+		}
 		const target = machines.has(server) ? machines.get(server)?.socket : host;
 		if (!target) {
 			socket.end("HTTP/1.1 503 Service Unavailable\r\ncontent-length: 23\r\n\r\nServer host is offline\n");
@@ -202,6 +212,19 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 			});
 			request.on("end", () => {
 				const form = new URLSearchParams(body);
+				if (form.get("grant_type") === "refresh_token") {
+					refreshes.push(form.get("refresh_token") ?? "");
+					response.writeHead(200, { "content-type": "application/json" });
+					response.end(
+						JSON.stringify({
+							access_token: `refreshed-${refreshes.length}`,
+							refresh_token: form.get("refresh_token"),
+							token_type: "Bearer",
+							expires_in: 86_400,
+						}),
+					);
+					return;
+				}
 				const code = form.get("code") ?? "";
 				const serverId = form.get("server_id") ?? "";
 				const index = Number(code.replace(/^CODE-/, "")) - 1;
@@ -364,10 +387,17 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 			machines.set(serverId, { token, name });
 			return token;
 		},
+		/** Removes a machine, as the owner's Remove does: its host socket closes and clients of it get 404. */
+		removeMachine: (serverId: string) => {
+			removedMachines.add(serverId);
+			machines.get(serverId)?.socket?.close(1008);
+			machines.delete(serverId);
+		},
 		/** The machine's host socket, once it connected. */
 		machine: machineSocket,
-		/** Every enrollment code minted, with the name hint it was asked for. */
+		/** Every enrollment code minted, with the name hint (and machine) it was asked for. */
 		enrollments,
+		refreshes,
 		/**
 		 * One HTTP request from a forward's origin to machine `serverId`'s forward `forward`, as the owner or (`anonymous`)
 		 * nobody: resolves with the machine's response head and body.

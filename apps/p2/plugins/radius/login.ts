@@ -2,7 +2,7 @@
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { readRadiusConfig, writeRadiusConfig } from "../../src/runtime/radius-config.ts";
+import { readRadiusConfig, writeRadiusConfig } from "@p2/app/v1/node";
 import { loginToRadius, newServerId, radiusGatewayFromEnv } from "./brain.ts";
 
 const directory = process.env.P2_DATA_DIR ?? join(homedir(), ".pi", "p2");

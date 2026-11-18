@@ -5,6 +5,7 @@ import { SERVER_PART_LIMITS } from "@p2/app/v1";
 import {
 	type RadiusBrainConfig,
 	radiusCredentialExpiring,
+	radiusCredentials,
 	radiusOAuth,
 	readRadiusConfig,
 	writeRadiusConfig,
@@ -281,7 +282,6 @@ export class RadiusBrain {
 	#channelSockets = false;
 	/** The configuration the host socket connected with; channel sockets authenticate with its credential. */
 	#config: RadiusBrainConfig | undefined;
-	#refreshing: Promise<RadiusBrainConfig> | undefined;
 	#congestion: NodeJS.Timeout | undefined;
 	#closed = false;
 	readonly #abort = new AbortController();
@@ -531,32 +531,29 @@ export class RadiusBrain {
 			});
 	}
 
+	/** radius.json as it is now, its credential refreshed (and saved) when about to expire; undefined while signed out. */
+	readonly #credentials = radiusCredentials(() => readRadiusConfig(this.#directory), {
+		// Read again: the public origin may have been saved while the refresh ran.
+		save: async (current, credential) => {
+			const refreshed = { ...((await readRadiusConfig(this.#directory)) ?? current), credential };
+			await writeRadiusConfig(this.#directory, refreshed);
+			return refreshed;
+		},
+		signal: this.#abort.signal,
+	});
+
 	/** Reads radius.json again for every attempt and refreshes the access token when it is about to expire. */
 	async #freshConfig(): Promise<RadiusBrainConfig> {
-		const config = await readRadiusConfig(this.#directory);
+		const config = await this.#credentials();
 		if (!config) throw new Error("Not signed in to Radius; run npm run radius:login");
-		if (!radiusCredentialExpiring(config.credential)) return config;
-		const credential = await radiusOAuth(config.gateway).refresh(
-			config.credential,
-			AbortSignal.any([this.#abort.signal, AbortSignal.timeout(30_000)]),
-		);
-		// Read again: the public origin may have been saved while the refresh ran.
-		const refreshed = {
-			...((await readRadiusConfig(this.#directory)) ?? config),
-			credential: { ...credential, type: "oauth" as const },
-		};
-		await writeRadiusConfig(this.#directory, refreshed);
-		return refreshed;
+		return config;
 	}
 
-	/** The current configuration, its credential refreshed when about to expire; one refresh at a time. */
+	/** The configuration the connection uses, its credential refreshed when about to expire. */
 	async #currentConfig(): Promise<RadiusBrainConfig> {
 		const config = this.#config;
 		if (config && !radiusCredentialExpiring(config.credential)) return config;
-		this.#refreshing ??= this.#freshConfig().finally(() => {
-			this.#refreshing = undefined;
-		});
-		this.#config = await this.#refreshing;
+		this.#config = await this.#freshConfig();
 		return this.#config;
 	}
 

@@ -11,12 +11,7 @@ import { join } from "node:path";
 import type { OAuthCredential } from "@earendil-works/pi-ai";
 import { DEFAULT_RADIUS_GATEWAY, normalizeRadiusGatewayUrl } from "@earendil-works/pi-ai/providers/radius-config";
 import { WebSocket } from "ws";
-import {
-	type RadiusClient,
-	radiusClientChannel,
-	radiusCredentialExpiring,
-	radiusOAuth,
-} from "../runtime/radius-client.ts";
+import { type RadiusClient, radiusClientChannel, radiusCredentials, radiusOAuth } from "../runtime/radius-client.ts";
 import { configDirectory } from "./tui-config.ts";
 import type { TuiRequestInit, TuiSocket, TuiSocketEvents, TuiTransport } from "./tui-transport.ts";
 
@@ -55,23 +50,18 @@ export async function radiusClient(
 		login = { gateway, credential: { ...credential, type: "oauth" } };
 		saveLogin(directory, path, login);
 	}
-	let current = login;
-	let refreshing: Promise<RadiusLogin> | undefined;
+	const credentials = radiusCredentials(async () => readLogin(path), {
+		save: async (_current, credential) => {
+			const next: RadiusLogin = { gateway: login.gateway, credential };
+			saveLogin(directory, path, next);
+			return next;
+		},
+	});
 	return {
-		gateway: current.gateway,
+		gateway: login.gateway,
 		access: async () => {
-			if (!radiusCredentialExpiring(current.credential)) return current.credential.access;
-			refreshing ??= radiusOAuth(current.gateway)
-				.refresh(current.credential, AbortSignal.timeout(30_000))
-				.then((credential) => {
-					const next: RadiusLogin = { gateway: current.gateway, credential: { ...credential, type: "oauth" } };
-					saveLogin(directory, path, next);
-					return next;
-				})
-				.finally(() => {
-					refreshing = undefined;
-				});
-			current = await refreshing;
+			const current = await credentials();
+			if (!current) throw new Error(`${path} is gone; sign in to Radius again`);
 			return current.credential.access;
 		},
 	};

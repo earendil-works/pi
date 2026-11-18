@@ -49,36 +49,68 @@ export function radiusCredentialExpiring(credential: OAuthCredential): boolean {
 }
 
 /**
- * This p2's owner at Radius, for what p2 opens as a Pi client of its owner rather than as a brain: connections to the
- * owner's machines running `pi-env agent` and Radius's API on the owner's behalf (listing them, enrollment codes). Any
- * process with the data directory uses it: the server, session workers and the terminal host. The gateway, this p2's
- * own server ID (its name at Radius) and a current access token of its owner. */
-export type OwnerRadius = { readonly gateway: string; readonly serverId: string; readonly token: string };
+ * A signed-in Radius user's credential as `load` reads it now (`undefined`: signed out), with a current access token:
+ * one about to expire is refreshed, one refresh at a time, and handed to `save` when given (which returns what it
+ * stored); without `save` the refreshed credential is kept in memory for as long as `load` reads the refresh token it
+ * came from (Radius does not rotate refresh tokens). `signal` abandons a refresh in flight.
+ */
+export function radiusCredentials<T extends { readonly gateway: string; readonly credential: OAuthCredential }>(
+	load: () => Promise<T | undefined>,
+	options: { save?: (current: T, credential: OAuthCredential) => Promise<T>; signal?: AbortSignal } = {},
+): () => Promise<T | undefined> {
+	let refreshed: { readonly from: string; readonly value: T } | undefined;
+	let refreshing: Promise<T> | undefined;
+	return async () => {
+		const current = await load();
+		if (current === undefined || !radiusCredentialExpiring(current.credential)) return current;
+		const from = current.credential.refresh;
+		if (refreshed?.from === from && !radiusCredentialExpiring(refreshed.value.credential)) return refreshed.value;
+		refreshing ??= (async () => {
+			const signal = AbortSignal.any([
+				...(options.signal ? [options.signal] : []),
+				AbortSignal.timeout(REFRESH_TIMEOUT_MS),
+			]);
+			const credential: OAuthCredential = {
+				...(await radiusOAuth(current.gateway).refresh(current.credential, signal)),
+				type: "oauth",
+			};
+			const value = options.save ? await options.save(current, credential) : { ...current, credential };
+			refreshed = { from, value };
+			return value;
+		})().finally(() => {
+			refreshing = undefined;
+		});
+		return refreshing;
+	};
+}
+
+const REFRESH_TIMEOUT_MS = 30_000;
 
 /**
- * The owner's Radius access from `directory`'s radius.json, read at every call so a new sign-in applies at once. A token
- * about to expire is refreshed in memory, one refresh at a time: Radius does not rotate refresh tokens, so the file's
- * stays valid and nothing is written (the brain refreshes and saves on its own schedule). Rejects while this p2 is not
- * signed in to Radius.
+ * This p2's owner at Radius, for what p2 opens as a Pi client of its owner rather than as a brain: connections to the
+ * owner's machines running `pi-env agent` and Radius's API on the owner's behalf (listing them, enrollment codes). The
+ * gateway, this p2's own server ID (its name at Radius) and a current access token of its owner.
+ */
+export type OwnerRadius = { readonly gateway: string; readonly serverId: string; readonly token: string };
+
+/** One access per data directory and process, so its refreshes are shared (`ownerRadiusAccess`). */
+const owners = new Map<string, () => Promise<OwnerRadius>>();
+
+/**
+ * The owner's Radius access from `directory`'s radius.json, read at every call so a new sign-in applies at once; one per
+ * directory and process (the server, a session worker, the terminal host). A refreshed token stays in memory: the brain
+ * refreshes and saves radius.json on its own schedule. Rejects while this p2 is not signed in to Radius.
  */
 export function ownerRadiusAccess(directory: string): () => Promise<OwnerRadius> {
-	let refreshed: { readonly from: string; readonly credential: OAuthCredential } | undefined;
-	let refreshing: Promise<OAuthCredential> | undefined;
-	return async () => {
-		const config = await readRadiusConfig(directory);
-		if (!config) throw new Error("This p2 is not signed in to Radius (npm run radius:login)");
-		const own = { gateway: config.gateway, serverId: config.serverId };
-		if (!radiusCredentialExpiring(config.credential)) return { ...own, token: config.credential.access };
-		const from = config.credential.refresh;
-		if (refreshed?.from === from && !radiusCredentialExpiring(refreshed.credential))
-			return { ...own, token: refreshed.credential.access };
-		refreshing ??= radiusOAuth(config.gateway)
-			.refresh(config.credential, AbortSignal.timeout(30_000))
-			.finally(() => {
-				refreshing = undefined;
-			});
-		const credential = await refreshing;
-		refreshed = { from, credential };
-		return { ...own, token: credential.access };
-	};
+	let access = owners.get(directory);
+	if (access === undefined) {
+		const credentials = radiusCredentials(() => readRadiusConfig(directory));
+		access = async () => {
+			const config = await credentials();
+			if (!config) throw new Error("This p2 is not signed in to Radius (npm run radius:login)");
+			return { gateway: config.gateway, serverId: config.serverId, token: config.credential.access };
+		};
+		owners.set(directory, access);
+	}
+	return access;
 }
