@@ -468,6 +468,42 @@ export function getModelEnum(id: string): string | undefined {
 	return ANTIGRAVITY_MODEL_ENUM[id] ?? ANTIGRAVITY_MODEL_ENUM[getAntigravityRequestModelId(id, undefined)];
 }
 
+/**
+ * Human-readable model name as the Antigravity client shows it in <USER_SETTINGS_CHANGE>
+ * blocks (snoop capture 2026-11-18: "Gemini 3.8 Flash (Medium)", "Gemini 3.5 Flash (Low)").
+ * Accepts public and runtime ids; falls back to the raw id for unknown families.
+ */
+export function antigravityDisplayModelName(id: string): string {
+	// Catalog display quirks (see fetchAvailableModels labels): the 3.5 efforts sit one
+	// level up from their runtime suffix, and gemini-3-flash-agent is the 3.5 high tier.
+	if (id === "gemini-3.5-flash-extra-low") return "Gemini 3.5 Flash (Low)";
+	if (id === "gemini-3.5-flash-low") return "Gemini 3.5 Flash (Medium)";
+	if (id === "gemini-3.5-flash-high" || id === "gemini-3-flash-agent") return "Gemini 3.5 Flash (High)";
+	if (id === "gemini-pro-agent") return "Gemini 3.1 Pro (High)";
+	if (id === "gpt-oss-120b" || id === "gpt-oss-120b-medium") return "GPT-OSS (120B)";
+
+	const effort = /-(low|medium|high|xhigh|extra-low|thinking)$/.exec(id)?.[1];
+	const base = effort ? id.slice(0, id.length - effort.length - 1) : id;
+	// Words: title-case, uppercase known acronyms, and join version segments ("4","6" → "4.6").
+	const words = base.split("-").map((word) => {
+		if (/^gpt$/i.test(word)) return "GPT";
+		if (/^oss$/i.test(word)) return "OSS";
+		return /^\d/.test(word) ? word : word.charAt(0).toUpperCase() + word.slice(1);
+	});
+	const title = words.reduce((joined: string[], word) => {
+		const previous = joined.at(-1);
+		if (previous !== undefined && /^\d+(\.[\db]+)?$/.test(previous) && /^\d/.test(word)) {
+			joined[joined.length - 1] = `${previous}.${word}`;
+		} else {
+			joined.push(word);
+		}
+		return joined;
+	}, []);
+	const name = title.join(" ");
+	if (!effort || effort === "thinking") return effort ? `${name} (Thinking)` : name;
+	return `${name} (${effort.charAt(0).toUpperCase() + effort.slice(1)})`;
+}
+
 export function getThinkingConfig(model: Model<Api>, effort: string | undefined): ThinkingWire | undefined {
 	const modelId = model.id;
 	if (modelId.startsWith("claude-")) {

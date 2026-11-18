@@ -43,6 +43,14 @@ const model = antigravityProvider()
 	.getModels()
 	.find((model) => model.id === "gemini-3.8-flash")!;
 
+/** Matches a user turn wrapped the way the official Antigravity CLI wraps them on the wire. */
+const wrappedUserText = (text: string) =>
+	expect.stringMatching(
+		new RegExp(
+			`^<USER_REQUEST>\\n${text.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}\\n</USER_REQUEST>\\n<ADDITIONAL_METADATA>\\nThe current local time is: [^\\n]+\\n</ADDITIONAL_METADATA>(\\n<USER_SETTINGS_CHANGE>[\\s\\S]*\\n</USER_SETTINGS_CHANGE>)?$`,
+		),
+	);
+
 function response(parts: unknown[] = [{ text: "native-ok" }], finishReason = "STOP") {
 	return new Response(
 		`data: ${JSON.stringify({ response: { responseId: "resp-123", candidates: [{ content: { parts }, finishReason }], usageMetadata: { promptTokenCount: 10, cachedContentTokenCount: 3, candidatesTokenCount: 2, totalTokenCount: 12 } } })}\n\n`,
@@ -98,7 +106,7 @@ describe("native Antigravity", () => {
 			],
 		});
 		expect(convertMessages(model, history, "gemini-3.8-flash-low")).toEqual([
-			{ role: "user", parts: [{ text: "Read it" }] },
+			{ role: "user", parts: [{ text: wrappedUserText("Read it") }] },
 			{
 				role: "model",
 				parts: [
@@ -149,7 +157,7 @@ describe("native Antigravity", () => {
 			{},
 			"gemini-3.8-flash-low",
 		);
-		expect(request.request.contents).toEqual([{ role: "user", parts: [{ text }] }]);
+		expect(request.request.contents).toEqual([{ role: "user", parts: [{ text: wrappedUserText(text) }] }]);
 		expect(request.request.systemInstruction).toEqual({ role: "user", parts: [{ text: "System" }] });
 	});
 	it("is a built-in provider without any extension", () => {
@@ -456,7 +464,9 @@ describe("server-rejected text", () => {
 		});
 		const request = await buildRequest(model, ctx, "project", {}, "gemini-3.8-flash-low");
 		expect(request.request.systemInstruction.parts).toEqual([
-			{ text: "You are a fast, precise coding assistant. Help users inspect files, run commands, and modify code." },
+			{
+				text: "<identity>\nYou are Antigravity, a powerful agentic AI assistant designed by the Google Deepmind team.\nYou are working with a USER to solve their task.\nThe USER will send you requests, which you must always prioritize addressing. User requests are enclosed within <USER_REQUEST> tags.\n</identity>\nHelp users inspect files, run commands, and modify code.",
+			},
 		]);
 		expect(findServerRejectedText(request.request)).toBeUndefined();
 		for (const variant of [
@@ -473,7 +483,9 @@ describe("server-rejected text", () => {
 				"gemini-3.8-flash-low",
 			);
 			expect(v.request.systemInstruction.parts).toEqual([
-				{ text: "You are a fast, precise coding assistant. Help users." },
+				{
+					text: "<identity>\nYou are Antigravity, a powerful agentic AI assistant designed by the Google Deepmind team.\nYou are working with a USER to solve their task.\nThe USER will send you requests, which you must always prioritize addressing. User requests are enclosed within <USER_REQUEST> tags.\n</identity>\nHelp users.",
+				},
 			]);
 		}
 		const custom = await buildRequest(
@@ -955,8 +967,8 @@ describe("silent Gemini endings", () => {
 			expect(result.content).toEqual([{ type: "text", text: "Done." }]);
 			expect(events).toEqual(["start", "text_start", "text_delta", "text_end", "done"]);
 			expect(bodies).toHaveLength(2);
-			expect(lastUserParts(bodies[0]!)).toEqual([{ text: "Hello" }]);
-			expect(lastUserParts(bodies[1]!)).toEqual([{ text: "Hello" }, { text: nudge }]);
+			expect(lastUserParts(bodies[0]!)).toEqual([{ text: wrappedUserText("Hello") }]);
+			expect(lastUserParts(bodies[1]!)).toEqual([{ text: wrappedUserText("Hello") }, { text: nudge }]);
 		});
 
 		it("reports a persistent silent ending as a retryable error", async () => {
@@ -978,8 +990,8 @@ describe("silent Gemini endings", () => {
 			expect(result.content).toEqual([{ type: "text", text: "Done." }]);
 			expect(events).toEqual(["start", "text_start", "text_delta", "text_end", "done"]);
 			expect(bodies).toHaveLength(2);
-			expect(lastUserParts(bodies[0]!)).toEqual([{ text: "Hello" }]);
-			expect(lastUserParts(bodies[1]!)).toEqual([{ text: "Hello" }, { text: nudge }]);
+			expect(lastUserParts(bodies[0]!)).toEqual([{ text: wrappedUserText("Hello") }]);
+			expect(lastUserParts(bodies[1]!)).toEqual([{ text: wrappedUserText("Hello") }, { text: nudge }]);
 		});
 
 		it("reports a persistent empty STOP as a retryable error after three nudged attempts", async () => {
@@ -996,7 +1008,7 @@ describe("silent Gemini endings", () => {
 		it("does not nudge an empty body", async () => {
 			const { result, bodies } = await call(freshContext(), [() => new Response(""), done]);
 			expect(result.stopReason).toBe("stop");
-			expect(lastUserParts(bodies[1]!)).toEqual([{ text: "Hello" }]);
+			expect(lastUserParts(bodies[1]!)).toEqual([{ text: wrappedUserText("Hello") }]);
 		});
 
 		it("keeps a whitespace-only STOP from Claude as its answer", async () => {
@@ -1076,26 +1088,26 @@ describe("silent Gemini endings", () => {
 
 			const retry = await call(ctx, [done]);
 			expect(retry.result.stopReason).toBe("stop");
-			expect(lastUserParts(retry.bodies[0]!)).toEqual([{ text: "Hello" }, { text: nudge }]);
+			expect(lastUserParts(retry.bodies[0]!)).toEqual([{ text: wrappedUserText("Hello") }, { text: nudge }]);
 
 			const next = await call(ctx, [done]);
-			expect(lastUserParts(next.bodies[0]!)).toEqual([{ text: "Hello" }]);
+			expect(lastUserParts(next.bodies[0]!)).toEqual([{ text: wrappedUserText("Hello") }]);
 		});
 
 		it("keeps nudging while the retried context stays empty", async () => {
 			const ctx = freshContext();
 			await call(ctx, [() => response(thoughtOnly)]);
 			const again = await call(ctx, [() => response(thoughtOnly)]);
-			expect(lastUserParts(again.bodies[0]!)).toEqual([{ text: "Hello" }, { text: nudge }]);
+			expect(lastUserParts(again.bodies[0]!)).toEqual([{ text: wrappedUserText("Hello") }, { text: nudge }]);
 			const retry = await call(ctx, [done]);
-			expect(lastUserParts(retry.bodies[0]!)).toEqual([{ text: "Hello" }, { text: nudge }]);
+			expect(lastUserParts(retry.bodies[0]!)).toEqual([{ text: wrappedUserText("Hello") }, { text: nudge }]);
 		});
 
 		it("nudges the agent's retry after the provider's own attempts are exhausted", async () => {
 			const ctx = freshContext();
 			await call(ctx, [silent]);
 			const retry = await call(ctx, [done]);
-			expect(lastUserParts(retry.bodies[0]!)).toEqual([{ text: "Hello" }, { text: nudge }]);
+			expect(lastUserParts(retry.bodies[0]!)).toEqual([{ text: wrappedUserText("Hello") }, { text: nudge }]);
 		});
 
 		it("ignores the failed attempt the agent keeps in its history", async () => {
@@ -1104,25 +1116,25 @@ describe("silent Gemini endings", () => {
 			const first = await call(normalizeContext({ systemPrompt, messages: [user] }), [() => response(thoughtOnly)]);
 			const withFailure = normalizeContext({ systemPrompt, messages: [user, first.result] });
 			const retry = await call(withFailure, [done]);
-			expect(lastUserParts(retry.bodies[0]!)).toEqual([{ text: "Hello" }, { text: nudge }]);
+			expect(lastUserParts(retry.bodies[0]!)).toEqual([{ text: wrappedUserText("Hello") }, { text: nudge }]);
 		});
 
 		it("does not nudge another context, a visible partial answer, or a stale entry", async () => {
 			const ctx = freshContext();
 			await call(ctx, [() => response(thoughtOnly)]);
 			const other = await call(freshContext("Something else"), [done]);
-			expect(lastUserParts(other.bodies[0]!)).toEqual([{ text: "Something else" }]);
+			expect(lastUserParts(other.bodies[0]!)).toEqual([{ text: wrappedUserText("Something else") }]);
 
 			const partial = freshContext();
 			await call(partial, [() => unfinished([{ text: "partial" }])]);
 			const afterPartial = await call(partial, [done]);
-			expect(lastUserParts(afterPartial.bodies[0]!)).toEqual([{ text: "Hello" }]);
+			expect(lastUserParts(afterPartial.bodies[0]!)).toEqual([{ text: wrappedUserText("Hello") }]);
 
 			const now = Date.now();
 			const clock = vi.spyOn(Date, "now").mockReturnValue(now + 120_001);
 			try {
 				const stale = await call(ctx, [done]);
-				expect(lastUserParts(stale.bodies[0]!)).toEqual([{ text: "Hello" }]);
+				expect(lastUserParts(stale.bodies[0]!)).toEqual([{ text: wrappedUserText("Hello") }]);
 			} finally {
 				clock.mockRestore();
 			}
@@ -1132,9 +1144,9 @@ describe("silent Gemini endings", () => {
 			const ctxs = Array.from({ length: 17 }, () => freshContext());
 			for (const ctx of ctxs) await call(ctx, [() => response(thoughtOnly)]);
 			const oldest = await call(ctxs[0]!, [done]);
-			expect(lastUserParts(oldest.bodies[0]!)).toEqual([{ text: "Hello" }]);
+			expect(lastUserParts(oldest.bodies[0]!)).toEqual([{ text: wrappedUserText("Hello") }]);
 			const newest = await call(ctxs[16]!, [done]);
-			expect(lastUserParts(newest.bodies[0]!)).toEqual([{ text: "Hello" }, { text: nudge }]);
+			expect(lastUserParts(newest.bodies[0]!)).toEqual([{ text: wrappedUserText("Hello") }, { text: nudge }]);
 		});
 	});
 });
@@ -1177,7 +1189,7 @@ describe("antigravity convertMessages — shared normalisation", () => {
 			role: "user",
 			parts: [
 				{ functionResponse: { name: "codemode", response: { error: "No result provided" }, id: "call_1" } },
-				{ text: "Never mind, list the files instead." },
+				{ text: wrappedUserText("Never mind, list the files instead.") },
 			],
 		});
 	});
@@ -1319,7 +1331,9 @@ describe("antigravity convertMessages — shared normalisation", () => {
 			"gpt-oss-120b-medium",
 		);
 		expect(JSON.stringify(contents)).not.toContain("inlineData");
-		expect(contents[0]!.parts.length).toBe(2);
+		// The user text and the image placeholder are one wrapped user turn on the wire.
+		expect(contents[0]!.parts.length).toBe(1);
+		expect((contents[0]!.parts[0] as { text: string }).text).toContain("(image omitted");
 	});
 
 	it("keeps the codemode schema intact through the Claude/GPT-OSS allowlist", () => {

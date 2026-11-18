@@ -413,7 +413,7 @@ it.each([
 	);
 	const part = { inlineData: { data: image.data, mimeType: image.mimeType } };
 	expect(JSON.parse(JSON.stringify(result))).toEqual([
-		{ role: "user", parts: [{ text: "Inspect" }] },
+		{ role: "user", parts: [{ text: expect.stringMatching(/^<USER_REQUEST>\nInspect\n<\/USER_REQUEST>/) }] },
 		{
 			role: "model",
 			parts: [

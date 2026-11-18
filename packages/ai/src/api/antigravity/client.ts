@@ -17,7 +17,11 @@ const ENDPOINTS = [
 // ANTIGRAVITY_CLIENT_VERSION (bare X.Y.Z, NOAGY_CLIENT_VERSION also works),
 // or override the whole header with ANTIGRAVITY_USER_AGENT.
 export const ANTIGRAVITY_CLIENT_VERSION_ENV = "ANTIGRAVITY_CLIENT_VERSION";
-const BUNDLED_CLIENT_VERSION = "1.5.9";
+// Both constants track the installed Antigravity CLI (snoop capture 2026-11-18:
+// antigravity/cli/1.5.11 ... cl=1024248524). A stale pair is a free-to-check tell:
+// re-check both against a fresh capture every agy release, or override with the envs above.
+const BUNDLED_CLIENT_VERSION = "1.5.11";
+const BUNDLED_CLIENT_CL = "1024248524";
 const CLIENT_VERSION = /^\d+\.\d+\.\d+$/;
 
 export function resolveAntigravityClientVersion(env?: ProviderEnv): string {
@@ -31,7 +35,7 @@ export function resolveAntigravityClientVersion(env?: ProviderEnv): string {
 export function antigravityUserAgent(env?: ProviderEnv): string {
 	return (
 		antigravityEnv("USER_AGENT", env) ||
-		`antigravity/cli/${resolveAntigravityClientVersion(env)} (aidev_client; os_type=linux; arch=amd64; cl=1021519450; auth_method=consumer)`
+		`antigravity/cli/${resolveAntigravityClientVersion(env)} (aidev_client; os_type=linux; arch=amd64; cl=${BUNDLED_CLIENT_CL}; auth_method=consumer)`
 	);
 }
 

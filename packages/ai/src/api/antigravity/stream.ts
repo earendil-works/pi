@@ -81,7 +81,13 @@ import {
 	StopReason,
 	ToolChoice,
 } from "./enums.ts";
-import { ANTIGRAVITY_ROUTING, getAntigravityRequestModelId, getMaxOutputTokens, getThinkingConfig } from "./models.ts";
+import {
+	ANTIGRAVITY_ROUTING,
+	antigravityDisplayModelName,
+	getAntigravityRequestModelId,
+	getMaxOutputTokens,
+	getThinkingConfig,
+} from "./models.ts";
 import { redactSecrets, safeError } from "./security.ts";
 import {
 	type ActiveBlock,
@@ -136,8 +142,16 @@ const SERVER_REJECTED_TEXT =
 // "a coding agent harness") is replaced. Live probe 2026-11-14 23:15Z: the full default prompt with 17 tools returns 200
 // on gemini-4-carbon-high and gemini-4-hydrogen-high with the replacement below.
 const PI_DEFAULT_IDENTITY =
-	/you\s+are\s+a\s+coding\s+assistant(?:\s+running\s+inside\s+[^,.\n]+)?(?:,\s+a\s+coding\s+agent\s+harness)?\./gi;
-const PI_DEFAULT_IDENTITY_REPLACEMENT = "You are a fast, precise coding assistant.";
+	/you\s+are\s+a\s+coding\s+assistant(?:\s+running\s+inside\s+[^,.\n]+)?(?:,\s+a\s+coding\s+agent\s+harness)?\.[ ]?/gi;
+const PI_DEFAULT_IDENTITY_REPLACEMENT =
+	// The official Antigravity CLI's <identity> section, sent verbatim by every agy request
+	// (snoop capture 2026-11-18). The rest of pi's preamble — tools, rules, project context —
+	// stays pi's own; only the identity phrase is swapped for parity with the official client.
+	"<identity>\n" +
+	"You are Antigravity, a powerful agentic AI assistant designed by the Google Deepmind team.\n" +
+	"You are working with a USER to solve their task.\n" +
+	"The USER will send you requests, which you must always prioritize addressing. User requests are enclosed within <USER_REQUEST> tags.\n" +
+	"</identity>\n";
 // Live probe 2026-11-15: Antigravity answers the same detail-less 429 to this generated docs clause,
 // including with one user turn and no history. Shortening only this clause returns STOP.
 const PI_CODEMODE_MODEL_LIST =
@@ -213,6 +227,40 @@ function asTextParts(content: unknown): Array<GeminiTextPart | GeminiInlineDataP
 	});
 }
 
+/** Local ISO-8601 timestamp with numeric offset, the format agy's <ADDITIONAL_METADATA> line uses. */
+function localTimeIso(now = new Date()): string {
+	const pad = (value: number, length = 2) => String(value).padStart(length, "0");
+	const offsetMinutes = -now.getTimezoneOffset();
+	const sign = offsetMinutes >= 0 ? "+" : "-";
+	const abs = Math.abs(offsetMinutes);
+	return (
+		`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}` +
+		`T${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}` +
+		`${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`
+	);
+}
+
+/**
+ * Wrap a natural-language user turn the way every agy agent request does (snoop capture
+ * 2026-11-18): <USER_REQUEST> around the text and <ADDITIONAL_METADATA> with local time;
+ * a <USER_SETTINGS_CHANGE> block is appended on the turn where the model selection changed.
+ * Exported for unit tests.
+ */
+export function formatUserTurnText(
+	text: string,
+	options?: { localTime?: string; modelChange?: { from: string; to: string } },
+): string {
+	let wrapped =
+		`<USER_REQUEST>\n${text}\n</USER_REQUEST>\n` +
+		`<ADDITIONAL_METADATA>\nThe current local time is: ${options?.localTime ?? localTimeIso()}.\n</ADDITIONAL_METADATA>`;
+	if (options?.modelChange) {
+		wrapped +=
+			`\n<USER_SETTINGS_CHANGE>\nThe user changed setting \`Model Selection\` from ${options.modelChange.from} to ${options.modelChange.to}. ` +
+			"No need to comment on this change if the user doesn't ask about it. If reporting what model you are, please use a human readable name instead of the exact string.\n</USER_SETTINGS_CHANGE>";
+	}
+	return wrapped;
+}
+
 function asImageParts(content: unknown): GeminiInlineDataPart[] {
 	if (!Array.isArray(content)) return [];
 	return content.flatMap((item): GeminiInlineDataPart[] => {
@@ -239,6 +287,25 @@ function appendTurn(contents: GeminiContent[], role: GeminiRole, parts: GeminiPa
 	}
 }
 
+/**
+ * The <USER_SETTINGS_CHANGE> payload, when the model selection differs from the model that
+ * produced the last assistant turn ("None" before the first response of a conversation).
+ * Effort-level changes are not recorded in the transcript, so only family switches are detected.
+ */
+function userSettingsChange(
+	messages: Context["messages"],
+	model: Model<Api>,
+	runtimeModel: string,
+): { from: string; to: string } | undefined {
+	const lastAssistant = [...messages].reverse().find((msg) => msg.role === "assistant") as
+		| AssistantMessage
+		| undefined;
+	const to = antigravityDisplayModelName(runtimeModel);
+	if (!lastAssistant?.model) return { from: "None", to };
+	if (lastAssistant.model === model.id) return undefined;
+	return { from: antigravityDisplayModelName(lastAssistant.model), to };
+}
+
 /** Exported for unit tests. */
 export function convertMessages(model: Model<Api>, context: Context, runtimeModel: string): GeminiContent[] {
 	const contents: GeminiContent[] = [];
@@ -251,11 +318,34 @@ export function convertMessages(model: Model<Api>, context: Context, runtimeMode
 	const needsThoughtSignature = requiresThoughtSignature(model.id) || requiresThoughtSignature(runtimeModel);
 	const needsToolCallId =
 		requiresToolCallId(canonicalGeminiId(model.id)) || requiresToolCallId(canonicalGeminiId(runtimeModel));
-	for (const msg of messages) {
+	// agy wraps every natural-language user turn at send time (snoop capture 2026-11-18; its
+	// checkpoint resends carry the raw text, so the wrapping is derived per request, not stored).
+	// The model-change block lands on the last user turn — the turn a real client reports the
+	// selection change on.
+	let lastUserTextIndex = -1;
+	for (let index = 0; index < messages.length; index += 1) {
+		const msg = messages[index];
+		if (msg.role !== "user") continue;
+		if (asTextParts(msg.content).some((part) => "text" in part && Boolean(part.text.trim())))
+			lastUserTextIndex = index;
+	}
+	for (const [index, msg] of messages.entries()) {
 		if ((msg.role as string) === "system") continue;
 		if (msg.role === "user") {
 			const parts = asTextParts(msg.content);
-			appendTurn(contents, GeminiRole.User, parts);
+			const texts = parts
+				.filter((part): part is GeminiTextPart => "text" in part)
+				.map((part) => part.text)
+				.filter(Boolean);
+			const images = parts.filter((part): part is GeminiInlineDataPart => "inlineData" in part);
+			const text = texts.join("\n\n").trim();
+			const modelChange =
+				index === lastUserTextIndex ? userSettingsChange(context.messages, model, runtimeModel) : undefined;
+			appendTurn(
+				contents,
+				GeminiRole.User,
+				text ? [{ text: formatUserTurnText(text, { modelChange }) }, ...images] : images,
+			);
 		} else if (msg.role === "assistant") {
 			const parts: GeminiPart[] = [];
 			const isSameModel = msg.provider === model.provider && msg.model === model.id;
@@ -843,7 +933,8 @@ export async function buildRequest(
 		context.messages?.filter((m) => m.role === "assistant" && m.stopReason !== "error" && m.stopReason !== "aborted")
 			.length ?? 0;
 
-	const { conversationId, trajectoryId } = await resolveSessionTrajectory(context, options.sessionId);
+	const { conversationId, trajectoryId, sessionInt64Id } = await resolveSessionTrajectory(context, options.sessionId);
+	const modelEnum = options.modelEnum ?? (model as AntigravityModel).antigravityModelEnums?.[runtimeModel];
 
 	const envelope = await antigravityRequestEnvelope(runtimeModel, {
 		isClaude,
@@ -853,11 +944,12 @@ export async function buildRequest(
 		requestIndex,
 		conversationId,
 		trajectoryId,
+		sessionInt64Id,
+		modelEnum,
 	});
-	request.sessionId = options.sessionId || envelope.sessionId;
+	// agy's sessionId is a stable negative-int64 string, never the harness's UUIDv7 session id.
+	request.sessionId = envelope.sessionId;
 	request.labels = envelope.labels;
-	const modelEnum = options.modelEnum ?? (model as AntigravityModel).antigravityModelEnums?.[runtimeModel];
-	if (modelEnum) request.labels.model_enum = modelEnum;
 
 	return {
 		project: projectId,
