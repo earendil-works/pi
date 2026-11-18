@@ -524,7 +524,8 @@
 	inset-inline-end: calc(var(--nav-edge) - var(--nav-glyph-inset));
 	display: none;
 	margin: 0;
-	/* The row's hover and selected fills show through it. */
+	/* No plate of its own, also hovered: the row's hover and selected fills show through it; hovered, its icon takes
+	   the text colour (.nav-control:hover). */
 	background: transparent;
 }
 .nav-row.has-action > .nav-details {
@@ -543,12 +544,6 @@
 	}
 	.nav-row:is(:hover, :has(:focus-visible)):has(> .item-action) > .nav-details {
 		visibility: hidden;
-	}
-	/* Hovered, a tint of its icon's colour over the row's own fill (darker in light themes, lighter in dark ones),
-	   so it stands out from a hovered or a selected row alike; Elanor's ghost fills are opaque and would hide the
-	   row's. */
-	.nav-row > .nav-control.item-action:hover {
-		background: color-mix(in srgb, currentColor 12%, transparent);
 	}
 }
 
