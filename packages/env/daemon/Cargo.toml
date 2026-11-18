@@ -8,8 +8,13 @@ publish = false
 [dependencies]
 encoding_rs = "=0.8.42"
 ignore = "=0.4.33"
+httparse = "=1.10.1"
 notify = "=8.2.0"
+ring = "=0.17.14"
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 serde_json = "=1.0.151"
+tungstenite = { version = "=0.30.0", default-features = false, features = ["handshake"] }
+webpki-roots = "=1.0.12"
 
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.190"

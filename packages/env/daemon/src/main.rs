@@ -1,6 +1,8 @@
 //! pi-env: a small daemon that gives a Pi Durable host an execution environment on this machine over stdin/stdout
-//! (docs/protocol.md). Started as `pi-env serve --token <hex>`, usually through `ssh`.
+//! (docs/protocol.md). Started as `pi-env serve --token <hex>`, usually through `ssh`; `pi-env agent` serves the same
+//! sessions through a Radius relay instead (docs/agent.md).
 
+mod agent;
 mod decode;
 mod errors;
 mod exec;
@@ -74,6 +76,8 @@ type Job = Box<dyn FnOnce() + Send>;
 
 struct Server {
     output: Arc<Output>,
+    /// The agent's port forwards: only sessions of `pi-env agent` have the `forwards` operations.
+    forwards: Option<Arc<agent::Forwards>>,
     tmpdir: String,
     handles: Mutex<HashMap<u64, Handle>>,
     next_handle: AtomicU64,
@@ -158,7 +162,10 @@ impl Server {
                 "cwd": sys::cwd(),
                 "driveCwds": sys::drive_cwds(),
                 "pid": std::process::id(),
-                "features": FEATURES,
+                "features": match self.forwards {
+                    Some(_) => [FEATURES, &["forwards"]].concat(),
+                    None => FEATURES.to_vec(),
+                },
             }))),
             "lstat" => plain(fs::lstat(field(json, "path")?)),
             "realpath" => plain(fs::realpath(field(json, "path")?)),
@@ -278,6 +285,9 @@ impl Server {
                 &self.groups,
                 &self.processes,
             )),
+            "forwards" | "forwardSet" | "forwardRemove" if self.forwards.is_some() => {
+                plain(self.forwards.as_ref().unwrap().handle(op, json))
+            }
             _ => Err(Failure::new("EINVAL", format!("unknown operation {op}"))),
         }
     }
@@ -512,36 +522,71 @@ fn serve(token: &str) -> io::Result<()> {
         writeln!(stdout, "PI-ENV {token}")?;
         stdout.flush()?;
     }
+    let silent = {
+        let groups = groups.clone();
+        // A client that went silent (a phone that lost its network) leaves nothing running.
+        move || {
+            kill_all(&groups);
+            std::process::exit(0);
+        }
+    };
+    run_session(
+        io::stdin().lock(),
+        || BufWriter::with_capacity(1 << 20, io::stdout().lock()),
+        Session {
+            groups,
+            forwards: None,
+        },
+        silent,
+    )
+}
+
+/// What a session of `run_session` shares with its caller: the commands it started, and the agent's forwards.
+struct Session {
+    groups: exec::Groups,
+    forwards: Option<Arc<agent::Forwards>>,
+}
+
+/// Serve one client's frames from `input`, writing replies to the writer `writer` makes (on the writer's own thread),
+/// until input ends; then kill everything the session started. `silent` runs once when no byte arrived for 30 seconds.
+fn run_session<W: Write>(
+    input: impl Read,
+    writer: impl FnOnce() -> W + Send + 'static,
+    session: Session,
+    silent: impl FnOnce() + Send + 'static,
+) -> io::Result<()> {
     let output = Arc::new(Output::default());
     let writer = {
         let output = output.clone();
-        thread::spawn(move || {
-            output.run(&mut BufWriter::with_capacity(1 << 20, io::stdout().lock()))
-        })
+        thread::spawn(move || output.run(&mut writer()))
     };
     let server = Arc::new(Server {
         output: output.clone(),
+        forwards: session.forwards,
         tmpdir: sys::tmpdir(),
         handles: Mutex::new(HashMap::new()),
         next_handle: AtomicU64::new(1),
         controls: Mutex::new(HashMap::new()),
-        groups,
+        groups: session.groups,
         terminals: Arc::new(Mutex::new(HashMap::new())),
         processes: Arc::new(Mutex::new(HashMap::new())),
     });
     let last_seen = Arc::new(AtomicU64::new(now_ms()));
+    let ended = Arc::new(AtomicBool::new(false));
     {
         let output = output.clone();
         let last_seen = last_seen.clone();
-        let groups = server.groups.clone();
+        let ended = ended.clone();
         thread::spawn(move || {
             loop {
                 thread::sleep(PING_INTERVAL);
+                if ended.load(Ordering::SeqCst) {
+                    return;
+                }
                 output.control(Frame::new(PING, 0, json!({})));
-                // A client that went silent (a phone that lost its network) leaves nothing running.
                 if now_ms().saturating_sub(last_seen.load(Ordering::Relaxed)) > SILENCE_LIMIT_MS {
-                    kill_all(&groups);
-                    std::process::exit(0);
+                    silent();
+                    return;
                 }
             }
         });
@@ -549,11 +594,12 @@ fn serve(token: &str) -> io::Result<()> {
     let mut input = BufReader::with_capacity(
         1 << 20,
         Seen {
-            inner: io::stdin().lock(),
+            inner: input,
             last_seen,
         },
     );
     let result = serve_frames(&server, &mut input);
+    ended.store(true, Ordering::SeqCst);
     // However input ended, the client is gone: stop everything it started.
     kill_all(&server.groups);
     output.close();
@@ -581,8 +627,14 @@ fn main() {
             std::process::exit(0);
         }
         Some("--version") => println!("pi-env {VERSION}"),
+        Some(command @ ("agent" | "install" | "enroll" | "status" | "uninstall")) => {
+            std::process::exit(agent::main(command, &args[2..]));
+        }
         _ => {
             eprintln!("usage: pi-env serve --token <hex>");
+            eprintln!(
+                "       pi-env agent|install|enroll|status|uninstall [options] (docs/agent.md)"
+            );
             std::process::exit(2);
         }
     }
