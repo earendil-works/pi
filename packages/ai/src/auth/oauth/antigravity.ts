@@ -9,11 +9,14 @@ import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../typ
 import { startOAuthCallbackServer, waitForCallbackOrManualInput } from "./callback-server.ts";
 import { generatePKCE } from "./pkce.ts";
 
-const REDIRECT_URI = "http://localhost:51121/oauth-callback";
+// Matches the redirect URI the official Antigravity CLI (agy) requests over SSH.
+const REDIRECT_URI = "https://antigravity.google/oauth-callback";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
+// Scope list mirrors the official Antigravity CLI, including the bare `openid` scope.
 const SCOPES = ["aicode", "cloud-platform", "userinfo.email", "userinfo.profile", "cclog", "experimentsandconfigs"].map(
 	(scope) => `https://www.googleapis.com/auth/${scope}`,
 );
+SCOPES.push("openid");
 // Public desktop OAuth client, not a private application credential.
 const CLIENT_ID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
 const CLIENT_SECRET = "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";
@@ -55,7 +58,14 @@ async function exchange(
 }
 
 export function parseAntigravityCallback(input: string, expectedState: string): string {
-	const url = new URL(input.trim());
+	const trimmed = input.trim();
+	// The hosted antigravity.google/oauth-callback page displays the authorization code for
+	// pasting, so a bare code carries no state to verify; PKCE still binds it to this session.
+	if (!/^https?:\/\//i.test(trimmed)) {
+		if (/^4\/[A-Za-z0-9._-]+$/.test(trimmed) || /^[A-Za-z0-9._-]{24,}$/.test(trimmed)) return trimmed;
+		throw new Error("Antigravity OAuth callback is neither a callback URL nor an authorization code");
+	}
+	const url = new URL(trimmed);
 	if (url.searchParams.get("state") !== expectedState) throw new Error("Antigravity OAuth state mismatch");
 	const code = url.searchParams.get("code");
 	if (!code || url.searchParams.has("error")) throw new Error("Antigravity OAuth callback has no authorization code");
@@ -92,13 +102,13 @@ async function login(interaction: ProviderAuthInteraction): Promise<OAuthCredent
 		});
 		interaction.notify({
 			type: "auth_url",
-			url: `https://accounts.google.com/o/oauth2/v2/auth?${query}`,
+			url: `https://accounts.google.com/o/oauth2/auth?${query}`,
 			instructions:
-				"Sign in with Google. If the browser cannot reach this machine, paste the complete callback URL.",
+				"Sign in with Google. The antigravity.google page will show a code; paste that code (or the full callback URL) here.",
 		});
 		const result = await waitForCallbackOrManualInput(interaction, callback, {
-			message: "Paste the complete Antigravity callback URL",
-			placeholder: `${REDIRECT_URI}?state=…&code=…`,
+			message: "Paste the authorization code shown on the antigravity.google page",
+			placeholder: `code (or ${REDIRECT_URI}?state=…&code=…)`,
 		});
 		signal.throwIfAborted();
 		const code = result.type === "callback" ? result.value : parseAntigravityCallback(result.input, state);
@@ -109,7 +119,7 @@ async function login(interaction: ProviderAuthInteraction): Promise<OAuthCredent
 		if (!tokens.refresh) throw new Error("Antigravity did not grant offline access; sign in again");
 		let email: string | undefined;
 		try {
-			const response = await fetch("https://www.googleapis.com/oauth2/v1/userinfo?alt=json", {
+			const response = await fetch("https://www.googleapis.com/oauth2/v2/userinfo?alt=json", {
 				headers: { Authorization: `Bearer ${tokens.access}` },
 				signal,
 			});

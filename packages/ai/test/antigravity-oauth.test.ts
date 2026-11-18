@@ -91,7 +91,7 @@ describe("Antigravity OAuth transport", () => {
 		mock
 			.get("https://www.googleapis.com")
 			.intercept({
-				path: "/oauth2/v1/userinfo?alt=json",
+				path: "/oauth2/v2/userinfo?alt=json",
 				method: "GET",
 				headers: { authorization: "Bearer login-access" },
 			})
@@ -112,7 +112,16 @@ describe("Antigravity OAuth transport", () => {
 			email: "user@example.test",
 			projectId: "login-project",
 		});
-		expect(notify).toHaveBeenCalledWith(expect.objectContaining({ type: "auth_url" }));
+		expect(notify).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: "auth_url",
+				url: expect.stringContaining("redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback"),
+			}),
+		);
+		const authUrl = notify.mock.calls[0][0].url as string;
+		expect(authUrl).toContain("scope=");
+		expect(authUrl).toContain("openid");
+		expect(authUrl).toContain("auth%2Faicode");
 		mock.assertNoPendingInterceptors();
 	});
 
@@ -129,15 +138,15 @@ describe("Antigravity OAuth transport", () => {
 		let notifiedUrl = "";
 		vi.mocked(waitForCallbackOrManualInput).mockImplementationOnce(async (_interaction, callback) => {
 			expect(callback).toBeUndefined();
-			const state = new URL(notifiedUrl).searchParams.get("state")!;
+			expect(notifiedUrl).toContain("redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback");
 			return {
 				type: "manual",
-				input: `http://localhost:51121/oauth-callback?state=${encodeURIComponent(state)}&code=manual-code`,
+				input: "manual-code-from-hosted-page",
 			};
 		});
 		mock
 			.get("https://oauth2.googleapis.com")
-			.intercept({ path: "/token", method: "POST", body: /code=manual-code/ })
+			.intercept({ path: "/token", method: "POST", body: /code=manual-code-from-hosted-page/ })
 			.reply(
 				200,
 				gzipSync(
@@ -147,7 +156,7 @@ describe("Antigravity OAuth transport", () => {
 			);
 		mock
 			.get("https://www.googleapis.com")
-			.intercept({ path: "/oauth2/v1/userinfo?alt=json", method: "GET" })
+			.intercept({ path: "/oauth2/v2/userinfo?alt=json", method: "GET" })
 			.reply(200, gzipSync(JSON.stringify({ email: "user@example.test" })), { headers });
 		mock
 			.get("https://daily-cloudcode-pa.googleapis.com")
