@@ -186,9 +186,16 @@ describe("the installed release", { concurrency: true, timeout: CASE_MS }, () =>
 		await client.get(SessionWorker, { session: await sessions.create({}, context) }, context);
 		const workers = await launched.workers();
 		assert.equal(workers.length, 1);
-		// It runs with the V8 flags for its memory (owner, 2026-11-16).
+		// It runs with the V8 flags for its memory (owner, 2026-11-16; the memory reducer's delay 2026-11-18).
 		const argv = (await readFile(`/proc/${workers[0]}/cmdline`, "utf8")).split("\0");
-		for (const flag of ["--liftoff-only", "--optimize-for-size", "--max-semi-space-size=4"]) {
+		// Named here, not read from `WORKER_V8_FLAGS`: a mutation that drops one there would drop it here too.
+		const flags = [
+			"--liftoff-only",
+			"--optimize-for-size",
+			"--max-semi-space-size=4",
+			"--gc-memory-reducer-start-delay-ms=8000",
+		];
+		for (const flag of flags) {
 			assert.ok(argv.includes(flag), `${flag}: ${argv.join(" ")}`);
 		}
 		await launched.close("SIGTERM");

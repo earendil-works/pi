@@ -28,10 +28,19 @@ const SOURCE_FLAGS = ["--conditions=source", "--disable-warning=ExperimentalWarn
  * - `--liftoff-only`: WebAssembly (undici's HTTP parser) is never compiled a second time, optimized; that compile's
  *   freed memory stayed with the process, 8 to 10 MiB with several streams at once;
  * - `--optimize-for-size`: a smaller heap and young generation in a burst of turns, for a few percent of CPU;
- * - `--max-semi-space-size=4`: a young generation of at most 4 MiB a semi-space.
- * Each is checked in every Node p3 supports (`node --v8-options`; `minimum-node.ts`).
+ * - `--max-semi-space-size=4`: a young generation of at most 4 MiB a semi-space;
+ * - `--gc-memory-reducer-start-delay-ms=8000` (owner, 2026-11-18, mem-audit): V8 starts shrinking the heap 8 s after
+ *   work, not 30 s as Node 26's V8 does; 8000 is Node 24's own default, so the flag changes nothing there and the same
+ *   list serves every Node p3 runs on (on Node 26, after a burst of turns 37.2 instead of 43.0 MiB).
+ * Every Node p3 supports (24.4.0 and newer, `minimum-node.ts`) knows each of them: `test/install.test.ts` starts the
+ * Node it runs on with them, and the release tests run on Node 24 and 26.
  */
-export const WORKER_V8_FLAGS: readonly string[] = ["--liftoff-only", "--optimize-for-size", "--max-semi-space-size=4"];
+export const WORKER_V8_FLAGS: readonly string[] = [
+	"--liftoff-only",
+	"--optimize-for-size",
+	"--max-semi-space-size=4",
+	"--gc-memory-reducer-start-delay-ms=8000",
+];
 
 /**
  * How a session's worker starts: the source entry with the flag that resolves workspace sources, or the built one,
