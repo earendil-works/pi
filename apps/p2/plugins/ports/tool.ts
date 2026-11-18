@@ -47,7 +47,7 @@ export function createPortsExtension(
 		sections: [
 			section("ports", async (input, context) =>
 				(await isTopLevel(input.read, input.conversationId, context))
-					? "The ports tool forwards a local web server (a dev server, say) through Radius so the owner can open it from other devices, and lists all forwards and public endpoints. Forwards are private by default: only the owner can open them, after signing in. Never make a port public, by opening it with public: true or switching an existing one, without asking the user first and getting a yes: a public port is reachable by anyone with the link, without signing in."
+					? "The ports tool forwards a web server (a dev server, say) on the machine you work on through Radius so the owner can open it from other devices, and lists all forwards and public endpoints of that machine. Forwards are private by default: only the owner can open them, after signing in. Never make a port public, by opening it with public: true or switching an existing one, without asking the user first and getting a yes: a public port is reachable by anyone with the link, without signing in."
 					: undefined,
 			),
 		],
@@ -55,11 +55,11 @@ export function createPortsExtension(
 			defineP2Tool({
 				name: "ports",
 				description: [
-					"Forward web servers on this device through Radius, so the owner can open them from anywhere.",
+					"Forward web servers on the machine this session works on through Radius, so the owner can open them from anywhere: this device, or a machine running pi-env agent (a Radius machine), which keeps its forwards itself.",
 					"list: every forward with its addresses and who opened it, and all public endpoints.",
 					"open (port; optional name, public): forward a port and return its address. Private by default (owner only, after signing in). public: true also opens it to anyone with the link, without signing in; ask the user before doing that. Opening a port that is already forwarded, by anyone, keeps its address and updates its name and visibility.",
 					"close (port): stop forwarding a port, whoever opened it.",
-					"Only ports of this device: a session on a remote environment cannot forward its host's ports yet. A session's forwards close when it is archived.",
+					"A session on an SSH environment or in a sandbox cannot forward its host's ports yet. A session's forwards close when it is archived.",
 				].join("\n"),
 				parameters: obj(
 					{

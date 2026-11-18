@@ -28,7 +28,10 @@ type Frame = { id: string; type: number; payload: Buffer };
  * (`/v1/servers/<id>/channels/<connection>`) are accepted unless `rejectChannels`, and `channel(id)` resolves with the
  * relay's end of one. Pi clients (`pi-server.client.v2`) get a `ws` channel without a request, as the owner for
  * `Bearer fixture-token` and as another user otherwise; their upgrade fails with 403 when the brain refuses the channel.
- * Never contacts Radius.
+ * Machines (`addMachine`: a server of kind `env` whose host token is bound to its ID) connect as hosts of their own
+ * server; a client of one reaches that machine (503 while it is not connected), every other client the brain. The
+ * owner's machines are listed at `GET /v1/pi/servers?kind=env` and enrollment codes minted at
+ * `POST /v1/pi/servers/enrollments`, as Radius serves them. Never contacts Radius.
  */
 /**
  * The session-sync routes as Radius serves them (`/v1/servers/<id>/sync/sessions/…`, radius#295), in memory: slots
@@ -95,14 +98,24 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 			[version, "pi-server.channel.v1", CLIENT_PROTOCOL].find((protocol) => protocols.has(protocol)) ?? false,
 	});
 	const channels = new Map<string, WebSocket>();
+	/** Machines: their host token, host socket once connected, and how Radius lists them. */
+	const machines = new Map<string, { token: string; name: string; socket?: WebSocket }>();
+	const machineWaiters = new Map<string, (socket: WebSocket) => void>();
+	const enrollments: Array<{ name?: string }> = [];
 	const channelWaiters = new Map<string, (socket: WebSocket) => void>();
 	const closeWaiters = new Map<string, () => void>();
 	/** A Pi client: a channel the brain opens its own socket for, then piped to the client as Radius does. */
 	const connectClient = async (request: IncomingMessage, socket: Duplex, head: Buffer) => {
 		const id = randomUUID();
 		const principal = request.headers.authorization === "Bearer fixture-token" ? OWNER : { ...OWNER, id: "usr_2" };
+		const server = /^\/v1\/servers\/([^/]+)\/connect/.exec(request.url ?? "")?.[1] ?? "";
+		const target = machines.has(server) ? machines.get(server)?.socket : host;
+		if (!target) {
+			socket.end("HTTP/1.1 503 Service Unavailable\r\ncontent-length: 23\r\n\r\nServer host is offline\n");
+			return;
+		}
 		const refused = new Promise<undefined>((resolve) => closeWaiters.set(id, () => resolve(undefined)));
-		host?.send(JSON.stringify({ version: 2, type: "connection_open", connection_id: id, kind: "ws", principal }));
+		target.send(JSON.stringify({ version: 2, type: "connection_open", connection_id: id, kind: "ws", principal }));
 		const channel = await Promise.race([
 			channels.get(id) ?? new Promise<WebSocket>((resolve) => channelWaiters.set(id, resolve)),
 			refused,
@@ -155,6 +168,47 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 			});
 			return;
 		}
+		if (request.url === "/v1/pi/servers?kind=env" && request.method === "GET") {
+			response.writeHead(200, { "content-type": "application/json" });
+			response.end(
+				JSON.stringify({
+					servers: [...machines].map(([serverId, machine]) => ({
+						serverId,
+						kind: "env",
+						name: machine.name,
+						organization: { id: OWNER.organization_id, name: "Org", slug: null },
+						status: machine.socket ? "online" : "offline",
+						connectedAt: null,
+						lastSeenAt: new Date(0).toISOString(),
+						activeClients: null,
+					})),
+				}),
+			);
+			return;
+		}
+		if (request.url === "/v1/pi/servers/enrollments" && request.method === "POST") {
+			let body = "";
+			request.on("data", (chunk: Buffer) => {
+				body += chunk.toString("utf8");
+			});
+			request.on("end", () => {
+				enrollments.push(JSON.parse(body || "{}") as { name?: string });
+				const gateway = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+				response.writeHead(201, { "content-type": "application/json" });
+				response.end(
+					JSON.stringify({
+						code: `CODE-${enrollments.length}`,
+						expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+						gateway,
+						install: {
+							sh: `curl -fsSL ${gateway}/pi-env/install.sh | sh -s -- --gateway ${gateway} --code CODE-${enrollments.length}`,
+							ps1: `& ([scriptblock]::Create((irm ${gateway}/pi-env/install.ps1))) -Gateway ${gateway} -Code CODE-${enrollments.length}`,
+						},
+					}),
+				);
+			});
+			return;
+		}
 		if (request.url !== "/v1/context") {
 			response.writeHead(404);
 			response.end();
@@ -177,9 +231,15 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 				void connectClient(request, socket, head);
 				return;
 			}
-			const channelId = /^\/v1\/servers\/[^/]+\/channels\/([^/]+)$/.exec(request.url ?? "")?.[1];
+			const [, serverId = "", channelId] =
+				/^\/v1\/servers\/([^/?]+)\/(?:channels\/([^/]+)$)?/.exec(request.url ?? "") ?? [];
+			const machine = machines.get(serverId);
+			if (machine && request.headers.authorization !== `Bearer ${machine.token}`) {
+				socket.end("HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\n\r\n");
+				return;
+			}
 			if (channelId !== undefined) {
-				assert.equal(request.headers.authorization, "Bearer fixture-token");
+				if (!machine) assert.equal(request.headers.authorization, "Bearer fixture-token");
 				if (options.rejectChannels) {
 					socket.end("HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n");
 					return;
@@ -191,7 +251,13 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 				return;
 			}
 			sockets.handleUpgrade(request, socket, head, (connection) => {
-				host = connection;
+				if (machine) {
+					machine.socket = connection;
+					machineWaiters.get(serverId)?.(connection);
+					connection.on("close", () => {
+						if (machine.socket === connection) delete machine.socket;
+					});
+				} else host = connection;
 				connection.on("message", (data: Buffer, binary) => {
 					if (!binary) {
 						const control = JSON.parse(data.toString("utf8")) as Record<string, unknown>;
@@ -206,20 +272,24 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 						});
 					}
 				});
-				resolve(connection);
+				if (!machine) resolve(connection);
 			});
 		}),
 	);
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	const address = server.address();
 	assert(address && typeof address !== "string");
-	const sendData = (id: string, payload: Buffer, type = 1) => {
+	const sendData = (id: string, payload: Buffer, type = 1, to = host) => {
 		const frame = Buffer.alloc(18 + payload.length);
 		frame[0] = 2;
 		frame[1] = type;
 		Buffer.from(id.replaceAll("-", ""), "hex").copy(frame, 2);
 		payload.copy(frame, 18);
-		host?.send(frame);
+		to?.send(frame);
+	};
+	const machineSocket = (serverId: string): Promise<WebSocket> => {
+		const connected = machines.get(serverId)?.socket;
+		return connected ? Promise.resolve(connected) : new Promise((resolve) => machineWaiters.set(serverId, resolve));
 	};
 	return {
 		gateway: `http://127.0.0.1:${address.port}`,
@@ -234,6 +304,52 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 		frames,
 		sendData,
 		send: (message: object) => host?.send(JSON.stringify(message)),
+		/** Registers a machine (a server of kind `env`): returns the host token bound to its ID. */
+		addMachine: (serverId: string, name: string): string => {
+			const token = `machine-${randomUUID()}`;
+			machines.set(serverId, { token, name });
+			return token;
+		},
+		/** The machine's host socket, once it connected. */
+		machine: machineSocket,
+		/** Every enrollment code minted, with the name hint it was asked for. */
+		enrollments,
+		/**
+		 * One HTTP request from a forward's origin to machine `serverId`'s forward `forward`, as the owner or (`anonymous`)
+		 * nobody: resolves with the machine's response head and body.
+		 */
+		forward: async (
+			serverId: string,
+			forward: string,
+			path: string,
+			options: { anonymous?: boolean; origin?: string } = {},
+		): Promise<{ status: number; headers: [string, string][]; body: Buffer }> => {
+			const to = await machineSocket(serverId);
+			const id = randomUUID();
+			const origin = options.origin ?? `https://fwd--0123456789abcdef0123456789abcdef--${forward}.rdtun.com`;
+			to.send(
+				JSON.stringify({
+					version: 2,
+					type: "connection_open",
+					connection_id: id,
+					kind: "http",
+					...(options.anonymous ? {} : { principal: OWNER }),
+					public_origin: origin,
+					request: { method: "GET", path, headers: [["origin", origin]] },
+					forward,
+					window: 1024 * 1024,
+				}),
+			);
+			sendData(id, Buffer.alloc(0), 3, to);
+			await poll(() => controls.some((message) => message.type === "response" && message.connection_id === id));
+			const head = controls.find((message) => message.type === "response" && message.connection_id === id)!;
+			await poll(() => frames.some((frame) => frame.id === id && frame.type === 3));
+			return {
+				status: Number(head.status),
+				headers: head.headers as [string, string][],
+				body: Buffer.concat(frames.filter((frame) => frame.id === id).map((frame) => frame.payload)),
+			};
+		},
 		channel: (id: string) => channels.get(id) ?? new Promise<WebSocket>((resolve) => channelWaiters.set(id, resolve)),
 		reading: (on: boolean) => {
 			if (on) host?.resume();

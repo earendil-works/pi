@@ -1,5 +1,5 @@
 import { arr, bool, int, nul, obj, opt, str, union } from "@earendil-works/pi-schema";
-import { defineRegistry, literal, local, method, propertiesOf, remote, serverHost } from "@p2/app/v1";
+import { defineRegistry, evolve, literal, local, method, propertiesOf, remote, serverHost } from "@p2/app/v1";
 import type { Forwards } from "./store.ts";
 
 export type { Forwards } from "./store.ts";
@@ -55,9 +55,8 @@ export const ForwardsNative = defineRegistry<
 	{ readonly forwards: Forwards },
 	{ readonly forwards: Forwards } | undefined
 >("p2.forwards", { version: 1 });
-/** Owner management and worker tool calls share one registry; worker identity fixes its session. */
-export const Ports = remote("p2.ports", {
-	/** 2: the worker's query has no `origin`. */
+/** Version 2, as released: the worker's query has no `origin`. */
+const PortsV2 = remote("p2.ports", {
 	version: 2,
 	params: {},
 	hostAddress: serverHost,
@@ -83,3 +82,30 @@ export const Ports = remote("p2.ports", {
 		},
 	},
 });
+
+const Env = obj({ env: str() });
+
+/**
+ * Owner management and worker tool calls share one registry; worker identity fixes its session. 3: the forwards of
+ * machines running `pi-env agent` (envs.json type `radius`), kept by their agents: `machine` lists one machine's
+ * (`origin` null while its addresses are unknown), `machineAdd`, `machineRemove` and `machineSetPublic` change them. A
+ * session working on such a machine opens and closes its forwards there with the worker's `query`. The provider still
+ * serves 2.
+ */
+export const Ports = evolve(PortsV2, (e) =>
+	e
+		.addMethod("owner", "machine", Env, obj({ forwards: List, origin: union([str(), nul()]) }))
+		.addMethod(
+			"owner",
+			"machineAdd",
+			obj({
+				env: str(),
+				port: int({ minimum: 1, maximum: 65535 }),
+				name: opt(str({ maxLength: 40 })),
+				public: opt(bool()),
+			}),
+			nul(),
+		)
+		.addMethod("owner", "machineRemove", obj({ env: str(), id: str() }), nul())
+		.addMethod("owner", "machineSetPublic", obj({ env: str(), id: str(), public: bool() }), nul()),
+);
