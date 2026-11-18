@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `ctx.ui.pasteToEditor()` and `ctx.ui.setEditorText()` not repainting the editor when called outside terminal input handling, such as after an `await` in a command handler ([#12295](https://github.com/earendil-works/pi/issues/12295))
+
 ## [1.6.0] - 2026-11-20
 
 ### New Features
