@@ -10,6 +10,7 @@ enum MainMenu {
 		let main = NSMenu()
 		main.addItem(submenu("Pi", [
 			item("About Pi", "orderFrontStandardAboutPanel:"),
+			item("Check for Updates…", "checkForUpdates:"),
 			.separator(),
 			item("Settings…", "openSettings:", ","),
 			.separator(),

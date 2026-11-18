@@ -23,11 +23,30 @@ make run-radius   # its own server connected to Radius: port 8799, data in ~/.pi
 make attach       # the p2 already running on 127.0.0.1:8788 with ~/.pi/p2
 ```
 
-On first launch, choose a checkout in the menu bar item (**Choose p2 Checkout…**). It can be a pi-mono root or its `apps/p2`, with dependencies installed. The app then runs `node --import ./src/source.ts src/hosts/server.ts` there.
+A development build carries no p2. On first launch, choose a checkout in the menu bar item (**Choose p2 Checkout…**). It can be a pi-mono root or its `apps/p2`, with dependencies installed. The app then runs `node --import ./src/source.ts src/hosts/server.ts` there.
 
 If a p2 already answers on the port, the app adopts it instead: it opens that server and can restart it when it runs in dev mode.
 
 **Server** in the menu bar item lists the p2 servers running on this Mac, found by their loopback listeners, `/health` and the process's `P2_DATA_DIR` and working directory. Choosing one (your dev checkout's on 8788, say) makes the app use it: it never starts or stops that server, and it restarts it through `dev.sock` when it runs in dev mode. **Run Pi from …** switches back to the app's own server.
+
+### Nightly builds
+
+`.github/workflows/p2-mac-nightly.yml` builds the app every night from the newest commit on main that passed CI and publishes it on pkg.earendil.com, the app `pi-mac`, channel `nightly`. Anyone can download it, no login needed:
+
+```
+https://pkg.earendil.com/-/apps/pi-mac/nightly/download
+```
+
+Open the DMG and drag Pi to Applications. The build needs nothing installed:
+
+- **p2 and Node inside:** `scripts/package-app.sh` puts the commit's p2 into `Contents/Resources/p2`. That copy holds the root tsconfig, the workspace packages p2 links (`src`, `package.json`, their own `node_modules`), `apps/p2` and production `node_modules`, with model data hydrated. The official Node build, checked against its pinned hash, goes into `Contents/Resources/node`. Unless a checkout is chosen, the app runs that copy with that Node (`ServerConfig.bundled`). **Use This App's Pi Instead of the Checkout** goes back to it. The server never writes into the bundle.
+- **Updates:** Sparkle (`Updater.swift`) checks the channel's appcast daily and installs a new build when Pi quits. **Check for Updates…** checks now. The DMG is signed with Sparkle's EdDSA key, whose public half is in Info.plist. The appcast comes from pkg.earendil.com (its `src/apps.ts`).
+- **Data backup:** before a new build first starts its p2 on a data directory, the app clones the directory to `<data>.backups/<previous build>`, since p2's data formats change without notice. It keeps three (`DataBackup.swift`).
+- **Signing:** with `SIGN_IDENTITY`, every Mach-O file in the bundle (Node, esbuild, Sparkle's helpers, the app) is signed with the hardened runtime. Node gets the JIT entitlements (`scripts/node.entitlements`), the app the microphone (`scripts/app.entitlements`). The DMG is notarized and stapled. Without `SIGN_IDENTITY`, the build is ad-hoc signed, without the hardened runtime.
+- **Versions:** `CFBundleVersion` is the commit's UTC minute (`202611180023`), which Sparkle orders by. The short version is its day (`2026.11.18`), and `PiCommit` holds the SHA.
+- **Smoke test:** `scripts/smoke-app.sh` starts the signed bundle's server in a bare environment and waits for `/health`.
+
+To build one locally (ad-hoc signed, no updater): `./scripts/package-app.sh`, which writes `build/dist/Pi-<day>-<version>.dmg`. With `SPARKLE_PUBLIC_KEY`, the app gets the feed, and with `SPARKLE_KEY_FILE` the DMG gets signed for it. The script's header lists every variable.
 
 ### Settings
 
@@ -35,8 +54,8 @@ Each setting is a user default (`defaults write com.earendil.pi <key> <value>`).
 
 | Default | Variable | Default value |
 |---|---|---|
-| `checkout` | `P2MAC_CHECKOUT` | none |
-| `node` | `P2MAC_NODE` | `node` on the login shell's PATH |
+| `checkout` | `P2MAC_CHECKOUT` | the app's own copy of p2 (packaged builds), else none |
+| `node` | `P2MAC_NODE` | the app's own Node with its own p2, else `node` on the login shell's PATH |
 | `port` | `P2MAC_PORT` | 8788 |
 | `dataDir` | `P2MAC_DATA_DIR` | `~/.pi/p2` |
 | `mode` | `P2MAC_MODE` | `start` (`dev`: the dev supervisor) |
@@ -128,6 +147,5 @@ These still need a person at the keyboard: dragging the window by the bars, Cmd-
 - Radius brains.
 - Notifications over the bridge.
 - `pi://` deep links.
-- Sparkle, signing and notarization.
-- The bundled Node and p2.
 - The server proof in the local sign-in.
+- Intel Macs: the nightly is Apple Silicon only.

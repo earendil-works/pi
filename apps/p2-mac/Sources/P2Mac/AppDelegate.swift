@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 	private(set) var server: ServerController!
 	private(set) var directory: BrainDirectory!
 	private(set) var radius: RadiusAccount!
+	private let updater = Updater()
 	private var statusItem: NSStatusItem!
 	private var windows: [PiWindowController] = []
 	private var found: [FoundServer] = []
@@ -177,6 +178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 		if item.action == #selector(chooseAppearance) {
 			item.state = item.representedObject as? String == appearance.rawValue ? .on : .off
 		}
+		if item.action == #selector(checkForUpdates) { return updater.available }
 		return true
 	}
 
@@ -211,6 +213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 		if config.source == .own, FileManager.default.fileExists(atPath: server.logFile.path) {
 			menu.addItem(item("Show Server Log", #selector(showLog)))
 		}
+		if updater.available { menu.addItem(item("Check for Updates…", #selector(checkForUpdates))) }
 		menu.addItem(.separator())
 		if directory.fixture {
 			menu.addItem(disabled("Radius: brains from P2MAC_BRAINS"))
@@ -242,12 +245,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 			menu.addItem(entry)
 		}
 		menu.addItem(.separator())
-		let ownTitle = config.checkout.map { "Run Pi from \(abbreviate($0.path))" } ?? "Run Pi from a Checkout"
+		let ownTitle = config.runsBundled
+			? "Run Pi from This App"
+			: config.checkout.map { "Run Pi from \(abbreviate($0.path))" } ?? "Run Pi from a Checkout"
 		let own = item(ownTitle, #selector(useOwn))
 		own.state = config.source == .own ? .on : .off
 		own.isEnabled = config.checkout != nil
 		menu.addItem(own)
 		menu.addItem(item("Choose p2 Checkout…", #selector(chooseCheckout)))
+		if ServerConfig.bundled != nil, config.checkout != nil, !config.runsBundled {
+			menu.addItem(item("Use This App's Pi Instead of the Checkout", #selector(forgetCheckout)))
+		}
 	}
 
 	private func statusLine() -> String {
@@ -299,6 +307,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 		NSWorkspace.shared.open(
 			[server.logFile], withApplicationAt: URL(fileURLWithPath: "/System/Applications/Utilities/Console.app"),
 			configuration: NSWorkspace.OpenConfiguration())
+	}
+
+	@objc func checkForUpdates(_ sender: Any?) { updater.checkForUpdates() }
+
+	@objc private func forgetCheckout() {
+		ServerConfig.forgetCheckout()
+		ServerConfig.saveOwn()
+		use(.own())
 	}
 
 	@objc private func chooseCheckout() {
