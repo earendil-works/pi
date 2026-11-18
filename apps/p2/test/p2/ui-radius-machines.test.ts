@@ -53,8 +53,16 @@ describe("Radius machines UI", { skip: !browserTests }, () => {
 			await browser.evaluate<string>(`document.querySelector('input[aria-label="Environment name"]').value`),
 			"mario-s-laptop",
 		);
-		await press("Add");
+		// The name is taken: Add stays off until another is typed, and the existing environment is left alone.
 		const envs = fixture.browser().hold(Envs, {}, BACKGROUND_CONTEXT);
+		await envs.save({ name: "mario-s-laptop", config: { type: "ssh", host: "laptop.example" } }, BACKGROUND_CONTEXT);
+		await browser.wait(
+			`document.querySelector('[role=dialog]').textContent.includes('An environment named mario-s-laptop exists')`,
+		);
+		assert.equal(await browser.evaluate<boolean>(`${button("Add")}.disabled`), true);
+		await envs.delete({ name: "mario-s-laptop" }, BACKGROUND_CONTEXT);
+		await browser.wait(`!${button("Add")}.disabled`);
+		await press("Add");
 		try {
 			let config: EnvConfig | undefined;
 			for (let attempt = 0; attempt < 100 && config === undefined; attempt++) {

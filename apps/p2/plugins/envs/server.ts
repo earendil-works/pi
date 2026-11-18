@@ -51,8 +51,8 @@ const knownRows = <R extends { readonly config: EnvConfig }>(rows: readonly R[])
 	rows.flatMap(({ config, ...row }) => (config.type === "radius" ? [] : [{ ...row, config }]));
 
 /**
- * Pages built with older versions of `Envs`: none sees Radius machines; 2 also gets rows without sandbox disk sizes; 1
- * also without users, and its delete is never forced. Their saves are a subset of the current ones.
+ * Pages built with older versions of `Envs`: none sees Radius machines, so their saves and deletes may not replace one
+ * (`withoutRadius`); 2 also gets rows without sandbox disk sizes; 1 also without users, and its delete is never forced.
  */
 const ENVS_ACCEPTS: AcceptsTable<typeof Envs> = {
 	1: {
@@ -67,22 +67,24 @@ const ENVS_ACCEPTS: AcceptsTable<typeof Envs> = {
 				result: (rows) =>
 					knownRows(rows).map(({ users: _users, ...row }) => ({ ...row, config: configV2(row.config) })),
 			},
-			save: { args: (old) => old },
-			delete: { args: (old) => old },
+			save: { args: (old) => ({ ...old, withoutRadius: true }) },
+			delete: { args: (old) => ({ ...old, withoutRadius: true }) },
 		},
 	},
 	2: {
 		state: { owner: { envs: (rows) => knownRows(rows).map((row) => ({ ...row, config: configV2(row.config) })) } },
 		methods: {
 			list: { result: (rows) => knownRows(rows).map((row) => ({ ...row, config: configV2(row.config) })) },
-			save: { args: (old) => old },
+			save: { args: (old) => ({ ...old, withoutRadius: true }) },
+			delete: { args: (old) => ({ ...old, withoutRadius: true }) },
 		},
 	},
 	3: {
 		state: { owner: { envs: (rows) => knownRows(rows) } },
 		methods: {
 			list: { result: (rows) => knownRows(rows) },
-			save: { args: (old) => old },
+			save: { args: (old) => ({ ...old, withoutRadius: true }) },
+			delete: { args: (old) => ({ ...old, withoutRadius: true }) },
 		},
 	},
 };
@@ -239,13 +241,16 @@ export default defineFacet((host) => {
 						await manager().manager.warm();
 						return null;
 					},
-					save: async ({ name, config }, ctx) => {
-						await manager().manager.save(name, config);
+					save: async ({ name, config, create, withoutRadius }, ctx) => {
+						await manager().manager.save(name, config, {
+							create: create === true,
+							withoutRadius: withoutRadius === true,
+						});
 						await service.reload(ctx);
 						return null;
 					},
-					delete: async ({ name, force }, ctx) => {
-						await manager().manager.delete(name, force === true);
+					delete: async ({ name, force, withoutRadius }, ctx) => {
+						await manager().manager.delete(name, force === true, withoutRadius === true);
 						await service.reload(ctx);
 						return null;
 					},

@@ -84,6 +84,7 @@ function refusal(name: string, status: number, body: string): string {
 	if (status === 503)
 		return `Machine "${name}" is not connected to Radius: it is offline or its pi-env agent is not running (${detail})`;
 	if (status === 401) return `Radius did not accept this p2's sign-in (${detail}); run npm run radius:login`;
-	if (status === 404) return `Radius does not know machine "${name}" (${detail}); it may have been removed`;
+	if (status === 404)
+		return `Machine "${name}" was removed from Radius (${detail}); delete this environment or enroll the machine again`;
 	return `Radius refused the connection to machine "${name}" (${detail})`;
 }

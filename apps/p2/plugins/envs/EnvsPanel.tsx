@@ -25,6 +25,7 @@ import {
 	type EnvTest,
 	type EnvUser,
 	type Installed,
+	installedReady,
 	type RadiusMachine,
 	type SandboxStatus,
 } from "./contract.ts";
@@ -598,18 +599,16 @@ function MachinesSection({
 	onOpen: (name: string) => void;
 }) {
 	const [enrollment, setEnrollment] = useState<Enrollment>();
-	const [enrolling, setEnrolling] = useState(false);
 	const [error, setError] = useState<string>();
+	// Minting a code is long work with no guess to show: its pending state labels the button.
+	const [, work, enrolling] = useOptimisticCall(null, keep, (reason) => setError(errorText(reason)));
 	const [using, setUsing] = useState<{ server: string; name: string }>();
 	const usedBy = (server: string) =>
 		envs.find((env) => env.config.type === "radius" && env.config.server === server)?.name;
+	const taken = (name: string) => envs.some((env) => env.name === name);
 	const enroll = () => {
-		setEnrolling(true);
 		setError(undefined);
-		void service
-			.enroll({}, BACKGROUND_CONTEXT)
-			.then(setEnrollment, (reason: unknown) => setError(errorText(reason)))
-			.finally(() => setEnrolling(false));
+		work(null, async () => setEnrollment(await service.enroll({}, BACKGROUND_CONTEXT)));
 	};
 	return (
 		<div className="list">
@@ -648,6 +647,7 @@ function MachinesSection({
 								className="inline-form"
 								onSubmit={(event) => {
 									event.preventDefault();
+									if (taken(using.name.trim())) return;
 									onUse(using.name.trim(), { type: "radius", server: machine.server });
 									setUsing(undefined);
 								}}
@@ -659,13 +659,22 @@ function MachinesSection({
 									onChange={(event) => setUsing({ ...using, name: event.target.value })}
 									{...NO_AUTOCORRECT}
 								/>
-								<button type="submit" className="button" disabled={!ENV_NAME.test(using.name.trim())}>
+								<button
+									type="submit"
+									className="button"
+									disabled={!ENV_NAME.test(using.name.trim()) || taken(using.name.trim())}
+								>
 									Add
 								</button>
 								<button type="button" className="text-action" onClick={() => setUsing(undefined)}>
 									Cancel
 								</button>
 							</form>
+						)}
+						{using?.server === machine.server && taken(using.name.trim()) && (
+							<p className="muted small" role="alert">
+								An environment named {using.name.trim()} exists; choose another name.
+							</p>
 						)}
 					</div>
 				);
@@ -704,32 +713,36 @@ function MachinesSection({
 
 /**
  * "Install permanently through Radius" on a tested SSH environment: installs pi-env agent there as a service, then,
- * once the owner confirms, makes the environment a Radius machine under the same name, keeping its shell settings.
+ * once the owner confirms, makes the environment a Radius machine under the same name, keeping its shell settings. An
+ * agent that may not keep running (no service, or systemd without lingering) is offered only once Radius lists it
+ * online; the installer's notes say what to do meanwhile. Installing again re-enrolls the same machine.
  */
 function InstallSection({
 	service,
 	name,
 	config,
 	blocked,
+	machines,
+	onCheck,
 	onSwitch,
 }: {
 	service: Held<typeof Envs>;
 	name: string;
 	config: SshEnvConfig;
 	blocked: boolean;
+	machines: readonly RadiusMachine[] | undefined;
+	onCheck: () => Promise<unknown>;
 	onSwitch: (config: EnvConfig) => void;
 }) {
-	const [installing, setInstalling] = useState(false);
 	const [installed, setInstalled] = useState<Installed>();
 	const [error, setError] = useState<string>();
+	// Installing and checking are long work with no guess to show: their pending state labels the buttons.
+	const [, work, working] = useOptimisticCall(null, keep, (reason) => setError(errorText(reason)));
 	const install = () => {
-		setInstalling(true);
 		setError(undefined);
-		void service
-			.install({ name }, BACKGROUND_CONTEXT)
-			.then(setInstalled, (reason: unknown) => setError(errorText(reason)))
-			.finally(() => setInstalling(false));
+		work(null, async () => setInstalled(await service.install({ name }, BACKGROUND_CONTEXT)));
 	};
+	const ready = installed !== undefined && installedReady(installed, machines);
 	return (
 		<div className="stack env-install">
 			<span className="label">Permanent</span>
@@ -737,27 +750,45 @@ function InstallSection({
 				<>
 					<p className="small">
 						pi-env agent runs on {name} ({installed.service === "none" ? "not as a service" : installed.service}
-						), enrolled with Radius as <span className="mono">{installed.server}</span>.
+						{installed.linger === false ? ", stops when you log out" : ""}), enrolled with Radius as{" "}
+						<span className="mono">{installed.server}</span>.
 					</p>
-					<p className="muted small">
-						Reach {name} through Radius from now on? Sessions keep working there; SSH is no longer used.
-					</p>
+					{installed.notes.map((note) => (
+						<p key={note} className="small mono env-install-note">
+							{note}
+						</p>
+					))}
+					{ready ? (
+						<p className="muted small">
+							Reach {name} through Radius from now on? Sessions keep working there; SSH is no longer used.
+						</p>
+					) : (
+						<p className="muted small">
+							Start the agent as the notes say; {name} can be reached through Radius once it is connected.
+						</p>
+					)}
 					<div className="inline-form">
-						<button
-							type="button"
-							className="button primary"
-							onClick={() =>
-								onSwitch({
-									type: "radius",
-									server: installed.server,
-									...(config.shellPath === undefined ? {} : { shellPath: config.shellPath }),
-									...(config.loginShell ? { loginShell: true } : {}),
-									...(config.shellEnv === undefined ? {} : { shellEnv: config.shellEnv }),
-								})
-							}
-						>
-							Use through Radius
-						</button>
+						{ready ? (
+							<button
+								type="button"
+								className="button primary"
+								onClick={() =>
+									onSwitch({
+										type: "radius",
+										server: installed.server,
+										...(config.shellPath === undefined ? {} : { shellPath: config.shellPath }),
+										...(config.loginShell ? { loginShell: true } : {}),
+										...(config.shellEnv === undefined ? {} : { shellEnv: config.shellEnv }),
+									})
+								}
+							>
+								Use through Radius
+							</button>
+						) : (
+							<button type="button" className="button" disabled={working} onClick={() => work(null, onCheck)}>
+								{working ? "Checking…" : "Check connection"}
+							</button>
+						)}
 						<button type="button" className="text-action" onClick={() => setInstalled(undefined)}>
 							Keep SSH
 						</button>
@@ -771,8 +802,8 @@ function InstallSection({
 						Install pi-env agent on {name} as a service enrolled with Radius: the machine is then reachable
 						without SSH, from wherever this server runs.
 					</p>
-					<button type="button" className="button" disabled={installing} onClick={install}>
-						{installing ? "Installing…" : "Install permanently through Radius"}
+					<button type="button" className="button" disabled={working} onClick={install}>
+						{working ? "Installing…" : "Install permanently through Radius"}
 					</button>
 				</>
 			)}
@@ -784,6 +815,9 @@ function InstallSection({
 		</div>
 	);
 }
+
+/** The reducer of long work without a guess: the value stays as it is until the work's state arrives. */
+const keep = (value: null): null => value;
 
 /** The host folders a sandbox sees; a new one is entered in place. */
 function FoldersField({
@@ -1091,17 +1125,19 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 	const [confirmDelete, setConfirmDelete] = useState(false);
 	const [confirmReset, setConfirmReset] = useState(false);
 	const [machines, setMachines] = useState<Machines>();
-	// Read from Radius once per opened sheet; a machine enrolled meanwhile shows when the sheet opens again.
+	const readMachines = () =>
+		service?.machines({}, BACKGROUND_CONTEXT).then(
+			(list): Machines => ({ kind: "listed", list }),
+			(reason: unknown): Machines => ({ kind: "failed", error: errorText(reason) }),
+		);
+	// Read from Radius once per opened sheet (and on "Check connection"); a machine enrolled meanwhile shows when the
+	// sheet opens again.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: reads once per service; readMachines is recreated each render.
 	useEffect(() => {
 		let current = true;
-		void service?.machines({}, BACKGROUND_CONTEXT).then(
-			(list) => {
-				if (current) setMachines({ kind: "listed", list });
-			},
-			(reason: unknown) => {
-				if (current) setMachines({ kind: "failed", error: errorText(reason) });
-			},
-		);
+		void readMachines()?.then((read) => {
+			if (current) setMachines(read);
+		});
 		return () => {
 			current = false;
 		};
@@ -1410,6 +1446,11 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 						name={name}
 						config={saved.config}
 						blocked={hostedSandboxes.length > 0}
+						machines={machines?.kind === "listed" ? machines.list : undefined}
+						onCheck={async () => {
+							const read = await readMachines();
+							if (read) setMachines(read);
+						}}
 						onSwitch={(config) => {
 							setError(undefined);
 							edit({ kind: "save", name, config }, () => service.save({ name, config }, BACKGROUND_CONTEXT));
@@ -1582,7 +1623,9 @@ export function EnvsPanel({ env: screen, onClose }: { env?: string; onClose: () 
 					onOpen={(name) => toScreen(name)}
 					onUse={(name, config) => {
 						setError(undefined);
-						edit({ kind: "save", name, config }, () => service.save({ name, config }, BACKGROUND_CONTEXT));
+						edit({ kind: "save", name, config }, () =>
+							service.save({ name, config, create: true }, BACKGROUND_CONTEXT),
+						);
 					}}
 				/>
 			)}

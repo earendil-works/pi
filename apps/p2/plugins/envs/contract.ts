@@ -209,9 +209,27 @@ export const EnrollmentSchema = obj({
 });
 export type Enrollment = Static<typeof EnrollmentSchema>;
 
-/** `pi-env agent` installed on an SSH environment: its Radius server ID and the service that runs it. */
-export const InstalledSchema = obj({ server: str(), service: str() });
+/**
+ * `pi-env agent` installed on an SSH environment: its Radius server ID, the service that runs it (`none`: nothing starts
+ * it again after a reboot or logout), whether it outlives the user's logout (`linger`: systemd's lingering; null where
+ * that does not apply) and what the installer told the user to do (`notes`).
+ */
+export const InstalledSchema = obj({
+	server: str(),
+	service: str(),
+	linger: union([bool(), nul()]),
+	notes: arr(str()),
+});
 export type Installed = Static<typeof InstalledSchema>;
+
+/**
+ * Whether an installed agent can be used at once: it runs as a service that outlives the user's logout. Otherwise it
+ * may not be running (the owner starts it by hand, as the notes say): use it once Radius lists it online.
+ */
+export function installedReady(installed: Installed, machines: readonly RadiusMachine[] | undefined): boolean {
+	if (installed.service !== "none" && installed.linger !== false) return true;
+	return machines?.some((machine) => machine.server === installed.server && machine.status === "online") ?? false;
+}
 
 /**
  * The owner's environments and sandboxes. 2: `EnvSummary.users` (the sessions using an environment), and `delete`'s
@@ -220,13 +238,16 @@ export type Installed = Static<typeof InstalledSchema>;
  * the VM and removes its disk, so the next start begins from the guest image again. 4: machines running `pi-env agent`
  * through Radius (`type: "radius"`): `machines` lists the owner's machines at Radius, `enroll` mints a code with the
  * commands that install the agent, `install` installs it as a service on an SSH environment (the owner then saves the
- * environment as a Radius machine). The provider still serves 1 to 3 (its `accepts`), without Radius machines.
+ * environment as a Radius machine); `save` with `create` refuses a name in use. The provider still serves 1 to 3 (its
+ * `accepts`), without Radius machines: their saves and deletes carry `withoutRadius`, refused for a Radius machine
+ * they cannot see.
  */
 export const Envs = evolve(EnvsV3, (e) =>
 	e
 		.state("owner", "envs", arr(EnvSummarySchema))
 		.result("list", arr(EnvSummarySchema))
-		.args("save", obj({ name: str(), config: EnvConfigSchema }))
+		.args("save", obj({ name: str(), config: EnvConfigSchema, create: opt(bool()), withoutRadius: opt(bool()) }))
+		.args("delete", obj({ name: str(), force: opt(bool()), withoutRadius: opt(bool()) }))
 		.addMethod("owner", "machines", obj({}), arr(RadiusMachineSchema))
 		.addMethod("owner", "enroll", obj({ name: opt(str({ maxLength: 64 })) }), EnrollmentSchema)
 		.addMethod("owner", "install", Name, InstalledSchema),

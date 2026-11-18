@@ -17,6 +17,7 @@ import {
 	packagedDaemon,
 	RemoteExecutionEnv,
 	type RemotePlatform,
+	runDaemon,
 	type SshTarget,
 	scanHostKey,
 } from "@earendil-works/pi-env";
@@ -45,7 +46,7 @@ import type {
 	SandboxStatus,
 	SandboxSupport,
 } from "./contract.ts";
-import { enrollMachine, installAgent, listMachines } from "./radius-machines.ts";
+import { enrollMachine, INSTALL_TIMEOUT_MS, installAgent, listMachines } from "./radius-machines.ts";
 import { envConnection, type RemoteSession, remoteSession, sandboxHost, sshOptions } from "./remote-env.ts";
 import { launcherCommand, sandboxArgument, sandboxKey, sandboxRevision } from "./sandbox-host.ts";
 import { LauncherCheckSchema, LauncherStatusSchema } from "./sandbox-schema.ts";
@@ -80,6 +81,10 @@ export class EnvManager {
 	private readonly launcher: string;
 	/** The owner at Radius: machines running `pi-env agent` and their enrollment. */
 	private readonly radius: () => Promise<OwnerRadius>;
+	/** The last work queued for each Radius machine's agent (`withAgent`). */
+	private readonly agentWork = new Map<string, Promise<void>>();
+	/** SSH environments `install` is running on: one install at a time each. */
+	private readonly installing = new Set<string>();
 
 	/** `session` replaces SSH for tests: the environment that browses an env's directories. */
 	constructor(
@@ -133,11 +138,19 @@ export class EnvManager {
 
 	/**
 	 * Other changes of a sandbox apply when its VM restarts; moving it to another host stops the VM on the old one first
-	 * (nothing could reach it afterwards), refusing the change when that fails.
+	 * (nothing could reach it afterwards), refusing the change when that fails. `create` refuses a name in use;
+	 * `withoutRadius` (pages that cannot see Radius machines) refuses to replace one.
 	 */
-	async save(name: string, config: EnvConfig): Promise<void> {
+	async save(
+		name: string,
+		config: EnvConfig,
+		options: { create?: boolean; withoutRadius?: boolean } = {},
+	): Promise<void> {
 		const configs = await loadEnvs(this.directory);
 		const previous = Object.hasOwn(configs, name) ? configs[name] : undefined;
+		if (previous && options.create) throw new Error(`An environment named "${name}" exists; choose another name`);
+		if (previous?.type === "radius" && options.withoutRadius)
+			throw new Error(`"${name}" is a Radius machine; reload this page to change it`);
 		if (previous?.type === "gondolin" && (config.type !== "gondolin" || config.host !== previous.host))
 			await this.sandboxStop(name).catch((error: unknown) => {
 				throw new Error(
@@ -153,7 +166,9 @@ export class EnvManager {
 	 * tools, so theirs refuse to run until they move. A sandbox's VM is stopped and its run directory removed first
 	 * (nothing could stop it once its configuration is gone); deleting is refused when that fails.
 	 */
-	async delete(name: string, force = false): Promise<void> {
+	async delete(name: string, force = false, withoutRadius = false): Promise<void> {
+		if (withoutRadius && (await loadEnvs(this.directory))[name]?.type === "radius")
+			throw new Error(`"${name}" is a Radius machine; reload this page to delete it`);
 		const uses = await this.uses(name);
 		if (uses > 0 && !force) throw new Error(`${uses} session${uses === 1 ? "" : "s"} still use "${name}"`);
 		const configs = await loadEnvs(this.directory);
@@ -329,20 +344,52 @@ export class EnvManager {
 	 * the machine's server ID. The environment stays an SSH environment until the owner saves it as a Radius machine.
 	 */
 	async install(name: string): Promise<Installed> {
-		const options = sshOptions(this.directory, name, await this.sshConfig(name));
-		const remote = await detectPlatform(options);
-		const file = await deployDaemon(options, remote, packagedDaemon(remote));
-		return installAgent(this.radius, options, remote, file, name);
+		if (this.installing.has(name)) throw new Error(`pi-env agent is being installed on "${name}" already`);
+		this.installing.add(name);
+		try {
+			const options = sshOptions(this.directory, name, await this.sshConfig(name));
+			const remote = await detectPlatform(options);
+			const file = await deployDaemon(options, remote, packagedDaemon(remote));
+			return await installAgent(
+				this.radius,
+				(args, stdin) =>
+					runDaemon(options, remote, file, args, {
+						...(stdin === undefined ? {} : { stdin }),
+						timeoutMs: INSTALL_TIMEOUT_MS,
+					}),
+				name,
+			);
+		} finally {
+			this.installing.delete(name);
+		}
 	}
 
 	/**
-	 * One request to the agent of Radius machine `name` on the shared browsing connection, for what only an agent serves
-	 * (its port forwards: `forwards`, `forwardSet`, `forwardRemove`); resolves with its answer.
+	 * Runs `work` with requests to the agent of Radius machine `name` on the shared browsing connection, for what only an
+	 * agent serves (its port forwards: `forwards`, `forwardSet`, `forwardRemove`). One `work` at a time per machine, so a
+	 * read and the write that follows it never interleave with another's.
 	 */
-	async agentRequest(name: string, op: string, json: Record<string, unknown>): Promise<Record<string, unknown>> {
-		const config = await this.config(name);
-		if (config.type !== "radius") throw new Error(`"${name}" is not a machine reached through Radius`);
-		return (await (await this.browser(name)).connection.request(op, json)).json;
+	async withAgent<T>(
+		name: string,
+		work: (request: (op: string, json: Record<string, unknown>) => Promise<Record<string, unknown>>) => Promise<T>,
+	): Promise<T> {
+		const previous = this.agentWork.get(name) ?? Promise.resolve();
+		const run = previous.then(async () => {
+			const config = await this.config(name);
+			if (config.type !== "radius") throw new Error(`"${name}" is not a machine reached through Radius`);
+			const session = await this.browser(name);
+			return work(async (op, json) => (await session.connection.request(op, json)).json);
+		});
+		// The queue goes on after a failure; the failure is this work's caller's.
+		const settled = run.then(
+			() => undefined,
+			() => undefined,
+		);
+		this.agentWork.set(name, settled);
+		void settled.then(() => {
+			if (this.agentWork.get(name) === settled) this.agentWork.delete(name);
+		});
+		return run;
 	}
 
 	private async testSsh(name: string, config: SshEnvConfig): Promise<EnvTest> {
