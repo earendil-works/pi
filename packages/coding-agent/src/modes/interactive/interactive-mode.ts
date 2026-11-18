@@ -436,6 +436,8 @@ function formatLoginProviderCompletionDescription(provider: LoginProviderComplet
  * Options for InteractiveMode initialization.
  */
 export interface InteractiveModeOptions {
+	/** Refresh the session's model scope after settings reload and before extensions restart. */
+	refreshModelScope?: (session: AgentSession) => Promise<void>;
 	/** Providers that were migrated to auth.json (shows warning) */
 	migratedProviders?: string[];
 	/** Diagnostics collected before the interactive TUI was initialized. */
@@ -6660,21 +6662,22 @@ export class InteractiveMode {
 			this.ui.requestRender();
 		};
 
-		let chatRestoredBeforeSessionStart = false;
+		let preparedForSessionStart = false;
 		let reloadBoxDismissed = false;
-		const restoreChatBeforeSessionStart = () => {
-			if (chatRestoredBeforeSessionStart) {
+		const prepareForSessionStart = async () => {
+			if (preparedForSessionStart) {
 				return;
 			}
 			this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
 			this.outputPad = this.settingsManager.getOutputPad();
 			this.rebuildChatFromMessages();
-			chatRestoredBeforeSessionStart = true;
+			await this.options.refreshModelScope?.(this.session);
+			preparedForSessionStart = true;
 		};
 
 		try {
-			await this.session.reload({ beforeSessionStart: restoreChatBeforeSessionStart });
-			restoreChatBeforeSessionStart();
+			await this.session.reload({ beforeSessionStart: prepareForSessionStart });
+			await prepareForSessionStart();
 			this.keybindings.reload();
 			const activeHeader = this.customHeader ?? this.builtInHeader;
 			if (isExpandable(activeHeader)) {

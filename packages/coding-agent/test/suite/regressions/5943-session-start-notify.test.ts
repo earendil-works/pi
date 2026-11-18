@@ -51,6 +51,7 @@ type RebindContext = {
 };
 
 type ReloadCommandContext = {
+	options: { refreshModelScope?: () => Promise<void> };
 	hideThinkingBlock: boolean;
 	session: {
 		isStreaming: boolean;
@@ -120,6 +121,7 @@ type ReloadCommandContextOverrides = Omit<
 function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {}): ReloadCommandContext {
 	const editor = overrides.editor ?? {};
 	return {
+		options: overrides.options ?? {},
 		hideThinkingBlock: overrides.hideThinkingBlock ?? false,
 		session: {
 			isStreaming: false,
@@ -438,6 +440,32 @@ describe("regression #5943: session_start transient UI", () => {
 
 		expect(context.hideThinkingBlock).toBe(true);
 		expect(events).toEqual(["reload", "rebuild:true", "start:true"]);
+	});
+
+	it.each([true, false])("refreshes model scope once with extensions bound: %s", async (bound) => {
+		initTheme("dark", false);
+		const events: string[] = [];
+		const context = createReloadCommandContext({
+			session: {
+				reload: async (options) => {
+					events.push("reload settings");
+					if (bound) {
+						await options?.beforeSessionStart?.();
+						events.push("session_start");
+					}
+				},
+			},
+			options: {
+				refreshModelScope: async () => {
+					await Promise.resolve();
+					events.push("refresh scope");
+				},
+			},
+		});
+		await interactiveModePrototype.handleReloadCommand.call(context);
+		expect(events).toEqual(
+			bound ? ["reload settings", "refresh scope", "session_start"] : ["reload settings", "refresh scope"],
+		);
 	});
 
 	it("keeps the reload blocker focused until async reload completes", async () => {
