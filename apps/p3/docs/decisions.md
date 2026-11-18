@@ -433,3 +433,6 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
   packages (the API `@earendil-works/p3` that plugins type-check against, Chord and the others) still go to npm. First
   step: the local release build (`release:p3:local`) also makes the executable, and the release tests, the memory test
   and the bench run against it beside the npm install, measured overnight. Later the release uploads the executables.
+- **Base entries live in `src/bootstrap/` (owner, 2026-11-18; refines "Base entries are named after what they are"):**
+  the process entries (the `p3` command, the server, a session worker, the supervisor, the single executable's main)
+  move from `apps/p3/`'s root to `apps/p3/src/bootstrap/`, keeping their names; the root holds no `.ts` files.
