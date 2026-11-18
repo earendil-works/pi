@@ -117,18 +117,21 @@ describe("chat control parity", { skip: !browserTests }, () => {
 				await browser.click('.topbar button[aria-label="Session options"]');
 				await browser.click("[role=dialog] .row-button:nth-child(2)");
 			} else await browser.click(".title-cwd");
-			await browser.wait(`document.querySelector('.directory-use:not(:disabled)')`);
+			await browser.wait(`document.querySelector('.location-use:not(:disabled)')`);
 			assert(
 				await browser.evaluate<boolean>(
-					`document.querySelector('[role=dialog]').getAttribute('aria-label')==='Working directory'`,
+					`document.querySelector('[role=dialog]').getAttribute('aria-label')==='Location'`,
 				),
 			);
+			// The path line turns into a text field: Enter browses there.
+			await browser.click('button[aria-label="Type a path"]');
+			await browser.wait(`document.activeElement?.matches('input[aria-label=Directory]')`);
 			await browser.evaluate(input("input[aria-label=Directory]", directory));
 			await browser.evaluate(`document.querySelector('input[aria-label=Directory]').form.requestSubmit()`);
 			await browser.wait(
-				`document.querySelector('.directory-use:not(:disabled)')?.textContent.trim()===${JSON.stringify(`Use ${directory}`)}`,
+				`document.querySelector('.location-use:not(:disabled)')?.textContent.trim()===${JSON.stringify(`Use ${directory}`)}`,
 			);
-			await browser.click(".directory-use");
+			await browser.click(".location-use");
 			await browser.wait(`document.querySelector('.title-cwd')?.textContent===${JSON.stringify(directory)}`);
 			await browser.wait(
 				`document.querySelector('.messages .assistant')?.textContent.includes('Echo: hello controls')`,
@@ -140,8 +143,12 @@ describe("chat control parity", { skip: !browserTests }, () => {
 		await chat.send({ text: "slow controls", requestId: "slow-controls" }, BACKGROUND_CONTEXT);
 		await browser.wait(`document.querySelector('button[aria-label=Stop]')`);
 		await browser.click(".title-cwd");
-		await browser.wait(`document.querySelector('.directory-use:not(:disabled)')`);
-		await browser.click(".directory-use");
+		await browser.wait(`document.querySelector('.location-use:not(:disabled)')`);
+		await browser.click('button[aria-label="Type a path"]');
+		await browser.evaluate(input("input[aria-label=Directory]", join(fixture.workspace, "moved")));
+		await browser.evaluate(`document.querySelector('input[aria-label=Directory]').form.requestSubmit()`);
+		await browser.wait(`document.querySelector('.location-use:not(:disabled)')?.textContent.endsWith('/moved')`);
+		await browser.click(".location-use");
 		await browser.wait(
 			`document.querySelector('.toast')?.textContent.includes('Stop the current run before changing directory')`,
 		);

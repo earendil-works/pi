@@ -609,3 +609,56 @@
 	letter-spacing: 0.04em;
 	text-transform: uppercase;
 }
+
+/* A project's ⋯ (its commands): with a fine pointer it shows while the row is hovered or has keyboard focus, laid out
+   at rest so nothing moves; on touch screens a long press on the row opens the same commands, so it is not shown. */
+.nav-row > .nav-control.group-options {
+	opacity: 0;
+}
+.nav-row:is(:hover, :has(:focus-visible)) > .nav-control.group-options,
+.archived-project > .nav-control.group-options {
+	opacity: 1;
+}
+@media (pointer: coarse) {
+	.sidebar-group .nav-row > .nav-control.group-options {
+		display: none;
+	}
+}
+
+/* Drag and drop (drag.ts): the dragged row's name follows the pointer; a project's group or the sessions without a
+   project are filled while a session would land there; a line shows where a dragged project would go. */
+.sidebar-drag-ghost {
+	position: fixed;
+	inset: 0 auto auto 0;
+	z-index: 1000;
+	max-width: 240px;
+	padding: var(--s1) var(--s2);
+	overflow: hidden;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg);
+	color: var(--text);
+	font-size: var(--semantic-typography-ui-secondary-font-size);
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	pointer-events: none;
+}
+body.sidebar-dragging,
+body.sidebar-dragging * {
+	cursor: grabbing;
+	user-select: none;
+}
+.sidebar-group.drop-into > .nav-row,
+.sidebar-section.headless.drop-into {
+	background: var(--hover);
+}
+.sidebar-group.drop-before > .nav-row {
+	box-shadow: inset 0 2px 0 var(--text);
+}
+.sidebar-group.drop-after {
+	box-shadow: inset 0 -2px 0 var(--text);
+}
+/* While dragging, the sessions without a project take a drop even when there are none. */
+body.sidebar-dragging .sidebar-section.headless {
+	min-height: var(--nav-row);
+}

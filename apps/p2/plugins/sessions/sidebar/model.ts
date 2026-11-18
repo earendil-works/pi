@@ -5,7 +5,6 @@
 // return.
 
 import type { Project } from "../../projects/contract.ts";
-import { projectAt } from "../../projects/place.ts";
 import type { RollupWindow } from "../../rollups/contract.ts";
 import type { RunFailure, Work } from "../../status/contract.ts";
 import type { Child } from "../../subagents/contract.ts";
@@ -113,9 +112,11 @@ export function keyPart(text: string): string {
 
 const live = (rows: readonly SidebarRow[]) => rows.filter((row) => !row.archivedAt);
 
-/** The project `row` belongs to: the one it joined, else the one whose place holds its folder (`projectAt`). */
-export const projectOf = (row: SidebarRow, { projects, memberships }: RollupContext) =>
-	projectAt(projects, row.env ?? null, row.cwd, memberships[row.id]);
+/** The live project `row` belongs to: the one the owner put it in (none for an archived project's). */
+export const projectOf = (row: SidebarRow, { projects, memberships }: RollupContext): Project | undefined => {
+	const name = memberships[row.id];
+	return name === undefined ? undefined : projects.find((project) => project.name === name);
+};
 
 /**
  * The folders sessions work in, one group each, by name: not a section of the sidebar (it is organised by project), but
@@ -170,7 +171,7 @@ export const ROLLUPS: readonly Rollup[] = [
 		name: "Projects",
 		archived: false,
 		prefix: "project:",
-		// One group per project of projects.json, in the file's order, sessions or not (a new one starts from its "+").
+		// One group per live project, in the owner's order, sessions or not (a new one starts from its "+").
 		collect: (rows, context) => {
 			const { projects } = context;
 			const byProject = new Map<string, SidebarRow[]>();

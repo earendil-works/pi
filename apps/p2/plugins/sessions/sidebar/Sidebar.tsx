@@ -3,8 +3,9 @@
 // and the guest's list of shared sessions. Every row has the same shape (NavRow.tsx): a marker, a label, details and
 // controls at the trailing end. The owner's list starts with the rows plugins put there (the Familiar's), then the row
 // that opens the new-session screen. A rollup's name opens its list page, its chevron shows or hides its sessions; the
-// Projects rollup's "+" creates a project; a group's row shows or hides its sessions; a session's row opens it, its
-// chevron shows or hides its subagents. It renders what model.ts computes and calls back for every action.
+// Projects rollup's "+" creates a project; a group's row shows or hides its sessions, a project's ⋯ (or a long press)
+// opens its commands; a session's row opens it, its chevron shows or hides its subagents. With a mouse, sessions and
+// projects are dragged (drag.ts). It renders what model.ts computes and calls back for every action.
 import { type Grant, grantMode } from "@p2/app/v1";
 import {
 	NavAddIcon,
@@ -12,16 +13,27 @@ import {
 	NavLockIcon,
 	NavMoreIcon,
 	NEW_SESSION,
+	openCommandMenu,
 	PiLogo,
 	Sidebar,
 	SideNavigation,
 	ThemeButton,
 	useLinkHref,
 } from "@p2/app/v1/web";
-import { memo, type ReactNode, useEffect, useId, useState } from "react";
+import { type ComponentProps, memo, type ReactNode, useEffect, useId, useState } from "react";
+import { projectTarget } from "../project-commands.tsx";
+import { type DropActions, useSidebarDrag } from "./drag.ts";
 import { type GroupSection, type NewTarget, PROJECTS, type Section, type SidebarRow } from "./model.ts";
 import { NavRow } from "./NavRow.tsx";
-import { HiddenAttention, pageRoute, type RowActions, SessionItem, Toggle, useOpenedFrom } from "./Row.tsx";
+import {
+	HiddenAttention,
+	pageRoute,
+	type RowActions,
+	SessionItem,
+	TargetNavRow,
+	Toggle,
+	useOpenedFrom,
+} from "./Row.tsx";
 import "./style.css";
 
 /** The current time, again every minute: a rollup's window passes while the sidebar is shown. */
@@ -45,15 +57,17 @@ type HeadingActions = {
 	onNewIn?: (target: NewTarget) => void;
 	/** Starts a new project (the Projects rollup's "+"; the owner's). */
 	onNewProject?: () => void;
+	/** Whether a project's row has its commands (⋯, a long press; the owner's). */
+	projectMenus?: boolean;
 };
 
 /**
- * A group inside a rollup: its row (a folder, a lock for a sandbox; its name, "+"), which shows
+ * A group inside a rollup: its row (a folder, a lock for a sandbox; its name, a project's ⋯, "+"), which shows
  * or hides its relevant sessions below it, one step in. Its tooltip is its path (a project's: its places). Collapsed, it
  * says what its hidden sessions do: how many run, failed or have a new answer.
  */
 function GroupItem({ group, rows, actions }: { group: GroupSection; rows: RowActions; actions: HeadingActions }) {
-	const { onCollapse, onNewIn, connected } = actions;
+	const { onCollapse, onNewIn, connected, projectMenus } = actions;
 	const { target } = group;
 	const listId = useId();
 	// A project's tooltip: its places, one per line.
@@ -63,37 +77,53 @@ function GroupItem({ group, rows, actions }: { group: GroupSection; rows: RowAct
 			: undefined;
 	const marker = group.sandboxed ? <NavLockIcon size={16} aria-label="Sandbox" /> : <NavFolderIcon size={16} />;
 	const label = <span className="session-title">{group.name}</span>;
+	const menu = projectMenus && target?.kind === "project" ? projectTarget(target.project.name) : undefined;
+	const row: ComponentProps<typeof NavRow> = {
+		className: "group-row",
+		linkClassName: "group-link",
+		...(onCollapse ? { expanded: !group.collapsed, controlsId: listId } : {}),
+		title: group.title ?? (places || undefined),
+		onActivate: () => onCollapse?.(group.key, !group.collapsed),
+		marker,
+		label,
+		details: group.hidden.working + group.hidden.failed + group.hidden.unread > 0 && (
+			<HiddenAttention activity={group.hidden} />
+		),
+		controls: (
+			<>
+				{menu && (
+					<button
+						type="button"
+						className="nav-control group-options"
+						aria-label={`${group.name} options`}
+						title="Options"
+						onClick={() => openCommandMenu(menu)}
+					>
+						<NavMoreIcon size={16} />
+					</button>
+				)}
+				{onNewIn && target && (
+					<button
+						type="button"
+						className="nav-control group-new"
+						aria-label={`New session in ${group.name}`}
+						title={`New session in ${group.name}`}
+						disabled={!connected}
+						onClick={() => onNewIn(target)}
+					>
+						<NavAddIcon size={16} />
+					</button>
+				)}
+			</>
+		),
+	};
 	return (
-		<SideNavigation.Item className="sidebar-group" data-key={group.key}>
-			<NavRow
-				className="group-row"
-				linkClassName="group-link"
-				{...(onCollapse ? { expanded: !group.collapsed, controlsId: listId } : {})}
-				title={group.title ?? (places || undefined)}
-				onActivate={() => onCollapse?.(group.key, !group.collapsed)}
-				marker={marker}
-				label={label}
-				details={
-					group.hidden.working + group.hidden.failed + group.hidden.unread > 0 && (
-						<HiddenAttention activity={group.hidden} />
-					)
-				}
-				controls={
-					onNewIn &&
-					target && (
-						<button
-							type="button"
-							className="nav-control group-new"
-							aria-label={`New session in ${group.name}`}
-							title={`New session in ${group.name}`}
-							disabled={!connected}
-							onClick={() => onNewIn(target)}
-						>
-							<NavAddIcon size={16} />
-						</button>
-					)
-				}
-			/>
+		<SideNavigation.Item
+			className="sidebar-group"
+			data-key={group.key}
+			{...(target?.kind === "project" ? { "data-project": target.project.name } : {})}
+		>
+			{menu ? <TargetNavRow menu={menu} {...row} /> : <NavRow {...row} />}
 			<SideNavigation.List className="group-items" id={listId} hidden={group.collapsed}>
 				{group.rows.map((session) => (
 					<SessionItem key={session.id} session={session} scope={group.key} actions={rows} />
@@ -270,6 +300,7 @@ export const SidebarView = memo(function SidebarView({
 	onCollapse,
 	onPage,
 	onCollapseSidebar,
+	drop,
 	headerActions,
 	footerActions,
 }: {
@@ -311,6 +342,8 @@ export const SidebarView = memo(function SidebarView({
 	/** Opens a rollup's or a group's list in the main area. */
 	onPage: (key: string) => void;
 	onCollapseSidebar: () => void;
+	/** Moving sessions and projects by drag and drop (the owner's): what a drop does. */
+	drop?: DropActions;
 	/** Icon buttons in the owner's header, before the collapse button (e.g. the scope prompt's). */
 	headerActions?: ReactNode;
 	/** Icon buttons at the footer's end, before the theme switch (the owner's), e.g. the Settings gear. */
@@ -323,6 +356,7 @@ export const SidebarView = memo(function SidebarView({
 	const from = activeId === undefined ? undefined : openedFrom[activeId];
 	const activeScope = from !== undefined && places.includes(from) ? from : (places[0] ?? "");
 	const actions: RowActions = {
+		dragging: drop !== undefined && !guest,
 		activeId,
 		activeScope,
 		conversationId,
@@ -334,7 +368,17 @@ export const SidebarView = memo(function SidebarView({
 		onArchive,
 		onArchiveAgent,
 	};
-	const headings: HeadingActions = { page, connected, onPage, onCollapse, onOptions, onNewIn, onNewProject };
+	const headings: HeadingActions = {
+		page,
+		connected,
+		onPage,
+		onCollapse,
+		onOptions,
+		onNewIn,
+		onNewProject,
+		projectMenus: drop !== undefined,
+	};
+	useSidebarDrag(guest ? undefined : drop);
 	// p2's layout hides a collapsed sidebar, so the root is never shown collapsed: its trigger only asks for it.
 	const frame = (label: string, header: ReactNode, content: ReactNode, foot: ReactNode) => (
 		<Sidebar.Root
@@ -390,7 +434,7 @@ export const SidebarView = memo(function SidebarView({
 			{headerActions}
 			<Sidebar.Trigger className="collapse-sidebar" aria-label="Collapse sidebar" />
 		</div>,
-		<SideNavigation.Root className="sidebar-nav" aria-label="Rollups">
+		<SideNavigation.Root className="sidebar-nav" aria-label="Rollups" {...(drop ? { "data-drag": "" } : {})}>
 			<SideNavigation.List className="sidebar-start">
 				{startRows}
 				<SideNavigation.Item>

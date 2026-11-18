@@ -1,5 +1,5 @@
 // Which project a place belongs to: the project a session joined, else the project whose place holds the folder most
-// closely (the sidebar groups sessions by it; the chat's top bar shows its glyph). Browser-safe, as contract.ts.
+// closely (the sidebar groups sessions by it). Browser-safe, as contract.ts.
 import { below, type Project, type ProjectPlace } from "./contract.ts";
 
 /**

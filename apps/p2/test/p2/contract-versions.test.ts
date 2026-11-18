@@ -5,7 +5,7 @@
 // the releases that bundled them (`Sessions` v3 and `Catalog` v2 from 0a730c8a7, `Sessions` v4, `Catalog` v3 and
 // `SessionTree` v1 from e88525506, `SessionTree` v2 from 7670c8be4, `Sessions` v5 from 9ff0ebfd0, `Catalog` v4 from
 // 0a180b049, `Sessions` v6 from 20d86c365, `Envs` v1 from 2a32a605a and v2 from d07548004, `SessionStatus` v1 and
-// `Subagents` v2 from 6e11a00a0, `SessionStatus` v2 from 335814952, `Projects` v1 from b58642efa), so their fingerprints
+// `Subagents` v2 from 6e11a00a0, `SessionStatus` v2 from 335814952, `Projects` v1 from b58642efa and v2 from 0826f9f39), so their fingerprints
 // are the ones old bundles send.
 
 import assert from "node:assert/strict";
@@ -34,6 +34,7 @@ import {
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Envs, EnvTestSchema, SandboxStatusSchema } from "../../plugins/envs/contract.ts";
 import { SandboxMountSchema, SshEnvConfigSchema } from "../../plugins/envs/schema.ts";
+import { Projects } from "../../plugins/projects/contract.ts";
 import { CreateSchema, MAX_TITLE, type Session, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
@@ -408,6 +409,19 @@ const ProjectsV1 = remote("p2.projects", {
 	},
 });
 
+/** 0826f9f39's `Projects` (version 2): `create`, projects.json's `failure` still in its state. */
+const ProjectsV2 = evolve(ProjectsV1, (e) =>
+	e.addMethod(
+		"owner",
+		"create",
+		obj({
+			name: str({ minLength: 1, maxLength: 64 }),
+			place: obj({ env: union([str({ maxLength: 32 }), nul()]), path: str({ minLength: 1, maxLength: 4096 }) }),
+		}),
+		nul(),
+	),
+);
+
 /** 2a32a605a's `Envs` (version 1): rows without `users`, `delete` without `force`. */
 const EnvName = obj({ name: str() });
 const EnvKey = obj({ publicKey: str(), identityFile: str() });
@@ -700,6 +714,20 @@ describe("older contract versions against the current server (fake provider)", (
 			ref.assign({ session: session.id, project: "nope" }, BACKGROUND_CONTEXT),
 			/No project "nope"/,
 		);
+		ref.release();
+	});
+
+	it("binds Projects v2: create and assign into the store; no failure any more", async () => {
+		const ref = await boundIn(owner, ProjectsV2, {}, "owner");
+		assert.equal(await until(ref.failure, (value) => value !== undefined), null);
+		await ref.create({ name: "v2-project", place: { env: null, path: "/v2" } }, BACKGROUND_CONTEXT);
+		await until(ref.projects, (list) => Boolean(list?.some((project) => project.name === "v2-project")));
+		await ref.assign({ session: session.id, project: "v2-project" }, BACKGROUND_CONTEXT);
+		await until(ref.sessions, (map) => map?.[session.id] === "v2-project");
+		const current = await holdIn(owner, Projects, {}, "owner");
+		await current.remove({ name: "v2-project" }, BACKGROUND_CONTEXT);
+		await until(ref.sessions, (map) => map?.[session.id] === undefined);
+		current.release();
 		ref.release();
 	});
 

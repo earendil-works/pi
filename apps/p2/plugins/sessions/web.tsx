@@ -10,7 +10,6 @@ import {
 	grantMode,
 	type HeldIn,
 	keptIn,
-	LOCAL,
 	liveIn,
 	whenLive,
 } from "@p2/app/v1";
@@ -45,7 +44,7 @@ import {
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Envs } from "../envs/contract.ts";
 import { DirectoryPicker, directoryPickerLayer } from "../envs/contract.web.tsx";
-import { type ProjectPlace, Projects, placeOn } from "../projects/contract.ts";
+import { type ArchivedProject, type Project, type ProjectPlace, Projects } from "../projects/contract.ts";
 import { SidebarRollups } from "../rollups/contract.ts";
 import { Search, SessionReads } from "../search/contract.ts";
 import { SessionStatus } from "../status/contract.ts";
@@ -57,6 +56,13 @@ import { BRANCH_SHEET, BranchSheet } from "./BranchSheet.tsx";
 import { SESSION_COMMANDS, SESSION_PAGES, SESSION_SEARCH } from "./commands.tsx";
 import { type Operation, type Session, Sessions, SidebarSettings, type SidebarWindow } from "./contract.ts";
 import { type DrawerRows, DrawerRowsContext } from "./contract.web.tsx";
+import {
+	locatingProject,
+	PROJECT_COMMANDS,
+	PROJECT_LOCATION,
+	PROJECT_PAGES,
+	projectJoin,
+} from "./project-commands.tsx";
 import { SessionSheet } from "./SessionSheet.tsx";
 import { customKey, customRollup } from "./sidebar/custom.ts";
 import { ListPage } from "./sidebar/ListPage.tsx";
@@ -69,7 +75,6 @@ import {
 	type NewTarget,
 	OTHER,
 	PROJECTS,
-	projectOf,
 	ROLLUPS,
 	type RollupContext,
 	type SidebarRow,
@@ -85,6 +90,34 @@ import { SidebarView, useNow } from "./sidebar/Sidebar.tsx";
 
 /** Closes the top layer only (a sheet), keeping those below it (a phone's drawer). */
 const closeTopLayer = () => void getNavigation().close((route) => ({ ...route, layers: route.layers.slice(0, -1) }));
+
+/** No archived projects (one value, so the page data keeps its identity across renders). */
+const NO_ARCHIVED: readonly ArchivedProject[] = [];
+
+/** The projects and the sessions' projects as the sidebar shows them: as known, with the owner's moves in flight. */
+type ProjectsShown = {
+	readonly projects: readonly Project[] | undefined;
+	readonly memberships: Readonly<Record<string, string>> | undefined;
+};
+
+/** A move in flight: a session to a project (null: to none), or a project before another one (null: to the end). */
+type ProjectGuess =
+	| { readonly kind: "assign"; readonly session: string; readonly project: string | null }
+	| { readonly kind: "move"; readonly name: string; readonly before: string | null };
+
+/** `shown` with `guess` applied, as the server will have it. */
+function applyProjectGuess(shown: ProjectsShown, guess: ProjectGuess): ProjectsShown {
+	if (guess.kind === "assign") {
+		const { [guess.session]: _left, ...others } = shown.memberships ?? {};
+		return { ...shown, memberships: guess.project === null ? others : { ...others, [guess.session]: guess.project } };
+	}
+	const list = shown.projects ?? [];
+	const moved = list.find((project) => project.name === guess.name);
+	if (!moved || guess.before === guess.name) return shown;
+	const rest = list.filter((project) => project !== moved);
+	const at = guess.before === null ? -1 : rest.findIndex((project) => project.name === guess.before);
+	return { ...shown, projects: at === -1 ? [...rest, moved] : [...rest.slice(0, at), moved, ...rest.slice(at)] };
+}
 
 /** A session without subagents (one value, so its rows keep their identity across renders). */
 const NO_SUBAGENTS: readonly Child[] = [];
@@ -231,12 +264,41 @@ function useSidebarData() {
 			}),
 		[list, statuses, children, answers, reads, operations, dismiss],
 	);
-	// The projects rollup reads projects.json and the sessions' projects (`Projects`, from the projects plugin).
+	// The projects rollup reads the projects and the sessions' projects (`Projects`, from the projects plugin); moving a
+	// session or a project shows at once.
 	const projectsHeld = useObject(Projects, owner ? {} : undefined);
 	const projectsKept = keptIn(projectsHeld, "owner");
-	const projects = useReadable(projectsKept?.projects);
-	const memberships = useReadable(projectsKept?.sessions);
-	const localLabel = useReadable(projectsKept?.local);
+	const knownProjects = useReadable(projectsKept?.projects);
+	const knownMemberships = useReadable(projectsKept?.sessions);
+	const archivedProjects = useReadable(projectsKept?.archived) ?? NO_ARCHIVED;
+	const [shownProjects, guessProjects] = useOptimisticCall<ProjectsShown, ProjectGuess>(
+		useMemo(() => ({ projects: knownProjects, memberships: knownMemberships }), [knownProjects, knownMemberships]),
+		applyProjectGuess,
+		fail,
+	);
+	const { projects, memberships } = shownProjects;
+	/** Shows `guess` at once and calls `call` with the live projects; offline the call fails, rolling it back. */
+	const changeProjects = useCallback(
+		(guess: ProjectGuess, call: (live: HeldIn<typeof Projects, "owner">) => Promise<unknown>) =>
+			guessProjects(guess, async () => {
+				const live = liveIn(projectsHeld, "owner");
+				if (!live) throw new Error("Not connected");
+				await call(live);
+			}),
+		[guessProjects, projectsHeld],
+	);
+	const onAssign = useCallback(
+		(session: string, project: string | null) =>
+			changeProjects({ kind: "assign", session, project }, (live) =>
+				live.assign({ session, project }, BACKGROUND_CONTEXT),
+			),
+		[changeProjects],
+	);
+	const onMoveProject = useCallback(
+		(name: string, before: string | null) =>
+			changeProjects({ kind: "move", name, before }, (live) => live.move({ name, before }, BACKGROUND_CONTEXT)),
+		[changeProjects],
+	);
 	// Folders on a sandbox environment show a lock; only the owner reads environments.
 	const envs = useReadable(useObject(Envs, owner ? {} : undefined)?.envs);
 	const context = useMemo(
@@ -372,7 +434,9 @@ function useSidebarData() {
 		onSearch,
 		projects,
 		projectsHeld,
-		localLabel,
+		archivedProjects,
+		onAssign,
+		onMoveProject,
 		context,
 		settings,
 		changeSettings,
@@ -486,36 +550,22 @@ function Sidebar() {
 			() => withTree(session.id, (tree) => tree.rename({ conversation, label }, BACKGROUND_CONTEXT)),
 		);
 	const sessionSheet = useSheet("session");
-	const { projectsHeld, localLabel, writable, onCancel, onArchive, onArchiveAgent } = data;
+	const { projectsHeld, archivedProjects, onAssign, onMoveProject, writable, onCancel, onArchive, onArchiveAgent } =
+		data;
 	/**
 	 * A group's "+": a folder's new session starts in the folder; a project's joins the project (once it exists) and
-	 * starts at its place on the machine of its most recently active session (as the group has it), else at its first
-	 * place.
+	 * starts at its default place.
 	 */
 	const onNewIn = useCallback(
 		(target: NewTarget) => {
 			if (target.kind === "folder") return startNewSession({ location: { env: target.env, cwd: target.cwd } });
-			const latest = rows
-				.filter((row) => !row.archivedAt && projectOf(row, context)?.name === target.project.name)
-				.toSorted((a, b) => b.updatedAt - a.updatedAt)[0];
-			const place =
-				(latest && placeOn(target.project, latest.env ?? LOCAL, localLabel ?? "")) ?? target.project.places[0];
+			const place = target.project.places[0];
 			startNewSession({
 				...(place ? { location: { env: place.env, cwd: place.path } } : {}),
-				join: {
-					label: target.project.name,
-					// The page is connected (the session was just created): wait for the projects to be live too.
-					run: async (session) => {
-						if (!projectsHeld) throw new Error("Only the owner has projects");
-						await whenLive(projectsHeld);
-						const live = liveIn(projectsHeld, "owner");
-						if (!live) throw new Error("Only the owner has projects");
-						await live.assign({ session, project: target.project.name }, BACKGROUND_CONTEXT);
-					},
-				},
+				join: projectJoin(host, target.project.name),
 			});
 		},
-		[rows, context, localLabel, projectsHeld],
+		[host],
 	);
 	const onCollapse = useCallback(
 		(key: string, collapsed: boolean) =>
@@ -529,6 +579,7 @@ function Sidebar() {
 		[],
 	);
 	const ownerNewIn = owner ? onNewIn : undefined;
+	const drop = useMemo(() => (owner ? { onAssign, onMoveProject } : undefined), [owner, onAssign, onMoveProject]);
 	useEffect(() => publishWanting(wantingOf(rows, route.session)), [rows, route.session]);
 	useEffect(
 		() =>
@@ -552,6 +603,8 @@ function Sidebar() {
 				onArchiveAgent,
 				...(onSearch ? { onSearch } : {}),
 				...(ownerNewIn ? { onNewIn: ownerNewIn } : {}),
+				archivedProjects,
+				...(owner ? { onAssign, onMoveProject } : {}),
 			}),
 		[
 			rolledUp,
@@ -571,6 +624,9 @@ function Sidebar() {
 			onArchiveAgent,
 			onSearch,
 			ownerNewIn,
+			archivedProjects,
+			onAssign,
+			onMoveProject,
 		],
 	);
 	const rollupSheet = useSheet("sidebar-rollup");
@@ -598,6 +654,13 @@ function Sidebar() {
 		};
 	};
 	const projectFolder = useSheet(PROJECT_FOLDER);
+	// A project's Change default location… (project-commands.tsx): the picker, then the project's new default place.
+	const projectLocation = useSheet(PROJECT_LOCATION);
+	const locating = projectLocation && context.projects.find((project) => project.name === locatingProject());
+	const withProjects = (action: (live: HeldIn<typeof Projects, "owner">) => Promise<unknown>) => {
+		const live = projectsHeld && liveIn(projectsHeld, "owner");
+		return live ? action(live).catch(fail) : fail(new Error("Not connected"));
+	};
 	const newProject = useSheet(NEW_PROJECT);
 	const newPlace = placeOf(newProject?.locator);
 	/** Each step of New project is a layer over the rollup's options: Back returns to the previous one. */
@@ -655,6 +718,7 @@ function Sidebar() {
 				onCollapse={owner ? onCollapse : undefined}
 				onPage={openPage}
 				onCollapseSidebar={toggleSidebar}
+				{...(drop ? { drop } : {})}
 				headerActions={headerActions}
 				footerActions={actions}
 			/>
@@ -675,9 +739,26 @@ function Sidebar() {
 				<DirectoryPicker
 					sheet={PROJECT_FOLDER}
 					title="Project folder"
+					sessions={list}
 					env={null}
 					value="~"
 					onChange={(env, path) => pushLayer(newProjectLayer({ env, path }))}
+					onClose={closeLayers}
+				/>
+			)}
+			{projectLocation && locating && (
+				<DirectoryPicker
+					sheet={PROJECT_LOCATION}
+					title={`Default location of ${locating.name}`}
+					sessions={list}
+					env={locating.places[0]?.env ?? null}
+					value={locating.places[0]?.path ?? "~"}
+					onChange={(env, path) => {
+						closeLayers();
+						void withProjects((live) =>
+							live.locate({ name: locating.name, place: { env, path } }, BACKGROUND_CONTEXT),
+						);
+					}}
 					onClose={closeLayers}
 				/>
 			)}
@@ -685,7 +766,7 @@ function Sidebar() {
 				<NewProjectSheet
 					key={newProject.locator}
 					place={newPlace}
-					taken={context.projects.map((project) => project.name)}
+					taken={[...context.projects, ...archivedProjects].map((project) => project.name)}
 					onCreate={(name) => createProject(name, newPlace)}
 					onClose={closeLayers}
 				/>
@@ -763,6 +844,7 @@ function SectionPage() {
 			}}
 			{...(data.onSearch ? { onSearch: data.onSearch } : {})}
 			{...(data.onNewIn ? { onNewIn: data.onNewIn } : {})}
+			archivedProjects={data.archivedProjects}
 		/>
 	);
 }
@@ -810,8 +892,8 @@ export default defineFacet((host) => {
 			"session-options": SessionOptions,
 			"menu-badge": MenuBadge,
 		});
-		self.contribute(Commands, SESSION_COMMANDS);
-		self.contribute(CommandPages, SESSION_PAGES);
+		self.contribute(Commands, { ...SESSION_COMMANDS, ...PROJECT_COMMANDS });
+		self.contribute(CommandPages, { ...SESSION_PAGES, ...PROJECT_PAGES });
 		self.contribute(CommandSearches, { sessions: SESSION_SEARCH });
 	});
 });

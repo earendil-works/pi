@@ -1,10 +1,8 @@
-// Which project a place belongs to (plugins/projects/place.ts: the sidebar's project groups) and the glyph seed it shows
-// (plugins/projects/glyph-seed.ts: the chat's top bar): a session's membership first, else the closest place on its
-// machine that holds the folder.
+// Which project a place belongs to (plugins/projects/place.ts: the sidebar's project groups): a session's membership
+// first, else the closest place on its machine that holds the folder.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Project } from "../../plugins/projects/contract.ts";
-import { placeSeed } from "../../plugins/projects/glyph-seed.ts";
 import { projectAt } from "../../plugins/projects/place.ts";
 
 const MONO: Project = { name: "mono", places: [{ env: null, path: "/w" }] };
@@ -41,14 +39,5 @@ describe("projectAt", () => {
 		assert.equal(nameAt("box", "/w/web"), undefined);
 		// A joined name that no project has falls back to the folder.
 		assert.equal(nameAt(null, "/x/remote", "gone"), "remote");
-	});
-});
-
-describe("placeSeed", () => {
-	it("seeds a place by its project's first place, else by its own path", () => {
-		assert.equal(placeSeed(PROJECTS, "gpu", "/home/ck/remote"), "~/remote");
-		assert.equal(placeSeed(PROJECTS, null, "/x/remote/a"), "~/remote");
-		assert.equal(placeSeed(PROJECTS, "box", "/srv/app"), "/srv/app");
-		assert.equal(placeSeed(PROJECTS, "box", "/srv/app", "nowhere"), "nowhere");
 	});
 });

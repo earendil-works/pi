@@ -108,21 +108,23 @@ describe("sectionsOf", () => {
 		);
 	});
 
-	it("puts a session in the project whose place holds its folder, unless it joined another one", () => {
+	it("puts a session in the project the owner put it in only: never by its folder, none for a project gone", () => {
 		const rows = [
 			row("inside", { cwd: "/w/web/src" }),
 			row("joined", { cwd: "/w/web" }),
 			row("outside", { cwd: "/w/x" }),
+			row("archived-project", { cwd: "/w/pi" }),
 		];
-		const context = { ...CONTEXT, memberships: { joined: "pi" } };
+		// "archived-project" names a project that is not live (archived or deleted): it shows without one.
+		const context = { ...CONTEXT, memberships: { joined: "pi", outside: "web", "archived-project": "old" } };
 		assert.deepEqual(sectionsOf(ROLLUPS, rows, context, VIEW).map(short).slice(0, 2), [
-			[OTHER, "sessions", ["outside"]],
+			[OTHER, "sessions", ["inside", "archived-project"]],
 			[
 				PROJECTS,
 				"groups",
 				[
 					[projectKey("pi"), ["joined"]],
-					[projectKey("web"), ["inside"]],
+					[projectKey("web"), ["outside"]],
 				],
 			],
 		]);
@@ -214,18 +216,18 @@ describe("activity", () => {
 	});
 
 	it("says what a collapsed rollup or group hides, and nothing while it shows its sessions", () => {
-		const rows = states.map((each) => ({ ...each, cwd: "/w/pi" }));
 		const idle = { working: 0, failed: 0, unread: 0 };
 		const all = { working: 3, failed: 3, unread: 2 };
-		const open = sectionsOf(ROLLUPS, rows, CONTEXT, VIEW);
+		// Every one is in pi.
+		const context = { ...CONTEXT, memberships: Object.fromEntries(states.map((each) => [each.id, "pi"])) };
+		const open = sectionsOf(ROLLUPS, states, context, VIEW);
 		for (const section of open) if (section.layout !== "link") assert.deepEqual(section.hidden, idle);
-		// Every one works in pi's place: they are pi's sessions.
-		const closed = sectionsOf(ROLLUPS, rows, CONTEXT, { ...VIEW, collapsed: { [projectKey("pi")]: true } });
+		const closed = sectionsOf(ROLLUPS, states, context, { ...VIEW, collapsed: { [projectKey("pi")]: true } });
 		const projects = closed[1]!;
 		assert.ok(projects.layout === "groups");
 		assert.deepEqual(projects.hidden, idle);
 		assert.deepEqual(projects.groups[0]!.hidden, all);
-		const rolled = sectionsOf(ROLLUPS, rows, CONTEXT, { ...VIEW, collapsed: { [PROJECTS]: true } })[1]!;
+		const rolled = sectionsOf(ROLLUPS, states, context, { ...VIEW, collapsed: { [PROJECTS]: true } })[1]!;
 		assert.deepEqual(rolled.layout === "groups" && rolled.hidden, all);
 		// A collapsed rollup of groups counts a session in two groups once (a rollup made from code may list it twice).
 		const twice = {
@@ -238,7 +240,7 @@ describe("activity", () => {
 				],
 			}),
 		};
-		const [both] = sectionsOf([twice], rows, CONTEXT, { ...VIEW, collapsed: { [twice.key]: true } });
+		const [both] = sectionsOf([twice], states, CONTEXT, { ...VIEW, collapsed: { [twice.key]: true } });
 		assert.deepEqual(both!.layout === "groups" && both!.hidden, all);
 	});
 

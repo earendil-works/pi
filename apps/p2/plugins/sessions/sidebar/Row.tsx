@@ -1,7 +1,8 @@
 // The rows of the sidebar and its list pages, items of Elanor's side navigation. A session and each of its subagents
 // are the same item (`AgentItem`): a status, a name and a detail. The status is pi's working dots while it runs, a blue
-// dot for an answer not read yet, a red dot for a failure, nothing while idle. The detail is how long ago its last
-// message was; under a fine pointer, on hover or keyboard focus, it gives way to the item's one action, an icon button:
+// dot for an answer not read yet, a red dot for a failure, nothing while idle; a session's is its main conversation's,
+// what wants the owner first, and work its status does not show (subagents) shows as dots before the detail. The
+// detail is how long ago its last message was; under a fine pointer, on hover or keyboard focus, it gives way to the item's one action, an icon button:
 // Cancel (a cross in a circle) while it runs, Archive while idle (on touch screens the item's command menu has them,
 // commands.tsx). The name is cut with "…" before the detail. A session lists its subagents below it (its chevron shows
 // or hides them); its `/tree` branches are not listed.
@@ -18,6 +19,7 @@ import {
 	SideNavigation,
 	shortPath,
 	useCommandMenuRow,
+	useCommandTargetRow,
 	useLinkHref,
 } from "@p2/app/v1/web";
 import { type ComponentProps, type ReactNode, useEffect, useId, useMemo, useState, useSyncExternalStore } from "react";
@@ -192,6 +194,7 @@ function AgentItem({
 	status,
 	name,
 	unread = false,
+	background,
 	detail,
 	action,
 	selected,
@@ -202,10 +205,13 @@ function AgentItem({
 	linkClassName = "",
 	after,
 	menu,
+	pressMenu = true,
 }: {
 	status: ItemStatus;
 	name: ReactNode;
 	unread?: boolean;
+	/** Before the detail: work the status does not show (a session's subagents running). */
+	background?: ReactNode;
 	detail: string;
 	action?: ItemAction;
 	selected: boolean;
@@ -218,6 +224,8 @@ function AgentItem({
 	/** A control right after the name (a session's chevron). */
 	after?: ReactNode;
 	menu?: CommandTarget;
+	/** Whether a long press opens `menu` (false: the owner's sidebar, where a long press drags, drag.ts). */
+	pressMenu?: boolean;
 }) {
 	const row: ComponentProps<typeof NavRow> = {
 		selected,
@@ -229,7 +237,13 @@ function AgentItem({
 		marker: <StatusMark status={status} />,
 		label: <span className={`session-title ${unread ? "unread" : ""}`}>{name}</span>,
 		after,
-		details: detail || action ? <span className="item-age">{detail}</span> : undefined,
+		details:
+			detail || action || background ? (
+				<>
+					{background}
+					<span className="item-age">{detail}</span>
+				</>
+			) : undefined,
 		controls: action && (
 			<button
 				type="button"
@@ -243,7 +257,13 @@ function AgentItem({
 			</button>
 		),
 	};
-	return menu ? <MenuNavRow menu={menu} {...row} /> : <NavRow {...row} />;
+	if (!menu) return <NavRow {...row} />;
+	return pressMenu ? <MenuNavRow menu={menu} {...row} /> : <TargetNavRow menu={menu} {...row} />;
+}
+
+/** A row that is the command menu's target `menu` while hovered or focused; a long press is someone else's (drag.ts). */
+export function TargetNavRow({ menu, ...row }: ComponentProps<typeof NavRow> & { menu: CommandTarget }) {
+	return <NavRow {...row} target={useCommandTargetRow(menu)} />;
 }
 
 /** A row that is the command menu's target `menu`: while hovered or focused, and opening the menu on a long press. */
@@ -253,6 +273,8 @@ function MenuNavRow({ menu, ...row }: ComponentProps<typeof NavRow> & { menu: Co
 
 /** What a session's row needs to show and act: the shown conversation, the time, and the actions. */
 export type RowActions = {
+	/** A long press on a session drags it (the owner's sidebar, drag.ts) instead of opening its menu. */
+	dragging?: boolean;
 	activeId?: string;
 	/** The one place the open session is selected in (it may show in several); absent: everywhere it shows. */
 	activeScope?: string;
@@ -270,13 +292,32 @@ export type RowActions = {
 	onArchiveAgent?: (id: string, conversation: number) => void;
 };
 
-/** A session's status: a failure first (`failureOf`), then working (any of its conversations), then unread. */
+/**
+ * A session's status, what wants the owner first: a failure (`failureOf`), an unread answer, then its main
+ * conversation working. Its subagents' work never hides that it waits for the owner (`BackgroundWork` shows it).
+ */
 function sessionStatus(session: SidebarRow): ItemStatus {
 	const failure = failureOf(session);
 	if (failure !== undefined) return { kind: "failed", title: failure };
-	if (session.worker.busy.length > 0) return { kind: "working" };
 	if (session.worker.unread) return { kind: "unread" };
+	if (session.worker.busy.includes(session.main)) return { kind: "working" };
 	return { kind: "idle" };
+}
+
+/**
+ * A session's running conversations while its status shows something else (it waits for the owner, or only its
+ * subagents run): pi's dots before the age, with their count when several run. Nothing while its status shows working
+ * (its main conversation runs; its subagents' items show theirs) or nothing runs.
+ */
+function BackgroundWork({ session, status }: { session: SidebarRow; status: ItemStatus }) {
+	const running = session.worker.busy.length;
+	if (status.kind === "working" || running === 0) return null;
+	return (
+		<span className="working-count background-work" title={running > 1 ? `${running} agents running` : "Running"}>
+			<PiDots />
+			{running > 1 && running}
+		</span>
+	);
 }
 
 /**
@@ -352,6 +393,7 @@ export function SessionItem({
 				status={status}
 				name={name}
 				unread={Boolean(worker.unread)}
+				background={archived ? undefined : <BackgroundWork session={session} status={status} />}
 				detail={ago(session.updatedAt, now)}
 				action={action}
 				selected={active && conversationId === main}
@@ -379,6 +421,7 @@ export function SessionItem({
 					)
 				}
 				menu={{ type: "session", id: session.id, kind: "Session", label: session.title }}
+				pressMenu={!actions.dragging}
 			/>
 			{session.operation && (
 				<div className={`session-operation ${session.operation.error === undefined ? "" : "failed"}`}>

@@ -1,6 +1,4 @@
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
@@ -204,8 +202,8 @@ describe("conversations (fake provider)", () => {
 	});
 
 	it("creates sessions in a project or a folder, stops, archives and restores them", async () => {
-		await writeFile(join(fixture.dataDir, "projects.json"), JSON.stringify({ ws: [{ path: fixture.workspace }] }));
 		const projects = await holdIn(owner, Projects, {}, "owner");
+		await projects.create({ name: "ws", place: { env: null, path: fixture.workspace } }, BACKGROUND_CONTEXT);
 		await until(projects.projects, (list) => Boolean(list?.some((project) => project.name === "ws")));
 		const query = { action: "create", project: "ws", message: "hello new" } as const;
 		const created = await broker(alpha, "create-project", query);

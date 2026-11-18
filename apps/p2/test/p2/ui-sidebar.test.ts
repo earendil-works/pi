@@ -1,13 +1,16 @@
 // Browser: the sidebar's rollups on Elanor's side navigation: the sessions without a project first, without a heading
 // (an "N older" row opening their list when the window hides some), then Projects (a group per project holding the
-// sessions that joined it or work inside its place; its "+" creating a project), then the Archive's link. Lists in the
-// main area (aged sessions after the others, dimmed; the list's own search), collapsing rollups and groups, a rollup's
-// window and place, a project group's "+" starting a session in it, what a session does (working, unread) and its sum
-// on collapsed groups and rollups and the menu button, and an item's action shown on hover or keyboard focus in place of
-// its age, its name cut before either. Fake provider, disposable data; every test makes its own sessions.
+// sessions the owner put in it, never by folder; its "+" creating a project), then the Archive's link. Lists in the
+// main area (aged sessions after the others, dimmed; the list's own search; the Archive's archived projects), collapsing
+// rollups and groups, a rollup's window and place, a project group's "+" starting a session in it at its default place,
+// a project's commands (its ⋯: rename, default location, order, archive, delete), Move to project…, drag and drop with
+// a mouse (a session onto a project or the sessions without one, a project before or after another) and on a touch
+// screen (a long press picks a row up; released without moving it opens the row's menu), what a session does
+// (working, unread) and its sum on collapsed groups and rollups and the menu button, and an item's action shown on
+// hover or keyboard focus in place of its age, its name cut before either. Fake provider, disposable data; every test
+// makes its own sessions and projects.
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
@@ -39,6 +42,17 @@ const withAttribute = (attribute: string, value: string) => `[${attribute}=${JSO
 const itemTitled = (title: string) =>
 	`[...document.querySelectorAll('.sidebar-nav .session-row')].find(e=>e.querySelector('.session-title').textContent===${JSON.stringify(title)})`;
 
+/** The open command menu's chip and its row titles, as expressions. */
+const CHIP = `document.querySelector('.command-menu .command-chip')?.textContent`;
+const TITLES = `[...document.querySelectorAll('.command-menu [role=option] .command-title')].map((e) => e.textContent)`;
+/** The open command menu's row titled `title`, as an expression. */
+const option = (title: string) =>
+	`[...document.querySelectorAll('.command-menu [role=option]')].find((o) => o.querySelector('.command-title')?.textContent === ${JSON.stringify(title)})`;
+/** The middle of the element `expression` evaluates to, as an expression. */
+const middle = (expression: string) =>
+	`(() => { const r = (${expression}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`;
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 describe("sidebar rollups", { skip: !browserTests }, () => {
 	let fixture: Fixture;
 	let browser: Browser;
@@ -66,7 +80,7 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 	beforeEach(async (context) => {
 		for (const row of sessions.sessions.value ?? [])
 			if (!row.archivedAt) await sessions.archive({ id: row.id }, BACKGROUND_CONTEXT);
-		await writeProjects({});
+		await setProjects({});
 		for (const key of ["other", "projects", "archive"]) {
 			await settings.setWindow({ key, window: "3d" }, BACKGROUND_CONTEXT);
 			await settings.setCollapsed({ key, collapsed: false }, BACKGROUND_CONTEXT);
@@ -84,33 +98,42 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		return path;
 	};
 	const create = (title: string, cwd: string) => sessions.create({ cwd, title }, BACKGROUND_CONTEXT);
-	/** Writes projects.json (project name to its places) and waits until the server read it. */
-	const writeProjects = async (places: Record<string, string>) => {
-		await writeFile(
-			join(fixture.dataDir, "projects.json"),
-			JSON.stringify(Object.fromEntries(Object.entries(places).map(([name, path]) => [name, [{ path }]]))),
-		);
+	/** Replaces every project (live or archived) by these (project name to its one place, in this order). */
+	const setProjects = async (places: Record<string, string>) => {
+		for (const { name } of [...(projects.projects.value ?? []), ...(projects.archived.value ?? [])])
+			await projects.remove({ name }, BACKGROUND_CONTEXT);
+		for (const [name, path] of Object.entries(places))
+			await projects.create({ name, place: { env: null, path } }, BACKGROUND_CONTEXT);
 		const names = Object.keys(places).join();
 		await until(projects.projects, (list) => list?.map((project) => project.name).join() === names);
+		await until(projects.archived, (list) => list?.length === 0);
 	};
+	/** A session in `project` (the owner put it there). */
+	const createIn = async (title: string, cwd: string, project: string) => {
+		const session = await create(title, cwd);
+		await projects.assign({ session: session.id, project }, BACKGROUND_CONTEXT);
+		return session;
+	};
+	/** A project's group in the sidebar, as a selector. */
+	const groupOf = (name: string) => `.sidebar-group${withAttribute("data-key", projectKey(name))}`;
 
 	it("lists sessions without a project first, without a heading, then projects with theirs, then the Archive", async () => {
 		const home = folder("home");
 		const place = folder("place");
-		await writeProjects({ zebra: place });
+		await setProjects({ zebra: place });
 		const free = await create("Free", home);
-		// Inside the project's place, never assigned: it shows under the project without joining it.
-		const inside = await create("Inside", folder("place/sub"));
+		// In the project because the owner put it there; one inside the project's place but never assigned is not.
+		const inside = await createIn("Inside", folder("place/sub"), "zebra");
+		await create("Unassigned", folder("place/other"));
 		const gone = await create("Gone", home);
 		await sessions.archive({ id: gone.id }, BACKGROUND_CONTEXT);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${free.id}`);
 		await browser.wait(`document.querySelector('.sidebar-group .session-main')`);
 		assert.deepEqual(await browser.evaluate(SECTIONS), [
-			["other", ["Free"]],
+			["other", ["Unassigned", "Free"]],
 			["projects", [["zebra", ["Inside"]]]],
 			["archive", []],
 		]);
-		assert.equal(projects.sessions.value?.[inside.id], undefined);
 		assert.equal(
 			await browser.evaluate(`document.querySelector('.sidebar-section[data-key=other]').matches('.headless')`),
 			true,
@@ -200,9 +223,9 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 
 	it("collapses rollups and groups, and sets a rollup's window and place from its options", async () => {
 		const place = folder("place");
-		await writeProjects({ kept: place });
-		await create("Kept", place);
-		const group = `.sidebar-group${withAttribute("data-key", projectKey("kept"))}`;
+		await setProjects({ kept: place });
+		await createIn("Kept", place, "kept");
+		const group = groupOf("kept");
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.wait(`document.querySelector(${JSON.stringify(`${group} .session-main`)})`);
 		// A group's row shows or hides its sessions; the choice is kept on the server.
@@ -233,10 +256,11 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
 		await browser.click(".sidebar-section[data-key=projects] button.new-project");
 		await browser.wait(`document.querySelector('[role=dialog]')?.textContent.includes('Project folder')`);
-		await browser.evaluate(setInput(".directory-head input.mono", place));
-		await browser.evaluate(`document.querySelector('.directory-head form').requestSubmit()`);
-		await browser.wait(`document.querySelector('.directory-use')?.textContent.endsWith('/fresh')`);
-		await browser.click(".directory-use");
+		await browser.click('button[aria-label="Type a path"]');
+		await browser.evaluate(setInput("input[aria-label=Directory]", place));
+		await browser.evaluate(`document.querySelector('.location-type').requestSubmit()`);
+		await browser.wait(`document.querySelector('.location-use:not(:disabled)')?.textContent.endsWith('/fresh')`);
+		await browser.click(".location-use");
 		// The folder's name is the first guess.
 		await browser.wait(`document.querySelector('[role=dialog] input.input')?.value==='fresh'`);
 		await browser.evaluate(clickInSheet("Create"));
@@ -246,15 +270,15 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		);
 	});
 
-	it("starts a session from a project group's + at its place, in the project, and the next new session in none", async () => {
+	it("starts a session from a project group's + at its default place, in the project, and the next new session in none", async () => {
 		const place = folder("place");
-		await create("Newest", folder("elsewhere"));
-		await writeProjects({ zebra: place });
+		await setProjects({ zebra: place });
+		// Its newest session works elsewhere: the "+" still starts at the project's default place.
+		await createIn("Newest", folder("elsewhere"), "zebra");
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
-		// A project without sessions has its group, with its "+".
-		await browser.click(`.sidebar-group${withAttribute("data-key", projectKey("zebra"))} .group-new`);
+		await browser.click(`${groupOf("zebra")} .group-new`);
 		await browser.wait(
-			`document.querySelector('.cwd-join')?.textContent==='in zebra' && !document.querySelector('.offline') && document.body.textContent.includes('Faux Model')`,
+			`document.querySelector('.project-pick span')?.textContent==='zebra' && document.querySelector('.cwd-pick span')?.textContent.endsWith('/place') && !document.querySelector('.offline') && document.body.textContent.includes('Faux Model')`,
 		);
 		await browser.evaluate(setComposer("Project start"));
 		await browser.click("button[aria-label=Send]");
@@ -263,22 +287,22 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		const created = rows?.find((row) => row.title.startsWith("Project start"));
 		assert.equal(created?.cwd, place);
 		await until(projects.sessions, (members) => members?.[created!.id] === "zebra");
-		await browser.wait(
-			`document.querySelector(${JSON.stringify(`.sidebar-group${withAttribute("data-key", projectKey("zebra"))} .session-main`)})`,
-		);
+		await browser.wait(`document.querySelector(${JSON.stringify(`${groupOf("zebra")} .session-main`)})`);
 		// The next new session joins no project.
 		await browser.click(".new-session");
-		await browser.wait(`document.querySelector('${COMPOSER}') && !document.querySelector('.cwd-join')`);
+		await browser.wait(
+			`document.querySelector('${COMPOSER}') && document.querySelector('.project-pick span')?.textContent==='No project'`,
+		);
 	});
 
 	it("shows what sessions do: pi's dots while working, bold with a dot when unread, summed up when hidden", async () => {
 		const place = folder("work");
-		await writeProjects({ work: place });
-		const runs = await create("Runs", place);
+		await setProjects({ work: place });
+		const runs = await createIn("Runs", place, "work");
 		const looking = await create("Looking", folder("look"));
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${looking.id}`);
 		const item = itemTitled("Runs");
-		const group = `.sidebar-group${withAttribute("data-key", projectKey("work"))}`;
+		const group = groupOf("work");
 		await browser.wait(`Boolean(${item})`);
 		const chat = await holdIn(fixture.browser(), Chat, { session: runs.id, conversation: 1 }, "participant");
 		await chat.send({ text: "slow-tool", requestId: "working" }, BACKGROUND_CONTEXT);
@@ -361,5 +385,293 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		await browser.clickPoint(point.x, point.y);
 		await browser.wait(`!${itemTitled(title)}`);
 		await until(sessions.sessions, (list) => Boolean(list?.find((each) => each.id === long.id)?.archivedAt));
+	});
+
+	/** Waits for the command menu on `chip`, then taps its row `title`. */
+	const choose = async (title: string) => {
+		await browser
+			.wait(option(title))
+			.catch(async () => assert.fail(`no "${title}": ${await browser.evaluate(TITLES)}`));
+		await browser.evaluate(`${option(title)}.click()`);
+	};
+	/** Moves the mouse onto a project's row, then clicks its ⋯, and waits for its menu. */
+	const projectMenu = async (name: string) => {
+		const row = `document.querySelector(${JSON.stringify(`${groupOf(name)} .group-row`)})`;
+		await browser.wait(row);
+		await browser.call("Input.dispatchMouseEvent", { type: "mouseMoved", ...(await browser.evaluate(middle(row))) });
+		await browser.click(`${groupOf(name)} button[aria-label=${JSON.stringify(`${name} options`)}]`);
+		await browser.wait(`${CHIP}===${JSON.stringify(`Project · ${name}`)}`);
+	};
+	const shownProjects = `[...document.querySelectorAll('.sidebar-group[data-project]')].map((e) => e.dataset.project).join()`;
+	const names = () => projects.projects.value?.map((project) => project.name).join();
+
+	it("opens a project's commands from its ⋯: move up and down, rename, default location, archive, restore, delete", async () => {
+		await setProjects({ alpha: folder("alpha"), beta: folder("beta"), gamma: folder("gamma") });
+		const one = await createIn("Alpha one", folder("alpha"), "alpha");
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
+		await browser.wait(`${shownProjects}==='alpha,beta,gamma'`);
+		// The ⋯ shows on hover only.
+		const options = `document.querySelector(${JSON.stringify(`${groupOf("beta")} .group-options`)})`;
+		assert.equal(await browser.evaluate(`getComputedStyle(${options}).opacity`), "0");
+		await projectMenu("beta");
+		assert.deepEqual(
+			(await browser.evaluate<string[]>(TITLES)).filter((title) => /project/i.test(title) || /location/.test(title)),
+			[
+				"Rename project…",
+				"Change default location…",
+				"Move project up",
+				"Move project down",
+				"Archive project",
+				"Delete project…",
+			],
+		);
+		await choose("Move project down");
+		await until(projects.projects, () => names() === "alpha,gamma,beta");
+		await browser.wait(`${shownProjects}==='alpha,gamma,beta'`);
+		// The first has no Move up, the last no Move down.
+		await projectMenu("alpha");
+		await browser.wait(option("Move project down"));
+		assert.ok(!(await browser.evaluate<string[]>(TITLES)).includes("Move project up"));
+		// Rename: the page's query is the new name; the sessions follow.
+		await choose("Rename project…");
+		await browser.wait(`document.activeElement?.matches('.command-menu input')`);
+		await browser.call("Input.insertText", { text: "omega" });
+		await choose("Rename to “omega”");
+		await until(projects.sessions, (members) => members?.[one.id] === "omega");
+		await browser.wait(
+			`${shownProjects}==='omega,gamma,beta' && ${itemTitled("Alpha one")}?.closest('.sidebar-group')?.dataset.project==='omega'`,
+		);
+		// Change default location…: the picker, then the project's new first place.
+		const moved = folder("gamma-moved");
+		await projectMenu("gamma");
+		await choose("Change default location…");
+		await browser.click('button[aria-label="Type a path"]');
+		await browser.evaluate(setInput("input[aria-label=Directory]", moved));
+		await browser.evaluate(`document.querySelector('.location-type').requestSubmit()`);
+		await browser.wait(
+			`document.querySelector('.location-use:not(:disabled)')?.textContent.endsWith('/gamma-moved')`,
+		);
+		await browser.click(".location-use");
+		await until(projects.projects, (list) => list?.find((each) => each.name === "gamma")?.places[0]?.path === moved);
+		// Archive: the project and its session leave the sidebar for the Archive's list.
+		await browser.wait(`!document.querySelector('[role=dialog]')`);
+		await projectMenu("omega");
+		await choose("Archive project");
+		await browser.wait(`${shownProjects}==='gamma,beta' && !${itemTitled("Alpha one")}`);
+		await until(sessions.sessions, (rows) => Boolean(rows?.find((row) => row.id === one.id)?.archivedAt));
+		await browser.click(".sidebar-section[data-key=archive] .group-label");
+		const archived = `document.querySelector('.list-page .archived-project')`;
+		await browser.wait(`location.pathname==='/list/archive' && ${archived}?.textContent.includes('omega')`);
+		await browser.call("Input.dispatchMouseEvent", {
+			type: "mouseMoved",
+			...(await browser.evaluate(middle(archived))),
+		});
+		await browser.click('.list-page button[aria-label="omega options"]');
+		await browser.wait(`${CHIP}==='Archived project · omega'`);
+		await browser.wait(option("Delete project…"));
+		await choose("Restore project");
+		// Back after the live projects, with its session.
+		await browser.wait(`${shownProjects}==='gamma,beta,omega' && ${itemTitled("Alpha one")}`);
+		await browser.wait(`!document.querySelector('.list-page .archived-project')`);
+		// Delete: it goes; its session stays, in no project.
+		await projectMenu("omega");
+		await choose("Delete project…");
+		await choose("Delete “omega”");
+		await until(projects.projects, () => names() === "gamma,beta");
+		await browser.wait(
+			`${shownProjects}==='gamma,beta' && ${itemTitled("Alpha one")}?.closest('.sidebar-section')?.dataset.key==='other'`,
+		);
+		assert.equal(projects.sessions.value?.[one.id], undefined);
+	});
+
+	it("drags with a mouse: a session onto a project or the sessions without one, a project before or after another", async () => {
+		await setProjects({ alpha: folder("alpha"), beta: folder("beta") });
+		const stay = await create("Stay", folder("free"));
+		const loose = await create("Loose", folder("free"));
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${stay.id}`);
+		await browser.wait(`${shownProjects}==='alpha,beta' && ${itemTitled("Loose")}`);
+		/** Drags from the middle of `from` to `to` (or to a point of its row), checking the drop mark before letting go. */
+		const drag = async (from: string, to: string, mark: string, at: "middle" | "top" | "bottom" = "middle") => {
+			const start = await browser.evaluate<{ x: number; y: number }>(middle(from));
+			const box = await browser.evaluate<{ x: number; top: number; bottom: number }>(
+				`(() => { const r = (${to}).getBoundingClientRect(); return { x: r.left + r.width / 2, top: r.top, bottom: r.bottom }; })()`,
+			);
+			const y = at === "top" ? box.top + 4 : at === "bottom" ? box.bottom - 4 : (box.top + box.bottom) / 2;
+			await browser.call("Input.dispatchMouseEvent", { type: "mouseMoved", ...start });
+			await browser.call("Input.dispatchMouseEvent", {
+				type: "mousePressed",
+				...start,
+				button: "left",
+				clickCount: 1,
+			});
+			for (let step = 1; step <= 8; step++)
+				await browser.call("Input.dispatchMouseEvent", {
+					type: "mouseMoved",
+					x: start.x + ((box.x - start.x) * step) / 8,
+					y: start.y + ((y - start.y) * step) / 8,
+					button: "left",
+					buttons: 1,
+				});
+			await browser.wait(
+				`document.querySelector('.sidebar-drag-ghost') && document.querySelector(${JSON.stringify(mark)})`,
+			);
+			await browser.call("Input.dispatchMouseEvent", {
+				type: "mouseReleased",
+				x: box.x,
+				y,
+				button: "left",
+				clickCount: 1,
+			});
+			await browser.wait(
+				`!document.querySelector('.sidebar-drag-ghost') && !document.querySelector('.drop-into, .drop-before, .drop-after')`,
+			);
+		};
+		const header = (title: string) => `${itemTitled(title)}.querySelector('.session-header')`;
+		const groupRow = (name: string) => `document.querySelector(${JSON.stringify(`${groupOf(name)} .group-row`)})`;
+		// A session onto a project's group joins it; the drop opens nothing.
+		await drag(header("Loose"), groupRow("beta"), `${groupOf("beta")}.drop-into`);
+		await until(projects.sessions, (members) => members?.[loose.id] === "beta");
+		await browser.wait(`${itemTitled("Loose")}?.closest('.sidebar-group')?.dataset.project==='beta'`);
+		assert.equal(await browser.evaluate("location.pathname"), `/s/${stay.id}`);
+		// Onto the sessions without a project: it leaves the project.
+		await drag(header("Loose"), header("Stay"), ".sidebar-section.headless.drop-into");
+		await until(projects.sessions, (members) => members?.[loose.id] === undefined);
+		await browser.wait(`${itemTitled("Loose")}?.closest('.sidebar-section')?.dataset.key==='other'`);
+		// A project onto another's upper half goes before it, onto its lower half after it.
+		await drag(groupRow("beta"), groupRow("alpha"), `${groupOf("alpha")}.drop-before`, "top");
+		await until(projects.projects, () => names() === "beta,alpha");
+		await browser.wait(`${shownProjects}==='beta,alpha'`);
+		await drag(groupRow("beta"), groupRow("alpha"), `${groupOf("alpha")}.drop-after`, "bottom");
+		await until(projects.projects, () => names() === "alpha,beta");
+		await browser.wait(`${shownProjects}==='alpha,beta'`);
+		// A click without a drag still opens the session.
+		await browser.click(`.sidebar-nav .session-row[data-session="${loose.id}"] a.session-main`);
+		await browser.wait(`location.pathname==='/s/${loose.id}'`);
+	});
+
+	it("on a touch screen a long press picks a row up: released it opens the menu (Move to project…), moved it drags", async () => {
+		await setProjects({ alpha: folder("alpha"), beta: folder("beta") });
+		const free = await create("Touch me", folder("free"));
+		await browser.metrics(390, 844);
+		await browser.call("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+		const touch = (type: string, point?: { x: number; y: number }) =>
+			browser.call("Input.dispatchTouchEvent", { type, touchPoints: point ? [point] : [] });
+		const title = `${itemTitled("Touch me")}.querySelector('.session-title')`;
+		/** Waits until the drawer stopped moving (pi's dots run forever). */
+		const still = () =>
+			browser.wait(
+				`!document.getAnimations().some((a) => a.playState === 'running' && a.effect?.getTiming().iterations !== Infinity)`,
+			);
+		/** Opens the drawer on the session's page. */
+		const drawer = async () => {
+			await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
+			await browser.click(".topbar button[aria-label=Sessions]");
+			await browser.wait(`document.querySelector('.app.drawer-open') && ${itemTitled("Touch me")}`);
+			await still();
+		};
+		try {
+			await drawer();
+			// Held without moving, then released: the session's menu, on release.
+			const point = await browser.evaluate<{ x: number; y: number }>(middle(title));
+			await touch("touchStart", point);
+			await pause(700);
+			assert.equal(await browser.evaluate(`Boolean(document.querySelector('.command-menu'))`), false);
+			await touch("touchEnd");
+			await browser.wait(`${CHIP}==='Session · Touch me'`);
+			assert.equal(await browser.evaluate("location.pathname"), "/new", "the long press opens no session");
+			await choose("Move to project…");
+			// No project (checked), then the projects with their default places.
+			await browser.wait(option("beta"));
+			assert.deepEqual(await browser.evaluate(TITLES), ["No project", "alpha", "beta"]);
+			assert.equal(await browser.evaluate(`${option("No project")}.getAttribute('aria-checked')`), "true");
+			await choose("beta");
+			await until(projects.sessions, (members) => members?.[free.id] === "beta");
+			await browser.wait(
+				`!document.querySelector('.command-menu') && ${itemTitled("Touch me")}?.closest('.sidebar-group')?.dataset.project==='beta'`,
+			);
+			// Held, then moved onto alpha's group: a drag, with the ghost; the list does not scroll meanwhile.
+			await still();
+			const from = await browser.evaluate<{ x: number; y: number }>(middle(title));
+			const to = await browser.evaluate<{ x: number; y: number }>(
+				middle(`document.querySelector(${JSON.stringify(`${groupOf("alpha")} .group-row`)})`),
+			);
+			await touch("touchStart", from);
+			await pause(700);
+			for (let step = 1; step <= 10; step++) {
+				await touch("touchMove", {
+					x: from.x + ((to.x - from.x) * step) / 10,
+					y: from.y + ((to.y - from.y) * step) / 10,
+				});
+				await pause(16);
+			}
+			await browser.wait(
+				`document.querySelector('.sidebar-drag-ghost')?.textContent==='Touch me' && document.querySelector(${JSON.stringify(`${groupOf("alpha")}.drop-into`)})`,
+			);
+			await touch("touchEnd");
+			await until(projects.sessions, (members) => members?.[free.id] === "alpha");
+			await browser.wait(
+				`!document.querySelector('.sidebar-drag-ghost') && ${itemTitled("Touch me")}?.closest('.sidebar-group')?.dataset.project==='alpha'`,
+			);
+			assert.equal(await browser.evaluate(`Boolean(document.querySelector('.command-menu'))`), false);
+			assert.equal(await browser.evaluate("location.pathname"), "/new");
+			// A project's row: released without moving, its menu.
+			await still();
+			const project = await browser.evaluate<{ x: number; y: number }>(
+				middle(`document.querySelector(${JSON.stringify(`${groupOf("beta")} .group-row .session-title`)})`),
+			);
+			await touch("touchStart", project);
+			await pause(700);
+			await touch("touchEnd");
+			await browser.wait(`${CHIP}==='Project · beta'`);
+			await browser.wait(option("Archive project"));
+			// A quick tap still opens the session.
+			await browser.evaluate("history.back()");
+			await browser.wait(`!document.querySelector('.command-menu')`);
+		} finally {
+			await browser.call("Emulation.setTouchEmulationEnabled", { enabled: false });
+		}
+	});
+
+	it("chooses the new session's project on the new-session screen: it starts at its default place and joins it", async () => {
+		const place = folder("beta");
+		await setProjects({ alpha: folder("alpha"), beta: place });
+		await create("Elsewhere", folder("elsewhere"));
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
+		await browser.wait(
+			`document.querySelector('.project-pick span')?.textContent==='No project' && !document.querySelector('.offline') && document.body.textContent.includes('Faux Model')`,
+		);
+		const start = await browser.evaluate<string>(`document.querySelector('.cwd-pick span').textContent`);
+		// Above the location control.
+		assert.ok(
+			await browser.evaluate<boolean>(
+				`document.querySelector('.project-pick').getBoundingClientRect().bottom <= document.querySelector('.cwd-pick').getBoundingClientRect().top`,
+			),
+		);
+		await browser.click(".project-pick");
+		await browser.wait(`document.querySelector('.command-menu .command-crumb')?.textContent==='Project'`);
+		await browser.wait(option("beta"));
+		assert.deepEqual(await browser.evaluate(TITLES), ["No project", "alpha", "beta"]);
+		await choose("beta");
+		await browser.wait(
+			`!document.querySelector('.command-menu') && document.querySelector('.project-pick span')?.textContent==='beta' && document.querySelector('.cwd-pick span')?.textContent.endsWith('/beta')`,
+		);
+		// No project again: the location stays where the project put it.
+		await browser.click(".project-pick");
+		await choose("No project");
+		await browser.wait(`document.querySelector('.project-pick span')?.textContent==='No project'`);
+		assert.notEqual(start, await browser.evaluate<string>(`document.querySelector('.cwd-pick span').textContent`));
+		await browser.click(".project-pick");
+		await choose("beta");
+		await browser.wait(`document.querySelector('.project-pick span')?.textContent==='beta'`);
+		await browser.evaluate(setComposer("Picked project"));
+		await browser.click("button[aria-label=Send]");
+		await browser.wait(`location.pathname.startsWith('/s/')`);
+		const rows = await until(sessions.sessions, (list) =>
+			list?.some((row) => row.title.startsWith("Picked project")),
+		);
+		const created = rows?.find((row) => row.title.startsWith("Picked project"));
+		assert.equal(created?.cwd, place);
+		await until(projects.sessions, (members) => members?.[created!.id] === "beta");
+		await browser.wait(`${itemTitled(created!.title)}?.closest('.sidebar-group')?.dataset.project==='beta'`);
 	});
 });

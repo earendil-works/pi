@@ -1,8 +1,8 @@
 // The sessions plugin's part of the command menu: New session…, Switch session…, and on a session target Rename
 // session…, Change working directory… (also on the new-session screen), Archive session and Restore session; the
 // sidebar items' actions, for touch screens without their hover button: Stop run (a session's or a subagent's) and
-// Archive subagent; on a `/tree` branch's target Rename branch…; Open folder…; their pages (with the new-session
-// screen's folder page), and the sessions the root's query matches by title.
+// Archive subagent; on a `/tree` branch's target Rename branch…; Open folder…; their pages, and the sessions the root's
+// query matches by title.
 import { BACKGROUND_CONTEXT, withHeld } from "@p2/app/v1";
 import {
 	ArchiveIcon,
@@ -17,7 +17,6 @@ import {
 	getNavigation,
 	knownMain,
 	ListIcon,
-	locationLabel,
 	NEW_SESSION,
 	type NewSessionLocation,
 	navigate,
@@ -28,6 +27,7 @@ import {
 	PlusIcon,
 	RestoreIcon,
 	StopIcon,
+	shortPath,
 	startNewSession,
 	useCommandMatches,
 	useCommandMenu,
@@ -156,7 +156,6 @@ export const SESSION_PAGES: Readonly<Record<string, CommandPage>> = {
 	sessions: { label: "Sessions", placeholder: "Search sessions…", Body: SessionsPage },
 	"rename-session": { label: "Rename", placeholder: "New title…", empty: "Type the new title", Body: RenamePage },
 	"new-session": { label: "New session", placeholder: "Search folders…", Body: NewSessionPage },
-	"new-session-folder": { label: "Folder", placeholder: "Search folders…", Body: NewSessionFolderPage },
 	folders: { label: "Folders", placeholder: "Search folders…", Body: FoldersPage },
 };
 
@@ -338,7 +337,6 @@ function RenamePage() {
 /** A folder sessions work in, as the sidebar's Folders rollup collects it, with when its latest session was active. */
 type Folder = {
 	readonly key: string;
-	readonly name: string;
 	readonly target: Extract<NewTarget, { kind: "folder" }>;
 	readonly active: number;
 };
@@ -350,18 +348,27 @@ function useFolders(): readonly Folder[] {
 		const collected = data && FOLDER_ROLLUP.collect(data.rows, data.context);
 		if (collected?.layout !== "groups") return [];
 		return collected.groups
-			.flatMap(({ key, name, target, members }) =>
+			.flatMap(({ key, target, members }) =>
 				target?.kind === "folder"
-					? [{ key, name, target, active: Math.max(...members.map((row) => row.updatedAt)) }]
+					? [{ key, target, active: Math.max(...members.map((row) => row.updatedAt)) }]
 					: [],
 			)
 			.toSorted((a, b) => b.active - a.active);
 	}, [data]);
 }
 
-/** What a folder's row says and matches: its name, then where it is. */
-const folderPath = (folder: Folder): string => locationLabel(folder.target.env, folder.target.cwd);
-const folderText = (folder: Folder): string => `${folder.name} ${folderPath(folder)}`;
+/** A folder row's title: the folder's own name. */
+const folderTitle = (folder: Folder): string => folderName(null, folder.target.cwd, 1);
+
+/** What a folder's row says after its name, and nothing twice: the machine, and the folder it is in. */
+function folderWhere(folder: Folder): string {
+	const path = shortPath(folder.target.cwd);
+	const parent = path.split(/[\\/]/).slice(0, -1).join("/");
+	const machine = folder.target.env ?? "This device";
+	return parent ? `${machine} · ${parent}` : machine;
+}
+
+const folderText = (folder: Folder): string => `${folderTitle(folder)} ${folderWhere(folder)} ${folder.target.cwd}`;
 
 /** New session…: picking a folder opens the new-session screen there; Select folder… opens it with the picker over it. */
 function NewSessionPage() {
@@ -369,20 +376,6 @@ function NewSessionPage() {
 		<StartFolders
 			choose={(location) => startNewSession({ location })}
 			browse={(location) => startNewSession({ location, layer: directoryPickerLayer(location.env, location.cwd) })}
-		/>
-	);
-}
-
-/**
- * The new-session screen's folder (its folder button): picking one changes where the session starts and keeps the
- * screen's model and project; Select folder… opens the picker over the screen.
- */
-function NewSessionFolderPage() {
-	const { setLocation } = useNewSessionState();
-	return (
-		<StartFolders
-			choose={setLocation}
-			browse={(location) => openLayer(directoryPickerLayer(location.env, location.cwd))}
 		/>
 	);
 }
@@ -428,9 +421,9 @@ function StartFolders({
 				{matches.map((folder) => (
 					<CommandMenu.Row
 						key={folder.key}
-						title={folder.name}
+						title={folderTitle(folder)}
 						icon={FolderIcon}
-						suffix={folderPath(folder)}
+						suffix={folderWhere(folder)}
 						checked={current !== undefined && sameFolder(folder, current)}
 						preferred={folder === first}
 						onSelect={async () => {
@@ -464,7 +457,6 @@ function withCurrent(folders: readonly Folder[], current: NewSessionLocation | u
 	const known = folders.find((folder) => sameFolder(folder, current));
 	const top: Folder = known ?? {
 		key: folderKey(current.env, current.cwd),
-		name: folderName(current.env, current.cwd, 1),
 		target: { kind: "folder", ...current },
 		active: 0,
 	};
@@ -486,8 +478,8 @@ function FoldersPage() {
 			{matches.map((folder) => (
 				<CommandMenu.Row
 					key={folder.key}
-					title={folder.name}
-					suffix={folderPath(folder)}
+					title={folderTitle(folder)}
+					suffix={folderWhere(folder)}
 					checked={folder.key === page}
 					onSelect={async () => {
 						await close();

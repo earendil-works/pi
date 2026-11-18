@@ -3,6 +3,7 @@
 // drawer) and holds the one copy of the data, with its edits shown at once; the views render from it, so they show the
 // same rows as the sidebar, offline too.
 import { useSyncExternalStore } from "react";
+import type { ArchivedProject } from "../../projects/contract.ts";
 import type { SearchResults } from "../../search/contract.ts";
 import type { NewTarget, Rollup, RollupContext, SidebarRow, View } from "./model.ts";
 
@@ -23,6 +24,12 @@ export type PageData = {
 	readonly onArchiveAgent: (id: string, conversation: number) => void;
 	readonly onSearch?: (query: string, archived: boolean, sessions: readonly string[]) => Promise<SearchResults>;
 	readonly onNewIn?: (target: NewTarget) => void;
+	/** The owner's archived projects (the Archive's list shows them). */
+	readonly archivedProjects: readonly ArchivedProject[];
+	/** Moves a session to a project, or (null) out of its project; shown at once (the owner's). */
+	readonly onAssign?: (session: string, project: string | null) => void;
+	/** Moves a project before another one, or (null) to the end; shown at once (the owner's). */
+	readonly onMoveProject?: (name: string, before: string | null) => void;
 };
 
 const listeners = new Set<() => void>();

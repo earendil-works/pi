@@ -1,5 +1,5 @@
 // New project, from the Projects rollup's options: a folder picker (its own layer, `PROJECT_FOLDER`), then this sheet
-// names the project at the chosen place (`NEW_PROJECT`, its locator the place) and adds it to projects.json.
+// names the project, its default location the chosen place (`NEW_PROJECT`, its locator the place).
 import { compile, nul, obj, str, union } from "@earendil-works/pi-schema";
 import { type Layer, Sheet, shortPath } from "@p2/app/v1/web";
 import { useEffect, useRef, useState } from "react";
@@ -38,7 +38,7 @@ export function NewProjectSheet({
 	onClose,
 }: {
 	place: ProjectPlace;
-	/** The names projects.json has. */
+	/** The names projects have (archived ones too). */
 	taken: readonly string[];
 	onCreate: (name: string) => Promise<void>;
 	onClose: () => void;
@@ -85,8 +85,7 @@ export function NewProjectSheet({
 					/>
 				</label>
 				<p className="muted small">
-					In {place.env ? `${place.env}:${place.path}` : shortPath(place.path)}. Added to projects.json; more
-					places go there by hand.
+					New sessions in it start in {place.env ? `${place.env}:${place.path}` : shortPath(place.path)}.
 				</p>
 				{exists && <p className="small rollup-error">A project "{name}" exists already.</p>}
 				{error && <p className="small rollup-error">{error}</p>}
