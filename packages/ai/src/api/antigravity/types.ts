@@ -6,6 +6,8 @@ import type { GeminiRole, GeminiToolCallingMode, ThinkingEffort, ToolChoice } fr
 export type AntigravityApiKey = {
 	token: string;
 	projectId: string;
+	/** Persistent negative-int64 session id minted at login; agy keeps one per install. */
+	sessionId?: string;
 };
 
 export type DynamicModelInfo = {

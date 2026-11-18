@@ -76,7 +76,9 @@ export function parseApiKey(raw: string | undefined): AntigravityApiKey {
 			typeof value.projectId === "string" &&
 			value.projectId
 		) {
-			return { token: value.token, projectId: value.projectId };
+			const sessionId =
+				typeof value.sessionId === "string" && /^-?\d{1,19}$/.test(value.sessionId) ? value.sessionId : undefined;
+			return { token: value.token, projectId: value.projectId, ...(sessionId ? { sessionId } : {}) };
 		}
 	} catch {
 		/* Never include credentials in parse errors. */

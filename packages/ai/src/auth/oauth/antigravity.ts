@@ -2,10 +2,10 @@
 // See ../../api/antigravity/LICENSE.
 import { defaultProjectId, loadCodeAssist } from "../../api/antigravity/client.ts";
 import { safeError } from "../../api/antigravity/security.ts";
-import { antigravityEnv, isRecord } from "../../api/antigravity/util.ts";
+import { antigravityEnv, isRecord, stableInt64Id } from "../../api/antigravity/util.ts";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
 import { ownedSlice } from "../../utils/text.ts";
-import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
+import type { LoginOptions, OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { startOAuthCallbackServer, waitForCallbackOrManualInput } from "./callback-server.ts";
 import { generatePKCE } from "./pkce.ts";
 
@@ -72,7 +72,7 @@ export function parseAntigravityCallback(input: string, expectedState: string): 
 	return code;
 }
 
-async function login(interaction: ProviderAuthInteraction): Promise<OAuthCredential> {
+async function login(interaction: ProviderAuthInteraction, options?: LoginOptions): Promise<OAuthCredential> {
 	const { signal } = interaction;
 	signal.throwIfAborted();
 	const { verifier, challenge } = await generatePKCE();
@@ -131,7 +131,13 @@ async function login(interaction: ProviderAuthInteraction): Promise<OAuthCredent
 			signal.throwIfAborted();
 		}
 		const projectId = (await loadCodeAssist(tokens.access, { signal })) || (await defaultProjectId(email));
-		return { type: "oauth", ...tokens, refresh: tokens.refresh, projectId, email };
+		// agy's sessionId is a negative-int64 string persisted per install. Derive it from the
+		// app's stable device id so re-login and re-derivation give the same value; mint a
+		// random one when the app supplies no device id (still stable across token refreshes).
+		const antigravitySessionId = await stableInt64Id(
+			`antigravity:sess:device:${options?.getDeviceId?.() ?? crypto.randomUUID()}`,
+		);
+		return { type: "oauth", ...tokens, refresh: tokens.refresh, projectId, email, antigravitySessionId };
 	} finally {
 		callback?.close();
 	}
@@ -155,6 +161,14 @@ export const antigravityOAuth: OAuthAuth = {
 			typeof credential.projectId === "string" && credential.projectId
 				? credential.projectId
 				: await defaultProjectId(typeof credential.email === "string" ? credential.email : undefined);
-		return { apiKey: JSON.stringify({ token: credential.access, projectId }) };
+		// The persistent session id rides the credential (it survives refresh via the spread);
+		// old credentials simply carry none until the next login.
+		const sessionId =
+			typeof credential.antigravitySessionId === "string" && credential.antigravitySessionId
+				? credential.antigravitySessionId
+				: undefined;
+		return {
+			apiKey: JSON.stringify({ token: credential.access, projectId, ...(sessionId ? { sessionId } : {}) }),
+		};
 	},
 };

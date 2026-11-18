@@ -125,6 +125,53 @@ describe("Antigravity OAuth transport", () => {
 		mock.assertNoPendingInterceptors();
 	});
 
+	it("mints a persistent negative-int64 session id from the device id and keeps it across refresh", async () => {
+		mock
+			.get("https://oauth2.googleapis.com")
+			.intercept({ path: "/token", method: "POST", body: /grant_type=authorization_code/ })
+			.reply(200, gzipSync(JSON.stringify({ access_token: "a", refresh_token: "r", expires_in: 3600 })), {
+				headers,
+			})
+			.persist();
+		mock
+			.get("https://www.googleapis.com")
+			.intercept({ path: "/oauth2/v2/userinfo?alt=json", method: "GET" })
+			.reply(200, gzipSync(JSON.stringify({ email: "user@example.test" })), { headers })
+			.persist();
+		mock
+			.get("https://daily-cloudcode-pa.googleapis.com")
+			.intercept({ path: "/v1internal:loadCodeAssist", method: "POST" })
+			.reply(200, gzipSync(JSON.stringify({ cloudaicompanionProject: "p" })), { headers })
+			.persist();
+		const interaction = { signal: new AbortController().signal, notify: vi.fn(), prompt: async () => "unused" };
+		const first = await antigravityOAuth.login(interaction, { getDeviceId: () => "device-123" });
+		const again = await antigravityOAuth.login(interaction, { getDeviceId: () => "device-123" });
+		const other = await antigravityOAuth.login(interaction, { getDeviceId: () => "device-456" });
+		expect(first.antigravitySessionId).toMatch(/^-\d{1,19}$/);
+		expect(again.antigravitySessionId).toBe(first.antigravitySessionId);
+		expect(other.antigravitySessionId).not.toBe(first.antigravitySessionId);
+
+		mock
+			.get("https://oauth2.googleapis.com")
+			.intercept({ path: "/token", method: "POST", body: /refresh_token=r/ })
+			.reply(200, gzipSync(JSON.stringify({ access_token: "b", expires_in: 3600 })), { headers });
+		const refreshed = await antigravityOAuth.refresh(first, new AbortController().signal);
+		expect(refreshed.antigravitySessionId).toBe(first.antigravitySessionId);
+
+		const auth = await antigravityOAuth.toAuth(refreshed);
+		expect(JSON.parse(auth.apiKey!)).toEqual({
+			token: "b",
+			projectId: "p",
+			sessionId: first.antigravitySessionId,
+		});
+		// A credential minted before the field existed carries no session id.
+		expect(JSON.parse((await antigravityOAuth.toAuth(credential)).apiKey!)).toEqual({
+			token: "old-access",
+			projectId: "fake-project",
+		});
+		mock.assertNoPendingInterceptors();
+	});
+
 	it("aborts before dispatching a refresh", async () => {
 		const controller = new AbortController();
 		controller.abort(new Error("cancelled"));

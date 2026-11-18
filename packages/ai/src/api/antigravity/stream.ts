@@ -933,7 +933,14 @@ export async function buildRequest(
 		context.messages?.filter((m) => m.role === "assistant" && m.stopReason !== "error" && m.stopReason !== "aborted")
 			.length ?? 0;
 
-	const { conversationId, trajectoryId, sessionInt64Id } = await resolveSessionTrajectory(context, options.sessionId);
+	// Prefer the credential-stashed persistent session id (agy keeps one per install)
+	// over the per-session derivation.
+	const credentialSessionId = options.apiKey ? parseApiKey(options.apiKey).sessionId : undefined;
+	const { conversationId, trajectoryId, sessionInt64Id } = await resolveSessionTrajectory(
+		context,
+		options.sessionId,
+		credentialSessionId,
+	);
 	const modelEnum = options.modelEnum ?? (model as AntigravityModel).antigravityModelEnums?.[runtimeModel];
 
 	const envelope = await antigravityRequestEnvelope(runtimeModel, {

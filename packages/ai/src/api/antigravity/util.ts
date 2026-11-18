@@ -43,7 +43,12 @@ export function randomNegativeInt64(): string {
 	return String(new DataView(bytes.buffer).getBigInt64(0, false));
 }
 
-export async function resolveSessionTrajectory(context: TranscriptContext, sessionId?: string) {
+export async function resolveSessionTrajectory(
+	context: TranscriptContext,
+	sessionId?: string,
+	/** Credential-stashed persistent session id; wins over the per-session derivation. */
+	deviceSessionId?: string,
+) {
 	const first = context.messages[0];
 	const content =
 		typeof first?.content === "string"
@@ -55,7 +60,10 @@ export async function resolveSessionTrajectory(context: TranscriptContext, sessi
 	return {
 		conversationId: await stableUuid(`antigravity:conv:${seed}`),
 		trajectoryId: await stableUuid(`antigravity:traj:${seed}`),
-		sessionInt64Id: await stableInt64Id(`antigravity:sess:${seed}`),
+		// agy persists one negative-int64 session id per install; the credential-stashed
+		// value wins, and the session-seeded derivation stays the fallback for credentials
+		// minted before the field existed.
+		sessionInt64Id: deviceSessionId ?? (await stableInt64Id(`antigravity:sess:${seed}`)),
 	};
 }
 

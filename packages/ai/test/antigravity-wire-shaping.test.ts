@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { parseApiKey } from "../src/api/antigravity/client.ts";
 import { antigravityDisplayModelName } from "../src/api/antigravity/models.ts";
 import { buildRequest, convertMessages, formatUserTurnText } from "../src/api/antigravity/stream.ts";
 import type { GeminiTextPart } from "../src/api/antigravity/types.ts";
@@ -201,6 +202,33 @@ describe("antigravity wire shaping (snoop capture 2026-11-18)", () => {
 		);
 		expect(request.request.sessionId).toMatch(NEGATIVE_INT64);
 		expect(request.request.labels!.cascade_id).toBe(request.requestId.split("/")[1]);
+	});
+
+	it("prefers the credential-stashed session id across sessions, and parseApiKey validates it", async () => {
+		const apiKey = JSON.stringify({ token: "t", projectId: "p", sessionId: "-3750763034362895579" });
+		expect(parseApiKey(apiKey).sessionId).toBe("-3750763034362895579");
+		expect(
+			parseApiKey(JSON.stringify({ token: "t", projectId: "p", sessionId: "not-a-number" })).sessionId,
+		).toBeUndefined();
+		expect(parseApiKey(JSON.stringify({ token: "t", projectId: "p" })).sessionId).toBeUndefined();
+
+		const messages = [{ role: "user" as const, content: "hi", timestamp: 1 }];
+		const first = await buildRequest(
+			model,
+			normalizeContext({ messages }),
+			"project",
+			{ apiKey, sessionId: "01a1efb7-a0cd-74a7-9a8a-4c661647b1c3" },
+			"gemini-3.8-flash-medium",
+		);
+		const second = await buildRequest(
+			model,
+			normalizeContext({ messages }),
+			"project",
+			{ apiKey, sessionId: "11b2f3c8-b1de-74a7-9a8a-4c661647b1c3" },
+			"gemini-3.8-flash-medium",
+		);
+		expect(first.request.sessionId).toBe("-3750763034362895579");
+		expect(second.request.sessionId).toBe("-3750763034362895579");
 	});
 
 	it("maps runtime ids to the client's display names", () => {
