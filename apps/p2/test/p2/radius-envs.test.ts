@@ -3,24 +3,29 @@
 // (radius-machine.ts), the Envs sheet's machines and enrollment, sessions whose tools, workspace, terminal and MCP
 // servers run there, and the ports tool keeping forwards on the machine.
 import assert from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { type TestContext, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
-import { BACKGROUND_CONTEXT } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, type HeldIn } from "@p2/app/v1";
 import { WebSocket } from "ws";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { envRevision, parseEnvs, validateEnv } from "../../plugins/envs/config.ts";
 import { connectionRevision } from "../../plugins/envs/connection-revision.ts";
 import { Envs } from "../../plugins/envs/contract.ts";
+import { radiusEnvConnection } from "../../plugins/envs/radius-env.ts";
 import { remoteSession } from "../../plugins/envs/remote-env.ts";
 import { Mcp } from "../../plugins/mcp/contract.ts";
 import { Ports } from "../../plugins/ports/contract.ts";
+import { listMachineForwards } from "../../plugins/ports/machine-forwards.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { Terminals } from "../../plugins/terminals/contract.ts";
@@ -65,6 +70,14 @@ test("a Radius machine's configuration: its server ID, shell settings, revisions
 	session.connection.close();
 });
 
+/** A machine for `onMachine`: up and connected to the relay as server `server`. */
+type Machine = {
+	readonly server: string;
+	/** Whether it proxies forward channels to its ports (the stand-in does not). */
+	readonly proxies: boolean;
+	close(): void;
+};
+
 test(
 	"a session on a Radius machine runs its tools, workspace, terminal, MCP servers and forwards there",
 	{
@@ -72,164 +85,283 @@ test(
 		skip: existsSync(DAEMON) ? false : `no pi-env daemon at ${DAEMON} (npm run build:daemon in packages/env)`,
 	},
 	async (t) => {
-		// The brain stays off: the machine is reached with the owner's sign-in alone.
-		process.env.P2_RADIUS = "0";
-		t.after(() => delete process.env.P2_RADIUS);
-		const radius = await fakeRadius({ channels: true });
-		t.after(() => radius.close());
-		const token = radius.addMachine(SERVER, "Laptop");
-		const fixture = await startFixture();
-		t.after(() => fixture.close());
-		const p2 = randomUUID();
-		const owner = fixture.browser();
-		const envs = await holdIn(owner, Envs, {}, "owner");
-		// Not signed in to Radius: no machines, and an environment there refuses instead of running here.
-		await assert.rejects(envs.machines({}, BACKGROUND_CONTEXT), /not signed in to Radius/);
-		await writeRadiusConfig(fixture.dataDir, {
-			gateway: radius.gateway,
-			serverId: p2,
-			credential: { type: "oauth", access: "fixture-token", refresh: "unused", expires: Date.now() + 3_600_000 },
+		await onMachine(t, async (radius, envs) => {
+			const token = radius.addMachine(SERVER, "Laptop");
+			assert.deepEqual(await envs.machines({}, BACKGROUND_CONTEXT), [
+				{ server: SERVER, name: "Laptop", status: "offline", lastSeenAt: new Date(0).toISOString() },
+			]);
+			const enrollment = await envs.enroll({ name: "laptop" }, BACKGROUND_CONTEXT);
+			assert.equal(enrollment.code, "CODE-1");
+			assert.match(enrollment.install.sh, /--code CODE-1$/);
+			assert.deepEqual(radius.enrollments, [{ name: "laptop" }]);
+			await envs.save({ name: "hand", config: { type: "radius", server: SERVER } }, BACKGROUND_CONTEXT);
+			const offline = await envs.test({ name: "hand" }, BACKGROUND_CONTEXT);
+			assert(!offline.ok);
+			assert.match(offline.error, /Machine "hand" is not connected to Radius/);
+			const machine = await fakeMachine({ gateway: radius.gateway, serverId: SERVER, token, daemon: DAEMON });
+			await radius.machine(SERVER);
+			return { server: SERVER, proxies: false, close: () => machine.close() };
 		});
-		assert.deepEqual(await envs.machines({}, BACKGROUND_CONTEXT), [
-			{ server: SERVER, name: "Laptop", status: "offline", lastSeenAt: new Date(0).toISOString() },
-		]);
-		const enrollment = await envs.enroll({ name: "laptop" }, BACKGROUND_CONTEXT);
-		assert.equal(enrollment.code, "CODE-1");
-		assert.match(enrollment.install.sh, /--code CODE-1$/);
-		assert.deepEqual(radius.enrollments, [{ name: "laptop" }]);
-
-		await envs.save({ name: "hand", config: { type: "radius", server: SERVER } }, BACKGROUND_CONTEXT);
-		const offline = await envs.test({ name: "hand" }, BACKGROUND_CONTEXT);
-		assert(!offline.ok);
-		assert.match(offline.error, /Machine "hand" is not connected to Radius/);
-
-		const machine = await fakeMachine({ gateway: radius.gateway, serverId: SERVER, token, daemon: DAEMON });
-		t.after(() => machine.close());
-		await radius.machine(SERVER);
-		const tested = await envs.test({ name: "hand" }, BACKGROUND_CONTEXT);
-		assert(tested.ok, tested.ok ? "" : tested.error);
-		assert.equal(tested.home, homedir());
-		assert.equal((await envs.listDirectory({ env: "hand", path: "~" }, BACKGROUND_CONTEXT)).path, homedir());
-
-		// MCP servers of the owner's mcp.json follow sessions to the machine.
-		await writeFile(
-			join(fixture.dataDir, "mcp.json"),
-			JSON.stringify({ mcpServers: { files: { command: process.execPath, args: [FIXTURE] } } }),
-		);
-		const cwd = join(fixture.workspace, "on-hand");
-		await mkdir(cwd);
-		const sessions = await holdIn(owner, Sessions, {}, "owner");
-		const session = await sessions.create({ env: "hand", cwd, title: "On the hand" }, BACKGROUND_CONTEXT);
-		assert.equal(session.env, "hand");
-		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
-		await chat.send({ text: "write", requestId: "hand-write" }, BACKGROUND_CONTEXT);
-		await until(chat.view, (view) => results(view, "write").length > 0, 60_000);
-		assert.equal(await readFile(join(cwd, "created.txt"), "utf8"), "before\n");
-		await chat.send({ text: "bash", requestId: "hand-bash" }, BACKGROUND_CONTEXT);
-		const ran = await until(chat.view, (view) => results(view, "bash").length > 0, 60_000);
-		assert.equal(text(results(ran, "bash")[0]).trim(), await realpath(cwd));
-		const workspace = owner.hold(Workspace, { session: session.id, conversation: 1 }, BACKGROUND_CONTEXT);
-		const file = await workspace.query({ kind: "file", path: "created.txt" }, BACKGROUND_CONTEXT);
-		assert(file.kind === "file" && file.text === "before\n");
-		workspace.release();
-		const mcp = await holdIn(owner, Mcp, {}, "owner");
-		const instances = await until(
-			mcp.instances,
-			(list) =>
-				list?.some(
-					(instance) =>
-						instance.server === "files" && instance.location?.env === "hand" && instance.status === "connected",
-				) ?? false,
-			60_000,
-		);
-		assert.deepEqual(instances.find((instance) => instance.location?.env === "hand")?.runsOn, { env: "hand" });
-		mcp.release();
-
-		// A terminal of the session opens on the machine.
-		const terminals = owner.hold(Terminals, { session: session.id, view: randomUUID() }, BACKGROUND_CONTEXT);
-		const { token: grant } = await terminals.channel({}, BACKGROUND_CONTEXT);
-		const socket = new WebSocket(
-			`ws://127.0.0.1:${fixture.server.port}/terminal?${new URLSearchParams({ token: grant })}`,
-			{
-				headers: { Cookie: fixture.owner.cookie },
-			},
-		);
-		const events: TerminalEvent[] = [];
-		const output: Buffer[] = [];
-		socket.on("message", (bytes, binary) => {
-			if (binary) output.push(Buffer.from(bytes as Buffer));
-			else events.push(JSON.parse(bytes.toString()) as TerminalEvent);
-		});
-		socket.on("error", () => {});
-		try {
-			await new Promise<void>((resolve, reject) => {
-				socket.once("open", resolve);
-				socket.once("error", reject);
-			});
-			await terminals.open({ cols: 60, rows: 12, conversation: 1 }, BACKGROUND_CONTEXT);
-			await poll(() => events.some((event) => event.type === "attached" || event.type === "error"), 30_000);
-			const attached = events.find((event) => event.type === "attached");
-			assert(attached?.type === "attached", JSON.stringify(events));
-			assert.equal(attached.terminal.env, "hand");
-			socket.send(Buffer.from("printf 'HAND_TERMINAL_%s\\n' sentinel\r"));
-			await poll(() => Buffer.concat(output).toString("utf8").includes("HAND_TERMINAL_sentinel"), 30_000);
-			await terminals.close({ force: true }, BACKGROUND_CONTEXT);
-		} finally {
-			socket.close();
-			await terminals.restartHost({}, BACKGROUND_CONTEXT).catch(() => {});
-			terminals.release();
-		}
-
-		// The ports tool keeps the session's forwards on the machine, tagged with this server and the session.
-		const status = await holdIn(owner, SessionStatus, {}, "reader");
-		let serial = 0;
-		const call = async (query: object) => {
-			await until(status.statuses, (statuses) => statuses?.[session.id]?.tasks === 0, 60_000);
-			const count = results(chat.view.value, "ports").length;
-			await chat.send(
-				{ text: `ports ${JSON.stringify(query)}`, requestId: `hand-ports-${++serial}` },
-				BACKGROUND_CONTEXT,
-			);
-			return results(await until(chat.view, (view) => results(view, "ports").length > count, 60_000), "ports").at(
-				-1,
-			)!;
-		};
-		const opened = await call({ action: "open", port: 5173, name: "web" });
-		assert.equal(opened.isError, false, text(opened));
-		assert.match(
-			text(opened),
-			/Forwarded port 5173, private: https:\/\/fwd--0123456789abcdef0123456789abcdef--[0-9a-f]+\.rdtun\.com\//,
-		);
-		assert.deepEqual(
-			machine.forwards.map((forward) => [forward.port, forward.name, forward.tag]),
-			[[5173, "web", { p2, session: session.id }]],
-		);
-		assert.equal((await call({ action: "open", port: 5173, public: true })).isError, false);
-		assert.equal(machine.forwards.length, 1, "opening a forwarded port again updates it");
-		assert.equal(machine.forwards[0]?.public, true);
-		// The owner sees and changes the machine's forwards in the Ports sheet.
-		const ports = await holdIn(owner, Ports, {}, "owner");
-		const listed = await ports.machine({ env: "hand" }, BACKGROUND_CONTEXT);
-		assert.equal(listed.forwards[0]?.sessionTitle, "On the hand");
-		assert.match(listed.forwards[0]?.publicUrl ?? "", /^https:\/\/pub--/);
-		await ports.machineAdd({ env: "hand", port: 8080 }, BACKGROUND_CONTEXT);
-		const added = machine.forwards.find((forward) => forward.port === 8080)!;
-		assert.equal(added.tag, undefined);
-		await ports.machineSetPublic({ env: "hand", id: added.id, public: true }, BACKGROUND_CONTEXT);
-		assert.equal(machine.forwards.find((forward) => forward.port === 8080)?.public, true);
-		await ports.machineRemove({ env: "hand", id: added.id }, BACKGROUND_CONTEXT);
-		assert(!machine.forwards.some((forward) => forward.port === 8080));
-		await call({ action: "open", port: 3000 });
-		assert.match(text(await call({ action: "close", port: 3000 })), /Stopped forwarding port 3000/);
-		ports.release();
-		// Archiving the session closes its forwards on the machine.
-		chat.release();
-		await sessions.archive({ id: session.id }, BACKGROUND_CONTEXT);
-		await poll(() => machine.forwards.length === 0, 30_000);
-		status.release();
-
-		// The machine going offline fails what needs it, and never runs anything here instead.
-		machine.close();
-		await poll(async () => !(await envs.test({ name: "hand" }, BACKGROUND_CONTEXT)).ok, 30_000);
 	},
 );
+
+/** Runs `program` to its end without blocking this process, whose fake Radius it may need; `input` on its stdin. */
+function run(
+	program: string,
+	args: string[],
+	input: string,
+): Promise<{ status: number | null; stdout: string; stderr: string }> {
+	return new Promise((resolve, reject) => {
+		const child = spawn(program, args, { stdio: "pipe" });
+		let stdout = "";
+		let stderr = "";
+		child.stdout.on("data", (chunk: Buffer) => {
+			stdout += chunk.toString("utf8");
+		});
+		child.stderr.on("data", (chunk: Buffer) => {
+			stderr += chunk.toString("utf8");
+		});
+		child.on("error", reject);
+		child.on("close", (status) => resolve({ status, stdout, stderr }));
+		child.stdin.end(input);
+	});
+}
+
+/** Whether `DAEMON` is a build with `pi-env agent` (the Rust agent of packages/env/daemon). */
+const agent = existsSync(DAEMON) && spawnSync(DAEMON, ["status", "--state", tmpdir()]).status === 0;
+
+test(
+	"a real pi-env agent, installed with an enrollment code from the Envs sheet, serves a session through the relay",
+	{ timeout: 180_000, skip: agent ? false : `no pi-env build with the agent at ${DAEMON} (npm run build:daemon)` },
+	async (t) => {
+		await onMachine(t, async (radius, envs) => {
+			const enrollment = await envs.enroll({ name: "hand" }, BACKGROUND_CONTEXT);
+			const state = await mkdtemp(join(tmpdir(), "p2-agent-"));
+			t.after(() => rm(state, { recursive: true, force: true }));
+			// As install.sh runs it, without a service: the binary copies itself into the state directory.
+			const installed = await run(
+				DAEMON,
+				[
+					"install",
+					"--gateway",
+					enrollment.gateway,
+					"--name",
+					"hand",
+					"--code-stdin",
+					"--state",
+					state,
+					"--no-service",
+				],
+				`${enrollment.code}\n`,
+			);
+			assert.equal(installed.status, 0, installed.stderr);
+			const answer = JSON.parse(installed.stdout.trim().split("\n").at(-1) ?? "") as {
+				server_id: string;
+				service: string;
+			};
+			assert.equal(answer.service, "none");
+			const child = spawn(join(state, "bin", "pi-env"), ["agent", "--state", state], { stdio: "ignore" });
+			const stopped = new Promise((resolve) => child.once("exit", resolve));
+			t.after(async () => {
+				child.kill();
+				await stopped;
+			});
+			await radius.machine(answer.server_id);
+			assert.deepEqual(
+				(await envs.machines({}, BACKGROUND_CONTEXT)).map((machine) => [
+					machine.server,
+					machine.name,
+					machine.status,
+				]),
+				[[answer.server_id, "hand", "online"]],
+			);
+			await envs.save({ name: "hand", config: { type: "radius", server: answer.server_id } }, BACKGROUND_CONTEXT);
+			return { server: answer.server_id, proxies: true, close: () => child.kill() };
+		});
+	},
+);
+
+/**
+ * A p2 server signed in to the fake Radius, with `start`'s machine saved as environment `hand`: its test, directories,
+ * a session's tools, workspace, MCP server and terminal there, the ports tool and the Ports sheet keeping forwards on
+ * the machine (and a forward relayed to a web server there), archiving closing them, and the machine going offline.
+ */
+async function onMachine(
+	t: TestContext,
+	start: (radius: Awaited<ReturnType<typeof fakeRadius>>, envs: HeldIn<typeof Envs, "owner">) => Promise<Machine>,
+): Promise<void> {
+	// The brain stays off: the machine is reached with the owner's sign-in alone.
+	process.env.P2_RADIUS = "0";
+	t.after(() => delete process.env.P2_RADIUS);
+	const radius = await fakeRadius({ channels: true });
+	t.after(() => radius.close());
+	const fixture = await startFixture();
+	t.after(() => fixture.close());
+	const p2 = randomUUID();
+	const owner = fixture.browser();
+	const envs = await holdIn(owner, Envs, {}, "owner");
+	// Not signed in to Radius: no machines.
+	await assert.rejects(envs.machines({}, BACKGROUND_CONTEXT), /not signed in to Radius/);
+	await writeRadiusConfig(fixture.dataDir, {
+		gateway: radius.gateway,
+		serverId: p2,
+		credential: { type: "oauth", access: "fixture-token", refresh: "unused", expires: Date.now() + 3_600_000 },
+	});
+	const machine = await start(radius, envs);
+	t.after(() => machine.close());
+	// What the machine's agent keeps, read over a connection of p2's own.
+	const direct = radiusEnvConnection(fixture.dataDir, "hand", { type: "radius", server: machine.server });
+	t.after(() => direct.close());
+	const kept = async () =>
+		(await listMachineForwards(async (op, json) => (await direct.request(op, json)).json)).forwards;
+	// A web server on the machine (this one), for a forward.
+	const web = createServer((request, response) => {
+		response.writeHead(200, { "content-type": "text/plain" });
+		response.end(`hello from ${request.url}`);
+	});
+	await new Promise<void>((resolve) => web.listen(0, "127.0.0.1", resolve));
+	t.after(
+		() =>
+			new Promise((resolve) => {
+				web.closeAllConnections();
+				web.close(resolve);
+			}),
+	);
+	const webPort = (web.address() as AddressInfo).port;
+	const tested = await envs.test({ name: "hand" }, BACKGROUND_CONTEXT);
+	assert(tested.ok, tested.ok ? "" : tested.error);
+	assert.equal(tested.home, homedir());
+	assert.equal((await envs.listDirectory({ env: "hand", path: "~" }, BACKGROUND_CONTEXT)).path, homedir());
+
+	// MCP servers of the owner's mcp.json follow sessions to the machine.
+	await writeFile(
+		join(fixture.dataDir, "mcp.json"),
+		JSON.stringify({ mcpServers: { files: { command: process.execPath, args: [FIXTURE] } } }),
+	);
+	const cwd = join(fixture.workspace, "on-hand");
+	await mkdir(cwd);
+	const sessions = await holdIn(owner, Sessions, {}, "owner");
+	const session = await sessions.create({ env: "hand", cwd, title: "On the hand" }, BACKGROUND_CONTEXT);
+	assert.equal(session.env, "hand");
+	const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+	await chat.send({ text: "write", requestId: "hand-write" }, BACKGROUND_CONTEXT);
+	await until(chat.view, (view) => results(view, "write").length > 0, 60_000);
+	assert.equal(await readFile(join(cwd, "created.txt"), "utf8"), "before\n");
+	await chat.send({ text: "bash", requestId: "hand-bash" }, BACKGROUND_CONTEXT);
+	const ran = await until(chat.view, (view) => results(view, "bash").length > 0, 60_000);
+	assert.equal(text(results(ran, "bash")[0]).trim(), await realpath(cwd));
+	const workspace = owner.hold(Workspace, { session: session.id, conversation: 1 }, BACKGROUND_CONTEXT);
+	const file = await workspace.query({ kind: "file", path: "created.txt" }, BACKGROUND_CONTEXT);
+	assert(file.kind === "file" && file.text === "before\n");
+	workspace.release();
+	const mcp = await holdIn(owner, Mcp, {}, "owner");
+	const instances = await until(
+		mcp.instances,
+		(list) =>
+			list?.some(
+				(instance) =>
+					instance.server === "files" && instance.location?.env === "hand" && instance.status === "connected",
+			) ?? false,
+		60_000,
+	);
+	assert.deepEqual(instances.find((instance) => instance.location?.env === "hand")?.runsOn, { env: "hand" });
+	mcp.release();
+
+	// A terminal of the session opens on the machine.
+	const terminals = owner.hold(Terminals, { session: session.id, view: randomUUID() }, BACKGROUND_CONTEXT);
+	const { token: grant } = await terminals.channel({}, BACKGROUND_CONTEXT);
+	const socket = new WebSocket(
+		`ws://127.0.0.1:${fixture.server.port}/terminal?${new URLSearchParams({ token: grant })}`,
+		{
+			headers: { Cookie: fixture.owner.cookie },
+		},
+	);
+	const events: TerminalEvent[] = [];
+	const output: Buffer[] = [];
+	socket.on("message", (bytes, binary) => {
+		if (binary) output.push(Buffer.from(bytes as Buffer));
+		else events.push(JSON.parse(bytes.toString()) as TerminalEvent);
+	});
+	socket.on("error", () => {});
+	try {
+		await new Promise<void>((resolve, reject) => {
+			socket.once("open", resolve);
+			socket.once("error", reject);
+		});
+		await terminals.open({ cols: 60, rows: 12, conversation: 1 }, BACKGROUND_CONTEXT);
+		await poll(() => events.some((event) => event.type === "attached" || event.type === "error"), 30_000);
+		const attached = events.find((event) => event.type === "attached");
+		assert(attached?.type === "attached", JSON.stringify(events));
+		assert.equal(attached.terminal.env, "hand");
+		socket.send(Buffer.from("printf 'HAND_TERMINAL_%s\\n' sentinel\r"));
+		await poll(() => Buffer.concat(output).toString("utf8").includes("HAND_TERMINAL_sentinel"), 30_000);
+		await terminals.close({ force: true }, BACKGROUND_CONTEXT);
+	} finally {
+		socket.close();
+		await terminals.restartHost({}, BACKGROUND_CONTEXT).catch(() => {});
+		terminals.release();
+	}
+
+	// The ports tool keeps the session's forwards on the machine, tagged with this server and the session.
+	const status = await holdIn(owner, SessionStatus, {}, "reader");
+	let serial = 0;
+	const call = async (query: object) => {
+		await until(status.statuses, (statuses) => statuses?.[session.id]?.tasks === 0, 60_000);
+		const count = results(chat.view.value, "ports").length;
+		await chat.send(
+			{ text: `ports ${JSON.stringify(query)}`, requestId: `hand-ports-${++serial}` },
+			BACKGROUND_CONTEXT,
+		);
+		return results(await until(chat.view, (view) => results(view, "ports").length > count, 60_000), "ports").at(-1)!;
+	};
+	const opened = await call({ action: "open", port: webPort, name: "web" });
+	assert.equal(opened.isError, false, text(opened));
+	assert.match(
+		text(opened),
+		new RegExp(
+			`Forwarded port ${webPort}, private: https://fwd--0123456789abcdef0123456789abcdef--[0-9a-z]+\\.rdtun\\.com/`,
+		),
+	);
+	assert.deepEqual(
+		(await kept()).map((forward) => [forward.port, forward.name, forward.tag]),
+		[[webPort, "web", { p2, session: session.id }]],
+	);
+	// Radius relays the forward's origin to the machine, which proxies it to the port there; anonymous visitors only
+	// reach public forwards.
+	const forwardId = (await kept())[0]!.id;
+	if (machine.proxies) {
+		const relayed = await radius.forward(machine.server, forwardId, "/page");
+		assert.equal(relayed.status, 200);
+		assert.equal(relayed.body.toString("utf8"), "hello from /page");
+		assert.equal((await radius.forward(machine.server, forwardId, "/page", { anonymous: true })).status, 404);
+	}
+	assert.equal((await call({ action: "open", port: webPort, public: true })).isError, false);
+	if (machine.proxies)
+		assert.equal((await radius.forward(machine.server, forwardId, "/open", { anonymous: true })).status, 200);
+	assert.equal((await kept()).length, 1, "opening a forwarded port again updates it");
+	assert.equal((await kept())[0]?.public, true);
+	// The owner sees and changes the machine's forwards in the Ports sheet.
+	const ports = await holdIn(owner, Ports, {}, "owner");
+	const listed = await ports.machine({ env: "hand" }, BACKGROUND_CONTEXT);
+	assert.equal(listed.forwards[0]?.sessionTitle, "On the hand");
+	assert.match(listed.forwards[0]?.publicUrl ?? "", /^https:\/\/pub--/);
+	await ports.machineAdd({ env: "hand", port: 8080 }, BACKGROUND_CONTEXT);
+	const added = (await kept()).find((forward) => forward.port === 8080)!;
+	assert.equal(added.tag, undefined);
+	await ports.machineSetPublic({ env: "hand", id: added.id, public: true }, BACKGROUND_CONTEXT);
+	assert.equal((await kept()).find((forward) => forward.port === 8080)?.public, true);
+	await ports.machineRemove({ env: "hand", id: added.id }, BACKGROUND_CONTEXT);
+	assert(!(await kept()).some((forward) => forward.port === 8080));
+	await call({ action: "open", port: 3000 });
+	assert.match(text(await call({ action: "close", port: 3000 })), /Stopped forwarding port 3000/);
+	ports.release();
+	// Archiving the session closes its forwards on the machine.
+	chat.release();
+	await sessions.archive({ id: session.id }, BACKGROUND_CONTEXT);
+	await poll(async () => (await kept()).length === 0, 30_000);
+	status.release();
+
+	// The machine going offline fails what needs it, and never runs anything here instead.
+	machine.close();
+	await poll(async () => !(await envs.test({ name: "hand" }, BACKGROUND_CONTEXT)).ok, 30_000);
+}

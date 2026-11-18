@@ -102,6 +102,9 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 	const machines = new Map<string, { token: string; name: string; socket?: WebSocket }>();
 	const machineWaiters = new Map<string, (socket: WebSocket) => void>();
 	const enrollments: Array<{ name?: string }> = [];
+	const redeemed = new Set<string>();
+	/** Client upgrades waiting for their channel: nothing reads them, so a close must end them itself. */
+	const pendingUpgrades = new Set<Duplex>();
 	const channelWaiters = new Map<string, (socket: WebSocket) => void>();
 	const closeWaiters = new Map<string, () => void>();
 	/** A Pi client: a channel the brain opens its own socket for, then piped to the client as Radius does. */
@@ -114,11 +117,16 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 			socket.end("HTTP/1.1 503 Service Unavailable\r\ncontent-length: 23\r\n\r\nServer host is offline\n");
 			return;
 		}
+		pendingUpgrades.add(socket);
+		socket.once("close", () => pendingUpgrades.delete(socket));
 		const refused = new Promise<undefined>((resolve) => closeWaiters.set(id, () => resolve(undefined)));
 		target.send(JSON.stringify({ version: 2, type: "connection_open", connection_id: id, kind: "ws", principal }));
+		// A host that goes away fails the channels it has not paired yet, as the relay does.
+		const gone = new Promise<undefined>((resolve) => target.once("close", () => resolve(undefined)));
 		const channel = await Promise.race([
 			channels.get(id) ?? new Promise<WebSocket>((resolve) => channelWaiters.set(id, resolve)),
 			refused,
+			gone,
 		]);
 		if (!channel) {
 			socket.end("HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\n\r\n");
@@ -184,6 +192,47 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 					})),
 				}),
 			);
+			return;
+		}
+		// A machine redeems an enrollment code minted here: it becomes the host of the server ID it chose.
+		if (request.url === "/v1/oauth/token" && request.method === "POST") {
+			let body = "";
+			request.on("data", (chunk: Buffer) => {
+				body += chunk.toString("utf8");
+			});
+			request.on("end", () => {
+				const form = new URLSearchParams(body);
+				const code = form.get("code") ?? "";
+				const serverId = form.get("server_id") ?? "";
+				const index = Number(code.replace(/^CODE-/, "")) - 1;
+				if (
+					form.get("grant_type") !== "urn:radius:params:oauth:grant-type:enrollment_code" ||
+					form.get("client_id") !== "pi-env" ||
+					enrollments[index] === undefined ||
+					redeemed.has(code)
+				) {
+					response.writeHead(400, { "content-type": "application/json" });
+					response.end(JSON.stringify({ error: "invalid_grant" }));
+					return;
+				}
+				redeemed.add(code);
+				const token = `machine-${randomUUID()}`;
+				machines.set(serverId, { token, name: form.get("name") ?? enrollments[index]?.name ?? serverId });
+				response.writeHead(200, { "content-type": "application/json" });
+				response.end(
+					JSON.stringify({
+						access_token: token,
+						refresh_token: `refresh-${token}`,
+						token_type: "Bearer",
+						expires_in: 86_400,
+						scope: "host offline_access",
+						server_id: serverId,
+						organization_id: OWNER.organization_id,
+						principal_id: OWNER.id,
+						public_origin: PUBLIC_ORIGIN,
+					}),
+				);
+			});
 			return;
 		}
 		if (request.url === "/v1/pi/servers/enrollments" && request.method === "POST") {
@@ -253,6 +302,11 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 			sockets.handleUpgrade(request, socket, head, (connection) => {
 				if (machine) {
 					machine.socket = connection;
+					// A machine's heartbeat is answered, as the relay does.
+					connection.on("message", (data: Buffer, binary) => {
+						if (!binary && (JSON.parse(data.toString("utf8")) as { type?: string }).type === "ping")
+							connection.send(JSON.stringify({ version: 2, type: "pong" }));
+					});
 					machineWaiters.get(serverId)?.(connection);
 					connection.on("close", () => {
 						if (machine.socket === connection) delete machine.socket;
@@ -326,7 +380,9 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 		): Promise<{ status: number; headers: [string, string][]; body: Buffer }> => {
 			const to = await machineSocket(serverId);
 			const id = randomUUID();
-			const origin = options.origin ?? `https://fwd--0123456789abcdef0123456789abcdef--${forward}.rdtun.com`;
+			const origin =
+				options.origin ??
+				`https://${options.anonymous ? "pub" : "fwd"}--0123456789abcdef0123456789abcdef--${forward}.rdtun.com`;
 			to.send(
 				JSON.stringify({
 					version: 2,
@@ -365,6 +421,9 @@ export async function fakeRadius(options: { channels?: boolean; rejectChannels?:
 		},
 		close: async () => {
 			for (const client of sockets.clients) client.terminate();
+			// Upgrades still waiting for a channel and kept-alive requests would hold the close.
+			for (const socket of pendingUpgrades) socket.destroy();
+			server.closeAllConnections();
 			await new Promise<void>((resolve) => server.close(() => resolve()));
 		},
 	};
@@ -378,10 +437,7 @@ export async function radiusFixture(
 ) {
 	const directory = await mkdtemp(join(tmpdir(), "p2-radius-"));
 	const radius = await fakeRadius(relay);
-	t.after(async () => {
-		await radius.close();
-		await rm(directory, { recursive: true, force: true });
-	});
+	t.after(() => radius.close());
 	await writeRadiusConfig(directory, {
 		gateway: radius.gateway,
 		serverId: randomUUID(),
@@ -423,7 +479,11 @@ export async function radiusFixture(
 		web: options.web ?? false,
 		facets: [{ name: "radius-probe", facet: probe }],
 	});
-	t.after(() => server.close());
+	t.after(async () => {
+		await server.close();
+		// Once the server stopped writing into it.
+		await rm(directory, { recursive: true, force: true });
+	});
 	await radius.hostReady;
 	// The natives the radius and ports plugins contribute once open (their objects live from the load).
 	const natives = await Promise.all([
