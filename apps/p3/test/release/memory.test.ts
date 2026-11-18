@@ -54,8 +54,8 @@ const SETTLE_MAX_MS = 40_000;
 /** The phases a worker marks, in order (`test/memory/session.ts`). */
 const PHASES = ["idle", "stream", "streamed", "burst", "bursted", "subagents", "subagented", "done"] as const;
 
-/** A worker's samples: its USS in MiB, by time. */
-type Samples = { t: number; uss: number }[];
+/** A worker's samples: its USS in MiB and the CPU time it used so far in s, by time. */
+type Samples = { t: number; uss: number; cpu: number }[];
 
 /** A process's unique memory (USS) in MiB, from `/proc`; `undefined` once it is gone. */
 async function uss(pid: number): Promise<number | undefined> {
@@ -63,6 +63,18 @@ async function uss(pid: number): Promise<number | undefined> {
 	if (rollup === undefined) return undefined;
 	const kb = (field: string) => Number(new RegExp(`^${field}:\\s+(\\d+)`, "m").exec(rollup)?.[1] ?? 0);
 	return (kb("Private_Clean") + kb("Private_Dirty")) / 1024;
+}
+
+/** The clock ticks a second of `/proc/<pid>/stat`'s CPU times: Linux's `USER_HZ`, 100 on every architecture p3 runs. */
+const TICKS = 100;
+
+/** The CPU time a process used so far (user and system), in s, from `/proc`; `undefined` once it is gone. */
+async function cpu(pid: number): Promise<number | undefined> {
+	const stat = await readFile(`/proc/${pid}/stat`, "utf8").catch(() => undefined);
+	if (stat === undefined) return undefined;
+	// After the command's name in parentheses: the state is field 3, utime and stime are fields 14 and 15.
+	const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+	return (Number(fields[11]) + Number(fields[12])) / TICKS;
 }
 
 /**
@@ -87,12 +99,20 @@ export type Readings = {
 	/** The highest sample, and the phase it fell in. */
 	readonly peak: number;
 	readonly peakPhase: string;
+	/** The CPU time of the streamed answer, of the burst and of the five subagents, in s. */
+	readonly cpuStream: number;
+	readonly cpuBurst: number;
+	readonly cpuSubagents: number;
 };
 
 /** A worker's readings from its samples and its marks (the time each phase began). */
 export function readingsOf(samples: Samples, marks: ReadonlyMap<string, number>): Readings {
 	const at = (phase: string) => marks.get(phase)!;
-	const before = (phase: string) => samples.filter((sample) => sample.t < at(phase)).at(-1)?.uss ?? Number.NaN;
+	const last = (phase: string) => samples.filter((sample) => sample.t < at(phase)).at(-1);
+	const before = (phase: string) => last(phase)?.uss ?? Number.NaN;
+	// From the last sample before the work to the first after it: the worker idles at both.
+	const cpuOf = (from: string, to: string) =>
+		(samples.find((sample) => sample.t >= at(to))?.cpu ?? Number.NaN) - (last(from)?.cpu ?? Number.NaN);
 	const peakIn = (from: string, to?: string) =>
 		Math.max(
 			...samples
@@ -111,6 +131,9 @@ export function readingsOf(samples: Samples, marks: ReadonlyMap<string, number>)
 		subagented: samples.at(-1)!.uss,
 		peak: top.uss,
 		peakPhase: phase,
+		cpuStream: cpuOf("stream", "streamed"),
+		cpuBurst: cpuOf("burst", "bursted"),
+		cpuSubagents: cpuOf("subagents", "subagented"),
 	};
 }
 
@@ -121,6 +144,7 @@ function line(readings: Readings): string {
 		`peak ${mib(readings.peak)} MiB in ${readings.peakPhase}`,
 		`settled: idle ${mib(readings.idle)}, after the response ${mib(readings.streamed)}, after the burst ${mib(readings.bursted)}, after the subagents ${mib(readings.subagented)}`,
 		`peaks: burst ${mib(readings.burstPeak)}, subagents ${mib(readings.subagentsPeak)}`,
+		`CPU: stream ${readings.cpuStream.toFixed(2)} s, burst ${readings.cpuBurst.toFixed(2)} s, subagents ${readings.cpuSubagents.toFixed(2)} s`,
 	].join("; ");
 }
 
@@ -189,8 +213,8 @@ describe("a session worker's memory, from the release", () => {
 				assert.ok(Date.now() < deadline, "the schedule did not end within 12 minutes");
 				const t = Date.now();
 				for (const pid of pids) {
-					const value = await uss(pid);
-					if (value !== undefined) samples.get(pid)!.push({ t, uss: value });
+					const [memory, time] = await Promise.all([uss(pid), cpu(pid)]);
+					if (memory !== undefined && time !== undefined) samples.get(pid)!.push({ t, uss: memory, cpu: time });
 				}
 				const marks = await marksOf();
 				const failed = marks.find((mark) => mark.phase.startsWith("error"));
@@ -227,7 +251,11 @@ describe("a session worker's memory, from the release", () => {
 describe("the memory test's limit", () => {
 	it("calls a worker settled once its USS held still for 4 s, 12 s into the phase at the earliest, 40 s at the latest", () => {
 		const flat = (from: number, to: number, uss: (t: number) => number) =>
-			Array.from({ length: (to - from) / 250 + 1 }, (_, i) => ({ t: from + i * 250, uss: uss(from + i * 250) }));
+			Array.from({ length: (to - from) / 250 + 1 }, (_, i) => ({
+				t: from + i * 250,
+				uss: uss(from + i * 250),
+				cpu: 0,
+			}));
 		assert.equal(
 			settled(
 				flat(0, 11_000, () => 30),
@@ -259,12 +287,13 @@ describe("the memory test's limit", () => {
 		);
 	});
 
-	// The check must fail above the budget, naming what it saw.
-	it("fails a worker above the budget with its phase, its peak and its settled values", () => {
+	// The check must fail above the budget, naming what it saw; the CPU per phase is read from the same samples.
+	it("fails a worker above the budget with its phase, its peak and its settled values, and reads its CPU per phase", () => {
 		const marks = new Map(PHASES.map((phase, index) => [phase, 1000 * (index + 1)]));
 		const samples = [1500, 2500, 3500, 4500, 5500, 6500, 7500, 8500].map((t, index) => ({
 			t,
 			uss: [20, 30, 28, 44, 33, 56, 31, 30][index]!,
+			cpu: [0.1, 0.2, 1.2, 1.3, 2.0, 2.1, 4.1, 4.1][index]!,
 		}));
 		const readings = readingsOf(samples, marks);
 		assert.deepEqual(
@@ -278,6 +307,9 @@ describe("the memory test's limit", () => {
 			],
 			[20, 28, 44, 33, 56, "subagents"],
 		);
+		// Each phase's CPU from the last sample before it began to the first after it ended.
+		const seconds = [readings.cpuStream, readings.cpuBurst, readings.cpuSubagents].map((value) => value.toFixed(2));
+		assert.deepEqual(seconds, ["1.10", "0.80", "2.10"]);
 		assert.throws(
 			() => withinBudget(readings, BUDGET_MIB, "worker 1"),
 			/worker 1: USS above 55 MiB: peak 56\.0 MiB in subagents; settled: idle 20\.0, after the response 28\.0/,

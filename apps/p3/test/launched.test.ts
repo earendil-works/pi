@@ -55,7 +55,7 @@ describe("p3 launched from source", { concurrency: true }, () => {
 			await client.get(SessionWorker, { session: await sessions.create({}, context) }, context);
 			const workers = await launched.workers();
 			assert.equal(workers.length, 1);
-			// It runs with the V8 flags for its memory (owner, 2026-11-16; the memory reducer's delay 2026-11-18).
+			// It runs with the V8 flags for its memory (owner, 2026-11-16; the memory reducer's delay and the zones 2026-11-18).
 			const argv = (await readFile(`/proc/${workers[0]}/cmdline`, "utf8")).split("\0");
 			// Named here, not read from `WORKER_V8_FLAGS`: a mutation that drops one there would drop it here too.
 			const flags = [
@@ -67,6 +67,9 @@ describe("p3 launched from source", { concurrency: true }, () => {
 			for (const flag of flags) {
 				assert.ok(argv.includes(flag), `${flag}: ${argv.join(" ")}`);
 			}
+			// V8's managed zone memory on Node 26 only: Node 24's V8 would refuse to start with it.
+			const zones = Number(process.versions.node.split(".")[0]) >= 26;
+			assert.equal(argv.includes("--managed-zone-memory"), zones, argv.join(" "));
 			// It wrote Node's compile cache after its start, not only at its exit: the next worker starts warm.
 			const cached = await readdir(join(dataDir, "cache", "node"), { recursive: true, withFileTypes: true });
 			assert.ok(

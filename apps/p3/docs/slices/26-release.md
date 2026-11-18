@@ -794,10 +794,19 @@ restored in a copy for the comparison); "settled" is after 40 s (V8's memory red
   after 8 s, so on Node 26 the garbage of a burst stayed in old space past the test's settled readings. 8000 is Node
   24's own default: the flag changes nothing there, and one list serves every Node (no choice by version; mem-audit
   thought the flag missing in Node 24, but `node --v8-options` of 24.4.1 lists it, and a worker starts with it).
-  Background recompilation stays on. `--managed-zone-memory` (mem-audit's second lever) is not taken: its production
-  status in V8 is unchecked.
-- **Node versions:** each flag is in `node --v8-options` on Node 24.4.1 and 26.11.1, and `test/install.test.ts` checks
-  that on the Node it runs on (the flag listed, and Node started with all of them); the release tests pass on both
+  Background recompilation stays on.
+- **`--managed-zone-memory` on Node 26 only** (owner, 2026-11-18, after v8-flag-check: an ordinary V8 flag staged for
+  shipping, v8 commit 277d16f12e01, bug issues.chromium.org/409953791, a Chrome field trial for over a year, off by
+  default even on V8's main branch): V8 pools its compilers' zone memory itself instead of taking it from malloc, so
+  glibc keeps less freed memory, most after the five subagents. Node 24's V8 does not know the flag and refuses to
+  start with it, so `workerV8Flags(process.versions.node)` adds it from Node 26 on, once per process, by Node's major
+  version: no API asks V8 in process which flags it knows (a `node --v8-options` child would cost every p3 process a
+  spawn), and every Node 26 release carries the same V8 major. One line to drop. Not taken:
+  `--managed-zone-memory-for-isolate-independent-memory`, `--future`.
+- **Node versions:** each flag is in `node --v8-options` of the Node that gets it (24.4.1, 26.11.1), and
+  `test/install.test.ts` checks that on the Node it runs on (each flag listed, Node started with all of them) and the
+  choice for 24.4.0 to 25.9.0 and 26.0.0 to 100.0.0; the launched and release tests check the worker's command line,
+  the zones flag on Node 26 only; the release tests pass on both
   (the memory test's numbers for each are below). `src/minimum-node.ts` refuses an older Node with one line and exit
   1 (`p3: needs Node 24.4.0 or newer; this is Node …`); its version is `package.json`'s `engines`. In the release the
   launcher `p3.js` runs it first and has no static import (Opus, round 5: ES modules are linked before any of them
@@ -892,6 +901,29 @@ unminified, no compile cache flush), 3 runs × 4 workers. After: 10 runs × 4 wo
   because the reducer now shrinks the heap in the idle phase before the subagents and V8 grows it again when five
   conversations stream at once (not checked). The worst Node 26 worker is 50.9 MiB, 4.1 below the budget (4.5 before). Node 24's
   readings are those of before, as expected from a flag that sets its own default. All 10 runs pass.
+- **With `--managed-zone-memory` on Node 26** (2026-11-18): 5 rounds, serially, each round the memory test as built
+  (with the flag) and a copy without it (the same commit, only the flag taken out) at the same time on an otherwise
+  idle slayer, all on Node 26.11.1, both with the reducer's delay; 5 runs × 4 workers each. The memory test now also
+  reads each worker's CPU time (`/proc/<pid>/stat`, user and system) from the last sample before a phase to the first
+  after it:
+
+  | reading | without (n=20) | with `--managed-zone-memory` (n=20) |
+  | --- | --- | --- |
+  | idle, settled | 18.9 [18.5–25.4] | 17.9 [17.7–20.1] |
+  | after the first response | 30.8 [30.2–35.7] | 28.6 [27.7–30.0] |
+  | burst peak | 43.4 [42.9–44.6] | 41.4 [40.8–42.9] |
+  | after the burst | 37.2 [36.8–44.1] | 33.8 [33.1–34.5] |
+  | 5 subagents, peak | 49.1 [48.3–51.1] | 46.7 [44.8–47.9] |
+  | after the subagents | 48.7 [43.7–51.1] | 42.6 [37.4–44.8] |
+  | highest of a run | 49.1 [48.3–51.1] | **46.7 [44.8–47.9]** |
+  | CPU of the streamed answer | 0.91 s [0.86–0.96] | 0.89 s [0.82–0.95] |
+  | CPU of the burst of 20 turns | 0.33 s [0.30–0.39] | 0.34 s [0.29–0.38] |
+  | CPU of the five subagents | 2.17 s [2.05–2.36] | 2.21 s [2.03–2.42] |
+
+  Lower in every reading, by 1 to 6 MiB; the worst Node 26 worker is 47.9 MiB, 7.1 below the budget and close to Node
+  24's worst (46.1 in the release's own run on Node 24 that night, n=4). No CPU cost the runs can see: every
+  phase's median within 2%, the ranges overlapping. The release tests' own memory run on Node 26 agrees (n=4: after
+  the burst 33.6, after the subagents 42.1, highest 46.9).
 
 ## Carried (not in this slice)
 
@@ -905,7 +937,7 @@ CHANGELOG for p3); an install lock for installers (`packages/coding-agent/instal
 terminal client behind plain `p3` (slice 27); a restart requested from the page (slice 2); starting a Pi at boot
 (a service unit); the web and terminal base bundles in the package (slice 16); slice 3 replaces `startWorker({
 session })`, the memory test's hook, with the harness as an object in the worker's core facet (design §24), and the
-memory test's session with it; what Node 26 holds after five subagents (with the reducer's delay set to 8 s its workers settle 2 MiB above Node 24's after a burst, 4 MiB after the subagents; mem-audit's `--managed-zone-memory` would close that, its production status unchecked). **Windows, not run natively:** the
+memory test's session with it; whether `--managed-zone-memory` can go once V8 turns it on by default (it is behind `--future` there). **Windows, not run natively:** the
 whole suite on Windows (its tests read `/proc`, the gate matches `/server.json`, the fake `ps` and PowerShell need a
 POSIX shell); Chord's `processLock` on named pipes; PowerShell's real output; `release:p3:local` there (it links
 `<out>/p3` with a symbolic link and runs `npm` without its `.cmd`); the data directory's privacy (modes 0700 and 0600

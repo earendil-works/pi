@@ -32,15 +32,31 @@ const SOURCE_FLAGS = ["--conditions=source", "--disable-warning=ExperimentalWarn
  * - `--gc-memory-reducer-start-delay-ms=8000` (owner, 2026-11-18, mem-audit): V8 starts shrinking the heap 8 s after
  *   work, not 30 s as Node 26's V8 does; 8000 is Node 24's own default, so the flag changes nothing there and the same
  *   list serves every Node p3 runs on (on Node 26, after a burst of turns 37.2 instead of 43.0 MiB).
- * Every Node p3 supports (24.4.0 and newer, `minimum-node.ts`) knows each of them: `test/install.test.ts` starts the
- * Node it runs on with them, and the release tests run on Node 24 and 26.
+ * - `--managed-zone-memory` (owner, 2026-11-18, mem-audit; Node 26 only, `workerV8Flags`): V8 pools the zone memory of
+ *   its compilers itself instead of taking it from malloc, so glibc keeps less freed memory (on Node 26 after five
+ *   subagents 37.3 instead of 44.8 MiB). An ordinary V8 flag staged for shipping (v8 commit 277d16f12e01, bug
+ *   issues.chromium.org/409953791), off by default; Node 24's V8 does not know it and refuses to start with it.
+ * Each is listed and accepted by the Node that runs it: `test/install.test.ts` checks on its Node, and the release tests
+ * run on Node 24 and 26.
  */
-export const WORKER_V8_FLAGS: readonly string[] = [
-	"--liftoff-only",
-	"--optimize-for-size",
-	"--max-semi-space-size=4",
-	"--gc-memory-reducer-start-delay-ms=8000",
-];
+export const WORKER_V8_FLAGS: readonly string[] = workerV8Flags(process.versions.node);
+
+/**
+ * The V8 flags of a session worker on Node `version` (`process.versions.node`): `--managed-zone-memory` from Node 26
+ * on. Chosen by Node's major version, once per process: no API asks V8 in process which flags it knows (asking a
+ * `node --v8-options` child would cost every p3 process a spawn), every Node 26 release carries the same V8 major, and
+ * `test/install.test.ts` fails on a Node whose V8 drops or lacks a flag.
+ */
+export function workerV8Flags(version: string): readonly string[] {
+	const zones = Number(version.split(".")[0]) >= 26 ? ["--managed-zone-memory"] : [];
+	return [
+		"--liftoff-only",
+		"--optimize-for-size",
+		"--max-semi-space-size=4",
+		"--gc-memory-reducer-start-delay-ms=8000",
+		...zones,
+	];
+}
 
 /**
  * How a session's worker starts: the source entry with the flag that resolves workspace sources, or the built one,
