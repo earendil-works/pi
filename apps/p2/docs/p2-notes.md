@@ -508,10 +508,31 @@ npm start
   removes any archived-session forwards left by an interrupted archive. A remote-environment session cannot open
   (mobile's message names the env); list and close work. The transcript shows mobile's `ports` card (summary,
   **Open … →** / **Public link →** from `details.forward`).
+- **Radius machines' forwards** (`plugins/ports/machine-forwards.ts`): a session working on a Radius machine
+  (`envs.json` type `radius`, [guide](remote-envs.md#radius-machines)) opens and closes forwards on that machine: its
+  agent keeps them and Radius relays their origins to it, so `ports` there talks to the agent (`forwards`,
+  `forwardSet`, `forwardRemove`) over the server's connection to it (`EnvManager.agentRequest`), with the same
+  one-forward-per-port rule; its forwards carry the tag `{ p2: <radius.json serverId>, session }`. `Ports` v3 adds the
+  owner's `machine`, `machineAdd`, `machineRemove`, `machineSetPublic` (the Ports sheet's section per machine). An
+  archive removes the session's tagged forwards from every Radius machine in the background (an offline machine must
+  not fail the archive). SSH environments and sandboxes still refuse `open`.
 - `test/p2/ports.test.ts` covers persistence, validation, ownership, fake-provider tool calls, reload, guest denial
   and archive cleanup. `test/p2/radius.test.ts` uses only a disposable localhost fake gateway/relay: remote-owner
   admission and provider access, HTTP credit in both directions, congestion, forwards, redirects, WebSockets,
   unavailable ports and anonymous public/private gates. All listeners use port 0 and private temporary data.
+
+### Machines through Radius
+
+A Radius machine (`envs.json` `{ "type": "radius", "server" }`, [guide](remote-envs.md#radius-machines)) is reached
+through the same client channel the TUI launcher uses: `radiusClientChannel` in `src/runtime/radius-client.ts` opens
+`/v1/servers/<server>/connect` with `pi-server.client.v2`, here with the owner credential of the data directory's
+`radius.json` (`ownerRadiusAccess`: read at every connect, refreshed in memory, never written: Radius does not rotate
+refresh tokens, and the brain saves its own). The channel's first message is the head `{ type: "pi-env", token }`;
+then it carries pi-env's byte stream (`Connection`'s `transport` option in packages/env). The agent, not this server,
+answers it, so the brain plays no part: it works with `P2_RADIUS=0`. The Envs sheet lists the owner's machines and
+mints enrollment codes through Radius's API with the same credential (`plugins/envs/radius-machines.ts`). `Envs` v4
+adds `machines`, `enroll` and `install` (the agent installed over an SSH environment); older pages bind v1 to v3 and
+see no Radius machines.
 
 ### TUI through Radius
 
