@@ -32,6 +32,11 @@ export class WsPeer {
 		});
 		socket.on("data", (chunk: Buffer) => this.#receive(chunk));
 		socket.on("close", () => this.#end({ code: 1006, reason: "" }));
+		// Upgraded sockets are half-open: a peer that went away ends its side without a close frame.
+		socket.on("end", () => {
+			this.#end({ code: 1006, reason: "" });
+			socket.destroy();
+		});
 		socket.on("error", () => this.#end({ code: 1006, reason: "" }));
 		if (head.length > 0) this.#receive(head);
 	}
