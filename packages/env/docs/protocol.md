@@ -3,6 +3,11 @@
 Version 1. The client starts `pi-env serve --token <hex>` (over `ssh`, or directly in tests) and talks to it over the
 process's stdin and stdout. stderr is diagnostic text for logs only.
 
+`pi-env agent` serves the same byte stream over a Radius env channel instead of stdio ([agent.md](agent.md)): the
+client's text head `{"type":"pi-env","token":"<hex>"}` takes the place of `--token`, the client's binary messages are
+stdin and the agent's binary messages are stdout (message boundaries carry no meaning), and the end of the channel is
+the end of stdin. Everything below applies unchanged; only sessions of the agent have the `forwards` operations.
+
 ## Sync
 
 Shell startup files may print to stdout before the daemon runs. The daemon's first output is the line
@@ -77,7 +82,7 @@ values (`linux`, `android`, `macos`, `windows`; `x86_64`, `aarch64`), which the 
 names; `tmpdir` follows the remote Node's `os.tmpdir()` rules; `cwd` and `driveCwds` (Windows' `=C:` variables) are
 what Node's `path.resolve` falls back to for drive-relative paths. `features` lists operations added to protocol 1
 after its first release (`listFiles`, `process`); older daemons omit the field and refuse those operations as unknown, so clients
-check it first.
+check it first. Sessions of `pi-env agent` also list `forwards`; `serve` never does.
 
 File operations take `{ path }` (and the listed fields) and return `{}` unless noted:
 
@@ -171,3 +176,18 @@ While a `process` request runs, `processWrite { target }` writes its payload to 
 request. Both return `{}` at once; input is queued and written in order, waiting while the program does not read it.
 Input queued after `processCloseStdin` is dropped; once stdin is closed, and once the program has ended, both fail
 with `EBADF`.
+
+## Forwards (agent only)
+
+With feature `forwards`, sessions of `pi-env agent` manage the machine's port forwards: HTTP services on its
+`localhost` that the owner reaches at their own Radius origins. They are stored in the agent's `forwards.json` and
+shared by all its sessions. A forward is `{ id, port, name?, public, tag?, url?, publicUrl? }`: `id` is 10 random
+characters of `[a-z0-9]`, `tag` any JSON value the opener chose, `url` (`https://fwd--<label>--<id>.<domain>`, when
+the machine's origin `https://<label>.<domain>` is known) and `publicUrl` (`https://pub--<label>--<id>.<domain>`, only
+for public forwards) its addresses, without a trailing slash.
+
+| op | fields | result |
+|---|---|---|
+| `forwards` | | `{ origin, forwards }`; `origin` is the machine's origin or `null` |
+| `forwardSet` | `id?`, `port`, `name?`, `public?`, `tag?` | `{ forward }`. With `id`, updates that forward (`ENOENT` if unknown); without, updates the forward with the same `port` and a JSON-equal `tag` (both absent counts as equal), else adds one. Omitted fields keep their values; a blank `name` clears it. `EINVAL` for a port outside 1 to 65535, a name over 40 characters or with control characters, or a 51st forward |
+| `forwardRemove` | `id?`, `tag?` | `{ removed }`: the forward `id`, else every forward whose `tag` is JSON-equal; neither is `EINVAL` |
