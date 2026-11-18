@@ -140,7 +140,8 @@ impl Options {
     }
 }
 
-/// Enroll unless already enrolled with this gateway; a code always enrolls anew, with a new server ID.
+/// Enroll unless already enrolled with this gateway. A code always enrolls anew (see `redeem`); the device flow enrolls
+/// a new machine.
 fn enroll(options: &Options) -> Result<AgentConfig, String> {
     let state = &options.state;
     let existing = state.agent()?;
@@ -162,20 +163,26 @@ fn enroll(options: &Options) -> Result<AgentConfig, String> {
         }
         return Ok(config);
     }
-    let server_id = new_server_id();
     let name = options
         .name
         .clone()
         .or_else(|| existing.as_ref().and_then(|config| config.name.clone()));
-    let grant = match &options.code {
-        Some(code) => oauth::redeem_code(&origin, code, &server_id, name.as_deref())
-            .map_err(|error| format!("enrollment: {error}"))?,
-        None => oauth::device_flow(&origin, &server_id, |url, code| {
-            eprintln!(
-                "To register this machine with Radius, open {url} and confirm the code {code}"
-            );
-        })
-        .map_err(|error| format!("enrollment: {error}"))?,
+    let known = existing
+        .as_ref()
+        .filter(|config| config.gateway == gateway)
+        .map(|config| config.server_id.clone());
+    let (server_id, grant) = match &options.code {
+        Some(code) => redeem(&origin, code, known, name.as_deref())?,
+        None => {
+            let server_id = new_server_id();
+            let grant = oauth::device_flow(&origin, &server_id, |url, code| {
+                eprintln!(
+                    "To register this machine with Radius, open {url} and confirm the code {code}"
+                );
+            })
+            .map_err(|error| format!("enrollment: {error}"))?;
+            (server_id, grant)
+        }
     };
     let (Some(organization_id), Some(principal_id), Some(refresh_token)) = (
         grant.organization_id.clone(),
@@ -202,6 +209,37 @@ fn enroll(options: &Options) -> Result<AgentConfig, String> {
     };
     state.write_agent(&config)?;
     Ok(config)
+}
+
+/// Redeem an enrollment code: with the machine's `known` server ID if it has one, else a new one. A re-enroll code is
+/// bound to one machine and names it when the ID differs (`server_id_mismatch`): redeem again with that ID. An
+/// ordinary code enrolls new machines only and refuses a known ID (`server_id_claimed`): redeem again with a new one,
+/// which makes this a new machine.
+fn redeem(
+    origin: &Origin,
+    code: &str,
+    known: Option<String>,
+    name: Option<&str>,
+) -> Result<(String, oauth::Grant), String> {
+    let mut fresh = known.is_none();
+    let mut server_id = known.unwrap_or_else(new_server_id);
+    // Each answer leads to at most one other ID: a mismatch names the bound one, a claim asks for a new one.
+    for _ in 0..3 {
+        match oauth::redeem_code(origin, code, &server_id, name) {
+            Ok(grant) => return Ok((server_id, grant)),
+            Err(oauth::TokenError::Claimed) if !fresh => {
+                let new = new_server_id();
+                eprintln!(
+                    "The code enrolls a new machine: the server ID changes from {server_id} to {new}"
+                );
+                server_id = new;
+                fresh = true;
+            }
+            Err(oauth::TokenError::Mismatch(bound)) if bound != server_id => server_id = bound,
+            Err(error) => return Err(format!("enrollment: {error}")),
+        }
+    }
+    Err("enrollment: the gateway kept refusing the server ID".into())
 }
 
 fn install(options: &Options) -> Result<(), String> {

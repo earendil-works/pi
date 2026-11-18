@@ -31,6 +31,12 @@ pub enum TokenError {
     Rejected(String),
     /// Device flow: the owner has not decided yet; `slow_down` asks for a longer interval.
     Pending { slow_down: bool },
+    /// Enrollment: the server ID belongs to an enrolled machine, and the code is for new machines only
+    /// (`server_id_claimed`). The code stays usable.
+    Claimed,
+    /// Enrollment: the code re-enrolls the machine with this server ID only (`server_id_mismatch`). The code stays
+    /// usable.
+    Mismatch(String),
     /// Anything else (network, server errors): worth retrying.
     Failed(String),
 }
@@ -42,6 +48,10 @@ impl std::fmt::Display for TokenError {
                 formatter.write_str(message)
             }
             TokenError::Pending { .. } => formatter.write_str("authorization pending"),
+            TokenError::Claimed => formatter.write_str("the server ID is already enrolled"),
+            TokenError::Mismatch(server_id) => {
+                write!(formatter, "the code is for the machine {server_id}")
+            }
         }
     }
 }
@@ -131,7 +141,7 @@ pub fn device_flow(
             }
             // A network failure while waiting is retried with the next poll.
             Err(TokenError::Failed(_)) => {}
-            Err(TokenError::Rejected(message)) => return Err(message),
+            Err(error) => return Err(error.to_string()),
         }
     }
     Err("the device code expired before it was approved".into())
@@ -149,6 +159,11 @@ fn token(gateway: &Origin, fields: &[(&str, &str)]) -> Result<Grant, TokenError>
     let message = format!("{} {}", response.status, error_text(&value, &response.body));
     match (response.status, error) {
         (400, "authorization_pending") => Err(TokenError::Pending { slow_down: false }),
+        (400, "server_id_claimed") => Err(TokenError::Claimed),
+        (400, "server_id_mismatch") => match value["server_id"].as_str() {
+            Some(server_id) => Err(TokenError::Mismatch(server_id.to_string())),
+            None => Err(TokenError::Rejected(message)),
+        },
         (400, "slow_down") => Err(TokenError::Pending { slow_down: true }),
         (400 | 401, _) => Err(TokenError::Rejected(message)),
         _ => Err(TokenError::Failed(message)),

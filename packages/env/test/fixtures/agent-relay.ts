@@ -37,6 +37,10 @@ export class FakeRelay {
 	/** Lifetime of issued access tokens, in seconds. */
 	expiresIn = 86_400;
 	readonly codes = new Set<string>();
+	/** Re-enroll codes and the server ID each is bound to. */
+	readonly reenrollCodes = new Map<string, string>();
+	/** Server IDs of enrolled machines, which ordinary codes and the device flow refuse. */
+	readonly servers = new Set<string>();
 	serverId: string | undefined;
 	host: WsPeer | undefined;
 	readonly connects: HostConnect[] = [];
@@ -85,6 +89,13 @@ export class FakeRelay {
 	code(): string {
 		const code = randomBytes(6).toString("hex").toUpperCase();
 		this.codes.add(code);
+		return code;
+	}
+
+	/** A single-use code that re-enrolls the machine `serverId`. */
+	reenrollCode(serverId: string): string {
+		const code = randomBytes(6).toString("hex").toUpperCase();
+		this.reenrollCodes.set(code, serverId);
 		return code;
 	}
 
@@ -220,6 +231,7 @@ export class FakeRelay {
 		if (path === "/v1/oauth/device") {
 			if (form.client_id !== "pi-env" || form.scope !== "host offline_access")
 				return [400, { error: "invalid_scope" }];
+			if (this.servers.has(form.server_id ?? "")) return [400, { error: "server_id_claimed" }];
 			this.serverId = form.server_id;
 			return [
 				200,
@@ -237,8 +249,15 @@ export class FakeRelay {
 		this.tokenRequests.push(form);
 		if (form.client_id !== "pi-env") return [400, { error: "invalid_client" }];
 		if (form.grant_type === "urn:radius:params:oauth:grant-type:enrollment_code") {
-			if (!form.code || !this.codes.delete(form.code)) return [400, { error: "invalid_grant" }];
+			const bound = this.reenrollCodes.get(form.code ?? "");
+			if (bound !== undefined && bound !== form.server_id)
+				return [400, { error: "server_id_mismatch", server_id: bound }];
+			if (bound === undefined && this.servers.has(form.server_id ?? ""))
+				return [400, { error: "server_id_claimed" }];
+			if (!form.code || !(this.reenrollCodes.delete(form.code) || this.codes.delete(form.code)))
+				return [400, { error: "invalid_grant" }];
 			this.serverId = form.server_id;
+			if (form.server_id) this.servers.add(form.server_id);
 			return [200, this.#issue(true)];
 		}
 		if (form.grant_type === "urn:ietf:params:oauth:grant-type:device_code") {
@@ -286,7 +305,7 @@ export class FakeRelay {
 			return;
 		}
 		if (!this.#access.has(token)) {
-			refuseUpgrade(socket, 401, '{"error":"invalid_token"}');
+			refuseUpgrade(socket, 401, '{"error":{"code":"invalid_token"}}');
 			return;
 		}
 		if (connect) {

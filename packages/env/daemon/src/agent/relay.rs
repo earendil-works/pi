@@ -524,6 +524,10 @@ impl Tokens {
                 Ok(credentials.access_token.clone())
             }
             Err(TokenError::Rejected(message)) => Err(TokenFailure::Revoked(message)),
+            // Answers of enrollment only; a refresh never gets them.
+            Err(error @ (TokenError::Claimed | TokenError::Mismatch(_))) => {
+                Err(TokenFailure::Revoked(error.to_string()))
+            }
             Err(error) if refused || credentials.expires_at <= now => Err(TokenFailure::Failed(
                 format!("refreshing the access token: {error}"),
             )),

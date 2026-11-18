@@ -47,8 +47,13 @@ The gateway defaults to `https://radius.pi.dev`; `http://` gateways (then `ws://
 - The token response must carry `organization_id`, `principal_id` (the owner) and a refresh token; `server_id` and
   `public_origin` are taken when present.
 - An enrolled state is kept: without `--code`, `install` and `enroll` reuse its server ID and credentials (a `--name`
-  updates the name). A code always enrolls anew, with a new server ID. A different `--gateway` without a code runs the
-  device flow.
+  updates the name). A different `--gateway` without a code runs the device flow, which always uses a new server ID.
+- A code always enrolls anew, first with the state's server ID (when enrolled with this gateway), else a new one.
+  Radius has two kinds of codes, and the agent follows its answers (the code stays usable after either refusal):
+  - An ordinary code enrolls new machines only and refuses a known ID with 400 `server_id_claimed`: the agent redeems
+    it again with a new server ID, so the machine becomes a new one (stderr says that the server ID changed).
+  - A re-enroll code is bound to one machine and refuses another ID with 400 `server_id_mismatch` and the bound
+    `server_id`: the agent redeems it again with that ID. Its success revokes the machine's earlier grants.
 
 ## State
 
@@ -79,7 +84,8 @@ Radius (`packages/gateway/src/servers/protocol.ts`).
   is connected.
 - Tokens: the access token is refreshed (`grant_type=refresh_token`) when it expires within 5 minutes, and after the
   gateway answered 401 for it; a returned refresh token replaces the stored one. A refresh refused with 400 or 401
-  means the machine was removed: the agent logs it, reports `revoked`, and tries again every 5 minutes. A failed
+  means the machine was removed (after Remove, the host connect answers 401 `invalid_token` and the refresh
+  `invalid_grant`): the agent logs it, reports `revoked`, and tries again every 5 minutes. A failed
   refresh of a token that is still valid keeps using it.
 - The owner is `{kind: "user", id: principalId, organization_id: organizationId}`.
 - When the host socket is lost, every channel ends with it, as the relay fails them.
@@ -149,6 +155,8 @@ service started it.
 
 ## Deviations from the v1 spec
 
+- Enrollment with a code follows Radius' re-enrollment answers (`server_id_claimed`, `server_id_mismatch`; see
+  "Enrollment") instead of always using a new server ID.
 - `install --service-name NAME` is an addition: tests need a label of their own, and it allows several agents per user.
   `agent.json` records the service (`service: {kind, name}`) so `status` and `uninstall` find it.
 - Forward URLs have no trailing slash (p2's own forward views add one).

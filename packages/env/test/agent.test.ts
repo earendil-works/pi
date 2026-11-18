@@ -197,6 +197,45 @@ describe.skipIf(process.platform === "win32")("pi-env agent", () => {
 			expect(used.stderr).toContain("invalid_grant");
 		});
 
+		it("redeems a code with the machine's server ID, a bound one, or a new one", async () => {
+			const fake = await new FakeRelay().start();
+			cleanups.push(() => fake.close());
+			const dir = stateDir();
+			const enroll = (code: string, at = dir) =>
+				cli(["enroll", "--gateway", fake.url, "--code", code, "--state", at]);
+			const redeemed = () => fake.tokenRequests.map((request) => request.server_id);
+			expect((await enroll(fake.code())).code).toBe(0);
+			const first = fake.serverId as string;
+			// A re-enroll code for this machine keeps its server ID: one request.
+			fake.tokenRequests.length = 0;
+			const again = await enroll(fake.reenrollCode(first));
+			expect(again.code, again.stderr).toBe(0);
+			expect(lastJson(again.stdout).server_id).toBe(first);
+			expect(redeemed()).toEqual([first]);
+			// An ordinary code refuses the enrolled ID: the machine gets a new one.
+			fake.tokenRequests.length = 0;
+			const fresh = await enroll(fake.code());
+			expect(fresh.code, fresh.stderr).toBe(0);
+			const second = lastJson(fresh.stdout).server_id as string;
+			expect(second).not.toBe(first);
+			expect(redeemed()).toEqual([first, second]);
+			expect(fresh.stderr).toContain(`server ID changes from ${first} to ${second}`);
+			expect(JSON.parse(readFileSync(join(dir, "agent.json"), "utf8")).serverId).toBe(second);
+			// Without state, a re-enroll code names the machine it is bound to.
+			fake.tokenRequests.length = 0;
+			const other = stateDir();
+			const bound = await enroll(fake.reenrollCode(first), other);
+			expect(bound.code, bound.stderr).toBe(0);
+			expect(lastJson(bound.stdout).server_id).toBe(first);
+			expect(redeemed()).toHaveLength(2);
+			expect(redeemed()[1]).toBe(first);
+			// A machine with another ID takes the bound one as well.
+			fake.tokenRequests.length = 0;
+			const switched = await enroll(fake.reenrollCode(second), other);
+			expect(lastJson(switched.stdout).server_id).toBe(second);
+			expect(redeemed()).toEqual([first, second]);
+		});
+
 		it("enrolls through the device flow without a code", async () => {
 			const fake = await new FakeRelay().start();
 			cleanups.push(() => fake.close());
