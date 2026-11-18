@@ -225,8 +225,8 @@ export function resolveThoughtSignature(
 }
 
 /**
- * Gemini 3+ rejects a model turn whose function calls carry no signature (400 "Function call is missing a
- * thought_signature"), which happens on history from another provider, whose signatures are dropped.
+ * Gemini 3+ requires a signature on the first function call of a step (400 "Function call is missing a
+ * thought_signature"), which may be unavailable when replaying history from another provider.
  * Such a turn is replayed as text instead: its calls are left out and each result becomes a user
  * observation that names the tool and its arguments. Google's skip_thought_signature_validator bypass is
  * not used: gemini-4-hydrogen then writes its next call into its thinking and emits an empty one
@@ -318,12 +318,12 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 			const isSameProviderAndModel = msg.provider === model.provider && msg.model === model.id;
 			// transformMessages already dropped tool call signatures that do not carry over to this model.
 			const isSameProvider = msg.provider === model.provider && msg.api === model.api;
-			// Only the first call of a parallel group is signed by Gemini, so one signature covers the turn.
-			const toolCalls = msg.content.filter((block) => block.type === "toolCall");
+			// A signature on a later parallel call cannot satisfy Gemini's check on the first call.
+			const firstToolCall = msg.content.find((block) => block.type === "toolCall");
 			const replayAsObservations =
 				requiresFunctionCallThoughtSignature(model.id) &&
-				toolCalls.length > 0 &&
-				!toolCalls.some((block) => resolveThoughtSignature(isSameProvider, block.thoughtSignature));
+				firstToolCall !== undefined &&
+				!resolveThoughtSignature(isSameProvider, firstToolCall.thoughtSignature);
 
 			for (const block of msg.content) {
 				if (block.type === "text") {
@@ -413,8 +413,10 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 				observedToolCalls.delete(msg.toolCallId);
 				const label =
 					observedArguments === "{}" ? `\`${msg.toolName}\`` : `\`${msg.toolName}\` (${observedArguments})`;
+				let observationText = responseValue;
+				if (msg.isError) observationText = responseValue ? `Tool failed: ${responseValue}` : "Tool failed.";
 				const observationParts: Part[] = [
-					{ text: sanitizeSurrogates(`[Observation from ${label}:\n${responseValue}]`) },
+					{ text: sanitizeSurrogates(`[Observation from ${label}:\n${observationText}]`) },
 					...imageParts,
 				];
 				// Results of one turn's parallel calls share a user turn, as function responses do.

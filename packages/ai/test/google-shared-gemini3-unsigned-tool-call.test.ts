@@ -149,6 +149,38 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 		expect(JSON.stringify(contents)).not.toContain("c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=");
 	});
 
+	it("replays the batch as observations if only a later parallel call has a signature", () => {
+		const model = makeGemini3Model("google-vertex", "google-vertex", "gemini-4-hydrogen");
+		const signature = "AAAAAAAAAAAAAAAAAAAAAA==";
+		const context = makeContext(model, signature);
+		const assistant = context.messages[1];
+		if (assistant.role !== "assistant") throw new Error("expected the assistant turn");
+		const [first, second] = assistant.content;
+		if (first.type !== "toolCall" || second.type !== "toolCall") throw new Error("expected parallel tool calls");
+		delete first.thoughtSignature;
+		second.thoughtSignature = signature;
+
+		expect(convertMessages(model, normalizeContext(context))).toEqual(OBSERVED_CONTENTS);
+	});
+
+	it("labels a failed unsigned result in observation text without sending a function response", () => {
+		const model = makeGemini3Model("google-generative-ai", "google", "gemini-4-hydrogen");
+		const context = makeContext(model);
+		const failed = context.messages[2];
+		if (failed.role !== "toolResult") throw new Error("expected a tool result");
+		failed.isError = true;
+		failed.content = [{ type: "text", text: "permission denied" }];
+
+		expect(convertMessages(model, normalizeContext(context)).at(-1)).toEqual({
+			role: "user",
+			parts: [
+				{ text: '[Observation from `bash` ({"command":"echo hi"}):\nTool failed: permission denied]' },
+				{ text: '[Observation from `bash` ({"command":"ls -la"}):\nfiles]' },
+				{ text: HISTORY_NOTE },
+			],
+		});
+	});
+
 	it("keeps the text of an unsigned turn and drops only its calls", () => {
 		const model = makeGemini3Model("google-vertex", "google-vertex", "gemini-4-hydrogen");
 		const context = makeContext({ api: "anthropic-messages", provider: "anthropic", id: "claude-opus-4-5" });
