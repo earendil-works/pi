@@ -4,10 +4,13 @@
 
 use std::io::Read;
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 /// How long the login shell may take; a slower one leaves the agent's environment as it is.
 const TIMEOUT: Duration = Duration::from_secs(10);
+/// How long output is still read after the shell exited.
+const EXIT_GRACE: Duration = Duration::from_millis(200);
 /// Printed before the environment, so whatever the login files print is skipped.
 const MARKER: &str = "__PI_ENV_LOGIN_ENVIRONMENT__";
 
@@ -56,6 +59,8 @@ fn login_shell() -> String {
     "/bin/sh".into()
 }
 
+/// The login shell's output, read until it ends, or until the shell exited and EXIT_GRACE passed, or TIMEOUT: a
+/// background job the login files started may hold stdout open forever.
 fn capture(shell: &str) -> Result<Vec<(String, String)>, String> {
     let mut child = Command::new(shell)
         .args(["-l", "-c", &format!("printf '%s' {MARKER}; env -0")])
@@ -65,28 +70,44 @@ fn capture(shell: &str) -> Result<Vec<(String, String)>, String> {
         .spawn()
         .map_err(|error| format!("{shell}: {error}"))?;
     let mut stdout = child.stdout.take().unwrap();
-    let reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let _ = stdout.read_to_end(&mut bytes);
-        bytes
-    });
-    let deadline = Instant::now() + TIMEOUT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!(
-                    "{shell} -l took longer than {} s",
-                    TIMEOUT.as_secs()
-                ));
+    let (chunks, received) = mpsc::channel::<Vec<u8>>();
+    // Left behind (blocked on the pipe) when a background job keeps it open.
+    std::thread::spawn(move || {
+        let mut buffer = [0u8; 64 * 1024];
+        while let Ok(read) = stdout.read(&mut buffer) {
+            if read == 0 || chunks.send(buffer[..read].to_vec()).is_err() {
+                return;
             }
         }
+    });
+    let deadline = Instant::now() + TIMEOUT;
+    let mut exited_at: Option<Instant> = None;
+    let mut bytes = Vec::new();
+    loop {
+        let now = Instant::now();
+        if exited_at.is_none() && child.try_wait().ok().flatten().is_some() {
+            exited_at = Some(now);
+        }
+        let until = exited_at.map_or(deadline, |exited| (exited + EXIT_GRACE).min(deadline));
+        if now >= until {
+            break;
+        }
+        match received.recv_timeout((until - now).min(Duration::from_millis(20))) {
+            Ok(chunk) => bytes.extend_from_slice(&chunk),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
     }
-    let bytes = reader.join().unwrap_or_default();
-    parse(&bytes).ok_or_else(|| format!("{shell} -l printed no environment"))
+    if exited_at.is_none() {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+    parse(&bytes).ok_or_else(|| {
+        format!(
+            "{shell} -l printed no environment within {} s",
+            TIMEOUT.as_secs()
+        )
+    })
 }
 
 /// The `KEY=VALUE` entries after the marker, NUL-separated.
@@ -124,5 +145,25 @@ mod tests {
     fn captures_a_shell_environment() {
         let variables = capture("/bin/sh").unwrap();
         assert!(variables.iter().any(|(key, _)| key == "PATH"));
+    }
+
+    #[test]
+    fn does_not_wait_for_a_background_job_holding_stdout() {
+        // A login shell whose profile leaves a job with stdout open, as `.profile` may.
+        let dir = std::env::temp_dir().join(format!("pi-env-login-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let shell = dir.join("shell");
+        std::fs::write(
+            &shell,
+            "#!/bin/sh\nsleep 30 &\nshift\nexec /bin/sh \"$@\"\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let started = Instant::now();
+        let variables = capture(shell.to_str().unwrap()).unwrap();
+        assert!(variables.iter().any(|(key, _)| key == "PATH"));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

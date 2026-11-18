@@ -5,7 +5,7 @@ use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, mpsc};
 use std::time::Duration;
 
 /// A gateway's origin: `http(s)://host[:port]`; paths are absolute below it.
@@ -133,10 +133,7 @@ impl Write for Stream {
 /// Connect to `origin` within `timeout` per address, and complete the TLS handshake for `https`. Reads and writes
 /// keep `timeout` as their timeout until the caller changes it.
 pub fn connect(origin: &Origin, timeout: Duration) -> io::Result<Stream> {
-    let addresses: Vec<SocketAddr> = (origin.host.as_str(), origin.port)
-        .to_socket_addrs()?
-        .collect();
-    let tcp = connect_any(&addresses, timeout)?;
+    let tcp = connect_any(&resolve(origin, timeout)?, timeout)?;
     if !origin.secure {
         return Ok(Stream::Plain(tcp));
     }
@@ -148,6 +145,26 @@ pub fn connect(origin: &Origin, timeout: Duration) -> io::Result<Stream> {
         tls.conn.complete_io(&mut tls.sock)?;
     }
     Ok(Stream::Tls(Box::new(tls)))
+}
+
+/// The addresses of `origin`'s host, within `timeout`: the system resolver has none of its own, so it runs on a thread
+/// that is left behind when it takes longer.
+fn resolve(origin: &Origin, timeout: Duration) -> io::Result<Vec<SocketAddr>> {
+    let (host, port) = (origin.host.clone(), origin.port);
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(
+            (host.as_str(), port)
+                .to_socket_addrs()
+                .map(Iterator::collect),
+        );
+    });
+    receiver.recv_timeout(timeout).unwrap_or_else(|_| {
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "resolving the host name timed out",
+        ))
+    })
 }
 
 /// The first of `addresses` that accepts a connection, with `timeout` for each and as read and write timeout.

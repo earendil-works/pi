@@ -10,6 +10,8 @@ use std::process::{Command, Stdio};
 pub struct Installed {
     pub record: ServiceRecord,
     pub notes: Vec<String>,
+    /// systemd: whether lingering is on, so the agent runs without a login; `None` elsewhere.
+    pub linger: Option<bool>,
 }
 
 /// The kinds `install` reports.
@@ -62,20 +64,43 @@ pub fn status(state: &State, record: &ServiceRecord) -> &'static str {
     }
 }
 
-/// How to start the agent where no service manager is available.
-pub fn manual_notes(state: &State) -> Vec<String> {
+/// The pid of an agent running with this state, as it reported in `status.json`.
+pub fn running_agent(state: &State) -> Option<u32> {
+    let status = state.status()?;
+    if status["relay"] == "stopped" {
+        return None;
+    }
+    agent_pid(state).filter(|pid| *pid != std::process::id() && alive(*pid))
+}
+
+/// Stop the service (if `record` names one) and any agent still running with this state, and wait up to 5 seconds
+/// for it to exit; returns the pid of the agent that ran.
+pub fn stop_agent(state: &State, record: Option<&ServiceRecord>) -> Option<u32> {
+    let running = running_agent(state);
+    if let Some(record) = record {
+        stop(state, record);
+    }
+    if running.is_some_and(alive) {
+        stop_process(state);
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while running.is_some_and(alive) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    running
+}
+
+/// Instructions for `install --no-service`.
+pub fn skipped_notes(state: &State) -> Vec<String> {
     let command = agent_command(state);
     if cfg!(windows) {
-        return vec![format!("Start the agent with: {command}")];
+        return vec![format!(
+            "The service was skipped (--no-service). Start the agent with: {command}"
+        )];
     }
-    vec![
-        format!(
-            "No user service manager found. Start the agent with: nohup {command} >/dev/null 2>&1 &"
-        ),
-        format!(
-            "To start it at boot, add to your crontab (crontab -e): @reboot {command} >/dev/null 2>&1"
-        ),
-    ]
+    vec![format!(
+        "The service was skipped (--no-service). Start the agent with: nohup {command} >/dev/null 2>&1 &"
+    )]
 }
 
 fn agent_command(state: &State) -> String {
@@ -202,6 +227,7 @@ mod platform {
         Ok(Installed {
             record,
             notes: Vec::new(),
+            linger: None,
         })
     }
 
@@ -283,6 +309,19 @@ mod platform {
 
     const DEFAULT_NAME: &str = "pi-env";
 
+    /// How to start the agent without a user systemd.
+    fn manual_notes(state: &State) -> Vec<String> {
+        let command = agent_command(state);
+        vec![
+            format!(
+                "No user service manager found. Start the agent with: nohup {command} >/dev/null 2>&1 &"
+            ),
+            format!(
+                "To start it at boot, add to your crontab (crontab -e): @reboot {command} >/dev/null 2>&1"
+            ),
+        ]
+    }
+
     pub fn install(state: &State, name: Option<&str>) -> Result<Installed, String> {
         let name = name.unwrap_or(DEFAULT_NAME).to_string();
         if run("systemctl", &["--user", "show-environment"]).is_err() {
@@ -292,6 +331,7 @@ mod platform {
                     name,
                 },
                 notes: manual_notes(state),
+                linger: None,
             });
         }
         let text = format!(
@@ -308,7 +348,8 @@ mod platform {
         run("systemctl", &["--user", "restart", &unit])?;
         let mut notes = Vec::new();
         let user = std::env::var("USER").unwrap_or_default();
-        if let Err(error) = run("loginctl", &["enable-linger", &user]) {
+        let linger = run("loginctl", &["enable-linger", &user]);
+        if let Err(error) = &linger {
             notes.push(format!(
                 "Could not enable lingering ({error}): the agent runs only while you are logged in. \
                  Ask an administrator to run: loginctl enable-linger {user}"
@@ -320,6 +361,7 @@ mod platform {
                 name,
             },
             notes,
+            linger: Some(linger.is_ok()),
         })
     }
 
@@ -422,6 +464,7 @@ mod platform {
             notes: vec![
                 "Install the Termux:Boot app and open it once, so the agent starts at boot.".into(),
             ],
+            linger: None,
         })
     }
 
@@ -505,6 +548,7 @@ mod platform {
                 name,
             },
             notes: Vec::new(),
+            linger: None,
         })
     }
 

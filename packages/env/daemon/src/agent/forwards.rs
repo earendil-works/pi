@@ -93,7 +93,9 @@ impl Forwards {
             Value::Null => None,
             tag => Some(tag.clone()),
         };
-        let mut list = self.list.lock().unwrap();
+        let mut stored = self.list.lock().unwrap();
+        // Changed on a copy and committed once saved, so a failed save leaves the forwards as they were.
+        let mut list = stored.clone();
         let existing = match json["id"].as_str() {
             Some(id) => Some(
                 list.iter()
@@ -139,11 +141,13 @@ impl Forwards {
             }
         };
         self.save(&list)?;
+        *stored = list;
         Ok(forward)
     }
 
     fn remove(&self, json: &Value) -> Result<usize, Failure> {
-        let mut list = self.list.lock().unwrap();
+        let mut stored = self.list.lock().unwrap();
+        let mut list = stored.clone();
         let before = list.len();
         match (json["id"].as_str(), &json["tag"]) {
             (Some(id), _) => list.retain(|forward| forward.id != id),
@@ -155,6 +159,7 @@ impl Forwards {
         let removed = before - list.len();
         if removed > 0 {
             self.save(&list)?;
+            *stored = list;
         }
         Ok(removed)
     }
@@ -320,6 +325,20 @@ mod tests {
         assert_eq!(list["forwards"].as_array().unwrap().len(), 1);
         assert_eq!(list["origin"], json!("https://0123abcd.rdtun.example"));
         std::fs::remove_file(&store.path).unwrap();
+    }
+
+    #[test]
+    fn keeps_the_forwards_when_saving_fails() {
+        let store = Forwards {
+            path: PathBuf::from("/dev/null/forwards.json"),
+            origin: None,
+            list: Mutex::new(Vec::new()),
+        };
+        assert!(store.handle("forwardSet", &json!({ "port": 80 })).is_err());
+        assert_eq!(
+            store.handle("forwards", &json!({})).unwrap()["forwards"],
+            json!([])
+        );
     }
 
     #[test]

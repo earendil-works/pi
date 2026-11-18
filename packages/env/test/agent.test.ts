@@ -4,7 +4,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
+import { type AddressInfo, createServer as createNetServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -85,13 +85,15 @@ function alive(pid: number): boolean {
 	}
 }
 
-type Answer = { status?: number; headers?: Record<string, string>; body: Buffer | string };
+type Answer = { status?: number; headers?: Record<string, string>; body: Buffer | string; delayMs?: number };
 
 /** A local HTTP server for forwards: answers with what it received, or as `routes` say. */
 async function localServer(
 	routes: (request: IncomingMessage, body: Buffer) => Answer | undefined = () => undefined,
-): Promise<{ server: Server; port: number }> {
+): Promise<{ server: Server; port: number; requests: string[] }> {
+	const requests: string[] = [];
 	const server = createServer((request, response) => {
+		requests.push(`${request.method} ${request.url}`);
 		const chunks: Buffer[] = [];
 		request.on("data", (chunk: Buffer) => chunks.push(chunk));
 		request.on("end", () => {
@@ -105,8 +107,10 @@ async function localServer(
 					length: body.length,
 				}),
 			};
-			response.writeHead(answer.status ?? 200, answer.headers ?? {});
-			response.end(answer.body);
+			setTimeout(() => {
+				response.writeHead(answer.status ?? 200, answer.headers ?? {});
+				response.end(answer.body);
+			}, answer.delayMs ?? 0);
 		});
 	});
 	server.on("upgrade", (request, socket, head) => {
@@ -123,7 +127,7 @@ async function localServer(
 		server.closeAllConnections();
 		server.close();
 	});
-	return { server, port: (server.address() as AddressInfo).port };
+	return { server, port: (server.address() as AddressInfo).port, requests };
 }
 
 describe.skipIf(process.platform === "win32")("pi-env agent", () => {
@@ -156,15 +160,19 @@ describe.skipIf(process.platform === "win32")("pi-env agent", () => {
 			);
 			expect(result.code, result.stderr).toBe(0);
 			const output = lastJson(result.stdout);
-			expect(output).toEqual({
+			expect(output).toMatchObject({
 				server_id: relay.serverId,
 				organization_id: OWNER.organization_id,
 				public_origin: PUBLIC_ORIGIN,
 				service: "none",
+				linger: null,
 			});
+			expect(output.notes).toEqual([expect.stringContaining("The service was skipped (--no-service)")]);
+			expect(statSync(state).mode & 0o777).toBe(0o700);
 			expect(relay.serverId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 			expect(relay.tokenRequests.at(-1)).toMatchObject({ code, name: "test machine", server_id: relay.serverId });
 			expect(result.stderr).toContain("nohup");
+			expect(result.stderr).not.toContain("No user service manager");
 			const binary = join(state, "bin", "pi-env");
 			expect(statSync(binary).mode & 0o111).not.toBe(0);
 			expect(readFileSync(binary).equals(readFileSync(daemon))).toBe(true);
@@ -333,6 +341,41 @@ describe.skipIf(process.platform === "win32")("pi-env agent", () => {
 			await until(() => !alive(pid), "the command to be killed");
 		}, 30_000);
 
+		it("keeps a session's commands running when another channel ends", async () => {
+			const start = async (name: string) => {
+				const connection = new Connection({ command: [process.execPath, bridge, relay.clientUrl("owner")] });
+				const cwd = stateDir();
+				const env = new RemoteExecutionEnv({ connection, id: `pi-env:agent-${name}`, cwd });
+				const running = env.exec(
+					[
+						process.execPath,
+						"-e",
+						"require('fs').writeFileSync('pid', String(process.pid)); setInterval(() => {}, 1000)",
+					],
+					{},
+					context,
+				);
+				const pid = Number(
+					await until(() => existsSync(join(cwd, "pid")) && readFileSync(join(cwd, "pid"), "utf8"), "the pid"),
+				);
+				return { connection, env, running, pid };
+			};
+			const [first, second] = await Promise.all([start("first"), start("second")]);
+			first.connection.close();
+			await first.running.catch(() => {});
+			await until(() => !alive(first.pid), "the first command to be killed");
+			expect(alive(second.pid)).toBe(true);
+			const echo = await second.env.exec(
+				[process.execPath, "-e", "process.stdout.write('still here')"],
+				{},
+				context,
+			);
+			expect(getOrThrow(echo).exitCode).toBe(0);
+			second.connection.close();
+			await second.running.catch(() => {});
+			await until(() => !alive(second.pid), "the second command to be killed");
+		}, 30_000);
+
 		it("manages forwards over an env channel", async () => {
 			const connection = new Connection({ command: [process.execPath, bridge, relay.clientUrl("owner")] });
 			cleanups.push(() => connection.close());
@@ -361,6 +404,14 @@ describe.skipIf(process.platform === "win32")("pi-env agent", () => {
 		it("refuses channels of anyone but the owner, and channels without a valid head", async () => {
 			expect((await relay.openChannel({ principal: MEMBER })).refused).toBe(1008);
 			expect((await relay.openChannel({})).refused).toBe(1008);
+			// A browser's WebSocket to the machine's own origin, with the owner's cookie, is not a client channel.
+			const browser = await relay.openChannel({
+				principal: OWNER,
+				publicOrigin: PUBLIC_ORIGIN,
+				request: { method: "GET", path: "/", headers: [["Origin", PUBLIC_ORIGIN]] },
+			});
+			expect(browser.refused).toBe(1008);
+			expect((await relay.openChannel({ principal: OWNER, publicOrigin: PUBLIC_ORIGIN })).refused).toBe(1008);
 			const noHead = await relay.openChannel({ principal: OWNER });
 			noHead.channel?.send(JSON.stringify({ type: "pi-env", token: "NOT-HEX" }));
 			expect((await noHead.channel?.closed)?.code).toBe(1008);
@@ -383,6 +434,7 @@ describe.skipIf(process.platform === "win32")("pi-env agent", () => {
 	describe("forward proxy", () => {
 		let connection: Connection;
 		const forwards: Record<string, string> = {};
+		let echoRequests: string[] = [];
 
 		async function forward(port: number, isPublic = false): Promise<string> {
 			const reply = await connection.request("forwardSet", {
@@ -402,9 +454,11 @@ describe.skipIf(process.platform === "win32")("pi-env agent", () => {
 					return { status: 302, headers: { location: `http://localhost:${echoPort}/next?a=1` }, body: "" };
 				if (request.url === "/big") return { headers: { "content-type": "application/octet-stream" }, body: big };
 				if (request.url === "/upload") return { body: `${body.length}:${body.equals(upload)}` };
+				if (request.url === "/slow") return { body: "slow", delayMs: 300 };
 				return undefined;
 			});
 			const echoPort = echo.port;
+			echoRequests = echo.requests;
 			forwards.echo = await forward(echoPort);
 			forwards.public = await forward(echoPort, true);
 			const closed = await localServer();
@@ -479,6 +533,61 @@ describe.skipIf(process.platform === "win32")("pi-env agent", () => {
 			expect(chunked.body.toString()).toBe(`${upload.length}:true`);
 		});
 
+		it("frames request bodies so nothing reaches the local server as a request of its own", async () => {
+			// Without a length, every method but GET and HEAD sends its body chunked.
+			const deleted = await relay.http({
+				principal: OWNER,
+				forward: forwards.echo,
+				method: "DELETE",
+				path: "/d",
+				body: Buffer.alloc(1000, 1),
+			});
+			expect(JSON.parse(deleted.body.toString())).toMatchObject({ method: "DELETE", length: 1000 });
+			// Nothing beyond Content-Length is written.
+			const smuggled = Buffer.from("hello" + "GET /smuggled HTTP/1.1\r\nHost: x\r\n\r\n");
+			const overlong = await relay.http({
+				principal: OWNER,
+				forward: forwards.echo,
+				method: "POST",
+				path: "/short",
+				headers: [["Content-Length", "5"]],
+				body: smuggled,
+			});
+			expect(overlong.closed).toBeDefined();
+			// A GET without a length has no body: body frames end the channel.
+			const get = await relay.http({ principal: OWNER, forward: forwards.echo, path: "/slow", body: smuggled });
+			expect(get.closed).toBeDefined();
+			expect(get.status).toBeUndefined();
+			await new Promise((resume) => setTimeout(resume, 400));
+			expect(echoRequests).not.toContain("GET /smuggled");
+		});
+
+		it("refuses requests that do not fit in a request head", async () => {
+			const invalid = [
+				{ path: "/a b" },
+				{ path: "/a\r\nX: y" },
+				{ method: "get", path: "/" },
+				{ path: "/", headers: [["X-Test", "a\r\nInjected: yes"]] as [string, string][] },
+				{ path: "/", headers: [["Bad Name", "a"]] as [string, string][] },
+				{ path: "/", headers: [["X-Test", "a\u0000b"]] as [string, string][] },
+				{
+					method: "POST",
+					path: "/",
+					headers: [
+						["Content-Length", "5"],
+						["Content-Length", "6"],
+					] as [string, string][],
+				},
+				{ method: "POST", path: "/", headers: [["Content-Length", "5x"]] as [string, string][] },
+			];
+			const before = echoRequests.length;
+			for (const request of invalid) {
+				const result = await relay.http({ principal: OWNER, forward: forwards.echo, ...request });
+				expect(result.status, JSON.stringify(request)).toBe(400);
+			}
+			expect(echoRequests.length).toBe(before);
+		});
+
 		it("points redirects to the local address at the public origin", async () => {
 			const result = await relay.http({ principal: OWNER, forward: forwards.echo, path: "/redirect" });
 			expect(result.status).toBe(302);
@@ -551,6 +660,30 @@ describe.skipIf(process.platform === "win32")("pi-env agent", () => {
 					.refused,
 			).toBe(1008);
 		});
+
+		it("gives up on a local WebSocket handshake that never completes", async () => {
+			const accepted: Socket[] = [];
+			const silent = createNetServer((socket) => {
+				// Read (and drop) the upgrade, so its end is seen; never answer.
+				socket.resume();
+				accepted.push(socket);
+			});
+			await new Promise<void>((done) => silent.listen(0, "127.0.0.1", done));
+			cleanups.push(() => silent.close());
+			const id = await forward((silent.address() as AddressInfo).port);
+			const started = Date.now();
+			const result = await relay.openChannel({
+				principal: OWNER,
+				forward: id,
+				request: { method: "GET", path: "/", headers: [] },
+			});
+			expect(result.refused).toBe(1011);
+			expect(Date.now() - started).toBeLessThan(15_000);
+			await until(
+				() => accepted.length > 0 && accepted.every((socket) => socket.readableEnded || socket.destroyed),
+				"the local connection to close",
+			);
+		}, 30_000);
 	});
 
 	describe("connection lifecycle", () => {
@@ -620,8 +753,73 @@ describe.skipIf(process.platform === "win32")("pi-env agent", () => {
 		}, 30_000);
 	});
 
+	describe("enrolling while an agent runs", () => {
+		let fake: FakeRelay;
+		let dir: string;
+
+		beforeAll(async () => {
+			fake = await new FakeRelay().start();
+			cleanups.push(() => fake.close());
+			dir = stateDir();
+			const installed = await cli([
+				"install",
+				"--gateway",
+				fake.url,
+				"--code",
+				fake.code(),
+				"--state",
+				dir,
+				"--no-service",
+			]);
+			expect(installed.code, installed.stderr).toBe(0);
+		});
+
+		const relayStatus = () =>
+			JSON.parse(readFileSync(join(dir, "status.json"), "utf8")) as { relay: string; error?: string };
+
+		it("refuses enroll, and install stops the agent and says so", async () => {
+			const connected = fake.waitForHost();
+			const running = startAgent(dir);
+			await connected;
+			await until(() => relayStatus().relay === "connected", "status connected");
+			const refused = await cli(["enroll", "--code", fake.code(), "--state", dir]);
+			expect(refused.code).toBe(1);
+			expect(refused.stderr).toContain("an agent runs with this state");
+			const exited = new Promise((done) => running.child.on("exit", done));
+			const again = await cli(["install", "--state", dir, "--no-service"]);
+			expect(again.code, again.stderr).toBe(0);
+			await exited;
+			const notes = lastJson(again.stdout).notes as string[];
+			expect(notes[0]).toBe(`Stopped the running agent (pid ${running.child.pid}); it was not started again.`);
+			expect(relayStatus()).toMatchObject({ relay: "stopped", error: "signal 15" });
+			expect(running.log()).toContain("stopping: signal 15");
+		}, 30_000);
+
+		it("never writes its old grant over a new enrollment", async () => {
+			const connected = fake.waitForHost();
+			const running = startAgent(dir);
+			await connected;
+			const exited = new Promise<number | null>((done) => running.child.on("exit", done));
+			// Another enrollment replaced the credentials meanwhile.
+			const replaced = {
+				access_token: "new-access",
+				refresh_token: "new-refresh",
+				expires_at: Date.now() + 86_400_000,
+			};
+			writeFileSync(join(dir, "credentials.json"), JSON.stringify(replaced));
+			fake.invalidateAccess();
+			fake.host?.terminate();
+			expect(await exited).toBe(0);
+			expect(JSON.parse(readFileSync(join(dir, "credentials.json"), "utf8"))).toEqual(replaced);
+			expect(relayStatus()).toMatchObject({ relay: "stopped", error: "credentials.json changed: enrolled again" });
+		}, 30_000);
+	});
+
 	it("uninstalls, removing its state", async () => {
+		const exited = new Promise((done) => agent.child.on("exit", done));
 		agent.child.kill("SIGTERM");
+		await exited;
+		expect(JSON.parse(readFileSync(join(state, "status.json"), "utf8")).relay).toBe("stopped");
 		const dir = stateDir();
 		writeFileSync(
 			join(dir, "agent.json"),

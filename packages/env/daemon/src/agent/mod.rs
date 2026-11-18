@@ -51,7 +51,7 @@ pub fn main(command: &str, args: &[String]) -> i32 {
     let result = match command {
         "agent" => run_agent(&options),
         "install" => install(&options),
-        "enroll" => enroll(&options).map(|config| println!("{}", enrollment_json(&config, None))),
+        "enroll" => enroll_command(&options),
         "status" => {
             println!("{}", status(&options.state));
             Ok(())
@@ -145,18 +145,9 @@ impl Options {
 fn enroll(options: &Options) -> Result<AgentConfig, String> {
     let state = &options.state;
     let existing = state.agent()?;
-    let gateway = options
-        .gateway
-        .clone()
-        .or_else(|| existing.as_ref().map(|config| config.gateway.clone()))
-        .unwrap_or_else(|| DEFAULT_GATEWAY.into());
-    let origin = Origin::parse(&gateway)?;
+    let origin = Origin::parse(&gateway(options, existing.as_ref()))?;
     let gateway = origin.text();
-    if let Some(mut config) = existing.clone()
-        && options.code.is_none()
-        && config.gateway == gateway
-        && state.credentials()?.is_some()
-    {
+    if let Some(mut config) = kept(options)? {
         if options.name.is_some() && options.name != config.name {
             config.name = options.name.clone();
             state.write_agent(&config)?;
@@ -191,8 +182,7 @@ fn enroll(options: &Options) -> Result<AgentConfig, String> {
     ) else {
         return Err("enrollment: the token response lacks the owner or a refresh token".into());
     };
-    std::fs::create_dir_all(&state.dir)
-        .map_err(|error| format!("{}: {error}", state.dir.display()))?;
+    state.create()?;
     state.write_credentials(&Credentials {
         access_token: grant.access_token.clone(),
         refresh_token,
@@ -242,31 +232,85 @@ fn redeem(
     Err("enrollment: the gateway kept refusing the server ID".into())
 }
 
+/// The gateway to enroll with: `--gateway`, else the enrolled one, else Radius' own.
+fn gateway(options: &Options, existing: Option<&AgentConfig>) -> String {
+    options
+        .gateway
+        .clone()
+        .or_else(|| existing.map(|config| config.gateway.clone()))
+        .unwrap_or_else(|| DEFAULT_GATEWAY.into())
+}
+
+/// The enrollment that stays as it is: enrolled with this gateway, with credentials, and no code given.
+fn kept(options: &Options) -> Result<Option<AgentConfig>, String> {
+    let state = &options.state;
+    let Some(config) = state.agent()? else {
+        return Ok(None);
+    };
+    let gateway = Origin::parse(&gateway(options, Some(&config)))?.text();
+    let keep =
+        options.code.is_none() && config.gateway == gateway && state.credentials()?.is_some();
+    Ok(keep.then_some(config))
+}
+
+/// `enroll`: refused while an agent runs on this state, which would later write its old grant over the new one.
+fn enroll_command(options: &Options) -> Result<(), String> {
+    if kept(options)?.is_none()
+        && let Some(pid) = service::running_agent(&options.state)
+    {
+        return Err(format!(
+            "an agent runs with this state (pid {pid}): stop it first, or use pi-env install, which restarts it"
+        ));
+    }
+    let config = enroll(options)?;
+    println!("{}", enrollment_json(&config, None));
+    Ok(())
+}
+
 fn install(options: &Options) -> Result<(), String> {
     let state = &options.state;
-    let mut config = enroll(options)?;
-    if let Some(record) = &config.service {
-        // A running agent holds the old binary (on Windows it cannot be replaced while it runs).
-        service::stop(state, record);
-    }
+    let previous = state.agent()?.and_then(|config| config.service);
+    // Stopped before enrolling, so it cannot write its old grant over the new one, and before the binary is replaced
+    // (on Windows a running binary cannot be).
+    let stopped = service::stop_agent(state, previous.as_ref());
+    let mut config = match enroll(options) {
+        Ok(config) => config,
+        Err(error) => {
+            // The machine keeps running as it was.
+            if let Some(record) = previous.filter(|record| record.kind != service::NONE) {
+                let _ = service::install(state, Some(&record.name));
+            }
+            return Err(error);
+        }
+    };
     copy_binary(state)?;
-    let installed = if options.no_service {
+    let mut installed = if options.no_service {
         service::Installed {
             record: state::ServiceRecord {
                 kind: service::NONE.into(),
                 name: "pi-env".into(),
             },
-            notes: service::manual_notes(state),
+            notes: service::skipped_notes(state),
+            linger: None,
         }
     } else {
         service::install(state, options.service_name.as_deref())?
     };
+    if let (Some(pid), service::NONE) = (stopped, installed.record.kind.as_str()) {
+        installed.notes.insert(
+            0,
+            format!("Stopped the running agent (pid {pid}); it was not started again."),
+        );
+    }
     for note in &installed.notes {
         eprintln!("{note}");
     }
     config.service = Some(installed.record.clone());
     state.write_agent(&config)?;
-    println!("{}", enrollment_json(&config, Some(&installed.record.kind)));
+    let mut line = enrollment_json(&config, Some(&installed.record.kind));
+    line["notes"] = json!(installed.notes);
+    line["linger"] = json!(installed.linger);
+    println!("{line}");
     Ok(())
 }
 
@@ -386,10 +430,7 @@ fn run_agent(options: &Options) -> Result<(), String> {
         let agent = agent.clone();
         // Stopping the agent (the service manager's SIGTERM) leaves no command of any session running.
         crate::sys::on_exit_signal(move |signal| {
-            for groups in agent.sessions.lock().unwrap().iter() {
-                crate::kill_all(groups);
-            }
-            std::process::exit(128 + signal);
+            relay::exit(&agent, &format!("signal {signal}"), 128 + signal)
         });
     }
     log::open(state.path("agent.log"));

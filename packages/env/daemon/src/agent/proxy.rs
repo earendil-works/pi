@@ -30,6 +30,7 @@ pub const DEFAULT_WINDOW: u64 = 256 * 1024;
 const BODY_CHUNK: usize = 256 * 1024;
 const LOCAL_TIMEOUT: Duration = Duration::from_secs(10);
 const UNKNOWN_FORWARD: &str = "This port forward does not exist (any more).\n";
+pub const INVALID_REQUEST: &str = "This request cannot be passed on to the forwarded port.\n";
 /// Request headers the proxy sets itself, or that belong to one hop only.
 const DROPPED: &[&str] = &[
     "host",
@@ -42,9 +43,13 @@ const DROPPED: &[&str] = &[
     "te",
     "trailer",
     "x-radius-shell-origin",
+    // Client addresses the local server must not take from the browser.
+    "forwarded",
+    "x-forwarded-for",
+    "x-real-ip",
 ];
-/// Methods whose requests have no body unless they state its length, as Node sends them.
-const BODILESS: &[&str] = &["GET", "HEAD", "DELETE", "OPTIONS", "TRACE", "CONNECT"];
+/// Methods whose requests have no body unless they state its length.
+const BODILESS: &[&str] = &["GET", "HEAD"];
 
 /// A forward's request as `connection_open` describes it.
 pub struct RequestHead {
@@ -53,7 +58,54 @@ pub struct RequestHead {
     pub headers: Vec<(String, String)>,
 }
 
+/// How the request body goes to the local server.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum BodyFraming {
+    /// `Content-Length`: exactly this many bytes.
+    Length(u64),
+    Chunked,
+    /// GET and HEAD without a length: no body at all.
+    None,
+}
+
 impl RequestHead {
+    /// Whether the head can be written as is: a method of capital letters, a path and header names of visible ASCII,
+    /// header values without CR, LF or NUL, so nothing in it ends a line of the request early.
+    pub fn valid(&self) -> bool {
+        let token = |text: &str| {
+            !text.is_empty()
+                && text
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
+        };
+        (1..=16).contains(&self.method.len())
+            && self.method.bytes().all(|byte| byte.is_ascii_uppercase())
+            && self.path.bytes().all(|byte| (0x21..0x7f).contains(&byte))
+            && self.headers.iter().all(|(name, value)| {
+                token(name) && !value.bytes().any(|byte| matches!(byte, b'\r' | b'\n' | 0))
+            })
+    }
+
+    /// The body's framing; `None` for conflicting or malformed `Content-Length` headers.
+    fn framing(&self) -> Option<BodyFraming> {
+        let mut lengths = self
+            .headers
+            .iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+            .map(|(_, value)| value.trim());
+        match lengths.next() {
+            Some(length) => {
+                let valid = !length.is_empty() && length.bytes().all(|byte| byte.is_ascii_digit());
+                let parsed = length.parse().ok().filter(|_| valid)?;
+                lengths
+                    .all(|other| other == length)
+                    .then_some(BodyFraming::Length(parsed))
+            }
+            None if BODILESS.contains(&self.method.as_str()) => Some(BodyFraming::None),
+            None => Some(BodyFraming::Chunked),
+        }
+    }
+
     pub fn from_json(value: &Value) -> Option<RequestHead> {
         let headers = value["headers"]
             .as_array()?
@@ -152,6 +204,7 @@ pub fn open_http(
     thread::spawn(move || {
         match relay_http(&host, &id, &channel, request, &target, chunks) {
             Ok(()) => host.send_data(&id, FRAME_END, &[]),
+            Err(Failure::Invalid) => host.respond_text(&id, 400, INVALID_REQUEST),
             Err(Failure::BeforeResponse) if !channel.ended.load(Ordering::SeqCst) => {
                 let text = format!(
                     "Nothing is listening on port {} of this machine.\n",
@@ -167,8 +220,10 @@ pub fn open_http(
     });
 }
 
-/// Where an HTTP channel failed: before the local server answered, the proxy answers 502 itself.
+/// Where an HTTP channel failed: before the local server answered, the proxy answers 502 itself; a request it cannot
+/// pass on gets 400.
 enum Failure {
+    Invalid,
     BeforeResponse,
     AfterResponse,
 }
@@ -182,13 +237,15 @@ fn relay_http(
     chunks: Receiver<Option<Vec<u8>>>,
 ) -> Result<(), Failure> {
     let before = |_| Failure::BeforeResponse;
+    let framing = request.framing().ok_or(Failure::Invalid)?;
     let local = connect_local(target.port).map_err(before)?;
+    // A slow response (a long poll) is fine; the relay ends a channel nobody waits for.
+    local.set_read_timeout(None).map_err(before)?;
+    local.set_write_timeout(None).map_err(before)?;
     *channel.local.lock().unwrap() = Some(local.try_clone().map_err(before)?);
     if channel.ended.load(Ordering::SeqCst) {
         return Err(Failure::AfterResponse);
     }
-    let length = http::header(&request.headers, "content-length").map(str::to_string);
-    let chunked = length.is_none() && !BODILESS.contains(&request.method.as_str());
     let mut head = format!("{} {} HTTP/1.1\r\n", request.method, request.path);
     for (name, value) in local_headers(&request.headers, target) {
         head.push_str(&format!("{name}: {value}\r\n"));
@@ -197,10 +254,10 @@ fn relay_http(
         "Host: localhost:{}\r\nConnection: close\r\n",
         target.port
     ));
-    match (&length, chunked) {
-        (Some(length), _) => head.push_str(&format!("Content-Length: {length}\r\n")),
-        (None, true) => head.push_str("Transfer-Encoding: chunked\r\n"),
-        (None, false) => {}
+    match framing {
+        BodyFraming::Length(length) => head.push_str(&format!("Content-Length: {length}\r\n")),
+        BodyFraming::Chunked => head.push_str("Transfer-Encoding: chunked\r\n"),
+        BodyFraming::None => {}
     }
     head.push_str("\r\n");
     let mut writer = local.try_clone().map_err(before)?;
@@ -208,7 +265,17 @@ fn relay_http(
     {
         let channel = channel.clone();
         let credit = host_credit(host.clone(), id.to_string());
-        thread::spawn(move || write_body(writer, chunks, chunked, &channel, credit));
+        let (host, id) = (host.clone(), id.to_string());
+        thread::spawn(move || {
+            if !write_body(writer, chunks, framing, &channel, credit)
+                && !channel.ended.load(Ordering::SeqCst)
+            {
+                // A body that does not fit its framing ends the channel: nothing of it may reach the server as a
+                // request of its own.
+                channel.end();
+                host.refuse(&id, None);
+            }
+        });
     }
     let mut reader = BufReader::new(local);
     let head = http::read_head(&mut reader).map_err(before)?;
@@ -258,34 +325,43 @@ fn host_credit(host: Arc<Host>, id: String) -> impl Fn(usize) + Send {
     }
 }
 
-/// Write the request body to the local server as it arrives, crediting the relay for each chunk.
+/// Write the request body to the local server as it arrives, crediting the relay for each chunk. False when the body
+/// broke its framing: bytes beyond `Content-Length`, an end before it, or any body of a GET or HEAD without one.
 fn write_body(
     mut writer: TcpStream,
     chunks: Receiver<Option<Vec<u8>>>,
-    chunked: bool,
+    framing: BodyFraming,
     channel: &HttpChannel,
     credit: impl Fn(usize),
-) {
+) -> bool {
+    let mut remaining = match framing {
+        BodyFraming::Length(length) => length,
+        _ => 0,
+    };
     for chunk in chunks {
-        let written = match chunk {
-            Some(bytes) if bytes.is_empty() => Ok(()),
-            Some(bytes) if chunked => writer
+        let written = match (chunk, framing) {
+            (Some(bytes), _) if bytes.is_empty() => Ok(()),
+            (Some(bytes), BodyFraming::Chunked) => writer
                 .write_all(format!("{:x}\r\n", bytes.len()).as_bytes())
                 .and_then(|()| writer.write_all(&bytes))
                 .and_then(|()| writer.write_all(b"\r\n"))
                 .map(|()| credit(bytes.len())),
-            Some(bytes) => writer.write_all(&bytes).map(|()| credit(bytes.len())),
-            None => {
-                if chunked {
-                    let _ = writer.write_all(b"0\r\n\r\n");
-                }
-                return;
+            (Some(bytes), BodyFraming::Length(_)) if bytes.len() as u64 <= remaining => {
+                remaining -= bytes.len() as u64;
+                writer.write_all(&bytes).map(|()| credit(bytes.len()))
             }
+            (Some(_), _) => return false,
+            (None, BodyFraming::Chunked) => {
+                let _ = writer.write_all(b"0\r\n\r\n");
+                return true;
+            }
+            (None, _) => return remaining == 0,
         };
         if written.is_err() || channel.ended.load(Ordering::SeqCst) {
-            return;
+            return true;
         }
     }
+    true
 }
 
 /// Relay WebSocket channel `id` to `target` (`None`: an unknown forward, refused).
@@ -323,7 +399,11 @@ fn open_pair(
     target: &Target,
     sockets: &Sockets,
 ) -> Option<(Arc<Socket>, Arc<Socket>)> {
+    // The connect timeout stays through the handshake; until then the channel can only cut the raw stream.
     let tcp = connect_local(target.port).ok()?;
+    if !sockets.add_stream(&tcp) {
+        return None;
+    }
     let protocol = http::header(&request.headers, "sec-websocket-protocol")
         .and_then(|offered| {
             offered
@@ -369,16 +449,14 @@ fn pipe(from: &Arc<Socket>, to: &Arc<Socket>) {
     }
 }
 
-/// A connection to `localhost:<port>`: IPv4 first, then IPv6, as dev servers listen on either.
+/// A connection to `localhost:<port>`: IPv4 first, then IPv6, as dev servers listen on either. Reads and writes time
+/// out after LOCAL_TIMEOUT until the caller clears it.
 fn connect_local(port: u16) -> std::io::Result<TcpStream> {
     let addresses = [
         SocketAddr::from((Ipv4Addr::LOCALHOST, port)),
         SocketAddr::from((Ipv6Addr::LOCALHOST, port)),
     ];
-    let tcp = net::connect_any(&addresses, LOCAL_TIMEOUT)?;
-    tcp.set_read_timeout(None)?;
-    tcp.set_write_timeout(None)?;
-    Ok(tcp)
+    net::connect_any(&addresses, LOCAL_TIMEOUT)
 }
 
 /// The request's headers for the local server (see the module comment); `Host` and framing are added by the caller.
@@ -433,6 +511,55 @@ mod tests {
             port: 5173,
             public_origin: "https://fwd--abc--x1.rdtun.example".into(),
         }
+    }
+
+    fn head(method: &str, path: &str, headers: &[(&str, &str)]) -> RequestHead {
+        RequestHead {
+            method: method.into(),
+            path: path.into(),
+            headers: headers
+                .iter()
+                .map(|(name, value)| (name.to_string(), value.to_string()))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn checks_heads_and_frames_bodies() {
+        assert!(head("GET", "/a?b=%20", &[("X-A", "b c")]).valid());
+        assert!(!head("GET", "/a b", &[]).valid());
+        assert!(!head("get", "/", &[]).valid());
+        assert!(!head("GET", "/", &[("X-A", "b\r\nC: d")]).valid());
+        assert!(!head("GET", "/", &[("X A", "b")]).valid());
+        assert!(!head("GET", "/", &[("X-A", "b\0")]).valid());
+        assert_eq!(head("GET", "/", &[]).framing(), Some(BodyFraming::None));
+        assert_eq!(head("HEAD", "/", &[]).framing(), Some(BodyFraming::None));
+        assert_eq!(
+            head("DELETE", "/", &[]).framing(),
+            Some(BodyFraming::Chunked)
+        );
+        assert_eq!(
+            head(
+                "GET",
+                "/",
+                &[("content-length", "3"), ("Content-Length", "3")]
+            )
+            .framing(),
+            Some(BodyFraming::Length(3))
+        );
+        assert_eq!(
+            head(
+                "POST",
+                "/",
+                &[("content-length", "3"), ("content-length", "4")]
+            )
+            .framing(),
+            None
+        );
+        assert_eq!(
+            head("POST", "/", &[("content-length", "+3")]).framing(),
+            None
+        );
     }
 
     #[test]

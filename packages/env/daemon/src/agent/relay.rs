@@ -21,6 +21,7 @@ use super::{channel, log, proxy};
 use crate::exec;
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::net::{Shutdown, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -79,6 +80,9 @@ pub fn run(agent: Arc<Agent>) -> ! {
                 thread::sleep(REVOKED_RETRY);
                 continue;
             }
+            Err(TokenFailure::Replaced) => {
+                exit(&agent, "credentials.json changed: enrolled again", 0)
+            }
             Err(TokenFailure::Failed(message)) => {
                 retry = wait(&agent, &message, retry);
                 continue;
@@ -123,6 +127,17 @@ fn wait(agent: &Agent, message: &str, retry: Duration) -> Duration {
     report(agent, json!({ "relay": "retrying", "error": message }));
     thread::sleep(retry);
     (retry * 2).min(RETRY_MAX)
+}
+
+/// Stop the agent: kill the commands of every session, log and report why, and exit with `code`. A service manager
+/// starts it again, with the state as it is then.
+pub fn exit(agent: &Agent, why: &str, code: i32) -> ! {
+    for groups in agent.sessions.lock().unwrap().iter() {
+        crate::kill_all(groups);
+    }
+    log::line(&format!("stopping: {why}"));
+    report(agent, json!({ "relay": "stopped", "error": why }));
+    std::process::exit(code)
 }
 
 /// Write `status.json`: the relay state with the time, the process and the server.
@@ -187,6 +202,8 @@ pub enum Channel {
 #[derive(Default)]
 pub struct Sockets {
     list: Mutex<Vec<Arc<Socket>>>,
+    /// Connections still in their WebSocket handshake.
+    streams: Mutex<Vec<TcpStream>>,
     ended: AtomicBool,
 }
 
@@ -202,14 +219,30 @@ impl Sockets {
         true
     }
 
+    /// Keep a connection that is not a WebSocket yet with the channel; false (and it cut) once the channel has ended.
+    pub fn add_stream(&self, stream: &TcpStream) -> bool {
+        let mut streams = self.streams.lock().unwrap();
+        let clone = stream.try_clone();
+        if self.ended.load(Ordering::SeqCst) || clone.is_err() {
+            let _ = stream.shutdown(Shutdown::Both);
+            return false;
+        }
+        streams.extend(clone);
+        true
+    }
+
     pub fn end(&self) {
-        let list = {
+        let (list, streams) = {
             let mut list = self.list.lock().unwrap();
+            let mut streams = self.streams.lock().unwrap();
             self.ended.store(true, Ordering::SeqCst);
-            std::mem::take(&mut *list)
+            (std::mem::take(&mut *list), std::mem::take(&mut *streams))
         };
         for socket in list {
             socket.terminate();
+        }
+        for stream in streams {
+            let _ = stream.shutdown(Shutdown::Both);
         }
     }
 }
@@ -337,7 +370,9 @@ impl Host {
         let request = proxy::RequestHead::from_json(&open["request"]);
         let public_origin = open["public_origin"].as_str();
         match (kind, open["forward"].as_str()) {
-            ("ws", None) if owner => {
+            // A Pi client's channel: no browser request, no origin. A browser's WebSocket to the machine's own origin
+            // carries both, and a page there must not get the owner's sessions.
+            ("ws", None) if owner && open["request"].is_null() && public_origin.is_none() => {
                 let sockets = Arc::new(Sockets::default());
                 self.register(id, Channel::Sockets(sockets.clone()));
                 channel::open(self.clone(), id.to_string(), sockets);
@@ -346,6 +381,12 @@ impl Host {
                 let (Some(request), Some(public_origin)) = (request, public_origin) else {
                     return self.refuse(id, Some(1008));
                 };
+                if !request.valid() {
+                    return match kind {
+                        "http" => self.respond_text(id, 400, proxy::INVALID_REQUEST),
+                        _ => self.refuse(id, Some(1008)),
+                    };
+                }
                 let forward = self
                     .agent
                     .forwards
@@ -453,11 +494,13 @@ impl Host {
         let path = format!("/v1/servers/{}/channels/{id}", self.agent.config.server_id);
         let mut stale = None;
         loop {
-            let token = self
-                .agent
-                .tokens
-                .access(stale.as_deref())
-                .map_err(|failure| failure.to_string())?;
+            let token = match self.agent.tokens.access(stale.as_deref()) {
+                Ok(token) => token,
+                Err(TokenFailure::Replaced) => {
+                    exit(&self.agent, "credentials.json changed: enrolled again", 0)
+                }
+                Err(failure) => return Err(failure.to_string()),
+            };
             match open_socket(&self.agent, &path, CHANNEL_SUBPROTOCOL, &token) {
                 Ok((socket, _)) => return Ok(socket),
                 Err(ConnectError::Refused { status: 401, .. }) if stale.is_none() => {
@@ -474,6 +517,8 @@ pub struct Tokens {
     state: State,
     gateway: Origin,
     credentials: Mutex<Credentials>,
+    /// Held while a refresh runs, so the credentials stay readable meanwhile.
+    refreshing: Mutex<()>,
 }
 
 /// Why no access token is available.
@@ -481,6 +526,8 @@ pub struct Tokens {
 pub enum TokenFailure {
     /// The gateway refused the refresh token: the machine was removed.
     Revoked(String),
+    /// `credentials.json` no longer holds this agent's grant: the machine was enrolled again (or uninstalled).
+    Replaced,
     Failed(String),
 }
 
@@ -488,6 +535,9 @@ impl std::fmt::Display for TokenFailure {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TokenFailure::Revoked(message) => write!(formatter, "revoked: {message}"),
+            TokenFailure::Replaced => {
+                formatter.write_str("credentials.json changed: enrolled again")
+            }
             TokenFailure::Failed(message) => formatter.write_str(message),
         }
     }
@@ -499,41 +549,60 @@ impl Tokens {
             state,
             gateway,
             credentials: Mutex::new(credentials),
+            refreshing: Mutex::new(()),
         }
     }
 
     /// A current access token: refreshed when it expires within five minutes, or when it is `refused` (the gateway
-    /// answered 401 for it). A failed refresh of a token that has not expired yet returns that token.
+    /// answered 401 for it). A failed refresh of a token that has not expired yet returns that token, and so does a
+    /// caller that finds another one refreshing.
     pub fn access(&self, refused: Option<&str>) -> Result<String, TokenFailure> {
-        let mut credentials = self.credentials.lock().unwrap();
         let now = log::now_ms();
-        let refused = refused == Some(credentials.access_token.as_str());
-        if !refused && credentials.expires_at > now + REFRESH_MARGIN_MS {
-            return Ok(credentials.access_token.clone());
+        let seen = self.credentials.lock().unwrap().clone();
+        let refused = refused == Some(seen.access_token.as_str());
+        if !refused && seen.expires_at > now + REFRESH_MARGIN_MS {
+            return Ok(seen.access_token);
         }
-        match oauth::refresh(&self.gateway, &credentials.refresh_token) {
+        let _refreshing = match self.refreshing.try_lock() {
+            Ok(guard) => guard,
+            Err(_) if !refused && seen.expires_at > now => return Ok(seen.access_token),
+            Err(_) => self.refreshing.lock().unwrap(),
+        };
+        let current = self.credentials.lock().unwrap().clone();
+        if current.access_token != seen.access_token && current.expires_at > now + REFRESH_MARGIN_MS
+        {
+            // Another caller refreshed meanwhile.
+            return Ok(current.access_token);
+        }
+        // A new enrollment may have replaced credentials.json; this older grant must not be written over it.
+        let on_disk = self.state.credentials().map_err(TokenFailure::Failed)?;
+        if on_disk.map(|disk| disk.refresh_token) != Some(current.refresh_token.clone()) {
+            return Err(TokenFailure::Replaced);
+        }
+        match oauth::refresh(&self.gateway, &current.refresh_token) {
             Ok(grant) => {
-                credentials.access_token = grant.access_token;
-                if let Some(refresh) = grant.refresh_token {
-                    credentials.refresh_token = refresh;
-                }
-                credentials.expires_at = now + grant.expires_in * 1000;
-                if let Err(error) = self.state.write_credentials(&credentials) {
+                let refreshed = Credentials {
+                    access_token: grant.access_token,
+                    refresh_token: grant.refresh_token.unwrap_or(current.refresh_token),
+                    expires_at: now + grant.expires_in * 1000,
+                };
+                if let Err(error) = self.state.write_credentials(&refreshed) {
                     log::line(&format!("writing credentials.json: {error}"));
                 }
-                Ok(credentials.access_token.clone())
+                *self.credentials.lock().unwrap() = refreshed.clone();
+                Ok(refreshed.access_token)
             }
             Err(TokenError::Rejected(message)) => Err(TokenFailure::Revoked(message)),
             // Answers of enrollment only; a refresh never gets them.
             Err(error @ (TokenError::Claimed | TokenError::Mismatch(_))) => {
                 Err(TokenFailure::Revoked(error.to_string()))
             }
-            Err(error) if refused || credentials.expires_at <= now => Err(TokenFailure::Failed(
+            Err(error) if refused || current.expires_at <= now => Err(TokenFailure::Failed(
                 format!("refreshing the access token: {error}"),
             )),
             Err(error) => {
                 log::line(&format!("refreshing the access token: {error}"));
-                Ok(credentials.access_token.clone())
+                Ok(current.access_token)
             }
         }
     }

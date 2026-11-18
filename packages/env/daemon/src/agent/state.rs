@@ -51,6 +51,17 @@ impl State {
         State { dir }
     }
 
+    /// Create the directory, readable by its owner only.
+    pub fn create(&self) -> Result<(), String> {
+        let created = fs::create_dir_all(&self.dir);
+        #[cfg(unix)]
+        let created = created.and_then(|()| {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&self.dir, fs::Permissions::from_mode(0o700))
+        });
+        created.map_err(|error| format!("{}: {error}", self.dir.display()))
+    }
+
     pub fn path(&self, name: &str) -> PathBuf {
         self.dir.join(name)
     }

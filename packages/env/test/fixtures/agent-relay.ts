@@ -127,6 +127,8 @@ export class FakeRelay {
 		principal?: Principal;
 		forward?: string;
 		request?: { method: string; path: string; headers: [string, string][] };
+		/** A browser's WebSocket to the machine's own origin carries it (forward channels get theirs). */
+		publicOrigin?: string;
 	}): Promise<{ channel?: WsPeer; refused?: number; id: string }> {
 		const id = randomUUID();
 		return new Promise((resolve) => {
@@ -138,6 +140,7 @@ export class FakeRelay {
 				kind: "ws",
 				...(open.principal ? { principal: open.principal } : {}),
 				...(open.forward ? { forward: open.forward, public_origin: forwardOrigin(open.forward) } : {}),
+				...(open.publicOrigin ? { public_origin: open.publicOrigin } : {}),
 				...(open.request ? { request: open.request } : {}),
 			});
 		});
