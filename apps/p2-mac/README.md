@@ -46,6 +46,8 @@ Open the DMG and drag Pi to Applications. The build needs nothing installed:
 - **Versions:** `CFBundleVersion` is the commit's UTC minute (`202611180023`), which Sparkle orders by. The short version is its day (`2026.11.18`), and `PiCommit` holds the SHA.
 - **Smoke test:** `scripts/smoke-app.sh` starts the signed bundle's server in a bare environment and waits for `/health`.
 
+The workflow's signing credentials live in the GitHub environment `p2-mac-release`. `scripts/release-secrets.sh` sets them: it makes the Developer ID key and its CSR, turns Apple's certificate into a .p12, checks the App Store Connect API key with notarytool, and makes Sparkle's key in the login keychain (account `pi-mac`). Each one goes straight into `gh secret set`, never to the terminal. Run it yourself, not through an agent.
+
 To build one locally (ad-hoc signed, no updater): `./scripts/package-app.sh`, which writes `build/dist/Pi-<day>-<version>.dmg`. With `SPARKLE_PUBLIC_KEY`, the app gets the feed, and with `SPARKLE_KEY_FILE` the DMG gets signed for it. The script's header lists every variable.
 
 ### Settings

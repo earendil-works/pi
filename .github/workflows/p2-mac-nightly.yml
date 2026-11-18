@@ -4,7 +4,7 @@
 # A night without new commits builds nothing. Never runs for PRs: the job holds the signing keys.
 #
 # pkg.earendil.com accepts the upload only from this workflow on main (its src/config.ts). The environment
-# `p2-mac-release` holds:
+# `p2-mac-release` (deployments from main only) holds the following; apps/p2-mac/scripts/release-secrets.sh sets them:
 #   secrets  MACOS_CERTIFICATE_P12        base64 of the Developer ID Application certificate with its key (.p12)
 #            MACOS_CERTIFICATE_PASSWORD   its password
 #            APPLE_NOTARY_KEY             base64 of an App Store Connect API key (.p8), for notarytool
