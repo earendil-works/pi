@@ -217,27 +217,33 @@ Empty submissions record `scorer_model: null`: they score zero without a judge c
 or provider credentials.
 
 `jobbench/judging.py` preserves the pinned rubric criteria, image
-selection, and result layout, adds complete-evidence access instructions, and uses `response_format: json_schema` with strict
+selection, and result layout, sends the full extracted text in one request per rubric attempt, and uses `response_format: json_schema` with strict
 typed fields and an exact criterion count. It validates criterion indices before
 accepting a result and, like upstream, scores the rubric from `rubric_passed`. JSON recovery, rubric weights, and score aggregation still
 use the upstream helpers. Saved score reports fingerprint the extractor and the
 judge adapter; scores from different evidence implementations must be compared
 by rejudging the same deliverables under both versions.
 
-The initial view remains bounded: 200,000 characters per file, with a 190,000-character
-budget shared fairly between Excel sheets. Complete extracted text is retained
-for files whose initial views omit or abbreviate content. Each rubric can search
-that text or read ranges through `read_output_evidence`, without filesystem or
-network access. Reads return at most 16,000 content characters each, with at most
-eight reads per rubric attempt. Tool exchanges and the final judgment share a
-900-second deadline per attempt. These exchanges can add judge calls and cost;
-they do not add calls to Pi's workflow. Retrieved requests and excerpts are saved
-in each rubric's `evidence_reads`. The judge must inspect relevant omitted evidence
-before treating its absence from the initial view as a missing deliverable.
+The scorer sends all extracted text in the initial request for each rubric.
+There is no per-file or per-sheet character cap, no SQLite row sampling, and no
+evidence-reading tool or follow-up conversation. All rubric prompts are prepared
+and checked before any judge request starts. The verified GPT-6 Luna context
+window is 1,050,000 tokens (OpenAI model documentation, checked 2026-11-18).
+The check counts the complete messages and JSON schema using `tiktoken`'s
+`o200k_base` encoding. This is an estimate: tiktoken has no GPT-6-specific mapping.
+It reserves an additional 10% of text tokens plus 4,096 for tokenizer differences
+and framing, 36,000 per selected image (the maximum auto-detail patch budget),
+and 64,000 for output including reasoning. The estimates and reserves appear in
+each rubric's `context` report and informational checks. A budget overflow raises
+an evaluation error before any requests, without truncation or a zero score.
+Provider context-limit errors also propagate immediately. Changing the scorer
+requires reviewing the explicit model/vision budget in `prepare_rubric()`; unknown
+models fail closed rather than inheriting GPT-6 Luna's limit.
 
 Notebook code views replace large base64 literals with length/hash references,
-so embedded input data cannot consume the entire initial view before methods and
-results. The notebook and its complete source remain unchanged and accessible.
+so embedded input data cannot consume the prompt before methods and
+results. The original notebook remains unchanged. Encoded payloads are represented
+by length/hash references; all other extracted code and saved text outputs are sent.
 Excel views include saved conditional-format rules, their differential styles,
 and native chart OOXML. These establish saved structure and conditions; they are
 not rendered screenshots and do not by themselves establish visual readability.
@@ -292,12 +298,10 @@ Before the workspace is deleted, including when Pi fails, a `pi.jobbench.workspa
 trace stage records every file the agent wrote outside `task_folder/`
 (deliverables and `scratch/`): text files inline (up to 200,000 characters each),
 and every file as a trace artifact under its SHA-256, up to 16 MiB per rollout.
-The initial judge view contains at most 200,000 extracted characters per file.
-A partial view gets an informational `Judge input truncated` check, which does
-not change the score; complete extracted evidence remains available through the
-bounded read tool. The standalone vendored `judge.py` CLI includes the extraction
-fixes but does not implement the adapter's evidence-read conversation. Use
-`.beaker/evaluate.py` or the Beaker scorer for the complete evaluation path.
+Judge inputs have no character cap; the separate trace preview limit above does
+not affect scoring. The standalone vendored `judge.py` CLI includes extraction
+changes but retains upstream request/error handling. Use `.beaker/evaluate.py`
+or the Beaker scorer for the context guard and strict evaluation path.
 
 - Binary submissions currently have an 11.9 MiB total limit, leaving room for base64
   encoding inside Beaker's 16 MiB result envelope. Exceeding this limit is an

@@ -2,15 +2,17 @@
   "repository": "https://github.com/Job-Bench/job-bench-eval",
   "revision": "660b33a86ed032559df0b2fdc1ad38cf7ceb83f3",
   "local_changes": {
-    "extraction_schema": 3,
-    "description": "Abbreviate encoded notebook literals in the initial view; expose saved Excel conditional formats and native chart definitions; retain complete extracted text for bounded rubric evidence reads. Rubric definitions, weighting and the pinned calculator are unchanged.",
+    "extraction_schema": 4,
+    "description": "Abbreviate encoded notebook literals; expose saved Excel conditional formats and native chart definitions; extract all text, sheet rows and SQLite rows without character budgets. Rubric definitions, weighting and the pinned calculator are unchanged.",
     "modified_paths": [
       "eval/judge.py",
       "eval/jobbench_eval/excel.py",
       "eval/jobbench_eval/excel_text.py",
       "eval/jobbench_eval/rich_text.py"
     ],
-    "added_paths": ["eval/jobbench_eval/excel_objects.py"]
+    "added_paths": [
+      "eval/jobbench_eval/excel_objects.py"
+    ]
   },
   "git_blob_sha1": {
     "eval/judge.py": "94a5b07c84a2c2f73a62dde5e49d05cd89a62180",

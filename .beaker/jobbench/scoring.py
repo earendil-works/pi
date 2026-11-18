@@ -17,7 +17,7 @@ from beaker import CaseScore, Check, scoring_inference_target
 
 from .data import Expected, PROTOCOL
 from .execution import MAX_DELIVERABLE_BYTES
-from .judging import judge_implementation, judge_rubric, official_judge
+from .judging import judge_implementation, judge_rubric, official_judge, prepare_rubric
 
 
 MAX_JUDGE_WORKERS = 10
@@ -72,8 +72,7 @@ def score_submission(
         rubric_results = []
         extraction: dict[str, Any] = {}
         if files:
-            full_contents: dict[str, str] = {}
-            text = official_judge.extract_all_file_contents(directory, extraction, full_contents=full_contents)
+            text = official_judge.extract_all_file_contents(directory, extraction)
             images = official_judge.collect_image_attachments(directory)
             target = scoring_inference_target()
             selected_model = target.model if target is not None else configured_scorer_model()
@@ -91,14 +90,15 @@ def score_submission(
                     raise RuntimeError("JUDGE_API_KEY is required for local scoring; Google also accepts GEMINI_API_KEY")
             else:
                 api_base, api_key, model = target.base_url, target.api_key, target.model
+            # Check every rubric before starting any paid requests, including
+            # rubrics whose criteria need the attached images.
+            requests = [prepare_rubric(rubric, text, selected_model, images) for rubric in expected.rubrics]
             executor = ThreadPoolExecutor(max_workers=MAX_JUDGE_WORKERS)
             try:
                 futures = [
                     executor.submit(
                         judge_rubric,
-                        index, rubric, text, model, api_base, api_key,
-                        image_attachments=images,
-                        full_contents=full_contents,
+                        index, rubric, requests[index], model, api_base, api_key,
                     )
                     for index, rubric in enumerate(expected.rubrics)
                 ]
@@ -131,14 +131,13 @@ def score_submission(
             )
             for rubric in rubric_results for criterion in rubric["result"]["criteria_results"]
         )
-        checks += judge_input_checks(extraction)
         checks += tuple(
             Check(
-                name=f"Judge evidence read: rubric-{rubric['index'] + 1}, read-{index + 1}",
-                verdict="pass", message=json.dumps(read, ensure_ascii=False),
+                name=f"Judge context budget: rubric-{rubric['index'] + 1}",
+                verdict="pass", message=json.dumps(rubric["context"]),
                 group="Judge input", informational=True,
             )
-            for rubric in rubric_results for index, read in enumerate(rubric.get("evidence_reads", []))
+            for rubric in rubric_results if "context" in rubric
         )
         checks += (Check(
             name="Judge evidence implementation", verdict="pass",
@@ -157,26 +156,6 @@ def score_submission(
             },
             checks=checks,
         )
-
-
-def judge_input_checks(extraction: dict[str, Any]) -> tuple[Check, ...]:
-    """Flag abbreviated initial views; diagnostics never change the score."""
-    limit = official_judge.MAX_CHARS_PER_FILE
-    return tuple(
-        Check(
-            name=f"Judge input truncated: {record['path']}",
-            verdict="fail",
-            message=(
-                f"The initial view contains the first {limit:,} of {record['characters']:,} extracted characters."
-                if record["characters"] > limit and not record["path"].lower().endswith(tuple(official_judge.SQLITE_EXTS))
-                else "The initial spreadsheet view omits part of this file's text."
-            ) + (" Complete extracted evidence is available through read_output_evidence."
-                 if record.get("full_evidence_available") else ""),
-            group="Judge input",
-            informational=True,
-        )
-        for record in extraction.get("files", []) if record.get("truncated")
-    )
 
 
 async def score_async(expected: Expected, files: list[dict[str, Any]]) -> CaseScore:

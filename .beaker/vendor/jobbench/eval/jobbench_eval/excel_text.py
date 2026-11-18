@@ -1,4 +1,4 @@
-"""Compact spreadsheet text for the judge's bounded evidence prompt."""
+"""Complete spreadsheet text with compact, exact formula families."""
 
 from __future__ import annotations
 
@@ -128,100 +128,21 @@ def _sheet_sections(name, records, calculated):
     return header, _formula_lines(records, calculated), grid_header, grid_rows
 
 
-def _allocate(lengths, budget):
-    """Let small sheets fit completely, sharing the remainder across large ones."""
-    assigned = [0] * len(lengths)
-    pending = list(range(len(lengths)))
-    while pending:
-        share = max(0, budget // len(pending))
-        small = [index for index in pending if lengths[index] <= share]
-        if not small:
-            for offset, index in enumerate(pending):
-                assigned[index] = share + (offset < max(0, budget) % len(pending))
-            break
-        for index in small:
-            assigned[index] = lengths[index]
-            budget -= lengths[index]
-            pending.remove(index)
-    return assigned
-
-
-def _fit_lines(lines, budget, label):
-    """Keep whole head/tail entries and explicitly count the omitted middle."""
-    full = "\n".join(lines)
-    if len(full) <= budget:
-        return full
-    marker = f"[EXCEL TEXT TRUNCATED: {label}; omitted {len(lines)} of {len(lines)} entries]"
-    available = budget - len(marker) - 2
-    head, tail = [], []
-    left, right = 0, len(lines) - 1
-    take_head = True
-    while left <= right:
-        chosen = None
-        for is_head in (take_head, not take_head):
-            index = left if is_head else right
-            if len(lines[index]) + 1 <= available:
-                chosen = is_head
-                break
-        if chosen is None:
-            break
-        index = left if chosen else right
-        (head if chosen else tail).append(lines[index])
-        available -= len(lines[index]) + 1
-        if chosen:
-            left += 1
-        else:
-            right -= 1
-        take_head = not chosen
-    marker = f"[EXCEL TEXT TRUNCATED: {label}; omitted {right - left + 1} of {len(lines)} entries]"
-    return "\n".join([*head, marker, *reversed(tail)])[:max(0, budget)]
-
-
-def _render_sheet(sections, budget=None):
+def _render_sheet(sections):
     header, formulas, grid_header, rows = sections
-
-    def combine(formula_text, row_text):
-        parts = [header]
-        if formulas:
-            parts.extend(["Formula evidence:", formula_text])
-        parts.extend(["Values (CSV; row numbers and column letters):", grid_header, row_text])
-        return "\n".join(parts)
-
-    formula_text, row_text = "\n".join(formulas), "\n".join(rows)
-    full = combine(formula_text, row_text)
-    if budget is None or len(full) <= budget:
-        return full
-    remaining = budget - len(combine("", ""))
-    if remaining < 90:
-        title, statistics = header.split("\n", 1)
-        body_budget = max(0, budget - len(title) - 1)
-        body = _fit_lines([statistics, *formulas, grid_header, *rows], body_budget, "sheet entries")
-        return (title + "\n" + body)[:max(0, budget)]
-    # Compact families normally fit completely; unique formulas and values share
-    # the space if neither can fit. Every sheet has its own reserved budget.
-    if len(formula_text) <= remaining // 2:
-        formula_budget = len(formula_text)
-        row_budget = remaining - formula_budget
-    else:
-        formula_budget, row_budget = _allocate([len(formula_text), len(row_text)], remaining)
-    return combine(_fit_lines(formulas, formula_budget, "formula entries"),
-                   _fit_lines(rows, row_budget, "value rows"))
+    parts = [header]
+    if formulas:
+        parts.extend(["Formula evidence:", "\n".join(formulas)])
+    parts.extend(["Values (CSV; row numbers and column letters):", grid_header, "\n".join(rows)])
+    return "\n".join(parts)
 
 
-def format_sheets(sheets, result, *, max_chars=190000) -> str:
-    """Render values and exact formula families without starving later sheets.
+def format_sheets(sheets, result) -> str:
+    """Render every nonempty value row and exact formula family on every sheet.
 
-    Full per-cell audit records belong in the caller's diagnostics. Text budgets
-    are shared between sheets; any omitted grid rows or formula entries carry an
-    explicit marker. Empty displayed rows are omitted, with formulas retained in
-    the family evidence and their ranges.
+    Empty displayed rows are counted in the header; their formulas remain in
+    the family evidence and ranges. No text budget omits rows or formula entries.
     """
-    if (max_chars is not None and max_chars <= 0) or not sheets:
-        return ""
     computed = result["cells"] if result is not None else {}
-    sections = [_sheet_sections(name, records, computed.get(name, {})) for name, records in sheets]
-    texts = [_render_sheet(section) for section in sections]
-    if max_chars is None or sum(map(len, texts)) + len(texts) - 1 <= max_chars:
-        return "\n".join(texts)
-    budgets = _allocate(list(map(len, texts)), max(0, max_chars - len(texts) + 1))
-    return "\n".join(_render_sheet(section, budget) for section, budget in zip(sections, budgets))[:max_chars]
+    return "\n".join(_render_sheet(_sheet_sections(name, records, computed.get(name, {})))
+                     for name, records in sheets)

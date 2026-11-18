@@ -41,7 +41,6 @@ def _restricted_formula(formula: str) -> bool:
 
 def read_excel(
     path: Path, *, recalculate: bool = True, diagnostics: list | None = None,
-    complete_text: list[str] | None = None,
 ) -> str:
     if path.suffix.lower() == ".xls":
         return _read_legacy_excel(path, diagnostics)
@@ -154,20 +153,13 @@ def read_excel(
                     item["recalculated"] = result["cells"][sheet_name][record["cell"]]
                 evidence.append(item)
     header = "\n".join(parts)
-    if complete_text is not None:
-        complete_text.append(header + "\n" + format_sheets(sheets, result, max_chars=None))
-    if len(header) > 9000:
-        header = header[:4500] + "\n[EXCEL TEXT TRUNCATED: workbook metadata; full metadata in diagnostics]\n" + header[-4000:]
     text = header + "\n" + format_sheets(sheets, result)
     if diagnostics is not None:
         diagnostics.append({"type": "excel", "status": status, "formula_count": formula_count,
                             "calculation_error_count": calculation_error_count,
                             "empty_cached_values": empty_count, "zero_cached_values": zero_count,
                             "engine": result["engine"] if result else None, "warnings": warnings,
-                            "defined_names": named_formulas, "formulas": evidence,
-                            "text_truncated": "[EXCEL TEXT TRUNCATED" in text,
-                            "truncation_notes": [line for line in text.splitlines()
-                                                 if "[EXCEL TEXT TRUNCATED" in line]})
+                            "defined_names": named_formulas, "formulas": evidence})
     return text
 
 
