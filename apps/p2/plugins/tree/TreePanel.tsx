@@ -2,7 +2,8 @@
 // panel (Elanor's), oldest first as the transcript beside it reads, the current branch at the top level and the other
 // branches inset under the turn they were forked after (toc.ts builds it). Its indicator follows the turn in view in
 // the transcript. It only moves through the tree: choosing a turn shows it in the transcript, switching the session to
-// the branch storing it first when that is not the current one. Editing and branching happen in the transcript.
+// the branch storing it first when that is not the current one. Editing and branching happen in the transcript. A
+// branch's label is the command menu's target for it (hovered or focused, or a long press on touch): "Rename branch…".
 import { BACKGROUND_CONTEXT, type HeldIn, liveIn } from "@p2/app/v1";
 import {
 	closePanel,
@@ -11,6 +12,7 @@ import {
 	requestReveal,
 	SidePanel,
 	TableOfContents,
+	useCommandMenuRow,
 	useComposerState,
 	useNavigation,
 	useObject,
@@ -19,9 +21,10 @@ import {
 } from "@p2/app/v1/web";
 import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Sessions } from "../sessions/contract.ts";
+import { branchTarget } from "./branch-target.ts";
 import { SessionTree, type Tree, type TreeNode } from "./contract.ts";
 import { onReaderScroll, useEntryInView } from "./entry-in-view.ts";
-import { type Toc, type Turn, tableOfContents } from "./toc.ts";
+import { type Tip, type Toc, type Turn, tableOfContents } from "./toc.ts";
 import "./tree.css";
 
 /** The side panel's name in the route (`Route.panel`). */
@@ -74,6 +77,7 @@ export function TreePanel({ session }: { session: string }) {
 
 /** What a turn's item does: show the turn in the transcript, on the branch storing it. */
 type TurnActions = {
+	readonly session: string;
 	readonly title: string;
 	readonly pending: boolean;
 	readonly active: number | undefined;
@@ -121,6 +125,7 @@ function TreeContents({
 		void nav.replace(wide ? next : { ...next, panel: undefined });
 	};
 	const actions: TurnActions = {
+		session,
 		title,
 		pending,
 		active: activeKey,
@@ -203,10 +208,7 @@ function TurnItem({ turn, actions }: { turn: Turn; actions: TurnActions }) {
 			>
 				<span className="tree-line">
 					{turn.tips.map((tip) => (
-						<span key={tip.conversation} className={`tree-ref ${tip.main ? "main" : ""}`}>
-							{tip.main ? "Current: " : ""}
-							{tip.label ?? actions.title}
-						</span>
+						<BranchLabel key={tip.conversation} session={actions.session} tip={tip} title={actions.title} />
 					))}
 					<span className="tree-text" data-role={user ? "user" : "assistant"}>
 						{(user ?? answer)?.text}
@@ -218,5 +220,17 @@ function TurnItem({ turn, actions }: { turn: Turn; actions: TurnActions }) {
 				<TurnList key={chain.start} turns={chain.turns} actions={actions} />
 			))}
 		</TableOfContents.Item>
+	);
+}
+
+/** A branch's label at its last turn ("Current: …" on the main one), the command menu's target for the branch. */
+function BranchLabel({ session, tip, title }: { session: string; tip: Tip; title: string }) {
+	const label = tip.label ?? title;
+	const target = useCommandMenuRow(branchTarget({ session, conversation: tip.conversation }, label));
+	return (
+		<span className={`tree-ref ${tip.main ? "main" : ""}`} {...target}>
+			{tip.main ? "Current: " : ""}
+			{label}
+		</span>
 	);
 }

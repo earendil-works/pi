@@ -1,10 +1,12 @@
 // Pages, TUIs, workers and plugins built before a deploy keep working: the providers of `Sessions`, `SessionTree`,
-// `Catalog`, `Envs`, `SessionStatus`, `Subagents` and `Projects` still bind the versions released before, through their `accepts`,
+// `Catalog`, `Envs`, `SessionStatus`, `Subagents` and `Projects` still bind the versions released before, through their
+// `accepts`,
 // and map the current state, arguments and results between versions. The old contracts below are copied verbatim from
 // the releases that bundled them (`Sessions` v3 and `Catalog` v2 from 0a730c8a7, `Sessions` v4, `Catalog` v3 and
 // `SessionTree` v1 from e88525506, `SessionTree` v2 from 7670c8be4, `Sessions` v5 from 9ff0ebfd0, `Catalog` v4 from
 // 0a180b049, `Sessions` v6 from 20d86c365, `Envs` v1 from 2a32a605a and v2 from d07548004, `SessionStatus` v1 and
-// `Subagents` v2 from 6e11a00a0, `Projects` v1 from b58642efa), so their fingerprints are the ones old bundles send.
+// `Subagents` v2 from 6e11a00a0, `SessionStatus` v2 from 335814952, `Projects` v1 from b58642efa), so their fingerprints
+// are the ones old bundles send.
 
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
@@ -498,6 +500,38 @@ const SessionStatusV1 = remote("p2.session-status", {
 	},
 });
 
+/** 335814952's `WorkStepSchema`, `WorkSchema`, `StatusSchema` and `ReportFields`: work, no run failure. */
+const WorkStepSchemaV2 = union([
+	obj({ kind: literal("thinking") }),
+	obj({ kind: literal("tools"), names: arr(str(), { minItems: 1 }) }),
+	obj({ kind: literal("compacting") }),
+	obj({ kind: literal("working") }),
+]);
+const WorkSchemaV2 = obj({ since: num(), rounds: num(), step: WorkStepSchemaV2 });
+const StatusSchemaV2 = obj({
+	/** A worker process runs for the session. */
+	running: bool(),
+	error: opt(str()),
+	usage: opt(unsafe<Usage>(unknown())),
+	/** Live Durable tasks (foreground and background). */
+	tasks: num(),
+	/** Conversations with foreground work, ascending. */
+	busy: arr(num()),
+	/** What each busy conversation does, by conversation ID. */
+	work: record(WorkSchemaV2),
+});
+const ReportSchemaV2 = obj({
+	tasks: num(),
+	busy: arr(num()),
+	work: record(WorkSchemaV2),
+	usage: opt(unsafe<Usage>(unknown())),
+});
+
+/** `SessionStatus` as 335814952 declared it. */
+const SessionStatusV2 = evolve(SessionStatusV1, (e) =>
+	e.state("reader", "statuses", record(StatusSchemaV2)).args("report", ReportSchemaV2),
+);
+
 /** 6e11a00a0's `ChildSchema`: no time or failure. */
 const ChildSchemaV2 = obj({
 	/** A subagent's name; a one-shot agent's label. */
@@ -532,6 +566,7 @@ const SubagentsV2 = remote("p2.subagents", {
 
 /** The fields a status and a child had in the released versions (the current ones add more). */
 const STATUS_KEYS_V1 = new Set(["running", "error", "usage", "tasks", "busy"]);
+const STATUS_KEYS_V2 = new Set([...STATUS_KEYS_V1, "work"]);
 const CHILD_KEYS_V2 = new Set([
 	"name",
 	"kind",
@@ -719,6 +754,33 @@ describe("older contract versions against the current server (fake provider)", (
 		worker.release();
 		current.release();
 		chat.release();
+	});
+
+	it("binds SessionStatus v2 as a reader and a worker: statuses with work, without the run's failure", async () => {
+		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const current = await holdIn(owner, SessionStatus, {}, "reader");
+		await until(current.statuses, (value) => value?.[session.id]?.running === true);
+		const generation = await workerGeneration(session.id);
+		const worker = fixture.as({ kind: "worker", session: session.id, generation });
+		// A current worker reports a failed run: a version 2 reader sees the status without it.
+		const reporter = await holdIn(worker, SessionStatus, {}, "reporter");
+		await reporter.report(
+			{ tasks: 0, busy: [], work: {}, failure: { reason: "model_error", detail: "overloaded" } },
+			BACKGROUND_CONTEXT,
+		);
+		await until(current.statuses, (value) => value?.[session.id]?.failure?.reason === "model_error");
+		const reader = await boundIn(owner, SessionStatusV2, {}, "reader");
+		const statuses = await until(reader.statuses, (value) => value?.[session.id]?.running === true);
+		assert.deepEqual(added(statuses[session.id]!, STATUS_KEYS_V2), {});
+		// A version 2 worker's report is accepted, with its work; it says nothing of a failure.
+		const old = await boundIn(worker, SessionStatusV2, {}, "reporter");
+		const work = { since: 1, rounds: 2, step: { kind: "thinking" as const } };
+		await old.report({ tasks: 1, busy: [2], work: { 2: work } }, BACKGROUND_CONTEXT);
+		const now = await until(current.statuses, (value) => value?.[session.id]?.tasks === 1);
+		assert.deepEqual([now[session.id]!.work, now[session.id]!.failure], [{ 2: work }, undefined]);
+		await old.report({ tasks: 0, busy: [], work: {} }, BACKGROUND_CONTEXT);
+		await until(current.statuses, (value) => value?.[session.id]?.tasks === 0);
+		for (const ref of [old, reader, reporter, current, chat]) ref.release();
 	});
 
 	it("binds Subagents v2 as a reader and a worker: children without time and failure", async () => {

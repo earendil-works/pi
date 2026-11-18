@@ -1,7 +1,7 @@
 // Browser: the command menu's workspace, terminal, folder and working directory commands at 1280×800: Browse files,
 // Show changes and Search files (the workspace's tabs, in the open session and in a hovered row's), Open terminal and
 // New terminal, Change working directory… on a session (the picker, then the move) and on the new-session screen, New
-// session in folder… and Open folder… (pages of the sidebar's folders), and which of them guests see. Fake provider;
+// session in folder… and Open folder… (pages of the folders sessions work in), and which of them guests see. Fake provider;
 // disposable data, every test makes its own sessions.
 
 import assert from "node:assert/strict";
@@ -162,7 +162,7 @@ describe("command menu: workspace, terminal and folders", { skip: !browserTests 
 			const to = await create("Workspace hovered");
 			await openSession(from, "Workspace from");
 			await hover(
-				`document.querySelector('.sidebar-section[data-key=recent] .nav-row:has(> a.session-main[href="/s/${to}"])')`,
+				`document.querySelector('.sidebar-section[data-key=other] .nav-row:has(> a.session-main[href="/s/${to}"])')`,
 			);
 			await openMenu();
 			assert.equal(
@@ -308,7 +308,7 @@ describe("command menu: workspace, terminal and folders", { skip: !browserTests 
 	});
 
 	describe("folders", () => {
-		it("starts a new session in a folder the sidebar knows", async () => {
+		it("starts a new session in a folder a session works in", async () => {
 			const path = folder("folder-new-one");
 			await create("In folder one", path);
 			await create("In folder two", folder("folder-new-two"));

@@ -17,7 +17,6 @@ import { Catalog, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
-import { SessionTree } from "../../plugins/tree/contract.ts";
 import { Browser, browserTests, COMPOSER, composerText, setComposer } from "./browser.ts";
 import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
 
@@ -173,7 +172,7 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		await browser.evaluate("localStorage.removeItem('pi-sidebar-width')");
 	});
 
-	it("orders pinned sessions first, expands child rows in the header, and keeps child busy dots visible when collapsed", async () => {
+	it("orders pinned sessions first, shows and hides subagents behind the session's chevron, and shows a working subagent on its collapsed session", async () => {
 		const owner = fixture.browser();
 		const sessions = await holdIn(owner, Sessions, {}, "owner");
 		const second = join(fixture.workspace, "second");
@@ -191,9 +190,9 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		await browser.metrics(1280, 900);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${pinned.id}`);
 		await browser.wait(`[...document.querySelectorAll('.session-title')].some(e=>e.textContent==='Pinned parent')`);
-		// Recents, across folders: pinned first, then the most recently active.
+		// The sessions without a project, across folders: pinned first, then the most recently active.
 		const titles = await browser.evaluate<string[]>(
-			`[...document.querySelectorAll('.sidebar-section[data-key=recent] .session-main .session-title')].map(e=>e.textContent)`,
+			`[...document.querySelectorAll('.sidebar-section[data-key=other] .session-main .session-title')].map(e=>e.textContent)`,
 		);
 		assert.deepEqual(titles.slice(0, 3), ["Pinned parent", "Other directory", "Recent sibling"]);
 		const chat = await holdIn(owner, Chat, { session: pinned.id, conversation: 1 }, "participant");
@@ -202,35 +201,24 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		const children = await until(agents.children, (children) => Boolean(children?.[pinned.id]?.length));
 		const child = children?.[pinned.id]?.[0];
 		assert(child);
-		await browser.wait(`document.querySelector('.session-header.has-subagents .subagent-toggle')`);
+		const header = ".sidebar-section[data-key=other] .session-header.has-subagents";
+		await browser.wait(`document.querySelector('${header} .subagent-toggle')`);
 		assert.equal(
 			await browser.evaluate<number>(
 				`document.querySelectorAll('.drawer button[aria-label="Session options"]').length`,
 			),
 			0,
 		);
-		// The open session's row is selected; the arrow after its title shows its other conversations, and hides them.
-		const conversations = `document.getElementById(document.querySelector('.sidebar-section[data-key=recent] .session-header.has-subagents .subagent-toggle').getAttribute('aria-controls'))`;
+		// The open session's row is selected; the chevron after its title shows its subagents, and hides them.
+		const conversations = `document.getElementById(document.querySelector('${header} .subagent-toggle').getAttribute('aria-controls'))`;
 		await browser.wait(
-			`${conversations}?.hidden && document.querySelector('.sidebar-section[data-key=recent] .nav-row.selected > .session-main')`,
+			`${conversations}?.hidden && document.querySelector('.sidebar-section[data-key=other] .nav-row.selected > .session-main')`,
 		);
-		await browser.click(".session-header.has-subagents .subagent-toggle");
+		await browser.click(`${header} .subagent-toggle`);
 		await browser.wait(`!${conversations}.hidden && ${conversations}.querySelector('.subagent-row')`);
-		// An idle subagent's row ends with when it was last active, in its session's time column; its model and where it
-		// works are its tooltip.
-		const subagentRow = `document.querySelector('.nav-row:has(> .subagent-row)')`;
-		await browser.wait(`${subagentRow}.querySelector('.session-time')?.textContent === 'now'`);
-		assert.equal(await browser.evaluate<number>(`${subagentRow}.querySelectorAll('.subagent-model').length`), 0);
-		const edges = await browser.evaluate<number[]>(
-			`[${subagentRow}.closest('.session-row').querySelector('.session-header .session-time'), ${subagentRow}.querySelector('.session-time')].map(e=>Math.round(e.getBoundingClientRect().right))`,
-		);
-		assert.equal(edges[0], edges[1]);
-		assert.equal(
-			await browser.evaluate<string>(`${subagentRow}.querySelector('.subagent-row').title`),
-			"faux-1 · off\nFollows the session",
-		);
-		await browser.click(".session-header.has-subagents .subagent-toggle");
+		await browser.click(`${header} .subagent-toggle`);
 		await browser.wait(`${conversations}.hidden`);
+		// While the subagent works, its collapsed session shows pi's dots; shown, the subagent's item does too.
 		const childChat = await holdIn(
 			owner,
 			Chat,
@@ -238,43 +226,52 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 			"participant",
 		);
 		await childChat.send({ text: "slow child", requestId: "drawer-busy" }, BACKGROUND_CONTEXT);
-		await browser.wait(
-			`document.querySelector('.session-header.has-subagents :is(.working-frame, .run-mark[data-state=working])')`,
-		);
-		await browser.click(".session-header.has-subagents .subagent-toggle");
-		await browser.wait(
-			`!${conversations}.hidden && document.querySelector('.nav-row:has(> .subagent-row) .run-mark[data-state=working]')`,
-		);
-		// While it works, its row ends with its step: the model's answer streams.
-		await browser.wait(`${subagentRow}.querySelector('.subagent-step')?.textContent === 'Thinking'`);
+		await browser.wait(`document.querySelector('${header} > .nav-marker > .pi-dots')`);
+		await browser.click(`${header} .subagent-toggle`);
+		const subagentRow = `document.querySelector('.nav-row:has(> .subagent-row)')`;
+		await browser.wait(`!${conversations}.hidden && ${subagentRow}.querySelector('.nav-marker > .pi-dots')`);
 		await browser.click(".subagent-row");
 		await browser.wait(
 			`location.pathname.endsWith('/c/${child.conversationId}') && document.querySelector('.subagent-row.active')`,
 		);
-		const status = await holdIn(owner, SessionStatus, {}, "reader");
 		await childChat.stop(BACKGROUND_CONTEXT);
-		await until(status.statuses, (states) => !states?.[pinned.id]?.busy.includes(child.conversationId));
-		// A stopped run says so at the row's end (a tool's step words: test/p2/subagent-state.test.ts).
-		await browser.wait(`${subagentRow}.querySelector('.subagent-step')?.textContent === 'Stopped'`);
-		// With `/tree` branches as well, the one control shows the branch rows, then the subagents, and hides both.
-		await until(status.statuses, (states) => states?.[pinned.id]?.tasks === 0);
-		const tree = await holdIn(owner, SessionTree, { session: pinned.id }, "owner");
-		const first = (await tree.tree(BACKGROUND_CONTEXT)).nodes.find((node) => node.role === "user")!;
-		await tree.navigate({ entry: first.entry }, BACKGROUND_CONTEXT);
-		await tree.select({ conversation: 1 }, BACKGROUND_CONTEXT);
-		tree.release();
-		// One disclosure shows the session's conversations: its branches and its subagents, in one list.
-		const toggle = `document.querySelector('.sidebar-section[data-key=recent] .session-header.has-subagents .subagent-toggle')`;
-		const list = `document.getElementById(${toggle}.getAttribute('aria-controls'))`;
-		await browser.wait(`${list}?.querySelectorAll('.branch-row').length===2`);
-		assert.equal(await browser.evaluate<string>(`${toggle}.getAttribute('aria-expanded')`), "true");
-		assert.equal(
-			await browser.evaluate<number>(`${list}.querySelectorAll('.subagent-row:not(.branch-row)').length`),
-			1,
-		);
-		await browser.evaluate(`${toggle}.click()`);
-		await browser.wait(`${list}.hidden`);
-		assert.equal(await browser.evaluate<string>(`${toggle}.getAttribute('aria-expanded')`), "false");
+		await browser.wait(`!document.querySelector('.sidebar-section[data-key=other] .pi-dots')`);
+		for (const held of [childChat, chat, agents, sessions]) held.release();
+	});
+
+	it("stops a session's run from its item, its queued follow-up waiting as the owner's draft; archives it from its item", async () => {
+		const owner = fixture.browser();
+		const sessions = await holdIn(owner, Sessions, {}, "owner");
+		const session = await sessions.create({ cwd: fixture.workspace, title: "Item actions" }, BACKGROUND_CONTEXT);
+		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
+		const status = await holdIn(owner, SessionStatus, {}, "reader");
+		await chat.send({ text: "slow item", requestId: "item-run" }, BACKGROUND_CONTEXT);
+		await chat.send({ text: "queued next", requestId: "item-queued", whenBusy: "followUp" }, BACKGROUND_CONTEXT);
+		await until(chat.view, (view) => JSON.stringify(view?.docs["pi.inbox"] ?? null).includes("queued next"));
+		await browser.metrics(1280, 900);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
+		const item = `.sidebar-section[data-key=other] .session-row[data-session="${session.id}"] > .session-header`;
+		/** Moves the mouse over the item, which shows its action in place of its age. */
+		const hover = async () => {
+			const at = await browser.evaluate<{ x: number; y: number }>(
+				`(() => { const r = document.querySelector('${item} .session-title').getBoundingClientRect(); return { x: r.left + 4, y: r.top + r.height / 2 }; })()`,
+			);
+			await browser.call("Input.dispatchMouseEvent", { type: "mouseMoved", ...at });
+		};
+		await browser.wait(`document.querySelector('${item} > .nav-marker > .pi-dots')`);
+		await hover();
+		await browser.click(`${item} > button.item-action[data-action=cancel][aria-label="Stop Item actions"]`);
+		await until(status.statuses, (states) => states?.[session.id]?.busy.length === 0);
+		// The withdrawn follow-up is the owner's draft: it comes back into the composer when the session opens.
+		await browser.click(`${item} .session-main`);
+		await browser.wait(`location.pathname === '/s/${session.id}' && ${composerText} === 'queued next'`);
+		assert.doesNotMatch(JSON.stringify((await until(chat.view, Boolean))?.entries ?? []), /Echo: queued next/);
+		// Idle, its action is Archive: the session leaves the sidebar at once, and the open one leaves the page.
+		await hover();
+		await browser.click(`${item} > button.item-action[data-action=archive][aria-label="Archive Item actions"]`);
+		await browser.wait(`!document.querySelector('${item}') && location.pathname === '/new'`);
+		await until(sessions.sessions, (list) => Boolean(list?.find((row) => row.id === session.id)?.archivedAt));
+		for (const held of [chat, status, sessions]) held.release();
 	});
 
 	it("preserves rename, pin and archive after moving actions out of session rows", async () => {
@@ -558,7 +555,7 @@ describe("guest drawer in Chromium", { skip: !browserTests }, () => {
 				ownerButtons: number;
 				search: boolean;
 			}>(
-				`(()=>{const n=document.querySelector('nav[aria-label="Shared session"]');return {identity:n.querySelector('.empty-note').textContent,titles:[...n.querySelectorAll('.session-title')].map(e=>e.textContent),ownerButtons:n.querySelectorAll('.new-session,.foot-button,.collapse-sidebar').length,search:Boolean(n.querySelector('.search'))};})()`,
+				`(()=>{const n=document.querySelector('nav[aria-label="Shared session"]');return {identity:n.querySelector('.empty-note').textContent,titles:[...n.querySelectorAll('.session-title')].map(e=>e.textContent),ownerButtons:n.querySelectorAll('.new-session,.foot-button,.collapse-sidebar,.item-action').length,search:Boolean(n.querySelector('.search'))};})()`,
 			);
 			assert.match(state.identity, /Joined as Guest browser\s*Read-only/);
 			assert.deepEqual(state.titles, ["Shared visible"]);

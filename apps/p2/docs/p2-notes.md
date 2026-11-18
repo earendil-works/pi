@@ -966,78 +966,108 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
     sidebar (`useSidebarData` in `web.tsx`). The sidebar is always mounted; it publishes what a list page needs
     (`publishPage`), so the list page shows the same rows and edits, offline too, without holding its own copy.
   - **Rules** (`model.ts`, pure, `sidebar-model.test.ts`): a `Rollup` collects sessions into one section, in one of
-    three layouts: a flat list (`sessions`: Recents), groups of sessions (`groups`: every project, one per folder, each
-    with where its "+" starts a session; a sandbox folder `sandboxed`), or a link only (`link`: the Archive).
-    `ROLLUPS` are the built-in ones, `ordered` puts them in the owner's order. `sectionsOf` shows every rollup and
-    applies relevance (pinned, open, working, unread, a failed worker, an operation, or `updatedAt` within the rollup's
-    window: `1d`, `3d` (default), `1w`, `forever`): a session shows in every rollup and group that has it, a group only
-    with relevant sessions or `keep` (every project's: a new one's "+" must be reachable), a collapsed rollup or group
-    only its row. `listPageOf` makes a rollup's or a group's list page: every session, the aged ones (outside the
-    window) after the others, by group for a rollup of groups; the archived ones newest archived first. Keys: `recent`,
-    `projects`, `folders`, `archive`, `project:<name>`, `folder:<base64url of JSON [env, cwd]>` (no slash, for
-    `/list/<key>`). Folders take as many trailing path segments as tell same-named ones apart. Rollup order never
-    follows activity. `glyphsOf` picks project glyphs by the glyphs plugin's `placeSeed` (below); a group's tooltip is
-    its path (a project's: its places), a Recents session's its cwd.
+    three layouts: a flat list (`sessions`: the sessions without a project), groups of sessions (`groups`: every
+    project, each with where its "+" starts a session; a sandbox group `sandboxed`), or a link only (`link`: the
+    Archive). A session belongs to the project it joined, else to the project whose place on its machine holds its
+    folder most closely (`projectOf`, by `projectAt` in `plugins/projects/place.ts`, `project-place.test.ts`; a place at
+    `~` last). `ROLLUPS` are the built-in ones: the sessions without a project (`headless`: no heading, no ⋯, always
+    first), Projects, the Archive; `arranged` keeps the headless rollup first and puts the others in the owner's order
+    (a saved order from before, naming `recent` or `folders`, cannot move it), `movable` are the ones a heading's ⋯
+    moves. `FOLDER_ROLLUP` (one group per folder) is no section: it serves the command menu's "Open folder…".
+    `sectionsOf` shows every rollup and applies relevance (pinned, open, working, unread, a failure, an operation, or
+    `updatedAt` within the rollup's window: `1d`, `3d` (default; the headless one keeps it), `1w`, `forever`): a session
+    shows in every rollup and group that has it, a group only with relevant sessions or `keep` (every project's: a new
+    one's "+" must be reachable), a collapsed rollup or group only its row; the headless section counts the sessions its
+    window hides (`older`, its "N older" row). `failureOf` says what failed in a session: its worker, an operation, or
+    its main conversation's last run (`runState` of `worker.failure`: a stop, a reset or nothing to answer is no
+    failure); relevance, `activityOf` and `wantingOf` count it. `listPageOf` makes a rollup's or a group's list page:
+    every session, the aged ones (outside the window) after the others, by group for a rollup of groups; the archived
+    ones newest archived first. Keys: `other`, `projects`, `archive`, `folders`, `project:<name>`, `folder:<base64url
+    of JSON [env, cwd]>` (no slash, for `/list/<key>`). Folders take as many trailing path segments as tell same-named
+    ones apart. Rollup order never follows activity. The sidebar waits for `Projects` before it shows the owner's
+    sections (a session would otherwise show without a project, then jump into its group).
   - **View** (`Sidebar.tsx`, `Row.tsx`, `ListPage.tsx`, `RollupSheet.tsx`), on Elanor's `Sidebar` and
-    `SideNavigation` and icons (re-exported by `src/web/navigation-components.ts`). Every row is a `NavRow`: a marker
-    column as wide as an icon (a session's working mark, a group's project glyph, folder or lock, a Recents session's
-    glyph; kept when empty; a rollup has none),
-    the label (a link; an action: restoring an archived session, switching to another branch; or, with `expanded`, the
-    control that shows or hides what is below the row, Elanor's chevron right after the label), details (the time of
-    the last activity last) and controls (⋯, "+", a branch's rename), all one control whose hover and selected
-    backgrounds (Elanor's ghost fills) span the row; the label's hit area covers it. Labels are one line, cut with "…" at
-    the end (`.nav-label`). No leading disclosure column, so nothing is indented by it: a group's row shows or hides
-    its sessions, not indented (every session's working mark is in one column); a group's row is medium weight. The
-    owner's list starts with the rows plugins put there (the `sidebar-start:<name>` slots, each a list item: the
-    Familiar's "Ask Pi") and a "New session" row, all in a group's type ("+" marker, a link to `/new`, the new-session
-    screen, selected while it shows), 16px above the first rollup (rollups are 24px apart); the header holds the Pi
-    logo and the collapse trigger. A session's row is a link to its main conversation,
-    selected while that shows (the label's hit area covers the row: the label is not positioned, so its `::after` is
-    laid out on the row). Its other conversations (its branches, then its subagents and one-shot agents, the most
-    recently active first) are below it, shown or hidden only by its chevron (`Toggle`, a button after the label;
-    showing a subagent shows them), in the secondary style, their labels and working marks in the session's columns. A rollup's name is a link
-    to its list, its chevron a `Toggle` after it; a collapsed rollup lists nothing ("No activity" is for an open one). Rows start and end on the bars' icon line (`--nav-edge`, style.css). An open session is selected
-    in one place: where this tab opened it from (per session, in sessionStorage), else the first place it shows. The
-    list page in the main area (`Route.page`, at `/list/<key>`; the `page` slot instead of `main`; `openPage` closes
-    the phone drawer as opening a conversation does; top-level links to it authenticate as `/s/` links do) lists
-    sessions only (no conversations below them, `listsConversations`), in the transcript's column (`--chat-size`,
-    `--chat-width`) inside one scroller across the main area, as the transcript; it has a search within its sessions (`Search` 3's `sessions`), kept with its scroll position across Back, its "+" for
-    groups, and the error toast (`ErrorToast`, shared with the chat).
-  - **State marks** (`Row.tsx`, the top of `style.css`): a row says two things in two places. The marker says whether
-    a session runs: `IconMarker` frames the row's icon (a glyph, a folder, a lock) with a dash travelling around it
-    (22px, 3px outside the icon, clear of a glyph's corner cells), `WorkingMark` is a spinner where a row has no icon (a
-    group's sessions, conversations, a collapsed rollup's details). That is the sidebar's only
-    motion. The row's end says whether it wants the owner, steady: an unread answer makes the title bold
-    (`.session-title.unread`) with a blue dot before the time (`UnreadMark`); a failed worker shows a warning sign and
-    "Failed" (`FailedMark`, the error in its tooltip). Each state has its own shape, not only a colour (spinner or
-    frame, dot, warning sign), so colour blindness does not merge them; the dots used to sit on a glyph's corner in the
-    glyph's own colours. With reduced motion the spinner is a still ¾ ring and the frame dashed; in the phone's closed
-    drawer they pause. A collapsed group or rollup sums up what it hides (`hidden`, `activityOf` in `model.ts`): a
-    group frames its icon while one of them works, a rollup shows a spinner, and both count the failed ones (warning
-    sign) and the unread ones (a blue count). The top bars' menu button (`menu-badge` slot, `MenuBadge` in `web.tsx`,
-    rendered by the chat's and the list page's bar) counts the other live sessions that want the owner (`wantingOf`: a
-    failure or an unread answer, the open one left out), red when one failed. The sidebar publishes it, as it publishes
-    the list page's data. A "needs input" state waits for questions and approvals (`docs/waiting.md`).
+    `SideNavigation` and icons (re-exported by `src/web/navigation-components.ts`; a plugin's web build reaches icons
+    only through the host packages). Every row is a `NavRow`: a marker column as wide as an icon (an item's status, a
+    project's folder icon or a sandbox's lock; kept when empty; a rollup has none), the label (a link; an action:
+    restoring an archived session; or, with `expanded`, the control that shows or hides what is below the row, Elanor's
+    chevron right after the label), details and controls (⋯, "+", an item's action), all one control whose hover and
+    selected backgrounds (Elanor's ghost fills) span the row; the label's hit area covers it. Labels are one line, cut
+    with "…" at the end (`.nav-label`). No leading disclosure column, so nothing is indented by it. The owner's list
+    starts with the rows plugins put there (the `sidebar-start:<name>` slots, each a list item: the Familiar's "Ask Pi")
+    and a "New session" row, 16px above the first rollup (rollups are 24px apart); the header holds the Pi logo and the
+    collapse trigger. A session and each of its subagents are the same item (`AgentItem`): status, name, detail. The
+    detail is how long ago its last message was (`ago`); under a fine pointer, on hover or keyboard focus, the item's
+    one action (`ItemAction`, an icon button, its name saying whose: "Stop <name>", "Archive <name>") shows over it:
+    Cancel (`CancelIcon`) while it runs, Archive while idle. The button is laid out but invisible and not hit at rest,
+    so Tab reaches it, and the age's column keeps its width, so nothing moves when it shows and the name is cut before
+    either. On coarse pointers it is not shown: a long press on the item opens its command menu (`useCommandMenuRow`;
+    the item is also the menu's target on hover and focus), which has "Stop run" and "Archive subagent"
+    (`commands.tsx`; a one-shot agent's item is no target, as its chat is none). A session's Cancel stops its busy
+    conversations but one-shot agents (`stoppable`: their script owns them, and stopping the script's conversation
+    ends them); a subagent's or a one-shot agent's stops its own run. Both go through `RunControl` (the chat plugin's
+    contract, participants): unlike the chat's Stop, which hands the caller's own withdrawn inputs back to its
+    composer, a stop from outside the chat puts every withdrawn input into its author's drafts (`DraftStore`), so a
+    queued follow-up is not lost. A session's Archive is the owner's (`Sessions.archive`); a subagent's is the owner's
+    and read/write guests' (`SubagentControl.archive`), shown at once (`useOptimisticCall` over the children). Who may
+    act is `writable`: the owner, or a guest whose grant for the session is `full`. The actions live in
+    `useSidebarData` and reach the list pages through `publishPage` too. A session's item is a link to its main
+    conversation, selected while that shows (the label's hit area covers the row: the label is not positioned, so its
+    `::after` is laid out on the row). Its subagents and one-shot agents (the most recently active first) are below it,
+    shown or hidden only by its chevron (`Toggle`, a button after the label; showing a subagent shows them), archived
+    subagents behind an "N archived" row. Its `/tree` branches are not listed (the tree panel has them, docs/tree.md).
+    A rollup's name is a link to its list, its chevron a `Toggle` after it; a collapsed rollup lists nothing ("No
+    activity" is for an open one). Rows start and end on the bars' icon line (`--nav-edge`, style.css). An open session
+    is selected in one place: where this tab opened it from (per session, in sessionStorage), else the first place it
+    shows. The list page in the main area (`Route.page`, at `/list/<key>`; the `page` slot instead of `main`;
+    `openPage` closes the phone drawer as opening a conversation does; top-level links to it authenticate as `/s/`
+    links do) lists sessions only (no conversations below them, `listsConversations`), in the transcript's column
+    (`--chat-size`, `--chat-width`) inside one scroller across the main area, as the transcript; it has a search within
+    its sessions (`Search` 3's `sessions`), kept with its scroll position across Back, its "+" for groups, and the
+    error toast (`ErrorToast`, shared with the chat).
+  - **State marks** (`marks.tsx`, `run-state.ts`, the top of `style.css`): an item's status is in its marker column.
+    Working is pi's dots (`PiDots`): the terminal UI's braille loader frames, one at a time, a strip of the ten stepped
+    by a CSS animation at 160ms a frame (pi's is 80ms), in the icons' colour, so a list of running agents stays calm.
+    Every strip's delay puts it on the page's clock, so running items step together; with reduced motion it stays on
+    its first frame, in the phone's closed drawer it pauses. That is the sidebar's only motion (the Familiar's row still
+    frames its logo, `IconMarker`). Wanting the owner is steady: a blue dot for an unread answer (`UnreadMark`; the name
+    is bold, `.session-title.unread`, whatever the status shows first), a red dot for a failure (`FailedDot`, what
+    failed in its tooltip and accessible name). The two dots differ by colour only (owner decision); forced-colour mode
+    keeps their colours. A subagent's status is `runState` of its `Child.failure`: busy, failed, or nothing (stopped,
+    reset, nothing to answer). A session's is `failureOf` first, then working (any conversation), then unread; its main
+    conversation's last run failure comes from the session worker (`SessionStatus` 3's `failure`, below). A collapsed
+    group or rollup sums up what it hides (`hidden`, `activityOf` in `model.ts`): pi's dots with the working count, a
+    warning sign with the failed count (`FailedMark`), a blue unread count. The top bars' menu button (`menu-badge`
+    slot, `MenuBadge` in `web.tsx`, rendered by the chat's and the list page's bar) counts the other live sessions that
+    want the owner (`wantingOf`: a failure or an unread answer, the open one left out), red when one failed. The
+    sidebar publishes it, as it publishes the list page's data. A "needs input" state waits for questions and approvals
+    (`docs/waiting.md`).
+  - **Run failure in status** (`plugins/status`): the session worker reports, with its tasks and busy conversations,
+    why the main conversation's last run ended without an answer (`LiveDoc.runFailure`: reason and detail), only while
+    that conversation is not busy; the reader sees it in `SessionStatus` 3's `failure` (a guest sees the reason only).
+    Workers and pages built for versions 1 and 2 still bind (`accepts`; their reports carry no failure). Test:
+    `run-control.test.ts` (a stop from outside: the drafts, then `aborted` in the status), `contract-versions.test.ts`.
   - **Settings** (`sidebar-settings.ts`, `SidebarSettingsStore`/`SidebarSettings`, owner): the rollups' order, windows
     and collapsed rollups and groups, one persisted document in the server's store (`p2.sidebar-settings-state`): a person's
     view, not the catalog. A project's "+" sets the new-session screen's location and a join (`NewSessionJoin`:
     `Projects.assign` once the projects are live), which the chat plugin runs once `Sessions.create` answered (a refused
     creation leaves no membership; a failed join shows in the toast) and clears after. Tests: `sidebar-model.test.ts`,
-    `sidebar-settings.test.ts`, `ui-sidebar.test.ts`, the scoped search in `search.test.ts`, list links in
-    `foreign-requests.test.ts`.
+    `run-state.test.ts`, `sidebar-settings.test.ts`, `ui-sidebar.test.ts`, the scoped search in `search.test.ts`,
+    list links in `foreign-requests.test.ts`.
 - **Project glyphs** (`plugins/glyphs`): `glyph.ts` (pure, browser-safe) draws a 3x3 identicon in the Radius mark's four
   colors from a seed (a path or a name; paths in their `shortPath` form, so `/Users/me/x`, `/home/me/x` and `~/x` draw
   one glyph): SHA-256 of `glyph-v1:<seed>` seeds two sfc32 streams, one for colors, mirror axis and corner style, one
   for cells and shapes (fan, leaf, drop, dome, wedge, circle, diamond, square). It is the "Tiles, 3x3" generator of
   the project-glyphs prototype (Radius artifact) with its recommended settings, and draws the same glyphs. Mirror
   axes only (vertical, horizontal, both diagonals): every glyph is mirror-symmetric, so none is a pinwheel (a
-  swastika); 3x3 cannot hold one anyway. `plugins/projects/glyph-seed.ts` decides which glyph a place shows (`placeSeed`, kept with the projects it reads so other plugins' web facets can import it alone): a project's is
-  seeded by its first place's path, and a folder or a session inside one of its places (a session also by membership)
-  shows the project's; any other place its own path's. `GlyphIcon.tsx` draws one inline (the sidebar's groups and
-  Recents, the chat's top bar before the location; the chat page holds `Projects` once for it, owner only);
+  swastika); 3x3 cannot hold one anyway. `plugins/projects/glyph-seed.ts` decides which glyph a place shows
+  (`placeSeed`, kept with the projects it reads so other plugins' web facets can import it alone): a project's is
+  seeded by its first place's path, and a place of a project (`projectAt`: by membership, else the closest place
+  holding it) shows the project's; any other place its own path's. `GlyphIcon.tsx` draws one inline (the chat's top
+  bar before the location; the chat page holds `Projects` once for it, owner only; the sidebar shows no glyphs);
   `GET /glyph.svg?seed=<seed>&size=<8 to 1024, default 64>` serves one as an SVG file to anyone (it reads no data; the
   seed is at most 1024 characters), cacheable for a day and embeddable from other origins. Tests: `glyphs.test.ts` (the prototype's output, seed forms, colors, symmetry),
-  `sidebar-model.test.ts` (`glyphsOf`), `ui-sidebar.test.ts`.
+  `project-place.test.ts` (`projectAt`, `placeSeed`).
 - **Rollups made from code** (`plugins/rollups`; README, The web sidebar): a saved script over every session that returns
   one sidebar section, in the built-in rollups' layouts. The script decides what a rollup collects; the sidebar decides
   what it shows, so the window, sticky sessions and the owner's settings work the same as for the built-in ones.

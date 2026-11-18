@@ -1,10 +1,10 @@
 // The sidebar's view, built from Elanor's sidebar and side navigation: one navigation group per rollup, in the layout
-// of what it collected (its relevant sessions, groups with theirs, or only its name), and the guest's list of shared
-// sessions. Every row has the same shape (Row.tsx's `NavRow`): a marker, a label, details and controls at the trailing
-// end. The owner's list starts with the rows plugins put there (the Familiar's), then the row that opens the
-// new-session screen. A rollup's name opens its list page, its chevron shows or
-// hides its sessions; a group's row shows or hides its sessions; a session's row opens it (and shows its
-// conversations), its chevron shows or hides them. It renders what model.ts computes and calls back for every action.
+// of what it collected (the projects as groups of their sessions, the sessions without a project, the Archive's name),
+// and the guest's list of shared sessions. Every row has the same shape (NavRow.tsx): a marker, a label, details and
+// controls at the trailing end. The owner's list starts with the rows plugins put there (the Familiar's), then the row
+// that opens the new-session screen. A rollup's name opens its list page, its chevron shows or hides its sessions; the
+// Projects rollup's "+" creates a project; a group's row shows or hides its sessions; a session's row opens it, its
+// chevron shows or hides its subagents. It renders what model.ts computes and calls back for every action.
 import { type Grant, grantMode } from "@p2/app/v1";
 import {
 	NavAddIcon,
@@ -19,9 +19,7 @@ import {
 	useLinkHref,
 } from "@p2/app/v1/web";
 import { memo, type ReactNode, useEffect, useId, useState } from "react";
-import { GlyphIcon } from "../../glyphs/GlyphIcon.tsx";
-import { IconMarker, WorkingMark } from "./marks.tsx";
-import type { Glyphs, GroupSection, NewTarget, Section, SidebarRow } from "./model.ts";
+import { type GroupSection, type NewTarget, PROJECTS, type Section, type SidebarRow } from "./model.ts";
 import { NavRow } from "./NavRow.tsx";
 import { HiddenAttention, pageRoute, type RowActions, SessionItem, Toggle, useOpenedFrom } from "./Row.tsx";
 import "./style.css";
@@ -45,31 +43,25 @@ type HeadingActions = {
 	onCollapse?: (key: string, collapsed: boolean) => void;
 	onOptions?: (key: string) => void;
 	onNewIn?: (target: NewTarget) => void;
-	/** The owner's project glyphs; absent: groups show a folder and sessions their working mark only. */
-	glyphs?: Glyphs;
+	/** Starts a new project (the Projects rollup's "+"; the owner's). */
+	onNewProject?: () => void;
 };
 
 /**
- * A group inside a rollup: its row (its project glyph, else a folder; a lock for a sandbox; its name, "+"), which shows
+ * A group inside a rollup: its row (a folder, a lock for a sandbox; its name, "+"), which shows
  * or hides its relevant sessions below it, one step in. Its tooltip is its path (a project's: its places). Collapsed, it
- * says what its hidden sessions do: its icon framed while one works, how many failed or have a new answer.
+ * says what its hidden sessions do: how many run, failed or have a new answer.
  */
 function GroupItem({ group, rows, actions }: { group: GroupSection; rows: RowActions; actions: HeadingActions }) {
-	const { onCollapse, onNewIn, connected, glyphs } = actions;
+	const { onCollapse, onNewIn, connected } = actions;
 	const { target } = group;
 	const listId = useId();
-	const glyph = target && glyphs?.target(target);
-	const marker = (
-		<IconMarker working={group.hidden.working > 0}>
-			{group.sandboxed ? (
-				<NavLockIcon size={16} aria-label="Sandbox" />
-			) : glyph ? (
-				<GlyphIcon seed={glyph.seed} />
-			) : (
-				<NavFolderIcon size={16} />
-			)}
-		</IconMarker>
-	);
+	// A project's tooltip: its places, one per line.
+	const places =
+		target?.kind === "project"
+			? target.project.places.map((place) => (place.env ? `${place.env}:${place.path}` : place.path)).join("\n")
+			: undefined;
+	const marker = group.sandboxed ? <NavLockIcon size={16} aria-label="Sandbox" /> : <NavFolderIcon size={16} />;
 	const label = <span className="session-title">{group.name}</span>;
 	return (
 		<SideNavigation.Item className="sidebar-group" data-key={group.key}>
@@ -77,11 +69,15 @@ function GroupItem({ group, rows, actions }: { group: GroupSection; rows: RowAct
 				className="group-row"
 				linkClassName="group-link"
 				{...(onCollapse ? { expanded: !group.collapsed, controlsId: listId } : {})}
-				title={group.title ?? glyph?.title}
+				title={group.title ?? (places || undefined)}
 				onActivate={() => onCollapse?.(group.key, !group.collapsed)}
 				marker={marker}
 				label={label}
-				details={group.hidden.failed + group.hidden.unread > 0 && <HiddenAttention activity={group.hidden} />}
+				details={
+					group.hidden.working + group.hidden.failed + group.hidden.unread > 0 && (
+						<HiddenAttention activity={group.hidden} />
+					)
+				}
 				controls={
 					onNewIn &&
 					target && (
@@ -110,13 +106,15 @@ function GroupItem({ group, rows, actions }: { group: GroupSection; rows: RowAct
 /**
  * A rollup's group of the navigation: its row (its name, a link to its list; the chevron right after it that shows or
  * hides its sessions; the Archive's count instead; its options), then its sessions or its groups by its layout, or
- * "No activity" when it has none to show. Collapsed, its row says what its hidden sessions do (it has no icon to frame:
- * a spinner while one works).
+ * "No activity" when it has none to show. Collapsed, its row says what its hidden sessions do. The Projects rollup has
+ * a "+" that creates a project.
  */
 function RollupGroup({ section, rows, actions }: { section: Section; rows: RowActions; actions: HeadingActions }) {
-	const { page, onPage, onCollapse, onOptions, glyphs } = actions;
+	const { page, onPage, onCollapse, onOptions, onNewProject, connected } = actions;
 	const linkHref = useLinkHref();
 	const listId = useId();
+	if (section.layout === "sessions" && section.headless)
+		return <HeadlessGroup section={section} rows={rows} selected={page === section.key} onPage={onPage} />;
 	const collapsed = section.layout === "link" ? undefined : section.collapsed;
 	// A collapsed rollup lists nothing, whatever it has: "No activity" is for an open one with nothing to show.
 	const empty =
@@ -149,38 +147,43 @@ function RollupGroup({ section, rows, actions }: { section: Section; rows: RowAc
 						<span className="section-count">{section.total}</span>
 					) : (
 						section.hidden.working + section.hidden.failed + section.hidden.unread > 0 && (
-							<>
-								{section.hidden.working > 0 && <WorkingMark />}
-								<HiddenAttention activity={section.hidden} />
-							</>
+							<HiddenAttention activity={section.hidden} />
 						)
 					)
 				}
 				controls={
-					onOptions && (
-						<button
-							type="button"
-							className="nav-control rollup-options"
-							aria-label={`${section.name} options`}
-							title="Options"
-							onClick={() => onOptions(section.key)}
-						>
-							<NavMoreIcon size={16} />
-						</button>
-					)
+					<>
+						{section.key === PROJECTS && onNewProject && (
+							<button
+								type="button"
+								className="nav-control new-project"
+								aria-label="New project"
+								title="New project"
+								disabled={!connected}
+								onClick={onNewProject}
+							>
+								<NavAddIcon size={16} />
+							</button>
+						)}
+						{onOptions && (
+							<button
+								type="button"
+								className="nav-control rollup-options"
+								aria-label={`${section.name} options`}
+								title="Options"
+								onClick={() => onOptions(section.key)}
+							>
+								<NavMoreIcon size={16} />
+							</button>
+						)}
+					</>
 				}
 			/>
 			{section.layout !== "link" && (
 				<SideNavigation.List id={listId} hidden={section.collapsed}>
 					{section.layout === "sessions" &&
 						section.rows.map((session) => (
-							<SessionItem
-								key={session.id}
-								session={session}
-								scope={section.key}
-								actions={rows}
-								glyph={glyphs?.row(session)}
-							/>
+							<SessionItem key={session.id} session={session} scope={section.key} actions={rows} />
 						))}
 					{section.layout === "groups" &&
 						section.groups.map((group) => (
@@ -189,6 +192,45 @@ function RollupGroup({ section, rows, actions }: { section: Section; rows: RowAc
 					{empty && <li className="empty-note sidebar-empty">No activity</li>}
 				</SideNavigation.List>
 			)}
+		</SideNavigation.Group>
+	);
+}
+
+/**
+ * A rollup without a heading (the sessions without a project): its sessions, then, when its window hides some, a row
+ * that opens its list ("3 older").
+ */
+function HeadlessGroup({
+	section,
+	rows,
+	selected,
+	onPage,
+}: {
+	section: Extract<Section, { layout: "sessions" }>;
+	rows: RowActions;
+	selected: boolean;
+	onPage: (key: string) => void;
+}) {
+	const linkHref = useLinkHref();
+	return (
+		<SideNavigation.Group className="sidebar-section headless" data-key={section.key}>
+			<SideNavigation.List aria-label={section.name}>
+				{section.rows.map((session) => (
+					<SessionItem key={session.id} session={session} scope={section.key} actions={rows} />
+				))}
+				{section.older > 0 && (
+					<SideNavigation.Item>
+						<NavRow
+							selected={selected}
+							className="older-row"
+							href={linkHref(pageRoute(section.key))}
+							onActivate={() => onPage(section.key)}
+							marker={null}
+							label={`${section.older} older`}
+						/>
+					</SideNavigation.Item>
+				)}
+			</SideNavigation.List>
 		</SideNavigation.Group>
 	);
 }
@@ -216,11 +258,14 @@ export const SidebarView = memo(function SidebarView({
 	conversationId,
 	connected,
 	onOpen,
-	onBranch,
 	onRestore,
+	writable,
+	onCancel,
+	onArchive,
+	onArchiveAgent,
 	onNew,
 	onNewIn,
-	glyphs,
+	onNewProject,
 	onOptions,
 	onCollapse,
 	onPage,
@@ -245,14 +290,20 @@ export const SidebarView = memo(function SidebarView({
 	conversationId: number;
 	connected: boolean;
 	onOpen: (id: string, conversationId?: number) => void;
-	/** Switches a session to one of its `/tree` branches (the owner's). */
-	onBranch?: (id: string, conversationId: number) => void;
 	onRestore: (id: string, conversationId?: number) => void;
+	/** Whether the reader acts on a session's agents (Cancel, a subagent's Archive). */
+	writable?: (id: string) => boolean;
+	/** Stops runs of a session's conversations (its items' Cancel). */
+	onCancel?: (id: string, conversations: readonly number[]) => void;
+	/** Archives a session (its item's Archive; the owner's). */
+	onArchive?: (id: string) => void;
+	/** Archives a subagent (its item's Archive). */
+	onArchiveAgent?: (id: string, conversation: number) => void;
 	onNew: () => void;
 	/** Starts a new session in a group; absent: groups have no "+". */
 	onNewIn?: (target: NewTarget) => void;
-	/** The owner's project glyphs, for groups and the sessions of flat lists (Recents). */
-	glyphs?: Glyphs;
+	/** Starts a new project (the Projects rollup's "+"; the owner's). */
+	onNewProject?: () => void;
 	/** Opens a rollup's options (its window and place). */
 	onOptions?: (key: string) => void;
 	/** Shows or hides a rollup's or a group's sessions. */
@@ -277,10 +328,13 @@ export const SidebarView = memo(function SidebarView({
 		conversationId,
 		now,
 		onOpen,
-		onBranch,
 		onRestore,
+		writable,
+		onCancel,
+		onArchive,
+		onArchiveAgent,
 	};
-	const headings: HeadingActions = { page, connected, onPage, onCollapse, onOptions, onNewIn, glyphs };
+	const headings: HeadingActions = { page, connected, onPage, onCollapse, onOptions, onNewIn, onNewProject };
 	// p2's layout hides a collapsed sidebar, so the root is never shown collapsed: its trigger only asks for it.
 	const frame = (label: string, header: ReactNode, content: ReactNode, foot: ReactNode) => (
 		<Sidebar.Root

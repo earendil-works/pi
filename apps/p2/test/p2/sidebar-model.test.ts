@@ -1,22 +1,24 @@
-// The sidebar's rules (plugins/sessions/sidebar/model.ts): what each built-in rollup collects (Recents, projects,
-// folders, the Archive), the sections with relevance, windows and collapsed rollups and groups, the list pages with
-// aged sessions after the others, folder keys and names, moving a rollup, and which project glyph a place shows.
+// The sidebar's rules (plugins/sessions/sidebar/model.ts): what each built-in rollup collects (the sessions without a
+// project, without a heading; the projects; the Archive), the sections with relevance, windows and collapsed rollups
+// and groups, what failed in a session and what sessions want, the list pages with aged sessions after the others,
+// folder keys and names (the command menu's folder lists), and arranging and moving rollups.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Project } from "../../plugins/projects/contract.ts";
 import {
 	ARCHIVE,
 	activityOf,
+	arranged,
 	FOLDERS,
+	failureOf,
 	folderKey,
-	glyphsOf,
 	type ListPageData,
 	listPageOf,
+	movable,
 	moved,
-	ordered,
+	OTHER,
 	PROJECTS,
 	projectKey,
-	RECENT,
 	ROLLUPS,
 	type RollupContext,
 	type Section,
@@ -79,11 +81,12 @@ function short(section: Section): unknown[] {
 }
 
 describe("sectionsOf", () => {
-	it("shows every rollup: Recents flat, every project and folders with relevant sessions as groups, the Archive as a link", () => {
+	it("lists sessions without a project flat, each project as a group of its relevant ones, the Archive as a link", () => {
 		assert.deepEqual(sectionsOf(ROLLUPS, ROWS, CONTEXT, VIEW).map(short), [
-			// Pinned first, then the most recently active; a session shows in every rollup and group that has it.
-			[RECENT, "sessions", ["p", "b", "free", "a"]],
-			// "web" has no session but shows anyway: its "+" starts a new project's first session.
+			// "stale" (on a sandbox, outside every project) is not relevant: older than the window.
+			[OTHER, "sessions", ["free"]],
+			// Pinned first, then the most recently active. "web" has no session but shows anyway: its "+" starts a new
+			// project's first session.
 			[
 				PROJECTS,
 				"groups",
@@ -92,16 +95,36 @@ describe("sectionsOf", () => {
 					[projectKey("web"), []],
 				],
 			],
-			// The sandbox folder of "stale" has no relevant session: no group in the sidebar.
+			[ARCHIVE, "link", 2],
+		]);
+	});
+
+	it("shows the sessions without a project without a heading: always open, counting the ones its window hides", () => {
+		const other = sectionsOf(ROLLUPS, ROWS, CONTEXT, { ...VIEW, collapsed: { [OTHER]: true } })[0]!;
+		assert.ok(other.layout === "sessions");
+		assert.deepEqual(
+			[other.headless, other.collapsed, other.rows.map((each) => each.id), other.older],
+			[true, false, ["free"], 1],
+		);
+	});
+
+	it("puts a session in the project whose place holds its folder, unless it joined another one", () => {
+		const rows = [
+			row("inside", { cwd: "/w/web/src" }),
+			row("joined", { cwd: "/w/web" }),
+			row("outside", { cwd: "/w/x" }),
+		];
+		const context = { ...CONTEXT, memberships: { joined: "pi" } };
+		assert.deepEqual(sectionsOf(ROLLUPS, rows, context, VIEW).map(short).slice(0, 2), [
+			[OTHER, "sessions", ["outside"]],
 			[
-				FOLDERS,
+				PROJECTS,
 				"groups",
 				[
-					[folderKey(null, "/w/pi"), ["p", "b", "a"]],
-					[folderKey(null, "/w"), ["free"]],
+					[projectKey("pi"), ["joined"]],
+					[projectKey("web"), ["inside"]],
 				],
 			],
-			[ARCHIVE, "link", 2],
 		]);
 	});
 
@@ -112,42 +135,42 @@ describe("sectionsOf", () => {
 			row("busy", { ...ancient, worker: { work: {}, busy: [1] } }),
 			row("unread", { ...ancient, worker: { work: {}, busy: [], unread: true } }),
 			row("failed", { ...ancient, worker: { work: {}, busy: [], error: "boom" } }),
+			row("run", { ...ancient, worker: { work: {}, busy: [], failure: { reason: "model_error" } } }),
 			row("moving", { ...ancient, operation: { label: "Moving…" } }),
 			row("open", ancient),
+			row("stopped", { ...ancient, worker: { work: {}, busy: [], failure: { reason: "aborted" } } }),
 			row("closed", ancient),
 		];
-		const recent = sectionsOf(ROLLUPS, held, CONTEXT, { ...VIEW, windows: { [RECENT]: "1d" }, open: "open" })[0]!;
-		assert.deepEqual(short(recent), [RECENT, "sessions", ["pinned", "busy", "unread", "failed", "moving", "open"]]);
+		const other = sectionsOf(ROLLUPS, held, CONTEXT, { ...VIEW, windows: { [OTHER]: "1d" }, open: "open" })[0]!;
+		assert.deepEqual(short(other), [
+			OTHER,
+			"sessions",
+			["pinned", "busy", "unread", "failed", "run", "moving", "open"],
+		]);
 	});
 
 	it("uses each rollup's window, and the owner's collapsed rollups and groups", () => {
-		const view: View = {
-			...VIEW,
-			windows: { [RECENT]: "forever", [FOLDERS]: "1d" },
-			collapsed: { [PROJECTS]: true, [folderKey(null, "/w/pi")]: true },
-		};
+		const view: View = { ...VIEW, windows: { [OTHER]: "forever" }, collapsed: { [projectKey("pi")]: true } };
 		const sections = sectionsOf(ROLLUPS, ROWS, CONTEXT, view);
-		assert.deepEqual(short(sections[0]!), [RECENT, "sessions", ["p", "b", "free", "a", "old", "stale"]]);
-		assert.deepEqual(short(sections[1]!), [PROJECTS, "groups", []]);
+		assert.deepEqual(short(sections[0]!), [OTHER, "sessions", ["free", "stale"]]);
 		// A collapsed group keeps its row, without its sessions.
-		assert.deepEqual(short(sections[2]!), [
-			FOLDERS,
+		assert.deepEqual(short(sections[1]!), [
+			PROJECTS,
 			"groups",
 			[
-				[folderKey(null, "/w/pi"), []],
-				[folderKey(null, "/w"), ["free"]],
+				[projectKey("pi"), []],
+				[projectKey("web"), []],
 			],
 		]);
-		const recent3d = sectionsOf(ROLLUPS, ROWS, CONTEXT, { ...VIEW, windows: { [RECENT]: "1d" } })[0]!;
-		assert.deepEqual(short(recent3d), [RECENT, "sessions", ["p", "b", "free", "a"]]);
+		const closed = sectionsOf(ROLLUPS, ROWS, CONTEXT, { ...VIEW, collapsed: { [PROJECTS]: true } })[1]!;
+		assert.deepEqual(short(closed), [PROJECTS, "groups", []]);
 	});
 
 	it("shows every rollup without sessions or projects too", () => {
 		const context = { ...CONTEXT, projects: [], memberships: {} };
 		assert.deepEqual(sectionsOf(ROLLUPS, [], context, VIEW).map(short), [
-			[RECENT, "sessions", []],
+			[OTHER, "sessions", []],
 			[PROJECTS, "groups", []],
-			[FOLDERS, "groups", []],
 			[ARCHIVE, "link", 0],
 		]);
 	});
@@ -162,27 +185,48 @@ describe("activity", () => {
 		row("broken", { worker: { work: {}, busy: [], error: "boom" } }),
 		row("move", { operation: { label: "Move failed", error: "refused" } }),
 		row("moving", { operation: { label: "Moving…" } }),
+		row("run", { worker: { work: {}, busy: [], failure: { reason: "model_error", detail: "overloaded" } } }),
+		row("stopped", { worker: { work: {}, busy: [], failure: { reason: "aborted" } } }),
 		row("idle"),
 	];
 
-	it("counts working, failed (worker or operation) and unread sessions; one session may count in several", () => {
-		assert.deepEqual(activityOf(states), { working: 3, failed: 2, unread: 2 });
+	it("says what failed: the worker, an operation, or the main conversation's last run while it is not running", () => {
+		assert.deepEqual(
+			states.map((each) => [each.id, failureOf(each)]).filter(([, failure]) => failure !== undefined),
+			[
+				["broken", "Worker failed: boom"],
+				["move", "Move failed: refused"],
+				["run", "Failed: overloaded"],
+			],
+		);
+		// A stop, a reset or a run with nothing to answer is no failure; a run again replaces the last one's ending.
+		const ended = (reason: string, busy: number[] = []) =>
+			failureOf(row("x", { worker: { work: {}, busy, failure: { reason } } }));
+		assert.deepEqual(
+			[ended("faulted"), ended("reset"), ended("nothing_to_answer"), ended("turn_limit"), ended("faulted", [1])],
+			["Failed: Its run hit an error", undefined, undefined, undefined, undefined],
+		);
+	});
+
+	it("counts working, failed and unread sessions; one session may count in several", () => {
+		assert.deepEqual(activityOf(states), { working: 3, failed: 3, unread: 2 });
 		assert.deepEqual(activityOf([]), { working: 0, failed: 0, unread: 0 });
 	});
 
 	it("says what a collapsed rollup or group hides, and nothing while it shows its sessions", () => {
 		const rows = states.map((each) => ({ ...each, cwd: "/w/pi" }));
 		const idle = { working: 0, failed: 0, unread: 0 };
-		const all = { working: 3, failed: 2, unread: 2 };
+		const all = { working: 3, failed: 3, unread: 2 };
 		const open = sectionsOf(ROLLUPS, rows, CONTEXT, VIEW);
 		for (const section of open) if (section.layout !== "link") assert.deepEqual(section.hidden, idle);
-		const group = folderKey(null, "/w/pi");
-		const closed = sectionsOf(ROLLUPS, rows, CONTEXT, { ...VIEW, collapsed: { [RECENT]: true, [group]: true } });
-		assert.deepEqual(closed[0]!.layout === "sessions" && closed[0]!.hidden, all);
-		const folders = closed[2]!;
-		assert.ok(folders.layout === "groups");
-		assert.deepEqual(folders.hidden, idle);
-		assert.deepEqual(folders.groups[0]!.hidden, all);
+		// Every one works in pi's place: they are pi's sessions.
+		const closed = sectionsOf(ROLLUPS, rows, CONTEXT, { ...VIEW, collapsed: { [projectKey("pi")]: true } });
+		const projects = closed[1]!;
+		assert.ok(projects.layout === "groups");
+		assert.deepEqual(projects.hidden, idle);
+		assert.deepEqual(projects.groups[0]!.hidden, all);
+		const rolled = sectionsOf(ROLLUPS, rows, CONTEXT, { ...VIEW, collapsed: { [PROJECTS]: true } })[1]!;
+		assert.deepEqual(rolled.layout === "groups" && rolled.hidden, all);
 		// A collapsed rollup of groups counts a session in two groups once (a rollup made from code may list it twice).
 		const twice = {
 			...ROLLUPS[1]!,
@@ -199,8 +243,8 @@ describe("activity", () => {
 	});
 
 	it("counts the live sessions that want the owner, apart from the one on screen, and whether one failed", () => {
-		assert.deepEqual(wantingOf(states, undefined), { count: 4, failed: true });
-		assert.deepEqual(wantingOf(states, "broken"), { count: 3, failed: true });
+		assert.deepEqual(wantingOf(states, undefined), { count: 5, failed: true });
+		assert.deepEqual(wantingOf(states, "broken"), { count: 4, failed: true });
 		const unread = [
 			row("read", { worker: { work: {}, busy: [], unread: true } }),
 			row("gone", { archivedAt: NOW, worker: { work: {}, busy: [], unread: true } }),
@@ -229,19 +273,20 @@ describe("listPageOf", () => {
 	it("lists every session of a rollup, the relevant ones first, then the aged ones, whatever their activity", () => {
 		// "held" is older than "old" but unread: it is relevant, so it comes before the aged "old".
 		const rows = [...ROWS, row("held", { updatedAt: NOW - 20 * DAY, worker: { work: {}, busy: [], unread: true } })];
-		const data = listPageOf(RECENT, ROLLUPS, rows, CONTEXT, VIEW);
+		const data = listPageOf(OTHER, ROLLUPS, rows, CONTEXT, VIEW);
 		assert(data?.content.layout === "sessions");
 		assert.deepEqual(
 			data.content.entries.map(({ row, aged }) => `${row.id}${aged ? " aged" : ""}`),
-			["p", "b", "free", "a", "held", "old aged", "stale aged"],
+			["free", "held", "stale aged"],
 		);
-		assert.deepEqual(page(RECENT, { ...VIEW, windows: { [RECENT]: "forever" } }), [
-			"Recents",
-			["p", "b", "free", "a", "old", "stale"],
+		assert.deepEqual(page(OTHER, { ...VIEW, windows: { [OTHER]: "forever" } }), [
+			"Other sessions",
+			["free", "stale"],
 		]);
 	});
 
 	it("lists a rollup of groups by group (projects without sessions too), and one group alone with its target", () => {
+		// Folders are no section of the sidebar, but the command menu's Open folder… lists them.
 		assert.deepEqual(page(FOLDERS), [
 			"Folders",
 			[
@@ -291,61 +336,20 @@ describe("folders", () => {
 	});
 });
 
-describe("ordered and moved", () => {
-	it("puts the rollups the order names first, and swaps a rollup with its neighbour", () => {
-		const rollups = ordered(ROLLUPS, [FOLDERS, "gone"]);
-		assert.deepEqual(
-			rollups.map((rollup) => rollup.key),
-			[FOLDERS, RECENT, PROJECTS, ARCHIVE],
-		);
-		assert.deepEqual(moved(rollups, RECENT, -1), [RECENT, FOLDERS, PROJECTS, ARCHIVE]);
-		assert.deepEqual(moved(rollups, ARCHIVE, 1), [FOLDERS, RECENT, PROJECTS, ARCHIVE]);
-	});
-});
+describe("arranged and moved", () => {
+	const keys = (rollups: readonly { key: string }[]) => rollups.map((rollup) => rollup.key);
 
-describe("glyphsOf", () => {
-	const REMOTE: Project = {
-		name: "remote",
-		places: [
-			{ env: "gpu", path: "~/remote" },
-			{ env: null, path: "/w/remote" },
-		],
-	};
-	const glyphs = glyphsOf({
-		projects: [PI, WEB, REMOTE, { name: "nowhere", places: [] }],
-		memberships: { member: "web" },
+	it("keeps the rollup without a heading first, then the others in the owner's order, the unnamed ones last", () => {
+		assert.deepEqual(keys(arranged(ROLLUPS, [ARCHIVE, "gone"])), [OTHER, ARCHIVE, PROJECTS]);
+		// An order saved before the headless rollup existed, or one naming it, does not move it.
+		assert.deepEqual(keys(arranged(ROLLUPS, ["recent", PROJECTS, "folders", ARCHIVE])), [OTHER, PROJECTS, ARCHIVE]);
+		assert.deepEqual(keys(arranged(ROLLUPS, [ARCHIVE, PROJECTS, OTHER])), [OTHER, ARCHIVE, PROJECTS]);
 	});
 
-	it("seeds a project by its first place and lists its places as the tooltip", () => {
-		assert.deepEqual(glyphs.target({ kind: "project", project: REMOTE }), {
-			seed: "~/remote",
-			title: "gpu:~/remote\n/w/remote",
-		});
-		assert.deepEqual(glyphs.target({ kind: "project", project: { name: "nowhere", places: [] } }), {
-			seed: "nowhere",
-			title: "nowhere",
-		});
-	});
-
-	it("gives a folder or a session inside a project's place the project's glyph, with its own path as the tooltip", () => {
-		assert.deepEqual(glyphs.target({ kind: "folder", env: null, cwd: "/w/pi/apps/p2" }), {
-			seed: "/w/pi",
-			title: "/w/pi/apps/p2",
-		});
-		assert.deepEqual(glyphs.row(row("x", { env: "gpu", cwd: "/home/me/remote/src" })), {
-			seed: "~/remote",
-			title: "gpu:/home/me/remote/src",
-		});
-		// Membership decides first: a session started from a project's row, wherever it works now.
-		assert.deepEqual(glyphs.row(row("member", { cwd: "/w/pi" })).seed, "/w/web");
-	});
-
-	it("seeds any other place by its own path", () => {
-		assert.deepEqual(glyphs.row(row("free", { cwd: "/elsewhere" })), { seed: "/elsewhere", title: "/elsewhere" });
-		// Inside a project's path, on another machine where the project has no place: the folder's own path.
-		assert.deepEqual(glyphs.target({ kind: "folder", env: "gpu", cwd: "/w/web/x" }), {
-			seed: "/w/web/x",
-			title: "gpu:/w/web/x",
-		});
+	it("swaps a rollup with a heading with its neighbour among those with one", () => {
+		const shown = movable(arranged(ROLLUPS, [ARCHIVE]));
+		assert.deepEqual(keys(shown), [ARCHIVE, PROJECTS]);
+		assert.deepEqual(moved(shown, PROJECTS, -1), [PROJECTS, ARCHIVE]);
+		assert.deepEqual(moved(shown, ARCHIVE, -1), [ARCHIVE, PROJECTS]);
 	});
 });

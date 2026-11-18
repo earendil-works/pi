@@ -1,22 +1,31 @@
-// The state marks of sidebar rows, apart from the rows (which show project glyphs) so other plugins' web facets can
-// show them through the sessions plugin's contract (`contract.web.tsx`) with nothing but React.
-import type { ReactNode } from "react";
+// The status marks of sidebar items, apart from the rows so other plugins' web facets (the Familiar's row, the command
+// menu's conversations) can show them through the sessions plugin's contract (`contract.web.tsx`) with nothing but
+// React.
+import { type ReactNode, useState } from "react";
+
+/** The frames of pi's working indicator (the terminal UI's loader, `packages/tui`'s `Loader`). */
+const PI_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/** One cycle of the frames: style.css's `pi-dots` animation. */
+const PI_CYCLE_MS = 1600;
 
 /**
- * A run's mark where its row has no icon: a hollow ring while idle (decoration: the row says its state in words), a
- * spinner in the same box while it works (a still ¾ ring with reduced motion), so nothing moves as it starts or ends.
+ * Working, as pi's terminal UI shows it: its braille dots, stepped by CSS through a strip of its frames (one frame
+ * shows at a time; no timer per row). Slow and in the secondary colour, so a list of running agents stays calm; still
+ * on its first frame with reduced motion. Each starts where the page's clock is in the cycle, so all of them step
+ * together.
  */
-export function RunMark({ state }: { state: "idle" | "working" }) {
-	return state === "working" ? (
-		<span className="run-mark" data-state="working" role="img" aria-label="Working" title="Working" />
-	) : (
-		<span className="run-mark" data-state="idle" aria-hidden="true" />
+export function PiDots() {
+	const [phase] = useState(() => `${-(performance.now() % PI_CYCLE_MS)}ms`);
+	return (
+		<span className="pi-dots" role="img" aria-label="Working" title="Working">
+			<span className="pi-dots-strip" style={{ animationDelay: phase }} aria-hidden="true">
+				{PI_FRAMES.map((frame) => (
+					<span key={frame}>{frame}</span>
+				))}
+			</span>
+		</span>
 	);
-}
-
-/** A conversation running a turn where its row has no icon: the spinner. */
-export function WorkingMark() {
-	return <RunMark state="working" />;
 }
 
 /** An answer the owner has not read: a steady blue dot. */
@@ -24,9 +33,14 @@ export function UnreadMark() {
 	return <span className="unread-dot" role="img" aria-label="New answer" title="New answer" />;
 }
 
+/** A failure that wants the owner (a worker, an operation or a run that failed): a steady dot in the error colour. */
+export function FailedDot({ title }: { title: string }) {
+	return <span className="failed-dot" role="img" aria-label={title} title={title} />;
+}
+
 /**
- * A row's 16px icon (a project glyph, a folder, a lock, a branch), framed while `working`: a rounded frame just outside
- * the icon, clear of its corners, whose dash travels around it (a still dashed frame with reduced motion).
+ * A row's 16px icon (the Familiar's logo), framed while `working`: a rounded frame just outside the icon,
+ * clear of its corners, whose dash travels around it (a still dashed frame with reduced motion).
  */
 export function IconMarker({ working, children }: { working: boolean; children: ReactNode }) {
 	return (
