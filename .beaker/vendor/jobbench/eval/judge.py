@@ -61,7 +61,9 @@ def _read_text(path: Path) -> str:
         return f"[ERROR: Failed to read text file: {path.name}: {exc}]"
 
 
-def convert_file_to_text(path: Path, diagnostics: list | None = None) -> str:
+def convert_file_to_text(
+    path: Path, diagnostics: list | None = None, *, complete_text: list[str] | None = None,
+) -> str:
     ext = path.suffix.lower().lstrip(".")
 
     if ext in (
@@ -73,7 +75,7 @@ def convert_file_to_text(path: Path, diagnostics: list | None = None) -> str:
 
     if ext in ("xlsx", "xls"):
         try:
-            return read_excel(path, diagnostics=diagnostics)
+            return read_excel(path, diagnostics=diagnostics, complete_text=complete_text)
         except ExtractionError:
             raise
         except Exception as exc:
@@ -146,6 +148,8 @@ def convert_file_to_text(path: Path, diagnostics: list | None = None) -> str:
         return read_presentation(path)
 
     if ext == "ipynb":
+        if complete_text is not None:
+            complete_text.append(read_notebook(path, compact_encoded=False))
         return read_notebook(path)
 
     if ext in ("png", "jpg", "jpeg", "gif", "svg", "bmp"):
@@ -164,10 +168,12 @@ def judge_implementation() -> dict:
         digest.update(b"\0")
         digest.update(path.read_bytes())
         digest.update(b"\0")
-    return {"extraction_schema": 2, "sha256": digest.hexdigest()}
+    return {"extraction_schema": 3, "sha256": digest.hexdigest()}
 
 
-def extract_all_file_contents(output_dir: Path, diagnostics: dict | None = None) -> str:
+def extract_all_file_contents(
+    output_dir: Path, diagnostics: dict | None = None, *, full_contents: dict[str, str] | None = None,
+) -> str:
     parts = []
     for file_path in sorted(output_dir.rglob("*")):
         if not file_path.is_file():
@@ -177,7 +183,8 @@ def extract_all_file_contents(output_dir: Path, diagnostics: dict | None = None)
         if diagnostics is not None:
             diagnostics.setdefault("files", []).append(record)
         try:
-            content = convert_file_to_text(file_path, record["details"])
+            complete = [] if full_contents is not None else None
+            content = convert_file_to_text(file_path, record["details"], complete_text=complete)
         except ExtractionError as exc:
             record["error"] = str(exc)
             raise ExtractionError(f"{record['path']}: {exc}") from exc
@@ -185,6 +192,12 @@ def extract_all_file_contents(output_dir: Path, diagnostics: dict | None = None)
         record["characters"] = len(content)
         over_limit = ext not in SQLITE_EXTS and len(content) > MAX_CHARS_PER_FILE
         record["truncated"] = over_limit or any(item.get("text_truncated") for item in record["details"])
+        if full_contents is not None:
+            full_content = complete[0] if complete else content
+            record["full_characters"] = len(full_content)
+            if record["truncated"] or full_content != content:
+                full_contents[record["path"]] = full_content
+                record["full_evidence_available"] = True
         if over_limit:
             content = content[:MAX_CHARS_PER_FILE] + f"\n... [Content truncated at {MAX_CHARS_PER_FILE} characters]"
         parts.append(f"=== FILE: {record['path']} ===\n{content}\n")

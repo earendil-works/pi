@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import ast
 import csv
+import hashlib
 from html.parser import HTMLParser
 import io
 import json
 from pathlib import Path
 import re
+import tokenize
 
 
 class _HTMLText(HTMLParser):
@@ -158,7 +161,42 @@ def _notebook_output(output, context: str, parts: list[str]):
             parts.append(f"[WARNING: {context} {mime}: could not extract text: {exc}]")
 
 
-def read_notebook(path: Path) -> str:
+def _compact_encoded_literals(source: str) -> str:
+    """Abbreviate only large encoded string tokens in the judge's code view."""
+    lines = source.splitlines(keepends=True)
+    starts = [0]
+    for line in lines:
+        starts.append(starts[-1] + len(line))
+    replacements = []
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if token.type != tokenize.STRING or len(token.string) < 8192:
+                continue
+            try:
+                value = ast.literal_eval(token.string)
+            except (SyntaxError, ValueError):
+                continue
+            if isinstance(value, bytes):
+                value = value.decode("ascii", errors="replace")
+            if not isinstance(value, str):
+                continue
+            payload = value.split(";base64,", 1)[-1] if value.startswith("data:") else value
+            if not re.fullmatch(r"[A-Za-z0-9+/\r\n]+={0,2}", payload):
+                continue
+            digest = hashlib.sha256(value.encode()).hexdigest()
+            marker = f"[Encoded data literal abbreviated for display: {len(value)} characters; sha256={digest}; original file unchanged]"
+            start = starts[token.start[0] - 1] + token.start[1]
+            end = starts[token.end[0] - 1] + token.end[1]
+            replacements.append((start, end, repr(marker)))
+    except (tokenize.TokenError, IndentationError):
+        # Invalid notebook code remains visible verbatim, rather than partially rewritten.
+        return source
+    for start, end, marker in reversed(replacements):
+        source = source[:start] + marker + source[end:]
+    return source
+
+
+def read_notebook(path: Path, *, compact_encoded: bool = True) -> str:
     """Read cell sources and already-saved text outputs; never execute a notebook."""
     try:
         notebook = json.loads(path.read_text(encoding="utf-8"))
@@ -173,8 +211,9 @@ def read_notebook(path: Path) -> str:
         if not isinstance(cell, dict):
             parts.append(f"[WARNING: {context}: expected a cell object; skipped]")
             continue
-        parts.append(f"=== {cell.get('cell_type', 'unknown')} ===")
-        parts.append(_saved_text(cell.get("source", ""), f"{context} source", parts))
+        parts.append(f"=== {context}: {cell.get('cell_type', 'unknown')} ===")
+        source = _saved_text(cell.get("source", ""), f"{context} source", parts)
+        parts.append(_compact_encoded_literals(source) if compact_encoded and cell.get("cell_type") == "code" else source)
         outputs = cell.get("outputs", [])
         if not isinstance(outputs, list):
             parts.append(f"[WARNING: {context}: expected an outputs list; skipped]")

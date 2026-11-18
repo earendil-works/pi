@@ -95,9 +95,9 @@ runtime. Install Docker and prepare that runtime once before scoring:
 .beaker/.venv/bin/python -c 'import sys; sys.path.insert(0, ".beaker/vendor/jobbench/eval"); from jobbench_eval.calc import setup_runtime; setup_runtime()'
 ```
 
-The unchanged Dockerfile and extractor sources are included under
+The unchanged calculator Dockerfile and locally extended extractor sources are included under
 `vendor/jobbench/`, alongside their Apache-2.0 license and `PROVENANCE.json` with
-the upstream Git blob hashes. Missing Docker or failed extraction is an
+the original upstream Git blob hashes and the local changes. Missing Docker or failed extraction is an
 evaluation error, not a score of zero. `JOBBENCH_CALC_NATIVE=1` is only suitable
 inside the exact upstream calculation image; it is not a generic LibreOffice
 fallback.
@@ -210,17 +210,38 @@ judging reads the YAML next to this integration, independently of the shell's
 working directory. Google models use Google's OpenAI-compatible endpoint by
 default; set `JUDGE_API_BASE` to override it. Other providers require both
 `JUDGE_API_BASE` and `JUDGE_API_KEY` locally. `score.json` records the actual judge
-model used, independently of the saved rollout protocol. The upstream sources under
-`vendor/jobbench/` are unchanged. Each rubric call is capped at 64,000 completion
+model used, independently of the saved rollout protocol. The local extraction changes under
+`vendor/jobbench/` are documented in `PROVENANCE.json`. Each rubric request is capped at 64,000 completion
 tokens, reasoning included, so a looping response fails fast and is retried.
 Empty submissions record `scorer_model: null`: they score zero without a judge call
 or provider credentials.
 
-`jobbench/judging.py` preserves the pinned upstream judge's prompts, image
-selection, and result layout, and adds `response_format: json_schema` with strict
+`jobbench/judging.py` preserves the pinned rubric criteria, image
+selection, and result layout, adds complete-evidence access instructions, and uses `response_format: json_schema` with strict
 typed fields and an exact criterion count. It validates criterion indices before
-accepting a result and, like upstream, scores the rubric from `rubric_passed`. Extraction, JSON recovery, rubric weights, and score aggregation still
-use the upstream helpers.
+accepting a result and, like upstream, scores the rubric from `rubric_passed`. JSON recovery, rubric weights, and score aggregation still
+use the upstream helpers. Saved score reports fingerprint the extractor and the
+judge adapter; scores from different evidence implementations must be compared
+by rejudging the same deliverables under both versions.
+
+The initial view remains bounded: 200,000 characters per file, with a 190,000-character
+budget shared fairly between Excel sheets. Complete extracted text is retained
+for files whose initial views omit or abbreviate content. Each rubric can search
+that text or read ranges through `read_output_evidence`, without filesystem or
+network access. Reads return at most 16,000 content characters each, with at most
+eight reads per rubric attempt. Tool exchanges and the final judgment share a
+900-second deadline per attempt. These exchanges can add judge calls and cost;
+they do not add calls to Pi's workflow. Retrieved requests and excerpts are saved
+in each rubric's `evidence_reads`. The judge must inspect relevant omitted evidence
+before treating its absence from the initial view as a missing deliverable.
+
+Notebook code views replace large base64 literals with length/hash references,
+so embedded input data cannot consume the entire initial view before methods and
+results. The notebook and its complete source remain unchanged and accessible.
+Excel views include saved conditional-format rules, their differential styles,
+and native chart OOXML. These establish saved structure and conditions; they are
+not rendered screenshots and do not by themselves establish visual readability.
+The pinned, offline LibreOffice calculator and formula semantics are unchanged.
 
 Rubrics run on at most ten worker threads and remain in their original order.
 Each rubric has at most three attempts, with a two-second pause between attempts.
@@ -271,9 +292,12 @@ Before the workspace is deleted, including when Pi fails, a `pi.jobbench.workspa
 trace stage records every file the agent wrote outside `task_folder/`
 (deliverables and `scratch/`): text files inline (up to 200,000 characters each),
 and every file as a trace artifact under its SHA-256, up to 16 MiB per rollout.
-The judge reads at most 200,000 extracted characters per file; a deliverable it
-saw only in part gets an informational `Judge input truncated` check, which does
-not change the score.
+The initial judge view contains at most 200,000 extracted characters per file.
+A partial view gets an informational `Judge input truncated` check, which does
+not change the score; complete extracted evidence remains available through the
+bounded read tool. The standalone vendored `judge.py` CLI includes the extraction
+fixes but does not implement the adapter's evidence-read conversation. Use
+`.beaker/evaluate.py` or the Beaker scorer for the complete evaluation path.
 
 - Binary submissions currently have an 11.9 MiB total limit, leaving room for base64
   encoding inside Beaker's 16 MiB result envelope. Exceeding this limit is an

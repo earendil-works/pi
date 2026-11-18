@@ -17,7 +17,7 @@ from beaker import CaseScore, Check, scoring_inference_target
 
 from .data import Expected, PROTOCOL
 from .execution import MAX_DELIVERABLE_BYTES
-from .judging import judge_rubric, official_judge
+from .judging import judge_implementation, judge_rubric, official_judge
 
 
 MAX_JUDGE_WORKERS = 10
@@ -72,7 +72,8 @@ def score_submission(
         rubric_results = []
         extraction: dict[str, Any] = {}
         if files:
-            text = official_judge.extract_all_file_contents(directory, extraction)
+            full_contents: dict[str, str] = {}
+            text = official_judge.extract_all_file_contents(directory, extraction, full_contents=full_contents)
             images = official_judge.collect_image_attachments(directory)
             target = scoring_inference_target()
             selected_model = target.model if target is not None else configured_scorer_model()
@@ -97,6 +98,7 @@ def score_submission(
                         judge_rubric,
                         index, rubric, text, model, api_base, api_key,
                         image_attachments=images,
+                        full_contents=full_contents,
                     )
                     for index, rubric in enumerate(expected.rubrics)
                 ]
@@ -116,6 +118,7 @@ def score_submission(
             (report_dir / "score.json").write_text(json.dumps({
                 "protocol": {**(PROTOCOL if protocol is None else protocol), "scorer_model": selected_model},
                 "scorecard": scorecard, "rubrics": rubric_results, "extraction": extraction,
+                "judge_implementation": judge_implementation(),
             }, indent=2), encoding="utf-8")
         checks = tuple(
             Check(
@@ -129,6 +132,18 @@ def score_submission(
             for rubric in rubric_results for criterion in rubric["result"]["criteria_results"]
         )
         checks += judge_input_checks(extraction)
+        checks += tuple(
+            Check(
+                name=f"Judge evidence read: rubric-{rubric['index'] + 1}, read-{index + 1}",
+                verdict="pass", message=json.dumps(read, ensure_ascii=False),
+                group="Judge input", informational=True,
+            )
+            for rubric in rubric_results for index, read in enumerate(rubric.get("evidence_reads", []))
+        )
+        checks += (Check(
+            name="Judge evidence implementation", verdict="pass",
+            message=json.dumps(judge_implementation()), group="Judge input", informational=True,
+        ),)
         graded = [check for check in checks if not check.informational]
         criteria_pass_rate = round(sum(check.verdict == "pass" for check in graded) / len(graded), 4) if graded else 0.0
         weighted_score = float(scorecard["normalized_score"])
@@ -145,17 +160,18 @@ def score_submission(
 
 
 def judge_input_checks(extraction: dict[str, Any]) -> tuple[Check, ...]:
-    """Flag deliverables the judge saw only in part; they are informational and never change the score."""
+    """Flag abbreviated initial views; diagnostics never change the score."""
     limit = official_judge.MAX_CHARS_PER_FILE
     return tuple(
         Check(
             name=f"Judge input truncated: {record['path']}",
             verdict="fail",
             message=(
-                f"The judge saw the first {limit:,} of {record['characters']:,} extracted characters."
+                f"The initial view contains the first {limit:,} of {record['characters']:,} extracted characters."
                 if record["characters"] > limit and not record["path"].lower().endswith(tuple(official_judge.SQLITE_EXTS))
-                else "Spreadsheet extraction truncated part of this file's text before judging."
-            ),
+                else "The initial spreadsheet view omits part of this file's text."
+            ) + (" Complete extracted evidence is available through read_output_evidence."
+                 if record.get("full_evidence_available") else ""),
             group="Judge input",
             informational=True,
         )

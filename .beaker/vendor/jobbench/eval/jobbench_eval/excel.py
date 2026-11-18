@@ -8,6 +8,7 @@ import re
 from zipfile import ZipFile
 
 from .calc import ExtractionError, recalculate as calculate
+from .excel_objects import read_objects
 from .excel_text import format_sheets
 
 MAX_GRID_CELLS = 2_000_000
@@ -38,7 +39,10 @@ def _restricted_formula(formula: str) -> bool:
                and RESTRICTED_FORMULA.search(token.value) for token in tokens)
 
 
-def read_excel(path: Path, *, recalculate: bool = True, diagnostics: list | None = None) -> str:
+def read_excel(
+    path: Path, *, recalculate: bool = True, diagnostics: list | None = None,
+    complete_text: list[str] | None = None,
+) -> str:
     if path.suffix.lower() == ".xls":
         return _read_legacy_excel(path, diagnostics)
     import openpyxl
@@ -140,6 +144,7 @@ def read_excel(path: Path, *, recalculate: bool = True, diagnostics: list | None
     parts.extend("[WARNING: " + warning + "]" for warning in warnings)
     if named_formulas:
         parts.append("=== Defined names ===\n" + "\n".join(named_formulas))
+    parts.extend(read_objects(path))
     evidence = []
     for sheet_name, records in sheets:
         for record in records:
@@ -149,6 +154,8 @@ def read_excel(path: Path, *, recalculate: bool = True, diagnostics: list | None
                     item["recalculated"] = result["cells"][sheet_name][record["cell"]]
                 evidence.append(item)
     header = "\n".join(parts)
+    if complete_text is not None:
+        complete_text.append(header + "\n" + format_sheets(sheets, result, max_chars=None))
     if len(header) > 9000:
         header = header[:4500] + "\n[EXCEL TEXT TRUNCATED: workbook metadata; full metadata in diagnostics]\n" + header[-4000:]
     text = header + "\n" + format_sheets(sheets, result)

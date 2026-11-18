@@ -216,12 +216,12 @@ def format_sheets(sheets, result, *, max_chars=190000) -> str:
     explicit marker. Empty displayed rows are omitted, with formulas retained in
     the family evidence and their ranges.
     """
-    if max_chars <= 0 or not sheets:
+    if (max_chars is not None and max_chars <= 0) or not sheets:
         return ""
     computed = result["cells"] if result is not None else {}
     sections = [_sheet_sections(name, records, computed.get(name, {})) for name, records in sheets]
     texts = [_render_sheet(section) for section in sections]
-    if sum(map(len, texts)) + len(texts) - 1 <= max_chars:
+    if max_chars is None or sum(map(len, texts)) + len(texts) - 1 <= max_chars:
         return "\n".join(texts)
     budgets = _allocate(list(map(len, texts)), max(0, max_chars - len(texts) + 1))
     return "\n".join(_render_sheet(section, budget) for section, budget in zip(sections, budgets))[:max_chars]
