@@ -51,15 +51,16 @@ type RebindContext = {
 };
 
 type ReloadCommandContext = {
-	options: { refreshModelScope?: () => Promise<void> };
 	hideThinkingBlock: boolean;
 	session: {
 		isStreaming: boolean;
 		isCompacting: boolean;
-		reload: (options?: { beforeSessionStart?: () => void | Promise<void> }) => Promise<void>;
+		reload: (options?: {
+			beforeSessionStart?: () => void | Promise<void>;
+		}) => Promise<{ modelScopeDiagnostics: Array<{ message: string }> }>;
 		resourceLoader: { getThemes: () => { themes: [] } };
 		extensionRunner: unknown;
-		modelRegistry: { getError: () => string | undefined };
+		modelRuntime: { getError: () => string | undefined };
 	};
 	settingsManager: {
 		getHttpIdleTimeoutMs: () => number;
@@ -88,6 +89,8 @@ type ReloadCommandContext = {
 	setupAutocompleteProvider: () => void;
 	setupExtensionShortcuts: (runner: unknown) => void;
 	showLoadedResources: (options: unknown) => void;
+	updateAvailableProviderCount: () => void;
+	applyRuntimeSettings: () => void;
 	maybeSaveImplicitProjectTrustAfterReload: () => boolean;
 	showStatus: (message: string) => void;
 	showWarning: (message: string) => void;
@@ -121,17 +124,17 @@ type ReloadCommandContextOverrides = Omit<
 function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {}): ReloadCommandContext {
 	const editor = overrides.editor ?? {};
 	return {
-		options: overrides.options ?? {},
 		hideThinkingBlock: overrides.hideThinkingBlock ?? false,
 		session: {
 			isStreaming: false,
 			isCompacting: false,
 			reload: async (options) => {
 				await options?.beforeSessionStart?.();
+				return { modelScopeDiagnostics: [] };
 			},
 			resourceLoader: { getThemes: () => ({ themes: [] }) },
 			extensionRunner: {},
-			modelRegistry: { getError: () => undefined },
+			modelRuntime: { getError: () => undefined },
 			...overrides.session,
 		},
 		settingsManager: {
@@ -163,6 +166,8 @@ function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {
 		setupAutocompleteProvider: overrides.setupAutocompleteProvider ?? (() => {}),
 		setupExtensionShortcuts: overrides.setupExtensionShortcuts ?? (() => {}),
 		showLoadedResources: overrides.showLoadedResources ?? (() => {}),
+		updateAvailableProviderCount: overrides.updateAvailableProviderCount ?? (() => {}),
+		applyRuntimeSettings: overrides.applyRuntimeSettings ?? (() => {}),
 		maybeSaveImplicitProjectTrustAfterReload: overrides.maybeSaveImplicitProjectTrustAfterReload ?? (() => false),
 		showStatus: overrides.showStatus ?? (() => {}),
 		showWarning: overrides.showWarning ?? (() => {}),
@@ -429,6 +434,7 @@ describe("regression #5943: session_start transient UI", () => {
 					events.push("reload");
 					await options?.beforeSessionStart?.();
 					events.push(`start:${context.hideThinkingBlock}`);
+					return { modelScopeDiagnostics: [] };
 				},
 			},
 			rebuildChatFromMessages: () => {
@@ -442,30 +448,28 @@ describe("regression #5943: session_start transient UI", () => {
 		expect(events).toEqual(["reload", "rebuild:true", "start:true"]);
 	});
 
-	it.each([true, false])("refreshes model scope once with extensions bound: %s", async (bound) => {
+	// #12277: reload resolves the model scope again; the footer and warnings must follow it.
+	it("updates the provider count and shows model scope warnings after reload", async () => {
 		initTheme("dark", false);
 		const events: string[] = [];
 		const context = createReloadCommandContext({
 			session: {
-				reload: async (options) => {
-					events.push("reload settings");
-					if (bound) {
-						await options?.beforeSessionStart?.();
-						events.push("session_start");
-					}
-				},
+				reload: async () => ({ modelScopeDiagnostics: [{ message: 'No models match pattern "missing"' }] }),
 			},
-			options: {
-				refreshModelScope: async () => {
-					await Promise.resolve();
-					events.push("refresh scope");
-				},
+			updateAvailableProviderCount: () => {
+				events.push("provider count");
+			},
+			showWarning: (message) => {
+				events.push(`warning: ${message}`);
+			},
+			showError: (message) => {
+				events.push(`error: ${message}`);
 			},
 		});
+
 		await interactiveModePrototype.handleReloadCommand.call(context);
-		expect(events).toEqual(
-			bound ? ["reload settings", "refresh scope", "session_start"] : ["reload settings", "refresh scope"],
-		);
+
+		expect(events).toEqual(["provider count", 'warning: No models match pattern "missing"']);
 	});
 
 	it("keeps the reload blocker focused until async reload completes", async () => {
@@ -489,6 +493,7 @@ describe("regression #5943: session_start transient UI", () => {
 					await options?.beforeSessionStart?.();
 					markReloadWaiting();
 					await reloadFinished;
+					return { modelScopeDiagnostics: [] };
 				},
 			},
 			ui: {

@@ -794,12 +794,6 @@ export async function main(args: string[], options?: MainOptions) {
 			console.error(chalk.dim(event.message));
 		}
 	};
-	const resolveModelScope = async (settingsManager: SettingsManager, modelRuntime: ModelRuntime) => {
-		const patterns = parsed.models ?? settingsManager.getEnabledModels();
-		return patterns?.length
-			? resolveModelScopeWithDiagnostics(patterns, modelRuntime, { signal: AbortSignal.timeout(15_000) })
-			: { scopedModels: [], diagnostics: [] };
-	};
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
 		cwd,
 		agentDir,
@@ -880,10 +874,14 @@ export async function main(args: string[], options?: MainOptions) {
 			})),
 		];
 
-		const { scopedModels, diagnostics: modelScopeDiagnostics } = await resolveModelScope(
-			settingsManager,
-			modelRuntime,
-		);
+		// The session calls this again on reload, so changes to `enabledModels` apply without a restart (#12277).
+		const resolveScopedModels = async () => {
+			const modelPatterns = parsed.models ?? settingsManager.getEnabledModels();
+			return modelPatterns && modelPatterns.length > 0
+				? resolveModelScopeWithDiagnostics(modelPatterns, modelRuntime, { signal: AbortSignal.timeout(15_000) })
+				: { scopedModels: [], diagnostics: [] };
+		};
+		const { scopedModels, diagnostics: modelScopeDiagnostics } = await resolveScopedModels();
 		// Returned as diagnostics instead of printed: this factory runs again on /new, /resume and /fork,
 		// while the interactive TUI draws on the terminal (#11264).
 		diagnostics.push(...modelScopeDiagnostics);
@@ -918,6 +916,7 @@ export async function main(args: string[], options?: MainOptions) {
 			model: sessionOptions.model,
 			thinkingLevel: sessionOptions.thinkingLevel,
 			scopedModels: sessionOptions.scopedModels,
+			resolveScopedModels,
 			tools: sessionOptions.tools,
 			excludeTools: sessionOptions.excludeTools,
 			noTools: sessionOptions.noTools,
@@ -1035,14 +1034,6 @@ export async function main(args: string[], options?: MainOptions) {
 	} else if (appMode === "interactive") {
 		announcePackageInstalls = false;
 		const interactiveMode = new InteractiveMode(runtime, {
-			refreshModelScope: async (session): Promise<void> => {
-				const { scopedModels, diagnostics } = await resolveModelScope(
-					session.settingsManager,
-					session.modelRuntime,
-				);
-				session.setScopedModels(scopedModels);
-				for (const diagnostic of diagnostics) interactiveMode.showWarning(diagnostic.message);
-			},
 			migratedProviders,
 			startupDiagnostics,
 			// A fallback to another model is already in startupDiagnostics.

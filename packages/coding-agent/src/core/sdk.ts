@@ -12,7 +12,7 @@ import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { createToolNameMatcher } from "./mcp-servers.ts";
 import { convertToLlm } from "./messages.ts";
-import { findInitialModel } from "./model-resolver.ts";
+import { findInitialModel, type ResolveModelScopeResult } from "./model-resolver.ts";
 import { ModelRuntime } from "./model-runtime.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
@@ -60,6 +60,8 @@ export interface CreateAgentSessionOptions {
 	thinkingLevel?: ThinkingLevel;
 	/** Models available for cycling (Ctrl+P in interactive mode) */
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	/** Resolves `scopedModels` again on reload, after settings are reloaded. Without it, reload keeps the scope. */
+	resolveScopedModels?: () => Promise<ResolveModelScopeResult>;
 
 	/**
 	 * Optional default tool suppression mode when no explicit allowlist is provided.
@@ -458,6 +460,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		settingsManager,
 		cwd,
 		scopedModels: options.scopedModels,
+		resolveScopedModels: options.resolveScopedModels,
 		resourceLoader,
 		customTools: options.customTools,
 		modelRuntime,

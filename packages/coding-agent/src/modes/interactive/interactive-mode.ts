@@ -436,8 +436,6 @@ function formatLoginProviderCompletionDescription(provider: LoginProviderComplet
  * Options for InteractiveMode initialization.
  */
 export interface InteractiveModeOptions {
-	/** Refresh the session's model scope after settings reload and before extensions restart. */
-	refreshModelScope?: (session: AgentSession) => Promise<void>;
 	/** Providers that were migrated to auth.json (shows warning) */
 	migratedProviders?: string[];
 	/** Diagnostics collected before the interactive TUI was initialized. */
@@ -6662,22 +6660,24 @@ export class InteractiveMode {
 			this.ui.requestRender();
 		};
 
-		let preparedForSessionStart = false;
+		let chatRestoredBeforeSessionStart = false;
 		let reloadBoxDismissed = false;
-		const prepareForSessionStart = async () => {
-			if (preparedForSessionStart) {
+		const restoreChatBeforeSessionStart = () => {
+			if (chatRestoredBeforeSessionStart) {
 				return;
 			}
 			this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
 			this.outputPad = this.settingsManager.getOutputPad();
 			this.rebuildChatFromMessages();
-			await this.options.refreshModelScope?.(this.session);
-			preparedForSessionStart = true;
+			chatRestoredBeforeSessionStart = true;
 		};
 
 		try {
-			await this.session.reload({ beforeSessionStart: prepareForSessionStart });
-			await prepareForSessionStart();
+			const { modelScopeDiagnostics } = await this.session.reload({
+				beforeSessionStart: restoreChatBeforeSessionStart,
+			});
+			restoreChatBeforeSessionStart();
+			this.updateAvailableProviderCount();
 			this.keybindings.reload();
 			const activeHeader = this.customHeader ?? this.builtInHeader;
 			if (isExpandable(activeHeader)) {
@@ -6698,6 +6698,7 @@ export class InteractiveMode {
 			if (modelsJsonError) {
 				this.showError(`models.json error: ${modelsJsonError}`);
 			}
+			for (const diagnostic of modelScopeDiagnostics) this.showWarning(diagnostic.message);
 			this.showStatus(
 				savedImplicitProjectTrust
 					? "Reloaded keybindings, extensions, skills, prompts, themes, and context files; saved project trust"
