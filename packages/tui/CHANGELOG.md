@@ -6,6 +6,10 @@
 
 - `Component.render()` now returns `readonly string[]`, and `Container.render()` returns the same cached array while its children are unchanged, like `Text`, `Markdown`, and `Box` already did. Code that modifies render output in place, including `super.render()` in a `Container` subclass, must copy it first ([#9549](https://github.com/earendil-works/pi/issues/9549))
 
+### Added
+
+- Added `TUI.setSuspendSignalHandler()`, which sets a handler called when the process receives `SIGTSTP` while the TUI is running. The `SIGTSTP` listener is removed on `stop()`, so a child that owns the terminal afterwards is suspended normally ([#12283](https://github.com/earendil-works/pi/pull/12283) by [@haoqixu](https://github.com/haoqixu))
+
 ### Fixed
 
 - Fixed fullscreen Kitty images disappearing after a full redraw such as a window resize. Clearing the screen made Kitty free the cached image data that the redraw then tried to reuse ([#12010](https://github.com/earendil-works/pi/issues/12010))
