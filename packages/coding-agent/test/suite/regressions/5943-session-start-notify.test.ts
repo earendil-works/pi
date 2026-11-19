@@ -2,6 +2,7 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { Container, Text } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
+import type { AgentSessionRuntimeDiagnostic } from "../../../src/core/agent-session-runtime.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
 import { createHarness, createTestUiContext } from "../harness.ts";
@@ -55,10 +56,13 @@ type ReloadCommandContext = {
 	session: {
 		isStreaming: boolean;
 		isCompacting: boolean;
-		reload: (options?: { beforeSessionStart?: () => void | Promise<void> }) => Promise<void>;
 		resourceLoader: { getThemes: () => { themes: [] } };
 		extensionRunner: unknown;
-		modelRegistry: { getError: () => string | undefined };
+		modelRuntime: { getError: () => string | undefined };
+	};
+	runtimeHost: {
+		reload: (options?: { beforeSessionStart?: () => void | Promise<void> }) => Promise<void>;
+		takeUnreportedDiagnostics: () => AgentSessionRuntimeDiagnostic[];
 	};
 	settingsManager: {
 		getHttpIdleTimeoutMs: () => number;
@@ -87,6 +91,8 @@ type ReloadCommandContext = {
 	setupAutocompleteProvider: () => void;
 	setupExtensionShortcuts: (runner: unknown) => void;
 	showLoadedResources: (options: unknown) => void;
+	applyRuntimeSettings: () => void;
+	showRuntimeDiagnostics: (diagnostics: readonly AgentSessionRuntimeDiagnostic[]) => void;
 	maybeSaveImplicitProjectTrustAfterReload: () => boolean;
 	showStatus: (message: string) => void;
 	showWarning: (message: string) => void;
@@ -106,9 +112,17 @@ const interactiveModePrototype = InteractiveMode.prototype as unknown as Interac
 
 type ReloadCommandContextOverrides = Omit<
 	Partial<ReloadCommandContext>,
-	"session" | "settingsManager" | "keybindings" | "editorContainer" | "ui" | "defaultEditor" | "themeController"
+	| "session"
+	| "runtimeHost"
+	| "settingsManager"
+	| "keybindings"
+	| "editorContainer"
+	| "ui"
+	| "defaultEditor"
+	| "themeController"
 > & {
 	session?: Partial<ReloadCommandContext["session"]>;
+	runtimeHost?: Partial<ReloadCommandContext["runtimeHost"]>;
 	settingsManager?: Partial<ReloadCommandContext["settingsManager"]>;
 	keybindings?: Partial<ReloadCommandContext["keybindings"]>;
 	editorContainer?: Partial<ReloadCommandContext["editorContainer"]>;
@@ -124,13 +138,17 @@ function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {
 		session: {
 			isStreaming: false,
 			isCompacting: false,
+			resourceLoader: { getThemes: () => ({ themes: [] }) },
+			extensionRunner: {},
+			modelRuntime: { getError: () => undefined },
+			...overrides.session,
+		},
+		runtimeHost: {
 			reload: async (options) => {
 				await options?.beforeSessionStart?.();
 			},
-			resourceLoader: { getThemes: () => ({ themes: [] }) },
-			extensionRunner: {},
-			modelRegistry: { getError: () => undefined },
-			...overrides.session,
+			takeUnreportedDiagnostics: () => [],
+			...overrides.runtimeHost,
 		},
 		settingsManager: {
 			getHttpIdleTimeoutMs: () => 0,
@@ -161,6 +179,8 @@ function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {
 		setupAutocompleteProvider: overrides.setupAutocompleteProvider ?? (() => {}),
 		setupExtensionShortcuts: overrides.setupExtensionShortcuts ?? (() => {}),
 		showLoadedResources: overrides.showLoadedResources ?? (() => {}),
+		applyRuntimeSettings: overrides.applyRuntimeSettings ?? (() => {}),
+		showRuntimeDiagnostics: overrides.showRuntimeDiagnostics ?? (() => {}),
 		maybeSaveImplicitProjectTrustAfterReload: overrides.maybeSaveImplicitProjectTrustAfterReload ?? (() => false),
 		showStatus: overrides.showStatus ?? (() => {}),
 		showWarning: overrides.showWarning ?? (() => {}),
@@ -422,7 +442,7 @@ describe("regression #5943: session_start transient UI", () => {
 		let context: ReloadCommandContext;
 		context = createReloadCommandContext({
 			settingsManager: { getHideThinkingBlock: () => true },
-			session: {
+			runtimeHost: {
 				reload: async (options) => {
 					events.push("reload");
 					await options?.beforeSessionStart?.();
@@ -438,6 +458,31 @@ describe("regression #5943: session_start transient UI", () => {
 
 		expect(context.hideThinkingBlock).toBe(true);
 		expect(events).toEqual(["reload", "rebuild:true", "start:true"]);
+	});
+
+	// Reload drains settings errors into the runtime diagnostics; /reload must show them like /new does.
+	it("shows the runtime diagnostics collected by reload", async () => {
+		initTheme("dark", false);
+		const warning: AgentSessionRuntimeDiagnostic = {
+			type: "warning",
+			message: "Invalid settings file settings.json",
+		};
+		const shown: AgentSessionRuntimeDiagnostic[] = [];
+		const errors: string[] = [];
+		const context = createReloadCommandContext({
+			runtimeHost: { takeUnreportedDiagnostics: () => [warning] },
+			showRuntimeDiagnostics: (diagnostics) => {
+				shown.push(...diagnostics);
+			},
+			showError: (message) => {
+				errors.push(message);
+			},
+		});
+
+		await interactiveModePrototype.handleReloadCommand.call(context);
+
+		expect(errors).toEqual([]);
+		expect(shown).toEqual([warning]);
 	});
 
 	it("keeps the reload blocker focused until async reload completes", async () => {
@@ -456,7 +501,7 @@ describe("regression #5943: session_start transient UI", () => {
 
 		const context = createReloadCommandContext({
 			editor,
-			session: {
+			runtimeHost: {
 				reload: async (options) => {
 					await options?.beforeSessionStart?.();
 					markReloadWaiting();

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerFauxProvider } from "@earendil-works/pi-ai/compat";
@@ -64,7 +64,7 @@ describe("AgentSessionRuntime.takeUnreportedDiagnostics", () => {
 			faux.unregister();
 			if (existsSync(tempDir)) rmSync(tempDir, { recursive: true, force: true });
 		});
-		return runtime;
+		return { runtime, tempDir };
 	}
 
 	// The runtime factory runs again on every session replacement, but modes only reported the startup
@@ -73,7 +73,7 @@ describe("AgentSessionRuntime.takeUnreportedDiagnostics", () => {
 		const settingsWarning: AgentSessionRuntimeDiagnostic = { type: "warning", message: "settings warning" };
 		const extensionError: AgentSessionRuntimeDiagnostic = { type: "error", message: "extension failed" };
 		const nextDiagnostics = { current: [settingsWarning] };
-		const runtime = await createRuntimeForTest(nextDiagnostics);
+		const { runtime } = await createRuntimeForTest(nextDiagnostics);
 
 		expect(runtime.takeUnreportedDiagnostics()).toEqual([settingsWarning]);
 		expect(runtime.takeUnreportedDiagnostics()).toEqual([]);
@@ -84,6 +84,23 @@ describe("AgentSessionRuntime.takeUnreportedDiagnostics", () => {
 		expect(runtime.takeUnreportedDiagnostics()).toEqual([]);
 
 		await runtime.newSession();
+		expect(runtime.takeUnreportedDiagnostics()).toEqual([]);
+	});
+
+	// Reload re-reads settings.json but no runtime is created, so an invalid settings file found by /reload or
+	// ctx.reload() was never reported.
+	it("returns settings errors found by reload once", async () => {
+		const { runtime, tempDir } = await createRuntimeForTest({ current: [] });
+		expect(runtime.takeUnreportedDiagnostics()).toEqual([]);
+
+		writeFileSync(join(tempDir, "settings.json"), "{ invalid");
+		await runtime.reload();
+		const diagnostics = runtime.takeUnreportedDiagnostics();
+		expect(diagnostics).toHaveLength(1);
+		expect(diagnostics[0]).toMatchObject({ type: "warning" });
+		expect(diagnostics[0]?.message).toContain(`Invalid settings file ${join(tempDir, "settings.json")}`);
+
+		await runtime.reload();
 		expect(runtime.takeUnreportedDiagnostics()).toEqual([]);
 	});
 });

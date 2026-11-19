@@ -118,7 +118,8 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 					return runtimeHost.switchSession(sessionPath, switchOptions);
 				},
 				reload: async () => {
-					await session.reload();
+					await runtimeHost.reload();
+					writeDiagnosticsToStderr(runtimeHost.takeUnreportedDiagnostics());
 				},
 			},
 			onError: (err) => {

@@ -13,6 +13,7 @@ import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type { CreateAgentSessionResult } from "./sdk.ts";
 import { assertSessionCwdExists } from "./session-cwd.ts";
 import { SessionManager } from "./session-manager.ts";
+import { collectSettingsDiagnostics } from "./settings-diagnostics.ts";
 
 /**
  * Result returned by runtime creation.
@@ -119,10 +120,10 @@ export class AgentSessionRuntime {
 	/**
 	 * Return the current runtime's diagnostics that were not reported yet, and mark them reported.
 	 *
-	 * The host calls this at startup and after each session replacement (/new, /resume, /fork,
-	 * import), whose runtime collects its diagnostics again. A diagnostic with the same type and
-	 * message as one returned before is left out, so an unchanged settings warning is not repeated
-	 * on every replacement.
+	 * The host calls this at startup, after each session replacement (/new, /resume, /fork, import),
+	 * whose runtime collects its diagnostics again, and after reload(). A diagnostic with the same type
+	 * and message as one returned before is left out, so an unchanged settings warning is not repeated
+	 * on every replacement or reload.
 	 */
 	takeUnreportedDiagnostics(): AgentSessionRuntimeDiagnostic[] {
 		return this._diagnostics.filter((diagnostic) => {
@@ -131,6 +132,15 @@ export class AgentSessionRuntime {
 			this.reportedDiagnosticKeys.add(key);
 			return true;
 		});
+	}
+
+	/**
+	 * Reload the current session's settings, resources and extensions in place. Settings errors found
+	 * by the reload are added to the diagnostics, for the host to report with takeUnreportedDiagnostics().
+	 */
+	async reload(options?: { beforeSessionStart?: () => void | Promise<void> }): Promise<void> {
+		await this.session.reload(options);
+		this._diagnostics = [...this._diagnostics, ...collectSettingsDiagnostics(this.session.settingsManager)];
 	}
 
 	setRebindSession(rebindSession?: (session: AgentSession) => Promise<void>): void {
