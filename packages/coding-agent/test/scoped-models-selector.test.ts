@@ -138,4 +138,21 @@ describe("scoped models selector", () => {
 		expect(getMarkerStates(selector, models)).toEqual([true, true, true]);
 		expect(stripAnsi(selector.render(120).join("\n"))).toContain("all enabled");
 	});
+
+	// Regression test for #12245: the /login fix applied to /scoped-models.
+	it("selects the best match after typing a query, even after scrolling", async () => {
+		const models = [
+			{ id: "gpt-4o", name: "GPT-4o", enabled: true },
+			{ id: "gpt-4o-mini", name: "GPT-4o mini", enabled: true },
+			{ id: "claude", name: "Claude", enabled: true },
+			{ id: "gemini", name: "Gemini", enabled: true },
+		];
+		const selector = await createSelector(models);
+
+		for (let i = 0; i < 3; i++) selector.handleInput("\x1b[B");
+		for (const char of "gpt-4o") selector.handleInput(char);
+		selector.handleInput("\r");
+
+		expect(models.map((model) => model.enabled)).toEqual([false, true, true, true]);
+	});
 });

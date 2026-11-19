@@ -401,8 +401,10 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 			return;
 		}
 
-		// Pass everything else to search input
+		// Pass everything else to search input. A query moves the selection to the top row, so the best match is
+		// highlighted; toggles and reorders call refresh() too, so the reset lives here and not there.
 		this.searchInput.handleInput(data);
+		if (this.searchInput.getValue()) this.selectedIndex = 0;
 		this.refresh();
 	}
 
