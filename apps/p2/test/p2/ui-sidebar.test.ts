@@ -221,9 +221,9 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		}
 	});
 
-	it("collapses rollups and groups, and sets a rollup's window and place from its options", async () => {
+	it("collapses rollups and groups (an empty one only turns its chevron), and sets a rollup's window and place", async () => {
 		const place = folder("place");
-		await setProjects({ kept: place });
+		await setProjects({ kept: place, unused: folder("unused") });
 		await createIn("Kept", place, "kept");
 		const group = groupOf("kept");
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
@@ -232,6 +232,14 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		await browser.click(`${group} .group-link`);
 		await until(settings.collapsed, (collapsed) => collapsed?.[projectKey("kept")] === true);
 		await browser.wait(`!document.querySelector(${JSON.stringify(`${group} .session-main`)})`);
+		// A project without sessions: its row turns its chevron only, nothing below it takes room.
+		const unused = groupOf("unused");
+		const height = `Math.round(document.querySelector(${JSON.stringify(unused)}).getBoundingClientRect().height)`;
+		const open = await browser.evaluate<number>(height);
+		await browser.click(`${unused} .group-link`);
+		await until(settings.collapsed, (collapsed) => collapsed?.[projectKey("unused")] === true);
+		await browser.wait(`document.querySelector(${JSON.stringify(`${unused} .group-link`)}).ariaExpanded==='false'`);
+		assert.equal(await browser.evaluate<number>(height), open);
 		// A rollup collapses to its row; so is that kept.
 		await browser.click(".sidebar-section[data-key=projects] .section-toggle");
 		await until(settings.collapsed, (collapsed) => collapsed?.projects === true);

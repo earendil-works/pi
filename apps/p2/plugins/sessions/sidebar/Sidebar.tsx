@@ -124,7 +124,9 @@ function GroupItem({ group, rows, actions }: { group: GroupSection; rows: RowAct
 			{...(target?.kind === "project" ? { "data-project": target.project.name } : {})}
 		>
 			{menu ? <TargetNavRow menu={menu} {...row} /> : <NavRow {...row} />}
-			<SideNavigation.List className="group-items" id={listId} hidden={group.collapsed}>
+			{/* Hidden while empty too: an empty list still takes its margins, so expanding a project without sessions
+			    would push the rows below it down. Only the chevron turns then. */}
+			<SideNavigation.List className="group-items" id={listId} hidden={group.collapsed || group.rows.length === 0}>
 				{group.rows.map((session) => (
 					<SessionItem key={session.id} session={session} scope={group.key} actions={rows} />
 				))}
