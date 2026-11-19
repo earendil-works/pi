@@ -32,6 +32,52 @@ describe("TUI suspend signal handler", () => {
 		assert.equal(process.listenerCount("SIGTSTP"), baseline + 1);
 	});
 
+	it("does not register a listener before the first start()", () => {
+		tui = new TuiMainScreen(new VirtualTerminal(40, 10));
+		tui.setSuspendSignalHandler(() => {});
+		assert.equal(process.listenerCount("SIGTSTP"), baseline);
+
+		tui.start();
+		assert.equal(process.listenerCount("SIGTSTP"), baseline + 1);
+	});
+
+	it("keeps the listener until stop() has restored the terminal", () => {
+		const counts: number[] = [];
+		class RecordingTerminal extends VirtualTerminal {
+			override stop(): void {
+				counts.push(process.listenerCount("SIGTSTP"));
+				super.stop();
+			}
+		}
+		tui = new TuiMainScreen(new RecordingTerminal(40, 10));
+		tui.setSuspendSignalHandler(() => {});
+		tui.start();
+		tui.stop();
+		assert.deepEqual(counts, [baseline + 1]);
+		assert.equal(process.listenerCount("SIGTSTP"), baseline);
+	});
+
+	// Removing the last listener restores the default action, so a remove/add pair would let a
+	// SIGTSTP in between stop the process while the TUI runs.
+	it("does not remove the listener while it stays needed", () => {
+		let removals = 0;
+		const countRemovals = (event: string | symbol) => {
+			if (event === "SIGTSTP") removals++;
+		};
+		tui = new TuiMainScreen(new VirtualTerminal(40, 10));
+		tui.setSuspendSignalHandler(() => {});
+		tui.start();
+		process.on("removeListener", countRemovals);
+		try {
+			tui.setSuspendSignalHandler(() => {});
+			tui.start();
+		} finally {
+			process.off("removeListener", countRemovals);
+		}
+		assert.equal(removals, 0);
+		assert.equal(process.listenerCount("SIGTSTP"), baseline + 1);
+	});
+
 	it("does not register a listener twice when start() runs again", () => {
 		tui = new TuiMainScreen(new VirtualTerminal(40, 10));
 		tui.setSuspendSignalHandler(() => {});
