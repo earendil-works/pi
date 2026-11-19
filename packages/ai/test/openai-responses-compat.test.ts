@@ -159,8 +159,13 @@ describe("openai-responses provider defaults", () => {
 		});
 	});
 
-	it("sets strict mode explicitly for Cloudflare OpenAI Responses tools", async () => {
-		const model = getModel("cloudflare-ai-gateway", "gpt-5.6-sol");
+	// #12286: Copilot treats tools without `strict` as strict and fills omitted optional arguments.
+	it.each([
+		getModel("cloudflare-ai-gateway", "gpt-5.6-sol"),
+		getModel("github-copilot", "gpt-5.3-codex"),
+		getModel("github-copilot", "mai-code-2"),
+		getModel("github-copilot", "grok-4.7"),
+	])("sets strict mode explicitly for $provider/$id Responses tools", async (model) => {
 		let capturedPayload: CapturedResponsesPayload | undefined;
 
 		vi.spyOn(globalThis, "fetch").mockResolvedValue(
