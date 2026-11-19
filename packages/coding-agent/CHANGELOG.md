@@ -93,6 +93,7 @@
 - Fixed text after a multi-row inline image in Markdown drawing over the image ([#12017](https://github.com/earendil-works/pi/issues/12017))
 - Fixed Kitty and iTerm2 images covering overlays drawn over them ([#11584](https://github.com/earendil-works/pi/issues/11584))
 - Fixed Enter on a Tab path menu for an absolute path (`look at /tmp/fi`) or a slash command argument menu (`/open /tm`) submitting the prompt instead of accepting the completion ([#12309](https://github.com/earendil-works/pi/issues/12309), [#12312](https://github.com/earendil-works/pi/pull/12312) by [@acmerfight](https://github.com/acmerfight))
+- Fixed Mermaid diagrams wider than the terminal falling back to their source without explanation; a note now says how many columns the diagram needs ([#12324](https://github.com/earendil-works/pi/issues/12324))
 
 ### Removed
 

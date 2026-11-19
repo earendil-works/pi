@@ -42,8 +42,11 @@ test("modes: off never, final only once the message is complete; thinking blocks
 	assert.equal(mermaidMarkdownTransformer(DIAGRAM, context({ messageType: "assistant-thinking" })), DIAGRAM);
 });
 
-test("too wide or invalid diagrams keep their source; invalid ones say why once complete", () => {
-	assert.equal(mermaidMarkdownTransformer(DIAGRAM, context({ availableWidth: 4 })), DIAGRAM);
+test("too wide or invalid diagrams keep their source and say why once complete", () => {
+	assert.equal(mermaidMarkdownTransformer(DIAGRAM, context({ availableWidth: 4, isStreaming: true })), DIAGRAM);
+	const tooWide = plain(mermaidMarkdownTransformer(DIAGRAM, context({ availableWidth: 4 })));
+	assert.match(tooWide, /```mermaid\ngraph TD\nA-->B\n```/);
+	assert.match(tooWide, /Mermaid diagram not rendered: needs \d+ columns, 4 available/);
 	const invalid = "```mermaid\ngraph TD\nA-->\n```\n";
 	const out = mermaidMarkdownTransformer(invalid, context());
 	assert.match(out, /```mermaid\ngraph TD\nA-->\n```/);

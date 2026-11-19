@@ -76,11 +76,18 @@ export const mermaidMarkdownTransformer: MarkdownTransformer = (markdown, contex
 		.map((token) => {
 			if (!isMermaid(token)) return token.raw;
 			const art = render(token.text);
-			if (!art || art.width > context.availableWidth) return token.raw;
+			if (!art) return token.raw;
+			const withWarning = (warning: string) =>
+				`${token.raw}\n${codeSpan(context.theme.fg("warning", warning))}  \n`;
+			if (art.width > context.availableWidth) {
+				if (context.isStreaming) return token.raw;
+				return withWarning(
+					`Mermaid diagram not rendered: needs ${art.width} columns, ${context.availableWidth} available`,
+				);
+			}
 			if (!context.isStreaming && art.warnings.length > 0) {
 				const suffix = art.warnings.length > 1 ? ` (+${art.warnings.length - 1} more)` : "";
-				const warning = `Mermaid diagram not rendered: ${art.warnings[0]}${suffix}`;
-				return `${token.raw}\n${codeSpan(context.theme.fg("warning", warning))}  \n`;
+				return withWarning(`Mermaid diagram not rendered: ${art.warnings[0]}${suffix}`);
 			}
 			const lines = themedLines(art, context.theme);
 			// Markdown hard breaks keep every diagram row on its own line.

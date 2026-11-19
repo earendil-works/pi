@@ -40,12 +40,15 @@ describe("Mermaid rendering", () => {
 		expect(rendered).toContain("After");
 	});
 
-	it("leaves unsupported and oversized diagrams unchanged", () => {
+	it("leaves unsupported diagrams unchanged and explains oversized ones", () => {
 		const unsupported = "```mermaid\ngantt\n  title Plan\n```";
 		const oversized = "```mermaid\nflowchart LR\n  A[Start] --> B[Done]\n```";
 
 		expect(transformMermaid(unsupported)).toBe(unsupported);
-		expect(transformMermaid(oversized, { maxWidth: 10 })).toBe(oversized);
+		expect(transformMermaid(oversized, { maxWidth: 10, isStreaming: true })).toBe(oversized);
+		const narrow = transformMermaid(oversized, { maxWidth: 10 });
+		expect(narrow).toContain(oversized);
+		expect(narrow).toContain("```\n`Mermaid diagram not rendered: needs 21 columns, 10 available`");
 	});
 
 	it("renders diagram types added by lovely-mermaid", () => {
