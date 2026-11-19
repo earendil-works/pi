@@ -849,6 +849,73 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		},
 	);
 
+	it.skipIf(process.platform === "win32")(
+		"verifies a managed update with the installer Node.js when the install has one",
+		async () => {
+			// The managed launcher starts pi with <XDG_DATA_HOME>/pi-node/current/bin/node, so the
+			// smoke test must use that Node.js too, not the one running the update.
+			const targetVersion = getNewerPatchVersion();
+			const { managedRoot } = prepareManagedInstall(targetVersion, 0, true);
+			const dataDir = join(tempDir, "xdg-data");
+			const nodeDir = join(dataDir, "pi-node", "current", "bin");
+			mkdirSync(nodeDir, { recursive: true });
+			const brokenNodePath = join(nodeDir, "node");
+			writeFileSync(brokenNodePath, "#!/bin/sh\necho 'node: error while loading shared libraries' >&2\nexit 1\n");
+			chmodSync(brokenNodePath, 0o755);
+			vi.stubEnv("XDG_DATA_HOME", dataDir);
+			mockManagedUpdate(targetVersion);
+			vi.spyOn(console, "log").mockImplementation(() => {});
+			const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+			await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+
+			expect(errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+				`Could not verify managed Pi ${targetVersion}`,
+			);
+			expect(readFileSync(join(managedRoot, "current-version"), "utf8")).toBe(`${VERSION}\n`);
+		},
+	);
+
+	it.skipIf(process.platform === "win32")("reports that a managed update has no Node.js of its own", async () => {
+		const targetVersion = getNewerPatchVersion();
+		const { managedRoot } = prepareManagedInstall(targetVersion);
+		vi.stubEnv("XDG_DATA_HOME", join(tempDir, "xdg-data"));
+		mockManagedUpdate(targetVersion);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+
+		expect(readFileSync(join(managedRoot, "current-version"), "utf8")).toBe(`${targetVersion}\n`);
+		expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain("has no Node.js of its own");
+		expect(errorSpy).not.toHaveBeenCalled();
+	});
+
+	it.skipIf(process.platform === "win32")(
+		"does not report a Node.js note when the managed install has its own Node.js",
+		async () => {
+			const targetVersion = getNewerPatchVersion();
+			const { managedRoot } = prepareManagedInstall(targetVersion);
+			const nodeDir = join(tempDir, "xdg-data", "pi-node", "current", "bin");
+			mkdirSync(nodeDir, { recursive: true });
+			const nodePath = join(nodeDir, "node");
+			writeFileSync(nodePath, `#!/bin/sh\nexec "${originalExecPath}" "$@"\n`);
+			chmodSync(nodePath, 0o755);
+			vi.stubEnv("XDG_DATA_HOME", join(tempDir, "xdg-data"));
+			mockManagedUpdate(targetVersion);
+			const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+			const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+			await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+
+			expect(readFileSync(join(managedRoot, "current-version"), "utf8")).toBe(`${targetVersion}\n`);
+			expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).not.toContain(
+				"has no Node.js of its own",
+			);
+			expect(errorSpy).not.toHaveBeenCalled();
+		},
+	);
+
 	it("rejects a concurrent managed update", async () => {
 		const targetVersion = getNewerPatchVersion();
 		const { managedRoot, npmRecordPath } = prepareManagedInstall(targetVersion);

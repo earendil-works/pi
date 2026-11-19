@@ -8,6 +8,7 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { ModelsError } from "@earendil-works/pi-ai";
 import { Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
@@ -109,16 +110,42 @@ async function runManagedNpmCi(stageDir: string): Promise<void> {
 }
 
 /**
- * Environment for the managed release smoke test, with the Node.js running this update
- * first on PATH. On Windows the managed launcher runs Pi on the installer's standalone
- * Node without changing PATH, so the release's `node_modules/.bin` shim may otherwise
- * run an older system Node that cannot load the new release.
+ * Directory of the standalone Node.js the installer writes for a managed install, which is
+ * the Node.js the managed launcher starts Pi with. Undefined when the installer reused a
+ * Node.js that was already on PATH, in which case Pi runs on that external Node.js and a
+ * distro update to it (for example a shared-library soname bump) stops Pi from starting.
+ */
+function getManagedStandaloneNodeDir(): string | undefined {
+	const dir =
+		process.platform === "win32"
+			? join(process.env.LOCALAPPDATA ?? "", "pi-node", "current")
+			: join(process.env.XDG_DATA_HOME?.trim() || join(homedir(), ".local", "share"), "pi-node", "current", "bin");
+	return existsSync(join(dir, process.platform === "win32" ? "node.exe" : "node")) ? dir : undefined;
+}
+
+/**
+ * Environment for the managed release smoke test, with the Node.js the next launch will use
+ * first on PATH: the installer's standalone Node.js when the install has one, otherwise the
+ * Node.js running this update. Otherwise the release's `node_modules/.bin` shim may run a
+ * Node.js that the user never launches Pi with, either an older system Node (Windows managed
+ * launchers pin the standalone Node without changing PATH) or a Node.js that cannot start.
  */
 function getManagedReleaseVerifyEnv(): NodeJS.ProcessEnv {
+	const standaloneNodeDir = getManagedStandaloneNodeDir();
 	const nodeDir = dirname(process.execPath);
 	const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "PATH";
 	const currentPath = process.env[pathKey] ?? "";
-	return { ...process.env, [pathKey]: [nodeDir, currentPath].filter(Boolean).join(delimiter) };
+	return { ...process.env, [pathKey]: [standaloneNodeDir, nodeDir, currentPath].filter(Boolean).join(delimiter) };
+}
+
+function noteManagedNodeRuntime(): void {
+	if (getManagedStandaloneNodeDir()) return;
+	console.log(
+		chalk.dim(
+			`This managed ${APP_NAME} installation has no Node.js of its own; it runs on ${process.execPath}. ` +
+				`A system Node.js update can stop ${APP_NAME} from starting; rerun the pi.dev installer to give it one.`,
+		),
+	);
 }
 
 function verifyManagedRelease(releaseDir: string, expectedVersion: string): void {
@@ -1195,6 +1222,7 @@ export async function handlePackageCommand(
 							return true;
 						}
 						console.log(chalk.green(`Updated ${APP_NAME} from ${VERSION} to ${selfUpdatePlan.version}`));
+						noteManagedNodeRuntime();
 						return true;
 					}
 
