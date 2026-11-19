@@ -1,5 +1,5 @@
 // The MCP sheet (owners): the running servers with their status, errors and tools, restart, and signing in and out of
-// HTTP servers that use OAuth. Sign in opens `/mcp/sign-in/<server>` in a new tab (it finds out where the browser runs);
+// HTTP servers that use OAuth (signing in again is signing out, then in, as in pi). Sign in opens `/mcp/sign-in/<server>` in a new tab (it finds out where the browser runs);
 // while a sign-in waits, the final redirect URL can be pasted here, for a browser that cannot reach where it returns.
 
 import { BACKGROUND_CONTEXT, contribute, defineFacet, type HeldIn, locationText } from "@p2/app/v1";
@@ -116,8 +116,10 @@ function ServerEntry({
 	signIn: SignIn | undefined;
 }) {
 	const oauth = instances.some((instance) => instance.auth === "oauth");
-	const needsSignIn = instances.some((instance) => instance.status === "sign-in");
-	const connected = instances.some((instance) => instance.status === "connected");
+	const mayNeedSignIn = instances.some((instance) => instance.status === "sign-in" || instance.status === "failed");
+	// Signing in again (another account, a grant the server refuses) is signing out, then in, as in pi: any instance
+	// not waiting for a sign-in may hold credentials (a failed or reconnecting one too), so it offers the sign-out.
+	const mayHoldCredentials = instances.some((instance) => instance.status !== "sign-in");
 	return (
 		<div className="stack mcp-server">
 			<strong>{server}</strong>
@@ -155,13 +157,13 @@ function ServerEntry({
 			)}
 			{oauth && (
 				<div className="inline-form">
-					{needsSignIn || signIn !== undefined ? (
+					{mayNeedSignIn || signIn !== undefined ? (
 						<a className="login-continue" href={signInLink(server)} target="_blank" rel="noreferrer">
 							{signIn?.status === "waiting" ? "Sign in again" : "Sign in"}
 							<ChevronIcon />
 						</a>
 					) : null}
-					{connected && (
+					{mayHoldCredentials && (
 						<button type="button" className="text-action danger" onClick={() => actions.signOut(server)}>
 							Sign out
 						</button>

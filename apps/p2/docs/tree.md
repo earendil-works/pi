@@ -1,8 +1,8 @@
 # `/tree`: branching the main conversation
 
-pi's `/tree` in p2 (owner decisions from the design discussion). Code: `plugins/tree/` (worker, web sheet),
-`src/runtime/main-conversation.ts`, `src/tui/components/tree-selector.ts`, `/tree` in `plugins/chat/tui.ts`, the sidebar's
-branch rows (`plugins/sessions/sidebar/Row.tsx`, `plugins/sessions/web.tsx`, `BranchSheet.tsx`). Tests:
+pi's `/tree` in p2 (owner decisions from the design discussion). Code: `plugins/tree/` (worker, tree panel),
+`src/runtime/main-conversation.ts`, `src/tui/components/tree-selector.ts`, `/tree` in `plugins/chat/tui.ts`, the branch
+rename sheet (`plugins/sessions/BranchSheet.tsx`, rendered by the sidebar, `plugins/sessions/web.tsx`). Tests:
 `tree.test.ts`, `tui-tree.test.ts`, `ui-tree.test.ts`.
 
 ## Goal
@@ -47,7 +47,8 @@ version 2; absent: `{ 1, [{ 1, null }] }`):
   label as the session title for 4, no labels for `SessionTree` 1; 2 lacks only `branch`). A web page or TUI viewing the previous main conversation follows a switch.
 - Earlier branches are read-only (`ReadOnlyConversations`): only the main conversation takes input (send, dequeue,
   configure); Stop stays allowed. A branch left while it works keeps running in the background: its run and queued
-  input go on, its sidebar row shows the working mark, and its answer counts as unread. To watch or stop it, switch
+  input go on, the session's sidebar item shows pi's working dots (its Cancel stops that run too), and its answer
+  counts as unread. To watch or stop it, switch
   back to it. The web shows only the main conversation and subagents (others redirect to the main one).
 - **Labels** are stored per branch (see [Labels](#labels)).
 
@@ -86,7 +87,7 @@ input: that work goes on in the branch left (see Top-level conversations), as do
 
 ### Labels
 
-What the sidebar and the TUI selector call a branch: `label` in `p2.main`, stored, never derived from later messages.
+What the tree panel and the TUI selector call a branch: `label` in `p2.main`, stored, never derived from later messages.
 
 - **A new branch** is labelled in the commit that creates it, with the first `PREVIEW_LENGTH` (200) characters of the
   message the owner picked, on one line: the answer for "Branch from here", the user message itself for "Edit" (not
@@ -94,8 +95,9 @@ What the sidebar and the TUI selector call a branch: `label` in `p2.main`, store
 - **Conversation 1** has no fork point: its label is null, and every UI shows the session title for a null label, so
   it follows a session rename. Once renamed, its stored label wins.
 - **Renaming:** `SessionTree.rename({ conversation, label })` (owner): one line, 1 to 200 characters after trimming;
-  null or empty resets conversation 1 to the session title (other branches need a label). Web: the pencil beside a
-  branch row (on hover; always on touch screens) opens a sheet. TUI: pi's label key (`app.tree.editLabel`, Shift+L) in
+  null or empty resets conversation 1 to the session title (other branches need a label). Web: a branch's label in the
+  tree panel is the command menu's target for the branch (hovered or focused, then the menu's shortcut; a long press on
+  touch screens): "Rename branch…" opens a sheet. TUI: pi's label key (`app.tree.editLabel`, Shift+L) in
   `/tree` renames the branch holding the selected message.
 - **Version 1** (`branches: number[]`) migrates to `label: null` (Durable `migrate`). At start the worker labels the
   null branches other than conversation 1 once, in one commit: the fork point's message (`parent.at`; for an Edit that
@@ -146,15 +148,53 @@ node:
   "Send in a new branch" while idle, "Steer" and "Follow up" while a run is busy (owner decisions: one
   button, no second control; Elanor's component; it replaced the Steer toggle). Alt+Enter is the second way at once.
   The menu takes the focus and gives it back when it closes (Escape returns to Send); opened from the keyboard or a
-  mouse its first item has it. On a phone the keyboard closes while the menu is open. Under the session in the sidebar, from two branches on, one row per
-  branch (`Sessions` rows' `branches`: the stored labels, null for the session title, newest first in a stable order,
-  the current one marked in place), behind the session row's expand control, which also shows its subagents
-  (collapsed by default, expanded while a subagent is shown); choosing one switches the session to its end
-  (`SessionTree.select`). The worker
-  pushes `p2.main` (`treeSelf`: `main` and the branches with their labels) at start and inside each `SessionTree`
+  mouse its first item has it. On a phone the keyboard closes while the menu is open. The sidebar lists no branches
+  (owner decision: a session is one item; the tree panel switches branches). The worker pushes `p2.main` (`treeSelf`: `main` and the branches with their labels) at start and inside each `SessionTree`
   method that changes it, before the method answers (nothing else changes `p2.main`).
 - TUI: `app.message.followUp` (Alt+Enter) sends in a new branch while idle (`ChatSurface.sendAlternate`).
+- Web: the tree panel (below).
 - Search indexes each branch's own entries (after its fork point).
+
+### Tree panel
+
+The web's view of the whole tree, as a table of contents beside the transcript (`plugins/tree/web.tsx`,
+`TreePanel.tsx`, `toc.ts`, `entry-in-view.ts`; Elanor's `TableOfContents`). The top bar's branch button (slot
+`tree-actions`, beside the terminal's and the workspace's) opens it in the side panel (`Route.panel` "tree"; a sheet
+on phones). The owner's only, as `SessionTree` is.
+
+```
+first / Echo: first
+    [Session title] second / Echo: second    ← conversation 1, inset under the turn it left, secondary colour
+┃ [Current: retry] other / Echo: other         ← the current branch at the top level; ┃ the turn in view
+```
+
+- **Order:** oldest first, as the transcript beside it reads; a panel in the opposite direction moves against the chat
+  while scrolling.
+- **Turns:** one item per turn: a user message with its final answer as a second line (an answer that is a turn of its
+  own: one something was forked from, or one starting a branch). The agent's intermediate steps (the text it wrote
+  before calling tools, which the chat shows inside the turn's collapsed steps) are left out. The tree does not mark
+  them, so the shape does: an answer followed by exactly one message, another answer, is a step; a final answer is
+  followed by a user message or ends a branch. An answer something was forked from stays.
+- **Branches:** the current branch's turns are the top level, in the primary text colour. Every other branch is a list
+  nested under the turn it was forked after, inset one step per level, in the secondary colour; a branch's chain
+  continues in its own conversation, branches of it nest deeper. Branches started before the first message are listed
+  apart at the top.
+- **Indicator:** Elanor's bar marks the turn in view in the main conversation's transcript (the last turn of the
+  current branch starting above the middle of the transcript, where a revealed message is centred; read from the rows'
+  `data-entry`), and the panel scrolls to keep it visible. A chosen turn stays marked until the reader scrolls the
+  transcript (wheel, touch, its scrollbar, keys): near the transcript's end the reveal cannot centre it, so the turn in
+  view would be an earlier one.
+- **Labels:** at each branch's last turn (null: the session title); the main one reads "Current: …". A main branch
+  without messages of its own yet sits at the turn it continues. Other branches without own messages are not shown:
+  the tree does not say where they were forked. Each label is the command menu's target for its branch (hover or
+  focus; a long press on touch screens), where "Rename branch…" is.
+- **Jumping:** the panel only moves through the tree (owner decision: Edit and Branch from here are the transcript's,
+  not repeated here). Choosing a turn of the current branch shows it in the transcript. Choosing a turn of another
+  branch switches the session to the branch storing the turn's first message (`SessionTree.select`: the session
+  continues at that branch's end), then shows the turn there. On phones the panel, a sheet over the chat, closes.
+- **Updates:** the panel reads the tree again when the session row's `main`, `branches` or `updatedAt` (a new
+  message) changes, not per streamed part: a read scans the whole history.
+- Tests: `tree-toc.test.ts` (turns and nesting), `ui-tree-panel.test.ts`.
 
 ## Later
 

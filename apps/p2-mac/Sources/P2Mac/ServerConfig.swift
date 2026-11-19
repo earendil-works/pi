@@ -17,7 +17,8 @@ struct ServerConfig: Equatable {
 	}
 
 	var source: Source
-	/// The `apps/p2` directory of a checkout; nil until the user picks one.
+	/// The `apps/p2` directory of a checkout: the one the user picked, else the app's own copy (`bundled`); nil in a
+	/// development build until the user picks one.
 	var checkout: URL?
 	/// An absolute Node binary; nil: `node` on the login shell's PATH.
 	var node: String?
@@ -31,7 +32,21 @@ struct ServerConfig: Equatable {
 
 	var origin: URL { URL(string: "http://127.0.0.1:\(port)")! }
 
+	/// Whether the server runs from the p2 and Node this app carries.
+	var runsBundled: Bool { checkout != nil && checkout == Self.bundled?.checkout }
+
 	static let defaultDataDir = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".pi/p2")
+
+	/// The p2 and Node a packaged app carries in its resources (scripts/package-app.sh); nil in a development build.
+	static let bundled: (checkout: URL, node: String)? = {
+		guard let resources = Bundle.main.resourceURL else { return nil }
+		let checkout = resources.appending(path: "p2/apps/p2")
+		let node = resources.appending(path: "node/bin/node").path
+		guard FileManager.default.fileExists(atPath: checkout.appending(path: "src/hosts/server.ts").path),
+			FileManager.default.isExecutableFile(atPath: node)
+		else { return nil }
+		return (checkout, node)
+	}()
 
 	/// The configuration of this launch. Environment variables win, so tests and dev runs never touch saved settings.
 	/// Only the launch reads it: a server chosen in the menu later is `attached(port:dataDir:)` or `own()`, so the
@@ -56,10 +71,12 @@ struct ServerConfig: Equatable {
 		let value = { (key: String, variable: String) in env[variable] ?? defaults.string(forKey: key) }
 		// With P2MAC_ATTACH, P2MAC_DATA_DIR is the attached server's directory, not the own server's.
 		let dataDir = env["P2MAC_ATTACH"] == nil ? value("dataDir", "P2MAC_DATA_DIR") : defaults.string(forKey: "dataDir")
+		let picked = value("checkout", "P2MAC_CHECKOUT").map(path).flatMap(p2Directory)
 		return ServerConfig(
 			source: .own,
-			checkout: value("checkout", "P2MAC_CHECKOUT").map(path).flatMap(p2Directory),
-			node: value("node", "P2MAC_NODE"),
+			checkout: picked ?? bundled?.checkout,
+			// A picked checkout runs with the developer's Node, the app's own copy with the Node it carries.
+			node: value("node", "P2MAC_NODE") ?? (picked == nil ? bundled?.node : nil),
 			port: value("port", "P2MAC_PORT").flatMap(Int.init) ?? 8788,
 			dataDir: dataDir.map(path) ?? defaultDataDir,
 			mode: value("mode", "P2MAC_MODE").flatMap(Mode.init) ?? .start,
@@ -91,6 +108,11 @@ struct ServerConfig: Equatable {
 	/// Remembers the checkout the user picked.
 	static func saveCheckout(_ directory: URL) {
 		UserDefaults.standard.set(directory.path, forKey: "checkout")
+	}
+
+	/// Forgets the picked checkout: the app runs its own copy of p2 again.
+	static func forgetCheckout() {
+		UserDefaults.standard.removeObject(forKey: "checkout")
 	}
 
 	/// The `apps/p2` directory for a picked folder: p2 itself, or a repository root that contains it.

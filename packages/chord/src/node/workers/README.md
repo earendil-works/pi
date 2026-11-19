@@ -63,7 +63,8 @@ workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
   may run in another order than unbundled (esbuild's splitting; base code must not rely on sibling order). A variable
   specifier stays an import Node resolves at run time, against the module's source file (its
   `import.meta.url`): outside the snapshot, so base code that must be in it imports with a literal specifier. ES modules
-  with inline source maps, forked with `--enable-source-maps` ahead of the app's `execArgv` (stack traces name the
+  minified (whitespace and syntax; names kept, so `name` is what unbundled code sees: every worker holds the base's
+  text), with inline source maps, forked with `--enable-source-maps` ahead of the app's `execArgv` (stack traces name the
   source files). The bundle stays in memory until the first fork, which writes its files into one private directory:
   `baseDir` when given (the component's own while it is open: emptied first; the kit's
   `<dataDir>/cache/workers/<kind>/`), else a new temporary one; written again when a cleaner removed one of them

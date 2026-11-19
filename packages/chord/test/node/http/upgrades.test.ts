@@ -134,6 +134,38 @@ describe("the links endpoint", () => {
 		await server.close();
 	});
 
+	it("gives links.opened what terminates that link at once: the others stay open", async () => {
+		const closes: (() => void)[] = [];
+		const closed: number[] = [];
+		const server = await served(
+			{},
+			{
+				config: {
+					links: {
+						path: "/chord",
+						opened: (_request, _principal, close) => {
+							const index = closes.push(close) - 1;
+							return () => closed.push(index);
+						},
+					},
+				},
+			},
+		);
+		const first = await socketTo(server.port, "/chord", { "x-principal": "owner" });
+		const second = await socketTo(server.port, "/chord", { "x-principal": "owner" });
+		for (let index = 0; index < 100 && closes.length < 2; index++) await new Promise((r) => setTimeout(r, 5));
+		const ended = closeOf(first);
+		closes[0]!();
+		// Terminated, not closed with a handshake: the peer sees an abnormal close.
+		expect((await ended).code).toBe(1006);
+		for (let index = 0; index < 100 && closed.length === 0; index++) await new Promise((r) => setTimeout(r, 5));
+		expect([closed, second.readyState === second.OPEN]).toEqual([[0], true]);
+		// A second call, after the link is gone, does nothing.
+		closes[0]!();
+		second.close();
+		await server.close();
+	});
+
 	it("takes frames of at most 1 MiB unless links.options says otherwise (Opus's audit H2)", async () => {
 		const server = await served({}, { config: { links: { path: "/chord" } } });
 		try {

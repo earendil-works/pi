@@ -8,7 +8,10 @@ import {
 	LinesBlock,
 	Markdown,
 	patchLines,
+	pressVerb,
 	textLines,
+	upperFirst,
+	usePointerKind,
 } from "@p2/app/v1/web";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { WorkspaceResult } from "./protocol.ts";
@@ -129,6 +132,7 @@ export function WorkspaceFile({
 	/** Send one comment on its own; absent when the viewer cannot send. */
 	onSendOne?: (comment: ReviewComment) => void;
 }) {
+	const pointer = usePointerKind();
 	const slash = path.lastIndexOf("/");
 	const name = path.slice(slash + 1);
 	const preview = filePreview(name);
@@ -411,7 +415,7 @@ export function WorkspaceFile({
 				</div>
 			</div>
 			{commentable && !comments.length && !open && lines?.length ? (
-				<p className="workspace-hint">Tap line numbers to comment.</p>
+				<p className="workspace-hint">{upperFirst(pressVerb(pointer))} line numbers to comment.</p>
 			) : null}
 			{content}
 		</div>

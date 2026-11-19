@@ -1,6 +1,7 @@
 #!/bin/sh
-# Builds build/Pi.app from the Swift package: the binary, Info.plist, the icon, an ad-hoc signature (no Developer ID
-# yet). CONFIG=release for an optimized build.
+# Builds build/Pi.app from the Swift package: the binary, Sparkle.framework, Info.plist, the icon, an ad-hoc
+# signature. CONFIG=release for an optimized build. scripts/package-app.sh turns it into a release.
+# Without p2 in its resources and without SUFeedURL, the app runs a checkout and never updates itself.
 set -eu
 cd "$(dirname "$0")/.."
 config="${CONFIG:-debug}"
@@ -14,7 +15,9 @@ if [ ! -f build/AppIcon.icns ] || [ scripts/make-icon.swift -nt build/AppIcon.ic
 fi
 app=build/Pi.app
 rm -rf "$app" build/P2.app
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks"
+# ditto keeps the framework's symlinks (Versions/Current), which codesign requires.
+ditto "$(dirname "$bin")/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
 # SwiftPM records the deployment target (14.0) as the SDK the binary was built with, and AppKit then draws the
 # window chrome of that release: small, closely spaced window buttons and a 52-point toolbar instead of the current
 # ones. Record the real SDK.

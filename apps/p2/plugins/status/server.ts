@@ -15,16 +15,17 @@ import {
 import { Hosts, serverOf } from "@p2/app/v1/server";
 import { ReportFields, SessionMetrics, SessionStatus, type Status, StatusStore, WorkerControl } from "./contract.ts";
 
-/** The latest report of each session's worker, with the generation that sent it. 2: `work`. */
+/** The latest report of each session's worker, with the generation that sent it. 2: `work`. 3: `failure`. */
 const Reports = defineTypedState("p2.status-reports", {
 	schema: obj({ reports: record(obj({ generation: num(), ...ReportFields })) }),
-	version: 2,
+	version: 3,
 	initial: () => ({ reports: {} }),
 });
 
 /**
- * `SessionStatus` 1: pages read statuses without `work`; a worker built then reports none (its conversations show
- * as busy without a step).
+ * `SessionStatus` 1: pages read statuses without `work` or `failure`; a worker built then reports neither (its
+ * conversations show as busy without a step). 2: pages read statuses without `failure`; a worker built then reports
+ * none (its main conversation's failures show as idle).
  */
 const STATUS_ACCEPTS: AcceptsTable<typeof SessionStatus> = {
 	1: {
@@ -32,11 +33,25 @@ const STATUS_ACCEPTS: AcceptsTable<typeof SessionStatus> = {
 			reader: {
 				statuses: (statuses) =>
 					Object.fromEntries(
-						Object.entries(statuses).map(([session, { work: _work, ...status }]) => [session, status]),
+						Object.entries(statuses).map(([session, { work: _work, failure: _failure, ...status }]) => [
+							session,
+							status,
+						]),
 					),
 			},
 		},
 		methods: { report: { args: (old) => ({ ...old, work: {} }) } },
+	},
+	2: {
+		state: {
+			reader: {
+				statuses: (statuses) =>
+					Object.fromEntries(
+						Object.entries(statuses).map(([session, { failure: _failure, ...status }]) => [session, status]),
+					),
+			},
+		},
+		methods: { report: { args: (old) => old } },
 	},
 };
 
@@ -72,7 +87,7 @@ export default defineFacet((host) => {
 		);
 		return {
 			statuses,
-			report: async ({ session, generation, tasks, busy, work, usage }, ctx) => {
+			report: async ({ session, generation, tasks, busy, work, failure, usage }, ctx) => {
 				// A report of an older worker (one that exited while its report travelled) is dropped.
 				const worker = hosts.workers.value[session];
 				if (worker === undefined || !worker.running || worker.generation !== generation) return null;
@@ -82,6 +97,7 @@ export default defineFacet((host) => {
 						tasks,
 						busy: [...busy].sort((a, b) => a - b),
 						work,
+						...(failure ? { failure } : {}),
 						...(usage ? { usage } : {}),
 					};
 				}, ctx);
@@ -131,14 +147,27 @@ export default defineFacet((host) => {
 				};
 			}
 			if (isGuest(principal)) {
-				// As in Pi Mobile: whether it runs, its work and spend, never the worker's error text (paths, stacks).
+				// As in Pi Mobile: whether it runs, its work and spend, never an error's text (paths, stacks): the worker's,
+				// or a failed run's detail.
 				const statusesView = deriveTyped(self, [store.statuses], ([statuses]) =>
 					Object.fromEntries(
 						Object.keys(principal.sessions).flatMap((session) => {
 							const status = statuses[session];
 							if (status === undefined) return [];
-							const { running, tasks, busy, work, usage } = status;
-							return [[session, { running, tasks, busy, work, ...(usage === undefined ? {} : { usage }) }]];
+							const { running, tasks, busy, work, failure, usage } = status;
+							return [
+								[
+									session,
+									{
+										running,
+										tasks,
+										busy,
+										work,
+										...(failure === undefined ? {} : { failure: { reason: failure.reason } }),
+										...(usage === undefined ? {} : { usage }),
+									},
+								],
+							];
 						}),
 					),
 				);

@@ -10,14 +10,17 @@ import { BACKGROUND_CONTEXT, contribute, defineFacet, type HeldIn, liveIn } from
 import {
 	CheckIcon,
 	closeLayers,
+	pressVerb,
 	SettingsSections,
 	Sheet,
 	Slots,
+	upperFirst,
 	useCanWrite,
 	useComposerState,
 	useObject,
 	useOptimisticCall,
 	useOwner,
+	usePointerKind,
 	useReadable,
 	useRoute,
 	useSheet,
@@ -371,6 +374,7 @@ function VoiceChip() {
  * guest's has the state and its own pause only (the voice is the owner's).
  */
 function VoiceSheet({ config, owner, onClose }: { config: VoiceConfig; owner: boolean; onClose: () => void }) {
+	const pointer = usePointerKind();
 	const { session, conversation = 1 } = useRoute();
 	const input = useMemo(() => (session ? { session, conversation } : undefined), [session, conversation]);
 	const { ownerMode, voice: shared } = useVoiceMode(input);
@@ -545,7 +549,7 @@ function VoiceSheet({ config, owner, onClose }: { config: VoiceConfig; owner: bo
 					</section>
 				))}
 			</div>
-			<p className="muted small">Tap a voice, or choose a language, to hear it.</p>
+			<p className="muted small">{upperFirst(pressVerb(pointer))} a voice, or choose a language, to hear it.</p>
 		</Sheet>
 	);
 }

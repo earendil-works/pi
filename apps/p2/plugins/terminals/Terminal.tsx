@@ -1,6 +1,7 @@
 import type { Held } from "@p2/app/v1";
 import { BACKGROUND_CONTEXT, whenLive } from "@p2/app/v1";
 import {
+	APPLE,
 	browserEnvironment,
 	CloseIcon,
 	HideIcon,
@@ -9,6 +10,8 @@ import {
 	PanelBottomIcon,
 	PanelSideIcon,
 	PlusIcon,
+	type PointerKind,
+	pointerKind,
 	type ReconnectLink,
 	type Route,
 	type SocketEvents,
@@ -94,6 +97,19 @@ export function withTerminal(route: Route): Route {
 	return terminalPlacement() === "bottom"
 		? { ...route, terminal: "", startTerminal: true }
 		: { ...route, workspace: { tab: "terminal", directory: route.workspace?.directory ?? "", startTerminal: true } };
+}
+
+/**
+ * How to paste without clipboard access: a long press opens the field's Paste menu; the browser's own paste key goes
+ * past the terminal's key encoding (Cmd+V on Apple's, Ctrl+Shift+V elsewhere, as #keyDown leaves them).
+ */
+function pasteHint(kind: PointerKind): string {
+	const key = APPLE ? "⌘V" : "Ctrl+Shift+V";
+	return kind === "touch"
+		? "Long-press the terminal to paste."
+		: kind === "mouse"
+			? `Press ${key} in the terminal to paste.`
+			: `Long-press the terminal or press ${key} to paste.`;
 }
 
 /** Whether the row of extra keys shows. Kept per browser; by default only on touch screens. */
@@ -1379,7 +1395,7 @@ export function TerminalView({
 	const pasteClipboard = () => {
 		void session.current?.pasteClipboard().then(
 			() => setPasteNotice(""),
-			() => setPasteNotice("Clipboard unavailable. Long-press the terminal to paste."),
+			() => setPasteNotice(`Clipboard unavailable. ${pasteHint(pointerKind())}`),
 		);
 	};
 	const toggleKeys = () => {

@@ -4,14 +4,18 @@ import { type Contract, contractData } from "../../src/contracts/contract.ts";
 import {
 	arr,
 	bytes,
+	event,
 	evolve,
 	type Implementation,
 	int,
+	keyed,
 	local,
+	memberNames,
 	method,
 	nul,
 	obj,
 	type ParamsOf,
+	queries,
 	remote,
 	str,
 	union,
@@ -52,6 +56,36 @@ describe("contract handles", () => {
 			return [new WeakRef(contract), new WeakRef(contractData(contract))];
 		})();
 		await expectCollected(...refs);
+	});
+});
+
+describe("member names", () => {
+	it("lists a remote variant's state members, methods and event members of the current version", () => {
+		expect(memberNames(Notes, "editor")).toEqual({ state: ["notes"], methods: ["add", "clear"], events: [] });
+		expect(memberNames(Notes, "reader")).toEqual({ state: ["notes"], methods: [], events: [] });
+		const next = evolve(Notes, (e) => e.addState("editor", "count", int()).removeMethod("clear"));
+		expect(memberNames(next, "editor")).toEqual({ state: ["notes", "count"], methods: ["add"], events: [] });
+	});
+
+	it("lists a local contract's, without its keyed and queries members", () => {
+		const Store = local("names.store", {
+			version: 1,
+			params: {},
+			members: {
+				count: int(),
+				notes: keyed(str()),
+				rows: queries(obj({ id: str() }), { one: obj({ id: str() }) }),
+				ticked: event(int()),
+				add: method(int()),
+			},
+		});
+		expect(memberNames(Store)).toEqual({ state: ["count"], methods: ["add"], events: ["ticked"] });
+	});
+
+	it("refuses a variant the contract does not have, and a copy of a contract", () => {
+		expect(() => memberNames(Notes, "owner")).toThrow('notes: no variant "owner"');
+		expect(() => memberNames(Notes)).toThrow('notes: no variant "members"');
+		expect(() => memberNames({ ...Notes }, "editor")).toThrow("not a declared contract");
 	});
 });
 

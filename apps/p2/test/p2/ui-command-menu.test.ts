@@ -2,8 +2,9 @@
 // Ctrl elsewhere, emulated through navigator.platform) from anywhere and from the composer, focus and caret back on
 // close, a key a focused component consumed (the terminal's Ctrl+K) left alone, filtering and ranking, the keys, pages
 // with Backspace and Back, the target chip, and the sessions' and the chat's commands (new, switch, rename, archive and
-// restore, session search, change model, thinking level, default model, current model as default), the footer's model
-// links that open the model pages, for the owner and a guest. Fake provider with a
+// restore, session search, change model, thinking level, default model, current model as default), a sidebar item's
+// menu on a phone's long press with Stop run and Archive subagent, the footer's model links that open the model pages,
+// for the owner and a guest. Fake provider with a
 // second, reasoning model from models.json and a key in auth.json (the pickers list signed-in providers only);
 // disposable data, every test makes its own sessions.
 
@@ -16,6 +17,7 @@ import { Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
+import { SessionStatus } from "../../plugins/status/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
 import { localSystem, terminalDaemon } from "../../plugins/terminals/daemon.ts";
 import { connectTerminalHost } from "../../plugins/terminals/detached.ts";
@@ -219,9 +221,9 @@ describe("command menu", { skip: !browserTests }, () => {
 		await browser.call("Input.dispatchMouseEvent", { type: "mouseMoved", ...point });
 	};
 
-	/** The selector of a session's main row in the sidebar's Recents. */
+	/** The selector of a session's item in the sidebar's sessions without a project (every fixture session is one). */
 	const sidebarRow = (id: string) =>
-		`.sidebar-section[data-key=recent] .nav-row:has(> a.session-main[href="/s/${id}"])`;
+		`.sidebar-section[data-key=other] .nav-row:has(> a.session-main[href="/s/${id}"])`;
 
 	describe("keys and focus", () => {
 		it("opens and closes with Cmd+K on macOS, Ctrl+K elsewhere, from the composer, and gives the composer its caret back", async () => {
@@ -348,6 +350,8 @@ describe("command menu", { skip: !browserTests }, () => {
 			const id = await create("Filtering");
 			await openSession(id, "Filtering");
 			await openMenu();
+			// Rows behind `Shown` wrappers render once their state arrived: count once the last of them (Archive session) shows.
+			await browser.wait(`${TITLES}.includes('Archive session') && ${COUNTED}`);
 			const all = await menu();
 			assert.equal(all?.chip, "Session · Filtering");
 			const total = all!.groups.flatMap(([, rows]) => rows).length;
@@ -534,7 +538,12 @@ describe("command menu", { skip: !browserTests }, () => {
 			// session shown before the list page.
 			await browser.wait(`document.activeElement === document.querySelector('${COMPOSER}')`);
 			const search = 'input[aria-label="Search sessions and messages"]';
-			await browser.click(".sidebar-section[data-key=recent] a.group-label");
+			// The Archive's list page, in the page: its link is below this file's many sessions.
+			const archive = ".sidebar-section[data-key=archive] a.group-label";
+			await browser.evaluate(
+				`document.querySelector(${JSON.stringify(archive)}).scrollIntoView({ block: 'center' })`,
+			);
+			await browser.click(archive);
 			await browser.wait(`document.querySelector(${JSON.stringify(search)})`);
 			await browser.evaluate(`document.querySelector(${JSON.stringify(search)}).focus()`);
 			await openMenu();
@@ -669,6 +678,94 @@ describe("command menu", { skip: !browserTests }, () => {
 			assert.equal((await menu())?.chip, "Session · Open one");
 			await press("Escape");
 			await browser.wait(CLOSED);
+		});
+
+		it("opens a session's and a subagent's menu with a long press on a phone: Stop run stops that target's run, Archive subagent archives it", async () => {
+			const session = await create("Long press");
+			const main = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+			const list = await holdIn(owner, Subagents, {}, "reader");
+			const status = await holdIn(owner, SessionStatus, {}, "reader");
+			await main.send({ text: "subagent", requestId: "press-spawn" }, BACKGROUND_CONTEXT);
+			const helper = (await until(list.children, (value) => value?.[session]?.length === 1))![session]![0]!;
+			const busy = (conversations: number[]) =>
+				until(status.statuses, (states) => states?.[session]?.busy.toSorted().join() === conversations.join());
+			await busy([]);
+			const sub = await holdIn(owner, Chat, { session, conversation: helper.conversationId }, "participant");
+			const sessionItem = `document.querySelector(${JSON.stringify(sidebarRow(session))})`;
+			const helperItem = `[...document.querySelectorAll('.session-row[data-session="${session}"] .conversation-row')].find((e) => e.querySelector('.session-title')?.textContent === 'helper')`;
+			/** Long-presses the item `expression` evaluates to and waits for the menu on `chip`, its rows settled. */
+			const longPress = async (expression: string, chip: string) => {
+				// Once the drawer settled: no finite animation runs (pi's dots run forever).
+				await browser.wait(
+					`(${expression}).getBoundingClientRect().left >= 0 && !document.getAnimations().some((a) => a.playState === 'running' && a.effect?.getTiming().iterations !== Infinity)`,
+				);
+				const point = await browser.evaluate<{ x: number; y: number }>(
+					`(() => { const r = (${expression}).querySelector('.session-title').getBoundingClientRect(); return { x: r.left + 4, y: r.top + r.height / 2 }; })()`,
+				);
+				await browser.call("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [point] });
+				await new Promise((resolve) => setTimeout(resolve, 700));
+				await browser.call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+				await browser.wait(
+					`document.querySelector('.command-menu .command-chip')?.textContent===${JSON.stringify(chip)}`,
+				);
+				await browser.wait(COUNTED);
+			};
+			/** Taps the open menu's row `title` once it shows. */
+			const choose = async (title: string) => {
+				const option = `[...document.querySelectorAll('.command-menu [role=option]')].find((o) => o.querySelector('.command-title')?.textContent === ${JSON.stringify(title)})`;
+				await browser.wait(option);
+				await browser.evaluate(`${option}.click()`);
+				await browser.wait(CLOSED);
+			};
+			// Long enough to outlast the test: the fake provider echoes it at 200 tokens a second.
+			const long = `slow ${"run ".repeat(4000)}`;
+			try {
+				await browser.metrics(390, 844);
+				await browser.call("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+				await browser.open(`${base}/s/${session}`);
+				await browser.click(".topbar button[aria-label=Sessions]");
+				await browser.wait(`document.querySelector('.app.drawer-open') && ${sessionItem}`);
+				const toggle = `${sessionItem}.querySelector('.subagent-toggle')`;
+				await browser.wait(toggle);
+				if ((await browser.evaluate<string>(`${toggle}.getAttribute('aria-expanded')`)) === "false")
+					await browser.evaluate(`${toggle}.click()`);
+				await browser.wait(helperItem);
+				// Both run: the subagent's Stop run stops its run only.
+				await main.send({ text: long, requestId: "press-main" }, BACKGROUND_CONTEXT);
+				await sub.send({ text: long, requestId: "press-helper" }, BACKGROUND_CONTEXT);
+				await busy([1, helper.conversationId].toSorted());
+				await longPress(helperItem, "Conversation · helper");
+				assert.equal(
+					await browser.evaluate<string>("location.pathname"),
+					`/s/${session}`,
+					"a long press opens nothing",
+				);
+				await choose("Stop run");
+				await busy([1]);
+				// The session's Stop run stops the rest.
+				await longPress(sessionItem, "Session · Long press");
+				await choose("Stop run");
+				await busy([]);
+				// Idle, neither offers Stop run; the idle subagent's Archive subagent archives it.
+				await longPress(sessionItem, "Session · Long press");
+				await browser.wait(`${TITLES}.includes('Archive session')`);
+				assert.ok(!(await browser.evaluate<string[]>(TITLES)).includes("Stop run"));
+				await press("Escape");
+				await browser.wait(CLOSED);
+				await longPress(helperItem, "Conversation · helper");
+				await browser.wait(`${TITLES}.includes('Archive subagent')`);
+				assert.ok(!(await browser.evaluate<string[]>(TITLES)).includes("Stop run"));
+				await choose("Archive subagent");
+				await browser.wait(
+					`${sessionItem}.closest('.session-row').querySelector('.subagent-stored .session-title')?.textContent === '1 archived'`,
+				);
+				await until(list.children, (value) => value?.[session]?.[0]?.archived === true);
+			} finally {
+				await browser.call("Emulation.setTouchEmulationEnabled", { enabled: false });
+				// A failed step leaves the runs going: the fixture would wait for them on close.
+				await Promise.all([main, sub].map((chat) => chat.stop(BACKGROUND_CONTEXT).catch(() => {})));
+				for (const held of [main, sub, list, status]) held.release();
+			}
 		});
 
 		it("lists a command run from the menu in the Recent group next time", async () => {

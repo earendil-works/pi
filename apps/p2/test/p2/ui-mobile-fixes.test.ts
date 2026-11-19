@@ -270,8 +270,8 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		await child.send({ text: "zebrafish unique words", requestId: "direct" }, BACKGROUND_CONTEXT);
 		await until(child.view, answered("Echo: zebrafish unique words"), 30_000);
 		await browser.metrics(1280, 900);
-		// Recents' list page searches messages too, subagents' included.
-		await browser.open(url("/list/recent"));
+		// The list page of the sessions without a project searches messages too, subagents' included.
+		await browser.open(url("/list/other"));
 		const search = 'input[aria-label="Search sessions and messages"]';
 		await browser.wait(`document.querySelector('${search}') && !document.querySelector('.offline')`);
 		await browser.evaluate(input(search, "zebrafish"));
@@ -362,6 +362,12 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		const second = await sessions.create({ cwd: fixture.workspace, title: "Focus second" }, BACKGROUND_CONTEXT);
 		const focused = `document.activeElement === document.querySelector('${COMPOSER}')`;
 		const row = (scope: string, session: string) => `${scope} a.session-main[href="/s/${session}"]`;
+		/** Presses Enter, as a keyboard does. */
+		const enter = async () => {
+			const key = { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 };
+			await browser.call("Input.dispatchKeyEvent", { type: "keyDown", text: "\r", ...key });
+			await browser.call("Input.dispatchKeyEvent", { type: "keyUp", ...key });
+		};
 		const arrive = async (session: string) => {
 			await browser.wait(`location.pathname === '/s/${session}' && document.querySelector('${COMPOSER}')`);
 		};
@@ -390,16 +396,31 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 			await click(".drawer", second.id);
 			await browser.wait(focused);
 			// From a list page, which has no composer, opened in the page: the session shown before it opens with its
-			// composer focused once it shows again.
-			await browser.click(".drawer .sidebar-section[data-key=recent] a.group-label");
+			// composer focused once it shows again. The folder's list page, from the command menu (Open folder…, its first
+			// folder: the most recently active one, the sessions' own).
+			const menuKey = {
+				key: "k",
+				code: "KeyK",
+				windowsVirtualKeyCode: 75,
+				modifiers: (await browser.evaluate<boolean>(`navigator.platform.startsWith('Mac')`)) ? 4 : 2,
+			};
+			await browser.call("Input.dispatchKeyEvent", { type: "rawKeyDown", ...menuKey });
+			await browser.call("Input.dispatchKeyEvent", { type: "keyUp", ...menuKey });
+			await browser.wait(`document.activeElement?.matches('.command-menu input')`);
+			await browser.call("Input.insertText", { text: "open folder" });
+			const selected = `document.querySelector('.command-menu [role=option][aria-selected=true] .command-title')?.textContent`;
+			await browser.wait(`${selected} === 'Open folder…'`);
+			await enter();
+			await browser.wait(
+				`document.querySelector('.command-menu .command-crumb')?.textContent === 'Folders' && ${selected}`,
+			);
+			await enter();
 			await browser.wait(`document.querySelector(${JSON.stringify(row(".list-page", second.id))})`);
 			await click(".list-page", second.id);
 			await browser.wait(focused);
 			// Enter on a focused row: the keyboard's click.
 			await browser.evaluate(`document.querySelector(${JSON.stringify(row(".drawer", first.id))}).focus()`);
-			const enter = { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 };
-			await browser.call("Input.dispatchKeyEvent", { type: "keyDown", text: "\r", ...enter });
-			await browser.call("Input.dispatchKeyEvent", { type: "keyUp", ...enter });
+			await enter();
 			await arrive(first.id);
 			await browser.wait(focused);
 			// Restoring an archived session opens it once the server has it, its composer focused then.

@@ -71,7 +71,7 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 			`[...document.querySelectorAll('[data-testid=activity]')].at(-1) && !document.querySelector('.offline')`,
 		);
 		// The session's other conversations are listed below it: the helper and the script's one-shot agent.
-		const conversations = `document.getElementById(document.querySelector('.sidebar-section[data-key=recent] .session-header.has-subagents .subagent-toggle').getAttribute('aria-controls'))`;
+		const conversations = `document.getElementById(document.querySelector('.sidebar-section[data-key=other] .session-header.has-subagents .subagent-toggle').getAttribute('aria-controls'))`;
 		assert.deepEqual(
 			await browser.evaluate<string[]>(
 				`[...${conversations}.querySelectorAll('.session-title')].map(e=>e.textContent)`,
@@ -103,7 +103,7 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 		assert.equal(await browser.evaluate(`document.querySelector('.subagent-bar .text-action')===null`), true);
 		// Its row in the sidebar is the selected one.
 		assert.equal(
-			await browser.evaluate(text(".sidebar-section[data-key=recent] .agent-row.active .session-title")),
+			await browser.evaluate(text(".sidebar-section[data-key=other] .agent-row.active .session-title")),
 			"Check ok",
 		);
 	});
@@ -115,9 +115,9 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 		await browser.evaluate(
 			`window.composerFocused = false; document.addEventListener('focusin', (e) => { if (e.target.matches('${COMPOSER}')) window.composerFocused = true; }, true)`,
 		);
-		const header = ".sidebar-section[data-key=recent] .session-header.has-subagents";
+		const header = ".sidebar-section[data-key=other] .session-header.has-subagents";
 		await browser.click(`${header} .subagent-toggle`);
-		await browser.click(`.sidebar-section[data-key=recent] a.agent-row[href$="/c/${agent.conversationId}"]`);
+		await browser.click(`.sidebar-section[data-key=other] a.agent-row[href$="/c/${agent.conversationId}"]`);
 		await browser.wait(
 			`location.pathname.endsWith('/c/${agent.conversationId}') && document.querySelector('.subagent-wrap .subagent-bar')`,
 		);
@@ -183,7 +183,7 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 		assert.equal(await browser.evaluate(text(".subagent-stored .session-title")), "1 archived");
 		assert.equal(
 			await browser.evaluate(
-				`document.querySelectorAll('.sidebar-section[data-key=recent] .subagent-row:not(.subagent-stored):not(.agent-row)').length`,
+				`document.querySelectorAll('.sidebar-section[data-key=other] .subagent-row:not(.subagent-stored):not(.agent-row)').length`,
 			),
 			1,
 		);
@@ -193,7 +193,7 @@ describe("one-shot agents and subagent archiving in the browser", { skip: !brows
 		await browser.wait(`document.querySelector('.subagent-stored')===null`);
 		assert.equal(
 			await browser.evaluate(
-				`document.querySelectorAll('.sidebar-section[data-key=recent] .subagent-row:not(.agent-row)').length`,
+				`document.querySelectorAll('.sidebar-section[data-key=other] .subagent-row:not(.agent-row)').length`,
 			),
 			1,
 		);

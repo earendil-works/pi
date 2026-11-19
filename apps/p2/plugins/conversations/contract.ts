@@ -55,7 +55,7 @@ const ReplySchema = union([
 			}),
 		),
 		truncated: bool(),
-		/** The owner's projects (`projects.json`): where each lives, by environment (null: this device). */
+		/** The owner's live projects: where each lives, by environment (null: this device), the default first. */
 		projects: arr(ProjectSchema),
 	}),
 	obj({ action: literal("send"), to: str(), submissionId: num() }),

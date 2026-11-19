@@ -91,7 +91,8 @@ final class ServerController {
 		update(healthy: healthy)
 	}
 
-	/// Runs the configured checkout's server as a child process.
+	/// Runs the configured checkout's server as a child process. The app's own copy first backs up the data directory
+	/// when its build changed (DataBackup).
 	func start() async {
 		guard config.source == .own, child == nil, !launching, ownership != .external, let checkout = config.checkout else { return }
 		launching = true
@@ -105,6 +106,7 @@ final class ServerController {
 		guard let node = config.node ?? LoginEnvironment.which("node", path: environment["PATH"]) else {
 			return set(.failed("No node on the login shell's PATH"), .none)
 		}
+		let backup = config.runsBundled ? await DataBackup.beforeUpgrade(dataDir: config.dataDir) : nil
 		let process = Process()
 		process.executableURL = URL(fileURLWithPath: node)
 		process.arguments = ["--import", "./src/source.ts", config.mode == .dev ? "scripts/dev.mjs" : "src/hosts/server.ts"]
@@ -113,6 +115,7 @@ final class ServerController {
 		process.standardInput = FileHandle.nullDevice
 		do {
 			let log = try openLog()
+			if let backup { log.write(Data("\n--- \(Date()) \(backup)\n".utf8)) }
 			log.write(Data("\n--- \(Date()) starting \(node) \(process.arguments!.joined(separator: " ")) in \(checkout.path)\n".utf8))
 			process.standardOutput = log
 			process.standardError = log
