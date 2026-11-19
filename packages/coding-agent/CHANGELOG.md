@@ -47,6 +47,7 @@
 - Fixed fullscreen scrolling in long sessions saturating a CPU core by re-rendering the whole transcript on every wheel event ([#9549](https://github.com/earendil-works/pi/issues/9549))
 - Fixed search in `/login`, `/logout`, `/scoped-models` and `/resume` keeping the highlight on the row scrolled to before typing, so Enter picked whichever entry landed there instead of the best match; a query now highlights the top match, as `/model` does ([#12245](https://github.com/earendil-works/pi/issues/12245), [#12246](https://github.com/earendil-works/pi/pull/12246) by [@acmerfight](https://github.com/acmerfight))
 - Fixed moving the cursor in a search field with Left, Right, Home or End moving the highlight back to the first entry in `/login`, `/logout`, `/model`, `/scoped-models`, `/resume`, `/settings`, the per-model settings model picker and `pi config` ([#12245](https://github.com/earendil-works/pi/issues/12245))
+- Fixed llama.cpp decision classifiers ignoring the image input that llama.cpp reports, such as Clef with its `mmproj`; `models.classify()` now sends their images to `/v1/systemone` ([#12282](https://github.com/earendil-works/pi/issues/12282))
 
 ### Removed
 
