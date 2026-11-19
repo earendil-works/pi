@@ -8,10 +8,15 @@ const STDOUT_FLUSH_TIMEOUT_MS = 1000;
  */
 export function flushStdout(): Promise<void> {
 	return new Promise((resolve) => {
-		const timer = setTimeout(resolve, STDOUT_FLUSH_TIMEOUT_MS);
-		process.stdout.write("", () => {
+		const finish = (error?: Error | null): void => {
 			clearTimeout(timer);
+			// A failed write, e.g. EPIPE on a closed stdout, also emits "error" after its callback. Keep the
+			// listener then, so that event is not an uncaught exception.
+			if (!error) process.stdout.off("error", finish);
 			resolve();
-		});
+		};
+		const timer = setTimeout(finish, STDOUT_FLUSH_TIMEOUT_MS);
+		process.stdout.on("error", finish);
+		process.stdout.write("", finish);
 	});
 }

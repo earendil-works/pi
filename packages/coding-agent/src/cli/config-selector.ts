@@ -32,6 +32,12 @@ export async function selectConfig(options: ConfigSelectorOptions): Promise<void
 		);
 		ui.setClearOnShrink(options.settingsManager.getClearOnShrink());
 		let resolved = false;
+		// The caller exits right after; flush the TUI's terminal mode resets first (#12133).
+		const stopUi = (): Promise<void> => {
+			ui.stop();
+			stopThemeWatcher();
+			return flushStdout();
+		};
 
 		const selector = new ConfigSelectorComponent(
 			options.resolvedPaths,
@@ -41,15 +47,11 @@ export async function selectConfig(options: ConfigSelectorOptions): Promise<void
 			() => {
 				if (!resolved) {
 					resolved = true;
-					ui.stop();
-					stopThemeWatcher();
-					resolve();
+					void stopUi().then(resolve);
 				}
 			},
 			() => {
-				ui.stop();
-				stopThemeWatcher();
-				void flushStdout().then(() => process.exit(0));
+				void stopUi().then(() => process.exit(0));
 			},
 			() => ui.requestRender(),
 			ui.terminal.rows,

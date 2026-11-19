@@ -23,6 +23,11 @@ export async function selectSession(
 		const keybindings = KeybindingsManager.create();
 		setKeybindings(keybindings);
 		let resolved = false;
+		// Callers may exit right after; flush the TUI's terminal mode resets first (#12133).
+		const stopUi = (): Promise<void> => {
+			ui.stop();
+			return flushStdout();
+		};
 
 		const selector = new SessionSelectorComponent(
 			currentSessionsLoader,
@@ -30,20 +35,17 @@ export async function selectSession(
 			(path: string) => {
 				if (!resolved) {
 					resolved = true;
-					ui.stop();
-					resolve(path);
+					void stopUi().then(() => resolve(path));
 				}
 			},
 			() => {
 				if (!resolved) {
 					resolved = true;
-					ui.stop();
-					resolve(null);
+					void stopUi().then(() => resolve(null));
 				}
 			},
 			() => {
-				ui.stop();
-				void flushStdout().then(() => process.exit(0));
+				void stopUi().then(() => process.exit(0));
 			},
 			() => ui.requestRender(),
 			{ showRenameHint: false, keybindings },

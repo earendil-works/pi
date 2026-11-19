@@ -1,3 +1,6 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { flushStdout } from "../src/utils/flush-stdout.ts";
 
@@ -37,5 +40,37 @@ describe("flushStdout", () => {
 		await vi.advanceTimersByTimeAsync(1);
 		await flushed;
 		expect(resolved).toBe(true);
+	});
+});
+
+describe("flushStdout before process.exit()", () => {
+	const fixture = fileURLToPath(new URL("./fixtures/flush-stdout-exit.ts", import.meta.url));
+
+	it("writes all queued output before exiting", async () => {
+		// More than a pipe buffer holds, so on POSIX the child's write is still queued when it exits.
+		const size = 4 * 1024 * 1024;
+		const child = spawn(process.execPath, [fixture, String(size)], { stdio: ["ignore", "pipe", "inherit"] });
+		let output = "";
+		child.stdout.setEncoding("utf8");
+		child.stdout.on("data", (chunk: string) => {
+			output += chunk;
+		});
+		const [code] = await once(child, "close");
+		expect(code).toBe(0);
+		expect(output.length).toBe(size + 3);
+		expect(output.endsWith("END")).toBe(true);
+	});
+
+	it("exits cleanly when stdout is closed", async () => {
+		const child = spawn(process.execPath, [fixture, "16"], { stdio: ["ignore", "pipe", "pipe"] });
+		child.stdout.destroy();
+		let stderr = "";
+		child.stderr.setEncoding("utf8");
+		child.stderr.on("data", (chunk: string) => {
+			stderr += chunk;
+		});
+		const [code] = await once(child, "exit");
+		expect(stderr).toBe("");
+		expect(code).toBe(0);
 	});
 });
