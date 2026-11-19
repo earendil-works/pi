@@ -67,6 +67,17 @@ describe("session selector search selection", () => {
 		expect(selected).toEqual(["/tmp/login.jsonl"]);
 	});
 
+	it("keeps the selection when a cursor key leaves the query unchanged", async () => {
+		const sessions = [makeSession("login", "fix login", 6000), makeSession("logout", "fix logout", 5000)];
+		const list = await createSelector(sessions, []);
+
+		for (const char of "fix") list.handleInput(char);
+		list.handleInput("\x1b[B");
+		list.handleInput("\x1b[D"); // Left
+
+		expect(list.getSelectedSessionPath()).toBe("/tmp/logout.jsonl");
+	});
+
 	it("keeps the top row selected when sessions arrive after typing a query", async () => {
 		const sessions = [makeSession("login", "fix login", 6000), makeSession("docs", "docs", 3000)];
 		const list = await createSelector(sessions, []);

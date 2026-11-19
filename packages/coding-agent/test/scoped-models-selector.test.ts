@@ -155,4 +155,20 @@ describe("scoped models selector", () => {
 
 		expect(models.map((model) => model.enabled)).toEqual([false, true, true, true]);
 	});
+
+	it("keeps the selection when a cursor key leaves the query unchanged", async () => {
+		const models = [
+			{ id: "gpt-4o", name: "GPT-4o", enabled: true },
+			{ id: "gpt-4o-mini", name: "GPT-4o mini", enabled: true },
+			{ id: "claude", name: "Claude", enabled: true },
+		];
+		const selector = await createSelector(models);
+
+		for (const char of "gpt") selector.handleInput(char);
+		selector.handleInput("\x1b[B");
+		selector.handleInput("\x1b[D"); // Left
+		selector.handleInput("\r");
+
+		expect(models.map((model) => model.enabled)).toEqual([true, false, true]);
+	});
 });

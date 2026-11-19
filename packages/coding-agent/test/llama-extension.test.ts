@@ -540,6 +540,69 @@ describe("llama.cpp extension", () => {
 		]);
 	});
 
+	// #12282: decision models that advertise image input were registered as text-only
+	it("sends images to decision models that advertise image input as data URLs", async () => {
+		const requests: Array<{ headers: Record<string, unknown>; body: unknown }> = [];
+		const { url } = await listen((request, response) => {
+			let body = "";
+			request.on("data", (chunk) => {
+				body += chunk;
+			});
+			request.on("end", () => {
+				requests.push({ headers: request.headers, body: JSON.parse(body) });
+				json(response, { answers: { screenshot: { type: "noul", noul: 0.9 } } });
+			});
+		});
+
+		const controller = createLlamaProvider();
+		controller.setCatalog(
+			[
+				{
+					id: "clef",
+					status: { value: "loaded" },
+					architecture: { input_modalities: ["text", "image"], output_modalities: ["decisions"] },
+				},
+				// The next-token fallback cannot take images, whatever the model reads.
+				{
+					id: "vision-chat",
+					status: { value: "loaded" },
+					architecture: { input_modalities: ["text", "image"], output_modalities: ["text"] },
+				},
+			],
+			url,
+		);
+		const classifiers = controller.provider.getAllModels?.().filter((model) => model.type === "classifier");
+		expect(classifiers?.map((model) => [model.id, model.input])).toEqual([
+			["clef", ["text", "image"]],
+			["vision-chat", ["text"]],
+		]);
+
+		const clef = classifiers?.[0];
+		if (clef?.type !== "classifier") throw new Error("missing decision classifier model");
+		const result = await controller.provider.classify!(
+			clef,
+			{
+				state: { task: "Check the screenshot." },
+				images: [{ type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" }],
+				questions: {
+					screenshot: { type: "bool", instructions: "Is this a screenshot?", criteria: { true: "", false: "" } },
+				},
+			},
+			{ apiKey: "local" },
+		);
+
+		expect(result.errorMessage).toBeUndefined();
+		expect(result.answers.screenshot).toEqual({ type: "bool", probability: 0.9 });
+		expect(requests).toHaveLength(1);
+		expect(requests[0]?.headers["typesafe-danger-zone-images"]).toBeUndefined();
+		expect(requests[0]?.body).toMatchObject({
+			model: "clef",
+			state: { task: "Check the screenshot." },
+			images: ["data:image/png;base64,iVBORw0KGgo="],
+		});
+		expect(requests[0]?.body).not.toHaveProperty("assets");
+	});
+
 	it("lists decision models that also output text for chat", () => {
 		const controller = createLlamaProvider();
 		controller.setCatalog(
