@@ -4395,8 +4395,8 @@ export class InteractiveMode {
 	}
 
 	/**
-	 * Render the current branch. Tree navigation passes `populateHistory: false`, so moving around the
-	 * tree does not add the branch's prompts to editor history again on every navigation.
+	 * Render the current branch into the chat.
+	 * @param options.populateHistory Add the branch's user prompts to editor history (default: true)
 	 */
 	renderInitialMessages(options: { populateHistory?: boolean } = {}): void {
 		const entries = this.sessionManager.buildContextEntries();

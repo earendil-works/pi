@@ -1,5 +1,6 @@
 import { Container } from "@earendil-works/pi-tui";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ExtensionBindings } from "../src/core/agent-session.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import type { StatusIndicator } from "../src/modes/interactive/components/status-indicator.ts";
@@ -151,6 +152,35 @@ describe("InteractiveMode tree navigation history", () => {
 		const { ui, select } = createTreeUI();
 
 		await select();
+
+		expect(ui.renderInitialMessages).toHaveBeenCalledExactlyOnceWith({ populateHistory: false });
+	});
+
+	it("re-renders without adding prompts to editor history when an extension navigates the tree", async () => {
+		const bindExtensions = vi.fn(async (_bindings: ExtensionBindings) => {});
+		const ui = {
+			session: {
+				bindExtensions,
+				navigateTree: vi.fn(async () => ({ cancelled: false })),
+				resourceLoader: { getThemes: () => ({ themes: [] }) },
+			},
+			createExtensionUIContext: vi.fn(() => ({})),
+			setupAutocompleteProvider: vi.fn(),
+			setupExtensionShortcuts: vi.fn(),
+			showLoadedResources: vi.fn(),
+			showStartupNoticesIfNeeded: vi.fn(),
+			chatContainer: new Container(),
+			editor: { getText: () => "", setText: vi.fn() },
+			renderInitialMessages: vi.fn(),
+			showStatus: vi.fn(),
+			flushCompactionQueue: vi.fn(async () => {}),
+		};
+		const bindCurrentSessionExtensions = Reflect.get(InteractiveMode.prototype, "bindCurrentSessionExtensions") as (
+			this: typeof ui,
+		) => Promise<void>;
+		await bindCurrentSessionExtensions.call(ui);
+
+		await bindExtensions.mock.calls[0][0].commandContextActions!.navigateTree("target");
 
 		expect(ui.renderInitialMessages).toHaveBeenCalledExactlyOnceWith({ populateHistory: false });
 	});
