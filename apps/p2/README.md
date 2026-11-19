@@ -197,7 +197,7 @@ inherited environment and terminal escapes; a connected server retains full auth
 
 ### Owner testing on slayer
 
-From `/home/badlogic/pi-private/apps/p2` (no server restart needed):
+From `/home/badlogic/pi/apps/p2` (no server restart needed):
 
 ```sh
 ~/.local/bin/node26 --import ./src/source.ts src/hosts/tui.ts

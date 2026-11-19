@@ -107,7 +107,7 @@ P2_FAKE=1 npm start          # http://127.0.0.1:8788, data in ~/.pi/p2
 ## Dev mode
 
 ```sh
-cd /home/badlogic/pi-private/apps/p2
+cd /home/badlogic/pi/apps/p2
 export PATH=/home/badlogic/node-v24.4.1-linux-x64/bin:$PATH
 # The proxy sets X-P2-Proxy-Secret: 1 on every request (never an owner grant).
 P2_ALLOWED_HOSTS=p2.mariozechner.at P2_PUBLIC_URL=https://p2.mariozechner.at \
