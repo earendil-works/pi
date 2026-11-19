@@ -5,10 +5,12 @@
 ### Breaking Changes
 
 - Extension components: `render()` now returns `readonly string[]`, and `Container` returns the same cached array while its children are unchanged. Extensions that modify render output in place, including `super.render()` in a `Container` subclass or an embedded component's output, must copy it first ([#9549](https://github.com/earendil-works/pi/issues/9549))
+- SDK: `AgentSession.reload()` now returns `{ modelScopeDiagnostics }` instead of `void`. Callbacks typed to return `Promise<void>`, such as an extension `reload` binding, must await it instead of returning it ([#12277](https://github.com/earendil-works/pi/issues/12277))
 
 ### Added
 
 - Added `deepseek-v4.1-flash` and `deepseek-v4.1-flash-1017` to the Qwen Token Plan Individual providers, and per-plan key variables `QWEN_TOKEN_PLAN_TEAM_API_KEY`, `QWEN_TOKEN_PLAN_TEAM_CN_API_KEY`, `QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY`, and `QWEN_TOKEN_PLAN_INDIVIDUAL_CN_API_KEY`; the shared `QWEN_TOKEN_PLAN_API_KEY` and `QWEN_TOKEN_PLAN_CN_API_KEY` still work ([#11773](https://github.com/earendil-works/pi/issues/11773))
+- Added the SDK option `resolveScopedModels`, which `AgentSession.reload()` calls to resolve `scopedModels` again ([#12277](https://github.com/earendil-works/pi/issues/12277))
 
 ### Changed
 
@@ -45,6 +47,7 @@
 - Fixed `Could not restore model <provider>/<model>. Using <fallback>` being shown only at interactive startup. Resuming or forking into a session whose model no longer exists or has no login switched to another model without notice, and print, JSON and RPC modes never showed it. It is now reported in every mode, at startup and after `/resume`, `/fork` and RPC `switch_session` or `fork`
 - Fixed git and npm output, such as `Cloning into ...` or `added 12 packages`, being drawn over the interactive TUI when pi installed or refreshed packages during `/reload`, `/new`, `/resume` and `/fork`, including temporary `-e git:` and `-e npm:` packages. In interactive mode their output is now captured, and a failed install reports the end of it. Until the TUI starts, each install is announced as `Installing <source>...` on stderr instead of showing git and npm output. git and ssh can no longer prompt in interactive mode: a package that needs a typed password or passphrase fails with a hint to set up a credential helper or ssh agent, or to run `pi install <source>` once from the shell. `pi install` and `pi update` keep live output ([#11264](https://github.com/earendil-works/pi/issues/11264))
 - Fixed fullscreen scrolling in long sessions saturating a CPU core by re-rendering the whole transcript on every wheel event ([#9549](https://github.com/earendil-works/pi/issues/9549))
+- Fixed `/reload` and extension `ctx.reload()` leaving the scoped models stale after `enabledModels` changed, in interactive, print and RPC modes; `--models` still takes precedence ([#12277](https://github.com/earendil-works/pi/issues/12277), [#12278](https://github.com/earendil-works/pi/pull/12278) by [@haoqixu](https://github.com/haoqixu))
 
 ### Removed
 

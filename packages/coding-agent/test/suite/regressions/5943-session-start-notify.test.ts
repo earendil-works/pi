@@ -55,10 +55,12 @@ type ReloadCommandContext = {
 	session: {
 		isStreaming: boolean;
 		isCompacting: boolean;
-		reload: (options?: { beforeSessionStart?: () => void | Promise<void> }) => Promise<void>;
+		reload: (options?: {
+			beforeSessionStart?: () => void | Promise<void>;
+		}) => Promise<{ modelScopeDiagnostics: Array<{ message: string }> }>;
 		resourceLoader: { getThemes: () => { themes: [] } };
 		extensionRunner: unknown;
-		modelRegistry: { getError: () => string | undefined };
+		modelRuntime: { getError: () => string | undefined };
 	};
 	settingsManager: {
 		getHttpIdleTimeoutMs: () => number;
@@ -87,6 +89,8 @@ type ReloadCommandContext = {
 	setupAutocompleteProvider: () => void;
 	setupExtensionShortcuts: (runner: unknown) => void;
 	showLoadedResources: (options: unknown) => void;
+	updateAvailableProviderCount: () => void;
+	applyRuntimeSettings: () => void;
 	maybeSaveImplicitProjectTrustAfterReload: () => boolean;
 	showStatus: (message: string) => void;
 	showWarning: (message: string) => void;
@@ -126,10 +130,11 @@ function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {
 			isCompacting: false,
 			reload: async (options) => {
 				await options?.beforeSessionStart?.();
+				return { modelScopeDiagnostics: [] };
 			},
 			resourceLoader: { getThemes: () => ({ themes: [] }) },
 			extensionRunner: {},
-			modelRegistry: { getError: () => undefined },
+			modelRuntime: { getError: () => undefined },
 			...overrides.session,
 		},
 		settingsManager: {
@@ -161,6 +166,8 @@ function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {
 		setupAutocompleteProvider: overrides.setupAutocompleteProvider ?? (() => {}),
 		setupExtensionShortcuts: overrides.setupExtensionShortcuts ?? (() => {}),
 		showLoadedResources: overrides.showLoadedResources ?? (() => {}),
+		updateAvailableProviderCount: overrides.updateAvailableProviderCount ?? (() => {}),
+		applyRuntimeSettings: overrides.applyRuntimeSettings ?? (() => {}),
 		maybeSaveImplicitProjectTrustAfterReload: overrides.maybeSaveImplicitProjectTrustAfterReload ?? (() => false),
 		showStatus: overrides.showStatus ?? (() => {}),
 		showWarning: overrides.showWarning ?? (() => {}),
@@ -427,6 +434,7 @@ describe("regression #5943: session_start transient UI", () => {
 					events.push("reload");
 					await options?.beforeSessionStart?.();
 					events.push(`start:${context.hideThinkingBlock}`);
+					return { modelScopeDiagnostics: [] };
 				},
 			},
 			rebuildChatFromMessages: () => {
@@ -438,6 +446,30 @@ describe("regression #5943: session_start transient UI", () => {
 
 		expect(context.hideThinkingBlock).toBe(true);
 		expect(events).toEqual(["reload", "rebuild:true", "start:true"]);
+	});
+
+	// #12277: reload resolves the model scope again; the footer and warnings must follow it.
+	it("updates the provider count and shows model scope warnings after reload", async () => {
+		initTheme("dark", false);
+		const events: string[] = [];
+		const context = createReloadCommandContext({
+			session: {
+				reload: async () => ({ modelScopeDiagnostics: [{ message: 'No models match pattern "missing"' }] }),
+			},
+			updateAvailableProviderCount: () => {
+				events.push("provider count");
+			},
+			showWarning: (message) => {
+				events.push(`warning: ${message}`);
+			},
+			showError: (message) => {
+				events.push(`error: ${message}`);
+			},
+		});
+
+		await interactiveModePrototype.handleReloadCommand.call(context);
+
+		expect(events).toEqual(["provider count", 'warning: No models match pattern "missing"']);
 	});
 
 	it("keeps the reload blocker focused until async reload completes", async () => {
@@ -461,6 +493,7 @@ describe("regression #5943: session_start transient UI", () => {
 					await options?.beforeSessionStart?.();
 					markReloadWaiting();
 					await reloadFinished;
+					return { modelScopeDiagnostics: [] };
 				},
 			},
 			ui: {

@@ -874,13 +874,14 @@ export async function main(args: string[], options?: MainOptions) {
 			})),
 		];
 
-		const modelPatterns = parsed.models ?? settingsManager.getEnabledModels();
-		const { scopedModels, diagnostics: modelScopeDiagnostics } =
-			modelPatterns && modelPatterns.length > 0
-				? await resolveModelScopeWithDiagnostics(modelPatterns, modelRuntime, {
-						signal: AbortSignal.timeout(15_000),
-					})
+		// The session calls this again on reload, so changes to `enabledModels` apply without a restart (#12277).
+		const resolveScopedModels = async () => {
+			const modelPatterns = parsed.models ?? settingsManager.getEnabledModels();
+			return modelPatterns && modelPatterns.length > 0
+				? resolveModelScopeWithDiagnostics(modelPatterns, modelRuntime, { signal: AbortSignal.timeout(15_000) })
 				: { scopedModels: [], diagnostics: [] };
+		};
+		const { scopedModels, diagnostics: modelScopeDiagnostics } = await resolveScopedModels();
 		// Returned as diagnostics instead of printed: this factory runs again on /new, /resume and /fork,
 		// while the interactive TUI draws on the terminal (#11264).
 		diagnostics.push(...modelScopeDiagnostics);
@@ -915,6 +916,7 @@ export async function main(args: string[], options?: MainOptions) {
 			model: sessionOptions.model,
 			thinkingLevel: sessionOptions.thinkingLevel,
 			scopedModels: sessionOptions.scopedModels,
+			resolveScopedModels,
 			tools: sessionOptions.tools,
 			excludeTools: sessionOptions.excludeTools,
 			noTools: sessionOptions.noTools,

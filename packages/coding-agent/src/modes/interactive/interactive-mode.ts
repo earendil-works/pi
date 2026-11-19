@@ -6674,8 +6674,11 @@ export class InteractiveMode {
 		};
 
 		try {
-			await this.session.reload({ beforeSessionStart: restoreChatBeforeSessionStart });
+			const { modelScopeDiagnostics } = await this.session.reload({
+				beforeSessionStart: restoreChatBeforeSessionStart,
+			});
 			restoreChatBeforeSessionStart();
+			this.updateAvailableProviderCount();
 			this.keybindings.reload();
 			const activeHeader = this.customHeader ?? this.builtInHeader;
 			if (isExpandable(activeHeader)) {
@@ -6696,6 +6699,7 @@ export class InteractiveMode {
 			if (modelsJsonError) {
 				this.showError(`models.json error: ${modelsJsonError}`);
 			}
+			for (const diagnostic of modelScopeDiagnostics) this.showWarning(diagnostic.message);
 			this.showStatus(
 				savedImplicitProjectTrust
 					? "Reloaded keybindings, extensions, skills, prompts, themes, and context files; saved project trust"

@@ -118,6 +118,7 @@ import { type BeforeAgentStartTrigger, emitSessionShutdownEvent } from "./extens
 import { createToolNameMatcher, isMcpToolName } from "./mcp-servers.ts";
 import { type BashExecutionMessage, type CustomMessage, convertToLlm } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
+import type { ModelScopeDiagnostic, ResolveModelScopeResult } from "./model-resolver.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { NestedToolCallRunner } from "./nested-tool-calls.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
@@ -270,6 +271,8 @@ export interface AgentSessionConfig {
 	cwd: string;
 	/** Models to cycle through with Ctrl+P (from --models flag) */
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	/** Resolves `scopedModels` again on reload, after settings are reloaded. Without it, reload keeps the scope. */
+	resolveScopedModels?: () => Promise<ResolveModelScopeResult>;
 	/** Resource loader for extensions, skills, prompts, themes, context files, and system prompt */
 	resourceLoader: ResourceLoader;
 	/** SDK custom tools registered outside extensions */
@@ -412,6 +415,7 @@ export class AgentSession {
 	readonly settingsManager: SettingsManager;
 
 	private _scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	private readonly _resolveScopedModels?: () => Promise<ResolveModelScopeResult>;
 
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
@@ -524,6 +528,7 @@ export class AgentSession {
 		this.sessionManager = config.sessionManager;
 		this.settingsManager = config.settingsManager;
 		this._scopedModels = config.scopedModels ?? [];
+		this._resolveScopedModels = config.resolveScopedModels;
 		this._resourceLoader = config.resourceLoader;
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
@@ -3828,7 +3833,13 @@ export class AgentSession {
 		});
 	}
 
-	async reload(options?: { beforeSessionStart?: () => void | Promise<void> }): Promise<void> {
+	/**
+	 * Reload settings, resources, extensions and the model scope. Returns the warnings from resolving
+	 * the model scope, for the host to show.
+	 */
+	async reload(options?: {
+		beforeSessionStart?: () => void | Promise<void>;
+	}): Promise<{ modelScopeDiagnostics: ModelScopeDiagnostic[] }> {
 		if (this.isStreaming) {
 			throw new Error("Wait for the current response to finish before reloading.");
 		}
@@ -3852,6 +3863,9 @@ export class AgentSession {
 		this.syncQueueModesFromSettings();
 		resetApiProviders();
 		await this._resourceLoader.reload();
+		// Before session_start, so the new extensions see the new scope.
+		const modelScope = await this._resolveScopedModels?.();
+		if (modelScope) this._scopedModels = modelScope.scopedModels;
 		// Activate tools newly added to defaultTools. Removed ones stay active, and tools disabled
 		// during the session stay disabled unless the setting newly adds them.
 		const addedDefaultTools = getDefaultTools().filter((name) => !previousDefaultTools.has(name));
@@ -3870,6 +3884,7 @@ export class AgentSession {
 			this._extensionRunner.reportUnhandledMcpServers();
 			await this.extendResourcesFromExtensions("reload");
 		}
+		return { modelScopeDiagnostics: modelScope?.diagnostics ?? [] };
 	}
 
 	// =========================================================================
