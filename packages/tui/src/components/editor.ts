@@ -813,7 +813,9 @@ export class Editor implements Component, Focusable {
 					this.state.cursorLine = result.cursorLine;
 					this.setCursorCol(result.cursorCol);
 
-					if (this.autocompletePrefix.startsWith("/")) {
+					// Only the slash command menu submits. A Tab path menu also has a "/" prefix for an absolute
+					// path, but its menu is opened in "force" mode, which slash commands never use.
+					if (this.autocompleteState === "regular" && this.autocompletePrefix.startsWith("/")) {
 						this.cancelAutocomplete();
 						// Fall through to submit
 					} else {

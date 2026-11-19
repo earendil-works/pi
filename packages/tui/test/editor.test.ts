@@ -2291,6 +2291,28 @@ describe("Editor component", () => {
 			}
 		});
 
+		// Regression test for #12309: Enter on a Tab menu for an absolute path submitted the prompt.
+		it("Enter on a Tab menu for an absolute path completes it without submitting", async (t) => {
+			const baseDir = mkdtempSync(join(tmpdir(), "pi-editor-autocomplete-"));
+			t.after(() => rmSync(baseDir, { recursive: true, force: true }));
+			writeFileSync(join(baseDir, "file-one.md"), "text");
+			writeFileSync(join(baseDir, "file-two.md"), "text");
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const submitted: string[] = [];
+			editor.onSubmit = (text) => submitted.push(text);
+			editor.setAutocompleteProvider(new CombinedAutocompleteProvider([], process.cwd()));
+			const dir = baseDir.replaceAll("\\", "/");
+			editor.setText(`look at ${dir}/fi`);
+
+			editor.handleInput("\t");
+			await flushAutocomplete();
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+			editor.handleInput("\r");
+
+			assert.deepStrictEqual(submitted, []);
+			assert.strictEqual(editor.getText(), `look at ${dir}/file-one.md`);
+		});
+
 		it("ends unquoted trigger and debounce contexts at whitespace or CJK punctuation", async (t) => {
 			t.mock.timers.enable({ apis: ["setTimeout"] });
 			for (const separator of [" ", "\u3000", "，", "。"]) {
