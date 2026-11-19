@@ -2291,6 +2291,75 @@ describe("Editor component", () => {
 			}
 		});
 
+		// Regression test for #12309: Enter on a Tab menu for an absolute path submitted the prompt.
+		it("Enter on a Tab path menu with a / prefix completes without submitting", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const submitted: string[] = [];
+			editor.onSubmit = (text) => submitted.push(text);
+			editor.setAutocompleteProvider({
+				getSuggestions: async () => ({
+					items: [
+						{ value: "/tmp/x/file-one.md", label: "file-one.md" },
+						{ value: "/tmp/x/file-two.md", label: "file-two.md" },
+					],
+					prefix: "/tmp/x/fi",
+				}),
+				applyCompletion,
+			});
+			editor.setText("look at /tmp/x/fi");
+
+			editor.handleInput("\t");
+			await flushAutocomplete();
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+			editor.handleInput("\r");
+
+			assert.deepStrictEqual(submitted, []);
+			assert.strictEqual(editor.getText(), "look at /tmp/x/file-one.md");
+		});
+
+		it("Enter on an argument menu with a / prefix completes without submitting", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const submitted: string[] = [];
+			editor.onSubmit = (text) => submitted.push(text);
+			editor.setAutocompleteProvider(
+				new CombinedAutocompleteProvider(
+					[
+						{
+							name: "open",
+							getArgumentCompletions: (prefix) =>
+								prefix.startsWith("/") ? [{ value: "/tmp/alpha", label: "alpha" }] : null,
+						},
+					],
+					process.cwd(),
+				),
+			);
+
+			for (const char of "/open /tm") editor.handleInput(char);
+			await flushAutocomplete();
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+			editor.handleInput("\r");
+
+			assert.deepStrictEqual(submitted, []);
+			assert.strictEqual(editor.getText(), "/open /tmp/alpha");
+		});
+
+		it("Enter on a Tab slash command menu submits the command", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const submitted: string[] = [];
+			editor.onSubmit = (text) => submitted.push(text);
+			editor.setAutocompleteProvider(
+				new CombinedAutocompleteProvider([{ name: "model" }, { name: "session" }], process.cwd()),
+			);
+			editor.setText("/mo");
+
+			editor.handleInput("\t");
+			await flushAutocomplete();
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+			editor.handleInput("\r");
+
+			assert.deepStrictEqual(submitted, ["/model"]);
+		});
+
 		it("ends unquoted trigger and debounce contexts at whitespace or CJK punctuation", async (t) => {
 			t.mock.timers.enable({ apis: ["setTimeout"] });
 			for (const separator of [" ", "\u3000", "，", "。"]) {
