@@ -264,4 +264,32 @@ describe("OAuthSelectorComponent", () => {
 		selector.handleInput("\r");
 		expect(selected).toEqual(["openai"]);
 	});
+
+	it("keeps the selection when a cursor key leaves the query unchanged", () => {
+		const providers = ["OpenAI", "OpenCode Go", "OpenCode Zen"].map((name) => ({
+			id: name.toLowerCase().replace(" ", "-"),
+			name,
+			authType: "api_key" as const,
+		}));
+		const selector = new OAuthSelectorComponent(
+			"login",
+			providers,
+			() => {},
+			() => {},
+		);
+
+		for (const char of "open") selector.handleInput(char);
+		selector.handleInput("\x1b[B");
+		selector.handleInput("\x1b[B");
+		const selectedRow = () =>
+			stripAnsi(selector.render(120).join("\n"))
+				.split("\n")
+				.find((line) => line.includes("→"));
+		const before = selectedRow();
+		selector.handleInput("\x1b[D"); // Left
+		selector.handleInput("\x1b[H"); // Home
+
+		expect(before).not.toContain("OpenAI");
+		expect(selectedRow()).toBe(before);
+	});
 });
