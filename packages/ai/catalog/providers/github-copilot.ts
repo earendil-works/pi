@@ -114,7 +114,9 @@ export default defineProvider({
 	classifiers: () => [MICROSOFT_DECISION_1],
 	// Copilot's /responses treats a function tool without `strict` as strict and fills omitted optional arguments
 	// with "" or invented values (#12286); it accepts both `strict: false` and `strict: true` (checked 2026-11-19).
+	// Its Messages endpoint accepts strict tools on Claude and passes Claude's strict tool limit errors through.
 	compat: {
+		"anthropic-messages": { supportsStrictTools: true },
 		"openai-completions": { supportsStrictMode: true },
 		"openai-responses": { supportsStrictMode: true },
 	},
