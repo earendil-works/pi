@@ -650,10 +650,13 @@ class SessionList implements Component, Focusable {
 		}
 	}
 
-	/** Applies a key to the search query; a non-empty query selects the top row, the best match. */
+	/** Applies a key to the search query; a changed, non-empty query selects the top row, the best match. */
 	private handleSearchInput(keyData: string): void {
+		const previousQuery = this.searchInput.getValue();
 		this.searchInput.handleInput(keyData);
 		const query = this.searchInput.getValue();
+		// Cursor keys leave the query as it is and must not move the selection.
+		if (query === previousQuery) return;
 		this.filterSessions(query);
 		if (!query.trim()) return;
 		this.selectedIndex = 0;
