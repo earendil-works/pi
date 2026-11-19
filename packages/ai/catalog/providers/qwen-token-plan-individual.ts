@@ -1,4 +1,3 @@
-import { assertExactModelIds } from "../../scripts/model-data.ts";
 import { defineProvider } from "../define.ts";
 import { INTERNATIONAL_BASE_URL, QWEN_COMPLETIONS_COMPAT, qwenTokenPlanModels } from "./qwen-token-plan.ts";
 
@@ -25,16 +24,6 @@ export const INDIVIDUAL_MODEL_IDS = new Set<string>([
 
 export default defineProvider({
 	id: "qwen-token-plan-individual",
-	models: (ctx) => {
-		const models = qwenTokenPlanModels(ctx, "alibaba-token-plan", INTERNATIONAL_BASE_URL, INDIVIDUAL_MODEL_IDS);
-		if (ctx.strict) {
-			assertExactModelIds(
-				ctx.providerId,
-				INDIVIDUAL_MODEL_IDS,
-				models.map((model) => model.id),
-			);
-		}
-		return models;
-	},
+	models: (ctx) => qwenTokenPlanModels(ctx, "alibaba-token-plan", INTERNATIONAL_BASE_URL, INDIVIDUAL_MODEL_IDS),
 	compat: { "openai-completions": QWEN_COMPLETIONS_COMPAT },
 });
