@@ -2275,6 +2275,7 @@ describe("openai-codex streaming", () => {
 		});
 	});
 
+	// #12273: GPT-6.2 only caches the system prompt when it's part of input.
 	it("sends only response input deltas in websocket-cached mode", async () => {
 		const token = mockToken();
 		const sentBodies: unknown[] = [];
@@ -2369,8 +2370,8 @@ describe("openai-codex streaming", () => {
 		vi.stubGlobal("WebSocket", MockWebSocket);
 
 		const model: Model<"openai-codex-responses"> = {
-			id: "gpt-5.1-codex",
-			name: "GPT-5.1 Codex",
+			id: "gpt-6.2-sol",
+			name: "GPT-6.2 Sol",
 			api: "openai-codex-responses",
 			provider: "openai-codex",
 			baseUrl: "https://chatgpt.com/backend-api",
@@ -2423,11 +2424,16 @@ describe("openai-codex streaming", () => {
 		}).result();
 
 		expect(sentBodies).toHaveLength(2);
-		const firstBody = sentBodies[0] as { input: unknown[]; previous_response_id?: string; store?: boolean };
-		const secondBody = sentBodies[1] as { input: unknown[]; previous_response_id?: string; store?: boolean };
+		type SentBody = { input: unknown[]; instructions?: string; previous_response_id?: string; store?: boolean };
+		const [firstBody, secondBody] = sentBodies as [SentBody, SentBody];
+		expect(firstBody.instructions).toBeUndefined();
+		expect(secondBody.instructions).toBeUndefined();
 		expect(firstBody.store).toBe(false);
 		expect(firstBody.previous_response_id).toBeUndefined();
-		expect(firstBody.input).toEqual([{ role: "user", content: [{ type: "input_text", text: "Use the tool" }] }]);
+		expect(firstBody.input).toEqual([
+			{ role: "developer", content: firstContext.systemPrompt },
+			{ role: "user", content: [{ type: "input_text", text: "Use the tool" }] },
+		]);
 		expect(secondBody.store).toBe(false);
 		expect(secondBody.previous_response_id).toBe("resp_1");
 		expect(secondBody.input).toEqual([
@@ -2646,7 +2652,8 @@ describe("openai-codex streaming", () => {
 			expect(sentBodies[1].previous_response_id).toBe("resp_1");
 			expect(sentBodies[1].input).toEqual([{ role: "user", content: [{ type: "input_text", text: "Now finish" }] }]);
 			expect(sentBodies[2].previous_response_id).toBeUndefined();
-			expect(sentBodies[2].input).toHaveLength(3);
+			expect(sentBodies[2].input).toHaveLength(4);
+			expect(sentBodies[2].input[0]).toEqual({ role: "developer", content: "You are a helpful assistant." });
 			expect(sentBodies[2].input.at(-1)).toEqual({
 				role: "user",
 				content: [{ type: "input_text", text: "Now finish" }],
@@ -2831,10 +2838,14 @@ describe("openai-codex streaming", () => {
 
 		expect(capturedEncoding).toBe("zstd");
 		expect(capturedBody).toBeInstanceOf(Uint8Array);
-		const decoded = JSON.parse(Buffer.from(zstdDecompressSync(capturedBody as Uint8Array)).toString("utf8")) as {
-			input: Array<{ content: Array<{ text: string }> }>;
-		};
-		expect(decoded.input[0].content[0].text).toBe(largeText);
+		const decoded = JSON.parse(
+			Buffer.from(zstdDecompressSync(capturedBody as Uint8Array)).toString("utf8"),
+		) as Record<string, unknown>;
+		expect(decoded).not.toHaveProperty("instructions");
+		expect(decoded.input).toEqual([
+			{ role: "developer", content: "You are a helpful assistant." },
+			{ role: "user", content: [{ type: "input_text", text: largeText }] },
+		]);
 
 		capturedEncoding = null;
 		capturedBody = undefined;
