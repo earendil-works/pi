@@ -1020,6 +1020,58 @@ describe("openai-codex streaming", () => {
 		expect(requestedToolChoice).toBe("required");
 	});
 
+	// Regression test for https://github.com/earendil-works/pi/issues/12273
+	it("sends the system prompt as a leading developer item instead of instructions", async () => {
+		const token = mockToken();
+		const encoder = new TextEncoder();
+		const requestBodies: Array<Record<string, unknown> | null> = [];
+
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (_input: string | URL, init?: RequestInit) => {
+				requestBodies.push(decodeCodexRequestBody(init?.body));
+				return new Response(
+					new ReadableStream<Uint8Array>({
+						start(controller) {
+							controller.enqueue(encoder.encode(buildSSEPayload({ status: "completed" })));
+							controller.close();
+						},
+					}),
+					{ status: 200, headers: { "content-type": "text/event-stream" } },
+				);
+			}),
+		);
+
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-6.2-sol",
+			name: "GPT-6.2 Sol",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+		const messages = [{ role: "user" as const, content: "Say hello", timestamp: 1 }];
+
+		await streamOpenAICodexResponses(model, normalizeContext({ systemPrompt: "Be terse.", messages }), {
+			apiKey: token,
+			transport: "sse",
+		}).result();
+		await streamOpenAICodexResponses(model, normalizeContext({ messages }), {
+			apiKey: token,
+			transport: "sse",
+		}).result();
+
+		const userItem = { role: "user", content: [{ type: "input_text", text: "Say hello" }] };
+		expect(requestBodies[0]).not.toHaveProperty("instructions");
+		expect(requestBodies[0]?.input).toEqual([{ role: "developer", content: "Be terse." }, userItem]);
+		expect(requestBodies[1]).not.toHaveProperty("instructions");
+		expect(requestBodies[1]?.input).toEqual([userItem]);
+	});
+
 	it("sets Codex strict mode explicitly and honors constrained sampling", async () => {
 		const token = mockToken();
 		const encoder = new TextEncoder();
@@ -2427,7 +2479,10 @@ describe("openai-codex streaming", () => {
 		const secondBody = sentBodies[1] as { input: unknown[]; previous_response_id?: string; store?: boolean };
 		expect(firstBody.store).toBe(false);
 		expect(firstBody.previous_response_id).toBeUndefined();
-		expect(firstBody.input).toEqual([{ role: "user", content: [{ type: "input_text", text: "Use the tool" }] }]);
+		expect(firstBody.input).toEqual([
+			{ role: "developer", content: "You are a helpful assistant." },
+			{ role: "user", content: [{ type: "input_text", text: "Use the tool" }] },
+		]);
 		expect(secondBody.store).toBe(false);
 		expect(secondBody.previous_response_id).toBe("resp_1");
 		expect(secondBody.input).toEqual([
@@ -2646,7 +2701,7 @@ describe("openai-codex streaming", () => {
 			expect(sentBodies[1].previous_response_id).toBe("resp_1");
 			expect(sentBodies[1].input).toEqual([{ role: "user", content: [{ type: "input_text", text: "Now finish" }] }]);
 			expect(sentBodies[2].previous_response_id).toBeUndefined();
-			expect(sentBodies[2].input).toHaveLength(3);
+			expect(sentBodies[2].input).toHaveLength(4);
 			expect(sentBodies[2].input.at(-1)).toEqual({
 				role: "user",
 				content: [{ type: "input_text", text: "Now finish" }],
@@ -2834,7 +2889,7 @@ describe("openai-codex streaming", () => {
 		const decoded = JSON.parse(Buffer.from(zstdDecompressSync(capturedBody as Uint8Array)).toString("utf8")) as {
 			input: Array<{ content: Array<{ text: string }> }>;
 		};
-		expect(decoded.input[0].content[0].text).toBe(largeText);
+		expect(decoded.input[1].content[0].text).toBe(largeText);
 
 		capturedEncoding = null;
 		capturedBody = undefined;
