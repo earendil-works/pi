@@ -118,6 +118,7 @@ import {
 } from "@p2/app/v1/web";
 import {
 	createContext,
+	Fragment,
 	type ReactNode,
 	useCallback,
 	useContext,
@@ -135,6 +136,7 @@ import { DirectoryPicker, directoryPickerLayer } from "../envs/contract.web.tsx"
 import { Models } from "../models/contract.ts";
 import type { ResourceSnapshot } from "../models/resources.ts";
 import { type Session, Sessions } from "../sessions/contract.ts";
+import { PiDots } from "../sessions/contract.web.tsx";
 import { SessionMetrics, SessionStatus, WorkerControl } from "../status/contract.ts";
 import { type Child, conversationLocation, SubagentControl, Subagents } from "../subagents/contract.ts";
 import { openMain } from "../subagents/contract.web.ts";
@@ -858,6 +860,31 @@ function viewTarget(
 		: undefined;
 }
 
+/**
+ * The bar above the main conversation's composer while the session's subagents or one-shot agents run: pi's dots and
+ * their names, each opening its conversation. The main conversation idle shows no wheel, so this says work goes on.
+ */
+function RunningAgents({ agents, onOpen }: { agents: readonly Child[]; onOpen: (conversation: number) => void }) {
+	return (
+		<div className="composer-wrap subagent-wrap">
+			<div className="subagent-bar running-agents">
+				<PiDots />
+				<span className="running-agents-names">
+					{agents.length > 1 ? `${agents.length} agents running: ` : "Running: "}
+					{agents.map((agent, index) => (
+						<Fragment key={agent.conversationId}>
+							{index > 0 && ", "}
+							<button type="button" className="running-agent" onClick={() => onOpen(agent.conversationId)}>
+								{agent.name}
+							</button>
+						</Fragment>
+					))}
+				</span>
+			</div>
+		</div>
+	);
+}
+
 function SessionChat({ sessionId, conversationId }: { sessionId: string; conversationId: number }) {
 	const nav = useNavigation();
 	const openConversation = useCallback(
@@ -955,7 +982,17 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 			void nav.replace(conversationRoute(current, sessionId, main), current);
 	}, [children, child, conversationId, main, nav, sessionId]);
 	const workers = liveIn(objects.status, "reader");
-	const workerError = useReadable(workers?.statuses)?.[sessionId]?.error;
+	const worker = useReadable(workers?.statuses)?.[sessionId];
+	const workerError = worker?.error;
+	// The session's other agents that run while its main conversation shows (the main one's own work is in its transcript).
+	const busyAgents = worker?.busy;
+	const runningAgents = useMemo(
+		() =>
+			main === conversationId && busyAgents?.length
+				? (children?.[sessionId] ?? []).filter((agent) => busyAgents.includes(agent.conversationId))
+				: [],
+		[main, conversationId, busyAgents, children, sessionId],
+	);
 	const [activationError, setActivationError] = useState<string>();
 	const failure = workerError ?? activationError;
 	// A rejected reference is released rather than repeatedly asking a broken worker to start. Chat lingers
@@ -1571,7 +1608,9 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	const place = useChatScreen(
 		{
 			screen: conversationKey({ session: sessionId, conversation: conversationId }),
-			above: subagentBar,
+			above:
+				subagentBar ||
+				(runningAgents.length > 0 && <RunningAgents agents={runningAgents} onOpen={openConversation} />),
 			// A one-shot agent's view has no composer: its bar above has the Stop.
 			...(oneShot && canWrite
 				? {}

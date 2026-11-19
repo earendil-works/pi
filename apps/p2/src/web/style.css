@@ -2628,10 +2628,19 @@ button.diff-number:hover {
 	font-family: var(--mono);
 	font-size: var(--fs-xs);
 }
-.subagent-bar span {
+.subagent-bar > span:not(.pi-dots) {
 	flex: 1;
 	min-width: 0;
 	overflow-wrap: anywhere;
+}
+/* The main conversation's running agents (chat's RunningAgents): each name opens its conversation. */
+.running-agent {
+	padding: 0;
+	color: var(--text);
+	font: inherit;
+	text-decoration: underline dotted;
+	text-decoration-color: var(--faint);
+	text-underline-offset: 3px;
 }
 .subagent-bar .round {
 	place-items: center end;

@@ -226,6 +226,10 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		await browser.wait(
 			`document.querySelector('${header} > .nav-details > .background-work > .pi-dots') && !document.querySelector('${header} > .nav-marker > *')`,
 		);
+		// The main conversation's dock says which agent runs, with pi's dots; its subagent's view has its own bar instead.
+		await browser.wait(
+			`document.querySelector('.dock .running-agents > .pi-dots') && document.querySelector('.dock .running-agents .running-agent')?.textContent === ${JSON.stringify(child.name)}`,
+		);
 		await browser.click(`${header} .subagent-toggle`);
 		const subagentRow = `document.querySelector('.nav-row:has(> .subagent-row)')`;
 		await browser.wait(`!${conversations}.hidden && ${subagentRow}.querySelector('.nav-marker > .pi-dots')`);
@@ -233,6 +237,7 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		await browser.wait(
 			`location.pathname.endsWith('/c/${child.conversationId}') && document.querySelector('.subagent-row.active')`,
 		);
+		assert.equal(await browser.evaluate(`document.querySelector('.running-agents') === null`), true);
 		await childChat.stop(BACKGROUND_CONTEXT);
 		await browser.wait(`!document.querySelector('.sidebar-section[data-key=other] .pi-dots')`);
 		for (const held of [childChat, chat, agents, sessions]) held.release();

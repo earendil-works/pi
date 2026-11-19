@@ -1042,7 +1042,10 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
     reset, nothing to answer). A session's is its main conversation's, what wants the owner first: `failureOf`, then
     unread, then working (the main conversation only; owner decision: a running subagent must not hide that the session
     waits for the owner). While the status shows anything but working and some conversation runs, pi's dots (and the
-    count of running conversations, when more than one) show before the age (`BackgroundWork`, `.background-work`). Its main
+    count of running conversations, when more than one) show before the age (`BackgroundWork`, `.background-work`). The
+    open session's main conversation says the same above its composer (the chat's `RunningAgents`, `.running-agents`):
+    pi's dots and the running subagents' and one-shot agents' names, each opening its conversation; on a phone the
+    drawer is closed, and an idle main conversation shows no wheel. Its main
     conversation's last run failure comes from the session worker (`SessionStatus` 3's `failure`, below). A collapsed
     group or rollup sums up what it hides (`hidden`, `activityOf` in `model.ts`): pi's dots with the working count, a
     warning sign with the failed count (`FailedMark`), a blue unread count. The top bars' menu button (`menu-badge`
