@@ -545,7 +545,6 @@ export class InteractiveMode {
 
 	// Agent subscription unsubscribe function
 	private unsubscribe?: () => void;
-	private suspendSignalHandler?: () => void;
 	private signalCleanupHandlers: Array<() => void> = [];
 
 	// Track if editor is in bash mode (text starts with !)
@@ -967,6 +966,7 @@ export class InteractiveMode {
 		});
 		nextUi.setClearOnShrink(clearOnShrink);
 		nextUi.onDebug = onDebug;
+		nextUi.setSuspendSignalHandler(() => this.handleCtrlZ());
 		if (nextUi instanceof TuiMainScreen && this.mainScreenRenderState) {
 			nextUi.restoreRenderState(this.mainScreenRenderState);
 		}
@@ -1036,6 +1036,8 @@ export class InteractiveMode {
 		this.defaultEditor.onSubmit = (text) => this.handleStartupSubmit(text);
 		this.ui.setFocus(this.editor);
 
+		// An external SIGTSTP (kill -TSTP) restores the terminal like Ctrl+Z (#12272).
+		this.ui.setSuspendSignalHandler(() => this.handleCtrlZ());
 		// Start the UI before initializing extensions so session_start handlers can use interactive dialogs
 		this.ui.start();
 		this.isInitialized = true;
@@ -3229,7 +3231,7 @@ export class InteractiveMode {
 		// Register app action handlers
 		this.defaultEditor.onAction("app.clear", () => this.handleCtrlC());
 		this.defaultEditor.onCtrlD = () => this.handleCtrlD();
-		this.defaultEditor.onAction("app.suspend", () => this.suspend());
+		this.defaultEditor.onAction("app.suspend", () => this.handleCtrlZ());
 		this.defaultEditor.onAction("app.thinking.cycle", () => this.cycleThinkingLevel());
 		this.defaultEditor.onAction("app.model.cycleForward", () => this.cycleModel("forward"));
 		this.defaultEditor.onAction("app.model.cycleBackward", () => this.cycleModel("backward"));
@@ -4582,13 +4584,6 @@ export class InteractiveMode {
 		const signals: NodeJS.Signals[] = ["SIGTERM"];
 		if (process.platform !== "win32") {
 			signals.push("SIGHUP");
-			const suspend = () => this.suspend();
-			this.suspendSignalHandler = suspend;
-			process.on("SIGTSTP", suspend);
-			this.signalCleanupHandlers.push(() => {
-				process.off("SIGTSTP", suspend);
-				this.suspendSignalHandler = undefined;
-			});
 		}
 
 		for (const signal of signals) {
@@ -4633,7 +4628,7 @@ export class InteractiveMode {
 		this.signalCleanupHandlers = [];
 	}
 
-	private suspend(): void {
+	private handleCtrlZ(): void {
 		if (process.platform === "win32") {
 			this.showStatus("Suspend to background is not supported on Windows");
 			return;
@@ -4649,30 +4644,23 @@ export class InteractiveMode {
 		const ignoreSigint = () => {};
 		process.on("SIGINT", ignoreSigint);
 
-		let uiStopped = false;
-		const finishSuspend = () => {
+		// Set up handler to restore TUI when resumed
+		process.once("SIGCONT", () => {
 			clearInterval(suspendKeepAlive);
 			process.removeListener("SIGINT", ignoreSigint);
-			if (this.suspendSignalHandler) process.on("SIGTSTP", this.suspendSignalHandler);
-			if (uiStopped) {
-				this.ui.start();
-				this.ui.requestRender(true);
-			}
-		};
-		process.once("SIGCONT", finishSuspend);
+			this.ui.start();
+			this.ui.requestRender(true);
+		});
 
-		// Let the group signal stop pi instead of invoking suspend() again.
-		if (this.suspendSignalHandler) process.off("SIGTSTP", this.suspendSignalHandler);
 		try {
 			// Stop the TUI (restore terminal to normal mode)
 			this.ui.stop();
-			uiStopped = true;
 
 			// Send SIGTSTP to process group (pid=0 means all processes in group)
 			process.kill(0, "SIGTSTP");
 		} catch (error) {
-			process.off("SIGCONT", finishSuspend);
-			finishSuspend();
+			clearInterval(suspendKeepAlive);
+			process.removeListener("SIGINT", ignoreSigint);
 			throw error;
 		}
 	}
