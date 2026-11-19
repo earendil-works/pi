@@ -13,6 +13,7 @@
 - Fixed Kitty and iTerm2 images covering overlays drawn over them. An image that an overlay overlaps by row and column is now removed while the overlay is open and drawn again when it closes. Images beside an overlay, such as a sidebar, stay visible ([#11584](https://github.com/earendil-works/pi/issues/11584))
 - Fixed fullscreen scrolling re-rendering the whole transcript on every wheel event and key press, which saturated a CPU core in long sessions; scroll frames now reuse the previous output ([#9549](https://github.com/earendil-works/pi/issues/9549))
 - Fixed containers copying every rendered line on every frame, and sped up column slicing for ASCII and other text without combining characters ([#9549](https://github.com/earendil-works/pi/issues/9549))
+- Fixed Enter on an autocomplete menu submitting the prompt when the completed text started with `/`, such as a Tab path menu for an absolute path (`look at /tmp/fi`) or a slash command argument (`/open /tm`). Enter now submits only from the slash command name menu ([#12309](https://github.com/earendil-works/pi/issues/12309), [#12312](https://github.com/earendil-works/pi/pull/12312) by [@acmerfight](https://github.com/acmerfight))
 
 ## [1.5.2] - 2026-11-10
 
