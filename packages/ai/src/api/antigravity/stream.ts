@@ -287,25 +287,6 @@ function appendTurn(contents: GeminiContent[], role: GeminiRole, parts: GeminiPa
 	}
 }
 
-/**
- * The <USER_SETTINGS_CHANGE> payload, when the model selection differs from the model that
- * produced the last assistant turn ("None" before the first response of a conversation).
- * Effort-level changes are not recorded in the transcript, so only family switches are detected.
- */
-function userSettingsChange(
-	messages: Context["messages"],
-	model: Model<Api>,
-	runtimeModel: string,
-): { from: string; to: string } | undefined {
-	const lastAssistant = [...messages].reverse().find((msg) => msg.role === "assistant") as
-		| AssistantMessage
-		| undefined;
-	const to = antigravityDisplayModelName(runtimeModel);
-	if (!lastAssistant?.model) return { from: "None", to };
-	if (lastAssistant.model === model.id) return undefined;
-	return { from: antigravityDisplayModelName(lastAssistant.model), to };
-}
-
 /** Exported for unit tests. */
 export function convertMessages(model: Model<Api>, context: Context, runtimeModel: string): GeminiContent[] {
 	const contents: GeminiContent[] = [];
@@ -320,15 +301,7 @@ export function convertMessages(model: Model<Api>, context: Context, runtimeMode
 		requiresToolCallId(canonicalGeminiId(model.id)) || requiresToolCallId(canonicalGeminiId(runtimeModel));
 	// agy wraps every natural-language user turn at send time (snoop capture 2026-11-18; its
 	// checkpoint resends carry the raw text, so the wrapping is derived per request, not stored).
-	// The model-change block lands on the last user turn — the turn a real client reports the
-	// selection change on.
-	let lastUserTextIndex = -1;
-	for (let index = 0; index < messages.length; index += 1) {
-		const msg = messages[index];
-		if (msg.role !== "user") continue;
-		if (asTextParts(msg.content).some((part) => "text" in part && Boolean(part.text.trim())))
-			lastUserTextIndex = index;
-	}
+	// Derive each turn’s selection from its surrounding assistant turns.
 	for (const [index, msg] of messages.entries()) {
 		if ((msg.role as string) === "system") continue;
 		if (msg.role === "user") {
@@ -339,12 +312,31 @@ export function convertMessages(model: Model<Api>, context: Context, runtimeMode
 				.filter(Boolean);
 			const images = parts.filter((part): part is GeminiInlineDataPart => "inlineData" in part);
 			const text = texts.join("\n\n").trim();
-			const modelChange =
-				index === lastUserTextIndex ? userSettingsChange(context.messages, model, runtimeModel) : undefined;
+			const prevAssistant = messages.slice(0, index).findLast((entry) => entry.role === "assistant");
+			const nextAssistant = messages.slice(index + 1).find((entry) => entry.role === "assistant");
+			const target = nextAssistant?.model ?? model.id;
+			const to = antigravityDisplayModelName(target === model.id ? runtimeModel : target);
+			const modelChange = !prevAssistant?.model
+				? { from: "None", to }
+				: prevAssistant.model === target
+					? undefined
+					: { from: antigravityDisplayModelName(prevAssistant.model), to };
 			appendTurn(
 				contents,
 				GeminiRole.User,
-				text ? [{ text: formatUserTurnText(text, { modelChange }) }, ...images] : images,
+				text
+					? [
+							{
+								text: formatUserTurnText(text, {
+									modelChange,
+									localTime: Number.isFinite(msg.timestamp)
+										? localTimeIso(new Date(msg.timestamp))
+										: undefined,
+								}),
+							},
+							...images,
+						]
+					: images,
 			);
 		} else if (msg.role === "assistant") {
 			const parts: GeminiPart[] = [];

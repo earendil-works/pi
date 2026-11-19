@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parseApiKey } from "../src/api/antigravity/client.ts";
 import { antigravityDisplayModelName } from "../src/api/antigravity/models.ts";
 import { buildRequest, convertMessages, formatUserTurnText } from "../src/api/antigravity/stream.ts";
@@ -106,6 +106,46 @@ describe("antigravity wire shaping (snoop capture 2026-11-18)", () => {
 		expect((switched[2].parts[0] as { text: string }).text).toContain(
 			"from Gemini 4 Carbon to Gemini 3.8 Flash (Medium)",
 		);
+	});
+
+	it.each(["gemini-3.8-flash", "gemini-4-carbon"])("preserves cached turns after %s", (previousModel) => {
+		vi.useFakeTimers();
+		try {
+			const runtime = "gemini-3.8-flash-medium";
+			const user0 = { role: "user" as const, content: "first", timestamp: 1000 };
+			const user1 = { role: "user" as const, content: "second", timestamp: 3000 };
+			const user2 = { role: "user" as const, content: "third", timestamp: 5000 };
+			vi.setSystemTime(10000);
+			const previous = antigravityProvider()
+				.getModels()
+				.find((entry) => entry.id === previousModel)!;
+			const first = convertMessages(
+				previous,
+				normalizeContext({ messages: [user0] }),
+				previousModel === model.id ? runtime : previousModel,
+			);
+			vi.setSystemTime(20000);
+			const second = convertMessages(
+				model,
+				normalizeContext({ messages: [user0, assistant(previousModel), user1] }),
+				runtime,
+			);
+			expect(second.slice(0, first.length)).toStrictEqual(first);
+			expect((second[0].parts[0] as GeminiTextPart).text).toContain("from None to");
+			const secondText = (second[2].parts[0] as GeminiTextPart).text;
+			if (previousModel === model.id) expect(secondText).not.toContain("<USER_SETTINGS_CHANGE>");
+			else expect(secondText).toContain("from Gemini 4 Carbon to Gemini 3.8 Flash (Medium)");
+			vi.setSystemTime(30000);
+			const third = convertMessages(
+				model,
+				normalizeContext({ messages: [user0, assistant(previousModel), user1, assistant(model.id), user2] }),
+				runtime,
+			);
+			expect(third.slice(0, second.length)).toStrictEqual(second);
+			expect((third[4].parts[0] as GeminiTextPart).text).not.toContain("<USER_SETTINGS_CHANGE>");
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("wraps every user turn and keeps tool-result turns bare", () => {
