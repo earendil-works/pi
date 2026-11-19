@@ -213,8 +213,8 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		await browser.wait(`!${conversations}.hidden && ${conversations}.querySelector('.subagent-row')`);
 		await browser.click(`${header} .subagent-toggle`);
 		await browser.wait(`${conversations}.hidden`);
-		// While only the subagent works, its collapsed session shows pi's dots before its age, not as its status (that
-		// is its main conversation's); shown, the subagent's item has them as its status.
+		// While only the subagent works, its collapsed session shows pi's dots as its status, as when its main
+		// conversation works; shown, the subagent's item has them as its status too.
 		const childChat = await holdIn(
 			owner,
 			Chat,
@@ -224,7 +224,7 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		await childChat.send({ text: "slow child", requestId: "drawer-busy" }, BACKGROUND_CONTEXT);
 		// The status settles once the main conversation's last answer is read (the session is open).
 		await browser.wait(
-			`document.querySelector('${header} > .nav-details > .background-work > .pi-dots') && !document.querySelector('${header} > .nav-marker > *')`,
+			`document.querySelector('${header} > .nav-marker > .pi-dots') && !document.querySelector('${header} .background-work')`,
 		);
 		// The main conversation's dock says which agent runs, with pi's dots; its subagent's view has its own bar instead.
 		await browser.wait(

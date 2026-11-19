@@ -1,7 +1,7 @@
 // The rows of the sidebar and its list pages, items of Elanor's side navigation. A session and each of its subagents
 // are the same item (`AgentItem`): a status, a name and a detail. The status is pi's working dots while it runs, a blue
-// dot for an answer not read yet, a red dot for a failure, nothing while idle; a session's is its main conversation's,
-// what wants the owner first, and work its status does not show (subagents) shows as dots before the detail. The
+// dot for an answer not read yet, a red dot for a failure, nothing while idle; a session's is what wants the owner
+// first, then any of its conversations working, and work its status does not show shows as dots before the detail. The
 // detail is how long ago its last message was; under a fine pointer, on hover or keyboard focus, it gives way to the item's one action, an icon button:
 // Cancel (a cross in a circle) while it runs, Archive while idle (on touch screens the item's command menu has them,
 // commands.tsx). The name is cut with "…" before the detail. A session lists its subagents below it (its chevron shows
@@ -293,21 +293,21 @@ export type RowActions = {
 };
 
 /**
- * A session's status, what wants the owner first: a failure (`failureOf`), an unread answer, then its main
- * conversation working. Its subagents' work never hides that it waits for the owner (`BackgroundWork` shows it).
+ * A session's status, what wants the owner first: a failure (`failureOf`), an unread answer, then working (any of its
+ * conversations, its subagents' too). Work never hides that it waits for the owner (`BackgroundWork` shows it).
  */
 function sessionStatus(session: SidebarRow): ItemStatus {
 	const failure = failureOf(session);
 	if (failure !== undefined) return { kind: "failed", title: failure };
 	if (session.worker.unread) return { kind: "unread" };
-	if (session.worker.busy.includes(session.main)) return { kind: "working" };
+	if (session.worker.busy.length > 0) return { kind: "working" };
 	return { kind: "idle" };
 }
 
 /**
- * A session's running conversations while its status shows something else (it waits for the owner, or only its
- * subagents run): pi's dots before the age, with their count when several run. Nothing while its status shows working
- * (its main conversation runs; its subagents' items show theirs) or nothing runs.
+ * A session's running conversations while its status shows that it waits for the owner (a failure or an unread
+ * answer): pi's dots before the age, with their count when several run. Nothing while its status shows working or
+ * nothing runs.
  */
 function BackgroundWork({ session, status }: { session: SidebarRow; status: ItemStatus }) {
 	const running = session.worker.busy.length;
