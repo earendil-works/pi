@@ -30,6 +30,7 @@
 - Fixed the find tool matching path patterns through folders above the search path: with the project in `~/src/app`, `src/**/*.ts` returned every `.ts` file in the project ([#12066](https://github.com/earendil-works/pi/issues/12066))
 - Fixed pi crashing with `RangeError: Maximum call stack size exceeded` when rendering a very large edit diff, for example after editing a file with a multi-megabyte line, and again on every resume of that session ([#8036](https://github.com/earendil-works/pi/issues/8036))
 - Fixed pressing Esc during a batch of tool calls leaving the calls that had not started yet without a result in the session; they now get an "Operation aborted" result ([#9986](https://github.com/earendil-works/pi/issues/9986))
+- Fixed search in `/login`, `/logout`, `/scoped-models` and `/resume` keeping the highlight on the row scrolled to before typing, so Enter picked whichever entry landed there instead of the best match; a query now highlights the top match, as `/model` does ([#12245](https://github.com/earendil-works/pi/issues/12245), [#12246](https://github.com/earendil-works/pi/pull/12246) by [@acmerfight](https://github.com/acmerfight))
 
 ### Removed
 
