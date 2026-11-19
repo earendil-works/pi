@@ -73,6 +73,7 @@ import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { initTheme, setThemeJsonValidator, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { validateThemeJson } from "./modes/interactive/theme/theme-schema.ts";
 import { cleanupManagedInstall, handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
+import { flushStdout } from "./utils/flush-stdout.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
 
@@ -462,6 +463,7 @@ export async function createSessionManager(
 			);
 			if (!selectedPath) {
 				console.log(chalk.dim("No session selected"));
+				await flushStdout();
 				process.exit(0);
 			}
 			return SessionManager.open(selectedPath, sessionDir);
@@ -754,6 +756,7 @@ export async function main(args: string[], options?: MainOptions) {
 					sessionManager = forkSessionOrExit(sessionFile, cwd, sessionDir);
 					break;
 				case undefined:
+					await flushStdout();
 					process.exit(0);
 			}
 		} else {

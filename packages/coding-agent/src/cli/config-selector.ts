@@ -7,6 +7,7 @@ import { KeybindingsManager } from "../core/keybindings.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
 import { ConfigSelectorComponent, type ScopedResolvedPaths } from "../modes/interactive/components/config-selector.ts";
 import { initTheme, stopThemeWatcher } from "../modes/interactive/theme/theme.ts";
+import { flushStdout } from "../utils/flush-stdout.ts";
 
 export interface ConfigSelectorOptions {
 	resolvedPaths: ScopedResolvedPaths;
@@ -48,7 +49,7 @@ export async function selectConfig(options: ConfigSelectorOptions): Promise<void
 			() => {
 				ui.stop();
 				stopThemeWatcher();
-				process.exit(0);
+				void flushStdout().then(() => process.exit(0));
 			},
 			() => ui.requestRender(),
 			ui.terminal.rows,
