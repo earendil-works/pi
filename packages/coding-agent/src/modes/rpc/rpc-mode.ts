@@ -358,7 +358,9 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 					return runtimeHost.switchSession(sessionPath, options);
 				},
 				reload: async () => {
-					await session.reload();
+					await runtimeHost.reload();
+					// stderr, never stdout: stdout carries the RPC protocol.
+					writeDiagnosticsToStderr(runtimeHost.takeUnreportedDiagnostics());
 				},
 			},
 			shutdownHandler: () => {
