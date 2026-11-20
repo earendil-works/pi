@@ -63,4 +63,23 @@ describe("Cloudflare provider streams", () => {
 
 		expect(captured).toBe(model.baseUrl);
 	});
+
+	it("routes gateway endpoints through a custom domain", () => {
+		const captured: string[] = [];
+		const streams = cloudflareStreams({
+			stream: (requestModel) => {
+				captured.push(requestModel.baseUrl);
+				return new AssistantMessageEventStream();
+			},
+			streamSimple: (requestModel) => {
+				captured.push(requestModel.baseUrl);
+				return new AssistantMessageEventStream();
+			},
+		});
+
+		streams.stream(model, context, { env: { CLOUDFLARE_GATEWAY_DOMAIN: "ai.example.com" } });
+		streams.stream(model, context, { env: { CLOUDFLARE_GATEWAY_DOMAIN: "https://ai.example.com/" } });
+
+		expect(captured).toEqual(["https://ai.example.com/openai", "https://ai.example.com/openai"]);
+	});
 });
