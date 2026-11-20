@@ -14,7 +14,7 @@ p3 needs Node 26.3.1 or newer, tests included. On slayer the default `node` is 2
 | `npm run check` | Biome and TypeScript over p3 (the root check skips `apps/`); clean before every report |
 | `npm test` | every `test/*.test.ts` and `plugins/**/*.test.ts`, from source |
 | `node --conditions=source --disable-warning=ExperimentalWarning --test <file>` | one test file |
-| `npm run release:p3:local -- --out /tmp/p3-release --force` (from the repository root) | builds and installs the release outside the repository, runs `test/release/*.test.ts` against it, the memory test included (about 90 s) |
+| `npm run release:p3:local -- --out /tmp/p3-release --force` (from the repository root) | builds and installs the release outside the repository and runs `test/release/*.test.ts` against it; `--bench` runs `bench/skeleton.ts` against it. The memory test is still on the old base (`old/test/release/`) |
 
 Run the release command when your package changes what the release ships (its files, its dependencies) or what a
 worker loads.
@@ -42,8 +42,12 @@ the owner over WebSocket), `workers()` (the runner's state), `restart()` and `cl
 for effects in other processes. Model: `test/skeleton.test.ts`.
 
 **3. The command** (a few cases): `p3` launched as processes of its own on a temporary home. Model:
-`test/command.test.ts`. The release (`npm run release:p3:local`) builds and installs p3 outside the repository; run
-the bench against it with `--release`.
+`test/command.test.ts`.
+
+**4. The release** (`test/release/release.test.ts`, run by `npm run release:p3:local` against the install it makes
+outside the repository): what the package holds, the command, a worker forked from the release's own bundle, and a
+third-party plugin written against the installed API alone (type-checked, loaded from the Pi's user root, called by a
+client of the compiled API). Run the bench against the install with `--release` (or the script's `--bench`).
 
 ## What every package tests
 

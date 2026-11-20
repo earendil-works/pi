@@ -17,7 +17,7 @@ const USAGE = `Usage: npm run release:p3:local -- --out <dir> [--force] [--skip-
                 p3's tarball) and p3 (a link to the installed command)
   --force       Replace the release a previous run left in <dir>
   --skip-test   Do not run the release test against the install
-  --bench       Run bench/slice-1.ts against the install afterwards`;
+  --bench       Run bench/skeleton.ts against the install afterwards`;
 
 /** The file that marks a directory as a release this script made: only such a directory is ever emptied. */
 const MARKER = ".p3-release";
@@ -129,7 +129,7 @@ if (import.meta.main) {
 	if (!values["skip-test"]) run(["npm", "run", "test:release"], install);
 	if (values.bench) {
 		const flags = ["--conditions=source", "--disable-warning=ExperimentalWarning"];
-		run([process.execPath, ...flags, "bench/slice-1.ts", "--release", install], install);
+		run([process.execPath, ...flags, "bench/skeleton.ts", "--release", install], install);
 	}
 	console.log(
 		`\nLocal release of ${p3.name}: ${out}\n  the command: ${join(out, "p3")}\n  the tarball: ${p3.tarball}`,
