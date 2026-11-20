@@ -5,6 +5,7 @@
 ### Fixed
 
 - Fixed `ctx.ui.pasteToEditor()` and `ctx.ui.setEditorText()` not repainting the editor when called outside terminal input handling, such as after an `await` in a command handler ([#12295](https://github.com/earendil-works/pi/issues/12295))
+- Fixed the bash tool returning `(no output)` when the output ended with a line over 50KB followed by an empty line; it now shows the end of that line ([#12350](https://github.com/earendil-works/pi/issues/12350))
 
 ## [1.6.0] - 2026-11-20
 
