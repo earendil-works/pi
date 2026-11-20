@@ -11,6 +11,14 @@ export type JsonObject = { [key: string]: unknown };
 export const LOG_START: Seq = 0;
 
 /**
+ * The version of the sync rules this client follows: slots created once at the head, each recording its device, and
+ * archive slots. A remote adapter sends it with every request, so a remote that later changes the rules for a session
+ * (a handoff to another device) can refuse writers that do not know them. Raised when the rules change, not when a
+ * body's encoding does (`LOG_VERSION`).
+ */
+export const SYNC_PROTOCOL = 1;
+
+/**
  * A slot of a session's remote history: the batch of outbox commits after `after`, up to `to`, uploaded by `device`. A
  * store creates each slot once and never replaces it, so the device whose upload creates it continues the session from
  * `after`, and a device that finds it taken by another one holds a different history.

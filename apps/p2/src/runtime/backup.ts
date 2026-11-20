@@ -40,6 +40,9 @@ export type {
 	SyncBody,
 };
 
+/** The sync rules' version a remote adapter sends with every request (Chord's `SYNC_PROTOCOL`). */
+export { SYNC_PROTOCOL } from "@earendil-works/chord/sync";
+
 /**
  * Where this instance backs up to: a folder (a local disk, a mounted bucket or NAS; tests), or a plugin's target by its
  * name (`radius`: the Radius this instance is signed in to, `BackupTargets`).
