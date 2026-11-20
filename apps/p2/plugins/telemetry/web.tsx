@@ -58,7 +58,7 @@ async function showTraces(ctx: CommandContext): Promise<void> {
 	const session = ctx.route.session;
 	const page = (await ctx.host.registry(ViewsPages, BACKGROUND_CONTEXT)).value.get("views");
 	if (session === undefined || page === undefined) {
-		openSettings({ layer: { kind: "sheet", name: TRACES } });
+		openSettings({ kind: "plugin", layer: { kind: "sheet", name: TRACES } });
 		return;
 	}
 	await withHeld(ctx.host.hold(Views, { session }, BACKGROUND_CONTEXT), "editor", (editor) =>

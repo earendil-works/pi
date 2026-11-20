@@ -130,7 +130,7 @@ await plugins.rollout([plugins.step("server", server), workers.step("workers")],
     rebuilt without a facet of the kind leave it, its facets replace theirs; applied and read in one step, so two
     reloads started together each pass their own) and reloads the host with that complete set.
   - `step(name, host)`: an in-process rollout step, one host named `name`. A step's `reload(built, ctx)` returns
-    `{ hosts: [{ host, report } | { host, stopped: true } | { host, error }] }` (D12). `rollout(steps, built, ctx)`
+    `{ hosts: [{ kind: "reloaded", host, report } | { kind: "stopped", host } | { kind: "failed", host, error }] }` (D12). `rollout(steps, built, ctx)`
     applies `built` to the current set of each step's kinds right before that step, runs the steps in order and stops
     at one that rejects (`stopped`); failed plugins and hosts do not stop it. It clears the dirty marks of the built
     plugins applied on every host of every step and unchanged since the build: a plugin failed on any host, or of a

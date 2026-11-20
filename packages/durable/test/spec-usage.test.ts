@@ -70,7 +70,7 @@ declare function requestSecondPass(
 	answer: AssistantMessage,
 	api: HookApi,
 	context: Context,
-): Promise<{ readonly continue: UserInput } | undefined>;
+): Promise<{ readonly kind: "continue"; readonly continue: UserInput } | undefined>;
 declare const metrics: { record(name: string, ms: number): void };
 declare function answerText(api: ToolExecutionApi, entry: EntryId, context: Context): Promise<string>;
 declare const payments: {
@@ -203,7 +203,7 @@ function examples() {
 				await runtime.commit(async (tx) => {
 					// Admitted in this commit, before its table writes; placed when the run ends, in queue order with other input.
 					if (!result.passed) {
-						await handle.submit(tx, {
+						await handle.admit(tx, {
 							type: "input",
 							content: `Tests failed:\n${result.output}`,
 							whenBusy: "followUp",
@@ -255,7 +255,7 @@ function examples() {
 					// One deadline per question, fixed at the first pass: later passes (wakes, registry changes) keep it.
 					const until = await api.memo(`approvals.until.${key}`, api.now() + DAY, context);
 					if (state === undefined) return { sleep: { signals: [Approval.key(key)], until } };
-					if ("expired" in state) return { block: "No approval within a day" };
+					if (state.kind === "expired") return { block: "No approval within a day" };
 					return state.value.allow ? undefined : { block: "Not approved" };
 				},
 			}),
@@ -280,7 +280,10 @@ function examples() {
 			const open = [a, b].filter((call) => !done.has(call.taskId));
 			if (open.length > 0)
 				return {
-					wait: { checkpoint: { done: [...done] }, on: open.map((call) => call.taskId), policy: "any" },
+					kind: "wait",
+					checkpoint: { done: [...done] },
+					on: open.map((call) => call.taskId),
+					policy: "any",
 				};
 			const [ra, rb] = await Promise.all([a.result(context), b.result(context)]);
 			return { output: [{ type: "text", text: `${String(ra.structuredOutput)}\n${String(rb.structuredOutput)}` }] };
@@ -303,7 +306,7 @@ function examples() {
 		async execute({ ref }, api, context) {
 			// The result, the deadline's expiry, or nothing yet (a fresh call).
 			const state = await api.readSignal(CiResult, "done", context);
-			if (state !== undefined && "value" in state) {
+			if (state?.kind === "value") {
 				const { status, logUrl } = state.value;
 				return { output: [{ type: "text", text: `CI ${status}: ${logUrl}` }], isError: status !== "passed" };
 			}
@@ -319,7 +322,10 @@ function examples() {
 			await webhooks.expect(runId, api.taskId, CiResult, "done", context);
 			const build = await ci.trigger({ ref, correlationId: runId, idempotencyKey: runId }, context);
 			return {
-				sleep: { checkpoint: { buildId: build.id }, signals: [CiResult.key("done")], until: api.now() + 2 * HOUR },
+				kind: "sleep",
+				checkpoint: { buildId: build.id },
+				signals: [CiResult.key("done")],
+				until: api.now() + 2 * HOUR,
 			};
 		},
 		async cancel(_args, api, context) {
@@ -338,7 +344,7 @@ function examples() {
 				replay: "safe",
 				async execute({ task }, api, context) {
 					const state = await api.readSignal(SubmissionSettled, "answered", context);
-					if (state !== undefined && "value" in state) {
+					if (state?.kind === "value") {
 						const settled = state.value;
 						if (settled.status !== "done" || settled.type !== "input") {
 							return { output: [{ type: "text", text: `Subagent ended: ${settled.status}` }], isError: true };
@@ -363,7 +369,7 @@ function examples() {
 						},
 						context,
 					);
-					return { sleep: { signals: [SubmissionSettled.key("answered")] } };
+					return { kind: "sleep", signals: [SubmissionSettled.key("answered")] };
 				},
 			}),
 		],
@@ -462,7 +468,7 @@ function examples() {
 				),
 			answered: async (_task, runtime, context) => {
 				const state = await runtime.readSignal(Answer, "answer", context); // { value } when answered, { expired } after the deadline
-				const text = state !== undefined && "value" in state ? state.value.text : undefined;
+				const text = state?.kind === "value" ? state.value.text : undefined;
 				return runtime.commit(
 					() => ({ status: "terminal", outcome: { status: "completed", result: { text } } }),
 					context,

@@ -23,20 +23,26 @@ export function CostPanel({
 	load: () => Promise<readonly (Omit<AssistantCost, "cacheHit"> & { cacheHit?: number })[]>;
 	onClose: () => void;
 }) {
-	const [loaded, setLoaded] = useState<{ costs: AssistantCost[] } | { error: string }>();
+	const [loaded, setLoaded] = useState<
+		{ kind: "costs"; costs: AssistantCost[] } | { kind: "failed"; error: string }
+	>();
 	// biome-ignore lint/correctness/useExhaustiveDependencies: fetched once per opening, not on every render's new `load`.
 	useEffect(() => {
 		let current = true;
 		load()
-			.then((rows) => current && setLoaded({ costs: rows.map((row) => ({ ...row, cacheHit: row.cacheHit })) }))
+			.then(
+				(rows) =>
+					current && setLoaded({ kind: "costs", costs: rows.map((row) => ({ ...row, cacheHit: row.cacheHit })) }),
+			)
 			.catch(
-				(error: unknown) => current && setLoaded({ error: error instanceof Error ? error.message : String(error) }),
+				(error: unknown) =>
+					current && setLoaded({ kind: "failed", error: error instanceof Error ? error.message : String(error) }),
 			);
 		return () => {
 			current = false;
 		};
 	}, []);
-	const costs = loaded && "costs" in loaded ? loaded.costs : [];
+	const costs = loaded?.kind === "costs" ? loaded.costs : [];
 	const maximum = Math.max(0, ...costs.map((entry) => entry.cost));
 	const total = costs.reduce((sum, entry) => sum + entry.cost, 0);
 	const rows = useRef(new Map<string, HTMLTableRowElement>());
@@ -48,7 +54,7 @@ export function CostPanel({
 			</p>
 			{!loaded ? (
 				<p className="muted">Loading…</p>
-			) : "error" in loaded ? (
+			) : loaded.kind === "failed" ? (
 				<p className="error">{loaded.error}</p>
 			) : costs.length ? (
 				<>

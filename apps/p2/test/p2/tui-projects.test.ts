@@ -418,7 +418,7 @@ test("/move <env> follows the stored project, keeps the subfolder, works while t
 		members().replace(undefined, membership);
 		const surface = runtime.ctx.surface("sessions");
 		assert(surface instanceof SessionsSurface);
-		await poll(() => surface.projectOf("s") === ("s" in membership ? membership.s : undefined));
+		await poll(() => surface.projectOf("s") === (membership as { readonly s?: string }).s);
 		typed(send, "/move mac");
 		send(ENTER);
 		await poll(() => runtime.notices.some((each) => each.text === notice));

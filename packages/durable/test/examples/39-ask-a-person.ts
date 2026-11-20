@@ -50,7 +50,7 @@ const AskPerson = defineTask<{ question: string }, { phase: "ask" } | { phase: "
 				inbox.delete(runtime.taskId);
 				// `signal` when answered, `expired` when the deadline came first.
 				const state = await runtime.readSignal(Answer, "answer", ctx);
-				const answer = state !== undefined && "value" in state ? state.value.text : null;
+				const answer = state?.kind === "value" ? state.value.text : null;
 				console.log(`  [ask] woke: ${task.state.wake?.reason}, read: ${JSON.stringify(state)}`);
 				await runtime.commit(
 					() => ({ status: "terminal", outcome: { status: "completed", result: { answer } } }),

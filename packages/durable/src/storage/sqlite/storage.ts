@@ -175,7 +175,7 @@ export class SqliteStorage implements Storage {
 			const pending = new PendingWrites();
 			for (const writes of batches) {
 				const checked = await this.checkBatch(transaction, state, pending, writes);
-				if ("refused" in checked) {
+				if (checked.kind === "refused") {
 					refused = { error: checked.refused };
 					break;
 				}
@@ -193,7 +193,9 @@ export class SqliteStorage implements Storage {
 		this.nextId = Math.max(this.nextId, candidateNextId);
 		// `COMMIT` returned: the stored batches are durable.
 		for (const [index, seq] of seqs.entries()) receive(index, seq);
-		return refused === undefined ? { stored: seqs.length } : { stored: seqs.length, refused: refused.error };
+		return refused === undefined
+			? { kind: "stored", stored: seqs.length }
+			: { kind: "refused", stored: seqs.length, refused: refused.error };
 	}
 
 	private async readMetadata(executor: SqliteExecutor): Promise<MetadataRow> {
@@ -222,24 +224,27 @@ export class SqliteStorage implements Storage {
 		state: CommitState,
 		pending: PendingWrites,
 		writes: readonly StorageWrite[],
-	): Promise<{ readonly actions: Map<DocumentId, DocumentAction> } | { readonly refused: unknown }> {
+	): Promise<
+		| { readonly kind: "checked"; readonly actions: Map<DocumentId, DocumentAction> }
+		| { readonly kind: "refused"; readonly refused: unknown }
+	> {
 		let actions: Map<DocumentId, DocumentAction>;
 		try {
 			actions = prepareDocumentActions(writes);
 			state.check(writes, actions);
 		} catch (error) {
-			return { refused: error };
+			return { kind: "refused", refused: error };
 		}
-		if (![...actions.values()].some((action) => action.copy !== undefined)) return { actions };
+		if (![...actions.values()].some((action) => action.copy !== undefined)) return { kind: "checked", actions };
 		await pending.flush(transaction, this.schema.tables);
 		const calls: CheckCalls = { failed: false };
 		try {
 			await this.resolveCopies(watchCalls(transaction, calls), actions);
 		} catch (error) {
 			if (calls.failed) throw error;
-			return { refused: error };
+			return { kind: "refused", refused: error };
 		}
-		return { actions };
+		return { kind: "checked", actions };
 	}
 
 	async mintId<I extends Id<string>>(): Promise<I> {

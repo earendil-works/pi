@@ -199,7 +199,7 @@ export class SignIns {
 	 * result names its server.
 	 */
 	async complete(
-		response: { state: string } & ({ code: string; iss?: string } | { error: string }),
+		response: { state: string } & ({ kind: "code"; code: string; iss?: string } | { kind: "error"; error: string }),
 	): Promise<{ server: string }> {
 		const flow = [...this.#flows.values()].find(
 			(candidate) =>
@@ -208,7 +208,7 @@ export class SignIns {
 				candidate.authorization.state === response.state,
 		);
 		if (flow === undefined) throw new PluginError("not_found", "This sign-in is unknown, finished or expired");
-		if ("error" in response) {
+		if (response.kind === "error") {
 			this.#fail(flow, new Error(response.error));
 			throw new PluginError("sign_in", response.error);
 		}

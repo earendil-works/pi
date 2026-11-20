@@ -177,8 +177,27 @@ export function hostErrorText(error: HostError): string {
 		case "transaction_cancelled":
 			return `${error.object}: a transaction was cancelled before it committed (${message(error.error)})`;
 	}
-	const failure = "error" in error ? error.error : "failure" in error ? error.failure.error : undefined;
-	return `${error.kind}: ${message(failure)}`;
+	return `${error.kind}: ${message(hostErrorCause(error))}`;
+}
+
+/** What a host error carries as its cause: its error, its failure's error, or nothing for the kinds without one. */
+export function hostErrorCause(error: HostError): unknown {
+	switch (error.kind) {
+		case "activation_failed":
+		case "object_failed":
+			return error.failure.error;
+		case "close_timeout":
+		case "drain_timeout":
+		case "job_interrupted":
+		case "job_dropped":
+		case "parked_long":
+		case "registry_undeclared":
+		case "registry_conflict":
+		case "contribution_refused":
+			return undefined;
+		default:
+			return error.error;
+	}
 }
 
 /**

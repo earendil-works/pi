@@ -1,11 +1,14 @@
 // The sessions plugin on the server. Every session is one row of a table keyed by its address, so a session's export,
 // import and delete carry it. One local store (`SessionsStore`, `contract.server.ts`) owns the table, writes it and
-// offers its rows as named queries; the owner's `Sessions` and `SessionsList`, each worker's `SessionFacts` and the
-// route's `SessionRoute` read them.
+// offers its rows as named queries; the owner's `Sessions` and `SessionsList`, each worker's `SessionFacts` (its row,
+// and its report of what its agent does) and the route's `SessionRoute` read them. The waker starts the workers of
+// every `working` session once the server is up (a restart cut their runs off; Durable resumes them there): it holds
+// each one's `SessionStart` until the worker is live, then lets go. A worker keeps itself alive while it works.
 
 import {
 	and,
 	type Ctx,
+	contribute,
 	defineFacet,
 	defineTable,
 	eq,
@@ -21,13 +24,14 @@ import {
 	Session,
 	str,
 } from "@earendil-works/p3/v1";
-import { SessionRoute } from "@earendil-works/p3/v1/server";
+import { ServerRuntime, SessionRoute } from "@earendil-works/p3/v1/server";
 import { SessionsStore } from "./contract.server.ts";
 import {
 	CODING,
 	Creator,
 	SessionFacts,
 	type SessionRow,
+	SessionStart,
 	type SessionState,
 	Sessions,
 	SessionsList,
@@ -60,7 +64,7 @@ const Rows = defineTable("sessions.rows", {
 	version: 1,
 	columns: ROW,
 	key: ["id"],
-	indexes: { active: ["app", "archivedAt", "lastTouch"], archived: ["app", "archivedAt"] },
+	indexes: { active: ["app", "archivedAt", "lastTouch"], archived: ["app", "archivedAt"], state: ["state"] },
 });
 
 /** How many sessions a page of a list holds. */
@@ -107,6 +111,19 @@ export default defineFacet((host) => {
 			rename: ({ id, title }, ctx) => update(id, { title }, ctx),
 			archive: ({ id }, ctx) => update(id, { archivedAt: Date.now() }, ctx),
 			restore: ({ id }, ctx) => update(id, { archivedAt: 0 }, ctx),
+			report: ({ id, state }, ctx) => update(id, { state, lastTouch: Date.now() }, ctx),
+			working: (_args, ctx) =>
+				self.tx(async (tx) => {
+					// Index `state`; every row, no cap: a session left out would never resume.
+					const ids: string[] = [];
+					for await (const row of tx.rows(
+						rows,
+						query(Rows).where((s) => eq(s.state, "working")),
+					)) {
+						ids.push(row.id.params.id);
+					}
+					return ids;
+				}, ctx),
 		};
 	});
 
@@ -126,9 +143,32 @@ export default defineFacet((host) => {
 
 	host.serve(SessionFacts, (_params, principal, self) => {
 		if (principal.kind !== "worker") throw forbidden("sessions: a session's worker only");
-		const one = self.get(SessionsStore, {}).sessions.one;
-		const found = self.liveQuery(one, { id: principal.session }, { first: 1 });
-		return { variant: "worker", members: { session: self.derive([found], ([{ rows }]) => rows[0] ?? null) } };
+		const store = self.get(SessionsStore, {});
+		const found = self.liveQuery(store.sessions.one, { id: principal.session }, { first: 1 });
+		return {
+			variant: "worker",
+			members: {
+				session: self.derive([found], ([{ rows }]) => rows[0] ?? null),
+				report: ({ state }, ctx) => store.report({ id: principal.session, state }, ctx),
+			},
+		};
+	});
+
+	contribute(host, "sessions.waker", (self) => {
+		const store = self.get(SessionsStore, {});
+		const runtime = self.registry(ServerRuntime);
+		self.onLive(async (ctx) => {
+			const { host: server } = runtime.value;
+			const starts = (await store.working({}, ctx)).map((session) =>
+				// Held until the worker serves it (it is live then), released when `root` returns.
+				server
+					.root(async (root) => void (await root.get(SessionStart, { session })), ctx)
+					.catch((error: unknown) => {
+						console.error(`p3 sessions: ${session}: could not start its worker:`, error);
+					}),
+			);
+			await Promise.all(starts);
+		});
 	});
 
 	host.serve(SessionRoute, ({ session }, self) => {

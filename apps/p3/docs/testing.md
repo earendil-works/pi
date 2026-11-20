@@ -1,6 +1,6 @@
 # Testing a package
 
-Tests are fast, isolated and deterministic: every case gets its own topology, sessions and stores; a test waits for
+Tests are fast, isolated and deterministic: every case gets its own server, sessions and stores; a test waits for
 an effect it caused; nothing fails in the background but what the case asked for. A failure under load is a bug until
 its cause is known.
 
@@ -12,9 +12,9 @@ p3 needs Node 26.3.1 or newer, tests included. On slayer the default `node` is 2
 | Command (in `apps/p3`) | What |
 | --- | --- |
 | `npm run check` | Biome and TypeScript over p3 (the root check skips `apps/`); clean before every report |
-| `npm test` | every `test/*.test.ts`, `test/kit/*.test.ts` and `plugins/**/*.test.ts`, from source |
+| `npm test` | every `test/*.test.ts` and `plugins/**/*.test.ts`, from source |
 | `node --conditions=source --disable-warning=ExperimentalWarning --test <file>` | one test file |
-| `npm run release:p3:local -- --out /tmp/p3-release --force` (from the repository root) | builds and installs the release outside the repository, runs `test/release/*.test.ts` against it, the memory test included (about 90 s) |
+| `npm run release:p3:local -- --out /tmp/p3-release --force` (from the repository root) | builds and installs the release outside the repository and runs `test/release/*.test.ts` against it; `--bench` runs `bench/skeleton.ts` against it. The memory test is still on the old base (`old/test/release/`) |
 
 Run the release command when your package changes what the release ships (its files, its dependencies) or what a
 worker loads.
@@ -34,15 +34,26 @@ await t.root(async (ctx) => { /* ctx.get(...), calls, asserts */ }, context, { p
 assert.deepEqual(t.unserved(), []);
 ```
 
-**2. Topology** (most coverage here): the server and session workers as hosts in one process, linked in memory, each
-with its own SQLite store; plugins imported as modules. `test/topology.ts` gives `topology(context, store?)`,
-`client(principal)`, `workers`, `errors`, `count(metric)`, `reloadSessions()`, `reloadWorker(session)`, `restart()`.
-Model: `test/sessions.test.ts`. It loads only the sessions plugin today: to load yours, ask Mario (`process.md`).
+**2. Topology** (fast, most cases of a plugin): the server and session workers as hosts in one process, linked in
+memory, each with its own SQLite store, the plugins imported as modules; the base's own pieces are the real ones
+(`src/server-core.ts`, `src/worker-core.ts`). `test/topology.ts` gives `topology(context, idleMs?)` with
+`client(principal)` (any principal), `reload(plugin, session?)` (a plugin's objects restart, as after an edit, on the
+server or on a worker), `workers`, `errors`, `closed`. Model: `test/topology.test.ts` (reloads while in use, access).
 
-**3. End to end** (a few cases): the real server in process (`test/app.test.ts`), launched from source
-(`test/launched.test.ts`) and from the installed release (`test/release/release.test.ts`), all running one case
-function (`test/end-to-end.ts`). Helpers: `ownerClient` (`test/client.ts`), `launch`, `run`, `eventually`
-(`test/launched.ts`).
+**3. End to end**: p3's real server in the test's process on a temporary data directory, its
+session workers as real processes, its plugins built from two roots as a Pi's are: the built-in one and the tests'
+own (`test/plugins/`: the probe, a third-party plugin a test drives a worker with); a test may write plugins of its own
+into `<data directory>/plugins` and apply them. `test/support.ts` gives `testServer()` with `client()` (signed in as
+the owner over WebSocket), `workers()` (the runner's state), `restart()` and `close()`, and `eventually` and `alive`
+for effects in other processes. Model: `test/skeleton.test.ts`.
+
+**4. The command** (a few cases): `p3` launched as processes of its own on a temporary home. Model:
+`test/command.test.ts`.
+
+**5. The release** (`test/release/release.test.ts`, run by `npm run release:p3:local` against the install it makes
+outside the repository): what the package holds, the command, a worker forked from the release's own bundle, and a
+third-party plugin written against the installed API alone (type-checked, loaded from the Pi's user root, called by a
+client of the compiled API). Run the bench against the install with `--release` (or the script's `--bench`).
 
 ## What every package tests
 
@@ -52,12 +63,12 @@ function (`test/end-to-end.ts`). Helpers: `ownerClient` (`test/client.ts`), `lau
 3. **Access:** every object refuses the principals it does not serve (`forbidden`); a person sees only what their
    admission allows.
 4. **Reload:** every facet you touch, reloaded while used (a list open, a worker held): nothing lost, no error. Model:
-   `test/sessions.test.ts`, "keeps its pages across a reload".
+   `test/topology.test.ts`, "reloads while in use".
 5. **Query plans:** for every named query, `EXPLAIN QUERY PLAN` of the SQL Chord runs (first page and after a
    bookmark) searches the named index with no temporary B-tree. Model: `test/plans.test.ts`.
 6. **Counted work:** Chord counts its work as metrics (`chord.query.runs`, `chord.query.probes`, `chord.link.*`);
-   assert them per common action through the in-memory telemetry adapter (`count` in the topology). Model:
-   "runs only the reads that show a renamed session".
+   assert them per common action through the in-memory telemetry adapter. Model: the sessions plugin's
+   "runs only the reads that show a renamed session" (`plugins/sessions/sessions.test.ts`).
 7. **GC:** every cache is a `WeakMap`; drop its owner, collect, assert the entry is gone:
 
    ```ts
@@ -91,7 +102,7 @@ p3 has no page or terminal client yet. When they come:
 p3 runs on Android under Termux (Node 26.3.1). Known differences:
 
 - no hard links (write a temporary file and rename it);
-- no `/proc/<pid>/task/<pid>/children` (scan `/proc/*/stat` for the parent; `childrenOf` in `test/launched.ts`);
+- no `/proc/<pid>/task/<pid>/children` (scan `/proc/*/stat` for the parent; `childrenOf` in `bench/skeleton.ts`);
 - at most 32 child processes per app: Android kills processes beyond that, the test runner included;
 - everything is about ten times slower to start than on slayer.
 

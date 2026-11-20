@@ -15,7 +15,16 @@ import { webSurface } from "@earendil-works/chord/surfaces";
 import { telemetryIngestFacet } from "@earendil-works/chord/telemetry-ingest";
 import { WebSocketServer } from "ws";
 import { backupConfigured } from "../runtime/backup.ts";
-import { type Ctx, createHost, type Host, type HostError, hostErrorText, Server, Session } from "../runtime/chord.ts";
+import {
+	type Ctx,
+	createHost,
+	type Host,
+	type HostError,
+	hostErrorCause,
+	hostErrorText,
+	Server,
+	Session,
+} from "../runtime/chord.ts";
 import { envDefaultModel } from "../runtime/default-model.ts";
 import { type DevCommand, type DevResult, parseDevCommand } from "../runtime/dev-protocol.ts";
 import { configureFetch } from "../runtime/fetch.ts";
@@ -587,9 +596,9 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 			hostFailures.set(plugin, [...(hostFailures.get(plugin) ?? []), text]);
 		for (const step of rebuilt.result.steps)
 			for (const each of step.hosts) {
-				if ("report" in each)
+				if (each.kind === "reloaded")
 					for (const { plugin, error } of each.report.failed) fail(plugin, `${each.host}: ${errorText(error)}`);
-				else if ("error" in each)
+				else if (each.kind === "failed")
 					for (const plugin of rebuilt.changed) fail(plugin, `${each.host}: ${errorText(each.error)}`);
 			}
 		return [
@@ -1017,7 +1026,7 @@ function recentErrors(since: number): string[] {
  */
 function isOwnerNotice(error: HostError): boolean {
 	if (error.kind === "resolve_failed") return false;
-	const failure = "error" in error ? error.error : "failure" in error ? error.failure.error : undefined;
+	const failure = hostErrorCause(error);
 	return !isChordError(failure, "released") && !isChordError(failure, "forbidden");
 }
 

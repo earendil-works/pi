@@ -132,10 +132,10 @@ workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
 - **`close(ctx)`:** starts waiting in `start(address)` are aborted, the worker base's file removed, every child
   stopped, new starts reject `released/closed`; the host's close (the route's context) closes it too, and no exit
   after that is a failure.
-- **`step(name)`** (§4): clears the failures from before it and retries the held ones (listed `{ host, report }` with
-  their load report once ready, or `{ host, error }`), then ships the kind's current set to every worker whose last
-  set is older, in parallel, one reload outstanding per child: `{ host, report }`, `{ host, stopped: true }` (stopped
-  cleanly meanwhile) or `{ host, error }` (a crash, a failed reload). The step's context bounds only its wait (an abort
+- **`step(name)`** (§4): clears the failures from before it and retries the held ones (listed `{ kind: "reloaded", host, report }` with
+  their load report once ready, or `{ kind: "failed", host, error }`), then ships the kind's current set to every worker whose last
+  set is older, in parallel, one reload outstanding per child: `{ kind: "reloaded", host, report }`, `{ kind: "stopped", host }` (stopped
+  cleanly meanwhile) or `{ kind: "failed", host, error }` (a crash, a failed reload). The step's context bounds only its wait (an abort
   lists the waiting ones with the abort's error; a late reply still frees the child's slot).
 - **The child** (`workerMain`): reads the start message, takes the lock, makes its parent link (`started` on the app's
   `connect`), gives the app `plugins` (`WorkerPlugins.load(host, { kind, core })` over the shipped scripts, with the

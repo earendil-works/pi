@@ -62,6 +62,7 @@ export function mapStack(error: unknown): string {
 		const script = scripts.get(filename);
 		if (script === undefined) return whole;
 		const entry = mapOf(script)?.findEntry(Number(line) - 1, Number(column) - 1);
+		// Node's `findEntry()` answers `{}` where no mapping covers the position.
 		if (entry === undefined || !("originalSource" in entry)) return whole;
 		const file = join(basename(script.dir), entry.originalSource).split("\\").join("/");
 		return `${file}:${entry.originalLine + 1}:${entry.originalColumn + 1}`;

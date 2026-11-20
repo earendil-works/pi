@@ -939,7 +939,7 @@ async function answer(runtime: Runtime, message: AssistantMessage, context: Cont
 		const decision = await hook(message, runtime, context);
 		if (decision === undefined) return;
 		decided = true;
-		if ("tasks" in decision) prepareHookTasks(runtime, decision.tasks, prepared);
+		if (decision.kind === "tasks") prepareHookTasks(runtime, decision.tasks, prepared);
 		else continuation = decision.continue;
 	});
 	const conversationId = runtime.conversationId;

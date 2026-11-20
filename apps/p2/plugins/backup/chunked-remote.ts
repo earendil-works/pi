@@ -33,6 +33,7 @@ export class ChunkedRemote implements SessionSyncUploader {
 		this.#own(sessionId);
 		return this.#with(async (remote, ctx) => {
 			const begun = await remote.begin({ after, to, ...(options.archive === true ? { archive: true } : {}) }, ctx);
+			// `begin`'s answer is the `Backup` contract's wire form, untagged: tagging it would change the contract.
 			if ("result" in begun) return begun.result;
 			const { upload } = begun;
 			try {

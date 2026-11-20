@@ -372,7 +372,9 @@ export class JsonlStorage implements Storage {
 		// The markers are appended: the batches are durable. Reclaiming sidecars comes after the receipts.
 		for (const [index, seq] of seqs.entries()) receive(index, seq);
 		await this.reclaimSidecars(reclamations, context);
-		return refused === undefined ? { stored: seqs.length } : { stored: seqs.length, refused: refused.error };
+		return refused === undefined
+			? { kind: "stored", stored: seqs.length }
+			: { kind: "refused", stored: seqs.length, refused: refused.error };
 	}
 
 	/** Append the sidecar records of `commits`, flushed with `fsync`, then their markers in one write of `main.jsonl`. */

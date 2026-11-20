@@ -890,7 +890,9 @@ export async function resolveDirectory(
 	target: LocationInput,
 	from: Location,
 	context: Context,
-): Promise<Location | { error: string }> {
+): Promise<
+	{ readonly kind: "directory"; readonly location: Location } | { readonly kind: "invalid"; readonly error: string }
+> {
 	const same = target.env === from.env;
 	const typed = target.path.trim();
 	const path = !typed ? (same ? from.cwd : "~") : same || isRooted(typed) ? typed : `~/${typed}`;
@@ -899,9 +901,10 @@ export async function resolveDirectory(
 		const absolute = await env.absolutePath(path, context);
 		const canonical = absolute.ok ? await env.canonicalPath(absolute.value, context) : undefined;
 		const info = canonical?.ok ? await env.fileInfo(canonical.value, context) : undefined;
-		if (!absolute.ok || !info?.ok || info.value.kind !== "directory") return { error: "not an existing directory" };
-		return { env: target.env, cwd: absolute.value };
+		if (!absolute.ok || !info?.ok || info.value.kind !== "directory")
+			return { kind: "invalid", error: "not an existing directory" };
+		return { kind: "directory", location: { env: target.env, cwd: absolute.value } };
 	} catch (error) {
-		return { error: error instanceof Error ? error.message : String(error) };
+		return { kind: "invalid", error: error instanceof Error ? error.message : String(error) };
 	}
 }

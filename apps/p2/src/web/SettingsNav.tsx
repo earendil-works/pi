@@ -11,7 +11,7 @@ import { setSettingsEmbed } from "./settings-embed.ts";
 export const SETTINGS_LAYER = "settings";
 
 /** A section of the Settings window: one of its own (`locator`) or a plugin's sheet (`layer`). */
-export type SettingsSectionChoice = { locator: string } | { layer: Layer };
+export type SettingsSectionChoice = { kind: "own"; locator: string } | { kind: "plugin"; layer: Layer };
 
 /** Where the Settings window is in `route.layers`; -1 while it is closed. */
 export function settingsIndex(route: Route): number {
@@ -45,9 +45,9 @@ function settingsLayers(section: SettingsSectionChoice | undefined): Layer[] {
 	const window: Layer = {
 		kind: "sheet",
 		name: SETTINGS_LAYER,
-		...(section && "locator" in section ? { locator: section.locator } : {}),
+		...(section?.kind === "own" ? { locator: section.locator } : {}),
 	};
-	return section && "layer" in section ? [window, section.layer] : [window];
+	return section?.kind === "plugin" ? [window, section.layer] : [window];
 }
 
 /** The section the Settings window shows: a plugin's sheet layer name, its own section's locator, or none (the list). */
@@ -96,7 +96,7 @@ export function SettingsNavItem({ name, label, title }: { name: string; label: s
 			className="settings-nav-item"
 			aria-current={current ? "page" : undefined}
 			title={title}
-			onClick={() => showSettingsSection({ layer: { kind: "sheet", name } }, wide)}
+			onClick={() => showSettingsSection({ kind: "plugin", layer: { kind: "sheet", name } }, wide)}
 		>
 			{label}
 		</button>

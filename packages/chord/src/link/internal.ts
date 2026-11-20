@@ -15,6 +15,7 @@ export {
 	type Message,
 	NO_RETIRED,
 	type OriginMessage,
+	originOf,
 	type ProviderMessage,
 	RETRY_HOPS,
 	type StateEntry,

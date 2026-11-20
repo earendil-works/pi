@@ -91,8 +91,8 @@ export class LoginDialog implements Component, Focusable {
 		this.input.setValue("");
 		this.secret.clear();
 		this.select = undefined;
-		if (prompt?.type === "select" && "options" in prompt) {
-			const options = prompt.options as readonly { id: string; label: string; description?: string }[];
+		if (prompt?.type === "select") {
+			const options = prompt.options;
 			this.select = new SelectList(
 				options.map((option) => ({
 					value: option.id,
@@ -264,7 +264,7 @@ export class LoginDialog implements Component, Focusable {
 		if (prompt) {
 			lines.push("", wrap(lineText(prompt.message)));
 			if (prompt.type === "manual_code") lines.push(wrap(theme.fg("dim", MANUAL_CODE_HELP)));
-			if ("placeholder" in prompt && typeof prompt.placeholder === "string" && prompt.type !== "secret")
+			if ((prompt.type === "text" || prompt.type === "manual_code") && prompt.placeholder !== undefined)
 				lines.push(wrap(theme.fg("dim", `e.g., ${lineText(prompt.placeholder)}`)));
 			if (prompt.type === "select" && this.select) lines.push(...this.select.render(width));
 			else if (prompt.type === "secret") {

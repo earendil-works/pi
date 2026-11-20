@@ -57,7 +57,7 @@ export const Approvals = defineExtension({
 					return { sleep: { signals: [Approval.key(key)], until } };
 				}
 				questions.delete(key);
-				if ("expired" in state) return { block: "No approval within a day" };
+				if (state.kind === "expired") return { block: "No approval within a day" };
 				return state.value.allow ? undefined : { block: "Not approved" };
 			},
 		}),

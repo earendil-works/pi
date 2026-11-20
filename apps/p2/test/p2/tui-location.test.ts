@@ -195,18 +195,43 @@ async function setup(t: { after(fn: () => unknown): void }, role: "owner" | "gue
 
 test("parseLocation reads [env:]path as the footer writes it", () => {
 	const envs = ["gpu", "local2"];
-	assert.deepEqual(parseLocation("gpu:/data", envs, { env: null }), { env: "gpu", path: "/data" });
-	assert.deepEqual(parseLocation("gpu:", envs, { env: null }), { env: "gpu", path: "~" });
-	assert.deepEqual(parseLocation("/tmp/x", envs, { env: null }), { env: null, path: "/tmp/x" });
+	assert.deepEqual(parseLocation("gpu:/data", envs, { env: null }), {
+		kind: "parsed",
+		location: { env: "gpu", path: "/data" },
+	});
+	assert.deepEqual(parseLocation("gpu:", envs, { env: null }), {
+		kind: "parsed",
+		location: { env: "gpu", path: "~" },
+	});
+	assert.deepEqual(parseLocation("/tmp/x", envs, { env: null }), {
+		kind: "parsed",
+		location: { env: null, path: "/tmp/x" },
+	});
 	// /cd: no prefix stays in the session's environment, relative to its directory.
-	assert.deepEqual(parseLocation("../b/./c", envs, { env: "gpu", cwd: "/srv/a" }), { env: "gpu", path: "/srv/b/c" });
-	assert.deepEqual(parseLocation("local:~/p", envs, { env: "gpu", cwd: "/srv" }), { env: null, path: "~/p" });
+	assert.deepEqual(parseLocation("../b/./c", envs, { env: "gpu", cwd: "/srv/a" }), {
+		kind: "parsed",
+		location: { env: "gpu", path: "/srv/b/c" },
+	});
+	assert.deepEqual(parseLocation("local:~/p", envs, { env: "gpu", cwd: "/srv" }), {
+		kind: "parsed",
+		location: { env: null, path: "~/p" },
+	});
 	// Another environment, or /new: relative to the home directory.
-	assert.deepEqual(parseLocation("gpu:rel", envs, { env: null, cwd: "/work" }), { env: "gpu", path: "~/rel" });
-	assert.deepEqual(parseLocation("rel", envs, { env: null }), { env: null, path: "~/rel" });
+	assert.deepEqual(parseLocation("gpu:rel", envs, { env: null, cwd: "/work" }), {
+		kind: "parsed",
+		location: { env: "gpu", path: "~/rel" },
+	});
+	assert.deepEqual(parseLocation("rel", envs, { env: null }), {
+		kind: "parsed",
+		location: { env: null, path: "~/rel" },
+	});
 	// One letter is a Windows drive; other unknown names are refused.
-	assert.deepEqual(parseLocation("c:/x", envs, { env: null }), { env: null, path: "c:/x" });
+	assert.deepEqual(parseLocation("c:/x", envs, { env: null }), {
+		kind: "parsed",
+		location: { env: null, path: "c:/x" },
+	});
 	assert.deepEqual(parseLocation("tpu:/x", envs, { env: null }), {
+		kind: "invalid",
 		error: 'Unknown environment "tpu" (/envs lists them)',
 	});
 	assert.equal(joinPath("C:\\work\\a", "..\\b"), "C:\\work\\b");

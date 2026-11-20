@@ -12,7 +12,7 @@ export default defineFacet((_host, self) =>
 				scope: "all",
 				wrap: async (request, next, ctx) => {
 					const response = await next(request);
-					const status = "status" in response ? response.status : 200;
+					const status = response.kind === "bytes" ? 200 : (response.status ?? 200);
 					console.log(
 						`   audit: ${ctx.principal === undefined ? "anonymous" : "someone"} ${request.method} ${request.path} ${status}`,
 					);
