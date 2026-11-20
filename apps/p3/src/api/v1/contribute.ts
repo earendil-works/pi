@@ -3,7 +3,7 @@
 // module exports it.
 
 import { type FacetHost, local, type StoreSelf } from "@earendil-works/chord";
-import type { P3Principal } from "../../principals.ts";
+import type { P3Principal } from "../../app.ts";
 
 /**
  * Serves a host-lifetime local object named `name` with no members, whose factory only calls `register(self)`: what it

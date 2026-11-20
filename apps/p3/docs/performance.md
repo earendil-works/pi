@@ -6,9 +6,8 @@ it touches and reports the numbers in its Linear issue; a number that gets worse
 ## The budget: 55 MiB per session worker
 
 No session worker's USS (the memory only that process holds: what one more worker costs) may exceed 55 MiB, in any
-phase. The memory test (`apps/p3/old/test/release/memory.test.ts`, on the old base; to be ported to the skeleton with
-the harness core, ERNDL-855) checks it: four
-workers, each with Durable's harness, the coding tools, a subagent tool, real pi-ai providers against a local HTTPS
+phase. The memory test (the old base's `apps/p3/old/test/release/memory.test.ts`, in git at `753bc0bb2`; to be
+ported to the skeleton with the harness core, ERNDL-855) checks it: four workers, each with Durable's harness, the coding tools, a subagent tool, real pi-ai providers against a local HTTPS
 stub and telemetry; idle, one streamed answer, a burst of 20 turns with tool calls, five subagents streaming at once.
 
 Where it stands (slayer, Node 26.11.1, the release, USS MiB, median of 20 workers):
@@ -31,19 +30,26 @@ the provider SDKs are bundled and load per provider on first use; the worker's V
 
 | What | slayer, release | the phone, from source |
 | --- | --- | --- |
-| server launch to listening, warm | 128 ms (105 ms on the old base, with one plugin) | 1.6 to 1.9 s |
-| worker start, warm | 64 ms (old base, same bench: 68 ms) | about 1 s |
-| idle worker, settled (sessions and runner only, no harness) | 14.0 MiB (old base, same bench: 14.9) | 19.6 MiB |
-| server, settled | 35.5 MiB (old base, same bench: 40.8) | 44 to 46 MiB |
-
-The skeleton's numbers are `bench/skeleton.ts --release` (2026-11-20); the old base's ran the same bench against a
-release of `30a3e0b1f`, back to back. The memory test's idle worker (17.9 MiB above) carries the harness, the coding
-tools and a subagent tool: never compare the two.
+| server launch to listening, warm | 112 ms (105 ms on the old base, with one plugin) | 1.6 to 1.9 s |
+| the worker plugins' build, on first need | 12 ms | |
+| worker start, warm | 69 ms (old base, same bench: 68 ms) | about 1 s |
+| idle worker, settled (sessions and runner only, no harness) | 14.3 MiB (old base, same bench: 14.9) | 19.6 MiB |
+| server, settled | 32.6 MiB (old base, same bench: 40.8) | 44 to 46 MiB |
 | plain `p3` to its owner link | about 250 ms | 3.4 to 3.9 s |
 | the owner's list, open / `more`, at 100,000 sessions | 0.6 / 0.45 ms | 3.4 to 5.3 / 2.6 to 4.5 ms |
 
+The skeleton's numbers are `bench/skeleton.ts --release` (2026-11-20, review round 1 fixed; slayer under load 6:
+the launch's minimum was 106 ms); the old base's ran the same bench against a release of `30a3e0b1f`. The idle
+worker's USS counts session workers only (esbuild's service, also the server's child, no longer). The memory test's idle worker (17.9 MiB above) carries the harness, the coding
+tools and a subagent tool: never compare the two.
+
 - **Every start builds every plugin again** (no build cache): about 30 ms for one plugin today, one esbuild call per
-  facet. A package with large facets says what it adds to the start, on the phone too.
+  facet. The server facets are built before the server listens; the worker facets when they are first needed (the
+  first worker's start, or an apply), so the first worker after a start pays their build: the bench measures that
+  build apart from a worker's start. A package with large facets says what it adds to the start, on the phone too.
+- **Many workers at once:** the waker starts the worker of every `working` session together after a restart, and
+  nothing caps live workers. On Android that meets the 32-child-process limit unless it is lifted (`testing.md`,
+  Android).
 - **Telemetry:** a healthy turn should store no spans; at most 1 KB of metrics per process per 10 s; the store
   bounded by size (slice 28's targets, `slices/28-telemetry.md`).
 - **Bytes on the wire:** none measured per action yet. A UI package sets a budget for its common actions (opening a
@@ -60,7 +66,7 @@ tools and a subagent tool: never compare the two.
   so note its load.
 - **Where:** slayer and the phone; source and release. Name the machine, the Node, the layout, the date and n.
 - **A bench per package:** `apps/p3/bench/<name>.ts`, modelled on `bench/skeleton.ts` (launched processes, both
-  layouts, `--release <install>`). `NODE_DEBUG=p3` prints what a start spends building.
+  layouts, `--release <dir>`).
 
 ## Rules
 

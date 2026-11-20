@@ -1,13 +1,11 @@
 // The owner's sign-in: a one-time owner link (single use, 10 minutes; its page posts the token from the URL's
-// fragment, never sent to a server, and gets a browser sign-in), and on this machine the owner token file (a device
-// sign-in, mode 0600) in the data directory, which the command uses to ask for a fresh link.
+// fragment, never sent to a server, and gets a browser sign-in), made fresh for `p3` (the command `owner-link`, over
+// the data directory's socket) or for a signed-in owner (`POST /_p3/owner/link`).
 
-import { chmod } from "node:fs/promises";
-import { join } from "node:path";
 import { contribute, type FacetHost, type P3Principal } from "@earendil-works/p3/v1";
-import { Http, ServerRuntime } from "@earendil-works/p3/v1/server";
+import { Http, ServerCommands, ServerRuntime } from "@earendil-works/p3/v1/server";
 import { SignIns } from "./contract.ts";
-import { hashToken, matchesHash, newToken, readSecret, writeSecret } from "./secrets.ts";
+import { hashToken, matchesHash, newToken } from "./secrets.ts";
 
 /** How long an owner link is valid: 10 minutes. */
 const OWNER_LINK_MS = 10 * 60_000;
@@ -18,28 +16,16 @@ export const OWNER_PATH = "/_p3/owner";
 /** The path a signed-in owner posts to for a fresh owner link. */
 export const OWNER_LINK_PATH = "/_p3/owner/link";
 
-/** The owner token file in a data directory. */
-export function ownerTokenFile(dataDir: string): string {
-	return join(dataDir, "owner-token");
-}
-
-/** Serves the owner's routes on `host`, and keeps the owner token file. */
+/** Serves the owner's routes and the command `owner-link` on `host`. */
 export function serveOwner(host: FacetHost<P3Principal>): void {
 	const ownerLink = new OwnerLink();
 	contribute(host, "sign-in.owner", (self) => {
 		const runtime = self.registry(ServerRuntime);
-		// The owner token file: kept while its token authenticates as the owner, else a new device sign-in written there.
-		self.onLive(async (ctx) => {
-			const path = ownerTokenFile(runtime.value.dataDir);
-			const signIns = await ctx.get(SignIns, {});
-			const existing = await readSecret(path);
-			if (existing !== undefined && (await signIns.verify(existing, ctx))?.kind === "owner") {
-				await chmod(path, 0o600);
-				return;
-			}
-			const { token } = await signIns.issue({ principal: OWNER, label: "owner token file", kind: "device" }, ctx);
-			await writeSecret(path, token);
-		});
+		/** A fresh owner link at the server's origin, or `undefined` before it listens. */
+		const freshLink = (): string | undefined => {
+			const listening = runtime.value.listening();
+			return listening === undefined ? undefined : ownerLink.renew(`http://127.0.0.1:${listening.port}`);
+		};
 		self.contribute(Http, {
 			routes: {
 				[`GET ${OWNER_PATH}`]: {
@@ -64,11 +50,19 @@ export function serveOwner(host: FacetHost<P3Principal>): void {
 				[`POST ${OWNER_LINK_PATH}`]: {
 					handler: async (_request, ctx) => {
 						if (ctx.principal?.kind !== "owner") return { kind: "error", status: 403 };
-						const listening = runtime.value.listening();
-						if (listening === undefined) return { kind: "error", status: 503 };
-						return { kind: "json", value: { link: ownerLink.renew(`http://127.0.0.1:${listening.port}`) } };
+						const link = freshLink();
+						return link === undefined ? { kind: "error", status: 503 } : { kind: "json", value: { link } };
 					},
 				},
+			},
+		});
+		// `p3` asks it over the data directory's socket, which only the owner's processes reach.
+		self.contribute(ServerCommands, {
+			name: "owner-link",
+			run: async () => {
+				const link = freshLink();
+				if (link === undefined) throw new Error("p3: the server does not listen yet");
+				return link;
 			},
 		});
 	});

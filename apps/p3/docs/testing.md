@@ -12,22 +12,26 @@ p3 needs Node 26.3.1 or newer, tests included. On slayer the default `node` is 2
 | Command (in `apps/p3`) | What |
 | --- | --- |
 | `npm run check` | Biome and TypeScript over p3 (the root check skips `apps/`); clean before every report |
-| `npm test` | every `test/*.test.ts` and `plugins/**/*.test.ts`, from source |
+| `npm test` | every `test/*.test.ts` and `plugins/*/test/*.test.ts`, from source |
 | `node --conditions=source --disable-warning=ExperimentalWarning --test <file>` | one test file |
-| `npm run release:p3:local -- --out /tmp/p3-release --force` (from the repository root) | builds and installs the release outside the repository and runs `test/release/*.test.ts` against it; `--bench` runs `bench/skeleton.ts` against it. The memory test is still on the old base (`old/test/release/`) |
+| `npm run release:p3:local -- --out /tmp/p3-release --force` (from the repository root) | builds and installs the release outside the repository and runs `test/release/*.test.ts` against it; `--bench` runs `bench/skeleton.ts` against it. The memory test is not ported yet: the old base's is in git at `753bc0bb2` (`apps/p3/old/test/release/`), ported with the harness core (ERNDL-855) |
 
 Run the release command when your package changes what the release ships (its files, its dependencies) or what a
 worker loads.
 
-## The three tiers
+## The tiers
 
-**1. Plugin** (milliseconds): one facet built as production builds it, on an in-memory host. Model:
-`plugins/sessions/sessions.test.ts`.
+A plugin's own tests live in its `test/` folder (`plugins/<name>/test/<file>.test.ts`, one per source file): no build
+reads that folder and no release ships it. They import the API only, as a third party's would; the plugin tier's
+helper is `@earendil-works/p3/v1/testing`.
+
+**1. Plugin** (milliseconds): one facet built as production builds it, on an in-memory host with its kind's
+principal, address and API modules. Model: `plugins/sessions/test/server.test.ts`.
 
 ```ts
-const t = await testPlugin<P3Principal>(fileURLToPath(new URL("./", import.meta.url)), {
-	kind: "server", api: { name: API.name, versions: API.versions }, modules: API.modules,
-	principal: { kind: "server" }, address: Server(),
+import { testPlugin } from "@earendil-works/p3/v1/testing";
+const t = await testPlugin(fileURLToPath(new URL("../", import.meta.url)), {
+	kind: "server",                            // or { kind: "worker", session: "s1" }
 	stubs: [],                                 // small facets serving the contracts t.unserved() lists
 }, context);
 await t.root(async (ctx) => { /* ctx.get(...), calls, asserts */ }, context, { principal: { kind: "owner" } });
@@ -36,9 +40,12 @@ assert.deepEqual(t.unserved(), []);
 
 **2. Topology** (fast, most cases of a plugin): the server and session workers as hosts in one process, linked in
 memory, each with its own SQLite store, the plugins imported as modules; the base's own pieces are the real ones
-(`src/server-core.ts`, `src/worker-core.ts`). `test/topology.ts` gives `topology(context, idleMs?)` with
-`client(principal)` (any principal), `reload(plugin, session?)` (a plugin's objects restart, as after an edit, on the
-server or on a worker), `workers`, `errors`, `closed`. Model: `test/topology.test.ts` (reloads while in use, access).
+(the base facets and the route's admission exported by `src/server.ts` and `src/worker.ts`), and the server loads every built-in plugin. `test/topology.ts` gives
+`topology(context, idleMs?)` with `client(principal)` (any principal), `reload(plugin, session?)` (a plugin's objects
+restart, as after an edit, on the server or on a worker), `count(metric)` (the server's counted work), `workers`,
+`errors`, `closed`. Model: `test/topology.test.ts` (reloads while in use, access, counted work). Where it stops: workers
+are hosts, not processes (no fork, no IPC, no exit), the route does not ask the runner, and a reload renews a facet
+object instead of building edited source: the runner's processes, an apply and edited scripts are tier 3.
 
 **3. End to end**: p3's real server in the test's process on a temporary data directory, its
 session workers as real processes, its plugins built from two roots as a Pi's are: the built-in one and the tests'
@@ -47,7 +54,8 @@ into `<data directory>/plugins` and apply them. `test/support.ts` gives `testSer
 the owner over WebSocket), `workers()` (the runner's state), `restart()` and `close()`, and `eventually` and `alive`
 for effects in other processes. Model: `test/skeleton.test.ts`.
 
-**4. The command** (a few cases): `p3` launched as processes of its own on a temporary home. Model:
+**4. The command** (a few cases): `p3` launched as processes of its own on a temporary home, including what a crash
+leaves behind (sockets of killed processes, a supervisor's restart) and a server that does not stop. Model:
 `test/command.test.ts`.
 
 **5. The release** (`test/release/release.test.ts`, run by `npm run release:p3:local` against the install it makes
@@ -67,8 +75,8 @@ client of the compiled API). Run the bench against the install with `--release` 
 5. **Query plans:** for every named query, `EXPLAIN QUERY PLAN` of the SQL Chord runs (first page and after a
    bookmark) searches the named index with no temporary B-tree. Model: `test/plans.test.ts`.
 6. **Counted work:** Chord counts its work as metrics (`chord.query.runs`, `chord.query.probes`, `chord.link.*`);
-   assert them per common action through the in-memory telemetry adapter. Model: the sessions plugin's
-   "runs only the reads that show a renamed session" (`plugins/sessions/sessions.test.ts`).
+   assert them per common action through the in-memory telemetry adapter (the topology's `count`). Model:
+   "a rename runs only the reads that show the renamed session" (`test/topology.test.ts`).
 7. **GC:** every cache is a `WeakMap`; drop its owner, collect, assert the entry is gone:
 
    ```ts
@@ -103,7 +111,11 @@ p3 runs on Android under Termux (Node 26.3.1). Known differences:
 
 - no hard links (write a temporary file and rename it);
 - no `/proc/<pid>/task/<pid>/children` (scan `/proc/*/stat` for the parent; `childrenOf` in `bench/skeleton.ts`);
-- at most 32 child processes per app: Android kills processes beyond that, the test runner included;
+- at most 32 child processes per app (Android 12 and later, the "phantom process" limit): Android kills processes
+  beyond that, the test runner and session workers included. A Pi with many working sessions needs it lifted: on
+  Android 14 and later, Developer options, "Disable child process restrictions"; on Android 12 and 13, from a computer,
+  `adb shell device_config set_sync_disabled_for_tests persistent` and
+  `adb shell device_config put activity_manager max_phantom_processes 2147483647`;
 - everything is about ten times slower to start than on slayer.
 
 A package that touches processes, files or the network runs its tests on the phone before sign-off.

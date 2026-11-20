@@ -27,7 +27,7 @@ They belong to Mario:
 
 - Chord and Durable: `packages/chord/`, `packages/durable/`;
 - p3's base code: `apps/p3/src/` (the API `apps/p3/src/api/` included);
-- p3's test harness: `apps/p3/test/support.ts`, `apps/p3/test/until.ts`;
+- p3's test harness: `apps/p3/test/support.ts`, `apps/p3/test/topology.ts`, `apps/p3/test/until.ts`;
 - another package's plugin: agree with its owner; its owner changes it.
 
 When your package needs a change there, **stop** the work that depends on it and write the change up:

@@ -2,7 +2,7 @@
 // client signed in as the owner over WebSocket. One case per rule of the base, the runner and the sessions plugin.
 
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -10,6 +10,8 @@ import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { remote, Session, str } from "@earendil-works/p3/v1";
 import { WorkerRunners } from "@earendil-works/p3/v1/server";
 import { Sessions, SessionWorker } from "../plugins/sessions/contract.ts";
+import { SignIns } from "../plugins/sign-in/contract.ts";
+import { ask, type ServerAnswer, serverSocket } from "../src/local-socket.ts";
 import { Probe } from "./plugins/probe/contract.ts";
 import { alive, eventually, IDLE_MS, type TestServer, testServer } from "./support.ts";
 import { until } from "./until.ts";
@@ -159,17 +161,25 @@ describe("session workers", () => {
 	});
 });
 
+describe("the server", () => {
+	it("closes once when asked twice at once, and frees its data directory for the next server", async () => {
+		const first = await testServer();
+		await Promise.all([first.server.close(context), first.server.close(context)]);
+		running = await testServer({ dataDir: first.dataDir });
+		assert.notEqual(running.server.port, 0);
+	});
+});
+
 describe("sign-in", () => {
-	it("the owner link signs a browser in once", async () => {
+	it("the owner link the command asks for over the data directory's socket signs a browser in once", async () => {
 		running = await testServer();
 		const base = `http://127.0.0.1:${running.server.port}`;
-		const dataDir = running.dataDir;
-		const token = await eventually(async () => (await readFile(join(dataDir, "owner-token"), "utf8")).trim());
-		const answer = await fetch(`${base}/_p3/owner/link`, {
-			method: "POST",
-			headers: { authorization: `Bearer ${token}` },
-		});
-		const { link } = (await answer.json()) as { readonly link: string };
+		const answer = (await ask(serverSocket(running.dataDir), {
+			kind: "command",
+			name: "owner-link",
+		})) as ServerAnswer;
+		assert.equal(answer.kind, "answer");
+		const link = answer.kind === "answer" ? String(answer.value) : "";
 		const once = new URL(link).hash.slice(1);
 		const post = (body: unknown) =>
 			fetch(`${base}/_p3/owner`, {
@@ -185,5 +195,22 @@ describe("sign-in", () => {
 		assert.equal(withCookie.status, 200);
 		assert.equal((await post({ token: once })).status, 403);
 		assert.equal((await fetch(`${base}/_p3/owner/link`, { method: "POST" })).status, 401);
+	});
+
+	it("the owner's control routes refuse a person's sign-in", async () => {
+		running = await testServer();
+		const base = `http://127.0.0.1:${running.server.port}`;
+		const person = { kind: "person", id: "ann", name: "Ann" } as const;
+		const { token } = await running.server.runtime.host.root(
+			async (ctx) => (await ctx.get(SignIns, {})).issue({ principal: person, label: "ann", kind: "device" }, ctx),
+			context,
+		);
+		for (const path of ["/_p3/stop", "/_p3/apply", "/_p3/owner/link"]) {
+			const answer = await fetch(`${base}${path}`, {
+				method: "POST",
+				headers: { authorization: `Bearer ${token}` },
+			});
+			assert.equal(answer.status, 403, path);
+		}
 	});
 });

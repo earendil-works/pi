@@ -1,6 +1,7 @@
 // The background server's supervisor (`p3` and `p3 restart` start it, detached): it runs the server as its child,
-// starts it again after a crash, and ends with it when it stops. One per data directory: it holds the supervisor's
-// lock and writes `supervisor-running.json` (its pid), so `p3 stop` finds it also while no server runs between two starts.
+// starts it again after a crash, and ends with it when it stops. One per data directory: it holds the data directory's
+// `supervisor.sock` (`local-socket.ts`), which answers the command (its pid, a stop), so `p3 stop` finds
+// it also while no server runs between two starts.
 // Run: supervisor.ts <dataDir> <node's arguments of the server's command...>
 //
 // The child tells over its IPC channel when it listens. A child that never listened failed its start (a busy port,
@@ -10,12 +11,9 @@
 import "./minimum-node.ts";
 import { type ChildProcess, spawn } from "node:child_process";
 import { openSync, writeSync } from "node:fs";
-import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import { BACKGROUND_CONTEXT as context, withAbortSignal } from "@earendil-works/chord/context";
-import { processLock } from "@earendil-works/chord/workers/child";
-import { privateDirectory, writePrivate } from "./files.ts";
-import { supervisorFile, supervisorLock } from "./records.ts";
+import { privateDirectory } from "./files.ts";
+import { type SupervisorAnswer, supervisorSocket, takeSocket } from "./local-socket.ts";
 
 /** The wait before a crashed server starts again: 1 s, doubled for each crash in a row, at most 30 s. */
 const FIRST_DELAY_MS = 1000;
@@ -29,25 +27,29 @@ if (dataDir !== undefined && command.length > 0) await supervise(dataDir, comman
 
 /** Runs the server `command` on `dataDir` until it is stopped, starting it again after each crash. */
 async function supervise(dataDir: string, command: readonly string[]): Promise<void> {
-	const lock = await processLock(supervisorLock(dataDir), withAbortSignal(AbortSignal.timeout(1000), context)).catch(
-		() => undefined,
-	);
-	if (lock === undefined) process.exit(1);
-	await writePrivate(supervisorFile(dataDir), JSON.stringify({ pid: process.pid }));
+	let stopping = false;
+	let child: ChildProcess | undefined;
+	let wake: (() => void) | undefined;
+	let stop = (): void => {};
+	const taken = await takeSocket(supervisorSocket(dataDir), async (request): Promise<SupervisorAnswer> => {
+		// A trust boundary: a request on the socket; only its kind matters.
+		const kind = typeof request === "object" && request !== null ? (request as { kind?: unknown }).kind : undefined;
+		if (kind === "status") return { kind: "supervising", pid: process.pid, server: child?.pid ?? null };
+		if (kind !== "stop") return { kind: "invalid" };
+		stop();
+		return { kind: "stopping" };
+	});
+	if (taken.kind === "held") process.exit(1);
 	await privateDirectory(join(dataDir, "logs"));
 	// The server prints into the log itself; the supervisor adds what it does.
 	const out = openSync(join(dataDir, "logs", "server.log"), "a", 0o600);
 	const say = (text: string): void => void writeSync(out, `${new Date().toISOString()} supervisor: ${text}\n`);
-	let stopping = false;
-	let child: ChildProcess | undefined;
-	let wake: (() => void) | undefined;
-	for (const signal of ["SIGINT", "SIGTERM"] as const) {
-		process.on(signal, () => {
-			stopping = true;
-			child?.kill("SIGTERM");
-			wake?.();
-		});
-	}
+	stop = () => {
+		stopping = true;
+		child?.kill("SIGTERM");
+		wake?.();
+	};
+	for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => stop());
 	let delay = FIRST_DELAY_MS;
 	let code = 0;
 	for (;;) {
@@ -69,8 +71,7 @@ async function supervise(dataDir: string, command: readonly string[]): Promise<v
 		}
 		delay = Math.min(delay * 2, LONGEST_DELAY_MS);
 	}
-	await rm(supervisorFile(dataDir), { force: true });
-	await lock.release();
+	await taken.socket.release();
 	process.exit(code);
 }
 

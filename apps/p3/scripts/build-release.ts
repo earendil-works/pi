@@ -1,8 +1,8 @@
 // Builds what p3 ships besides its sources (`docs/slices/26-release.md`), into `dist/`: the base code bundled, one
-// bundle per process (`main.js`, the command and the server; `worker.js`, a session worker; `supervisor.js`; the kit,
+// bundle per process (`main.js`, the command and the server; `worker.js`, a session worker; `supervisor.js`; the base,
 // Chord and `ws` inlined where used, so no process loads TypeScript, and a worker or the supervisor none of the
 // server's code), the launcher `p3.js`, and the API modules compiled one by one with their declarations
-// (`api/v1/`, and what they import of the kit), which import Chord from the package's dependency: what a plugin's type
+// (`api/v1/`, and what they import of the base), which import Chord from the package's dependency: what a plugin's type
 // check and editor resolve. `package.json` names the rest that ships (`files`).
 // Run: npm run build (in apps/p3)
 

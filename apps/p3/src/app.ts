@@ -1,8 +1,19 @@
-// What p3 is to its base and its tests: its API (the package and its versions), its facet kinds, and its principals as
-// links stamp them. The API's modules each process evaluates plugins with are `modules-server.ts` and
-// `modules-worker.ts`: a worker never loads the server's (its HTTP stack).
+// What p3 is to its base, its API and its tests: its API (the package and its versions), its facet kinds, and its
+// principals (decision "The principal is identity only", 2026-11-13): who someone is, never what they may do. What a
+// person may do is data of apps and plugins, read live by admissions. The API's modules ship this file.
 
-import type { P3Principal } from "./principals.ts";
+import { lit, obj, type Static, str, union } from "@earendil-works/chord";
+
+/** Who someone is in p3: the owner, a person the owner let in, a session's worker, or the server. */
+export const P3Principal = union([
+	obj({ kind: lit("owner") }),
+	obj({ kind: lit("person"), id: str(), name: str() }),
+	obj({ kind: lit("worker"), session: str() }),
+	obj({ kind: lit("server") }),
+]);
+
+/** Who someone is in p3 (see `P3Principal`). */
+export type P3Principal = Static<typeof P3Principal>;
 
 /** p3's API: its package and its versions (newest first). */
 export const API = { name: "@earendil-works/p3", versions: ["v1"] } as const;

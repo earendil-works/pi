@@ -10,6 +10,11 @@ export type ToWorker =
 			readonly session: string;
 			/** The worker's private directory: its store lives in it. */
 			readonly dir: string;
+			/**
+			 * The session's lock (a socket path in a private directory, short enough for one: at most 104 bytes), which
+			 * the worker takes before it opens its store.
+			 */
+			readonly lock: string;
 			/** How long it idles before it stops itself. */
 			readonly idleMs: number;
 			readonly scripts: readonly PluginScript[];
@@ -19,7 +24,7 @@ export type ToWorker =
 
 /**
  * What a worker sends the server: `failed` names the plugins that did not load; `closed`: it was idle for its idle
- * time, has closed its host and store (everything it started finished), and exits now (a clean exit, no crash).
+ * time and its store's queued commits settled; it closes its host and store and exits now (a clean exit, no crash).
  */
 export type FromWorker =
 	| { readonly kind: "ready"; readonly failed: readonly string[] }

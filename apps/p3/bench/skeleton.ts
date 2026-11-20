@@ -1,9 +1,11 @@
 // The skeleton's numbers (ERNDL-954), with p3 launched as a user starts it, from the source checkout: the server's
-// launch to listening (cold: the first, an empty compile cache; then warm), a session worker's start (the first after
-// the server's start, then warm), and memory as `performance.md` reads it: USS (what only that process holds) of the
-// server and of idle workers, each read settled (until it moves less than 0.25 MiB over 4 s, at most 40 s).
+// launch to listening (cold: the first, an empty compile cache; then warm), the worker plugins' build (the server
+// builds them when they are first needed: here an owner's apply asks for them), a session worker's start (the first,
+// then warm), and memory as `performance.md` reads it: USS (what only that process holds) of the server and of idle
+// workers (the server's children that run the worker entry: esbuild's service is a child too), each read settled
+// (until it moves less than 0.25 MiB over 4 s, at most 40 s).
 // Run from apps/p3, with Node 26: node --conditions=source --disable-warning=ExperimentalWarning bench/skeleton.ts
-// [--release <install directory>]: with it, p3 as the release installed there (`npm run release:p3:local`) runs.
+// [--release <dir>]: with it, the release `npm run release:p3:local -- --out <dir>` installed in `<dir>/install` runs.
 
 import { type ChildProcess, spawn } from "node:child_process";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
@@ -16,6 +18,7 @@ import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import type { P3Principal } from "@earendil-works/p3/v1";
 import { Sessions, SessionWorker } from "../plugins/sessions/contract.ts";
 import { COMMAND } from "../src/install.ts";
+import { ownerCookie } from "../test/support.ts";
 
 /** Node's arguments that run the `p3` command: the release installed in `--release`, else this checkout's source. */
 const { release } = parseArgs({ options: { release: { type: "string" } } }).values;
@@ -46,6 +49,13 @@ try {
 	try {
 		const client = await ownerClient(server.dataDir, server.port);
 		const sessions = await client.get(Sessions, {}, context);
+		const building = performance.now();
+		const applied = await fetch(`http://127.0.0.1:${server.port}/_p3/apply`, {
+			method: "POST",
+			headers: { cookie: await ownerCookie(server.dataDir, server.port) },
+		});
+		if (!applied.ok) throw new Error(`bench: the apply failed: ${applied.status}`);
+		line("worker plugins: build (asked by an apply)", `${(performance.now() - building).toFixed(0)} ms`);
 		const starts: number[] = [];
 		const held: { release(): void }[] = [];
 		for (let i = 0; i < Math.max(RUNS, WORKERS); i++) {
@@ -54,11 +64,12 @@ try {
 			held.push(await client.get(SessionWorker, { session: id }, context));
 			starts.push(performance.now() - started);
 		}
-		line("worker: start, the first after the server's", `${starts[0]!.toFixed(0)} ms`);
+		line("worker: start, the first (plugins built)", `${starts[0]!.toFixed(0)} ms`);
 		line("worker: start, warm", stats(starts.slice(1)));
 		line("server, settled", `USS ${mib(await settled(server.pid))}`);
-		const workers = await childrenOf(server.pid);
-		const idle = await Promise.all(workers.slice(0, WORKERS).map(settled));
+		const workers = await workersOf(server.pid);
+		if (workers.length !== WORKERS) throw new Error(`bench: ${workers.length} workers run, not ${WORKERS}`);
+		const idle = await Promise.all(workers.map(settled));
 		line(`idle worker, settled (median of ${idle.length})`, `USS ${mib(median(idle))}`);
 		for (const each of held) each.release();
 		await client.close(context);
@@ -94,11 +105,10 @@ async function stop(child: ChildProcess): Promise<void> {
 	await exited;
 }
 
-/** A client of the server on `port`, signed in as the owner with the owner token file. */
+/** A client of the server on `port`, signed in as the owner with a fresh owner link's cookie. */
 async function ownerClient(dataDir: string, port: number): Promise<Host<P3Principal>> {
-	const token = (await readFile(join(dataDir, "owner-token"), "utf8")).trim();
 	// Node's WebSocket (undici) takes an init object with headers; the DOM type knows only protocols.
-	const init = { headers: { authorization: `Bearer ${token}` } } as unknown as string[];
+	const init = { headers: { cookie: await ownerCookie(dataDir, port) } } as unknown as string[];
 	const client = createHost<P3Principal>({ readyTimeout: 30_000, onError: (error) => console.error(error) });
 	client.connect(
 		webSocketLink(new WebSocket(`ws://127.0.0.1:${port}/chord`, init)),
@@ -128,16 +138,21 @@ async function uss(pid: number): Promise<number> {
 	return kb("Private_Clean") + kb("Private_Dirty");
 }
 
-/** The children of `pid`: every process whose parent it is (`/proc/*\/stat`; Android has no `children` file). */
-async function childrenOf(pid: number): Promise<number[]> {
-	const children: number[] = [];
+/**
+ * The session workers of the server `pid`: its children whose command line runs the worker entry (`/proc/*\/stat`;
+ * Android has no `children` file).
+ */
+async function workersOf(pid: number): Promise<number[]> {
+	const workers: number[] = [];
 	for (const entry of await readdir("/proc")) {
 		if (!/^\d+$/.test(entry)) continue;
 		const stat = await readFile(`/proc/${entry}/stat`, "utf8").catch(() => "");
 		const parent = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
-		if (parent === pid) children.push(Number(entry));
+		if (parent !== pid) continue;
+		const command = await readFile(`/proc/${entry}/cmdline`, "utf8").catch(() => "");
+		if (command.split("\0").some((arg) => /[/\\]worker\.(js|ts)$/.test(arg))) workers.push(Number(entry));
 	}
-	return children;
+	return workers;
 }
 
 function median(values: readonly number[]): number {

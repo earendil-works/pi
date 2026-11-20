@@ -1,7 +1,7 @@
 // p3's API v1 for server facets (`@earendil-works/p3/v1/server`): Chord's HTTP surface (routes, authenticators,
 // cookies), the registries the base serves (`ServerRuntime`: the server's process values; `WorkerRunners`: how a session's
-// worker runs; `LinkOpened`: hooks on each accepted `/chord` link), and the contract the session route asks
-// (`SessionRoute`), which a plugin serves.
+// worker runs; `LinkOpened`: hooks on each accepted `/chord` link; `ServerCommands`: what `p3` runs over the data
+// directory's socket), and the contract the session route asks (`SessionRoute`), which a plugin serves.
 
 import {
 	type Address,
@@ -16,8 +16,9 @@ import {
 } from "@earendil-works/chord";
 import type { Context } from "@earendil-works/chord/context";
 import type { HttpRequest, ListenAddress } from "@earendil-works/chord/http";
+import type { JsonValue } from "@earendil-works/chord/json";
 import type { PluginScript, RolloutResult, RolloutStep } from "@earendil-works/chord/plugins";
-import type { P3Principal } from "../../principals.ts";
+import type { P3Principal } from "../../app.ts";
 import type { Session } from "./index.ts";
 
 export * from "@earendil-works/chord/http";
@@ -49,7 +50,7 @@ export type ServerRuntime = {
 /** The server's process values (`ServerRuntime`), served by the base. */
 export const ServerRuntime = defineRegistry<never, ServerRuntime>("p3.server-runtime", { version: 1 });
 
-/** How a session's worker runs: started for the route, and the rollout step that ships plugin reloads to it. */
+/** How a session's worker runs: started for the route, and the workers step of an apply, which ships reloads to it. */
 export type WorkerRunner = {
 	/** Starts the worker of `address` (after its previous one exited) and gives the link to its host. */
 	start(address: Address<typeof Session>, context: Context): Promise<Link>;
@@ -59,7 +60,8 @@ export type WorkerRunner = {
 	retry(id: string): void;
 	/** What runs: each session's worker by id, `running` or `failed` with the reason. */
 	state(): Readonly<Record<string, WorkerState>>;
-	readonly rollout: RolloutStep;
+	/** The workers step of an apply (the base names it and runs it after the server step): ships the changed scripts. */
+	reload: RolloutStep["reload"];
 };
 
 /** A session worker as its runner sees it. */
@@ -90,4 +92,16 @@ export const SessionRoute = local("p3.session-route", {
 	version: 1,
 	params: { session: str() },
 	members: { exists: bool() },
+});
+
+/**
+ * A command the owner's `p3` runs on the server over the data directory's socket (`server.sock`; the sign-in plugin's
+ * `owner-link`). Only the owner's processes can reach that socket (the directory is private): a command runs for the
+ * owner, without a sign-in.
+ */
+export type ServerCommand = { readonly name: string; run(context: Context): Promise<JsonValue> };
+
+/** The server's commands by name: the first contribution of a name by plugin order. */
+export const ServerCommands = defineRegistry<ServerCommand, ReadonlyMap<string, ServerCommand>>("p3.server-commands", {
+	version: 1,
 });

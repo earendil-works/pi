@@ -1,11 +1,13 @@
-// The topology tier (`test/topology.ts`): reloads of the plugins the skeleton touches while they are in use, and
-// access: every object refuses the principals it does not serve.
+// The topology tier (`test/topology.ts`): reloads of the plugins the skeleton touches while they are in use, access
+// (every object refuses the principals it does not serve), and the work a common action costs.
 
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import { isChordError } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import type { P3Principal } from "@earendil-works/p3/v1";
+import { Http } from "@earendil-works/p3/v1/server";
+import { SessionsStore } from "../plugins/sessions/contract.server.ts";
 import { SessionFacts, SessionStart, Sessions, SessionsList, SessionWorker } from "../plugins/sessions/contract.ts";
 import { SignIns } from "../plugins/sign-in/contract.ts";
 import { Probe } from "./plugins/probe/contract.ts";
@@ -78,6 +80,33 @@ describe("reloads while in use", () => {
 		assert.deepEqual(verified, OWNER);
 	});
 
+	it("the sessions plugin's waker: a reload starts the worker of a working session nobody holds", async () => {
+		const { t, id } = await withSession();
+		await t.server.root(
+			async (ctx) => (await ctx.get(SessionsStore, {})).report({ id, state: "working" }, ctx),
+			context,
+		);
+		assert.equal(t.workers.has(id), false);
+		await t.reload("@earendil-works/p3-sessions");
+		await eventually(
+			async () => t.workers.has(id),
+			(started) => started,
+		);
+		assert.deepEqual(t.errors, []);
+	});
+
+	it("the control plugin: its routes are served again", async () => {
+		const { t } = await withSession();
+		const routes = async () => {
+			const router = (await t.server.registry(Http, context)).value;
+			return ["/_p3/stop", "/_p3/apply"].map((path) => router.route("POST", path) !== undefined);
+		};
+		assert.deepEqual(await routes(), [true, true]);
+		await t.reload("@earendil-works/p3-control");
+		assert.deepEqual(await routes(), [true, true]);
+		assert.deepEqual(t.errors, []);
+	});
+
 	it("the runner's worker facet: a worker still stops itself once idle", async () => {
 		const { t, owner, id } = await withSession(200);
 		const probe = await owner.get(Probe, { session: id }, context);
@@ -106,6 +135,12 @@ describe("access", () => {
 		await refused(owner.get(SessionStart, { session: id }, context), "forbidden");
 	});
 
+	it("no worker starts for a session that does not exist", async () => {
+		const { t, owner } = await withSession();
+		await assert.rejects(owner.get(SessionWorker, { session: "none" }, context, { readyTimeout: 1000 }));
+		assert.equal(t.workers.has("none"), false);
+	});
+
 	it("a session's worker reaches its own row, never another session's worker", async () => {
 		const { t, sessions, id } = await withSession();
 		const other = await sessions.create({ title: "other" }, context);
@@ -115,5 +150,20 @@ describe("access", () => {
 		assert.equal(facts.session.value?.id, id);
 		await assert.rejects(worker.get(SessionWorker, { session: other }, context, { readyTimeout: 1000 }));
 		assert.equal(t.workers.has(other), false, "no worker started for a refused principal");
+	});
+});
+
+describe("counted work", () => {
+	it("a rename runs only the reads that show the renamed session", async () => {
+		const { t, owner, sessions, id: a } = await withSession();
+		const b = await sessions.create({ title: "B" }, context);
+		await owner.get(SessionsList, { app: "coding", set: "active", view: "v" }, context);
+		const workerB = await owner.get(SessionWorker, { session: b }, context);
+		await owner.get(SessionWorker, { session: a }, context);
+		const before = [t.count("chord.query.runs"), t.count("chord.query.probes")];
+		await sessions.rename({ id: a, title: "A2" }, context);
+		// The list's page and session A's two reads (its worker's row and its route's); B's run not, and ask nothing.
+		assert.deepEqual([t.count("chord.query.runs") - before[0]!, t.count("chord.query.probes") - before[1]!], [3, 0]);
+		if (workerB.variant === "owner") assert.equal(workerB.session.value?.title, "B");
 	});
 });

@@ -1,6 +1,6 @@
 // The sign-ins: `SignIns` (persisted in the server's store, expiring after 400 days unused), the authenticator (a
 // bearer token first, else the signed sign-in cookie), the wrap renewing a browser's cookie, and the hook that closes
-// the open links of a sign-in that ends.
+// the open links of a sign-in that ends (and every link `SignIns` tracked, once it ends).
 
 import {
 	type Context,
@@ -12,7 +12,9 @@ import {
 	obj,
 	oneOf,
 	P3Principal,
+	reportError,
 	str,
+	untilAborted,
 } from "@earendil-works/p3/v1";
 import {
 	Authenticators,
@@ -74,14 +76,19 @@ type Key = { readonly name: string; readonly secret: string };
 
 /** Serves `SignIns` on `host` (a host-lifetime object: its contributions live from the load on). */
 export function serveSignIns(host: FacetHost<P3Principal>): void {
-	const links = new SignInLinks();
 	host.serve(SignIns, (_params, self) => {
 		const document = self.state(SignInsDocument);
 		const stored = self.state(CookieKey);
 		const key = (): Key => ({ name: `p3-${stored.value.id}`, secret: stored.value.secret });
-		links.serve((id) => {
+		const links = new SignInLinks((id) => {
 			const signIns = document.value.signIns;
 			return Object.hasOwn(signIns, id) && Date.now() - signIns[id]!.lastUsed <= SIGN_IN_IDLE_MS;
+		});
+		// The next object (a reload's) tracks none of these links, so it could never close them: they end with this one,
+		// and their clients sign in again.
+		self.onLive(async (ctx) => {
+			await untilAborted(ctx);
+			links.closeAll();
 		});
 		/** Ends sign-in `id`: removed from the store, then its open links closed. */
 		const end = async (id: string, context: Context): Promise<null> => {
@@ -126,10 +133,10 @@ export function serveSignIns(host: FacetHost<P3Principal>): void {
 class SignInLinks {
 	readonly #closes = new Map<string, Set<() => void>>();
 	readonly #requests = new WeakMap<HttpRequest, string>();
-	#live: (id: string) => boolean = () => false;
+	readonly #live: (id: string) => boolean;
 
-	/** `SignIns` serves: `live` says whether a sign-in exists and has not expired, read when a link opens. */
-	serve(live: (id: string) => boolean): void {
+	/** One `SignIns` object's links: `live` says whether a sign-in exists and has not expired (read as a link opens). */
+	constructor(live: (id: string) => boolean) {
 		this.#live = live;
 	}
 
@@ -161,6 +168,11 @@ class SignInLinks {
 	close(id: string): void {
 		for (const close of this.#closes.get(id) ?? []) close();
 	}
+
+	/** Closes every open link of every sign-in. */
+	closeAll(): void {
+		for (const id of [...this.#closes.keys()]) this.close(id);
+	}
 }
 
 /**
@@ -181,14 +193,14 @@ function authenticated(
 	if (!matchesHash(token.slice(id.length + 1), signIn.hash)) return undefined;
 	const now = Date.now();
 	if (now - signIn.lastUsed > SIGN_IN_IDLE_MS) {
-		void end(id, context).catch(() => {});
+		void end(id, context).catch((error: unknown) => reportError(`p3 sign-in: ${id}: ending it`, error, context));
 		return undefined;
 	}
 	if (now - signIn.lastUsed > TOUCH_MS) {
 		const touch = document.change((draft) => {
 			if (Object.hasOwn(draft.signIns, id)) draft.signIns[id]!.lastUsed = now;
 		}, context);
-		void touch.catch(() => {});
+		void touch.catch((error: unknown) => reportError(`p3 sign-in: ${id}: its last use`, error, context));
 	}
 	return signIn.principal;
 }

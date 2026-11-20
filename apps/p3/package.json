@@ -22,21 +22,26 @@
 			"source": "./src/api/v1/worker.ts",
 			"types": "./dist/src/api/v1/worker.d.ts",
 			"import": "./dist/src/api/v1/worker.js"
+		},
+		"./v1/testing": {
+			"source": "./src/api/v1/testing.ts",
+			"types": "./dist/src/api/v1/testing.d.ts",
+			"import": "./dist/src/api/v1/testing.js"
 		}
 	},
 	"files": [
 		"dist",
 		"plugins",
-		"!plugins/**/*.test.ts",
+		"!plugins/*/test",
 		"src/api",
-		"src/principals.ts",
+		"src/app.ts",
 		"README.md"
 	],
 	"scripts": {
 		"build": "node --disable-warning=ExperimentalWarning scripts/build-release.ts",
 		"check": "node ../../scripts/biome-check.mjs && tsc --noEmit",
 		"format": "node ../../scripts/biome-check.mjs --write",
-		"test": "node --conditions=source --disable-warning=ExperimentalWarning --test --test-timeout=120000 --test-force-exit --test-reporter=dot \"test/*.test.ts\" \"test/kit/*.test.ts\" \"plugins/**/*.test.ts\"",
+		"test": "node --conditions=source --disable-warning=ExperimentalWarning --test --test-timeout=120000 --test-force-exit --test-reporter=dot \"test/*.test.ts\" \"plugins/*/test/*.test.ts\"",
 		"test:release": "node --conditions=source --disable-warning=ExperimentalWarning --test --test-concurrency=1 --test-timeout=900000 --test-force-exit \"test/release/*.test.ts\""
 	},
 	"engines": {

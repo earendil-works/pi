@@ -1,8 +1,9 @@
 // The end-to-end harness: p3's real server in this process on a temporary data directory, with its built-in plugins
 // and the probe (`test/probe/`, copied into a root of the test's own, so a test may edit and apply it), its session
-// workers as real processes; and clients signed in as the owner over WebSocket, as a browser's page would be.
+// workers as real processes; and clients signed in as the owner over WebSocket, as a browser's page is: with the
+// cookie an owner link gives (`ownerCookie`).
 
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -14,6 +15,7 @@ import { WorkerRunners, type WorkerState } from "@earendil-works/p3/v1/server";
 import { SessionsStore } from "../plugins/sessions/contract.server.ts";
 import type { SessionState } from "../plugins/sessions/contract.ts";
 import { PLUGINS, WORKER } from "../src/install.ts";
+import { ask, type ServerAnswer, serverSocket } from "../src/local-socket.ts";
 import { type RunningServer, type ServerError, startServer } from "../src/server.ts";
 
 /** A test's server and what it needs around it. */
@@ -39,16 +41,22 @@ export type TestServer = {
 /** How long a worker idles before it stops itself in the tests. */
 export const IDLE_MS = 300;
 
-/** Starts a server on a new data directory (or again on `dataDir`). */
-export async function testServer(dataDir?: string): Promise<TestServer> {
-	const dir = dataDir ?? (await mkdtemp(join(tmpdir(), "p3-test-")));
+/**
+ * What a test's server starts with: `dataDir` to start again on one, `builtIn` for a copy of the built-in plugins
+ * that the test edits and applies (the checkout's own by default).
+ */
+export type TestServerOptions = { readonly dataDir?: string; readonly builtIn?: string };
+
+/** Starts a server on a new data directory (or again on `options.dataDir`). */
+export async function testServer(options: TestServerOptions = {}): Promise<TestServer> {
+	const dir = options.dataDir ?? (await mkdtemp(join(tmpdir(), "p3-test-")));
 	const plugins = join(dir, "plugins");
 	const errors: ServerError[] = [];
 	const server = await startServer(
 		{
 			dataDir: dir,
 			roots: [
-				{ path: PLUGINS, required: true },
+				{ path: options.builtIn ?? PLUGINS, required: true },
 				{ path: fileURLToPath(new URL("./plugins/", import.meta.url)), required: true },
 				{ path: plugins, required: false },
 			],
@@ -86,17 +94,17 @@ export async function testServer(dataDir?: string): Promise<TestServer> {
 		workers: async () => (await server.runtime.host.registry(WorkerRunners, context)).value?.state() ?? {},
 		restart: async () => {
 			await close(true);
-			return testServer(dir);
+			return testServer({ ...options, dataDir: dir });
 		},
 		close,
 	};
 }
 
-/** A client host connected over WebSocket with the owner token file's bearer token, loaded with no plugins. */
+/** A client host connected over WebSocket with an owner's sign-in cookie, loaded with no plugins. */
 async function ownerClient(dataDir: string, port: number): Promise<Host<P3Principal>> {
-	const token = await eventually(async () => (await readFile(join(dataDir, "owner-token"), "utf8")).trim());
+	const cookie = await ownerCookie(dataDir, port);
 	// Node's WebSocket (undici) takes an init object with headers; the DOM type knows only protocols.
-	const init = { headers: { authorization: `Bearer ${token}` } } as unknown as string[];
+	const init = { headers: { cookie } } as unknown as string[];
 	const socket = new WebSocket(`ws://127.0.0.1:${port}/chord`, init);
 	const client = createHost<P3Principal>({
 		readyTimeout: 10_000,
@@ -105,6 +113,26 @@ async function ownerClient(dataDir: string, port: number): Promise<Host<P3Princi
 	client.connect(webSocketLink(socket), { principal: { kind: "server" } }, context);
 	await client.load([], context);
 	return client;
+}
+
+/**
+ * A fresh owner's sign-in cookie (`name=value`) from the server of `dataDir` on `port`, as `p3` and a browser get it:
+ * the server's `owner-link` over its socket, then the link's token posted as the owner link's page posts it.
+ */
+export async function ownerCookie(dataDir: string, port: number): Promise<string> {
+	const answer = (await ask(serverSocket(dataDir), { kind: "command", name: "owner-link" })) as
+		| ServerAnswer
+		| undefined;
+	if (answer?.kind !== "answer") throw new Error(`ownerCookie: no owner link: ${JSON.stringify(answer)}`);
+	const token = new URL(String(answer.value)).hash.slice(1);
+	const signedIn = await fetch(`http://127.0.0.1:${port}/_p3/owner`, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ token }),
+	});
+	const cookie = signedIn.headers.get("set-cookie")?.split(";")[0];
+	if (!signedIn.ok || cookie === undefined) throw new Error(`ownerCookie: the sign-in failed: ${signedIn.status}`);
+	return cookie;
 }
 
 /**

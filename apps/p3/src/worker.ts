@@ -1,25 +1,36 @@
 // A session worker's bootstrap (the process a runner forks): everything that must exist before plugins can load. It
 // makes the link to the server at once (it queues the server's frames until the host listens), waits for its start
-// message, opens the session's store, creates the host and connects it, serves `WorkerRuntime` and `WorkerBusy`, loads
-// the shipped worker plugins and reports `ready`, then applies reloads. `WorkerRuntime.close` (the runner's worker facet
-// calls it once the worker idled) closes its host and store, says `closed` once everything finished, and only then
-// exits 0. On `shutdown`, a disconnect, `SIGTERM` or `SIGINT` it closes its host and store and exits. Control messages travel
+// message, takes the session's lock (a socket in its directory: a previous worker of the session that still closes, as
+// after a server's crash, finishes with the store first), opens the session's store, creates the host and connects
+// it, serves `WorkerRuntime` and `WorkerBusy`, loads the shipped worker plugins and reports `ready`, then applies
+// reloads. `WorkerRuntime.close` (the runner's worker facet calls it once the worker idled) waits for its store's
+// queued commits, says `closed` (the runner counts the exit as clean), then closes its host and store and exits 0. On
+// `shutdown`, a disconnect, `SIGTERM` or `SIGINT` it closes its host and store and exits. Control messages travel
 // beside the link's frames on the same IPC channel (`api/v1/control.ts`).
 
 import { flushCompileCache } from "node:module";
 import { join } from "node:path";
-import { type ChordStore, createHost, type IpcPort, ipcLink, openStore, sqliteBackend } from "@earendil-works/chord";
+import {
+	type ChordStore,
+	createHost,
+	defineFacet,
+	type Facet,
+	type IpcPort,
+	ipcLink,
+	openStore,
+	sqliteBackend,
+} from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { createPluginRuntime, type PluginScript } from "@earendil-works/chord/plugins/runtime";
 import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
-import { Session } from "@earendil-works/p3/v1";
-import type { WorkerRuntime } from "@earendil-works/p3/v1/worker";
+import * as v1 from "@earendil-works/p3/v1";
+import { reportError, Session } from "@earendil-works/p3/v1";
+import * as v1worker from "@earendil-works/p3/v1/worker";
+import { WorkerBusy, WorkerRuntime } from "@earendil-works/p3/v1/worker";
 import { type FromWorker, type ToWorker, workerControl, workerMessage } from "./api/v1/control.ts";
-import { SERVER, workerPrincipal } from "./app.ts";
+import { type P3Principal, SERVER, workerPrincipal } from "./app.ts";
 import { privateDirectory, privateStore } from "./files.ts";
-import { WORKER_MODULES } from "./modules-worker.ts";
-import type { P3Principal } from "./principals.ts";
-import { workerCoreFacets } from "./worker-core.ts";
+import { waitForSocket } from "./local-socket.ts";
 
 /** How long a shutdown's closes get before the worker exits anyway. */
 const FORCED_EXIT_MS = 3000;
@@ -27,8 +38,8 @@ const FORCED_EXIT_MS = 3000;
 /** The start message. */
 type Start = Extract<ToWorker, { readonly kind: "start" }>;
 
-// Only when forked by a runner.
-if (process.send !== undefined) runWorker(process as unknown as IpcPort);
+// Only as the process's entry, forked by a runner: the test topology imports the base's facets from here.
+if (import.meta.main && process.send !== undefined) runWorker(process as unknown as IpcPort);
 
 /** Runs this process as a session worker on the IPC channel `port`. */
 function runWorker(port: IpcPort): void {
@@ -104,6 +115,8 @@ async function open(
 	close: (reason: "idle") => void,
 ): Promise<WorkerRuntime> {
 	await privateDirectory(message.dir);
+	// Held until this process exits. The wait is bounded by the runner's start timeout, which kills a worker not ready.
+	await waitForSocket(message.lock, context);
 	const file = join(message.dir, "store.sqlite");
 	await privateStore(file);
 	// `openStore` makes the one kind of store there is.
@@ -112,7 +125,7 @@ async function open(
 		address: Session({ id: message.session }),
 		principal: workerPrincipal(message.session),
 		store,
-		onError: (error) => console.error(`p3 worker ${message.session}:`, error),
+		onError: (error) => reportError(`p3 worker ${message.session}`, error, context),
 	});
 	host.connect(parent, { principal: SERVER, trusted: true }, context);
 	return { session: message.session, host, store, dir: message.dir, idleMs: message.idleMs, close };
@@ -120,6 +133,23 @@ async function open(
 
 /** An error nothing handles: printed (the server's log gets it), and the worker exits 1. */
 function fatal(error: unknown): void {
-	console.error("p3 worker: fatal:", error);
+	reportError("p3 worker: fatal", error, context);
 	process.exit(1);
+}
+
+/**
+ * The API's modules a session worker evaluates its plugins' worker facets with: this process's instances, by
+ * specifier; never the server's module, which holds the HTTP stack.
+ */
+export const WORKER_MODULES = { "@earendil-works/p3/v1": v1, "@earendil-works/p3/v1/worker": v1worker };
+
+/** The base's facets on a worker: `WorkerRuntime` (the process values) and `WorkerBusy` (the sum of the counts). */
+export function workerCoreFacets(
+	runtime: WorkerRuntime,
+): { readonly name: string; readonly facet: Facet<P3Principal> }[] {
+	const facet = defineFacet<P3Principal>((host) => {
+		host.serve(WorkerRuntime, { compose: () => runtime });
+		host.serve(WorkerBusy, { compose: (table) => table.reduce((sum, { value }) => sum + value, 0) });
+	});
+	return [{ name: "p3.worker", facet }];
 }

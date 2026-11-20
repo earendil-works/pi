@@ -1,8 +1,11 @@
 // The test topology: p3's server and its session workers as hosts in one process, linked in memory, each with its
 // own SQLite store, the plugins' facets imported as modules (no build), clients connected as any principal. The base's
-// own pieces are the real server's and worker's (`src/server-core.ts`, `src/worker-core.ts`); the route starts a worker
+// own pieces are the real server's and worker's (`serverCoreFacet` and `admitSession` of `src/server.ts`, `workerCoreFacets` of `src/worker.ts`); the route starts a worker
 // as a host here instead of a process. A plugin reloads with `reload` (a new facet object of the same setup: its
-// objects restart, as after an edit), on the server or on a worker, so a test reloads a facet while it is in use.
+// objects restart, as after an edit), on the server or on a worker, so a test reloads a facet while it is in use. The
+// server counts its work through the in-memory telemetry adapter (`count`). The server's plugins are all the built-in
+// ones; the runner's contributes a runner the route here does not ask (it starts hosts), so a reload of it is seen
+// by the waker alone.
 
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -25,13 +28,16 @@ import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import { type P3Principal, Server, Session } from "@earendil-works/p3/v1";
 import type { ServerRuntime } from "@earendil-works/p3/v1/server";
 import type { WorkerRuntime } from "@earendil-works/p3/v1/worker";
+import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
+import controlServer from "../plugins/control/server.ts";
+import runnerServer from "../plugins/runner/server.ts";
 import runnerWorker from "../plugins/runner/worker.ts";
 import sessionsServer from "../plugins/sessions/server.ts";
 import sessionsWorker from "../plugins/sessions/worker.ts";
 import signInServer from "../plugins/sign-in/server.ts";
 import { SERVER, workerPrincipal } from "../src/app.ts";
-import { admitSession, serverCoreFacet } from "../src/server-core.ts";
-import { workerCoreFacets } from "../src/worker-core.ts";
+import { admitSession, serverCoreFacet } from "../src/server.ts";
+import { workerCoreFacets } from "../src/worker.ts";
 import probeWorker from "./plugins/probe/worker.ts";
 
 /** How long a host of the topology waits for an object to go live: a failing test fails in seconds. */
@@ -42,6 +48,8 @@ type Plugin = { readonly name: string; readonly facet: Facet<P3Principal> };
 
 /** The server's plugins, by name. */
 const SERVER_PLUGINS: readonly Plugin[] = [
+	{ name: "@earendil-works/p3-control", facet: controlServer },
+	{ name: "@earendil-works/p3-runner", facet: runnerServer },
 	{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
 	{ name: "@earendil-works/p3-sign-in", facet: signInServer },
 ];
@@ -68,6 +76,8 @@ export type Topology = {
 		| { readonly kind: "load_failed"; readonly failed: LoadReport["failed"] }
 	)[];
 	readonly closed: readonly string[];
+	/** The sum of the server's metric `name` so far (`chord.query.runs`, `chord.query.probes`, ...). */
+	count(name: string): number;
 	/** A client host connected to the server as `principal`, loaded with no plugins. */
 	client(principal: P3Principal): Promise<Host<P3Principal>>;
 	/** Reloads plugin `name` on the server (or on session `session`'s worker): every object of it restarts. */
@@ -83,10 +93,12 @@ export async function topology(context: Context, idleMs = 60_000): Promise<Topol
 	const workers = new Map<string, Worker>();
 	const clients: Host<P3Principal>[] = [];
 	const store = await storeAt(context);
+	const telemetry = new InMemoryTelemetryContext();
 	const server = createHost<P3Principal>({
 		address: Server(),
 		principal: SERVER,
 		store,
+		telemetry,
 		readyTimeout: READY,
 		onError: (error) => errors.push(error),
 	});
@@ -149,6 +161,11 @@ export async function topology(context: Context, idleMs = 60_000): Promise<Topol
 		workers,
 		errors,
 		closed,
+		count: (name) =>
+			telemetry
+				.getMetrics()
+				.filter((metric) => metric.name === name)
+				.reduce((sum, metric) => sum + metric.value, 0),
 		client: async (principal) => {
 			const [toServer, fromClient] = memoryLinkPair();
 			const client = createHost<P3Principal>({ readyTimeout: READY, onError: (error) => errors.push(error) });

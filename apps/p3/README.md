@@ -14,9 +14,9 @@ p3 restart         stop, then start in the background
 p3 list            the Pis on this machine and their state
 ```
 
-A Pi is its data directory. Without an option that is `~/.pi/p3`, on port 8789. `--pi <name>` is a second Pi in
-`~/.pi/p3/pis/<name>`, `--dir <path>` one in any directory; each takes a free port at its first start and keeps it
-(`pi.json`). `--port <n>` names the port for one start. Pis on one machine share nothing: each has its own sessions,
+A Pi is its data directory: `~/.pi/p3/<name>` for `--pi <name>`. Without an option it is the default Pi, named
+`default` (`~/.pi/p3/default`), on port 8789. `--dir <path>` is a Pi in any directory. Every Pi but the default takes
+a free port at its first start and keeps it (`pi.json`). `--port <n>` names the port for one start. Pis on one machine share nothing: each has its own sessions,
 sign-ins and cookie.
 
 The background server runs under a supervisor that starts it again after a crash; what it prints is in
@@ -33,12 +33,12 @@ p3 and "go to definition" lands in the API's code.
 
 - `docs/`: start at `docs/README.md`: the guides for building a package (process, building on Chord, testing, performance), names, and the record (decisions, slice briefs).
 - `src/`: base code (a restart changes it), only what must exist before plugins load: the process entries (`bin.ts`,
-  `server.ts`, `worker.ts`, `supervisor.ts`), the data directory's files (`files.ts`, `pi.ts`, `records.ts`), the
-  principal, and the API (`src/api/v1/`). Everything else is a plugin.
+  `server.ts`, `worker.ts`, `supervisor.ts`), the Pis and their data directories (`files.ts`), the sockets that are the
+  locks and the command's channel (`local-socket.ts`), what p3 is (`app.ts`: its API, kinds and principals), and the
+  API (`src/api/v1/`). Everything else is a plugin.
 - `plugins/`: everything else, one directory per plugin.
 - `test/`: tests of the whole (end to end against real processes, the command, the query plans; the tests' own plugin
-  root `test/plugins/`); a plugin's own tests
-  sit in its directory.
+  root `test/plugins/`); a plugin's own tests sit in its `test/` folder.
 
 From this directory, with Node 26.3.1 or newer: `npm run check`, `npm test`; `node --conditions=source
 --disable-warning=ExperimentalWarning src/bin.ts server --dir <path>` runs the server from source. A local

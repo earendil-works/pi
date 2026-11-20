@@ -16,8 +16,10 @@ session workers           one process per session: host at Session({ id }), its 
 - **A host** is one participant; **a link** joins two. A plugin never sees processes: it serves objects on a host
   kind and asks for objects by contract (`ctx.get`, `self.get`); Chord routes and relays.
 - **A plugin** is a folder in a plugins root with one file per facet kind: `server.ts`, `worker.ts` (p3's kinds today;
-  `web` and `terminal` come with the UI). The server builds every facet with esbuild at each start and ships the
-  worker facets to the workers. A plugin imports only `@earendil-works/p3/v1` (and `/v1/server`, `/v1/worker` in
+  `web` and `terminal` come with the UI). The server builds its server facets with esbuild at each start, and the
+  worker facets when they are first needed (the first worker's start, or an apply), then ships them to the workers: a
+  broken worker facet shows its error there, in the first worker's start and the server's log, not at the server's
+  start. A plugin imports only `@earendil-works/p3/v1` (and `/v1/server`, `/v1/worker` in
   those facets), its own files, other plugins' contract files by relative path, and its npm dependencies (inlined).
   Never Chord directly; never `import()` (plugins load whole, at start).
 - **The store:** the server and every worker have one SQLite store, synchronous (a query blocks the event loop).
@@ -30,29 +32,34 @@ session workers           one process per session: host at Session({ id }), its 
   calls finish on the old code. Server first, then workers, then clients. Base code (`src/`, the API, Chord) changes
   only with a restart. Everything a plugin keeps across a reload is in its store.
 - **The base** (`apps/p3/src/`) is only what must exist before plugins load: per host kind a bootstrap (`server.ts`:
-  the data directory's lock, the store, the host, Chord's HTTP and plugins components, the route to session workers;
-  `worker.ts`: the session's store and host, connected to the server), and the registries of process values it serves
-  (`ServerRuntime`, `WorkerRuntime`). Everything else is a plugin: how a session's worker runs (`runner`), who someone
-  is (`sign-in`), the owner's stop and apply (`control`), the sessions (`sessions`).
+  the data directory's socket, `server.sock`, which is the lock and the command's channel (`local-socket.ts`); the
+  store, the host, Chord's HTTP and plugins components, the route to session workers; `worker.ts`: the session's
+  lock, store and host, connected to the server), and the registries of process values it serves (`ServerRuntime`,
+  `WorkerRuntime`). Everything else is a plugin: how a session's worker runs (`runner`), who someone is (`sign-in`),
+  the owner's stop and apply (`control`), the sessions (`sessions`).
 - **Session workers:** the route's `resolve` asks the `WorkerRunners` registry; the `runner` plugin forks one process
   per session. A worker stops itself once it was idle for its idle time (the runner's worker facet: no holds, calls,
-  jobs, and every `WorkerBusy` count 0; the harness contributes "a run is active"), closing its host and store first.
+  jobs, and every `WorkerBusy` count 0; the harness contributes "a run is active"); its store's commits settle first.
   A crashed worker fails its session until `retry` or an apply. After a server restart the sessions plugin's waker
-  starts the workers of every `working` session.
+  starts the workers of every `working` session. One worker per session store: a worker takes its session's lock (a
+  socket, `<data directory>/locks/<hash>`, named by the runner) before it opens the store, so a successor (after a server's crash, or a reload of the
+  runner) waits until the previous worker exited.
 
 ## The API (`@earendil-works/p3/v1`)
 
 | Module | What you get |
 | --- | --- |
-| `/v1` | everything of Chord's root (`remote`, `local`, `method`, the schema helpers, `defineTable`, `query`, `queries`, `defineState`, `defineRegistry`, `allow`, `deny`, `forbidden`, `invalid`, ...), `BACKGROUND_CONTEXT`, `Context`, `JsonValue`, `defineFacet` typed with p3's principals, the host kinds `Server()` and `Session({ id })`, the helpers `forward` and `contribute`, `P3Principal`, and the contracts p3 promises to third-party plugins (the sessions plugin's: `Sessions`, `SessionsList`, `SessionFacts`, `SessionWorker`, `SessionStart`, `SessionRow`, `SessionState`) |
-| `/v1/server` | Chord's HTTP surface (`Http`, `Authenticators`, cookies), `ServerRuntime` (the data directory, the host, the store, the route to workers, apply, stop), `WorkerRunners` (how session workers run), `LinkOpened` (hooks on accepted links), `SessionRoute`, the worker control messages, the rollout types |
+| `/v1` | everything of Chord's root (`remote`, `local`, `method`, the schema helpers, `defineTable`, `query`, `queries`, `defineState`, `defineRegistry`, `allow`, `deny`, `forbidden`, `invalid`, ...), `BACKGROUND_CONTEXT`, `Context`, `JsonValue`, `defineFacet` typed with p3's principals, the host kinds `Server()` and `Session({ id })`, the helpers `forward`, `contribute` and `reportError` (a failure nobody awaits: stderr now, telemetry with the telemetry package), `P3Principal`, and the contracts p3 promises to third-party plugins (the sessions plugin's: `Sessions`, `SessionsList`, `SessionFacts`, `SessionWorker`, `SessionStart`, `SessionRow`, `SessionState`) |
+| `/v1/server` | Chord's HTTP surface (`Http`, `Authenticators`, cookies), `ServerRuntime` (the data directory, the host, the store, the route to workers, apply, stop), `WorkerRunners` (how session workers run), `LinkOpened` (hooks on accepted links), `ServerCommands` (what `p3` runs over the data directory's socket, as the owner), `SessionRoute`, `writePrivate` (a private file written in one step), the worker control messages, the rollout types |
 | `/v1/worker` | `WorkerRuntime` (the session, the host, the store, the directory, the idle time, `close`), `WorkerBusy` (counts that keep the worker alive) |
+| `/v1/testing` | `testPlugin(root, { kind: "server" } or { kind: "worker", session }, context)`: Chord's plugin tier with p3's API, kinds, modules and principals (for a plugin's `test/` folder only) |
 
 Principals are identity only: `{ kind: "owner" }`, `{ kind: "person", id, name }`, `{ kind: "worker", session }`,
 `{ kind: "server" }`. What a person may do is data, read by admissions, never stored in the principal.
 
 A plugin of another root (a third party's, in `<data directory>/plugins`) reaches the built-in plugins' contracts only
-through the API (Chord decision "The app kit, point 5"): a relative path out of its root is a build error.
+through the API (Chord decision "The app kit, point 5"): a relative path out of its root is a build error. The sessions
+plugin's `contract.ts` is part of `/v1` through that re-export (v1 stays changeable until p3 is done).
 
 Missing today (ask Mario, `process.md`): `withoutAbortSignal` and `pluginFile` are not exported; there is no `web` or
 `terminal` facet kind yet.
@@ -65,7 +72,7 @@ contract.ts          contracts every kind imports (one per audience)
 contract.server.ts   the store's contract, for server facets only
 server.ts            the server facet: the table, the store, the views
 worker.ts            the worker facet
-sessions.test.ts     the plugin tier test
+test/server.test.ts  the plugin tier test of the server facet (`@earendil-works/p3/v1/testing`)
 ```
 
 **One audience per contract.** The owner, a session's worker and the server never share a contract through variants;
@@ -160,6 +167,9 @@ reference or a native.
 - Hot details (tokens streaming, progress, timers) never reach a table a list reads. A session's row holds
   transitions only.
 - Counts read every row they pass: `self.count` only where a key or an index bounds it; lists use `more`.
+- A table's definition (columns, key, indexes) is part of its version: changing it means a new version and a
+  migration. Chord refuses to open a version recorded with another definition ("a history edited in place"); before
+  p3's first release a data directory of an older build is deleted instead.
 
 **Lists**
 - One remote object per screen, the screen's own id in its params; `self.list` tiles pages between fixed bookmarks,
@@ -191,7 +201,8 @@ reference or a native.
   error.
 
 **Releases** (p3 runs from the checkout and as an installed release; both must work)
-- Plugins ship as source and are built at start; their tests end in `.test.ts` (the release leaves those out).
+- Plugins ship as source and are built at start; their tests live in their `test/` folder (the release leaves it
+  out).
 - Node flags go into the worker's `execArgv` (`apps/p3/src/install.ts`), never only into `npm test`.
 - A package that changes what the release ships runs `npm run release:p3:local` (`testing.md`).
 
@@ -227,10 +238,13 @@ reference or a native.
 | Seven plugins checking a worker's generation by hand | the runner counts a worker's exit once the commits its calls queued settled |
 | A test plugin re-declared another plugin's contract (a second root cannot import it): Chord refused the different schema | the API re-exports the contracts p3 promises; a plugin of another root imports them from there |
 | `"report" in entry` to tell apart the members of an untagged union | tagged unions (`kind`), a `switch` on the tag; `in` only at a trust boundary on an `unknown` value |
-| The worker's bundle imported the server's API module, and with it Chord's HTTP stack (`ws`, `node:http`) | the API modules per process (`modules-server.ts`, `modules-worker.ts`); the release's lean check catches it |
+| The worker's bundle imported the server's API module, and with it Chord's HTTP stack (`ws`, `node:http`) | the API modules per process (`SERVER_MODULES` in `server.ts`, `WORKER_MODULES` in `worker.ts`); the release's lean check catches it |
 | One index for two lists: the archived list's tie-break was not in its index, so SQLite sorted every page | one index per list's order, and a plan test |
 | A revoked device's open socket kept working | a sign-in closes its own links (`links.opened`'s `close`), never `host.revoke` (it ends shared objects for every device) |
+| Files of a few lines each (`modules-server.ts`, `worker-core.ts`, `channel.ts`, ...) spread a concept over the tree | a few lines go into the file that uses them; split only a second concept, never for size |
 | A secret file linked into place: Android forbids hard links, p3 could not start | write a temporary file, then rename it |
+| The command sent the owner token to whatever listened on the port `running.json` named: a lock any local user could hold, a file a crash left | the data directory's socket is the lock and the channel: only the owner's processes reach it, the holder answers what it is, no token travels |
+| A crashed server's successor started a session's worker while the previous one still closed the same store | a lock per session, taken before the store opens; the successor waits for it |
 | A test helper read `/proc/<pid>/task/<pid>/children`, which Android's kernel lacks | scan `/proc/*/stat` for the parent |
 | A worker thread per code-mode script (p2): 10 to 28 MiB per worker | QuickJS inline, opened on first use |
 | Braille glyphs for the working dots: Android's font draws one frame in the wrong column | draw the dots ourselves |

@@ -1,14 +1,78 @@
-// The base's files: the data directory and the stores made private (directories 0700, files 0600, also when they
-// existed looser: other local users must not read a store's sign-ins, nor replace it), and private files written in
-// one step.
+// The base's files. A Pi is its data directory: `~/.pi/p3/<name>` (the default Pi is the one named `default`) or any
+// directory (`--dir`); each keeps its port in `pi.json` from its first start. The data directory and the stores are
+// made private (directories 0700, files 0600, also when they existed looser: other local users must not read a
+// store's sign-ins, nor replace it, nor reach its sockets), and private files are written in one step.
 
 import { randomBytes } from "node:crypto";
-import { chmod, mkdir, open, realpath, rename, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, open, readdir, readFile, realpath, rename, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, parse } from "node:path";
+import { dirname, join, parse, resolve } from "node:path";
 
-/** The default Pi's data directory: `~/.pi/p3`. */
-export function defaultDataDir(): string {
+/** Which Pi a command line names: `--pi <name>`, `--dir <path>`, or neither (the default Pi). */
+export type PiChoice = { readonly pi?: string; readonly dir?: string };
+
+/** The default Pi's name. */
+export const DEFAULT_PI = "default";
+
+/** The default Pi's port (p2 keeps 8788). Every other Pi takes a free one at its first start and keeps it. */
+export const DEFAULT_PORT = 8789;
+
+/** Whether `name` can name a Pi: lower case letters, digits, `-` and `_`, at most 32. */
+export function isPiName(name: string): boolean {
+	return /^[a-z0-9][a-z0-9_-]{0,31}$/.test(name);
+}
+
+/** The data directory of the Pi `choice` names. */
+export function dataDirOf(choice: PiChoice): string {
+	return choice.dir !== undefined ? resolve(choice.dir) : join(pisRoot(), choice.pi ?? DEFAULT_PI);
+}
+
+/** The Pis of `~/.pi/p3/`: every directory there with a Pi's name, by name. */
+export async function pis(): Promise<{ readonly name: string; readonly dataDir: string }[]> {
+	const root = pisRoot();
+	const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+	return entries
+		.filter((entry) => entry.isDirectory() && isPiName(entry.name))
+		.map((entry) => ({ name: entry.name, dataDir: join(root, entry.name) }))
+		.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** The port the Pi on `dataDir` keeps: its `pi.json`'s, else 8789 for the default Pi and 0 (a free one) for others. */
+export async function keptPort(dataDir: string): Promise<{ readonly port: number; readonly kept: boolean }> {
+	const port = (await readConfig(dataDir))?.port;
+	if (port !== undefined) return { port, kept: true };
+	return { port: resolve(dataDir) === dataDirOf({}) ? DEFAULT_PORT : 0, kept: false };
+}
+
+/** Keeps `port` as the Pi's port (`pi.json`). */
+export async function keepPort(dataDir: string, port: number): Promise<void> {
+	await writePrivate(configFile(dataDir), JSON.stringify({ port }, null, "\t"));
+}
+
+/** Makes the Pi's config when it has none yet: an empty one (a start with `--port` keeps no port). */
+export async function keepConfig(dataDir: string): Promise<void> {
+	if ((await readConfig(dataDir)) === undefined) await writePrivate(configFile(dataDir), "{}");
+}
+
+/** The Pi's config, or `undefined` before its first start. */
+export async function readConfig(dataDir: string): Promise<{ readonly port?: number } | undefined> {
+	const text = await readFile(configFile(dataDir), "utf8").catch(() => undefined);
+	if (text === undefined) return undefined;
+	// A trust boundary: a file people edit.
+	const { port } = JSON.parse(text) as { readonly port?: unknown };
+	if (port !== undefined && !(typeof port === "number" && Number.isInteger(port) && port > 0 && port <= 65535)) {
+		throw new Error(`${configFile(dataDir)}: "port" must be a port number`);
+	}
+	return port === undefined ? {} : { port };
+}
+
+/** The Pi's config file. */
+function configFile(dataDir: string): string {
+	return join(dataDir, "pi.json");
+}
+
+/** Where the Pis live. */
+function pisRoot(): string {
 	return join(homedir(), ".pi", "p3");
 }
 

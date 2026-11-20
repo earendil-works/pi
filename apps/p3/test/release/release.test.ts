@@ -16,7 +16,7 @@ import { createHost, webSocketLink } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import type { P3Principal } from "@earendil-works/p3/v1";
 import { Sessions, SessionWorker } from "../../plugins/sessions/contract.ts";
-import { eventually } from "../support.ts";
+import { eventually, ownerCookie } from "../support.ts";
 
 const run = promisify(execFile);
 
@@ -43,12 +43,12 @@ describe("the installed release", () => {
 		for (const file of ["p3.js", "main.js", "worker.js", "supervisor.js", "minimum-node.js"]) {
 			assert.ok(dist.includes(file), file);
 		}
-		for (const module of ["index", "server", "worker"]) {
+		for (const module of ["index", "server", "worker", "testing"]) {
 			await readFile(join(PACKAGE, "dist", "src", "api", "v1", `${module}.d.ts`));
 		}
 		const plugins = await readdir(join(PACKAGE, "plugins"), { recursive: true });
 		assert.deepEqual(
-			plugins.filter((path) => /\.(test\.ts|js|d\.ts|map)$/.test(path)),
+			plugins.filter((path) => /\.(test\.ts|js|d\.ts|map)$/.test(path) || /(^|[/\\])test([/\\]|$)/.test(path)),
 			[],
 			"plugins ship as source only, no tests",
 		);
@@ -100,8 +100,8 @@ describe("the installed release", () => {
 		assert.equal(checked.stdout, "", "the plugin type-checks against the installed API");
 		const server = await launch(dataDir);
 		try {
-			const token = (await readFile(join(dataDir, "owner-token"), "utf8")).trim();
-			const said = await run(process.execPath, [join(plugin, "client.mjs"), String(server.port), token]);
+			const cookie = await ownerCookie(dataDir, server.port);
+			const said = await run(process.execPath, [join(plugin, "client.mjs"), String(server.port), cookie]);
 			assert.deepEqual(JSON.parse(said.stdout), ["HELLO", "HELLO, P3"]);
 		} finally {
 			await server.stop();
@@ -156,8 +156,8 @@ const HELLO = {
 		'import { BACKGROUND_CONTEXT as context, createHost, webSocketLink } from "@earendil-works/p3/v1";',
 		'import { Hello } from "./contract.ts";',
 		"",
-		"const [port, token] = process.argv.slice(2);",
-		'const socket = new WebSocket("ws://127.0.0.1:" + port + "/chord", { headers: { authorization: "Bearer " + token } });',
+		"const [port, cookie] = process.argv.slice(2);",
+		'const socket = new WebSocket("ws://127.0.0.1:" + port + "/chord", { headers: { cookie } });',
 		"const client = createHost({ readyTimeout: 5000, onError: (error) => console.error(error) });",
 		'client.connect(webSocketLink(socket), { principal: { kind: "server" } }, context);',
 		"await client.load([], context);",
@@ -191,11 +191,10 @@ async function stop(child: ChildProcess): Promise<void> {
 	await exited;
 }
 
-/** A client of the server on `port`, signed in as the owner with the owner token file. */
+/** A client of the server on `port`, signed in as the owner with a fresh owner link's cookie. */
 async function ownerClient(dataDir: string, port: number) {
-	const token = (await readFile(join(dataDir, "owner-token"), "utf8")).trim();
 	// Node's WebSocket (undici) takes an init object with headers; the DOM type knows only protocols.
-	const init = { headers: { authorization: `Bearer ${token}` } } as unknown as string[];
+	const init = { headers: { cookie: await ownerCookie(dataDir, port) } } as unknown as string[];
 	const client = createHost<P3Principal>({ readyTimeout: 30_000, onError: (error) => console.error(error) });
 	const socket = new WebSocket(`ws://127.0.0.1:${port}/chord`, init);
 	client.connect(webSocketLink(socket), { principal: { kind: "server" } }, context);

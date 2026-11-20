@@ -2,7 +2,7 @@
 // what keeps it alive (`WorkerBusy`), both served by the base.
 
 import { type ChordStore, defineRegistry, type Host } from "@earendil-works/chord";
-import type { P3Principal } from "../../principals.ts";
+import type { P3Principal } from "../../app.ts";
 
 /** A session worker's process values, for plugins: what only the base has. */
 export type WorkerRuntime = {
@@ -14,7 +14,7 @@ export type WorkerRuntime = {
 	readonly dir: string;
 	/** How long the worker may idle before it stops itself (the runner's choice, from its start). */
 	readonly idleMs: number;
-	/** Stops the worker: closes its host and store (everything it started finishes), tells the server why, exits. */
+	/** Stops the worker: its store's queued commits settle, it tells the server why, closes its host and store, exits. */
 	close(reason: "idle"): void;
 };
 

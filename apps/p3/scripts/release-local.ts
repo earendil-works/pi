@@ -129,7 +129,7 @@ if (import.meta.main) {
 	if (!values["skip-test"]) run(["npm", "run", "test:release"], install);
 	if (values.bench) {
 		const flags = ["--conditions=source", "--disable-warning=ExperimentalWarning"];
-		run([process.execPath, ...flags, "bench/skeleton.ts", "--release", install], install);
+		run([process.execPath, ...flags, "bench/skeleton.ts", "--release", out], install);
 	}
 	console.log(
 		`\nLocal release of ${p3.name}: ${out}\n  the command: ${join(out, "p3")}\n  the tarball: ${p3.tarball}`,

@@ -2,8 +2,10 @@
 // import and delete carry it. One local store (`SessionsStore`, `contract.server.ts`) owns the table, writes it and
 // offers its rows as named queries; the owner's `Sessions` and `SessionsList`, each worker's `SessionFacts` (its row,
 // and its report of what its agent does) and the route's `SessionRoute` read them. The waker starts the workers of
-// every `working` session once the server is up (a restart cut their runs off; Durable resumes them there): it holds
-// each one's `SessionStart` until the worker is live, then lets go. A worker keeps itself alive while it works.
+// every `working` session whenever a runner appears in `WorkerRunners`: once the server is up (a restart cut their runs
+// off; Durable resumes them there), and after a reload of the runner plugin (the old runner stopped every worker before
+// the new one is contributed). It holds each one's `SessionStart` until the worker is live, then lets go. A worker keeps
+// itself alive while it works.
 
 import {
 	and,
@@ -21,10 +23,12 @@ import {
 	json,
 	query,
 	type RowOf,
+	reportError,
 	Session,
 	str,
+	untilAborted,
 } from "@earendil-works/p3/v1";
-import { ServerRuntime, SessionRoute } from "@earendil-works/p3/v1/server";
+import { ServerRuntime, SessionRoute, WorkerRunners } from "@earendil-works/p3/v1/server";
 import { SessionsStore } from "./contract.server.ts";
 import {
 	CODING,
@@ -157,17 +161,36 @@ export default defineFacet((host) => {
 	contribute(host, "sessions.waker", (self) => {
 		const store = self.get(SessionsStore, {});
 		const runtime = self.registry(ServerRuntime);
+		const runners = self.registry(WorkerRunners);
 		self.onLive(async (ctx) => {
 			const { host: server } = runtime.value;
-			const starts = (await store.working({}, ctx)).map((session) =>
-				// Held until the worker serves it (it is live then), released when `root` returns.
-				server
-					.root(async (root) => void (await root.get(SessionStart, { session })), ctx)
-					.catch((error: unknown) => {
-						console.error(`p3 sessions: ${session}: could not start its worker:`, error);
-					}),
-			);
-			await Promise.all(starts);
+			/** Starts the worker of every `working` session. */
+			const wake = async (): Promise<void> => {
+				const starts = (await store.working({}, ctx)).map((session) =>
+					// Held until the worker serves it (it is live then), released when `root` returns.
+					server
+						.root(async (root) => void (await root.get(SessionStart, { session })), ctx)
+						.catch((error: unknown) => {
+							// Ending with the waker (its reload, the server's close) is no failure.
+							if (ctx.abortSignal?.aborted !== true) {
+								reportError(`p3 sessions: ${session}: could not start its worker`, error, ctx);
+							}
+						}),
+				);
+				await Promise.all(starts);
+			};
+			const watch = await runners.watch(ctx);
+			try {
+				if (watch.value !== undefined) await wake();
+				// Each new runner wakes them again (`undefined` comes between two: the old one withdrew before it stopped its
+				// workers).
+				watch.start(async (call) => {
+					if (call.kind === "value" && call.value !== undefined) await wake();
+				});
+				await untilAborted(ctx);
+			} finally {
+				await watch.stop();
+			}
 		});
 	});
 
