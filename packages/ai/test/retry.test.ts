@@ -240,6 +240,30 @@ describe("provider retry classification", () => {
 	])("does not match status codes inside ids or longer numbers: %s", (errorMessage) => {
 		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(false);
 	});
+
+	it.each([
+		"Unable to process request. Repeat the request later.",
+		"waited 73.4s in queue, reaching this model's admission ceiling of 60s; retry after the hinted delay",
+		'{"type":"error","error":{"details":null,"type":"api_error","message":"Unable to complete this request right now. Please try again."},"request_id":"req_011CgfE1bTgPTDsor4TsApFv"}',
+		"Provider finish_reason: error",
+		"Provider returned an empty response",
+		"Upstream error from Relace: The model stopped before completing the response.",
+	])("retries temporary provider failures: %s", (errorMessage) => {
+		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(true);
+	});
+
+	it.each([
+		// A cancellation, usually the user's.
+		"The operation was aborted",
+		// Only Anthropic's internal error is retried, not other error types.
+		'{"type":"error","error":{"type":"invalid_request_error","message":"messages: at least one message is required"}}',
+		// A refusal ends the stream with a finish reason other than `error`.
+		"Provider finish_reason: content_filter",
+		// The quota exclusions are checked before the retryable patterns.
+		'{"type":"error","error":{"type":"api_error","message":"Monthly quota exceeded"}}',
+	])("does not retry: %s", (errorMessage) => {
+		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(false);
+	});
 });
 
 describe("retryDelayMs", () => {
