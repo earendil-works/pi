@@ -1,10 +1,60 @@
+import type { GenerateContentParameters } from "@google/genai";
 import { describe, expect, it } from "vitest";
+import { streamSimple as streamSimpleGoogle } from "../src/api/google-generative-ai.ts";
 import {
 	convertTools,
 	resolveGoogleFunctionCallingMode,
 	supportsGoogleStrictToolSampling,
 } from "../src/api/google-shared.ts";
-import type { Tool } from "../src/types.ts";
+import { streamSimple as streamSimpleVertex } from "../src/api/google-vertex.ts";
+import type { GoogleCompat, Model, Tool } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
+
+function googleModel(id: string, compat?: GoogleCompat): Model<"google-generative-ai"> {
+	return {
+		id,
+		name: id,
+		api: "google-generative-ai",
+		provider: "test-google",
+		baseUrl: "https://example.invalid/v1beta",
+		reasoning: true,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 128000,
+		maxTokens: 4096,
+		...(compat && { compat }),
+	};
+}
+
+function vertexModel(id: string, compat?: GoogleCompat): Model<"google-vertex"> {
+	return {
+		...googleModel(id, compat),
+		api: "google-vertex",
+		provider: "test-vertex",
+		baseUrl: "https://example.invalid/v1",
+	};
+}
+
+/** Builds the request for one strict-preferring tool and returns its function-calling mode. */
+async function capturedFunctionCallingMode(
+	model: Model<"google-generative-ai"> | Model<"google-vertex">,
+): Promise<string | undefined> {
+	const tool = makeTool({ type: "object", properties: {} });
+	tool.constrainedSampling = { type: "json_schema", strict: "prefer" };
+	const context = normalizeContext({ messages: [{ role: "user", content: "Hi", timestamp: 0 }], tools: [tool] });
+	let payload: GenerateContentParameters | undefined;
+	const onPayload = (request: unknown) => {
+		payload = request as GenerateContentParameters;
+		throw new Error("payload captured");
+	};
+	const stream =
+		model.api === "google-vertex"
+			? streamSimpleVertex(model as Model<"google-vertex">, context, { apiKey: "test", onPayload })
+			: streamSimpleGoogle(model as Model<"google-generative-ai">, context, { apiKey: "test", onPayload });
+	const result = await stream.result();
+	expect(result.errorMessage).toContain("payload captured");
+	return payload?.config?.toolConfig?.functionCallingConfig?.mode;
+}
 
 function makeTool(parameters: Record<string, unknown>): Tool {
 	return {
@@ -188,12 +238,33 @@ describe("google-shared convertTools", () => {
 		const tool = makeTool({ type: "object", properties: {} });
 		tool.constrainedSampling = { type: "json_schema", strict: "require" };
 
-		expect(supportsGoogleStrictToolSampling("gemini-3.1-pro-preview")).toBe(true);
-		expect(supportsGoogleStrictToolSampling("gemini-2.5-pro")).toBe(false);
+		expect(supportsGoogleStrictToolSampling(googleModel("gemini-3.1-pro-preview"))).toBe(true);
+		expect(supportsGoogleStrictToolSampling(googleModel("gemini-2.5-pro"))).toBe(false);
 		expect(resolveGoogleFunctionCallingMode([tool], undefined, true)).toBe("VALIDATED");
 		expect(() => resolveGoogleFunctionCallingMode([tool], undefined, false)).toThrow(
 			'Tool "test_tool" requires JSON-schema constrained sampling',
 		);
+	});
+
+	// #12321
+	it("lets compat.supportsStrictMode override the model ID detection", () => {
+		expect(supportsGoogleStrictToolSampling(googleModel("randomprefix-gemini-4-argon"))).toBe(false);
+		expect(
+			supportsGoogleStrictToolSampling(googleModel("randomprefix-gemini-4-argon", { supportsStrictMode: true })),
+		).toBe(true);
+		expect(
+			supportsGoogleStrictToolSampling(googleModel("gemini-3.1-pro-preview", { supportsStrictMode: false })),
+		).toBe(false);
+	});
+
+	// #12321
+	it("sends VALIDATED for a prefixed Gemini ID only with compat.supportsStrictMode", async () => {
+		for (const makeModel of [googleModel, vertexModel]) {
+			expect(await capturedFunctionCallingMode(makeModel("randomprefix-gemini-4-argon"))).toBeUndefined();
+			expect(
+				await capturedFunctionCallingMode(makeModel("randomprefix-gemini-4-argon", { supportsStrictMode: true })),
+			).toBe("VALIDATED");
+		}
 	});
 
 	it("returns undefined for empty tool list", () => {

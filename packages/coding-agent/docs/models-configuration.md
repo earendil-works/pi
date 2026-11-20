@@ -192,6 +192,14 @@ Also applies to `azure-openai-responses` and `openai-codex-responses`.
 | `supportsMidConvoSystemMessages` | boolean | `false` | Whether the exact model accepts system messages after the conversation has started. When false, later system messages are folded into the leading system message. |
 | `supportsStrictMode` | boolean | `false` | Whether the model supports strict (schema-constrained) function tools. |
 
+### `google-generative-ai`
+
+Also applies to `google-vertex`.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `supportsStrictMode` | boolean |  | Whether the model enforces strict tools through Gemini's VALIDATED function-calling mode. Default: true for model IDs starting with gemini-3 or a later version, false otherwise. Set true for Gemini 3+ models served under other IDs. |
+
 ### `typesafe-system-one`
 
 Also applies to `cloudflare-workers-ai-system-one`.
