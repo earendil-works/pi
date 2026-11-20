@@ -18,7 +18,7 @@ import { Subagents } from "../../plugins/subagents/contract.ts";
 import type { Host } from "../../src/runtime/chord.ts";
 import { Hosts } from "../../src/runtime/server.ts";
 import { bigSessionEntries } from "../fixtures/big-session.ts";
-import { Browser, browserTests } from "./browser.ts";
+import { Browser, browserTests, COMPOSER, composerText, setComposer } from "./browser.ts";
 import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
 
 const live = (view: ConversationView | null | undefined) => view?.docs["pi.live"] as LiveState | undefined;
@@ -97,7 +97,7 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		try {
 			await browser.metrics(390, 844);
 			await browser.open(url(`/s/${session.id}`));
-			await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
+			await browser.wait(`document.querySelector('${COMPOSER}') && !document.querySelector('.offline')`);
 			for (const text of ["one", "two", "slow three"]) {
 				await chat.send({ text, requestId: text }, BACKGROUND_CONTEXT);
 				await until(chat.view, answered(`Echo: ${text}`), 30_000);
@@ -210,12 +210,12 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		);
 		await browser.metrics(1280, 900);
 		await browser.open(url(`/s/${session.id}`));
-		await browser.wait(`document.querySelector('.composer textarea') && document.querySelector('.hero.small-hero')`);
-		await browser.evaluate(input(".composer textarea", "typed while loading"));
+		await browser.wait(`document.querySelector('${COMPOSER}') && document.querySelector('.hero.small-hero')`);
+		await browser.evaluate(setComposer("typed while loading"));
 		await browser.wait(`!document.querySelector('.composer button[aria-label=Send]').disabled`);
 		// Stopping the worker makes the page's Chat handle gone; it is acquired again while the worker starts.
 		await browser.evaluate(
-			`(() => { window.__samples = []; window.__timer = setInterval(() => window.__samples.push({ composer: !!document.querySelector('.composer textarea'), typed: document.querySelector('.composer textarea')?.value.trim() !== '', send: document.querySelector('.composer button[aria-label=Send]')?.disabled ?? null, connecting: [...document.querySelectorAll('.subagent-bar')].some((e) => e.textContent.includes('Connecting')) }), 20); })()`,
+			`(() => { window.__samples = []; window.__timer = setInterval(() => window.__samples.push({ composer: !!document.querySelector('${COMPOSER}'), typed: (document.querySelector('${COMPOSER}')?.textContent ?? '').replaceAll('\u200B', '').trim() !== '', send: document.querySelector('.composer button[aria-label=Send]')?.disabled ?? null, connecting: [...document.querySelectorAll('.subagent-bar')].some((e) => e.textContent.includes('Connecting')) }), 20); })()`,
 		);
 		const hosts = fixture.server.host.hold(Hosts, {}, BACKGROUND_CONTEXT);
 		try {
@@ -225,9 +225,9 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		}
 		// Sending does not wait for the chat object (plugins/chat/outbox.ts): the message shows at once and is
 		// delivered once the worker is back.
-		assert.equal(await browser.evaluate(`document.querySelector('.composer textarea').value`), "typed while loading");
+		assert.equal(await browser.evaluate(composerText), "typed while loading");
 		await browser.click("button[aria-label=Send]");
-		await browser.wait(`document.querySelector('.composer textarea').value === ''`);
+		await browser.wait(`${composerText} === ''`);
 		await browser.wait(`${messages}.includes('Echo: typed while loading')`);
 		const samples = await browser.evaluate<
 			{ composer: boolean; typed: boolean; send: boolean | null; connecting: boolean }[]
@@ -270,8 +270,8 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		await child.send({ text: "zebrafish unique words", requestId: "direct" }, BACKGROUND_CONTEXT);
 		await until(child.view, answered("Echo: zebrafish unique words"), 30_000);
 		await browser.metrics(1280, 900);
-		// Recents' list page searches messages too, subagents' included.
-		await browser.open(url("/list/recent"));
+		// The list page of the sessions without a project searches messages too, subagents' included.
+		await browser.open(url("/list/other"));
 		const search = 'input[aria-label="Search sessions and messages"]';
 		await browser.wait(`document.querySelector('${search}') && !document.querySelector('.offline')`);
 		await browser.evaluate(input(search, "zebrafish"));
@@ -324,7 +324,7 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		try {
 			await browser.metrics(1280, 900);
 			await browser.open(url(`/s/${first.id}`));
-			await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
+			await browser.wait(`document.querySelector('${COMPOSER}') && !document.querySelector('.offline')`);
 			// A queued follow-up moved back to the editor lands there with the focus.
 			await chat.send({ text: "slow running", requestId: "slow" }, BACKGROUND_CONTEXT);
 			await until(chat.view, (view) => Boolean(live(view)?.run));
@@ -333,9 +333,9 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 			await browser.evaluate(`document.activeElement?.blur()`);
 			await browser.click(".queue-edit");
 			await browser.wait(
-				`document.querySelector('.composer textarea').value.includes('queued words') && document.activeElement === document.querySelector('.composer textarea')`,
+				`${composerText}.includes('queued words') && document.activeElement === document.querySelector('${COMPOSER}')`,
 			);
-			await browser.evaluate(input(".composer textarea", ""));
+			await browser.evaluate(setComposer(""));
 			await until(chat.view, answered("Echo: slow running"), 30_000);
 			// Stopped during a tool call: no aborted answer, so the Stop notice shows.
 			await chat.send({ text: "slow-tool", requestId: "tool" }, BACKGROUND_CONTEXT);
@@ -360,10 +360,16 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		const sessions = await holdIn(owner, Sessions, {}, "owner");
 		const first = await sessions.create({ cwd: fixture.workspace, title: "Focus first" }, BACKGROUND_CONTEXT);
 		const second = await sessions.create({ cwd: fixture.workspace, title: "Focus second" }, BACKGROUND_CONTEXT);
-		const focused = `document.activeElement === document.querySelector('.composer textarea')`;
+		const focused = `document.activeElement === document.querySelector('${COMPOSER}')`;
 		const row = (scope: string, session: string) => `${scope} a.session-main[href="/s/${session}"]`;
+		/** Presses Enter, as a keyboard does. */
+		const enter = async () => {
+			const key = { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 };
+			await browser.call("Input.dispatchKeyEvent", { type: "keyDown", text: "\r", ...key });
+			await browser.call("Input.dispatchKeyEvent", { type: "keyUp", ...key });
+		};
 		const arrive = async (session: string) => {
-			await browser.wait(`location.pathname === '/s/${session}' && document.querySelector('.composer textarea')`);
+			await browser.wait(`location.pathname === '/s/${session}' && document.querySelector('${COMPOSER}')`);
 		};
 		const click = async (scope: string, session: string) => {
 			await browser.evaluate(`document.activeElement?.blur()`);
@@ -384,22 +390,37 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		try {
 			await browser.metrics(1280, 900);
 			await browser.open(url(`/s/${first.id}`));
-			await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
+			await browser.wait(`document.querySelector('${COMPOSER}') && !document.querySelector('.offline')`);
 			// Opening a page focuses nothing; selecting a session in the sidebar focuses the composer the dock keeps.
 			assert.equal(await browser.evaluate<boolean>(focused), false);
 			await click(".drawer", second.id);
 			await browser.wait(focused);
 			// From a list page, which has no composer, opened in the page: the session shown before it opens with its
-			// composer focused once it shows again.
-			await browser.click(".drawer .sidebar-section[data-key=recent] a.group-label");
+			// composer focused once it shows again. The folder's list page, from the command menu (Open folder…, its first
+			// folder: the most recently active one, the sessions' own).
+			const menuKey = {
+				key: "k",
+				code: "KeyK",
+				windowsVirtualKeyCode: 75,
+				modifiers: (await browser.evaluate<boolean>(`navigator.platform.startsWith('Mac')`)) ? 4 : 2,
+			};
+			await browser.call("Input.dispatchKeyEvent", { type: "rawKeyDown", ...menuKey });
+			await browser.call("Input.dispatchKeyEvent", { type: "keyUp", ...menuKey });
+			await browser.wait(`document.activeElement?.matches('.command-menu input')`);
+			await browser.call("Input.insertText", { text: "open folder" });
+			const selected = `document.querySelector('.command-menu [role=option][aria-selected=true] .command-title')?.textContent`;
+			await browser.wait(`${selected} === 'Open folder…'`);
+			await enter();
+			await browser.wait(
+				`document.querySelector('.command-menu .command-crumb')?.textContent === 'Folders' && ${selected}`,
+			);
+			await enter();
 			await browser.wait(`document.querySelector(${JSON.stringify(row(".list-page", second.id))})`);
 			await click(".list-page", second.id);
 			await browser.wait(focused);
 			// Enter on a focused row: the keyboard's click.
 			await browser.evaluate(`document.querySelector(${JSON.stringify(row(".drawer", first.id))}).focus()`);
-			const enter = { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 };
-			await browser.call("Input.dispatchKeyEvent", { type: "keyDown", text: "\r", ...enter });
-			await browser.call("Input.dispatchKeyEvent", { type: "keyUp", ...enter });
+			await enter();
 			await arrive(first.id);
 			await browser.wait(focused);
 			// Restoring an archived session opens it once the server has it, its composer focused then.
@@ -505,7 +526,7 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 			await browser.wait(`${messages}.includes('Echo: slow long answer') && !document.querySelector('.offline')`);
 			await browser.evaluate(toTop);
 			await browser.wait(`document.querySelector('.to-bottom')`);
-			await browser.evaluate(input(".composer textarea", "Next question"));
+			await browser.evaluate(setComposer("Next question"));
 			const rows = await browser.evaluate<number>(`Number(document.querySelector('.rows').dataset.rows)`);
 			await browser.click("button[aria-label=Send]");
 			await until(chat.view, answered("Echo: Next question"), 30_000);
@@ -516,13 +537,13 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 				`moved ${await browser.evaluate<number>(FROM_START)}px from the top`,
 			);
 			// A taller composer (a second line) keeps the reader's place too: its room is below them.
-			await browser.evaluate(input(".composer textarea", "one\ntwo\nthree\nfour"));
-			await browser.wait(`document.querySelector('.composer textarea').clientHeight > 60`);
+			await browser.evaluate(setComposer("one\ntwo\nthree\nfour"));
+			await browser.wait(`document.querySelector('${COMPOSER}').clientHeight > 60`);
 			assert.ok(
 				await browser.evaluate<boolean>(atTop),
 				`moved ${await browser.evaluate<number>(FROM_START)}px from the top`,
 			);
-			await browser.evaluate(input(".composer textarea", ""));
+			await browser.evaluate(setComposer(""));
 			assert.ok(await browser.evaluate<boolean>(`Boolean(document.querySelector('.to-bottom'))`));
 		} finally {
 			stop();
@@ -538,7 +559,7 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		);
 		await browser.metrics(1280, 900);
 		await browser.open(url(`/s/${session.id}`));
-		await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
+		await browser.wait(`document.querySelector('${COMPOSER}') && !document.querySelector('.offline')`);
 		await browser.click(".drawer-foot .settings-open");
 		const environments = `[...document.querySelectorAll('.settings-nav-item')].find((e) => e.textContent === 'Environments')`;
 		await browser.wait(environments);
@@ -556,7 +577,7 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		const session = await sessions.create({ cwd: fixture.workspace, title: "Archived here" }, BACKGROUND_CONTEXT);
 		await browser.metrics(390, 844);
 		await browser.open(url(`/s/${session.id}`));
-		await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
+		await browser.wait(`document.querySelector('${COMPOSER}') && !document.querySelector('.offline')`);
 		// The page's conversation is live: its worker runs, and the page keeps holding it after leaving (linger).
 		const hosts = fixture.server.host.hold(Hosts, {}, BACKGROUND_CONTEXT);
 		await until(hosts.workers, (workers) => workers?.[session.id]?.running === true);
@@ -586,17 +607,17 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		try {
 			await browser.metrics(390, 844);
 			await browser.open(url(`/s/${session.id}`));
-			await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
-			await browser.evaluate(`document.querySelector('.composer textarea').focus()`);
+			await browser.wait(`document.querySelector('${COMPOSER}') && !document.querySelector('.offline')`);
+			await browser.evaluate(`document.querySelector('${COMPOSER}').focus()`);
 			await browser.call("Input.insertText", { text: "tap send" });
 			await browser.wait(`!document.querySelector('.composer .send').disabled`);
 			const [x, y] = await browser.evaluate<[number, number]>(
 				`(() => { const r = document.querySelector('.composer .send').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`,
 			);
-			// Pressing Send leaves the focus in the textarea (blurring it would close a phone's keyboard and move the button).
+			// Pressing Send leaves the focus in the editor (blurring it would close a phone's keyboard and move the button).
 			await browser.call("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
 			assert.equal(
-				await browser.evaluate<boolean>(`document.activeElement === document.querySelector('.composer textarea')`),
+				await browser.evaluate<boolean>(`document.activeElement === document.querySelector('${COMPOSER}')`),
 				true,
 			);
 			// Releasing it sends: one tap, no second press.
@@ -615,7 +636,7 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		);
 		const chat = await holdIn(owner, Chat, { session: session.id, conversation: 1 }, "participant");
 		const stop = follow(chat.view, () => {});
-		const focused = `document.activeElement === document.querySelector('.composer textarea')`;
+		const focused = `document.activeElement === document.querySelector('${COMPOSER}')`;
 		const tap = async (x: number, y: number) => {
 			await browser.call("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
 			await browser.call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
@@ -624,8 +645,8 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 			await browser.metrics(390, 844);
 			await browser.call("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
 			await browser.open(url(`/s/${session.id}`));
-			await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
-			await browser.evaluate(`document.querySelector('.composer textarea').focus()`);
+			await browser.wait(`document.querySelector('${COMPOSER}') && !document.querySelector('.offline')`);
+			await browser.evaluate(`document.querySelector('${COMPOSER}').focus()`);
 			// A phone's keyboard holds the word being typed as a composition until it is committed.
 			await browser.call("Input.insertText", { text: "touch " });
 			await browser.call("Input.imeSetComposition", { text: "send", selectionStart: 4, selectionEnd: 4 });
@@ -633,18 +654,13 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 			const [bar, right, middle] = await browser.evaluate<[number, number, number]>(
 				`(() => { const s = document.querySelector('.composer .send').getBoundingClientRect(), f = document.querySelector('.composer').getBoundingClientRect(); return [s.left - 30, f.right - 6, s.top + s.height / 2]; })()`,
 			);
-			// A tap in the bar's gap left of Send does nothing: the textarea keeps the focus (and a phone its keyboard).
+			// A tap in the bar's gap left of Send does nothing: the editor keeps the focus (and a phone its keyboard).
 			await tap(bar, middle);
 			assert.equal(await browser.evaluate<boolean>(focused), true);
 			// A tap right of Send's glyph, in the composer's padding where a thumb aiming at it lands, sends at once.
 			await tap(right, middle);
 			await until(chat.view, answered("Echo: touch send"), 30_000);
-			assert.deepEqual(
-				await browser.evaluate<[boolean, string]>(
-					`[${focused}, document.querySelector('.composer textarea').value]`,
-				),
-				[true, ""],
-			);
+			assert.deepEqual(await browser.evaluate<[boolean, string]>(`[${focused}, ${composerText}]`), [true, ""]);
 		} finally {
 			await browser.call("Emulation.setTouchEmulationEnabled", { enabled: false });
 			stop();
@@ -659,16 +675,18 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 		);
 		await browser.metrics(390, 844);
 		await browser.open(url(`/s/${session.id}`));
-		await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
-		await browser.evaluate(`document.querySelector('.composer textarea').focus()`);
+		await browser.wait(`document.querySelector('${COMPOSER}') && !document.querySelector('.offline')`);
+		await browser.evaluate(`document.querySelector('${COMPOSER}').focus()`);
 		await browser.call("Input.insertText", { text: "hello world" });
-		await browser.wait(`document.querySelector('.composer textarea').value === 'hello world'`);
+		await browser.wait(`${composerText} === 'hello world'`);
 		// Put the caret after "hello" and type there, one character at a time as a keyboard does.
-		await browser.evaluate(`document.querySelector('.composer textarea').setSelectionRange(5, 5)`);
+		await browser.evaluate(
+			`(() => { const r = document.createRange(); r.setStart(document.querySelector('${COMPOSER}').firstChild, 5); getSelection().removeAllRanges(); getSelection().addRange(r); })()`,
+		);
 		for (const character of " there") await browser.call("Input.insertText", { text: character });
 		assert.deepEqual(
 			await browser.evaluate<[string, number]>(
-				`(() => { const t = document.querySelector('.composer textarea'); return [t.value, t.selectionStart]; })()`,
+				`(() => { const r = getSelection().getRangeAt(0), p = document.createRange(); p.setStart(document.querySelector('${COMPOSER}'), 0); p.setEnd(r.startContainer, r.startOffset); return [${composerText}, p.toString().length]; })()`,
 			),
 			["hello there world", 11],
 		);

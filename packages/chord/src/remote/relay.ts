@@ -5,8 +5,8 @@
 // upstream (slice 9).
 
 import type { TelemetryCarrier, TelemetrySpan } from "@earendil-works/pi-telemetry";
-import { ChordError } from "../data/index.ts";
-import type { Caller } from "../host/internal.ts";
+import { ChordError, type FailureCause } from "../data/index.ts";
+import { type Caller, revoked } from "../host/internal.ts";
 import { errorFromWire, type Message, type OriginMessage, wireError } from "../link/internal.ts";
 import { capped, carrierOf, ended, OpenSpan, parentOf, spanFailed, untraced } from "../telemetry.ts";
 import type { CallWindow } from "./calls.ts";
@@ -132,6 +132,8 @@ export class RelayedHold {
 	readonly #trace: TelemetryCarrier | undefined;
 	/** How many times it was held upstream. */
 	#holds = 0;
+	/** What its downstream was told holds it back (`withheld`), until it is told that it is admitted again. */
+	#heldBack: FailureCause | undefined;
 
 	constructor(id: number, downstream: ProviderSide, request: HoldRequest, caller: Caller, path: Path) {
 		this.id = id;
@@ -227,6 +229,32 @@ export class RelayedHold {
 	}
 
 	/**
+	 * Its route's admission holds it back with `cause` (slice 14 §2.3): released upstream when it is held there (what
+	 * still arrives for it from that link is dropped: a link answers only for what is relayed over it); downstream its
+	 * calls, in flight and waiting, are rejected and it is told `failed` with the cause. It stays on its path: an allow
+	 * holds it again, under its id.
+	 */
+	withheld(cause: FailureCause): void {
+		const upstream = this.#upstream;
+		this.#upstream = undefined;
+		upstream?.link.send({ kind: "release", origin: upstream.origin, hold: this.id });
+		this.#relayed("error", cause.error);
+		this.#heldBack = cause;
+		this.#downstream.withheld(this, cause);
+	}
+
+	/**
+	 * Its route's admission allows it: a hold that was told what held it back is `loading` downstream from here on,
+	 * through the fence and its host's start, until its next `bound` (the caller has access again: it is not shown
+	 * "no access" meanwhile). A hold never told anything is loading already.
+	 */
+	admitted(): void {
+		if (this.#heldBack === undefined) return;
+		this.#heldBack = undefined;
+		this.#downstream.send({ kind: "loading", hold: this.id });
+	}
+
+	/**
 	 * Whether it waits for its path's link (a route still resolving, or a dropped link's next): a revocation ends it then,
 	 * since the link it is held on next gets no past `revoke` (§4).
 	 */
@@ -250,17 +278,27 @@ export class RelayedHold {
 	/**
 	 * A call from downstream (registered there under its id): it waits in its upstream link's window for this origin
 	 * and is forwarded (`call`) as a slot frees, at once when one is free and nothing waits (a trusted upstream announced
-	 * no window); its reply comes back by the origin. Without an upstream link it is answered `unavailable` at once (it
-	 * crossed the `loading` notice).
+	 * no window); its reply comes back by the origin. Without an upstream link it is answered at once: `unavailable`
+	 * (it crossed the `loading` notice), or, held back by its route's admission, what held it back (it crossed that
+	 * `failed`: `forbidden/revoked` for a denial, access withdrawn under a call already made).
 	 */
 	submit(call: RelayedCall): void {
 		const upstream = this.#upstream;
 		if (upstream === undefined) {
-			const error = new ChordError({ code: "unavailable", message: `hold ${this.id}: its upstream link is down` });
+			const error = this.#unreached();
 			this.#downstream.reply(call.message.call, { kind: "error", call: call.message.call, error: wireError(error) });
 			return;
 		}
 		call.queue(upstream.link.consumer.relayWindow(upstream.origin));
+	}
+
+	/** What a call that finds it on no upstream link is answered. */
+	#unreached(): ChordError {
+		const cause = this.#heldBack;
+		const label = `hold ${this.id}`;
+		if (cause === undefined)
+			return new ChordError({ code: "unavailable", message: `${label}: its upstream link is down` });
+		return cause.kind === "denied" ? revoked(label, cause.error) : cause.error;
 	}
 
 	/**

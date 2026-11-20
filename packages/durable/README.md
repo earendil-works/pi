@@ -304,6 +304,16 @@ import { createCodingTools } from "@earendil-works/pi-durable/tools";
 registry.install(createCodingTools({ images: await createNodePhotonImages() }));
 ```
 
+Images also reach the model through other tools' results (an MCP tool, code mode's `image()`) and through a host's input. `@earendil-works/pi-durable/images/fit` fits those to the conversation model's limits with any processor, before they are stored, so the transcript, and the provider's prompt cache, never changes later. `createFitImagesExtension(images)` is an `afterTool` hook for every result the model gets, and says what changed in an `info` diagnostic; `fitImage(bytes, mimeType, imageLimits(model), images)` fits an attachment before the host submits it, and returns notes for the model. Every image is decoded, as the coding agent does, so a damaged one never reaches the transcript; one that cannot be prepared is left out with a note.
+
+```typescript
+import { createFitImagesExtension } from "@earendil-works/pi-durable/images/fit";
+
+const images = await createNodePhotonImages();
+registry.install(createCodingTools({ images }));
+registry.install(createFitImagesExtension(images));
+```
+
 A model without image input sees a placeholder instead of the image, decided per request, so an image read under such a model still reaches a vision model the conversation switches to; `read` names such a model in `details.imageUnsupportedByModel` for UIs. `/images/node` prepares images in a worker thread, so a large photo (a second or two of work) never blocks the event loop; the worker exits after 30 s without images, freeing Photon's WebAssembly memory (`createNodePhotonImages({ worker: false, idleMs })`). Elsewhere, `createPhotonImages()` and `/images/cloudflare` work on the calling thread, and decoding takes the image's full size in WebAssembly memory, which does not shrink again; leave the processor out on memory-constrained hosts such as Cloudflare Workers unless images stay small.
 
 Define your own tool with a JSON Schema, built here with `@earendil-works/pi-schema`. `defineTool()` types `args` from `parameters` (through pi-schema's `Static`; other JSON Schema gives `unknown`), which the Harness coerces and validates before `execute()`. `api.output()` streams running output, which becomes the result when `execute()` returns no `output`:
@@ -1128,6 +1138,7 @@ node --conditions=source --experimental-strip-types test/examples/13-chat.ts
 | [44-approval-gate](test/examples/44-approval-gate.ts) | A `beforeTool` approval gate keyed by the arguments with a memoized deadline, a second gate asked on every wake, denial and expiry |
 | [45-review-on-yield](test/examples/45-review-on-yield.ts) | An `onYield` review task whose `{ continue }` sends the agent back, and a queued user message winning over it |
 | [46-after-tools-terminate](test/examples/46-after-tools-terminate.ts) | An `afterTools` task asking a person whether to go on: a steer, then `{ terminate: true }` |
+| [47-fit-images](test/examples/47-fit-images.ts) | Images fitted to the model's limits before they are stored: an attached photo with `fitImage`, a tool's screenshot with the `fit-images` extension |
 | [00](test/examples/00-conversation.ts)–[12](test/examples/12-recovery.ts) | The layers underneath: sessions, documents, forks, watches, the Harness, agent configuration, reload, extension state, tasks, recovery |
 
 Examples that call OpenAI need `OPENAI_API_KEY`; most use the faux provider otherwise.

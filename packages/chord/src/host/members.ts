@@ -24,6 +24,7 @@ import {
 } from "../registries/internal.ts";
 import { type Derive, type DeriveInput, type DeriveSource, NativeSource } from "../state/internal.ts";
 import { type EventNode, OwnEventSource, type SourceOwner } from "./events.ts";
+import { type OwnQuery, ownQueries } from "./named-query.ts";
 import { type Binding, resolveKeyed, resolveWatchable } from "./reference.ts";
 import { ReexposedEvents, ReferenceEvents } from "./reference-events.ts";
 
@@ -37,6 +38,8 @@ export type Members = {
 	readonly keyed: ReadonlyMap<string, KeyedBinding>;
 	/** The event members: the attempt's own sources, or nodes fed by the references they re-expose (`ReexposedEvents`). */
 	readonly events: ReadonlyMap<string, EventNode>;
+	/** The `queries` members (slice 14 §3.1): the object's own named queries, by member and query name. */
+	readonly queries: ReadonlyMap<string, ReadonlyMap<string, OwnQuery>>;
 };
 
 /**
@@ -81,6 +84,34 @@ export function checkImplementation(
 
 type Implementation = { readonly [member: string]: unknown };
 
+/** The `queries` members of a variant without any: shared, never written. */
+const NO_QUERIES: ReadonlyMap<string, ReadonlyMap<string, OwnQuery>> = new Map();
+
+/**
+ * Checks the `queries` members: each is what `self.queries` returned (an object's own named queries: a reference's
+ * are not re-exposed), with a builder for every query the contract lists, which takes the contract's argument schema.
+ */
+function checkQueries(
+	queries: VariantData["queries"],
+	own: (member: string) => unknown,
+): ReadonlyMap<string, ReadonlyMap<string, OwnQuery>> {
+	const checked = new Map<string, ReadonlyMap<string, OwnQuery>>();
+	for (const [member, { args }] of queries) {
+		const declared = ownQueries(own(member));
+		if (declared === undefined) throw new Error(`${member}: a queries member is what self.queries returned`);
+		for (const [name, schema] of args) {
+			const query = declared.get(name);
+			if (query === undefined) throw new Error(`${member}: no builder for the listed query "${name}"`);
+			query.listed(schema);
+		}
+		for (const [name, query] of declared) {
+			if (!query.checked) throw new Error(`${member}: query "${name}" is not listed and brings no argument schema`);
+		}
+		checked.set(member, declared);
+	}
+	return checked;
+}
+
 /** The event members of a variant without any: shared, never written. */
 const NO_EVENTS: ReadonlyMap<string, EventNode> = new Map();
 
@@ -90,12 +121,18 @@ const NO_EVENTS: ReadonlyMap<string, EventNode> = new Map();
  * method without arguments is called with the context alone.
  */
 function checkMembers(
-	{ state, methods, keyed, events }: VariantData,
+	{ state, methods, keyed, events, queries }: VariantData,
 	implementation: Implementation,
 	sources: SourceOwner | undefined,
 ): Members {
 	for (const member of Object.keys(implementation)) {
-		if (!state.has(member) && !methods.has(member) && !keyed.has(member) && !events.has(member)) {
+		if (
+			!state.has(member) &&
+			!methods.has(member) &&
+			!keyed.has(member) &&
+			!events.has(member) &&
+			!queries.has(member)
+		) {
 			throw new Error(`${member}: not a member`);
 		}
 	}
@@ -107,6 +144,7 @@ function checkMembers(
 		state: new Map<string, DeriveSource>(),
 		keyed: new Map<string, KeyedBinding>(),
 		events: NO_EVENTS,
+		queries: NO_QUERIES,
 	};
 	for (const [member, data] of methods) {
 		const method = own(member);
@@ -133,6 +171,7 @@ function checkMembers(
 		checked.keyed.set(member, resolved);
 	}
 	if (events.size > 0) checked.events = checkEvents(events, own, sources);
+	if (queries.size > 0) checked.queries = checkQueries(queries, own);
 	return checked;
 }
 

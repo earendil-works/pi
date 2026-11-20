@@ -1,11 +1,15 @@
 import { defineExtension, section } from "@earendil-works/pi-durable";
-import { CodingTools } from "@earendil-works/pi-durable/tools";
+import { createCodingTools } from "@earendil-works/pi-durable/tools";
 import { contribute, defineFacet } from "@p2/app/v1";
-import { Extensions, HarnessEnvironments, HarnessNative, locateConversation } from "@p2/app/v1/worker";
+import { Extensions, HarnessEnvironments, HarnessNative, locateConversation, workerOf } from "@p2/app/v1/worker";
 
-/** Durable's read/write/edit/bash tools, and the prompt sections of a coding session. */
+/**
+ * Durable's read/write/edit/bash tools (`read` fits images with the worker's processor), and the prompt sections of a
+ * coding session.
+ */
 export default defineFacet((host) => {
 	contribute(host, "p2.coding-tools", (self) => {
+		const tools = createCodingTools({ images: workerOf(self)().images });
 		const harness = self.registry(HarnessNative);
 		const environments = self.registry(HarnessEnvironments);
 		const coding = defineExtension({
@@ -29,6 +33,6 @@ export default defineFacet((host) => {
 				}),
 			],
 		});
-		self.contribute(Extensions, { [CodingTools.name]: CodingTools, [coding.name]: coding });
+		self.contribute(Extensions, { [tools.name]: tools, [coding.name]: coding });
 	});
 });

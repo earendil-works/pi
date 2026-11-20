@@ -40,6 +40,8 @@ startPage<P>({
   dependency): during that restart its old UI can show unstyled (its classes' rules are gone). The browser test
   `styles.test.ts` keeps this visible. Contribute UI from facets to avoid it.
 - An outdated page reloads.
+- `limits`: the limits per part of what the page takes from the server (`PartLimits`; default an untrusted link's, 16
+  MiB on the wire and 64 MiB decoded), as `startClient` takes them.
 - `themes: false`: no `Themes` provider, nothing written on `:root` (an app styling its pages itself). `follow: false`:
   a static page (built offline with `buildBase` and `pageBootstrap`, served elsewhere): its combined plugins only, no
   updates, never outdated.

@@ -1,8 +1,10 @@
 // Fixture worker (slice 10): `workerMain` with a host at its address, the shipped plugins, and a core facet serving
 // `Control` (crash, fatal, block, busy, local calls) and `Busy` (the app's keep-alive counts). Its start data picks a
 // behaviour for the tests: exit or throw before connecting, never connect, a slow or endless load, slow closers that
-// log their order to a file, a closer importing a lazy module.
+// log their order to a file, a closer importing a lazy module, a report to the server during its startup, a process
+// that keeps its IPC channel open after its exit.
 
+import { spawn } from "node:child_process";
 import { appendFileSync, writeFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { BACKGROUND_CONTEXT } from "../../../../src/context/index.ts";
@@ -11,7 +13,7 @@ import { defineState } from "../../../../src/documents/index.ts";
 import { createHost, defineFacet } from "../../../../src/host/index.ts";
 import * as chord from "../../../../src/index.ts";
 import { workerMain } from "../../../../src/node/workers/index.ts";
-import { Control, type WorkerBehaviour } from "./control.ts";
+import { Control, Reports, type WorkerBehaviour } from "./control.ts";
 
 // Every IPC message this process sends, counted (a local call must send none).
 let sent = 0;
@@ -27,6 +29,17 @@ const Counts = defineState("counts", { schema: map(int()), version: 1, initial: 
 
 /** The worker's host, set once made: a timer reaches its objects through it. */
 let host: ReturnType<typeof createHost>;
+
+/** The server's `Reports`, held from its first use on: a report goes out in the turn that sends it. */
+let held: ReturnType<typeof holdReports> | undefined;
+
+const holdReports = () => host.get(Reports, {}, BACKGROUND_CONTEXT);
+
+/** The held `Reports`; its answers are the server's to give or not (the worker may be gone by then). */
+function serverReports(): ReturnType<typeof holdReports> {
+	held ??= holdReports();
+	return held;
+}
 
 const core = defineFacet((facet) => {
 	facet.serve(Busy, (_, self) => {
@@ -88,6 +101,16 @@ const core = defineFacet((facet) => {
 					for (let i = 0; i < n; i++) await echo.echo(i, ctx);
 					return sent - before;
 				},
+				report: async (text) => {
+					const reports = await serverReports();
+					reports.report(text, BACKGROUND_CONTEXT).catch(() => {});
+					return null;
+				},
+				reportAndExit: async (text) => {
+					const reports = await serverReports();
+					reports.report(text, BACKGROUND_CONTEXT).catch(() => {});
+					process.exit(7);
+				},
 			},
 		};
 	});
@@ -117,6 +140,8 @@ workerMain(
 			writeFileSync(behaviour.lazyOnClose, imported);
 		});
 		if (behaviour.connect === false) await sleep(1e9, undefined, { signal: ctx.abortSignal });
+		// fd 3 is the IPC channel of a forked child (`stdio: [.., "ipc"]`).
+		if (behaviour.holdsChannel === true) spawn("sleep", ["60"], { stdio: ["ignore", "ignore", "ignore", 3] });
 		worker.connect(parent, { principal: { kind: "server" }, trusted: true }, ctx);
 		if (behaviour.loadMs !== undefined) await sleep(behaviour.loadMs, undefined, { signal: ctx.abortSignal });
 		if (behaviour.hang === true) await sleep(1e9, undefined, { signal: ctx.abortSignal });
@@ -130,6 +155,11 @@ workerMain(
 				});
 				process.disconnect?.();
 			}, 300);
+		}
+		if (behaviour.reportAtStart !== undefined) {
+			const reports = await worker.get(Reports, {}, ctx);
+			await reports.report(behaviour.reportAtStart, ctx);
+			reports.release();
 		}
 		const calls = behaviour.localCalls;
 		if (calls !== undefined) {

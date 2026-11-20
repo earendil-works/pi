@@ -16,6 +16,7 @@ import * as piDurable from "@earendil-works/pi-durable";
 import * as durableCodemode from "@earendil-works/pi-durable/codemode";
 import * as durableEnv from "@earendil-works/pi-durable/env";
 import * as durableEnvNode from "@earendil-works/pi-durable/env/node";
+import * as durableImagesFit from "@earendil-works/pi-durable/images/fit";
 import * as durableToolSearch from "@earendil-works/pi-durable/tool-search";
 import * as durableTools from "@earendil-works/pi-durable/tools";
 import * as piEnv from "@earendil-works/pi-env";
@@ -58,11 +59,15 @@ export const SHARED_PACKAGES = {
 	yaml,
 };
 
-/** The host packages of worker facets (pi-tui too: file completion ranks as pi-tui's autocomplete does). */
+/**
+ * The host packages of worker facets (pi-tui too: file completion ranks as pi-tui's autocomplete does; Durable's image
+ * fitting, with the worker's processor `WorkerParts.images`).
+ */
 export const WORKER_PACKAGES = {
 	"@p2/app/v1": api,
 	"@p2/app/v1/node": apiNode,
 	"@p2/app/v1/worker": apiWorker,
+	"@earendil-works/pi-durable/images/fit": durableImagesFit,
 	"@earendil-works/pi-tui": piTui,
 	...SHARED_PACKAGES,
 };

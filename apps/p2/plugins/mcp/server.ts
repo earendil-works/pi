@@ -239,7 +239,7 @@ function managerFactory(connector: EnvConnector): Factory<typeof McpManager> {
 
 /**
  * Keeps the memento a restarted manager's natives start from: the servers of each valid read, and the instances once
- * one of them lists other tools (instances closing change no tools, so a manager ending writes nothing).
+ * one of them lists other tools or instructions (instances closing change neither, so a manager ending writes nothing).
  */
 function keepMemento(
 	self: Self,
@@ -251,14 +251,15 @@ function keepMemento(
 		if (failure === null) await memento.change((draft) => Object.assign(draft, { servers, errors }), ctx);
 	});
 	self.on(listed, async ({ value: { instances } }, ctx) => {
-		const remembered = new Map(memento.value.instances.map((instance) => [instance.id, toolNames(instance)]));
-		if (instances.some((instance) => remembered.get(instance.id) !== toolNames(instance)))
+		const remembered = new Map(memento.value.instances.map((instance) => [instance.id, listing(instance)]));
+		if (instances.some((instance) => remembered.get(instance.id) !== listing(instance)))
 			await memento.change((draft) => Object.assign(draft, { instances }), ctx);
 	});
 }
 
-/** The names of the tools `instance` lists, as one string. */
-const toolNames = (instance: Instance): string => instance.tools.map((tool) => tool.name).join("\n");
+/** The names of the tools `instance` lists and its instructions, as one string. */
+const listing = (instance: Instance): string =>
+	JSON.stringify([instance.tools.map((tool) => tool.name), instance.instructions ?? null]);
 
 /** The environments each session's conversations work on, as the catalog and the subagent store record them. */
 function workEnvironments(
@@ -413,7 +414,10 @@ const view: Factory<typeof Mcp> = (_params, principal, self) => {
 	return { variant: "worker", members: workerView(principal, manager, self) };
 };
 
-/** A session worker's view: its session's servers (without the owner's errors), its locations and calls. */
+/**
+ * A session worker's view: its session's servers (without the owner's errors), which of them each of its leases uses,
+ * its locations and calls.
+ */
 function workerView(principal: WorkerPrincipal, manager: Ref<typeof McpManager>, self: Self) {
 	const { session, generation } = principal;
 	const current = currentWorker(self.get(Hosts, {}), principal);
@@ -430,6 +434,11 @@ function workerView(principal: WorkerPrincipal, manager: Ref<typeof McpManager>,
 			const used = new Set(leases.filter((lease) => lease.session === session).flatMap((lease) => lease.instances));
 			return instances.filter((instance) => used.has(instance.id)).map(({ error: _error, ...instance }) => instance);
 		}),
+		leases: deriveTyped(self, [manager.leases], ([leases]) =>
+			leases
+				.filter((lease) => lease.session === session)
+				.map(({ location, instances }) => ({ location, instances })),
+		),
 		errors: deriveTyped(self, [manager.leases], ([leases]) =>
 			leases.filter((lease) => lease.session === session).flatMap((lease) => lease.errors),
 		),

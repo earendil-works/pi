@@ -25,3 +25,4 @@ export { checkName } from "./names.ts";
 export type { Params, ParamsData } from "./params.ts";
 export { joinKey } from "./params.ts";
 export { Method } from "./schema.ts";
+export { type Snapshot, snapshotArguments } from "./snapshot.ts";

@@ -1,7 +1,7 @@
 // Declarations: `remote(...)` and `local(...)`, the checks every declared version passes, and the reading of
 // untyped declaration input. A member is state, a method, a keyed member (local only) or an event.
 
-import type { HostKeyed, KeyedSnapshot } from "./contract.ts";
+import type { AdmissionData, HostKeyed, KeyedSnapshot, QueriesData } from "./contract.ts";
 import {
 	type Contract,
 	createContract,
@@ -12,12 +12,12 @@ import {
 	type MethodData,
 	type VariantData,
 } from "./contract.ts";
-import { materialize } from "./fingerprint.ts";
+import { fingerprintOf, materialize } from "./fingerprint.ts";
 import type { MemberNames, MethodAt, VariantShape } from "./history.ts";
 import { type Address, type KindShape, kindParams } from "./host-kind.ts";
 import { checkName } from "./names.ts";
 import { type Params, type RequiredFields, readParams } from "./params.ts";
-import { EventDeclaration, KeyedMember, Method, type Schema, type Static } from "./schema.ts";
+import { EventDeclaration, KeyedMember, Method, QueriesMember, type Schema, type Static } from "./schema.ts";
 import { type Snapshot, snapshotArguments, snapshotSchema } from "./snapshot.ts";
 
 type VariantDeclaration = {
@@ -42,6 +42,7 @@ type LocalVariants<M extends { readonly [member: string]: LocalMember }> = {
 		methods: { [K in keyof M as M[K] extends Method ? K : never]: Extract<M[K], Method> };
 		keyed: { [K in keyof M as M[K] extends KeyedMember ? K : never]: SchemaOf<M[K]> };
 		events: { [K in keyof M as M[K] extends EventDeclaration ? K : never]: EventSchemaOf<M[K]> };
+		queries: { [K in keyof M as M[K] extends QueriesMember ? K : never]: Extract<M[K], QueriesMember> };
 	};
 };
 
@@ -49,7 +50,7 @@ type LocalVariants<M extends { readonly [member: string]: LocalMember }> = {
 type LocalMember = Schema | Marker;
 
 /** The local members that are no state schema. */
-type Marker = Method | KeyedMember | EventDeclaration;
+type Marker = Method | KeyedMember | EventDeclaration | QueriesMember;
 
 type EventSchemaOf<M> = M extends EventDeclaration<infer S> ? S : never;
 
@@ -83,12 +84,16 @@ type SameMembers<D extends VariantDeclarations, V extends { [variant: string]: V
 	};
 };
 
-/** Declares a remote contract: per-principal variants of state, methods and events. */
+/**
+ * Declares a remote contract: per-principal variants of state, methods and events, and optionally its `admission`,
+ * the JSON value its provider reads about a caller before the factory runs (slice 14 §2.1).
+ */
 export function remote<
 	const N extends string,
 	const P extends Params,
 	const V extends number,
 	const D extends VariantDeclarations,
+	A extends Schema = never,
 >(
 	name: N,
 	declaration: {
@@ -96,24 +101,40 @@ export function remote<
 		readonly params: P & NoInfer<RequiredFields<P>>;
 		/** The address of the host serving an object for these params; never part of the fingerprint. */
 		readonly hostAddress: (params: { [F in keyof P]: Static<P[F]> }) => Address;
+		/**
+		 * The schema of the value the type's admission hands its factory: small, about the caller (a mode, a role). It
+		 * selects the variant and the members. Never part of the fingerprint, never validated at runtime.
+		 */
+		readonly admission?: A;
 		readonly variants: D & NoInfer<SameMembers<D>>;
 	},
-): Contract<{
-	kind: "remote";
-	name: N;
-	params: P;
-	history: [{ version: `${V}`; variants: RemoteVariants<D>; changes: never }];
-}> {
+): Contract<
+	{
+		kind: "remote";
+		name: N;
+		params: P;
+		history: [{ version: `${V}`; variants: RemoteVariants<D>; changes: never }];
+	} & ([A] extends [never] ? unknown : { admission: A })
+> {
 	// Declaration policy: JavaScript callers reach every check below.
 	checkName(name, "A contract name");
-	checkKeys(declaration, ["version", "params", "hostAddress", "variants"], name);
+	checkKeys(declaration, ["version", "params", "hostAddress", "admission", "variants"], name);
 	const variants = entriesOf(declaration.variants, `${name}.variants`);
 	if (variants.length === 0) throw new Error(`${name}.variants: at least one variant is required`);
 	const { hostAddress } = declaration;
 	if (typeof hostAddress !== "function") throw new Error(`${name}.hostAddress: expected a function of the params`);
 	const read = variants.map(([variant, members]) => [variant, readVariant(members, `${name}.${variant}`)] as const);
+	const { admission } = declaration;
+	const admitted = admission === undefined ? undefined : admissionData(admission, `${name}.admission`);
 	// The host address gets the checked params of this contract.
-	return declare("remote", name, declaration, new Map(read), hostAddress as HostAddress);
+	return declare("remote", name, declaration, new Map(read), hostAddress as HostAddress, admitted);
+}
+
+/** An admission schema as Chord-owned data, with its fingerprint: JSON only (declaration policy: no `bytes()` leaf). */
+export function admissionData(schema: unknown, path: string): AdmissionData {
+	const snapshot = snapshotSchema(schema, path);
+	if (snapshot.bytes) throw new Error(`${path}: an admission's value is JSON only (no bytes())`);
+	return { schema: snapshot, fingerprint: fingerprintOf(snapshot.normal) };
 }
 
 /**
@@ -141,14 +162,16 @@ export function local<
 	const methods = new Map<string, MethodData>();
 	const keyed = new Map<string, KeyedSnapshot>();
 	const events = new Map<string, Snapshot>();
+	const queries = new Map<string, QueriesData>();
 	for (const [member, value] of entriesOf(declaration.members, `${name}.${LOCAL}`)) {
 		const path = `${name}.${LOCAL}.${member}`;
 		if (value instanceof Method) methods.set(member, readMethod(value, path));
+		else if (value instanceof QueriesMember) queries.set(member, readQueries(value, path));
 		else if (value instanceof KeyedMember) keyed.set(member, keyedSnapshot(value.schema, value.key, path));
 		else if (value instanceof EventDeclaration) events.set(member, eventSnapshot(value.schema, path));
 		else state.set(member, snapshotSchema(value, path));
 	}
-	return declare("local", name, declaration, new Map([[LOCAL, { state, methods, keyed, events }]]));
+	return declare("local", name, declaration, new Map([[LOCAL, { state, methods, keyed, events, queries }]]));
 }
 
 function readVariant(source: unknown, path: string): VariantData {
@@ -160,6 +183,9 @@ function readVariant(source: unknown, path: string): VariantData {
 			throw new Error(`${path}.state.${member}: keyed members are only in local contracts`);
 		}
 		if (schema instanceof EventDeclaration) throw new Error(`${path}.state.${member}: an event belongs in events`);
+		if (schema instanceof QueriesMember) {
+			throw new Error(`${path}.state.${member}: queries members are only in local contracts`);
+		}
 		return [member, snapshotSchema(schema, `${path}.state.${member}`)] as const;
 	});
 	const methodEntries = entriesOf(methods, `${path}.methods`).map(([member, method]) => {
@@ -177,6 +203,7 @@ function readVariant(source: unknown, path: string): VariantData {
 		methods: new Map(methodEntries),
 		keyed: new Map(),
 		events: new Map(eventEntries),
+		queries: new Map(),
 	};
 }
 
@@ -198,6 +225,14 @@ export function keyedSnapshot(schema: unknown, key: KindShape | undefined, path:
 	return { ...snapshot, key };
 }
 
+/** A `queries` member as Chord-owned snapshots: its items' schema, and each named query's arguments, closed. */
+function readQueries(member: QueriesMember, path: string): QueriesData {
+	const args = entriesOf(member.args, `${path}.args`).map(
+		([query, schema]) => [query, snapshotArguments(schema, `${path}.args.${query}`)] as const,
+	);
+	return { item: snapshotSchema(member.item, `${path}.item`), args: new Map(args) };
+}
+
 /** One method declaration as Chord-owned snapshots; its arguments must be closed. */
 export function readMethod(method: Method, path: string): MethodData {
 	return {
@@ -212,6 +247,7 @@ function declare<C extends Contract>(
 	declaration: { readonly version: number; readonly params: unknown },
 	variants: ReadonlyMap<string, VariantData>,
 	hostAddress?: HostAddress,
+	admission?: AdmissionData,
 ): C {
 	const { version } = declaration;
 	if (!Number.isSafeInteger(version) || version < 1) throw new Error(`${name}.version: expected a positive integer`);
@@ -219,7 +255,7 @@ function declare<C extends Contract>(
 	checkMembers(variants, kinds, (variant, member, memberKind) => memberPath(name, kind, variant, member, memberKind));
 	const params = readParams(entriesOf(declaration.params, `${name}.params`), `${name}.params`);
 	const versions = [materialize(kind, params, version, variants, [])];
-	return createContract({ kind, name, params, hostAddress, versions, kinds });
+	return createContract({ kind, name, params, hostAddress, versions, kinds, admission });
 }
 
 /**
@@ -232,7 +268,8 @@ export function checkMembers(
 	path: (variant: string, member: string, kind: MemberKind) => string,
 ): void {
 	const signatures = new Map<string, string>();
-	for (const [variant, { state, methods, keyed, events }] of variants) {
+	for (const [variant, { state, methods, keyed, events, queries }] of variants) {
+		for (const member of queries.keys()) recordKind(kinds, member, "queries", path(variant, member, "queries"));
 		for (const member of state.keys()) recordKind(kinds, member, "state", path(variant, member, "state"));
 		for (const member of keyed.keys()) recordKind(kinds, member, "keyed", path(variant, member, "keyed"));
 		for (const member of events.keys()) recordKind(kinds, member, "event", path(variant, member, "event"));
@@ -276,6 +313,7 @@ const SECTIONS: { readonly [K in MemberKind]: string } = {
 	method: "methods",
 	keyed: "state",
 	event: "events",
+	queries: "state",
 };
 
 /** Refuses a non-object and unknown keys. */

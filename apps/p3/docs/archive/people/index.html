@@ -1,0 +1,801 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>p3 people, apps and locks</title>
+<style>
+
+:root{--paper:#fbf8f2;--ink:#2a2723;--muted:#7b7468;--rule:#e3dbcc;--accent:#b4472f;--blue:#2e6a8a;--sand:#c2b18c;--soft:#f4eee2}
+*{box-sizing:border-box}
+html{background:#efe9dd}
+body{margin:0;color:var(--ink);font:19px/1.68 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+ -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.book{max-width:860px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px #e1d9c8,0 30px 80px -40px rgba(60,40,10,.35);padding:0 0 4rem}
+.inner{padding:0 90px}
+h1,h2,h3{font-weight:400;line-height:1.15}
+h2{font-size:2.1rem;margin:.2em 0 .3em;letter-spacing:-.01em}
+h3{font-size:1.05rem;text-transform:uppercase;letter-spacing:.14em;margin:2.4em 0 .6em;color:var(--ink);font-weight:600;
+ font-family:'Avenir Next','Helvetica Neue',sans-serif}
+p{margin:0 0 1.05em;hyphens:auto;text-align:left}
+code{font:.8em/1 'SF Mono',Menlo,Consolas,monospace;background:#f1ebde;padding:.1em .35em;border-radius:3px}
+pre{font:.74rem/1.55 'SF Mono',Menlo,Consolas,monospace;background:#f4eee2;border-left:3px solid var(--sand);padding:1rem 1.2rem;margin:1.4rem 0 1.8rem;
+ overflow-x:auto;border-radius:0 4px 4px 0;white-space:pre;tab-size:2}
+pre code{background:none;padding:0;font-size:1em}
+em{font-style:italic}
+a{color:var(--blue)}
+.cover{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding:90px;background:
+ radial-gradient(circle at 85% 15%,rgba(180,71,47,.13),transparent 40%),radial-gradient(circle at 10% 90%,rgba(46,106,138,.12),transparent 45%),var(--paper);
+ border-bottom:1px solid var(--rule)}
+.kicker{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.cover h1{font-size:5.2rem;line-height:.98;margin:.35em 0 .25em;letter-spacing:-.025em}
+.subtitle{font-size:1.45rem;font-style:italic;color:#4a453e;max-width:30em;text-align:left}
+.cover-stats,.stats{display:flex;flex-wrap:wrap;gap:1.2rem 2.4rem;margin:2.2rem 0}
+.stats{margin:1.6rem 0 1.8rem;padding:1.1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat b{display:block;font-size:2.1rem;font-weight:400;line-height:1.1;font-variant-numeric:lining-nums}
+.stat span{font:.78rem/1.3 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);letter-spacing:.03em;display:block;max-width:14em}
+.cover-note{font-size:.9rem;color:var(--muted);max-width:34em;text-align:left;margin-top:2rem}
+.toc{padding:4rem 0 2rem}
+.toc ol{list-style:none;padding:0;margin:1rem 0;columns:2;column-gap:3rem}
+.toc li{padding:.3rem 0;border-bottom:1px dotted var(--rule);break-inside:avoid}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.preface{padding-top:2rem}
+.findings{padding-left:1.4em}
+.findings li{margin:.55em 0;padding-left:.3em}
+.findings li::marker{color:var(--accent);font-weight:600}
+.chapter{padding-top:4.5rem;margin-top:3rem;border-top:1px solid var(--rule)}
+.opener{text-align:center;margin-bottom:2.6rem}
+.numeral{font-size:4.2rem;color:var(--accent);line-height:1;font-variant:small-caps;letter-spacing:.05em}
+.opener h2{font-size:2.5rem;margin:.25em 0}
+.lede{font-style:italic;color:#5a544a;font-size:1.12rem;max-width:30em;margin:0 auto;text-align:center}
+.dropcap::first-letter{float:left;font-size:4.1em;line-height:.82;padding:.06em .09em 0 0;color:var(--accent)}
+.fig{margin:2rem 0 2.2rem}
+.fig.wide{margin-left:-50px;margin-right:-50px}
+.fig svg{display:block;margin:0 auto}
+figcaption{font:.8rem/1.45 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:.7rem;padding-left:.8rem;border-left:2px solid var(--rule)}
+.fignum{color:var(--ink);font-weight:600}
+.note{font:.86rem/1.55 'Avenir Next','Helvetica Neue',sans-serif;color:#5b5549;background:#f4eee2;border-left:3px solid var(--sand);
+ padding:.9rem 1.1rem;margin:1.8rem 0;border-radius:0 4px 4px 0}
+.note.review{border-left-color:var(--accent)}
+.note b.tag{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem;color:var(--accent);display:block;margin-bottom:.3rem}
+.note code{font-size:.85em}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0 1.8rem;font:.8rem/1.4 'Avenir Next','Helvetica Neue',sans-serif}
+th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;border-bottom:1.5px solid var(--ink);padding:.45rem .5rem}
+td{padding:.42rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font-size:.92em}
+table.num td:not(:first-child),table.num th:not(:first-child){text-align:right}
+.epilogue p{font-size:1.04em}
+.appendix{font-size:.92em}
+.appendix ul,.chapter ul{padding-left:1.2em}
+.appendix li,.chapter li{margin:.4em 0}
+.colophon{text-align:center;font:.78rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--muted);margin-top:4rem;letter-spacing:.05em}
+@media (max-width:760px){.inner{padding:0 22px}.cover{padding:40px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}
+ .toc ol{columns:1}p{text-align:left}body{font-size:17px}}
+@media print{html{background:#fff}.book{box-shadow:none}.chapter{break-before:page}.fig{break-inside:avoid}}
+.transcript p b{font:600 .78rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-right:.3em}
+pre .tk-c{color:#8d8576;font-style:italic}pre .tk-s{color:#5f7a3d}pre .tk-n{color:#a0662a}pre .tk-k{color:#b4472f}pre .tk-t{color:#2e6a8a}pre .tk-f{color:#7a3f6a}
+h4{font:600 .82rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.06em;margin:1.8em 0 .5em;color:var(--muted)}
+.inner ul,.inner ol:not(.findings){padding-left:1.2em}
+.inner li{margin:.35em 0}
+blockquote{margin:1.4rem 0;padding:.2rem 0 .2rem 1.2rem;border-left:3px solid var(--rule);color:#5a544a;font-style:italic}
+.fig svg text{dominant-baseline:auto}
+.fig .replay{font:600 .7rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+ background:none;border:1px solid var(--rule);border-radius:3px;padding:.2rem .55rem;margin:0 0 0 1rem;cursor:pointer;float:right}
+.fig .replay:hover{border-color:var(--accent)}
+.anim.armed .step{opacity:0}
+.anim.armed.play .step{animation:stepIn .45s ease-out both;animation-delay:calc(var(--i) * var(--pace, .45s))}
+.anim.armed.play .step.edge{animation-name:edgeIn}
+@keyframes stepIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2rem 0 2.2rem;border:1px solid var(--rule);border-radius:6px;background:#fffdf8}
+.steps-head{display:flex;align-items:center;gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--rule);
+ font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.steps-head .title{flex:1}
+.steps-head .count{color:var(--muted);letter-spacing:.06em}
+.steps-head button{font:600 .72rem 'Avenir Next','Helvetica Neue',sans-serif;color:var(--ink);background:var(--soft);border:1px solid var(--rule);
+ border-radius:3px;padding:.25rem .65rem;cursor:pointer}
+.steps-head button:disabled{opacity:.35;cursor:default}
+.step-panel{padding:1rem 1.2rem .4rem}
+.step-panel>h4:first-child{margin-top:.2rem;color:var(--ink)}
+.steps.js .step-panel{display:none}
+.steps.js .step-panel.on{display:block}
+.steps:not(.js) .steps-head button,.steps:not(.js) .steps-head .count{display:none}
+.steps:not(.js) .step-panel+.step-panel{border-top:1px dashed var(--rule)}
+.fig figcaption{display:flow-root}
+.fig svg{max-width:100%;height:auto}
+table{max-width:100%}
+@media (max-width:760px){.inner{padding:0 20px}.cover{padding:48px 22px}.cover h1{font-size:3.2rem}.fig.wide{margin-left:0;margin-right:0}table{display:block;overflow-x:auto}.toc ol{columns:1}}
+</style>
+
+
+</head>
+<body><div class="book">
+<section class="cover">
+  <div class="kicker">The design so far · p3 · 2026-11-13 · second edition</div>
+  <h1>People<br>Apps<br>Locks</h1>
+  <p class="subtitle">One owner, persons with roles in apps, and one lock mechanism for apps, sessions, the Pi and companies; every decision of 2026-11-13, the review findings, and what is still open</p>
+  <div class="cover-stats"><div class="stat"><b>0</b><span>changes to Chord&#39;s core (one open question may need one)</span></div><div class="stat"><b>6</b><span>changes to the app kit</span></div><div class="stat"><b>4</b><span>lock layers: company, Pi, app, session</span></div><div class="stat"><b>4</b><span>open questions for the owner</span></div></div>
+  <div class="cover-note"><p>The state of the design at the end of 2026-11-13, written so the work can resume from this note alone. It supersedes
+<code>apps/book.md</code> (all editions: per-app user pools, <code>self.choose</code>, the async app rule) and the settings layer of
+<code>org-managed/book.md</code> (its enrollment and gate stay, chapter IX). Every code block is PROPOSED: p3 has no code. Names
+that exist and are used as they are: Chord&#39;s <code>local</code>, <code>remote</code>, <code>host.serve</code>, <code>self.get</code>, <code>self.state</code>,
+<code>self.derive</code>, <code>self.on</code>, <code>self.onLive</code>, <code>self.writable</code>, <code>self.contribute</code>, <code>self.table</code>, <code>self.query</code>, <code>self.tx</code>
+(<code>tx.put</code>, <code>tx.delete</code>), <code>defineRegistry</code>, <code>keyedEntries</code>, <code>defineState</code> (<code>keyed: Session</code>), <code>defineTable</code>, <code>json</code>
+columns with <code>{ version }</code>, <code>forbidden</code>, <code>host.revoke</code> and <code>revokedBy</code>; the kit&#39;s <code>SignIns</code> (<code>issue</code>, <code>verify</code>,
+<code>revoke</code>), <code>Authenticators</code>, pairing, <code>testPlugin</code>, the two plugin roots; pi-schema&#39;s builders (<code>str</code> with <code>format</code>).
+The owner said at the end: &quot;this still seems overly complex imo&quot;. Reviewers are asked to find what can go.</p>
+</div>
+</section><div class="inner">
+<nav class="toc"><h2>Contents</h2><ol>
+<li><a href="#where-this-comes-from">Where This Comes From</a></li>
+<li><a href="#people">I. People</a></li>
+<li><a href="#identity">II. Identity and Joining</a></li>
+<li><a href="#access">III. The Session Check</a></li>
+<li><a href="#apps">IV. Apps</a></li>
+<li><a href="#locks">V. Locks</a></li>
+<li><a href="#switch">VI. The Plugin Switch</a></li>
+<li><a href="#layers">VII. Layers and Sheets</a></li>
+<li><a href="#company">VIII. Companies</a></li>
+<li><a href="#kit">IX. What the Kit Must Add</a></li>
+<li><a href="#club">X. One App in Full: the Football Club</a></li>
+<li><a href="#review">XI. Review Findings</a></li>
+<li><a href="#open-questions">Open Questions</a></li>
+</ol></nav>
+
+<section class="preface" id="where-this-comes-from">
+<h2>Where This Comes From</h2>
+<p class="dropcap">The owner wants to build <strong>apps</strong> on his Pi and share them: a robot for his son (who cannot read: a face, hold to talk,
+one session in a fixed folder, no tools), a family app for his wife (her calendars and mail, a voice chat, her
+journal, and Leo&#39;s robot adventures to watch), a football club (coaches change the roster, everyone talks in match
+sessions), coding (the app Pi ships with), guests of single sessions, a Discord bot session that may only message one
+other session. And companies (Colin&#39;s plan, Dec 18: Org Devices) must be able to restrict the Pis of their members.</p>
+<p>The day went through several designs that the owner rejected: managed settings (<code>defineSetting</code>), plugin manifests
+in <code>package.json</code>, per-plugin &quot;features&quot;, rule tables over registry entries, per-app user pools with <code>self.choose</code>
+(two-step activation; the reviews found it hits Chord&#39;s reload, staging and document invariants), an
+<code>plugins: { only: [...] }</code> list in app code. What survived is below.</p>
+<h3 id="read-first-in-full-read">Read first, in full {#read}</h3>
+<p>To be up to speed on this design (after a compaction or in a new session), read these completely, in this order:</p>
+<ol>
+<li><strong>This note</strong>, all chapters.</li>
+<li><strong><code>apps/p3/docs/decisions.md</code></strong>, all entries (newest last; the last three are today&#39;s).</li>
+<li><strong><code>apps/p3/docs/base-inventory/explainer/book.md</code></strong>: chapters &quot;The Harness&quot; (extensions, <code>HarnessFilters</code>,
+<code>FilterScope</code>, model and environment providers), &quot;What Is Offered&quot; (<code>ConversationOffer</code>), &quot;Waiting Costs Nothing&quot;;
+its session metadata store is superseded by host-keyed documents (decisions.md).</li>
+<li><strong><code>apps/p3/docs/status-2026-11-09.md</code></strong> (the harness direction, instruction scopes, the session service).</li>
+<li><strong><code>apps/p3/docs/views.md</code></strong> and <strong><code>apps/p3/docs/sharing.md</code></strong> (views, layouts as apps, sharing and the owner&#39;s
+direction of 2026-11-10).</li>
+<li><strong><code>apps/p3/docs/apps/web-ui-direction.html</code></strong> (the apps mockup: robot, family, club, music, friends,
+environments) and <strong><code>apps/p3/docs/apps/book.md</code></strong> (superseded; the record of the per-app user pools).</li>
+<li><strong><code>apps/p3/docs/org-managed/book.md</code></strong> (enrollment, gate, machine lock-down; its settings layer superseded) and,
+for detail, <code>details.md</code> next to it.</li>
+<li><strong><code>apps/p3/docs/rundown/book.md</code></strong> chapters &quot;The Rule Under Everything&quot;, &quot;Resources and Bringing&quot;, &quot;Who May&quot;,
+&quot;Sharing and Locks&quot;, &quot;The Filters&quot;.</li>
+<li><strong>Chord:</strong> <code>packages/chord/docs/design.md</code> §1, §4 (principals, revocation), §6–§7 (the factory rule), §10 &quot;Data
+belonging to a host&quot;, §16–§18, §21 &quot;The plugin model&quot;, §23 &quot;The app kit&quot;; code: <code>src/node/app/sign-ins.ts</code>,
+<code>pairing.ts</code>, <code>invite.ts</code>, <code>users.ts</code>, <code>worker.ts</code>, <code>app.ts</code>; <code>src/node/http/authenticate.ts</code> and <code>http.ts</code> (the
+accept path); <code>src/host/revocation.ts</code>; <code>src/remote/hold.ts</code> (<code>#bindTo</code>, the rebind race).</li>
+<li><strong>p2 as precedent</strong> (not reused): <code>apps/p2/src/runtime/principals.ts</code> (the guest principal),
+<code>apps/p2/plugins/sharing/server.ts</code> and <code>store.ts</code> (guests, revisions, Radius email shares),
+<code>apps/p2/src/runtime/session-lock.ts</code>, <code>tool-access.ts</code>, <code>durable.ts</code>, <code>apps/p2/plugins/envs/schema.ts</code>,
+<code>apps/p2/plugins/mcp/placement.ts</code>, <code>apps/p2/plugins/prompt/worker.ts</code> (what p2 locks today).</li>
+<li><strong>Research:</strong> <code>apps/p3/docs/authz-research.md</code> (prior art; its levels and policy are superseded) and the two
+team-mode research notes <code>apps/p3/docs/*-teams.md</code> (how other agent systems handle teams and tool policies).</li>
+<li><strong>Reviews</strong> (temporary, on slayer): <code>/tmp/apps-brief.md</code>, <code>/tmp/apps-opus.md</code>, <code>/tmp/apps-astra.md</code>,
+<code>/tmp/apps-sol.md</code> (the first app designs), <code>/tmp/choose-spec.md</code> and the reviews of <code>self.choose</code> (rejected).</li>
+<li><strong>History</strong> of the p3 session (8b6ab5cc): the harness and filter design (entries 271840–273175), the apps
+discussion (277211–277720); today&#39;s people and locks discussion: search &quot;person&quot;, &quot;locks&quot;, &quot;otherPlugins&quot;,
+&quot;lock down&quot;.</li>
+</ol>
+<h3 id="decisions-of-2026-11-13-decisions">Decisions of 2026-11-13 {#decisions}</h3>
+<ol class="findings">
+<li><strong>One Pi, one owner, who installs every plugin; plugins (apps among them) are trusted code.</strong> Only people are
+confined. (&quot;we control that shit, owner installs all code&quot;)</li>
+<li><strong>An app is a plugin.</strong> It creates the layouts, views and objects it needs and reuses any other plugin&#39;s. The
+agent writes one when asked. Coding is the built-in app.</li>
+<li><strong>Everyone besides the owner is a person</strong> whose rights live in the principal, as p2&#39;s guests: roles per app and
+single shared sessions. A change bumps the revision and revokes. (&quot;maybe guest is sufficient&quot;)</li>
+<li><strong>Identity is pluggable;</strong> by default Radius (a verified email; Google or GitHub happen at Radius) and this device.</li>
+<li><strong>No defensive machinery against the owner:</strong> he passes every session check; an app may refuse him in its own
+objects as a courtesy; privacy from him is never a guarantee (&quot;I can just dig out her journal from sqlite&quot;).</li>
+<li><strong>A session belongs to exactly one app</strong> (its rules and locks apply); any app may show any session.</li>
+<li><strong>Lockdown is locks:</strong> a plugin declares what can be switched off or limited, registers it with the server, and
+enforces it itself; layers company &gt; Pi &gt; app &gt; session only narrow.</li>
+<li><strong>Plugins outside Pi&#39;s own root get a plugin switch per app;</strong> an app says only <code>otherPlugins: &quot;on&quot; | &quot;off&quot;</code>; on
+install the owner chooses the apps. Base plugins (Pi&#39;s root) have no switch; they declare locks.</li>
+<li><strong>One sheet per scope</strong> (app, session, optionally the Pi), for technical owners, with the agent&#39;s help; the
+company&#39;s values show read-only.</li>
+<li><strong>The company layer is the org profile:</strong> an initial copy on disk, then whatever Radius delivers.</li>
+<li><strong>Radius learns the locks</strong> from member Pis&#39; reports and by loading selected plugins&#39; server facets in a sandbox.</li>
+</ol>
+</section>
+
+<section class="chapter" id="people"><header class="opener"><div class="numeral">I</div><h2>People</h2><p class="lede">One principal kind for everyone the owner lets in; rights in the principal; changes revoke.</p></header>
+<pre><code><span class="tk-c">// PROPOSED · @p3/v1</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">P3Principal</span> =
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"server"</span> }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"worker"</span>; <span class="tk-k">readonly</span> session: string }
+	| { <span class="tk-k">readonly</span> kind: <span class="tk-s">"owner"</span> }
+	| {
+			<span class="tk-k">readonly</span> kind: <span class="tk-s">"person"</span>;
+			<span class="tk-k">readonly</span> id: string;                                            <span class="tk-c">// stable across devices and apps</span>
+			<span class="tk-k">readonly</span> name: string;
+			<span class="tk-k">readonly</span> roles: <span class="tk-t">Readonly</span>&lt;<span class="tk-t">Record</span>&lt;string, string&gt;&gt;;               <span class="tk-c">// app id → role: { family: "member", club: "coach" }</span>
+			<span class="tk-k">readonly</span> sessions: <span class="tk-t">Readonly</span>&lt;<span class="tk-t">Record</span>&lt;string, <span class="tk-s">"read"</span> | <span class="tk-s">"write"</span>&gt;&gt;;  <span class="tk-c">// single shared sessions (p2's guests)</span>
+			<span class="tk-k">readonly</span> revision: number;                                      <span class="tk-c">// part of the principal key</span>
+	  };</code></pre>
+<ul>
+<li><strong>Why in the principal:</strong> a Chord factory decides only from params and principal, synchronously (design §6, §7).
+With the roles in the principal, every object picks its variant at once: <code>roles.club === &quot;coach&quot;</code>.</li>
+<li><strong>A change</strong> (invite, role, a shared session, removal): the person&#39;s row gets <code>revision + 1</code>; <code>host.revoke({ person: id })</code> ends all of the person&#39;s objects on the server and every worker (calls in flight aborted); the devices
+reconnect, the kit resolves the current principal (chapter VIII), the references re-bind with the new variant. The
+revision distinguishes the new principal; the revocation ends the old objects. A short reconnect of every open pane,
+on every device; rights change rarely.</li>
+<li><strong>Typed roles:</strong> an app declares its roles once; a helper reads them typed.</li>
+</ul>
+<pre><code><span class="tk-c">// PROPOSED · @p3/v1</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">defineApp</span>&lt;<span class="tk-k">const</span> R <span class="tk-k">extends</span> <span class="tk-k">readonly</span> string[]&gt;(id: string, shape: {
+	roles: R;
+	otherPlugins: <span class="tk-s">"on"</span> | <span class="tk-s">"off"</span>;                                       <span class="tk-c">// chapter VI</span>
+}): {
+	<span class="tk-k">readonly</span> id: string;
+	<span class="tk-k">readonly</span> roles: R;
+	<span class="tk-c">/** The person's role in this app, typed; undefined for anyone else (the owner included: apps decide for him). */</span>
+	<span class="tk-f">roleOf</span>(principal: <span class="tk-t">P3Principal</span>): R[number] | <span class="tk-k">undefined</span>;
+};</code></pre>
+<p><code>People.grant</code> checks a role against the roles the app declared (a trust boundary: the owner&#39;s page); an unknown role
+never reaches a principal.</p>
+<ul>
+<li><strong>One person, several apps:</strong> one principal with several roles. One login per person, not per app (an earlier idea
+of one cookie per app path is dropped).</li>
+<li><strong>Apps admitting other apps&#39; people:</strong> the robot&#39;s rule lets family members watch: <code>p.roles.family !== undefined</code>
+gives <code>see</code>, not <code>send</code>.</li>
+<li><strong>Guests are persons</strong> with <code>sessions</code> and no roles: the same principal, the same join path.</li>
+</ul>
+</section>
+
+<section class="chapter" id="identity"><header class="opener"><div class="numeral">II</div><h2>Identity and Joining</h2><p class="lede">The people plugin: persons, identities, invites; identity providers with server, web and terminal parts.</p></header>
+<pre><code><span class="tk-c">// PROPOSED · plugins/people (server): tables (json columns need a version)</span>
+<span class="tk-k">const</span> <span class="tk-t">Persons</span> = <span class="tk-f">defineTable</span>(<span class="tk-s">"people.persons"</span>, { version: <span class="tk-n">1</span>, key: [<span class="tk-s">"id"</span>], columns: {
+	id: <span class="tk-f">str</span>(), name: <span class="tk-f">str</span>(),
+	roles: <span class="tk-f">json</span>(<span class="tk-f">map</span>(<span class="tk-f">str</span>()), { version: <span class="tk-n">1</span> }),
+	sessions: <span class="tk-f">json</span>(<span class="tk-f">map</span>(<span class="tk-f">oneOf</span>(<span class="tk-s">"read"</span>, <span class="tk-s">"write"</span>)), { version: <span class="tk-n">1</span> }),
+	revision: <span class="tk-f">int</span>(),
+} });
+<span class="tk-k">const</span> <span class="tk-t">Identities</span> = <span class="tk-f">defineTable</span>(<span class="tk-s">"people.identities"</span>, { version: <span class="tk-n">1</span>, key: [<span class="tk-s">"provider"</span>, <span class="tk-s">"subject"</span>],
+	columns: { provider: <span class="tk-f">str</span>(), subject: <span class="tk-f">str</span>(), person: <span class="tk-f">str</span>() } });           <span class="tk-c">// radius: the verified email; device: a token's hash</span>
+<span class="tk-k">const</span> <span class="tk-t">Invites</span> = <span class="tk-f">defineTable</span>(<span class="tk-s">"people.invites"</span>, { version: <span class="tk-n">1</span>, key: [<span class="tk-s">"hash"</span>], columns: {
+	hash: <span class="tk-f">str</span>(), person: <span class="tk-f">str</span>(), expires: <span class="tk-f">int</span>(), used: <span class="tk-f">bool</span>() } });           <span class="tk-c">// the token is never stored, only its hash</span>
+
+<span class="tk-c">/** The owner's management of people. */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">People</span> = <span class="tk-f">remote</span>(<span class="tk-s">"people.admin"</span>, { version: <span class="tk-n">1</span>, params: {}, hostAddress: () =&gt; <span class="tk-t">Server</span>(),
+	variants: { owner: {
+		state: { persons: <span class="tk-f">arr</span>(<span class="tk-t">PersonSchema</span>), invites: <span class="tk-f">arr</span>(<span class="tk-t">InviteSchema</span>) },
+		methods: {
+			invite: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ name: <span class="tk-f">str</span>(), roles: <span class="tk-f">map</span>(<span class="tk-f">str</span>()), sessions: <span class="tk-f">map</span>(<span class="tk-f">oneOf</span>(<span class="tk-s">"read"</span>, <span class="tk-s">"write"</span>)) }), <span class="tk-f">obj</span>({ url: <span class="tk-f">str</span>() })),
+			grant: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ person: <span class="tk-f">str</span>(), roles: <span class="tk-f">opt</span>(<span class="tk-f">map</span>(<span class="tk-f">nullable</span>(<span class="tk-f">str</span>()))), sessions: <span class="tk-f">opt</span>(<span class="tk-f">map</span>(<span class="tk-f">nullable</span>(<span class="tk-f">oneOf</span>(<span class="tk-s">"read"</span>, <span class="tk-s">"write"</span>)))) })),
+			remove: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ person: <span class="tk-f">str</span>() })),
+		},
+	} } });</code></pre>
+<ul>
+<li><strong>invite</strong> creates the person row (no identity yet) and an invite (single use, expiring); the URL is
+<code>/people/join#&lt;token&gt;</code>. Sending it by email goes through Radius when connected.</li>
+<li><strong>remove</strong> deletes the person&#39;s row and identities (removed ids are never reused), marks pending invites used,
+revokes the person&#39;s sign-ins (and so their open links, chapter VIII), then <code>host.revoke({ person })</code>.</li>
+<li><strong>The join page</strong> (the people plugin&#39;s own route and web view) checks the invite token and offers every identity
+provider; after a provider&#39;s <code>finish</code> it links the identity to the invited person and issues a sign-in (kit
+<code>SignIns.issue</code> with the subject <code>{ person: id }</code>, chapter VIII).</li>
+<li><strong>A returning person</strong> (a new device, no invite) signs in through a provider; <code>finish</code> looks the identity up in
+<code>Identities</code> and finds the person.</li>
+</ul>
+<h3 id="identity-providers">Identity providers</h3>
+<p>A provider is an ordinary plugin with up to three facets, registered in registries the people plugin owns:</p>
+<pre><code><span class="tk-c">// PROPOSED · plugins/people/contract.server.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">IdentityProvider</span> = {
+	<span class="tk-k">readonly</span> id: string;                                     <span class="tk-c">// "radius", "device", later "google", "saml"</span>
+	<span class="tk-c">/** Begins sign-in: a redirect, or a page of its own. `invite` is null for a returning person. */</span>
+	<span class="tk-f">start</span>(request: <span class="tk-t">HttpRequest</span>, invite: <span class="tk-t">InviteRef</span> | <span class="tk-k">null</span>, ctx: <span class="tk-t">Ctx</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-t">HttpResponse</span>&gt;;
+	<span class="tk-c">/** Its callback: the verified subject, or undefined. */</span>
+	<span class="tk-f">finish</span>(request: <span class="tk-t">HttpRequest</span>, ctx: <span class="tk-t">Ctx</span>): <span class="tk-t">Promise</span>&lt;{ subject: string; name?: string } | <span class="tk-k">undefined</span>&gt;;
+};
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">IdentityProviders</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">IdentityProvider</span>, <span class="tk-t">ProviderTable</span>&gt;(<span class="tk-s">"people.identity-providers"</span>, { version: <span class="tk-n">1</span> });
+
+<span class="tk-c">// plugins/people/contract.web.ts: the join page renders one entry per provider</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">SignInOption</span> = { <span class="tk-k">readonly</span> provider: string; <span class="tk-k">readonly</span> <span class="tk-t">Button</span>: <span class="tk-t">ComponentType</span>&lt;{ invite: <span class="tk-t">InviteRef</span> | <span class="tk-k">null</span> }&gt; };
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">SignInOptions</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">SignInOption</span>, <span class="tk-k">readonly</span> <span class="tk-t">SignInOption</span>[]&gt;(<span class="tk-s">"people.sign-in-options"</span>, { version: <span class="tk-n">1</span> });
+
+<span class="tk-c">// plugins/people/contract.tui.ts: the terminal client offers each flow when it has no sign-in yet</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">TuiSignIn</span> = { <span class="tk-k">readonly</span> provider: string; <span class="tk-k">readonly</span> label: string; <span class="tk-f">run</span>(io: <span class="tk-t">TuiIo</span>, ctx: <span class="tk-t">Ctx</span>): <span class="tk-t">Promise</span>&lt;<span class="tk-t">SignInToken</span> | <span class="tk-k">undefined</span>&gt; };
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">TuiSignIns</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">TuiSignIn</span>, <span class="tk-k">readonly</span> <span class="tk-t">TuiSignIn</span>[]&gt;(<span class="tk-s">"people.tui-sign-ins"</span>, { version: <span class="tk-n">1</span> });</code></pre>
+<ul>
+<li><strong>Built in:</strong> <code>radius</code> (while the Pi is connected to Radius: Radius signs the person in, with Google or GitHub at
+Radius, and forwards the verified email, as p2&#39;s guests by email work today) and <code>device</code> (a cookie in this
+browser; a token file in this terminal, <code>~/.pi/clients/&lt;pi&gt;.json</code>, mode 0600, sent as a bearer header).</li>
+<li><strong>OAuth directly at Google or GitHub</strong> would need every Pi registered as an OAuth client at its own address (and
+Google refuses private LAN addresses): impractical; it happens at Radius once for everyone.</li>
+<li><strong>More devices:</strong> sign in through the same provider, or pair: on a signed-in device &quot;Add device&quot; shows a code or QR
+code; the new browser or terminal polls and gets a sign-in for the same subject (kit pairing, generalized,
+chapter VIII). A terminal can also <code>pi join &lt;link&gt;</code>.</li>
+<li><strong>Without Radius</strong> (a LAN-only Pi) only <code>device</code> remains.</li>
+<li><strong>The owner invites from the terminal too:</strong> <code>/invite Tanja family:member</code> prints the link and a QR code.</li>
+</ul>
+</section>
+
+<section class="chapter" id="access"><header class="opener"><div class="numeral">III</div><h2>The Session Check</h2><p class="lede">One question every session view and object asks: may this principal see or send here?</p></header>
+<p class="dropcap">The sessions plugin creates sessions and records each one&#39;s facts (app, creator), fixed at creation, in memory on
+the server (one small row per session).</p>
+<pre><code><span class="tk-c">// PROPOSED · plugins/sessions</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">SessionFacts</span> = {
+	<span class="tk-k">readonly</span> id: string;
+	<span class="tk-k">readonly</span> app: string;                                                         <span class="tk-c">// exactly one</span>
+	<span class="tk-k">readonly</span> creator: { <span class="tk-k">readonly</span> kind: <span class="tk-s">"owner"</span> } | { <span class="tk-k">readonly</span> kind: <span class="tk-s">"person"</span>; <span class="tk-k">readonly</span> id: string };
+};
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Access</span> = { <span class="tk-k">readonly</span> see: boolean; <span class="tk-k">readonly</span> send: boolean };
+
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">access</span>(p: <span class="tk-t">P3Principal</span>, s: <span class="tk-t">SessionFacts</span>, facts: <span class="tk-t">SessionIndex</span>, apps: <span class="tk-t">AppTable</span>): <span class="tk-t">Access</span> {
+	<span class="tk-k">if</span> (p.kind === <span class="tk-s">"owner"</span> || p.kind === <span class="tk-s">"server"</span>) <span class="tk-k">return</span> ALL;
+	<span class="tk-k">if</span> (p.kind === <span class="tk-s">"worker"</span>) {
+		<span class="tk-k">if</span> (p.session === s.id) <span class="tk-k">return</span> ALL;
+		<span class="tk-k">const</span> own = facts.<span class="tk-f">get</span>(p.session);                                         <span class="tk-c">// another session's agent asks as its creator</span>
+		<span class="tk-k">return</span> own === <span class="tk-k">undefined</span> ? NONE : <span class="tk-f">access</span>(<span class="tk-f">creatorPrincipal</span>(own.creator), s, facts, apps);
+	}
+	<span class="tk-k">const</span> shared = <span class="tk-t">Object</span>.<span class="tk-f">hasOwn</span>(p.sessions, s.id)
+		? { see: <span class="tk-k">true</span>, send: p.sessions[s.id] === <span class="tk-s">"write"</span> } : NONE;
+	<span class="tk-k">const</span> byApp = apps.<span class="tk-f">get</span>(s.app)?.<span class="tk-f">access</span>(p, s) ?? NONE;
+	<span class="tk-k">return</span> { see: shared.see || byApp.see, send: shared.send || byApp.send };   <span class="tk-c">// a share never lowers an app role</span>
+}</code></pre>
+<ul>
+<li><strong>Where it runs:</strong> the session worker&#39;s route <code>authorize</code> (synchronous: the server holds the session index and the
+composed <code>Apps</code> table; until both are loaded it refuses persons), every object&#39;s factory on the server, sending
+methods, HTTP handlers (downloads, exports). Read-only means every mutating method requires <code>send</code>: sending,
+steering, stopping, uploads.</li>
+<li><strong>In the worker: open question 2.</strong> <code>Apps</code> and the facts are server-side; a worker factory cannot read them.</li>
+<li><strong>Who checks what for a person:</strong> transcript, composer, artifacts, files, search, export, downloads, cross-session
+tools. Objects not about sessions serve only the principals they know (deny by default): terminals, mail and
+settings serve the owner and the host&#39;s own code (<code>server</code>, <code>worker</code>); a person holding them gets <code>forbidden</code>.</li>
+<li><strong>What a person sees:</strong> their page opens the layout of their app (one app: straight in; several: a switcher). A
+person with only shared sessions lands on the shared session&#39;s transcript in the layout of the session&#39;s app, cut
+to that session; global panes dropped.</li>
+</ul>
+</section>
+
+<section class="chapter" id="apps"><header class="opener"><div class="numeral">IV</div><h2>Apps</h2><p class="lede">An app is a plugin that contributes itself; it owns its sessions&#39; rules and defaults.</p></header>
+<pre><code><span class="tk-c">// PROPOSED · plugins/apps (defines and serves the registry; one app per id, a duplicate reported)</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">AppContribution</span> = {
+	<span class="tk-k">readonly</span> id: string;
+	<span class="tk-k">readonly</span> title: string;
+	<span class="tk-k">readonly</span> roles: <span class="tk-k">readonly</span> string[];
+	<span class="tk-k">readonly</span> otherPlugins: <span class="tk-s">"on"</span> | <span class="tk-s">"off"</span>;
+	<span class="tk-k">readonly</span> layout: (principal: <span class="tk-t">P3Principal</span>) =&gt; <span class="tk-t">Layout</span>;                  <span class="tk-c">// served to the page by `AppLayout { app }`</span>
+	<span class="tk-k">readonly</span> access: (principal: <span class="tk-t">P3Principal</span>, session: <span class="tk-t">SessionFacts</span>) =&gt; <span class="tk-t">Access</span>;   <span class="tk-c">// synchronous: roles are in the principal</span>
+	<span class="tk-k">readonly</span> locks?: <span class="tk-t">LockValues</span>;                                          <span class="tk-c">// the app's defaults for its sessions (chapter V)</span>
+};
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Apps</span> = <span class="tk-f">defineRegistry</span>&lt;<span class="tk-t">AppContribution</span>, <span class="tk-t">AppTable</span>&gt;(<span class="tk-s">"p3.apps"</span>, { version: <span class="tk-n">1</span> });
+host.<span class="tk-f">serve</span>(<span class="tk-t">Apps</span>, { compose: (table, { report }) =&gt; <span class="tk-f">keyedEntries</span>(table, (app) =&gt; ({ [app.id]: app }), report) });</code></pre>
+<ul>
+<li><strong>Belonging:</strong> every session has exactly one app; sessions created without one belong to coding; the owner can move
+a session to another app (its rules switch with it).</li>
+<li><strong>Showing:</strong> any app may show any session (an overview app listing all sessions, the family app showing Leo&#39;s
+robot session); the session&#39;s own app&#39;s rules apply wherever it is shown.</li>
+<li><strong>Creating sessions for persons:</strong> through the app&#39;s own objects (a coach&#39;s <code>Matches.open</code>), never the owner&#39;s
+session service; the app passes the creator explicitly (<code>{ kind: &quot;person&quot;, id }</code> from the principal its remote
+object got), because its local store acts as the server.</li>
+<li><strong>Reaching other plugins for persons:</strong> a remote object keeps its caller&#39;s principal on <code>self.get</code> (Chord §4); only
+a <code>local</code> object acts as the host. So an app gives persons a slice of another plugin through its own local store;
+a plugin reused that way offers a <code>local</code> service (or a variant for <code>server</code>).</li>
+</ul>
+</section>
+
+<section class="chapter" id="locks"><header class="opener"><div class="numeral">V</div><h2>Locks</h2><p class="lede">A plugin declares what can be switched off or limited, registers it, and enforces it where it hands things out.</p></header>
+<pre><code><span class="tk-c">// PROPOSED · @p3/v1</span>
+<span class="tk-k">export</span> <span class="tk-k">type</span> <span class="tk-t">Lock</span>&lt;T&gt; = {
+	<span class="tk-k">readonly</span> id: string;                       <span class="tk-c">// "coding.bash"</span>
+	<span class="tk-k">readonly</span> title: string;
+	<span class="tk-k">readonly</span> schema: <span class="tk-t">Schema</span>&lt;T&gt;;                <span class="tk-c">// JSON Schema underneath: the sheet and Radius build controls from it</span>
+	<span class="tk-k">readonly</span> open: T;                          <span class="tk-c">// no restriction</span>
+	<span class="tk-k">readonly</span> closed: T;                        <span class="tk-c">// the most restrictive value</span>
+	<span class="tk-f">narrow</span>(upper: T, lower: T): T;             <span class="tk-c">// a lower layer only narrows</span>
+};
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">defineSwitch</span>(id: string, title: string): <span class="tk-t">Lock</span>&lt;boolean&gt;;   <span class="tk-c">// open true, closed false, narrow a &amp;&amp; b</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">defineLimit</span>&lt;T&gt;(id: string, shape: <span class="tk-t">Omit</span>&lt;<span class="tk-t">Lock</span>&lt;T&gt;, <span class="tk-s">"id"</span>&gt;): <span class="tk-t">Lock</span>&lt;T&gt;;
+
+<span class="tk-c">/** Server registry: every lock of every loaded plugin (facets contribute; host-lifetime objects may, rarely). */</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Locks</span> = defineRegistry&lt;<span class="tk-k">readonly</span> <span class="tk-t">Lock</span>&lt;<span class="tk-k">unknown</span>&gt;[], <span class="tk-t">LockTable</span>&gt;(<span class="tk-s">"locks.locks"</span>, { version: <span class="tk-n">1</span> });
+
+<span class="tk-c">/** Worker: this session's effective value, all layers narrowed, live. */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">lockValue</span>&lt;T&gt;(self: <span class="tk-t">Self</span>, lock: <span class="tk-t">Lock</span>&lt;T&gt;): <span class="tk-t">Readable</span>&lt;T&gt;;
+<span class="tk-c">/** Server: the same for any session. */</span>
+<span class="tk-k">export</span> <span class="tk-k">function</span> <span class="tk-f">lockValueFor</span>&lt;T&gt;(self: <span class="tk-t">Self</span>, lock: <span class="tk-t">Lock</span>&lt;T&gt;, session: string): <span class="tk-t">Readable</span>&lt;T&gt;;
+
+<span class="tk-c">// Two string formats for values that name things (pi-schema has `str({ format })`; checked with compile's formats):</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> glob = () =&gt; <span class="tk-f">str</span>({ format: <span class="tk-s">"p3.glob"</span>, minLength: <span class="tk-n">1</span> });                 <span class="tk-c">// "linear__*"</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> ref = (kind: <span class="tk-t">HostKind</span>) =&gt; <span class="tk-f">str</span>({ format: <span class="tk-s">`p3.ref:${kind.name}`</span> });       <span class="tk-c">// an id of that kind</span></code></pre>
+<h3 id="what-a-plugin-writes">What a plugin writes</h3>
+<pre><code><span class="tk-c">// plugins/coding-tools/contract.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">BashLock</span> = <span class="tk-f">defineSwitch</span>(<span class="tk-s">"coding.bash"</span>, <span class="tk-s">"Shell commands (bash)"</span>);
+<span class="tk-c">// plugins/coding-tools/server.ts: registered with the server, so the sheet and Radius know it with no worker running</span>
+self.<span class="tk-f">contribute</span>(<span class="tk-t">Locks</span>, [<span class="tk-t">BashLock</span>]);
+<span class="tk-c">// plugins/coding-tools/worker.ts: enforced where the tool is handed out</span>
+host.<span class="tk-f">serve</span>(<span class="tk-t">CodingTools</span>, (_params, self) =&gt; {
+	<span class="tk-k">const</span> bash = <span class="tk-f">lockValue</span>(self, <span class="tk-t">BashLock</span>);
+	<span class="tk-k">const</span> extension = self.<span class="tk-f">writable</span>(<span class="tk-f">codingExtension</span>({ bash: bash.value }));
+	self.<span class="tk-f">on</span>(bash, ({ value }) =&gt; extension.<span class="tk-f">set</span>(<span class="tk-f">codingExtension</span>({ bash: value })));
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">HarnessExtensions</span>, extension);
+	<span class="tk-k">return</span> {};
+});</code></pre>
+<h3 id="the-locks-discussed-today">The locks discussed today</h3>
+<table>
+<thead>
+<tr>
+<th>Lock</th>
+<th>Plugin</th>
+<th>Value</th>
+<th>Enforced where</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>coding.bash</code></td>
+<td>coding-tools</td>
+<td>switch</td>
+<td>the extension leaves bash out</td>
+</tr>
+<tr>
+<td><code>conversations.reach</code></td>
+<td>conversations</td>
+<td><code>ref(Session)[]</code> or null</td>
+<td>list shows only those; send refuses others</td>
+</tr>
+<tr>
+<td><code>terminals.use</code></td>
+<td>terminals</td>
+<td>switch</td>
+<td><code>Terminals.open</code> (pane and agent tool both go through it); state <code>allowed</code> hides the button</td>
+</tr>
+<tr>
+<td><code>mcp.servers</code></td>
+<td>mcp</td>
+<td><code>ref(McpServer)[]</code> or null; project servers as <code>project:&lt;name&gt;</code></td>
+<td>placement starts only those</td>
+</tr>
+<tr>
+<td><code>mcp.tools</code></td>
+<td>mcp</td>
+<td><code>glob()[]</code> or null (<code>linear__*</code>)</td>
+<td>the worker extension offers only those</td>
+</tr>
+<tr>
+<td><code>mcp.project</code></td>
+<td>mcp</td>
+<td>switch</td>
+<td><code>.pi/mcp.json</code> servers placed at all</td>
+</tr>
+<tr>
+<td><code>prompt.instructions</code></td>
+<td>prompt</td>
+<td>sources <code>instance</code> / <code>environment</code> / <code>project</code></td>
+<td>which AGENTS.md are loaded</td>
+</tr>
+<tr>
+<td><code>prompt.skills</code>, <code>prompt.templates</code></td>
+<td>prompt</td>
+<td><code>glob()[]</code> with source prefix (<code>project:*</code>)</td>
+<td>loading, listing and <code>/name</code> expansion</td>
+</tr>
+<tr>
+<td><code>locations.places</code></td>
+<td>locations</td>
+<td><code>{ environment: ref(Environment), cwd }[]</code></td>
+<td>every move, every spawn with <code>cwd</code>/<code>env</code></td>
+</tr>
+<tr>
+<td><code>subagents.use</code>, <code>subagents.environments</code></td>
+<td>subagents</td>
+<td>switch; environments</td>
+<td>spawn and moves of subagents</td>
+</tr>
+</tbody></table>
+<ul>
+<li><strong>Subagents</strong> run in the session&#39;s worker, so every session lock applies to them too; their tool choice is a subset
+of the caller&#39;s.</li>
+<li><strong>cwd is not confinement:</strong> a place decides which instructions and skills load; only an environment (a sandbox
+with that folder) confines.</li>
+<li><strong>Runtime things are values, not locks:</strong> locks are declared statically (in the facet, so Radius&#39;s sandbox sees
+them); servers, tools, skills that exist only at runtime are values in them. A plugin may contribute locks from a
+host-lifetime object (<code>self.writable</code>) if it must; Radius then learns them only from reports.</li>
+<li><strong>A plugin that declares a lock but does not enforce it</strong> is a bug in trusted code.</li>
+</ul>
+<h3 id="how-the-sheet-knows-what-to-show">How the sheet knows what to show</h3>
+<ul>
+<li>The sheet&#39;s object on the server (<code>LockSheet { scope }</code>, owner only) serves every registered lock with its plugin,
+title and JSON Schema, the values per layer with who set them, the effective value, and stored values of locks no
+plugin declares now (&quot;missing&quot;, no effect). <code>set({ lock, value })</code> checks the value against the schema.</li>
+<li><strong>Controls from the schema:</strong> a switch is a toggle; <code>ref(Session)</code> uses a picker from <code>RefPickers</code> (contributed by
+the plugin that owns the kind: sessions, environments, MCP servers); a place combines the environment picker and a
+folder browser on that environment (text when it is unreachable); <code>glob()</code> is a text field. A plugin may contribute
+its own editor (<code>LockEditors</code>).</li>
+<li><strong>Every editor offers what it can render:</strong> where no picker exists (Radius has no picker for a member&#39;s sessions),
+only <code>open</code> and <code>closed</code>.</li>
+<li><strong>The agent:</strong> code-mode namespace <code>locks</code> (<code>locks_catalog</code>, <code>locks_set({ scope, lock, value })</code>), only from the
+owner&#39;s sessions; <code>locks.manage</code> is itself a lock.</li>
+</ul>
+</section>
+
+<section class="chapter" id="switch"><header class="opener"><div class="numeral">VI</div><h2>The Plugin Switch</h2><p class="lede">Plugins outside Pi&#39;s own root can be switched off per app, as a whole, without declaring anything.</p></header>
+<ul>
+<li><strong>Base or not</strong> is where a plugin was loaded from: the kit&#39;s app root (<code>startServer({ root })</code>, shipped with Pi)
+or the user&#39;s root (<code>&lt;dataDir&gt;/plugins</code>, everything the owner or the agent installed, org plugins included).</li>
+<li><strong>Base plugins have no switch;</strong> they declare locks for everything that matters (we maintain them).</li>
+<li><strong>Every other plugin has a switch per app,</strong> declared or not, locks or not (locks come on top, for finer control
+where the plugin is on). An app&#39;s default for plugins it does not know is its <code>otherPlugins</code> flag; on every
+install the owner (or the agent) chooses the apps: &quot;Enable weather in [x] Coding [ ] Robot&quot;, pre-filled from the
+flags; the choice is stored in each app&#39;s configuration.</li>
+<li><strong>What the switch does:</strong> every worker still loads every plugin (Chord gives all workers of a kind one plugin set).
+The base leaves a switched-off plugin&#39;s contributions out of the registries it owns, for that session: the
+harness (extensions with tools, sections, hooks, wraps, tasks; environment and model providers) and the page
+(panes, slots, commands of panes of that session). The plugin&#39;s objects and routines still run; nothing reaches
+them through switched-off contributions, and persons are denied by default anyway. Owners of other registries use
+<code>pluginAllowed(self, plugin)</code>.</li>
+</ul>
+</section>
+
+<section class="chapter" id="layers"><header class="opener"><div class="numeral">VII</div><h2>Layers and Sheets</h2><p class="lede">company &gt; Pi &gt; app &gt; session; only narrowing; one sheet per scope.</p></header>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Set by</th>
+<th>Stored</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>company</td>
+<td>the org profile (Radius, signed; initial copy on disk)</td>
+<td>the profile cache</td>
+</tr>
+<tr>
+<td>Pi</td>
+<td>the owner&#39;s Pi sheet (&quot;no bash on this Pi&quot;)</td>
+<td>server</td>
+</tr>
+<tr>
+<td>app</td>
+<td>the app&#39;s code (<code>locks</code>, <code>otherPlugins</code>), then the owner&#39;s app sheet over it</td>
+<td>server, per app</td>
+</tr>
+<tr>
+<td>session</td>
+<td>the owner&#39;s session sheet</td>
+<td>server, keyed by <code>Session</code></td>
+</tr>
+</tbody></table>
+<p><code>effective = narrow(company, narrow(pi, narrow(app, session)))</code>, applied per lock; plugin switches the same way. The
+owner may change an app&#39;s defaults in either direction within the company and Pi values; a session only narrows.
+Every sheet shows the upper layers&#39; values read-only next to its own.</p>
+</section>
+
+<section class="chapter" id="company"><header class="opener"><div class="numeral">VIII</div><h2>Companies</h2><p class="lede">The org profile is the top layer; Radius learns the locks.</p></header>
+<ul>
+<li><strong>Enrollment</strong> (from <code>org-managed/book.md</code>, still valid): an admin-owned file <code>/etc/p3/enrollment.json</code> (org,
+server, org key, allowed plugin sources; optionally an initial profile); the Pi stays locked until its first sync
+delivered a signed profile, then works from the cache and follows changes live. Gate states <code>unmanaged</code>,
+<code>pending</code>, <code>ready</code>, <code>stale</code>, <code>revoked</code>. Machine lock-down (service user, signed executable, gondolin sandboxes, a
+device key) as written there.</li>
+<li><strong>The profile:</strong> the plugin list (<code>required</code>, <code>allowed</code>, <code>blocked</code>) and lock values by id:</li>
+</ul>
+<pre><code><span class="tk-c">// PROPOSED · part of Acme's profile for a member's Pi</span>
+{
+  <span class="tk-s">"plugins"</span>: { <span class="tk-s">"required"</span>: [<span class="tk-s">"@earendil/linear"</span>], <span class="tk-s">"blocked"</span>: [<span class="tk-s">"@someone/drive"</span>] },
+  <span class="tk-s">"locks"</span>: { <span class="tk-s">"coding.bash"</span>: <span class="tk-k">false</span>, <span class="tk-s">"subagents.environments"</span>: [<span class="tk-s">"acme-sandbox"</span>], <span class="tk-s">"conversations.reach"</span>: <span class="tk-k">null</span> }
+}</code></pre>
+<ul>
+<li><strong>Applied on the Pi</strong> as the company layer: a value is checked against the schema its own plugin declares; a value
+that does not match gives <code>closed</code>; an id no plugin declares stays &quot;missing&quot;.</li>
+<li><strong>How Radius knows the locks:</strong> member Pis report their <code>Locks</code> (id, plugin, version, title, JSON Schema) on every
+sync; and Radius loads selected plugins&#39; server facets in a sandbox (as <code>testPlugin</code> collects contributions) to read
+their locks before anyone installed them; locks contributed at runtime by objects only come through reports.</li>
+<li><strong>Radius renders</strong> switches and fixed lists; for references to a member&#39;s things (sessions) only <code>open</code>/<code>closed</code>.</li>
+</ul>
+</section>
+
+<section class="chapter" id="kit"><header class="opener"><div class="numeral">IX</div><h2>What the Kit Must Add</h2><p class="lede">Six changes, with the review findings folded in; Chord&#39;s core stays.</p></header>
+<ol>
+<li><strong>Sign-ins name a subject; the app resolves the current principal at every use.</strong> <code>SignIns.issue({ subject, label, kind })</code>; <code>startServer({ signIns: { resolve(subject, ctx) → P | null } })</code>, resolved through a registry the
+people plugin contributes (so it stays reloadable). The owner&#39;s sign-ins have the subject <code>{ owner: true }</code>.</li>
+<li><strong>Revocation from plugins and in workers:</strong> <code>revokedBy</code> for <code>startServer</code> and <code>startWorker</code> (the same function);
+a server-local <code>Revocations.revoke(r)</code>.</li>
+<li><strong>No stale admission:</strong> a link whose principal was resolved before a revocation must not be accepted after it:
+re-resolve right before <code>host.accept</code> (no gap) and close the link if the principal changed; HTTP requests check
+the current revision before protected work.</li>
+<li><strong>Removing one device ends its open links:</strong> the links endpoint records the sign-in per link (as it does for
+ephemeral sign-ins); <code>SignIns.revoke(id)</code> closes them.</li>
+<li><strong>Pairing for any subject:</strong> a signed-in principal confirms a pairing code for its own subject; the poll returns a
+bearer token (terminal) or completes with the sign-in cookie (browser).</li>
+<li><strong>Authentication precedence</strong> set in one place (the kit takes the first authenticator by plugin name today):
+identity providers redeem into the common sign-in; a direct Radius authentication, if kept, has a fixed order.</li>
+</ol>
+<p>Separately in Chord (found by Sol, needed anyway): a variant change within one round trip (A → B → C before B is
+acknowledged) can decode a call with the wrong method table (<code>remote/hold.ts #bindTo</code> keeps one previous binding);
+fence per acknowledgement or do not send the next binding before the previous one is acknowledged.</p>
+</section>
+
+<section class="chapter" id="club"><header class="opener"><div class="numeral">X</div><h2>One App in Full: the Football Club</h2><p class="lede">Roles coach and player, a roster coaches change, match sessions everyone joins, locks for the agent.</p></header>
+<pre><code><span class="tk-c">// PROPOSED · plugins/club/contract.ts</span>
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Club</span> = <span class="tk-f">defineApp</span>(<span class="tk-s">"club"</span>, { roles: [<span class="tk-s">"coach"</span>, <span class="tk-s">"player"</span>] <span class="tk-k">as</span> <span class="tk-k">const</span>, otherPlugins: <span class="tk-s">"off"</span> });
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Player</span> = <span class="tk-f">obj</span>({ id: <span class="tk-f">str</span>(), name: <span class="tk-f">str</span>(), position: <span class="tk-f">str</span>() });
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Roster</span> = <span class="tk-f">remote</span>(<span class="tk-s">"club.roster"</span>, { version: <span class="tk-n">1</span>, params: {}, hostAddress: () =&gt; <span class="tk-t">Server</span>(), variants: {
+	coach: { state: { players: <span class="tk-f">arr</span>(<span class="tk-t">Player</span>) }, methods: { put: <span class="tk-f">method</span>(<span class="tk-t">Player</span>), remove: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ id: <span class="tk-f">str</span>() })) } },
+	player: { state: { players: <span class="tk-f">arr</span>(<span class="tk-t">Player</span>) } },
+} });
+<span class="tk-k">export</span> <span class="tk-k">const</span> <span class="tk-t">Matches</span> = <span class="tk-f">remote</span>(<span class="tk-s">"club.matches"</span>, { version: <span class="tk-n">1</span>, params: {}, hostAddress: () =&gt; <span class="tk-t">Server</span>(), variants: {
+	coach: { state: { sessions: <span class="tk-f">arr</span>(<span class="tk-f">str</span>()) }, methods: { open: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ title: <span class="tk-f">str</span>() }), <span class="tk-f">str</span>()) } },
+	player: { state: { sessions: <span class="tk-f">arr</span>(<span class="tk-f">str</span>()) } },
+} });</code></pre>
+<pre><code><span class="tk-c">// PROPOSED · plugins/club/server.ts</span>
+<span class="tk-k">const</span> <span class="tk-t">Players</span> = <span class="tk-f">defineTable</span>(<span class="tk-s">"club.players"</span>, { version: <span class="tk-n">1</span>, columns: { id: <span class="tk-f">str</span>(), name: <span class="tk-f">str</span>(), position: <span class="tk-f">str</span>() }, key: [<span class="tk-s">"id"</span>] });
+<span class="tk-k">const</span> ROSTER_MAX = <span class="tk-n">200</span>;                                                          <span class="tk-c">// a club roster's size; the live query's limit</span>
+
+<span class="tk-k">const</span> <span class="tk-t">ClubStore</span> = <span class="tk-f">local</span>(<span class="tk-s">"club.store"</span>, { version: <span class="tk-n">1</span>, params: {}, members: {
+	players: <span class="tk-f">arr</span>(<span class="tk-t">Player</span>), sessions: <span class="tk-f">arr</span>(<span class="tk-f">str</span>()),
+	put: <span class="tk-f">method</span>(<span class="tk-t">Player</span>), remove: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ id: <span class="tk-f">str</span>() })),
+	open: <span class="tk-f">method</span>(<span class="tk-f">obj</span>({ title: <span class="tk-f">str</span>(), creator: <span class="tk-f">str</span>() }), <span class="tk-f">str</span>()),
+} });
+
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((host) =&gt; {
+	host.<span class="tk-f">serve</span>(<span class="tk-t">ClubStore</span>, (_params, self) =&gt; {
+		<span class="tk-k">const</span> players = self.<span class="tk-f">table</span>(<span class="tk-t">Players</span>);
+		<span class="tk-k">const</span> sessions = self.<span class="tk-f">get</span>(<span class="tk-t">Sessions</span>, {});
+		self.<span class="tk-f">contribute</span>(<span class="tk-t">Apps</span>, {
+			id: <span class="tk-t">Club</span>.id, title: <span class="tk-s">"Football club"</span>, roles: <span class="tk-t">Club</span>.roles, otherPlugins: <span class="tk-s">"off"</span>,
+			layout: () =&gt; [{ kind: <span class="tk-s">"club.home"</span> }],
+			access: (p) =&gt; (<span class="tk-t">Club</span>.<span class="tk-f">roleOf</span>(p) === <span class="tk-k">undefined</span> ? NONE : ALL),          <span class="tk-c">// every club person talks in its match sessions</span>
+			locks: { <span class="tk-s">"coding.bash"</span>: <span class="tk-k">false</span>, <span class="tk-s">"prompt.instructions"</span>: [<span class="tk-s">"project"</span>], <span class="tk-s">"locations.places"</span>: [{ environment: <span class="tk-s">"club-box"</span>, cwd: <span class="tk-s">"/srv/club"</span> }] },
+		});
+		<span class="tk-k">return</span> {
+			players: self.<span class="tk-f">query</span>(players, <span class="tk-f">query</span>(<span class="tk-t">Players</span>), ROSTER_MAX),
+			sessions: sessions.byApp.<span class="tk-f">at</span>(<span class="tk-t">Club</span>.id),
+			put: <span class="tk-k">async</span> (player, ctx) =&gt; { <span class="tk-k">await</span> self.<span class="tk-f">tx</span>(<span class="tk-k">async</span> (tx) =&gt; { tx.<span class="tk-f">put</span>(players, player); }, ctx); <span class="tk-k">return</span> <span class="tk-k">null</span>; },
+			remove: <span class="tk-k">async</span> ({ id }, ctx) =&gt; { <span class="tk-k">await</span> self.<span class="tk-f">tx</span>(<span class="tk-k">async</span> (tx) =&gt; { tx.<span class="tk-k">delete</span>(players, { id }); }, ctx); <span class="tk-k">return</span> <span class="tk-k">null</span>; },
+			open: <span class="tk-k">async</span> ({ title, creator }, ctx) =&gt;
+				(<span class="tk-k">await</span> sessions.<span class="tk-f">create</span>({ app: <span class="tk-t">Club</span>.id, title, creator: { kind: <span class="tk-s">"person"</span>, id: creator } }, ctx)).id,
+		};
+	});
+	<span class="tk-c">/** The owner counts as a coach; persons by their club role; anyone else is refused. */</span>
+	<span class="tk-k">const</span> roleOf = (principal: <span class="tk-t">P3Principal</span>) =&gt; {
+		<span class="tk-k">const</span> role = principal.kind === <span class="tk-s">"owner"</span> ? <span class="tk-s">"coach"</span> : <span class="tk-t">Club</span>.<span class="tk-f">roleOf</span>(principal);
+		<span class="tk-k">if</span> (role === <span class="tk-k">undefined</span>) <span class="tk-k">throw</span> <span class="tk-f">forbidden</span>(<span class="tk-s">"Club members only."</span>);
+		<span class="tk-k">return</span> role;
+	};
+	host.<span class="tk-f">serve</span>(<span class="tk-t">Roster</span>, (_params, principal, self) =&gt; {
+		<span class="tk-k">const</span> store = self.<span class="tk-f">get</span>(<span class="tk-t">ClubStore</span>, {});
+		<span class="tk-k">return</span> <span class="tk-f">roleOf</span>(principal) === <span class="tk-s">"coach"</span>
+			? { variant: <span class="tk-s">"coach"</span>, members: { players: store.players, put: (p, ctx) =&gt; store.<span class="tk-f">put</span>(p, ctx), remove: (a, ctx) =&gt; store.<span class="tk-f">remove</span>(a, ctx) } }
+			: { variant: <span class="tk-s">"player"</span>, members: { players: store.players } };
+	});
+	host.<span class="tk-f">serve</span>(<span class="tk-t">Matches</span>, (_params, principal, self) =&gt; {
+		<span class="tk-k">const</span> store = self.<span class="tk-f">get</span>(<span class="tk-t">ClubStore</span>, {});
+		<span class="tk-k">const</span> creator = principal.kind === <span class="tk-s">"person"</span> ? principal.id : <span class="tk-s">"owner"</span>;
+		<span class="tk-k">return</span> <span class="tk-f">roleOf</span>(principal) === <span class="tk-s">"coach"</span>
+			? { variant: <span class="tk-s">"coach"</span>, members: { sessions: store.sessions, open: ({ title }, ctx) =&gt; store.<span class="tk-f">open</span>({ title, creator }, ctx) } }
+			: { variant: <span class="tk-s">"player"</span>, members: { sessions: store.sessions } };
+	});
+});</code></pre>
+<pre><code><span class="tk-c">// PROPOSED · plugins/club/web.tsx</span>
+<span class="tk-k">export</span> <span class="tk-k">default</span> <span class="tk-f">defineFacet</span>((_host, self) =&gt; {
+	self.<span class="tk-f">contribute</span>(<span class="tk-t">WebViews</span>, { <span class="tk-s">"club.home"</span>: () =&gt; &lt;<span class="tk-t">ClubHome</span> /&gt; });
+});
+<span class="tk-k">function</span> <span class="tk-t">ClubHome</span>() {
+	<span class="tk-k">const</span> roster = <span class="tk-f">useHold</span>(<span class="tk-t">Roster</span>, {});
+	<span class="tk-k">const</span> matches = <span class="tk-f">useHold</span>(<span class="tk-t">Matches</span>, {});
+	<span class="tk-k">const</span> players = <span class="tk-f">useWatch</span>(roster.players) ?? [];
+	<span class="tk-k">const</span> sessions = <span class="tk-f">useWatch</span>(matches.sessions) ?? [];
+	<span class="tk-k">return</span> (
+		&lt;<span class="tk-t">Split</span>&gt;
+			&lt;<span class="tk-t">List</span> title=<span class="tk-s">"Team"</span>&gt;{players.<span class="tk-f">map</span>((p) =&gt; &lt;<span class="tk-t">Row</span> key={p.id} title={p.name} detail={p.position}
+				actions={roster.variant === <span class="tk-s">"coach"</span> ? [{ label: <span class="tk-s">"Remove"</span>, run: (ctx) =&gt; roster.<span class="tk-f">remove</span>({ id: p.id }, ctx) }] : []} /&gt;)}&lt;/<span class="tk-t">List</span>&gt;
+			&lt;<span class="tk-t">List</span> title=<span class="tk-s">"Matches"</span>&gt;{sessions.<span class="tk-f">map</span>((id) =&gt; &lt;<span class="tk-t">SessionRow</span> key={id} session={id} /&gt;)}
+				{matches.variant === <span class="tk-s">"coach"</span> &amp;&amp; &lt;<span class="tk-t">Button</span> onClick={(ctx) =&gt; matches.<span class="tk-f">open</span>({ title: <span class="tk-s">"Next match"</span> }, ctx)}&gt;<span class="tk-t">New</span> match&lt;/<span class="tk-t">Button</span>&gt;}&lt;/<span class="tk-t">List</span>&gt;
+		&lt;/<span class="tk-t">Split</span>&gt;
+	);
+}</code></pre>
+<p>The club needs no worker facet: its sessions&#39; agent is restricted by the locks it contributes (no bash, only the
+club folder&#39;s instructions, one place) and <code>otherPlugins: &quot;off&quot;</code> (no third-party tool reaches a match session unless
+the owner switches it on for the club).</p>
+<p><strong>The flow:</strong> the owner invites Max with club: player; Max opens the link, taps &quot;Continue with Radius&quot; (Google at
+Radius), lands in the club: the team, the matches, no buttons. The owner makes him coach: revision up, Max&#39;s pages
+reconnect, Remove and New match appear. Max holds <code>Terminals</code> directly: <code>forbidden</code>. A match session&#39;s transcript is
+the ordinary one; the session check lets every club person send there; its agent has no shell.</p>
+</section>
+
+<section class="chapter" id="review"><header class="opener"><div class="numeral">XI</div><h2>Review Findings</h2><p class="lede">The three reviews of the first edition (Opus, Astra, Sol), and where each went.</p></header>
+<table>
+<thead>
+<tr>
+<th>Finding</th>
+<th>Where it went</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>json</code> columns need <code>{ version }</code></td>
+<td>chapter III</td>
+</tr>
+<tr>
+<td>removal must delete the row (or flag it), invalidate invites, revoke sign-ins</td>
+<td>chapter III</td>
+</tr>
+<tr>
+<td><code>revokedBy</code> also for workers</td>
+<td>kit change 2</td>
+</tr>
+<tr>
+<td>stale admission across a revocation</td>
+<td>kit change 3</td>
+</tr>
+<tr>
+<td>removing one device leaves its links open</td>
+<td>kit change 4</td>
+</tr>
+<tr>
+<td>browser pairing returns no cookie</td>
+<td>kit change 5</td>
+</tr>
+<tr>
+<td>authentication precedence</td>
+<td>kit change 6</td>
+</tr>
+<tr>
+<td>the worker cannot evaluate app rules</td>
+<td>open question 2</td>
+</tr>
+<tr>
+<td>players got the owner&#39;s agent with bash</td>
+<td>the club&#39;s locks and <code>otherPlugins: &quot;off&quot;</code></td>
+</tr>
+<tr>
+<td>a share lowered an app role</td>
+<td><code>access</code> takes the larger</td>
+</tr>
+<tr>
+<td>returning people without an invite</td>
+<td><code>start(…, invite: null)</code>, <code>finish</code> finds the identity</td>
+</tr>
+<tr>
+<td>match sessions had no creator</td>
+<td><code>Matches</code> passes it to <code>ClubStore.open</code></td>
+</tr>
+<tr>
+<td>methods returned <code>undefined</code></td>
+<td><code>return null</code></td>
+</tr>
+<tr>
+<td>shared-session-only landing</td>
+<td>chapter IV</td>
+</tr>
+<tr>
+<td>roster query silently capped</td>
+<td><code>ROSTER_MAX</code>, named</td>
+</tr>
+<tr>
+<td><code>Apps</code> without a provider</td>
+<td>chapter V</td>
+</tr>
+</tbody></table>
+</section>
+
+<section class="chapter epilogue" id="open-questions"><header class="opener"><div class="numeral">∴</div><h2>Open Questions</h2></header>
+<ol>
+<li><strong>Slots of switched-on third-party plugins in reused views</strong> (the drive button in the robot&#39;s transcript, when
+drive is on for the robot): the reviewers proposed &quot;only for the owner unless the app names it&quot;, which conflicts
+with apps not naming other plugins. Alternative: shown to persons too; its backing object decides (a broken
+button where it serves only the owner).</li>
+<li><strong>The session check in the worker:</strong> (a) the session facts in the worker&#39;s start data and each app&#39;s <code>access</code> as a
+pure module the worker loads too; (b) a Chord change: a factory may read an already composed registry value; (c)
+the worker asks the server, persons get one variant and a check per call.</li>
+<li><strong>The page with several sessions</strong> must compose panes, slots and commands per session (plugin switches, locks):
+a mechanism of the page, not designed yet.</li>
+<li><strong>Complexity:</strong> the owner finds it &quot;still overly complex&quot;. Candidates to cut: the Pi layer (the owner can set the
+same on each app), <code>LockEditors</code> (pickers only), runtime-contributed locks, <code>otherPlugins</code> (always off for apps
+that set locks?), separate <code>sessions</code> in the principal (a share as a one-session role?).</li>
+</ol>
+</section>
+
+<p class="colophon">p3 people, apps and locks · second edition · 2026-11-13</p>
+</div></div>
+
+</body></html>

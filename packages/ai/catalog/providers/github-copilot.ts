@@ -94,14 +94,14 @@ export default defineProvider({
 				skipDeprecated: true,
 				defaultContextWindow: 128000,
 				defaultMaxTokens: 8192,
-				map: (model): ChatModel => {
+				map: (model, source): ChatModel => {
 					const api = copilotApi(model.id);
 					const result: ChatModel = { ...model, api };
 					if (api === "openai-completions") {
 						result.compat = {
 							supportsStore: false,
-							supportsDeveloperRole: false,
-							supportsReasoningEffort: false,
+							supportsReasoningEffort:
+								source.reasoningOptions?.some((option) => option.type === "effort") ?? false,
 						};
 					}
 					if (model.id === "claude-opus-5.5") mergeThinking(result, claude55ThinkingLevels(model.id));
@@ -111,7 +111,14 @@ export default defineProvider({
 			[GPT_6_LUNA],
 		).map((model) => (EXTENDED_CONTEXT_MODEL_IDS.has(model.id) ? { ...model, contextWindow: 1000000 } : model)),
 	classifiers: () => [MICROSOFT_DECISION_1],
-	compat: { "openai-completions": { supportsStrictMode: true } },
+	// Copilot's /responses treats a function tool without `strict` as strict and fills omitted optional arguments
+	// with "" or invented values (#12286); it accepts both `strict: false` and `strict: true` (checked 2026-11-19).
+	// Its Messages endpoint accepts strict tools on Claude and passes Claude's strict tool limit errors through.
+	compat: {
+		"anthropic-messages": { supportsStrictTools: true },
+		"openai-completions": { supportsStrictMode: true },
+		"openai-responses": { supportsStrictMode: true },
+	},
 	finalize: (model) => {
 		if (model.id.startsWith("gpt-5")) mergeThinking(model, { minimal: "low" });
 		const override = THINKING_LEVEL_OVERRIDES[model.id];

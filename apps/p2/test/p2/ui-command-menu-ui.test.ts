@@ -13,7 +13,7 @@ import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { Views } from "../../plugins/views/contract.ts";
 import type { Host, RefIn } from "../../src/runtime/chord.ts";
-import { Browser, browserTests } from "./browser.ts";
+import { Browser, browserTests, COMPOSER } from "./browser.ts";
 import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
 
 const OPEN = `Boolean(document.querySelector('.command-menu'))`;
@@ -70,7 +70,7 @@ describe("command menu: app and views commands", { skip: !browserTests }, () => 
 			`(() => { for (const key of [${JSON.stringify(RECENTS)}, 'pi-theme', 'pi-sidebar-collapsed']) localStorage.removeItem(key); })()`,
 		);
 		await browser.open(`${base}/s/${id}`);
-		await browser.wait(`document.querySelector('.composer textarea') && !document.querySelector('.offline')`);
+		await browser.wait(`document.querySelector('${COMPOSER}') && !document.querySelector('.offline')`);
 		await browser.wait(`document.querySelector('.topbar h1')?.textContent===${JSON.stringify(title)}`);
 	};
 
@@ -289,7 +289,7 @@ describe("command menu: app and views commands", { skip: !browserTests }, () => 
 			const open = await create("Open with views");
 			const other = await create("Other row");
 			await openSession(open, "Open with views");
-			const row = `.sidebar-section[data-key=recent] .nav-row:has(> a.session-main[href="/s/${other}"])`;
+			const row = `.sidebar-section[data-key=other] .nav-row:has(> a.session-main[href="/s/${other}"])`;
 			await browser.wait(`document.querySelector(${JSON.stringify(row)})`);
 			const point = await browser.evaluate<{ x: number; y: number }>(
 				`(() => { const r = document.querySelector(${JSON.stringify(row)}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`,

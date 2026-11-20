@@ -14,6 +14,7 @@ import { sendWorkerTelemetry, TelemetryRecorder } from "@earendil-works/chord/te
 import { workerMain } from "@earendil-works/chord/workers/child";
 import { registerLazyBedrockProvider } from "@earendil-works/pi-ai/lazy-bedrock-provider";
 import { registerLazyOAuthFlows } from "@earendil-works/pi-ai/lazy-oauth";
+import { createNodePhotonImages } from "@earendil-works/pi-durable/images/node";
 import { backupConfigured } from "../runtime/backup.ts";
 import { createHost, hostErrorText } from "../runtime/chord.ts";
 import { configureFetch } from "../runtime/fetch.ts";
@@ -96,6 +97,7 @@ workerMain(
 							location,
 							store,
 							(fn, rootContext) => host.root(fn, rootContext),
+							await createNodePhotonImages(),
 							recorder,
 						),
 					},

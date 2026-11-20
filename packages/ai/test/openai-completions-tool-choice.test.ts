@@ -14,7 +14,8 @@ const mockState = vi.hoisted(() => ({
 					prompt_tokens: number;
 					completion_tokens: number;
 					prompt_tokens_details: { cached_tokens: number; cache_write_tokens?: number };
-					completion_tokens_details: { reasoning_tokens: number };
+					completion_tokens_details?: { reasoning_tokens: number };
+					reasoning_tokens?: number;
 				};
 		  }>
 		| undefined,
@@ -101,6 +102,26 @@ async function captureSimpleParams(
 	).result();
 
 	return (payload ?? mockState.lastParams) as CapturedParams;
+}
+
+async function firstInstructionRole(model: Model<"openai-completions">): Promise<string | undefined> {
+	let payload: unknown;
+
+	await streamSimple(
+		model,
+		{
+			systemPrompt: "Follow instructions.",
+			messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
+		},
+		{
+			apiKey: "test",
+			onPayload: (params: unknown) => {
+				payload = params;
+			},
+		},
+	).result();
+
+	return (payload as { messages?: Array<{ role?: string }> }).messages?.[0]?.role;
 }
 
 describe("openai-completions tool_choice", () => {
@@ -1150,83 +1171,44 @@ describe("openai-completions tool_choice", () => {
 		expect(writeCall).not.toHaveProperty("partialArgs");
 	});
 
-	it("uses system messages for non-OpenAI/Anthropic OpenRouter reasoning model instructions", async () => {
-		const model = getModel("openrouter", "deepseek/deepseek-v4-pro")!;
-		let payload: unknown;
-
-		await streamSimple(
-			model,
-			{
-				systemPrompt: "Follow instructions.",
-				messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
-			},
-			{
-				apiKey: "test",
-				onPayload: (params: unknown) => {
-					payload = params;
-				},
-			},
-		).result();
-
-		const params = payload as { messages?: Array<{ role?: string }> };
-		expect(params.messages?.[0]?.role).toBe("system");
-	});
-
-	it("keeps developer messages for OpenAI and Anthropic OpenRouter batch instructions", async () => {
-		for (const model of [
-			getModel("openrouter", "openai/gpt-5.2-codex"),
-			getModel("openrouter", "anthropic/claude-fable-5.1:batch"),
-		]) {
-			expect(model).toBeDefined();
-			let payload: unknown;
-
-			await streamSimple(
-				model!,
-				{
-					systemPrompt: "Follow instructions.",
-					messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
-				},
-				{
-					apiKey: "test",
-					onPayload: (params: unknown) => {
-						payload = params;
-					},
-				},
-			).result();
-
-			const params = payload as { messages?: Array<{ role?: string }> };
-			expect(params.messages?.[0]?.role).toBe("developer");
-		}
-	});
-
 	it("keeps developer messages for OpenAI reasoning model instructions", async () => {
 		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-5.5")!;
 		const model = { ...baseModel, api: "openai-completions" } as const;
-		let payload: unknown;
 
-		await streamSimple(
-			model,
-			{
-				systemPrompt: "Follow instructions.",
-				messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
-			},
-			{
-				apiKey: "test",
-				onPayload: (params: unknown) => {
-					payload = params;
-				},
-			},
-		).result();
+		expect(await firstInstructionRole(model)).toBe("developer");
+	});
 
-		const params = payload as { messages?: Array<{ role?: string }> };
-		expect(params.messages?.[0]?.role).toBe("developer");
+	it("uses system messages for reasoning model instructions on other OpenAI-compatible hosts", async () => {
+		// #10741: Groq's Qwen chat template rejects the developer role.
+		const groqQwen = getModel("groq", "qwen/qwen3.8-27b")!;
+		const customHost = { ...localOpenAICompletionsModel, id: "qwen3.8-27b", name: "Qwen3.8 27B" };
+		const openRouterModels = [
+			getModel("openrouter", "deepseek/deepseek-v4-pro")!,
+			getModel("openrouter", "openai/gpt-5.2-codex")!,
+			getModel("openrouter", "anthropic/claude-fable-5.1:batch")!,
+		];
+		const azureBaseUrl = "https://my-resource.openai.azure.com/openai/v1";
+		// The built-in model has no baseUrl; it is resolved from AZURE_* variables at runtime.
+		const azureDeepSeek = { ...getModel("azure", "deepseek-v4-pro")!, baseUrl: azureBaseUrl };
+		const azureHost = {
+			...localOpenAICompletionsModel,
+			id: "gpt-5.5",
+			name: "GPT-5.5",
+			provider: "my-azure",
+			baseUrl: azureBaseUrl,
+		};
+
+		for (const model of [groqQwen, customHost, ...openRouterModels, azureDeepSeek, azureHost]) {
+			expect(model.api).toBe("openai-completions");
+			expect(model.reasoning).toBe(true);
+			expect(await firstInstructionRole(model)).toBe("system");
+		}
 	});
 
 	it("stores OpenRouter Kimi K2.6 reasoning replay compat in built-in metadata", () => {
 		// `:free` variant delisted from the OpenRouter API; the generator override
 		// matches any `moonshotai/kimi-k2.6*` variant that is listed.
 		const model = getModel("openrouter", "moonshotai/kimi-k2.6")!;
-		expect(model.compat?.supportsDeveloperRole).toBe(false);
 		expect(model.compat?.requiresReasoningContentOnAssistantMessages).toBe(true);
 	});
 
@@ -1254,7 +1236,6 @@ describe("openai-completions tool_choice", () => {
 			const model = getModel(provider, "qwen3.7-max")!;
 			expect(model.compat?.thinkingFormat).toBe("qwen");
 			expect(model.compat?.requiresReasoningContentOnAssistantMessages).toBeUndefined();
-			expect(model.compat?.supportsDeveloperRole).toBe(false);
 			expect(model.compat?.supportsStore).toBe(false);
 		}
 	});
@@ -1767,6 +1748,52 @@ describe("openai-completions tool_choice", () => {
 		expect(response.usage.totalTokens).toBe(105);
 	});
 
+	// #12019
+	it("reads top-level reasoning_tokens when completion_tokens_details has none", async () => {
+		mockState.chunks = [
+			{
+				id: "chatcmpl-copilot-reasoning",
+				choices: [{ delta: { content: "OK" }, finish_reason: null }],
+			},
+			{
+				id: "chatcmpl-copilot-reasoning",
+				choices: [{ delta: {}, finish_reason: "stop" }],
+				usage: {
+					prompt_tokens: 10,
+					completion_tokens: 40,
+					prompt_tokens_details: { cached_tokens: 0 },
+					reasoning_tokens: 30,
+				},
+			},
+		];
+
+		const model = getModel("github-copilot", "gemini-4-argon")!;
+		const response = await streamSimple(
+			model,
+			{
+				messages: [
+					{
+						role: "user",
+						content: "Reply with exactly OK",
+						timestamp: Date.now(),
+					},
+				],
+			},
+			{ apiKey: "test" },
+		).result();
+
+		expect(response.usage.reasoning).toBe(30);
+		expect(response.usage.output).toBe(40);
+	});
+
+	// #12019
+	it("sends reasoning_effort for GitHub Copilot completions models with effort levels", async () => {
+		const model = getModel("github-copilot", "gemini-4-argon")!;
+
+		expect((await captureSimpleParams(model, "low")).reasoning_effort).toBe("low");
+		expect((await captureSimpleParams(model, "high")).reasoning_effort).toBe("high");
+	});
+
 	it("uses OpenRouter reasoning object instead of reasoning_effort", async () => {
 		const model = getModel("openrouter", "deepseek/deepseek-r1-0528")!;
 		let payload: unknown;
@@ -1876,7 +1903,6 @@ describe("openai-completions tool_choice", () => {
 
 		expect(model.compat).toMatchObject({
 			supportsStore: false,
-			supportsDeveloperRole: false,
 			supportsReasoningEffort: false,
 			maxTokensField: "max_tokens",
 			thinkingFormat: "ant-ling",

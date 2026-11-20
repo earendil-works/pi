@@ -1,19 +1,26 @@
 // Radius's HTTP adapter for Chord's session-sync remote contract.
 import type { Context } from "@p2/app/v1";
-import type {
-	JsonObject,
-	PutBatchResult,
-	RemoteListing,
-	Seq,
-	SessionChanges,
-	SessionSyncStore,
-	SyncBody,
+import {
+	type JsonObject,
+	type PutBatchResult,
+	type RemoteListing,
+	type Seq,
+	type SessionChanges,
+	type SessionSyncStore,
+	SYNC_PROTOCOL,
+	type SyncBody,
 } from "@p2/app/v1/node";
 
 /** What a Radius sync request needs. Authentication and token refresh stay outside the adapter. */
 export type RadiusSyncAccess = { readonly gateway: string; readonly serverId: string; readonly token: string };
 
 const PAGE_SIZE = 100;
+
+/** The header carrying the sync rules' version (`SYNC_PROTOCOL`) on every request; Radius reads it as 0 when absent. */
+const PROTOCOL_HEADER = "pi-sync-protocol";
+
+/** Radius's code for a write this client's protocol is too old for: the session moved under newer rules. */
+const PROTOCOL_TOO_OLD = "protocol_too_old";
 
 type ErrorBody = { error?: { message?: string; code?: string; details?: Record<string, unknown> } };
 
@@ -59,7 +66,11 @@ export class RadiusSyncRemote implements SessionSyncStore {
 				return { type: "not_head", head: details.to };
 			if ((error?.code === "next_id_regression" || error?.code === "legacy_session_history") && isSeq(details.head))
 				return { type: "not_head", head: details.head };
-			throw new Error(`Radius sync could not upload a batch: 409${error?.message ? ` ${error.message}` : ""}`);
+			throw new RadiusSyncError(
+				`Radius sync could not upload a batch: 409${error?.message ? ` ${error.message}` : ""}`,
+				409,
+				error?.code,
+			);
 		}
 		throw await failure(response, "upload a batch");
 	}
@@ -130,6 +141,7 @@ export class RadiusSyncRemote implements SessionSyncStore {
 		const url = new URL(`/v1/servers/${encodeURIComponent(access.serverId)}/sync/sessions${path}`, access.gateway);
 		const headers = new Headers(init.headers);
 		headers.set("authorization", `Bearer ${access.token}`);
+		headers.set(PROTOCOL_HEADER, String(SYNC_PROTOCOL));
 		return this.#fetch(url, {
 			...init,
 			headers,
@@ -160,34 +172,45 @@ function isSeq(value: unknown): value is Seq {
 	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
-/** A request Radius answered with an error: its HTTP status, so a caller tells a refusal from a passing failure. */
+/**
+ * A request Radius answered with an error: its HTTP status and Radius's error code, so a caller tells a refusal from a
+ * passing failure.
+ */
 export class RadiusSyncError extends Error {
 	readonly status: number;
-	constructor(message: string, status: number) {
+	readonly code: string | undefined;
+	constructor(message: string, status: number, code?: string) {
 		super(message);
 		this.name = "RadiusSyncError";
 		this.status = status;
+		this.code = code;
 	}
 }
 
 /**
  * Whether retrying `error` cannot help (Radius's session-sync contract, radius#295): a body Radius refuses (400), one
- * too large (413), or sync not allowed for this server or user (403: the `session_sync` feature off, the server not
- * theirs). Expired credentials (401) refresh on the next attempt; server errors and network failures pass.
+ * too large (413), sync not allowed for this server or user (403: the `session_sync` feature off, the server not
+ * theirs), or a session that needs a newer sync protocol than this client's (409 `protocol_too_old`: only updating p2
+ * helps). Expired credentials (401) refresh on the next attempt; server errors and network failures pass.
  */
 export function isTerminalSyncError(error: unknown): boolean {
-	return error instanceof RadiusSyncError && (error.status === 400 || error.status === 403 || error.status === 413);
+	return (
+		error instanceof RadiusSyncError &&
+		(error.status === 400 || error.status === 403 || error.status === 413 || error.code === PROTOCOL_TOO_OLD)
+	);
 }
 
 async function failure(response: Response, operation: string): Promise<RadiusSyncError> {
-	let message = "";
+	let error: ErrorBody["error"];
 	try {
-		message = ((await response.json()) as ErrorBody).error?.message ?? "";
+		error = ((await response.json()) as ErrorBody).error;
 	} catch {
 		// The response was not a Radius JSON error.
 	}
+	const message = error?.message ?? "";
 	return new RadiusSyncError(
 		`Radius sync could not ${operation}: ${response.status}${message ? ` ${message}` : ""}`,
 		response.status,
+		error?.code,
 	);
 }

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-20
+
 ### Breaking Changes
 
 - `RunEndTask` and `runEndTask` are renamed `HookTask` and `hookTask`, as `afterTools` and `onYield` hooks now ask for tasks too. Migration: rename the import in `afterRun` hooks.
@@ -21,6 +23,8 @@
 - Gates: a `beforeTool` hook may return `{ sleep: { until?, signals? } }` to park a call before it runs; every wake, every registry publication, and every open run the whole `call` phase again, so the gates installed then decide. `HookApi.now()` reads the Harness clock.
 - Hooks that start tasks: `afterTools` and `onYield` hooks may return `{ tasks }`, run as the generation's children. An `afterTools` task ends the run with `{ terminate: true }` (`AfterToolsDecision`) or answers it with a steer; `onYield` tasks decide whether an answer stands while the run's inputs stay open (`pi.live.run.yield`): once all are terminal, the first in creation order that completed with a valid `{ continue }` (`YieldDecision`) continues the run, unless a user message or a reset was queued meanwhile.
 - Examples 38-46: signals, asking a person, a tool that waits for a webhook, a tool that polls, parallel nested calls, a subagent that waits, an approval gate, a review on yield, and an `afterTools` task that ends the run.
+- `@earendil-works/pi-durable/images/fit` fits the images entering a conversation to its model's limits with any `ImageProcessor`, before they are stored, as the coding agent does: `createFitImagesExtension(processor)` is an `afterTool` hook for the results of every tool the model calls (MCP tools, code mode's `image()`), and `fitImage(bytes, mimeType, limits, processor)` and `fitImages(content, limits, processor)` fit a host's input before it is submitted. An image that cannot be prepared is left out with a note. `imageLimits(model)` (`/tools`) resolves a model's limits as `read` does. Example 47 shows both.
+- `onAbort: "keep"` on an input submission keeps it queued through `Conversation.abort()` and abort cascades, as a failed run keeps its queue under `afterFailedRun: "keep"`: the next input places it and that run answers it. For input its sender cannot take back, such as another agent's message; `Submission.abort()` still withdraws it. The default, `"withdraw"`, settles it `unanswered` with reason `aborted` as before.
 
 ### Fixed
 

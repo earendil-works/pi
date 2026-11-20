@@ -92,7 +92,10 @@ export class ToolExecutionComponent extends Container {
 		if (tool.status === "pending" && !this.calls?.length) return undefined;
 		const text = tool.output || (tool.status === "interrupted" ? "Not run: the answer was interrupted." : "");
 		return {
-			content: [...(text ? [{ type: "text" as const, text }] : []), ...tool.images],
+			content: [
+				...(text ? [{ type: "text" as const, text }] : []),
+				...tool.images.map((image) => ({ type: "image" as const, ...image })),
+			],
 			details: tool.details,
 		};
 	}
@@ -155,7 +158,7 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
-	override render(width: number): string[] {
+	override render(width: number): readonly string[] {
 		// Colors are baked into the content: rebuild after a theme swap (section 5.4).
 		if (this.themeVersion !== this.ctx.theme.version) {
 			this.themeVersion = this.ctx.theme.version;

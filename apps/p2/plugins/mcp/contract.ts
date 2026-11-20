@@ -47,6 +47,20 @@ const InstanceSchemaV2 = obj({
 	tools: arr(ToolSchema),
 });
 
+/** One running (or failed) server process or connection, as `Mcp` version 3 (6f1a96e1d) released it. */
+const InstanceSchemaV3 = obj({
+	id: str(),
+	server: str(),
+	source: oneOf(["owner", "project"]),
+	location: union([LocationSchema, nul()]),
+	runsOn: RunsOnSchema,
+	auth: opt(literal("oauth")),
+	status: oneOf(["starting", "connected", "sign-in", "failed"]),
+	error: opt(str()),
+	tools: arr(ToolSchema),
+	instructions: opt(str()),
+});
+
 /** One running (or failed) server process or connection. */
 export const InstanceSchema = obj({
 	id: str(),
@@ -64,8 +78,13 @@ export const InstanceSchema = obj({
 	tools: arr(ToolSchema),
 	/** The server's instructions from `initialize`, if it sent any; kept while it reconnects. */
 	instructions: opt(str()),
+	/** What the server offers, in a sentence, as its configuration's `description` says (absent: not configured). */
+	description: opt(str()),
 });
-/** One instance as the manager lists it: its server, where it runs, its status, error, tools and instructions. */
+/**
+ * One instance as the manager lists it: its server, where it runs, its status, error, tools, instructions and
+ * configured description.
+ */
 export type Instance = Static<typeof InstanceSchema>;
 
 /**
@@ -130,8 +149,8 @@ const Caller = { session: str(), generation: int(), incarnation: str() };
  * moves the session to any configured environment.
  */
 export const McpManager = local("p2.mcp.manager", {
-	// 3: an instance's `instructions`.
-	version: 3,
+	// 3: an instance's `instructions`; 4: its configured `description`.
+	version: 4,
 	params: {},
 	members: {
 		instances: arr(InstanceSchema),
@@ -224,23 +243,42 @@ const McpV2 = remote("p2.mcp", {
 	},
 });
 
+/** `Mcp` version 3, as 6f1a96e1d released it: instances with the server's `instructions`. */
+const McpV3 = evolve(McpV2, (e) =>
+	e.state("worker", "servers", arr(InstanceSchemaV3)).state("owner", "instances", arr(InstanceSchemaV3)),
+);
+
+/** One of a session's leases as its worker sees it: the location and the instances it uses, one per server. */
+const SessionLeaseSchema = obj({ location: LocationSchema, instances: arr(str()) });
+/** A lease of the worker's session: where, and the IDs of the instances it uses (one per server). */
+export type SessionLease = Static<typeof SessionLeaseSchema>;
+
 /**
  * MCP servers as a principal sees them: a session worker sets its locations and calls tools (its session, generation
  * and incarnation from the link), the owner sees every instance with its errors and sign-ins, restarts them and signs in
  * and out of HTTP servers. Nobody else gets one. 3: an instance's `instructions` (the server's own, from `initialize`);
- * the provider still serves 2 (`MCP_ACCEPTS`).
+ * 4: its configured `description`, and the worker's `leases` (which instances each location uses: a project override
+ * decides per lease, also for instances serving every location); the provider still serves 2 and 3 (`MCP_ACCEPTS`).
  */
-export const Mcp = evolve(McpV2, (e) =>
-	e.state("worker", "servers", arr(InstanceSchema)).state("owner", "instances", arr(InstanceSchema)),
+export const Mcp = evolve(McpV3, (e) =>
+	e
+		.state("worker", "servers", arr(InstanceSchema))
+		.addState("worker", "leases", arr(SessionLeaseSchema))
+		.state("owner", "instances", arr(InstanceSchema)),
 );
 
-/** What `Mcp` version 2's holders get: instances without `instructions`. */
+/** What `Mcp` versions 2 and 3's holders get: instances without what those versions lack. */
 export const MCP_ACCEPTS: AcceptsTable<typeof Mcp> = {
-	2: { state: { worker: { servers: withoutInstructions }, owner: { instances: withoutInstructions } } },
+	2: { state: { worker: { servers: asV2 }, owner: { instances: asV2 } } },
+	3: { state: { worker: { servers: asV3 }, owner: { instances: asV3 } } },
 };
 
-function withoutInstructions(instances: readonly Instance[]) {
-	return instances.map(({ instructions: _instructions, ...instance }) => instance);
+function asV2(instances: readonly Instance[]) {
+	return instances.map(({ instructions: _instructions, description: _description, ...instance }) => instance);
+}
+
+function asV3(instances: readonly Instance[]) {
+	return instances.map(({ description: _description, ...instance }) => instance);
 }
 
 /** The p2 page that signs the owner in to HTTP server `server` (relative: it opens on the origin the viewer uses). */

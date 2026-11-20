@@ -108,6 +108,12 @@ const EVERY_KIND: Message[] = [
 		hold: 0,
 		cause: { kind: "waiting", error: { kind: "chord", error: { code: "contract_mismatch", message: "m" } } },
 	},
+	// An admission refused the caller (slice 14 §2.4): no backoff window, the decision wakes it.
+	{
+		kind: "failed",
+		hold: 0,
+		cause: { kind: "denied", error: { kind: "chord", error: { code: "forbidden", message: "no access" } } },
+	},
 	// The wire error format in `failed` and `gone`: a plugin's error travels too.
 	{ kind: "failed", hold: 0, cause: { kind: "broken", error: { kind: "plugin", code: "config", message: "m" } } },
 	{ kind: "gone", hold: 1, error: { kind: "plugin", code: "config", message: "m", details: { at: 1 } } },
@@ -455,18 +461,18 @@ describe("the binary codec", () => {
 		expect([...binaryCodec.encode({ kind: "closed", origin: 1 })]).toEqual([14 | 0x80, 1]);
 	});
 
-	it("writes a failure's cause as one byte, 0 transient, 1 broken, 2 waiting (dependency model §2); refuses another", () => {
+	it("writes a failure's cause as one byte, 0 transient, 1 broken, 2 waiting, 3 denied (slice 14 §2.4); refuses another", () => {
 		const error = { kind: "chord", error: { code: "unavailable", message: "m" } } as const;
-		const failed = (kind: "transient" | "broken" | "waiting"): Message => ({
+		const failed = (kind: "transient" | "broken" | "waiting" | "denied"): Message => ({
 			kind: "failed",
 			hold: 0,
 			cause: { kind, error },
 		});
 		expect(
-			["transient", "broken", "waiting"].map((kind) => binaryCodec.encode(failed(kind as "waiting"))[2]),
-		).toEqual([0, 1, 2]);
+			["transient", "broken", "waiting", "denied"].map((kind) => binaryCodec.encode(failed(kind as "denied"))[2]),
+		).toEqual([0, 1, 2, 3]);
 		const unknown = binaryCodec.encode(failed("waiting"));
-		unknown[2] = 3;
+		unknown[2] = 4;
 		expect(() => binaryCodec.decode(unknown)).toThrow("an unknown failure kind");
 	});
 
@@ -602,6 +608,9 @@ describe("the text codec", () => {
 		);
 		expect(text({ kind: "failed", hold: 2, cause: { ...cause, kind: "waiting" } })).toBe(
 			'["f",2,"w",{"kind":"chord","error":{"code":"unavailable","message":"m"}}]',
+		);
+		expect(text({ kind: "failed", hold: 2, cause: { ...cause, kind: "denied" } })).toBe(
+			'["f",2,"d",{"kind":"chord","error":{"code":"unavailable","message":"m"}}]',
 		);
 		expect(() => textCodec.decode(new TextEncoder().encode('["f",2,"x",{}]'))).toThrow("an unknown failure kind");
 		expect(text({ kind: "ack" })).toBe('["a"]');

@@ -999,15 +999,19 @@ forEachCodec(() => {
 		it("inflate nothing for a member nobody listens to, nor parse it; acknowledged all the same", async () => {
 			const { peer, paddle, hold, counts } = await eventClient();
 			const seen: unknown[] = [];
-			await paddle.on(({ value }) => void seen.push(value.y), context);
+			const delivered = Promise.withResolvers<void>();
+			await paddle.on(({ value }) => {
+				seen.push(value.y);
+				delivered.resolve();
+			}, context);
 			const deflated = (y: number) =>
 				new DeflatedPart(nodeCompression.deflate(new TextEncoder().encode(JSON.stringify({ y }))));
 			peer.send({ kind: "event", events: [{ hold, member: PLAYER.events.ball!, at: 1, value: deflated(1) }] });
 			await transported();
 			expect(counts()["chord.link.inflates"]).toBeUndefined();
 			peer.send({ kind: "event", events: [{ hold, member: PLAYER.events.paddle!, at: 1, value: deflated(2) }] });
-			// The web inflate takes a few turns of its own.
-			for (let turn = 0; turn < 50 && seen.length === 0; turn++) await transported();
+			// The web inflate runs on libuv's thread pool: no number of turns is sure to cover it, so wait for the delivery.
+			await delivered.promise;
 			await transported();
 			expect(seen).toEqual([2]);
 			expect(counts()["chord.link.inflates"]).toBe(1);
@@ -1071,14 +1075,19 @@ forEachCodec(() => {
 			try {
 				const { peer, paddle, hold } = await eventClient();
 				const seen: unknown[] = [];
-				await paddle.on(({ value }) => void seen.push(value.y), context);
+				const delivered = Promise.withResolvers<void>();
+				await paddle.on(({ value }) => {
+					seen.push(value.y);
+					delivered.resolve();
+				}, context);
 				const json = new TextEncoder().encode(JSON.stringify({ y: 1 }));
 				const value = new DeflatedPart(nodeCompression.deflate(json));
 				peer.send({ kind: "event", events: [{ hold, member: PLAYER.events.paddle!, at: 1, value }] });
 				for (let turn = 0; turn < 5; turn++) await transported();
 				expect(eventAcks(peer)).toEqual([]);
 				gate.resolve();
-				for (let turn = 0; turn < 5 && seen.length === 0; turn++) await transported();
+				// The real inflate behind the gate runs on libuv's thread pool: wait for the delivery, not for turns.
+				await delivered.promise;
 				await transported();
 				expect(seen).toEqual([1]);
 				expect(eventAcks(peer)).toEqual([1]);

@@ -73,6 +73,11 @@ export class Channel {
 	#lastReceived = Date.now();
 	/** Whether a `ping` went out since the last received message. */
 	#pinged = false;
+	/** How many `ping`s it sent and how many `pong`s it received: a fence waits for the `pong` of its own `ping`. */
+	#pings = 0;
+	#pongs = 0;
+	/** The fences waiting for their `pong`, oldest first; made by the first (most links never fence). */
+	#fences: { readonly ping: number; readonly then: () => void }[] | undefined;
 	/**
 	 * Messages received while one is handled asynchronously, in order, and the index of the next to handle; `undefined`
 	 * while none waits.
@@ -159,8 +164,33 @@ export class Channel {
 		if (silent >= close) this.close();
 		else if (silent >= ping && !this.#pinged && this.#state.kind === "open") {
 			this.#pinged = true;
+			this.#pings++;
 			this.#link.send(this.#codec.encode({ kind: "ping" }));
 		}
+	}
+
+	/**
+	 * A fence (slice 14 §2.3): sends a `ping` and runs `then` when its `pong` arrived. A link is ordered and the peer
+	 * answers a `ping` after everything it handled before it, so whatever the peer sent before it saw the `ping` has
+	 * arrived here by then. Pings and pongs are counted: a liveness `pong` in transit ends no fence. Returns what
+	 * cancels it; a link that closes first runs none.
+	 */
+	fence(then: () => void): () => void {
+		const fence = { ping: ++this.#pings, then };
+		this.#fences ??= [];
+		this.#fences.push(fence);
+		this.send({ kind: "ping" });
+		return () => {
+			const at = this.#fences?.indexOf(fence) ?? -1;
+			if (at !== -1) this.#fences!.splice(at, 1);
+		};
+	}
+
+	/** A `pong` arrived: the fences of the pings up to it run, in order. */
+	#ponged(): void {
+		this.#pongs++;
+		const fences = this.#fences;
+		while (fences !== undefined && fences.length > 0 && fences[0]!.ping <= this.#pongs) fences.shift()!.then();
 	}
 
 	#receive(bytes: Uint8Array): void {
@@ -184,7 +214,8 @@ export class Channel {
 			if (message.kind === "hello") throw new Error("handshake: a second hello");
 			// Control of the link itself, never queued behind the window.
 			if (message.kind === "ping") this.#link.send(this.#codec.encode({ kind: "pong" }));
-			else if (message.kind !== "pong") {
+			else if (message.kind === "pong") this.#ponged();
+			else {
 				const handling = this.#handler.message(message);
 				if (handling !== undefined) this.#hold(handling);
 			}
@@ -259,6 +290,7 @@ export class Channel {
 		if (this.#state.kind === "closed") return;
 		this.#state = { kind: "closed" };
 		this.#held = undefined;
+		this.#fences = undefined;
 		this.#handler.closed();
 	}
 }

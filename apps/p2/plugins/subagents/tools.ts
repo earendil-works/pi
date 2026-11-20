@@ -106,7 +106,7 @@ function textOf(message: AssistantMessage | undefined): string {
 /**
  * A subagent's message as an input: the structural entry readers use, and what the model reads: the sender block, then
  * the intent and the text. `replyWith` is the tool call that answers a question (the main agent's `subagent send`, a
- * sibling's `team send`).
+ * sibling's `team send`). A Stop keeps it queued for the next input: the subagent cannot send it again.
  */
 function agentMessageInput(message: AgentMessage, replyWith: string) {
 	const label = {
@@ -121,6 +121,7 @@ function agentMessageInput(message: AgentMessage, replyWith: string) {
 			{ type: "text" as const, text: `[${label}] ${message.text}` },
 		],
 		entry: { kind: AGENT_MESSAGE_ENTRY, data: message as unknown as JsonValue },
+		onAbort: "keep" as const,
 	};
 }
 

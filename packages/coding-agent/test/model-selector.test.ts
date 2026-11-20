@@ -114,6 +114,31 @@ describe("model selector", () => {
 		selector.dispose();
 	});
 
+	it("keeps the selection when a cursor key leaves the query unchanged", async () => {
+		harness = await createHarness({
+			models: [{ id: "alpha-1" }, { id: "alpha-2" }, { id: "alpha-3" }],
+		});
+		const selector = new ModelSelectorComponent(
+			createFakeTui(),
+			undefined,
+			harness.session.modelRuntime,
+			[],
+			() => {},
+			() => {},
+		);
+
+		for (const char of "alpha") selector.handleInput(char);
+		selector.handleInput("\x1b[B");
+		selector.handleInput("\x1b[B");
+		const browsed = selectedModelId(selector);
+		selector.handleInput("\x1b[D"); // Left
+		selector.handleInput("\x1b[H"); // Home
+
+		expect(selectedModelId(selector)).toBe(browsed);
+		expect(browsed).not.toBe("alpha-1");
+		selector.dispose();
+	});
+
 	it("uses the configured save binding", async () => {
 		setKeybindings(new KeybindingsManager({ "app.models.save": "ctrl+r" }));
 		harness = await createHarness();

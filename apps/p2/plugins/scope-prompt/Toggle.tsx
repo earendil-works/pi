@@ -1,6 +1,6 @@
 // The scope prompt's button: next to the sidebar's collapse button, and in the top bar while the sidebar is not shown
 // (collapsed, or a phone's drawer), so it is always at hand. It switches pointing mode on, and off again.
-import { useOwner } from "@p2/app/v1/web";
+import { primaryChord, useOwner } from "@p2/app/v1/web";
 import { setPointing, usePointing } from "./mode.ts";
 
 /** The button, for the owner only (as the overlay is). */
@@ -16,7 +16,7 @@ function Button() {
 			className={`icon-button scope-toggle scope-ui ${pointing ? "on" : ""}`}
 			aria-pressed={pointing}
 			aria-label="Prompt anywhere"
-			title={pointing ? "Stop prompting anywhere" : "Prompt anywhere (Cmd+.)"}
+			title={pointing ? "Stop prompting anywhere" : `Prompt anywhere (${primaryChord(".")})`}
 			onClick={() => setPointing(!pointing)}
 		>
 			<PointIcon />

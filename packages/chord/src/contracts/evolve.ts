@@ -1,6 +1,7 @@
 // Evolution: `evolve(previous, (e) => e...)` appends the next version of a history with structured edits.
 
 import {
+	type AdmissionData,
 	type Contract,
 	type ContractData,
 	type ContractShape,
@@ -13,9 +14,10 @@ import {
 	LOCAL,
 	type MemberKind,
 	type MethodData,
+	type QueriesData,
 	type ShapeOf,
 } from "./contract.ts";
-import { checkMembers, eventSnapshot, keyedSnapshot, memberPath, readMethod } from "./declare.ts";
+import { admissionData, checkMembers, eventSnapshot, keyedSnapshot, memberPath, readMethod } from "./declare.ts";
 import { materialize } from "./fingerprint.ts";
 import type { Change, CurrentStep, Increment, MemberNames, MethodAt, Variants, VariantsWith } from "./history.ts";
 import type { HostKind, KindShape } from "./host-kind.ts";
@@ -90,7 +92,16 @@ interface RemoteEditor<V extends Variants, C extends Change> extends MethodEdito
 		variant: X,
 		member: M,
 	): RemoteEditor<DropEvent<V, X, M>, C>;
+	/**
+	 * Replaces the schema of the admission's value (slice 14 §2.5), or gives the contract one: the last edit of a
+	 * version. The wire fingerprint is untouched; a reload rehearses the new factory only with a value of an equal
+	 * admission schema.
+	 */
+	admission<S extends Schema>(schema: S): Edited<V, C> & { readonly "~admission"?: S };
 }
+
+/** What an editor says of its edits in the types: the variants after them and the changes they made. */
+type Edited<V extends Variants, C extends Change> = { readonly "~variants"?: V; readonly "~changes"?: C };
 
 /** Edits of a local contract: like remote ones, without a variant. */
 interface LocalEditor<V extends Variants, C extends Change> extends MethodEditor<"local", V, C> {
@@ -214,7 +225,7 @@ type Drop<V extends Variants, X, Side extends EditedSide, M extends string> = {
 /** The sides of a variant that `Put` and `Drop` edit (keyed members have their own, `PutKeyed` and `DropKeyed`). */
 type EditedSide = "state" | "methods";
 
-type Evolved<S extends ContractShape, E extends MethodEditor<S["kind"], Variants, Change>> = {
+type Evolved<S extends ContractShape, E extends Edited<Variants, Change>> = {
 	kind: S["kind"];
 	name: S["name"];
 	params: S["params"];
@@ -226,13 +237,17 @@ type Evolved<S extends ContractShape, E extends MethodEditor<S["kind"], Variants
 			changes: NonNullable<E["~changes"]>;
 		},
 	];
-};
+} & ("~admission" extends keyof E
+	? { admission: NonNullable<E["~admission"]> }
+	: S extends { readonly admission: infer A extends Schema }
+		? { admission: A }
+		: unknown);
 
 /**
  * Appends the next version (`previous.version + 1`) with the edits `edit` makes; `edit` must return the editor it was
  * given. Params and the variant set never change: a change to either is a new history base.
  */
-export function evolve<C extends Contract, E extends MethodEditor<ShapeOf<C>["kind"], Variants, Change>>(
+export function evolve<C extends Contract, E extends Edited<Variants, Change>>(
 	previous: C,
 	edit: (editor: EditorOf<C>) => E,
 ): Contract<Evolved<ShapeOf<C>, E>> {
@@ -257,6 +272,8 @@ type DraftVariant = {
 	readonly methods: Map<string, MethodData>;
 	readonly keyed: Map<string, KeyedSnapshot>;
 	readonly events: Map<string, Snapshot>;
+	/** `queries` members are carried over as they are: no edit changes one yet (slice 14, carry-over). */
+	readonly queries: ReadonlyMap<string, QueriesData>;
 };
 
 /** The next version under construction, and the remote editor. Every edit is checked as it is made. */
@@ -270,6 +287,8 @@ class Draft {
 	readonly #variants: Map<string, DraftVariant>;
 	readonly #kinds: Map<string, MemberKind>;
 	readonly #changes: Change[] = [];
+	/** The admission of the next version: the previous one's unless `admission(schema)` replaced it. */
+	#admission: AdmissionData | undefined;
 
 	constructor(data: ContractData) {
 		const current = data.versions.at(-1)!;
@@ -278,12 +297,24 @@ class Draft {
 		this.#version = current.version + 1;
 		this.path = `${data.name} v${this.#version}`;
 		this.#variants = new Map(
-			[...current.variants].map(([name, { state, methods, keyed, events }]) => [
+			[...current.variants].map(([name, { state, methods, keyed, events, queries }]) => [
 				name,
-				{ state: new Map(state), methods: new Map(methods), keyed: new Map(keyed), events: new Map(events) },
+				{
+					state: new Map(state),
+					methods: new Map(methods),
+					keyed: new Map(keyed),
+					events: new Map(events),
+					queries,
+				},
 			]),
 		);
 		this.#kinds = new Map(data.kinds);
+		this.#admission = data.admission;
+	}
+
+	admission(schema: Schema): object {
+		this.#admission = admissionData(schema, `${this.path}.admission`);
+		return this.editor;
 	}
 
 	state(variant: string, member: string, schema: Schema): object {
@@ -374,7 +405,7 @@ class Draft {
 	next(): ContractData {
 		const { kind, params, versions } = this.#data;
 		const version = materialize(kind, params, this.#version, this.#variants, this.#changes);
-		return { ...this.#data, versions: [...versions, version], kinds: this.#kinds };
+		return { ...this.#data, versions: [...versions, version], kinds: this.#kinds, admission: this.#admission };
 	}
 
 	#putState(variant: string, member: string, schema: Schema): object {
@@ -426,8 +457,8 @@ class Draft {
 	}
 
 	#refuseDeclared(variant: string, member: string, kind: MemberKind): void {
-		const { state, methods, keyed, events } = this.#variant(variant);
-		if (state.has(member) || methods.has(member) || keyed.has(member) || events.has(member)) {
+		const { state, methods, keyed, events, queries } = this.#variant(variant);
+		if (state.has(member) || methods.has(member) || keyed.has(member) || events.has(member) || queries.has(member)) {
 			throw new Error(`${this.#path(variant, member, kind)}: already declared`);
 		}
 	}

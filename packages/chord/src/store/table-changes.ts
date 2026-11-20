@@ -4,8 +4,10 @@
 
 import type { Context } from "../context/index.ts";
 import { invalid } from "../data/internal.ts";
+import type { SqliteValue } from "../sqlite/index.ts";
 import { applySet, type EvaluatedRow } from "./evaluate.ts";
 import { compileSet, compileWhere, type SetNode } from "./expression.ts";
+import type { Change } from "./skip.ts";
 import type { StagedWrite } from "./step.ts";
 import type { TableHandle } from "./table-handle.ts";
 import {
@@ -32,6 +34,8 @@ export class TableChanges {
 	readonly handle: TableHandle;
 	readonly #staged: StagedWrite[];
 	readonly #byKey = new Map<string, KeyWrite[]>();
+	/** The columns each bulk write assigned (`undefined`: a `deleteWhere`), for `changes`. */
+	readonly #bulks: (readonly string[] | undefined)[] = [];
 	/** An `updateWhere` or `deleteWhere` was staged: `get` is refused from then on (W10). */
 	#bulk = false;
 
@@ -88,6 +92,7 @@ export class TableChanges {
 		this.#staged.push(
 			stageUpdateWhere(statement, sql.table, condition, compiled, recordedVersions(compiled, versions)),
 		);
+		this.#bulks.push(Object.keys(compiled));
 		this.#bulk = true;
 	}
 
@@ -100,6 +105,7 @@ export class TableChanges {
 			"deleteWhere",
 		);
 		this.#staged.push(stageDeleteWhere(sql.deleteWhere(condition), sql.table, condition));
+		this.#bulks.push(undefined);
 		this.#bulk = true;
 	}
 
@@ -134,6 +140,26 @@ export class TableChanges {
 			if (row !== undefined && write.kind === "update") row = applySet(write.set, row, definition.name);
 		}
 		return row === undefined ? undefined : definition.rows.addressed(row);
+	}
+
+	/**
+	 * Its writes as the skip test of the store's reads takes them (slice 14 §3.3). Built when a commit step found a
+	 * read over the table, from what the overlay keeps anyway: a table nothing reads costs its writes nothing more.
+	 */
+	changes(): Change[] {
+		const { definition, sql } = this.handle;
+		const table = sql.table;
+		const changes: Change[] = this.#bulks.map((assigned) => ({ table, kind: "bulk", assigned }));
+		for (const [id, writes] of this.#byKey) {
+			// A key's identity is the JSON of its values in key order (`EncodedKey.id`).
+			const values = JSON.parse(id) as SqliteValue[];
+			const key = Object.fromEntries(definition.key.map((name, index) => [name, values[index]!]));
+			for (const write of writes) {
+				const assigned = write.kind === "update" ? Object.keys(write.set) : undefined;
+				changes.push({ table, kind: write.kind, key, assigned });
+			}
+		}
+		return changes;
 	}
 
 	#set(set: unknown, what: string): SetNode {

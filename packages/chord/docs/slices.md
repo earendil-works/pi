@@ -62,6 +62,20 @@ slice spec's section citations are for orientation, not a reading limit (owner, 
   `host/adapted.ts`, the `event` message and `ack.events` (both codecs), event windows and tickets in
   `remote/provider.ts`, `useEvents`, `TuiScope.on`; `callWindow` (none announced on trusted links) and relayed calls
   queued per upstream window; example 67; `test/bench/events.ts`.
+- **Slice 14, first part** (built 2026-11-15, `slice-14.md`; committed `92e1db6ca`): column sets (`defineColumns`,
+  `exposes`), `exists`, `existsNode`, the one-to-one `join`, conditions as data (`compile`, `whereNode`) in
+  `src/store/` (`column-set.ts`, `expression.ts`, `query.ts`, `read-plan.ts`); the store's reads with the skip test
+  and the keyed probe (`read.ts`, `reads.ts`, `skip.ts`, `open-query.ts`, `page.ts`), `self.query` rebuilt over
+  them; the `queries` member kind and `self.queries`, `self.liveQuery`, `self.count`, `page` (`host/named-query.ts`,
+  `host/query-reader.ts`, `host/read-declarations.ts`); lists over one source, `self.list` (`host/list.ts`,
+  `host/tiling.ts`; `state/framed.ts`); examples 70, 71 and 72; `test/bench/slice-14.ts`. The rest of the slice is under "Carry-over".
+- **Slice 14, second part** (built 2026-11-15, `slice-14.md` §2, §6; not committed): admission with a typed value
+  (`admission` in a remote contract, `host.serve(Type, factory, { admit })`, `host/admission.ts`: the decision an
+  attempt parks on, hands its factory and follows; the seal on a change in `host/object.ts`; staging's rehearsal by
+  admission fingerprint), the failure kind `denied` in both codecs, the binding fence per acknowledgement
+  (`remote/hold.ts`), a route's admission (`host/route-admission.ts`, the gated path and its fence in
+  `remote/path.ts`, `Channel.fence`, `createWorkers`' `admit`), `deleteHostData(address, ctx, { plugin })`; example
+  69.
 - **Chord's shared code** (upstream pi): `src/watch.ts` (`Watch`, `NativeWatch`, `WatchHandle`, `WatchEnd`,
   `NativeWatchable`), Delta (`track`, `diffRevisions`, `applyImmutable`, encoders, `PendingOps`, `appendText`),
   context, JSON, output, SQLite drivers.
@@ -92,6 +106,7 @@ telemetry last, since it instruments the app kit too; 2026-11-01: the plugin mod
 | 13 | **The app kit** | `chord/app`: `startServer`, `startWorker`, layout, worker kinds, owner link, deny by default, sign-ins, CLI tokens, storage, the files plugin, export per address, plugin roots and "apply changes", base code as API, bootstrap and a start-data facet (`slice-13.md`) |
 | 11 | **Web and TUI** | `chord/web` (page host), `chord/react` (React hooks), `chord/tui` with `chord/tui/launcher` (sandbox, launcher) and `chord/surfaces` (their server side), from p2's code |
 | 9 | **Telemetry** | spans, events, metrics across hosts |
+| 14 | **Admission, named live queries, lists, joins by key** | admission with a typed value, route admission, named queries read live by any object on the store's host with a skip test and a keyed probe, counts, lists, column sets with `exists` and a one-to-one join, conditions as data (`slice-14.md`; built in parts, see "What exists" and "Carry-over") |
 
 The playground (`apps/chord-playground`) moves to the new code once slice 4 exists. Round-3 cuts (C3-C16) and
 carry-over entries are decided in the slice that first needs them.
@@ -158,6 +173,14 @@ pattern, no code. Decided cuts are noted where they apply.
 | 11 | `NativeWatchable`, `self.writable` | 8 |
 | 11 | Durable's views as sources (`self.follow` over Durable's `observeXXX`) | 6b |
 | 11 | live queries (`self.query(table, q, limit)`: run before live, re-run per touching commit, diffed) | after 11 |
+| 10 | column sets (`defineColumns`, `exposes`), `exists`, `existsNode`, the one-to-one `join`, conditions as data (`compile`, `whereNode`), the store's reads, the skip test and the probe | 14 |
+| 11 | named queries (`queries`, `self.queries`), `self.liveQuery` (arguments that follow a value), `self.count`, `page` | 14 |
+| 11 | lists over one named query (`self.list`: pages between bookmarks, `more`, splits and merges, overflow, bookmarks across a reload) | 14 |
+| 11 | lists over several named queries merged into one | 14 (carry-over) |
+| 6 | admission with a typed value (`admission`, `admit`, the watch table, staging's rehearsal, no jobs in an admitted object) | 14 |
+| 3 | a route's admission (`RouteOptions.admit`, one decision per principal and address, the fence after a denial, `createWorkers`' `admit`) | 14 |
+| 10 | `deleteHostData(address, ctx, { plugin })` | 14 |
+| 22 | the failure kind `denied`; binding fences per acknowledgement | 14 |
 | 11 | events: the emit counter, the event flush after published state, eligibility per binding, listeners outside the fence, re-exposure, `self.events` | events |
 | 12 | `self.derive`, failures per member, lazy when unwatched, `mapShared` | 1 |
 | 12 | container-width benchmark (R24) | 9 |
@@ -178,6 +201,8 @@ pattern, no code. Decided cuts are noted where they apply.
 | 22 | trace carriers (R5) | 9 |
 | 22 | the `event` message, `ack.events`, both codecs, part limits and compression for event values | events |
 | 23 | `useEvents` (`chord/react`), `TuiScope.on` | events |
+| 23 | `useVariant` (`chord/react`), `TuiScope.variant`: a reference read in one variant (decision "C15 stands; the UI bindings follow the variant") | after 14 (2026-11-15) |
+| 23 | workers: a worker's exit published after its link's work ended, its incarnation in `WorkerState`; a route's `opened(incarnation)` (§3) | after 14 (2026-11-15) |
 | 27 | event edits (`event`, `addEvent`, `removeEvent`), `accepts.events`, one mapping per emit per older version (`event_mapping_failed`) | events |
 | 23 | HTTP (routes, wraps, responses as descriptions, request bodies, plugin sockets), workers; channels and chunked transfers stay owner patterns until a second user | 10 |
 | 23 | the app kit: `startServer`, `startWorker`, start-data objects, deny by default, sign-ins (`SignIns`), owner link and token file, device pairing, files (with chunked transfers), export and import per address, plugin roots and "apply changes", optional users, invite and ephemeral-login plugins | 13 |
@@ -232,6 +257,16 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
   "retire a provider side's record only once its event tickets drained"). Whether an ended attempt should cut what it
   reaches (its object, its links' records) is undecided. (Events build reviews.)
 
+### Workers: what the exit order left (decision "A worker's exit is published after its link's work ended")
+
+- **A call an exited worker made that the server relayed** to another host is cancelled there when the cancel
+  arrives: its transaction on that host may commit after the server published the exit. Waiting for it needs the
+  other host's answer; build it when a case reports through a relay.
+- **p2 keeps its hand-written generation checks** (its principal's `generation`, the checks in its report methods)
+  until it is ported: it passes `store` to `createWorkers` now, so they are redundant, not wrong.
+- **`useVariant`'s snapshot** (the narrowed reference, so two `live` states in different variants differ to React)
+  is tested through the page (a variant change while mounted), not with a forced coalesced render.
+
 ### Later: reload (when a case needs it)
 
 - **`rebuild` of tables** (key and column-type changes): `evolveTable` has no edit for them; build one only when a
@@ -242,11 +277,84 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
   build read (`BuiltFacet.inputs` already holds their hashes), as `base` now does. (p3 step 0a,
   `apps/p3/docs/step-0a/book.md`.)
 
+### Slice 14: what its two parts left (spec `slice-14.md`; the builds' reports, 2026-11-15)
+
+Not built yet:
+
+- **Lists over several sources** (§4 "Sources"; a third of the list tests; §9 item 3's merged list). The owner
+  allowed it to wait; until then a sparse person's drivers are separate reads (`test/bench/slice-14.ts` measures
+  them so).
+- Examples `73-sidebar.ts`, `74-access.ts` and `75-reload.ts` (§9 items 1, 7, 9, 10, 11); the page, server and
+  worker reload suite's cases of tests 17 to 22 (the kernel-level reload tests exist: named queries, column sets and
+  lists in `test/host/query-reader.test.ts`, `named-query.test.ts`, `list.test.ts` and `tiling.test.ts`; admission
+  and route admission in `test/host/admission.test.ts` and `route-admission.test.ts`); a list's re-hold within
+  `linger` over a link (§9 item 8); "a server restart with a new `admit` uses it" (test 21's integration case).
+
+Left by the second part (admission, route admission, `deleteHostData({ plugin })`; built 2026-11-15):
+
+- **A failed admitted object follows a denial and another allowed value, nothing else:** a source that fails
+  while the object is failed changes nothing, and an object whose admission itself broke (a value that is no
+  decision, an `admit` that threw) follows nothing until `ref.retry()` or a reload.
+- **An ended admission source** (revoked, its host closed) breaks the attempt as an ended dependency does
+  (`broken`, design §6), not `failed { waiting }` as §2.2's table words it; it never comes back, so nothing would
+  wake a waiting attempt. Tested through the dependency check, not by an admission test of its own.
+- **`AdmitSelf` has no type parameter** (the spec writes `AdmitSelf<P>`): nothing of it depends on the principal
+  type.
+- **Two persons cannot widen a read by params** (§10 test 13) is still not written: it wants the worked example's
+  `PersonAccess` (the condition from the admission's sources), which is p3's.
+- Bump `PROTOCOL_VERSION` for `denied` with p3's first release.
+
+Left by the first part itself:
+
+- **A list's bookmarks are kept by its object** (`ChordObject.listMemory`), not in an in-memory document as §4
+  says: the same life (across attempts, gone with the object), no document machinery in a read's adoption.
+- **Test files:** `store/read.ts`, `store/open-query.ts` and `store/page.ts` have no test file of their own; they
+  are tested in `test/store/reads.test.ts`, `test/store/skip.test.ts` and `test/store/read-plan.test.ts`.
+  `host/query-reader.ts` is tested through live queries and lists (`test/host/query-reader.test.ts`,
+  `list.test.ts`, `named-query.test.ts`); `state/framed.ts` and `host/read-declarations.ts` have their own since
+  (`test/state/framed.test.ts`, `test/host/read-declarations.test.ts`).
+- **`self.count` has no opt-in** (round 4's decision: the `counts` list is dropped; `slice-14.md` §3.1). Any reader
+  may count any named query; the guide says what to count.
+- **A reader's arguments from a followed source or a native** are not available when it opens: readers open before
+  the natives (a waiting attempt holds none), so their argument derives read references, registries, writables and
+  earlier reads only; one that reads something else fails the attempt `broken` with that rule. The case: a list
+  whose arguments come from `self.follow`.
+- **A removed provider's readers keep its named query** (its mapping, so its code) with their last rows until they
+  end or the provider is served again: a run a commit made before the removal may still need decoding. A restarted
+  provider's old queries are collected once its readers read the successor's (tested).
+- **An `exists` inside a condition passed as data** (`compile`, then `whereNode` or `existsNode`) carries no column
+  types: its operands are checked against the table bound now, not against the set the condition was written for
+  (a typed `exists(Set, …)` is). Conditions are built by server code; a node has no types to carry.
+- **`store/reads.ts` holds three things** (the index of reads, the set bindings with held tables and their
+  watchers, `ReadRefresh`): to split into `reads.ts`, `set-bindings.ts` and `read-refresh.ts` with the next change
+  there. Not done in code review round 2: `store.reads` is the name the reviews' reproductions use.
+- **Small leftovers of code review round 1:** `QueryPage` (contracts) and `Page` (store) are one shape with two
+  names; a list decodes every loaded row's identity on each page adoption (0.6 ms a message at 20 pages); a list's
+  method is `more` beside the values `more` and `moreAfter`, as the spec has it.
+- **Reads are not shared between readers** (§3.1's last bullet; test 3): two readers of one query with equal
+  arguments are two reads. The case that brings it back: many readers of identical arguments measured in a commit
+  step.
+- **A failed migration's held reads** keep their rows and stay held; §5 asks for `failed unavailable` ("table X is
+  not ready") with the rows as last values. The case: a screen that must say why it is stale.
+- **Staging knows a recorded handle as a table, a named query of the object, or anything else.** A table given to
+  a reader and a named query given to `self.query` are refused in staging; a reader given a reference's member
+  that is no named query (a state member, a method) is found at activation, when the reference is bound: the
+  recorded reference does not carry its contract's member kinds. The case: a wrong member name in a reload that
+  should keep the old code.
+- **`evolve` and `accepts` edits for named queries**: the first released contract with a `queries` member that
+  changes. A `queries` member is carried over unchanged by `evolve` today.
+- **A partner's row type in `map`** is `{ [column: string]: unknown }`: typed from the joined set when a second
+  user asks.
+- `self.list`'s carry-over of the spec's §12 (opening at a bookmark, `more` towards the start, a live `moreAfter`,
+  sources that follow a value, offsets), a probe for counts, an in-memory evaluator before the probe, a left join,
+  aggregates, `matches`.
+
 ### Later: live queries (when a case needs it)
 
-- **Incremental maintenance of a live query's result** (decision "Live queries over an object's own tables"): an
-  ordered, limited result kept from row-level changes in memory, re-running only when a removal empties the window
-  or a bulk write hides which rows changed; today every touching commit re-runs the query. (Live queries build.)
+- **Maintaining a page from the written rows** (decision "Live queries over an object's own tables"; slice 14): an
+  ordered, limited result kept from row-level changes in memory instead of running the read again. Slice 14 built
+  the skip test (a commit that cannot change a read does not run it); a read it cannot rule out still runs whole.
+  The case: §9's "a touch of a session every open list shows", if judged too high.
 
 ### After slice 11
 

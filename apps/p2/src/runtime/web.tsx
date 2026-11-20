@@ -460,9 +460,12 @@ export function openPage(page: string): void {
 	void getNavigation().closeThenPush(() => ({ ...HOME, page }));
 }
 
-/** The new-session screen (`NEW_SESSION`). As opening a conversation, it closes the phone drawer and modal layers. */
-export function openNewSession(): void {
-	void getNavigation().closeThenPush(() => NEW_SESSION);
+/**
+ * The new-session screen (`NEW_SESSION`), with `layers` over it (the directory picker). As opening a conversation, it
+ * closes the phone drawer and modal layers.
+ */
+export function openNewSession(layers: readonly Layer[] = []): void {
+	void getNavigation().closeThenPush(() => ({ ...NEW_SESSION, layers: [...layers] }));
 }
 
 /** Named plugin modal: locators are small serialized values, not component state. */

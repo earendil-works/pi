@@ -3,10 +3,13 @@
 import AppKit
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemValidation {
+	/// The light/dark preference every window and page follows.
+	private(set) var appearance = Appearance.load()
 	private(set) var server: ServerController!
 	private(set) var directory: BrainDirectory!
 	private(set) var radius: RadiusAccount!
+	private let updater = Updater()
 	private var statusItem: NSStatusItem!
 	private var windows: [PiWindowController] = []
 	private var found: [FoundServer] = []
@@ -21,6 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 	private var signals: [DispatchSourceSignal] = []
 
 	func applicationDidFinishLaunching(_ notification: Notification) {
+		// Before the first window, so nothing paints in the other appearance first.
+		appearance.apply()
 		NSApp.mainMenu = MainMenu.build()
 		NotificationCenter.default.addObserver(forName: BrainDirectory.changed, object: nil, queue: .main) { notification in
 			MainActor.assumeIsolated {
@@ -152,6 +157,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		if let id = current ?? directory.local?.id { openWindow(id, path: "/") }
 	}
 
+	// MARK: - Appearance
+
+	/// Makes `preference` the app's light/dark preference: stores it, applies it (cross-fading the native views), and
+	/// tells every page.
+	func setAppearance(_ preference: Appearance) {
+		appearance = preference
+		for window in windows { window.crossFadeNativeViews() }
+		preference.apply()
+		preference.save()
+		for window in windows { window.appearanceChanged(preference) }
+	}
+
+	/// View > Appearance: the item's preference.
+	@objc func chooseAppearance(_ sender: NSMenuItem) {
+		if let preference = (sender.representedObject as? String).flatMap(Appearance.init) { setAppearance(preference) }
+	}
+
+	func validateMenuItem(_ item: NSMenuItem) -> Bool {
+		if item.action == #selector(chooseAppearance) {
+			item.state = item.representedObject as? String == appearance.rawValue ? .on : .off
+		}
+		if item.action == #selector(checkForUpdates) { return updater.available }
+		return true
+	}
+
 	private func serverChanged() {
 		statusItem.button?.appearsDisabled = server.phase != .running
 		directory.rebuild()
@@ -183,6 +213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		if config.source == .own, FileManager.default.fileExists(atPath: server.logFile.path) {
 			menu.addItem(item("Show Server Log", #selector(showLog)))
 		}
+		if updater.available { menu.addItem(item("Check for Updates…", #selector(checkForUpdates))) }
 		menu.addItem(.separator())
 		if directory.fixture {
 			menu.addItem(disabled("Radius: brains from P2MAC_BRAINS"))
@@ -214,12 +245,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 			menu.addItem(entry)
 		}
 		menu.addItem(.separator())
-		let ownTitle = config.checkout.map { "Run Pi from \(abbreviate($0.path))" } ?? "Run Pi from a Checkout"
+		let ownTitle = config.runsBundled
+			? "Run Pi from This App"
+			: config.checkout.map { "Run Pi from \(abbreviate($0.path))" } ?? "Run Pi from a Checkout"
 		let own = item(ownTitle, #selector(useOwn))
 		own.state = config.source == .own ? .on : .off
 		own.isEnabled = config.checkout != nil
 		menu.addItem(own)
 		menu.addItem(item("Choose p2 Checkout…", #selector(chooseCheckout)))
+		if ServerConfig.bundled != nil, config.checkout != nil, !config.runsBundled {
+			menu.addItem(item("Use This App's Pi Instead of the Checkout", #selector(forgetCheckout)))
+		}
 	}
 
 	private func statusLine() -> String {
@@ -271,6 +307,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		NSWorkspace.shared.open(
 			[server.logFile], withApplicationAt: URL(fileURLWithPath: "/System/Applications/Utilities/Console.app"),
 			configuration: NSWorkspace.OpenConfiguration())
+	}
+
+	@objc func checkForUpdates(_ sender: Any?) { updater.checkForUpdates() }
+
+	@objc private func forgetCheckout() {
+		ServerConfig.forgetCheckout()
+		ServerConfig.saveOwn()
+		use(.own())
 	}
 
 	@objc private func chooseCheckout() {

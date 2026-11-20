@@ -27,6 +27,10 @@ type NotesProvider = Implementation<typeof Notes>; // { variant: "editor"; membe
   `clear(context)`) and `events` (schemas of the JSON values the object emits, decision "Events: fire-and-forget
   members"). `local(name, { version, params, members })`: one flat map, where a schema is state, `method(...)` a
   method, `keyed(schema)` a keyed member and `event(schema)` an event member.
+- `admission: schema` (remote only, optional; slice 14): the JSON value the type's admission hands its factory about
+  a caller (`AdmittedOf<C>`; JSON only, no `bytes()`). Never part of the fingerprint and never validated; it has a
+  fingerprint of its own (`contractData(contract).admission`), which a reload's staging compares. `evolve`'s
+  `admission(schema)` replaces it, as the last edit of a version.
 - `hostAddress(params) => Address` (remote only, required; a declaration error without it): the address of the host that serves the object for these
   params (`host/`'s routing table). The caller computes it and sends it with its hold, so a relay routes by the address
   alone. It is not part of the normal form or the fingerprint and `evolve` carries it.
@@ -44,6 +48,10 @@ type NotesProvider = Implementation<typeof Notes>; // { variant: "editor"; membe
 - `evolve(previous, (e) => e...)`: the next version from structured edits (`state`, `addState`, `removeState`, `args`,
   `result`, `method`, `addMethod`, `removeMethod`, `keyed`, `addKeyed`, `removeKeyed`, `event`, `addEvent`,
   `removeEvent`; local ones without the variant); it must return the editor it was given.
+- `memberNames(contract, variant)`: the names of the state members, methods and event members of one variant of a
+  contract's current version, in the order declared (`{ state, methods, events }`; a local contract's without the
+  variant, and without its keyed and `queries` members): for an app's helper that fills a view's implementation from
+  a store's reference. An unknown variant throws.
 - Types: `Contract`, `Implementation<C, X>` (what a factory returns: for `local` a `Watchable` per state member, an
   `EventMember` per event member (an `EventSource` of its own or a reference's member) and a function per method,
   `(args, context)` or `(context)` without arguments; for `remote` one variant, `{ variant,
@@ -51,6 +59,10 @@ type NotesProvider = Implementation<typeof Notes>; // { variant: "editor"; membe
   `HostKind`, `Address<K>`, `KindShape` and `ParamsOfKind<K>`; for events `EventMember<T>` (`on(listener, ctx)`, what
   references expose), `EventSource<T>` (adds `emit`, what `self.events<T>()` returns), `EventSubscription` (`stop`) and
   `EventDeclaration` (the local marker's type).
+- The types a contract's inferred type holds are all exported, so a package that emits declarations for its contracts
+  names them through this entry point: the schema types (`StringSchema`, …, `LiteralsSchema` for `oneOf(...)`), the
+  markers' (`Method`, `KeyedMember`, `QueriesMember`, `EventDeclaration`) and `HostKeyed` (a keyed member with a host
+  kind).
 
 Rules:
 

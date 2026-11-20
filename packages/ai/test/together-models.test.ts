@@ -24,7 +24,7 @@ describe("Together models", () => {
 		expect(model.thinkingLevelMap).toEqual({ minimal: null, low: null, medium: null });
 		expect(model.input).toEqual(["text", "image"]);
 		expect(model.contextWindow).toBe(1048576);
-		expect(model.maxTokens).toBe(131072);
+		expect(model.maxTokens).toBe(1048576);
 		expect(model.cost).toEqual({
 			input: 3,
 			output: 15,
@@ -33,7 +33,6 @@ describe("Together models", () => {
 		});
 		expect(model.compat).toEqual({
 			supportsStore: false,
-			supportsDeveloperRole: false,
 			supportsReasoningEffort: false,
 			maxTokensField: "max_tokens",
 			thinkingFormat: "together",

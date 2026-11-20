@@ -40,8 +40,13 @@ export function fingerprintOf(normal: JsonValue): string {
  * kind) or `{ event }` (slice 6a §12, decision "Events: fire-and-forget members": a node of its own per kind, so
  * contracts without keyed or event members keep their fingerprints and `NORMAL_FORM_VERSION` stays).
  */
-function variantNormal({ state, methods, keyed, events }: VariantData): JsonValue {
+function variantNormal({ state, methods, keyed, events, queries }: VariantData): JsonValue {
 	return sortedDict([
+		// A `queries` member's node is its own (slice 14): contracts without one keep their fingerprints.
+		...[...queries].map(([member, { item, args }]) => {
+			const named = sortedDict([...args].map(([query, schema]) => [query, schema.normal] as const));
+			return [member, { queries: item.normal, args: named }] as const;
+		}),
 		...[...state].map(([member, schema]) => [member, { state: schema.normal }] as const),
 		...[...events].map(([member, schema]) => [member, { event: schema.normal }] as const),
 		// A host-keyed member's kind joins its node: string-keyed members keep their fingerprints.

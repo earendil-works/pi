@@ -3,6 +3,7 @@
 // `/tui/launcher` and `/surfaces`'s `tuiSurface`.
 
 export type { PageState } from "../surfaces/page-state.ts";
+export type { InVariant, VariantOf, VariantRef } from "../surfaces/variant.ts";
 export type { Bridge, BridgeRequest, BridgeStart, LauncherMessage, SandboxMessage } from "./bridge.ts";
 export {
 	type AttachedFile,

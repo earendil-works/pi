@@ -236,6 +236,7 @@ self.register(SendRouters, {
 | `chat-content` | `plugins/chat/web.tsx:1133` | wrapper (gets `children`) | artifacts (card contexts, the sent-file viewer, the artifacts side panel) |
 | `chat-attribution` | `plugins/chat/web.tsx:1134` | wrapper | conversations |
 | `sidebar-actions:*` | `plugins/sessions/web.tsx` (`SlotList`) | list: icon buttons before the theme switch | settings |
+| `sidebar-start:*` | `plugins/sessions/web.tsx` (`SlotList`) | list: rows (list items) before "New session" | familiar |
 | `envs-actions:*` | `plugins/envs/EnvsPanel.tsx:524` (`SlotList`) | list | ports |
 | `workspace-terminal` | `src/web/Workspace.tsx:730` | single | terminals |
 | `workbench` | `src/web/AppLayout.tsx` | wrapper (gets the `main` slot as `children`) | views |

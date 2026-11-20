@@ -30,7 +30,7 @@ export {
 	type SpaceSummary,
 } from "./files.ts";
 export { copyFiles } from "./files-copy.ts";
-export { AppInfo, WorkerInfo } from "./info.ts";
+export { AppInfo, appInfoFacet, WorkerInfo, workerInfoFacet } from "./info.ts";
 export { inviteFacet } from "./invite.ts";
 export { privateDirectory, privateStore } from "./layout.ts";
 export { SIGN_IN_COOKIE, type SignInInfo, type SignInKind, SignIns } from "./sign-ins.ts";

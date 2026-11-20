@@ -11,8 +11,10 @@ import type { ChordError } from "../../src/data/index.ts";
 import { createHost, defineFacet, type FacetHost, type HostError, type StoreSelf } from "../../src/host/index.ts";
 import { eq } from "../../src/store/expression.ts";
 import { json } from "../../src/store/json-column.ts";
-import { LiveQuery, QueryRefresh } from "../../src/store/live-query.ts";
+import { LiveQuery } from "../../src/store/live-query.ts";
 import { query } from "../../src/store/query.ts";
+import type { Read } from "../../src/store/read.ts";
+import { ReadRefresh, Reads } from "../../src/store/reads.ts";
 import type { Step } from "../../src/store/step.ts";
 import type { ChordStore } from "../../src/store/store.ts";
 import { defineTable } from "../../src/store/table.ts";
@@ -210,9 +212,10 @@ describe("publication", () => {
 		await b.put({ id: 1, text: "a" }, counting);
 		const touching = [statements() - before[0]!, runs() - before[1]!];
 		await delivered();
-		// The same one-row put: the touching commit costs one query, one statement more.
+		// The same one-row put: the touching commit costs one query and two statements more (slice 14 §3.3: a `put`
+		// of a row not in the window asks the keyed probe first, and it finds the row).
 		expect(other[1]).toBe(0);
-		expect(touching).toEqual([other[0]! + 1, 1]);
+		expect(touching).toEqual([other[0]! + 2, 1]);
 		expect(calls).toHaveLength(1);
 		watch.stop();
 		await host.close(context);
@@ -312,7 +315,7 @@ describe("failure", () => {
 				],
 			],
 		});
-		expect(errors.map((error) => [error.kind, "table" in error ? error.table : ""])).toEqual([
+		expect(errors.map((error) => [error.kind, "query" in error ? error.query : ""])).toEqual([
 			["query_failed", "items"],
 		]);
 		// The object stays live: only the member failed.
@@ -340,15 +343,21 @@ describe("a refresh applied again", () => {
 	it("adopts its last application's runs only: a grouped commit that rolled back applies again alone", async () => {
 		const adopted: unknown[] = [];
 		let runs = 0;
-		// Stubs: the refresh only calls a query's rerun and adopt, and hands the step through.
+		// Stubs: the refresh takes the reads over the written table from the index, runs and adopts them, and hands the
+		// step through. A read without a result is never skipped.
 		const stub = {
-			rerun: async () => ({ kind: "rows", rows: ++runs }),
+			plan: { uses: [{ table: "t" }] },
+			latest: () => undefined,
+			run: async () => ({ kind: "count", count: ++runs }),
+			ran: () => {},
 			adopt: (run: unknown) => void adopted.push(run),
-		} as unknown as LiveQuery;
-		const refresh = new QueryRefresh([stub], context);
+		} as unknown as Read;
+		const reads = new Reads();
+		reads.add(stub);
+		const refresh = new ReadRefresh(reads, ["t"], () => [{ table: "t", kind: "bulk", assigned: undefined }], context);
 		await refresh.write.apply({} as Step);
 		await refresh.write.apply({} as Step);
 		refresh.adopt();
-		expect(adopted).toEqual([{ kind: "rows", rows: 2 }]);
+		expect(adopted).toEqual([{ kind: "count", count: 2 }]);
 	});
 });

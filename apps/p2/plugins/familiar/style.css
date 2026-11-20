@@ -1,35 +1,5 @@
-/* The Familiar's entry: the Pi logo at the start of the sidebar header, as a button a control wide. The logo stays where
-   the header puts it (the box reaches past it by half the difference), and the session's working spinner or unread
-   dot sits on the logo's top end corner. */
-.familiar-entry {
-	position: relative;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: var(--control);
-	height: var(--control);
-	margin-inline-start: calc((24px - var(--control)) / 2);
-	border-radius: var(--radius);
-}
-.familiar-entry.active,
-.familiar-entry:active {
-	background: var(--hover);
-}
-@media (hover: hover) {
-	.familiar-entry:hover {
-		background: var(--hover);
-	}
-}
-.familiar-entry > .run-mark,
-.familiar-entry > .unread-dot {
-	position: absolute;
-	top: var(--s1);
-	right: var(--s1);
-}
-@media (pointer: coarse) {
-	.familiar-entry {
-		width: var(--row);
-		height: var(--row);
-		margin-inline-start: calc((24px - var(--row)) / 2);
-	}
+/* The Familiar's row in the sidebar: the Pi logo as its icon, in the marker column's size. */
+.nav-marker > .nav-icon > .pi-logo {
+	width: var(--nav-icon);
+	height: var(--nav-icon);
 }

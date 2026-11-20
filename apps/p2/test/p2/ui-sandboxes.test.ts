@@ -7,7 +7,7 @@ import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Envs } from "../../plugins/envs/contract.ts";
 import type { EnvConfig } from "../../plugins/envs/schema.ts";
 import { Catalog } from "../../plugins/sessions/contract.ts";
-import { Browser, browserTests } from "./browser.ts";
+import { Browser, browserTests, COMPOSER } from "./browser.ts";
 import { type Fixture, startFixture } from "./helpers.ts";
 
 const input = (selector: string, value: string) =>
@@ -44,7 +44,7 @@ describe("sandbox UI", { skip: !browserTests }, () => {
 
 	it("lists a sandbox under its host and edits its folders and allowed hosts", async () => {
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
-		await browser.wait(`document.querySelector('textarea') && !document.querySelector('.offline')`);
+		await browser.wait(`document.querySelector('${COMPOSER}') && !document.querySelector('.offline')`);
 		await browser.openSettings("Environments");
 		await browser.wait(`document.querySelector('[role=dialog] [aria-label=Environments] .env-sandbox svg')`);
 		const rows = await browser.evaluate<string[]>(
@@ -127,12 +127,18 @@ describe("sandbox UI", { skip: !browserTests }, () => {
 			`[...document.querySelectorAll('.sidebar-group')].some(g=>g.querySelector('.group-link').title==='box1:/workspace' && g.querySelector('.nav-marker svg[aria-label=Sandbox]'))`,
 		);
 		await browser.evaluate(`document.querySelector('.title-cwd').click()`);
-		await browser.wait(`document.querySelector('[role=dialog][aria-label="Working directory"] select')`);
+		await browser.wait(`document.querySelector('[role=dialog][aria-label="Location"] .location-machines')`);
+		// The machines: this device, the SSH environment, then the sandbox, marked with a lock and its host; the sandbox is
+		// the chosen one.
 		assert.deepEqual(
 			await browser.evaluate<string[]>(
-				`[...document.querySelectorAll('[role=dialog] optgroup[label=Sandboxes] option')].map(e=>e.textContent)`,
+				`[...document.querySelectorAll('[role=dialog] .location-machine')].map(e=>e.textContent+'|'+e.title+'|'+e.getAttribute('aria-pressed')+'|'+Boolean(e.querySelector('svg[aria-label=Sandbox]')))`,
 			),
-			["box1 · sandbox on host1"],
+			[
+				"This device|This device|false|false",
+				"host1|host1 (SSH)|false|false",
+				"box1|box1: sandbox on host1|true|true",
+			],
 		);
 		assert(
 			await browser.evaluate<boolean>(
@@ -140,18 +146,20 @@ describe("sandbox UI", { skip: !browserTests }, () => {
 			),
 		);
 		await browser.evaluate(
-			`(()=>{const s=document.querySelector('[role=dialog] select');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(s,'');s.dispatchEvent(new Event('change',{bubbles:true}));})()`,
+			`[...document.querySelectorAll('[role=dialog] .location-machine')].find(e=>e.textContent==='This device').click()`,
 		);
-		await browser.wait(`document.querySelector('.directory-use')?.textContent.startsWith('Move session to')`);
-		await browser.evaluate(`document.querySelector('.directory-use').click()`);
+		await browser.wait(
+			`document.querySelector('.location-use:not(:disabled)')?.textContent.startsWith('Move session to')`,
+		);
+		await browser.evaluate(`document.querySelector('.location-use').click()`);
 		await browser.wait(`document.querySelector('[role=dialog]').textContent.includes('Leave sandbox box1?')`);
 		assert(
 			await browser.evaluate<boolean>(
-				`document.querySelector('.directory-leave').textContent.includes('run directly on this device')`,
+				`document.querySelector('.location-leave').textContent.includes('run directly on this device')`,
 			),
 		);
 		await press("Cancel");
-		await browser.wait(`document.querySelector('.directory-use') && !document.querySelector('.directory-leave')`);
+		await browser.wait(`document.querySelector('.location-use') && !document.querySelector('.location-leave')`);
 		await browser.evaluate(`document.querySelector('[role=dialog] button[aria-label=Close]').click()`);
 	});
 });

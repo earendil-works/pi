@@ -15,6 +15,7 @@
 ## Code Quality
 
 - Read files in full before wide-ranging changes, before editing files you have not fully inspected, and when asked to investigate or audit. Do not rely on search snippets for broad changes.
+- Before recommending a fix design, check how sibling implementations (other adapters, providers, commands) handle the same concern, and follow that pattern. If you deviate, say why.
 - No `any` unless absolutely necessary.
 - No runtime checks of values whose types TypeScript already guarantees (no `typeof`/`instanceof`/`Array.isArray`/shape guards on typed parameters, typed callback results or typed declarations). Validate only at decided trust boundaries (wire input, schema-checked arguments and params).
 - Inline single-line helpers that have only one call site.
@@ -115,6 +116,10 @@ When closing issues via commit:
 ## Writing p2 plugin code
 
 Before writing or reviewing plugin code in `apps/p2` (server and worker facets, contracts, stores), read [apps/p2/docs/plugin-practices.md](apps/p2/docs/plugin-practices.md) in full and follow it.
+
+## Working on p3 (Pi Roam) packages
+
+Work on a p3 (Pi Roam) package in `apps/p3` starts by reading [apps/p3/docs/README.md](apps/p3/docs/README.md), then the guides it lists, in its order, in full. Follow them.
 
 ## Building p2's web UI
 

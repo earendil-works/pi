@@ -164,6 +164,8 @@ test("launcher reads pi's files and p2 prefs, validates themes and hot-reloads c
 	const updates: TuiLocalPreferences[] = [];
 	const stop = watchLocalPreferences(sources, (next) => updates.push(next), loaded);
 	t.after(stop);
+	// macOS FSEvents can miss a change made right after the watch starts.
+	await new Promise((resolve) => setTimeout(resolve, 200));
 	writeFileSync(join(agentDir, "themes", "mine.json"), theme("#654321"));
 	await poll(() => updates.some((next) => JSON.stringify(next.themes.mine?.colors).includes("#654321")), 5000);
 	const view = await runtime(t);

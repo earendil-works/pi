@@ -34,7 +34,7 @@ import {
 	type WorkerInit,
 	workerCore,
 } from "../../src/runtime/worker.ts";
-import { APP } from "./helpers.ts";
+import { APP, NO_IMAGES } from "./helpers.ts";
 
 const MODEL = { provider: "faux", modelId: "faux-1" };
 const context = durableContext(new AbortController().signal);
@@ -136,7 +136,15 @@ async function start(dataDir: string, project: string, facets: { followers?: Ret
 		values: { session: { id: "s1", cwd: project, env: null, model: MODEL, thinkingLevel: "off" } },
 	};
 	const location = new SessionLocation({ cwd: project, env: null });
-	const core = workerCore(init, new Liveness(), location, store, (fn) => host.root(fn, BACKGROUND_CONTEXT), undefined);
+	const core = workerCore(
+		init,
+		new Liveness(),
+		location,
+		store,
+		(fn) => host.root(fn, BACKGROUND_CONTEXT),
+		NO_IMAGES,
+		undefined,
+	);
 	await host.load(
 		[
 			{ name: "@p2/core", facet: core },

@@ -603,6 +603,21 @@ forEachCodec(() => {
 			]);
 			expect(callsOf(worker)).toEqual([0, 1]);
 		});
+
+		it("failed { denied }: the waiting calls are rejected forbidden/revoked, as calls in flight are (slice 14 §2.3)", async () => {
+			const { raw, worker, held } = await bound();
+			callFrom(raw, [0, 1, 2]);
+			await transported();
+			const cause = { kind: "denied" as const, error: wireChord("forbidden", "no access") };
+			worker.send({ kind: "failed", ...originOf(held), hold: held.hold, cause });
+			await transported();
+			// Call 2 waited for the worker's window: access was withdrawn under it too.
+			const answer = raw.received.find((message) => message.kind === "error" && message.call === 2);
+			expect(answer).toMatchObject({
+				error: { error: { code: "forbidden", reason: "revoked", message: "hold 0: no access" } },
+			});
+			expect(callsOf(worker)).toEqual([0, 1]);
+		});
 	});
 
 	describe("an upstream drop", () => {

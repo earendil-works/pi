@@ -417,6 +417,33 @@ describe("subscribers, directly", () => {
 	});
 });
 
+describe("a denied reference's source (slice 14 §2.2)", () => {
+	it("keeps no value: reads throw the denial, a watch opened now has nothing to start at, the next bind is whole", () => {
+		const batch = new Batch(() => {}, undefined);
+		const owner = { none: () => new ChordError({ code: "not_ready", message: "none" }) };
+		const source = new ReferenceSource(batch, owner);
+		const events: unknown[] = [];
+		const subscriber: Subscriber = {
+			advance: (call) =>
+				void events.push(call.kind === "value" ? [call.value, call.ops] : (call.error as Error).message),
+			end: () => {},
+			endAfterDelivery: () => {},
+		};
+		const denial = new ChordError({ code: "forbidden", message: "no access" });
+		batch.commit(() => source.bind(constant(1) as unknown as Source), context);
+		source.subscribe(subscriber);
+		batch.commit(() => source.deny(denial, context), context);
+		expect(() => source.value).toThrow("no access");
+		// Unlike a failed target's source: no last value to show.
+		expect(source.start()).toEqual({ kind: "failed", error: denial, last: undefined });
+		expect(() => source.openWatch(context)).toThrow("no access");
+		// The same denial told again (its object notifies for another reason) is no second call.
+		batch.commit(() => source.deny(denial, context), context);
+		batch.commit(() => source.bind(constant(1) as unknown as Source), context);
+		expect(events).toEqual(["no access", [1, [["r", 1]]]]);
+	});
+});
+
 describe("a member the new attempt's variant lacks", () => {
 	it("fails: its watch gets one failure call and stays open, reads throw invalid/member; a later attempt brings it back", async () => {
 		const Two = remote("app.two", {

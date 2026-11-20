@@ -81,6 +81,7 @@ async function setup(
 		readonly shown?: readonly RegisteredScript[];
 		/** Holds the server's base answers until it settles (a slow network). */
 		readonly baseAnswers?: Promise<void>;
+		readonly limits?: chordNext.PartLimits;
 	} = {},
 ) {
 	let failing = more.failing ?? 0;
@@ -136,6 +137,7 @@ async function setup(
 		onConnection: (state) => states.push(state),
 		...(more.styles === undefined ? {} : { styles: more.styles }),
 		...(more.follow === undefined ? {} : { follow: more.follow }),
+		...(more.limits === undefined ? {} : { limits: more.limits }),
 		environment: {
 			now: () => Date.now(),
 			after: (ms, callback) => {
@@ -390,6 +392,25 @@ describe("outdated clients", () => {
 		expect(outdated).toEqual(["outdated (waiting)"]);
 		await client.stop(context);
 		await server.close(context);
+	});
+});
+
+describe("part limits", () => {
+	it("takes parts from the server within the limits it was given, and none past them", async () => {
+		const a1 = script("@test/a", "d1", "hello");
+		const a2 = script("@test/a", "d2", "hello again");
+		const within = await setup([a1], [a2], { shown: [a2], limits: { part: 1024 * 1024 } });
+		const greeting = await within.client.host.get(Greeting, {}, context);
+		await until(() => greeting.text.value === "hello again");
+		await within.client.stop(context);
+		await within.server.close(context);
+		// The scripts object's set is past 32 bytes: the client never gets it, so it keeps the code it started with.
+		const past = await setup([a1], [a2], { shown: [a2], limits: { part: 32 } });
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		expect(past.fetched).toEqual([]);
+		expect((await past.client.host.get(Greeting, {}, context)).text.value).toBe("hello");
+		await past.client.stop(context);
+		await past.server.close(context);
 	});
 });
 

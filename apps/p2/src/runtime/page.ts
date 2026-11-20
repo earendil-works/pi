@@ -2,7 +2,8 @@
 // app's visual language: the tokens of src/web/style.css, thin separators, an
 // underlined input, one outline button and the canonical colored Pi logo.
 // Without a script they follow the system scheme; with a nonce they also apply
-// the browser's sidebar theme choice (src/web/theme.ts, same origin storage).
+// the browser's sidebar theme choice (src/web/theme.ts, same origin storage),
+// except in a frame or p2-mac, whose host owns the choice (src/hosts/web.ts's rule).
 
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -31,7 +32,9 @@ button:hover{background:var(--hover)}button:disabled{opacity:.45;cursor:default}
 // Same geometry and colours as src/web/PiLogo.tsx (canonical startup logo).
 const LOGO = `<svg viewBox="0 0 4 4" role="img" aria-label="Pi"><rect fill="rgb(228 138 122)" width="3" height="1"/><rect fill="rgb(228 138 122)" x="2" y="1" width="1" height="1"/><rect fill="rgb(79 142 179)" y="1" width="1" height="3"/><rect fill="rgb(79 142 179)" x="1" y="2" width="1" height="1"/><rect fill="rgb(234 182 93)" x="3" y="2" width="1" height="2"/></svg>`;
 
-const THEME = `try{const t=localStorage.getItem("pi-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch{}`;
+// A framed page's stored theme is not its own: the CSP lets only the Radius shell frame p2's responses
+// (`frame-ancestors`, src/hosts/principals.ts), so any frame is the shell's, and these pages need no shell meta.
+const THEME = `try{if(window.parent===window&&!window.webkit?.messageHandlers?.piHost){const t=localStorage.getItem("pi-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}}catch{}`;
 
 const escapeHtml = (value: string) =>
 	value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");

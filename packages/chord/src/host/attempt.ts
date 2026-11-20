@@ -3,11 +3,21 @@
 // each failing with its own kind; it takes the live object's calls and starts its routines and jobs; and it ends with
 // its seal (slice 6a §1.3), the drain and the closes of its natives. A reload's restart drains it (decision "Reload
 // restarts every affected object; old work finishes on old code"): its routines stop, it serves old work under its
-// own contract, and it is sealed once that work settled.
+// own contract, and it is sealed once that work settled. An attempt of an admitted type first runs its admission
+// (`admission.ts`): it parks on the decision as on a dependency, hands its factory the admitted value, and follows
+// the decision until its seal.
 
 import type { TelemetryContext, TelemetrySpan } from "@earendil-works/pi-telemetry";
 import { awaitWithContext, type Context, withAbortSignal, withContextValue, withTelemetry } from "../context/index.ts";
-import type { Contract, EventSource, Implementation, ParamsOf } from "../contracts/index.ts";
+import type {
+	AdmittedOf,
+	Contract,
+	EventSource,
+	Implementation,
+	NamedQuery,
+	ParamsOf,
+	Schema,
+} from "../contracts/index.ts";
 import { contractData, type ShapeOf } from "../contracts/internal.ts";
 import { ChordError, type FailureCause, type Principal } from "../data/index.ts";
 import { asChordError, checkArgs, checkParams, invalid, openFailure, type Value } from "../data/internal.ts";
@@ -25,10 +35,12 @@ import type { JsonValue } from "../json.ts";
 import type { Contribution, Registry, RegistryValue } from "../registries/index.ts";
 import type { RegistryContribution, RegistryWaiter } from "../registries/internal.ts";
 import type { Writable } from "../state/index.ts";
-import { Derive, type DeriveSource, WritableSource } from "../state/internal.ts";
+import { type Dependent, Derive, type DeriveSource, WritableSource } from "../state/internal.ts";
+import { checkExposedOnce } from "../store/column-set.ts";
 import type { Columns, RowOf } from "../store/columns.ts";
-import { checkLiveQuery, LiveQuery } from "../store/live-query.ts";
+import { checkLiveQuery, LiveQuery, type LiveTarget } from "../store/live-query.ts";
 import type { Query } from "../store/query.ts";
+import type { Order } from "../store/sql.ts";
 import { tableSqlName } from "../store/sql.ts";
 import type { ChordStore } from "../store/store.ts";
 import type { TableDefinition } from "../store/table.ts";
@@ -37,12 +49,14 @@ import { prepareTables } from "../store/table-migration.ts";
 import { capped, MAX_MESSAGE, OpenSpan, spanFailed, untraced } from "../telemetry.ts";
 import type { NativeWatchable, Watchable, WatchEnd } from "../watch.ts";
 import { AdaptedMembers } from "./adapted.ts";
+import { type Allowed, Decision, refuseAdmittedJob, type Verdict } from "./admission.ts";
 import { CallContext, type Caller, type Ctx, withLinkedAbortSignal } from "./ctx.ts";
 import { Deadline } from "./deadline.ts";
-import { checkDependencies, type Dependency, ParkedLong, parkedCause, waitingOn } from "./dependencies.ts";
+import { checkDependencies, type Dependency, ParkedLong, type Parking, parkedCause, pinKeys } from "./dependencies.ts";
 import { type EventNode, OwnEventSource, type SourceOwner } from "./events.ts";
 import { type FollowAttach, FollowSource } from "./follow.ts";
 import type { HostError } from "./host.ts";
+import type { ListOptions } from "./list.ts";
 import {
 	attachDerives,
 	checkImplementation,
@@ -51,6 +65,7 @@ import {
 	type Members,
 	type Method,
 } from "./members.ts";
+import { NamedQueryHandle, OwnQuery, type QueriesOptions } from "./named-query.ts";
 import {
 	type CloseFailed,
 	drained,
@@ -60,9 +75,24 @@ import {
 	type NativeOptions,
 	type NativeSlot,
 } from "./native.ts";
-import type { ChordObject, Served } from "./object.ts";
+import type { ChordObject, Served, ServedAdmission } from "./object.ts";
 import { OPENING } from "./old-work.ts";
-import type { Failed, RefState } from "./ref-state.ts";
+import type { Reader } from "./query-reader.ts";
+import {
+	firstOf,
+	listName,
+	listReader,
+	liveReader,
+	namedBuilders,
+	oneSource,
+	openReaders,
+	type ReaderSite,
+	readerSite,
+	rowsReader,
+	tableExpected,
+	undeclaredTable,
+} from "./read-declarations.ts";
+import type { RefState } from "./ref-state.ts";
 import type { Binding, CheckedParams, Reference, RetryWalk } from "./reference.ts";
 import { ReexposedEvents } from "./reference-events.ts";
 import { type RetrySource, retrySource } from "./retry-on.ts";
@@ -149,7 +179,61 @@ export interface Self<P extends Principal = Principal> extends RoutineDeclaratio
 	 * `finish` records its outcome in one. Starts are taken once the object is live.
 	 */
 	job<A, R, S>(definition: JobDefinition<A, R, S>, implementation: JobImplementation<A, R, S, P>): JobHandle<A, R, S>;
+	/**
+	 * A named query read live (slice 14 §3): the first `range.first` rows of `query` for `args`, and whether a further
+	 * row exists, as a JSON watchable. `args` may be a watchable of the arguments: the member shows the previous rows
+	 * until the read for the new arguments has run. Opened once this object's dependencies are live; a commit that
+	 * can change its rows runs it again in its step. Another object's query is read through its reference
+	 * (`self.get(Store, {}).member.name`), the owner's own through what `self.queries` returned.
+	 */
+	liveQuery<T, A>(
+		query: NamedQuery<T, A>,
+		args: A | Watchable<A>,
+		range: { readonly first: number },
+	): Watchable<{ rows: T[]; more: boolean }>;
+	/**
+	 * The exact number of rows of a named query for `args`, live (slice 14 §3.1). Expensive, know what you are doing:
+	 * every run reads every matching row, nothing caps it, and it runs again on every write to its tables except an
+	 * `update` that assigns none of its condition's columns. Count what a key or an index bounds.
+	 */
+	count<T, A>(query: NamedQuery<T, A>, args: A | Watchable<A>): Watchable<number>;
+	/**
+	 * A list a screen loads more of (slice 14 §4): the rows of a named query in pages of `options.first` between
+	 * fixed bookmarks, so loaded rows stay live, `more` sends only the new rows, and a row that moves leaves no gap
+	 * and no duplicate. `name` is the list's within this object: its bookmarks survive a reload by it. One source,
+	 * `[[namedQuery, args]]`; `args` may be a watchable of the arguments.
+	 */
+	list<T, A>(
+		name: string,
+		sources: readonly (readonly [NamedQuery<T, A>, A | Watchable<A>])[],
+		options: ListOptions,
+	): ListHandle<T>;
 }
+
+/** What `self.list` returns: the list's value for a state member, and `more` for a method. */
+export type ListHandle<T> = {
+	/** The loaded rows in order, and whether rows may follow them. */
+	readonly value: Watchable<{ rows: T[]; moreAfter: boolean }>;
+	/** Loads one more page behind the last one; resolves once its rows are in `value`. */
+	more(context: Context): Promise<null>;
+};
+
+/** What a named query's builder returns: a query of the table (`C`, `K`), joined or not. */
+export type BuiltQuery<C extends Columns, K extends readonly string[]> = {
+	readonly table: TableDefinition<C, K>;
+	readonly order: Order;
+};
+
+/** A named query's builder: a pure function of the query's arguments. */
+export type QueryBuilder<C extends Columns, K extends readonly string[], A> = (args: A) => BuiltQuery<C, K>;
+
+/**
+ * The builders `self.queries` takes, by query name: a builder for a query the contract lists (the contract has its
+ * argument schema), or `[argsSchema, builder]` for a query private to its owner.
+ */
+export type QueryBuilders<C extends Columns, K extends readonly string[], A> = {
+	readonly [N in keyof A]: QueryBuilder<C, K, A[N]> | readonly [Schema, QueryBuilder<C, K, A[N]>];
+};
 
 /**
  * What the factory of a `local` type with empty params declares with: one object per host and type, so its data may
@@ -173,6 +257,18 @@ export interface StoreSelf<P extends Principal = Principal> extends Self<P> {
 		limit: number,
 	): Watchable<RowOf<C>[]>;
 	/**
+	 * Named queries over `table`, a table this factory declared (slice 14 §3.1): one per entry of `builders`, each a
+	 * pure function of its arguments returning a query of the table. What it returns implements a `queries` member of
+	 * the contract (the queries listed there; the others are private to this object and bring their argument schema).
+	 * `options.map` turns a row (and a joined query's partner) into the item readers get, from the columns `reads`
+	 * (and `partnerReads`) list: a change of another column is no change of the item.
+	 */
+	queries<C extends Columns, K extends readonly string[], T, A extends { readonly [query: string]: unknown }>(
+		table: Table<C, K>,
+		options: QueriesOptions<RowOf<C>, T>,
+		builders: QueryBuilders<C, K, A>,
+	): { readonly [N in keyof A]: NamedQuery<T, A[N]> };
+	/**
 	 * Contributes `value` to registry `R` from the moment this object is live until it ends, fails or restarts (R21: a
 	 * host-lifetime object): a plain value, or a Chord watchable of one (followed: its change recomposes). At most one
 	 * per registry.
@@ -185,11 +281,18 @@ export type PinnedKey = { readonly source: DeriveSource; readonly release: () =>
 
 /**
  * A factory: synchronous and declarative, run once per attempt. A remote one also gets the principal in its object's
- * identity and returns one variant, `{ variant, members }`. Methods get a `Ctx` for the app's principal type `P`.
+ * identity and returns one variant, `{ variant, members }`; one of a contract that declares an `admission` gets the
+ * admitted value after the principal (slice 14 §2.1: it selects the variant and the members, and `self.job` is
+ * refused there). Methods get a `Ctx` for the app's principal type `P`.
  */
 export type Factory<C extends Contract, P extends Principal = Principal> = ShapeOf<C>["kind"] extends "local"
 	? (params: ParamsOf<C>, self: keyof ParamsOf<C> extends never ? StoreSelf<P> : Self<P>) => Implementation<C, Ctx<P>>
-	: (params: ParamsOf<C>, principal: P, self: Self<P>) => Implementation<C, Ctx<P>>;
+	: ShapeOf<C> extends { readonly admission: Schema }
+		? (params: ParamsOf<C>, principal: P, admitted: AdmittedOf<C>, self: Self<P>) => Implementation<C, Ctx<P>>
+		: (params: ParamsOf<C>, principal: P, self: Self<P>) => Implementation<C, Ctx<P>>;
+
+/** A parked attempt whose check found nothing to wait for: the shared answer. */
+const READY: Parking = { kind: "ready" };
 
 /** No declarations of a kind: the shared empty list. */
 const NONE: readonly never[] = [];
@@ -307,8 +410,14 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	readonly #jobs = new Map<string, Job>();
 	/** The tables it declared, by name. */
 	readonly #tables = new Map<string, TableHandle>();
-	/** Its live queries, run at activation (after the tables are prepared), detached at its end. */
-	readonly #queries: LiveQuery[] = [];
+	/** Its own live queries with what each reads, run at activation (after the tables are prepared), detached at its end. */
+	readonly #queries: { readonly live: LiveQuery; readonly target: LiveTarget }[] = [];
+	/** Its readers of named queries (`self.liveQuery`, `self.count`), opened once its dependencies are live. */
+	readonly #readers: Reader[] = [];
+	/** The names of the lists its factory declared: one list per name. */
+	readonly #listed = new Set<string>();
+	/** Follows a reader this attempt is parked on: its next adoption (a good run heals it) checks again. */
+	readonly #readerWake: Dependent = { invalidate: () => this.dependencyMoved(), sourceRetired: () => {} };
 	/** References this attempt declared with `self.get` (params checked), bound during activation. */
 	readonly #references: { readonly binding: Binding; readonly contract: Contract; readonly params: CheckedParams }[] =
 		[];
@@ -357,6 +466,12 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		| undefined;
 	/** What a reload did to it, made by the first such step (most attempts never meet one). */
 	#reloaded: Reloaded | undefined;
+	/** An admitted type's decision, from its `admit` until its object releases it (`releaseAdmission`). */
+	#decision: Decision | undefined;
+	/** What its decision allowed, from its first allow on: its factory's value. */
+	#admitted: Allowed | undefined;
+	/** What its object was last told of its decision, from the allow on: the same object means nothing changed. */
+	#followed: Verdict | undefined;
 
 	constructor(object: ChordObject, context: Context, trace: AttemptTrace) {
 		this.#object = object;
@@ -392,13 +507,17 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		const { served, label } = object;
 		const store = this.#assertPersistable(`table "${definition.name}"`);
 		if (this.#tables.has(definition.name)) throw new Error(`${label}: table "${definition.name}" is declared twice`);
+		checkExposedOnce(
+			definition,
+			[...this.#tables.values()].map((declared) => declared.definition),
+			label,
+		);
 		const sqlName = tableSqlName(served.contract.name, definition.name);
 		object.claimTable(sqlName);
 		const owner = {
 			label,
 			scope: object.documents,
 			assertLive: () => object.documents.assertLive(),
-			queries: object.liveQueries,
 			fail: (error: ChordError) => object.failLive(this, { kind: "broken", error }),
 		};
 		// The handle's rows are the definition's, typed by `C` and `K`.
@@ -416,21 +535,97 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		const { host, label } = this.#object;
 		// Plugin code may pass any table: only a handle this attempt declared is taken (its object's own table).
 		const handle: unknown = table;
+		if (handle instanceof NamedQueryHandle) throw tableExpected(label);
 		if (!(handle instanceof TableHandle) || this.#tables.get(handle.definition.name) !== handle) {
-			throw new Error(`${label}: self.query: the table is not one this factory declared`);
+			throw undeclaredTable(label, "query");
 		}
 		checkLiveQuery(handle.definition, q as unknown as Query, limit, label);
 		const owner = {
 			label,
 			report: (error: unknown) =>
-				host.report({ kind: "query_failed", object: label, table: handle.definition.name, error }),
+				host.report({ kind: "query_failed", object: label, query: handle.definition.name, error }),
 		};
-		// The query is of `handle`'s table (checked above).
-		const live = new LiveQuery(handle, q as unknown as Query, limit, owner, host.batch);
-		handle.owner.queries.add(live);
-		this.#queries.push(live);
+		const { rows } = handle.definition;
+		// The owner's window: its value the rows themselves.
+		const live = new LiveQuery({ store: handle.store, batch: host.batch }, owner, {
+			kind: "rows",
+			// Checked above: a positive integer.
+			range: { limit: limit as number },
+			present: (items) => items,
+		});
+		const target: LiveTarget = {
+			// The query is of `handle`'s table (checked above); every column of the row is read.
+			spec: { query: q as unknown as Query, table: handle.sql.table, projection: {}, owner: handle },
+			// A table's rows hold its columns' values: scalars and JSON.
+			decode: (stored, context) => rows.decode(stored, context) as JsonValue,
+		};
+		this.#queries.push({ live, target });
 		// Its rows are the table's, typed by `C`.
 		return live as unknown as Watchable<RowOf<C>[]>;
+	}
+
+	queries<C extends Columns, K extends readonly string[], T, A extends { readonly [query: string]: unknown }>(
+		table: Table<C, K>,
+		options: QueriesOptions<RowOf<C>, T>,
+		builders: QueryBuilders<C, K, A>,
+	): { readonly [N in keyof A]: NamedQuery<T, A[N]> } {
+		this.#assertDeclaring("queries");
+		const { label } = this.#object;
+		// Plugin code may pass any table: only a handle this attempt declared is taken (its object's own table).
+		const handle: unknown = table;
+		if (!(handle instanceof TableHandle) || this.#tables.get(handle.definition.name) !== handle) {
+			throw undeclaredTable(label, "queries");
+		}
+		// The mapping is the plugin's, typed by the table's rows; Chord hands it decoded rows.
+		const mapped = options as QueriesOptions<unknown, unknown>;
+		const named = namedBuilders(label, builders).map(
+			({ name, builder, args }) => [name, new OwnQuery(label, name, handle, builder, mapped, args)] as const,
+		);
+		// One named query per builder, typed by the mapping's items and the builders' arguments.
+		return Object.fromEntries(named) as unknown as { readonly [N in keyof A]: NamedQuery<T, A[N]> };
+	}
+
+	liveQuery<T, A>(
+		query: NamedQuery<T, A>,
+		args: A | Watchable<A>,
+		range: { readonly first: number },
+	): Watchable<{ rows: T[]; more: boolean }> {
+		this.#assertDeclaring("liveQuery");
+		const { reader, source } = rowsReader(this.#readerSite(), query, args, range);
+		this.#readers.push(reader);
+		// Its value is what `present` builds from the query's items.
+		return source as unknown as Watchable<{ rows: T[]; more: boolean }>;
+	}
+
+	count<T, A>(query: NamedQuery<T, A>, args: A | Watchable<A>): Watchable<number> {
+		this.#assertDeclaring("count");
+		const { reader, source } = liveReader(this.#readerSite(), "count", query, args, { kind: "count" });
+		this.#readers.push(reader);
+		// A count's value is its number.
+		return source as unknown as Watchable<number>;
+	}
+
+	list<T, A>(
+		name: string,
+		sources: readonly (readonly [NamedQuery<T, A>, A | Watchable<A>])[],
+		options: ListOptions,
+	): ListHandle<T> {
+		this.#assertDeclaring("list");
+		const at = this.#readerSite();
+		const first = firstOf(at.label, "list", options);
+		const source = oneSource(at.label, sources);
+		// Checked last: a list refused for another reason does not take its name.
+		const listed = listName(at.label, name, this.#listed);
+		const { reader, list } = listReader(at, listed, source, first, this.#object.listMemory(listed));
+		this.#readers.push(reader);
+		// Its value is `{ rows, moreAfter }` of the query's items.
+		return { value: list as unknown as Watchable<{ rows: T[]; moreAfter: boolean }>, more: (ctx) => list.more(ctx) };
+	}
+
+	/** Where this attempt's readers live. */
+	#readerSite(): ReaderSite {
+		const { host, label } = this.#object;
+		return readerSite(host, label, () => this.dependencyMoved());
 	}
 
 	derive<const S extends readonly (Watchable<unknown> | NativeWatchable<unknown>)[], T extends JsonValue>(
@@ -571,6 +766,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	job<A, R, S>(definition: JobDefinition<A, R, S>, implementation: JobImplementation<A, R, S>): JobHandle<A, R, S> {
 		this.#assertDeclaring("job");
 		const object = this.#object;
+		refuseAdmittedJob(this.#served, object.label);
 		if (this.#jobs.has(definition.name)) {
 			throw new Error(`${object.label}: job "${definition.name}" is declared twice`);
 		}
@@ -601,7 +797,8 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 
 	/**
 	 * Activates once `ending` (the previous instance's) has finished; `readyTimeout` bounds both (an attempt abandoned
-	 * while it waits has opened nothing).
+	 * while it waits has opened nothing). An admitted type's admission runs before that wait (slice 14 §2.2): only its
+	 * factory waits for the previous instance's teardown.
 	 */
 	async activate(ending: Promise<void> | undefined): Promise<Activation> {
 		this.#startActivation(this.#trace.trigger);
@@ -610,6 +807,12 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 			this.abandon({ kind: "failed", cause: { kind: "transient", error: notLive(this.#object.label, ready) } });
 		});
 		try {
+			const served = this.#served;
+			if (served.kind === "remote" && served.admission !== undefined) {
+				const refused = await this.#runAdmission(served.admission, deadline);
+				if (refused !== undefined) return refused;
+				this.#activation?.span.addEvent("chord.admit", { outcome: "allow" });
+			}
 			if (ending !== undefined) {
 				try {
 					await awaitWithContext(ending, this.#opening);
@@ -624,6 +827,84 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 			// Ended before its first dependency check (its factory threw, it was abandoned): nothing parked.
 			this.#settleCheck(undefined);
 		}
+	}
+
+	/**
+	 * The admission phase (slice 14 §2.2): one microtask after its start (a seal's flush has ended by then), `admit`
+	 * declares against this attempt's decision, whose requests are bound at once (its object then lets its
+	 * predecessors' go). The attempt parks on them, and on a denial showing `failed { denied }`, with no timer, and goes
+	 * on with the first allow. Resolves `undefined` once allowed, else with how the attempt ends.
+	 */
+	async #runAdmission(admission: ServedAdmission, deadline: Deadline): Promise<NotLive | undefined> {
+		await undefined;
+		if (this.#abandoned !== undefined) return this.#abandoned;
+		const object = this.#object;
+		const decision = new Decision({
+			host: object.host,
+			label: object.label,
+			caller: this.#caller(),
+			dependent: object,
+			moved: () => this.#admissionMoved(),
+		});
+		try {
+			// A remote object's identity has its principal.
+			decision.declare((self) => admission.admit(object.params, object.principal!, self), this.#opening);
+		} catch (error) {
+			decision.release();
+			return this.#broken(error);
+		}
+		this.#decision = decision;
+		object.admitting(this);
+		return this.#park(decision.dependencies, (long) => this.#decide(decision, long), deadline);
+	}
+
+	/** One check of its admission while it parks on it: allowed, it goes on; denied, it shows `failed { denied }`. */
+	async #decide(decision: Decision, long: ParkedLong): Promise<Parking> {
+		this.#admitted = undefined;
+		const verdict: Verdict = await decision.settle(long, this.#opening);
+		if (verdict.kind === "allow") {
+			this.#admitted = verdict;
+			this.#followed = verdict;
+			return READY;
+		}
+		if (verdict.kind !== "deny") return verdict;
+		const cause: FailureCause = { kind: "denied", error: verdict.error };
+		const activation = this.#activation;
+		if (activation !== undefined && !activation.ended) activation.span.addEvent("chord.admit", { outcome: "deny" });
+		return { kind: "parked", shown: { kind: "failed", cause, retryAt: undefined }, firstPass: true, cause };
+	}
+
+	/**
+	 * Something its admission reads changed. While it still decides, its parked check runs again. From its allow on it
+	 * follows the decision (slice 14 §2.2, "Watch"), live, opening its natives or draining for a reload alike: an equal
+	 * decision changes nothing; anything else (another value, a denial, a source that failed or ended) is its object's
+	 * to act on, which seals it at once and admits afresh. It goes on following after its own failure, so its failed
+	 * object still shows a denial; a later attempt's admission takes over once it bound.
+	 */
+	#admissionMoved(): void {
+		if (this.#admitted === undefined) {
+			this.dependencyMoved();
+			return;
+		}
+		const verdict = this.#decision!.now(this.#opening);
+		if (verdict === this.#followed) return;
+		this.#followed = verdict;
+		this.#object.readmit(this, verdict);
+	}
+
+	/** What its admission allowed (its factory's value); `undefined` before its first allow and without an admission. */
+	get admitted(): Allowed | undefined {
+		return this.#admitted;
+	}
+
+	/** Whether it was sealed: its object lets a sealed attempt's admission go once a later one bound its requests. */
+	get sealed(): boolean {
+		return this.#token.sealed;
+	}
+
+	/** Releases what its admission declared (its references, registry reads, derives and live queries); once. */
+	releaseAdmission(): void {
+		this.#decision?.release();
 	}
 
 	/** Its current (or last) activation span; `undefined` when the host records nothing. */
@@ -964,6 +1245,13 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		return keyed.kind === "own" ? keyed.slot : keyed.binding.keyedSlot(keyed.member);
 	}
 
+	/** The named query `name` of its `queries` member `member`; an unknown one fails `invalid/member`. */
+	queryMember(member: string, name: string): OwnQuery {
+		const query = this.#members!.queries.get(member)?.get(name);
+		if (query === undefined) throw invalid("member", `${this.#object.label} has no query "${member}.${name}"`);
+		return query;
+	}
+
 	/** The keyed members as checked: what each is (`KeyedBinding`), for the keys its object holds across attempts. */
 	get keyedMembers(): ReadonlyMap<string, KeyedBinding> {
 		return this.#members!.keyed;
@@ -1126,7 +1414,11 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		for (const adapted of this.#adapted?.values() ?? []) adapted.detach(ended);
 		this.#adapted = undefined;
 		for (const derive of this.#derives) derive.detach(ended);
-		for (const query of this.#queries) query.detach(ended);
+		for (const { live } of this.#queries) live.detach(ended);
+		for (const reader of this.#readers) reader.close(ended);
+		// The named queries it offered are offered no more (slice 14 §3.2): their readers' reads leave the store's
+		// index before a successor prepares the tables, and read the successor's queries when it is live.
+		for (const handle of this.#tables.values()) handle.store.reads.retire(handle);
 		for (const follow of this.#follows) follow.detach();
 		for (const source of this.#sources ?? []) source.detach();
 		for (const node of this.#members?.events.values() ?? []) if (node instanceof ReexposedEvents) node.detach();
@@ -1164,8 +1456,10 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 				documents.hydrate(this.#declared, this.#pins.splice(0), this.#opening);
 				const loading = documents.load(this.#opening);
 				if (loading !== undefined) await loading;
+				// Awaited only with tables: an object without any takes no extra turn here.
 				if (this.#tables.size > 0) await this.#prepareTables(deadline);
-				for (const query of this.#queries) await query.load(this.#opening);
+				else if (host.store !== undefined) this.#bindSets(NONE, host.store);
+				for (const { live, target } of this.#queries) await live.load(target, this.#opening);
 			} finally {
 				host.hostData.leave();
 			}
@@ -1191,24 +1485,27 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		}
 		// Parked only when something is not live yet (most activations find their dependencies live).
 		if ((dependencies.length > 0 && checkDependencies(dependencies).kind !== "live") || this.#pinsKeys()) {
-			const parked = await this.#park(dependencies, deadline);
+			const parked = await this.#park(dependencies, (long) => this.#checkDependencies(dependencies, long), deadline);
 			if (parked !== undefined) return parked;
 		} else {
 			this.#settleCheck(undefined);
 			// Its own steps start in a later turn: an object ended in the turn it was made opens nothing.
 			await undefined;
 		}
-		return this.#ownSteps(implementation);
+		return this.#ownSteps(implementation, deadline);
 	}
 
 	/**
-	 * Parks while a dependency is not live (dependency model §3), with no timer: the deadline paused, `parked_long`'s
-	 * report the only clock. Checks at every change of a dependency (after its batch) and shows what it found on its
-	 * object; once all are live, the keys the factory pinned on them are loaded (a failed load parks it `waiting`
-	 * until the next change or a retry). Resolves `undefined` once all are live and pinned, else with how it ends:
-	 * abandoned, or broken (a cycle, an ended dependency).
+	 * Parks until `step` finds nothing to wait for (dependency model §3), with no timer: the deadline paused,
+	 * `parked_long`'s report the only clock. `step` runs at every change of what the attempt waits on (after its batch):
+	 * its `dependencies`, a pinned key, its admission; what it finds is shown on its object. Resolves `undefined` once
+	 * the attempt may go on, else with how it ends: abandoned, or broken (a cycle, an ended dependency).
 	 */
-	async #park(dependencies: readonly Dependency[], deadline: Deadline): Promise<NotLive | undefined> {
+	async #park(
+		dependencies: readonly Dependency[],
+		step: (long: ParkedLong) => Promise<Parking>,
+		deadline: Deadline,
+	): Promise<NotLive | undefined> {
 		const object = this.#object;
 		deadline.pause();
 		this.#parked = dependencies;
@@ -1220,29 +1517,20 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		try {
 			for (;;) {
 				this.#moved = false;
-				const check = checkDependencies(dependencies);
-				if (check.kind !== "parked") this.#settleCheck(undefined);
-				if (check.kind === "broken")
-					return this.#abandoned ?? { kind: "failed", cause: { kind: "broken", error: check.error } };
-				if (check.kind === "live") {
-					const pinned = await this.#pinKeys(long);
-					if (this.#abandoned !== undefined) return this.#abandoned;
-					// Changed while the keys loaded: checked again.
-					if (pinned === undefined && !this.#moved) {
-						// Its own steps follow: `loading` until its outcome (a failure shows as the failure, not this).
-						object.unparked(this);
-						this.#unparked();
-						return undefined;
-					}
-					if (pinned !== undefined) {
-						object.parked(this, pinned, true);
-						this.#parkedOn(pinned);
-					}
-				} else {
-					object.parked(this, check.shown, check.firstPass);
-					this.#settleCheck(parkedCause(check));
-					long.blockedBy(check.blocker);
-					this.#parkedOn(check.shown);
+				const parking = await step(long);
+				if (this.#abandoned !== undefined) return this.#abandoned;
+				if (parking.kind === "broken") return { kind: "failed", cause: { kind: "broken", error: parking.error } };
+				// Changed while it checked (its keys loaded, its admission settled): checked again.
+				if (parking.kind === "ready" && !this.#moved) {
+					// Its own steps follow: `loading` until its outcome (a failure shows as the failure, not this).
+					object.unparked(this);
+					this.#unparked();
+					return undefined;
+				}
+				if (parking.kind === "parked") {
+					object.parked(this, parking.shown, parking.firstPass);
+					if (parking.cause !== undefined) this.#settleCheck(parking.cause);
+					this.#parkedOn(parking.shown);
 				}
 				if (!(await this.#nextChange())) return this.#abandoned!;
 			}
@@ -1254,6 +1542,27 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 			object.waitsFor(NONE);
 			deadline.resume();
 		}
+	}
+
+	/**
+	 * One check of its factory's dependencies while it parks on them: once all are live, the keys the factory pinned on
+	 * them are loaded (a failed load parks it `waiting` until the next change or a retry).
+	 */
+	async #checkDependencies(dependencies: readonly Dependency[], long: ParkedLong): Promise<Parking> {
+		const check = checkDependencies(dependencies);
+		if (check.kind !== "parked") this.#settleCheck(undefined);
+		if (check.kind === "broken") return check;
+		if (check.kind === "parked") {
+			long.blockedBy(check.blocker);
+			return { kind: "parked", shown: check.shown, firstPass: check.firstPass, cause: parkedCause(check) };
+		}
+		const pinned = await pinKeys(this.#bindings(), long, this.#opening);
+		return pinned === undefined ? READY : { kind: "parked", shown: pinned, firstPass: true, cause: undefined };
+	}
+
+	/** The references its factory declared. */
+	#bindings(): Binding[] {
+		return this.#references.map(({ binding }) => binding);
 	}
 
 	/** Its dependencies are live after it parked: its own steps run in a new activation span, linked to the parked one. */
@@ -1281,24 +1590,21 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	}
 
 	/**
-	 * Loads the keys the factory pinned on its dependencies' keyed members (`at(key)`), each reference's named to `long`
-	 * as the blocker while they load (`failed` when they failed); `undefined` once all are, else what the parked attempt
-	 * shows for the first that failed to load (`waiting` on its reference).
+	 * Opens its readers of named queries and waits until each has a value (slice 14 §3.2), after its derives are
+	 * attached (the ones computing arguments are computed here) and before the others are computed (they may read a
+	 * live query). A reader that cannot read yet, or whose first run failed, parks the attempt on it (`loading`, or
+	 * `failed { waiting }`): its next adoption (`#readerWake`) or a move of what it reads checks again. Arguments its
+	 * provider refuses and a builder that throws fail the attempt `broken`. Resolves `undefined` once all have
+	 * values, else with how the attempt ends.
 	 */
-	async #pinKeys(long: ParkedLong): Promise<Failed | undefined> {
-		for (const { binding } of this.#references) {
-			const { label } = binding;
-			try {
-				const pinning = binding.pinKeys(this.#opening);
-				if (pinning === undefined) continue;
-				long.blockedBy({ label, state: "loading" });
-				await pinning;
-			} catch (error) {
-				long.blockedBy({ label, state: "failed" });
-				return waitingOn(label, asChordError(error, label));
-			}
+	async #awaitReaders(deadline: Deadline): Promise<NotLive | undefined> {
+		const label = `${this.#object.label}: a live query`;
+		const open = (long: ParkedLong) => openReaders(this.#readers, this.#readerWake, long, label, this.#opening);
+		try {
+			return await this.#park(NONE, open, deadline);
+		} finally {
+			for (const reader of this.#readers) reader.source.dependents.delete(this.#readerWake);
 		}
-		return undefined;
 	}
 
 	/**
@@ -1338,11 +1644,36 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	}
 
 	/**
-	 * The steps after the dependency check (its own: natives, followed sources, the member check, derives, the keys
-	 * references pin on its keyed members), under the deadline. A dependency that leaves `live` meanwhile changes
+	 * The steps after the dependency check (its own: the member check, derives attached, the readers of named queries,
+	 * natives, followed sources, derives computed, the keys references pin on its keyed members), under the deadline. A dependency that leaves `live` meanwhile changes
 	 * nothing (R18 after live).
 	 */
-	async #ownSteps(implementation: unknown): Promise<Activation> {
+	async #ownSteps(implementation: unknown, deadline: Deadline): Promise<Activation> {
+		let members: Members;
+		try {
+			const checked = checkImplementation(this.#object.served.contract, implementation, this.#sourceOwner);
+			members = checked.members;
+			this.#members = members;
+			this.#variant = checked.variant;
+			// Fed by their references from now on (the object's bindings tap them once it is live).
+			for (const node of members.events.values()) if (node instanceof ReexposedEvents) node.attach();
+			if (this.#registryDeclarations !== undefined)
+				this.#registryDeclarations.contributions = this.#resolveContributions(this.#registryDeclarations);
+			const { host, label } = this.#object;
+			attachDerives(this.#derives, members.state, (member) => (error) => {
+				// During activation a throwing derive fails the attempt, which `activation_failed` reports alone.
+				if (!this.#isLive) return;
+				host.report({ kind: "derive_failed", object: label, ...(member === undefined ? {} : { member }), error });
+			});
+		} catch (error) {
+			return this.#broken(error);
+		}
+		// Before the natives: an attempt that waits on a reader holds none (design §6), as one parked on a dependency.
+		// Awaited only with readers: an attempt without any takes no extra turn before its natives open.
+		if (this.#readers.length > 0) {
+			const reading = await this.#awaitReaders(deadline);
+			if (reading !== undefined) return reading;
+		}
 		for (const native of this.#natives) {
 			// An attempt abandoned before this open (ended while it waited) closed its natives already: none opens late.
 			if (this.#abandoned !== undefined) return this.#abandoned;
@@ -1361,22 +1692,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 				return this.#abandoned ?? { kind: "failed", cause };
 			}
 		}
-		let members: Members;
 		try {
-			const checked = checkImplementation(this.#object.served.contract, implementation, this.#sourceOwner);
-			members = checked.members;
-			this.#members = members;
-			this.#variant = checked.variant;
-			// Fed by their references from now on (the object's bindings tap them once it is live).
-			for (const node of members.events.values()) if (node instanceof ReexposedEvents) node.attach();
-			if (this.#registryDeclarations !== undefined)
-				this.#registryDeclarations.contributions = this.#resolveContributions(this.#registryDeclarations);
-			const { host, label } = this.#object;
-			attachDerives(this.#derives, members.state, (member) => (error) => {
-				// During activation a throwing derive fails the attempt, which `activation_failed` reports alone.
-				if (!this.#isLive) return;
-				host.report({ kind: "derive_failed", object: label, ...(member === undefined ? {} : { member }), error });
-			});
 			for (const derive of this.#derives) void derive.value;
 		} catch (error) {
 			return this.#broken(error);
@@ -1401,12 +1717,40 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		const handles = [...this.#tables.values()];
 		const tables = handles.map(({ definition, sql }) => ({ definition, table: sql.table }));
 		const fence = { admit: () => !this.#token.sealed && this.#abandoned === undefined, adopt: () => {} };
+		const { store } = handles[0]!;
+		// Every read over a table that is created or migrated now waits until it is ready (slice 14 §5): a migration's
+		// chunks are not one commit, and a failed one leaves the table held.
+		for (const { definition, sql } of handles) {
+			const recorded = store.table(sql.table);
+			if (recorded?.version !== definition.version || recorded.state !== "ready") store.reads.hold(sql.table);
+		}
 		deadline.pause();
 		try {
-			await prepareTables(tables, handles[0]!.store, fence, this.#object.label, this.#opening);
+			await prepareTables(tables, store, fence, this.#object.label, this.#opening);
 		} finally {
 			deadline.resume();
 		}
+		this.#bindSets(handles, store);
+	}
+
+	/**
+	 * The bindings of column sets follow this attempt's declarations (the committed code, slice 14 §5): each set a
+	 * table exposes is bound to it, a set its object bound before and no table exposes now is dropped; then the tables
+	 * are ready, and the reads over them compile again and run once. An attempt that declares no table drops what
+	 * its object had bound.
+	 */
+	#bindSets(handles: readonly TableHandle[], store: ChordStore): void {
+		const object = this.#object;
+		const { reads } = store;
+		const exposed = new Set<string>();
+		for (const { definition, sql } of handles) {
+			const set = definition.exposes?.name;
+			if (set === undefined) continue;
+			exposed.add(set);
+			reads.bind(set, { table: sql.table, definition }, object);
+		}
+		for (const set of reads.boundBy(object)) if (!exposed.has(set)) reads.unbind(set, object);
+		for (const { sql } of handles) reads.ready(sql.table);
 	}
 
 	/**
@@ -1418,8 +1762,10 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		try {
 			const { served, params, principal } = this.#object;
 			if (served.kind === "local") return served.factory(params, this);
-			// A remote object's identity has its principal.
-			return served.factory(params, principal!, this);
+			// A remote object's identity has its principal; an admitted one's factory gets what its admission allowed.
+			const admitted = this.#admitted;
+			if (admitted === undefined) return served.factory(params, principal!, this);
+			return served.factory(params, principal!, admitted.value, this);
 		} catch (error) {
 			for (const release of this.#pins) release();
 			throw error;
@@ -1465,7 +1811,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		return this.#variant === undefined ? "" : ` (variant ${this.#variant})`;
 	}
 
-	#broken(error: unknown): Activation {
+	#broken(error: unknown): NotLive {
 		const cause: FailureCause = { kind: "broken", error: asChordError(error, this.#object.label) };
 		return this.#abandoned ?? { kind: "failed", cause };
 	}

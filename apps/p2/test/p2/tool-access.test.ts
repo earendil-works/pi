@@ -124,6 +124,14 @@ describe("tools given to agents", () => {
 		assert.deepEqual(names(choice.loaded), ["powershell"]);
 	});
 
+	it("matches names regardless of case when no tool matches exactly (Anthropic subscriptions show `Read`)", () => {
+		const choice = resolveTools(caller, access, ["Read", "BASH", "PowerShell"], ["PowerShell"], "one-shot");
+		assert(typeof choice !== "string");
+		assert.deepEqual(choice.chosen, ["read", "bash", "powershell"]);
+		assert.deepEqual(names(choice.loaded), ["powershell"]);
+		assert.match(resolveTools(caller, access, ["Subagent"], [], "subagent") as string, /^Unknown tools: Subagent\. /);
+	});
+
 	it("refuses session-level, subagent-only, script-only and unknown tools", () => {
 		for (const name of ["subagent", "rename_session", "team", "agent", "bogus"]) {
 			const refused = resolveTools(caller, access, ["read", name], [], "subagent");

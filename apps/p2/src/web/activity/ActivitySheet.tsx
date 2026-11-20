@@ -1,14 +1,14 @@
 // A transcript block's activity in the side panel (SidePanel.tsx: docked on the right, p2's sheet on phones). Steps
 // expand in place; choosing another block in the transcript replaces the panel's selection. Opening and closing it
 // participate in Back.
-import type { ImageContent } from "@earendil-works/pi-ai";
 import { type ReactNode, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { ShownImage } from "../../runtime/entry-images.ts";
 import { getNavigation, useRoute, useScrollMemory } from "../../runtime/web.tsx";
 import { ToolActivityContext, WorkingDirectory } from "../chat-context.ts";
 import type { Route } from "../navigation.ts";
 import { closePanel, SidePanel, showInSidePanel, useSidePanelShown } from "../SidePanel.tsx";
 import { clockTime, Time } from "../Time.tsx";
-import { DetailProse, imageUrl, StepDetail } from "./Detail.tsx";
+import { DetailProse, StepDetail } from "./Detail.tsx";
 import { ChevronIcon, CommentIcon, SparkIcon } from "./icons.tsx";
 import { KindIcon } from "./Label.tsx";
 import {
@@ -174,7 +174,7 @@ const THUMBNAILS = { phone: 2, wide: 4 } as const;
  * stays its words. Both counts are rendered and CSS shows the one for the width (activity.css), so the transcript's
  * rows at detail 4 follow the same breakpoint as the panel.
  */
-function StepThumbnails({ images }: { images: readonly ImageContent[] }) {
+function StepThumbnails({ images }: { images: readonly ShownImage[] }) {
 	if (!images.length) return null;
 	return (
 		<span className="step-thumbs" data-testid="step-thumbs" aria-hidden="true">
@@ -187,7 +187,7 @@ function StepThumbnails({ images }: { images: readonly ImageContent[] }) {
 			)}
 			{images.slice(-THUMBNAILS.wide).map((image, index) => (
 				// biome-ignore lint/suspicious/noArrayIndexKey: a result's images never move.
-				<img key={index} className="step-thumb" src={imageUrl(image)} alt="" decoding="async" />
+				<img key={index} className="step-thumb" src={image.src} alt="" decoding="async" />
 			))}
 		</span>
 	);

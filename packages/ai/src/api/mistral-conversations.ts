@@ -529,7 +529,9 @@ function buildChatPayload(
 	};
 
 	const currentTools = getCurrentTools(context.messages);
-	if (currentTools.length > 0) payload.tools = toFunctionTools(currentTools);
+	// Strict tools are opt-in: Mistral Large 4 can go silent for minutes before a strict tool call (#12148).
+	if (currentTools.length > 0)
+		payload.tools = toFunctionTools(currentTools, model.compat?.supportsStrictMode ?? false);
 	if (options?.temperature !== undefined) payload.temperature = options.temperature;
 	if (options?.maxTokens !== undefined) payload.maxTokens = options.maxTokens;
 	if (options?.toolChoice) payload.toolChoice = mapToolChoice(options.toolChoice);
@@ -746,9 +748,9 @@ async function consumeChatStream(
 	}
 }
 
-function toFunctionTools(tools: Tool[]): MistralFunctionTool[] {
+function toFunctionTools(tools: Tool[], supportsStrictMode: boolean): MistralFunctionTool[] {
 	return tools.map((tool) => {
-		const strict = resolveJsonSchemaStrictSampling(tool, true);
+		const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
 		return {
 			type: "function",
 			function: {

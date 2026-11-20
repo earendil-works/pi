@@ -107,7 +107,19 @@ within each link's limits, compression at the origin, activation chains and revo
   (malformed: a protocol error). A type not served here (or as a local type), a mismatch, or params the provider's
   code places on another host leave it refused `failed { waiting }`, indexed under its type until a publication re-runs
   its start (`loading`, then `bound` or `failed`); invalid params or a cycle leave it refused `failed { broken }`; both
-  are kept for a `retry`, which re-runs the start. While pending it follows its object's `state`: each failure is sent
+  are kept for a `retry`, which re-runs the start. An object its admission denies (slice 14) is `failed { denied }`:
+  the hold unbinds, every call made before its consumer learnt of it is answered `forbidden/revoked` (in flight,
+  waiting for a call-window slot at the consumer or at a relay, or crossing the `failed`), and the consumer drops its
+  replicas (no
+  value of it stays readable); the next allow sends `loading`, then `bound`. **Bindings are fenced per
+  acknowledgement:** one fence per unacknowledged `bound`, so a call is decoded by what its consumer had applied when
+  it sent it (A, B, C before the first `ack`: a call sent between B's and C's application by B's names), and a call
+  sent after the consumer was told a failure is refused with it. A path of a route with an admission (`path.ts`)
+  holds on its links only the holders its gate admits (a lost link asks the gate, `unlinked`, which takes back what
+  it cannot forward on the next one: a new link fails closed): a denial releases a holder upstream (`withheld`), an
+  allow
+  tells it `loading` (`admitted`) and holds it again under its id behind a fence (`release`, a `ping`, the hold after that ping's `pong`), which relies
+  on the route's `resolve` returning the link to the final provider of the address. While pending it follows its object's `state`: each failure is sent
   as `failed` (with `retryIn`, the rest of the object's backoff window, for a transient one; absent for broken and
   waiting), each new cause of an object parked on a failed dependency too, the current one at once when the object is
   failed already; the next attempt (or the parked object's next `loading`) is announced with `loading`; the hold stays,

@@ -89,6 +89,17 @@ final class PiWindowController: NSWindowController, NSWindowDelegate {
 		for page in pages.values { page.serverChanged(app.server) }
 	}
 
+	/// Cross-fades the views the window draws itself (the tab bar, the pages' placeholders) into the next appearance.
+	func crossFadeNativeViews() {
+		Appearance.crossFade(tabBar)
+		for page in pages.values { page.crossFadeNativeViews() }
+	}
+
+	/// Tells every page of the window that the light/dark preference changed.
+	func appearanceChanged(_ preference: Appearance) {
+		for page in pages.values { page.appearanceChanged(preference) }
+	}
+
 	private func show(_ id: String, path: String) {
 		selected = id
 		recent.removeAll { $0 == id }
@@ -154,6 +165,7 @@ final class PiWindowController: NSWindowController, NSWindowDelegate {
 	// MARK: - Menu actions (first responder chain: the window's delegate)
 
 	@objc func reloadPage(_ sender: Any?) { page?.reload() }
+	@objc func openSettings(_ sender: Any?) { page?.menuChosen("settings") }
 	@objc func zoomIn(_ sender: Any?) { page.map { $0.setZoom(min($0.webView.pageZoom + 0.1, 3)) } }
 	@objc func zoomOut(_ sender: Any?) { page.map { $0.setZoom(max($0.webView.pageZoom - 0.1, 0.5)) } }
 	@objc func actualSize(_ sender: Any?) { page?.setZoom(1) }

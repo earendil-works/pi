@@ -8,7 +8,9 @@
 // 8), its ending, revocation included (§4, R11), and what a reload does to it (decision "Reload restarts every affected
 // object; old work finishes on old code"): a restart, whose old attempt serves old work until it drained and its
 // successor's requests are ready, a retry on the new code, or its end by its type's removal, after which its
-// references wait with their last values and follow the next object of the identity.
+// references wait with their last values and follow the next object of the identity; and, for an admitted type (slice
+// 14 §2.2), what a change of its admission does to it: its attempt sealed at once and a new one admitted, a denial
+// shown as `failed { denied }`, its holders listed in presence only while it is allowed.
 
 import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import { awaitWithContext, type Context } from "../context/index.ts";
@@ -23,14 +25,16 @@ import type { JsonValue } from "../json.ts";
 import { CHAIN } from "../link/internal.ts";
 import type { RegistryContribution } from "../registries/internal.ts";
 import type { DeriveSource } from "../state/internal.ts";
-import { LiveQueries } from "../store/live-query.ts";
 import type { TableDefinition } from "../store/table.ts";
 import { chordMetrics } from "../telemetry.ts";
 import { refusal } from "./adapted.ts";
+import { type AdmitSelf, revoked, type Verdict } from "./admission.ts";
 import { Attempt, type PinnedKey, type Self } from "./attempt.ts";
 import type { Caller } from "./ctx.ts";
 import type { Dependency } from "./dependencies.ts";
 import type { AnyHost } from "./host.ts";
+import type { ListMemory } from "./list.ts";
+import type { OwnQuery } from "./named-query.ts";
 import type { CloseFailed, NativeCloseReason } from "./native.ts";
 import { OPENING } from "./old-work.ts";
 import { Readiness } from "./readiness.ts";
@@ -66,8 +70,24 @@ export type Served =
 	  })
 	| (ServedType<RemoteContract> & {
 			readonly kind: "remote";
-			readonly factory: (params: ParamsOf<Contract>, principal: Principal, self: Self) => unknown;
+			/** Its factory: an admitted type's is handed the admitted value before `self` (slice 14 §2.1). */
+			readonly factory: (
+				params: ParamsOf<Contract>,
+				principal: Principal,
+				...rest: [self: Self] | [admitted: JsonValue, self: Self]
+			) => unknown;
+			/** Its admission, when its contract declares one. */
+			readonly admission: ServedAdmission | undefined;
 	  });
+
+/**
+ * A served type's admission: `admit`, plugin code run first in every attempt (what it returns is checked there), and
+ * the fingerprint of its contract's admission schema, which a reload's staging compares.
+ */
+export type ServedAdmission = {
+	readonly admit: (params: ParamsOf<Contract>, principal: Principal, self: AdmitSelf) => unknown;
+	readonly fingerprint: string;
+};
 
 type ServedType<C extends Contract> = {
 	/** The plugin whose facet served it: its objects contribute to registries by it. */
@@ -158,6 +178,9 @@ const END: NativeCloseReason = { kind: "end" };
 const CLOSE: NativeCloseReason = { kind: "close" };
 
 const RELOAD: NativeCloseReason = { kind: "reload" };
+
+/** No holders listed: what presence gets of an admitted object that is not allowed. */
+const NO_HOLDERS: ReadonlySet<Holder> = new Set();
 
 /** No dependencies waited for: the shared empty list. */
 const NO_DEPENDENCIES: readonly Dependency[] = [];
@@ -257,10 +280,21 @@ export class ChordObject implements Target {
 	#startSuccessor: (() => void) | undefined;
 	/** The objects whose gate its activation's opener waits at now: its wait edges for reload cycles. */
 	#gateWaits: Set<ChordObject> | undefined;
-	/** Its live queries by table, across its attempts; made by the first table it declares. */
-	#liveQueries: LiveQueries | undefined;
 	/** Resolves at its next change of state, for calls waiting at the gate; made by the first one. */
 	#changed: PromiseWithResolvers<void> | undefined;
+	/** What its lists keep across its attempts (slice 14 §4), by list name; made by the first list. */
+	#lists: Map<string, ListMemory> | undefined;
+	/**
+	 * The attempts whose admission holds its requests, in the order they bound them (slice 14 §2.2, rule 4): a sealed
+	 * one's are released once a later one bound its own, so a source held only by admissions never ends across a
+	 * rebuild. Made by the first (admitted types only).
+	 */
+	#admissions: Attempt[] | undefined;
+	/**
+	 * Whether presence lists show an admitted object's holders (§19): from its first allow until a denial. Always true
+	 * for a type without an admission.
+	 */
+	#allowed: boolean;
 
 	constructor(
 		host: AnyHost,
@@ -283,6 +317,7 @@ export class ChordObject implements Target {
 		this.chain = chain;
 		this.#trigger = trigger;
 		this.#context = context;
+		this.#allowed = served.kind !== "remote" || served.admission === undefined;
 		const { store } = host;
 		this.documents = new Documents({
 			label: this.label,
@@ -391,9 +426,21 @@ export class ChordObject implements Target {
 		return [...(chain.length < CHAIN ? chain : chain.slice(chain.length - CHAIN + 1)), id];
 	}
 
-	/** Its holders, for a presence list made after they took it. */
+	/** Its holders, for a presence list made after they took it: none while an admitted object is not allowed. */
 	get holders(): ReadonlySet<Holder> {
-		return this.#holders;
+		return this.#allowed ? this.#holders : NO_HOLDERS;
+	}
+
+	/**
+	 * What its live attempt's admission allowed, with the fingerprint of the admission schema it was decided under: a
+	 * reload's staging rehearses its new factory with it (slice 14 §2.5); `undefined` without one.
+	 */
+	get admitted(): { readonly value: JsonValue; readonly fingerprint: string } | undefined {
+		const state = this.#state;
+		if (state.kind !== "live") return undefined;
+		const { admitted, served } = state.attempt;
+		if (admitted === undefined || served.kind !== "remote" || served.admission === undefined) return undefined;
+		return { value: admitted.value, fingerprint: served.admission.fingerprint };
 	}
 
 	/**
@@ -531,8 +578,11 @@ export class ChordObject implements Target {
 				: state.kind === "activating" && state.shown.kind === "failed"
 					? state.shown
 					: undefined;
-		if (failure !== undefined) return { kind: "failed", error: failure.cause.error, last: shown, instance: exposed };
-		return { kind: "loading", last: shown, instance: exposed };
+		if (failure === undefined) return { kind: "loading", last: shown, instance: exposed };
+		const { kind, error } = failure.cause;
+		// A denial keeps no value (slice 14 §2.2): what the caller may read is withdrawn with its access.
+		if (kind === "denied") return { kind: "denied", error };
+		return { kind: "failed", error, last: shown, instance: exposed };
 	}
 
 	/**
@@ -627,6 +677,25 @@ export class ChordObject implements Target {
 		return this.#live().keyedMember(member);
 	}
 
+	/**
+	 * What its list `name` keeps across its attempts: its bookmarks, so a reload's successor opens the pages the
+	 * list had. It goes with the object.
+	 */
+	listMemory(name: string): ListMemory {
+		this.#lists ??= new Map();
+		let memory = this.#lists.get(name);
+		if (memory === undefined) {
+			memory = { signature: "", bookmarks: [], open: true };
+			this.#lists.set(name, memory);
+		}
+		return memory;
+	}
+
+	/** The named query `name` of `queries` member `member` of the live object (slice 14 §3.1). */
+	queryMember(member: string, name: string): OwnQuery {
+		return this.#live().queryMember(member, name);
+	}
+
 	/** Pins `key` of keyed member `member` on the live instance, as a consumer of `version` reads it (`Attempt.pinKey`). */
 	pinKey(member: string, key: string, version: number, context: Context): Promise<PinnedKey> {
 		return this.#live().pinKey(member, key, version, context);
@@ -647,7 +716,7 @@ export class ChordObject implements Target {
 		this.#holders.add(holder);
 		this.#stopLingering();
 		// Last: a derive over the presence list may close a link synchronously, which may release this holder again.
-		this.host.referenced(this, holder, this.#context);
+		if (this.#allowed) this.host.referenced(this, holder, this.#context);
 	}
 
 	/** `holder` was released: the object may end (`#idle`). */
@@ -707,12 +776,6 @@ export class ChordObject implements Target {
 	/** The live instance's declaration of table `table` (SQL name), if it has one (a host data import's history). */
 	declaredTable(table: string): TableDefinition | undefined {
 		return this.instance?.declaredTable(table);
-	}
-
-	/** Its live queries by table (`self.query`), across its attempts: what its commits writing a table re-run. */
-	get liveQueries(): LiveQueries {
-		this.#liveQueries ??= new LiveQueries();
-		return this.#liveQueries;
 	}
 
 	/** Claims this object's documents in `namespace` of the host's store, as `claimTable`. */
@@ -812,6 +875,145 @@ export class ChordObject implements Target {
 		throw error;
 	}
 
+	/**
+	 * `attempt`'s admission bound its requests: the admissions of the sealed attempts before it are let go (slice 14
+	 * §2.2, rule 4).
+	 */
+	admitting(attempt: Attempt): void {
+		this.#admissions ??= [];
+		this.#admissions.push(attempt);
+		this.#releaseSuperseded();
+	}
+
+	/**
+	 * Releases the admission of every sealed attempt a later one's followed (its requests are bound: a source held only
+	 * by them stays held). The last one's stays, sealed or not, until a later attempt's binds or the object ends.
+	 */
+	#releaseSuperseded(): void {
+		const admissions = this.#admissions;
+		if (admissions === undefined) return;
+		const last = admissions.at(-1);
+		for (const attempt of [...admissions]) {
+			if (attempt === last || !attempt.sealed) continue;
+			attempt.releaseAdmission();
+			admissions.splice(admissions.indexOf(attempt), 1);
+		}
+	}
+
+	/**
+	 * The admission of `attempt` no longer says what it allowed (slice 14 §2.2, "Watch"): `verdict` is another value,
+	 * a denial, or no decision (a source that failed or ended). What follows depends on where the attempt stands: the
+	 * object's current attempt is sealed and a new one admits (`#rebuild`); a restart's old attempt that still drains
+	 * is sealed (`#sealDraining`); the last attempt of a failed object makes the object follow a denial without
+	 * running its failed factory again (`#followFailed`). An attempt a later one replaced tells nothing.
+	 */
+	readmit(attempt: Attempt, verdict: Verdict): void {
+		const denial = verdict.kind === "deny" ? verdict.error : undefined;
+		const state = this.#state;
+		if ((state.kind === "live" || state.kind === "activating") && state.attempt === attempt) {
+			this.#rebuild(attempt, denial);
+		} else if (this.#old === attempt && attempt.draining) {
+			this.#sealDraining(attempt, denial);
+		} else if (state.kind === "failed" && this.#admissions?.at(-1) === attempt) {
+			this.#followFailed(attempt, verdict);
+		}
+	}
+
+	/**
+	 * Seals the object's attempt `attempt` at once, with no drain, and admits afresh: its running calls are rejected
+	 * `forbidden/revoked` for a denial (`denial`, its `forbidden` error) and `unavailable` otherwise, nothing of it is
+	 * published from here on (its holders stop following it in this flush: they keep their last values while it loads,
+	 * none for a denial, which the object shows at once), and it is torn down in the background. A new attempt admits,
+	 * one microtask later, and a call that crossed the seal waits for it at the gate. A lingering object without
+	 * holders ends instead.
+	 */
+	#rebuild(attempt: Attempt, denial: ChordError | undefined): void {
+		if (this.#lingering !== undefined) {
+			this.end();
+			return;
+		}
+		attempt.seal(this.#readmitted(denial));
+		const next = this.#newAttempt();
+		this.#state = { kind: "activating", attempt: next, shown: LOADING };
+		if (denial !== undefined) this.#showDenied(denial);
+		this.#cut(attempt);
+		const closing = attempt.close(END).then((failures) => {
+			attempt.detach();
+			attempt.releaseReferences();
+			return failures;
+		});
+		this.host.ending(this.identity, this.#reported(closing));
+		void this.#run(next, this.host.endingOf(this.identity));
+	}
+
+	/**
+	 * A restart's old attempt `attempt`, still draining, is sealed at once (its successor admits by itself): the old
+	 * work on it is rejected as `#rebuild` rejects calls, and its holders leave it in this flush; a denial is shown
+	 * now, not when the successor's own admission finds it. Its end (`#endOld`) goes on from here: it closes the
+	 * attempt and lets its admission's requests go (never here: a reference is not released inside a batch).
+	 */
+	#sealDraining(attempt: Attempt, denial: ChordError | undefined): void {
+		attempt.seal(this.#readmitted(denial));
+		if (denial !== undefined) this.#showDenied(denial);
+		this.#cut(attempt);
+	}
+
+	/**
+	 * A failed object follows its last attempt's admission (the factory of `attempt` broke, or it failed live): a
+	 * denial is shown at once, `failed { denied }` in place of its failure, with no value kept and its holders out of
+	 * presence, and the failed factory is not run for it; another allowed value retries the object, as a wake signal
+	 * does; a source that failed changes nothing.
+	 */
+	#followFailed(attempt: Attempt, verdict: Verdict): void {
+		if (verdict.kind === "allow") {
+			this.retry();
+			return;
+		}
+		if (verdict.kind !== "deny") return;
+		// Denied: no backoff, woken by the decision.
+		this.host.backoff.delete(this.identity);
+		this.#showDenied(verdict.error);
+		this.#cut(attempt);
+	}
+
+	/** What a change of its admission rejects running calls with: `forbidden/revoked` for a denial, else `unavailable`. */
+	#readmitted(denial: ChordError | undefined): ChordError {
+		if (denial !== undefined) return revoked(this.label, denial);
+		return new ChordError({ code: "unavailable", message: `${this.label}: its admission changed` });
+	}
+
+	/**
+	 * The object shows `failed { denied }` with `denial` from now on, in place of what it shows while it activates or
+	 * of its failure, and presence lists its holders no more. Its caller tells the holders (`#cut`).
+	 */
+	#showDenied(denial: ChordError): void {
+		const shown: Failed = { kind: "failed", cause: { kind: "denied", error: denial }, retryAt: undefined };
+		const state = this.#state;
+		if (state.kind === "activating") this.#state = { kind: "activating", attempt: state.attempt, shown };
+		else if (state.kind === "failed") this.#state = { kind: "failed", failure: shown };
+		else return;
+		this.#lastFailure = denial;
+		this.#disallow();
+	}
+
+	/**
+	 * Nothing of `attempt` is published from here on: the references that follow it leave it now, taking what the
+	 * object shows (their last values while it loads, none for a denial), and every holder is told.
+	 */
+	#cut(attempt: Attempt): void {
+		const exposed = this.#exposed === attempt;
+		if (exposed) this.#following = false;
+		this.#notify();
+		if (exposed) this.#exposed = undefined;
+	}
+
+	/** An admitted object is denied: presence lists its holders no more, until its next allow (§19). */
+	#disallow(): void {
+		if (!this.#allowed) return;
+		this.host.unreferenced(this, this.#holders, this.#context);
+		this.#allowed = false;
+	}
+
 	/** Its parked attempt waits for `dependencies` (none once it leaves parking): the waits a cycle check follows. */
 	waitsFor(dependencies: readonly Dependency[]): void {
 		this.#waitingFor = dependencies;
@@ -840,6 +1042,7 @@ export class ChordObject implements Target {
 				this.#lastFailure = shown.cause.error;
 				// A restart's successor parked on a failure: the old attempt's kept contributions leave (F-c).
 				this.#dropKept();
+				if (shown.cause.kind === "denied") this.#disallow();
 			}
 			this.#notify();
 		}
@@ -889,7 +1092,21 @@ export class ChordObject implements Target {
 	 */
 	remove(cause: FailureCause): void {
 		const teardown = this.#seal({ kind: "removed", error: this.ended(), cause });
+		this.unbindSets();
 		if (teardown.kind !== "none") this.host.ending(this.identity, this.#reported(this.#tearDown(teardown, END)));
+	}
+
+	/**
+	 * The column sets its tables exposed are served no more (slice 14 §5): reads over them fail `unavailable`. A
+	 * table's owner has empty params, so it lives as long as its host serves its type; it leaves in two ways. An
+	 * object whose type a reload removed drops its sets at its seal, so another object may bind the name at once (a
+	 * reload moving a set to another plugin's table ends this object and starts that one in one commit; this object's
+	 * teardown runs later). A closing host drops them when every object is torn down: the readers end with their
+	 * objects, not on a read that failed because its publisher was torn down first.
+	 */
+	unbindSets(): void {
+		const reads = this.host.store?.reads;
+		for (const set of reads?.boundBy(this) ?? []) reads!.unbind(set, this);
 	}
 
 	/** What a reload does to this object, whose type is still served: a live object restarts, any other is retried. */
@@ -951,6 +1168,7 @@ export class ChordObject implements Target {
 		// failure dropped them already.
 		if (old.opensNatives) this.#withdraw(old);
 		old.seal(this.#reloaded(), "reload");
+		this.#releaseSuperseded();
 		// Sealed, it is no longer the instance its holders bind (`instance`, `stateFor`): a hold waiting for a window
 		// slot unbinds now, before an `ack` could bind it to nothing; bound holds and references follow it on until it
 		// stopped changing.
@@ -1111,6 +1329,11 @@ export class ChordObject implements Target {
 		this.#state = { kind: "live", attempt };
 		this.#exposed = attempt;
 		this.#following = true;
+		if (!this.#allowed) {
+			// An admitted object's first allow, or its first since a denial: presence lists its holders from now on (§19).
+			this.#allowed = true;
+			for (const holder of this.#holders) this.host.referenced(this, holder, this.#context);
+		}
 		const { contributions } = attempt;
 		// A restart's kept contributions leave in the batch the new ones enter (F-c), so no reader sees a gap.
 		const leaving = this.#kept?.contributions ?? NO_CONTRIBUTIONS;
@@ -1405,6 +1628,8 @@ export class ChordObject implements Target {
 			teardown.attempt.detach();
 			teardown.attempt.releaseReferences();
 		}
+		// Last, as its references: nothing of it is admitted any more.
+		for (const attempt of this.#admissions?.splice(0) ?? []) attempt.releaseAdmission();
 		await this.documents.settled();
 		this.documents.end();
 		this.host.store?.claims.release(this);

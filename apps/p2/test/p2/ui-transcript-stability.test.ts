@@ -15,7 +15,7 @@ import { Models } from "../../plugins/models/contract.ts";
 import { Sessions, SessionTransfer } from "../../plugins/sessions/contract.ts";
 import type { Host } from "../../src/runtime/chord.ts";
 import { bigSessionEntries } from "../fixtures/big-session.ts";
-import { Browser, browserTests } from "./browser.ts";
+import { Browser, browserTests, COMPOSER } from "./browser.ts";
 import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
 import { type ProbeReport, RENDER_PROBE } from "./render-probe.ts";
 
@@ -168,7 +168,7 @@ describe("transcript stability", { skip: !browserTests }, () => {
 		try {
 			await browser.open(url(`/s/${session}`));
 			await browser.wait(
-				`document.querySelector('.composer textarea') && document.querySelectorAll('[data-row]').length > 3`,
+				`document.querySelector('${COMPOSER}') && document.querySelectorAll('[data-row]').length > 3`,
 			);
 			await sleep(1_500);
 
@@ -225,7 +225,7 @@ describe("transcript stability", { skip: !browserTests }, () => {
 		try {
 			await browser.open(url(`/s/${session}`));
 			await browser.wait(
-				`document.querySelector('.composer textarea') && document.querySelectorAll('[data-row]').length > 3`,
+				`document.querySelector('${COMPOSER}') && document.querySelectorAll('[data-row]').length > 3`,
 			);
 			await sleep(1_500);
 			// Thinking first (`steps`, then a plain echo), words first (`tool`): every first part takes the working
@@ -283,9 +283,7 @@ describe("transcript stability", { skip: !browserTests }, () => {
 	it("shows a mixed turn and incoming messages (screenshots)", { skip: !SCREENSHOTS }, async () => {
 		const session = await seeded("Mixed", mixedEntries());
 		await browser.open(url(`/s/${session}`));
-		await browser.wait(
-			`document.querySelector('.composer textarea') && document.querySelectorAll('[data-row]').length > 5`,
-		);
+		await browser.wait(`document.querySelector('${COMPOSER}') && document.querySelectorAll('[data-row]').length > 5`);
 		await sleep(1_000);
 		await browser.evaluate("(document.querySelector('.scroller').scrollTop = 0, true)");
 		await sleep(600);

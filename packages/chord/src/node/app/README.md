@@ -92,6 +92,8 @@ The kit's start-data objects serve process values to plugins: `AppInfo` (`chord.
 `name`, `version`, the newest API version, `owner`, the app's `principal.owner`) and `WorkerInfo`
 (`chord.app.worker-info`, on workers: `address`, `start`, the start data the app's `start(address)` made). Plugins
 `self.get(AppInfo, {})` through the app's API, which re-exports them; nothing else of the process reaches a plugin.
+The facets serving them, `appInfoFacet(info)` and `workerInfoFacet(info)`, are exported for apps that run hosts of their
+own (an app's tests with its server and workers in one process).
 
 ## Base code
 

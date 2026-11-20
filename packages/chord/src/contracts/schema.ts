@@ -194,6 +194,31 @@ export class KeyedMember<S extends Schema = Schema, K extends KindShape | undefi
 	}
 }
 
+/** The argument schemas of a `queries` member's named queries, by query name. */
+export type QueryArguments = { readonly [query: string]: Schema };
+
+/**
+ * A `queries` member's declaration (slice 14 §3.1): named queries over one of the object's tables, each with the
+ * schema of its arguments, whose rows are values of `item`; only in `local` contracts.
+ */
+export class QueriesMember<I extends Schema = Schema, A extends QueryArguments = QueryArguments> {
+	readonly item: I;
+	readonly args: A;
+
+	constructor(item: I, args: A) {
+		this.item = item;
+		this.args = args;
+	}
+}
+
+/**
+ * Declares a `queries` member of a `local` contract: the named queries other objects on the host may read, each
+ * with its argument schema (part of the fingerprint). The handle of `self.queries(...)` implements it.
+ */
+export function queries<I extends Schema, const A extends QueryArguments>(item: I, args: A): QueriesMember<I, A> {
+	return new QueriesMember(item, args);
+}
+
 /**
  * Declares a keyed state member of a `local` contract: documents of `schema` by string key, or with `key` (a host kind)
  * by address of that kind (a host-keyed document handle implements it), each watchable.

@@ -1,4 +1,4 @@
-// The sidebar's theme control: cycles System → Light → Dark; the choice is kept per browser (theme.ts).
+// The sidebar's theme control: cycles System → Light → Dark; the choice is kept per browser, or by the host (theme.ts).
 import { type ComponentType, useSyncExternalStore } from "react";
 import { MoonIcon, SunIcon, SystemThemeIcon } from "./icons.tsx";
 import { getTheme, setTheme, subscribeTheme, type ThemePreference } from "./theme.ts";
@@ -12,7 +12,7 @@ export const THEME_CHOICES: Readonly<
 	dark: { label: "Dark", icon: MoonIcon, next: "system" },
 };
 
-/** Cycles System → Light → Dark; the choice is kept per browser. */
+/** Cycles System → Light → Dark; the choice is kept per browser, or by the Radius shell or p2-mac hosting the page. */
 export function ThemeButton() {
 	const theme = useThemePreference();
 	const { label, icon: Icon, next } = THEME_CHOICES[theme];
@@ -29,7 +29,7 @@ export function ThemeButton() {
 	);
 }
 
-/** This browser's theme preference, re-rendering on change. */
+/** The theme preference (this browser's or its host's), re-rendering on change. */
 export function useThemePreference(): ThemePreference {
 	return useSyncExternalStore(subscribeTheme, getTheme, getTheme);
 }

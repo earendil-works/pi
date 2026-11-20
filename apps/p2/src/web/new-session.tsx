@@ -2,7 +2,8 @@
 // command run outside React (the command menu's New session) starts a fresh one too.
 import { useSyncExternalStore } from "react";
 import { openNewSession } from "../runtime/web.tsx";
-import type { ModelChoice } from "./ModelPicker.tsx";
+import type { ModelChoice } from "./model-choice.ts";
+import type { Layer } from "./navigation.ts";
 
 /**
  * A project the new session joins (a sidebar project group's "+"): its name, shown on the new-session screen, and how
@@ -10,7 +11,8 @@ import type { ModelChoice } from "./ModelPicker.tsx";
  */
 export type NewSessionJoin = { readonly label: string; readonly run: (session: string) => Promise<unknown> };
 
-type NewSessionLocation = { env: string | null; cwd: string };
+/** Where a new session starts: an environment (null for this device) and a directory on it. */
+export type NewSessionLocation = { env: string | null; cwd: string };
 
 type Choices = {
 	readonly location: NewSessionLocation | undefined;
@@ -52,10 +54,13 @@ export function useNewSessionState(): State {
 
 /**
  * Opens the new-session screen ready to type, as the sidebar's New session: the default model again, the project `join`
- * (none by default: the one chosen before is dropped), at `location` when given, the composer focused.
+ * (none by default: the one chosen before is dropped), at `location` when given, the composer focused; with `layer`,
+ * that layer opens over it instead (the directory picker) and keeps the focus.
  */
-export function startNewSession(start: { location?: NewSessionLocation; join?: NewSessionJoin } = {}): void {
+export function startNewSession(
+	start: { location?: NewSessionLocation; join?: NewSessionJoin; layer?: Layer } = {},
+): void {
 	change({ choice: undefined, join: start.join, ...(start.location ? { location: start.location } : {}) });
-	openNewSession();
-	setTimeout(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus(), 50);
+	openNewSession(start.layer ? [start.layer] : []);
+	if (!start.layer) setTimeout(() => document.querySelector<HTMLElement>(".composer .draft-editor")?.focus(), 50);
 }

@@ -6,6 +6,7 @@
 import { type KindShape, opt } from "../contracts/index.ts";
 import { editWith, type Increment } from "../contracts/internal.ts";
 import { isOptional, type Optional } from "../contracts/schema.ts";
+import type { ColumnSet } from "./column-set.ts";
 import {
 	type ColumnSchema,
 	type Columns,
@@ -59,6 +60,12 @@ export interface TableEditor<C extends Columns, K extends readonly string[]> ext
 	}): TableTailEditor<C, K>;
 }
 
+/** What `evolveTable` takes besides the edits. */
+export type EvolveOptions = {
+	/** The column set the new version exposes: the previous version's when left out, none for `"none"`. */
+	readonly exposes?: ColumnSet | "none";
+};
+
 /** A column `add` takes: `opt(...)` or one with a `default`. */
 export type AddedColumn = ColumnSchema & (Optional | { readonly default: unknown });
 
@@ -109,9 +116,10 @@ export function evolveTable<
 >(
 	previous: TableDefinition<C, K, V>,
 	edit: (t: TableEditor<C, K>) => E,
+	options: EvolveOptions = {},
 ): TableDefinition<NonNullable<E["~columns"]>, NonNullable<E["~key"]>, Next<V>> {
 	// The runtime editor works on untyped definitions; the types live in the editor interfaces.
-	const editor = new Editor(previous as unknown as TableDefinition);
+	const editor = new Editor(previous as unknown as TableDefinition, options);
 	// The editor interfaces track the edits in the types; at runtime every edit returns the same editor.
 	editWith(editor as unknown as TableEditor<C, K>, edit, `${previous.name}: evolveTable`);
 	return editor.finish() as unknown as TableDefinition<NonNullable<E["~columns"]>, NonNullable<E["~key"]>, Next<V>>;
@@ -132,9 +140,12 @@ class Editor {
 	readonly #before: TableEdit[] = [];
 	#step: DataStep | undefined;
 	readonly #after: TableEdit[] = [];
+	/** The set the finished version exposes; the versions a data step reads expose none. */
+	readonly #exposes: ColumnSet | undefined;
 
-	constructor(previous: TableDefinition) {
+	constructor(previous: TableDefinition, options: EvolveOptions) {
 		this.#previous = previous;
+		this.#exposes = options.exposes === "none" ? undefined : (options.exposes ?? previous.exposes);
 		this.#what = `${previous.name} version ${previous.version + 1}`;
 		this.#schemas = { ...previous.schemas };
 		this.#key = [...previous.key];
@@ -257,7 +268,8 @@ class Editor {
 	/** The new version, materialized and fingerprinted, linked to the previous one and the migration from it. */
 	finish(): TableDefinition {
 		const migration = { before: this.#before, step: this.#step, after: this.#after };
-		return new TableDefinition(this.#previous.name, this.#options(), { previous: this.#previous, migration });
+		const options = { ...this.#options(), ...(this.#exposes === undefined ? {} : { exposes: this.#exposes }) };
+		return new TableDefinition(this.#previous.name, options, { previous: this.#previous, migration });
 	}
 
 	/** The table as the edits so far leave it, at the new version: what a data step reads and writes. */

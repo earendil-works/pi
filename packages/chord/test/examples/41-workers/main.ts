@@ -34,6 +34,8 @@ const workers = createWorkers(
 		start: () => ({}),
 		lock: (address) => `example-41:${process.pid}:${address.key}`,
 		idleMs: () => 300,
+		// The server host has no store.
+		store: undefined,
 		plugins,
 		onError: console.error,
 	},

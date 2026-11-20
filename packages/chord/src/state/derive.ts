@@ -43,7 +43,10 @@ export class Derive extends Source implements Dependent {
 	#declared: readonly unknown[] | undefined;
 	#sources: readonly DeriveInput[] = [];
 	#state: DeriveState = { kind: "dirty" };
-	/** The value this derive's watches have, kept from its marking to its frame in the batch. */
+	/**
+	 * The value this derive's watches have, kept from its first marking in a batch to that batch's frame; `undefined`:
+	 * not listed in the batch.
+	 */
 	#framed: JsonValue | typeof NO_VALUE | undefined;
 	/** Whether a source's document was retired in the current batch while this derive is watched (rule 21). */
 	#retired = false;
@@ -105,14 +108,20 @@ export class Derive extends Source implements Dependent {
 	/**
 	 * A source changed: mark this derive and its dependents dirty, flags only; a failed one too, which recomputes on its
 	 * next read and heals when its sources give a value it can compute. An already dirty derive has dirty dependents
-	 * (every read recomputes its sources first), so marking stops there.
+	 * (every read recomputes its sources first), so marking stops there. A watched derive is listed for the batch's
+	 * frame by its first marking in the batch only, which keeps what its watches have: one read between two changes
+	 * of a batch (clean again, then marked again) is not listed twice (two frames of one member in one commit, which
+	 * a link refuses) and its frame still diffs from the value before the batch.
 	 */
 	invalidate(): void {
 		const state = this.#state;
 		if (state.kind === "dirty" || state.kind === "detached") return;
-		if (this.watched) this.#framed = state.kind === "clean" ? state.value : NO_VALUE;
+		if (this.watched && this.#framed === undefined) {
+			this.#framed = state.kind === "clean" ? state.value : NO_VALUE;
+			this.batch.changed(this);
+		}
 		this.#state = DIRTY;
-		this.changed();
+		for (const dependent of this.dependents) dependent.invalidate();
 	}
 
 	/**
@@ -128,7 +137,8 @@ export class Derive extends Source implements Dependent {
 	}
 
 	/**
-	 * Delivers the frame: the diff from the watches' value, a retirement even without ops (rule 21). A compute that
+	 * Delivers the batch's one frame: the diff from the value its watches had before the batch, a retirement even
+	 * without ops (rule 21). A compute that
 	 * throws gives one failure call when the watches had a value (one per failure episode), the watches stay open; a
 	 * retirement waits for the next value.
 	 */

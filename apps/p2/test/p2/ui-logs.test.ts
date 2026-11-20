@@ -5,7 +5,7 @@ import { Catalog, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { processLogs } from "../../src/runtime/logs.ts";
 import { ServerNatives } from "../../src/runtime/server.ts";
-import { Browser, browserTests } from "./browser.ts";
+import { Browser, browserTests, COMPOSER } from "./browser.ts";
 import { holdIn, startFixture, until } from "./helpers.ts";
 
 test(
@@ -94,7 +94,9 @@ test(
 		processLogs.append("session:another-worker", "event", "other-worker-only-marker");
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session.id}`);
 		await browser.wait("document.querySelector('.worker-start-error')?.textContent.includes('not configured')");
-		await browser.wait("document.querySelector('.session-worker-error')?.textContent==='Failed'");
+		// The session's item shows the failure as its status, the reason as the dot's name.
+		const failedDot = `document.querySelector('.session-row[data-session="${session.id}"] .session-header .failed-dot')`;
+		await browser.wait(`${failedDot}?.getAttribute('aria-label').startsWith('Worker failed:')`);
 		await browser.wait("document.querySelector('.owner-notice')?.textContent.includes('not configured')");
 		const failed = await until(status.statuses, (value) => Boolean(value?.[session.id]?.error));
 		assert.equal(failed?.[session.id]?.running, false);
@@ -117,14 +119,12 @@ test(
 		await browser.evaluate(
 			"[...document.querySelectorAll('.worker-start-error button')].find(e=>e.textContent==='Retry').click()",
 		);
-		await browser.wait(
-			"!document.querySelector('.worker-start-error') && document.querySelector('.composer textarea')",
-		);
+		await browser.wait(`!document.querySelector('.worker-start-error') && document.querySelector('${COMPOSER}')`);
 		await until(
 			status.statuses,
 			(value) => value?.[session.id]?.running === true && value[session.id].error === undefined,
 		);
-		await browser.wait("!document.querySelector('.session-worker-error')");
+		await browser.wait(`!${failedDot}`);
 		assert(workers.generation(session.id) > generation);
 	},
 );

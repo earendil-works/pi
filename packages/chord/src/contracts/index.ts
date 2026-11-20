@@ -2,14 +2,20 @@
 
 export type { AcceptsTable } from "./accepts.ts";
 export type {
+	AdmittedOf,
 	Contract,
 	EventMember,
 	EventSource,
 	EventSubscription,
+	HostKeyed,
 	Implementation,
 	KeyedWatchable,
+	MemberNames,
+	NamedQuery,
 	ParamsOf,
+	QueryPage,
 } from "./contract.ts";
+export { memberNames } from "./contract.ts";
 export { local, remote } from "./declare.ts";
 export { evolve } from "./evolve.ts";
 export { type Address, type HostKind, hostKind, type KindShape, type ParamsOfKind } from "./host-kind.ts";
@@ -26,7 +32,9 @@ export {
 	int,
 	type KeyedMember,
 	keyed,
+	type LiteralsSchema,
 	lit,
+	type Method,
 	map,
 	method,
 	type NullSchema,
@@ -37,6 +45,8 @@ export {
 	obj,
 	oneOf,
 	opt,
+	type QueriesMember,
+	queries,
 	type Schema,
 	type Static,
 	type StringSchema,

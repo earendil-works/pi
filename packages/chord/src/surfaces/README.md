@@ -36,7 +36,8 @@ from `@earendil-works/chord`.
   `base` calls `outdated`. At each reconnect, beside the next attempt, it asks the server's base (`serverBase`): another
   one stops the loop (ending an attempt made meanwhile), then calls `outdated` (a new link protocol comes with a new base
   bundle, Chord being in it). A static client
-  (`follow: false`) neither follows the scripts object nor asks the server's base.
+  (`follow: false`) neither follows the scripts object nor asks the server's base. `limits` sets the limits per part of
+  what arrives from the server (an untrusted link's by default).
 - **Themes** (`themes.ts`, `theme-choice.ts`, `active-theme.ts`): `Theme` (`{ id, name, mode, colors, web?, tui? }`; the
   base roles `accent`, `bg`, `fg`, `muted`, `error`, `warning`, `success`, apps add roles), the `Themes` registry
   (version 1; a later role is a version bump mapping old entries from the fallback theme), `themesFacet` serving it on a
@@ -53,5 +54,9 @@ from `@earendil-works/chord`.
   contributor; one catalog per namespace and locale) with `translationsFacet`; `LocaleChoice` with
   `localeChoiceFacet`; `followActiveLanguage(host, preferred, changed, report, ctx)`, keeping the host's language as
   its page state (`hostLanguage`).
+- **A reference in one variant** (`variant.ts`; decision "C15 stands; the UI bindings follow the variant"): `liveIn(ref,
+  variant)`, the reference narrowed to `variant` while it is live in it, `undefined` otherwise; internal, what
+  React's `useVariant` and `TuiScope.variant` return, each with its own subscription to the reference's state. The
+  types `InVariant`, `VariantOf` and `VariantRef` are exported with those bindings.
 
 Tests: `test/surfaces/`.

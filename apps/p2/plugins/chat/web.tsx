@@ -6,17 +6,19 @@ import {
 	BACKGROUND_CONTEXT,
 	defineFacet,
 	expandComposerText,
+	fileReferences,
 	grantMode,
 	type Held,
 	isChordError,
-	keptIn,
 	liveIn,
+	plainReferences,
+	renameReferences,
 	serveKeyed,
 	UI_LINGER,
 	whenLive,
 } from "@p2/app/v1";
 import {
-	AttachIcon,
+	ALT_KEY,
 	BranchFrom,
 	buildTranscript,
 	ChevronIcon,
@@ -31,6 +33,7 @@ import {
 	conversationRoute,
 	type Detail,
 	DownIcon,
+	type DraftInput,
 	ErrorToast,
 	errorText,
 	type FileCompletion,
@@ -46,6 +49,7 @@ import {
 	keepSessions,
 	keptSizes,
 	knownMain,
+	ListIcon,
 	LockIcon,
 	lightTap,
 	loadKept,
@@ -54,14 +58,15 @@ import {
 	MenuIcon,
 	Messages,
 	type ModelChoice,
-	ModelPicker,
 	modelName,
+	moreVerb,
 	NEW_SESSION,
 	navigate,
 	OneShotAgents,
 	OpenConversation,
 	OpenTerminal,
 	OpenWorkspaceFile,
+	openCommandPage,
 	openLayer,
 	openSidebar,
 	type PickedFile,
@@ -69,6 +74,7 @@ import {
 	PlusIcon,
 	ReplyTo,
 	RevealEntry,
+	referencedFiles,
 	revealEntry,
 	revealRequest,
 	rowEstimates,
@@ -78,12 +84,14 @@ import {
 	Slot,
 	SlotList,
 	Slots,
+	StarIcon,
 	StopIcon,
 	seedSizes,
 	ToolActivities,
 	ToolActivityContext,
 	type Transcript,
 	takeReveal,
+	thinkingLevels,
 	transcriptOf,
 	transcriptRows,
 	useChatScroll,
@@ -99,6 +107,7 @@ import {
 	useOffline,
 	useOptimisticCall,
 	useOwner,
+	usePointerKind,
 	useReadable,
 	useRegistry,
 	useRoute,
@@ -109,6 +118,7 @@ import {
 } from "@p2/app/v1/web";
 import {
 	createContext,
+	Fragment,
 	type ReactNode,
 	useCallback,
 	useContext,
@@ -123,19 +133,19 @@ import { createPortal } from "react-dom";
 import { Drafts } from "../drafts/contract.ts";
 import { Envs } from "../envs/contract.ts";
 import { DirectoryPicker, directoryPickerLayer } from "../envs/contract.web.tsx";
-import { GlyphIcon } from "../glyphs/GlyphIcon.tsx";
 import { Models } from "../models/contract.ts";
 import type { ResourceSnapshot } from "../models/resources.ts";
-import { Projects } from "../projects/contract.ts";
-import { placeSeed } from "../projects/glyph-seed.ts";
 import { type Session, Sessions } from "../sessions/contract.ts";
+import { PiDots } from "../sessions/contract.web.tsx";
 import { SessionMetrics, SessionStatus, WorkerControl } from "../status/contract.ts";
 import { type Child, conversationLocation, SubagentControl, Subagents } from "../subagents/contract.ts";
 import { openMain } from "../subagents/contract.web.ts";
 import { SessionTree } from "../tree/contract.ts";
-import { MODEL_COMMANDS, MODEL_PAGES } from "./commands.tsx";
+import { configure, MODEL_COMMANDS, MODEL_PAGES } from "./commands.tsx";
 import { Chat, ChatCosts, conversationTargetId, TranscriptEntries } from "./contract.ts";
-import { newSessionChoice, thinkingLevelOf } from "./model-choice.ts";
+import { DraftEditor } from "./draft-editor.tsx";
+import { isDefaultChoice, newSessionChoice, thinkingLevelOf } from "./model-choice.ts";
+import { useModelScreen } from "./model-screens.ts";
 import { type Outgoing, outboxOf } from "./outbox.ts";
 import { sessionStart } from "./session-start.ts";
 
@@ -174,18 +184,14 @@ function refused(error: unknown): boolean {
 const OWNER_AUTHOR = { kind: "owner", id: "owner", name: "Owner" } as const;
 
 /** A message sent from here as the transcript will show it, until the server shows it (outbox.ts). */
-function outgoingItem(
-	id: string,
-	text: string,
-	files: readonly PickedFile[],
-	author: Outgoing["item"]["author"],
-): Outgoing["item"] {
+function outgoingItem(id: string, text: string, author: Outgoing["item"]["author"]): Outgoing["item"] {
 	return {
 		type: "user",
 		key: `outgoing-${id}`,
 		text,
 		images: [],
-		files: files.map((file) => file.file.name),
+		// Its files show where their references are.
+		files: [],
 		...(author ? { author } : {}),
 	};
 }
@@ -201,11 +207,10 @@ const outgoingTranscript = (messages: readonly Outgoing[]): Transcript => ({
 	agent: {},
 });
 
-/** Picked files: shown above the textarea, removable; the attach button and pasted images add more. */
+/** Picked files: pills in the draft where their references are; the attach button and pasted images add more. */
 type Attaching = {
 	readonly files: readonly PickedFile[];
 	readonly add: (files: File[]) => void;
-	readonly remove: (file: PickedFile) => void;
 };
 
 /**
@@ -227,10 +232,9 @@ function pastedImages(data: DataTransfer): File[] {
 }
 
 /** The composer's attachments from its state. */
-const attachingOf = ({ files, setFiles, addFiles }: ReturnType<typeof useComposerState>): Attaching => ({
+const attachingOf = ({ files, addFiles }: ReturnType<typeof useComposerState>): Attaching => ({
 	files,
 	add: addFiles,
-	remove: (file) => setFiles((current) => current.filter((entry) => entry !== file)),
 });
 
 /**
@@ -246,8 +250,6 @@ type PageObjects = {
 	readonly models: Held<typeof Models> | undefined;
 	/** The owner's only. */
 	readonly envs: Held<typeof Envs> | undefined;
-	/** The owner's only: projects.json and the sessions' projects, for the top bar's project glyph. */
-	readonly projects: Held<typeof Projects> | undefined;
 };
 
 const PageObjectsContext = createContext<PageObjects | undefined>(undefined);
@@ -311,24 +313,68 @@ function useDetail(resources: ResourceSnapshot | undefined): Detail | undefined 
 	}
 }
 
-/** The model and thinking chip that opens the model sheet. */
-function ModelControl({ resources, choice }: { resources: ResourceSnapshot | undefined; choice?: ModelChoice }) {
+/**
+ * The footer's model links: the model and the thinking level open the command menu's pages for `target` (what the
+ * screen shows), and while the two are not the default for new sessions a star saves them as the default. Without a
+ * target (a read-only screen) or before the catalog arrived the links are disabled.
+ */
+function ModelControls({
+	resources,
+	choice,
+	target,
+	onDefault,
+}: {
+	resources: ResourceSnapshot | undefined;
+	choice: ModelChoice | undefined;
+	target: CommandTarget | undefined;
+	onDefault: (choice: ModelChoice) => void;
+}) {
 	const name = choice ? modelName(resources, choice.model) : "Choose model";
-	const level = choice && choice.thinkingLevel !== "off" ? choice.thinkingLevel : undefined;
+	// A model without adjustable thinking has no thinking link.
+	const level = choice && thinkingLevels(resources, choice.model).length > 1 ? choice.thinkingLevel : undefined;
+	const disabled = !resources || !target;
+	const described = `${name}${level ? ` · ${level}` : ""}`;
 	return (
-		<button
-			type="button"
-			className="model-control footer-action"
-			aria-label="Model and thinking"
-			title={`${name}${level ? ` · ${level}` : ""}`}
-			onClick={() => openLayer({ kind: "sheet", name: "model" })}
-			disabled={!resources}
-		>
-			<span>
+		<span className="model-controls">
+			<button
+				type="button"
+				className="model-control footer-action"
+				aria-label="Model"
+				title={name}
+				onClick={() => openCommandPage("models", target)}
+				disabled={disabled}
+			>
 				{name}
-				{level && ` · ${level}`}
-			</span>
-		</button>
+			</button>
+			{level && (
+				<>
+					<span className="model-separator" aria-hidden="true">
+						·
+					</span>
+					<button
+						type="button"
+						className="thinking-control footer-action"
+						aria-label="Thinking level"
+						title={`Thinking: ${level}`}
+						onClick={() => openCommandPage("thinking", target)}
+						disabled={disabled}
+					>
+						{level}
+					</button>
+				</>
+			)}
+			{!disabled && choice && !isDefaultChoice(resources, choice) && (
+				<button
+					type="button"
+					className="default-control"
+					aria-label="Make default for new sessions"
+					title={`Make ${described} the default for new sessions`}
+					onClick={() => onDefault(choice)}
+				>
+					<StarIcon size={13} />
+				</button>
+			)}
+		</span>
 	);
 }
 
@@ -336,7 +382,7 @@ function ModelControl({ resources, choice }: { resources: ResourceSnapshot | und
 type SendChoice = { readonly label: string; readonly run: () => void };
 
 /**
- * Textarea with send, stop and attachments. Enter (with a fine pointer) and a tap on Send do `send`; Alt+Enter does
+ * The draft's editor (text with file pills) with send, stop and attachments. Enter (with a fine pointer) and a tap on Send do `send`; Alt+Enter does
  * `alternate` (while a run is busy: a follow-up instead of steering; idle: the message in a new branch). Where there is
  * an alternate, Send also opens a menu of both: a long press (touch), a right-click, the Menu key or Shift+F10,
  * or ArrowUp while it has focus (Elanor's menu). Escape stops a busy run.
@@ -350,7 +396,7 @@ function Composer({
 	attaching,
 	replying,
 	completion,
-	textareaRef,
+	inputRef,
 	children,
 }: {
 	busy: boolean;
@@ -364,34 +410,15 @@ function Composer({
 	replying?: { name: string; onCancel: () => void };
 	/** `@` and Tab file completion (p2 addition, src/web/file-completion.tsx); only where a session exists. */
 	completion?: FileCompletion;
-	textareaRef?: React.RefObject<HTMLTextAreaElement | null>;
+	inputRef?: React.RefObject<DraftInput | null>;
 	children?: React.ReactNode;
 }) {
 	// The draft straight from the app's composer state, not through the screen's dock content: that arrives a layout
-	// effect after a keystroke, so the controlled textarea rendered the previous text first, which put the caret at the
-	// end on every keystroke and broke a phone keyboard's composition (its first tap on Send only closed the keyboard).
-	const { draft, setDraft, registerTextarea } = useComposerState();
-	const ownRef = useRef<HTMLTextAreaElement>(null);
-	const textarea = textareaRef ?? ownRef;
-	// The app's composer state focuses it on request (`focus`): opening a session, a reply, restored text.
-	const ref = useCallback(
-		(element: HTMLTextAreaElement | null) => {
-			textarea.current = element;
-			registerTextarea(element);
-		},
-		[textarea, registerTextarea],
-	);
-	// biome-ignore lint/correctness/useExhaustiveDependencies: resizing follows the rendered draft, as in Pi Mobile.
-	useLayoutEffect(() => {
-		const element = textarea.current;
-		if (!element) return;
-		element.style.height = "auto";
-		element.style.overflowY = "hidden";
-		element.style.height = `${Math.min(element.scrollHeight + 1, 200)}px`;
-		element.style.overflowY = element.scrollHeight > element.clientHeight ? "auto" : "hidden";
-	}, [draft]);
-	const files = attaching?.files ?? [];
-	const content = draft.trim() !== "" || files.length > 0;
+	// effect after a keystroke, so the input rendered the previous text first, which put the caret at the end on every
+	// keystroke and broke a phone keyboard's composition (its first tap on Send only closed the keyboard).
+	const { draft, setDraft, registerInput, files } = useComposerState();
+	// Files travel as references in the text, so a draft with only pills has text too.
+	const content = draft.trim() !== "";
 	const [choosing, setChoosing] = useState(false);
 	const choices = alternate && content && !disabled ? [send, alternate] : undefined;
 	const offered = choices !== undefined;
@@ -403,6 +430,7 @@ function Composer({
 	const press = useLongPress(() => {
 		if (offered) setChoosing(true);
 	});
+	const pointer = usePointerKind();
 	// Opened from the keyboard or a mouse, the menu's first item takes the focus (no trigger tells Elanor's menu how it
 	// opened); a touch leaves it on the menu.
 	const popup = useRef<HTMLDivElement>(null);
@@ -431,35 +459,15 @@ function Composer({
 					</button>
 				</div>
 			)}
-			{files.length > 0 && (
-				<div className="attachments">
-					{files.map((file) => (
-						<span key={file.key} className="attachment">
-							{file.preview ? <img src={file.preview} alt="" /> : <AttachIcon />}
-							<span className="attachment-name">{file.file.name}</span>
-							<button
-								type="button"
-								aria-label={`Remove ${file.file.name}`}
-								onClick={() => attaching?.remove(file)}
-							>
-								<CloseIcon />
-							</button>
-						</span>
-					))}
-				</div>
-			)}
 			{completion && <FileCompletionPopover completion={completion} />}
-			<textarea
-				ref={ref}
-				rows={1}
-				value={draft}
+			<DraftEditor
+				draft={draft}
+				setDraft={setDraft}
+				files={files}
+				register={registerInput}
+				{...(inputRef ? { inputRef } : {})}
 				placeholder={busy ? "Steer the current run…" : "Message Pi…"}
-				aria-label="Message"
-				onChange={(event) => {
-					setDraft(event.target.value);
-					completion?.update();
-				}}
-				onClick={() => completion?.update()}
+				onEdit={() => completion?.update()}
 				onPaste={(event) => {
 					if (!attaching) return;
 					const images = pastedImages(event.clipboardData);
@@ -528,16 +536,19 @@ function Composer({
 										<Menu.Item
 											key={choice.label}
 											onClick={choice.run}
+											// A touch-only device sends with the button, never with Enter (onKeyDown above).
 											endAdornment={
-												<KeyboardShortcut>
-													{index === 0 ? (
-														<KeyboardKey>Enter</KeyboardKey>
-													) : (
-														<>
-															<KeyboardKey>Alt</KeyboardKey>+<KeyboardKey>Enter</KeyboardKey>
-														</>
-													)}
-												</KeyboardShortcut>
+												pointer !== "touch" && (
+													<KeyboardShortcut>
+														{index === 0 ? (
+															<KeyboardKey>Enter</KeyboardKey>
+														) : (
+															<>
+																<KeyboardKey>{ALT_KEY}</KeyboardKey>+<KeyboardKey>Enter</KeyboardKey>
+															</>
+														)}
+													</KeyboardShortcut>
+												)
 											}
 										>
 											{choice.label}
@@ -554,7 +565,7 @@ function Composer({
 						type="submit"
 						className="round send"
 						aria-label="Send"
-						title={choices ? `${send.label} (long press for more)` : send.label}
+						title={choices ? `${send.label} (${moreVerb(pointer)} for more)` : send.label}
 						disabled={!content || disabled}
 						{...(choices ? { "aria-haspopup": "menu" as const, "aria-expanded": choosing } : {})}
 						{...press.handlers}
@@ -594,7 +605,7 @@ function keepComposerFocus(event: React.PointerEvent<HTMLFormElement>): void {
 }
 
 /** The composer's settings from the screen in the frame; the frame owns its textarea (`Frame.composer`). */
-type ComposerProps = Omit<Parameters<typeof Composer>[0], "textareaRef">;
+type ComposerProps = Omit<Parameters<typeof Composer>[0], "inputRef">;
 
 /**
  * What the chat's dock shows for the screen in the frame: a bar above (a subagent's), and the composer's place with the
@@ -636,7 +647,7 @@ type Frame = {
 	readonly view: HTMLDivElement | null;
 	readonly dock: HTMLDivElement | null;
 	readonly contents: DockContents;
-	readonly composer: React.RefObject<HTMLTextAreaElement | null>;
+	readonly composer: React.RefObject<DraftInput | null>;
 };
 const ChatFrame = createContext<Frame | undefined>(undefined);
 
@@ -684,7 +695,7 @@ function Dock({ frame, dockRef }: { frame: Frame; dockRef: (element: HTMLDivElem
 					) : (
 						<>
 							{composer.queued}
-							<Composer {...composer.props} textareaRef={frame.composer} />
+							<Composer {...composer.props} inputRef={frame.composer} />
 							{composer.footer}
 						</>
 					)}
@@ -711,16 +722,6 @@ function TopBar({
 	const objects = usePageObjects();
 	const envs = useReadable(objects.envs?.envs);
 	const sandboxed = envs?.find((env) => env.name === session?.env)?.config.type === "gondolin";
-	// The project glyph the sidebar shows for this session (guests read no projects: the path's own glyph).
-	const kept = keptIn(objects.projects, "owner");
-	const projects = useReadable(kept?.projects);
-	const memberships = useReadable(kept?.sessions);
-	const glyph = session && (
-		<GlyphIcon
-			seed={placeSeed(projects ?? [], session.env ?? null, session.cwd, memberships?.[session.id])}
-			size={11}
-		/>
-	);
 	const lock = sandboxed && (
 		<span className="title-lock">
 			<LockIcon size={11} />
@@ -759,16 +760,12 @@ function TopBar({
 									) : (
 										<>
 											{lock}
-											{glyph}
 											{locationLabel(session.env, session.cwd)}
 										</>
 									)}
 								</button>
 							) : (
-								<p>
-									{glyph}
-									{locationLabel(session.env, session.cwd)}
-								</p>
+								<p>{locationLabel(session.env, session.cwd)}</p>
 							))}
 					</>
 				)}
@@ -776,6 +773,7 @@ function TopBar({
 			{offline && <span className="offline">Offline</span>}
 			<Slot name="view-actions" />
 			<Slot name="artifact-actions" />
+			<Slot name="tree-actions" />
 			<Slot name="terminal-actions" />
 			<Slot name="workspace-actions" />
 			<Slot name="session-options" />
@@ -862,6 +860,31 @@ function viewTarget(
 		: undefined;
 }
 
+/**
+ * The bar above the main conversation's composer while the session's subagents or one-shot agents run: pi's dots and
+ * their names, each opening its conversation. The main conversation idle shows no wheel, so this says work goes on.
+ */
+function RunningAgents({ agents, onOpen }: { agents: readonly Child[]; onOpen: (conversation: number) => void }) {
+	return (
+		<div className="composer-wrap subagent-wrap">
+			<div className="subagent-bar running-agents">
+				<PiDots />
+				<span className="running-agents-names">
+					{agents.length > 1 ? `${agents.length} agents running: ` : "Running: "}
+					{agents.map((agent, index) => (
+						<Fragment key={agent.conversationId}>
+							{index > 0 && ", "}
+							<button type="button" className="running-agent" onClick={() => onOpen(agent.conversationId)}>
+								{agent.name}
+							</button>
+						</Fragment>
+					))}
+				</span>
+			</div>
+		</div>
+	);
+}
+
 function SessionChat({ sessionId, conversationId }: { sessionId: string; conversationId: number }) {
 	const nav = useNavigation();
 	const openConversation = useCallback(
@@ -929,7 +952,8 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	const child = children?.[sessionId]?.find((entry) => entry.conversationId === conversationId);
 	// A code mode script's one-shot agent: read-only, opened from the script's tool card.
 	const oneShot = child?.kind === "agent";
-	useCommandRouteTarget(viewTarget(session, conversationId, child));
+	const target = viewTarget(session, conversationId, child);
+	useCommandRouteTarget(target);
 	// Where the viewed conversation works: a subagent may have its own location (e.g. a git worktree, or another machine).
 	const viewLocation = conversationLocation(session, child);
 	const viewCwd = viewLocation?.cwd;
@@ -958,7 +982,17 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 			void nav.replace(conversationRoute(current, sessionId, main), current);
 	}, [children, child, conversationId, main, nav, sessionId]);
 	const workers = liveIn(objects.status, "reader");
-	const workerError = useReadable(workers?.statuses)?.[sessionId]?.error;
+	const worker = useReadable(workers?.statuses)?.[sessionId];
+	const workerError = worker?.error;
+	// The session's other agents that run while its main conversation shows (the main one's own work is in its transcript).
+	const busyAgents = worker?.busy;
+	const runningAgents = useMemo(
+		() =>
+			main === conversationId && busyAgents?.length
+				? (children?.[sessionId] ?? []).filter((agent) => busyAgents.includes(agent.conversationId))
+				: [],
+		[main, conversationId, busyAgents, children, sessionId],
+	);
 	const [activationError, setActivationError] = useState<string>();
 	const failure = workerError ?? activationError;
 	// A rejected reference is released rather than repeatedly asking a broken worker to start. Chat lingers
@@ -1067,7 +1101,6 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	const clients = useReadable(metrics?.clients) ?? 0;
 	const usage = useReadable(metrics?.usage) ?? undefined;
 	const cwdSheet = useSheet("cwd");
-	const modelSheet = useSheet("model");
 	const costSheet = useSheet("cost");
 	/**
 	 * Restored text goes into the composer, which takes the focus, as in Pi Mobile; sending it again is a new message
@@ -1195,17 +1228,17 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	 */
 	const send = (whenBusy: "steer" | "followUp") => {
 		const text = draft.trim();
-		if ((!text && !files.length) || !canWrite) return;
+		if (!text || !canWrite) return;
 		lightTap();
 		setStopped(undefined);
 		const id = crypto.randomUUID();
 		outbox.add({
 			id,
 			text,
-			files: [...files],
+			files: referencedFiles(text, files),
 			whenBusy,
 			...(replying ? { replyTo: replying } : {}),
-			item: outgoingItem(id, text, files, author ?? (owner ? OWNER_AUTHOR : undefined)),
+			item: outgoingItem(id, text, author ?? (owner ? OWNER_AUTHOR : undefined)),
 		});
 		setDraft("");
 		setFiles([]);
@@ -1218,10 +1251,10 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	 */
 	const sendInBranch = () => {
 		const text = draft.trim();
-		if (!text && !files.length) return;
+		if (!text) return;
 		lightTap();
 		setStopped(undefined);
-		const picked = [...files];
+		const picked = referencedFiles(text, files);
 		setDraft("");
 		setFiles([]);
 		setReplyTo(undefined);
@@ -1230,7 +1263,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 			.then(() => {
 				const tree = liveIn(held, "owner");
 				if (!tree) throw new Error("Only the owner branches the session");
-				const label = text || picked.map((file) => file.file.name).join(", ");
+				const label = plainReferences(text);
 				return tree.branch({ conversation: conversationId, label }, BACKGROUND_CONTEXT);
 			})
 			.then(({ conversation }) => {
@@ -1240,7 +1273,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 					text,
 					files: picked,
 					whenBusy: "steer",
-					item: outgoingItem(id, text, picked, author ?? OWNER_AUTHOR),
+					item: outgoingItem(id, text, author ?? OWNER_AUTHOR),
 				});
 				void nav.replace(conversationRoute(nav.route, sessionId, conversation));
 			})
@@ -1295,16 +1328,21 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 						return file.uploaded;
 					}),
 				);
+				// The references name the picked files by their keys; the session knows them by their upload IDs. The other
+				// references are uploads already (a message brought back by Edit or from the queue): they go as they are.
+				const uploads = new Map(message.files.map((file, index) => [file.key, attachments[index]!]));
+				const referenced = renameReferences(message.text, (key) => uploads.get(key) ?? key);
+				const ids = [...new Set(fileReferences(referenced).map((reference) => reference.id))];
 				// `/template args` and `/skill:name args` expand on the session worker first (10.8).
-				const text = message.text.startsWith("/")
-					? await expandComposerText(client, session, conversation, message.text)
-					: message.text;
+				const text = referenced.startsWith("/")
+					? await expandComposerText(client, session, conversation, referenced)
+					: referenced;
 				const { submissionId } = await current.send(
 					{
 						text,
 						requestId: message.id,
 						whenBusy: message.whenBusy,
-						...(attachments.length ? { attachments } : {}),
+						...(ids.length ? { attachments: ids } : {}),
 						...(message.replyTo ? { replyTo: message.replyTo.entryId } : {}),
 					},
 					BACKGROUND_CONTEXT,
@@ -1424,8 +1462,19 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 		(items, submissionId: number) => items.filter((item) => item.id !== submissionId),
 		fail,
 	);
+	// The menu's model pages and commands change the model through here, so the footer shows it at once; before the
+	// chat is live the change goes through a hold of its own.
+	useModelScreen(owner ? target : undefined, choice, {
+		choose: (next) =>
+			chooseModel(next, () =>
+				writer ? writer.configure(next, BACKGROUND_CONTEXT) : configure(host, sessionId, conversationId, next),
+			),
+		makeDefault: () => {
+			if (choice) setDefault(choice);
+		},
+	});
 	const modelControl = owner ? (
-		<ModelControl resources={resources} {...(choice ? { choice } : {})} />
+		<ModelControls resources={resources} choice={choice} target={target} onDefault={setDefault} />
 	) : (
 		<span className="model-control static">{grant?.name} · guest</span>
 	);
@@ -1511,7 +1560,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 							setFiles((current) => [...current, ...message.files]);
 						}}
 					>
-						<span>{message.whenBusy === "steer" ? "Steer" : "Queued"}</span> {message.text}
+						<span>{message.whenBusy === "steer" ? "Steer" : "Queued"}</span> {plainReferences(message.text)}
 					</button>
 					<button
 						type="button"
@@ -1540,7 +1589,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 							})
 						}
 					>
-						<span>{item.mode === "steer" ? "Steer" : "Queued"}</span> {item.text}
+						<span>{item.mode === "steer" ? "Steer" : "Queued"}</span> {plainReferences(item.text)}
 					</button>
 					<button
 						type="button"
@@ -1559,7 +1608,9 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	const place = useChatScreen(
 		{
 			screen: conversationKey({ session: sessionId, conversation: conversationId }),
-			above: subagentBar,
+			above:
+				subagentBar ||
+				(runningAgents.length > 0 && <RunningAgents agents={runningAgents} onOpen={openConversation} />),
 			// A one-shot agent's view has no composer: its bar above has the Stop.
 			...(oneShot && canWrite
 				? {}
@@ -1596,26 +1647,13 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 					value={session.cwd}
 					env={session.env ?? null}
 					moving={{ env: session.env ?? null }}
-					recent={(env) => [
-						...new Set((listed ?? []).filter((row) => (row.env ?? null) === env).map((row) => row.cwd)),
-					]}
+					sessions={listed}
 					onClose={closeLayers}
 					onChange={(env, cwd) => {
 						const catalog = liveIn(sessions, "owner");
 						if (catalog) relocate(true, () => catalog.relocate({ id: sessionId, env, cwd }, BACKGROUND_CONTEXT));
 						closeLayers();
 					}}
-				/>
-			)}
-			{modelSheet && owner && (
-				<ModelPicker
-					resources={resources}
-					value={choice}
-					onChange={(next) => {
-						if (writer) chooseModel(next, () => writer.configure(next, BACKGROUND_CONTEXT));
-					}}
-					onDefault={setDefault}
-					onClose={closeLayers}
 				/>
 			)}
 			{costSheet && (
@@ -1744,17 +1782,25 @@ function NewSession() {
 		choice: selectedChoice,
 		setChoice,
 	} = useNewSessionState();
+	// Unless chosen, the session starts where the latest session that is not archived works: the first of the recent
+	// folders the folder button lists.
+	const latest = recent.find((session) => session.archivedAt === null);
 	const location =
-		selectedLocation ?? (recent[0] ? { env: recent[0].env ?? null, cwd: recent[0].cwd } : { env: null, cwd: "~" });
+		selectedLocation ?? (latest ? { env: latest.env ?? null, cwd: latest.cwd } : { env: null, cwd: "~" });
 	const choice = newSessionChoice(selectedChoice, resources, recent[0]);
 	useCommandRouteTarget(NEW_SESSION_TARGET);
+	useModelScreen(owner ? NEW_SESSION_TARGET : undefined, choice, {
+		choose: setChoice,
+		makeDefault: () => {
+			if (choice) setDefault(choice);
+		},
+	});
 	const contextWindow = resources?.models.find(
 		(entry) => entry.provider === choice?.model.provider && entry.modelId === choice?.model.modelId,
 	)?.contextWindow;
 	const composer = useComposerState();
 	const { draft, setDraft, files, setFiles, setError, setStopped } = composer;
 	const cwdSheet = useSheet("cwd");
-	const modelSheet = useSheet("model");
 	const attaching = attachingOf(composer);
 	// The first messages, shown at once while the session is created (session-start.ts).
 	const start = useSyncExternalStore(sessionStart.subscribe, sessionStart.snapshot);
@@ -1768,9 +1814,9 @@ function NewSession() {
 	 */
 	const send = () => {
 		const text = draft.trim();
-		if ((!text && !files.length) || !owner) return;
+		if (!text || !owner) return;
 		if (!choice) {
-			openLayer({ kind: "sheet", name: "model" });
+			openCommandPage("models", NEW_SESSION_TARGET);
 			return;
 		}
 		lightTap();
@@ -1780,9 +1826,9 @@ function NewSession() {
 			{
 				id,
 				text,
-				files: [...files],
+				files: referencedFiles(text, files),
 				whenBusy: "steer",
-				item: outgoingItem(id, text, files, OWNER_AUTHOR),
+				item: outgoingItem(id, text, OWNER_AUTHOR),
 			},
 			// The page chooses the session's ID: a retried creation answers the same session.
 			{ session: crypto.randomUUID(), location, choice, ...(join ? { join } : {}) },
@@ -1860,7 +1906,12 @@ function NewSession() {
 						footer: (
 							<div className="session-usage">
 								<div className="session-controls">
-									<ModelControl resources={resources} {...(choice ? { choice } : {})} />
+									<ModelControls
+										resources={resources}
+										choice={choice}
+										target={NEW_SESSION_TARGET}
+										onDefault={setDefault}
+									/>
 								</div>
 								{/* The session's context bar, empty: the dock keeps its height when Send opens the session. */}
 								<ContextUsage {...(contextWindow ? { used: 0, limit: contextWindow } : {})} />
@@ -1884,22 +1935,11 @@ function NewSession() {
 				<DirectoryPicker
 					value={location.cwd}
 					env={location.env}
-					recent={(env) => [
-						...new Set(recent.filter((session) => (session.env ?? null) === env).map((session) => session.cwd)),
-					]}
+					sessions={listed}
 					onChange={(env, cwd) => {
 						setLocation({ env, cwd });
 						closeLayers();
 					}}
-					onClose={closeLayers}
-				/>
-			)}
-			{modelSheet && owner && (
-				<ModelPicker
-					resources={resources}
-					value={choice}
-					onChange={setChoice}
-					onDefault={setDefault}
 					onClose={closeLayers}
 				/>
 			)}
@@ -1914,16 +1954,30 @@ function NewSession() {
 								<PiLogo />
 								<h2>What should Pi do?</h2>
 							</div>
-							<button
-								type="button"
-								className="cwd-pick"
-								onClick={() => openLayer(directoryPickerLayer(location.env, location.cwd))}
-							>
-								<FolderIcon />
-								<span>{locationLabel(location.env, location.cwd)}</span>
-								{join && <small className="cwd-join">in {join.label}</small>}
-								<ChevronIcon size={14} />
-							</button>
+							{/* The project the session joins, then where it starts: each opens its own picker. */}
+							<div className="new-session-choices">
+								{owner && (
+									<button
+										type="button"
+										className="project-pick"
+										aria-label={`Project: ${join?.label ?? "No project"}`}
+										onClick={() => openCommandPage("new-session-project", NEW_SESSION_TARGET)}
+									>
+										<ListIcon />
+										<span>{join?.label ?? "No project"}</span>
+										<ChevronIcon size={14} />
+									</button>
+								)}
+								<button
+									type="button"
+									className="cwd-pick"
+									onClick={() => openLayer(directoryPickerLayer(location.env, location.cwd))}
+								>
+									<FolderIcon />
+									<span>{locationLabel(location.env, location.cwd)}</span>
+									<ChevronIcon size={14} />
+								</button>
+							</div>
 							{owner && resources && !resources.credentials.length && (
 								<button
 									type="button"
@@ -1966,10 +2020,9 @@ function Main() {
 	const status = useObject(SessionStatus, {});
 	const models = useObject(Models, owner ? {} : undefined);
 	const envs = useObject(Envs, owner ? {} : undefined);
-	const projects = useObject(Projects, owner ? {} : undefined);
 	const objects = useMemo(
-		() => ({ sessions, access, subagents, status, models, envs, projects }),
-		[sessions, access, subagents, status, models, envs, projects],
+		() => ({ sessions, access, subagents, status, models, envs }),
+		[sessions, access, subagents, status, models, envs],
 	);
 	const grant = useReadable(liveIn(access, "guest")?.grant);
 	// A guest stays within the sessions shared with it; anywhere else it lands in the one shared or joined last.
@@ -1980,7 +2033,7 @@ function Main() {
 	const [view, setView] = useState<HTMLDivElement | null>(null);
 	const [dock, setDock] = useState<HTMLDivElement | null>(null);
 	const [contents] = useState(() => new DockContents());
-	const composer = useRef<HTMLTextAreaElement>(null);
+	const composer = useRef<DraftInput>(null);
 	const frame = useMemo(() => ({ view, dock, contents, composer }), [view, dock, contents]);
 	// A short link (`/s/<id>`) opens the session's main conversation as last known here: no hold of conversation 1
 	// first and no redirect after the catalog arrives (the conversation view corrects a stale guess).

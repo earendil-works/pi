@@ -23,10 +23,11 @@ import { requireEnv } from "./env.ts";
 import { detectSupportedImageMimeTypeOf, imageDimensions } from "./image.ts";
 import {
 	base64Length,
-	DEFAULT_IMAGE_LIMITS,
 	type ImageLimits,
 	type ImageProcessor,
 	INLINE_IMAGE_TYPES,
+	imageLimits,
+	preparedNotes,
 	toBase64,
 } from "./image-processor.ts";
 import { resolveReadToolPath } from "./path-utils.ts";
@@ -171,15 +172,7 @@ async function readImage(
 		if (prepared === undefined)
 			return imageError(`${path} is an image (${mimeType}) that cannot be prepared for the model`);
 		image = prepared;
-		if (prepared.convertedFrom !== undefined)
-			notes.push(`Converted from ${prepared.convertedFrom} to ${prepared.mimeType}.`);
-		if (prepared.resized !== undefined) {
-			const { from, to } = prepared.resized;
-			const scale = (from.width / to.width).toFixed(2);
-			notes.push(
-				`Resized from ${from.width}x${from.height} to ${to.width}x${to.height}. Multiply coordinates by ${scale} to map them to the original.`,
-			);
-		}
+		notes.push(...preparedNotes(prepared));
 	} else {
 		if (!INLINE_IMAGE_TYPES.has(mimeType)) {
 			return imageError(
@@ -218,20 +211,15 @@ async function readImage(
 type ImageModel = { readonly limits: ImageLimits; readonly imageUnsupportedByModel?: string };
 
 /**
- * The conversation model's image limits, `DEFAULT_IMAGE_LIMITS` overridden by its `inputLimits.images.resize`, and its
- * id if it has no image input. Without a resolvable model, the defaults and no id.
+ * The conversation model's image limits (`imageLimits`), and its id if it has no image input. Without a resolvable
+ * model, the defaults and no id.
  */
 async function imageModel(api: ToolExecutionApi, context: Context): Promise<ImageModel> {
 	const ref = (await api.agent(context)).model;
 	const model = ref === undefined ? undefined : api.models.getModel(ref.provider, ref.modelId);
-	const resize = model?.inputLimits?.images?.resize;
 	return {
 		...(model === undefined || model.input.includes("image") ? {} : { imageUnsupportedByModel: model.id }),
-		limits: {
-			maxWidth: resize?.maxWidth ?? DEFAULT_IMAGE_LIMITS.maxWidth,
-			maxHeight: resize?.maxHeight ?? DEFAULT_IMAGE_LIMITS.maxHeight,
-			maxBytes: resize?.maxBytes ?? DEFAULT_IMAGE_LIMITS.maxBytes,
-		},
+		limits: imageLimits(model),
 	};
 }
 

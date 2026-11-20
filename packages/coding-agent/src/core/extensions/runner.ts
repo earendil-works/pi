@@ -408,6 +408,10 @@ export class ExtensionRunner {
 	) {
 		this.extensions = extensions;
 		this.runtime = runtime;
+		// A handler still running when its session is replaced must not report into the replacement's UI.
+		this.runtime.reportError = (error) => {
+			if (!this.staleMessage) this.emitError(error);
+		};
 		this.uiContext = noOpUIContext;
 		this.cwd = cwd;
 		this.sessionManager = sessionManager;

@@ -111,7 +111,7 @@ See [Describe model input and caching](models.md#describe-model-input-and-cachin
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `supportsStore` | boolean |  | Whether the provider supports the store field. Default: auto-detected from URL. |
-| `supportsDeveloperRole` | boolean |  | Whether the provider supports the developer role instead of system. Default: auto-detected from URL. |
+| `supportsDeveloperRole` | boolean |  | Whether to send system messages of reasoning models (the system prompt and mid-conversation system messages) with the developer role instead of system. Default: true only for api.openai.com. |
 | `supportsReasoningEffort` | boolean |  | Whether the provider supports reasoning_effort. Default: auto-detected from URL. |
 | `supportsUsageInStreaming` | boolean | `true` | Whether the provider supports stream_options.include_usage for token usage in streaming responses. |
 | `supportsFinishReason` | boolean | `true` | Whether streamed responses include finish_reason. When false, pi infers stop or toolUse when the stream ends. |
@@ -157,7 +157,7 @@ Also applies to `azure-openai-responses` and `openai-codex-responses`.
 | `supportsAdditionalTools` | boolean | `false` | Whether the model supports message-anchored additional_tools input items. |
 | `supportsToolSearch` | boolean | `false` | Whether the model supports client-executed tool search for transcript-anchored additions. |
 | `supportsExplicitPromptCacheMode` | boolean | `false` | Whether the model accepts prompt_cache_options. Older OpenAI models reject the parameter. |
-| `supportsMidConvoEffort` | boolean | `false` | Whether thinking level changes are sent as configuration_update input items instead of changing reasoning.effort, so a change keeps the prompt cache. Only used by the openai-responses API, and ignored with Sign in with ChatGPT on the openai provider. |
+| `supportsMidConvoEffort` | boolean | `false` | Whether thinking level changes are sent as configuration_update input items instead of changing reasoning.effort, so a change keeps the prompt cache. Used by the openai-responses and openai-codex-responses APIs, and ignored with Sign in with ChatGPT on the openai provider. |
 | `supportsMaxOutputTokens` | boolean | `true` | Whether the provider accepts max_output_tokens. Some Codex-protocol gateways reject it. |
 
 ### `anthropic-messages`
@@ -190,6 +190,7 @@ Also applies to `azure-openai-responses` and `openai-codex-responses`.
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `supportsMidConvoSystemMessages` | boolean | `false` | Whether the exact model accepts system messages after the conversation has started. When false, later system messages are folded into the leading system message. |
+| `supportsStrictMode` | boolean | `false` | Whether the model supports strict (schema-constrained) function tools. |
 
 ### `typesafe-system-one`
 

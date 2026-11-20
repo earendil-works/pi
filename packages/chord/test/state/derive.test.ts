@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
 import { arr, int, local, method, obj, str } from "../../src/contracts/index.ts";
+import { applyImmutable, type Op } from "../../src/delta/index.ts";
 import { defineState, type SingletonHandle } from "../../src/documents/index.ts";
 import type { Self } from "../../src/host/index.ts";
 import { ChordObject } from "../../src/host/object.ts";
+import type { JsonValue } from "../../src/json.ts";
 import { mapShared } from "../../src/state/index.ts";
-import { Derive } from "../../src/state/internal.ts";
-import type { Watchable } from "../../src/watch.ts";
+import { Batch, Derive, Source, type Subscriber } from "../../src/state/internal.ts";
+import type { Watchable, WatchCall } from "../../src/watch.ts";
 import {
 	changesOf,
 	delivered,
@@ -141,6 +143,147 @@ describe("the pull model", () => {
 		await delivered();
 		expect(frames).toEqual([[{ even: 1 }, [["s", ["even"], 1]]]]);
 		expect(telemetry.counts()["chord.derive.diffs"]).toBe(2);
+	});
+});
+
+/** A source a test sets inside a batch; nobody watches it (its derives are what the tests follow). */
+class Cell extends Source {
+	#value: number;
+
+	constructor(value: number, batch: Batch) {
+		super(batch);
+		this.#value = value;
+	}
+
+	get value(): number {
+		return this.#value;
+	}
+
+	put(value: number): void {
+		this.#value = value;
+		this.changed();
+	}
+
+	deliver(): void {}
+}
+
+/** A cell at 1 in a batch counting on `telemetry`, and `derived(compute)`: a derive over it with a subscriber's calls. */
+async function cell() {
+	const telemetry = await metered();
+	const errors: unknown[] = [];
+	const batch = new Batch((error) => errors.push(error), telemetry.telemetry.metrics);
+	const source = new Cell(1, batch);
+	const derived = (sources: readonly Source[], compute: (values: readonly unknown[]) => JsonValue) => {
+		const derive = new Derive(sources, compute, batch);
+		derive.attach(
+			(input) => input as Source,
+			() => {},
+		);
+		// As a subscriber takes it on: the current value first.
+		const taken = derive.value;
+		const calls: WatchCall<JsonValue>[] = [];
+		const subscriber: Subscriber = {
+			advance: (call) => void calls.push(call),
+			end: () => {},
+			endAfterDelivery: () => {},
+		};
+		derive.subscribe(subscriber);
+		return { derive, taken, calls };
+	};
+	return { source, batch, errors, derived, counts: () => telemetry.counts() };
+}
+
+/** The ops of the value call `call`. */
+function opsOf(call: WatchCall<JsonValue> | undefined): readonly Op[] {
+	if (call?.kind !== "value") throw new Error("no value call");
+	return call.ops;
+}
+
+describe("a watched derive read between two changes of its source in one batch", () => {
+	it("delivers one frame: its last value, diffed from the value before the batch (one diff)", async () => {
+		const { source, batch, errors, derived, counts } = await cell();
+		// `big` changes with the first change only: a diff from the value read in between would not carry it.
+		const { derive, taken, calls } = derived([source], ([n]) => ({ n: n as number, big: (n as number) >= 2 }));
+		const before = counts()["chord.derive.diffs"] ?? 0;
+		const read: unknown[] = [];
+		batch.commit(() => {
+			source.put(2);
+			// As a reference binding in the same commit reads the member it binds to.
+			read.push(derive.value);
+			source.put(3);
+		}, context);
+		expect(read).toEqual([{ n: 2, big: true }]);
+		expect(errors).toEqual([]);
+		expect(calls).toMatchObject([{ kind: "value", value: { n: 3, big: true } }]);
+		// The ops apply to what the subscriber had, not to the value read in between.
+		expect(applyImmutable(taken, opsOf(calls[0]))).toEqual({ n: 3, big: true });
+		expect((counts()["chord.derive.diffs"] ?? 0) - before).toBe(1);
+		// The next batch starts from the last value.
+		batch.commit(() => source.put(4), context);
+		expect(calls).toHaveLength(2);
+		expect(opsOf(calls[1])).toEqual([["s", ["n"], 4]]);
+	});
+
+	it("delivers nothing when the batch ends at the value it started from", async () => {
+		const { source, batch, derived } = await cell();
+		const { derive, calls } = derived([source], ([n]) => ({ n: n as number }));
+		batch.commit(() => {
+			source.put(2);
+			void derive.value;
+			source.put(1);
+		}, context);
+		expect(calls).toEqual([]);
+	});
+
+	it("a derive over it is one frame too, read or not", async () => {
+		const { source, batch, derived } = await cell();
+		const inner = derived([source], ([n]) => ({ n: n as number }));
+		const outer = derived([inner.derive], ([value]) => ({ shown: `n=${(value as { n: number }).n}` }));
+		batch.commit(() => {
+			source.put(2);
+			void outer.derive.value;
+			source.put(3);
+			void inner.derive.value;
+			source.put(4);
+		}, context);
+		expect(inner.calls).toHaveLength(1);
+		expect(outer.calls).toHaveLength(1);
+		expect(applyImmutable(inner.taken, opsOf(inner.calls[0]))).toEqual({ n: 4 });
+		expect(applyImmutable(outer.taken, opsOf(outer.calls[0]))).toEqual({ shown: "n=4" });
+	});
+
+	it("a failure read in between and the value after it are one frame, the diff from the value before; no failure call", async () => {
+		const { source, batch, derived } = await cell();
+		const { derive, taken, calls } = derived([source], ([n]) => {
+			if (n === 2) throw new Error("two");
+			return { n: n as number };
+		});
+		batch.commit(() => {
+			source.put(2);
+			expect(() => derive.value).toThrow("two");
+			source.put(3);
+		}, context);
+		expect(calls).toHaveLength(1);
+		// Its watches had a value: a diff, not a replacement of the whole.
+		expect(opsOf(calls[0])).toEqual([["s", ["n"], 3]]);
+		expect(applyImmutable(taken, opsOf(calls[0]))).toEqual({ n: 3 });
+	});
+
+	it("a value read in between and the failure after it are one failure call", async () => {
+		const { source, batch, derived } = await cell();
+		const { derive, calls } = derived([source], ([n]) => {
+			if (n === 3) throw new Error("three");
+			return { n: n as number };
+		});
+		batch.commit(() => {
+			source.put(2);
+			void derive.value;
+			source.put(3);
+		}, context);
+		expect(calls).toMatchObject([{ kind: "failed", error: { message: "three" } }]);
+		// Healed in a later batch: the value whole.
+		batch.commit(() => source.put(4), context);
+		expect(calls[1]).toMatchObject({ kind: "value", ops: [["r", { n: 4 }]] });
 	});
 });
 

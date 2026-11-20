@@ -1,6 +1,7 @@
 // Hosts for Chord's layers: what the remote sides of links use of a host, its objects and references (and old work
 // arriving from another host); what jobs use of a handler's ctx, the backoff and ids.
 
+export { revoked } from "./admission.ts";
 export type { Attempt, PinnedKey } from "./attempt.ts";
 export { nextDelay } from "./backoff.ts";
 export { CallContext, type Caller, SpanCtx } from "./ctx.ts";
