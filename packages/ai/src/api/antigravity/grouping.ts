@@ -67,11 +67,25 @@ const PI_LEVELS = [
 
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
+/**
+ * Server-side slots the official client never offers as user-selectable models (displayName: None,
+ * absent from agentModelSorts): `*-sonar` experiment/policy backends (e.g. gemini-4-hydrogen-sonar,
+ * M578, the PolicyGuardian monitors model) and `*-tiered-<effort>` server-tier routing slots
+ * (e.g. gemini-4-hydrogen-tiered-high, M530) and `*-worker-agy` orchestrator workers (e.g.
+ * gemini-flash-worker-agy, M669). Only the plain `-tiered` family id (e.g.
+ * gemini-3.8-flash-tiered) is user-facing. None of the hidden slots appear in `agy models`;
+ * chatting through them is impossible for the official client, so exposing them fingerprints third-party traffic (TOS_VIOLATION ban
+ * waves, 2026-11).
+ */
+const HIDDEN_RUNTIME_SUFFIX =
+	/-(?:sonar|worker-agy|tiered-(?:extra-low|extra-high|xhigh|thinking|minimal|medium|high|low))$/;
+
 export function isSelectableRuntimeModelId(id: string): boolean {
 	if (!/^(gemini-|claude-|gpt-oss-|gemma-)/i.test(id) || /\s/.test(id) || /^MODEL_/i.test(id)) {
 		return false;
 	}
 	if (/^(chat_|tab_)/i.test(id)) return false;
+	if (HIDDEN_RUNTIME_SUFFIX.test(id)) return false;
 	if (/image/i.test(id)) return false;
 	return true;
 }

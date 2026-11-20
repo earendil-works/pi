@@ -625,6 +625,15 @@ describe("Antigravity native catalog", () => {
 		expect(isSelectableRuntimeModelId("claude-3-5-sonnet")).toBe(true);
 		expect(isSelectableRuntimeModelId("gpt-oss-120b")).toBe(true);
 		expect(isSelectableRuntimeModelId("chat_123")).toBe(false);
+
+		// Server-side slots absent from `agy models` (official picker never offers them)
+		expect(isSelectableRuntimeModelId("gemini-4-hydrogen-sonar")).toBe(false);
+		expect(isSelectableRuntimeModelId("gemini-4-hydrogen-tiered-high")).toBe(false);
+		expect(isSelectableRuntimeModelId("gemini-4-hydrogen-tiered-xhigh")).toBe(false);
+		expect(isSelectableRuntimeModelId("gemini-flash-worker-agy")).toBe(false);
+		// Plain -tiered family ids and orchestrator models are user-facing
+		expect(isSelectableRuntimeModelId("gemini-3.8-flash-tiered")).toBe(true);
+		expect(isSelectableRuntimeModelId("gemini-pro-orchestrator-argon")).toBe(true);
 	});
 
 	it("recovers valid display name when a group contains both corrupt and clean variant display names", async () => {
@@ -815,6 +824,26 @@ describe("Antigravity catalog retirement", () => {
 			thinkingLevelMap: { low: "low", medium: null, high: null, xhigh: "xhigh" },
 		});
 		expect(catalog.routing["gemini-9-nova"]?.routing?.xhigh).toBe("gemini-9-nova-xhigh");
+	});
+
+	it("hides server-side sonar, tiered-effort, and worker-agy slots that agy models never lists", () => {
+		const catalog = buildAntigravityCatalog(
+			{
+				"gemini-4-hydrogen-low": { ...flash("New"), displayName: "Gemini 4 Hydrogen (Low)" },
+				"gemini-4-hydrogen-high": { ...flash("New"), displayName: "Gemini 4 Hydrogen (High)" },
+				"gemini-4-hydrogen-sonar": { ...flash("New"), displayName: "Gemini 4 Hydrogen (Sonar)" },
+				"gemini-4-hydrogen-tiered-high": { ...flash("New"), displayName: "Gemini 4 Hydrogen (High)" },
+				"gemini-4-hydrogen-tiered-xhigh": { ...flash("New"), displayName: "Gemini 4 Hydrogen (XHigh)" },
+				"gemini-flash-worker-agy": { ...flash("New"), displayName: "Gemini Flash Worker (AGY)" },
+			},
+			{ models: ANTIGRAVITY_MODELS, routing: ANTIGRAVITY_ROUTING },
+		);
+		const ids = catalog.models.map((model) => model.id);
+		expect(ids).toContain("gemini-4-hydrogen");
+		expect(ids).not.toContain("gemini-4-hydrogen-sonar");
+		expect(ids).not.toContain("gemini-4-hydrogen-tiered");
+		expect(ids).not.toContain("gemini-flash-worker-agy");
+		expect(Object.keys(catalog.routing)).not.toContain("gemini-4-hydrogen-sonar");
 	});
 
 	it("keeps removed families hidden after an offline restart from the models store", async () => {
