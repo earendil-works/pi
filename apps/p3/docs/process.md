@@ -48,8 +48,14 @@ Then tell your user to take it to Mario (or to the other package's owner). Never
 
 ## The steps
 
-**Stage Design** (label `Design`): steps 1 to 3. It ends when the plan is complete and its open decisions are
-taken; the owner then sets `Implementation`.
+Three stages, each with its label in the group "Pi stage" on the item issue. At every step: a guide that was wrong or
+silent is fixed in the commit that shows it, and a mistake you made and its fix go into `chord-practices.md`, "Mistakes
+we made".
+
+### Design
+
+Label `Design`; every package starts here. The stage ends when the plan is complete and its open decisions are taken;
+the owner then sets `Implementation`.
 
 1. **The issue.** Read the package's item issue and its area's parent issue. Everything below is written into the item
    issue or one of its sub-issues.
@@ -67,8 +73,10 @@ taken; the owner then sets `Implementation`.
    - the contracts and objects, as real Chord and p3 APIs (with their file) or marked PROPOSED;
    - the tests, case by case (`testing.md`), and the numbers to meet (`performance.md`);
    - the open decisions, each as problem, example, options, recommendation.
-**Stage Implementation** (label `Implementation`): steps 4 to 7. It ends with the push to main; whoever pushed then
-sets `Review`.
+
+### Implementation
+
+Label `Implementation`. The stage ends with the push to main; whoever pushed then sets `Review`.
 
 4. **Build** it as plugins in `apps/p3/plugins/<name>/`, following `chord-practices.md`.
 5. **Test and measure** as `testing.md` and `performance.md` say, before you report.
@@ -79,9 +87,12 @@ sets `Review`.
    your own protocol. Fix what matters, then a second round by the same four. Every reproduction a reviewer writes
    becomes a test.
 7. **Push to main** (git rules below).
-**Stage Review** (label `Review`): step 8, the people's review. A finding that needs code sets the label back to
-`Implementation` (steps 4 to 7 again, then `Review` again). After the team's sign-off and Colin's and Jakob's tests,
-the issue is closed as Done; the `Review` label stays as the record.
+
+### Review
+
+Label `Review`: the people's review. A finding that needs code sets the label back to `Implementation` (steps 4 to 7
+again, then `Review` again). After the team's sign-off and Colin's and Jakob's tests, the issue is closed as Done; the
+`Review` label stays as the record.
 
 8. **Sign-off.**
    - Whoever pushed posts a short video (UI) or a 5-minute explainer (non-UI work) on the Linear issue and in
@@ -92,8 +103,6 @@ the issue is closed as Done; the `Review` label stays as the record.
    - The whole team audits and signs off.
    - Colin and Jakob test it; what they find goes back to step 4. Then it goes into the nightly (built from main by
      GitHub Actions; the Distribution area's item).
-9. **Fix the guides.** A guide that was wrong or silent is fixed in the commit that shows it. A mistake you made and
-   its fix go into `chord-practices.md`, "Mistakes we made".
 
 ## Git
 
