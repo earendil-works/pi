@@ -5,7 +5,7 @@
 
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
+import { type Context, BACKGROUND_CONTEXT as context } from "../../../src/context/index.ts";
 import * as chord from "../../../src/index.ts";
 import { defineFacet, int, local, str } from "../../../src/index.ts";
 import { testPlugin } from "../../../src/node/plugins/index.ts";
@@ -46,6 +46,29 @@ async function statsPlugin(): Promise<string> {
 /** A stub of the notes plugin: every project has 42 words. */
 const notesStub = defineFacet((host) => host.serve(Notes, () => ({ words: chord.constant(42) })));
 
+/** A count kept in the host's store, and what bumps it. */
+const Counter = local("acme.counter", { version: 1, params: {}, members: { bump: chord.method() } });
+const Count = chord.defineState("acme.count", {
+	schema: chord.obj({ n: int() }),
+	version: 1,
+	initial: () => ({ n: 0 }),
+	persist: true,
+	checkpointWhen: () => true,
+});
+
+/** A stub serving `Counter`: each bump commits to the host's store. */
+const counterStub = defineFacet((host) =>
+	host.serve(Counter, (_params, self) => {
+		const count = self.state(Count);
+		return {
+			bump: async (ctx: Context) => {
+				await count.change((draft) => void draft.n++, ctx);
+				return null;
+			},
+		};
+	}),
+);
+
 describe("testPlugin", () => {
 	it("loads the plugin built against the API beside a stub; collects its contributions and lists what it waits for", async () => {
 		const dir = await statsPlugin();
@@ -79,7 +102,7 @@ describe("testPlugin", () => {
 
 	it("makes host stubs once the host exists: they get the test's host and store (p3's WorkerRuntime)", async () => {
 		const dir = await statsPlugin();
-		const seen: unknown[] = [];
+		const seen: { host?: unknown; store?: chord.Store } = {};
 		const t = await testPlugin(
 			dir,
 			{
@@ -87,14 +110,22 @@ describe("testPlugin", () => {
 				api: API,
 				modules: MODULES,
 				hostStubs: (host, store) => {
-					seen.push(host, store);
-					return [{ name: "@acme/notes", facet: notesStub }];
+					seen.host = host;
+					seen.store = store;
+					return [
+						{ name: "@acme/notes", facet: notesStub },
+						{ name: "@acme/counter", facet: counterStub },
+					];
 				},
 			},
 			context,
 		);
-		expect(seen).toEqual([t.host, expect.anything()]);
+		expect(seen.host).toBe(t.host);
 		expect((await t.host.get(Stats, { project: "p1" }, context)).words.value).toBe(42);
+		// The store the stubs got is the one the host commits to.
+		const before = seen.store!.lastSeq;
+		await (await t.host.get(Counter, {}, context)).bump(context);
+		expect(seen.store!.lastSeq).toBeGreaterThan(before);
 		await t.close(context);
 	});
 

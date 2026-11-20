@@ -13,6 +13,7 @@ import { hostKind, int, local, method, remote, str } from "../../../src/contract
 import { createHost, defineFacet, type Host, type ReloadReport } from "../../../src/host/index.ts";
 import type { ChordHost } from "../../../src/host/internal.ts";
 import { memoryLinkPair } from "../../../src/link/index.ts";
+import type * as Build from "../../../src/node/plugins/build.ts";
 import {
 	createPlugins,
 	type PluginError,
@@ -41,6 +42,20 @@ import {
 	writePackage,
 	writePlugin,
 } from "./support.ts";
+
+/** How many facets were built in this file, by anyone. */
+const builds = vi.hoisted(() => ({ count: 0 }));
+
+vi.mock("../../../src/node/plugins/build.ts", async (importOriginal) => {
+	const original = await importOriginal<typeof Build>();
+	return {
+		...original,
+		buildFacet: (...args: Parameters<typeof Build.buildFacet>) => {
+			builds.count++;
+			return original.buildFacet(...args);
+		},
+	};
+});
 
 /** The fixtures' contracts, as the `contracts` fixture declares them. */
 const Worker = hostKind("test.worker");
@@ -409,6 +424,29 @@ describe("current sets (slice 10 D11)", () => {
 		expect(await digests()).toEqual(first);
 		await plugins.rollout([shipped], built, context);
 		expect(await digests()).not.toEqual(first);
+		plugins.close();
+	});
+
+	it("first uses at once share one making: each facet is built once, not once per caller (Astra S4)", async () => {
+		const root = await tempRoot();
+		for (const dir of ["a", "b", "c"]) await itemPlugin(root, dir, dir);
+		const { plugins } = await component(root);
+		const before = builds.count;
+		// A server's start resuming eight working sessions: each worker's start asks for the worker set at once.
+		const sets = await Promise.all(Array.from({ length: 8 }, () => plugins.scripts("worker", context)));
+		expect(builds.count - before).toBe(3);
+		for (const set of sets) expect(set.map(({ built }) => built)).toEqual(sets[0]!.map(({ built }) => built));
+		plugins.close();
+	});
+
+	it("forgets a first making that failed: the next use makes the set again", async () => {
+		const root = await tempRoot();
+		await itemPlugin(root, "a", "a");
+		const { plugins } = await component(root);
+		const controller = new AbortController();
+		controller.abort(new Error("gone"));
+		await expect(plugins.scripts("worker", withAbortSignal(controller.signal, context))).rejects.toThrow();
+		expect((await plugins.scripts("worker", context)).map(({ plugin }) => plugin.name)).toEqual(["@test/a"]);
 		plugins.close();
 	});
 });

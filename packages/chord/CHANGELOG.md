@@ -12,6 +12,10 @@
 
 - `testPlugin` takes `hostStubs(host, store)`: stubs made once the test's host exists, for an app's registry of process values that hands out the host or its store (p3's `WorkerRuntime`).
 
+### Fixed
+
+- The plugins component's first uses of a kind at once (`scripts(kind)`, `load`, a rollout) share one making of its current set: each facet is built once, not once per caller (a server resuming many workers built every worker facet once per worker). A making that failed is forgotten, so the next use tries again.
+
 ## [1.6.0] - 2026-11-20
 
 ### Breaking Changes

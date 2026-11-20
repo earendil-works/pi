@@ -104,8 +104,8 @@ export interface Plugins {
 	 */
 	build(names: readonly string[], context: Context): Promise<Built>;
 	/**
-	 * The complete current set of `kind`: every discovered plugin's facet of it (built on first use), as the last
-	 * rollout or reload shipping `kind` left it; what a worker starts with.
+	 * The complete current set of `kind`: every discovered plugin's facet of it (built on first use, once for every
+	 * first use at once), as the last rollout or reload shipping `kind` left it; what a worker starts with.
 	 */
 	scripts(kind: string, context: Context): Promise<readonly PluginScript[]>;
 	/**
@@ -171,6 +171,8 @@ class PluginsComponent implements Plugins {
 	readonly #built = new Map<string, BuiltFacet>();
 	/** The current set of each kind used so far, by plugin name. */
 	readonly #current = new Map<string, Map<string, PluginScript>>();
+	/** Each kind's first set while it is made: every first use meanwhile waits for the same builds. */
+	readonly #making = new Map<string, Promise<Map<string, PluginScript>>>();
 	/** The kind each loaded host was loaded with, held as long as the host is. */
 	readonly #kinds = new WeakMap<object, string>();
 	/** The marks each build started from, held as long as its result is (a rollout given a copy clears none). */
@@ -345,10 +347,30 @@ class PluginsComponent implements Plugins {
 		this.#watcher.know(this.#discovery, seen);
 	}
 
-	/** `kind`'s current set, made at its first use from every discovered plugin's facet of it (built if needed). */
+	/**
+	 * `kind`'s current set, made at its first use from every discovered plugin's facet of it (built if needed). First
+	 * uses at once (a server's start resuming many workers) share one making: each facet is built once, not once per
+	 * caller; it runs in the first one's context. A making that failed (that context aborted) is forgotten: the next
+	 * use tries again.
+	 */
 	async #set(kind: string, context: Context): Promise<Map<string, PluginScript>> {
-		let set = this.#current.get(kind);
+		const set = this.#current.get(kind);
 		if (set !== undefined) return set;
+		let making = this.#making.get(kind);
+		if (making === undefined) {
+			making = this.#makeSet(kind, context);
+			this.#making.set(kind, making);
+			const made = making;
+			const forget = (): void => {
+				if (this.#making.get(kind) === made) this.#making.delete(kind);
+			};
+			made.then(forget, forget);
+		}
+		return making;
+	}
+
+	/** Makes `kind`'s first set and keeps it as the current one. */
+	async #makeSet(kind: string, context: Context): Promise<Map<string, PluginScript>> {
 		if (!this.#discovered) await this.#discover(context);
 		const plugins = this.#discovery.plugins.filter((plugin) => plugin.facets[kind] !== undefined);
 		const scripts = await Promise.all(
@@ -358,8 +380,7 @@ class PluginsComponent implements Plugins {
 				return { plugin, built };
 			}),
 		);
-		// Built concurrently: a set made meanwhile (by a concurrent first use) wins.
-		set = this.#current.get(kind) ?? new Map(scripts.map((script) => [script.plugin.name, script]));
+		const set = new Map(scripts.map((script) => [script.plugin.name, script]));
 		this.#current.set(kind, set);
 		return set;
 	}
