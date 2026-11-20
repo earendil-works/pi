@@ -1,5 +1,17 @@
+import type * as ChildProcess from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { killProcessTree } from "../src/utils/shell.ts";
+import { killProcessTree, killTrackedDetachedChildren, trackDetachedChildPid } from "../src/utils/shell.ts";
+
+const { spawnMock, spawnSyncMock } = vi.hoisted(() => ({
+	spawnMock: vi.fn(),
+	spawnSyncMock: vi.fn(),
+}));
+
+vi.mock("child_process", async (importOriginal) => ({
+	...(await importOriginal<typeof ChildProcess>()),
+	spawn: spawnMock,
+	spawnSync: spawnSyncMock,
+}));
 
 const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
 
@@ -70,6 +82,47 @@ describe("killProcessTree", () => {
 
 		killProcessTree(1234);
 
+		expect(vi.mocked(process.kill).mock.calls).toEqual([[-1234, "SIGKILL"]]);
+	});
+});
+
+// Shutdown paths exit right after killing the tracked shells. On Windows an asynchronous taskkill lost
+// that race: libuv's job object killed the shell first, and taskkill /T then missed its descendants.
+describe("killTrackedDetachedChildren", () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+		spawnMock.mockReset();
+		spawnSyncMock.mockReset();
+		if (platformDescriptor) Object.defineProperty(process, "platform", platformDescriptor);
+	});
+
+	it("waits for one taskkill of all tracked trees on Windows", () => {
+		Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+		trackDetachedChildPid(1234);
+		trackDetachedChildPid(5678);
+
+		killTrackedDetachedChildren();
+
+		expect(spawnMock).not.toHaveBeenCalled();
+		expect(spawnSyncMock).toHaveBeenCalledTimes(1);
+		expect(spawnSyncMock).toHaveBeenCalledWith(
+			expect.stringMatching(/taskkill.exe$/),
+			["/F", "/T", "/PID", "1234", "/PID", "5678"],
+			expect.objectContaining({ timeout: 2000, windowsHide: true }),
+		);
+
+		killTrackedDetachedChildren();
+		expect(spawnSyncMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("kills each tracked process group on POSIX", () => {
+		Object.defineProperty(process, "platform", { configurable: true, value: "linux" });
+		vi.spyOn(process, "kill").mockReturnValue(true);
+		trackDetachedChildPid(1234);
+
+		killTrackedDetachedChildren();
+
+		expect(spawnSyncMock).not.toHaveBeenCalled();
 		expect(vi.mocked(process.kill).mock.calls).toEqual([[-1234, "SIGKILL"]]);
 	});
 });
