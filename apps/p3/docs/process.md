@@ -3,6 +3,20 @@
 A package is one part of p3 with one owner (a person) and one Linear issue. The owner's agent builds it. This guide is
 the path from the issue to the nightly.
 
+## Where the work is planned: Linear
+
+Project "Pi next" in team Earendil (issue keys `ERNDL-…`), three levels:
+
+- **Area:** a parent issue per area (UI/UX and UI tech, Services, AuthZ and sharing, Net and storage, Harness,
+  Distribution, Apps, Voice, Efficiency, Comms, ...), naming its owners; a label per area in the group "Pi area"
+  (`area:ui`, `area:services`, ...).
+- **Item = package:** a sub-issue of its area, with the area's label. It holds the scope, the old p3 slices and p3
+  sources in its area, the p2 plugins, docs and screenshots to look at, the open points, and the plan (step 3).
+- **Sub-items:** one sub-issue per part of the package, created by the owner while planning it.
+
+Statuses are Linear's: Backlog, Todo, In Progress, In Review, Done. Decisions taken inside the package are recorded
+in its item issue as they are taken.
+
 ## Never change these
 
 They belong to Mario:
@@ -30,14 +44,14 @@ Then tell your user to take it to Mario (or to the other package's owner). Never
 
 ## The steps
 
-1. **The issue.** The package's Linear issue (with the package's label) names the owner. Everything below is written
-   into it or linked from it.
+1. **The issue.** Read the package's item issue and its area's parent issue. Everything below is written into the item
+   issue or one of its sub-issues.
 2. **Look at p2 first, on a phone.** What exists in this area (p2's plugins in `apps/p2/plugins/`, the functionality
    map `apps/p2/docs/p3-functions/`, the old brief in `slices/` for this area), and what sucks about it. Then: what
    should the polished final version be, and where can third-party plugins extend or replace it (a registry, a
    contract others read, a slot in a view)? **p2 is inspiration only: no p2 code, structure or file layout is
    carried over.**
-3. **The plan, in the issue,** before building:
+3. **The plan, in the item issue,** before building, with a sub-issue per part:
    - p2's features in the area, each: built now, carried to another package, or proposed to drop (the owner decides
      drops);
    - the extension points;
@@ -59,7 +73,8 @@ Then tell your user to take it to Mario (or to the other package's owner). Never
    - People with the devices test the UI by hand: Safari on iOS, Firefox on Android, Chrome on Android. They note on
      the issue what they used and found.
    - The whole team audits and signs off.
-   - Colin and Jakob test it; what they find goes back to step 4. Then it goes into the nightly.
+   - Colin and Jakob test it; what they find goes back to step 4. Then it goes into the nightly (built from main by
+     GitHub Actions; the Distribution area's item).
 9. **Fix the guides.** A guide that was wrong or silent is fixed in the commit that shows it. A mistake you made and
    its fix go into `chord-practices.md`, "Mistakes we made".
 
@@ -78,7 +93,8 @@ You work in the shared checkout, on main, with other sessions committing beside 
 
 ## Checklist
 
-- [ ] Plan in the Linear issue: p2's features sorted, extension points, files, contracts, tests, numbers, decisions.
+- [ ] Plan in the item issue, a sub-issue per part: p2's features sorted, extension points, files, contracts, tests,
+      numbers, decisions.
 - [ ] Every decision asked one at a time and recorded in the issue.
 - [ ] Only your plugins changed; every needed change elsewhere written up and taken to its owner.
 - [ ] `cd apps/p3 && npm run check` clean; `npm test` passes, serially and with four runs at once.
