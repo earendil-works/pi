@@ -111,9 +111,11 @@ describe("google-shared image tool result routing", () => {
 	});
 
 	// https://github.com/earendil-works/pi/issues/12321
+	// Unsigned tool-call turns replay as observations (fb98effb8), so this carries a signature
+	// like its siblings to exercise prefixed-ID functionResponse nesting.
 	it("nests image tool results for prefixed Gemini 3+ IDs", () => {
 		const model = makeModel("google-generative-ai", "google", "randomprefix-gemini-4-argon");
-		const contents = convertMessages(model, normalizeContext(makeContext(model)));
+		const contents = convertMessages(model, normalizeContext(makeContext(model, SIGNATURE)));
 
 		expect(contents).toHaveLength(3);
 		expect(contents[2].parts?.[1]?.functionResponse?.parts?.[0]?.inlineData).toBeTruthy();
