@@ -86,8 +86,12 @@ export interface SessionSyncStore {
 			readonly epoch?: number;
 		},
 	): Promise<PutBatchResult>;
-	/** A batch's body; `undefined` when its slot is folded or absent. */
+	/**
+	 * A batch's body; `undefined` when its slot is folded or absent. The body may hold a file or a connection until it is
+	 * read to the end or its iterator's `return()` is called, which releases it also before the first read.
+	 */
 	getBatch(sessionId: string, after: Seq, context: Context): Promise<SyncBody | undefined>;
+	/** A snapshot's body, released as `getBatch()`'s; `undefined` when it is absent. */
 	getSnapshot(sessionId: string, to: Seq, context: Context): Promise<SyncBody | undefined>;
 	list(sessionId: string, context: Context): Promise<RemoteListing>;
 	/**

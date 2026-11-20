@@ -358,20 +358,22 @@ export async function pullSession(options: {
 		}
 		for (const body of bodies) {
 			if (body.to <= at()) continue;
-			const bytes = await body.read();
-			if (bytes === undefined) throw new HistoryUnavailableError(at());
-			await state.set(sessionId, { syncedHead: at(), pulling: body.to }, context);
-			if (body.archive) {
-				// An archive restores a whole store: only into an empty backend.
-				if (target !== undefined || local.kind !== "empty") throw new HistoryUnavailableError(at());
-				target = await importStore(local.backend, decodeSnapshot(bytes), context, { outbox: true });
-			} else {
-				if (target === undefined) {
-					if (local.kind !== "empty") throw new Error("unreachable: a store copy always has a target");
-					target = await openStore(local.backend, context, { outbox: true });
+			const opened = await body.read();
+			if (opened === undefined) throw new HistoryUnavailableError(at());
+			await readBody(opened, async (bytes) => {
+				await state.set(sessionId, { syncedHead: at(), pulling: body.to }, context);
+				if (body.archive) {
+					// An archive restores a whole store: only into an empty backend.
+					if (target !== undefined || local.kind !== "empty") throw new HistoryUnavailableError(at());
+					target = await importStore(local.backend, decodeSnapshot(bytes), context, { outbox: true });
+				} else {
+					if (target === undefined) {
+						if (local.kind !== "empty") throw new Error("unreachable: a store copy always has a target");
+						target = await openStore(local.backend, context, { outbox: true });
+					}
+					await applyBody(target as ChordStore, bytes, context);
 				}
-				await applyBody(target as ChordStore, bytes, context);
-			}
+			});
 			await state.set(sessionId, { syncedHead: at() }, context);
 		}
 		if (target === undefined) {
@@ -389,6 +391,19 @@ export async function pullSession(options: {
 		// A store this pull opened is the caller's only on success.
 		if (local.kind === "empty" && target !== undefined) await target.close(context).catch(() => {});
 		throw error;
+	}
+}
+
+/**
+ * Run `read` over a remote's body, then release the body: also when `read` stopped early or never started it. A body
+ * may hold a file or a connection until its iterator's `return()`, which `for await` calls only once it started.
+ */
+async function readBody(body: SyncBody, read: (body: SyncBody) => Promise<void>): Promise<void> {
+	const iterator = body[Symbol.asyncIterator]();
+	try {
+		await read({ [Symbol.asyncIterator]: () => iterator });
+	} finally {
+		await iterator.return?.();
 	}
 }
 

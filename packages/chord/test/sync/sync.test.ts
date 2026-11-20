@@ -32,6 +32,7 @@ import {
 	remoteHistory,
 	type Seq,
 	type SessionSyncMaintenance,
+	type SyncFileSystem,
 	type SyncState,
 	type SyncStateStore,
 	UnsyncedCommitsError,
@@ -50,10 +51,30 @@ afterEach(async () => {
 	for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true });
 });
 
-async function remote(): Promise<FileSystemSyncRemote> {
+async function remote(files: SyncFileSystem = nodeFiles): Promise<FileSystemSyncRemote> {
 	const directory = await mkdtemp(join(tmpdir(), "chord-sync-"));
 	directories.push(directory);
-	return new FileSystemSyncRemote(nodeFiles, directory);
+	return new FileSystemSyncRemote(files, directory);
+}
+
+/** `nodeFiles` counting the readers it opens and closes: a body left open shows without waiting for GC. */
+function countingFiles(): { readonly files: SyncFileSystem; readonly readers: { opened: number; closed: number } } {
+	const readers = { opened: 0, closed: 0 };
+	const files: SyncFileSystem = {
+		...nodeFiles,
+		openBinaryReader: async (path, options, ctx) => {
+			const result = await nodeFiles.openBinaryReader(path, options, ctx);
+			if (!result.ok) return result;
+			readers.opened++;
+			const reader = result.value;
+			const close = (closeContext: Context) => {
+				readers.closed++;
+				return reader.close(closeContext);
+			};
+			return { ok: true, value: { ...reader, close } };
+		},
+	};
+	return { files, readers };
 }
 
 /** A backend over the SQLite file at `path`, `:memory:` by default. */
@@ -700,6 +721,46 @@ describe("syncing a session between devices", () => {
 		const fresh = device("fresh", store);
 		await fresh.pull();
 		expect(await reads(await fresh.store())).toEqual(await reads(source));
+	});
+});
+
+describe("remote bodies", () => {
+	it("closes a body's file at its end, and on return() also before the first read", async () => {
+		const { files, readers } = countingFiles();
+		const store = await remote(files);
+		const source = tracked(await sessionStore());
+		await commitAll(source, seedBatches().slice(0, 2));
+		await uploadSession({ sessionId: SESSION, device: "laptop", source, store, state: new MemoryState(), context });
+
+		const read = (await store.getBatch(SESSION, LOG_START, context))!;
+		let commits = 0;
+		for await (const _ of decodeBatch(read)) commits++;
+		expect(commits).toBeGreaterThan(0);
+		expect(readers).toEqual({ opened: 1, closed: 1 });
+
+		const unread = (await store.getBatch(SESSION, LOG_START, context))!;
+		expect(readers).toEqual({ opened: 2, closed: 1 });
+		await unread[Symbol.asyncIterator]().return!();
+		await unread[Symbol.asyncIterator]().return!();
+		expect(readers).toEqual({ opened: 2, closed: 2 });
+		expect(await unread[Symbol.asyncIterator]().next()).toEqual({ done: true, value: undefined });
+	});
+
+	it("closes a body a pull read and then refused", async () => {
+		const { files, readers } = countingFiles();
+		const store = await remote(files);
+		const laptop = device("laptop", store);
+		await laptop.commit(seedBatches().slice(0, 2));
+		await laptop.upload();
+		const replica = device("replica", store);
+		await replica.pull();
+		// An archive slot after the replica's head: a full state, which does not apply on top of its store.
+		const head = remoteHead(await store.list(SESSION, context));
+		await store.putBatch(SESSION, head, head + 1, "laptop", encodeBatch([]), context, { archive: true });
+
+		await expect(replica.pull()).rejects.toThrow(HistoryUnavailableError);
+		expect(readers.opened).toBeGreaterThan(1);
+		expect(readers.closed).toBe(readers.opened);
 	});
 });
 
