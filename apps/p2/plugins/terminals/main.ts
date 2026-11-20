@@ -499,7 +499,10 @@ function call(client: Client, id: number, request: HostCall): void {
 	const cancelled = Promise.withResolvers<never>();
 	cancelled.promise.catch(() => {});
 	client.calls.set(id, () => cancelled.reject(new Error("cancelled")));
-	const result = "key" in request ? once(request) : perform(request, cancelled.promise);
+	const result =
+		request.op === "open" || request.op === "send" || request.op === "close"
+			? once(request)
+			: perform(request, cancelled.promise);
 	Promise.race([result, cancelled.promise])
 		.then(
 			(value) => send(client, { type: "reply", id, result: value }),

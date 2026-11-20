@@ -37,7 +37,7 @@ type OldFile = {
 	readonly source: string;
 	readonly meta: Record<string, string>;
 	/** The old file whose bytes it is, or its text (an artifact's content). */
-	readonly bytes: { readonly file: string } | { readonly text: string };
+	readonly bytes: { readonly kind: "file"; readonly file: string } | { readonly kind: "text"; readonly text: string };
 	/** An artifact's version number; ones the old layout skipped are made and removed, so no number moves. */
 	readonly version?: number;
 	/** When it was made: the old file's modification time (the old layout recorded no other). */
@@ -78,7 +78,7 @@ export function oldFiles(dataDir: string, id: string): OldFile[] {
 					{ html: "text/html", svg: "image/svg+xml", markdown: "text/markdown" }[parsed.info.type] ?? "text/plain",
 				source: "agent",
 				meta: { title: parsed.info.title, type: parsed.info.type },
-				bytes: { text: parsed.content },
+				bytes: { kind: "text", text: parsed.content },
 				// Written once, as the version was saved.
 				created: modified(path),
 				version,
@@ -98,7 +98,7 @@ export function oldFiles(dataDir: string, id: string): OldFile[] {
 			// Who uploaded it was not recorded.
 			source: "unknown",
 			meta: { name },
-			bytes: { file: join(uploads, file) },
+			bytes: { kind: "file", file: join(uploads, file) },
 			created: modified(join(uploads, file)),
 		});
 	}
@@ -115,7 +115,7 @@ export function oldFiles(dataDir: string, id: string): OldFile[] {
 			mime: "application/octet-stream",
 			source: "agent",
 			meta: { name: info.name },
-			bytes: { file: join(downloads, key, "payload") },
+			bytes: { kind: "file", file: join(downloads, key, "payload") },
 			// Written last, when the snapshot was published.
 			created: modified(metadata),
 		});
@@ -155,7 +155,7 @@ export async function migrateFiles(
 			...(old.key === undefined ? {} : { key: old.key }),
 		};
 		const file =
-			"text" in old.bytes
+			old.bytes.kind === "text"
 				? await files.put({ ...write, bytes: Buffer.from(old.bytes.text, "utf8") }, ctx)
 				: await writeChunks(files, write, reader(old.bytes.file), MAX_DOWNLOAD_BYTES * 4, ctx);
 		if (old.version !== undefined && file.version !== old.version)
@@ -180,7 +180,7 @@ export async function verifyFiles(dataDir: string, id: string, files: Ref<typeof
 		if (file === null || file.path !== old.path) throw new Error(`${what} is missing after the migration`);
 		if (JSON.stringify(file.meta) !== JSON.stringify(old.meta)) throw new Error(`${what}'s metadata differs`);
 		if (file.created !== old.created) throw new Error(`${what}'s time differs`);
-		const expected = "text" in old.bytes ? Buffer.from(old.bytes.text, "utf8") : readFileSync(old.bytes.file);
+		const expected = old.bytes.kind === "text" ? Buffer.from(old.bytes.text, "utf8") : readFileSync(old.bytes.file);
 		if (!expected.equals(await readWhole(files, file, ctx))) throw new Error(`${what}'s bytes differ`);
 	}
 }

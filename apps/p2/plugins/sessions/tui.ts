@@ -571,9 +571,9 @@ export class SessionsSurface implements TuiSurface {
 			this.create({ env: current ? (current.env ?? null) : this.defaultEnv, path: current?.cwd ?? this.defaultCwd });
 			return;
 		}
-		const location = parseLocation(argument, await envNames(this.ctx), { env: null });
-		if ("error" in location) this.runtime.fail(new Error(location.error));
-		else this.create(location);
+		const parsed = parseLocation(argument, await envNames(this.ctx), { env: null });
+		if (parsed.kind === "invalid") this.runtime.fail(new Error(parsed.error));
+		else this.create(parsed.location);
 	}
 
 	private submitPrompt(): void {
@@ -1081,9 +1081,9 @@ async function changeDirectory(ctx: TuiContext, argument: string): Promise<void>
 	if (!session) return;
 	const fallback = { env: session.env ?? null, cwd: session.cwd };
 	if (argument) {
-		const location = parseLocation(argument, await envNames(ctx), fallback);
-		if ("error" in location) ctx.notify(location.error, "error");
-		else await relocate(ctx, session, location);
+		const parsed = parseLocation(argument, await envNames(ctx), fallback);
+		if (parsed.kind === "invalid") ctx.notify(parsed.error, "error");
+		else await relocate(ctx, session, parsed.location);
 		return;
 	}
 	const overlay = ctx.overlay(

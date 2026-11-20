@@ -37,7 +37,10 @@ function ShareSheet({ session, onClose }: { session: string; onClose: () => void
 	const [email, setEmail] = useState("");
 	const [personMode, setPersonMode] = useState<ShareMode>("view");
 	const [confirming, setConfirming] = useState<
-		{ reset: ShareMode } | { remove: string } | { remote: true } | { share: string }
+		| { kind: "reset"; reset: ShareMode }
+		| { kind: "remove"; remove: string }
+		| { kind: "remote" }
+		| { kind: "share"; share: string }
 	>();
 	const [error, setError] = useState<string>();
 	useEffect(() => {
@@ -49,7 +52,7 @@ function ShareSheet({ session, onClose }: { session: string; onClose: () => void
 		if (!sharing) return;
 		setError(undefined);
 		if (!remoteConfirmed && confirmsFirst(mode, links, remoteEnv)) {
-			setConfirming({ remote: true });
+			setConfirming({ kind: "remote" });
 			return;
 		}
 		try {
@@ -64,7 +67,7 @@ function ShareSheet({ session, onClose }: { session: string; onClose: () => void
 		if (!sharing) return;
 		setError(undefined);
 		if (personMode === "full" && remoteEnv && !remoteConfirmed) {
-			setConfirming({ share: address });
+			setConfirming({ kind: "share", share: address });
 			return;
 		}
 		try {
@@ -83,16 +86,16 @@ function ShareSheet({ session, onClose }: { session: string; onClose: () => void
 	const confirm = () => {
 		if (!sharing || !confirming) return;
 		setConfirming(undefined);
-		if ("remote" in confirming) {
+		if (confirming.kind === "remote") {
 			void copy("full", true);
 			return;
 		}
-		if ("share" in confirming) {
+		if (confirming.kind === "share") {
 			void share(confirming.share, true);
 			return;
 		}
 		const action =
-			"reset" in confirming
+			confirming.kind === "reset"
 				? resetLink(sharing, confirming.reset)
 				: sharing.remove({ guestId: confirming.remove }, BACKGROUND_CONTEXT);
 		action.catch((reason: unknown) => setError(errorText(reason)));
@@ -104,7 +107,7 @@ function ShareSheet({ session, onClose }: { session: string; onClose: () => void
 	);
 	/** Remove, confirmed in place: for a link guest (blocked from the session) or a person (shared no more). */
 	const removal = (id: string) =>
-		confirming && "remove" in confirming && confirming.remove === id ? (
+		confirming?.kind === "remove" && confirming.remove === id ? (
 			<span className="inline-form">
 				<button type="button" className="text-action danger" onClick={confirm}>
 					Remove
@@ -112,7 +115,7 @@ function ShareSheet({ session, onClose }: { session: string; onClose: () => void
 				{cancel}
 			</span>
 		) : (
-			<button type="button" className="text-action" onClick={() => setConfirming({ remove: id })}>
+			<button type="button" className="text-action" onClick={() => setConfirming({ kind: "remove", remove: id })}>
 				Remove
 			</button>
 		);
@@ -129,7 +132,7 @@ function ShareSheet({ session, onClose }: { session: string; onClose: () => void
 					return (
 						<div className="share-row" key={mode}>
 							<span>{LINK_LABEL[mode]}</span>
-							{mode === "full" && confirming && "remote" in confirming ? (
+							{mode === "full" && confirming?.kind === "remote" ? (
 								<>
 									<span className="muted small">
 										Guests can run commands on "{remoteEnv}". Create the link?
@@ -139,7 +142,7 @@ function ShareSheet({ session, onClose }: { session: string; onClose: () => void
 									</button>
 									{cancel}
 								</>
-							) : confirming && "reset" in confirming && confirming.reset === mode ? (
+							) : confirming?.kind === "reset" && confirming.reset === mode ? (
 								<>
 									<span className="muted small">New link, disconnect its guests?</span>
 									<button type="button" className="text-action danger" onClick={confirm}>
@@ -153,7 +156,7 @@ function ShareSheet({ session, onClose }: { session: string; onClose: () => void
 										<button
 											type="button"
 											className="text-action"
-											onClick={() => setConfirming({ reset: mode })}
+											onClick={() => setConfirming({ kind: "reset", reset: mode })}
 										>
 											Reset
 										</button>
@@ -207,7 +210,7 @@ function ShareSheet({ session, onClose }: { session: string; onClose: () => void
 							Share
 						</button>
 					</form>
-					{confirming && "share" in confirming && (
+					{confirming?.kind === "share" && (
 						<div className="share-row">
 							<span className="muted small">
 								{confirming.share} can run commands on "{remoteEnv}". Share read/write?

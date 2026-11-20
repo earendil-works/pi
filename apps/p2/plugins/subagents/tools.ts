@@ -309,7 +309,9 @@ export type SubagentLocator = {
 		target: LocationInput,
 		from: Location,
 		context: Context,
-	) => Promise<Location | { error: string }>;
+	) => Promise<
+		{ readonly kind: "directory"; readonly location: Location } | { readonly kind: "invalid"; readonly error: string }
+	>;
 };
 
 /**
@@ -328,7 +330,7 @@ export async function placeTarget(
 	if (sandbox !== undefined && env !== sandbox)
 		return `You work in sandbox ${sandbox}; your subagents can only work inside it.`;
 	const resolved = await locator.directory({ env, path: args.cwd ?? "" }, caller, context);
-	if (!("error" in resolved)) return resolved;
+	if (resolved.kind === "directory") return resolved.location;
 	const where = `${env === caller.env ? "" : `${env ?? "local"}:`}${args.cwd ?? "~"}`;
 	return resolved.error === "not an existing directory"
 		? `cwd ${where} is not an existing directory.`

@@ -617,7 +617,7 @@ export function launcherActions(options: LauncherActionOptions): Record<string, 
 			kind: "C",
 			consent: (payload) => {
 				const checked = validatePrefsPatch(record(payload)?.patch);
-				if ("error" in checked) return undefined;
+				if (checked.kind === "invalid") return undefined;
 				let current: Record<string, unknown>;
 				try {
 					current = readPrefsFile(prefsDirectory);
@@ -635,7 +635,7 @@ export function launcherActions(options: LauncherActionOptions): Record<string, 
 			},
 			run: async (payload) => {
 				const checked = validatePrefsPatch(record(payload)?.patch);
-				if ("error" in checked) throw new Error(checked.error);
+				if (checked.kind === "invalid") throw new Error(checked.error);
 				// Re-read: the file may have changed while the screen was up; the patch applies to what is there now.
 				writePrefsFile(prefsDirectory, applyPrefsPatch(readPrefsFile(prefsDirectory), checked.patch));
 				return { saved: true };

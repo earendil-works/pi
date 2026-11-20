@@ -244,7 +244,10 @@ test("a sandboxed caller places subagents only in its sandbox", async () => {
 	const locator: SubagentLocator = {
 		locate: async () => ({ env: "box1", cwd: "/workspace" }),
 		sandbox: async (location) => (location.env === "box1" ? "box1" : undefined),
-		directory: async (target) => ({ env: target.env, cwd: target.path || "/workspace" }),
+		directory: async (target) => ({
+			kind: "directory",
+			location: { env: target.env, cwd: target.path || "/workspace" },
+		}),
 	};
 	const caller: Location = { env: "box1", cwd: "/workspace" };
 	for (const args of [{ env: "slayer" }, { env: null }, { env: null, cwd: "/tmp" }])

@@ -52,12 +52,16 @@ function useEntries(): readonly Entry[] {
 	const sections = useSettingsSections();
 	return useMemo(
 		() => [
-			...OWN_SECTIONS.map(({ id, label }) => ({ key: `own:${id}`, label, section: { locator: id } })),
+			...OWN_SECTIONS.map(({ id, label }) => ({
+				key: `own:${id}`,
+				label,
+				section: { kind: "own" as const, locator: id },
+			})),
 			...sections.map(([name, { label, title, Shown }]) => ({
 				key: name,
 				label,
 				title,
-				section: { layer: { kind: "sheet" as const, name } },
+				section: { kind: "plugin" as const, layer: { kind: "sheet" as const, name } },
 				Shown,
 			})),
 		],

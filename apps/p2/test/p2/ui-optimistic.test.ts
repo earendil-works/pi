@@ -25,13 +25,13 @@ test(
 			await browser.evaluate("document.querySelector('#switch').click()");
 			await browser.wait("document.querySelector('#switch').textContent === 'on'");
 			assert.equal(await text("#pending"), "pending");
-			await browser.evaluate("window.settleCall({ pass: true })");
+			await browser.evaluate("window.settleCall({ kind: 'pass' })");
 			await browser.wait("document.querySelector('#pending').textContent === 'idle'");
 			assert.equal(await text("#switch"), "on");
 			// Refused: the guess goes, the value is the server's again, and the error is shown.
 			await browser.evaluate("document.querySelector('#switch').click()");
 			await browser.wait("document.querySelector('#switch').textContent === 'off'");
-			await browser.evaluate("window.settleCall({ refuse: 'not allowed' })");
+			await browser.evaluate("window.settleCall({ kind: 'refuse', refuse: 'not allowed' })");
 			await browser.wait("document.querySelector('#switch').textContent === 'on'");
 			assert.equal(await text("#error"), "not allowed");
 			assert.equal(await text("#pending"), "idle");
