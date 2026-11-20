@@ -12,6 +12,10 @@
 - `SignalState` is tagged: `{ kind: "value", value }` or `{ kind: "expired" }`, in place of `{ value }` and `{ expired: true }`. Migration: test `state?.kind === "value"` or `state.kind === "expired"` instead of `"value" in state`. Stored signal memos keep their shape.
 - `CommitResult` (`Storage.commit()`) is tagged: `{ kind: "stored", stored }` or `{ kind: "refused", stored, refused }`. Migration: a custom Storage returns the tagged forms; a caller reads `refused` after checking `result.kind === "refused"`.
 
+### Fixed
+
+- Fixed `NodeExecutionEnv` shell commands running only partly, with exit code 0, under Git Bash and other Cygwin-based `bash.exe` on Windows when longer than about 8 KB or made of newline-separated words without spaces; commands now reach bash in an environment variable ([#12340](https://github.com/earendil-works/pi/issues/12340))
+
 ## [1.6.0] - 2026-11-20
 
 ### Breaking Changes

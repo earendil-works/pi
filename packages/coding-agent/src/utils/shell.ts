@@ -6,8 +6,12 @@ import { getBinDir } from "../config.ts";
 export interface ShellConfig {
 	shell: string;
 	args: string[];
-	commandTransport?: "argv" | "stdin";
+	/** How the command reaches the shell: appended to `args` (default), written to stdin, or set in `SHELL_COMMAND_ENV_VAR`. */
+	commandTransport?: "argv" | "stdin" | "env";
 }
+
+/** Environment variable that carries the command when `commandTransport` is `"env"`. */
+export const SHELL_COMMAND_ENV_VAR = "PI_BASH_COMMAND";
 
 // Keep in sync with packages/durable/src/env/node.ts.
 function isLegacyWslBashPath(path: string): boolean {
@@ -23,8 +27,29 @@ function isLegacyWslBashPath(path: string): boolean {
 	return /^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/.test(normalized);
 }
 
+// Keep in sync with packages/durable/src/env/node.ts.
+// Bash builds for Windows (Git Bash, MSYS2, Cygwin) parse their command line with the Cygwin
+// runtime, which silently cuts quoted arguments after about 8 KB and splits unquoted ones at
+// newlines (#12340), so `bash -c <command>` can run only part of a command. The command goes in
+// an environment variable instead, which arrives whole or not at all. The runner drops the
+// variable before the command runs so child processes do not inherit it, and fails if it is
+// missing, for callers that still append the command to `args`.
+const WINDOWS_ENV_COMMAND_RUNNER = `__pi_command=\${${SHELL_COMMAND_ENV_VAR}?pi: the command was not passed in ${SHELL_COMMAND_ENV_VAR}}; unset ${SHELL_COMMAND_ENV_VAR}; eval "$__pi_command"`;
+
 function getBashShellConfig(shell: string): ShellConfig {
-	return isLegacyWslBashPath(shell) ? { shell, args: ["-s"], commandTransport: "stdin" } : { shell, args: ["-c"] };
+	if (isLegacyWslBashPath(shell)) return { shell, args: ["-s"], commandTransport: "stdin" };
+	if (process.platform === "win32" && isWindowsBashPath(shell)) {
+		return { shell, args: ["-c", WINDOWS_ENV_COMMAND_RUNNER], commandTransport: "env" };
+	}
+	return { shell, args: ["-c"] };
+}
+
+// Other custom shells keep argv. The WindowsApps alias is a WSL launcher, which does not pass
+// Windows environment variables into Linux.
+function isWindowsBashPath(path: string): boolean {
+	const normalized = win32.normalize(path).toLowerCase();
+	const name = win32.basename(normalized);
+	return (name === "bash.exe" || name === "bash") && win32.basename(win32.dirname(normalized)) !== "windowsapps";
 }
 
 // Matches harness-v2's pathExists (packages/durable/src/env/node.ts).

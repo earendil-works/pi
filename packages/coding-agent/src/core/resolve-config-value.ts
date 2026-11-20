@@ -4,7 +4,7 @@
  */
 
 import { execSync, spawnSync } from "child_process";
-import { getShellConfig } from "../utils/shell.ts";
+import { getShellConfig, SHELL_COMMAND_ENV_VAR } from "../utils/shell.ts";
 
 // Cache for shell command results (persists for process lifetime)
 const commandResultCache = new Map<string, string | undefined>();
@@ -153,9 +153,11 @@ export function resolveConfigValue(config: string, env?: Record<string, string>)
 function executeWithConfiguredShell(command: string): { executed: boolean; value: string | undefined } {
 	try {
 		const { shell, args, commandTransport } = getShellConfig();
-		const commandFromStdin = commandTransport === "stdin";
-		const result = spawnSync(shell, commandFromStdin ? args : [...args, command], {
+		const transport = commandTransport ?? "argv";
+		const commandFromStdin = transport === "stdin";
+		const result = spawnSync(shell, transport === "argv" ? [...args, command] : args, {
 			encoding: "utf-8",
+			env: transport === "env" ? { ...process.env, [SHELL_COMMAND_ENV_VAR]: command } : undefined,
 			input: commandFromStdin ? command : undefined,
 			timeout: 10000,
 			stdio: [commandFromStdin ? "pipe" : "ignore", "pipe", "ignore"],
