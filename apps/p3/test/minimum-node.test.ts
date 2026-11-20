@@ -14,8 +14,11 @@ describe("the oldest Node p3 runs on", () => {
 	});
 
 	it("compares versions by number, not as text", () => {
-		for (const version of ["24.3.9", "24.0.0", "23.99.99", "22.12.0", "9.99.99"]) assert.ok(tooOld(version), version);
-		for (const version of ["24.4.0", "24.4.1", "24.10.0", "25.0.0", "26.11.1", "100.0.0"])
+		for (const version of ["26.3.0", "26.2.9", "26.0.0", "25.99.99", "24.17.0", "9.99.99"]) {
+			assert.ok(tooOld(version), version);
+		}
+		for (const version of ["26.3.1", "26.4.0", "26.10.0", "26.11.1", "27.0.0", "100.0.0"]) {
 			assert.ok(!tooOld(version), version);
+		}
 	});
 });

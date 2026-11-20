@@ -1,9 +1,9 @@
 // Secrets of the kit: tokens from `crypto.randomBytes`, kept only as their SHA-256 hashes and compared in constant
-// time, and secret files (the cookie key, the owner token file) created with mode 0600 in one step, so no other OS user
-// and no half-written file ever reads them.
+// time, and secret files (the cookie key, the owner token file; the Pi's config and the records use the same write)
+// put in place with mode 0600 in one rename, so no other OS user and no half-written file ever reads them.
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { link, open, readFile, rename, unlink } from "node:fs/promises";
+import { lstat, open, readFile, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 /** A fresh random token of `bytes` bytes, base64url. */
@@ -23,7 +23,10 @@ export function matchesHash(token: string, hash: string): boolean {
 	return given.length === kept.length && timingSafeEqual(given, kept);
 }
 
-/** The secret in the file at `path`, created (mode 0600, in one step) with a fresh token when it does not exist yet. */
+/**
+ * The secret in the file at `path`, created (mode 0600, in one step) with a fresh token when it does not exist yet. Its
+ * caller holds the data directory's server lock (`writeSecret`'s `create`).
+ */
 export async function secretFile(path: string): Promise<string> {
 	const existing = await readSecret(path);
 	if (existing !== undefined) return existing;
@@ -43,8 +46,14 @@ export async function readSecret(path: string): Promise<string | undefined> {
 }
 
 /**
- * Writes `text` to `path` with mode 0600 in one step: a temporary file of the same directory (made exclusively, 0600)
- * linked into place (`create`: refused when `path` exists, `"exists"` returned) or renamed over it (`replace`).
+ * Writes `text` to `path` with mode 0600 in one step: into a temporary file of the same directory (made exclusively,
+ * 0600), synced, then renamed into place. `replace` replaces what is there; `create` never does: when `path` exists
+ * (a link too) it returns `"exists"` and writes nothing. No hard link: Android's app sandbox refuses them (EACCES), and a
+ * Pi's first start failed there making its cookie secret. `create` checks, then renames: a second writer between the
+ * two would be overwritten, so every caller of `create` holds the data directory's server lock (the server's start
+ * makes the cookie secret and the owner token file; the Pi's config and the records only replace). The directory is
+ * not synced after the rename: a power loss right after it may lose the file, which the next start writes again (a new
+ * cookie secret signs every device out), and syncing a directory has no portable form (Windows opens none).
  */
 export async function writeSecret(
 	path: string,
@@ -54,22 +63,28 @@ export async function writeSecret(
 	const temporary = join(dirname(path), `.${newToken(9)}.tmp`);
 	const handle = await open(temporary, "wx", 0o600);
 	try {
-		await handle.writeFile(`${text}\n`);
-		await handle.sync();
-	} finally {
-		await handle.close();
-	}
-	try {
-		if (mode === "replace") {
-			await rename(temporary, path);
-			return "written";
+		try {
+			await handle.writeFile(`${text}\n`);
+			await handle.sync();
+		} finally {
+			await handle.close();
 		}
-		await link(temporary, path);
+		if (mode === "create" && (await exists(path))) return "exists";
+		await rename(temporary, path);
 		return "written";
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "EEXIST") return "exists";
-		throw error;
 	} finally {
-		await unlink(temporary).catch(() => {});
+		// Gone after the rename; left when `create` found the file, or when a step failed.
+		await rm(temporary, { force: true });
+	}
+}
+
+/** Whether anything is at `path` (a dangling link too). */
+async function exists(path: string): Promise<boolean> {
+	try {
+		await lstat(path);
+		return true;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+		throw error;
 	}
 }

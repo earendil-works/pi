@@ -12,6 +12,7 @@ import {
 	enableOpenAiGrammarTools,
 	enableOpenAiMidConvoSystemMessages,
 	OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
+	OPENAI_MID_CONVO_EFFORT_MODEL_IDS,
 	OPENAI_STANDARD_COSTS,
 	OPENAI_TOOL_SEARCH_MODEL_IDS,
 	withOpenAiLongContextPricing,
@@ -35,6 +36,8 @@ const SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-6-luna",
 	"gpt-6.1-sol",
 	"gpt-6.1-terra",
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
 ]);
 const LONG_CONTEXT_PRICING_MODEL_IDS = new Set([...SHORT_CONTEXT_CAPPED_MODEL_IDS, "gpt-5.4-pro", "gpt-5.5-pro"]);
 
@@ -52,9 +55,6 @@ const NONE_REASONING_MODEL_IDS = new Set([
 	"gpt-6-sol",
 	"gpt-6-luna",
 ]);
-// OpenAI documents configuration_update for the GPT-6 family.
-// https://developers.openai.com/api/docs/guides/reasoning
-const MID_CONVO_EFFORT_MODEL_IDS = new Set(["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-terra"]);
 
 // Not listed by models.dev.
 const GPT_5_CHAT_LATEST: Model<"openai-responses"> = {
@@ -137,7 +137,9 @@ export default defineProvider({
 		// those models accept `prompt_cache_options`; older models reject the parameter.
 		// https://developers.openai.com/api/docs/guides/prompt-caching
 		if (model.cost.cacheWrite > 0) mergeCompat(responsesModel, { supportsExplicitPromptCacheMode: true });
-		if (MID_CONVO_EFFORT_MODEL_IDS.has(model.id)) mergeCompat(responsesModel, { supportsMidConvoEffort: true });
+		if (OPENAI_MID_CONVO_EFFORT_MODEL_IDS.has(model.id)) {
+			mergeCompat(responsesModel, { supportsMidConvoEffort: true });
+		}
 		withInputLimits(model, { maxRequestBytes: 512 * 1024 * 1024, images: { maxPerRequest: 1500 } });
 	},
 });

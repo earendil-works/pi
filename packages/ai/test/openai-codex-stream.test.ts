@@ -50,6 +50,59 @@ function decodeCodexRequestBody(body: RequestInit["body"] | undefined): Record<s
 	return null;
 }
 
+function buildCodexModel(
+	id: string,
+	compat?: Model<"openai-codex-responses">["compat"],
+	thinkingLevelMap?: Model<"openai-codex-responses">["thinkingLevelMap"],
+): Model<"openai-codex-responses"> {
+	return {
+		id,
+		name: id,
+		api: "openai-codex-responses",
+		provider: "openai-codex",
+		baseUrl: "https://chatgpt.com/backend-api",
+		reasoning: true,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 400000,
+		maxTokens: 128000,
+		...(compat ? { compat } : {}),
+		...(thinkingLevelMap ? { thinkingLevelMap } : {}),
+	};
+}
+
+/** Answers every SSE request with a short completed response and records the decoded request bodies. */
+function captureSSERequestBodies(): Array<Record<string, unknown> | null> {
+	const encoder = new TextEncoder();
+	const requestBodies: Array<Record<string, unknown> | null> = [];
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async (_input: string | URL, init?: RequestInit) => {
+			requestBodies.push(decodeCodexRequestBody(init?.body));
+			return new Response(
+				new ReadableStream<Uint8Array>({
+					start(controller) {
+						controller.enqueue(encoder.encode(buildSSEPayload({ status: "completed" })));
+						controller.close();
+					},
+				}),
+				{ status: 200, headers: { "content-type": "text/event-stream" } },
+			);
+		}),
+	);
+	return requestBodies;
+}
+
+/** Input items as roles, with configuration_update items shown with their effort. */
+function summarizeInput(body: Record<string, unknown> | null | undefined): string[] {
+	const input = (body?.input ?? []) as Array<{ type?: string; role?: string; reasoning?: { effort?: string } }>;
+	return input.map((item) =>
+		item.type === "configuration_update"
+			? `configuration_update:${item.reasoning?.effort}`
+			: (item.role ?? `${item.type}`),
+	);
+}
+
 function buildSSEPayload({
 	status,
 	includeDone = false,
@@ -1018,6 +1071,117 @@ describe("openai-codex streaming", () => {
 		).result();
 
 		expect(requestedToolChoice).toBe("required");
+	});
+
+	// Regression test for https://github.com/earendil-works/pi/issues/12273
+	it("sends the system prompt as a leading developer item instead of instructions", async () => {
+		const token = mockToken();
+		const requestBodies = captureSSERequestBodies();
+		const model = buildCodexModel("gpt-6.2-sol");
+		const messages = [{ role: "user" as const, content: "Say hello", timestamp: 1 }];
+
+		await streamOpenAICodexResponses(model, normalizeContext({ systemPrompt: "Be terse.", messages }), {
+			apiKey: token,
+			transport: "sse",
+		}).result();
+		await streamOpenAICodexResponses(model, normalizeContext({ messages }), {
+			apiKey: token,
+			transport: "sse",
+		}).result();
+
+		const userItem = { role: "user", content: [{ type: "input_text", text: "Say hello" }] };
+		expect(requestBodies[0]).not.toHaveProperty("instructions");
+		expect(requestBodies[0]?.input).toEqual([{ role: "developer", content: "Be terse." }, userItem]);
+		expect(requestBodies[1]).not.toHaveProperty("instructions");
+		expect(requestBodies[1]?.input).toEqual([userItem]);
+	});
+
+	// Regression test for https://github.com/earendil-works/pi/issues/12269
+	it("sends thinking level changes as configuration_update items with a fixed request effort", async () => {
+		const token = mockToken();
+		const requestBodies = captureSSERequestBodies();
+		const model = buildCodexModel("gpt-6.2-sol", { supportsMidConvoEffort: true });
+		const firstMessages: Context["messages"] = [{ role: "user", content: "Say hello", timestamp: 1 }];
+
+		const first = await streamOpenAICodexResponses(model, normalizeContext({ messages: firstMessages }), {
+			apiKey: token,
+			transport: "sse",
+			reasoningEffort: "low",
+		}).result();
+		const second = await streamOpenAICodexResponses(
+			model,
+			normalizeContext({ messages: [...firstMessages, first, { role: "user", content: "Again", timestamp: 2 }] }),
+			{ apiKey: token, transport: "sse", reasoningEffort: "high" },
+		).result();
+
+		expect(first.providerThinkingLevel).toBe("low");
+		expect(second.providerThinkingLevel).toBe("high");
+		expect(requestBodies.map((body) => body?.reasoning)).toEqual([
+			{ effort: "medium", summary: "auto" },
+			{ effort: "medium", summary: "auto" },
+		]);
+		expect(requestBodies.map((body) => summarizeInput(body))).toEqual([
+			["user", "configuration_update:low"],
+			["user", "configuration_update:low", "assistant", "user", "configuration_update:high"],
+		]);
+	});
+
+	it("sends the off level, an omitted reasoning option, as a configuration_update item", async () => {
+		const token = mockToken();
+		const requestBodies = captureSSERequestBodies();
+		const model = buildCodexModel("gpt-6-sol", { supportsMidConvoEffort: true }, { off: "none" });
+
+		const result = await streamSimpleOpenAICodexResponses(
+			model,
+			normalizeContext({ messages: [{ role: "user", content: "Say hello", timestamp: 1 }] }),
+			{ apiKey: token, transport: "sse" },
+		).result();
+
+		expect(result.providerThinkingLevel).toBe("none");
+		expect(requestBodies[0]?.reasoning).toEqual({ effort: "medium", summary: "auto" });
+		expect(summarizeInput(requestBodies[0])).toEqual(["user", "configuration_update:none"]);
+	});
+
+	it("sends thinking levels as reasoning.effort without supportsMidConvoEffort", async () => {
+		const token = mockToken();
+		const requestBodies = captureSSERequestBodies();
+		const model = buildCodexModel("gpt-5.6-sol");
+
+		const result = await streamOpenAICodexResponses(
+			model,
+			normalizeContext({ messages: [{ role: "user", content: "Say hello", timestamp: 1 }] }),
+			{ apiKey: token, transport: "sse", reasoningEffort: "high" },
+		).result();
+
+		expect(result.providerThinkingLevel).toBeUndefined();
+		expect(requestBodies[0]?.reasoning).toEqual({ effort: "high", summary: "auto" });
+		expect(summarizeInput(requestBodies[0])).toEqual(["user"]);
+	});
+
+	it("sends maxTokens as max_output_tokens unless the model opts out", async () => {
+		const token = mockToken();
+		const requestBodies = captureSSERequestBodies();
+		const context = normalizeContext({ messages: [{ role: "user", content: "Say hello", timestamp: 1 }] });
+
+		await streamSimpleOpenAICodexResponses(buildCodexModel("gpt-6.2-sol"), context, {
+			apiKey: token,
+			transport: "sse",
+			maxTokens: 5000,
+		}).result();
+		await streamOpenAICodexResponses(buildCodexModel("gpt-6.2-sol"), context, {
+			apiKey: token,
+			transport: "sse",
+			maxTokens: 4,
+		}).result();
+		await streamOpenAICodexResponses(buildCodexModel("gpt-6.2-sol", { supportsMaxOutputTokens: false }), context, {
+			apiKey: token,
+			transport: "sse",
+			maxTokens: 5000,
+		}).result();
+
+		expect(requestBodies[0]?.max_output_tokens).toBe(5000);
+		expect(requestBodies[1]?.max_output_tokens).toBe(16);
+		expect(requestBodies[2]).not.toHaveProperty("max_output_tokens");
 	});
 
 	it("sets Codex strict mode explicitly and honors constrained sampling", async () => {
@@ -2275,6 +2439,99 @@ describe("openai-codex streaming", () => {
 		});
 	});
 
+	// Regression test for https://github.com/earendil-works/pi/issues/12269
+	it("keeps sending input deltas in websocket-cached mode when the thinking level changes", async () => {
+		const token = mockToken();
+		const sentBodies: Array<{ input: unknown[]; previous_response_id?: string; reasoning?: unknown }> = [];
+
+		class MockWebSocket {
+			static OPEN = 1;
+			readyState = MockWebSocket.OPEN;
+			private listeners = new Map<string, Set<(event: unknown) => void>>();
+
+			constructor(_url: string, _protocols?: string | string[] | { headers?: Record<string, string> }) {
+				queueMicrotask(() => this.dispatch("open", {}));
+			}
+
+			addEventListener(type: string, listener: (event: unknown) => void): void {
+				const listeners = this.listeners.get(type) ?? new Set();
+				listeners.add(listener);
+				this.listeners.set(type, listeners);
+			}
+
+			removeEventListener(type: string, listener: (event: unknown) => void): void {
+				this.listeners.get(type)?.delete(listener);
+			}
+
+			send(data: string): void {
+				sentBodies.push(JSON.parse(data));
+				const responseId = `resp_${sentBodies.length}`;
+				const item = {
+					type: "message",
+					id: `msg_${sentBodies.length}`,
+					role: "assistant",
+					status: "completed",
+					content: [{ type: "output_text", text: "OK" }],
+				};
+				const events = [
+					{ type: "response.created", response: { id: responseId } },
+					{ type: "response.output_item.added", item: { ...item, status: "in_progress", content: [] } },
+					{ type: "response.content_part.added", part: { type: "output_text", text: "" } },
+					{ type: "response.output_text.delta", delta: "OK" },
+					{ type: "response.output_item.done", item },
+					{
+						type: "response.completed",
+						response: {
+							id: responseId,
+							status: "completed",
+							usage: { input_tokens: 5, output_tokens: 1, total_tokens: 6 },
+						},
+					},
+				];
+				queueMicrotask(() => {
+					for (const event of events) this.dispatch("message", { data: JSON.stringify(event) });
+				});
+			}
+
+			close(): void {
+				this.readyState = 3;
+			}
+
+			private dispatch(type: string, event: unknown): void {
+				for (const listener of this.listeners.get(type) ?? []) listener(event);
+			}
+		}
+
+		vi.stubGlobal("WebSocket", MockWebSocket);
+
+		const model = buildCodexModel("gpt-6.2-sol", { supportsMidConvoEffort: true });
+		const sessionId = "session-effort-deltas";
+		const messages: Context["messages"] = [];
+		for (const [turn, reasoningEffort] of (["low", "high", "high"] as const).entries()) {
+			messages.push({ role: "user", content: `Turn ${turn + 1}`, timestamp: turn });
+			const reply = await streamOpenAICodexResponses(model, normalizeContext({ messages }), {
+				apiKey: token,
+				sessionId,
+				transport: "websocket-cached",
+				reasoningEffort,
+			}).result();
+			messages.push(reply);
+		}
+
+		expect(sentBodies.map((body) => body.reasoning)).toEqual([
+			{ effort: "medium", summary: "auto" },
+			{ effort: "medium", summary: "auto" },
+			{ effort: "medium", summary: "auto" },
+		]);
+		expect(sentBodies.map((body) => body.previous_response_id)).toEqual([undefined, "resp_1", "resp_2"]);
+		expect(sentBodies.map((body) => summarizeInput(body as Record<string, unknown>))).toEqual([
+			["user", "configuration_update:low"],
+			["user", "configuration_update:high"],
+			["user", "configuration_update:high"],
+		]);
+		expect(getOpenAICodexWebSocketDebugStats(sessionId)).toMatchObject({ fullContextRequests: 1, deltaRequests: 2 });
+	});
+
 	it("sends only response input deltas in websocket-cached mode", async () => {
 		const token = mockToken();
 		const sentBodies: unknown[] = [];
@@ -2427,7 +2684,10 @@ describe("openai-codex streaming", () => {
 		const secondBody = sentBodies[1] as { input: unknown[]; previous_response_id?: string; store?: boolean };
 		expect(firstBody.store).toBe(false);
 		expect(firstBody.previous_response_id).toBeUndefined();
-		expect(firstBody.input).toEqual([{ role: "user", content: [{ type: "input_text", text: "Use the tool" }] }]);
+		expect(firstBody.input).toEqual([
+			{ role: "developer", content: "You are a helpful assistant." },
+			{ role: "user", content: [{ type: "input_text", text: "Use the tool" }] },
+		]);
 		expect(secondBody.store).toBe(false);
 		expect(secondBody.previous_response_id).toBe("resp_1");
 		expect(secondBody.input).toEqual([
@@ -2646,7 +2906,7 @@ describe("openai-codex streaming", () => {
 			expect(sentBodies[1].previous_response_id).toBe("resp_1");
 			expect(sentBodies[1].input).toEqual([{ role: "user", content: [{ type: "input_text", text: "Now finish" }] }]);
 			expect(sentBodies[2].previous_response_id).toBeUndefined();
-			expect(sentBodies[2].input).toHaveLength(3);
+			expect(sentBodies[2].input).toHaveLength(4);
 			expect(sentBodies[2].input.at(-1)).toEqual({
 				role: "user",
 				content: [{ type: "input_text", text: "Now finish" }],
@@ -2834,7 +3094,7 @@ describe("openai-codex streaming", () => {
 		const decoded = JSON.parse(Buffer.from(zstdDecompressSync(capturedBody as Uint8Array)).toString("utf8")) as {
 			input: Array<{ content: Array<{ text: string }> }>;
 		};
-		expect(decoded.input[0].content[0].text).toBe(largeText);
+		expect(decoded.input[1].content[0].text).toBe(largeText);
 
 		capturedEncoding = null;
 		capturedBody = undefined;

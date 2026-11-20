@@ -166,7 +166,8 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 					(provider) => `${provider.name} ${provider.id} ${provider.authType} ${provider.method?.name ?? ""}`,
 				)
 			: this.allProviders;
-		this.selectedIndex = Math.max(0, Math.min(this.selectedIndex, Math.max(0, this.filteredProviders.length - 1)));
+		// A query moves the selection to the top row, so the best match is highlighted.
+		this.selectedIndex = query ? 0 : Math.min(this.selectedIndex, Math.max(0, this.filteredProviders.length - 1));
 		this.updateList();
 	}
 
@@ -256,10 +257,12 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 		else if (kb.matches(keyData, "tui.select.cancel")) {
 			this.onCancelCallback();
 		}
-		// Pass everything else to search input
+		// Pass everything else to search input. Cursor keys leave the query as it is and must not move the selection.
 		else {
+			const previousQuery = this.searchInput.getValue();
 			this.searchInput.handleInput(keyData);
-			this.filterProviders(this.searchInput.getValue());
+			const query = this.searchInput.getValue();
+			if (query !== previousQuery) this.filterProviders(query);
 		}
 	}
 }

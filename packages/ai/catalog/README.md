@@ -36,7 +36,7 @@ export default defineProvider({
 	id: "example",
 	models: (ctx) =>
 		modelsDevModels(ctx, "example", { api: "openai-completions", baseUrl: "https://api.example.com/v1" }),
-	compat: { "openai-completions": { supportsStore: false, supportsDeveloperRole: false } },
+	compat: { "openai-completions": { supportsStore: false } },
 });
 ```
 

@@ -21,8 +21,8 @@ import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { int, method, type P3Principal, remote, Server, str } from "@earendil-works/p3/v1";
 import { SessionsStore } from "../plugins/sessions/contract.server.ts";
 import { CODING, Sessions, SessionsList, SessionWorker } from "../plugins/sessions/contract.ts";
-import { startP3 } from "../server.ts";
 import { PRINCIPALS } from "../src/app.ts";
+import { startP3 } from "../src/bootstrap/server.ts";
 import { ownerClient } from "../test/client.ts";
 import { type Launched, launch, releaseOf, run as runCommand, SOURCE } from "../test/launched.ts";
 

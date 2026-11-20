@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-20
+
 ### Breaking Changes
 
 - `RunEndTask` and `runEndTask` are renamed `HookTask` and `hookTask`, as `afterTools` and `onYield` hooks now ask for tasks too. Migration: rename the import in `afterRun` hooks.

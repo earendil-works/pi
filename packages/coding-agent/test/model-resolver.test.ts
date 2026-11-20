@@ -680,8 +680,8 @@ describe("resolveCliModel", () => {
 
 describe("default model selection", () => {
 	test("openai defaults track current models", () => {
-		expect(defaultModelPerProvider.openai).toBe("gpt-6.1-sol");
-		expect(defaultModelPerProvider["openai-codex"]).toBe("gpt-6.1-sol");
+		expect(defaultModelPerProvider.openai).toBe("gpt-6.2-sol");
+		expect(defaultModelPerProvider["openai-codex"]).toBe("gpt-6.2-sol");
 	});
 
 	test("zai, minimax, cerebras, and ant-ling defaults track current models", () => {

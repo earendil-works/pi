@@ -3,7 +3,9 @@
 // (`release.test.ts`); the command's other cases are `commands.test.ts`.
 
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { mkdtemp, readdir, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, type TestContext } from "node:test";
@@ -11,7 +13,7 @@ import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { Sessions, SessionWorker } from "../plugins/sessions/contract.ts";
 import { ownerClient } from "./client.ts";
 import { endToEnd } from "./end-to-end.ts";
-import { launch, SOURCE } from "./launched.ts";
+import { childrenOf, launch, SOURCE } from "./launched.ts";
 
 /** How long a case may take: a server or a worker that hangs fails its case instead of the run. */
 const CASE_MS = 60_000;
@@ -55,9 +57,17 @@ describe("p3 launched from source", { concurrency: true }, () => {
 			await client.get(SessionWorker, { session: await sessions.create({}, context) }, context);
 			const workers = await launched.workers();
 			assert.equal(workers.length, 1);
-			// It runs with the V8 flags for its memory (owner, 2026-11-16).
+			// It runs with the V8 flags for its memory (owner, 2026-11-16; the memory reducer's delay and the zones 2026-11-18).
 			const argv = (await readFile(`/proc/${workers[0]}/cmdline`, "utf8")).split("\0");
-			for (const flag of ["--liftoff-only", "--optimize-for-size", "--max-semi-space-size=4"]) {
+			// Named here, not read from `WORKER_V8_FLAGS`: a mutation that drops one there would drop it here too.
+			const flags = [
+				"--liftoff-only",
+				"--optimize-for-size",
+				"--max-semi-space-size=4",
+				"--gc-memory-reducer-start-delay-ms=8000",
+				"--managed-zone-memory",
+			];
+			for (const flag of flags) {
 				assert.ok(argv.includes(flag), `${flag}: ${argv.join(" ")}`);
 			}
 			// It wrote Node's compile cache after its start, not only at its exit: the next worker starts warm.
@@ -75,4 +85,30 @@ describe("p3 launched from source", { concurrency: true }, () => {
 			await again.close();
 		});
 	}
+});
+
+// The phone (owner, 2026-11-18): Android's kernel has no `/proc/<pid>/task/<pid>/children` (no CONFIG_PROC_CHILDREN),
+// so `workersOf` failed with ENOENT there, and with it the bench and the launched tests.
+describe("a process's children", () => {
+	it("are found from the kernel's list, and from every process's parent where the list is missing", async (t) => {
+		const dir = await mkdtemp(join(tmpdir(), "p3-children-"));
+		t.after(() => rm(dir, { recursive: true, force: true }));
+		// A command whose name holds a `)`, as `/proc/<pid>/stat` shows it in its second field.
+		await symlink("/bin/sleep", join(dir, "a ) b"));
+		const started = [
+			spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"]),
+			spawn(join(dir, "a ) b"), ["30"]),
+		];
+		t.after(async () => {
+			for (const child of started) child.kill("SIGKILL");
+			await Promise.all(started.map((child) => (child.exitCode === null ? once(child, "exit") : undefined)));
+		});
+		await Promise.all(started.map((child) => once(child, "spawn")));
+		const pids = started.map((child) => child.pid!).sort();
+		const listed = await childrenOf(process.pid);
+		const scanned = await childrenOf(process.pid, join(dir, "no-children-file"));
+		assert.deepEqual([...listed].sort(), [...scanned].sort());
+		for (const pid of pids) assert.ok(scanned.includes(pid), `${pid} in ${scanned.join(" ")}`);
+		assert.ok(!scanned.includes(process.pid));
+	});
 });

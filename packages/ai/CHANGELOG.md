@@ -2,15 +2,30 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `retryAssistantCall()` retaining an abort listener after each completed backoff, causing listener buildup across repeated retries ([#10506](https://github.com/earendil-works/pi/issues/10506))
+- Fixed Cloudflare's HTTP 525 (SSL handshake failed) not being retried like its 520 and 524 errors
+- Fixed gateway errors such as "The provider is temporarily unavailable. Retry shortly.", "The provider ended the response before it was complete.", "The connection to the provider was reset.", and "The provider reported a failure while generating the response." not being retried ([#12227](https://github.com/earendil-works/pi/issues/12227))
+- Fixed temporary provider failures not being retried automatically: Anthropic `api_error` events during streaming, OpenRouter's "Provider returned an empty response" and "stopped before completing the response", streams that end with `finish_reason: "error"`, and "Repeat the request later" and "admission ceiling" responses
+
+## [1.6.0] - 2026-11-20
+
 ### Added
 
 - Added custom `fetch` support to the `google-generative-ai` and `google-vertex` adapters; Vertex ADC token requests still use `google-auth-library`'s own HTTP client ([#12103](https://github.com/earendil-works/pi/pull/12103) by [@rometi](https://github.com/rometi))
+- Added `qwen4-max-preview` to the Qwen Token Plan Individual providers ([#12259](https://github.com/earendil-works/pi/issues/12259))
 - Added `deepseek-v4.1-flash` and `deepseek-v4.1-flash-1017` to the Qwen Token Plan Individual providers, and per-plan key variables `QWEN_TOKEN_PLAN_TEAM_API_KEY`, `QWEN_TOKEN_PLAN_TEAM_CN_API_KEY`, `QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY`, and `QWEN_TOKEN_PLAN_INDIVIDUAL_CN_API_KEY`; the shared `QWEN_TOKEN_PLAN_API_KEY` and `QWEN_TOKEN_PLAN_CN_API_KEY` still work ([#11773](https://github.com/earendil-works/pi/issues/11773))
+- Added GPT-6.2 Astra and GPT-6.2 Sol to the OpenAI, Azure OpenAI Responses, and OpenAI Codex providers with official pricing (Astra: $8 input, $0.40 cached input, $10 cache writes, $40 output; Sol: $2, $0.10, $2.50, $10; long-context tier above 272k), tool search, additional tools, and mid-conversation effort changes. Both reject reasoning effort `none` and `minimal`, so `off` is unavailable. Azure serves them with a 1.05M context window; Codex serves GPT-6.2 Sol with 500K and GPT-6.2 Astra with 272K
+- Added `openai_input_transformations` assistant message diagnostics to the OpenAI Responses, Azure OpenAI Responses, and OpenAI Codex providers. They list the replayed reasoning items the API withheld from the model and why, such as `prefix_mismatch` (from GPT-6.2 on, OpenAI drops reasoning that follows an edit of earlier input, for example after compaction) or `organization_mismatch`. `turn_boundary` removals are not recorded: models before GPT-5.6 report every earlier turn's reasoning that way on each request
+- Added the `@earendil-works/pi-ai/session-resources` export with `registerSessionResourceCleanup()` and `cleanupSessionResources()`, which release process-local provider resources such as an OpenAI Codex WebSocket for one provider session ([#11676](https://github.com/earendil-works/pi/issues/11676))
 
 ### Changed
 
+- Updated `openai` to 7.59.0
 - Updated `@google/genai` to 2.32.0. The Google adapters turn off its automatic continuation, so a `CONTINUATION` finish ends the turn with stop reason `length` ([#12103](https://github.com/earendil-works/pi/pull/12103) by [@rometi](https://github.com/rometi))
 - Anthropic message threads are now on by default for any provider whose baseUrl is on api.anthropic.com, not only the `anthropic` provider ([#11987](https://github.com/earendil-works/pi/issues/11987))
+- `openai-completions` now sends system messages of reasoning models (the system prompt and mid-conversation system messages) with the `developer` role only to `api.openai.com`; all other hosts, including Azure and OpenRouter, get `system`. Set `compat.supportsDeveloperRole` to override ([#10741](https://github.com/earendil-works/pi/issues/10741))
 - Qwen Token Plan providers now use the current gateways (`token-plan.maas.qwencloudapi.com` international, `token-plan.maas.qianwenaiapi.com` China), and `qwen-token-plan` and `qwen-token-plan-cn` are named "Qwen Token Plan Team" and "Qwen Token Plan Team CN". Provider IDs are unchanged, and the old `aliyuncs.com` hosts still work ([#11773](https://github.com/earendil-works/pi/issues/11773))
 
 ### Fixed
@@ -18,10 +33,16 @@
 - Fixed tools with `strict: "prefer"` constrained sampling being sent in strict mode when their schema contains a node without a `type` (such as `items: {}`, `Type.Unknown()`, or a bare `const`), which OpenAI rejects with a 400 error; these tools now fall back to non-strict mode, and `strict: "require"` fails locally. Nodes with only an `enum` stay strict ([#12049](https://github.com/earendil-works/pi/issues/12049))
 - Fixed provider errors that report only a Node socket error code, such as `read ECONNRESET`, `write EPIPE`, or `connect ETIMEDOUT`, not being retried ([#12128](https://github.com/earendil-works/pi/issues/12128))
 - Fixed provider errors reading "Connection closed." not being retried ([#12064](https://github.com/earendil-works/pi/issues/12064))
+- Fixed Groq Qwen models failing with `400 Unexpected message role` because the system prompt was sent with the `developer` role ([#10741](https://github.com/earendil-works/pi/issues/10741))
 - Fixed Mistral Large 4 tool calls stalling for minutes: Mistral models no longer receive strict (schema-constrained) tools unless `compat.supportsStrictMode` is set ([#12148](https://github.com/earendil-works/pi/issues/12148))
 - Fixed non-strict Anthropic tool schemas dropping the root `additionalProperties`, so the model was not told that extra arguments are forbidden ([#12067](https://github.com/earendil-works/pi/issues/12067))
+- Fixed GitHub Copilot models on the Responses API (GPT, Grok, MAI-Code) filling omitted optional tool arguments with empty strings or invented values. Their tools were sent without `strict`, which Copilot treats as strict mode; they now send `strict: false`, or `strict: true` for tools with JSON-schema constrained sampling. Copilot's Claude models now also send `strict: true` for those tools, as direct Anthropic does ([#12286](https://github.com/earendil-works/pi/issues/12286))
 - Fixed the OpenAI Codex WebSocket 60-minute connection limit failing the turn when it hit mid-stream, for example during long thinking. The error is now retried on a fresh connection, and new requests stop reusing a cached connection after 45 minutes instead of 55, so a long response is less likely to reach the limit ([#12124](https://github.com/earendil-works/pi/issues/12124))
 - Fixed OpenAI Decisions (`gpt-6-luna` classifier) usage dropping `cached_tokens` and `cache_write_tokens`: they are now reported as `cacheRead` and `cacheWrite` and no longer counted in `input`, and the catalog prices them at the input rate so the cost estimate is unchanged ([#12264](https://github.com/earendil-works/pi/issues/12264))
+- Fixed the OpenAI Codex provider getting almost no prompt cache hits for the system prompt on GPT-6.2 models. GPT-6.2 places top-level `instructions` after the conversation, so each new turn invalidated the cache for it. The system prompt is now sent as the first `developer` input item, as Codex does, and no `instructions` field is sent ([#12273](https://github.com/earendil-works/pi/issues/12273))
+- Fixed changing the thinking level on the OpenAI Codex provider invalidating the prompt cache on GPT-6 models. Thinking level changes, including switching to off, are now sent as `configuration_update` input items with a fixed `reasoning.effort`, as on the `openai` provider and in Codex ([#12269](https://github.com/earendil-works/pi/issues/12269))
+- Fixed GitHub Copilot Gemini and Kimi models (`gemini-4-argon`, `gemini-4-carbon`, `gemini-3.8-flash`, `kimi-k3`) never receiving the thinking level, and Copilot usage always reporting 0 reasoning tokens ([#12110](https://github.com/earendil-works/pi/pull/12110) by [@DenielC1](https://github.com/DenielC1))
+- Fixed the OpenAI Codex provider ignoring `maxTokens`; it is now sent as `max_output_tokens` (at least 16) unless the model sets `compat.supportsMaxOutputTokens: false`
 
 ### Removed
 

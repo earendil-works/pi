@@ -1,4 +1,4 @@
-// `/move` in the TUI: the viewed session moves to another place of its project (`projects.json`, the projects plugin).
+// `/move` in the TUI: the viewed session moves to another place of its project (the projects plugin).
 // `/move <env>` names the machine; `/move` alone opens a picker of the project's places, probed as it opens. The
 // session's project is the one it belongs to (`Projects.sessions`), never derived from its directory; the move is
 // `/cd`'s (the selector's `relocate`: confirmed, then `Sessions.relocate`) and keeps the subfolder below the project's
@@ -49,13 +49,13 @@ export function completeMove(ctx: TuiContext, source: MoveSource, prefix: string
 	return items.length ? items : null;
 }
 
-/** The project `session` belongs to while projects.json still has it; else why `/move` cannot move it. */
+/** The live project `session` belongs to; else why `/move` cannot move it. */
 function storedProject(source: MoveSource, session: Session): { project: Project } | { error: string } {
 	const name = source.projectOf(session.id);
 	if (name === undefined)
 		return { error: "This session belongs to no project: start one from a project's row in /sessions" };
 	const project = source.projects.find((each) => each.name === name);
-	return project ? { project } : { error: `Project ${lineText(name)} is no longer in projects.json` };
+	return project ? { project } : { error: `Project ${lineText(name)} is archived or deleted` };
 }
 
 /**
@@ -105,7 +105,7 @@ async function moveTo(
 }
 
 /**
- * The picker: every place of `project` in projects.json's order, the session's own one marked current, the others
+ * The picker: every place of `project` in its order, the session's own one marked current, the others
  * probed now (`…`, `✓`, `?`, `✗`, with why a place cannot be used). The cursor starts on the first other place that is
  * reachable (it waits on one still checking); Enter on a reachable one moves there (`moveTo`), on the current one only
  * closes, the others cannot be chosen.

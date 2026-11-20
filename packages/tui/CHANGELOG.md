@@ -2,9 +2,15 @@
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-20
+
 ### Breaking Changes
 
 - `Component.render()` now returns `readonly string[]`, and `Container.render()` returns the same cached array while its children are unchanged, like `Text`, `Markdown`, and `Box` already did. Code that modifies render output in place, including `super.render()` in a `Container` subclass, must copy it first ([#9549](https://github.com/earendil-works/pi/issues/9549))
+
+### Added
+
+- Added `TUI.setSuspendSignalHandler()`, which sets a handler called when the process receives `SIGTSTP` while the TUI owns the terminal, from `start()` until `stop()`. The `SIGTSTP` listener is removed on `stop()`, so a child that owns the terminal afterwards is suspended normally ([#12283](https://github.com/earendil-works/pi/pull/12283) by [@haoqixu](https://github.com/haoqixu))
 
 ### Fixed
 
@@ -13,6 +19,8 @@
 - Fixed Kitty and iTerm2 images covering overlays drawn over them. An image that an overlay overlaps by row and column is now removed while the overlay is open and drawn again when it closes. Images beside an overlay, such as a sidebar, stay visible ([#11584](https://github.com/earendil-works/pi/issues/11584))
 - Fixed fullscreen scrolling re-rendering the whole transcript on every wheel event and key press, which saturated a CPU core in long sessions; scroll frames now reuse the previous output ([#9549](https://github.com/earendil-works/pi/issues/9549))
 - Fixed containers copying every rendered line on every frame, and sped up column slicing for ASCII and other text without combining characters ([#9549](https://github.com/earendil-works/pi/issues/9549))
+- Fixed Enter on an autocomplete menu submitting the prompt when the completed text started with `/`, such as a Tab path menu for an absolute path (`look at /tmp/fi`) or a slash command argument (`/open /tm`). Enter now submits only from the slash command name menu ([#12309](https://github.com/earendil-works/pi/issues/12309), [#12312](https://github.com/earendil-works/pi/pull/12312) by [@acmerfight](https://github.com/acmerfight))
+- Fixed `SettingsList` with `enableSearch` moving the selection back to the first entry when Left, Right, Home or End moved the cursor in the search field without changing the query ([#12245](https://github.com/earendil-works/pi/issues/12245))
 
 ## [1.5.2] - 2026-11-10
 

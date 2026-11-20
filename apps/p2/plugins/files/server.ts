@@ -17,7 +17,7 @@ import {
 	withAbortSignal,
 } from "@p2/app/v1";
 import { DownloadError, FILE_CHUNK, MAX_DOWNLOAD_BYTES } from "@p2/app/v1/node";
-import { fromOrigin, type RequestAccess, Routes, sendJson, serverOf } from "@p2/app/v1/server";
+import { crossSiteRead, fromOrigin, type RequestAccess, Routes, sendJson, serverOf } from "@p2/app/v1/server";
 import { Catalog } from "../sessions/contract.ts";
 import { DownloadStore, SessionFiles } from "./contract.ts";
 import { MAX_UPLOAD_BYTES, UploadError } from "./uploads.ts";
@@ -146,8 +146,8 @@ export default defineFacet((host) => {
 		): Promise<void> => {
 			const query = new URL(request.url ?? "/", "http://localhost").searchParams;
 			const session = query.get("session") ?? "";
-			// A cross-site page may link here, but never with the owner's or a guest's access.
-			if (request.headers["sec-fetch-site"] === "cross-site" || !canView(principal, session)) {
+			// A cross-site page may link here, but never read a file with the owner's or a guest's access.
+			if (crossSiteRead(request) || !canView(principal, session)) {
 				response.writeHead(403, { "Content-Type": "text/plain" });
 				response.end("Forbidden");
 				return;

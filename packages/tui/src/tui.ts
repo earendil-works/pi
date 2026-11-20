@@ -569,6 +569,12 @@ export interface TUI extends Component {
 	removeInputListener(listener: TuiInputListener): void;
 	onTerminalColorSchemeChange(listener: (scheme: TerminalColorScheme) => void): () => void;
 	setTerminalColorSchemeNotifications(enabled: boolean): void;
+	/**
+	 * Sets the handler called on SIGTSTP while this TUI owns the terminal (from start() until stop()),
+	 * or clears it with undefined.
+	 * The listener is removed on stop(), so a child that owns the terminal afterwards is suspended normally.
+	 */
+	setSuspendSignalHandler(handler: (() => void) | undefined): void;
 	queryTerminalColors(options: {
 		timeoutMs: number;
 		onLateReply?: (colors: TerminalColors) => void;
@@ -594,6 +600,11 @@ export abstract class TuiBase extends Container implements TUI {
 
 	/** Global callback for debug key (Shift+Ctrl+D). Called before input is forwarded to focused component. */
 	public onDebug?: () => void;
+	private suspendSignalHandler: (() => void) | undefined;
+	private readonly suspendSignalListener = (): void => this.suspendSignalHandler?.();
+	// From start() until stop(). Unlike `stopped`, false before the first start().
+	private ownsTerminal = false;
+	private suspendSignalListening = false;
 	private renderRequested = false;
 	/**
 	 * Whether a render request since the last frame may have changed component output. Only
@@ -1041,6 +1052,8 @@ export abstract class TuiBase extends Container implements TUI {
 		this.stopped = false;
 		process.off("exit", this.exitRestoreHandler);
 		process.on("exit", this.exitRestoreHandler);
+		this.ownsTerminal = true;
+		this.updateSuspendSignalListener();
 		this.beforeTerminalStart();
 		this.terminal.start(
 			(data) => this.handleTerminalInput(data),
@@ -1083,6 +1096,23 @@ export abstract class TuiBase extends Container implements TUI {
 		}
 	}
 
+	setSuspendSignalHandler(handler: (() => void) | undefined): void {
+		this.suspendSignalHandler = handler;
+		this.updateSuspendSignalListener();
+	}
+
+	// Listen only while the TUI owns the terminal. After stop(), a child (external editor,
+	// interactive command) owns it, and a listener would keep SIGTSTP from stopping the process.
+	// Only real changes touch the listener: removing the last one restores the default action,
+	// so an off/on pair would let a SIGTSTP in between stop the process with the TUI running.
+	private updateSuspendSignalListener(): void {
+		const listen = this.ownsTerminal && this.suspendSignalHandler !== undefined;
+		if (listen === this.suspendSignalListening) return;
+		this.suspendSignalListening = listen;
+		if (listen) process.on("SIGTSTP", this.suspendSignalListener);
+		else process.off("SIGTSTP", this.suspendSignalListener);
+	}
+
 	private queryCellSize(): void {
 		// Only query if terminal supports images (cell size is only used for image rendering)
 		if (!getCapabilities().images) {
@@ -1104,6 +1134,10 @@ export abstract class TuiBase extends Container implements TUI {
 		this.terminal.showCursor();
 		this.terminal.stop();
 		this.afterTerminalStop(options);
+		// Last, so a SIGTSTP during the restore above is caught (and dropped when the listener
+		// goes) instead of stopping the process with the terminal half restored.
+		this.ownsTerminal = false;
+		this.updateSuspendSignalListener();
 	}
 
 	renderNow(force = false): void {

@@ -361,6 +361,10 @@ and its exit on a clean stop, the kept port).
 
 ## As built
 
+The process entries (`bin.ts`, `server.ts`, `worker.ts`, `supervisor.ts`) live in `src/bootstrap/` (decision "Base
+entries live in `src/bootstrap/`", 2026-11-18); `apps/p3/`'s root holds no `.ts` file. The names below without a
+directory are theirs; the release's files (`dist/main.js`, `worker.js`, `supervisor.js`, `p3.js`) keep their names.
+
 ### What ships
 
 ```text
@@ -368,7 +372,7 @@ and its exit on a clean stop, the kept port).
   package.json                          bin { p3: dist/p3.js }; exports ./v1, ./v1/server, ./v1/worker (source, types,
                                         import); dependencies: Chord, pi-schema, pi-telemetry, esbuild, ws (exact)
   dist/p3.js                            the launcher: the compile cache, the experimental-warning filter, main.js
-  dist/main.js                          the command (bin.ts) and the server: kit, Chord, pi-schema, pi-telemetry, ws inlined
+  dist/main.js                          the command (src/bootstrap/bin.ts) and the server: kit, Chord, pi-schema, pi-telemetry, ws inlined
   dist/worker.js                        a session worker's entry: a bundle of its own, none of the server's code
   dist/supervisor.js                    the background server's supervisor: a bundle of its own
   dist/api/v1/*.{js,d.ts,d.ts.map}      the API compiled by tsc, importing Chord from the dependency
@@ -395,11 +399,11 @@ How p3 runs from it:
 ### How it is built and tested
 
 - **`scripts/build-release.ts`** (`npm run build` in `apps/p3`): checks that every dependency is pinned to the
-  workspace's version; one esbuild build per process (`bin.ts`, `worker.ts`, `supervisor.ts`, in parallel, no shared
-  chunk), with the condition `source`, minified with names kept, no source maps; the externals check (Node builtins,
-  esbuild, `ws`'s two optional accelerators), the placement check of `src/install.ts` (in `main.js` and nowhere
-  else) and the lean check of the worker's and the supervisor's bundles (`checkLean`: no import of esbuild or Node's
-  HTTP, no `ws`, none of Chord's HTTP component, the server side of its workers or its plugin builds); the
+  workspace's version; one esbuild build per process (`src/bootstrap/bin.ts`, `worker.ts`, `supervisor.ts`, in
+  parallel, no shared chunk), with the condition `source`, minified with names kept, no source maps; the externals check (Node
+  builtins, esbuild, `ws`'s two optional accelerators), the placement check of `src/install.ts` (in `main.js` and
+  nowhere else) and the lean check of the worker's and the supervisor's bundles (`checkLean`: no import of esbuild or
+  Node's HTTP, no `ws`, none of Chord's HTTP component, the server side of its workers or its plugin builds); the
   launcher; then `tsc -p tsconfig.build.json` for the API. `scripts/` is TypeScript, run by Node, so `npm run check` covers it.
 - **`scripts/release-local.ts`** (`npm run release:p3:local -- --out <dir> [--force] [--skip-test] [--bench]` from the
   repository root): the output directory checked (below), Chord, pi-schema and pi-telemetry built, p3 built, the four
@@ -608,8 +612,9 @@ workers component takes `dist/worker.js` as its entry.
 
 ### The third part, against its specification
 
-- **`supervisor.ts` is at p3's root**, beside `bin.ts`, `server.ts` and `worker.ts` (decision "Base entries are named
-  after what they are"), not in `src/`; the build bundles it as `dist/supervisor.js`.
+- **`supervisor.ts` is beside `bin.ts`, `server.ts` and `worker.ts`** (decision "Base entries are named after what they
+  are"; at p3's root then, in `src/bootstrap/` since 2026-11-18), not in `src/` as planned; the build bundles it as
+  `dist/supervisor.js`.
 - **The supervisor has a lock and a record of its own** (`p3-supervisor:<dataDir>`, `supervisor.json`), as the server
   has (`p3-server:<dataDir>`, `server.json`): `stop` finds the supervisor also while no server runs (between a crash
   and the restart), two `p3` at once start one supervisor (the second cannot take the lock and exits, and its command
@@ -784,14 +789,36 @@ restored in a copy for the comparison); "settled" is after 40 s (V8's memory red
 - **A warm compile cache:** `flushCompileCache()` once after a worker started (`src/kit/worker.ts`); Node writes it only
   at exit otherwise, and every later worker starts from it.
 - **The worker's V8 flags** (`WORKER_V8_FLAGS` in `src/install.ts`, both layouts): `--liftoff-only`,
-  `--optimize-for-size`, `--max-semi-space-size=4`. Background recompilation stays on.
-- **Node versions:** each flag is in `node --v8-options` on Node 24.4.1 and 26.11.1; the release tests pass on both
-  (the memory test's numbers for each are below). `src/minimum-node.ts` refuses an older Node with one line and exit
-  1 (`p3: needs Node 24.4.0 or newer; this is Node …`); its version is `package.json`'s `engines`. In the release the
+  `--optimize-for-size`, `--max-semi-space-size=4`, and since 2026-11-18 `--gc-memory-reducer-start-delay-ms=8000`
+  (owner, from mem-audit's Node 26 measurements): Node 26's V8 starts its memory reducer 30 s after work, Node 24's
+  after 8 s, so on Node 26 the garbage of a burst stayed in old space past the test's settled readings. 8000 is Node
+  24's own default: the flag changes nothing there, and one list serves every Node (no choice by version; mem-audit
+  thought the flag missing in Node 24, but `node --v8-options` of 24.4.1 lists it, and a worker starts with it).
+  Background recompilation stays on.
+- **`--managed-zone-memory`** (owner, 2026-11-18, after v8-flag-check: an ordinary V8 flag staged for shipping, v8
+  commit 277d16f12e01, bug issues.chromium.org/409953791, a Chrome field trial for over a year, off by default even on
+  V8's main branch): V8 pools its compilers' zone memory itself instead of taking it from malloc, so glibc keeps less
+  freed memory, most after the five subagents. Node 24's V8 does not know it; while p3 still ran on Node 24 it was
+  added from Node 26 on by Node's major version (`workerV8Flags`). Not taken:
+  `--managed-zone-memory-for-isolate-independent-memory`, `--future`.
+- **Node 26.3.1 or newer, everywhere** (decision "Node 26 or newer everywhere", 2026-11-18): from a checkout, in the
+  tests and in a release. The five flags are one constant list; the Node 24 branch and its tests are gone. 26.3.1, the
+  newest Node Termux offers on the owner's phone (Android is a target), is the oldest p3 accepts: checked on slayer with
+  nodejs.org's 26.3.1 build (V8 14.6.202.34, as every Node 26 release): each of the five flags is in its
+  `--v8-options` and a Node starts with them, `node:sqlite` opens and queries a database, and `--permission` without
+  `--allow-net` refuses a TCP connection (`ERR_ACCESS_DENIED`; `--allow-net` came with Node 25.0.0), and `npm test`
+  passes on it. Chord's terminal sandbox (slice 27) asks for 26.5.1 (`requireSandboxNode`): that release fixed
+  permission-model CVEs (CVE-2026-58043 "avoid granting radix split nodes", High; two Low), which slice 27 has to weigh.
+  `test/install.test.ts` checks that the Node that runs the tests lists and accepts every flag; the launched and release
+  tests check the worker's command line flag by flag. `src/minimum-node.ts` refuses an older Node with one line and exit
+  1 (`p3: needs Node 26.3.1 or newer; this is Node …`); its version is `package.json`'s `engines`. (Before 2026-11-18:
+  Node 24.4.0, each flag checked on 24.4.1 and 26.11.1, the release tests run on both; the memory test's numbers for
+  each Node are below.) In the release the
   launcher `p3.js` runs it first and has no static import (Opus, round 5: ES modules are linked before any of them
   runs, so a builtin an old Node lacks failed the graph first: `node:sqlite` on Node 22.12, `enableCompileCache` on
   20): it loads `minimum-node.js`, a bundle of no imports, then Node's compile cache and the rest with `import()`.
-  Checked with Node 20.19.5, 22.12.0, 22.21.1 and 24.0.0: each gets the one line, for `--version` and `status`; a build
+  Checked with Node 20.19.5, 22.12.0, 22.21.1 and 24.0.0, and on 2026-11-18 against 26.3.1 with 20.19.5, 22.12.0,
+  24.0.0 and 24.4.1: each gets the one line, for `--version` and `status`; a build
   test asserts that `p3.js` has no static import. From a checkout `bin.ts` imports it first (an old Node there is a
   developer's). A worker never starts alone, so it has no check of its own.
 - **Two hooks** the memory test uses (owner: fine): `startWorker({ session })`, what runs on the worker's store and
@@ -860,8 +887,54 @@ unminified, no compile cache flush), 3 runs × 4 workers. After: 10 runs × 4 wo
   Node 26 run in five failed (Opus); at 45, 15 of 40 Node 24 workers went above it. Node 24 still catches a lost lever
   (Opus: without `--liftoff-only` 55.4 at the median, without the three flags 65.9).
 - The idle maximum (25.4) is each run's first worker, whose compile cache is cold; the others start from its cache.
+- **With `--gc-memory-reducer-start-delay-ms=8000`** (2026-11-18): the memory test 5 times on each Node, alternating
+  Node 26 and Node 24, serially on an otherwise idle slayer (the release built and its 33 tests passed on Node 24, and
+  again run by Node 26.11.1), 5 runs × 4 workers each. "Node 26, before" is the same test the night before, also
+  serial, without the flag:
+
+  | reading | Node 24.4.1 (n=20) | Node 26.11.1, before (n=20) | Node 26.11.1, with the flag (n=20) |
+  | --- | --- | --- | --- |
+  | idle, settled | 18.5 [18.1–25.4] | 20.7 [20.3–26.9] | 19.0 [18.5–25.6] |
+  | after the first response | 30.1 [28.9–34.6] | 29.7 [28.7–33.6] | 30.7 [30.1–35.1] |
+  | burst peak | 41.8 [40.9–43.3] | 43.1 [42.3–45.1] | 43.3 [42.8–45.3] |
+  | after the burst | 35.0 [34.5–36.7] | 42.8 [37.7–45.1] | **37.2 [36.6–39.0]** |
+  | 5 subagents, peak | 44.8 [43.9–46.1] | 47.2 [46.3–50.5] | 49.5 [47.1–50.9] |
+  | after the subagents | 44.8 [41.3–46.1] | 46.8 [43.5–49.8] | 49.1 [42.9–50.9] |
+  | highest of a run | 44.8 [43.9–46.1] | 47.2 [46.3–50.5] | 49.5 [47.1–50.9] |
+
+  On Node 26 the flag does what mem-audit measured: after the burst 37.2 instead of 42.8, idle 19.0 instead of 20.7.
+  The subagents' peak and what follows it rise by about 2 MiB (mem-audit too: 50.7 with the flag against 48.9); likely
+  because the reducer now shrinks the heap in the idle phase before the subagents and V8 grows it again when five
+  conversations stream at once (not checked). The worst Node 26 worker is 50.9 MiB, 4.1 below the budget (4.5 before). Node 24's
+  readings are those of before, as expected from a flag that sets its own default. All 10 runs pass.
+- **With `--managed-zone-memory` on Node 26** (2026-11-18): 5 rounds, serially, each round the memory test as built
+  (with the flag) and a copy without it (the same commit, only the flag taken out) at the same time on an otherwise
+  idle slayer, all on Node 26.11.1, both with the reducer's delay; 5 runs × 4 workers each. The memory test now also
+  reads each worker's CPU time (`/proc/<pid>/stat`, user and system) from the last sample before a phase to the first
+  after it:
+
+  | reading | without (n=20) | with `--managed-zone-memory` (n=20) |
+  | --- | --- | --- |
+  | idle, settled | 18.9 [18.5–25.4] | 17.9 [17.7–20.1] |
+  | after the first response | 30.8 [30.2–35.7] | 28.6 [27.7–30.0] |
+  | burst peak | 43.4 [42.9–44.6] | 41.4 [40.8–42.9] |
+  | after the burst | 37.2 [36.8–44.1] | 33.8 [33.1–34.5] |
+  | 5 subagents, peak | 49.1 [48.3–51.1] | 46.7 [44.8–47.9] |
+  | after the subagents | 48.7 [43.7–51.1] | 42.6 [37.4–44.8] |
+  | highest of a run | 49.1 [48.3–51.1] | **46.7 [44.8–47.9]** |
+  | CPU of the streamed answer | 0.91 s [0.86–0.96] | 0.89 s [0.82–0.95] |
+  | CPU of the burst of 20 turns | 0.33 s [0.30–0.39] | 0.34 s [0.29–0.38] |
+  | CPU of the five subagents | 2.17 s [2.05–2.36] | 2.21 s [2.03–2.42] |
+
+  Lower in every reading, by 1 to 6 MiB; the worst Node 26 worker is 47.9 MiB, 7.1 below the budget and close to Node
+  24's worst (46.1 in the release's own run on Node 24 that night, n=4). No CPU cost the runs can see: every
+  phase's median within 2%, the ranges overlapping. The release tests' own memory run on Node 26 agrees (n=4: after
+  the burst 33.6, after the subagents 42.1, highest 46.9).
 
 ## Carried (not in this slice)
+
+Packaging: its own package, later; decision "Packaging is its own work, later"; the measurements are in
+`/home/badlogic/chord-notes/research/p3-sea-2026-11-18/`.
 
 Publishing the lockstep version of Chord, pi-schema and pi-telemetry that p3's types need (npm's 1.5.2 predates
 them), and p3's own version joining the lockstep; a build cache on disk (decided against for now, decision "No build cache"), or a ready worker base in the release (the
@@ -870,7 +943,7 @@ CHANGELOG for p3); an install lock for installers (`packages/coding-agent/instal
 terminal client behind plain `p3` (slice 27); a restart requested from the page (slice 2); starting a Pi at boot
 (a service unit); the web and terminal base bundles in the package (slice 16); slice 3 replaces `startWorker({
 session })`, the memory test's hook, with the harness as an object in the worker's core facet (design §24), and the
-memory test's session with it; what Node 26 holds after a burst (its workers settle about 7 MiB above Node 24's). **Windows, not run natively:** the
+memory test's session with it; whether `--managed-zone-memory` can go once V8 turns it on by default (it is behind `--future` there). **Windows, not run natively:** the
 whole suite on Windows (its tests read `/proc`, the gate matches `/server.json`, the fake `ps` and PowerShell need a
 POSIX shell); Chord's `processLock` on named pipes; PowerShell's real output; `release:p3:local` there (it links
 `<out>/p3` with a symbolic link and runs `npm` without its `.cmd`); the data directory's privacy (modes 0700 and 0600

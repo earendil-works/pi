@@ -4,7 +4,7 @@ import { type CommandTargetRow, inPage, NavDisclosureIcon, SideNavigation } from
 import type { ReactNode } from "react";
 
 /**
- * One row: a marker (a session's working mark, a group's icon; its column is kept when empty, so labels line up; absent:
+ * One row: a marker (an item's status, a group's icon; its column is kept when empty, so labels line up; absent:
  * no column, as a rollup's), the label (on one line, cut with "…" at its end), then details and controls at the
  * trailing end. The label is a link to `href`, an action without one, or with `expanded`, the control that shows or
  * hides what is below the row (its chevron right after the label). The whole row is one control: its hover and selected
@@ -27,14 +27,13 @@ export function NavRow({
 	details,
 	controls,
 	target,
-	guides,
 }: {
 	selected?: boolean;
 	className?: string;
 	linkClassName?: string;
 	/** The marker column (absent: the row has none): a mark or an icon, or `null` for its empty space. */
 	marker?: ReactNode;
-	/** The address the label links to; absent: the label is an action (restore, switch a branch, show or hide). */
+	/** The address the label links to; absent: the label is an action (restore, show or hide). */
 	href?: string;
 	title?: string;
 	/** Whether what the row shows or hides is shown; absent: the row does not show or hide anything. */
@@ -44,18 +43,15 @@ export function NavRow({
 	onActivate: () => void;
 	label: ReactNode;
 	after?: ReactNode;
-	/** Information after the label (state, time last), not interactive. */
+	/** Information after the label (an item's age, a heading's counts), not interactive. */
 	details?: ReactNode;
 	/** Buttons at the trailing end. */
 	controls?: ReactNode;
 	target?: CommandTargetRow;
-	/** A tree row's connector guides (`TreeGuides`), drawn on the row outside its layout. */
-	guides?: ReactNode;
 }) {
 	const link = `nav-link ${linkClassName} ${selected ? "active" : ""}`;
 	return (
 		<div className={`nav-row ${selected ? "selected" : ""} ${className}`} {...target}>
-			{guides}
 			{marker !== undefined && <span className="nav-marker">{marker}</span>}
 			{href === undefined ? (
 				<button

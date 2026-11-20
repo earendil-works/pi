@@ -2,6 +2,6 @@
 // server. The kit's `startWorker` opens the session's store, connects to the server and loads the plugins' worker
 // facets.
 
-import { startWorker } from "./src/kit/worker.ts";
+import { startWorker } from "../kit/worker.ts";
 
 startWorker({ onError: (error) => console.error("p3 worker:", error) });

@@ -1,7 +1,6 @@
-// `projects.json` in the data directory: `{ "<name>": [{ "env"?: "<environment>", "path": "<directory>" }, ...] }`.
-// Object order is display order, array order is preference; a place without `env` is this device.
-import { randomBytes } from "node:crypto";
-import { rename, rm, writeFile } from "node:fs/promises";
+// What a project may be (its name, its places), and `projects.json`, where projects lived before the server's store:
+// `{ "<name>": [{ "env"?: "<environment>", "path": "<directory>" }, ...] }`, object order the display order, array
+// order preference, a place without `env` this device. The store imports it once (server.ts); nothing writes it.
 import { join } from "node:path";
 import { compile, obj, opt, str } from "@earendil-works/pi-schema";
 import { isRooted } from "@p2/app/v1";
@@ -32,8 +31,8 @@ export function parseProjects(content: string): Project[] {
 	return Object.entries(value).map(([name, places]) => ({ name, places: parsePlaces(name, places) }));
 }
 
-/** One project's places: absolute or `~` paths, at most one per environment. */
-function parsePlaces(name: string, places: unknown): Project["places"] {
+/** One project's name and places: absolute or `~` paths, at most one per environment. */
+export function parsePlaces(name: string, places: unknown): Project["places"] {
 	if (!name.trim() || name.length > 64 || hasControl(name)) throw new Error(`Invalid project name: ${name}`);
 	if (!Array.isArray(places) || places.length === 0)
 		throw new Error(`Project ${name}: a list of places ({ "env"?, "path" }) is required`);
@@ -57,35 +56,4 @@ export function projectsPath(directory: string): string {
 /** The projects of `directory`'s `projects.json` (none without one). */
 export async function loadProjects(directory: string): Promise<Project[]> {
 	return parseProjects((await optionalText(projectsPath(directory))) ?? "{}");
-}
-
-/**
- * Adds `project` after the others in `directory`'s `projects.json`, written anew (its comments and formatting go).
- * Refused while the file is invalid, for a name it has, and for places the file could not hold.
- */
-export async function addProject(directory: string, project: Project): Promise<void> {
-	const path = projectsPath(directory);
-	let projects: Project[];
-	try {
-		projects = await loadProjects(directory);
-	} catch (error) {
-		throw new Error(`projects.json is invalid; fix it first (${error instanceof Error ? error.message : error})`);
-	}
-	if (projects.some((each) => each.name === project.name))
-		throw new Error(`A project "${project.name}" exists already`);
-	const content = Object.fromEntries(
-		[...projects, project].map(({ name, places }) => [
-			name,
-			places.map(({ env, path: place }) => (env === null ? { path: place } : { env, path: place })),
-		]),
-	);
-	parsePlaces(project.name, content[project.name]);
-	// Written whole, then renamed: the observer never reads half a file.
-	const temporary = `${path}.${randomBytes(6).toString("hex")}.tmp`;
-	try {
-		await writeFile(temporary, `${JSON.stringify(content, null, "\t")}\n`, { flag: "wx" });
-		await rename(temporary, path);
-	} finally {
-		await rm(temporary, { force: true });
-	}
 }

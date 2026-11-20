@@ -13,7 +13,7 @@ export const SOURCE: readonly string[] = [
 	process.execPath,
 	"--conditions=source",
 	"--disable-warning=ExperimentalWarning",
-	fileURLToPath(new URL("../bin.ts", import.meta.url)),
+	fileURLToPath(new URL("../src/bootstrap/bin.ts", import.meta.url)),
 ];
 
 /** The command that starts the release installed in `install` (a directory with `node_modules/`). */
@@ -149,15 +149,37 @@ export async function supervisorsOf(dataDir: string): Promise<number[]> {
 }
 
 /**
- * The session workers among the children of process `pid` (Linux): those running the worker base of `dataDir`. The
- * server's other child is esbuild's service.
+ * The session workers among the children of process `pid` (Linux, Android): those running the worker base of
+ * `dataDir`. The server's other child is esbuild's service.
  */
 export async function workersOf(pid: number, dataDir: string): Promise<number[]> {
-	const children = (await readFile(`/proc/${pid}/task/${pid}/children`, "utf8")).trim().split(" ").filter(Boolean);
 	const workers: number[] = [];
-	for (const child of children) {
+	for (const child of await childrenOf(pid)) {
 		const command = await readFile(`/proc/${child}/cmdline`, "utf8").catch(() => "");
-		if (command.includes(join(dataDir, "cache", "worker"))) workers.push(Number(child));
+		if (command.includes(join(dataDir, "cache", "worker"))) workers.push(child);
 	}
 	return workers;
+}
+
+/**
+ * The process ids of the children of process `pid`, from `children` (`/proc/<pid>/task/<pid>/children`, its main
+ * thread's, where Node spawns). A kernel without it (Android's: no `CONFIG_PROC_CHILDREN`) is asked through every
+ * process's `/proc/<id>/stat`: those whose parent (the 4th field, the 2nd after the last `)`, which closes the command's
+ * name, itself free to hold one) is `pid`.
+ */
+export async function childrenOf(pid: number, children = `/proc/${pid}/task/${pid}/children`): Promise<number[]> {
+	const listed = await readFile(children, "utf8").catch((error: NodeJS.ErrnoException) => {
+		if (error.code === "ENOENT") return undefined;
+		throw error;
+	});
+	if (listed !== undefined) return listed.trim().split(" ").filter(Boolean).map(Number);
+	const found: number[] = [];
+	for (const id of (await readdir("/proc")).filter((name) => /^\d+$/.test(name))) {
+		// Gone meanwhile: not a child any more.
+		const stat = await readFile(`/proc/${id}/stat`, "utf8").catch(() => undefined);
+		if (stat !== undefined && Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]) === pid) {
+			found.push(Number(id));
+		}
+	}
+	return found;
 }

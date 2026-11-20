@@ -144,8 +144,11 @@ export class ThinkingSelectorComponent extends Container implements Focusable {
 			return;
 		}
 
+		// Cursor keys leave the query as it is and must not rebuild the list.
+		const previousQuery = this.searchInput.getValue();
 		this.searchInput.handleInput(keyData);
-		this.applyFilter(this.searchInput.getValue());
+		const query = this.searchInput.getValue();
+		if (query !== previousQuery) this.applyFilter(query);
 	}
 
 	getSelectList(): SelectList {

@@ -117,7 +117,7 @@ function ownerPage(nonce: string): string {
 /**
  * The owner token file at `path`: kept when its token still authenticates as the owner (its sign-in exists, its secret
  * matches, it has not expired; its mode set to 0600 again), else a new device sign-in of the owner written there (mode
- * 0600, in one step). Its token, for the start script.
+ * 0600, in one step). Its token, for the start script, which holds the data directory's server lock (`writeSecret`).
  */
 export async function ownerTokenFile(path: string, host: Host<P3Principal>, context: Context): Promise<string> {
 	const existing = await readSecret(path);

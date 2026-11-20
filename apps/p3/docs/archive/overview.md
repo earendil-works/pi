@@ -34,9 +34,10 @@ directory. It starts empty: no migration of p2's data. Slice 1 is built (`slices
 **Base code** (a restart changes it; named after what it is): the principal (`owner`, `person`, `worker`, `server`),
 API v1 (shared, server, worker, web, terminal modules), the kit (`src/kit/`: the server's start, the data directory,
 sign-ins and the owner's sign-in, a worker's start, the start data, and the helpers `forward` and `contribute`;
-Chord's general components stay Chord's: HTTP, workers, plugin loading), `server.ts` (the server), `worker.ts` (a
-session worker), `bin.ts` (the `p3` command: `server`, `status`, `stop`, `restart`, `list`), `supervisor.ts` (the
-background server: runs it as its child and starts it again after a crash; on request from the page: slice 2).
+Chord's general components stay Chord's: HTTP, workers, plugin loading), and the process entries in `src/bootstrap/`
+(decision "Base entries live in `src/bootstrap/`"): `server.ts` (the server), `worker.ts` (a session worker), `bin.ts`
+(the `p3` command: `server`, `status`, `stop`, `restart`, `list`), `supervisor.ts` (the background server: runs it as
+its child and starts it again after a crash; on request from the page: slice 2).
 
 **Plugins:**
 

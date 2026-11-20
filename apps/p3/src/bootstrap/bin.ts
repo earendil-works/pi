@@ -1,19 +1,19 @@
-// The `p3` command. The same file runs from a source checkout (`node --conditions=source bin.ts`) and, bundled, as the
-// installed package's `p3`. It reads the command line (which command, which Pi), then runs the server in the
-// foreground (`p3 server`: it closes on SIGINT and SIGTERM, so workers stop and the data directory's lock is free at
-// once) or one of the commands of `src/commands.ts`.
+// The `p3` command. The same file runs from a source checkout (`node --conditions=source src/bootstrap/bin.ts`) and,
+// bundled, as the installed package's `p3`. It reads the command line (which command, which Pi), then runs the server
+// in the foreground (`p3 server`: it closes on SIGINT and SIGTERM, so workers stop and the data directory's lock is
+// free at once) or one of the commands of `src/commands.ts`.
 
 // First: a Node too old for p3 ends here, before any other module runs.
-import "./src/minimum-node.ts";
+import "../minimum-node.ts";
 import { parseArgs } from "node:util";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
+import { list, restart, start, status, stop } from "../commands.ts";
+import { version } from "../install.ts";
+import type { App } from "../kit/app.ts";
+import { defaultDataDir } from "../kit/layout.ts";
+import { ListenFailed } from "../kit/start-server.ts";
+import { DEFAULT_PORT, dataDirOf, isPiName } from "../pi.ts";
 import { startP3 } from "./server.ts";
-import { list, restart, start, status, stop } from "./src/commands.ts";
-import { version } from "./src/install.ts";
-import type { App } from "./src/kit/app.ts";
-import { defaultDataDir } from "./src/kit/layout.ts";
-import { ListenFailed } from "./src/kit/start-server.ts";
-import { DEFAULT_PORT, dataDirOf, isPiName } from "./src/pi.ts";
 
 const USAGE = `Usage: p3 [command] [--pi <name> | --dir <path>] [--port <n>]
 
