@@ -1,22 +1,21 @@
 // The installed release: p3 as `npm run release:p3:local` built, packed and installed it outside the repository.
 // `P3_RELEASE` names the install directory; the release script sets it. Not part of `npm test`: it needs that install.
 // It checks what the package holds, the command, a session's worker forked from the release's own bundle, and a
-// third-party plugin written against nothing but the installed API: type-checked, loaded from the Pi's user root, and
-// called by a client that uses the compiled API modules.
+// third-party plugin written against nothing but the installed API: type-checked, its own test run on the installed
+// `/v1/testing`, loaded from the Pi's user root, and called by a client that uses the compiled API modules.
 
 import assert from "node:assert/strict";
-import { type ChildProcess, execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { createHost, webSocketLink } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import type { P3Principal } from "@earendil-works/p3/v1";
 import { Sessions, SessionWorker } from "../../plugins/sessions/contract.ts";
-import { eventually, ownerCookie } from "../support.ts";
+import { childrenOf, launch, ownerClient, ownerCookie } from "../support.ts";
+import { eventually } from "../until.ts";
 
 const run = promisify(execFile);
 
@@ -27,8 +26,8 @@ if (P3_RELEASE === undefined) throw new Error("release.test.ts: set P3_RELEASE t
 const MODULES = join(P3_RELEASE, "node_modules");
 const PACKAGE = join(MODULES, "@earendil-works", "p3");
 
-/** The installed command. */
-const P3 = [process.execPath, join(PACKAGE, "dist", "p3.js")];
+/** Node's arguments that run the installed command. */
+const P3 = [join(PACKAGE, "dist", "p3.js")];
 
 /** The repository's TypeScript: a plugin author's own would do the same. */
 const TSC = fileURLToPath(new URL("../../../../node_modules/typescript/bin/tsc", import.meta.url));
@@ -58,7 +57,8 @@ describe("the installed release", () => {
 	it("starts in the background, says it runs, and stops", async () => {
 		const home = join(root, "home");
 		await mkdir(home);
-		const p3 = (...args: string[]) => run(P3[0]!, [...P3.slice(1), ...args], { env: { ...process.env, HOME: home } });
+		const p3 = (...args: string[]) =>
+			run(process.execPath, [...P3, ...args], { env: { ...process.env, HOME: home } });
 		const started = await p3("--port", "0");
 		assert.match(started.stdout, /port \d+\. Open http:\/\/127\.0\.0\.1:\d+\/_p3\/owner#/);
 		assert.match((await p3("status")).stdout, /running/);
@@ -66,39 +66,44 @@ describe("the installed release", () => {
 	});
 
 	it("forks a session's worker from the release's own worker bundle", async () => {
-		const server = await launch(join(root, "workers"));
+		const server = await launch(P3, join(root, "workers"));
 		try {
-			const client = await ownerClient(server.dataDir, server.port);
+			const client = await ownerClient(server.dataDir, server.port, 30_000);
 			const id = await (await client.get(Sessions, {}, context)).create({ title: "one" }, context);
 			const worker = await client.get(SessionWorker, { session: id }, context);
 			assert.equal(worker.variant, "owner");
 			// Besides the worker, the server has esbuild's service as a child (it builds the plugins).
-			const commands = await eventually(
-				async () =>
-					Promise.all((await childrenOf(server.pid)).map((pid) => readFile(`/proc/${pid}/cmdline`, "utf8"))),
-				(found) => found.some((command) => command.includes("worker")),
+			const children = await eventually(
+				() => childrenOf(server.pid),
+				(found) => found.some(({ args }) => args.some((arg) => arg.includes("worker"))),
 			);
-			const workers = commands
-				.map((command) => command.split("\0"))
-				.filter((args) => args.some((arg) => arg.includes("worker")));
-			assert.equal(workers.length, 1, commands.join("\n"));
-			assert.ok(workers[0]!.includes(join(PACKAGE, "dist", "worker.js")), workers[0]!.join(" "));
+			const workers = children.filter(({ args }) => args.some((arg) => arg.includes("worker")));
+			assert.equal(workers.length, 1, JSON.stringify(children));
+			assert.ok(workers[0]!.args.includes(join(PACKAGE, "dist", "worker.js")), workers[0]!.args.join(" "));
 			await client.close(context);
 		} finally {
 			await server.stop();
 		}
 	});
 
-	it("loads a third-party plugin written against the installed API alone, type-checked and called", async () => {
+	it("loads a third-party plugin written against the installed API alone, type-checked, tested and called", async () => {
 		const dataDir = join(root, "third-party");
 		const plugin = join(dataDir, "plugins", "hello");
-		await mkdir(plugin, { recursive: true });
+		await mkdir(join(plugin, "test"), { recursive: true });
 		for (const [name, text] of Object.entries(HELLO)) await writeFile(join(plugin, name), text);
 		// The author's project resolves `@earendil-works/p3` from the install, as an npm dependency would.
 		await symlink(MODULES, join(plugin, "node_modules"));
 		const checked = await run(process.execPath, [TSC, "-p", plugin]).catch((error: { stdout: string }) => error);
 		assert.equal(checked.stdout, "", "the plugin type-checks against the installed API");
-		const server = await launch(dataDir);
+		// The plugin's own test, on the installed `/v1/testing`; a run of its own (`node --test` inside a test reports to
+		// its parent's runner when it finds the parent's context).
+		const env = { ...process.env, NODE_TEST_CONTEXT: undefined };
+		const testArgs = ["--test", "--test-reporter=tap", join(plugin, "test", "hello.test.ts")];
+		const tested = await run(process.execPath, testArgs, { cwd: plugin, env }).catch(
+			(error: { stdout: string; stderr: string }) => assert.fail(`${error.stdout}\n${error.stderr}`),
+		);
+		assert.match(tested.stdout, /# pass 1\n/);
+		const server = await launch(P3, dataDir);
 		try {
 			const cookie = await ownerCookie(dataDir, server.port);
 			const said = await run(process.execPath, [join(plugin, "client.mjs"), String(server.port), cookie]);
@@ -151,6 +156,32 @@ const HELLO = {
 		"	});",
 		"});",
 	].join("\n"),
+	// The plugin's own test, as its author writes it (the release ships no tests of its own to copy).
+	"test/hello.test.ts": [
+		'import assert from "node:assert/strict";',
+		'import { it } from "node:test";',
+		'import { fileURLToPath } from "node:url";',
+		'import { BACKGROUND_CONTEXT as context } from "@earendil-works/p3/v1";',
+		'import { testPlugin } from "@earendil-works/p3/v1/testing";',
+		'import { Hello } from "../contract.ts";',
+		"",
+		'it("greets the owner, loud", async () => {',
+		'	const t = await testPlugin(fileURLToPath(new URL("../", import.meta.url)), { kind: "server" }, context);',
+		"	try {",
+		"		const said = await t.root(",
+		"			async (ctx) => {",
+		'				const hello = await ctx.get(Hello, { tone: "loud" });',
+		'				return [hello.text.value, await hello.greet({ name: "p3" }, ctx)];',
+		"			},",
+		"			context,",
+		'			{ principal: { kind: "owner" } },',
+		"		);",
+		'		assert.deepEqual(said, ["HELLO", "HELLO, P3"]);',
+		"	} finally {",
+		"		await t.close(context);",
+		"	}",
+		"});",
+	].join("\n"),
 	// The plugin's own client, outside the server: the compiled API modules run it.
 	"client.mjs": [
 		'import { BACKGROUND_CONTEXT as context, createHost, webSocketLink } from "@earendil-works/p3/v1";',
@@ -166,49 +197,3 @@ const HELLO = {
 		"await client.close(context);",
 	].join("\n"),
 };
-
-/** The installed release's server in the foreground on `dataDir`, on a free port, once it listens. */
-async function launch(dataDir: string) {
-	const child = spawn(P3[0]!, [...P3.slice(1), "server", "--dir", dataDir, "--port", "0"], {
-		stdio: ["ignore", "pipe", "inherit"],
-	});
-	const port = await new Promise<number>((resolve, reject) => {
-		let out = "";
-		child.stdout?.on("data", (chunk: Buffer) => {
-			out += chunk.toString();
-			const found = /port (\d+)\. Open/.exec(out);
-			if (found !== null) resolve(Number(found[1]));
-		});
-		child.once("exit", (code) => reject(new Error(`p3 server exited with ${code}`)));
-	});
-	return { pid: child.pid!, port, dataDir, stop: () => stop(child) };
-}
-
-/** Stops `child` with `SIGTERM` and waits for its exit. */
-async function stop(child: ChildProcess): Promise<void> {
-	const exited = new Promise((resolve) => child.once("exit", resolve));
-	child.kill("SIGTERM");
-	await exited;
-}
-
-/** A client of the server on `port`, signed in as the owner with a fresh owner link's cookie. */
-async function ownerClient(dataDir: string, port: number) {
-	// Node's WebSocket (undici) takes an init object with headers; the DOM type knows only protocols.
-	const init = { headers: { cookie: await ownerCookie(dataDir, port) } } as unknown as string[];
-	const client = createHost<P3Principal>({ readyTimeout: 30_000, onError: (error) => console.error(error) });
-	const socket = new WebSocket(`ws://127.0.0.1:${port}/chord`, init);
-	client.connect(webSocketLink(socket), { principal: { kind: "server" } }, context);
-	await client.load([], context);
-	return client;
-}
-
-/** The children of `pid` (`/proc/*\/stat`; Android has no `children` file). */
-async function childrenOf(pid: number): Promise<number[]> {
-	const children: number[] = [];
-	for (const entry of await readdir("/proc")) {
-		if (!/^\d+$/.test(entry)) continue;
-		const stat = await readFile(`/proc/${entry}/stat`, "utf8").catch(() => "");
-		if (Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]) === pid) children.push(Number(entry));
-	}
-	return children;
-}

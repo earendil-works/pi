@@ -1,8 +1,10 @@
 // The sign-ins (`sign-ins.ts`): issued, verified, listed and revoked through `SignIns`, only hashes kept; the
 // authenticator taking a bearer token, else the signed cookie named after the Pi; a sign-in ending unused after 400
 // days; the cookie renewed once it is a day old; a sign-in's open links closed when it ends, only its own; and every
-// link of a `SignIns` object closed when the object ends (a reload of the plugin). The plugin tier first (its facet
-// alone, requests made by the test), then the real server (`test/support.ts`) for what needs HTTP and `/chord` links.
+// link of a `SignIns` object closed when the object ends (a reload of the plugin); the sign-ins and the cookie's key
+// kept across a restart. The plugin tier first (its facet alone, requests made by the test), then the real server
+// (`test/support.ts`) for what needs HTTP and `/chord` links; the probe's route (`GET /_probe/principal`) says what a
+// request authenticated as.
 
 import assert from "node:assert/strict";
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -10,26 +12,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import { fileURLToPath } from "node:url";
-import { setFlagsFromString } from "node:v8";
-import { runInNewContext } from "node:vm";
 import {
 	BACKGROUND_CONTEXT as context,
 	createHost,
-	defineFacet,
 	isChordError,
 	type P3Principal,
 	webSocketLink,
 } from "@earendil-works/p3/v1";
-import {
-	Authenticators,
-	type HttpRequest,
-	LinkOpened,
-	type ServerRuntime as Runtime,
-	ServerRuntime,
-} from "@earendil-works/p3/v1/server";
+import { Authenticators, type HttpRequest, LinkOpened, ServerCommands } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
-import { eventually, type TestServer, testServer } from "../../../test/support.ts";
-import { until } from "../../../test/until.ts";
+import { type TestServer, testServer } from "../../../test/support.ts";
+import { collected, eventually, until } from "../../../test/until.ts";
 import { Sessions } from "../../sessions/contract.ts";
 import { SignIns } from "../contract.ts";
 import { hashToken } from "../secrets.ts";
@@ -41,24 +34,17 @@ const MAX: P3Principal = { kind: "person", id: "max", name: "Max" };
 /** The sign-in plugin's directory. */
 const PLUGIN = fileURLToPath(new URL("../", import.meta.url));
 
-setFlagsFromString("--expose-gc");
-/** Collects garbage now. */
-const gc = runInNewContext("gc") as () => void;
-
 afterEach(() => mock.timers.reset());
 
 /** A sign-in as `issue` answers it. */
 type Issued = { readonly id: string; readonly token: string; readonly cookie: string };
 
 // ---------------------------------------------------------------------------------------------------------------------
-// The plugin tier: the server facet on a host of its own, `ServerRuntime` stubbed.
+// The plugin tier: the server facet on a host of its own, beside the base's facet (a server that does not listen).
 
-/** The plugin's server facet alone, on a server that does not listen. */
-async function signInPlugin(): Promise<TestedPlugin<P3Principal>> {
-	// The owner's routes read only `listening` of the runtime.
-	const runtime = { listening: () => undefined } as unknown as Runtime;
-	const stub = defineFacet((host) => host.serve(ServerRuntime, { compose: () => runtime }));
-	return testPlugin(PLUGIN, { kind: "server", stubs: [{ name: "p3.server-runtime-stub", facet: stub }] }, context);
+/** The plugin's server facet alone. */
+function signInPlugin(): Promise<TestedPlugin<P3Principal>> {
+	return testPlugin(PLUGIN, { kind: "server" }, context);
 }
 
 /** A sign-in of `principal` on `t`. */
@@ -109,11 +95,11 @@ async function authenticate(t: TestedPlugin<P3Principal>, req: HttpRequest): Pro
 	return (await entry!.value(req, context)) as P3Principal | undefined;
 }
 
-/** The plugin's `LinkOpened` hook on a link of `req`: whether it closed the link, and what it returns. */
-function open(t: TestedPlugin<P3Principal>, req: HttpRequest) {
-	const [entry] = t.contributions(LinkOpened);
+/** The `LinkOpened` hook (the base's, composed) on a link of `req`: whether it closed the link, and what it returns. */
+async function open(t: TestedPlugin<P3Principal>, req: HttpRequest) {
+	const hook = (await t.host.registry(LinkOpened, context)).value;
 	const link = { closed: 0 };
-	const end = entry!.value(req, () => void link.closed++);
+	const end = hook(req, () => void link.closed++);
 	return { link, end };
 }
 
@@ -124,7 +110,8 @@ function carrying(issued: Issued, carry: "bearer" | "cookie"): Record<string, st
 
 describe("the plugin's SignIns", () => {
 	let t: TestedPlugin<P3Principal>;
-	// What the load reported: the registries nobody serves, before the helper collected them.
+	// What the load reported: the registries of Chord's HTTP component, which nobody serves here (the helper collects
+	// them).
 	let loaded: number;
 	beforeEach(async () => {
 		t = await signInPlugin();
@@ -309,16 +296,16 @@ describe("the plugin's links of a sign-in", () => {
 			assert.deepEqual(await authenticate(t, req), OWNER);
 			if (race === "revoke") await revoke(t, issued.id);
 			else mock.timers.setTime(start + 401 * DAY);
-			const { link, end } = open(t, req);
+			const { link, end } = await open(t, req);
 			assert.deepEqual([link.closed, end], [1, undefined], `${carry}, ${race}`);
 		}
 	});
 
 	it("a link of a request no sign-in authenticated is none of the plugin's", async () => {
-		const { link, end } = open(t, request({}));
+		const { link, end } = await open(t, request({}));
 		const refused = request({ authorization: "Bearer nope.x" });
 		assert.equal(await authenticate(t, refused), undefined);
-		const other = open(t, refused);
+		const other = await open(t, refused);
 		assert.deepEqual([link.closed, end, other.link.closed, other.end], [0, undefined, 0, undefined]);
 	});
 
@@ -333,18 +320,11 @@ describe("the plugin's links of a sign-in", () => {
 					requests.push(new WeakRef(req));
 					assert.deepEqual(await authenticate(t, req), OWNER);
 					// Half of them open a link that stays open: its closer holds no request either.
-					if (i % 2 === 0) ends.push(open(t, req).end!);
+					if (i % 2 === 0) ends.push((await open(t, req)).end!);
 				}
 			}
 		})();
-		for (let i = 0; i < 20 && requests.some((ref) => ref.deref() !== undefined); i++) {
-			await new Promise((resolve) => setImmediate(resolve));
-			gc();
-		}
-		assert.deepEqual(
-			requests.map((ref) => ref.deref() === undefined),
-			requests.map(() => true),
-		);
+		assert.ok(await collected(requests));
 		assert.equal(ends.length, 10);
 	});
 });
@@ -374,9 +354,15 @@ function issueOn(t: TestServer, principal: P3Principal, kind: "browser" | "devic
 	);
 }
 
-/** The owner link route's answer to `headers`: 401 for nobody, 403 for a sign-in not the owner's, 200 for the owner. */
-function asOwner(port: number, headers: Readonly<Record<string, string>>): Promise<Response> {
-	return fetch(`http://127.0.0.1:${port}/_p3/owner/link`, { method: "POST", headers });
+/** The probe route's answer to `headers` on `port`: 401 for nobody, else 200 with the principal they sign in as. */
+function asked(port: number, headers: Readonly<Record<string, string>>): Promise<Response> {
+	return fetch(`http://127.0.0.1:${port}/_probe/principal`, { headers });
+}
+
+/** The principal `headers` sign in as on `port`, or `undefined` (401). */
+async function principalOf(port: number, headers: Readonly<Record<string, string>>): Promise<P3Principal | undefined> {
+	const answer = await asked(port, headers);
+	return answer.status === 401 ? undefined : ((await answer.json()) as P3Principal);
 }
 
 describe("the sign-in cookie on the server", () => {
@@ -387,12 +373,11 @@ describe("the sign-in cookie on the server", () => {
 		assert.notEqual(first.split("=")[0], second.split("=")[0]);
 		// A browser sends both to both ports.
 		const both = { cookie: `${first}; ${second}` };
-		const answers = [await asOwner(one.server.port, both), await asOwner(other.server.port, both)];
 		assert.deepEqual(
-			answers.map(({ status }) => status),
-			[200, 200],
+			[await principalOf(one.server.port, both), await principalOf(other.server.port, both)],
+			[OWNER, OWNER],
 		);
-		assert.equal((await asOwner(other.server.port, { cookie: first })).status, 401);
+		assert.equal(await principalOf(other.server.port, { cookie: first }), undefined);
 	});
 
 	it("renews a cookie older than a day with a fresh signed expiry; the old one ends at its own", async () => {
@@ -400,17 +385,17 @@ describe("the sign-in cookie on the server", () => {
 		const start = Date.now();
 		mock.timers.enable({ apis: ["Date"], now: start });
 		const cookie = carrying(await issueOn(t, OWNER, "browser"), "cookie").cookie!;
-		const within = await asOwner(t.server.port, { cookie });
+		const within = await asked(t.server.port, { cookie });
 		assert.deepEqual([within.status, within.headers.get("set-cookie")], [200, null]);
 		mock.timers.setTime(start + DAY + 1000);
-		const renewed = await asOwner(t.server.port, { cookie });
+		const renewed = await asked(t.server.port, { cookie });
 		assert.equal(renewed.status, 200);
 		const set = renewed.headers.get("set-cookie")!;
 		assert.match(set, /^p3-[A-Za-z0-9_-]{11}=[^;]+; HttpOnly; Path=\/; SameSite=Strict; Max-Age=34560000$/);
 		assert.equal(set.split("=")[0], cookie.split("=")[0]);
 		mock.timers.setTime(start + 401 * DAY);
-		assert.equal((await asOwner(t.server.port, { cookie })).status, 401);
-		assert.equal((await asOwner(t.server.port, { cookie: set.split(";")[0]! })).status, 200);
+		assert.equal((await asked(t.server.port, { cookie })).status, 401);
+		assert.equal((await asked(t.server.port, { cookie: set.split(";")[0]! })).status, 200);
 	});
 
 	it("renews no revoked sign-in's cookie, and none a route sets itself", async () => {
@@ -422,15 +407,16 @@ describe("the sign-in cookie on the server", () => {
 		await t.server.runtime.host.root(async (ctx) => (await ctx.get(SignIns, {})).revoke(browser.id, ctx), context);
 		mock.timers.setTime(start + 2 * DAY);
 		const cookie = carrying(browser, "cookie").cookie!;
-		const alone = await asOwner(t.server.port, { cookie });
+		const alone = await asked(t.server.port, { cookie });
 		assert.deepEqual([alone.status, alone.headers.get("set-cookie")], [401, null]);
 		// Signed in by a bearer token, the revoked sign-in's cookie beside it is not renewed.
-		const beside = await asOwner(t.server.port, { ...carrying(owner, "bearer"), cookie });
+		const beside = await asked(t.server.port, { ...carrying(owner, "bearer"), cookie });
 		assert.deepEqual([beside.status, beside.headers.get("set-cookie")], [200, null]);
 		// The owner link's post sets the new browser's cookie: an old cookie it carries is not renewed over it.
 		const kept = carrying(await issueOn(t, OWNER, "browser"), "cookie").cookie!;
 		mock.timers.setTime(start + 4 * DAY);
-		const { link } = (await (await asOwner(t.server.port, carrying(owner, "bearer"))).json()) as { link: string };
+		const commands = (await t.server.runtime.host.registry(ServerCommands, context)).value;
+		const link = String(await commands.get("owner-link")!.run(context));
 		const signed = await fetch(`http://127.0.0.1:${t.server.port}/_p3/owner`, {
 			method: "POST",
 			headers: { "content-type": "application/json", cookie: kept },
@@ -441,6 +427,19 @@ describe("the sign-in cookie on the server", () => {
 		assert.notEqual(
 			decodeURIComponent(set.split("=")[1]!).split(".")[0],
 			decodeURIComponent(kept.split("=")[1]!).split(".")[0],
+		);
+	});
+
+	it("keeps the sign-ins and the cookie's key across a restart: a cookie and a token issued before still sign in", async () => {
+		const t = await started();
+		const browser = await issueOn(t, OWNER, "browser");
+		const device = await issueOn(t, MAX, "device");
+		const restarted = await servers.pop()!.restart();
+		servers.push(restarted);
+		const port = restarted.server.port;
+		assert.deepEqual(
+			[await principalOf(port, carrying(browser, "cookie")), await principalOf(port, carrying(device, "bearer"))],
+			[OWNER, MAX],
 		);
 	});
 

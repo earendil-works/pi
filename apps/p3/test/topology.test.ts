@@ -6,14 +6,13 @@ import { afterEach, describe, it } from "node:test";
 import { isChordError } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import type { P3Principal } from "@earendil-works/p3/v1";
-import { Http } from "@earendil-works/p3/v1/server";
+import { ServerCommands } from "@earendil-works/p3/v1/server";
 import { SessionsStore } from "../plugins/sessions/contract.server.ts";
 import { SessionFacts, SessionStart, Sessions, SessionsList, SessionWorker } from "../plugins/sessions/contract.ts";
 import { SignIns } from "../plugins/sign-in/contract.ts";
 import { Probe } from "./plugins/probe/contract.ts";
-import { eventually } from "./support.ts";
 import { type Topology, topology } from "./topology.ts";
-import { until } from "./until.ts";
+import { eventually, until } from "./until.ts";
 
 const OWNER: P3Principal = { kind: "owner" };
 const PERSON: P3Principal = { kind: "person", id: "p1", name: "Ann" };
@@ -56,6 +55,25 @@ describe("reloads while in use", () => {
 		assert.deepEqual(t.errors, []);
 	});
 
+	it("the sessions plugin on the server: a list's loaded pages stay through a reload, and `more` goes on after it", async () => {
+		const { t, owner, sessions } = await withSession();
+		// 120 sessions: two pages of 50 loaded, a third to come.
+		for (let i = 1; i < 120; i++) await sessions.create({ title: `s${i}` }, context);
+		const list = await owner.get(SessionsList, { app: "coding", set: "active", view: "v1" }, context);
+		if (list.variant !== "owner") return assert.fail(list.variant);
+		await list.more(context);
+		assert.deepEqual([list.list.value.rows.length, list.list.value.moreAfter], [100, true]);
+		await t.reload("@earendil-works/p3-sessions");
+		// A session made after the reload shows the new object's list: the new row on the first page, both pages kept.
+		const after = await sessions.create({ title: "after" }, context);
+		const shown = await until(list.list, (value) => value.rows[0]?.id === after, context);
+		assert.deepEqual([shown.rows.length, shown.moreAfter], [101, true]);
+		await list.more(context);
+		assert.deepEqual([list.list.value.rows.length, list.list.value.moreAfter], [121, false]);
+		assert.equal(new Set(list.list.value.rows.map(({ id }) => id)).size, 121, "no row twice");
+		assert.deepEqual(t.errors, []);
+	});
+
 	it("the sessions plugin on a worker: its row still follows the server", async () => {
 		const { t, owner, sessions, id } = await withSession();
 		const worker = await owner.get(SessionWorker, { session: id }, context);
@@ -95,15 +113,15 @@ describe("reloads while in use", () => {
 		assert.deepEqual(t.errors, []);
 	});
 
-	it("the control plugin: its routes are served again", async () => {
+	it("the control plugin: its commands `stop` and `apply` are there again", async () => {
 		const { t } = await withSession();
-		const routes = async () => {
-			const router = (await t.server.registry(Http, context)).value;
-			return ["/_p3/stop", "/_p3/apply"].map((path) => router.route("POST", path) !== undefined);
+		const commands = async () => {
+			const served = (await t.server.registry(ServerCommands, context)).value;
+			return ["stop", "apply"].map((name) => served.get(name) !== undefined);
 		};
-		assert.deepEqual(await routes(), [true, true]);
+		assert.deepEqual(await commands(), [true, true]);
 		await t.reload("@earendil-works/p3-control");
-		assert.deepEqual(await routes(), [true, true]);
+		assert.deepEqual(await commands(), [true, true]);
 		assert.deepEqual(t.errors, []);
 	});
 
@@ -165,5 +183,34 @@ describe("counted work", () => {
 		// The list's page and session A's two reads (its worker's row and its route's); B's run not, and ask nothing.
 		assert.deepEqual([t.count("chord.query.runs") - before[0]!, t.count("chord.query.probes") - before[1]!], [3, 0]);
 		if (workerB.variant === "owner") assert.equal(workerB.session.value?.title, "B");
+	});
+
+	it("a worker's report runs only the reads that show its session", async () => {
+		const { t, owner, sessions, id: a } = await withSession();
+		const b = await sessions.create({ title: "B" }, context);
+		const list = await owner.get(SessionsList, { app: "coding", set: "active", view: "v" }, context);
+		await owner.get(SessionWorker, { session: b }, context);
+		const probe = await owner.get(Probe, { session: a }, context);
+		if (probe.variant !== "owner" || list.variant !== "owner") return assert.fail("the owner's variants");
+		const before = [t.count("chord.query.runs"), t.count("chord.query.probes")];
+		await probe.report({ state: "working" }, context);
+		// As a rename: the list's page and session A's two reads (its worker's row and its route's); B's not.
+		assert.deepEqual([t.count("chord.query.runs") - before[0]!, t.count("chord.query.probes") - before[1]!], [3, 0]);
+		assert.equal(list.list.value.rows.find(({ id }) => id === a)?.state, "working");
+	});
+
+	it("a hold of a session's worker costs two reads, its route's admission and its worker's row; a second hold none", async () => {
+		const { t, owner, id } = await withSession();
+		await owner.get(SessionsList, { app: "coding", set: "active", view: "v" }, context);
+		const counted = () => [t.count("chord.query.runs"), t.count("chord.query.probes")];
+		const first = counted();
+		await owner.get(SessionWorker, { session: id }, context);
+		const second = counted();
+		await (await t.client(OWNER)).get(SessionWorker, { session: id }, context);
+		const after = counted();
+		assert.deepEqual(
+			[second[0]! - first[0]!, second[1]! - first[1]!, after[0]! - second[0]!, after[1]! - second[1]!],
+			[2, 0, 0, 0],
+		);
 	});
 });

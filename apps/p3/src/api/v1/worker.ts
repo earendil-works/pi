@@ -14,8 +14,11 @@ export type WorkerRuntime = {
 	readonly dir: string;
 	/** How long the worker may idle before it stops itself (the runner's choice, from its start). */
 	readonly idleMs: number;
-	/** Stops the worker: its store's queued commits settle, it tells the server why, closes its host and store, exits. */
-	close(reason: "idle"): void;
+	/**
+	 * Stops the worker: it tells the server it leaves (a clean exit), closes its host and store (the store's close settles
+	 * its queued commits), exits.
+	 */
+	close(): void;
 };
 
 /** The worker's process values (`WorkerRuntime`), served by the base. */

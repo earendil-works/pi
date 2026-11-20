@@ -23,14 +23,16 @@ export type ToWorker =
 	| { readonly kind: "shutdown" };
 
 /**
- * What a worker sends the server: `failed` names the plugins that did not load; `closed`: it was idle for its idle
- * time and its store's queued commits settled; it closes its host and store and exits now (a clean exit, no crash).
+ * What a worker sends the server: `locked` once it holds its session's lock (a previous worker of the session exited);
+ * `failed` names the plugins that did not load; `closed`: it stops itself (it was idle for its idle time): it closes its
+ * host and store (whose close settles the queued commits) and exits now (a clean exit, no crash).
  */
 export type FromWorker =
+	| { readonly kind: "locked" }
 	| { readonly kind: "ready"; readonly failed: readonly string[] }
 	| { readonly kind: "reloaded"; readonly failed: readonly string[] }
 	| { readonly kind: "reload_failed"; readonly error: string }
-	| { readonly kind: "closed"; readonly reason: "idle" };
+	| { readonly kind: "closed" };
 
 /** A control message in its envelope, as it goes over the IPC channel. */
 export function workerMessage(message: ToWorker | FromWorker): { readonly p3: ToWorker | FromWorker } {

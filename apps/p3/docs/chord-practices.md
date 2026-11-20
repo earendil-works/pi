@@ -17,10 +17,10 @@ session workers           one process per session: host at Session({ id }), its 
   kind and asks for objects by contract (`ctx.get`, `self.get`); Chord routes and relays.
 - **A plugin** is a folder in a plugins root with one file per facet kind: `server.ts`, `worker.ts` (p3's kinds today;
   `web` and `terminal` come with the UI). The server builds its server facets with esbuild at each start, and the
-  worker facets when they are first needed (the first worker's start, or an apply), then ships them to the workers: a
-  broken worker facet shows its error there, in the first worker's start and the server's log, not at the server's
-  start. A plugin imports only `@earendil-works/p3/v1` (and `/v1/server`, `/v1/worker` in
-  those facets), its own files, other plugins' contract files by relative path, and its npm dependencies (inlined).
+  worker facets when they are first needed (the first worker's start; an apply builds what changed), then ships them
+  to the workers: a broken worker facet shows its error there, in the first worker's start and the server's log, not
+  at the server's start. A plugin imports only `@earendil-works/p3/v1` (and `/v1/server`, `/v1/worker` in those
+  facets), its own files, other plugins' contract files by relative path, and its npm dependencies (inlined).
   Never Chord directly; never `import()` (plugins load whole, at start).
 - **The store:** the server and every worker have one SQLite store, synchronous (a query blocks the event loop).
   What is needed while no worker runs lives on the server; the session's own data in the worker's store; never one
@@ -35,24 +35,39 @@ session workers           one process per session: host at Session({ id }), its 
   the data directory's socket, `server.sock`, which is the lock and the command's channel (`local-socket.ts`); the
   store, the host, Chord's HTTP and plugins components, the route to session workers; `worker.ts`: the session's
   lock, store and host, connected to the server), and the registries of process values it serves (`ServerRuntime`,
-  `WorkerRuntime`). Everything else is a plugin: how a session's worker runs (`runner`), who someone is (`sign-in`),
-  the owner's stop and apply (`control`), the sessions (`sessions`).
+  `WorkerRuntime`). Everything else is a plugin: how a session's worker runs (`runner`), who someone is (`sign-in`:
+  the sign-ins, the owner link's page and post), the owner's `stop` and `apply` (`control`, as commands over the
+  socket; there are no control routes over HTTP), the sessions (`sessions`).
+- **The data directory's sockets** (`local-socket.ts`): `server.sock` (the server), `supervisor.sock` (the background
+  server's supervisor) and a session worker's lock (`locks/<hash>`) are each a lock and, for the first two, the
+  command's channel: one JSON request and answer. The trust boundary is the OS user: the directory is 0700, so only
+  the owner's user can make or reach a socket there, and every process of that user may ask (the owner's programs,
+  plugins, an agent's tools); no token travels. POSIX only: a Windows named pipe is reachable by every local user
+  (ERNDL-1059). A socket file a killed holder left is cleared and taken under a kernel-owned guard (Chord's
+  `processLock`, `@earendil-works/chord/workers/child`), so two starters after a crash cannot both win; a release
+  removes the file only while it is still its own (same inode). Socket paths are short (108 bytes on Linux and
+  Android, 103 on macOS): the start refuses a data directory too long for its longest socket, a session's lock.
+- **Failures:** a failure nobody awaits goes to `reportError` (stderr now, telemetry later). A failed server store
+  (`storage_failed`: a commit whose outcome is unknown) is not one of those: the server closes and exits non-zero,
+  and the supervisor starts it again.
 - **Session workers:** the route's `resolve` asks the `WorkerRunners` registry; the `runner` plugin forks one process
-  per session. A worker stops itself once it was idle for its idle time (the runner's worker facet: no holds, calls,
-  jobs, and every `WorkerBusy` count 0; the harness contributes "a run is active"); its store's commits settle first.
+  per session, its directory `<data directory>/workers/<session id>` (ids are the sessions plugin's UUIDs). A worker
+  stops itself once it was idle for its idle time (the runner's worker facet: no holds, calls, jobs or lingering
+  objects, and every `WorkerBusy` count 0; the harness contributes "a run is active"); its store's commits settle
+  first.
   A crashed worker fails its session until `retry` or an apply. After a server restart the sessions plugin's waker
   starts the workers of every `working` session. One worker per session store: a worker takes its session's lock (a
-  socket, `<data directory>/locks/<hash>`, named by the runner) before it opens the store, so a successor (after a server's crash, or a reload of the
-  runner) waits until the previous worker exited.
+  socket, `<data directory>/locks/<hash>`, named by the runner) before it opens the store, so a successor (after a
+  server's crash, or a reload of the runner) waits until the previous worker exited.
 
 ## The API (`@earendil-works/p3/v1`)
 
 | Module | What you get |
 | --- | --- |
 | `/v1` | everything of Chord's root (`remote`, `local`, `method`, the schema helpers, `defineTable`, `query`, `queries`, `defineState`, `defineRegistry`, `allow`, `deny`, `forbidden`, `invalid`, ...), `BACKGROUND_CONTEXT`, `Context`, `JsonValue`, `defineFacet` typed with p3's principals, the host kinds `Server()` and `Session({ id })`, the helpers `forward`, `contribute` and `reportError` (a failure nobody awaits: stderr now, telemetry with the telemetry package), `P3Principal`, and the contracts p3 promises to third-party plugins (the sessions plugin's: `Sessions`, `SessionsList`, `SessionFacts`, `SessionWorker`, `SessionStart`, `SessionRow`, `SessionState`) |
-| `/v1/server` | Chord's HTTP surface (`Http`, `Authenticators`, cookies), `ServerRuntime` (the data directory, the host, the store, the route to workers, apply, stop), `WorkerRunners` (how session workers run), `LinkOpened` (hooks on accepted links), `ServerCommands` (what `p3` runs over the data directory's socket, as the owner), `SessionRoute`, `writePrivate` (a private file written in one step), the worker control messages, the rollout types |
+| `/v1/server` | Chord's HTTP surface (`Http`, `Authenticators`, cookies), `ServerRuntime` (the data directory, the host, the store, the route to workers, apply, stop), `WorkerRunners` (how session workers run), `LinkOpened` (hooks on accepted links), `ServerCommands` (what `p3` runs over the data directory's socket, for the owner's OS user: `stop`, `apply`, `owner-link`), `SessionRoute`, the worker control messages, the rollout types |
 | `/v1/worker` | `WorkerRuntime` (the session, the host, the store, the directory, the idle time, `close`), `WorkerBusy` (counts that keep the worker alive) |
-| `/v1/testing` | `testPlugin(root, { kind: "server" } or { kind: "worker", session }, context)`: Chord's plugin tier with p3's API, kinds, modules and principals (for a plugin's `test/` folder only) |
+| `/v1/testing` | `testPlugin(root, { kind: "server" } or { kind: "worker", session }, context)`: Chord's plugin tier with p3's API, kinds, modules and principals, and the base's own facet as the real host has it (`ServerRuntime` of a server that does not listen, starts no worker and applies nothing; or `WorkerRuntime` and `WorkerBusy`), each test with a temporary directory of its own, removed at `close` (for a plugin's `test/` folder only) |
 
 Principals are identity only: `{ kind: "owner" }`, `{ kind: "person", id, name }`, `{ kind: "worker", session }`,
 `{ kind: "server" }`. What a person may do is data, read by admissions, never stored in the principal.
@@ -191,14 +206,19 @@ reference or a native.
 - Admission values are small (a mode, a role).
 - No `self.job` in an admitted type: work for a person lives in a local store, carries the person, asks again on
   every run.
-- Workers: never check whether a call comes from a worker that is gone; Chord settles an exiting worker's calls
-  before it publishes the exit. Data kept across a worker's runs is tagged with `ctx.incarnation`.
+- Workers: never check whether a call comes from a worker that is gone; the runner publishes a worker's exit only
+  after its link is closed (nothing it sent is handled later) and the server's store settled the commits its calls
+  queued. Data kept across a worker's runs is tagged with `ctx.incarnation`.
 
 **Reload**
 - Everything kept across a reload is in the store's tables and documents; writables start over. A list's bookmarks
   survive a reload, not a restart.
 - Edit and reload every facet you touch while it is used (a list open, a worker running), in a test: nothing lost, no
-  error.
+  error. One decided exception: a reload of the sign-in plugin closes every `/chord` link its `SignIns` tracked
+  (the next object could never close them); their clients sign in again.
+- A contribution made by a native's successor comes after the apply returns: a reload of the runner plugin closes the
+  old runner (its workers exit) before the new one is contributed, so a test waits on `WorkerRunners`, not on the
+  apply's answer.
 
 **Releases** (p3 runs from the checkout and as an installed release; both must work)
 - Plugins ship as source and are built at start; their tests live in their `test/` folder (the release leaves it
@@ -248,3 +268,9 @@ reference or a native.
 | A test helper read `/proc/<pid>/task/<pid>/children`, which Android's kernel lacks | scan `/proc/*/stat` for the parent |
 | A worker thread per code-mode script (p2): 10 to 28 MiB per worker | QuickJS inline, opened on first use |
 | Braille glyphs for the working dots: Android's font draws one frame in the wrong column | draw the dots ourselves |
+| Two starters after a crash both found the killed server's socket file stale, both removed it and both took the lock: a second look at the inode narrowed the window, never closed it | clear and take a socket under a kernel-owned guard (Chord's `processLock`); a release removes only its own file (same inode) |
+| An apply that came while a worker's start still awaited its preparation (the lock directory) shipped nothing to it: the start had read the scripts, the apply saw no worker yet | a rollout reaches every worker of the runner, a start that has not forked yet included |
+| Private file modes, the data directory's refusals and the session lock had no test: undoing them left the suite green | the mutation check for every rule (`testing.md`, rule 9), modes and locks included |
+| A persisted state with a random `initial` (the cookie's key): an initial value is never stored, so every start made a new key and signed every browser out | an empty initial value, and a generated one written once; a restart test |
+| The base's composed `LinkOpened` made each link's disposer inside the function that had the request: V8 keeps one context per scope, so every open link kept its request (headers, cookie) | a closure that outlives its call is made in a function of its own, given only what it needs; a GC test through the composed registry |
+| A failed store (`storage_failed`) was only logged: the server answered `running` with a closed host | the server closes and exits non-zero; the supervisor starts it again |

@@ -1,18 +1,24 @@
 // The `p3` command as a user runs it: launched from source as processes of its own, on a temporary home (a Pi lives
 // in `~/.pi/p3/<name>/`, the default one is `default`), each case with its own Pi. The command asks the server and its
-// supervisor over their sockets in the data directory; the cases include what a crash leaves behind and a server
-// that does not stop. The cases run at once: each has its own home, so nothing but the machine is shared.
+// supervisor over their sockets in the data directory; the cases include what a crash leaves behind, a server that
+// does not stop or does not answer, a store that fails, two starts at once and the supervisor's waits. The cases run
+// at once: each has its own home, so nothing but the machine is shared.
 
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { execFile, spawn } from "node:child_process";
+import { access, chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, it, type TestContext } from "node:test";
 import { promisify } from "node:util";
-import { COMMAND } from "../src/install.ts";
-import { alive, eventually } from "./support.ts";
+import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
+import { processLock } from "@earendil-works/chord/workers/child";
+import { COMMAND, SUPERVISOR } from "../src/install.ts";
+import { ask, supervisorSocket } from "../src/local-socket.ts";
+import { alive, launch } from "./support.ts";
+import { eventually } from "./until.ts";
 
 const run = promisify(execFile);
 
@@ -47,7 +53,18 @@ async function homeOf(t: TestContext) {
 		const supervisor = /^\s+supervisor\s+(\d+)$/m.exec(out)?.[1];
 		return { pid: Number(pid), supervisor: supervisor === undefined ? undefined : Number(supervisor) };
 	};
-	return { home, p3, pids };
+	return { home, p3, pids, env: { ...process.env, HOME: home }, dataDir: join(home, ".pi", "p3", "default") };
+}
+
+/** A foreground `p3 server` on the default Pi of `home`, killed after the case `t` (continued first if stopped). */
+async function foreground(t: TestContext, home: { readonly env: NodeJS.ProcessEnv; readonly dataDir: string }) {
+	const launched = await launch(COMMAND, home.dataDir, home.env);
+	t.after(() => {
+		if (!alive(launched.pid)) return;
+		process.kill(launched.pid, "SIGCONT");
+		process.kill(launched.pid, "SIGKILL");
+	});
+	return launched;
 }
 
 describe("the p3 command", { concurrency: true }, () => {
@@ -80,9 +97,11 @@ describe("the p3 command", { concurrency: true }, () => {
 		assert.equal(started.code, 0, started.out);
 		const port = /port (\d+)\./.exec(started.out)?.[1];
 		assert.ok(port !== undefined);
-		const kept = JSON.parse(await readFile(join(home, ".pi", "p3", "two", "pi.json"), "utf8")) as {
-			readonly port: number;
-		};
+		// The server keeps its port a moment after it answers that it runs.
+		const kept = await eventually(
+			async () => JSON.parse(await readFile(join(home, ".pi", "p3", "two", "pi.json"), "utf8")) as { port?: number },
+			({ port }) => port !== undefined,
+		);
 		assert.equal(String(kept.port), port);
 		const list = await p3("list");
 		assert.match(list.out, new RegExp(`two\\s+running\\s+${port}`));
@@ -137,14 +156,185 @@ describe("the p3 command", { concurrency: true }, () => {
 		assert.equal(again.code, 0, again.out);
 	});
 
-	it("kills a server that does not stop", async (t) => {
+	// Opus, review round 2 (N8): a kill was reported as "stopped".
+	it("kills a server that does not stop, with its supervisor, and says so", async (t) => {
 		const { p3, pids } = await homeOf(t);
 		assert.equal((await p3("--port", "0")).code, 0);
 		const { pid, supervisor } = await pids();
 		process.kill(pid, "SIGSTOP");
 		const stopped = await p3("stop", "--wait", "1");
-		assert.equal(stopped.out.trim(), "stopped", stopped.out);
+		assert.equal(stopped.out.trim(), "killed", stopped.out);
 		assert.ok(!alive(pid) && !alive(supervisor!));
+	});
+
+	// Opus, review round 2 (B1, M16): nothing failed when the server's socket answered a stop without stopping.
+	it("stops a foreground server on its socket's command, cleanly", async (t) => {
+		const home = await homeOf(t);
+		const server = await foreground(t, home);
+		// Not "killed": the server stopped on its own within the wait.
+		const stopped = await home.p3("stop", "--wait", "5");
+		assert.equal(stopped.out.trim(), "stopped", stopped.out);
+		await eventually(
+			() => alive(server.pid),
+			(lives) => !lives,
+		);
+	});
+
+	// Sol (S1), Astra (S1) and Opus (S5), review round 2: a foreground server that did not answer was reported "not
+	// running" with exit 0 while it still held the data directory, and `p3 list` threw on it.
+	it("says a hung foreground server does not answer, never that it is gone: stop fails, status and list say so", async (t) => {
+		const home = await homeOf(t);
+		const server = await foreground(t, home);
+		process.kill(server.pid, "SIGSTOP");
+		const stopped = await home.p3("stop", "--wait", "0.5");
+		assert.equal(stopped.code, 1, stopped.out);
+		assert.match(stopped.out, /does not answer.*it was not stopped/);
+		assert.ok(alive(server.pid));
+		const [status, list] = await Promise.all([home.p3("status"), home.p3("list")]);
+		assert.deepEqual([status.code, status.out.split("\n")[0]], [1, "not answering"]);
+		assert.match(list.out, /^default\s+not answering\s/m);
+		// `--wait 0` would disable the asks' timeouts: refused.
+		assert.equal((await home.p3("stop", "--wait", "0")).code, 2);
+		process.kill(server.pid, "SIGCONT");
+		assert.equal((await home.p3("stop")).out.trim(), "stopped");
+	});
+
+	// Astra, review round 2 (S2): of two `p3` started at once on an empty Pi, the one whose supervisor lost the
+	// socket to the other's said "the server did not start".
+	it("starts once when two `p3` start the Pi at once; both print its port", async (t) => {
+		const { p3 } = await homeOf(t);
+		const both = await Promise.all([p3("--port", "0"), p3("--port", "0")]);
+		const ports = both.map(({ code, out }) => {
+			assert.equal(code, 0, out);
+			return /port (\d+)\./.exec(out)?.[1];
+		});
+		assert.equal(ports[0], ports[1]);
+	});
+
+	// Astra (S2) and Opus (S6), review round 2: a stop the supervisor answered before it had started its server was
+	// ignored; it started the server afterwards and ran on.
+	it("a supervisor asked to stop while it starts ends without starting its server", async (t) => {
+		const { home } = await homeOf(t);
+		const dataDir = join(home, "supervised");
+		await mkdir(dataDir, { mode: 0o700 });
+		const started = join(home, "started");
+		// A "server" that marks its start and never ends: only a stop ends the supervisor then.
+		const server = [
+			"-e",
+			`require("node:fs").writeFileSync(${JSON.stringify(started)}, ""); setInterval(() => {}, 1000)`,
+		];
+		// Holding the guard of the supervisor's socket keeps it before its socket is in place, listening on its
+		// temporary name (`local-socket.ts`): the stop reaches it there, at the earliest moment it can.
+		const guard = await processLock(`p3-socket:${supervisorSocket(dataDir)}`, context);
+		const supervisor = spawn(process.execPath, [...SUPERVISOR, dataDir, ...server], { stdio: "ignore" });
+		t.after(() => supervisor.kill("SIGKILL"));
+		const exited = new Promise<number | null>((resolve) => supervisor.once("exit", resolve));
+		try {
+			const temporary = await eventually(
+				async () => (await readdir(dataDir)).find((name) => name.startsWith(".")),
+				(found) => found !== undefined,
+			);
+			assert.deepEqual(await ask(join(dataDir, temporary!), { kind: "stop" }), { kind: "stopping" });
+		} finally {
+			await guard.release();
+		}
+		const code = await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 5000, "runs on"))]);
+		assert.equal(code, 0);
+		await assert.rejects(access(started), { code: "ENOENT" });
+	});
+
+	// Opus, review round 2 (B1, M23; N7): the supervisor's wait after a crash, doubled for each crash in a row. Read
+	// from the supervisor's log, whose times are the supervisor's own: the test's polling adds nothing to them.
+	it("waits 1 s before starting a crashed server again, then 2 s after the next crash", async (t) => {
+		const { p3, pids, dataDir } = await homeOf(t);
+		assert.equal((await p3("--port", "0")).code, 0);
+		let { pid } = await pids();
+		for (const _ of [1, 2]) {
+			process.kill(pid, "SIGKILL");
+			const old = pid;
+			pid = (await eventually(pids, (found) => found.pid !== old, 30_000)).pid;
+		}
+		const log = await readFile(join(dataDir, "logs", "server.log"), "utf8");
+		const said = [
+			...log.matchAll(
+				/^(\S+) supervisor: (?:the server exited with \d+; starting it again in (\d+) ms|the server starts)/gm,
+			),
+		];
+		const lines = said.map(([, at, delay]) => ({
+			at: Date.parse(at!),
+			delay: delay === undefined ? undefined : Number(delay),
+		}));
+		// Started, crashed, started, crashed, started.
+		assert.deepEqual(
+			lines.map(({ delay }) => delay),
+			[undefined, 1000, undefined, 2000, undefined],
+		);
+		for (const index of [1, 3]) {
+			const waited = lines[index + 1]!.at - lines[index]!.at;
+			assert.ok(waited >= lines[index]!.delay!, `waited ${waited} ms of ${lines[index]!.delay} ms`);
+		}
+	});
+
+	// Sol, review round 2 (S2; D10): a failed store left the server answering "running" on a closed host.
+	it("ends a server whose store failed, and its supervisor starts it again", async (t) => {
+		const { p3, pids, dataDir } = await homeOf(t);
+		const first = await p3("--port", "0");
+		assert.equal(first.code, 0, first.out);
+		const link = new URL(/Open (\S+)/.exec(first.out)![1]!);
+		const { pid, supervisor } = await pids();
+		// Another connection holds the store's write lock: the server's next commit fails after SQLite's busy wait.
+		const blocker = new DatabaseSync(join(dataDir, "server", "store.sqlite"), { timeout: 0 });
+		blocker.exec("BEGIN IMMEDIATE");
+		try {
+			// A sign-in commits.
+			await fetch(`${link.origin}/_p3/owner`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ token: link.hash.slice(1) }),
+			}).catch(() => undefined);
+		} finally {
+			blocker.exec("ROLLBACK");
+			blocker.close();
+		}
+		const after = await eventually(pids, (found) => found.pid !== pid, 20_000);
+		assert.equal(after.supervisor, supervisor);
+		const log = await readFile(join(dataDir, "logs", "server.log"), "utf8");
+		assert.match(log, /storage_failed/);
+		assert.match(log, /the server exited with 1/);
+	});
+
+	// Opus (N10) and Astra (S6), review round 2: `stop` and `status` asked the sockets of a data directory others could
+	// have written to, and `stop` signalled the pids their answers named.
+	it("refuses to ask the sockets of a data directory that is not private", async (t) => {
+		const { p3, dataDir } = await homeOf(t);
+		assert.equal((await p3("--port", "0")).code, 0);
+		await chmod(dataDir, 0o755);
+		for (const command of ["status", "stop", "apply"]) {
+			const refused = await p3(command);
+			assert.equal(refused.code, 1, command);
+			assert.match(refused.out, /is not private/, command);
+		}
+		await chmod(dataDir, 0o700);
+	});
+
+	// D11: an apply is the control plugin's command over the socket.
+	it("applies the changed plugins with `p3 apply`, and fails on a Pi that does not run", async (t) => {
+		const { p3 } = await homeOf(t);
+		assert.equal((await p3("apply")).code, 1);
+		assert.equal((await p3("--port", "0")).code, 0);
+		const applied = await p3("apply");
+		assert.equal(applied.code, 0, applied.out);
+		assert.match(applied.out, /^applied$/m);
+	});
+
+	// Opus, review round 2 (N12): the server's log kept a looser mode it had.
+	it("keeps the server's log private, also when it existed looser", async (t) => {
+		const { p3, dataDir } = await homeOf(t);
+		await mkdir(join(dataDir, "logs"), { recursive: true });
+		await writeFile(join(dataDir, "logs", "server.log"), "");
+		await chmod(join(dataDir, "logs", "server.log"), 0o644);
+		assert.equal((await p3("--port", "0")).code, 0);
+		assert.equal((await stat(join(dataDir, "logs", "server.log"))).mode & 0o777, 0o600);
 	});
 
 	it("fails at once when the server cannot start, without waiting out its start time", async (t) => {

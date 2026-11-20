@@ -3,8 +3,10 @@
 // component, registers the route to session workers (its `resolve` asks the `WorkerRunners` registry, its `admit` the
 // sessions plugin's `SessionRoute`), serves the base's registries (`ServerRuntime`, `WorkerRunners`, `LinkOpened`,
 // `ServerCommands`), loads the server plugins and listens. The lock is the data directory's socket (`server.sock`,
-// `local-socket.ts`), taken first: it also answers the command: what the server is, a stop, and the plugins'
-// commands. Everything else is a plugin. The base's facet and the route's admission are exported for the test
+// `local-socket.ts`), taken first: it also answers the command: what the server is, and the plugins' commands (the
+// control plugin's `stop` and `apply`, the sign-in plugin's `owner-link`). A failed store (`storage_failed`) ends the
+// server: the host closed itself, so the server closes and its process exits non-zero for the supervisor to start it
+// again. Everything else is a plugin. The base's facet and the route's admission are exported for the test
 // topology (`test/topology.ts`), which runs them as the server does.
 
 import { mkdir } from "node:fs/promises";
@@ -13,28 +15,33 @@ import {
 	type Address,
 	type AdmitSelf,
 	allow,
-	type ChordStore,
 	createHost,
 	defineFacet,
 	deny,
 	type Facet,
 	type Host,
 	type HostError,
-	openStore,
-	orderedEntries,
-	sqliteBackend,
+	keyedEntries,
+	type Link,
+	type RegistryTable,
+	type RegistryValue,
+	type Watchable,
 } from "@earendil-works/chord";
-import type { Context } from "@earendil-works/chord/context";
-import { createHttp, type HttpError, HttpListener, type ListenAddress } from "@earendil-works/chord/http";
-import { createPlugins, type PluginsError } from "@earendil-works/chord/plugins";
-import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
+import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
+import {
+	createHttp,
+	type HttpError,
+	HttpListener,
+	type HttpRequest,
+	type ListenAddress,
+} from "@earendil-works/chord/http";
+import { createPlugins, type PluginsError, type PluginsState } from "@earendil-works/chord/plugins";
 import * as v1 from "@earendil-works/p3/v1";
-import { Server, Session } from "@earendil-works/p3/v1";
+import { reportError, Server, Session } from "@earendil-works/p3/v1";
 import * as v1server from "@earendil-works/p3/v1/server";
 import {
 	LinkOpened,
 	type LinkOpenedHook,
-	type ServerCommand,
 	ServerCommands,
 	ServerRuntime,
 	SessionRoute,
@@ -42,7 +49,7 @@ import {
 	WorkerRunners,
 } from "@earendil-works/p3/v1/server";
 import { API, KINDS, type P3Principal, SERVER, workerPrincipal } from "./app.ts";
-import { openDataDir, privateDirectory, privateStore } from "./files.ts";
+import { openDataDir, openPrivateStore, privateDirectory } from "./files.ts";
 import { type ServerAnswer, type ServerStatus, serverSocket, takeSocket } from "./local-socket.ts";
 
 /** What the server's start takes. */
@@ -60,10 +67,16 @@ export type ServerOptions = {
 	readonly version: string;
 	/** Facets of the server's own besides the base's, loaded with them (the memory test's telemetry ingest). */
 	readonly facets?: readonly { readonly name: string; readonly facet: Facet<P3Principal> }[];
-	/** What the owner's stop does (the command's close); also asked while the server starts. */
-	readonly onStop: () => void;
+	/**
+	 * What ends the server's process: the owner's stop (`stopped`: close, exit 0), or a failed store (`failed`: close,
+	 * exit non-zero, so a supervisor starts it again). Also asked while the server starts.
+	 */
+	readonly onStop: (end: ServerEnd) => void;
 	readonly onError: (error: ServerError) => void;
 };
+
+/** Why the server ends: the owner stopped it, or its store failed (the host closed itself, Chord design §3). */
+export type ServerEnd = { readonly kind: "stopped" } | { readonly kind: "failed"; readonly error: unknown };
 
 /** What the server reports in the background. */
 export type ServerError =
@@ -76,6 +89,8 @@ export type RunningServer = {
 	readonly dataDir: string;
 	readonly port: number;
 	readonly runtime: ServerRuntime;
+	/** The plugins' marks (`dirty`, ...): what a test or a tool waits on before an apply. */
+	readonly plugins: Watchable<PluginsState>;
 	/** Closes everything it opened, the data directory's socket last; a second call waits for the first. */
 	close(context: Context): Promise<void>;
 };
@@ -87,7 +102,7 @@ const IDLE_MS = 5 * 60_000;
 export async function startServer(options: ServerOptions, context: Context): Promise<RunningServer> {
 	const dataDir = await openDataDir(options.dataDir);
 	const answering: Answering = { status: { kind: "starting", pid: process.pid }, host: undefined };
-	const taken = await takeSocket(serverSocket(dataDir), (request) => answer(request, answering, options, context));
+	const taken = await takeSocket(serverSocket(dataDir), (request) => answer(request, answering, context));
 	if (taken.kind === "held") throw new Error(`p3: another server runs on ${dataDir}`);
 	const closers: ((context: Context) => Promise<void> | void)[] = [() => taken.socket.release()];
 	let closing: Promise<void> | undefined;
@@ -99,10 +114,7 @@ export async function startServer(options: ServerOptions, context: Context): Pro
 		await privateDirectory(join(dataDir, "server"));
 		// Made now, so the plugin watcher watches a root nobody created yet (the user's): a plugin added later is seen.
 		for (const { path } of options.roots) await mkdir(path, { recursive: true });
-		const file = join(dataDir, "server", "store.sqlite");
-		await privateStore(file);
-		// `openStore` makes the one kind of store there is: its `settled` is the runner's, for a worker's exit.
-		const store = (await openStore(sqliteBackend(await openNodeSqliteDatabase(file)), context)) as ChordStore;
+		const store = await openPrivateStore(join(dataDir, "server", "store.sqlite"), context);
 		closers.push((ctx) => store.close(ctx));
 		const listen = { host: "127.0.0.1", port: options.port };
 		// Chord retries a listen that failed; a start does not wait for a port: its first failure ends the start.
@@ -116,7 +128,10 @@ export async function startServer(options: ServerOptions, context: Context): Pro
 			onError: (error) => {
 				if (starting && error.kind === "activation_failed" && error.object === HttpListener.name) {
 					unheard.reject(listenFailed(listen, error.failure.error.cause));
-				} else options.onError({ kind: "host", error });
+					return;
+				}
+				options.onError({ kind: "host", error });
+				if (error.kind === "storage_failed") options.onStop({ kind: "failed", error: error.error });
 			},
 		});
 		closers.push((ctx) => host.close(ctx));
@@ -138,12 +153,9 @@ export async function startServer(options: ServerOptions, context: Context): Pro
 		closers.push((ctx) => http.close(ctx));
 		const plugins = createPlugins(
 			{
-				roots: options.roots.map(({ path, required }) => ({ path, required })),
-				api: { name: API.name, versions: [...API.versions] },
-				kinds: {
-					server: { platform: KINDS.server.platform, hostPackages: [...KINDS.server.hostPackages] },
-					worker: { platform: KINDS.worker.platform, hostPackages: [...KINDS.worker.hostPackages] },
-				},
+				roots: options.roots,
+				api: API,
+				kinds: KINDS,
 				onError: (error) => options.onError({ kind: "plugins", error }),
 			},
 			context,
@@ -155,11 +167,11 @@ export async function startServer(options: ServerOptions, context: Context): Pro
 				// Admission decides; a worker never reaches another session's worker.
 				authorize: () => true,
 				admit: admitSession,
-				resolve: async (address, routing) => {
-					const runner = await runnerOf(host, routing);
-					const link = await runner.start(address, routing);
-					return { link, principal: workerPrincipal(address.params.id), trusted: true };
-				},
+				resolve: async (address, routing) => ({
+					link: await startWorker(host, address, routing),
+					principal: workerPrincipal(address.params.id),
+					trusted: true,
+				}),
 			},
 			context,
 		);
@@ -186,7 +198,7 @@ export async function startServer(options: ServerOptions, context: Context): Pro
 				};
 				return plugins.rollout([plugins.step("server", host), workers], built, ctx);
 			},
-			stop: options.onStop,
+			stop: () => options.onStop({ kind: "stopped" }),
 		};
 		const core = [
 			{ name: "chord.http", facet: http.facet },
@@ -205,7 +217,7 @@ export async function startServer(options: ServerOptions, context: Context): Pro
 			startedAt: Date.now(),
 		};
 		answering.host = host;
-		return { dataDir, port: listening.port, runtime, close };
+		return { dataDir, port: listening.port, runtime, plugins: plugins.state, close };
 	} catch (error) {
 		await close(context);
 		throw error;
@@ -220,18 +232,33 @@ function listenFailed(address: ListenAddress, cause: unknown): Error {
 }
 
 /**
- * The runner the route starts workers with: the one contributed now, else the next one. While the runner plugin
- * reloads there is none (the old runner closes, its workers exit, then the new one is contributed): a held session's
- * worker starts again once the new runner is there, instead of failing its holders. `context`'s abort rejects.
+ * Starts the worker of `address` with the runner contributed now, else the next one. While the runner plugin reloads
+ * there is none (the old runner closes, its workers exit, then the new one is contributed), and a start the old runner
+ * took before it was withdrawn is refused by its close: neither fails the holders, the worker starts on the next
+ * runner. A start that fails while its runner is still the current one is the worker's failure. `context`'s abort
+ * rejects.
  */
-async function runnerOf(host: Host<P3Principal>, context: Context): Promise<WorkerRunner> {
+async function startWorker(host: Host<P3Principal>, address: Address<typeof Session>, context: Context): Promise<Link> {
 	const runners = await host.registry(WorkerRunners, context);
-	if (runners.value !== undefined) return runners.value;
+	for (;;) {
+		const runner = runners.value ?? (await nextRunner(runners, context));
+		try {
+			return await runner.start(address, context);
+		} catch (error) {
+			// Its object withdraws a runner at its seal, before its close refuses starts: a withdrawn one is no failure.
+			if (runners.value === runner) throw error;
+		}
+	}
+}
+
+/** The next runner `runners` gets; `context`'s abort rejects (the watch ends with it, so nothing is left behind). */
+async function nextRunner(runners: RegistryValue<WorkerRunner | undefined>, context: Context): Promise<WorkerRunner> {
+	context.abortSignal?.throwIfAborted();
 	const watch = await runners.watch(context);
 	try {
 		return await new Promise<WorkerRunner>((resolve, reject) => {
-			if (watch.value !== undefined) resolve(watch.value);
-			context.abortSignal?.addEventListener("abort", () => reject(context.abortSignal?.reason), { once: true });
+			if (watch.value !== undefined) return resolve(watch.value);
+			void watch.closed.then((end) => reject(context.abortSignal?.reason ?? new Error(`p3: runners: ${end.kind}`)));
 			watch.start(async (call) => {
 				if (call.kind === "value" && call.value !== undefined) resolve(call.value);
 			});
@@ -258,22 +285,13 @@ async function closeAll(closers: readonly ((context: Context) => Promise<void> |
 type Answering = { status: ServerStatus; host: Host<P3Principal> | undefined };
 
 /** The server's answer to the command's `request` (`local-socket.ts`). */
-async function answer(
-	request: unknown,
-	answering: Answering,
-	options: Pick<ServerOptions, "onStop">,
-	context: Context,
-): Promise<ServerAnswer> {
+async function answer(request: unknown, answering: Answering, context: Context): Promise<ServerAnswer> {
 	// A trust boundary: a request on the socket (only the owner's processes reach it; its shape is still checked).
 	const { kind, name } = (typeof request === "object" && request !== null ? request : {}) as {
 		readonly kind?: unknown;
 		readonly name?: unknown;
 	};
 	if (kind === "status") return answering.status;
-	if (kind === "stop") {
-		options.onStop();
-		return { kind: "stopping" };
-	}
 	if (kind !== "command" || typeof name !== "string") return { kind: "invalid" };
 	// A command waits for the plugins: while starting, the answer says so and the command asks again.
 	if (answering.host === undefined) return answering.status;
@@ -287,32 +305,58 @@ export const SERVER_MODULES = { "@earendil-works/p3/v1": v1, "@earendil-works/p3
 
 /**
  * The base's facet: it serves `ServerRuntime` (the process values), `WorkerRunners` (the first runner by plugin name),
- * `LinkOpened` (every hook called, in plugin order) and `ServerCommands` (each name's first command by plugin order).
+ * `LinkOpened` (every hook called, in plugin order) and `ServerCommands` (each name's first command by plugin name; a
+ * second one of a name is reported as a conflict).
  */
 export function serverCoreFacet(runtime: ServerRuntime): Facet<P3Principal> {
 	return defineFacet<P3Principal>((host) => {
 		host.serve(ServerRuntime, { compose: () => runtime });
 		host.serve(WorkerRunners, { compose: (table) => table[0]?.value });
-		host.serve(LinkOpened, {
-			compose: (table) => {
-				const hooks = orderedEntries(table, (hook) => [hook]);
-				return (request, close) => {
-					const ends = hooks.map(({ value }) => value(request, close)).filter((end) => end !== undefined);
-					if (ends.length === 0) return undefined;
-					return () => {
-						for (const end of ends) end();
-					};
-				};
-			},
-		});
+		host.serve(LinkOpened, { compose: (table) => (request, close) => linkOpened(table, request, close) });
 		host.serve(ServerCommands, {
-			compose: (table) => {
-				const commands = new Map<string, ServerCommand>();
-				for (const { value } of table) if (!commands.has(value.name)) commands.set(value.name, value);
-				return commands;
+			compose: (table, { report }) => {
+				const keyed = keyedEntries(table, (command) => ({ [command.name]: command }), report);
+				return new Map([...keyed].map(([name, { value }]) => [name, value] as const));
 			},
 		});
 	});
+}
+
+/**
+ * Calls every plugin's hook on an accepted link, each on its own: one that throws is reported and the others still
+ * see the link; the disposers they returned are called the same way once it closed.
+ */
+function linkOpened(
+	table: RegistryTable<LinkOpenedHook>,
+	request: HttpRequest,
+	close: () => void,
+): (() => void) | undefined {
+	const ends: { readonly plugin: string; readonly end: () => void }[] = [];
+	for (const { plugin, value } of table) {
+		const end = isolated(plugin, () => value(request, close));
+		if (end !== undefined) ends.push({ plugin, end });
+	}
+	return ends.length === 0 ? undefined : disposerOf(ends);
+}
+
+/**
+ * The disposer of a link's hooks: each one's `end`, on its own. Made apart from `linkOpened`, whose scope holds the
+ * request: a closure there would keep the request for as long as the link stays open.
+ */
+function disposerOf(ends: readonly { readonly plugin: string; readonly end: () => void }[]): () => void {
+	return () => {
+		for (const { plugin, end } of ends) isolated(plugin, end);
+	};
+}
+
+/** `run`'s result, or `undefined` when it threw: reported as `plugin`'s link hook failing. */
+function isolated<T>(plugin: string, run: () => T): T | undefined {
+	try {
+		return run();
+	} catch (error) {
+		reportError(`p3: ${plugin}'s link hook`, error, BACKGROUND_CONTEXT);
+		return undefined;
+	}
 }
 
 /**

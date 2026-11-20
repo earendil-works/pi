@@ -7,39 +7,17 @@ import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import { remote, Session, str } from "@earendil-works/p3/v1";
 import { WorkerRunners } from "@earendil-works/p3/v1/server";
 import { Sessions, SessionWorker } from "../plugins/sessions/contract.ts";
-import { SignIns } from "../plugins/sign-in/contract.ts";
-import { ask, type ServerAnswer, serverSocket } from "../src/local-socket.ts";
+import { askServer } from "../src/local-socket.ts";
 import { Probe } from "./plugins/probe/contract.ts";
-import { alive, eventually, IDLE_MS, type TestServer, testServer } from "./support.ts";
-import { until } from "./until.ts";
+import { alive, constantContract, constantPlugin, IDLE_MS, type TestServer, testServer } from "./support.ts";
+import { eventually, until } from "./until.ts";
 
 let running: TestServer | undefined;
 
-/** The contract of the plugin the apply test writes (`versioned`): its version, on a session's worker. */
-const Versioned = remote("versioned.versioned", {
-	version: 1,
-	params: { session: str() },
-	hostAddress: ({ session }) => Session({ id: session }),
-	variants: { owner: { state: { version: str() } } },
-});
-
-/** The source of a single-file worker plugin serving `Versioned` with `version`. */
-function versioned(version: string): string {
-	return `import { constant, defineFacet, remote, Session, str } from "@earendil-works/p3/v1";
-const Versioned = remote("versioned.versioned", {
-	version: 1,
-	params: { session: str() },
-	hostAddress: ({ session }) => Session({ id: session }),
-	variants: { owner: { state: { version: str() } } },
-});
-export default defineFacet((host) => {
-	host.serve(Versioned, () => ({ variant: "owner", members: { version: constant(${JSON.stringify(version)}) } }));
-});
-`;
-}
+/** The contract of the plugin the apply test writes (`versioned`): its value, on a session's worker. */
+const Versioned = constantContract("versioned");
 
 afterEach(async () => {
 	await running?.close();
@@ -126,7 +104,7 @@ describe("session workers", () => {
 	it("a working session's worker starts again after a server restart, unasked", async () => {
 		const { t, id } = await withSession();
 		const held = await probe(t, id);
-		await t.report(id, "working");
+		await held.report({ state: "working" }, context);
 		await held.busy(1, context);
 		running = await t.restart();
 		const restarted = running;
@@ -136,30 +114,31 @@ describe("session workers", () => {
 		);
 	});
 
+	// Sol, review round 2 (S6): the case applied again and again until the code changed; now one apply per change,
+	// once the watcher marked it, through the command `p3 apply` sends (D11).
 	it("an apply ships a changed worker plugin to a running worker", async () => {
 		const { t, id } = await withSession();
 		const file = join(t.plugins, "versioned.worker.ts");
-		await writeFile(file, versioned("1"));
 		const client = await t.client();
-		// The watcher sees the new file a moment after it is written: applied until the plugin is there.
-		const held = await eventually(async () => {
-			await t.server.runtime.apply(context);
-			return client.get(Versioned, { session: id }, context, { readyTimeout: 500 });
-		});
+		await writeFile(file, constantPlugin("versioned", "1"));
+		await applied(t, (marks) => marks.set);
+		const held = await client.get(Versioned, { session: id }, context);
 		assert.equal(held.variant, "owner");
 		if (held.variant !== "owner") return;
-		assert.equal(held.version.value, "1");
-		await writeFile(file, versioned("2"));
-		await eventually(
-			async () => {
-				const result = await t.server.runtime.apply(context);
-				assert.equal(result.stopped, undefined);
-				return held.version.value;
-			},
-			(version) => version === "2",
-		);
+		assert.equal(held.value.value, "1");
+		await writeFile(file, constantPlugin("versioned", "2"));
+		await applied(t, (marks) => marks.dirty.length > 0);
+		await until(held.value, (value) => value === "2", context);
 	});
 });
+
+/** Waits until the watcher's marks pass `marked`, then applies once with the command `apply`; asserts no step stopped. */
+async function applied(t: TestServer, marked: (marks: typeof t.server.plugins.value) => boolean): Promise<void> {
+	await until(t.server.plugins, marked, context, 10_000);
+	const reply = await askServer(t.dataDir, { kind: "command", name: "apply" }, 60_000);
+	assert.ok(reply.kind === "answered" && reply.answer.kind === "answer", JSON.stringify(reply));
+	assert.equal((reply.answer.value as { readonly stopped: unknown }).stopped, null);
+}
 
 describe("the server", () => {
 	it("closes once when asked twice at once, and frees its data directory for the next server", async () => {
@@ -167,50 +146,5 @@ describe("the server", () => {
 		await Promise.all([first.server.close(context), first.server.close(context)]);
 		running = await testServer({ dataDir: first.dataDir });
 		assert.notEqual(running.server.port, 0);
-	});
-});
-
-describe("sign-in", () => {
-	it("the owner link the command asks for over the data directory's socket signs a browser in once", async () => {
-		running = await testServer();
-		const base = `http://127.0.0.1:${running.server.port}`;
-		const answer = (await ask(serverSocket(running.dataDir), {
-			kind: "command",
-			name: "owner-link",
-		})) as ServerAnswer;
-		assert.equal(answer.kind, "answer");
-		const link = answer.kind === "answer" ? String(answer.value) : "";
-		const once = new URL(link).hash.slice(1);
-		const post = (body: unknown) =>
-			fetch(`${base}/_p3/owner`, {
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify(body),
-			});
-		const signedIn = await post({ token: once });
-		assert.equal(signedIn.status, 200);
-		const cookie = signedIn.headers.get("set-cookie")?.split(";")[0];
-		assert.ok(cookie !== undefined);
-		const withCookie = await fetch(`${base}/_p3/owner/link`, { method: "POST", headers: { cookie } });
-		assert.equal(withCookie.status, 200);
-		assert.equal((await post({ token: once })).status, 403);
-		assert.equal((await fetch(`${base}/_p3/owner/link`, { method: "POST" })).status, 401);
-	});
-
-	it("the owner's control routes refuse a person's sign-in", async () => {
-		running = await testServer();
-		const base = `http://127.0.0.1:${running.server.port}`;
-		const person = { kind: "person", id: "ann", name: "Ann" } as const;
-		const { token } = await running.server.runtime.host.root(
-			async (ctx) => (await ctx.get(SignIns, {})).issue({ principal: person, label: "ann", kind: "device" }, ctx),
-			context,
-		);
-		for (const path of ["/_p3/stop", "/_p3/apply", "/_p3/owner/link"]) {
-			const answer = await fetch(`${base}${path}`, {
-				method: "POST",
-				headers: { authorization: `Bearer ${token}` },
-			});
-			assert.equal(answer.status, 403, path);
-		}
 	});
 });

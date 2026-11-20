@@ -22,11 +22,20 @@ worker loads.
 ## The tiers
 
 A plugin's own tests live in its `test/` folder (`plugins/<name>/test/<file>.test.ts`, one per source file): no build
-reads that folder and no release ships it. They import the API only, as a third party's would; the plugin tier's
-helper is `@earendil-works/p3/v1/testing`.
+reads that folder and no release ships it. They import the API only, as a third party's would (the plugin tier's
+helper is `@earendil-works/p3/v1/testing`), never p3's `src/`; one exception, `WORKER` (`src/install.ts`) where the
+runner forks a real worker. A built-in plugin's cases that need the real server (HTTP, `/chord` links, a restart)
+sit in its `test/` folder too and use the end-to-end harness (`test/support.ts`, `test/until.ts`; the sign-in
+plugin's); cases of several plugins together go to `test/` (the runner's reload, `test/runner-e2e.test.ts`).
 
 **1. Plugin** (milliseconds): one facet built as production builds it, on an in-memory host with its kind's
-principal, address and API modules. Model: `plugins/sessions/test/server.test.ts`.
+principal, address and API modules, beside the base's facet as the real host has it: on the server `ServerRuntime`
+(a server that does not listen, starts no session worker and applies nothing) and the base's registries
+(`WorkerRunners`, `LinkOpened`, `ServerCommands`, composed as the server composes them), on a worker `WorkerRuntime`
+and `WorkerBusy`. Each test gets a temporary directory of its own (the runtime's `dataDir` or `dir`), removed at its
+close. Chord's HTTP component is not there: its registries (`Http`, `Authenticators`) are collected for the test
+(`t.contributions`). The installed release runs a third-party plugin's own test this way. Model:
+`plugins/sessions/test/server.test.ts`.
 
 ```ts
 import { testPlugin } from "@earendil-works/p3/v1/testing";
@@ -34,8 +43,12 @@ const t = await testPlugin(fileURLToPath(new URL("../", import.meta.url)), {
 	kind: "server",                            // or { kind: "worker", session: "s1" }
 	stubs: [],                                 // small facets serving the contracts t.unserved() lists
 }, context);
-await t.root(async (ctx) => { /* ctx.get(...), calls, asserts */ }, context, { principal: { kind: "owner" } });
-assert.deepEqual(t.unserved(), []);
+try {
+	await t.root(async (ctx) => { /* ctx.get(...), calls, asserts */ }, context, { principal: { kind: "owner" } });
+	assert.deepEqual(t.unserved(), []);
+} finally {
+	await t.close(context);                    // also removes the test's directory
+}
 ```
 
 **2. Topology** (fast, most cases of a plugin): the server and session workers as hosts in one process, linked in
@@ -49,25 +62,32 @@ object instead of building edited source: the runner's processes, an apply and e
 
 **3. End to end**: p3's real server in the test's process on a temporary data directory, its
 session workers as real processes, its plugins built from two roots as a Pi's are: the built-in one and the tests'
-own (`test/plugins/`: the probe, a third-party plugin a test drives a worker with); a test may write plugins of its own
-into `<data directory>/plugins` and apply them. `test/support.ts` gives `testServer()` with `client()` (signed in as
-the owner over WebSocket), `workers()` (the runner's state), `restart()` and `close()`, and `eventually` and `alive`
-for effects in other processes. Model: `test/skeleton.test.ts`.
+own (`test/plugins/`: the probe, a third-party plugin a test drives a worker with, and whose server route
+`GET /_probe/principal` answers who a request signed in as); a test may write plugins of its own into
+`<data directory>/plugins` and apply them (`constantPlugin(name, value)`: a single-file worker plugin serving one
+value). `test/support.ts` gives `testServer()` with `client()` (signed in as the owner over WebSocket), `workers()`
+(the runner's state), `restart()` and `close()`; `ownerCookie` and `ownerClient` (a browser's sign-in, from the
+command's owner link), `alive`, and for launched processes `launch` (a foreground `p3 server`) and `childrenOf`.
+Model: `test/skeleton.test.ts`.
 
 **4. The command** (a few cases): `p3` launched as processes of its own on a temporary home, including what a crash
-leaves behind (sockets of killed processes, a supervisor's restart) and a server that does not stop. Model:
+leaves behind (sockets of killed processes, a supervisor's restart) and a server that does not stop. The command's
+channel is a Unix socket: these cases, like p3's guarantee, are POSIX only (Windows: ERNDL-1059). Model:
 `test/command.test.ts`.
 
 **5. The release** (`test/release/release.test.ts`, run by `npm run release:p3:local` against the install it makes
 outside the repository): what the package holds, the command, a worker forked from the release's own bundle, and a
-third-party plugin written against the installed API alone (type-checked, loaded from the Pi's user root, called by a
-client of the compiled API). Run the bench against the install with `--release` (or the script's `--bench`).
+third-party plugin written against the installed API alone (type-checked, its own test run on the installed
+`/v1/testing`, loaded from the Pi's user root, called by a client of the compiled API). Run the bench against the
+install with `--release` (or the script's `--bench`).
 
 ## What every package tests
 
 1. **Each case of the plan,** in its tier, named after the rule it pins.
 2. **Effects the test caused:** `until(member, done, ctx)` (`test/until.ts`) for changes made elsewhere; after a call
-   on the same reference the value is already there. No sleeps for synchronization.
+   on the same reference the value is already there; `eventually(probe, done)` (the same file) only for what no
+   watchable shows (a process's exit, a file). No sleeps for synchronization. `test/until.ts` imports nothing of p3:
+   a plugin's own tests use it too.
 3. **Access:** every object refuses the principals it does not serve (`forbidden`); a person sees only what their
    admission allows.
 4. **Reload:** every facet you touch, reloaded while used (a list open, a worker held): nothing lost, no error. Model:
@@ -75,16 +95,15 @@ client of the compiled API). Run the bench against the install with `--release` 
 5. **Query plans:** for every named query, `EXPLAIN QUERY PLAN` of the SQL Chord runs (first page and after a
    bookmark) searches the named index with no temporary B-tree. Model: `test/plans.test.ts`.
 6. **Counted work:** Chord counts its work as metrics (`chord.query.runs`, `chord.query.probes`, `chord.link.*`);
-   assert them per common action through the in-memory telemetry adapter (the topology's `count`). Model:
-   "a rename runs only the reads that show the renamed session" (`test/topology.test.ts`).
-7. **GC:** every cache is a `WeakMap`; drop its owner, collect, assert the entry is gone:
+   assert them per common action through the in-memory telemetry adapter (the topology's `count`). Models
+   (`test/topology.test.ts`): "a rename runs only the reads that show the renamed session", the same for a worker's
+   report, and what a hold of a session's worker costs.
+7. **GC:** every cache is a `WeakMap`, and nothing holds what it was keyed by; drop its owner, collect, assert the
+   entry is gone (`collected` of `test/until.ts`):
 
    ```ts
-   setFlagsFromString("--expose-gc");
-   const gc = runInNewContext("gc") as () => void;
    const ref = (() => new WeakRef(makeOwner()))();
-   for (let i = 0; i < 10 && ref.deref() !== undefined; i++) { await new Promise((r) => setImmediate(r)); gc(); }
-   assert.equal(ref.deref(), undefined);
+   assert.ok(await collected([ref]));
    ```
 
 8. **Reviewers' reproductions** become regression tests.
@@ -110,7 +129,7 @@ p3 has no page or terminal client yet. When they come:
 p3 runs on Android under Termux (Node 26.3.1). Known differences:
 
 - no hard links (write a temporary file and rename it);
-- no `/proc/<pid>/task/<pid>/children` (scan `/proc/*/stat` for the parent; `childrenOf` in `bench/skeleton.ts`);
+- no `/proc/<pid>/task/<pid>/children` (scan `/proc/*/stat` for the parent; `childrenOf` in `test/support.ts`);
 - at most 32 child processes per app (Android 12 and later, the "phantom process" limit): Android kills processes
   beyond that, the test runner and session workers included. A Pi with many working sessions needs it lifted: on
   Android 14 and later, Developer options, "Disable child process restrictions"; on Android 12 and 13, from a computer,

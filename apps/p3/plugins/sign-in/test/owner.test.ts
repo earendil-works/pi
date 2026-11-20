@@ -1,19 +1,19 @@
 // The owner's sign-in (`owner.ts`): the owner link, made fresh by the command `owner-link` (as `p3` asks it over the
-// data directory's socket) or a signed-in owner's post; single use, 10 minutes, the previous one dropped; its page
-// reads the fragment; its post refuses anything but the current token, malformed bodies included. The plugin tier for
-// what needs no listener, the real server (`test/support.ts`) for the rest.
+// data directory's socket); single use, 10 minutes, the previous one dropped; its page reads the fragment; its post
+// refuses anything but the current token, malformed bodies included, and signs a browser in as the owner. The plugin
+// tier for what needs no listener, the real server (`test/support.ts`) for the rest; the probe's route
+// (`GET /_probe/principal`) says what a cookie signs in as.
 
 import assert from "node:assert/strict";
 import { afterEach, describe, it, mock } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BACKGROUND_CONTEXT as context, defineFacet, type P3Principal } from "@earendil-works/p3/v1";
-import { type ServerRuntime as Runtime, ServerCommands, ServerRuntime } from "@earendil-works/p3/v1/server";
+import { BACKGROUND_CONTEXT as context, type P3Principal } from "@earendil-works/p3/v1";
+import { ServerCommands } from "@earendil-works/p3/v1/server";
 import { testPlugin } from "@earendil-works/p3/v1/testing";
 import { ownerCookie, type TestServer, testServer } from "../../../test/support.ts";
 import { SignIns } from "../contract.ts";
 
 const OWNER: P3Principal = { kind: "owner" };
-const MAX: P3Principal = { kind: "person", id: "max", name: "Max" };
 
 /** The servers a case started, closed after it. */
 const servers: TestServer[] = [];
@@ -28,15 +28,6 @@ async function started(): Promise<TestServer> {
 	const t = await testServer();
 	servers.push(t);
 	return t;
-}
-
-/** A device sign-in of `principal` on `t`: its bearer header. */
-async function bearer(t: TestServer, principal: P3Principal): Promise<Record<string, string>> {
-	const issued = await t.server.runtime.host.root(
-		async (ctx) => (await ctx.get(SignIns, {})).issue({ principal, label: "test", kind: "device" }, ctx),
-		context,
-	);
-	return { authorization: `Bearer ${issued.token}` };
 }
 
 /** A fresh owner link from `t`'s command `owner-link`, as `p3` asks it over the data directory's socket. */
@@ -59,9 +50,10 @@ function postToken(t: TestServer, link: string): Promise<Response> {
 	return post(t, JSON.stringify({ token: new URL(link).hash.slice(1) }));
 }
 
-/** The answer of `POST /_p3/owner/link` to `headers`. */
-function askLink(t: TestServer, headers: Readonly<Record<string, string>>): Promise<Response> {
-	return fetch(`http://127.0.0.1:${t.server.port}/_p3/owner/link`, { method: "POST", headers });
+/** The principal a browser with `cookie` signs in as on `t`, or `undefined`. */
+async function principalOf(t: TestServer, cookie: string): Promise<P3Principal | undefined> {
+	const answer = await fetch(`http://127.0.0.1:${t.server.port}/_probe/principal`, { headers: { cookie } });
+	return answer.status === 401 ? undefined : ((await answer.json()) as P3Principal);
 }
 
 describe("the owner link", () => {
@@ -79,7 +71,7 @@ describe("the owner link", () => {
 		assert.equal((await postToken(t, link.href)).status, 403, "used up");
 		// Asked after the check above: a fresh link would replace the used one anyway.
 		const cookie = signed.headers.get("set-cookie")!.split(";")[0]!;
-		assert.equal((await askLink(t, { cookie })).status, 200, "the browser is the owner's");
+		assert.deepEqual(await principalOf(t, cookie), OWNER, "the browser is the owner's");
 		const browsers = await t.server.runtime.host.root(
 			async (ctx) => (await ctx.get(SignIns, {})).list.value.filter(({ kind }) => kind === "browser"),
 			context,
@@ -124,41 +116,17 @@ describe("the owner link", () => {
 		assert.deepEqual(t.errors, []);
 	});
 
-	it("is made fresh by `POST /_p3/owner/link` only for the owner, and drops the command's", async () => {
+	it("signs `p3`'s browser in as the owner over the data directory's socket", async () => {
 		const t = await started();
-		assert.equal((await askLink(t, {})).status, 401);
-		assert.equal((await askLink(t, await bearer(t, MAX))).status, 403);
-		const dropped = await commandLink(t);
-		const answered = await askLink(t, await bearer(t, OWNER));
-		assert.equal(answered.status, 200);
-		const { link } = (await answered.json()) as { readonly link: string };
-		assert.equal(new URL(link).origin, `http://127.0.0.1:${t.server.port}`);
-		assert.equal((await postToken(t, dropped)).status, 403);
-		assert.equal((await postToken(t, link)).status, 200);
-	});
-
-	it("signs `p3`'s browser in over the data directory's socket, and that cookie asks for the next link", async () => {
-		const t = await started();
-		const cookie = await ownerCookie(t.dataDir, t.server.port);
-		const answered = await askLink(t, { cookie });
-		assert.equal(answered.status, 200);
-		const { link } = (await answered.json()) as { readonly link: string };
-		assert.equal((await postToken(t, link)).status, 200);
+		assert.deepEqual(await principalOf(t, await ownerCookie(t.dataDir, t.server.port)), OWNER);
 	});
 
 	it("is refused by the command before the server listens", async () => {
-		// The owner's routes and command read only `listening` of the runtime.
-		const runtime = { listening: () => undefined } as unknown as Runtime;
-		const stub = defineFacet((host) => host.serve(ServerRuntime, { compose: () => runtime }));
-		const t = await testPlugin(
-			fileURLToPath(new URL("../", import.meta.url)),
-			{ kind: "server", stubs: [{ name: "p3.server-runtime-stub", facet: stub }] },
-			context,
-		);
+		// The plugin tier's server does not listen.
+		const t = await testPlugin(fileURLToPath(new URL("../", import.meta.url)), { kind: "server" }, context);
 		try {
-			const [command] = t.contributions(ServerCommands);
-			assert.equal(command!.value.name, "owner-link");
-			await assert.rejects(command!.value.run(context), /does not listen/);
+			const command = (await t.host.registry(ServerCommands, context)).value.get("owner-link");
+			await assert.rejects(command!.run(context), /does not listen/);
 		} finally {
 			await t.close(context);
 		}

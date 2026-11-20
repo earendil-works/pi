@@ -30,23 +30,29 @@ the provider SDKs are bundled and load per provider on first use; the worker's V
 
 | What | slayer, release | the phone, from source |
 | --- | --- | --- |
-| server launch to listening, warm | 112 ms (105 ms on the old base, with one plugin) | 1.6 to 1.9 s |
-| the worker plugins' build, on first need | 12 ms | |
-| worker start, warm | 69 ms (old base, same bench: 68 ms) | about 1 s |
-| idle worker, settled (sessions and runner only, no harness) | 14.3 MiB (old base, same bench: 14.9) | 19.6 MiB |
-| server, settled | 32.6 MiB (old base, same bench: 40.8) | 44 to 46 MiB |
+| server launch to ready (its owner link printed), warm | 114 ms (cold 132 ms; old base, to listening: 105 ms) | 1.6 to 1.9 s |
+| an apply, nothing changed (the socket command `apply`) | 8 ms | |
+| worker start to its first object, the first after a start (builds the worker plugins) | 96 ms | |
+| worker start to its first object, warm | 71 ms (old base, earlier bench: 68 ms) | about 1 s |
+| idle worker, settled (sessions and runner only, no harness) | 14.3 MiB (old base, earlier bench: 14.9) | 19.6 MiB |
+| server, settled | 34.9 MiB (old base, earlier bench: 40.8) | 44 to 46 MiB |
 | plain `p3` to its owner link | about 250 ms | 3.4 to 3.9 s |
 | the owner's list, open / `more`, at 100,000 sessions | 0.6 / 0.45 ms | 3.4 to 5.3 / 2.6 to 4.5 ms |
 
-The skeleton's numbers are `bench/skeleton.ts --release` (2026-11-20, review round 1 fixed; slayer under load 6:
-the launch's minimum was 106 ms); the old base's ran the same bench against a release of `30a3e0b1f`. The idle
-worker's USS counts session workers only (esbuild's service, also the server's child, no longer). The memory test's idle worker (17.9 MiB above) carries the harness, the coding
-tools and a subagent tool: never compare the two.
+The skeleton's numbers are `bench/skeleton.ts --release` (2026-11-20, review round 2 fixed, Node 26.11.1; medians of
+20 warm runs, the cold first apart; slayer under load 9 falling to 6; a second run right after gave the same within
+3 ms and 0.2 MiB). The old base's numbers ran the bench's earlier version against a release of `30a3e0b1f`; it timed
+the launch to listening, fewer runs, and an apply it took for the worker plugins' build (round 1's "12 ms build" was
+that apply: with nothing changed it builds nothing; the build is in the first worker start). The idle worker's USS
+counts session workers only (esbuild's service, also the server's child, no longer). The memory test's idle worker
+(17.9 MiB above) carries the harness, the coding tools and a subagent tool: never compare the two.
 
 - **Every start builds every plugin again** (no build cache): about 30 ms for one plugin today, one esbuild call per
   facet. The server facets are built before the server listens; the worker facets when they are first needed (the
-  first worker's start, or an apply), so the first worker after a start pays their build: the bench measures that
-  build apart from a worker's start. A package with large facets says what it adds to the start, on the phone too.
+  first worker's start; an apply builds only the plugins that changed), so the first worker after a start pays
+  their build: the bench's first worker start includes it, the warm ones do not. A package with large facets says
+  what it adds to the start, on the phone too. The old base's `NODE_DEBUG=p3` (what a start spends building) does
+  not exist in the skeleton: the new base never had it.
 - **Many workers at once:** the waker starts the worker of every `working` session together after a restart, and
   nothing caps live workers. On Android that meets the 32-child-process limit unless it is lifted (`testing.md`,
   Android).

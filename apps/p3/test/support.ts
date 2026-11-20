@@ -1,28 +1,28 @@
-// The end-to-end harness: p3's real server in this process on a temporary data directory, with its built-in plugins
-// and the probe (`test/probe/`, copied into a root of the test's own, so a test may edit and apply it), its session
-// workers as real processes; and clients signed in as the owner over WebSocket, as a browser's page is: with the
-// cookie an owner link gives (`ownerCookie`).
+// The end-to-end harness: p3's real server in this process on a temporary data directory, with its built-in plugins,
+// the tests' own root (`test/plugins/`: the probe, used in place) and the data directory's user root (`plugins`, where
+// a test may write plugins and apply them), its session workers as real processes; clients signed in as the owner over
+// WebSocket, as a browser's page is: with the cookie an owner link gives (`ownerCookie`, `ownerClient`). And what the
+// command's and the release's tests and the bench share: a foreground `p3 server` (`launch`), a process's children
+// (`childrenOf`), and a single-file worker plugin serving one value (`constantPlugin`).
 
-import { mkdtemp, rm } from "node:fs/promises";
+import { type ChildProcess, spawn } from "node:child_process";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { createHost, type Host, webSocketLink } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import type { P3Principal } from "@earendil-works/p3/v1";
+import { type P3Principal, remote, Session, str } from "@earendil-works/p3/v1";
 import { WorkerRunners, type WorkerState } from "@earendil-works/p3/v1/server";
-import { SessionsStore } from "../plugins/sessions/contract.server.ts";
-import type { SessionState } from "../plugins/sessions/contract.ts";
 import { PLUGINS, WORKER } from "../src/install.ts";
-import { ask, type ServerAnswer, serverSocket } from "../src/local-socket.ts";
+import { ASK_MS, askServer } from "../src/local-socket.ts";
 import { type RunningServer, type ServerError, startServer } from "../src/server.ts";
 
 /** A test's server and what it needs around it. */
 export type TestServer = {
 	readonly server: RunningServer;
 	readonly dataDir: string;
-	/** The test's own plugin root: the probe's directory is `<plugins>/probe`. */
+	/** The data directory's user root (`<data directory>/plugins`), where a test writes plugins of its own. */
 	readonly plugins: string;
 	/** What the server reported in the background. */
 	readonly errors: ServerError[];
@@ -30,8 +30,6 @@ export type TestServer = {
 	client(): Promise<Host<P3Principal>>;
 	/** Each session's worker as the runner sees it. */
 	workers(): Promise<Readonly<Record<string, WorkerState>>>;
-	/** Sets session `id`'s state on the server, as its worker's report does. */
-	report(id: string, state: SessionState): Promise<void>;
 	/** Closes the server and starts a new one on the same data directory. */
 	restart(): Promise<TestServer>;
 	/** Closes the clients and the server; removes the data directory unless `keep`. */
@@ -85,12 +83,6 @@ export async function testServer(options: TestServerOptions = {}): Promise<TestS
 			clients.push(client);
 			return client;
 		},
-		report: async (id, state) => {
-			await server.runtime.host.root(
-				async (ctx) => (await ctx.get(SessionsStore, {})).report({ id, state }, ctx),
-				context,
-			);
-		},
 		workers: async () => (await server.runtime.host.registry(WorkerRunners, context)).value?.state() ?? {},
 		restart: async () => {
 			await close(true);
@@ -100,16 +92,16 @@ export async function testServer(options: TestServerOptions = {}): Promise<TestS
 	};
 }
 
-/** A client host connected over WebSocket with an owner's sign-in cookie, loaded with no plugins. */
-async function ownerClient(dataDir: string, port: number): Promise<Host<P3Principal>> {
+/**
+ * A client host connected over WebSocket to the server of `dataDir` on `port`, signed in as the owner with a fresh
+ * owner link's cookie, loaded with no plugins; a call waits `readyTimeout` ms at most for its object.
+ */
+export async function ownerClient(dataDir: string, port: number, readyTimeout = 10_000): Promise<Host<P3Principal>> {
 	const cookie = await ownerCookie(dataDir, port);
 	// Node's WebSocket (undici) takes an init object with headers; the DOM type knows only protocols.
 	const init = { headers: { cookie } } as unknown as string[];
 	const socket = new WebSocket(`ws://127.0.0.1:${port}/chord`, init);
-	const client = createHost<P3Principal>({
-		readyTimeout: 10_000,
-		onError: (error) => console.error("client:", error),
-	});
+	const client = createHost<P3Principal>({ readyTimeout, onError: (error) => console.error("client:", error) });
 	client.connect(webSocketLink(socket), { principal: { kind: "server" } }, context);
 	await client.load([], context);
 	return client;
@@ -120,11 +112,11 @@ async function ownerClient(dataDir: string, port: number): Promise<Host<P3Princi
  * the server's `owner-link` over its socket, then the link's token posted as the owner link's page posts it.
  */
 export async function ownerCookie(dataDir: string, port: number): Promise<string> {
-	const answer = (await ask(serverSocket(dataDir), { kind: "command", name: "owner-link" })) as
-		| ServerAnswer
-		| undefined;
-	if (answer?.kind !== "answer") throw new Error(`ownerCookie: no owner link: ${JSON.stringify(answer)}`);
-	const token = new URL(String(answer.value)).hash.slice(1);
+	const reply = await askServer(dataDir, { kind: "command", name: "owner-link" }, ASK_MS);
+	if (reply.kind !== "answered" || reply.answer.kind !== "answer") {
+		throw new Error(`ownerCookie: no owner link: ${JSON.stringify(reply)}`);
+	}
+	const token = new URL(String(reply.answer.value)).hash.slice(1);
 	const signedIn = await fetch(`http://127.0.0.1:${port}/_p3/owner`, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
@@ -135,30 +127,6 @@ export async function ownerCookie(dataDir: string, port: number): Promise<string
 	return cookie;
 }
 
-/**
- * The first result of `probe` that does not throw and passes `done`, tried every 25 ms; rejects with the last error
- * after `ms`. For effects in other processes (a worker's exit), which no watchable shows here.
- */
-export async function eventually<T>(
-	probe: () => Promise<T>,
-	done: (value: T) => boolean = () => true,
-	ms = 10_000,
-): Promise<T> {
-	const deadline = Date.now() + ms;
-	let last: unknown = new Error("eventually: nothing passed");
-	for (;;) {
-		try {
-			const value = await probe();
-			if (done(value)) return value;
-			last = new Error(`eventually: ${JSON.stringify(value)} did not pass`);
-		} catch (error) {
-			last = error;
-		}
-		if (Date.now() > deadline) throw last;
-		await sleep(25);
-	}
-}
-
 /** Whether process `pid` lives. */
 export function alive(pid: number): boolean {
 	try {
@@ -167,4 +135,83 @@ export function alive(pid: number): boolean {
 	} catch {
 		return false;
 	}
+}
+
+/** A `p3 server` launched in the foreground: its pid and port, once it printed its owner link. */
+export type Launched = { readonly pid: number; readonly port: number; readonly dataDir: string; stop(): Promise<void> };
+
+/**
+ * Launches `p3 server` on `dataDir` on a free port, `command` being Node's arguments that run `p3` (a checkout's
+ * `COMMAND`, or an installed release's `p3.js`), with `env` (this process's by default); resolves once it printed its
+ * port and owner link.
+ */
+export async function launch(
+	command: readonly string[],
+	dataDir: string,
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<Launched> {
+	const child = spawn(process.execPath, [...command, "server", "--dir", dataDir, "--port", "0"], {
+		stdio: ["ignore", "pipe", "inherit"],
+		env,
+	});
+	const port = await new Promise<number>((resolve, reject) => {
+		let out = "";
+		child.stdout?.on("data", (chunk: Buffer) => {
+			out += chunk.toString();
+			const found = /port (\d+)\. Open/.exec(out);
+			if (found !== null) resolve(Number(found[1]));
+		});
+		child.once("exit", (code) => reject(new Error(`p3 server exited with ${code}`)));
+	});
+	return { pid: child.pid!, port, dataDir, stop: () => stop(child) };
+}
+
+/** Stops `child` with `SIGTERM` and waits for its exit. */
+async function stop(child: ChildProcess): Promise<void> {
+	if (child.exitCode !== null || child.signalCode !== null) return;
+	const exited = new Promise((resolve) => child.once("exit", resolve));
+	child.kill("SIGTERM");
+	await exited;
+}
+
+/** The children of process `pid`, each with its command line (`/proc/*\/stat`: Android has no `children` file). */
+export async function childrenOf(pid: number): Promise<{ readonly pid: number; readonly args: readonly string[] }[]> {
+	const children: { pid: number; args: string[] }[] = [];
+	for (const entry of await readdir("/proc")) {
+		if (!/^\d+$/.test(entry)) continue;
+		// A process may exit while it is read: it is none of the children then.
+		const stat = await readFile(`/proc/${entry}/stat`, "utf8").catch(() => "");
+		if (Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]) !== pid) continue;
+		const command = await readFile(`/proc/${entry}/cmdline`, "utf8").catch(() => "");
+		children.push({ pid: Number(entry), args: command.split("\0").filter((arg) => arg !== "") });
+	}
+	return children;
+}
+
+/** The contract of a plugin `constantPlugin` writes: one value on a session's worker, for the owner. */
+export function constantContract(name: string) {
+	return remote(`${name}.${name}`, {
+		version: 1,
+		params: { session: str() },
+		hostAddress: ({ session }) => Session({ id: session }),
+		variants: { owner: { state: { value: str() } } },
+	});
+}
+
+/**
+ * The source of single-file worker plugin `name` (`<name>.worker.ts`, written into a root) serving
+ * `constantContract(name)` with `value`: a test writes it again with another value and applies it.
+ */
+export function constantPlugin(name: string, value: string): string {
+	return `import { constant, defineFacet, remote, Session, str } from "@earendil-works/p3/v1";
+const Constant = remote(${JSON.stringify(`${name}.${name}`)}, {
+	version: 1,
+	params: { session: str() },
+	hostAddress: ({ session }) => Session({ id: session }),
+	variants: { owner: { state: { value: str() } } },
+});
+export default defineFacet((host) => {
+	host.serve(Constant, () => ({ variant: "owner", members: { value: constant(${JSON.stringify(value)}) } }));
+});
+`;
 }

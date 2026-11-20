@@ -18,7 +18,7 @@ export default defineFacet((host) => {
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			const check = (): void => {
 				clearTimeout(timer);
-				timer = idle() ? setTimeout(() => (idle() ? close("idle") : check()), idleMs) : undefined;
+				timer = idle() ? setTimeout(() => (idle() ? close() : check()), idleMs) : undefined;
 			};
 			const stops: (() => Promise<unknown>)[] = [];
 			// One cleanup for every exit, an abort while a watch is being taken included.

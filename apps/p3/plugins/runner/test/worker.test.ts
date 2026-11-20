@@ -34,13 +34,14 @@ async function turns(): Promise<void> {
 
 describe("the runner plugin on a worker", () => {
 	let t: TestedPlugin<P3Principal>;
-	const closed: string[] = [];
+	/** How often the worker's `close` was called. */
+	let closes = 0;
 	let entered = Promise.withResolvers<void>();
 	let open = Promise.withResolvers<null>();
 
 	beforeEach(async () => {
 		mock.timers.enable({ apis: ["setTimeout"] });
-		closed.length = 0;
+		closes = 0;
 		entered = Promise.withResolvers<void>();
 		open = Promise.withResolvers<null>();
 		t = await testPlugin(
@@ -49,7 +50,7 @@ describe("the runner plugin on a worker", () => {
 				kind: "worker",
 				session: "s",
 				idleMs: IDLE_MS,
-				close: (reason) => void closed.push(reason),
+				close: () => void closes++,
 				stubs: [{ name: "test.gate", facet: gateFacet(entered, open) }],
 			},
 			context,
@@ -64,24 +65,24 @@ describe("the runner plugin on a worker", () => {
 
 	it("a call running through the idle time keeps the worker; once it finished, the worker stops once", async () => {
 		// Idle from the start: it stops after its idle time (the clock moves until the check is armed).
-		for (let i = 0; i < 20 && closed.length === 0; i++) {
+		for (let i = 0; i < 20 && closes === 0; i++) {
 			await turns();
 			mock.timers.tick(IDLE_MS);
 		}
-		assert.deepEqual(closed, ["idle"]);
+		assert.equal(closes, 1);
 		const call = t.root(async (ctx) => (await ctx.get(Gate, {})).wait(ctx), context);
 		await entered.promise;
 		await turns();
 		mock.timers.tick(IDLE_MS * 3);
 		await turns();
-		assert.deepEqual(closed, ["idle"], "a running call keeps the worker");
+		assert.equal(closes, 1, "a running call keeps the worker");
 		open.resolve(null);
 		await call;
 		await turns();
 		mock.timers.tick(IDLE_MS * 3);
 		await turns();
 		mock.timers.tick(IDLE_MS * 3);
-		assert.deepEqual(closed, ["idle", "idle"], "one stop once the call finished");
+		assert.equal(closes, 2, "one stop once the call finished");
 		assert.deepEqual(t.errors, []);
 	});
 });

@@ -1,5 +1,5 @@
 // The sign-in plugin on the server: who someone is. The sign-ins and their authenticator (`sign-ins.ts`), and the
-// owner's link and token file (`owner.ts`).
+// owner link's page, post and command (`owner.ts`).
 
 import { defineFacet } from "@earendil-works/p3/v1";
 import { serveOwner } from "./owner.ts";

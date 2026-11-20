@@ -43,7 +43,7 @@ export type ServerRuntime = {
 	listening(): ListenAddress | undefined;
 	/** Builds the changed plugins and rolls them out: the server, then the running workers (the runner's step). */
 	apply(context: Context): Promise<RolloutResult>;
-	/** Stops the server, as `SIGTERM` does. */
+	/** Stops the server, as `SIGTERM` does (the control plugin's command `stop`). */
 	stop(): void;
 };
 
@@ -95,13 +95,14 @@ export const SessionRoute = local("p3.session-route", {
 });
 
 /**
- * A command the owner's `p3` runs on the server over the data directory's socket (`server.sock`; the sign-in plugin's
- * `owner-link`). Only the owner's processes can reach that socket (the directory is private): a command runs for the
- * owner, without a sign-in.
+ * A command the owner's `p3` runs on the server over the data directory's socket (`server.sock`: the control plugin's
+ * `stop` and `apply`, the sign-in plugin's `owner-link`). Only the owner's OS user can reach that socket (the directory
+ * is private; POSIX only, Windows: ERNDL-1059): a command runs for the owner, without a sign-in, for every process of
+ * that user (an agent's tools included). Its answer is sent as JSON.
  */
 export type ServerCommand = { readonly name: string; run(context: Context): Promise<JsonValue> };
 
-/** The server's commands by name: the first contribution of a name by plugin order. */
+/** The server's commands by name: the first contribution of a name by plugin name; a second is reported. */
 export const ServerCommands = defineRegistry<ServerCommand, ReadonlyMap<string, ServerCommand>>("p3.server-commands", {
 	version: 1,
 });

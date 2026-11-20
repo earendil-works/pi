@@ -1,12 +1,18 @@
 // The base's files. A Pi is its data directory: `~/.pi/p3/<name>` (the default Pi is the one named `default`) or any
 // directory (`--dir`); each keeps its port in `pi.json` from its first start. The data directory and the stores are
 // made private (directories 0700, files 0600, also when they existed looser: other local users must not read a
-// store's sign-ins, nor replace it, nor reach its sockets), and private files are written in one step.
+// store's sign-ins, nor replace it, nor reach its sockets), and private files are written in one step. The boundary
+// is the OS user (`local-socket.ts`): every process of the owner's user reaches all of it. The modes protect on POSIX
+// only; on Windows they do nothing and the directory is as private as the ACL it inherits (ERNDL-1059).
 
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, open, readdir, readFile, realpath, rename, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, parse, resolve } from "node:path";
+import { type ChordStore, openStore, sqliteBackend } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
+import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
+import { checkSocketPaths } from "./local-socket.ts";
 
 /** Which Pi a command line names: `--pi <name>`, `--dir <path>`, or neither (the default Pi). */
 export type PiChoice = { readonly pi?: string; readonly dir?: string };
@@ -37,11 +43,15 @@ export async function pis(): Promise<{ readonly name: string; readonly dataDir: 
 		.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** The port the Pi on `dataDir` keeps: its `pi.json`'s, else 8789 for the default Pi and 0 (a free one) for others. */
+/**
+ * The port the Pi on the real path `dataDir` keeps: its `pi.json`'s, else 8789 for the default Pi and 0 (a free one)
+ * for others. The default Pi is known by its real path: a home reached through a link is still the home.
+ */
 export async function keptPort(dataDir: string): Promise<{ readonly port: number; readonly kept: boolean }> {
 	const port = (await readConfig(dataDir))?.port;
 	if (port !== undefined) return { port, kept: true };
-	return { port: resolve(dataDir) === dataDirOf({}) ? DEFAULT_PORT : 0, kept: false };
+	const defaultDir = await realpath(dataDirOf({})).catch(() => dataDirOf({}));
+	return { port: dataDir === defaultDir ? DEFAULT_PORT : 0, kept: false };
 }
 
 /** Keeps `port` as the Pi's port (`pi.json`). */
@@ -78,21 +88,49 @@ function pisRoot(): string {
 
 /**
  * The real path of the data directory `path`, made private (0700) and made when missing; refused when it is the home
- * directory, a file system's root, or another user's.
+ * directory, a file system's root, another user's, or too long a path for its sockets.
  */
 export async function openDataDir(path: string): Promise<string> {
 	await mkdir(path, { recursive: true, mode: 0o700 });
 	const dataDir = await realpath(path);
+	await checkDataDir(dataDir);
+	await chmod(dataDir, 0o700);
+	return dataDir;
+}
+
+/**
+ * The real path of the existing data directory `path`, or `undefined` when there is none, for a command that asks its
+ * sockets (`stop`, `status`): refused as `openDataDir` refuses, and when it is not private, since then others could
+ * have made the sockets that would answer.
+ */
+export async function existingDataDir(path: string): Promise<string | undefined> {
+	const dataDir = await realpath(path).catch((error: NodeJS.ErrnoException) => {
+		if (error.code === "ENOENT") return undefined;
+		throw error;
+	});
+	if (dataDir === undefined) return undefined;
+	const { mode } = await checkDataDir(dataDir);
+	if (process.platform !== "win32" && (mode & 0o077) !== 0) {
+		const shown = (mode & 0o777).toString(8);
+		throw new Error(
+			`p3: the data directory ${dataDir} is not private (mode ${shown}; p3 makes it 0700 at every start)`,
+		);
+	}
+	return dataDir;
+}
+
+/** Throws unless the real path `dataDir` can be a data directory (see `openDataDir`); its stats. */
+async function checkDataDir(dataDir: string): Promise<{ readonly mode: number }> {
 	const home = await realpath(homedir());
 	if (dataDir === home || dataDir === parse(dataDir).root) {
 		throw new Error(`p3: the data directory ${dataDir} must be a directory of p3's own`);
 	}
-	const { uid } = await stat(dataDir);
+	const { uid, mode } = await stat(dataDir);
 	if (process.getuid !== undefined && uid !== process.getuid()) {
 		throw new Error(`p3: the data directory ${dataDir} belongs to another user (uid ${uid})`);
 	}
-	await chmod(dataDir, 0o700);
-	return dataDir;
+	checkSocketPaths(dataDir);
+	return { mode };
 }
 
 /** Makes `dir` (and missing parents) with mode 0700, and sets 0700 on it when it existed. */
@@ -112,6 +150,16 @@ export async function privateStore(path: string): Promise<void> {
 			if (error.code !== "ENOENT") throw error;
 		});
 	}
+}
+
+/**
+ * Opens the store file `path` of the server or a session's worker, private (`privateStore`). Chord's `openStore` makes
+ * the one kind of store there is, typed as its interface: its `settled` (the runner's fence for a worker's exit) is
+ * `ChordStore`'s.
+ */
+export async function openPrivateStore(path: string, context: Context): Promise<ChordStore> {
+	await privateStore(path);
+	return (await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context)) as ChordStore;
 }
 
 /** Writes `text` to `path` with mode 0600 in one step: a temporary file of the same directory, synced, renamed. */
