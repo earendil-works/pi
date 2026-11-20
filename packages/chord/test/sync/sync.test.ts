@@ -260,6 +260,16 @@ describe("remoteHistory", () => {
 		});
 		expect(remoteHistory(listing, 12)).toEqual({ batches: [], head: 12 });
 	});
+
+	it("restores from the newest archive slot along the chain, past an older snapshot; a copy gets the chain as it is", () => {
+		const archived = { ...slot(10, 12, "b"), archive: true as const };
+		const withArchive = { ...listing, batches: [...listing.batches.slice(0, 2), archived, slot(12, 15, "b")] };
+		expect(remoteHistory(withArchive)).toEqual({ batches: [archived, slot(12, 15, "b")], head: 15 });
+		expect(remoteHistory(withArchive, 4)).toEqual({
+			batches: [slot(4, 10, "a"), archived, slot(12, 15, "b")],
+			head: 15,
+		});
+	});
 });
 
 describe("syncing a session between devices", () => {
@@ -618,6 +628,78 @@ describe("syncing a session between devices", () => {
 		const replica = device("replica", store);
 		await replica.pull();
 		expect(await reads(await replica.store())).toEqual(await reads(source));
+	});
+
+	it("goes on from a full state after the outbox was turned off and on again", async () => {
+		const store = await remote();
+		const directory = await mkdtemp(join(tmpdir(), "chord-sync-gap-"));
+		directories.push(directory);
+		const file = join(directory, "session.sqlite");
+		const state = new MemoryState();
+		const upload = (source: Store) =>
+			uploadSession({ sessionId: SESSION, device: "laptop", source, store, state, context });
+		const first = await openStore(await backend(file), context, { outbox: true });
+		await commitAll(first, seedBatches().slice(0, 4));
+		const synced = first.lastSeq;
+		expect(await upload(first)).toEqual({ type: "uploaded", head: synced });
+		await first.close(context);
+		// A replica in step with the remote now.
+		const replica = device("replica", store);
+		await replica.pull();
+
+		// Off: the outbox's commits are dropped, and the store commits on without one.
+		const off = await openStore(await backend(file), context, { outbox: false });
+		await commitAll(off, seedBatches().slice(4, 7));
+		await off.close(context);
+		// On again: the outbox starts at the store's head, past what the remote holds.
+		const source = tracked(await openStore(await backend(file), context, { outbox: true }));
+		expect(source.outbox!.floor).toBeGreaterThan(synced);
+		expect(await upload(source)).toEqual({ type: "uploaded", head: source.lastSeq });
+		expect((await store.list(SESSION, context)).batches.at(-1)).toEqual({
+			...slot(synced, source.lastSeq, "laptop"),
+			archive: true,
+		});
+
+		// Commits after it are batches again.
+		const archived = source.lastSeq;
+		await commitAll(source, seedBatches().slice(7));
+		expect(await upload(source)).toEqual({ type: "uploaded", head: source.lastSeq });
+		expect((await store.list(SESSION, context)).batches.at(-1)).toEqual(slot(archived, source.lastSeq, "laptop"));
+
+		// A restore starts from the archive slot; a copy behind it cannot apply it and restores fresh.
+		const fresh = device("fresh", store);
+		await fresh.pull();
+		expect(await reads(await fresh.store())).toEqual(await reads(source));
+		await expect(replica.pull()).rejects.toThrow(HistoryUnavailableError);
+
+		// Folding covers every slot, also those before the archive slot, and restores the same.
+		expect(await foldSession({ sessionId: SESSION, store, scratch: await backend(), context })).toBe(source.lastSeq);
+		expect((await store.list(SESSION, context)).batches.every((batch) => batch.folded === true)).toBe(true);
+		const folded = device("folded", store);
+		await folded.pull();
+		expect(await reads(await folded.store())).toEqual(await reads(source));
+	});
+
+	it("finds its own slots when its sync state is lost, and goes on from a full state after them", async () => {
+		const store = await remote();
+		const directory = await mkdtemp(join(tmpdir(), "chord-sync-lost-"));
+		directories.push(directory);
+		const file = join(directory, "session.sqlite");
+		const first = await openStore(await backend(file), context, { outbox: true });
+		await commitAll(first, seedBatches().slice(0, 4));
+		const upload = (source: Store, state: MemoryState) =>
+			uploadSession({ sessionId: SESSION, device: "laptop", source, store, state, context });
+		await upload(first, new MemoryState());
+		await first.close(context);
+		const off = await openStore(await backend(file), context, { outbox: false });
+		await commitAll(off, seedBatches().slice(4));
+		await off.close(context);
+		const source = tracked(await openStore(await backend(file), context, { outbox: true }));
+		// No sync state: the archive at 0 finds this device's slot, and the next archive goes after it.
+		expect(await upload(source, new MemoryState())).toEqual({ type: "uploaded", head: source.lastSeq });
+		const fresh = device("fresh", store);
+		await fresh.pull();
+		expect(await reads(await fresh.store())).toEqual(await reads(source));
 	});
 });
 

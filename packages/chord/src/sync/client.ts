@@ -119,8 +119,10 @@ export type UploadResult =
  * outbox through what the remote acknowledged. Every device continues a session as its own; whichever creates the slot
  * first continues the session, so an upload that is acknowledged stays.
  *
- * A session the remote does not have yet, whose outbox does not reach back to its first commit (turned on later, or
- * trimmed, as for a copy renamed after it diverged), starts with an archive slot: the store's `export()` at its head.
+ * Where the outbox does not reach back to what the copy shares with the remote, the next slot is an archive slot: the
+ * store's `export()` at its head. For a session the remote does not have yet, that is its first slot (the outbox was
+ * turned on later, or trimmed, as for a copy renamed after it diverged); for one it has, the slot after its head (the
+ * outbox was turned off, dropping commits not uploaded yet, and on again), so the history goes on from a full state.
  *
  * A slot this device created already is an upload whose response was lost: the remote has the history up to its end,
  * and the upload goes on from there.
@@ -148,7 +150,7 @@ export async function uploadSession(options: {
 		let body: SyncBody;
 		let archive = false;
 		let close: (() => Promise<void>) | undefined;
-		if (synced === LOG_START && outbox.floor > 0) {
+		if (outbox.floor > synced) {
 			const snapshot = await exportSnapshot(source, context);
 			to = snapshot.to;
 			body = snapshot.body;
@@ -319,13 +321,13 @@ export type LocalCopy =
 	| { readonly kind: "empty"; readonly backend: Backend };
 
 /**
- * Apply what the remote has after the local head; into an empty backend, that restores the session (from an archive
- * when the history starts with one) and opens its store with an outbox. Resolves with the store, which the caller
+ * Apply what the remote has after the local head; into an empty backend, that restores the session (from the newest
+ * archive along its history, if any) and opens its store with an outbox. Resolves with the store, which the caller
  * owns and closes. Nothing may hold the store's claims (no `StoreStorage`, no Harness): `applyBatch()` refuses then.
  *
  * A copy with commits it has not uploaded rejects with `UnsyncedCommitsError` instead of getting the remote's commits
- * spliced onto its own. A copy whose history folding removed rejects with `HistoryUnavailableError` and restores into
- * a fresh backend.
+ * spliced onto its own. A copy whose history folding removed, or that an archive slot continues (a full state, which
+ * does not apply on top of a store), rejects with `HistoryUnavailableError` and restores into a fresh backend.
  */
 export async function pullSession(options: {
 	readonly sessionId: string;
@@ -421,7 +423,10 @@ export async function foldSession(options: {
 		}
 		await store.foldBatches(
 			sessionId,
-			history.batches.filter((batch: BatchInfo) => batch.to <= snapshot.to).map((batch) => batch.after),
+			// Every slot the snapshot covers, also those before an archive slot the restore started from.
+			listing.batches
+				.filter((batch: BatchInfo) => batch.to <= snapshot.to && batch.folded !== true)
+				.map((batch) => batch.after),
 			context,
 		);
 		await store.deleteSnapshots(

@@ -22,8 +22,9 @@ export type BatchInfo = {
 	/** Folding dropped its commits into a snapshot; the slot stays taken. */
 	readonly folded?: true;
 	/**
-	 * The body is a store archive at `to` instead of commits: the first upload of a session whose outbox does not reach
-	 * back to its first commit. Only the slot after 0 can be one.
+	 * The body is a store archive at `to` instead of commits: an upload whose outbox does not reach back to `after` (a
+	 * session's first upload with its outbox turned on late, or one after its outbox was turned off and on again). A
+	 * restore starts from the newest one along the chain; a copy behind it restores fresh.
 	 */
 	readonly archive?: true;
 };
@@ -136,7 +137,8 @@ export class HistoryUnavailableError extends Error {
 
 /**
  * The history a copy at `from` applies, or a restore without `from`. Slots are created once, so at most one batch
- * starts at each sequence and the history is a single chain.
+ * starts at each sequence and the history is a single chain. A restore starts from the newest full state along it: the
+ * newest snapshot or archive slot, whichever ends later.
  */
 export function remoteHistory(listing: RemoteListing, from?: Seq): RemoteHistory {
 	const chain = new Map(listing.batches.map((batch) => [batch.after, batch]));
@@ -159,6 +161,11 @@ export function remoteHistory(listing: RemoteListing, from?: Seq): RemoteHistory
 		batches.push(next);
 		at = next.to;
 	}
+	// An archive slot is a full state: a restore starts at the newest one. A copy at `from` gets the chain as it is: an
+	// archive slot in it does not apply on top of its store, and `pullSession` refuses it (the host restores fresh).
+	const archive =
+		from === undefined || from === LOG_START ? batches.findLastIndex((batch) => batch.archive === true) : -1;
+	if (archive >= 0) return { batches: batches.slice(archive), head: at };
 	return { ...(snapshot === undefined ? {} : { snapshot }), batches, head: at };
 }
 
