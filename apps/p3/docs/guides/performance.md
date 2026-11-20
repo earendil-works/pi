@@ -81,7 +81,7 @@ worker-only entry"). Source is the checkout (`--conditions=source`), release the
 | `p3 status` | 170 ms | 109 ms |
 | `p3 stop`, until the directory is free | 197 ms | 133 ms |
 
-**The phone** (Android, Termux, Node 26.3.1), 2026-11-18, as reported by Mario's planning session (not yet in a
+**The phone** (Android, Termux, Node 26.3.1), 2026-11-18, measured with `bench/slice-1.ts` from source, 3 runs (not yet in a
 brief): an idle worker 19.6 MiB settled; a warm worker start about 1 s; the server 44–46 MiB settled; plain `p3` to its
 owner link 3.4–3.9 s from source. The phone is about ten times slower than slayer at starts: measure there.
 
