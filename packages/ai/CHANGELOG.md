@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `retryAssistantCall()` retaining an abort listener after each completed backoff, causing listener buildup across repeated retries ([#10506](https://github.com/earendil-works/pi/issues/10506))
+
 ## [1.6.0] - 2026-11-20
 
 ### Added
