@@ -12,7 +12,12 @@ import {
 import { obj, str } from "@earendil-works/pi-schema";
 import { describe, expect, it } from "vitest";
 import { createCodemodeExtension } from "../src/codemode/codemode.ts";
-import { codemodeDescription, codemodeSection, namespacesOf } from "../src/codemode/describe.ts";
+import {
+	codemodeDescription,
+	codemodeSection,
+	listableNamespaces,
+	namespacesOf,
+} from "../src/codemode/describe.ts";
 import { allEntries, chatSetup, openChat } from "./chat-support.ts";
 import { context } from "./session-support.ts";
 
@@ -32,6 +37,8 @@ const GITHUB: ToolNamespace = {
 	instructions: "Pass repositories as owner/name.",
 };
 
+const LINEAR: ToolNamespace = { name: "linear", description: "Linear: sign in first." };
+
 /** An extension bringing `tools`, in `namespace` when given. */
 function extension(name: string, tools: ToolRegistration[], namespace?: ToolNamespace): Extension {
 	return defineExtension({ name, tools, ...(namespace ? { namespace } : {}) });
@@ -47,16 +54,33 @@ describe("code mode description and section", () => {
 		expect(codemodeDescription(true)).toContain("`models`");
 	});
 
-	it("puts a tool in its extension's namespace; the first extension naming a tool wins", () => {
+	it("puts a tool in its winning extension's namespace; the last extension naming a tool wins", () => {
 		const issues = tool("list_issues", "List issues.");
 		const shared = tool("read", "Read a file.");
 		const map = namespacesOf([extension("coding", [shared]), extension("github", [issues, shared], GITHUB)]);
 		expect(map.get("list_issues")).toBe(GITHUB);
-		// `read` came first from an extension without a namespace: ungrouped.
-		expect(map.has("read")).toBe(false);
+		// Durable composes `read` from `github`, the last extension naming it: its namespace is the one that runs.
+		expect(map.get("read")).toBe(GITHUB);
+		// The last extension naming `read` declares no namespace: the winning tool is ungrouped.
 		expect(
-			namespacesOf([extension("github", [issues, shared], GITHUB), extension("coding", [shared])]).get("read"),
-		).toBe(GITHUB);
+			namespacesOf([extension("github", [issues, shared], GITHUB), extension("coding", [shared])]).has("read"),
+		).toBe(false);
+	});
+
+	it("lists namespaces by structural reachability, not by state", () => {
+		const read = tool("read", "Read a file.");
+		const issues = tool("list_issues", "List issues.");
+		const modelOnly = tool("get_issue", "Get an issue.", { callers: ["model"] });
+		const extensions = [
+			extension("coding", [read]),
+			extension("github", [issues, modelOnly], GITHUB),
+			extension("linear", [], LINEAR),
+		];
+		// `github` has a callable tool; `linear` declares none yet; both are listed, sorted by name.
+		expect(listableNamespaces(extensions, [read, issues])).toEqual([LINEAR, GITHUB]);
+		// `github` declares tools but none is callable, `linear` still declares none: only `linear` is listed.
+		expect(listableNamespaces(extensions, [read])).toEqual([LINEAR]);
+		expect(listableNamespaces(extensions, [])).toEqual([LINEAR]);
 	});
 
 	it("lists ungrouped tools first, then each namespace's heading and description, then its declarations", () => {
@@ -66,6 +90,7 @@ describe("code mode description and section", () => {
 			[read, issues],
 			[extension("coding", [read]), extension("github", [issues], GITHUB)],
 			3000,
+			[read, issues],
 		)!;
 		expect(section).toContain("### `read`\nRead a file.");
 		expect(section).toContain("read(args: {");
@@ -78,19 +103,41 @@ describe("code mode description and section", () => {
 	});
 
 	it("lists a namespace without tools, and nothing without tools and namespaces", () => {
-		const section = codemodeSection([], [extension("github", [], GITHUB)], 3000)!;
+		const section = codemodeSection([], [extension("github", [], GITHUB)], 3000, [])!;
 		expect(section).toContain("## mcp__github\nGitHub MCP server");
-		expect(codemodeSection([], [extension("coding", [])], 3000)).toBeUndefined();
+		expect(codemodeSection([], [extension("coding", [])], 3000, [])).toBeUndefined();
+	});
+
+	it("hides a namespace whose declared tools are not callable (callers, or an allowlist)", () => {
+		const read = tool("read", "Read a file.");
+		const modelOnly = tool("get_issue", "Get an issue.", { callers: ["model"] });
+		const section = codemodeSection(
+			[read],
+			[extension("coding", [read]), extension("github", [modelOnly], GITHUB), extension("linear", [], LINEAR)],
+			3000,
+			[read],
+		)!;
+		expect(section).not.toContain("## mcp__github");
+		expect(section).not.toContain("GitHub MCP server");
+		expect(section).toContain("## linear");
+		expect(section).toContain("### `read`");
+		// The allowlist leaves the namespace's only tool out: no callable tool, so no heading, and no section at all
+		// without other tools.
+		const issues = tool("list_issues", "List issues.");
+		expect(codemodeSection([], [extension("github", [issues], GITHUB)], 3000, [])).toBeUndefined();
 	});
 
 	it("keeps the section identical before and after a namespace's (deferred) tools appear", () => {
 		const read = tool("read", "Read a file.");
-		const before = codemodeSection([read], [extension("coding", [read]), extension("github", [], GITHUB)], 3000);
+		const before = codemodeSection([read], [extension("coding", [read]), extension("github", [], GITHUB)], 3000, [
+			read,
+		]);
 		// The server connected: its tools are installed, deferred, and callable by scripts.
 		const issues = tool("list_issues", "List issues.", { deferred: true });
 		const extensions = [extension("coding", [read]), extension("github", [issues], GITHUB)];
-		// The section's caller passes the non-deferred callable tools (deferred ones are found with searchTools()).
-		const after = codemodeSection([read], extensions, 3000);
+		// The section declares the non-deferred callable tools; `callable` includes the deferred ones, so the namespace
+		// stays listed before and after they appear.
+		const after = codemodeSection([read], extensions, 3000, [read, issues]);
 		expect(after).toBe(before);
 	});
 
@@ -98,7 +145,7 @@ describe("code mode description and section", () => {
 		const github = Array.from({ length: 30 }, (_, index) => tool(`tool${index}`, "x".repeat(200)));
 		const read = tool("read", "Read a file.");
 		const extensions = [extension("coding", [read]), extension("github", github, GITHUB)];
-		const section = codemodeSection([read, ...github], extensions, 400)!;
+		const section = codemodeSection([read, ...github], extensions, 400, [read, ...github])!;
 		expect(section).toContain("### `read`");
 		expect(section).toContain("Some tools are not listed: find them with `searchTools()`.");
 		expect(section).toContain("## mcp__github\nGitHub MCP server");

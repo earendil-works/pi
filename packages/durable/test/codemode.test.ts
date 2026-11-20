@@ -1117,6 +1117,22 @@ describe("durable code mode output and tool search", () => {
 		chat.setup.registry.install(
 			defineExtension({ name: "mcp:linear", namespace: { name: "linear", description: "Linear: sign in first." } }),
 		);
+		// A namespace whose tools only the model may call: structurally unreachable from scripts, so not described.
+		chat.setup.registry.install(
+			defineExtension({
+				name: "mcp:model-only",
+				namespace: { name: "model-only", description: "Model-only tools." },
+				tools: [
+					defineTool({
+						name: "model_tool",
+						description: "Only the model may call this.",
+						parameters: Parameters,
+						callers: ["model"],
+						execute: async () => ({ output: [] }),
+					}),
+				],
+			}),
+		);
 		const { text } = await runScript(
 			`const found = await searchTools("issues");
 			const byInstructions = await searchTools("repository owner");
@@ -1129,6 +1145,7 @@ describe("durable code mode output and tool search", () => {
 				missing: (await describeTool("nope")) ?? null,
 				namespace: await describeNamespace("github"),
 				empty: await describeNamespace("linear"),
+				modelOnly: (await describeNamespace("model-only")) ?? null,
 				all: ALL_TOOLS.map((tool) => tool.name).includes("list_issues"),
 			};`,
 			chat,
@@ -1146,6 +1163,7 @@ describe("durable code mode output and tool search", () => {
 				tools: ["list_issues"],
 			},
 			empty: { name: "linear", description: "Linear: sign in first.", tools: [] },
+			modelOnly: null,
 			all: true,
 		});
 	});

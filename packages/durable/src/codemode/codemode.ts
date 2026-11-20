@@ -66,7 +66,7 @@ import {
 	codemodeDescription,
 	codemodeSection,
 	DEFAULT_CODEMODE_INLINE_BUDGET,
-	declaredNamespaces,
+	listableNamespaces,
 	namespacesOf,
 	sampleOf,
 } from "./describe.ts";
@@ -267,6 +267,8 @@ export function createCodemodeExtension(options: CodemodeToolOptions): Extension
 					),
 					input.agent.extensions,
 					options.inlineBudget ?? DEFAULT_CODEMODE_INLINE_BUDGET,
+					// Everything scripts can call, deferred included: it decides which namespaces are listed.
+					input.agent.callable.filter((tool) => !tool.name.startsWith(CODEMODE_INTERNAL_PREFIX)),
 				),
 			),
 		],
@@ -389,7 +391,7 @@ class CodemodeCall {
 			...(this.options.globals ?? []).map((global) => ({ name: global.name, spread: global.spread === true })),
 		];
 		const toolNamespaces = namespacesOf(agent.extensions);
-		const namespaces: Start["namespaces"] = declaredNamespaces(agent.extensions).map((namespace) => ({
+		const namespaces: Start["namespaces"] = listableNamespaces(agent.extensions, callable).map((namespace) => ({
 			name: namespace.name,
 			description: namespace.description,
 			...(namespace.instructions === undefined ? {} : { instructions: namespace.instructions }),

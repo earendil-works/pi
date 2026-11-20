@@ -10,4 +10,4 @@ export {
 	createCodemodeExtension,
 	createCodemodeTool,
 } from "./codemode.ts";
-export { DEFAULT_CODEMODE_INLINE_BUDGET, namespacesOf } from "./describe.ts";
+export { DEFAULT_CODEMODE_INLINE_BUDGET, listableNamespaces, namespacesOf } from "./describe.ts";

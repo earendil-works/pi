@@ -2,9 +2,11 @@
  * What the model reads about code mode, copied from the coding agent's code mode: the tool's fixed description (the
  * script environment and its globals), and the `codemode` prompt section, which lists the tools scripts can call as
  * TypeScript declarations, grouped by the namespaces their extensions declare and limited to a token budget. Tools
- * that do not fit, and deferred tools, are found with `searchTools()`. Every selected extension's namespace is listed
- * (with its description) whether or not it has tools yet, so the section stays the same when an extension's deferred
- * tools come and go (an MCP server connecting); the tool's description never changes.
+ * that do not fit, and deferred tools, are found with `searchTools()`. A namespace is listed when at least one of its
+ * tools is callable by this agent, or when its extensions declare no tools yet (an MCP server not connected: nothing
+ * is known, so it is kept for the section's stability as its deferred tools appear); a namespace whose declared tools
+ * are all unreachable for this agent is not listed, so a heading always describes tools a script can call. The tool's
+ * description never changes.
  */
 import type { CodemodeJsonSchema } from "@earendil-works/pi-codemode";
 import { renderToolSample, toCodemodeIdentifier } from "@earendil-works/pi-codemode/declarations";
@@ -60,18 +62,16 @@ export function sampleOf(tool: ToolRegistration): string {
 }
 
 /**
- * The namespace of each tool the extensions bring, by tool name: its extension's `namespace`. A tool several
- * extensions name belongs to the first one's (with none when the first declares none).
+ * The namespace of each tool the extensions bring, by tool name: the namespace of the extension whose registration
+ * wins, the last one naming it (Durable composes tools by name, so the last extension's tool is the one that runs).
+ * A name whose winner declares no namespace is ungrouped.
  */
 export function namespacesOf(extensions: readonly Extension[]): ReadonlyMap<string, ToolNamespace> {
-	const namespaces = new Map<string, ToolNamespace>();
-	const seen = new Set<string>();
+	const winners = new Map<string, ToolNamespace | undefined>();
 	for (const extension of extensions)
-		for (const tool of extension.tools ?? []) {
-			if (seen.has(tool.name)) continue;
-			seen.add(tool.name);
-			if (extension.namespace !== undefined) namespaces.set(tool.name, extension.namespace);
-		}
+		for (const tool of extension.tools ?? []) winners.set(tool.name, extension.namespace);
+	const namespaces = new Map<string, ToolNamespace>();
+	for (const [name, namespace] of winners) if (namespace !== undefined) namespaces.set(name, namespace);
 	return namespaces;
 }
 
@@ -81,6 +81,32 @@ export function declaredNamespaces(extensions: readonly Extension[]): readonly T
 	for (const { namespace } of extensions)
 		if (namespace !== undefined && !byName.has(namespace.name)) byName.set(namespace.name, namespace);
 	return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * The namespaces `codemodeSection` lists for an agent whose script-callable tools are `callable` (deferred ones
+ * included): a namespace with at least one callable tool, or one whose extensions declare no tools yet. Only static
+ * metadata is read, the extensions' tools and `callable`: whether a server is connected, or a tool is deferred or
+ * offered to the model, does not decide it.
+ */
+export function listableNamespaces(
+	extensions: readonly Extension[],
+	callable: readonly ToolRegistration[],
+): readonly ToolNamespace[] {
+	const callableNames = new Set(callable.map((tool) => tool.name));
+	const owners = namespacesOf(extensions);
+	const reachable = new Set<string>();
+	for (const name of callableNames) {
+		const namespace = owners.get(name);
+		if (namespace !== undefined) reachable.add(namespace.name);
+	}
+	const withTools = new Set<string>();
+	for (const extension of extensions)
+		if (extension.namespace !== undefined && (extension.tools?.length ?? 0) > 0)
+			withTools.add(extension.namespace.name);
+	return declaredNamespaces(extensions).filter(
+		(namespace) => reachable.has(namespace.name) || !withTools.has(namespace.name),
+	);
 }
 
 /** `### \`id\` (\`raw name\`)` followed by the tool's description and declaration. */
@@ -117,17 +143,19 @@ function selectCatalog(groups: readonly CatalogGroup[], budget: number): Set<str
 }
 
 /**
- * The `codemode` section: the tools scripts can call (ungrouped ones first), then every namespace the selected
+ * The `codemode` section: the tools scripts can call (ungrouped ones first), then every listable namespace the selected
  * `extensions` declare, by name, as `## <name>` and its description, each followed by its tools' declarations as far as
- * the budget allows. Headers carry no counts, so the text changes only with the declared tools. `undefined` without
- * callable tools and namespaces.
+ * the budget allows. `tools` are the non-deferred callable ones to declare; `callable` is everything scripts can call
+ * (deferred included), which decides which namespaces are listed. Headers carry no counts, so the text changes only
+ * with the declared tools. `undefined` without callable tools and listable namespaces.
  */
 export function codemodeSection(
 	tools: readonly ToolRegistration[],
 	extensions: readonly Extension[],
 	budget: number,
+	callable: readonly ToolRegistration[],
 ): string | undefined {
-	const namespaces = declaredNamespaces(extensions);
+	const namespaces = listableNamespaces(extensions, callable);
 	if (tools.length === 0 && namespaces.length === 0) return undefined;
 	const toolNamespaces = namespacesOf(extensions);
 	const ungrouped: CatalogGroup = { namespace: undefined, entries: [] };
@@ -136,7 +164,7 @@ export function codemodeSection(
 	);
 	for (const tool of tools) {
 		const namespace = toolNamespaces.get(tool.name);
-		const group = namespace === undefined ? ungrouped : groups.get(namespace.name)!;
+		const group = namespace === undefined ? ungrouped : (groups.get(namespace.name) ?? ungrouped);
 		const section = renderToolSection(tool);
 		group.entries.push({ name: tool.name, section, cost: Math.ceil(section.length / CHARS_PER_TOKEN) });
 	}
