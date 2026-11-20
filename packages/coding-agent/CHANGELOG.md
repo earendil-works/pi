@@ -50,6 +50,7 @@
 - Fixed moving the cursor in a search field with Left, Right, Home or End moving the highlight back to the first entry in `/login`, `/logout`, `/model`, `/scoped-models`, `/resume`, `/settings`, the per-model settings model picker and `pi config` ([#12245](https://github.com/earendil-works/pi/issues/12245))
 - Fixed llama.cpp decision classifiers ignoring the image input that llama.cpp reports, such as Clef with its `mmproj`; `models.classify()` now sends their images to `/v1/systemone` ([#12282](https://github.com/earendil-works/pi/issues/12282))
 - Fixed `kill -TSTP` from outside pi stopping it without restoring the terminal, which left mouse tracking and the Kitty keyboard protocol on at the shell prompt and turned mouse movement into garbage input. pi now suspends as with Ctrl+Z and redraws on `fg` ([#12283](https://github.com/earendil-works/pi/pull/12283) by [@haoqixu](https://github.com/haoqixu))
+- Fixed changing the thinking level on the `openai-codex` provider invalidating the prompt cache on GPT-6 models ([#12269](https://github.com/earendil-works/pi/issues/12269))
 
 ### Removed
 
