@@ -49,6 +49,11 @@ export type TestPluginOptions<P extends Principal = Principal> = {
 	readonly platform?: "node" | "browser";
 	/** Facets serving what the plugin uses (other plugins' contracts, core objects, registries it reads), loaded beside it. */
 	readonly stubs?: readonly PluginFacet<P>[];
+	/**
+	 * Stubs that need the test's host or its store (an app's registry of process values, as its production host serves
+	 * one), made once the host exists and loaded beside the others.
+	 */
+	readonly hostStubs?: (host: Host<P>, store: Store) => readonly PluginFacet<P>[];
 	/** The host's principal, as the kind's production host has one. */
 	readonly principal?: P;
 	/** The host's address, as the kind's production host has one. */
@@ -123,7 +128,11 @@ export async function testPlugin<P extends Principal = Principal>(
 		...(options.address === undefined ? {} : { address: options.address }),
 	});
 	try {
-		const facets = [...(options.stubs ?? []), { name: plugin.found.name, facet }];
+		const facets = [
+			...(options.stubs ?? []),
+			...(options.hostStubs?.(host, store) ?? []),
+			{ name: plugin.found.name, facet },
+		];
 		throwFailed(await host.load(facets, context));
 		const collected = await collect(host, facets, context);
 		return new Tested(host, store, plugin.found, errors, collected);

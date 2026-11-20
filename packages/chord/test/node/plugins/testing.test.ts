@@ -1,6 +1,7 @@
 // Tests of testing a plugin alone (slice 12 §6): the plugin built as production builds it against the app's API
-// modules, loaded on an in-memory host beside a stub serving what it uses; the registries it contributes to that nobody
-// serves collected; the contracts it waits for unserved listed; a principal for the host and for a root scope.
+// modules, loaded on an in-memory host beside a stub serving what it uses (or one made once the host exists); the
+// registries it contributes to that nobody serves collected; the contracts it waits for unserved listed; a principal
+// for the host and for a root scope.
 
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -73,6 +74,27 @@ describe("testPlugin", () => {
 		expect(() => t.contributions(chord.defineRegistry("acme.other", { version: 1 }))).toThrow(
 			"testPlugin: registry acme.other is not collected",
 		);
+		await t.close(context);
+	});
+
+	it("makes host stubs once the host exists: they get the test's host and store (p3's WorkerRuntime)", async () => {
+		const dir = await statsPlugin();
+		const seen: unknown[] = [];
+		const t = await testPlugin(
+			dir,
+			{
+				kind: "worker",
+				api: API,
+				modules: MODULES,
+				hostStubs: (host, store) => {
+					seen.push(host, store);
+					return [{ name: "@acme/notes", facet: notesStub }];
+				},
+			},
+			context,
+		);
+		expect(seen).toEqual([t.host, expect.anything()]);
+		expect((await t.host.get(Stats, { project: "p1" }, context)).words.value).toBe(42);
 		await t.close(context);
 	});
 

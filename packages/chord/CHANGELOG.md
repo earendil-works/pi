@@ -8,6 +8,10 @@
 - `PluginSource` (`installPlugin`, the app kit's `plugins.install`) is tagged: `{ kind: "git", git, ref }` or `{ kind: "npm", npm, version }`. Migration: add the `kind`.
 - `SeriesResult` (`ChordStore.commitSeries`) is tagged: `{ kind: "stored", stored }` or `{ kind: "refused", stored, refused }` (was `{ stored, refused? }`). Migration: read `refused` after checking `result.kind === "refused"`.
 
+### Added
+
+- `testPlugin` takes `hostStubs(host, store)`: stubs made once the test's host exists, for an app's registry of process values that hands out the host or its store (p3's `WorkerRuntime`).
+
 ## [1.6.0] - 2026-11-20
 
 ### Breaking Changes
