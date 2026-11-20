@@ -1809,7 +1809,10 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   instructions come from `describeNamespace()`. Without code mode, the `mcp` extension's `mcp_servers` section lists
   the conversation's servers with their summaries, as pi's does for `tool_search` servers. Deferred
   tools named by `createMcpToolName` (every tool of a colliding name gets the hash suffix, as in pi), results through
-  `toLlmContent` and `limitMcpContent`, `structuredOutput` only for tools with an output schema. Without code mode,
+  `toMcpModelContent` and `limitMcpContent` (for `tool_search` calls, binary resources and the full text saved in the
+  conversation's environment; resource links name no tool, since p2 has no `read_mcp_resource`),
+  every tool's `structuredOutput` the server's `CallToolResult` without `_meta` (`createMcpResultSchema`), so scripts
+  get it whole as in pi. Without code mode,
   `tool_search` is installed by the worker's registry (`durableRegistry`: once, while code mode is off and any extension
   has a deferred tool the model may call; MCP's and the terminal tool share it). Tests: `mcp.test.ts` (manager and views on a bare host with `test/fixtures/mcp-server.mjs` and
   an HTTP fixture; projects, where sessions work, and an environment through the debug pi-env daemon, skipped without

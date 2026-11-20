@@ -36,13 +36,14 @@ import { CODEMODE_TOOL_NAME } from "@earendil-works/pi-durable/codemode";
 import { TOOL_SEARCH_TOOL_NAME } from "@earendil-works/pi-durable/tool-search";
 import {
 	type CallToolResult,
+	createMcpResultSchema,
 	createMcpToolName,
 	limitMcpContent,
 	type McpOutputSaver,
 	mcpNamespace,
 	mcpServerSummary,
 	normalizeMcpInputSchema,
-	toLlmContent,
+	toMcpModelContent,
 } from "@earendil-works/pi-mcp";
 import { type Context, type Location, locationText, sameLocation } from "@p2/app/v1";
 import type { P2Tool } from "@p2/app/v1/worker";
@@ -390,8 +391,10 @@ function serversSection(
  * One variant as a Durable tool (not replay-safe: an interrupted call is not repeated). Deferred either way, so the
  * `codemode` section leaves it out; for `codemode` only other tools (scripts) may call it, so `tool_search` never
  * offers it to the model either. A call reaches the instance where the calling conversation works, and only when that
- * instance describes the tool as this variant does. Scripts get the whole result (code mode limits what the script
- * shows the model); the model's own calls (`tool_search`) get pi's output limit, the full text saved where the
+ * instance describes the tool as this variant does. As in pi, every variant declares the `CallToolResult` as its
+ * structured output, so scripts get the server's whole result (`content`, `structuredContent`, `isError`, without
+ * `_meta`), never cut, also for error results; code mode limits what the script shows the model. The model's own calls
+ * (`tool_search`) get pi's model-facing content and output limit, binary resources and the full text saved where the
  * conversation works.
  */
 function toolRegistration(
@@ -407,7 +410,7 @@ function toolRegistration(
 		parameters: normalizeMcpInputSchema(tool.inputSchema),
 		deferred: true,
 		...(offer.reach === "codemode" ? { callers: ["tools" as const] } : {}),
-		...(tool.outputSchema === undefined ? {} : { structuredOutputSchema: tool.outputSchema }),
+		structuredOutputSchema: createMcpResultSchema(tool.outputSchema),
 		async execute(args, api, context) {
 			const location = await locate(api.conversationId, api, context);
 			const there = instanceAt(offer, location, server);
@@ -423,30 +426,27 @@ function toolRegistration(
 				{ location, server, tool: tool.name, args: args as Record<string, unknown> },
 				context,
 			);
-			const content = toLlmContent(result);
+			// Scripts read the result itself, so files the model could read are written only for the model's own calls.
+			const saveOutput = offer.reach === "tool_search" ? outputSaver(api, context) : undefined;
+			const content = await toMcpModelContent(server, result, saveOutput === undefined ? {} : { saveOutput });
 			if (result.isError && !content.some((block) => block.type === "text" && block.text.trim() !== ""))
 				content.push({ type: "text", text: `MCP tool ${server}/${tool.name} returned an error` });
-			const limited =
-				offer.reach === "codemode" ? { content } : await limitMcpContent(content, outputSaver(api, context));
-			// Structured output only for a tool that declares its schema (Durable checks it), error results too. The
-			// server's JSON arrived as JSON; the type says `unknown` only because MCP allows any value.
-			const structured =
-				tool.outputSchema !== undefined && result.structuredContent !== undefined
-					? { structuredOutput: result.structuredContent as JsonValue }
-					: {};
+			const limited = saveOutput === undefined ? { content } : await limitMcpContent(content, saveOutput);
+			const { _meta: _dropped, ...whole } = result;
 			return {
 				output: limited.content,
 				isError: result.isError === true,
 				details: { server, tool: tool.name },
-				...structured,
+				// The result arrived as JSON; its types are interfaces, without the index signature `JsonValue` asks for.
+				structuredOutput: whole as unknown as JsonValue,
 			};
 		},
 	};
 }
 
 /**
- * Saves a cut result's full text in a new temp directory of the calling conversation's environment, where the model's
- * `read` tool reads it (a subagent's own location may be another machine than the session's).
+ * Saves a cut result's full text, or a binary resource, in a new temp directory of the calling conversation's
+ * environment, where the model's `read` tool reads it (a subagent's own location may be another machine than the session's).
  */
 function outputSaver(api: ToolExecutionApi, context: Context): McpOutputSaver {
 	return async (data, extension) => {
