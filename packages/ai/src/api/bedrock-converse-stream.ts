@@ -23,6 +23,7 @@ import {
 	type ToolResultContentBlock,
 	ToolResultStatus,
 } from "@aws-sdk/client-bedrock-runtime";
+import { defaultProvider } from "@aws-sdk/credential-provider-node";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import type { BuildMiddleware, DeserializeMiddleware, DocumentType, HttpResponse, MetadataBearer } from "@smithy/types";
 import { HttpProxyAgent } from "http-proxy-agent";
@@ -242,6 +243,15 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 					httpAgent: new HttpProxyAgent(proxyUrl),
 					httpsAgent: new HttpsProxyAgent(proxyUrl) as unknown as HttpsAgent,
 				});
+				// The default credential chain creates its own SSO clients, which do not
+				// inherit the Bedrock client's request handler. Pass it on so SSO
+				// credential and token requests also go through the proxy.
+				if (!config.credentials && !useBearerToken) {
+					config.credentials = defaultProvider({
+						profile: config.profile,
+						clientConfig: { requestHandler: config.requestHandler },
+					});
+				}
 			} else if (getProviderEnvValue("AWS_BEDROCK_FORCE_HTTP1", options.env) === "1") {
 				// Some custom endpoints require HTTP/1.1 instead of HTTP/2
 				config.requestHandler = new NodeHttpHandler();

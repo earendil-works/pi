@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const bedrockMock = vi.hoisted(() => ({
 	constructorCalls: [] as Array<Record<string, unknown>>,
@@ -64,6 +64,13 @@ async function captureClientConfig(
 }
 
 describe("bedrock credential priority", () => {
+	beforeEach(() => {
+		// A proxy makes pi supply its own credential provider (#12353).
+		for (const name of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]) {
+			vi.stubEnv(name, undefined);
+		}
+	});
+
 	afterEach(() => {
 		vi.unstubAllEnvs();
 	});
