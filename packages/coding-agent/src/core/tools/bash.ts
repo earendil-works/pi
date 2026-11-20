@@ -8,6 +8,7 @@ import {
 	getShellConfig,
 	getShellEnv,
 	killProcessTree,
+	SHELL_COMMAND_ENV_VAR,
 	type ShellConfig,
 	trackDetachedChildPid,
 	untrackDetachedChildPid,
@@ -121,14 +122,20 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 				throw new Error(`Working directory does not exist: ${cwd}\nCannot execute ${shellName} commands.`);
 			}
 
-			const commandFromStdin = shellConfig.commandTransport === "stdin";
-			const child = spawn(shellConfig.shell, commandFromStdin ? shellConfig.args : [...shellConfig.args, command], {
-				cwd,
-				detached: process.platform !== "win32",
-				env: env ?? getShellEnv(),
-				stdio: [commandFromStdin ? "pipe" : "ignore", "pipe", "pipe"],
-				windowsHide: true,
-			});
+			const transport = shellConfig.commandTransport ?? "argv";
+			const commandFromStdin = transport === "stdin";
+			const shellEnv = env ?? getShellEnv();
+			const child = spawn(
+				shellConfig.shell,
+				transport === "argv" ? [...shellConfig.args, command] : shellConfig.args,
+				{
+					cwd,
+					detached: process.platform !== "win32",
+					env: transport === "env" ? { ...shellEnv, [SHELL_COMMAND_ENV_VAR]: command } : shellEnv,
+					stdio: [commandFromStdin ? "pipe" : "ignore", "pipe", "pipe"],
+					windowsHide: true,
+				},
+			);
 			if (commandFromStdin) {
 				child.stdin?.on("error", () => {});
 				child.stdin?.end(command);

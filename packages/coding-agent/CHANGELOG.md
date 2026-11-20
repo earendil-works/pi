@@ -12,6 +12,7 @@
 - Fixed `ctx.ui.pasteToEditor()` and `ctx.ui.setEditorText()` not repainting the editor when called outside terminal input handling, such as after an `await` in a command handler ([#12295](https://github.com/earendil-works/pi/issues/12295))
 - Fixed the bash tool returning `(no output)` when the output ended with a line over 50KB followed by an empty line; it now shows the end of that line ([#12350](https://github.com/earendil-works/pi/issues/12350))
 - Fixed `/tree` navigation adding the branch's prompts to Up-arrow history again on every navigation; prompts already in history now move to the most recent position instead of repeating ([#12279](https://github.com/earendil-works/pi/issues/12279))
+- Fixed bash commands running only partly, with exit code 0, under Git Bash and other Cygwin-based `bash.exe` on Windows when longer than about 8 KB or made of newline-separated words without spaces; commands now reach bash in the `PI_BASH_COMMAND` environment variable. Extensions that spawn the shell from `getShellConfig()` must handle `commandTransport: "env"` by setting `SHELL_COMMAND_ENV_VAR` instead of appending the command to `args` ([#12340](https://github.com/earendil-works/pi/issues/12340))
 
 ## [1.6.0] - 2026-11-20
 
