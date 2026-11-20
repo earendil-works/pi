@@ -1,3 +1,4 @@
+import { getEventListeners } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage } from "../src/providers/faux.ts";
 import { isRetryableAssistantError, type RetryPolicy, retryAssistantCall, retryDelayMs } from "../src/utils/retry.ts";
@@ -285,19 +286,22 @@ describe("retryAssistantCall", () => {
 		expect(onRetryScheduled.mock.calls.map((call) => call[2])).toEqual([10, 15, 15, 15]);
 	});
 
-	it("stops retrying once a call succeeds", async () => {
+	// Regression for #10506.
+	it("stops retrying once a call succeeds and removes backoff abort listeners", async () => {
+		const controller = new AbortController();
 		let n = 0;
 		const produce = vi.fn(async () => {
 			n++;
-			return n < 3
+			return n < 4
 				? fauxAssistantMessage("", { stopReason: "error", errorMessage: "terminated" })
 				: fauxAssistantMessage("recovered");
 		});
 		const onRetryFinished = vi.fn();
-		const res = await retryAssistantCall(produce, enabled, undefined, { onRetryFinished });
+		const res = await retryAssistantCall(produce, enabled, controller.signal, { onRetryFinished });
 		expect(res.content).toEqual([{ type: "text", text: "recovered" }]);
-		expect(produce).toHaveBeenCalledTimes(3);
-		expect(onRetryFinished).toHaveBeenCalledWith(true, 2);
+		expect(produce).toHaveBeenCalledTimes(4);
+		expect(onRetryFinished).toHaveBeenCalledWith(true, 3);
+		expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
 	});
 
 	it("reports an aborted retried call as unsuccessful", async () => {

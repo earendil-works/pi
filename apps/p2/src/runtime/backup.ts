@@ -3,8 +3,9 @@
 // session's worker the session's. Only the server holds the remote; workers upload through it (`BackupRemote`).
 //
 // A store keeps an outbox only while backup is configured: the server and each worker open their store with
-// `outbox: backupConfigured(dataDir)`. Offline tools open stores without the option, keeping what is stored (an
-// outbox turned off drops its commits, which would lose what was not uploaded yet).
+// `outbox: backupConfigured(dataDir)`. Offline tools open stores without the option, keeping what is stored. An outbox
+// turned off drops its commits; turned on again, it starts at the store's head, so the next upload is a full copy of
+// the store after what the backup holds (Chord's archive slot), and the backup goes on from there.
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { PluginError, type Store } from "@earendil-works/chord";
