@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { describe, it } from "node:test";
+import { describe, it, type TestContext } from "node:test";
 import {
 	type Component,
 	parseTerminalColorSchemeReport,
@@ -90,8 +90,6 @@ class InputRecorder implements Component {
 
 	invalidate(): void {}
 }
-
-const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 describe("parseTerminalColorSchemeReport", () => {
 	it("parses color scheme reports", () => {
@@ -201,12 +199,13 @@ describe("TUI.queryTerminalColors", () => {
 		}
 	});
 
-	it("reports late replies after a timeout and consumes them until DA1", async () => {
+	it("reports late replies after a timeout and consumes them until DA1", async (t) => {
+		t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
 		const { terminal, tui, component } = setup();
 		try {
 			const late: TerminalColors[] = [];
 			const query = tui.queryTerminalColors({ timeoutMs: 1, onLateReply: (colors) => late.push(colors) });
-			await wait(5);
+			t.mock.timers.tick(5);
 			assert.strictEqual((await query).background, undefined);
 
 			terminal.sendInput("\x1b]11;#ffffff\x07");
@@ -214,10 +213,104 @@ describe("TUI.queryTerminalColors", () => {
 			assert.deepStrictEqual(late, [{ foreground: undefined, background: WHITE, palette: undefined }]);
 			assert.deepStrictEqual(component.inputs, []);
 
-			// With no query pending, color replies are ordinary input again.
+			// Once the reply window after the query has passed, color replies are ordinary input again.
+			t.mock.timers.tick(1000);
 			terminal.sendInput("\x1b]11;#ffffff\x07");
 			assert.deepStrictEqual(component.inputs, ["\x1b]11;#ffffff\x07"]);
 		} finally {
+			tui.stop();
+		}
+	});
+});
+
+// Color replies that arrive after the query's DA1 reply, as ConPTY answers DA1 itself (#10256).
+describe("TUI.queryTerminalColors replies after DA1", () => {
+	function setupWithBuffer(t: TestContext) {
+		t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+		const context = setup();
+		const buffer = new StdinBuffer();
+		buffer.on("data", (data) => context.terminal.sendInput(data));
+		const query = context.tui.queryTerminalColors({ timeoutMs: 100 });
+		return { ...context, buffer, query };
+	}
+
+	it("drops mintty's header-less OSC 4 replies without typing them or opening the editor", async (t) => {
+		const { tui, component, buffer, query } = setupWithBuffer(t);
+		try {
+			// Captured from mintty (Git Bash on Windows): DA1 first, then OSC 4 replies without `ESC ] 4`.
+			buffer.process(`\x1b[?1;0c;0;rgb:0000/0000/0000\x07;1;rgb:d4d4/2c2c/3a3a\x07`);
+			assert.deepStrictEqual(await query, { foreground: undefined, background: undefined, palette: undefined });
+			// The same replies, split across reads.
+			buffer.process(";2");
+			t.mock.timers.tick(20);
+			buffer.process(";rgb:1c1c/a8a8/0000");
+			t.mock.timers.tick(20);
+			buffer.process("\x07");
+			assert.deepStrictEqual(component.inputs, []);
+
+			// A real Ctrl+G still reaches the editor.
+			buffer.process("\x07");
+			assert.deepStrictEqual(component.inputs, ["\x07"]);
+		} finally {
+			buffer.destroy();
+			tui.stop();
+		}
+	});
+
+	it("drops ST-terminated reply tails, also when glued to another reply", async (t) => {
+		const { tui, component, buffer, query } = setupWithBuffer(t);
+		try {
+			// Captured from WezTerm 20240203 on Windows: only the tail of a palette reply arrives.
+			buffer.process(`${DA1}a8\x1b\\`);
+			await query;
+			buffer.process("\x1b[6;21;10t79\x1b\\");
+			assert.deepStrictEqual(component.inputs, []);
+		} finally {
+			buffer.destroy();
+			tui.stop();
+		}
+	});
+
+	it("consumes complete color replies that arrive after DA1", async (t) => {
+		const { tui, component, buffer, query } = setupWithBuffer(t);
+		try {
+			// Captured from tmux 3.6 under Windows Terminal: DA1 first, then the color replies.
+			buffer.process("\x1b[?1;2;4c");
+			await query;
+			buffer.process("\x1b]10;rgb:cccc/cccc/cccc\x07\x1b]11;rgb:0c0c/0c0c/0c0c\x07");
+			t.mock.timers.tick(500);
+			buffer.process("\x1b]4;1;rgb:c5c5/0f0f/1f1f\x07");
+			assert.deepStrictEqual(component.inputs, []);
+		} finally {
+			buffer.destroy();
+			tui.stop();
+		}
+	});
+
+	it("delivers text typed in the reply window in order", async (t) => {
+		const { tui, component, buffer, query } = setupWithBuffer(t);
+		try {
+			buffer.process(DA1);
+			await query;
+			// Text that could be a fragment waits for the next key.
+			buffer.process("add");
+			assert.deepStrictEqual(component.inputs, []);
+			buffer.process("s");
+			assert.deepStrictEqual(component.inputs, ["a", "d", "d", "s"]);
+			// Or until no terminator follows in time.
+			buffer.process("f");
+			buffer.process("\x1b[A");
+			buffer.process("0");
+			assert.deepStrictEqual(component.inputs, ["a", "d", "d", "s", "f", "\x1b[A"]);
+			t.mock.timers.tick(300);
+			assert.deepStrictEqual(component.inputs, ["a", "d", "d", "s", "f", "\x1b[A", "0"]);
+
+			// After the window, nothing is held.
+			t.mock.timers.tick(1000);
+			buffer.process("a");
+			assert.deepStrictEqual(component.inputs.at(-1), "a");
+		} finally {
+			buffer.destroy();
 			tui.stop();
 		}
 	});
