@@ -1,6 +1,7 @@
 import type OpenAI from "openai";
 import type {
 	Tool as OpenAITool,
+	Response,
 	ResponseConfigurationUpdateItemParam,
 	ResponseCreateParamsStreaming,
 	ResponseInput,
@@ -31,6 +32,7 @@ import type {
 	TranscriptContext,
 	Usage,
 } from "../types.ts";
+import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
@@ -622,6 +624,7 @@ export async function processResponsesStream<TApi extends Api>(
 	): void => {
 		sawTerminalResponseEvent = true;
 		backfillReasoningSignatures(response.output ?? []);
+		appendReasoningRemovals(output, response.input_transformations);
 		if (response?.id) {
 			output.responseId = response.id;
 		}
@@ -821,6 +824,35 @@ export async function processResponsesStream<TApi extends Api>(
 			);
 		}
 	}
+}
+
+/**
+ * Record the replayed reasoning items the API withheld from the model, with the reason for each.
+ * From GPT-6.2 on, OpenAI removes reasoning that follows an edit of earlier input (`prefix_mismatch`)
+ * and reasoning created under another organization, end user, or model. A removal is reported again
+ * on every later request that replays the item.
+ *
+ * `turn_boundary` removals are left out: models that use only current-turn reasoning (all models
+ * before GPT-5.6) report every earlier turn's reasoning item on every request. That is their normal
+ * behavior, and storing it would grow the session quadratically with the conversation.
+ */
+function appendReasoningRemovals(output: AssistantMessage, transformations: Response["input_transformations"]): void {
+	// Wire input: older servers and proxies omit the field, and Codex tolerates malformed entries too.
+	if (!Array.isArray(transformations)) return;
+	const removals = transformations.filter(
+		(transformation) =>
+			transformation?.type === "reasoning" &&
+			transformation.action === "removed" &&
+			transformation.reason !== "turn_boundary",
+	);
+	if (removals.length === 0) return;
+	appendAssistantMessageDiagnostic(output, {
+		type: "openai_input_transformations",
+		timestamp: Date.now(),
+		details: {
+			transformations: removals.map(({ type, id, action, reason }) => ({ type, id, action, reason })),
+		},
+	});
 }
 
 type CustomInput = Extract<ToolCallInput, { kind: "custom" }>;
