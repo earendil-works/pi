@@ -41,6 +41,8 @@ export function lazyOAuth(input: {
 	name: string;
 	isSubscription?: boolean;
 	loginLabel?: string;
+	/** The loaded flow implements `refreshModelAccess`. */
+	refreshModelAccess?: boolean;
 	load: () => Promise<OAuthAuth>;
 }): OAuthAuth {
 	let promise: Promise<OAuthAuth> | undefined;
@@ -54,6 +56,9 @@ export function lazyOAuth(input: {
 		loginLabel: input.loginLabel,
 		login: async (interaction, options) => (await loaded()).login(interaction, options),
 		refresh: async (credential, signal) => (await loaded()).refresh(credential, signal),
+		...(input.refreshModelAccess && {
+			refreshModelAccess: async (credential, signal) => (await loaded()).refreshModelAccess!(credential, signal),
+		}),
 		toAuth: async (credential) => (await loaded()).toAuth(credential),
 	};
 }

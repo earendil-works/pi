@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
-import type { ApiKeyAuth, CredentialStore, OAuthAuth, ProviderAuth } from "../src/auth/types.ts";
+import type { ApiKeyAuth, CredentialStore, OAuthAuth, OAuthCredential, ProviderAuth } from "../src/auth/types.ts";
 import { calculateCost, createModels, createProvider, hasApi, type Provider } from "../src/models.ts";
 import { InMemoryModelsStore, type ModelsStore, type ModelsStoreEntry } from "../src/models-store.ts";
 import type { Api, AssistantMessage, Context, Model, SimpleStreamOptions, StreamOptions, Usage } from "../src/types.ts";
@@ -546,6 +546,49 @@ describe("Models runtime", () => {
 		expect(networkCredentials).toEqual([undefined]);
 		expect(unconfiguredRefreshes).toBe(0);
 		expect(await credentials.read("catalog-oauth")).toMatchObject({ access: "expired", refresh: "revoked" });
+	});
+
+	describe("OAuth model access (#11006)", () => {
+		async function refreshWith(expires: number, oauth: Partial<OAuthAuth>) {
+			const credentials = new InMemoryCredentialStore();
+			await credentials.modify("p", async () => ({
+				type: "oauth",
+				access: "a",
+				refresh: "r",
+				expires,
+				availableModelIds: ["old"],
+			}));
+			const models = createModels({ credentials });
+			const provider = testProvider({ id: "p", auth: { oauth: testOAuth(oauth) }, refreshModels: async () => {} });
+			models.setProvider({ ...provider, refreshModelsAuth: "configured" });
+			const { errors } = await models.refresh();
+			return { error: errors.get("p"), stored: await credentials.read("p") };
+		}
+		const withNew = async (credential: OAuthCredential) => ({ ...credential, availableModelIds: ["new"] });
+
+		it("updates model access with a valid token without exchanging it", async () => {
+			const refresh = vi.fn(withNew);
+			const { stored } = await refreshWith(Date.now() + 60_000, { refresh, refreshModelAccess: withNew });
+			expect(refresh).not.toHaveBeenCalled();
+			expect(stored).toMatchObject({ access: "a", availableModelIds: ["new"] });
+		});
+
+		it("refreshes an expired token, which updates its model access", async () => {
+			const refreshModelAccess = vi.fn(withNew);
+			const refresh = async (credential: OAuthCredential) => ({ ...(await withNew(credential)), access: "fresh" });
+			const { stored } = await refreshWith(0, { refresh, refreshModelAccess });
+			expect(refreshModelAccess).not.toHaveBeenCalled();
+			expect(stored).toMatchObject({ access: "fresh", availableModelIds: ["new"] });
+		});
+
+		it("reports a failed update as an OAuth error and keeps the credential", async () => {
+			const refreshModelAccess = async (): Promise<never> => {
+				throw new Error("401");
+			};
+			const { error, stored } = await refreshWith(Date.now() + 60_000, { refreshModelAccess });
+			expect(error).toMatchObject({ code: "oauth" });
+			expect(stored).toMatchObject({ availableModelIds: ["old"] });
+		});
 	});
 
 	it("persists an OAuth refresh that started before the model refresh was cancelled", async () => {
