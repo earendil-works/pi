@@ -98,6 +98,8 @@ again, then `Review` again). After the team's sign-off and Colin's and Jakob's t
    - Whoever pushed posts a short video (UI) or a 5-minute explainer (non-UI work) on the Linear issue and in
      #packages on Discord. The explainer shows the real code and the files touched; it assumes no access to the
      source.
+   - Whoever implemented it must be able to answer questions about both its functionality and its code.
+   - Armin and Mario review the code. What they find goes back to step 4.
    - People with the devices test the UI by hand: Safari on iOS, Firefox on Android, Chrome on Android. They note on
      the issue what they used and found.
    - The whole team audits and signs off.
@@ -127,4 +129,5 @@ You work in the shared checkout, on main, with other sessions committing beside 
 - [ ] `cd apps/p3 && npm run check` clean; `npm test` passes, serially and with four runs at once.
 - [ ] The tests and numbers of `testing.md` and `performance.md`, reported in the issue.
 - [ ] Two review rounds by Opus, Fable, Sol and Astra, each primed with the guides; reproductions are tests.
-- [ ] Pushed by explicit paths; video or explainer posted; devices checked; team sign-off.
+- [ ] Pushed by explicit paths; video or explainer posted; questions on functionality and code answered; code
+      reviewed by Armin and Mario; devices checked; team sign-off.
