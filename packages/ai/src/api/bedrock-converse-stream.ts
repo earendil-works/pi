@@ -247,6 +247,8 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				// The default credential chain builds its own SSO and SSO OIDC clients, which do
 				// not inherit the Bedrock client's request handler (#12353). The SDK uses this
 				// chain only when `credentials` is unset, so explicit keys keep their precedence.
+				// Those are static (env keys, skip-auth dummies) and make no requests, so they
+				// need no proxy.
 				config.credentialDefaultProvider = (init: DefaultProviderInit) =>
 					defaultProvider({ ...init, clientConfig: { ...init.clientConfig, requestHandler } });
 			} else if (getProviderEnvValue("AWS_BEDROCK_FORCE_HTTP1", options.env) === "1") {
