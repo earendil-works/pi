@@ -160,6 +160,8 @@ describe("requiresToolCallId", () => {
 	it.each([
 		[false, "gemini-2.5-flash"],
 		[true, "gemini-3.6-flash"],
+		[true, "randomprefix-gemini-4-argon"], // #12321
+		[false, "vendor-gemini-2.5-flash"],
 		[true, "claude-sonnet-4-5"],
 		[true, "gpt-oss-120b"],
 	] as const)("returns %s for %s", (expected, modelId) => {

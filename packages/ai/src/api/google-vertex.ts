@@ -487,7 +487,7 @@ function buildParams(
 		generationConfig.maxOutputTokens = options.maxTokens;
 	}
 
-	const supportsStrictMode = supportsGoogleStrictToolSampling(model.id);
+	const supportsStrictMode = supportsGoogleStrictToolSampling(model);
 	const functionCallingMode =
 		currentTools.length > 0
 			? resolveGoogleFunctionCallingMode(currentTools, options.toolChoice, supportsStrictMode)
