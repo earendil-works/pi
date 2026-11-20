@@ -587,9 +587,9 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 			hostFailures.set(plugin, [...(hostFailures.get(plugin) ?? []), text]);
 		for (const step of rebuilt.result.steps)
 			for (const each of step.hosts) {
-				if ("report" in each)
+				if (each.kind === "reloaded")
 					for (const { plugin, error } of each.report.failed) fail(plugin, `${each.host}: ${errorText(error)}`);
-				else if ("error" in each)
+				else if (each.kind === "failed")
 					for (const plugin of rebuilt.changed) fail(plugin, `${each.host}: ${errorText(each.error)}`);
 			}
 		return [

@@ -70,7 +70,7 @@ function itemSource(dir: string, label: string): string {
 /** The report of an in-process step's one host. */
 function reportOf(hosts: readonly RolloutHost[]): ReloadReport {
 	const [entry] = hosts;
-	if (entry === undefined || !("report" in entry)) throw new Error("no report");
+	if (entry === undefined || entry.kind !== "reloaded") throw new Error("no report");
 	return entry.report;
 }
 
@@ -264,7 +264,7 @@ describe("rollout", () => {
 		reload: async () => {
 			order.push(name);
 			if (outcome.error !== undefined) throw outcome.error;
-			return { hosts: outcome.hosts ?? [{ host: name, report: outcome.report! }] };
+			return { hosts: outcome.hosts ?? [{ kind: "reloaded", host: name, report: outcome.report! }] };
 		},
 	});
 	const report = (failed: readonly string[]): ReloadReport => ({
@@ -308,7 +308,7 @@ describe("rollout", () => {
 		await plugins.build([], context);
 		await writeFile(join(root, "a", "worker.ts"), "// a\n");
 		await vi.waitFor(() => expect(plugins.state.value).toMatchObject({ dirty: ["@test/a"] }), { timeout: 5_000 });
-		const stopped: RolloutHost[] = [{ host: "session|S1", stopped: true }];
+		const stopped: RolloutHost[] = [{ kind: "stopped", host: "session|S1" }];
 		await plugins.rollout(
 			[step("workers", [], { hosts: stopped })],
 			await plugins.build(["@test/a"], context),
@@ -318,8 +318,8 @@ describe("rollout", () => {
 		await writeFile(join(root, "a", "worker.ts"), "// a again\n");
 		await vi.waitFor(() => expect(plugins.state.value).toMatchObject({ dirty: ["@test/a"] }), { timeout: 5_000 });
 		const crashed: RolloutHost[] = [
-			{ host: "session|S1", report: report([]) },
-			{ host: "session|S2", error: new Error("crashed") },
+			{ kind: "reloaded", host: "session|S1", report: report([]) },
+			{ kind: "failed", host: "session|S2", error: new Error("crashed") },
 		];
 		const result = await plugins.rollout(
 			[step("workers", [], { hosts: crashed })],
