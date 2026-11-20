@@ -10,6 +10,14 @@
 	font-family: var(--sans);
 }
 
+/*
+ * A link's underline where Elanor puts it (the font's underline position). p2's base rule for links offsets underlines
+ * by 3px, which on top of that left the line at the bottom of the line box, against the next line's text.
+ */
+.elanor-markdown a {
+	text-underline-offset: auto;
+}
+
 /* Code indents with tabs as p2's other code does: three columns, not the browser's eight. */
 .elanor-markdown pre {
 	tab-size: 3;
