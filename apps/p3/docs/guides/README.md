@@ -4,7 +4,8 @@ Pi Roam (p3) is split into packages. Each package has an owner, and each owner b
 guides are for that work. They are written for the agent first and for people second.
 
 A package is one plugin or a few plugins of `apps/p3/plugins/` (the parts in `../overview.md`, "Plugins"), or a part
-of one. Base code (`apps/p3/src/`) is not a package: it changes only through its owner (`process.md`, "Who decides").
+of one. Chord, Durable, p3's shared base code and its test harnesses are not packages: they belong to Mario, and
+agents never change them (`process.md`, "Code you never change").
 
 ## Read in this order
 

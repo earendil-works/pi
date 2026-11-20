@@ -3,15 +3,34 @@
 How a package of Pi Roam (p3) goes from "what is it" to the nightly. From the team's process board (onsite, Mario's
 team), adapted from `../workflow.md` for a team where each owner and their agent builds one package.
 
+## Code you never change
+
+These belong to Mario (`../decisions.md`, "Packages: owners, audits, sign-off and browser testing"). **Agents never
+change them:**
+
+- **Chord and Durable:** `packages/chord/`, `packages/durable/`.
+- **p3's shared base code:** `apps/p3/src/kit/`, `apps/p3/src/api/`, `apps/p3/src/bootstrap/`,
+  `apps/p3/src/install.ts`.
+- **p3's shared test harnesses:** `apps/p3/test/topology.ts`, `apps/p3/test/launched.ts`, `apps/p3/test/commands.ts`.
+
+When your package needs a change there, **stop** work on what depends on it, and write it up:
+
+1. **The problem:** what your package cannot do without the change.
+2. **A concrete example:** the call, the case or the trace that shows it.
+3. **The change it needs:** the smallest one, in which file, and who else it affects.
+
+Then tell your user (the package owner) to take it to Mario. Do not work around it in your plugin, and do not make
+the change yourself, not even in a test copy you commit.
+
 ## Who decides
 
 | Who | Does |
 | --- | --- |
-| Mario | owns p3. Decides what crosses packages: base code (`apps/p3/src/`), the API (`@earendil-works/p3/v1`), names, the order of work, and everything in `../decisions.md` before the split |
+| Mario | owns p3, Chord and Durable, and p3's shared base and test code (above). Decides what crosses packages: base code, the API (`@earendil-works/p3/v1`), names, the order of work, and everything in `../decisions.md` before the split |
 | the package owner (a person) | owns one package. Decides inside it, records each decision, signs the package off with the team |
 | the owner's agent | the builder: writes the brief, builds, tests, measures, writes the explainer. Never decides; asks its owner |
 | reviewers | agents on other models than the builder's. They read the code against the brief |
-| the full team | signs off every package |
+| the full team | audits and signs off every package |
 | Colin and Jakob | test a signed-off package before it goes into the nightly |
 
 - **A decision inside the package** (a table's columns, a contract's shape, which p2 feature to drop) is the package
@@ -79,31 +98,30 @@ Docs, briefs and decisions are committed without review (`../workflow.md`).
   the API, the kit, the process entries); a package does not grow it (`../overview.md`, Goals).
 - **Follow the guides:** `building.md` for the shape and the rules, Chord v2 code style (root `AGENTS.md`) for every
   file.
-- **No changes to Durable or Chord** (`packages/durable/`, `packages/chord/`). A package that needs one writes it up
-  (problem, example, the smallest change, who else it affects) and sends it to their owner. **Open:** who owns Chord
-  and Durable for the team. p3 needed Chord changes before the split (`memberNames` for `forward`; the close function
-  `links.opened(request, principal, close)` hands a sign-in; Chord's worker base minified). Until Mario decides, such
-  a change goes to Mario.
+- **Never change Chord, Durable, or p3's shared base and test code** ("Code you never change", above). When you need
+  a change there, stop, write it up (the problem, a concrete example, the change it needs) and tell your user to take
+  it to Mario. p3 has needed such changes before (Chord's `memberNames` for `forward`; the close function
+  `links.opened(request, principal, close)` hands a sign-in; Chord's worker base minified): each went through Mario.
 - **A plugin that needs a change in another plugin** talks to that plugin's owner. Never edit another package's
   files; agree on the contract change, its owner makes it (a version bump with `accepts` for the old version,
   `plugin-authoring.md`, "Contracts and versions").
-- **Base code a package needs** (a new API export, a kit change, a new facet kind): the same, to Mario.
+- **Base code a package needs** (a new API export, a kit change, a new facet kind, a topology that loads your
+  plugin): the same write-up, to Mario.
 - **Tests and numbers:** as `testing.md` and `performance.md` say, before you report.
 
 ### 5. Review
 
-The package is reviewed by agents on other models than the builder's (`../workflow.md`, steps 4 to 6): one for fit
+Before the push, the builder has the package reviewed, as its own quality step, by agents on other models than the
+builder's (`../workflow.md`, steps 4 to 6): one for fit
 with Chord's design and code, one adversarial (races, failures, cost), one for simplicity. Not overzealous: what
 matters, not esoteric cases. Findings are fixed; a finding that needs a decision goes to the owner first. Two rounds.
 Every reproduction a reviewer writes becomes a regression test.
 
-### 6. Push to main, then security audits
+### 6. Push to main; the whole team audits
 
-Push to main in the shared checkout (rules below). Then the package gets its security audit.
-
-**Open:** the board says "push to main, then security audits"; `../workflow.md` (step 8) and `../decisions.md`
-("Code is committed only after the owner reviewed it") say code is committed only after the owner's review. Until
-Mario decides which rule packages follow: code is pushed only after the package owner reviewed it; docs any time.
+Push to main in the shared checkout (rules below), once the reviews' findings are fixed. Then **the whole team
+audits** the package: whoever pushed it posts a short video or explainer (step 7) on the package's Linear issue and
+in #packages on Discord, and the team signs it off (step 8).
 
 ### 7. The explainer
 
@@ -121,9 +139,12 @@ Where: `apps/p3/docs/slices/NN-name/walkthrough/` (slices 1 and 26 have one). Th
 
 ### 8. Sign-off
 
-- **UI work:** a video or a live demo, on a phone and on a desktop.
-- **Non-UI work** (security, storage, the release): a 5-minute explainer to the team, from the walkthrough.
-- **The full team signs off.**
+- **Posted by whoever pushed:** a short video or explainer on the package's Linear issue and in #packages on Discord.
+  UI work: a video or a live demo, on a phone and on a desktop. Non-UI work (security, storage, the release): a
+  5-minute explainer, from the walkthrough.
+- **Browser checks on devices, by people who have them** (UI work): Safari on iOS, Firefox on Android, Chrome on
+  Android. Beyond headless Chromium these are manual (`testing.md`, "UI tests"), and part of the sign-off.
+- **The whole team audits and signs off.**
 - **Then Colin and Jakob test it.** What they find goes back to step 4.
 - **Then it goes into the nightly.**
 
@@ -166,11 +187,13 @@ ordered by importance; then the state, the decisions, what is open and the files
 3. The brief written: p2's features (built, carried, dropped), extension points, files, contracts, tests, numbers,
    decisions, "Read first".
 4. Every decision asked one at a time and recorded in `decisions.md`.
-5. Built as plugins, no change to Chord, Durable or another package's files.
+5. Built as plugins. No change to Chord, Durable, p3's shared base and test code, or another package's files; each
+   needed change written up (problem, example, change) and taken to Mario by the user.
 6. `cd apps/p3 && npm run check` clean; the package's tests and `npm test` pass, serial and loaded.
 7. Numbers measured and in the brief.
 8. Mutation check done; reviewers' reproductions are tests.
 9. Two review rounds by other models, findings fixed.
-10. Pushed (after the owner's review, until Mario decides otherwise), explicit paths only.
-11. Explainer written; demo or 5-minute talk given; team sign-off; Colin and Jakob tested.
+10. Pushed to main, explicit paths only.
+11. Explainer written; video or explainer posted on the Linear issue and in #packages; UI checked by hand in Safari on
+    iOS, Firefox and Chrome on Android; team audit and sign-off; Colin and Jakob tested.
 12. Docs updated: brief "As built", `decisions.md`, `names.md`, `overview.md`, `chord-practices.md`.

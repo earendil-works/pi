@@ -27,11 +27,15 @@ export PATH=/home/badlogic/node-v26.11.1-linux-x64/bin:$PATH
 | `npm test` | `apps/p3` | every `test/*.test.ts`, `test/kit/*.test.ts` and `plugins/**/*.test.ts`, from source (`--conditions=source`), dot reporter, `--test-force-exit`. About 134 tests in 12 s today |
 | `node --conditions=source --disable-warning=ExperimentalWarning --test <file>` | `apps/p3` | one test file |
 | `npm run release:p3:local -- --out <dir>` | the repository root | builds Chord, pi-schema, pi-telemetry and p3, packs them, installs p3 outside the repository, then runs `test/release/*.test.ts` against the install (`P3_RELEASE`). `--bench` runs the bench too; `--skip-test` skips the tests. About 91 s, the memory test's 80 s among them |
-| `npm run check` | the repository root | the root check, when you touched anything under `packages/` (you should not: `process.md`) |
 
 - Run `npm test` in `apps/p3`, not at the root: the root `AGENTS.md` forbids `npm test` at the root unless asked.
-- Run `release:p3:local` when you touched base code (`src/`, `scripts/`, `package.json`) or anything the release
-  ships differently from source.
+- Run `release:p3:local` when your package changes what the release ships (its plugins' files, their dependencies)
+  or anything the release runs differently from source.
+- The shared harnesses (`test/topology.ts`, `test/launched.ts`, `test/commands.ts`) are Mario's, as is base code
+  (`../decisions.md`, "Packages: owners, audits, sign-off and browser testing"). Use them; never change them. A change
+  you need there is written up (the problem, a concrete example, the change it needs) and your user takes it to Mario
+  (`process.md`, "Code you never change"). Your package's own tests and helpers live with its plugin
+  (`plugins/<name>/*.test.ts`) or in test files of your own.
 
 ## The three tiers
 
@@ -84,8 +88,7 @@ Every host waits at most 5 s for an object, so a mistake fails in seconds. After
 failed in the background but the refusals the case asked for (`test/sessions.test.ts`, its `afterEach`).
 
 The topology loads only the sessions plugin today (`SESSIONS`, `WORKER_PLUGINS` in `test/topology.ts`). A package
-that needs its plugin there extends it. **Open:** who owns shared test code (`test/topology.ts`, `test/until.ts`,
-`test/launched.ts`); until decided, a change there goes to Mario, and the PROPOSED shape is a topology that takes the
+that needs its plugin there asks Mario for it, written up as above; the PROPOSED shape is a topology that takes the
 plugins to load (server and worker facets) as an argument.
 
 ### 3. End to end: the real app
@@ -171,7 +174,7 @@ they come, from p2 and Chord.
   `call(cdpMethod)`; `.pi/skills/p2-ui.md`, "Tests").
 - Chord: `packages/chord/test/node/web/browser.ts`, adapted from p2's: `CHROMIUM_BIN`, else `chromium-docker` on the
   `PATH`; without either the browser tests are skipped.
-- p3: PROPOSED `test/browser.ts`, adapted from Chord's.
+- p3: PROPOSED `test/browser.ts`, adapted from Chord's; a shared harness, so Mario's like the others.
 - On slayer: `CHROMIUM_BIN=/home/badlogic/.local/bin/chromium-docker`, a wrapper running the Chromium of the Playwright
   image `mcr.microsoft.com/playwright:v1.55.0-noble` with host networking. Run browser tests in a scratch clone, not in
   the shared checkout's live data.
@@ -184,17 +187,16 @@ they come, from p2 and Chord.
   OS text selection, no soft keyboard; test those paths through their handlers (timers, `pointerdown`).
 - Screenshots: `Page.captureScreenshot` at 390×844, for the sign-off video or demo.
 
-**Safari and iOS (the board: Chrome-based and Safari/iOS; Firefox dropped).** What exists today:
+**Other browsers: by hand, on devices, at sign-off** (`../decisions.md`, "Packages: owners, audits, sign-off and
+browser testing"). Beyond headless Chromium, browser testing is manual, done by people who have the devices, and part
+of the package's sign-off (`process.md`, step 8):
 
-- No Safari on Linux. No p3, p2 or Chord test runs WebKit.
-- p2's tests only fake `window.webkit` for the macOS app's native theme bridge (`apps/p2/test/p2/theme.test.ts`); that
-  is no WebKit engine.
-- The Playwright image on slayer ships a WebKit build (`/ms-playwright/webkit-2203`), but WebKit does not speak CDP:
-  driving it needs Playwright's client library, which is not a dependency of the repository.
+- Safari on iOS;
+- Firefox on Android;
+- Chrome on Android.
 
-**Open:** how Safari/iOS is tested. Options: WebKit through Playwright on Linux (a new dependency, a second driver
-beside CDP); a Mac runner with real Safari (and the iOS simulator); manual checks on devices at sign-off. Until Mario
-decides, UI packages check Safari on an iPhone by hand before sign-off and say so in the demo.
+No automated test runs these. The person who checked says on the package's Linear issue which devices and browsers
+they used and what they found.
 
 ## Android (the phone)
 
@@ -227,6 +229,8 @@ Run your package's tests on the phone before sign-off when it touches processes,
 7. Reviewers' reproductions are tests.
 8. Mutation check done and reported.
 9. `npm run check` clean; `npm test` passes serially and with four at once; the suite's time reported.
-10. Base code touched: `release:p3:local` passes.
-11. UI: phone and desktop viewports in Chromium; Safari on a device by hand (until decided).
-12. Processes, files or network touched: run on the phone.
+10. What the release ships changed: `release:p3:local` passes.
+11. UI: phone and desktop viewports in headless Chromium; at sign-off, by hand on devices: Safari on iOS, Firefox and
+    Chrome on Android.
+12. No change to the shared harnesses; each needed change written up and taken to Mario by your user.
+13. Processes, files or network touched: run on the phone.

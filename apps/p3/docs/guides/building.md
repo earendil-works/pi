@@ -6,6 +6,21 @@ to the repository root (`/home/badlogic/pi` on slayer) unless they start with `.
 Read first: `../chord-practices.md` in full. This guide condenses it and adds the map around it; where the two
 differ, `chord-practices.md` and `../decisions.md` win, and this guide gets fixed.
 
+## What you build in, and what you never touch
+
+You build in your package's plugins (`apps/p3/plugins/<name>/`), and their tests. **Never change** these; they belong
+to Mario (`../decisions.md`, "Packages: owners, audits, sign-off and browser testing"):
+
+| Code | Paths |
+| --- | --- |
+| Chord and Durable | `packages/chord/`, `packages/durable/` |
+| p3's shared base code | `apps/p3/src/kit/`, `apps/p3/src/api/`, `apps/p3/src/bootstrap/`, `apps/p3/src/install.ts` |
+| p3's shared test harnesses | `apps/p3/test/topology.ts`, `apps/p3/test/launched.ts`, `apps/p3/test/commands.ts` |
+
+When your package needs a change there (a Chord fix, an API export, a kit option, the topology loading your plugin):
+**stop**, write it up (the problem, a concrete example, the change it needs) and tell your user to take it to Mario
+(`process.md`, "Code you never change"). Never work around a missing piece inside your plugin.
+
 ## How the parts fit
 
 ```text
@@ -158,7 +173,7 @@ Chord: the build refuses it (`plugin-authoring.md`, "What a plugin may import").
 - **`contribute(host, name, register)`** (`apps/p3/src/kit/contribute.ts`): an object that only contributes, for a
   contribution that needs a reference, a registry, a derive or a writable.
 - **What the API does not have** (a Chord subpath such as `chord/workers`, a new facet kind, a new start-data object)
-  is an API change: base code, Mario's (`process.md`, "Who decides").
+  is an API change: base code, Mario's. Write it up and have your user take it to him (above).
 
 ## The rules, condensed
 
@@ -199,8 +214,8 @@ From `../chord-practices.md` (the rules with their reasons), `plugin-authoring.m
 **Reload**
 - Everything kept across a reload is in tables and documents; writables start over.
 - A root opened inside a method takes the method's `ctx` (`host.root(fn, withoutAbortSignal(ctx))`; Chord's
-  `withoutAbortSignal` is in `@earendil-works/chord/context`, not yet in p3's API: ask for it as an API change when
-  you need it). Work longer than a few seconds is a job: a call still running at the reload drain bound (5 s) is cut.
+  `withoutAbortSignal` is in `@earendil-works/chord/context`, not yet in p3's API: when you need it, it is an API
+  change for Mario). Work longer than a few seconds is a job: a call still running at the reload drain bound (5 s) is cut.
 - Every facet you touch is edited and reloaded while in use, in a test (`testing.md`).
 
 **Contracts and errors**
@@ -215,7 +230,7 @@ From `../chord-practices.md` (the rules with their reasons), `plugin-authoring.m
 - Plugins ship as source: they import only the API and their own files; their tests end in `.test.ts`.
 - A plugin's npm `dependencies` are bundled into its facet's script. No `import.meta`, `__dirname`, top-level `await`
   or literal `import("x")` in plugin code (the build refuses them). Chord reads a plugin's own files through
-  `pluginFile` (`@earendil-works/chord/plugins`), which p3's API does not export yet: an API change.
+  `pluginFile` (`@earendil-works/chord/plugins`), which p3's API does not export yet: an API change for Mario.
 - No new dependency without a measurement (`performance.md`) and the root `AGENTS.md`'s dependency rules (exact
   pins, the lockfile reviewed).
 
@@ -270,7 +285,9 @@ From `../chord-practices.md` (the rules with their reasons), `plugin-authoring.m
 7. Views `forward` from the store; access by admission (or the owner check until slice 5).
 8. Factories synchronous and declarative; standing behaviour in host-lifetime `local` objects.
 9. Texts in `messages.ts` (`defineMessages`).
-10. No change to Chord, Durable, base code or another package's files; each needed change sent to its owner.
+10. No change to Chord, Durable, p3's shared base and test code, or another package's files. Each needed change
+    written up (problem, example, change) and taken to Mario by your user; another package's, to its owner.
 11. Chord v2 code style, re-read top to bottom.
 12. Tests per `testing.md`, numbers per `performance.md`; `cd apps/p3 && npm run check` clean.
-13. If you touched base code: `npm run release:p3:local -- --out <dir>` passes.
+13. Before you report: `npm run release:p3:local -- --out <dir>` passes when your package changes what the release
+    ships (its plugins' files, their dependencies).
