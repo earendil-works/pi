@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const bedrockMock = vi.hoisted(() => ({
 	constructorCalls: [] as Array<Record<string, unknown>>,
@@ -64,13 +64,6 @@ async function captureClientConfig(
 }
 
 describe("bedrock credential priority", () => {
-	beforeEach(() => {
-		// A proxy makes pi supply its own credential provider (#12353).
-		for (const name of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]) {
-			vi.stubEnv(name, undefined);
-		}
-	});
-
 	afterEach(() => {
 		vi.unstubAllEnvs();
 	});
@@ -103,6 +96,22 @@ describe("bedrock credential priority", () => {
 			accessKeyId: "AKIAEXAMPLE",
 			secretAccessKey: "secretexample",
 		});
+	});
+
+	// #12353: the proxy-aware credential chain must not replace explicit keys.
+	it("keeps ambient AWS access keys when a proxy is set", async () => {
+		vi.stubEnv("AWS_ACCESS_KEY_ID", "AKIAEXAMPLE");
+		vi.stubEnv("AWS_SECRET_ACCESS_KEY", "secretexample");
+		vi.stubEnv("HTTPS_PROXY", "http://127.0.0.1:9");
+		const model = getBuiltinModel("amazon-bedrock", "us.anthropic.claude-opus-4-8");
+
+		const config = await captureClientConfig(model);
+
+		expect(config.credentials).toEqual({
+			accessKeyId: "AKIAEXAMPLE",
+			secretAccessKey: "secretexample",
+		});
+		expect(config.credentialDefaultProvider).toBeTypeOf("function");
 	});
 
 	it("uses ambient AWS access keys when only an ambient profile is set", async () => {

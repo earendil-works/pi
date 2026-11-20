@@ -23,7 +23,7 @@ import {
 	type ToolResultContentBlock,
 	ToolResultStatus,
 } from "@aws-sdk/client-bedrock-runtime";
-import { defaultProvider } from "@aws-sdk/credential-provider-node";
+import { type DefaultProviderInit, defaultProvider } from "@aws-sdk/credential-provider-node";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import type { BuildMiddleware, DeserializeMiddleware, DocumentType, HttpResponse, MetadataBearer } from "@smithy/types";
 import { HttpProxyAgent } from "http-proxy-agent";
@@ -239,19 +239,16 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				// Bedrock runtime uses NodeHttp2Handler by default since v3.798.0, which is based
 				// on `http2` module and has no support for http agent.
 				// Use NodeHttpHandler to support HTTP(S) proxy agents.
-				config.requestHandler = new NodeHttpHandler({
+				const requestHandler = new NodeHttpHandler({
 					httpAgent: new HttpProxyAgent(proxyUrl),
 					httpsAgent: new HttpsProxyAgent(proxyUrl) as unknown as HttpsAgent,
 				});
-				// The default credential chain creates its own SSO clients, which do not
-				// inherit the Bedrock client's request handler. Pass it on so SSO
-				// credential and token requests also go through the proxy.
-				if (!config.credentials && !useBearerToken) {
-					config.credentials = defaultProvider({
-						profile: config.profile,
-						clientConfig: { requestHandler: config.requestHandler },
-					});
-				}
+				config.requestHandler = requestHandler;
+				// The default credential chain builds its own SSO and SSO OIDC clients, which do
+				// not inherit the Bedrock client's request handler (#12353). The SDK uses this
+				// chain only when `credentials` is unset, so explicit keys keep their precedence.
+				config.credentialDefaultProvider = (init: DefaultProviderInit) =>
+					defaultProvider({ ...init, clientConfig: { ...init.clientConfig, requestHandler } });
 			} else if (getProviderEnvValue("AWS_BEDROCK_FORCE_HTTP1", options.env) === "1") {
 				// Some custom endpoints require HTTP/1.1 instead of HTTP/2
 				config.requestHandler = new NodeHttpHandler();
