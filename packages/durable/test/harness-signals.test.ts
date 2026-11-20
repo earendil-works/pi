@@ -11,6 +11,7 @@ import {
 	ROOT_CONVERSATION_ID,
 	type SignalState,
 	type TaskId,
+	type TaskState,
 	type WakeReason,
 } from "@earendil-works/pi-durable";
 import { bigint, bytes, int, obj, str } from "@earendil-works/pi-schema";
@@ -64,8 +65,8 @@ async function statusOf(harness: Awaited<ReturnType<typeof openTasks>>["harness"
 }
 
 /** The wake of a `pending` or `running` state. */
-function wakeOf(state: { readonly status: string } | undefined): WakeReason | undefined {
-	return state !== undefined && "wake" in state ? (state.wake as WakeReason) : undefined;
+function wakeOf(state: TaskState<unknown, unknown> | undefined): WakeReason | undefined {
+	return state?.status === "pending" || state?.status === "running" ? state.wake : undefined;
 }
 
 const directories = new Set<string>();
@@ -140,7 +141,12 @@ describe("delivery", () => {
 		expect(results).toEqual(["delivered", "duplicate", "delivered"]);
 		const receipt = await harness.waitForTask(id, context);
 		expect(receipt.state.outcome).toMatchObject({
-			result: { states: [{ value: { text: "first" } }, { value: { text: "bee" } }] },
+			result: {
+				states: [
+					{ kind: "value", value: { text: "first" } },
+					{ kind: "value", value: { text: "bee" } },
+				],
+			},
 		});
 		await harness.close(context);
 	});
@@ -168,7 +174,7 @@ describe("sleeping on signals", () => {
 			status: "completed",
 			result: {
 				wake: { reason: "signal", signal: "test.answer", key: "a" },
-				states: [{ value: { text: "early" } }],
+				states: [{ kind: "value", value: { text: "early" } }],
 			},
 		});
 		await harness.close(context);
@@ -198,7 +204,7 @@ describe("sleeping on signals", () => {
 			status: "completed",
 			result: {
 				wake: { reason: "signal", signal: "test.answer", key: "b" },
-				states: [null, { value: { text: "bee" } }],
+				states: [null, { kind: "value", value: { text: "bee" } }],
 			},
 		});
 		await harness.close(context);
@@ -217,7 +223,7 @@ describe("sleeping on signals", () => {
 		const receipt = await harness.waitForTask(id, context);
 		expect(receipt.state.outcome).toEqual({
 			status: "completed",
-			result: { wake: { reason: "expired" }, states: [{ expired: true }] },
+			result: { wake: { reason: "expired" }, states: [{ kind: "expired" }] },
 		});
 		await harness.close(context);
 	});
@@ -233,7 +239,7 @@ describe("sleeping on signals", () => {
 		expect(await harness.signal(id, Answer, "a", { text: "late" }, context)).toBe("closed");
 		const receipt = await harness.waitForTask(id, context);
 		expect(receipt.state.outcome).toMatchObject({
-			result: { wake: { reason: "expired" }, states: [{ expired: true }] },
+			result: { wake: { reason: "expired" }, states: [{ kind: "expired" }] },
 		});
 		await harness.close(context);
 	});
@@ -456,7 +462,7 @@ describe("sleeping on signals", () => {
 		const id = await root.commit((tx) => tx.createTask(Read, null, { ownership: { kind: "conversation" } }), context);
 		expect(await harness.signal(id, Old, "k", { n: "42" }, context)).toBe("delivered");
 		await harness.waitForTask(id, context);
-		expect(reads).toEqual([{ value: { n: 42 } }]);
+		expect(reads).toEqual([{ kind: "value", value: { n: 42 } }]);
 		await harness.close(context);
 	});
 
@@ -569,7 +575,9 @@ describe("wakes", () => {
 		await eventually(() => harness.wake().active);
 		harness.resume();
 		const receipt = await harness.waitForTask(id, context);
-		expect(receipt.state.outcome).toMatchObject({ result: { states: [{ value: { text: "later" } }] } });
+		expect(receipt.state.outcome).toMatchObject({
+			result: { states: [{ kind: "value", value: { text: "later" } }] },
+		});
 		await harness.close(context);
 	});
 

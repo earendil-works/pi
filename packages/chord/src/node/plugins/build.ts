@@ -190,6 +190,7 @@ function freeGlobals(source: string): string[] {
 	for (const [line, text] of source.split("\n").entries()) {
 		for (const match of text.matchAll(/__chord_plugin_(?:dirname|filename)/g)) {
 			const entry = map.findEntry(line, match.index);
+			// Node's `findEntry()` answers `{}` where no mapping covers the position.
 			if (!("originalSource" in entry)) continue;
 			errors.push(
 				`${entry.originalSource}:${entry.originalLine + 1}:${entry.originalColumn + 1}: ${NO_MODULE_IDENTITY}`,

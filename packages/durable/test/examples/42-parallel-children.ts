@@ -30,9 +30,8 @@ const research = defineTool({
 	replay: "safe",
 	async execute({ topic }, api, ctx) {
 		const state = await api.readSignal(Report, "report", ctx);
-		if (state !== undefined && "value" in state)
-			return { output: [{ type: "text", text: `${topic}: ${state.value.text}` }] };
-		return { sleep: { signals: [Report.key("report")] } };
+		if (state?.kind === "value") return { output: [{ type: "text", text: `${topic}: ${state.value.text}` }] };
+		return { kind: "sleep", signals: [Report.key("report")] };
 	},
 });
 
@@ -54,7 +53,7 @@ const researchBoth = defineTool<typeof ResearchParameters, never, ResearchCheckp
 		console.log(`  [research_both] run with wake ${JSON.stringify(api.wake)}, ${done.size} of 2 done`);
 		const open = [a, b].filter((call) => !done.has(call.taskId));
 		if (open.length > 0)
-			return { wait: { checkpoint: { done: [...done] }, on: open.map((call) => call.taskId), policy: "any" } };
+			return { kind: "wait", checkpoint: { done: [...done] }, on: open.map((call) => call.taskId), policy: "any" };
 		const [ra, rb] = await Promise.all([a.result(ctx), b.result(ctx)]);
 		return { output: [{ type: "text", text: `${String(ra.structuredOutput)}\n${String(rb.structuredOutput)}` }] };
 	},

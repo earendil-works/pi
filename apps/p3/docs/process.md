@@ -17,13 +17,17 @@ Project "Pi next" in team Earendil (issue keys `ERNDL-…`), three levels:
 Statuses are Linear's: Backlog, Todo, In Progress, In Review, Done. Decisions taken inside the package are recorded
 in its item issue as they are taken.
 
+The stage of a package is a label in the group "Pi stage", one at a time, set on the item issue: **Design** (steps
+1 to 3), **Implementation** (steps 4 to 7), **Review** (step 8). Every package starts in Design. Whoever moves the
+package to the next stage changes the label in the same moment and says why in a comment on the issue.
+
 ## Never change these
 
 They belong to Mario:
 
 - Chord and Durable: `packages/chord/`, `packages/durable/`;
-- p3's base code: `apps/p3/src/kit/`, `apps/p3/src/api/`, `apps/p3/src/bootstrap/`, `apps/p3/src/install.ts`;
-- p3's test harnesses: `apps/p3/test/topology.ts`, `apps/p3/test/launched.ts`, `apps/p3/test/commands.ts`;
+- p3's base code: `apps/p3/src/` (the API `apps/p3/src/api/` included);
+- p3's test harness: `apps/p3/test/support.ts`, `apps/p3/test/until.ts`;
 - another package's plugin: agree with its owner; its owner changes it.
 
 When your package needs a change there, **stop** the work that depends on it and write the change up:
@@ -44,6 +48,15 @@ Then tell your user to take it to Mario (or to the other package's owner). Never
 
 ## The steps
 
+Three stages, each with its label in the group "Pi stage" on the item issue. At every step: a guide that was wrong or
+silent is fixed in the commit that shows it, and a mistake you made and its fix go into `chord-practices.md`, "Mistakes
+we made".
+
+### Design
+
+Label `Design`; every package starts here. The stage ends when the plan is complete and its open decisions are taken;
+the owner then sets `Implementation`.
+
 1. **The issue.** Read the package's item issue and its area's parent issue. Everything below is written into the item
    issue or one of its sub-issues.
 2. **Look at p2 first, on a phone.** What exists in this area (p2's plugins in `apps/p2/plugins/`, the functionality
@@ -60,23 +73,38 @@ Then tell your user to take it to Mario (or to the other package's owner). Never
    - the contracts and objects, as real Chord and p3 APIs (with their file) or marked PROPOSED;
    - the tests, case by case (`testing.md`), and the numbers to meet (`performance.md`);
    - the open decisions, each as problem, example, options, recommendation.
+
+### Implementation
+
+Label `Implementation`. The stage ends with the push to main; whoever pushed then sets `Review`.
+
 4. **Build** it as plugins in `apps/p3/plugins/<name>/`, following `chord-practices.md`.
 5. **Test and measure** as `testing.md` and `performance.md` say, before you report.
-6. **Review.** Agents on other models than yours read the code against the plan: one for fit with Chord and p3, one
-   adversarial (races, failures, cost), one for simplicity. Fix what matters, two rounds. Every reproduction a
-   reviewer writes becomes a test.
+6. **Review, always by four models:** Opus, Fable, Sol and Astra, each a fresh agent. Prime each one: it first reads
+   `README.md` and the guides it lists, in full, then the plan in the item issue, then the code. Give each a focus:
+   fit with Chord and p3 (Sol), adversarial: races, failures, cost (Astra), simplicity (Fable), and a second full
+   read (Opus). Sol and Astra refuse to review security attacks; give those to Opus or Fable, framed as a review of
+   your own protocol. Fix what matters, then a second round by the same four. Every reproduction a reviewer writes
+   becomes a test.
 7. **Push to main** (git rules below).
+
+### Review
+
+Label `Review`: the people's review. A finding that needs code sets the label back to `Implementation` (steps 4 to 7
+again, then `Review` again). After the team's sign-off and Colin's and Jakob's tests, the issue is closed as Done; the
+`Review` label stays as the record.
+
 8. **Sign-off.**
    - Whoever pushed posts a short video (UI) or a 5-minute explainer (non-UI work) on the Linear issue and in
      #packages on Discord. The explainer shows the real code and the files touched; it assumes no access to the
      source.
+   - Whoever implemented it must be able to answer questions about both its functionality and its code.
+   - Armin and Mario review the code. What they find goes back to step 4.
    - People with the devices test the UI by hand: Safari on iOS, Firefox on Android, Chrome on Android. They note on
      the issue what they used and found.
    - The whole team audits and signs off.
    - Colin and Jakob test it; what they find goes back to step 4. Then it goes into the nightly (built from main by
      GitHub Actions; the Distribution area's item).
-9. **Fix the guides.** A guide that was wrong or silent is fixed in the commit that shows it. A mistake you made and
-   its fix go into `chord-practices.md`, "Mistakes we made".
 
 ## Git
 
@@ -93,11 +121,13 @@ You work in the shared checkout, on main, with other sessions committing beside 
 
 ## Checklist
 
+- [ ] The stage label kept current: `Design`, then `Implementation`, then `Review`.
 - [ ] Plan in the item issue, a sub-issue per part: p2's features sorted, extension points, files, contracts, tests,
       numbers, decisions.
 - [ ] Every decision asked one at a time and recorded in the issue.
 - [ ] Only your plugins changed; every needed change elsewhere written up and taken to its owner.
 - [ ] `cd apps/p3 && npm run check` clean; `npm test` passes, serially and with four runs at once.
 - [ ] The tests and numbers of `testing.md` and `performance.md`, reported in the issue.
-- [ ] Two review rounds on other models; reproductions are tests.
-- [ ] Pushed by explicit paths; video or explainer posted; devices checked; team sign-off.
+- [ ] Two review rounds by Opus, Fable, Sol and Astra, each primed with the guides; reproductions are tests.
+- [ ] Pushed by explicit paths; video or explainer posted; questions on functionality and code answered; code
+      reviewed by Armin and Mario; devices checked; team sign-off.

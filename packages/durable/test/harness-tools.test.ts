@@ -737,7 +737,8 @@ describe("generation hooks", () => {
 		});
 		let yields = 0;
 		addHooks(setup.registry, GenerationTask, {
-			onYield: () => (yields++ === 0 ? { continue: [{ type: "text", text: "keep going" }] } : undefined),
+			onYield: () =>
+				yields++ === 0 ? { kind: "continue", continue: [{ type: "text", text: "keep going" }] } : undefined,
 		});
 		const { harness, entries, status } = await run(setup, [record, record]);
 		expect(status).toBe("done");
@@ -825,7 +826,7 @@ describe("generation hooks", () => {
 		let input: SubmissionId | undefined;
 		let statusAtSecondRequest: string | undefined;
 		addHooks(setup.registry, GenerationTask, {
-			onYield: () => (yields++ === 0 ? { continue: "again" } : undefined),
+			onYield: () => (yields++ === 0 ? { kind: "continue", continue: "again" } : undefined),
 		});
 		const second: FauxResponseStep = async () => {
 			input = (await harness.snapshot(LiveDoc, 1 as never, context))!.run!.inputs[0];
@@ -870,12 +871,14 @@ describe("generation hooks", () => {
 		addHooks(setup.registry, GenerationTask, { afterResponse: () => void called.push("next observer") });
 		let yields = 0;
 		addHooks(setup.registry, GenerationTask, {
-			onYield: () => (yields++ === 0 ? { continue: "first" } : undefined),
+			onYield: () => (yields++ === 0 ? { kind: "continue", continue: "first" } : undefined),
 		});
 		addHooks(setup.registry, GenerationTask, {
 			onYield: () => {
 				called.push("second onYield");
-				return called.filter((name) => name === "second onYield").length === 1 ? { continue: "second" } : undefined;
+				return called.filter((name) => name === "second onYield").length === 1
+					? { kind: "continue", continue: "second" }
+					: undefined;
 			},
 		});
 		const { harness, entries } = await run(setup, [

@@ -428,13 +428,14 @@ export class Editor implements Component, Focusable {
 
 	/**
 	 * Add a prompt to history for up/down arrow navigation.
-	 * Called after successful submission.
+	 * A prompt already in history moves to the most recent position instead of being added twice.
 	 */
 	addToHistory(text: string): void {
 		const trimmed = text.trim();
 		if (!trimmed) return;
-		// Don't add consecutive duplicates
-		if (this.history.length > 0 && this.history[0] === trimmed) return;
+		// Callers re-add prompts when re-rendering a session (tree navigation, fork, resume).
+		const existing = this.history.indexOf(trimmed);
+		if (existing !== -1) this.history.splice(existing, 1);
 		this.history.unshift(trimmed);
 		// Limit history size
 		if (this.history.length > 100) {

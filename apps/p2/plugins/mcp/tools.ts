@@ -305,6 +305,7 @@ function viewWraps(
 	viewOf: (conversationId: ConversationId, read: DocumentReader, context: Context) => Promise<View>,
 ): Wrap<P2Tool>[] {
 	const tool = (name: string): Wrap<P2Tool> => ({
+		kind: "tool",
 		tool: name,
 		wrap: (base: P2Tool): P2Tool => ({
 			...base,

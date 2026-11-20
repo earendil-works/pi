@@ -98,9 +98,9 @@ export function rolloutFailures(result: RolloutResult): string[] {
 	const failures: string[] = [];
 	for (const step of result.steps) {
 		for (const entry of step.hosts) {
-			if ("report" in entry)
+			if (entry.kind === "reloaded")
 				for (const { plugin } of entry.report.failed) failures.push(`${step.name}/${entry.host}: ${plugin}`);
-			else if ("error" in entry) failures.push(`${step.name}/${entry.host}: error ${String(entry.error)}`);
+			else if (entry.kind === "failed") failures.push(`${step.name}/${entry.host}: error ${String(entry.error)}`);
 		}
 	}
 	return failures;
@@ -111,7 +111,7 @@ export function rolloutFates(result: RolloutResult): string[] {
 	const fates: string[] = [];
 	for (const step of result.steps) {
 		for (const entry of step.hosts) {
-			if (!("report" in entry)) continue;
+			if (entry.kind !== "reloaded") continue;
 			for (const each of entry.report.objects) fates.push(`${step.name}/${entry.host}: ${each.object} ${each.kind}`);
 		}
 	}

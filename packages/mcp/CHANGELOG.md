@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-20
+
 ### Added
 
 - Added `mcpServerSummary(description, instructions)`, a server's one-line summary for the system prompt as pi's coding agent shows it: the first line of the configured `description`, else of the server's `initialize` instructions.

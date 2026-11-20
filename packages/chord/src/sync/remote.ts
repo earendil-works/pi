@@ -11,6 +11,14 @@ export type JsonObject = { [key: string]: unknown };
 export const LOG_START: Seq = 0;
 
 /**
+ * The version of the sync rules this client follows: slots created once at the head, each recording its device, and
+ * archive slots. A remote adapter sends it with every request, so a remote that later changes the rules for a session
+ * (a handoff to another device) can refuse writers that do not know them. Raised when the rules change, not when a
+ * body's encoding does (`LOG_VERSION`).
+ */
+export const SYNC_PROTOCOL = 1;
+
+/**
  * A slot of a session's remote history: the batch of outbox commits after `after`, up to `to`, uploaded by `device`. A
  * store creates each slot once and never replaces it, so the device whose upload creates it continues the session from
  * `after`, and a device that finds it taken by another one holds a different history.
@@ -22,8 +30,9 @@ export type BatchInfo = {
 	/** Folding dropped its commits into a snapshot; the slot stays taken. */
 	readonly folded?: true;
 	/**
-	 * The body is a store archive at `to` instead of commits: the first upload of a session whose outbox does not reach
-	 * back to its first commit. Only the slot after 0 can be one.
+	 * The body is a store archive at `to` instead of commits: an upload whose outbox does not reach back to `after` (a
+	 * session's first upload with its outbox turned on late, or one after its outbox was turned off and on again). A
+	 * restore starts from the newest one along the chain; a copy behind it restores fresh.
 	 */
 	readonly archive?: true;
 };
@@ -85,8 +94,12 @@ export interface SessionSyncStore {
 			readonly epoch?: number;
 		},
 	): Promise<PutBatchResult>;
-	/** A batch's body; `undefined` when its slot is folded or absent. */
+	/**
+	 * A batch's body; `undefined` when its slot is folded or absent. The body may hold a file or a connection until it is
+	 * read to the end or its iterator's `return()` is called, which releases it also before the first read.
+	 */
 	getBatch(sessionId: string, after: Seq, context: Context): Promise<SyncBody | undefined>;
+	/** A snapshot's body, released as `getBatch()`'s; `undefined` when it is absent. */
 	getSnapshot(sessionId: string, to: Seq, context: Context): Promise<SyncBody | undefined>;
 	list(sessionId: string, context: Context): Promise<RemoteListing>;
 	/**
@@ -136,7 +149,8 @@ export class HistoryUnavailableError extends Error {
 
 /**
  * The history a copy at `from` applies, or a restore without `from`. Slots are created once, so at most one batch
- * starts at each sequence and the history is a single chain.
+ * starts at each sequence and the history is a single chain. A restore starts from the newest full state along it: the
+ * newest snapshot or archive slot, whichever ends later.
  */
 export function remoteHistory(listing: RemoteListing, from?: Seq): RemoteHistory {
 	const chain = new Map(listing.batches.map((batch) => [batch.after, batch]));
@@ -159,6 +173,11 @@ export function remoteHistory(listing: RemoteListing, from?: Seq): RemoteHistory
 		batches.push(next);
 		at = next.to;
 	}
+	// An archive slot is a full state: a restore starts at the newest one. A copy at `from` gets the chain as it is: an
+	// archive slot in it does not apply on top of its store, and `pullSession` refuses it (the host restores fresh).
+	const archive =
+		from === undefined || from === LOG_START ? batches.findLastIndex((batch) => batch.archive === true) : -1;
+	if (archive >= 0) return { batches: batches.slice(archive), head: at };
 	return { ...(snapshot === undefined ? {} : { snapshot }), batches, head: at };
 }
 

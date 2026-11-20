@@ -617,8 +617,13 @@ type DockContent = {
 	readonly screen: string;
 	readonly above?: ReactNode;
 	readonly composer?: { readonly toBottom?: ReactNode } & (
-		| { readonly bar: ReactNode }
-		| { readonly queued?: ReactNode; readonly props: ComposerProps; readonly footer: ReactNode }
+		| { readonly kind: "bar"; readonly bar: ReactNode }
+		| {
+				readonly kind: "composer";
+				readonly queued?: ReactNode;
+				readonly props: ComposerProps;
+				readonly footer: ReactNode;
+		  }
 	);
 };
 
@@ -690,7 +695,7 @@ function Dock({ frame, dockRef }: { frame: Frame; dockRef: (element: HTMLDivElem
 			{composer && (
 				<div className="composer-wrap">
 					{composer.toBottom}
-					{"bar" in composer ? (
+					{composer.kind === "bar" ? (
 						composer.bar
 					) : (
 						<>
@@ -1617,8 +1622,9 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 				: {
 						composer: readOnlyBar
 							? // As in Pi Mobile, the read-only bar has no scroll-down button.
-								{ bar: readOnlyBar }
+								{ kind: "bar", bar: readOnlyBar }
 							: {
+									kind: "composer",
 									toBottom,
 									queued: queuedRows,
 									props: {
@@ -1902,6 +1908,7 @@ function NewSession() {
 			screen: conversationKey(NEW_SESSION),
 			composer: owner
 				? {
+						kind: "composer",
 						props: { busy: false, disabled: false, send: { label: "Send", run: send }, attaching },
 						footer: (
 							<div className="session-usage">
@@ -1919,6 +1926,7 @@ function NewSession() {
 						),
 					}
 				: {
+						kind: "bar",
 						bar: (
 							<div className="subagent-bar">
 								<span>Connecting…</span>

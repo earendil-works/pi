@@ -400,11 +400,12 @@ class CodemodeCall {
 		const now = api.now();
 		const seed = crypto.getRandomValues(new Uint32Array(1))[0]!;
 		type Found =
-			| { done: ToolExecutionResult }
-			| { start: Start; journal: JournalEntry[]; firstIssued: number | undefined; rerun: boolean };
+			| { kind: "done"; done: ToolExecutionResult }
+			| { kind: "started"; start: Start; journal: JournalEntry[]; firstIssued: number | undefined; rerun: boolean };
 		const found = await api.commit(async (tx): Promise<Found> => {
 			const run = await tx.doc(CodemodeRunDoc, api.taskId);
-			if (run.result !== undefined) return { done: copyJson(run.result as JsonValue) as ToolExecutionResult };
+			if (run.result !== undefined)
+				return { kind: "done", done: copyJson(run.result as JsonValue) as ToolExecutionResult };
 			const rerun = run.start !== undefined;
 			if (run.start === undefined) {
 				const store = await tx.doc(CodemodeStoreDoc, api.conversationId);
@@ -423,13 +424,14 @@ class CodemodeCall {
 			}
 			const journal = await tx.doc(CodemodeJournalDoc, api.taskId);
 			return {
+				kind: "started",
 				start: copyJson(run.start as unknown as JsonValue) as unknown as Start,
 				journal: copyJson(journal.entries as unknown as JsonValue) as unknown as JournalEntry[],
 				firstIssued: journal.firstIssued,
 				rerun,
 			};
 		}, context);
-		if ("done" in found) return found.done;
+		if (found.kind === "done") return found.done;
 		this.start = found.start;
 		this.replayed = found.journal;
 		this.replayIndex = new Map(found.journal.map((entry, index) => [entry.id, index]));
@@ -581,14 +583,14 @@ class CodemodeCall {
 		const env = this.api.env;
 		let directory: Promise<string> | undefined;
 		return async (name, data) => {
-			if (env === undefined) return { error: "no execution environment" };
+			if (env === undefined) return { kind: "failed", error: "no execution environment" };
 			try {
 				directory ??= this.outputDir(env);
 				const path = `${await directory}/${name}`;
 				const written = await env.writeFile(path, data, this.context);
-				return written.ok ? { path } : { error: written.error.message };
+				return written.ok ? { kind: "saved", path } : { kind: "failed", error: written.error.message };
 			} catch (error) {
-				return { error: errorMessage(error) };
+				return { kind: "failed", error: errorMessage(error) };
 			}
 		};
 	}

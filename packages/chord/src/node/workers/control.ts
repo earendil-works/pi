@@ -41,7 +41,7 @@ export type FromWorker =
 	| { readonly kind: "idle"; readonly idle: boolean }
 	| { readonly kind: "fatal"; readonly error: CrossedError }
 	| { readonly kind: "reloaded"; readonly report: CrossedReport }
-	| { readonly kind: "reloaded"; readonly error: CrossedError };
+	| { readonly kind: "reload_failed"; readonly error: CrossedError };
 
 /** `message` in its envelope, as it goes over the IPC channel. */
 export function envelope(message: ToWorker | FromWorker): { readonly [ENVELOPE]: ToWorker | FromWorker } {

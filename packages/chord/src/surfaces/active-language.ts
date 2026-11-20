@@ -88,7 +88,7 @@ export function hostLanguage<P extends Principal>(host: Host<P>): PageState<Lang
 function reportOnce(report: (report: MessagesReport) => void): (report: MessagesReport) => void {
 	const seen = new Set<string>();
 	return (each) => {
-		const id = `${each.kind}|${each.namespace}|${"locale" in each ? each.locale : ""}|${each.key}`;
+		const id = `${each.kind}|${each.namespace}|${each.kind === "unknown" ? "" : each.locale}|${each.key}`;
 		if (seen.has(id)) return;
 		seen.add(id);
 		report(each);

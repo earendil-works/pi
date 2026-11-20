@@ -90,8 +90,9 @@ export class OutputAccumulator {
 
 	snapshot(options: { persistIfTruncated?: boolean } = {}): OutputSnapshot {
 		// Clipping drops the partial first line of the retained tail. When the tail is only the end of
-		// one over-long line, that is everything, so show the end of that line instead.
-		const snapshotText = this.getSnapshotText() || this.tailText;
+		// one over-long line (plus blank lines), nothing is left, so show the end of that line instead.
+		const clippedText = this.getSnapshotText();
+		const snapshotText = clippedText.trim().length === 0 ? this.tailText : clippedText;
 		const tailTruncation = truncateTail(snapshotText, {
 			maxLines: this.maxLines,
 			maxBytes: this.maxBytes,

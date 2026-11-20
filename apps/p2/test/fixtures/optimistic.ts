@@ -46,9 +46,9 @@ const element = document.createElement("div");
 document.body.replaceChildren(element);
 createRoot(element).render(createElement(Switch));
 Object.assign(window, {
-	settleCall: (outcome: { pass: true } | { refuse: string }) => {
+	settleCall: (outcome: { kind: "pass" } | { kind: "refuse"; refuse: string }) => {
 		const call = calls.shift();
-		if (call && "pass" in outcome) call.pass();
-		else call?.refuse("refuse" in outcome ? outcome.refuse : "");
+		if (outcome.kind === "pass") call?.pass();
+		else call?.refuse(outcome.refuse);
 	},
 });

@@ -353,8 +353,8 @@ function signInMethods(configured: Watchable<OwnerConfigState>, signIns: () => S
 		completeSignIn: ({ state, code, iss, error }: { state: string; code?: string; iss?: string; error?: string }) =>
 			signIns().complete(
 				error !== undefined || code === undefined
-					? { state, error: error ?? "The authorization response has no code" }
-					: { state, code, ...(iss === undefined ? {} : { iss }) },
+					? { kind: "error", state, error: error ?? "The authorization response has no code" }
+					: { kind: "code", state, code, ...(iss === undefined ? {} : { iss }) },
 			),
 		pasteSignIn: async ({ id, redirectUrl }: { id: string; redirectUrl: string }) => {
 			await signIns().paste(id, redirectUrl);
@@ -386,6 +386,7 @@ async function asPluginError<T>(promise: Promise<T>): Promise<T> {
 function projectAt(location: Location, projects: readonly ProjectFile[]): ProjectSource {
 	const file = projects.find((candidate) => sameLocation(candidate.location, location));
 	if (file === undefined) return { kind: "none" };
+	// `ProjectFile` is the `Mcp` contract's wire form, untagged: tagging it would change the contract.
 	return "text" in file ? { kind: "file", text: file.text } : { kind: "unreadable", error: file.error };
 }
 

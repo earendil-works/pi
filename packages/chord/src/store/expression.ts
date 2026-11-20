@@ -21,7 +21,8 @@ import type { TableDefinition } from "./table.ts";
 /**
  * A compiled condition: column comparisons with checked operands, combined by `and`, `or`, `not`. A query's
  * condition may also test `exists` (slice 14 §5): `[set, [[setColumn, column], …], inner]`, true for a row when the
- * set's table has a row equal in the matched columns that satisfies `inner`. Writes take no `exists`.
+ * set's table has a row equal in the matched columns that satisfies `inner`. Writes take no `exists`. Untagged on
+ * purpose: each node is told apart by its one key (`"and" in node`), as the stored format (outbox, archives) holds it.
  */
 export type WhereNode =
 	| { readonly eq: readonly [string, Scalar] }
@@ -41,7 +42,10 @@ export type WhereNode =
 /** The data of an `exists`: the set's name, the matched pairs (set column, enclosing column), the inner condition. */
 export type ExistsNode = readonly [string, readonly (readonly [string, string])[], WhereNode | null];
 
-/** A compiled value expression: a literal (`null` clears), a column, a `json(...)` cell, or an operation. */
+/**
+ * A compiled value expression: a literal (`null` clears), a column, a `json(...)` cell, or an operation. Untagged on
+ * purpose, as `WhereNode`: the stored format.
+ */
 export type ExprNode =
 	| Scalar
 	| null

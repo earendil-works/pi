@@ -47,9 +47,9 @@ export async function buildRelease(dist: string = join(P3, "dist")): Promise<Bui
 	const bundle = async (name: string, entry: string) =>
 		(await build({ ...options, entryPoints: { [name]: join(P3, entry) } })).metafile;
 	const [main, worker, supervisor, minimum] = await Promise.all([
-		bundle("main", "src/bootstrap/bin.ts"),
-		bundle("worker", "src/bootstrap/worker.ts"),
-		bundle("supervisor", "src/bootstrap/supervisor.ts"),
+		bundle("main", "src/bin.ts"),
+		bundle("worker", "src/worker.ts"),
+		bundle("supervisor", "src/supervisor.ts"),
 		// No banner: the launcher loads it on any Node, before anything else, and it imports nothing.
 		build({ ...options, banner: {}, entryPoints: { "minimum-node": join(P3, "src", "minimum-node.ts") } }).then(
 			(built) => built.metafile,

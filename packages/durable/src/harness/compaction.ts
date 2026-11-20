@@ -139,12 +139,15 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 				firstKept,
 				...(instructions === undefined ? {} : { instructions }),
 			};
-			let decision: { readonly decline: true } | { readonly summary: string } | undefined;
+			let decision:
+				| { readonly kind: "decline" }
+				| { readonly kind: "summary"; readonly summary: string }
+				| undefined;
 			await runtime.hooks.each("beforeCompact", async (hook) => {
 				if (decision === undefined) decision = await hook(compaction, runtime, context);
 			});
-			if (decision !== undefined && "decline" in decision) return complete(runtime, context);
-			if (decision !== undefined) return place(runtime, firstKept, decision.summary, context);
+			if (decision?.kind === "decline") return complete(runtime, context);
+			if (decision?.kind === "summary") return place(runtime, firstKept, decision.summary, context);
 			const request: SummaryRequest = {
 				attempt: 1,
 				model: ref,

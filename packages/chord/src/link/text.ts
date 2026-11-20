@@ -65,7 +65,8 @@ function segmentsOf(message: Message): readonly Uint8Array[] | undefined {
 
 /** The tuple's JSON text, parts spliced in; wrapped with its origin when it has one. */
 function tuple(message: Message): string {
-	const origin = "origin" in message ? message.origin : undefined;
+	// Encoded on any kind: the message schema, after decoding, refuses an origin on a kind that has none.
+	const origin = (message as { readonly origin?: number }).origin;
 	return origin === undefined ? ownTuple(message) : `["@",${origin},${ownTuple(message)}]`;
 }
 

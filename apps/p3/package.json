@@ -10,18 +10,18 @@
 	"exports": {
 		"./v1": {
 			"source": "./src/api/v1/index.ts",
-			"types": "./dist/api/v1/index.d.ts",
-			"import": "./dist/api/v1/index.js"
+			"types": "./dist/src/api/v1/index.d.ts",
+			"import": "./dist/src/api/v1/index.js"
 		},
 		"./v1/server": {
 			"source": "./src/api/v1/server.ts",
-			"types": "./dist/api/v1/server.d.ts",
-			"import": "./dist/api/v1/server.js"
+			"types": "./dist/src/api/v1/server.d.ts",
+			"import": "./dist/src/api/v1/server.js"
 		},
 		"./v1/worker": {
 			"source": "./src/api/v1/worker.ts",
-			"types": "./dist/api/v1/worker.d.ts",
-			"import": "./dist/api/v1/worker.js"
+			"types": "./dist/src/api/v1/worker.d.ts",
+			"import": "./dist/src/api/v1/worker.js"
 		}
 	},
 	"files": [
@@ -29,9 +29,6 @@
 		"plugins",
 		"!plugins/**/*.test.ts",
 		"src/api",
-		"src/kit/contribute.ts",
-		"src/kit/forward.ts",
-		"src/kit/info.ts",
 		"src/principals.ts",
 		"README.md"
 	],
@@ -46,14 +43,14 @@
 		"node": ">=26.3.1"
 	},
 	"dependencies": {
-		"@earendil-works/chord": "1.5.2",
-		"@earendil-works/pi-schema": "1.5.2",
-		"@earendil-works/pi-telemetry": "1.5.2",
+		"@earendil-works/chord": "1.6.0",
+		"@earendil-works/pi-schema": "1.6.0",
+		"@earendil-works/pi-telemetry": "1.6.0",
 		"esbuild": "0.28.2",
 		"ws": "8.21.0"
 	},
 	"devDependencies": {
-		"@earendil-works/pi-ai": "1.5.2",
-		"@earendil-works/pi-durable": "1.5.2"
+		"@earendil-works/pi-ai": "1.6.0",
+		"@earendil-works/pi-durable": "1.6.0"
 	}
 }

@@ -158,8 +158,8 @@ async function sectionView(extension: Extension<P2Tool>, conversationId: number)
 				callable: agent.callable.map((one) => one.name),
 			}),
 	};
-	const wrap = extension.wraps!.find((each) => "section" in each && each.section === "codemode")!;
-	const wrapped = "section" in wrap ? wrap.wrap(base) : base;
+	const wrap = extension.wraps!.find((each) => each.kind === "section" && each.section === "codemode")!;
+	const wrapped = wrap.kind === "section" ? wrap.wrap(base) : base;
 	const input = {
 		conversationId: conversationId as ConversationId,
 		agent: agentWith(extension),
@@ -294,9 +294,9 @@ test("the codemode and tool_search tools run with the conversation's view; every
 			],
 		},
 	);
-	const targets = extension.wraps!.flatMap((each) => ("tool" in each ? [each.tool] : []));
+	const targets = extension.wraps!.flatMap((each) => (each.kind === "tool" ? [each.tool] : []));
 	assert.deepEqual(targets, ["codemode", "tool_search"]);
-	const wrap = extension.wraps!.find((each) => "tool" in each && each.tool === "codemode")!;
+	const wrap = extension.wraps!.find((each) => each.kind === "tool" && each.tool === "codemode")!;
 	const seen: { agent: Agent; models: unknown; marked: unknown }[] = [];
 	const marker = Symbol("marker");
 	const base: P2Tool = {
@@ -308,7 +308,7 @@ test("the codemode and tool_search tools run with the conversation's view; every
 			return { output: [] };
 		},
 	};
-	const wrapped = "tool" in wrap ? wrap.wrap(base) : base;
+	const wrapped = wrap.kind === "tool" ? wrap.wrap(base) : base;
 	const agent = agentWith(extension) as unknown as Agent;
 	let reads = 0;
 	const api = {

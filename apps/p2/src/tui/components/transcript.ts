@@ -42,7 +42,8 @@ interface ItemView {
 
 /** The entry ID an item shows, also for failures and markers keyed by their entry. */
 export function itemEntryId(item: ViewItem): number | undefined {
-	if ("entryId" in item && item.entryId !== undefined) return item.entryId;
+	const shown = item.type === "user" || item.type === "assistant" || item.type === "entry" ? item.entryId : undefined;
+	if (shown !== undefined) return shown;
 	const match = /^(\d+)(?:-|$)/.exec(item.key);
 	return match ? Number(match[1]) : undefined;
 }

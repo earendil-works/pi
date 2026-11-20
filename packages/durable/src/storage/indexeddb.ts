@@ -495,7 +495,9 @@ export class IndexedDbStorage implements Storage {
 		});
 		// The transaction completed: the stored batches are durable.
 		for (const [index, seq] of seqs.entries()) receive(index, seq);
-		return refused === undefined ? { stored: seqs.length } : { stored: seqs.length, refused: refused.error };
+		return refused === undefined
+			? { kind: "stored", stored: seqs.length }
+			: { kind: "refused", stored: seqs.length, refused: refused.error };
 	}
 
 	async mintId<I extends Id<string>>(): Promise<I> {

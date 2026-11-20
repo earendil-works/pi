@@ -28,7 +28,7 @@ export async function runMove(ctx: TuiContext, source: MoveSource, argument: str
 	const session = source.session(ctx.identity.session);
 	if (!session) return;
 	const found = storedProject(source, session);
-	if ("error" in found) ctx.notify(found.error, "error");
+	if (found.kind === "missing") ctx.notify(found.error, "error");
 	else if (argument) await moveTo(ctx, source, relocate, session, found.project, argument);
 	else openPicker(ctx, source, relocate, session, found.project);
 }
@@ -37,7 +37,7 @@ export async function runMove(ctx: TuiContext, source: MoveSource, argument: str
 export function completeMove(ctx: TuiContext, source: MoveSource, prefix: string): AutocompleteItem[] | null {
 	const session = source.session(ctx.identity.session);
 	const found = session ? storedProject(source, session) : undefined;
-	if (!session || !found || "error" in found) return null;
+	if (!session || found?.kind !== "found") return null;
 	const items = found.project.places
 		.filter((place) => place.env !== (session.env ?? null))
 		.map((place) => ({
@@ -50,12 +50,20 @@ export function completeMove(ctx: TuiContext, source: MoveSource, prefix: string
 }
 
 /** The live project `session` belongs to; else why `/move` cannot move it. */
-function storedProject(source: MoveSource, session: Session): { project: Project } | { error: string } {
+function storedProject(
+	source: MoveSource,
+	session: Session,
+): { readonly kind: "found"; readonly project: Project } | { readonly kind: "missing"; readonly error: string } {
 	const name = source.projectOf(session.id);
 	if (name === undefined)
-		return { error: "This session belongs to no project: start one from a project's row in /sessions" };
+		return {
+			kind: "missing",
+			error: "This session belongs to no project: start one from a project's row in /sessions",
+		};
 	const project = source.projects.find((each) => each.name === name);
-	return project ? { project } : { error: `Project ${lineText(name)} is archived or deleted` };
+	return project
+		? { kind: "found", project }
+		: { kind: "missing", error: `Project ${lineText(name)} is archived or deleted` };
 }
 
 /**

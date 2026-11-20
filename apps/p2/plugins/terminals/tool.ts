@@ -224,8 +224,9 @@ async function run(
 		case "kill-window": {
 			// A rerun closes the window the first attempt found, never another that took its number since.
 			const known = await api.memo<{ id: string; window: number; env: string | null }>("window", context);
-			const target = reachable(known ?? (await backend.cursor(command.target, context)).terminal);
-			const window = "window" in target ? target.window : target.index;
+			const found = known === undefined ? (await backend.cursor(command.target, context)).terminal : undefined;
+			const target = reachable(known ?? { id: found!.id, window: found!.index, env: found!.env });
+			const { window } = target;
 			await api.memo("window", { id: target.id, window, env: target.env }, context);
 			await backend.close({ key, target: target.id }, context);
 			return { result: { window, killed: true } };

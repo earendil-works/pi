@@ -215,11 +215,17 @@ type DocumentEntry = {
 
 /**
  * What one staged incarnation writes and publishes, decided once before Storage admission so adoption only applies it.
- * `record` is a `DocumentRecord` for an incarnation that is already committed and a `DocumentCreate` for a new one.
+ * `record` is a `DocumentCreate` for a new incarnation (kind `new`) and a `DocumentRecord` for one already committed.
  */
-type DocumentPlan = {
+type DocumentPlan = DocumentPlanFields &
+	(
+		| { readonly kind: "new"; readonly record: DocumentCreate }
+		| { readonly kind: "committed"; readonly record: DocumentRecord }
+	);
+
+/** What every `DocumentPlan` holds besides its incarnation's record. */
+type DocumentPlanFields = {
 	readonly addressId: string;
-	readonly record: DocumentCreate | DocumentRecord;
 	retire: boolean;
 	/** Creation, copy, or change content; absent when only retirement is written. */
 	content?: Extract<StorageWrite, { readonly type: "document.create" | "document.copy" | "document.change" }>;
@@ -891,7 +897,7 @@ export class Transaction implements Tx {
 		const taken: H[] = [];
 		for (const plan of this.#plans) {
 			// A new incarnation holds nothing yet.
-			if (!("createdAt" in plan.record)) continue;
+			if (plan.kind === "new") continue;
 			const hold = held(plan.record.id);
 			if (hold === undefined) continue;
 			taken.push(hold);
@@ -923,7 +929,7 @@ export class Transaction implements Tx {
 		for (const plan of this.#plans) {
 			if (plan.content === undefined && !plan.retire) continue;
 			keys.push(documentKey(plan.addressId), incarnationKey(plan.record.id));
-			if (plan.retire || !("createdAt" in plan.record)) keys.push(scopeKey(plan.record.scope));
+			if (plan.retire || plan.kind === "new") keys.push(scopeKey(plan.record.scope));
 		}
 		return keys;
 	}
@@ -943,8 +949,8 @@ export class Transaction implements Tx {
 		// Only when the commit stored held changes: then what Storage got differs from what memory adopted.
 		let stored: DocumentCommitChange[] | undefined;
 		for (const plan of this.#plans) {
-			const committed = "createdAt" in plan.record;
-			let record: DocumentRecord = committed ? (plan.record as DocumentRecord) : { ...plan.record, createdAt: seq };
+			const committed = plan.kind === "committed";
+			let record: DocumentRecord = plan.kind === "committed" ? plan.record : { ...plan.record, createdAt: seq };
 			if (plan.retire) record = { ...record, retiredAt: seq };
 			const change = plan.change;
 			if (change !== undefined) {
@@ -1024,7 +1030,7 @@ export class Transaction implements Tx {
 			}
 			const retire = (record: DocumentRecord): void => {
 				if (retiring.has(record.id)) return;
-				plans.push({ addressId: addressId(record), record, retire: true });
+				plans.push({ kind: "committed", addressId: addressId(record), record, retire: true });
 				retiring.add(record.id);
 			};
 			for (const taskId of terminalTaskIds) {
@@ -1258,6 +1264,7 @@ function planDocument(document: DocumentEntry): DocumentPlan | undefined {
 			const content = { version, kind: "base", value: prepared.value } as const;
 			return {
 				...plan,
+				kind: "new",
 				record,
 				content: { type: "document.create", record, content },
 				change: { tracker, prepared, version },
@@ -1266,11 +1273,12 @@ function planDocument(document: DocumentEntry): DocumentPlan | undefined {
 		case "fork-copy":
 			return {
 				...plan,
+				kind: "new",
 				record: target.record,
 				content: { type: "document.copy", record: target.record, source: target.source },
 			};
 		case "retire-only":
-			return { ...plan, record: target.record };
+			return { ...plan, kind: "committed", record: target.record };
 		case "loaded": {
 			const loaded = target.document;
 			const definition = document.definition!;
@@ -1291,7 +1299,13 @@ function planDocument(document: DocumentEntry): DocumentPlan | undefined {
 				loaded,
 				definition,
 			};
-			return { ...plan, record: loaded.record, change, ...(content === undefined ? {} : { content }) };
+			return {
+				...plan,
+				kind: "committed",
+				record: loaded.record,
+				change,
+				...(content === undefined ? {} : { content }),
+			};
 		}
 	}
 }

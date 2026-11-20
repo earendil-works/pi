@@ -333,9 +333,9 @@ export const messages = defineMessages("bob.stats", {
 
 ## Installing
 
-- `plugins.installPlugin({ git: "https://github.com/bob/stats.git", ref: "v1.2.0" }, root, ctx)`: a shallow clone of
+- `plugins.installPlugin({ kind: "git", git: "https://github.com/bob/stats.git", ref: "v1.2.0" }, root, ctx)`: a shallow clone of
   the branch, tag or commit into `<root>/stats`; its plugins are the folders its `chord.plugins` lists, else by
-  convention. `{ npm: "@bob/stats", version: "1.2.0" }`: the package extracted into `<root>/@bob/stats`. Then their
+  convention. `{ kind: "npm", npm: "@bob/stats", version: "1.2.0" }`: the package extracted into `<root>/@bob/stats`. Then their
   dependencies are installed (`npm install --omit=dev --ignore-scripts`; no lifecycle scripts run). Refused: a plugin
   name the app has already, an existing directory, a ref or name starting with `-`.
 - Removing is deleting the directory. To update, install another ref (a new directory) or delete and install again.

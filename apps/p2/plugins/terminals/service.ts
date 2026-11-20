@@ -260,6 +260,7 @@ export class HostCalls {
 		if (event.type !== "reply") return;
 		const pending = this.#pending.get(event.id);
 		this.#pending.delete(event.id);
+		// The terminal host's wire protocol, kept for hosts already running: a reply carries `result` or `error`.
 		if ("error" in event) pending?.reject(new Error(event.error));
 		else pending?.resolve(event.result);
 	}

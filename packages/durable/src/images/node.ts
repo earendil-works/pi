@@ -82,7 +82,7 @@ class PhotonThread {
 			const request = this.#pending.get(reply.id);
 			if (request === undefined) return;
 			this.#pending.delete(reply.id);
-			if ("error" in reply) request.reject(new Error(reply.error));
+			if (reply.kind === "failed") request.reject(new Error(reply.error));
 			else request.resolve(reply.result);
 			this.#settled();
 		});

@@ -210,7 +210,11 @@ describe("the member check", () => {
 		await host.get(Club, {}, context).catch(() => {});
 		await host.close(context);
 		await store.close(context);
-		return errors.map((error) => ("failure" in error ? error.failure.error.message : error.kind));
+		return errors.map((error) =>
+			error.kind === "activation_failed" || error.kind === "object_failed"
+				? error.failure.error.message
+				: error.kind,
+		);
 	}
 
 	it("refuses anything but what self.queries returned, a listed query without a builder, and a second schema", async () => {

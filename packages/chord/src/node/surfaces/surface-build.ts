@@ -104,7 +104,7 @@ export class SurfaceBuild<P extends Principal> {
 			kinds: [this.#options.kind],
 			reload: async (built: Built, context: Context) => {
 				const outcome = await awaitWithContext(this.#ready(), context);
-				if (outcome.kind === "failed") return { hosts: [{ host: name, error: outcome.error }] };
+				if (outcome.kind === "failed") return { hosts: [{ kind: "failed", host: name, error: outcome.error }] };
 				return outcome.published.step(name).reload(built, context);
 			},
 		};

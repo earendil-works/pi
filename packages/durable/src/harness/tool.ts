@@ -40,6 +40,7 @@ import {
 	clearProgress,
 	cutOffCount,
 	cutOffTooOften,
+	findSlot,
 	finishSlot,
 	LiveDoc,
 	type NestedToolSlot,
@@ -175,8 +176,9 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 				return reject(runtime, task.input, call, undefined, error, context);
 			}
 			const prepared = prepare(tool, call.arguments as JsonObject);
-			const checked = "error" in prepared ? prepared : validate(tool, call, prepared.args);
-			if ("error" in checked) return reject(runtime, task.input, call, tool, invalid(checked.error), context);
+			const checked = prepared.kind === "invalid" ? prepared : validate(tool, call, prepared.args);
+			if (checked.kind === "invalid")
+				return reject(runtime, task.input, call, tool, invalid(checked.error), context);
 			let args = checked.args;
 			let block: string | undefined;
 			let sleep: GateSleep | undefined;
@@ -198,7 +200,8 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 			}
 			if (sleep !== undefined) return parkAtGate(runtime, task.input, call, tool, sleep, context);
 			const validated = validate(tool, call, args);
-			if ("error" in validated) return reject(runtime, task.input, call, tool, invalid(validated.error), context);
+			if (validated.kind === "invalid")
+				return reject(runtime, task.input, call, tool, invalid(validated.error), context);
 			// Strict JSON: repair may set optional properties to undefined, which the slot and checkpoint cannot hold.
 			const final = copyJson(validated.args, { omitUndefinedProperties: true }) as JsonObject;
 			await commitIntent(runtime, { phase: "execute", arguments: final, replay: tool.replay ?? "unsafe" }, context);
@@ -242,12 +245,12 @@ export const ToolTask = defineTask<ToolTaskInput, ToolTaskCheckpoint, ToolTaskRe
 				// the arguments it runs with again, as the deferred commit that showed them may have been lost with the crash.
 				// A woken run keeps the details and diagnostics earlier runs left, as a park does.
 				await runtime.commit(async (tx) => {
-					const slot = toolSlot(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId);
-					if (slot !== undefined) {
-						if (wake === undefined) clearProgress(slot);
-						else clearOutput(slot);
-						slot.status = "running";
-						if ("parentTaskId" in slot) slot.arguments = args;
+					const found = findSlot(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId);
+					if (found !== undefined) {
+						if (wake === undefined) clearProgress(found.slot);
+						else clearOutput(found.slot);
+						found.slot.status = "running";
+						if (found.kind === "nested") found.slot.arguments = args;
 					}
 					return undefined;
 				}, context);
@@ -366,10 +369,10 @@ async function commitIntent(
 ): Promise<void> {
 	await runtime.commit(
 		async (tx) => {
-			const slot = toolSlot(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId);
-			if (slot !== undefined) slot.status = "running";
+			const found = findSlot(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId);
+			if (found !== undefined) found.slot.status = "running";
 			// Assigned whole: an equal value records no change, and a rerun corrects what an earlier attempt showed.
-			if (slot !== undefined && "parentTaskId" in slot) slot.arguments = intent.arguments;
+			if (found?.kind === "nested") found.slot.arguments = intent.arguments;
 			return undefined;
 		},
 		context,
@@ -509,24 +512,26 @@ async function readCall(runtime: Runtime, input: ToolTaskInput, context: Context
 }
 
 /** Arguments, or why they are invalid. */
-type Checked = { readonly args: JsonObject } | { readonly error: string };
+type Checked =
+	| { readonly kind: "valid"; readonly args: JsonObject }
+	| { readonly kind: "invalid"; readonly error: string };
 
 /** The call's arguments as repaired by the tool; a throwing repair makes them invalid. */
 function prepare(tool: ToolRegistration, args: JsonObject): Checked {
-	if (tool.prepareArguments === undefined) return { args };
+	if (tool.prepareArguments === undefined) return { kind: "valid", args };
 	try {
-		return { args: tool.prepareArguments(args) as JsonObject };
+		return { kind: "valid", args: tool.prepareArguments(args) as JsonObject };
 	} catch (error) {
-		return { error: errorMessage(error) };
+		return { kind: "invalid", error: errorMessage(error) };
 	}
 }
 
 /** Arguments validated and coerced against the implementation's schema. */
 function validate(tool: ToolRegistration, call: ToolCall, args: JsonObject): Checked {
 	try {
-		return { args: validateToolArguments(tool, { ...call, arguments: args }) as JsonObject };
+		return { kind: "valid", args: validateToolArguments(tool, { ...call, arguments: args }) as JsonObject };
 	} catch (error) {
-		return { error: errorMessage(error) };
+		return { kind: "invalid", error: errorMessage(error) };
 	}
 }
 
@@ -835,14 +840,13 @@ async function park(
 	const { api, reported } = attempt;
 	const shape = parkError(tool, returned, api);
 	if (shape !== undefined) return shape;
-	if (returned.wait !== undefined) {
-		for (const id of returned.wait.on) {
+	if (returned.kind === "wait") {
+		for (const id of returned.on) {
 			if ((await runtime.getTask(id, context))?.owner !== runtime.taskId)
 				return `task ${id} is not owned by the call`;
 		}
 	}
-	const { sleep, wait } = returned;
-	const checkpoint = (sleep ?? wait)!.checkpoint;
+	const { checkpoint } = returned;
 	const parked = {
 		phase: "parked",
 		arguments: args,
@@ -857,10 +861,10 @@ async function park(
 				if (streams && reported.details !== undefined) assignJson(slot, "details", reported.details);
 				if (streams && reported.diagnostics.length > 0) assignJson(slot, "diagnostics", reported.diagnostics);
 				clearOutput(slot);
-				slot.status = sleep !== undefined ? "sleeping" : "waiting";
+				slot.status = returned.kind === "sleep" ? "sleeping" : "waiting";
 			}
-			if (sleep !== undefined) {
-				const { until, signals } = sleep;
+			if (returned.kind === "sleep") {
+				const { until, signals } = returned;
 				return {
 					status: "sleeping",
 					checkpoint: parked,
@@ -868,7 +872,7 @@ async function park(
 					...(signals === undefined ? {} : { signals }),
 				};
 			}
-			return { status: "waiting", checkpoint: parked, on: wait!.on, policy: wait!.policy };
+			return { status: "waiting", checkpoint: parked, on: returned.on, policy: returned.policy };
 		}, context);
 	} catch (error) {
 		// The sleep or wait broke a rule the commit checks: a deadline, a used key, a missing task, a wait cycle. A close
@@ -1177,7 +1181,7 @@ async function settle(
 		// lifecycle times keeps the last attempt's execution time.
 		const durationMs = current.startedAt === undefined ? measured : runtime.now() - current.startedAt;
 		const live = await tx.doc(LiveDoc, conversationId);
-		const slot = toolSlot(live, runtime.taskId);
+		const found = findSlot(live, runtime.taskId);
 		let settled: ToolTaskResult;
 		if (input.kind === "nested") {
 			const nested = nestedResult(runtime.taskId, result, durationMs);
@@ -1187,17 +1191,17 @@ async function settle(
 			const state = await tx.doc(NestedCallDoc, input.parent, input.key, null);
 			if (state.taskId !== runtime.taskId) throw new Error(`Nested call ${call.id} is not in its caller's index`);
 			state.result = nested as unknown as Draft<JsonRepresentation<NestedToolExecutionResult>>;
-			if (slot !== undefined && "parentTaskId" in slot) {
-				finishSlot(slot);
-				slot.summary = summaryOf(nested, result.output ?? []);
+			if (found?.kind === "nested") {
+				finishSlot(found.slot);
+				found.slot.summary = summaryOf(nested, result.output ?? []);
 			}
 			settled = { kind: "nested" };
 		} else {
 			const timing = { timestamp: runtime.now(), durationMs };
 			const entry = await appendToolResult(tx, conversationId, call, result, timing);
-			if (slot !== undefined && !("parentTaskId" in slot)) {
-				finishSlot(slot);
-				slot.entry = entry.id;
+			if (found?.kind === "model") {
+				finishSlot(found.slot);
+				found.slot.entry = entry.id;
 			}
 			// Tools build control objects freely; drop keys set to undefined so the task result is strict JSON.
 			const control =
