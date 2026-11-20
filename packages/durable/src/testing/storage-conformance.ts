@@ -168,7 +168,9 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 					context,
 				);
 				expect(refused.stored).toBe(0);
-				expect(String(refused.refused)).toBe(`Error: ID ${rootId} already belongs to conversation`);
+				expect(refused.kind === "refused" && String(refused.refused)).toBe(
+					`Error: ID ${rootId} already belongs to conversation`,
+				);
 				expect(events).toEqual([]);
 
 				const next = await commitWrites(
@@ -1956,7 +1958,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 					},
 					context,
 				);
-				expect(result).toEqual({ stored: 3 });
+				expect(result).toEqual({ kind: "stored", stored: 3 });
 				expect(receipts.map(([index]) => index)).toEqual([0, 1, 2]);
 				const [[, first], [, second], [, last]] = receipts as [[number, Seq], [number, Seq], [number, Seq]];
 				expect(second).toBeGreaterThan(first);
@@ -1992,7 +1994,9 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				context,
 			);
 			expect(result.stored).toBe(1);
-			expect(String(result.refused)).toBe(`Error: ID ${firstId} already belongs to entry`);
+			expect(result.kind === "refused" && String(result.refused)).toBe(
+				`Error: ID ${firstId} already belongs to entry`,
+			);
 			expect(receipts).toEqual([0]);
 			expect(await storage.entry(firstId, context)).toBeDefined();
 			expect(await storage.entry(afterId, context)).toBeUndefined();
@@ -2005,7 +2009,9 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				context,
 			);
 			expect(refused.stored).toBe(0);
-			expect(String(refused.refused)).toBe(`Error: ID ${rootId} already belongs to conversation`);
+			expect(refused.kind === "refused" && String(refused.refused)).toBe(
+				`Error: ID ${rootId} already belongs to conversation`,
+			);
 			expect(receipts).toEqual([0]);
 			await commitWrites(storage, [{ type: "entry", value: entry(afterId, rootId) }], context);
 			expect(await storage.entry(afterId, context)).toBeDefined();
@@ -2047,7 +2053,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 					context,
 				);
 				expect(result.stored).toBe(1);
-				expect(result.refused).toBeDefined();
+				expect(result.kind).toBe("refused");
 				expect(receipts).toEqual([0]);
 				expect(await storage.entry(firstId, context)).toBeDefined();
 				expect(await storage.entry(secondId, context)).toBeUndefined();
@@ -2097,7 +2103,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				(_index, seq) => seqs.push(seq),
 				context,
 			);
-			expect(result).toEqual({ stored: 3 });
+			expect(result).toEqual({ kind: "stored", stored: 3 });
 			expect((await storage.document(copyId, "current", context))?.value).toEqual({ count: 2 });
 			expect((await storage.document(sourceId, seqs[0]!, context))?.value).toEqual({ count: 1 });
 
@@ -2124,7 +2130,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				context,
 			);
 			expect(refused.stored).toBe(0);
-			expect(refused.refused).toBeDefined();
+			expect(refused.kind).toBe("refused");
 			expect(await storage.conversation(laterId, context)).toBeUndefined();
 			expect((await storage.document(sourceId, "current", context))?.value).toEqual({ count: 2 });
 		}),

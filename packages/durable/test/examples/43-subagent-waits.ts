@@ -34,9 +34,9 @@ const askPerson = defineTool({
 	replay: "safe",
 	async execute({ question }, api, ctx) {
 		const state = await api.readSignal(Answer, "answer", ctx);
-		if (state !== undefined && "value" in state) return { output: [{ type: "text", text: state.value.text }] };
+		if (state?.kind === "value") return { output: [{ type: "text", text: state.value.text }] };
 		asked.set(api.taskId, question);
-		return { sleep: { signals: [Answer.key("answer")] } };
+		return { kind: "sleep", signals: [Answer.key("answer")] };
 	},
 });
 
@@ -51,7 +51,7 @@ export const Subagent = defineExtension({
 			replay: "safe",
 			async execute({ task }, api, ctx) {
 				const state = await api.readSignal(SubmissionSettled, "answered", ctx);
-				if (state !== undefined && "value" in state) {
+				if (state?.kind === "value") {
 					const settled = state.value;
 					if (settled.status !== "done" || settled.type === "write")
 						return { output: [{ type: "text", text: `Subagent ended: ${settled.status}` }], isError: true };
@@ -82,7 +82,7 @@ export const Subagent = defineExtension({
 					},
 					ctx,
 				);
-				return { sleep: { signals: [SubmissionSettled.key("answered")] } };
+				return { kind: "sleep", signals: [SubmissionSettled.key("answered")] };
 			},
 		}),
 	],

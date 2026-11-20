@@ -56,7 +56,7 @@ const RunTests = defineTask<{ attempt: number }, { phase: "run" }, boolean>({
 			await runtime.commit(async (tx) => {
 				// Admitted with this commit, before its own table writes: placed when the run ends.
 				if (!result.passed && task.input.attempt < 3) {
-					await conversation.submit(tx, {
+					await conversation.admit(tx, {
 						type: "input",
 						content: `The tests failed: ${result.output}. Fix it.`,
 						whenBusy: "followUp",

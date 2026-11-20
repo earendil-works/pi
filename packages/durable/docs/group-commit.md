@@ -73,7 +73,10 @@ commit(
 	batches: readonly (readonly StorageWrite[])[],
 	receive: (index: number, seq: Seq) => void,
 	context: Context,
-): Promise<{ readonly stored: number; readonly refused?: unknown }>;
+): Promise<
+	| { readonly kind: "stored"; readonly stored: number }
+	| { readonly kind: "refused"; readonly stored: number; readonly refused: unknown }
+>;
 ```
 
 `receive` is a durability receipt, not publication: the Session publishes later (§5.3). It is Storage's only write

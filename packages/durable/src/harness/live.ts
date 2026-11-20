@@ -358,9 +358,26 @@ export function failCompactionStatus(live: Draft<LiveState>, taskId: TaskId, err
  * the commit that creates its task, task IDs ascend in commit order, and removal keeps the order.
  */
 export function toolSlot(live: Draft<LiveState>, taskId: TaskId): Draft<ToolSlot | NestedToolSlot> | undefined {
+	return live.tools?.find((each) => each.taskId === taskId) ?? nestedSlot(live, taskId);
+}
+
+/** A tool task's slot in `pi.live`, told apart by whose call it is: a model-issued call's, or a nested call's. */
+export type FoundSlot =
+	| { readonly kind: "model"; readonly slot: Draft<ToolSlot> }
+	| { readonly kind: "nested"; readonly slot: Draft<NestedToolSlot> };
+
+/** The slot of tool task `taskId` with whose call it is, if `pi.live` still lists it (see `toolSlot`). */
+export function findSlot(live: Draft<LiveState>, taskId: TaskId): FoundSlot | undefined {
 	const slot = live.tools?.find((each) => each.taskId === taskId);
-	if (slot !== undefined || live.nestedTools === undefined) return slot;
+	if (slot !== undefined) return { kind: "model", slot };
+	const nested = nestedSlot(live, taskId);
+	return nested === undefined ? undefined : { kind: "nested", slot: nested };
+}
+
+/** The nested slot of tool task `taskId`, by binary search over the ascending task IDs. */
+function nestedSlot(live: Draft<LiveState>, taskId: TaskId): Draft<NestedToolSlot> | undefined {
 	const nested = live.nestedTools;
+	if (nested === undefined) return undefined;
 	let low = 0;
 	let high = nested.length - 1;
 	while (low <= high) {
@@ -436,7 +453,7 @@ export async function settleSchedulerOutcome(
 	// and keeps that meaning. Its run ends `aborted`, with the limit as detail, and an aborted compaction is no failure.
 	const detail = outcome.status === "faulted" ? outcome.error.detail : undefined;
 	const cutOff =
-		typeof detail === "object" && detail !== null && "reason" in detail && detail.reason === "restart_limit";
+		typeof detail === "object" && detail !== null && !Array.isArray(detail) && detail.reason === "restart_limit";
 	if (record.kind === COMPACTION_TASK_KIND) {
 		const live = await tx.doc(LiveDoc, record.conversationId);
 		if (cutOff) removeCompactionStatus(live, record.id);

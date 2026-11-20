@@ -61,7 +61,7 @@ function deciderTask(plan: Plan, seen: { yields: (number | undefined)[] }) {
 				const handle = (await runtime.conversation(runtime.conversationId, ctx))!;
 				await runtime.commit(async (tx) => {
 					if (plan.steer !== undefined) {
-						await handle.submit(tx, { type: "input", content: plan.steer, whenBusy: "steer" });
+						await handle.admit(tx, { type: "input", content: plan.steer, whenBusy: "steer" });
 					}
 					return completed(plan.result);
 				}, ctx);
@@ -79,7 +79,7 @@ function setupWith(hookName: "afterTools" | "onYield", plan: Plan) {
 	const noop = defineTool({ name: "noop", description: "noop", parameters: obj({}), execute: async () => ({}) });
 	const handler = async () => {
 		seen.asked++;
-		return seen.asked === 1 ? { tasks: [hookTask(Decider, null)] } : undefined;
+		return seen.asked === 1 ? { kind: "tasks" as const, tasks: [hookTask(Decider, null)] } : undefined;
 	};
 	setup.registry.install(
 		defineExtension({
@@ -333,7 +333,9 @@ describe("recovery", () => {
 			defineExtension({
 				name: "deciders",
 				tasks: [Decider],
-				hooks: [hook(GenerationTask, { onYield: async () => ({ tasks: [hookTask(Decider, null)] }) })],
+				hooks: [
+					hook(GenerationTask, { onYield: async () => ({ kind: "tasks", tasks: [hookTask(Decider, null)] }) }),
+				],
 			}),
 		);
 		setup.faux.setResponses([fauxAssistantMessage([fauxText("first")])]);
@@ -368,7 +370,9 @@ describe("recovery", () => {
 			defineExtension({
 				name: "deciders",
 				tasks: [Decider],
-				hooks: [hook(GenerationTask, { onYield: async () => ({ tasks: [hookTask(Decider, null)] }) })],
+				hooks: [
+					hook(GenerationTask, { onYield: async () => ({ kind: "tasks", tasks: [hookTask(Decider, null)] }) }),
+				],
 			}),
 		);
 		setup.faux.setResponses([fauxAssistantMessage([fauxText("first")])]);

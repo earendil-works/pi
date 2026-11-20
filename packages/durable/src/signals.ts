@@ -40,7 +40,7 @@ export type SignalDefinition<S extends object> = {
 };
 
 /** A key's state: the value delivered under it, or expired because its sleep's deadline came first. */
-export type SignalState<T> = { readonly value: T } | { readonly expired: true };
+export type SignalState<T> = { readonly kind: "value"; readonly value: T } | { readonly kind: "expired" };
 
 /**
  * What a delivery did: `delivered` (durably accepted, not necessarily consumed), `duplicate` (the key holds a value),
@@ -49,10 +49,14 @@ export type SignalState<T> = { readonly value: T } | { readonly expired: true };
  */
 export type SignalResult = "delivered" | "duplicate" | "invalid" | "closed" | "not_found";
 
-/** Stored state of one key, in the task's memo `pi.signal.<name>/<key>`. */
-type SignalMemo =
-	| { readonly version: number; readonly value: JsonValue; readonly consumed?: true }
-	| { readonly expired: true };
+/**
+ * Stored state of one key, in the task's memo `pi.signal.<name>/<key>`, told apart by `expired`: the stored shape stays
+ * as records already hold it.
+ */
+type SignalMemo = (ValueMemo & { readonly expired?: never }) | { readonly expired: true };
+
+/** A stored key that holds a value: its version, and whether a wake used it. */
+type ValueMemo = { readonly version: number; readonly value: JsonValue; readonly consumed?: true };
 
 type AnyTaskRecord = TaskRecord<JsonValue, JsonValue, JsonValue>;
 type Memos = Readonly<Record<string, JsonValue>>;
@@ -206,7 +210,7 @@ export function deliverSignal<T>(
 	if (key === "" || !isJsonValue(value) || !internalsOf(token).validator.check(value)) return { result: "invalid" };
 	const name = signalMemoName(token.name, key);
 	const stored = memoOf(record.memos, name);
-	if (stored !== undefined) return { result: "expired" in stored ? "closed" : "duplicate" };
+	if (stored !== undefined) return { result: stored.expired === true ? "closed" : "duplicate" };
 	if (
 		state.status === "sleeping" &&
 		state.until !== undefined &&
@@ -216,7 +220,7 @@ export function deliverSignal<T>(
 		return { result: "closed", record: withMemos(record, { [name]: { expired: true } }) };
 	}
 	// `setTask()` copies the record, the value with it.
-	const memo: SignalMemo = { version: token.version, value };
+	const memo: ValueMemo = { version: token.version, value };
 	return { result: "delivered", record: withMemos(record, { [name]: memo }) };
 }
 
@@ -231,8 +235,8 @@ export function readSignal<T>(
 ): SignalState<T> | undefined {
 	const stored = memoOf(memos, signalMemoName(token.name, key));
 	if (stored === undefined) return undefined;
-	if ("expired" in stored) return { expired: true };
-	if (stored.version === token.version) return { value: stored.value as T };
+	if (stored.expired === true) return { kind: "expired" };
+	if (stored.version === token.version) return { kind: "value", value: stored.value as T };
 	if (stored.version > token.version) {
 		throw new Error(`Signal ${token.name} value has version ${stored.version}, newer than ${token.version}`);
 	}
@@ -242,7 +246,7 @@ export function readSignal<T>(
 	if (!isJsonValue(migrated) || !validator.check(migrated)) {
 		throw new Error(`Signal ${token.name} migration from version ${stored.version} returned an invalid value`);
 	}
-	return { value: migrated as T };
+	return { kind: "value", value: migrated as T };
 }
 
 /** Throws unless a sleep waits for something (`until` or a non-empty `signals`) and none of its keys served a wait. */
@@ -253,7 +257,8 @@ export function checkSleep(state: Sleeping, memos: Memos | undefined, task: numb
 	for (const { signal, key } of state.signals ?? []) {
 		const stored = memoOf(memos, signalMemoName(signal, key));
 		if (stored === undefined) continue;
-		if ("expired" in stored) throw new Error(`Task ${task} cannot sleep on signal ${signal} key ${key}: it expired`);
+		if (stored.expired === true)
+			throw new Error(`Task ${task} cannot sleep on signal ${signal} key ${key}: it expired`);
 		if (stored.consumed === true) {
 			throw new Error(`Task ${task} cannot sleep on signal ${signal} key ${key}: it already woke a wait`);
 		}
@@ -278,7 +283,8 @@ export function sleepWake(
 	const ready = readyKey(state, memos);
 	if (ready !== undefined) {
 		const name = signalMemoName(ready.signal, ready.key);
-		const consumed = { ...(memoOf(memos, name) as SignalMemo), consumed: true };
+		// `readyKey()` found a value there.
+		const consumed: ValueMemo = { ...(memoOf(memos, name) as ValueMemo), consumed: true };
 		return { wake: { reason: "signal", signal: ready.signal, key: ready.key }, memos: { [name]: consumed } };
 	}
 	if (state.until === undefined || state.until > now) return undefined;
@@ -298,7 +304,7 @@ function readyKey(
 ): { readonly signal: string; readonly key: string } | undefined {
 	return state.signals?.find(({ signal, key }) => {
 		const stored = memoOf(memos, signalMemoName(signal, key));
-		return stored !== undefined && !("expired" in stored) && stored.consumed !== true;
+		return stored !== undefined && stored.expired !== true && stored.consumed !== true;
 	});
 }
 

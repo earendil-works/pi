@@ -15,8 +15,8 @@ export type PrepareRequest = {
 
 /** The reply to a request: its result, or why it failed. */
 export type PrepareReply =
-	| { readonly id: number; readonly result: PreparedImage | undefined }
-	| { readonly id: number; readonly error: string };
+	| { readonly kind: "prepared"; readonly id: number; readonly result: PreparedImage | undefined }
+	| { readonly kind: "failed"; readonly id: number; readonly error: string };
 
 const port = parentPort;
 if (port === null) throw new Error("The Photon image worker needs a parent thread");
@@ -25,9 +25,10 @@ const images = createPhotonImages(
 );
 port.on("message", (request: PrepareRequest) => {
 	void images.prepare(request.bytes, request.mimeType, request.limits).then(
-		(result) => port.postMessage({ id: request.id, result } satisfies PrepareReply),
+		(result) => port.postMessage({ kind: "prepared", id: request.id, result } satisfies PrepareReply),
 		(error: unknown) =>
 			port.postMessage({
+				kind: "failed",
 				id: request.id,
 				error: error instanceof Error ? error.message : String(error),
 			} satisfies PrepareReply),

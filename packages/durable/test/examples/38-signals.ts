@@ -35,7 +35,7 @@ const Greeter = defineTask<null, { phase: "work" } | { phase: "greeted" }, strin
 			// The wake names the key; readSignal() is how the value is read.
 			const wake = task.state.wake;
 			const state = await runtime.readSignal(Greeting, "hello", ctx);
-			const text = state !== undefined && "value" in state ? state.value.text : "(none)";
+			const text = state?.kind === "value" ? state.value.text : "(none)";
 			console.log(`  [greeter] woke by ${JSON.stringify(wake)}, read "${text}"`);
 			await runtime.commit(() => ({ status: "terminal", outcome: { status: "completed", result: text } }), ctx);
 		},

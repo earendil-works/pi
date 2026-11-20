@@ -4,7 +4,8 @@ import type { ToolExecutionApi, ToolExecutionResult, ToolPark, ToolRegistration 
 
 /** Whether `execute()` returned a park rather than a result. */
 export function isPark(returned: ToolExecutionResult | ToolPark): returned is ToolPark {
-	return "sleep" in returned || "wait" in returned;
+	// Tool code is a trust boundary: any `kind` makes a park, and `parkError` refuses one that is neither.
+	return returned.kind !== undefined;
 }
 
 /**
@@ -20,13 +21,13 @@ export type ParkCarrier = { readonly [BASE_PARKS]?: Set<ToolPark> };
 const RESULT_FIELDS = ["output", "structuredOutput", "isError", "details", "diagnostics", "usage", "control"] as const;
 
 /**
- * Why a park breaks its shape (spec suspendable §4.1), or `undefined`: exactly one of `sleep` and `wait`, no result
- * field, and, when `tool` is a wrapper's composite (§9), one its base returned in this run, whose api is `api`. Rules
+ * Why a park breaks its shape (spec suspendable §4.1), or `undefined`: kind `sleep` or `wait`, no result field, and, when `tool` is a wrapper's composite (§9), one its base returned in this run, whose api is `api`. Rules
  * on what it waits for are the commit's.
  */
 export function parkError(tool: ToolRegistration, park: ToolPark, api: ParkCarrier): string | undefined {
 	// Tool code is a trust boundary for the mixed objects its types forbid.
-	if ("sleep" in park && "wait" in park) return "a park has either sleep or wait, not both";
+	const kind: unknown = park.kind;
+	if (kind !== "sleep" && kind !== "wait") return `a park's kind is sleep or wait, not ${String(kind)}`;
 	const field = RESULT_FIELDS.find((name) => name in park);
 	if (field !== undefined) return `a park has no result field, but this one has ${field}`;
 	if (composites.has(tool) && api[BASE_PARKS]?.has(park) !== true) {

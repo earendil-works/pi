@@ -54,7 +54,7 @@ export function hookTask<I extends JsonValue, S extends { phase: string }, R, H 
  * its base unchanged or spread and returns the base's park unchanged; a park of its own ends the call `invalid_park`.
  */
 export function wrapTool<Tool extends ToolRegistration>(tool: Tool, wrapper: (tool: Tool) => Tool): Wrap<Tool> {
-	return { tool: tool.name, wrap: wrapper };
+	return { kind: "tool", tool: tool.name, wrap: wrapper };
 }
 
 /** Wrap the section `key` wherever the wrapping extension is selected. */
@@ -62,5 +62,5 @@ export function wrapSection<Tool extends ToolRegistration = ToolRegistration>(
 	key: string,
 	wrapper: (section: PromptSection<Tool>) => PromptSection<Tool>,
 ): Wrap<Tool> {
-	return { section: key, wrap: wrapper };
+	return { kind: "section", section: key, wrap: wrapper };
 }

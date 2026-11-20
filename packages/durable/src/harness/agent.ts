@@ -234,7 +234,7 @@ export function sectionExtension(agent: Agent, key: string): string | undefined 
 	let found: string | undefined;
 	for (const extension of agent.extensions) {
 		const provides = extension.sections?.some((section) => section.key === key) === true;
-		const wraps = extension.wraps?.some((wrap) => "section" in wrap && wrap.section === key) === true;
+		const wraps = extension.wraps?.some((wrap) => wrap.kind === "section" && wrap.section === key) === true;
 		if (provides || wraps) found = extension.name;
 	}
 	return found;
@@ -245,7 +245,7 @@ export function toolExtension(agent: Agent, name: string): string | undefined {
 	let found: string | undefined;
 	for (const extension of agent.extensions) {
 		const provides = extension.tools?.some((tool) => tool.name === name) === true;
-		const wraps = extension.wraps?.some((wrap) => "tool" in wrap && wrap.tool === name) === true;
+		const wraps = extension.wraps?.some((wrap) => wrap.kind === "tool" && wrap.tool === name) === true;
 		if (provides || wraps) found = extension.name;
 	}
 	return found;
@@ -273,7 +273,7 @@ export function resolveAgent<Tool extends ToolRegistration>(
 	for (const extension of extensions) {
 		for (const wrap of extension.wraps ?? []) {
 			const wrapReport = (error: unknown) => report(error, extension.name);
-			if ("tool" in wrap)
+			if (wrap.kind === "tool")
 				applyWrap(
 					composed,
 					wrap.tool,

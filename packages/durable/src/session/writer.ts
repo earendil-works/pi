@@ -229,7 +229,7 @@ export class Writer {
 				const error =
 					rejected !== undefined
 						? rejected.error
-						: index === result?.stored && "refused" in result
+						: index === result?.stored && result.kind === "refused"
 							? result.refused
 							: new Error("Storage committed without adopting the batch");
 				failing.push({ part, outcome: { kind: "own", error }, published: false });
