@@ -140,6 +140,21 @@ describe("runPrintMode", () => {
 		expect(session.extensionRunner.emit).toHaveBeenCalledWith({ type: "session_shutdown", reason: "quit" });
 	});
 
+	// #12208
+	it("returns non-zero on assistant error in json mode", async () => {
+		const runtimeHost = createRuntimeHost(
+			createAssistantMessage({ stopReason: "error", errorMessage: "provider failure" }),
+		);
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
+			mode: "json",
+		});
+
+		expect(exitCode).toBe(1);
+		expect(errorSpy).toHaveBeenCalledWith("provider failure");
+	});
+
 	// #10799
 	it("warns on stderr and returns non-zero when the response was truncated", async () => {
 		const runtimeHost = createRuntimeHost(createAssistantMessage({ stopReason: "length" }));

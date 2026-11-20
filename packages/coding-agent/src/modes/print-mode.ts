@@ -145,25 +145,27 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 			await session.prompt(message);
 		}
 
-		if (mode === "text") {
-			const state = session.state;
-			const lastMessage = state.messages[state.messages.length - 1];
+		const state = session.state;
+		const lastMessage = state.messages[state.messages.length - 1];
 
-			if (lastMessage?.role === "assistant") {
-				const assistantMsg = lastMessage as AssistantMessage;
-				if (assistantMsg.stopReason === "error" || assistantMsg.stopReason === "aborted") {
-					console.error(assistantMsg.errorMessage || `Request ${assistantMsg.stopReason}`);
-					exitCode = 1;
-				} else {
+		// JSON mode already streamed the message; only text mode writes the final text to stdout.
+		// Both modes report a failed or truncated response on stderr and with a nonzero exit code.
+		if (lastMessage?.role === "assistant") {
+			const assistantMsg = lastMessage as AssistantMessage;
+			if (assistantMsg.stopReason === "error" || assistantMsg.stopReason === "aborted") {
+				console.error(assistantMsg.errorMessage || `Request ${assistantMsg.stopReason}`);
+				exitCode = 1;
+			} else {
+				if (mode === "text") {
 					for (const content of assistantMsg.content) {
 						if (content.type === "text") {
 							writeRawStdout(`${content.text}\n`);
 						}
 					}
-					if (assistantMsg.stopReason === "length") {
-						console.error("Response was truncated: the model reached its output token limit.");
-						exitCode = 1;
-					}
+				}
+				if (assistantMsg.stopReason === "length") {
+					console.error("Response was truncated: the model reached its output token limit.");
+					exitCode = 1;
 				}
 			}
 		}
