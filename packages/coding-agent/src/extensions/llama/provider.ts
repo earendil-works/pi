@@ -151,7 +151,6 @@ function toPiModel(
 		maxTokens: contextWindow,
 		compat: {
 			supportsStore: false,
-			supportsDeveloperRole: false,
 			supportsReasoningEffort: false,
 			supportsUsageInStreaming: true,
 			supportsStrictMode: false,
