@@ -324,7 +324,7 @@ export async function startVm(options: StartVmOptions): Promise<VmSession> {
 		// match the script as written.
 		let fn: JSValueHandle;
 		try {
-			fn = vm.evalCode(`(async (tools, console) => {${data.code}\n})`, "codemode.js");
+			fn = vm.evalCode(`(async () => {${data.code}\n})`, "codemode.js");
 		} catch (error) {
 			if (!(error instanceof JSException)) throw error;
 			post({ type: "done", ok: false, error: describeException(error) });
