@@ -3003,7 +3003,7 @@ draining old holder without polling).
   reported only for an exit nobody asked for.
 - **Workers never build** (D11): the server's plugins component builds every plugin; workers evaluate shipped
   complete sets (`createPluginRuntime`, no esbuild); `workers.step(name)` ships a rollout's set to every worker (D12:
-  `{ host, report } | { host, stopped: true } | { host, error }` per worker).
+  `{ kind: "reloaded", host, report } | { kind: "stopped", host } | { kind: "failed", host, error }` per worker).
 
 ### The app kit (`chord/app`; slice 13)
 
