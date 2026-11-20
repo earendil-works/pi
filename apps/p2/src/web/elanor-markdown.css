@@ -11,10 +11,12 @@
 }
 
 /*
- * A link's underline where Elanor puts it (the font's underline position). p2's base rule for links offsets underlines
- * by 3px, which on top of that left the line at the bottom of the line box, against the next line's text.
+ * A link's underline as one unbroken line just below the descenders. Elanor puts it at the font's underline position,
+ * where the system sans's descenders cut it into pieces (the browser skips ink around them); p2's base rule for links
+ * offsets underlines by 3px, which on top of that left it at the bottom of the line box, against the next line.
  */
 .elanor-markdown a {
+	text-underline-position: under;
 	text-underline-offset: auto;
 }
 
