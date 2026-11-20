@@ -5,7 +5,7 @@
 import { bool, local, str } from "@earendil-works/chord";
 
 export { Http } from "@earendil-works/chord/http";
-export { AppInfo } from "../../kit/info.ts";
+export { AppInfo } from "../../../old/src/kit/info.ts";
 
 /**
  * What the route to a session's worker asks before it starts or reaches one: whether the session exists. The API owns

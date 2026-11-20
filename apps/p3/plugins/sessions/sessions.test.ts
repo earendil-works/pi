@@ -11,7 +11,7 @@ import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { type TestedPlugin, testPlugin } from "@earendil-works/chord/plugins";
 import { type P3Principal, Server } from "@earendil-works/p3/v1";
 import { SessionRoute } from "@earendil-works/p3/v1/server";
-import { API } from "../../src/app.ts";
+import { API } from "../../old/src/app.ts";
 import { CODING, SessionFacts, Sessions, SessionsList } from "./contract.ts";
 
 const OWNER: P3Principal = { kind: "owner" };
