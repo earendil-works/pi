@@ -119,7 +119,7 @@ Before writing or reviewing plugin code in `apps/p2` (server and worker facets, 
 
 ## Working on p3 (Pi Roam) packages
 
-Work on a p3 (Pi Roam) package in `apps/p3` (a plugin or a part of one) starts by reading the guides index [apps/p3/docs/guides/README.md](apps/p3/docs/guides/README.md), then the guides it lists, in its order, in full. Follow them.
+Work on a p3 (Pi Roam) package in `apps/p3` starts by reading [apps/p3/docs/README.md](apps/p3/docs/README.md), then the guides it lists, in its order, in full. Follow them.
 
 ## Building p2's web UI
 

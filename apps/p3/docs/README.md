@@ -1,21 +1,43 @@
-# p3 docs
+# p3 (Pi Roam): start here
 
-The working set: short, current, updated as slices are built. Everything older is in `archive/` (the record of how
-we got here; not a reference for building).
+p3 is one Pi per person: a server on the person's machine, one worker process per session, and everything else as
+plugins, built on Chord (`packages/chord`) and Durable (`packages/durable`). It lives in `apps/p3/` on main. Plans,
+package briefs and decisions about packages live in Linear, one issue per package. This folder holds the guides an
+agent needs while building, and the record of how p3 got here.
 
-| File | What it is |
+## Read before you build, in this order, in full
+
+1. `process.md`: how a package goes from its Linear issue to the nightly; what you must never change.
+2. `chord-practices.md`: how p3 fits together and how a p3 plugin is built on Chord: the shape, the rules, the
+   mistakes made and their fixes.
+3. `testing.md`: the tiers, what every package tests, the commands.
+4. `performance.md`: the budgets, how to measure, the traps.
+5. `names.md`: one name per thing; use these words in code, contracts and text.
+
+For depth, only when a guide sends you there: Chord's design (`packages/chord/docs/design.md`; §3 hosts and links, §6
+objects and admission, §§9-11 documents, tables, queries, lists, §17 registries, §21 reload, §23 HTTP, workers and
+surfaces) and its plugin guide (`packages/chord/docs/plugin-authoring.md`).
+
+## Reference (not instructions)
+
+| Path | What it is |
 | --- | --- |
-| `overview.md` | what p3 is, its goals, the parts we build, in what order |
-| `names.md` | one name per thing, used everywhere (code, contracts, panes, docs) |
-| `chord-practices.md` | how p3 is built on Chord: the shape of a plugin, the rules, the mistakes made and their fixes (read before every slice) |
-| `workflow.md` | how a slice is specified, built, reviewed and handed over |
-| `decisions.md` | the owner's decisions, newest last (the record; older entries may be superseded by newer ones) |
-| `slices/` | one brief per slice; a slice's brief is filled out in detail before it is built |
-| `guides/` | the guides for package builders (process, building, testing, performance): start at `guides/README.md` |
+| `decisions.md` | Mario's decisions up to the package split, newest last. Later entries win over earlier ones. Read the entries your package touches |
+| `slices/` | the per-slice briefs written before the split. Read the ones in your package's area for p2's features, measurements and open points; the brief your package works from is its Linear issue |
+| `slices/01-base-and-sessions/walkthrough/`, `slices/26-release/walkthrough/` | how slices 1 (base and sessions) and 26 (release, the `p3` command) were built, with the real code |
+| `archive/` | older designs and notes; uses older names. Not a reference for building |
 
-Rules for this folder:
+## The code, at a glance
 
-- A doc here is current or it is moved to `archive/`.
-- When a slice changes what a doc says (a name, a part, a decision), the doc changes in the same commit.
-- Chord's own design is in `packages/chord/docs/design.md`; Chord changes p3 needs are specified there
-  (`packages/chord/docs/admission/design.md`), and the slice brief points to them.
+| Path | What |
+| --- | --- |
+| `apps/p3/plugins/<name>/` | the built-in plugins; `sessions` is the model plugin |
+| `apps/p3/src/api/v1/` | the API plugins import: `@earendil-works/p3/v1`, `/v1/server`, `/v1/worker` |
+| `apps/p3/src/kit/` | p3's kit: the server's start, sign-ins, the session workers, the data directory |
+| `apps/p3/src/bootstrap/` | the process entries: `bin.ts` (the `p3` command), `server.ts`, `worker.ts`, `supervisor.ts` |
+| `apps/p3/test/` | the tests and their harnesses (`topology.ts`, `launched.ts`, `commands.ts`, `until.ts`) |
+| `apps/p3/bench/` | benchmarks, one per slice or package |
+| `apps/p2/` | p2 (Pi Mobile), today's app: inspiration for what to build, never a source to copy |
+
+Rules for this folder: the guides stay current (fix one the moment it is wrong or silent, in the commit that shows
+it); the reference is not edited except to correct a fact.

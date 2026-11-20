@@ -31,7 +31,7 @@ p3 and "go to definition" lands in the API's code.
 
 ## In the repository
 
-- `docs/`: the working set (`docs/README.md`): overview, names, workflow, decisions, slice briefs.
+- `docs/`: start at `docs/README.md`: the guides for building a package (process, building on Chord, testing, performance), names, and the record (decisions, slice briefs).
 - `src/`: base code (a restart changes it): the process entries (`src/bootstrap/`: `bin.ts`, `server.ts`,
   `worker.ts`, `supervisor.ts`), the principal, the API (`src/api/v1/`), the kit (`src/kit/`).
 - `plugins/`: everything else, one directory per plugin.
