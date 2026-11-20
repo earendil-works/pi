@@ -44,7 +44,9 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"rate.?limit",
 	"too many requests",
 	// Status codes must not be part of a longer word or number, e.g. a request id or byte count (#11057).
-	"(?<![a-z0-9])(?:429|500|502|503|504|520|524)(?![a-z0-9])",
+	// 520, 524 and 525 are Cloudflare's: an unknown error, a timeout, and a failed TLS
+	// handshake between Cloudflare and the provider's origin, usually while it restarts.
+	"(?<![a-z0-9])(?:429|500|502|503|504|520|524|525)(?![a-z0-9])",
 	// Also matches "The service is temporarily unavailable" (#10965).
 	"service.?(?:is.?)?(?:temporarily.?)?unavailable",
 	"server.?error",
