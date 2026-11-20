@@ -231,6 +231,9 @@ From `../chord-practices.md` (the rules with their reasons), `plugin-authoring.m
 - A plugin's npm `dependencies` are bundled into its facet's script. No `import.meta`, `__dirname`, top-level `await`
   or literal `import("x")` in plugin code (the build refuses them). Chord reads a plugin's own files through
   `pluginFile` (`@earendil-works/chord/plugins`), which p3's API does not export yet: an API change for Mario.
+- No lazy loading in plugins: a facet loads whole when its process starts (`../decisions.md`, "No lazy loading in
+  plugins for now"). A heavy library in a worker facet: measure its cost per idle worker and bring it to Mario
+  (`performance.md`, "Hot-path rules").
 - No new dependency without a measurement (`performance.md`) and the root `AGENTS.md`'s dependency rules (exact
   pins, the lockfile reviewed).
 

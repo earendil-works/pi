@@ -208,12 +208,13 @@ What Chord's reads cost (design §30, `plugin-authoring.md`):
   a reload makes new objects, and a strong cache keeps the old ones alive.
 - **Natives open on first use,** close with their owner (code mode's sandbox: 1.2 MiB less while unused).
 - **Hot values stay out of listed tables:** a streaming token rewriting a session's row re-runs every list over it.
-- **Lazy loading.** Base code: what an entry imports with a literal `import()` stays a chunk of its own, loaded on
-  first use (design §23, "The worker base"; `splitting` in `scripts/build-release.ts`); the provider SDKs are such
-  chunks. Plugins: the build refuses `import()`, and a facet's script, its npm dependencies inlined, is evaluated in
-  every process of its kind at load. So keep worker facets small, and put rarely used heavy code where it runs least
-  (the server, not every worker). **Open:** a way for a plugin to load a heavy dependency lazily; until decided,
-  measure it and ask Mario before adding one to a worker facet.
+- **No lazy loading in plugins** (`../decisions.md`, "No lazy loading in plugins for now"). A plugin loads its whole
+  facet when a process starts: the build refuses `import()`, and a facet's script, its npm dependencies inlined, is
+  evaluated in every process of its kind. Keep worker facets small, and put rarely used heavy code where it runs least
+  (the server, not every worker). **A heavy library in a worker facet:** measure its cost per idle worker (settled USS
+  with and without it, `How to measure`) and bring the numbers to Mario before adding it. Only base code loads lazily:
+  what an entry imports with a literal `import()` stays a chunk of its own, loaded on first use (design §23, "The
+  worker base"; `splitting` in `scripts/build-release.ts`); the provider SDKs are such chunks.
 - **Two plugins inlining the same library load it twice** in every process of their kind. Share through a contract or
   a registry entry instead (one live instance).
 - **No new dependency without a measurement:** the worker's idle and settled USS, its start, the bundle's size, before
@@ -256,4 +257,5 @@ What Chord's reads cost (design §30, `plugin-authoring.md`):
 6. UI: bytes per common action and the bundle's size.
 7. Every cache a `WeakMap` with a GC test; no module-level strong cache.
 8. No new dependency, flag or process without a measurement in the brief.
-9. A number that got worse says why.
+9. A heavy library in a worker facet: its cost per idle worker measured and brought to Mario.
+10. A number that got worse says why.
