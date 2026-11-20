@@ -44,6 +44,10 @@ Binding for Chord v2 (`packages/chord/src/`) and its tests, when writing and whe
 - Deferred work: anything left to a later slice goes into the section "Carry-over" of `packages/chord/docs/slices.md` under that slice, in the same change; a slice's spec and build include every entry of its section.
 - Before reporting: re-read every changed file top to bottom as a stranger would; each file must be understandable without jumping around. Then `npm run check` and the layer's tests.
 
+## Reviews
+
+- When reviewers (subagents or other sessions) report while others are still reviewing, do not summarize or relay their findings piecemeal. Wait until every report is in, then give one report that covers all of them.
+
 ## Commands
 
 - After code changes (not docs): `npm run check` (full output, no tail). Fix all errors, warnings, and infos before committing. Does not run tests.
