@@ -1,0 +1,137 @@
+// A local release of p3 (`docs/slices/26-release.md`): builds p3 and the three workspace packages it depends on (Chord,
+// pi-schema, pi-telemetry: their published versions do not have what p3 uses yet), packs the four and installs p3's
+// tarball, the three as overrides, into a directory outside the repository, as a user installing from npm would (no
+// lifecycle script of a dependency runs), so nothing there resolves a workspace source. Then the release test runs
+// against the install, and with `--bench` the bench.
+// Run from the repository root: npm run release:p3:local -- --out /tmp/p3-release [--force] [--skip-test] [--bench]
+
+import { execFileSync } from "node:child_process";
+import { mkdir, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { parseArgs } from "node:util";
+import { buildRelease, P3, REPOSITORY } from "./build-release.ts";
+
+const USAGE = `Usage: npm run release:p3:local -- --out <dir> [--force] [--skip-test] [--bench]
+
+  --out <dir>   Where the release goes, outside the repository: tarballs/, install/ (an isolated npm install of
+                p3's tarball) and p3 (a link to the installed command)
+  --force       Replace the release a previous run left in <dir>
+  --skip-test   Do not run the release test against the install
+  --bench       Run bench/slice-1.ts against the install afterwards`;
+
+/** The file that marks a directory as a release this script made: only such a directory is ever emptied. */
+const MARKER = ".p3-release";
+
+/** What the script makes in its output directory, and so what `--force` removes there: nothing else. */
+const MADE = [MARKER, "tarballs", "install", "p3"];
+
+/** The workspace packages p3 depends on, in the order they build. */
+const DEPENDENCIES = ["telemetry", "schema", "chord"].map((name) => join(REPOSITORY, "packages", name));
+
+/**
+ * The output directory `out`, ready: made when missing, used when empty, and with `force` cleared of what a previous
+ * run made there. Refused before anything is removed: the repository, a directory above it (a file system's root is
+ * one) or inside it, by real paths, so not through a link either; and a directory with other content, which is not
+ * ours to empty.
+ */
+export async function prepareOutput(out: string, force: boolean): Promise<string> {
+	const path = await realOf(resolve(out));
+	const repository = await realpath(REPOSITORY);
+	if (within(repository, path) || within(path, repository)) {
+		throw new Error(`release-local: ${path} must be outside the repository, and not above it`);
+	}
+	await mkdir(path, { recursive: true });
+	const present = await readdir(path);
+	if (present.length > 0) {
+		if (!present.includes(MARKER)) {
+			throw new Error(`release-local: ${path} holds something else than a release of this script; not touched`);
+		}
+		if (!force) throw new Error(`release-local: ${path} holds a release (pass --force to replace it)`);
+		for (const name of MADE) await rm(join(path, name), { recursive: true, force: true });
+	}
+	await writeFile(join(path, MARKER), "A local release of p3, made by apps/p3/scripts/release-local.ts.\n");
+	return path;
+}
+
+/** Whether `path` is `directory` or lies in it, by path segments. */
+function within(path: string, directory: string): boolean {
+	const from = relative(directory, path);
+	return from === "" || !(from === ".." || from.startsWith(`..${sep}`) || isAbsolute(from));
+}
+
+/** `path` with its existing part resolved through links: the part that does not exist yet is appended as it is. */
+async function realOf(path: string): Promise<string> {
+	try {
+		return await realpath(path);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+		return join(await realOf(dirname(path)), basename(path));
+	}
+}
+
+/** Runs npm in `cwd` and answers what it printed; no lifecycle script of any package runs. */
+function npm(args: readonly string[], cwd: string): string {
+	return execFileSync("npm", [...args, "--ignore-scripts"], {
+		cwd,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "inherit"],
+	});
+}
+
+/** Packs the package in `directory` into `tarballs`: its name and its tarball's path. */
+function pack(directory: string, tarballs: string): { readonly name: string; readonly tarball: string } {
+	const [packed] = JSON.parse(npm(["pack", "--json", "--pack-destination", tarballs], directory)) as [
+		{ readonly name: string; readonly filename: string },
+	];
+	return { name: packed.name, tarball: join(tarballs, packed.filename) };
+}
+
+/** Runs a script of p3's checkout against the install `install`. */
+function run(args: readonly string[], install: string): void {
+	execFileSync(args[0]!, args.slice(1), { cwd: P3, stdio: "inherit", env: { ...process.env, P3_RELEASE: install } });
+}
+
+if (import.meta.main) {
+	const { values } = parseArgs({
+		options: {
+			out: { type: "string" },
+			force: { type: "boolean", default: false },
+			"skip-test": { type: "boolean", default: false },
+			bench: { type: "boolean", default: false },
+			help: { type: "boolean", default: false },
+		},
+	});
+	if (values.help || values.out === undefined) {
+		console.log(USAGE);
+		process.exit(values.help ? 0 : 2);
+	}
+	const out = await prepareOutput(values.out, values.force);
+	for (const directory of DEPENDENCIES) execFileSync("npm", ["run", "build"], { cwd: directory, stdio: "inherit" });
+	const built = await buildRelease();
+	console.log(`Built ${built.dist}: ${built.files.length} files, ${(built.bytes / 1024).toFixed(0)} KiB of bundles`);
+	const tarballs = join(out, "tarballs");
+	await mkdir(tarballs);
+	const p3 = pack(P3, tarballs);
+	const dependencies = DEPENDENCIES.map((directory) => pack(directory, tarballs));
+	// An isolated consumer: a private package whose one dependency is p3's tarball. Its dependencies of the workspace
+	// come from their tarballs too, not from the registry.
+	const install = join(out, "install");
+	await mkdir(install);
+	const consumer = {
+		private: true,
+		type: "module",
+		dependencies: { [p3.name]: `file:${p3.tarball}` },
+		overrides: Object.fromEntries(dependencies.map(({ name, tarball }) => [name, `file:${tarball}`])),
+	};
+	await writeFile(join(install, "package.json"), `${JSON.stringify(consumer, null, "\t")}\n`);
+	npm(["install", "--omit=dev", "--no-audit", "--no-fund"], install);
+	await symlink(join("install", "node_modules", ".bin", "p3"), join(out, "p3"));
+	if (!values["skip-test"]) run(["npm", "run", "test:release"], install);
+	if (values.bench) {
+		const flags = ["--conditions=source", "--disable-warning=ExperimentalWarning"];
+		run([process.execPath, ...flags, "bench/slice-1.ts", "--release", install], install);
+	}
+	console.log(
+		`\nLocal release of ${p3.name}: ${out}\n  the command: ${join(out, "p3")}\n  the tarball: ${p3.tarball}`,
+	);
+}

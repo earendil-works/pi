@@ -61,10 +61,11 @@ export type LinksOptions = {
 	readonly path: string;
 	readonly options?: LinkOptions | ((request: HttpRequest, principal: Principal) => LinkOptions);
 	/**
-	 * Called when a link is accepted, with its request and principal; what it returns is called when that link closes
-	 * (the app tracking its clients' links: the kit ends an ephemeral sign-in with its last link).
+	 * Called when a link is accepted, with its request, its principal and `close`, which terminates that link at once
+	 * (an app closing the links of a credential it revoked); what it returns is called when that link closes (the app
+	 * tracking its clients' links: the kit ends an ephemeral sign-in with its last link).
 	 */
-	readonly opened?: (request: HttpRequest, principal: Principal) => (() => void) | undefined;
+	readonly opened?: (request: HttpRequest, principal: Principal, close: () => void) => (() => void) | undefined;
 };
 
 /** What the component reports. */
@@ -483,9 +484,9 @@ class Component<P extends Principal> implements HttpComponent<P>, Handler {
 				return refuse(stream, 403);
 			}
 			const admitted = { allowed, relay, principal, ...options };
-			const opened = (): (() => void) | undefined => {
+			const opened = (close: () => void): (() => void) | undefined => {
 				try {
-					return links.opened?.(webRequest, principal);
+					return links.opened?.(webRequest, principal, close);
 				} catch (error) {
 					this.#hookFailed("links.opened", undefined, error);
 					return undefined;

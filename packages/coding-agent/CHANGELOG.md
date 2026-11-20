@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Extension components: `render()` now returns `readonly string[]`, and `Container` returns the same cached array while its children are unchanged. Extensions that modify render output in place, including `super.render()` in a `Container` subclass or an embedded component's output, must copy it first ([#9549](https://github.com/earendil-works/pi/issues/9549))
+
 ### Added
 
 - Added `deepseek-v4.1-flash` and `deepseek-v4.1-flash-1017` to the Qwen Token Plan Individual providers, and per-plan key variables `QWEN_TOKEN_PLAN_TEAM_API_KEY`, `QWEN_TOKEN_PLAN_TEAM_CN_API_KEY`, `QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY`, and `QWEN_TOKEN_PLAN_INDIVIDUAL_CN_API_KEY`; the shared `QWEN_TOKEN_PLAN_API_KEY` and `QWEN_TOKEN_PLAN_CN_API_KEY` still work ([#11773](https://github.com/earendil-works/pi/issues/11773))
@@ -9,7 +13,10 @@
 ### Changed
 
 - Qwen Token Plan providers now use the current gateways (`token-plan.maas.qwencloudapi.com` international, `token-plan.maas.qianwenaiapi.com` China), and `qwen-token-plan` and `qwen-token-plan-cn` are named "Qwen Token Plan Team" and "Qwen Token Plan Team CN". Provider IDs are unchanged, and the old `aliyuncs.com` hosts still work ([#11773](https://github.com/earendil-works/pi/issues/11773))
+- Updated `undici` to 8.12.4 for security advisories GHSA-mqg3-3v4r-cm32, GHSA-7xg3-fphp-28hg, GHSA-5rm8-gv32-r954, GHSA-9v6h-8rgp-m69f, GHSA-3g9m-rv3r-w5w2, and GHSA-r4pc-4jcp-7pqc ([#12200](https://github.com/earendil-works/pi/issues/12200))
+- The default model for the `openai`, `azure`, and `openai-codex` providers is now GPT-6.2 Sol (`gpt-6.2-sol`) instead of GPT-6.1 Sol, at the same price
 - The find tool's path patterns are now relative to the search directory, like grep's `glob`: `src/*.ts` finds `src/a.ts` but no longer `pkg/src/a.ts`; use `**/src/*.ts` to match at any depth. Patterns without `/` still match file names at any depth ([#12066](https://github.com/earendil-works/pi/issues/12066))
+- The resume command printed on exit is now on its own line after `To resume this session:`, so it can be selected with a triple-click ([#12237](https://github.com/earendil-works/pi/issues/12237))
 
 ### Fixed
 
@@ -30,6 +37,21 @@
 - Fixed the find tool matching path patterns through folders above the search path: with the project in `~/src/app`, `src/**/*.ts` returned every `.ts` file in the project ([#12066](https://github.com/earendil-works/pi/issues/12066))
 - Fixed pi crashing with `RangeError: Maximum call stack size exceeded` when rendering a very large edit diff, for example after editing a file with a multi-megabyte line, and again on every resume of that session ([#8036](https://github.com/earendil-works/pi/issues/8036))
 - Fixed pressing Esc during a batch of tool calls leaving the calls that had not started yet without a result in the session; they now get an "Operation aborted" result ([#9986](https://github.com/earendil-works/pi/issues/9986))
+- Fixed an unreadable `CHANGELOG.md` (pi's own or an extension package's) printing `Warning: Could not parse changelog` over the interactive TUI; it now shows no changelog notes ([#11264](https://github.com/earendil-works/pi/issues/11264))
+- Fixed problems found when replacing the session with `/new`, `/resume`, `/fork` or RPC `new_session`, `switch_session` and `fork` never being shown, for example a project extension that fails to load after `/resume` into another project, or an `enabledModels` pattern that matches nothing after a settings change. Interactive mode now shows them in the chat and print, JSON and RPC modes write them to stderr; a problem already reported is not repeated. SDK hosts can call the new `AgentSessionRuntime.takeUnreportedDiagnostics()` at startup and after each replacement to get each diagnostic once
+- Fixed RPC `new_session`, `switch_session`, `fork` and `clone` running extension `session_start` and `resources_discover` handlers twice for the new session. RPC clients now also receive events emitted by `session_start` handlers, such as `entry_appended` for entries they append ([#10470](https://github.com/earendil-works/pi/issues/10470))
+- Fixed an exception thrown by an extension's `pi.events` handler being printed with `console.error` over the interactive TUI. It is now reported like other extension errors: in the chat in interactive mode, as `extension_error` in RPC mode and as `Extension error (...)` in print mode. Errors from a handler that fails after its session was replaced are dropped ([#11264](https://github.com/earendil-works/pi/issues/11264))
+- Fixed `AgentSession.reload()` not emitting `session_start` to extensions when the SDK host bound them with `bindExtensions({})`, after it had already emitted `session_shutdown`. Extensions that start work in `session_start`, such as the MCP extension connecting its servers, stayed stopped after a reload
+- Fixed `--mode json` dropping events emitted by extension `session_start` handlers, such as `entry_appended` for entries they append, at startup and after an extension replaces the session
+- Fixed `Could not restore model <provider>/<model>. Using <fallback>` being shown only at interactive startup. Resuming or forking into a session whose model no longer exists or has no login switched to another model without notice, and print, JSON and RPC modes never showed it. It is now reported in every mode, at startup and after `/resume`, `/fork` and RPC `switch_session` or `fork`
+- Fixed git and npm output, such as `Cloning into ...` or `added 12 packages`, being drawn over the interactive TUI when pi installed or refreshed packages during `/reload`, `/new`, `/resume` and `/fork`, including temporary `-e git:` and `-e npm:` packages. In interactive mode their output is now captured, and a failed install reports the end of it. Until the TUI starts, each install is announced as `Installing <source>...` on stderr instead of showing git and npm output. git and ssh can no longer prompt in interactive mode: a package that needs a typed password or passphrase fails with a hint to set up a credential helper or ssh agent, or to run `pi install <source>` once from the shell. `pi install` and `pi update` keep live output ([#11264](https://github.com/earendil-works/pi/issues/11264))
+- Fixed fullscreen scrolling in long sessions saturating a CPU core by re-rendering the whole transcript on every wheel event ([#9549](https://github.com/earendil-works/pi/issues/9549))
+- Fixed search in `/login`, `/logout`, `/scoped-models` and `/resume` keeping the highlight on the row scrolled to before typing, so Enter picked whichever entry landed there instead of the best match; a query now highlights the top match, as `/model` does ([#12245](https://github.com/earendil-works/pi/issues/12245), [#12246](https://github.com/earendil-works/pi/pull/12246) by [@acmerfight](https://github.com/acmerfight))
+- Fixed exiting pi, `pi config` and the `--resume` and other startup pickers dropping terminal output still queued in stdout, such as the resets that turn off mouse tracking and Kitty keyboard reporting; the shell could then print mouse and key reports as text. pi now waits up to one second for queued output before exiting or continuing ([#12133](https://github.com/earendil-works/pi/issues/12133))
+- Fixed moving the cursor in a search field with Left, Right, Home or End moving the highlight back to the first entry in `/login`, `/logout`, `/model`, `/scoped-models`, `/resume`, `/settings`, the per-model settings model picker and `pi config` ([#12245](https://github.com/earendil-works/pi/issues/12245))
+- Fixed llama.cpp decision classifiers ignoring the image input that llama.cpp reports, such as Clef with its `mmproj`; `models.classify()` now sends their images to `/v1/systemone` ([#12282](https://github.com/earendil-works/pi/issues/12282))
+- Fixed `kill -TSTP` from outside pi stopping it without restoring the terminal, which left mouse tracking and the Kitty keyboard protocol on at the shell prompt and turned mouse movement into garbage input. pi now suspends as with Ctrl+Z and redraws on `fg` ([#12283](https://github.com/earendil-works/pi/pull/12283) by [@haoqixu](https://github.com/haoqixu))
+- Fixed changing the thinking level on the `openai-codex` provider invalidating the prompt cache on GPT-6 models ([#12269](https://github.com/earendil-works/pi/issues/12269))
 
 ### Removed
 

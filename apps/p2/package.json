@@ -41,7 +41,7 @@
 		"proper-lockfile": "4.1.2",
 		"react": "19.3.0",
 		"react-dom": "19.3.0",
-		"undici": "8.12.3",
+		"undici": "8.12.4",
 		"ws": "8.21.0",
 		"yaml": "2.9.1"
 	},

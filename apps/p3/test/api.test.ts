@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { defineFacet, Session } from "@p3/app/v1";
+import { defineFacet, Session } from "@earendil-works/p3/v1";
 
 describe("the API", () => {
 	it("addresses a session by its id", () => {

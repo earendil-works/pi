@@ -42,8 +42,8 @@ describe("search, viewers, artifacts and cost parity", { skip: !browserTests }, 
 		await chat.send({ text: "Unique search needle", requestId: "needle" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => JSON.stringify(view?.entries).includes("Echo: Unique search needle"));
 		await browser.metrics(1280, 900);
-		// Recents' list page searches its sessions' titles and messages.
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/list/recent`);
+		// The list page of the sessions without a project searches its sessions' titles and messages.
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/list/other`);
 		await browser.wait(
 			`document.querySelector('.list-page input[aria-label="Search sessions and messages"]')&&!document.querySelector('.offline')`,
 		);
@@ -54,7 +54,7 @@ describe("search, viewers, artifacts and cost parity", { skip: !browserTests }, 
 		await browser.evaluate(input('input[aria-label="Search sessions and messages"]', "Unique search needle"));
 		await browser.wait(`document.querySelector('.list-page .hit')?.textContent.includes('Unique search needle')`);
 		await sessions.archive({ id: session.id }, BACKGROUND_CONTEXT);
-		// Refresh the submitted query, as mobile does on an edit: the archived session is no longer in Recents.
+		// Refresh the submitted query, as mobile does on an edit: the archived session is no longer on that page.
 		await browser.evaluate(input('input[aria-label="Search sessions and messages"]', "Unique search needle "));
 		await browser.wait(`!document.querySelector('.list-page .hit')`);
 		// The Archive's list page searches the archive.

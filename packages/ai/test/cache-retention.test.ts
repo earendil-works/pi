@@ -248,6 +248,8 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			"gpt-6-luna",
 			"gpt-6-sol",
 			"gpt-6.1-terra",
+			"gpt-6.2-astra",
+			"gpt-6.2-sol",
 		] as const)("does not enable cache warming from the documented TTL alone for %s", (modelId) => {
 			expect(getModel("openai", modelId).promptCache).toBeUndefined();
 		});

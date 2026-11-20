@@ -621,7 +621,8 @@ describe("syncing a session between devices", () => {
 	});
 });
 
-describe("bounded memory", () => {
+// Each test moves megabytes through gzip and SQLite: about 2 s on a CI runner, over 5 s when the suite loads it.
+describe("bounded memory", { timeout: 30_000 }, () => {
 	/** Rows of `size` characters each, one per commit: about `count * size` bytes of history. */
 	function bigBatches(count: number, size: number): Rows[] {
 		return Array.from({ length: count }, (_, index) => [{ id: `big${index}`, n: index, pad: "x".repeat(size) }]);

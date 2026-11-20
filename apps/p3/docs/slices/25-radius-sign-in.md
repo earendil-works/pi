@@ -55,6 +55,22 @@ A visit through the relay needs no sign-in: the relay's identity maps to the sam
 
 Until then, the screens can run on today's device code, for the owner only.
 
+## Decided since (owner, 2026-11-16)
+
+- The sign-in screen lists the registered identity providers: Radius and pairing.
+- Pairing: the new device shows a short code, a signed-in device approves it (`p3 pair <code>`, the local page, the
+  terminal client); no link travels, so the Pi never needs its public address (decision "Signing in a new device").
+- No owner password.
+- **Remote requests are accepted for any host name** (a tunnel's, a LAN address), so a Pi behind ngrok needs no
+  configured domain. Safe because authority comes only from a sign-in, never from the host name or from loopback: a
+  request whose host is no loopback name is remote and needs a sign-in, and the sign-in cookie is bound to the host the
+  browser used, so a DNS-rebinding page (`evil.com` pointed at the Pi) is anonymous and reaches public routes only. The
+  public pairing route is the remaining risk (an attacker's page starts a pairing and asks the owner to approve it), so:
+  the code expires within minutes and is single use; the approval shows everything needed to judge the request (the
+  host name it came through, the client's IP address, its browser or terminal, when it started) with approve and deny;
+  pairing starts and attempts are rate-limited. This changes Chord's HTTP baseline (declared hosts only): a Chord
+  decision of its own, and Astra and Sol attack it in the slice's reviews.
+
 ## Open (owner decisions, one at a time, with the details)
 
 - Which Radius changes to ask for, or whether to accept the interim for persons.

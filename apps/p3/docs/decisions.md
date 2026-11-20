@@ -373,3 +373,100 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
   (`src/kit/session-workers.ts`). A sign-in that ends (revoked, or expired unused) closes its own links at once,
   through the close function Chord's HTTP component now hands `links.opened(request, principal, close)`; not through
   `host.revoke`, which ends objects by principal and so would end the owner's shared objects for every device.
+- **The basics before iterating (owner, 2026-11-15):** slice 26 (the release build, the shipped package
+  `@earendil-works/p3` with types third-party plugins type-check against, the `p3` command with `server`, `status`,
+  `stop`, `restart`, a background supervisor, and several Pis on one machine by `--pi`/`--dir`), then slice 27 (a
+  terminal client scaffold that `p3` connects to), then slice 25 (sign-in with Radius); further arguments (mirroring
+  coding-agent's where sensible) are iterations on that base. The API is `@earendil-works/p3/v1`, no shorthand; the
+  built-in plugin is `@earendil-works/p3-sessions`; Chord exports the `Method` and `LiteralsSchema` types so
+  contracts can be named in declarations. The lockfile change of the rename is OK.
+- **Fable plans and reviews, never builds (owner, 2026-11-15):** builders are Opus; Fable writes designs, briefs and
+  reviews only. (Slice 14, the frame fixes, slice 1's redo and slice 26's first part were built by Fable before this
+  rule; each went through review rounds by Opus, Sol and Astra with mutation checks.)
+- **Correction (2026-11-15):** p3's sign-in cookie is `p3-<id>`, named after the Pi's random id (slice 26, several
+  Pis on one machine), not `p3-sign-in` as the slice 1 redo entry says. The API package is `@earendil-works/p3`.
+- **Stack traces in the release: names kept, no source maps (owner, 2026-11-16):** the release bundle keeps
+  identifiers (`minifySyntax` and `minifyWhitespace` only), as coding-agent's bundle does, so a raw stack names real
+  functions; no source maps ship. Mapping stacks to source positions (maps beside the bundle, a short-lived mapper
+  process for crashes and `p3 report`) is a nice-to-have for later, not planned. Identifiers stay unminified (owner,
+  2026-11-16, after the measurement: minifying them in the release and the worker base saves 1.1 MiB per idle worker
+  and 2.4 MiB on the server, 5 ms of a warm worker start; not worth unreadable stacks).
+- **Signing in a new device: the new device shows a code, a signed-in one approves it (owner, 2026-11-16):** a
+  browser or terminal without a sign-in gets the sign-in screen with the registered identity providers: Radius, and
+  pairing. Pairing shows a short single-use code on the new device (`K7QM-2PXF`); the owner approves it on a device
+  already signed in (`p3 pair <code>`, the local page, the terminal client), and the waiting device gets its own
+  sign-in, revocable on its own. No link travels, so the Pi never needs to know the address it is reached by (a
+  tunnel's domain, a LAN address). Passwords for the owner are out: a Pi exposed to the web would make them phishable
+  and guessable. The owner link printed at start stays as the first sign-in. Remote requests are accepted for any host name
+  (owner, 2026-11-16, same day): authority comes only from host-bound sign-ins; pairing codes expire within minutes,
+  the approval shows everything needed to judge the request, and pairing is rate-limited (slice 25, "Decided since").
+- **The release gets a worker-only entry (owner, 2026-11-16):** a session worker (and the supervisor) loads a bundle of
+  its own instead of the chunk it shares with the server (esbuild's JS API, `ws`, `node:http`, the server side of
+  Chord's workers): about 1.5 MiB less per worker and a faster warm start (mem-audit, `p3-memory.md`). Built after slice
+  26's round-3 fixes, in slice 26.
+- **No build cache (owner, 2026-11-16):** nothing built is kept between starts, as Chord's decision "A" says: every
+  start builds the server's plugins and the worker base again (about 30 ms and 120 ms today). A cache keyed by what a
+  build read would save that, at the risk of serving old code after an edit; not built. To be measured again once p3
+  has many plugins.
+- **Chord's package is installed beside p3, accepted (owner, 2026-11-16):** an install of p3 also installs Chord's
+  whole package (about 15 MB: its sources, compiled components and declarations), because the shipped plugin API's
+  declarations and JavaScript import Chord (a plugin's type check and its own tests outside the server). The server
+  never loads it (its Chord is in the bundle). Accepted as it is; slimming Chord's package is a matter for publishing.
+- **Windows is a target; a running server proves its identity over HTTP (owner, 2026-11-16):** p3 runs on Linux,
+  macOS, Windows and Android. A command trusts a listening server's record only after asking that server, on the
+  recorded port with the owner token, who it is, and getting the record's own run id back: a reused pid cannot answer
+  as the server, on any platform. Process start times remain only for what does not listen (a starting server, a
+  supervisor), read on Windows through PowerShell; there `ps` does not exist.
+- **Slice 1 approved (owner, 2026-11-16):** the walkthrough is fine; slice 1 is committed together with slice 26.
+- **Session worker memory levers and a budget (owner, 2026-11-16):** workers get the measured safe levers: the
+  worker-only entry with splitting, the provider SDKs bundled, Chord's worker base minified, a warm compile cache
+  (`flushCompileCache()` after start), and `--liftoff-only`, `--optimize-for-size` and `--max-semi-space-size=4` in
+  their `execArgv`; background recompilation stays on (turning it off saves 1.5 to 2.5 MiB for up to 25% more CPU).
+  p3 enforces its minimum Node version at start, and every flag is checked in the supported versions. A memory test
+  in the release tests runs a real worker with Durable and pi-ai (stub provider), a burst and five parallel subagents,
+  and fails if the worker's USS ever exceeds 55 MiB, one budget for every supported Node (owner, same day: raised
+  from 45 to 50, because after five parallel streams glibc keeps about 10 MiB it freed, the session's own data is
+  about 4 MiB, and the glibc setting that removes it only helps on Linux; then to 55, because Node 26's workers settle
+  about 7 MiB above Node 24's and 50 failed one run in five on Node 26).
+- **p3 ships as a single executable, likely (owner, 2026-11-17):** p3 itself is likely distributed as a Node single
+  executable application (SEA: one binary per platform with Node and p3's code inside), not installed from npm; the
+  packages (the API `@earendil-works/p3` that plugins type-check against, Chord and the others) still go to npm. First
+  step: the local release build (`release:p3:local`) also makes the executable, and the release tests, the memory test
+  and the bench run against it beside the npm install, measured overnight. Later the release uploads the executables.
+- **Base entries live in `src/bootstrap/` (owner, 2026-11-18; refines "Base entries are named after what they are"):**
+  the process entries (the `p3` command, the server, a session worker, the supervisor, the single executable's main)
+  move from `apps/p3/`'s root to `apps/p3/src/bootstrap/`, keeping their names; the root holds no `.ts` files.
+- **Packaging is its own work, later (owner, 2026-11-18; replaces the first step of "p3 ships as a single executable,
+  likely"):** the single-executable build made for the local release is taken out again; packaging p3 (an executable,
+  the native desktop apps) becomes a package of its own in p3 that someone takes on. The measurements stay as the
+  record: a Node 26 executable matched the npm install on Node 26 in every number, 156 MiB on disk (36 MB as xz); a
+  Node 24 executable cannot give workers their V8 flags and failed the memory budget; coding-agent's Bun binary is
+  117 MiB (42 MB as xz). The move of the entries to `src/bootstrap/` stays.
+- **Lock decisions wait for slice 6 (owner, 2026-11-18):** the lock sheet study's decisions (fewer layers, folding
+  locks into `harness.tools`, presets, the lock list; private: `/home/badlogic/chord-notes/research/p3-locks-sheet/`)
+  are taken when locks are built, not before. The owner is not convinced locks are any good: slice 6 starts by
+  questioning the mechanism itself, not only its details.
+- **p3 ships with its own Node (owner, 2026-11-18):** p3 is only shipped with a Node of its own (bundled beside it, or
+  a single executable), so p3 controls the Node version a user runs; no install runs on a Node p3 did not choose.
+  Slice 27's decision 1 is settled by it: the terminal's sandbox gets Node 26, whose permission model blocks the
+  network. Whether the minimum for running from a checkout rises to Node 26 is still open.
+- **Node 26 or newer everywhere (owner, 2026-11-18: "node 26+ all the way"):** p3's minimum Node is 26, also for running
+  from a checkout and for its tests; Node 24 support goes (its branch in the workers' V8 flags, its test runs).
+- **The terminal's sandbox runs on p3's minimum Node; shipped p3 carries a fixed one (owner, 2026-11-18):** Node 26.5.1
+  fixed a high-severity hole in the permission model (CVE-2026-58043) that the terminal's sandbox (slice 27) relies on.
+  The sandbox accepts the older Nodes p3 supports (from 26.3.1, the phone's Termux Node) with that hole; the Node p3 ships
+  with is 26.5.1 or newer, so shipped installs have the fix.
+- **Packages: owners, audits, sign-off and browser testing (owner, 2026-11-18, for the team's package work; the guides
+  in `guides/` carry them):**
+  - **Chord and Durable belong to Mario.** Package builders and their agents never change `packages/chord` or
+    `packages/durable`; an agent that needs a change there writes it up (the problem, an example, the change it needs)
+    and tells its user to take it to Mario.
+  - **p3's shared base and test code belong to Mario:** `src/kit`, `src/api`, `src/bootstrap`, `src/install.ts`, the
+    test harnesses (`test/topology.ts`, `test/launched.ts`, `test/commands.ts`); changes there go to him.
+  - **The whole team audits.** Whoever pushes a package posts a short video or explainer on its Linear issue and in
+    #packages on Discord; the team signs off.
+  - **Browser testing beyond headless Chromium is manual, by people with the devices, and part of the sign-off:** Safari
+    on iOS, Firefox on Android, Chrome on Android.
+- **No lazy loading in plugins for now (owner, 2026-11-18):** plugins keep loading their whole facet at a process's
+  start (the plugin build refuses `import()`); no Chord change for it. A package that wants a heavy library in a worker
+  facet measures its cost per idle worker and brings it to Mario.

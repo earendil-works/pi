@@ -2217,6 +2217,11 @@ export interface ExtensionRuntimeState {
 	/** Retain an event-bus subscription until this runtime is invalidated. */
 	trackEventBusSubscription: (unsubscribe: () => void) => () => void;
 	/**
+	 * Report an error thrown by a `pi.events` handler. Dropped before the runner exists; the runner
+	 * replaces this to call its emitError() until the runner is invalidated.
+	 */
+	reportError: (error: ExtensionError) => void;
+	/**
 	 * Register or unregister a provider.
 	 *
 	 * Before bindCore(): queues registrations / removes from queue.

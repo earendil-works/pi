@@ -124,7 +124,6 @@ export interface OpenAIResponsesStreamOptions {
 }
 
 export interface ConvertResponsesMessagesOptions {
-	includeSystemPrompt?: boolean;
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
 	/** Whether later system messages are sent in place; otherwise they are folded into the leading prompt. */
 	supportsMidConvoSystemMessages?: boolean;
@@ -263,7 +262,6 @@ export function convertResponsesMessages<TApi extends Api>(
 			tools: convertResponsesTools(tools, { ...options?.toolOptions, toolSearchResult: true }),
 		} satisfies ResponseToolSearchOutputItemParam);
 	};
-	const includeInitialSystemMessage = options?.includeSystemPrompt ?? true;
 	const pushConfigurationUpdate = (effort: string): void => {
 		messages.push({
 			type: "configuration_update",
@@ -282,20 +280,18 @@ export function convertResponsesMessages<TApi extends Api>(
 			// transformMessages keeps system messages in order, so their position matches the transcript.
 			const anchorsToolChanges = systemIndex++ >= transcriptTools.foldedSystemMessages;
 			if (anchorsToolChanges) appendSystemToolAdditions(msg, `system:${msgIndex}`);
-			if (!isLeadingSystemMessage || includeInitialSystemMessage) {
-				const parts = [isLeadingSystemMessage ? getSystemMessageText(msg) : renderSystemMessageUpdate(msg)];
-				if (anchorsToolChanges) {
-					// A redefinition is a removal plus an addition of the same name; only true removals are announced.
-					const added = new Set((msg.toolsAdded ?? []).map((tool) => tool.name));
-					const removed = (msg.toolsRemoved ?? []).map((tool) => tool.name).filter((name) => !added.has(name));
-					if (removed.length > 0) parts.push(renderToolRemovalNotice(removed));
-					// Recorded after this message's additions, whose notice precedes this removal notice.
-					for (const name of removed) unavailableTools.add(name);
-				}
-				const text = parts.filter((part) => part.length > 0).join("\n\n");
-				if (text.length > 0) {
-					messages.push({ role: instructionRole, content: sanitizeSurrogates(text) });
-				}
+			const parts = [isLeadingSystemMessage ? getSystemMessageText(msg) : renderSystemMessageUpdate(msg)];
+			if (anchorsToolChanges) {
+				// A redefinition is a removal plus an addition of the same name; only true removals are announced.
+				const added = new Set((msg.toolsAdded ?? []).map((tool) => tool.name));
+				const removed = (msg.toolsRemoved ?? []).map((tool) => tool.name).filter((name) => !added.has(name));
+				if (removed.length > 0) parts.push(renderToolRemovalNotice(removed));
+				// Recorded after this message's additions, whose notice precedes this removal notice.
+				for (const name of removed) unavailableTools.add(name);
+			}
+			const text = parts.filter((part) => part.length > 0).join("\n\n");
+			if (text.length > 0) {
+				messages.push({ role: instructionRole, content: sanitizeSurrogates(text) });
 			}
 		} else if (msg.role === "user") {
 			if (typeof msg.content === "string") {

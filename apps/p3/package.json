@@ -1,25 +1,59 @@
 {
-	"name": "@p3/app",
+	"name": "@earendil-works/p3",
 	"version": "0.0.1",
 	"private": true,
-	"description": "p3: the successor of p2 on Chord v2 (its API, base code and built-in plugins)",
+	"description": "p3: one Pi per person (the server, its command `p3`, and the API plugins import)",
 	"type": "module",
-	"exports": {
-		"./v1": "./src/api/v1/index.ts",
-		"./v1/server": "./src/api/v1/server.ts",
-		"./v1/worker": "./src/api/v1/worker.ts"
+	"bin": {
+		"p3": "dist/p3.js"
 	},
+	"exports": {
+		"./v1": {
+			"source": "./src/api/v1/index.ts",
+			"types": "./dist/api/v1/index.d.ts",
+			"import": "./dist/api/v1/index.js"
+		},
+		"./v1/server": {
+			"source": "./src/api/v1/server.ts",
+			"types": "./dist/api/v1/server.d.ts",
+			"import": "./dist/api/v1/server.js"
+		},
+		"./v1/worker": {
+			"source": "./src/api/v1/worker.ts",
+			"types": "./dist/api/v1/worker.d.ts",
+			"import": "./dist/api/v1/worker.js"
+		}
+	},
+	"files": [
+		"dist",
+		"plugins",
+		"!plugins/**/*.test.ts",
+		"src/api",
+		"src/kit/contribute.ts",
+		"src/kit/forward.ts",
+		"src/kit/info.ts",
+		"src/principals.ts",
+		"README.md"
+	],
 	"scripts": {
+		"build": "node --disable-warning=ExperimentalWarning scripts/build-release.ts",
 		"check": "node ../../scripts/biome-check.mjs && tsc --noEmit",
 		"format": "node ../../scripts/biome-check.mjs --write",
-		"test": "node --conditions=source --disable-warning=ExperimentalWarning --test --test-reporter=dot \"test/**/*.test.ts\" \"plugins/**/*.test.ts\""
+		"test": "node --conditions=source --disable-warning=ExperimentalWarning --test --test-timeout=120000 --test-force-exit --test-reporter=dot \"test/*.test.ts\" \"test/kit/*.test.ts\" \"plugins/**/*.test.ts\"",
+		"test:release": "node --conditions=source --disable-warning=ExperimentalWarning --test --test-concurrency=1 --test-timeout=900000 --test-force-exit \"test/release/*.test.ts\""
 	},
 	"engines": {
-		"node": ">=24.4.0"
+		"node": ">=26.3.1"
 	},
 	"dependencies": {
 		"@earendil-works/chord": "1.5.2",
 		"@earendil-works/pi-schema": "1.5.2",
-		"@earendil-works/pi-telemetry": "1.5.2"
+		"@earendil-works/pi-telemetry": "1.5.2",
+		"esbuild": "0.28.2",
+		"ws": "8.21.0"
+	},
+	"devDependencies": {
+		"@earendil-works/pi-ai": "1.5.2",
+		"@earendil-works/pi-durable": "1.5.2"
 	}
 }

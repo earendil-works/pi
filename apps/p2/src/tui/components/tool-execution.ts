@@ -158,7 +158,7 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
-	override render(width: number): string[] {
+	override render(width: number): readonly string[] {
 		// Colors are baked into the content: rebuild after a theme swap (section 5.4).
 		if (this.themeVersion !== this.ctx.theme.version) {
 			this.themeVersion = this.ctx.theme.version;

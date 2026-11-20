@@ -82,7 +82,7 @@ host.serve(SessionFacts, (_params, principal, self) => {
 ```
 
 **No worker starts for a session that does not exist.** The session route's admission reads data through a contract the API owns
-(`SessionRoute`, `@p3/app/v1/server`), served by the sessions plugin (`src/session-route.ts`, `sessionExists`).
+(`SessionRoute`, `@earendil-works/p3/v1/server`), served by the sessions plugin (`src/session-route.ts`, `sessionExists`).
 
 **Helpers in p3's API** (`src/kit/`): `forward(store, Remote, variant, own?)` (a view's members from a store,
 by the remote contract's names; never derive a public contract from a store: it would publish whatever internal
@@ -144,6 +144,19 @@ needs a reference or a native). No stale-worker check exists or is needed (below
 - Every slice edits and reloads each plugin it touches while it is used (a list open, a worker running), in a test:
   nothing lost, no error.
 
+## Releases
+
+p3 runs two ways: from the checkout (TypeScript through `--conditions=source`) and as the installed release
+(`npm run release:p3:local`, slice 26: base code bundled with Chord inlined, plugins as source). Both must work.
+
+- Base code asks `src/install.ts` where p3's files are; it never builds paths from `import.meta` itself.
+- Plugins ship as source: they import only the API and their own files, and their tests end in `.test.ts` (the build
+  leaves those out).
+- A new base-code dependency is inlined into the bundle or added to the build's list of allowed externals (the build
+  fails on any other).
+- Node flags go into the launcher or the session worker's `execArgv`, never only into `npm test`.
+- A slice that touches base code runs `release:p3:local` (its release tests) before reporting.
+
 ## Tests
 
 - Three tiers: plugin (`testPlugin`), topology (server and workers in one process, `test/topology.ts`), end to end
@@ -158,9 +171,13 @@ needs a reference or a native). No stale-worker check exists or is needed (below
 - Numbers: `bench/slice-<n>.ts`, at the sizes the brief states (1k, 10k, 100k rows), medians of 20 or more runs,
   the first (cold) run reported apart, on slayer; a worker's memory as its private memory (USS), and its total for
   several workers at once.
-- The mutation copy needs its own package links: copy `apps/p3` to `/tmp/x/apps/p3`, then link
-  `/tmp/x/node_modules/@p3/app` to the copy and `/tmp/x/node_modules/@earendil-works` to the repository's (a plain copy
-  resolves `@p3/app` back to the checkout, and mutations in `src/` take no effect).
+- The mutation copy needs its own package links: copy `apps/p3` to `/tmp/x/apps/p3` and make
+  `/tmp/x/node_modules/@earendil-works/` a directory of links: `p3` to the copy, every other entry to the repository's
+  (a mutation in Chord copies `packages/chord` too and links `chord` to it). Linking the whole scope resolves p3 back to
+  the checkout, and mutations take no effect. A mutation must keep its imports used: an unused import trips the
+  build's externals check.
+- A failed case leaves no socket or launched process open (`finally`, `t.after`, `--test-force-exit`): one leak hangs
+  the whole runner. Supervisors are detached, so a mutation runner kills them by command line.
 - Reload tests reload every facet the slice touches while it is used: the server's (a list open) and the worker's (the
   owner holding the worker's object).
 
@@ -183,13 +200,15 @@ needs a reference or a native). No stale-worker check exists or is needed (below
 | A whole store exposed as a remote contract | an explicit contract and `forward` |
 | Seven plugins checking a worker's generation by hand | the workers component guarantees it |
 | A list cost measured once, after a start (2.3 ms, cold) | medians of 20 or more runs (0.7 ms warm), the cold run apart |
-| A mutation copy that still resolved `@p3/app` to the checkout | its own package links |
+| A mutation copy that still resolved `@earendil-works/p3` to the checkout | its own package links |
 | One index for two lists: the archived list's tie-break on the key was not in its index, so SQLite sorted every page | one index per list's order, and a plan test |
 | A revoked device's open socket kept working (inherited from Chord's kit) | a sign-in closes its own links (`links.opened`'s `close`), never `host.revoke` (it ends shared objects for every device) |
 
 ## How we work
 
 `workflow.md` is the process; this is what it means for the builder:
+
+- **Models:** builders are Opus. Fable plans and reviews, never builds (owner, 2026-11-15). Sol and Astra review.
 
 - Read the brief's "Read first" list and this file in full before touching code. Never present an invented API: real
   with its file, or marked PROPOSED.

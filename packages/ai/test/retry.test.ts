@@ -14,8 +14,26 @@ const wrappedDnsLookupError =
 	"The pending stream has been canceled (caused by: getaddrinfo ENOTFOUND bedrock-runtime.us-east-1.amazonaws.com)";
 const azurePeakLoadError =
 	"The system is currently experiencing high demand and cannot process your request. Your request exceeds the maximum usage size allowed during peak load. For improved capacity reliability, consider switching to Provisioned Throughput.";
+const codexConnectionLimitError =
+	"Codex error: Responses websocket connection limit reached (60 minutes). Create a new websocket connection to continue.";
 
 describe("provider retry classification", () => {
+	// Regression for #12124: the Codex WebSocket lifetime limit is recoverable on a fresh connection.
+	it.each([codexConnectionLimitError, "Codex error: websocket_connection_limit_reached"])(
+		"matches the Codex websocket connection lifetime limit: %s",
+		(errorMessage) => {
+			expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(true);
+		},
+	);
+
+	it("does not match a generic connection limit", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "connection limit reached" }),
+			),
+		).toBe(false);
+	});
+
 	it("matches explicit provider retry guidance", () => {
 		expect(
 			isRetryableAssistantError(

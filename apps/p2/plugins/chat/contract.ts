@@ -275,6 +275,18 @@ export const Chat = remote("p2.chat", {
 });
 
 /**
+ * Stopping a conversation's run from outside its chat (the sidebar's Cancel, the command menu's Stop): every input the
+ * stop withdraws, the caller's own too, waits as its author's draft (`DraftStore`), restored to their composer when
+ * they open that conversation. The chat's own Stop (`Chat.stop`) returns the caller's texts to the composer at once.
+ */
+export const RunControl = remote("p2.run-control", {
+	version: 1,
+	params: { session: param.str(), conversation: param.int() },
+	hostAddress: sessionHost,
+	variants: { participant: { methods: { stop: method() } } },
+});
+
+/**
  * Each response of a conversation's active range with its cost, for whoever may view it (the cost sheet: a client's
  * view holds only a window).
  */

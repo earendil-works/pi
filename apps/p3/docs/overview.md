@@ -1,7 +1,8 @@
 # p3 overview
 
-p3 is the successor of p2 (Pi Mobile): one Pi per person, built on Chord v2 and its app kit, next to p2 in
-`apps/p3/` on main, with its own data directory. It starts empty: no migration of p2's data. Nothing is built yet.
+p3 is the successor of p2 (Pi Mobile): one Pi per person, built on Chord v2 with a kit of its own (`src/kit/`, the
+parts of Chord's app kit p3 needs, copied and cut down), next to p2 in `apps/p3/` on main, with its own data
+directory. It starts empty: no migration of p2's data. Slice 1 is built (`slices/README.md`).
 
 ## Goals
 
@@ -21,18 +22,22 @@ p3 is the successor of p2 (Pi Mobile): one Pi per person, built on Chord v2 and 
 - admission before the factory, with the per-acknowledgement binding fence (`packages/chord/docs/admission/design.md`;
   slice 4);
 - the kit's reload control `AppChanges` (Chord decision "The kit serves the reload control"; slice 2);
-- startup spans and `app.startup` (`archive/startup-telemetry/book.md`, not built; slice 1);
+- startup spans and `app.startup` (`archive/startup-telemetry/book.md`, not built; slice 2);
 - how a plugin gets its host's store, root scope, load signal and keep-alive (`archive/map/book.md` decision 1, not
   decided; slice 3);
-- compression at the origin on the kit's server and worker hosts (`archive/efficiency.md`; slice 1);
+- compression at the origin on the kit's server and worker hosts (`archive/efficiency.md`; slice 2);
 - `revokedBy` on the kit's server and workers; removing a device closes its links; pairing for persons; no stale
   admission; authentication precedence (`archive/people/book.md`, What the Kit Must Add; slice 5);
 - loader admission, an org's ban (`archive/locks/design.md` §5, `archive/org-managed/book.md`; slice 17);
 - rendering another plugin's messages, for the locks sheet (Fable's locks review B1, on slayer; slice 6).
 
 **Base code** (a restart changes it; named after what it is): the principal (`owner`, `person`, `worker`, `server`),
-API v1 (shared, server, worker, web, terminal modules), `server.ts` (the server), `worker.ts` (a session worker),
-`supervisor.ts` (the `p3` command: restarts the server on request or after a crash).
+API v1 (shared, server, worker, web, terminal modules), the kit (`src/kit/`: the server's start, the data directory,
+sign-ins and the owner's sign-in, a worker's start, the start data, and the helpers `forward` and `contribute`;
+Chord's general components stay Chord's: HTTP, workers, plugin loading), and the process entries in `src/bootstrap/`
+(decision "Base entries live in `src/bootstrap/`"): `server.ts` (the server), `worker.ts` (a session worker), `bin.ts`
+(the `p3` command: `server`, `status`, `stop`, `restart`, `list`), `supervisor.ts` (the background server: runs it as
+its child and starts it again after a crash; on request from the page: slice 2).
 
 **Plugins:**
 

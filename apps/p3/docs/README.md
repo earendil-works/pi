@@ -11,6 +11,7 @@ we got here; not a reference for building).
 | `workflow.md` | how a slice is specified, built, reviewed and handed over |
 | `decisions.md` | the owner's decisions, newest last (the record; older entries may be superseded by newer ones) |
 | `slices/` | one brief per slice; a slice's brief is filled out in detail before it is built |
+| `guides/` | the guides for package builders (process, building, testing, performance): start at `guides/README.md` |
 
 Rules for this folder:
 

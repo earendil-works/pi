@@ -1,7 +1,9 @@
 // What the sidebar publishes for views outside it: a rollup's or a group's list page in the main area and the command
-// menu's folder pages. The sidebar is always mounted (docked, or in the drawer) and holds the one copy of the data, with
-// its edits shown at once; the views render from it, so they show the same rows as the sidebar, offline too.
+// menu's folder pages and item actions (Stop run, Archive subagent). The sidebar is always mounted (docked, or in the
+// drawer) and holds the one copy of the data, with its edits shown at once; the views render from it, so they show the
+// same rows as the sidebar, offline too.
 import { useSyncExternalStore } from "react";
+import type { ArchivedProject } from "../../projects/contract.ts";
 import type { SearchResults } from "../../search/contract.ts";
 import type { NewTarget, Rollup, RollupContext, SidebarRow, View } from "./model.ts";
 
@@ -16,8 +18,18 @@ export type PageData = {
 	readonly connected: boolean;
 	readonly onOpen: (id: string, conversation?: number) => void;
 	readonly onRestore: (id: string, conversation?: number) => void;
+	readonly writable: (id: string) => boolean;
+	readonly onCancel: (id: string, conversations: readonly number[]) => void;
+	readonly onArchive?: (id: string) => void;
+	readonly onArchiveAgent: (id: string, conversation: number) => void;
 	readonly onSearch?: (query: string, archived: boolean, sessions: readonly string[]) => Promise<SearchResults>;
 	readonly onNewIn?: (target: NewTarget) => void;
+	/** The owner's archived projects (the Archive's list shows them). */
+	readonly archivedProjects: readonly ArchivedProject[];
+	/** Moves a session to a project, or (null) out of its project; shown at once (the owner's). */
+	readonly onAssign?: (session: string, project: string | null) => void;
+	/** Moves a project before another one, or (null) to the end; shown at once (the owner's). */
+	readonly onMoveProject?: (name: string, before: string | null) => void;
 };
 
 const listeners = new Set<() => void>();
@@ -33,6 +45,9 @@ export function publishPage(next: PageData): void {
 	data = next;
 	for (const listener of listeners) listener();
 }
+
+/** The sidebar's data as last published, for a command's run; undefined before the sidebar first rendered. */
+export const pageData = (): PageData | undefined => data;
 
 /** The sidebar's data as last published; undefined before the sidebar first rendered. */
 export const usePageData = (): PageData | undefined => useSyncExternalStore(subscribe, () => data);

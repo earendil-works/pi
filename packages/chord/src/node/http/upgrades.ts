@@ -49,7 +49,8 @@ export class Upgrades {
 	/**
 	 * Upgrades `message` to the links endpoint: `host.accept` over the socket (its output capped) as the admitted
 	 * principal, with `options`' limits; `context` is the parent of the work on the link. `opened` runs once the link
-	 * is accepted; what it returns runs when its socket closes.
+	 * is accepted, with what terminates that link at once (as a revocation does: no close handshake a peer could
+	 * ignore); what it returns runs when its socket closes.
 	 */
 	link<P extends Principal>(
 		message: IncomingMessage,
@@ -58,20 +59,21 @@ export class Upgrades {
 		admission: Admission<P> & LinkOptions,
 		host: Host<P>,
 		context: Context,
-		opened: () => (() => void) | undefined,
+		opened: (close: () => void) => (() => void) | undefined,
 	): void {
 		const { principal, limits } = admission;
 		upgrade(message, stream, head, admission.maxPayload ?? DEFAULT_LINK_PAYLOAD, (socket) => {
 			const link = webSocketLink(limitedSocket(socket));
-			this.#keep({
+			const upgraded = {
 				socket,
 				allowed: admission.allowed,
 				relay: admission.relay,
 				handler: undefined,
 				seal: () => link.close(),
-			});
+			};
+			this.#keep(upgraded);
 			host.accept(link, { principal, ...(limits === undefined ? {} : { limits }) }, context);
-			const closed = opened();
+			const closed = opened(() => end(upgraded));
 			if (closed !== undefined) socket.once("close", closed);
 		});
 	}

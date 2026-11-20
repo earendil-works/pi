@@ -1,7 +1,7 @@
 // Browser: the command menu's workspace, terminal, folder and working directory commands at 1280×800: Browse files,
 // Show changes and Search files (the workspace's tabs, in the open session and in a hovered row's), Open terminal and
 // New terminal, Change working directory… on a session (the picker, then the move) and on the new-session screen, New
-// session in folder… and Open folder… (pages of the sidebar's folders), and which of them guests see. Fake provider;
+// session in folder… and Open folder… (pages of the folders sessions work in), and which of them guests see. Fake provider;
 // disposable data, every test makes its own sessions.
 
 import assert from "node:assert/strict";
@@ -129,13 +129,13 @@ describe("command menu: workspace, terminal and folders", { skip: !browserTests 
 		await browser.call("Input.dispatchMouseEvent", { type: "mouseMoved", ...point });
 	};
 
-	/** Clicks the directory picker's row of the folder `name`. */
+	/** Opens the location picker's browser row of the folder `name`. */
 	const pickFolder = async (name: string) => {
-		const row = `[...document.querySelectorAll('.sheet .row-button.mono')].find((e) => e.textContent.trim() === ${JSON.stringify(name)})`;
+		const row = `[...document.querySelectorAll('.location-browse .location-link')].find((e) => e.textContent.trim() === ${JSON.stringify(name)})`;
 		await browser.wait(row);
 		await browser.evaluate(`${row}.click()`);
 		await browser.wait(
-			`document.querySelector('.directory-use')?.textContent.endsWith(${JSON.stringify(`/${name}`)})`,
+			`document.querySelector('.location-use')?.textContent.endsWith(${JSON.stringify(`/${name}`)})`,
 		);
 	};
 
@@ -162,7 +162,7 @@ describe("command menu: workspace, terminal and folders", { skip: !browserTests 
 			const to = await create("Workspace hovered");
 			await openSession(from, "Workspace from");
 			await hover(
-				`document.querySelector('.sidebar-section[data-key=recent] .nav-row:has(> a.session-main[href="/s/${to}"])')`,
+				`document.querySelector('.sidebar-section[data-key=other] .nav-row:has(> a.session-main[href="/s/${to}"])')`,
 			);
 			await openMenu();
 			assert.equal(
@@ -249,12 +249,12 @@ describe("command menu: workspace, terminal and folders", { skip: !browserTests 
 			await browser.wait(`document.querySelector('.messages .assistant')?.textContent.includes('Echo: hello')`);
 			await openMenu();
 			await run("change working", "Change working directory…");
-			await browser.wait(`${CLOSED} && ${SHEET}==='Working directory'`);
+			await browser.wait(`${CLOSED} && ${SHEET}==='Location'`);
 			await browser.wait(
-				`document.querySelector('.directory-use')?.textContent.endsWith(${JSON.stringify(`/${basename(fixture.workspace)}`)})`,
+				`document.querySelector('.location-use')?.textContent.endsWith(${JSON.stringify(`/${basename(fixture.workspace)}`)})`,
 			);
 			await pickFolder("moved-here");
-			await browser.click(".directory-use");
+			await browser.click(".location-use");
 			// The picker lists real paths (on macOS the temporary folder is behind a symlink).
 			await until(sessions.sessions, (rows) =>
 				Boolean(rows?.find((row) => row.id === id)?.cwd.endsWith("/moved-here")),
@@ -272,11 +272,11 @@ describe("command menu: workspace, terminal and folders", { skip: !browserTests 
 				"New session",
 			);
 			await run("change working", "Change working directory…");
-			await browser.wait(`${CLOSED} && ${SHEET}==='Working directory'`);
+			await browser.wait(`${CLOSED} && ${SHEET}==='Location'`);
 			// The picker starts where the screen says the session starts (the latest session's directory).
 			const shown = await browser.evaluate<string>(`document.querySelector('.cwd-pick span').textContent`);
 			await browser.wait(
-				`document.querySelector('.directory-use')?.textContent.endsWith(${JSON.stringify(`/${shown.split("/").at(-1)}`)})`,
+				`document.querySelector('.location-use')?.textContent.endsWith(${JSON.stringify(`/${shown.split("/").at(-1)}`)})`,
 			);
 			await browser.evaluate(`history.back()`);
 			await browser.wait(`!document.querySelector('.sheet-head')`);
@@ -284,9 +284,9 @@ describe("command menu: workspace, terminal and folders", { skip: !browserTests 
 			await create("Latest in workspace");
 			await openMenu();
 			await run("change working", "Change working directory…");
-			await browser.wait(`${SHEET}==='Working directory'`);
+			await browser.wait(`${SHEET}==='Location'`);
 			await pickFolder("start-here");
-			await browser.click(".directory-use");
+			await browser.click(".location-use");
 			await browser.wait(`document.querySelector('.cwd-pick span')?.textContent.endsWith('/start-here')`);
 		});
 
@@ -308,7 +308,7 @@ describe("command menu: workspace, terminal and folders", { skip: !browserTests 
 	});
 
 	describe("folders", () => {
-		it("starts a new session in a folder the sidebar knows", async () => {
+		it("starts a new session in a folder a session works in", async () => {
 			const path = folder("folder-new-one");
 			await create("In folder one", path);
 			await create("In folder two", folder("folder-new-two"));
@@ -322,26 +322,38 @@ describe("command menu: workspace, terminal and folders", { skip: !browserTests 
 			await browser.wait(`document.querySelector('.cwd-pick span')?.textContent.endsWith('/folder-new-one')`);
 		});
 
-		it("changes the new-session screen's folder from its folder button, or browses with Select folder…", async () => {
+		it("opens the location picker from the new-session screen's folder button: a recent folder picks it", async () => {
+			await create("Older folder", folder("folder-older"));
 			await create("Recent folder", folder("folder-recent"));
 			await load("/new");
 			await browser.click(".cwd-pick");
-			await browser.wait(`document.querySelector('.command-menu .command-crumb')?.textContent==='Folder'`);
-			await run("folder-recent", "folder-recent");
+			await browser.wait(`${SHEET}==='Location' && !document.querySelector('.command-menu')`);
+			// The machine's recent folders, the most recent first, the screen's own checked; the browser starts there.
+			const RECENT = `[...document.querySelectorAll('[aria-label="Recent folders"] .location-link')].map((e) => e.textContent.trim())`;
 			await browser.wait(
-				`${CLOSED} && document.querySelector('.cwd-pick span')?.textContent.endsWith('/folder-recent')`,
+				`${RECENT}.slice(0, 2).every((text, i) => text.endsWith(['/folder-recent', '/folder-older'][i]))`,
 			);
+			assert.equal(
+				await browser.evaluate<number>(
+					`document.querySelectorAll('[aria-label="Recent folders"] .location-row.current').length`,
+				),
+				1,
+			);
+			await browser.wait(`document.querySelector('.location-use')?.textContent.endsWith('/folder-recent')`);
+			const older = `[...document.querySelectorAll('[aria-label="Recent folders"] .location-link')].find((e) => e.textContent.trim().endsWith('/folder-older'))`;
+			await browser.evaluate(`${older}.click()`);
+			await browser.wait(
+				`!document.querySelector('.sheet-head') && document.querySelector('.cwd-pick span')?.textContent.endsWith('/folder-older')`,
+			);
+			// Each folder step is one Back; the browser's path steps lead to the parents.
 			await browser.click(".cwd-pick");
-			await run("select folder", "Select folder…");
-			await browser.wait(`${CLOSED} && ${SHEET}==='Working directory'`);
-			await browser.wait(`document.querySelector('.directory-use')?.textContent.endsWith('/folder-recent')`);
-			// The picker's Back returns to the recent folders, in its place.
-			await browser.click(".sheet-head .back");
-			await browser.wait(
-				`!document.querySelector('.sheet-head') && document.querySelector('.command-menu .command-crumb')?.textContent==='Folder'`,
-			);
-			await press("Escape");
-			await browser.wait(`${CLOSED} && location.pathname==='/new'`);
+			await browser.wait(`document.querySelector('.location-crumb[aria-current]')?.textContent==='folder-older'`);
+			await browser.evaluate(`[...document.querySelectorAll('button.location-crumb')].at(-1).click()`);
+			await browser.wait(`document.querySelector('.location-crumb[aria-current]')?.textContent!=='folder-older'`);
+			await browser.evaluate("history.back()");
+			await browser.wait(`document.querySelector('.location-crumb[aria-current]')?.textContent==='folder-older'`);
+			await browser.evaluate("history.back()");
+			await browser.wait(`!document.querySelector('.sheet-head') && location.pathname==='/new'`);
 		});
 
 		it("opens a folder's list page, the open one checked", async () => {

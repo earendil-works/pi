@@ -1,18 +1,15 @@
-// p3 end to end: the real server (`startP3`: the kit's HTTP, sign-ins, plugin builds, a forked worker per session) on a
-// temporary data directory, and a client over WebSocket signed in with the owner token file. The owner creates a
-// session, its worker answers, and a restart on the same directory keeps it.
+// p3 end to end in this process: the real server (`startP3`: the kit's HTTP, sign-ins, plugin builds, a forked worker
+// per session) on a temporary data directory, driven by the case of `end-to-end.ts`.
 
-import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import { Sessions, SessionWorker } from "../plugins/sessions/contract.ts";
-import { startP3 } from "../server.ts";
-import { ownerClient } from "./client.ts";
+import { startP3 } from "../src/bootstrap/server.ts";
+import { endToEnd } from "./end-to-end.ts";
 
-describe("p3 end to end", () => {
+describe("p3 end to end, in this process", () => {
 	let dir: string;
 	before(async () => {
 		dir = await mkdtemp(join(tmpdir(), "p3-app-"));
@@ -21,31 +18,16 @@ describe("p3 end to end", () => {
 		await rm(dir, { recursive: true, force: true });
 	});
 
-	it("creates a session whose forked worker answers, and keeps it across a restart", async () => {
-		const dataDir = join(dir, "data");
-		const first = await startP3(context, { dataDir, port: 0 });
-		let id: string;
-		try {
-			const client = await ownerClient(first, context);
-			const sessions = await client.get(Sessions, {}, context);
-			id = await sessions.create({ title: "End to end" }, context);
-			const worker = await client.get(SessionWorker, { session: id }, context);
-			assert.equal(worker.facts.value.session?.title, "End to end");
-			await client.close(context);
-		} finally {
-			await first.close(context);
-		}
-		const second = await startP3(context, { dataDir, port: 0 });
-		try {
-			const client = await ownerClient(second, context);
-			const sessions = await client.get(Sessions, {}, context);
-			assert.deepEqual(
-				sessions.list.value.map((row) => [row.id, row.title]),
-				[[id, "End to end"]],
-			);
-			await client.close(context);
-		} finally {
-			await second.close(context);
-		}
+	it("creates a session whose forked worker answers, starts none for an unknown one, and keeps it across a restart", async () => {
+		const start = async (dataDir: string) => {
+			const app = await startP3(context, { dataDir, port: 0, onStop: () => {} });
+			return {
+				ownerLink: () => app.ownerLink(),
+				ownerTokenFile: app.ownerTokenFile,
+				workers: async () => Object.keys(app.workers.state.value).length,
+				close: () => app.close(context),
+			};
+		};
+		await endToEnd(start, join(dir, "data"));
 	});
 });

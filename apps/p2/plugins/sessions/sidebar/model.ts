@@ -1,26 +1,45 @@
 // The sidebar's rules, as pure functions over what p2 already knows. A rollup is a rule that collects sessions into one
-// section of the sidebar: a flat list (Recents), groups of sessions (one per project, one per folder), or only a link to
-// its list (the Archive). The sidebar shows each rollup's relevant sessions (relevance and the rollup's window); its
-// list page shows them all, those that fell out of the window aged. No React: the views render what these return.
+// section of the sidebar: groups of sessions (one per project), a flat list (the sessions without a project), or only a
+// link to its list (the Archive). The sidebar shows each rollup's relevant sessions (relevance and the rollup's
+// window); its list page shows them all, those that fell out of the window aged. No React: the views render what these
+// return.
 
 import type { Project } from "../../projects/contract.ts";
-import { placeSeed, projectSeed } from "../../projects/glyph-seed.ts";
 import type { RollupWindow } from "../../rollups/contract.ts";
-import type { Work } from "../../status/contract.ts";
+import type { RunFailure, Work } from "../../status/contract.ts";
 import type { Child } from "../../subagents/contract.ts";
 import type { Session, SidebarWindow } from "../contract.ts";
+import { failureWords, runState } from "./run-state.ts";
 
 /** A session as the sidebar shows it: its catalog row with its subagents, its worker's state and an operation. */
 export type SidebarRow = Session & {
 	subagents: readonly Child[];
 	/**
-	 * `work`: what each busy conversation does, by conversation ID. `unread`: a finished answer the owner has not read on
-	 * any device (see `SessionReads`).
+	 * `work`: what each busy conversation does, by conversation ID. `failure`: why the main conversation's last run
+	 * ended without an answer. `unread`: a finished answer the owner has not read on any device (see `SessionReads`).
 	 */
-	worker: { busy: number[]; work: Readonly<Record<string, Work>>; error?: string; unread?: boolean };
+	worker: {
+		busy: number[];
+		work: Readonly<Record<string, Work>>;
+		error?: string;
+		failure?: RunFailure;
+		unread?: boolean;
+	};
 	/** A lifecycle operation of the session: running (`label` only), or failed with its error and a Dismiss. */
 	operation?: { readonly label: string; readonly error?: string; readonly dismiss?: () => void };
 };
+
+/**
+ * What failed in `row`, in words for its tooltip: its worker, an operation, or its main conversation's last run (one
+ * stopped, or ended as an idle one does, is no failure: `runState`); undefined when nothing did.
+ */
+export function failureOf(row: SidebarRow): string | undefined {
+	const { worker, operation } = row;
+	if (worker.error !== undefined) return `Worker failed: ${worker.error}`;
+	if (operation?.error !== undefined) return `${operation.label}: ${operation.error}`;
+	const run = runState(worker.failure, worker.busy.includes(row.main), undefined);
+	return run.kind === "failed" ? `Failed: ${run.detail ?? failureWords(run.reason)}` : undefined;
+}
 
 /** Where a group's "+" starts a new session: in a folder, or in a project (at one of its places). */
 export type NewTarget = { kind: "folder"; env: string | null; cwd: string } | { kind: "project"; project: Project };
@@ -59,12 +78,14 @@ export type RollupContext = {
  * A rule that turns sessions into one section of the sidebar. `archived`: it collects archived sessions. `prefix`: the
  * key prefix of the groups it collects. `window`: its window until the owner picks one (default 3 days; `none`: every
  * session it collects shows). `timeOf`: the time its window compares and its list sorts by (default `updatedAt`).
- * `keeps`: sessions it shows whatever their time, as pinned ones.
+ * `keeps`: sessions it shows whatever their time, as pinned ones. `headless`: its sessions show without a heading row,
+ * always open, followed by a link to its list when its window hides some.
  */
 export type Rollup = {
 	readonly key: string;
 	readonly name: string;
 	readonly archived: boolean;
+	readonly headless?: boolean;
 	readonly prefix?: string;
 	readonly window?: RollupWindow;
 	readonly timeOf?: (row: SidebarRow) => number;
@@ -72,41 +93,8 @@ export type Rollup = {
 	collect(rows: readonly SidebarRow[], context: RollupContext): Collected;
 };
 
-/** A place's project glyph (plugins/glyphs): what it hashes, and the path its row's tooltip shows. */
-export type GlyphSeed = { readonly seed: string; readonly title: string };
-
-/** The sidebar's glyphs: a group's, by where its "+" starts a session; a session's, in a flat list (Recents). */
-export type Glyphs = {
-	readonly target: (target: NewTarget) => GlyphSeed;
-	readonly row: (row: SidebarRow) => GlyphSeed;
-};
-
-/**
- * Glyphs by project (`placeSeed`): a project, its folders and its sessions show the project's glyph; any other place
- * its own path's. The tooltip is the place's path, a project's its places.
- */
-export function glyphsOf({ projects, memberships }: Pick<RollupContext, "projects" | "memberships">): Glyphs {
-	const label = (env: string | null, path: string) => (env ? `${env}:${path}` : path);
-	const at = (env: string | null, cwd: string, member?: string): GlyphSeed => ({
-		seed: placeSeed(projects, env, cwd, member),
-		title: label(env, cwd),
-	});
-	return {
-		target: (target) =>
-			target.kind === "folder"
-				? at(target.env, target.cwd)
-				: {
-						seed: projectSeed(target.project),
-						title:
-							target.project.places.map((place) => label(place.env, place.path)).join("\n") ||
-							target.project.name,
-					},
-		row: (row) => at(row.env ?? null, row.cwd, memberships[row.id]),
-	};
-}
-
-export const RECENT = "recent";
 export const PROJECTS = "projects";
+export const OTHER = "other";
 export const FOLDERS = "folders";
 export const ARCHIVE = "archive";
 
@@ -124,24 +112,71 @@ export function keyPart(text: string): string {
 
 const live = (rows: readonly SidebarRow[]) => rows.filter((row) => !row.archivedAt);
 
-/** The built-in rollups, in their default order. */
+/** The live project `row` belongs to: the one the owner put it in (none for an archived project's). */
+export const projectOf = (row: SidebarRow, { projects, memberships }: RollupContext): Project | undefined => {
+	const name = memberships[row.id];
+	return name === undefined ? undefined : projects.find((project) => project.name === name);
+};
+
+/**
+ * The folders sessions work in, one group each, by name: not a section of the sidebar (it is organised by project), but
+ * where the command menu's folder pages find the folders sessions know.
+ */
+export const FOLDER_ROLLUP: Rollup = {
+	key: FOLDERS,
+	name: "Folders",
+	archived: false,
+	prefix: "folder:",
+	collect: (rows, { folderName, sandboxes }) => {
+		const folders = new Map<string, { env: string | null; cwd: string; members: SidebarRow[] }>();
+		for (const row of live(rows)) {
+			const env = row.env ?? null;
+			const key = folderKey(env, row.cwd);
+			const folder = folders.get(key);
+			if (folder) folder.members.push(row);
+			else folders.set(key, { env, cwd: row.cwd, members: [row] });
+		}
+		const names = disambiguate([...folders.values()], ({ env, cwd }, segments) => folderName(env, cwd, segments));
+		const groups = [...folders].map(
+			([key, folder], index): Group => ({
+				key,
+				name: names[index]!,
+				title: folder.env ? `${folder.env}:${folder.cwd}` : folder.cwd,
+				sandboxed: folder.env !== null && sandboxes.has(folder.env),
+				members: folder.members,
+				target: { kind: "folder", env: folder.env, cwd: folder.cwd },
+			}),
+		);
+		return {
+			layout: "groups",
+			groups: groups.sort((a, b) => a.name.localeCompare(b.name) || a.key.localeCompare(b.key)),
+		};
+	},
+};
+
+/** The built-in rollups, in their default order: the sessions without a project (no heading), projects, the Archive. */
 export const ROLLUPS: readonly Rollup[] = [
 	{
-		key: RECENT,
-		name: "Recents",
+		key: OTHER,
+		name: "Other sessions",
 		archived: false,
-		collect: (rows) => ({ layout: "sessions", members: live(rows) }),
+		headless: true,
+		collect: (rows, context) => ({
+			layout: "sessions",
+			members: live(rows).filter((row) => !projectOf(row, context)),
+		}),
 	},
 	{
 		key: PROJECTS,
 		name: "Projects",
 		archived: false,
 		prefix: "project:",
-		// One group per project of projects.json, in the file's order, sessions or not (a new one starts from its "+").
-		collect: (rows, { projects, memberships }) => {
+		// One group per live project, in the owner's order, sessions or not (a new one starts from its "+").
+		collect: (rows, context) => {
+			const { projects } = context;
 			const byProject = new Map<string, SidebarRow[]>();
 			for (const row of live(rows)) {
-				const project = memberships[row.id];
+				const project = projectOf(row, context)?.name;
 				if (project === undefined) continue;
 				const members = byProject.get(project);
 				if (members) members.push(row);
@@ -154,40 +189,10 @@ export const ROLLUPS: readonly Rollup[] = [
 					name: project.name,
 					sandboxed: false,
 					members: byProject.get(project.name) ?? [],
+					// Shown without sessions too: its "+" is where a new project's first session starts.
+					keep: true,
 					target: { kind: "project", project },
 				})),
-			};
-		},
-	},
-	{
-		key: FOLDERS,
-		name: "Folders",
-		archived: false,
-		prefix: "folder:",
-		// One group per folder sessions work in, by name.
-		collect: (rows, { folderName, sandboxes }) => {
-			const folders = new Map<string, { env: string | null; cwd: string; members: SidebarRow[] }>();
-			for (const row of live(rows)) {
-				const env = row.env ?? null;
-				const key = folderKey(env, row.cwd);
-				const folder = folders.get(key);
-				if (folder) folder.members.push(row);
-				else folders.set(key, { env, cwd: row.cwd, members: [row] });
-			}
-			const names = disambiguate([...folders.values()], ({ env, cwd }, segments) => folderName(env, cwd, segments));
-			const groups = [...folders].map(
-				([key, folder], index): Group => ({
-					key,
-					name: names[index]!,
-					title: folder.env ? `${folder.env}:${folder.cwd}` : folder.cwd,
-					sandboxed: folder.env !== null && sandboxes.has(folder.env),
-					members: folder.members,
-					target: { kind: "folder", env: folder.env, cwd: folder.cwd },
-				}),
-			);
-			return {
-				layout: "groups",
-				groups: groups.sort((a, b) => a.name.localeCompare(b.name) || a.key.localeCompare(b.key)),
 			};
 		},
 	},
@@ -221,8 +226,19 @@ function disambiguate<T>(items: readonly T[], name: (item: T, segments: number) 
 	return names;
 }
 
+/**
+ * The rollups as the sidebar shows them: those without a heading first, in their default order (they have no row to
+ * move them by), then the others in the owner's order (`ordered`).
+ */
+export function arranged(rollups: readonly Rollup[], order: readonly string[]): Rollup[] {
+	return [...rollups.filter((rollup) => rollup.headless), ...ordered(movable(rollups), order)];
+}
+
+/** The rollups the owner orders: those with a heading. */
+export const movable = (rollups: readonly Rollup[]): Rollup[] => rollups.filter((rollup) => !rollup.headless);
+
 /** The rollups in the owner's order: the keys in `order` first, then the rest in their default order. */
-export function ordered(rollups: readonly Rollup[], order: readonly string[]): Rollup[] {
+function ordered(rollups: readonly Rollup[], order: readonly string[]): Rollup[] {
 	const rank = new Map(order.map((key, index) => [key, index]));
 	const placed = (rollup: Rollup) => rank.get(rollup.key) ?? Number.MAX_SAFE_INTEGER;
 	// A stable sort: rollups the order does not name keep their default order behind the named ones.
@@ -258,7 +274,7 @@ const timeIn = (rollup: Rollup, row: SidebarRow) => rollup.timeOf?.(row) ?? row.
 
 /**
  * Whether the sidebar shows `row` in `rollup`: something keeps it in view (pinned, open now, working, an unread answer,
- * a failed worker, a running or failed operation, the rollup keeps it), or its time is within the rollup's window.
+ * a failure, a running operation, the rollup keeps it), or its time is within the rollup's window.
  */
 function isRelevant(rollup: Rollup, row: SidebarRow, window: RollupWindow, view: View): boolean {
 	return (
@@ -266,8 +282,8 @@ function isRelevant(rollup: Rollup, row: SidebarRow, window: RollupWindow, view:
 		row.id === view.open ||
 		row.worker.busy.length > 0 ||
 		Boolean(row.worker.unread) ||
-		row.worker.error !== undefined ||
 		row.operation !== undefined ||
+		failureOf(row) !== undefined ||
 		Boolean(rollup.keeps?.(row)) ||
 		view.now - timeIn(rollup, row) < WINDOW_MS[window]
 	);
@@ -287,8 +303,8 @@ export type View = {
 };
 
 /**
- * What sessions are doing, counted: running a turn (`working`), wanting the owner because their worker or an operation
- * failed (`failed`), or with an answer the owner has not read (`unread`). A session may count in several.
+ * What sessions are doing, counted: running a turn (`working`), wanting the owner because something failed
+ * (`failed`: `failureOf`), or with an answer the owner has not read (`unread`). A session may count in several.
  */
 export type Activity = { readonly working: number; readonly failed: number; readonly unread: number };
 
@@ -299,7 +315,7 @@ export function activityOf(rows: Iterable<SidebarRow>): Activity {
 	let unread = 0;
 	for (const row of rows) {
 		if (row.worker.busy.length > 0) working++;
-		if (row.worker.error !== undefined || row.operation?.error !== undefined) failed++;
+		if (failureOf(row) !== undefined) failed++;
 		if (row.worker.unread) unread++;
 	}
 	return { working, failed, unread };
@@ -316,7 +332,7 @@ export function wantingOf(rows: readonly SidebarRow[], shown: string | undefined
 	let failed = false;
 	for (const row of rows) {
 		if (row.archivedAt || row.id === shown) continue;
-		const broken = row.worker.error !== undefined || row.operation?.error !== undefined;
+		const broken = failureOf(row) !== undefined;
 		if (broken || row.worker.unread) count++;
 		failed ||= broken;
 	}
@@ -343,6 +359,10 @@ export type Section = { readonly key: string; readonly name: string; readonly wi
 			readonly collapsed: boolean;
 			readonly rows: readonly SidebarRow[];
 			readonly hidden: Activity;
+			/** Shown without a heading row, always open (`Rollup.headless`). */
+			readonly headless: boolean;
+			/** How many of its sessions its window hides (its list shows them). */
+			readonly older: number;
 	  }
 	| {
 			readonly layout: "groups";
@@ -372,10 +392,23 @@ export function sectionsOf(
 		const base = { key: rollup.key, name: rollup.name, window };
 		const collected = rollup.collect(rows, context);
 		if (collected.layout === "link") return { ...base, layout: "link", total: collected.members.length };
-		if (collected.layout === "sessions")
-			return collapsed
-				? { ...base, layout: "sessions", collapsed, rows: [], hidden: activityOf(collected.members) }
-				: { ...base, layout: "sessions", collapsed, rows: relevant(collected.members), hidden: IDLE };
+		if (collected.layout === "sessions") {
+			const headless = rollup.headless ?? false;
+			// A rollup without a heading has nothing to collapse it with: it is always open.
+			if (collapsed && !headless)
+				return {
+					...base,
+					layout: "sessions",
+					collapsed,
+					rows: [],
+					hidden: activityOf(collected.members),
+					headless,
+					older: 0,
+				};
+			const shown = relevant(collected.members);
+			const older = collected.members.length - shown.length;
+			return { ...base, layout: "sessions", collapsed: false, rows: shown, hidden: IDLE, headless, older };
+		}
 		if (collapsed) {
 			// A session may be in several groups: count it once.
 			const members = new Map(collected.groups.flatMap((group) => group.members.map((row) => [row.id, row])));
@@ -426,7 +459,8 @@ export function listPageOf(
 	context: RollupContext,
 	view: View,
 ): ListPageData | undefined {
-	const rollup = rollups.find(
+	// A folder's list (the command menu's Open folder…) has a page though no section shows folders.
+	const rollup = [...rollups, FOLDER_ROLLUP].find(
 		(each) => each.key === key || (each.prefix !== undefined && key.startsWith(each.prefix)),
 	);
 	if (!rollup) return undefined;

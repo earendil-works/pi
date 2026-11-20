@@ -372,10 +372,12 @@ describe("failures stay until retry or a rollout (R2)", () => {
 		try {
 			behaviours.set("S1", { hang: true });
 			const notes = server.hold(Notes, { id: "S1" }, context);
-			await vi.waitFor(() => expect(stateOf(workers.state.value, "S1")?.status).toBe("starting"), {
+			// The incarnation comes with the link's handshake, after `started` cleared the start timer: a forked worker
+			// connects in its own time, so advancing the clock before it would fire the timer (CI flake).
+			await vi.waitFor(() => expect(stateOf(workers.state.value, "S1")?.incarnation).toBeDefined(), {
 				timeout: 5_000,
 			});
-			await new Promise((resolve) => setImmediate(resolve));
+			expect(stateOf(workers.state.value, "S1")?.status).toBe("starting");
 			await vi.advanceTimersByTimeAsync(120_000);
 			expect(stateOf(workers.state.value, "S1")?.status).toBe("starting");
 			expect(notes.state.value.kind).toBe("loading");

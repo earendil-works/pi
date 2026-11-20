@@ -7,12 +7,15 @@ export type {
 	EventMember,
 	EventSource,
 	EventSubscription,
+	HostKeyed,
 	Implementation,
 	KeyedWatchable,
+	MemberNames,
 	NamedQuery,
 	ParamsOf,
 	QueryPage,
 } from "./contract.ts";
+export { memberNames } from "./contract.ts";
 export { local, remote } from "./declare.ts";
 export { evolve } from "./evolve.ts";
 export { type Address, type HostKind, hostKind, type KindShape, type ParamsOfKind } from "./host-kind.ts";
@@ -29,7 +32,9 @@ export {
 	int,
 	type KeyedMember,
 	keyed,
+	type LiteralsSchema,
 	lit,
+	type Method,
 	map,
 	method,
 	type NullSchema,

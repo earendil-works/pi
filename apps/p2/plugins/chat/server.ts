@@ -2,7 +2,7 @@
 // whoever may view the session. The chat view carries references to them instead of their bytes
 // (src/runtime/entry-images.ts); a page loads each image here when it shows it.
 import { canView, contribute, defineFacet, ENTRY_IMAGE_PATH, withAbortSignal } from "@p2/app/v1";
-import { type RouteHandler, Routes, sendJson, serverOf } from "@p2/app/v1/server";
+import { crossSiteRead, type RouteHandler, Routes, sendJson, serverOf } from "@p2/app/v1/server";
 import { ChatImages } from "./contract.ts";
 
 /** Image types served as themselves; anything else goes out as bytes, never as a document a browser would run. */
@@ -14,7 +14,7 @@ export default defineFacet((host) => {
 		const serve: RouteHandler = async (request, response, { principal }, outer) => {
 			const query = new URL(request.url ?? "/", "http://localhost").searchParams;
 			const session = query.get("session") ?? "";
-			if (!canView(principal, session) || request.headers["sec-fetch-site"] === "cross-site") {
+			if (!canView(principal, session) || crossSiteRead(request)) {
 				response.writeHead(403);
 				response.end("Forbidden");
 				return;
