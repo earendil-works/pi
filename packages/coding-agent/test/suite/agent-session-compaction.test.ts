@@ -57,12 +57,12 @@ function createAssistant(
 function useSummaryStreamFn(
 	harness: Harness,
 	summary: string,
-	onRequest?: (context: TranscriptContext, options: SimpleStreamOptions | undefined) => void,
+	onRequest?: (context: TranscriptContext, options: SimpleStreamOptions | undefined, model: Model<string>) => void,
 ): () => number {
 	let callCount = 0;
 	harness.session.agent.streamFunction = (model, context, options) => {
 		callCount++;
-		onRequest?.(context, options);
+		onRequest?.(context, options, model);
 		const stream = createAssistantMessageEventStream();
 		queueMicrotask(() => {
 			const message: AssistantMessage = {
@@ -379,6 +379,90 @@ describe("AgentSession compaction characterization", () => {
 		);
 	});
 
+	it("uses configured compaction model and thinking level with the session provider", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-summary", reasoning: true }],
+			settings: {
+				compaction: { keepRecentTokens: 1, model: "faux-summary", thinkingLevel: "high" },
+			},
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		const calls: Array<{ modelId: string; reasoning: SimpleStreamOptions["reasoning"] }> = [];
+		useSummaryStreamFn(harness, "summary from configured model", (_context, options, model) => {
+			calls.push({ modelId: model.id, reasoning: options?.reasoning });
+		});
+
+		const result = await harness.session.compact();
+
+		expect(result.summary).toContain("summary from configured model");
+		expect(calls).toEqual([{ modelId: "faux-summary", reasoning: "high" }]);
+	});
+
+	it.each([
+		{ thinkingLevel: undefined, reasoning: "medium" },
+		{ thinkingLevel: "high", reasoning: "high" },
+		{ thinkingLevel: "off", reasoning: undefined },
+		{ thinkingLevel: "max", reasoning: "high" },
+	] as const)(
+		"uses configured manual compaction model and thinking without mutation: $thinkingLevel",
+		async ({ thinkingLevel, reasoning }) => {
+			const harness = await createHarness({
+				models: [
+					{ id: "faux-1", reasoning: true },
+					{ id: "faux-configured", reasoning: true },
+				],
+				settings: {
+					compaction: { keepRecentTokens: 1, model: "faux-configured", thinkingLevel },
+				},
+			});
+			harnesses.push(harness);
+			harness.session.agent.state.thinkingLevel = "medium";
+			seedCompactableSession(harness);
+			const mainModel = harness.session.model;
+			const mainThinkingLevel = harness.session.thinkingLevel;
+			const settingsBefore = {
+				compaction: harness.settingsManager.getCompactionSettings(),
+				defaultProvider: harness.settingsManager.getDefaultProvider(),
+				defaultModel: harness.settingsManager.getDefaultModel(),
+				defaultThinkingLevel: harness.settingsManager.getDefaultThinkingLevel(),
+			};
+			const calls: Array<{ modelId: string; reasoning: SimpleStreamOptions["reasoning"] }> = [];
+			useSummaryStreamFn(harness, "configured summary", (_context, options, model) => {
+				calls.push({ modelId: model.id, reasoning: options?.reasoning });
+			});
+
+			const result = await harness.session.compact();
+
+			expect(result.summary).toContain("configured summary");
+			expect(calls).toEqual([{ modelId: "faux-configured", reasoning }]);
+			expect(harness.session.model).toBe(mainModel);
+			expect(harness.session.thinkingLevel).toBe(mainThinkingLevel);
+			expect({
+				compaction: harness.settingsManager.getCompactionSettings(),
+				defaultProvider: harness.settingsManager.getDefaultProvider(),
+				defaultModel: harness.settingsManager.getDefaultModel(),
+				defaultThinkingLevel: harness.settingsManager.getDefaultThinkingLevel(),
+			}).toEqual(settingsBefore);
+			expect(
+				harness.sessionManager
+					.getEntries()
+					.filter((entry) => entry.type === "model_change" || entry.type === "thinking_level_change"),
+			).toHaveLength(0);
+		},
+	);
+
+	it("points to the relevant settings when a summarization model is not found", async () => {
+		const harness = await createHarness({
+			settings: { compaction: { provider: "missing-provider" } },
+		});
+		harnesses.push(harness);
+
+		await expect(harness.session.compact()).rejects.toThrow(
+			"Summarization model not found: missing-provider/faux-1. Check compaction.provider and compaction.model in your settings.",
+		);
+	});
+
 	it("auto-compacts with a custom streamFn when registry auth is absent", async () => {
 		const harness = await createHarness({ withConfiguredAuth: false });
 		harnesses.push(harness);
@@ -438,6 +522,118 @@ describe("AgentSession compaction characterization", () => {
 			}),
 		]);
 	});
+
+	it("auto-compacts with the configured summarization model when the session model is absent", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-summary" }],
+			settings: { compaction: { keepRecentTokens: 1, provider: "faux", model: "faux-summary" } },
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		harness.session.agent.state.model = undefined as unknown as Model<string>;
+		const getStreamCallCount = useSummaryStreamFn(harness, "summary without session model");
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+
+		await sessionInternals._runAutoCompaction("threshold", false);
+
+		const compactionEntries = harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction");
+		expect(compactionEntries).toHaveLength(1);
+		expect(getStreamCallCount()).toBe(1);
+	});
+
+	it("uses configured branch summary model and thinking level", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-branch-summary", reasoning: true }],
+			settings: {
+				branchSummary: { provider: "faux", model: "faux-branch-summary", thinkingLevel: "medium" },
+			},
+		});
+		harnesses.push(harness);
+		const rootId = harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "root" }],
+			timestamp: Date.now(),
+		});
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "branch work" }],
+			timestamp: Date.now(),
+		});
+		harness.sessionManager.appendMessage(createAssistant(harness, { stopReason: "stop", totalTokens: 10 }));
+		const calls: Array<{ modelId: string; reasoning: SimpleStreamOptions["reasoning"] }> = [];
+		harness.session.agent.state.model = undefined as unknown as Model<string>;
+		useSummaryStreamFn(harness, "branch summary from configured model", (_context, options, model) => {
+			calls.push({ modelId: model.id, reasoning: options?.reasoning });
+		});
+
+		const result = await harness.session.navigateTree(rootId, { summarize: true });
+
+		expect(result.summaryEntry?.summary).toContain("branch summary from configured model");
+		expect(calls).toEqual([{ modelId: "faux-branch-summary", reasoning: "medium" }]);
+	});
+
+	it.each([
+		{ thinkingLevel: undefined, reasoning: "medium" },
+		{ thinkingLevel: "high", reasoning: "high" },
+		{ thinkingLevel: "off", reasoning: undefined },
+		{ thinkingLevel: "max", reasoning: "high" },
+	] as const)(
+		"uses configured branch summary model and thinking without mutation: $thinkingLevel",
+		async ({ thinkingLevel, reasoning }) => {
+			const harness = await createHarness({
+				models: [
+					{ id: "faux-1", reasoning: true },
+					{ id: "faux-configured", reasoning: true },
+				],
+				settings: {
+					branchSummary: { provider: "faux", model: "faux-configured", thinkingLevel },
+				},
+			});
+			harnesses.push(harness);
+			harness.session.agent.state.thinkingLevel = "medium";
+			const rootId = harness.sessionManager.appendMessage({
+				role: "user",
+				content: [{ type: "text", text: "root" }],
+				timestamp: Date.now(),
+			});
+			harness.sessionManager.appendMessage({
+				role: "user",
+				content: [{ type: "text", text: "branch work" }],
+				timestamp: Date.now(),
+			});
+			harness.sessionManager.appendMessage(createAssistant(harness, { stopReason: "stop", totalTokens: 10 }));
+			const mainModel = harness.session.model;
+			const mainThinkingLevel = harness.session.thinkingLevel;
+			const settingsBefore = {
+				branchSummary: harness.settingsManager.getBranchSummarySettings(),
+				defaultProvider: harness.settingsManager.getDefaultProvider(),
+				defaultModel: harness.settingsManager.getDefaultModel(),
+				defaultThinkingLevel: harness.settingsManager.getDefaultThinkingLevel(),
+			};
+			const calls: Array<{ modelId: string; reasoning: SimpleStreamOptions["reasoning"] }> = [];
+			useSummaryStreamFn(harness, "branch summary from configured model", (_context, options, model) => {
+				calls.push({ modelId: model.id, reasoning: options?.reasoning });
+			});
+
+			const result = await harness.session.navigateTree(rootId, { summarize: true });
+
+			expect(result.summaryEntry?.summary).toContain("branch summary from configured model");
+			expect(calls).toEqual([{ modelId: "faux-configured", reasoning }]);
+			expect(harness.session.model).toBe(mainModel);
+			expect(harness.session.thinkingLevel).toBe(mainThinkingLevel);
+			expect({
+				branchSummary: harness.settingsManager.getBranchSummarySettings(),
+				defaultProvider: harness.settingsManager.getDefaultProvider(),
+				defaultModel: harness.settingsManager.getDefaultModel(),
+				defaultThinkingLevel: harness.settingsManager.getDefaultThinkingLevel(),
+			}).toEqual(settingsBefore);
+			expect(
+				harness.sessionManager
+					.getEntries()
+					.filter((entry) => entry.type === "model_change" || entry.type === "thinking_level_change"),
+			).toHaveLength(0);
+		},
+	);
 
 	it("compacts and resumes after a length stop below the desired output limit", async () => {
 		const harness = await createHarness({
