@@ -62,9 +62,12 @@ Then tell your user to take it to Mario (or to the other package's owner). Never
    - the open decisions, each as problem, example, options, recommendation.
 4. **Build** it as plugins in `apps/p3/plugins/<name>/`, following `chord-practices.md`.
 5. **Test and measure** as `testing.md` and `performance.md` say, before you report.
-6. **Review.** Agents on other models than yours read the code against the plan: one for fit with Chord and p3, one
-   adversarial (races, failures, cost), one for simplicity. Fix what matters, two rounds. Every reproduction a
-   reviewer writes becomes a test.
+6. **Review, always by four models:** Opus, Fable, Sol and Astra, each a fresh agent. Prime each one: it first reads
+   `README.md` and the guides it lists, in full, then the plan in the item issue, then the code. Give each a focus:
+   fit with Chord and p3 (Sol), adversarial: races, failures, cost (Astra), simplicity (Fable), and a second full
+   read (Opus). Sol and Astra refuse to review security attacks; give those to Opus or Fable, framed as a review of
+   your own protocol. Fix what matters, then a second round by the same four. Every reproduction a reviewer writes
+   becomes a test.
 7. **Push to main** (git rules below).
 8. **Sign-off.**
    - Whoever pushed posts a short video (UI) or a 5-minute explainer (non-UI work) on the Linear issue and in
@@ -99,5 +102,5 @@ You work in the shared checkout, on main, with other sessions committing beside 
 - [ ] Only your plugins changed; every needed change elsewhere written up and taken to its owner.
 - [ ] `cd apps/p3 && npm run check` clean; `npm test` passes, serially and with four runs at once.
 - [ ] The tests and numbers of `testing.md` and `performance.md`, reported in the issue.
-- [ ] Two review rounds on other models; reproductions are tests.
+- [ ] Two review rounds by Opus, Fable, Sol and Astra, each primed with the guides; reproductions are tests.
 - [ ] Pushed by explicit paths; video or explainer posted; devices checked; team sign-off.
