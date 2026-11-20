@@ -31,10 +31,14 @@ the provider SDKs are bundled and load per provider on first use; the worker's V
 
 | What | slayer, release | the phone, from source |
 | --- | --- | --- |
-| server launch to listening, warm | 128 ms (the skeleton, 2026-11-20; 105 ms before, with one plugin) | 1.6 to 1.9 s |
-| worker start, warm | 64 ms (the skeleton, 2026-11-20) | about 1 s |
-| idle worker, settled | 13.9 MiB (the skeleton, 2026-11-20; 17.9 before) | 19.6 MiB |
-| server, settled | 36.0 MiB (the skeleton, 2026-11-20) | 44 to 46 MiB |
+| server launch to listening, warm | 128 ms (105 ms on the old base, with one plugin) | 1.6 to 1.9 s |
+| worker start, warm | 64 ms (old base, same bench: 68 ms) | about 1 s |
+| idle worker, settled (sessions and runner only, no harness) | 14.0 MiB (old base, same bench: 14.9) | 19.6 MiB |
+| server, settled | 35.5 MiB (old base, same bench: 40.8) | 44 to 46 MiB |
+
+The skeleton's numbers are `bench/skeleton.ts --release` (2026-11-20); the old base's ran the same bench against a
+release of `30a3e0b1f`, back to back. The memory test's idle worker (17.9 MiB above) carries the harness, the coding
+tools and a subagent tool: never compare the two.
 | plain `p3` to its owner link | about 250 ms | 3.4 to 3.9 s |
 | the owner's list, open / `more`, at 100,000 sessions | 0.6 / 0.45 ms | 3.4 to 5.3 / 2.6 to 4.5 ms |
 
