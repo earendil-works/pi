@@ -34,17 +34,23 @@ await t.root(async (ctx) => { /* ctx.get(...), calls, asserts */ }, context, { p
 assert.deepEqual(t.unserved(), []);
 ```
 
-**2. End to end** (most coverage here): p3's real server in the test's process on a temporary data directory, its
+**2. Topology** (fast, most cases of a plugin): the server and session workers as hosts in one process, linked in
+memory, each with its own SQLite store, the plugins imported as modules; the base's own pieces are the real ones
+(`src/server-core.ts`, `src/worker-core.ts`). `test/topology.ts` gives `topology(context, idleMs?)` with
+`client(principal)` (any principal), `reload(plugin, session?)` (a plugin's objects restart, as after an edit, on the
+server or on a worker), `workers`, `errors`, `closed`. Model: `test/topology.test.ts` (reloads while in use, access).
+
+**3. End to end**: p3's real server in the test's process on a temporary data directory, its
 session workers as real processes, its plugins built from two roots as a Pi's are: the built-in one and the tests'
 own (`test/plugins/`: the probe, a third-party plugin a test drives a worker with); a test may write plugins of its own
 into `<data directory>/plugins` and apply them. `test/support.ts` gives `testServer()` with `client()` (signed in as
 the owner over WebSocket), `workers()` (the runner's state), `restart()` and `close()`, and `eventually` and `alive`
 for effects in other processes. Model: `test/skeleton.test.ts`.
 
-**3. The command** (a few cases): `p3` launched as processes of its own on a temporary home. Model:
+**4. The command** (a few cases): `p3` launched as processes of its own on a temporary home. Model:
 `test/command.test.ts`.
 
-**4. The release** (`test/release/release.test.ts`, run by `npm run release:p3:local` against the install it makes
+**5. The release** (`test/release/release.test.ts`, run by `npm run release:p3:local` against the install it makes
 outside the repository): what the package holds, the command, a worker forked from the release's own bundle, and a
 third-party plugin written against the installed API alone (type-checked, loaded from the Pi's user root, called by a
 client of the compiled API). Run the bench against the install with `--release` (or the script's `--bench`).
@@ -57,7 +63,7 @@ client of the compiled API). Run the bench against the install with `--release` 
 3. **Access:** every object refuses the principals it does not serve (`forbidden`); a person sees only what their
    admission allows.
 4. **Reload:** every facet you touch, reloaded while used (a list open, a worker held): nothing lost, no error. Model:
-   `test/skeleton.test.ts`, "an apply ships a changed worker plugin to a running worker".
+   `test/topology.test.ts`, "reloads while in use".
 5. **Query plans:** for every named query, `EXPLAIN QUERY PLAN` of the SQL Chord runs (first page and after a
    bookmark) searches the named index with no temporary B-tree. Model: `test/plans.test.ts`.
 6. **Counted work:** Chord counts its work as metrics (`chord.query.runs`, `chord.query.probes`, `chord.link.*`);

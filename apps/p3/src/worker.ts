@@ -8,26 +8,18 @@
 
 import { flushCompileCache } from "node:module";
 import { join } from "node:path";
-import {
-	type ChordStore,
-	createHost,
-	defineFacet,
-	type Facet,
-	type IpcPort,
-	ipcLink,
-	openStore,
-	sqliteBackend,
-} from "@earendil-works/chord";
+import { type ChordStore, createHost, type IpcPort, ipcLink, openStore, sqliteBackend } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { createPluginRuntime, type PluginScript } from "@earendil-works/chord/plugins/runtime";
 import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import { Session } from "@earendil-works/p3/v1";
-import { WorkerBusy, WorkerRuntime } from "@earendil-works/p3/v1/worker";
+import type { WorkerRuntime } from "@earendil-works/p3/v1/worker";
 import { type FromWorker, type ToWorker, workerControl, workerMessage } from "./api/v1/control.ts";
 import { SERVER, workerPrincipal } from "./app.ts";
 import { privateDirectory, privateStore } from "./files.ts";
 import { WORKER_MODULES } from "./modules-worker.ts";
 import type { P3Principal } from "./principals.ts";
+import { workerCoreFacets } from "./worker-core.ts";
 
 /** How long a shutdown's closes get before the worker exits anyway. */
 const FORCED_EXIT_MS = 3000;
@@ -75,7 +67,7 @@ function runWorker(port: IpcPort): void {
 		started = await open(message, parent, (reason) => void shutdown({ kind: "closed", reason }));
 		const report = await runtime.load(
 			started.host,
-			{ kind: "worker", core: coreFacets(started), scripts: message.scripts, modules: WORKER_MODULES },
+			{ kind: "worker", core: workerCoreFacets(started), scripts: message.scripts, modules: WORKER_MODULES },
 			context,
 		);
 		// Node writes its compile cache only at exit otherwise: the next workers start from this one's, warm.
@@ -124,15 +116,6 @@ async function open(
 	});
 	host.connect(parent, { principal: SERVER, trusted: true }, context);
 	return { session: message.session, host, store, dir: message.dir, idleMs: message.idleMs, close };
-}
-
-/** The base's facets on a worker: `WorkerRuntime` (the process values) and `WorkerBusy` (the sum of the counts). */
-function coreFacets(runtime: WorkerRuntime): { readonly name: string; readonly facet: Facet<P3Principal> }[] {
-	const facet = defineFacet<P3Principal>((host) => {
-		host.serve(WorkerRuntime, { compose: () => runtime });
-		host.serve(WorkerBusy, { compose: (table) => table.reduce((sum, { value }) => sum + value, 0) });
-	});
-	return [{ name: "p3.worker", facet }];
 }
 
 /** An error nothing handles: printed (the server's log gets it), and the worker exits 1. */
