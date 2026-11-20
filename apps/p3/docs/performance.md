@@ -6,7 +6,8 @@ it touches and reports the numbers in its Linear issue; a number that gets worse
 ## The budget: 55 MiB per session worker
 
 No session worker's USS (the memory only that process holds: what one more worker costs) may exceed 55 MiB, in any
-phase. The memory test (`apps/p3/test/release/memory.test.ts`, run by `npm run release:p3:local`) checks it: four
+phase. The memory test (`apps/p3/old/test/release/memory.test.ts`, on the old base; to be ported to the skeleton with
+the harness core, ERNDL-855) checks it: four
 workers, each with Durable's harness, the coding tools, a subagent tool, real pi-ai providers against a local HTTPS
 stub and telemetry; idle, one streamed answer, a burst of 20 turns with tool calls, five subagents streaming at once.
 
@@ -30,10 +31,10 @@ the provider SDKs are bundled and load per provider on first use; the worker's V
 
 | What | slayer, release | the phone, from source |
 | --- | --- | --- |
-| server launch to listening, warm | about 105 ms | 1.6 to 1.9 s |
-| worker start, warm | about 70 ms | about 1 s |
-| idle worker, settled | about 18 MiB | 19.6 MiB |
-| server, settled | about 34 MiB | 44 to 46 MiB |
+| server launch to listening, warm | 128 ms (the skeleton, 2026-11-20; 105 ms before, with one plugin) | 1.6 to 1.9 s |
+| worker start, warm | 64 ms (the skeleton, 2026-11-20) | about 1 s |
+| idle worker, settled | 13.9 MiB (the skeleton, 2026-11-20; 17.9 before) | 19.6 MiB |
+| server, settled | 36.0 MiB (the skeleton, 2026-11-20) | 44 to 46 MiB |
 | plain `p3` to its owner link | about 250 ms | 3.4 to 3.9 s |
 | the owner's list, open / `more`, at 100,000 sessions | 0.6 / 0.45 ms | 3.4 to 5.3 / 2.6 to 4.5 ms |
 
@@ -54,7 +55,7 @@ the provider SDKs are bundled and load per provider on first use; the worker's V
 - **Compare** A and B built from the same commit, alternating in the same runs, on a quiet machine; slayer is shared,
   so note its load.
 - **Where:** slayer and the phone; source and release. Name the machine, the Node, the layout, the date and n.
-- **A bench per package:** `apps/p3/bench/<name>.ts`, modelled on `bench/slice-1.ts` (launched processes, both
+- **A bench per package:** `apps/p3/bench/<name>.ts`, modelled on `bench/skeleton.ts` (launched processes, both
   layouts, `--release <install>`). `NODE_DEBUG=p3` prints what a start spends building.
 
 ## Rules

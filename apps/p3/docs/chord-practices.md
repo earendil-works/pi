@@ -25,24 +25,34 @@ session workers           one process per session: host at Session({ id }), its 
   fact in both.
 - **Admission:** before an object of a remote type is built, its `admit` reads data about the caller and allows (with
   a value for the factory) or denies. The route to session workers has one too: no worker starts for a session that
-  does not exist (`apps/p3/src/session-route.ts`).
+  does not exist, and no worker reaches another session's worker (`apps/p3/src/server.ts`).
 - **Reload:** applying a plugin's new code restarts its live objects on that code; documents and tables stay; running
-  calls finish on the old code. Server first, then workers, then clients. Base code (the kit, the API, Chord) changes
+  calls finish on the old code. Server first, then workers, then clients. Base code (`src/`, the API, Chord) changes
   only with a restart. Everything a plugin keeps across a reload is in its store.
-- **The kit** (`apps/p3/src/kit/`) starts the server (`start-server.ts`), the workers (`worker.ts`,
-  `session-workers.ts`), sign-ins and the owner's link (`sign-ins.ts`, `owner.ts`), and lays out the data directory
-  (`layout.ts`, `~/.pi/p3`).
+- **The base** (`apps/p3/src/`) is only what must exist before plugins load: per host kind a bootstrap (`server.ts`:
+  the data directory's lock, the store, the host, Chord's HTTP and plugins components, the route to session workers;
+  `worker.ts`: the session's store and host, connected to the server), and the registries of process values it serves
+  (`ServerRuntime`, `WorkerRuntime`). Everything else is a plugin: how a session's worker runs (`runner`), who someone
+  is (`sign-in`), the owner's stop and apply (`control`), the sessions (`sessions`).
+- **Session workers:** the route's `resolve` asks the `WorkerRunners` registry; the `runner` plugin forks one process
+  per session. A worker stops itself once it was idle for its idle time (the runner's worker facet: no holds, calls,
+  jobs, and every `WorkerBusy` count 0; the harness contributes "a run is active"), closing its host and store first.
+  A crashed worker fails its session until `retry` or an apply. After a server restart the sessions plugin's waker
+  starts the workers of every `working` session.
 
 ## The API (`@earendil-works/p3/v1`)
 
 | Module | What you get |
 | --- | --- |
-| `/v1` | everything of Chord's root (`remote`, `local`, `method`, the schema helpers, `defineTable`, `query`, `queries`, `defineState`, `defineRegistry`, `allow`, `deny`, `forbidden`, `invalid`, ...), `BACKGROUND_CONTEXT` and `Context`, `defineFacet` typed with p3's principals, the host kinds `Server()` and `Session({ id })`, the helpers `forward` and `contribute`, the type `P3Principal` |
-| `/v1/server` | `Http` (routes), `AppInfo` (data directory, name, API version), `SessionRoute` (whether a session exists; the sessions plugin serves it) |
-| `/v1/worker` | `WorkerInfo` (the worker's address) |
+| `/v1` | everything of Chord's root (`remote`, `local`, `method`, the schema helpers, `defineTable`, `query`, `queries`, `defineState`, `defineRegistry`, `allow`, `deny`, `forbidden`, `invalid`, ...), `BACKGROUND_CONTEXT`, `Context`, `JsonValue`, `defineFacet` typed with p3's principals, the host kinds `Server()` and `Session({ id })`, the helpers `forward` and `contribute`, `P3Principal`, and the contracts p3 promises to third-party plugins (the sessions plugin's: `Sessions`, `SessionsList`, `SessionFacts`, `SessionWorker`, `SessionStart`, `SessionRow`, `SessionState`) |
+| `/v1/server` | Chord's HTTP surface (`Http`, `Authenticators`, cookies), `ServerRuntime` (the data directory, the host, the store, the route to workers, apply, stop), `WorkerRunners` (how session workers run), `LinkOpened` (hooks on accepted links), `SessionRoute`, the worker control messages, the rollout types |
+| `/v1/worker` | `WorkerRuntime` (the session, the host, the store, the directory, the idle time, `close`), `WorkerBusy` (counts that keep the worker alive) |
 
 Principals are identity only: `{ kind: "owner" }`, `{ kind: "person", id, name }`, `{ kind: "worker", session }`,
 `{ kind: "server" }`. What a person may do is data, read by admissions, never stored in the principal.
+
+A plugin of another root (a third party's, in `<data directory>/plugins`) reaches the built-in plugins' contracts only
+through the API (Chord decision "The app kit, point 5"): a relative path out of its root is a build error.
 
 Missing today (ask Mario, `process.md`): `withoutAbortSignal` and `pluginFile` are not exported; there is no `web` or
 `terminal` facet kind yet.
@@ -214,7 +224,10 @@ reference or a native.
 | Mirroring last touch into the team's row to make the order cheap | a keyed probe skips reads a write cannot affect; no copy |
 | A count behind a hot column | count only what a key or an index bounds |
 | A whole store exposed as a remote contract | an explicit contract and `forward` |
-| Seven plugins checking a worker's generation by hand | Chord's workers component guarantees it |
+| Seven plugins checking a worker's generation by hand | the runner counts a worker's exit once the commits its calls queued settled |
+| A test plugin re-declared another plugin's contract (a second root cannot import it): Chord refused the different schema | the API re-exports the contracts p3 promises; a plugin of another root imports them from there |
+| `"report" in entry` to tell apart the members of an untagged union | tagged unions (`kind`), a `switch` on the tag; `in` only at a trust boundary on an `unknown` value |
+| The worker's bundle imported the server's API module, and with it Chord's HTTP stack (`ws`, `node:http`) | the API modules per process (`modules-server.ts`, `modules-worker.ts`); the release's lean check catches it |
 | One index for two lists: the archived list's tie-break was not in its index, so SQLite sorted every page | one index per list's order, and a plan test |
 | A revoked device's open socket kept working | a sign-in closes its own links (`links.opened`'s `close`), never `host.revoke` (it ends shared objects for every device) |
 | A secret file linked into place: Android forbids hard links, p3 could not start | write a temporary file, then rename it |

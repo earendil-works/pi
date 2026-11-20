@@ -33,9 +33,8 @@ surfaces) and its plugin guide (`packages/chord/docs/plugin-authoring.md`).
 | --- | --- |
 | `apps/p3/plugins/<name>/` | the built-in plugins; `sessions` is the model plugin |
 | `apps/p3/src/api/v1/` | the API plugins import: `@earendil-works/p3/v1`, `/v1/server`, `/v1/worker` |
-| `apps/p3/src/kit/` | p3's kit: the server's start, sign-ins, the session workers, the data directory |
-| `apps/p3/src/bootstrap/` | the process entries: `bin.ts` (the `p3` command), `server.ts`, `worker.ts`, `supervisor.ts` |
-| `apps/p3/test/` | the tests and their harnesses (`topology.ts`, `launched.ts`, `commands.ts`, `until.ts`) |
+| `apps/p3/src/` | the base: `bin.ts` (the `p3` command), `server.ts`, `worker.ts`, `supervisor.ts`, the data directory (`files.ts`, `pi.ts`, `records.ts`) |
+| `apps/p3/test/` | the tests, their harness (`support.ts`, `until.ts`) and the tests' plugin root (`test/plugins/`) |
 | `apps/p3/bench/` | benchmarks, one per slice or package |
 | `apps/p2/` | p2 (Pi Mobile), today's app: inspiration for what to build, never a source to copy |
 
