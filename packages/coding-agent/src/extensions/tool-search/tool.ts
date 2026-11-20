@@ -293,31 +293,61 @@ function isSearchable(exposure: ToolExposure): boolean {
 	return exposure === "codemode" || exposure === "deferred";
 }
 
+/** What one `tool_search` call found. */
+interface ToolSearchMatches {
+	/** Tools loaded by this call. */
+	loaded: ToolSearchResultTool[];
+	/** Matching tools that were already active, so the model can call them without loading. */
+	available: ToolSearchResultTool[];
+}
+
+/** Rank `tools` against `query` and return the matches with their descriptions. */
+function rankTools(tools: readonly ToolInfo[], query: string, limit: number): ToolSearchResultTool[] {
+	const documents = tools.map((tool) => createToolSearchDocument(tool, tool.namespace));
+	return new Bm25Ranker().rank(query, documents, limit).map((match) => ({
+		name: match.name,
+		description: tools.find((tool) => tool.name === match.name)?.description ?? "",
+	}));
+}
+
 /**
  * Rank the searchable tools that are not active yet and activate the matches, so the next model
- * call declares them. Activation is recorded in the transcript like any tool change.
+ * call declares them. Activation is recorded in the transcript like any tool change. Active tools
+ * that it could have searched for (MCP tools and tools loaded earlier) are reported too: a model
+ * that searches for a tool it already has, such as a `direct` MCP tool, must not read the result
+ * as "the tool does not exist".
  */
 function searchAndLoad(
 	tools: NonNullable<ToolSearchToolOptions["tools"]>,
 	query: string,
 	limit: number,
-): ToolSearchResultTool[] {
+): ToolSearchMatches {
 	const active = tools.getActiveTools();
-	const candidates = tools.getAllTools().filter((tool) => isSearchable(tool.exposure) && !active.includes(tool.name));
-	const documents = candidates.map((tool) => createToolSearchDocument(tool, tool.namespace));
-	const matches = new Bm25Ranker().rank(query, documents, limit);
-	if (matches.length > 0) tools.setActiveTools([...active, ...matches.map((match) => match.name)]);
-	return matches.map((match) => ({
-		name: match.name,
-		description: candidates.find((tool) => tool.name === match.name)?.description ?? "",
-	}));
+	const all = tools.getAllTools();
+	const candidates = all.filter((tool) => isSearchable(tool.exposure) && !active.includes(tool.name));
+	const loaded = rankTools(candidates, query, limit);
+	if (loaded.length > 0) tools.setActiveTools([...active, ...loaded.map((tool) => tool.name)]);
+	// Only tools a model would search for: MCP tools (they have a namespace, `direct` ones included)
+	// and tools loaded earlier. Built-in tools stay out; the model sees them in its tool list anyway.
+	const activeTools = all.filter(
+		(tool) =>
+			active.includes(tool.name) &&
+			tool.exposure !== "hidden" &&
+			(tool.namespace !== undefined || isSearchable(tool.exposure)),
+	);
+	return { loaded, available: rankTools(activeTools, query, limit) };
+}
+
+/** One line per tool: its name and the first line of its description. */
+function formatTools(tools: readonly ToolSearchResultTool[]): string {
+	return tools.map((tool) => `- ${tool.name}: ${tool.description.trim().split(/\r?\n/)[0]}`).join("\n");
 }
 
 /**
  * The `tool_search` description. It does not list the searchable tools or their namespaces, so it
  * stays the same while tools are registered, for example when MCP servers connect.
  */
-export const TOOL_SEARCH_DESCRIPTION = `# Tool discovery\n\nSearches over deferred tool metadata with BM25 and exposes matching tools for the next model call.\n\nSome of the tools, such as tools of MCP servers, may not have been provided to you upfront, and you should use this tool (\`${TOOL_SEARCH_TOOL_NAME}\`) to search for the required tools. For MCP tool discovery, always use \`${TOOL_SEARCH_TOOL_NAME}\`.`;
+export const TOOL_SEARCH_DESCRIPTION = `# Tool discovery\n\nSearches over deferred tool metadata with BM25 and exposes matching tools for the next model call.\n\nSome of the tools, such as tools of MCP servers, may not have been provided to you upfront, and you should use this tool (\`${TOOL_SEARCH_TOOL_NAME}\`) to search for the required tools. For MCP tools not already in your tool list, use \`${TOOL_SEARCH_TOOL_NAME}\`.`;
 
 export function createToolSearchToolDefinition(
 	options: ToolSearchToolOptions = {},
@@ -336,14 +366,20 @@ export function createToolSearchToolDefinition(
 			if (query.trim() === "") throw new Error("query must not be empty");
 			const max = limit ?? DEFAULT_TOOL_SEARCH_LIMIT;
 			if (!Number.isInteger(max) || max <= 0) throw new Error("limit must be a positive integer");
-			const tools = options.tools ? searchAndLoad(options.tools, query, max) : [];
-			const text =
-				tools.length === 0
-					? "No matching tools found."
-					: `Loaded ${tools.length} tool${tools.length === 1 ? "" : "s"}. They are available from your next call:\n${tools
-							.map((tool) => `- ${tool.name}: ${tool.description.trim().split(/\r?\n/)[0]}`)
-							.join("\n")}`;
-			return { content: [{ type: "text", text }], details: { loaded: tools.map((tool) => tool.name) } };
+			const { loaded, available } = options.tools
+				? searchAndLoad(options.tools, query, max)
+				: { loaded: [], available: [] };
+			const sections: string[] = [];
+			if (loaded.length > 0) {
+				sections.push(
+					`Loaded ${loaded.length} tool${loaded.length === 1 ? "" : "s"}. They are available from your next call:\n${formatTools(loaded)}`,
+				);
+			}
+			if (available.length > 0) {
+				sections.push(`Already available, no need to load:\n${formatTools(available)}`);
+			}
+			const text = sections.length === 0 ? "No matching tools found." : sections.join("\n\n");
+			return { content: [{ type: "text", text }], details: { loaded: loaded.map((tool) => tool.name) } };
 		},
 	};
 }

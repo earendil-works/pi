@@ -1016,14 +1016,19 @@ return [...new Set(await Promise.all(names.map(async (name) => (await describeNa
 		expect(harness.session.getActiveToolNames()).toContain(searchName);
 	});
 
-	it("finds nothing to load when every matching tool is already declared", async () => {
+	// #11921: "No matching tools found" made models give up on direct MCP tools they already had.
+	it("reports matching tools that are already declared instead of finding nothing", async () => {
 		const { harness } = await setup("direct", undefined, { builtInTools: ["tool_search"] });
 		harness.setResponses([
-			fauxAssistantMessage([fauxToolCall("tool_search", { query: "docs" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxToolCall("tool_search", { query: "search the docs", limit: 1 })], {
+				stopReason: "toolUse",
+			}),
 			fauxAssistantMessage("done"),
 		]);
 		await harness.session.prompt("go");
-		expect(getMessageText(toolResult(harness, "tool_search"))).toBe("No matching tools found.");
+		expect(getMessageText(toolResult(harness, "tool_search"))).toBe(
+			"Already available, no need to load:\n- mcp__docs__search: Search the docs.",
+		);
 	});
 });
 
