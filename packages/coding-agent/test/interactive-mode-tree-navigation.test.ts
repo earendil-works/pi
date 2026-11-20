@@ -1,5 +1,6 @@
 import { Container } from "@earendil-works/pi-tui";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ExtensionBindings } from "../src/core/agent-session.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import type { StatusIndicator } from "../src/modes/interactive/components/status-indicator.ts";
@@ -140,5 +141,68 @@ describe("InteractiveMode tree navigation availability", () => {
 		expect(ui.clearStatusIndicator).not.toHaveBeenCalled();
 		expect(ui.defaultEditor.onEscape).toBe(onEscape);
 		expect(ui.session.navigateTree).not.toHaveBeenCalled();
+	});
+});
+
+// Regression for #12279: each navigation re-added the branch's prompts to Up-arrow history.
+describe("InteractiveMode tree navigation history", () => {
+	beforeEach(() => initTheme("dark"));
+
+	it("re-renders the branch without adding its prompts to editor history again", async () => {
+		const { ui, select } = createTreeUI();
+
+		await select();
+
+		expect(ui.renderInitialMessages).toHaveBeenCalledExactlyOnceWith({ populateHistory: false });
+	});
+
+	it("re-renders without adding prompts to editor history when an extension navigates the tree", async () => {
+		const bindExtensions = vi.fn(async (_bindings: ExtensionBindings) => {});
+		const ui = {
+			session: {
+				bindExtensions,
+				navigateTree: vi.fn(async () => ({ cancelled: false })),
+				resourceLoader: { getThemes: () => ({ themes: [] }) },
+			},
+			createExtensionUIContext: vi.fn(() => ({})),
+			setupAutocompleteProvider: vi.fn(),
+			setupExtensionShortcuts: vi.fn(),
+			showLoadedResources: vi.fn(),
+			showStartupNoticesIfNeeded: vi.fn(),
+			chatContainer: new Container(),
+			editor: { getText: () => "", setText: vi.fn() },
+			renderInitialMessages: vi.fn(),
+			showStatus: vi.fn(),
+			flushCompactionQueue: vi.fn(async () => {}),
+		};
+		const bindCurrentSessionExtensions = Reflect.get(InteractiveMode.prototype, "bindCurrentSessionExtensions") as (
+			this: typeof ui,
+		) => Promise<void>;
+		await bindCurrentSessionExtensions.call(ui);
+
+		await bindExtensions.mock.calls[0][0].commandContextActions!.navigateTree("target");
+
+		expect(ui.renderInitialMessages).toHaveBeenCalledExactlyOnceWith({ populateHistory: false });
+	});
+
+	it("adds the branch's prompts to editor history only when asked to", () => {
+		const renderInitialMessages = Reflect.get(InteractiveMode.prototype, "renderInitialMessages") as (
+			this: object,
+			options?: { populateHistory?: boolean },
+		) => void;
+		const context = {
+			sessionManager: SessionManager.inMemory(),
+			renderSessionEntries: vi.fn(),
+			renderProjectTrustWarningIfNeeded: vi.fn(),
+			showStatus: vi.fn(),
+		};
+
+		renderInitialMessages.call(context);
+		renderInitialMessages.call(context, { populateHistory: false });
+
+		expect(context.renderSessionEntries.mock.calls.map(([, options]) => options)).toEqual([
+			{ updateFooter: true, populateHistory: true },
+			{ updateFooter: true, populateHistory: false },
+		]);
 	});
 });

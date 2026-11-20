@@ -2130,7 +2130,7 @@ export class InteractiveMode {
 					}
 
 					this.chatContainer.clear();
-					this.renderInitialMessages();
+					this.renderInitialMessages({ populateHistory: false });
 					if (result.editorText && !this.editor.getText().trim()) {
 						this.editor.setText(result.editorText);
 					}
@@ -4394,11 +4394,15 @@ export class InteractiveMode {
 		this.chatContainer.addChild(new ThemedText(() => theme.fg("warning", `${label}: ${reBilled}`), 1, 0));
 	}
 
-	renderInitialMessages(): void {
+	/**
+	 * Render the current branch into the chat.
+	 * @param options.populateHistory Add the branch's user prompts to editor history (default: true)
+	 */
+	renderInitialMessages(options: { populateHistory?: boolean } = {}): void {
 		const entries = this.sessionManager.buildContextEntries();
 		this.renderSessionEntries(entries, {
 			updateFooter: true,
-			populateHistory: true,
+			populateHistory: options.populateHistory ?? true,
 		});
 		this.renderProjectTrustWarningIfNeeded();
 
@@ -5860,7 +5864,7 @@ export class InteractiveMode {
 
 						// Update UI
 						this.chatContainer.clear();
-						this.renderInitialMessages();
+						this.renderInitialMessages({ populateHistory: false });
 						if (result.editorText && !this.editor.getText().trim()) {
 							this.editor.setText(result.editorText);
 						}
