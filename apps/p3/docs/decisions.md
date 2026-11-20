@@ -467,3 +467,6 @@ older entries that say `docs/<file>` or `apps/p3/docs/<file>` now are `apps/p3/d
     #packages on Discord; the team signs off.
   - **Browser testing beyond headless Chromium is manual, by people with the devices, and part of the sign-off:** Safari
     on iOS, Firefox on Android, Chrome on Android.
+- **No lazy loading in plugins for now (owner, 2026-11-18):** plugins keep loading their whole facet at a process's
+  start (the plugin build refuses `import()`); no Chord change for it. A package that wants a heavy library in a worker
+  facet measures its cost per idle worker and brings it to Mario.
