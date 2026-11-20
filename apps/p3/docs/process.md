@@ -17,6 +17,10 @@ Project "Pi next" in team Earendil (issue keys `ERNDL-…`), three levels:
 Statuses are Linear's: Backlog, Todo, In Progress, In Review, Done. Decisions taken inside the package are recorded
 in its item issue as they are taken.
 
+The stage of a package is a label in the group "Pi stage", one at a time, set on the item issue: **Design** (steps
+1 to 3), **Implementation** (steps 4 to 7), **Review** (step 8). Every package starts in Design. Whoever moves the
+package to the next stage changes the label in the same moment and says why in a comment on the issue.
+
 ## Never change these
 
 They belong to Mario:
@@ -44,6 +48,9 @@ Then tell your user to take it to Mario (or to the other package's owner). Never
 
 ## The steps
 
+**Stage Design** (label `Design`): steps 1 to 3. It ends when the plan is complete and its open decisions are
+taken; the owner then sets `Implementation`.
+
 1. **The issue.** Read the package's item issue and its area's parent issue. Everything below is written into the item
    issue or one of its sub-issues.
 2. **Look at p2 first, on a phone.** What exists in this area (p2's plugins in `apps/p2/plugins/`, the functionality
@@ -60,6 +67,9 @@ Then tell your user to take it to Mario (or to the other package's owner). Never
    - the contracts and objects, as real Chord and p3 APIs (with their file) or marked PROPOSED;
    - the tests, case by case (`testing.md`), and the numbers to meet (`performance.md`);
    - the open decisions, each as problem, example, options, recommendation.
+**Stage Implementation** (label `Implementation`): steps 4 to 7. It ends with the push to main; whoever pushed then
+sets `Review`.
+
 4. **Build** it as plugins in `apps/p3/plugins/<name>/`, following `chord-practices.md`.
 5. **Test and measure** as `testing.md` and `performance.md` say, before you report.
 6. **Review, always by four models:** Opus, Fable, Sol and Astra, each a fresh agent. Prime each one: it first reads
@@ -69,6 +79,10 @@ Then tell your user to take it to Mario (or to the other package's owner). Never
    your own protocol. Fix what matters, then a second round by the same four. Every reproduction a reviewer writes
    becomes a test.
 7. **Push to main** (git rules below).
+**Stage Review** (label `Review`): step 8, the people's review. A finding that needs code sets the label back to
+`Implementation` (steps 4 to 7 again, then `Review` again). After the team's sign-off and Colin's and Jakob's tests,
+the issue is closed as Done; the `Review` label stays as the record.
+
 8. **Sign-off.**
    - Whoever pushed posts a short video (UI) or a 5-minute explainer (non-UI work) on the Linear issue and in
      #packages on Discord. The explainer shows the real code and the files touched; it assumes no access to the
@@ -96,6 +110,7 @@ You work in the shared checkout, on main, with other sessions committing beside 
 
 ## Checklist
 
+- [ ] The stage label kept current: `Design`, then `Implementation`, then `Review`.
 - [ ] Plan in the item issue, a sub-issue per part: p2's features sorted, extension points, files, contracts, tests,
       numbers, decisions.
 - [ ] Every decision asked one at a time and recorded in the issue.
