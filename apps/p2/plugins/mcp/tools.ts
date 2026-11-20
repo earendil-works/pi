@@ -38,6 +38,7 @@ import {
 	type CallToolResult,
 	createMcpToolName,
 	limitMcpContent,
+	type McpOutputSaver,
 	mcpNamespace,
 	mcpServerSummary,
 	normalizeMcpInputSchema,
@@ -388,7 +389,9 @@ function serversSection(
  * One variant as a Durable tool (not replay-safe: an interrupted call is not repeated). Deferred either way, so the
  * `codemode` section leaves it out; for `codemode` only other tools (scripts) may call it, so `tool_search` never
  * offers it to the model either. A call reaches the instance where the calling conversation works, and only when that
- * instance describes the tool as this variant does.
+ * instance describes the tool as this variant does. Scripts get the whole result (code mode limits what the script
+ * shows the model); the model's own calls (`tool_search`) get pi's output limit, the full text saved where the
+ * conversation works.
  */
 function toolRegistration(
 	{ server, tool, descriptor, name }: Variant,
@@ -422,7 +425,8 @@ function toolRegistration(
 			const content = toLlmContent(result);
 			if (result.isError && !content.some((block) => block.type === "text" && block.text.trim() !== ""))
 				content.push({ type: "text", text: `MCP tool ${server}/${tool.name} returned an error` });
-			const limited = await limitMcpContent(content);
+			const limited =
+				offer.reach === "codemode" ? { content } : await limitMcpContent(content, outputSaver(api, context));
 			// Structured output only for a tool that declares its schema (Durable checks it), error results too. The
 			// server's JSON arrived as JSON; the type says `unknown` only because MCP allows any value.
 			const structured =
@@ -436,6 +440,23 @@ function toolRegistration(
 				...structured,
 			};
 		},
+	};
+}
+
+/**
+ * Saves a cut result's full text in a new temp directory of the calling conversation's environment, where the model's
+ * `read` tool reads it (a subagent's own location may be another machine than the session's).
+ */
+function outputSaver(api: ToolExecutionApi, context: Context): McpOutputSaver {
+	return async (data, extension) => {
+		const env = api.env;
+		if (env === undefined) throw new Error("no execution environment");
+		const directory = await env.createTempDir("pi-mcp-", context);
+		if (!directory.ok) throw new Error(directory.error.message);
+		const path = `${directory.value}/output${extension}`;
+		const written = await env.writeFile(path, data, context);
+		if (!written.ok) throw new Error(written.error.message);
+		return path;
 	};
 }
 

@@ -3,8 +3,12 @@
 // wraps give each conversation the servers its location's lease uses, each with its namespace, pi's one-line summary
 // and instructions; variants of one tool at two locations, the session's with the plain name; calls only as the variant
 // the caller's instance describes; the `mcp_servers` section per conversation without code mode; structured output only
-// for tools with an output schema (error results included); and error results with text.
+// for tools with an output schema (error results included); error results with text; and results whole for scripts,
+// cut with the full text saved where the conversation works for the model's own calls.
 import assert from "node:assert/strict";
+import { readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname } from "node:path";
 import { test } from "node:test";
 import type {
 	Agent,
@@ -14,7 +18,8 @@ import type {
 	ToolExecutionApi,
 	ToolRegistration,
 } from "@earendil-works/pi-durable";
-import type { CallToolResult } from "@earendil-works/pi-mcp";
+import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+import { type CallToolResult, MCP_OUTPUT_MAX_BYTES } from "@earendil-works/pi-mcp";
 import { BACKGROUND_CONTEXT, type Location } from "@p2/app/v1";
 import type { P2Tool } from "@p2/app/v1/worker";
 import type { Instance, McpTool, SessionLease } from "../../plugins/mcp/contract.ts";
@@ -393,16 +398,24 @@ test("without code mode, the mcp_servers section lists the conversation's server
 	);
 });
 
-/** The registration of `mcpTool` calling a server that answers `result`, and what it was called with. */
-function registration(mcpTool: McpTool, result: CallToolResult) {
+/**
+ * The registration of `mcpTool` calling a server that answers `result`, and what it was called with; reached as `reach`,
+ * the caller's environment `env`.
+ */
+function registration(
+	mcpTool: McpTool,
+	result: CallToolResult,
+	{ reach = "codemode", env }: { reach?: McpReach; env?: NodeExecutionEnv } = {},
+) {
 	const calls: Parameters<McpCall>[0][] = [];
 	const call: McpCall = async (request) => {
 		calls.push(request);
 		return result;
 	};
-	const [registered] = extensionOf([instance("docs", { tools: [mcpTool] })], { call }).tools as ToolRegistration[];
-	// The tool reads only the conversation ID and the reader from the API.
-	const api = { conversationId: 1 } as unknown as ToolExecutionApi;
+	const [registered] = extensionOf([instance("docs", { tools: [mcpTool] })], { call, reach })
+		.tools as ToolRegistration[];
+	// The tool reads only the conversation ID, the reader and the environment from the API.
+	const api = { conversationId: 1, env } as unknown as ToolExecutionApi;
 	return { registered: registered!, calls, run: () => registered!.execute({ q: "x" }, api, BACKGROUND_CONTEXT) };
 }
 
@@ -434,4 +447,34 @@ test("results: structured output only with an output schema, error results inclu
 	assert.match(JSON.stringify(error.output), /hits/);
 	const bare = await registration(tool("search"), { content: [], isError: true }).run();
 	assert.deepEqual(bare.output, [{ type: "text", text: "MCP tool docs/search returned an error" }]);
+});
+
+test("results: scripts get them whole; the model's own calls get them cut, the full text saved where it works", async () => {
+	const text = Array.from({ length: 1024 }, (_, line) => `line ${line} ${"x".repeat(32)}`).join("\n");
+	assert(Buffer.byteLength(text) > 2 * MCP_OUTPUT_MAX_BYTES - 2048);
+	const result = { content: [{ type: "text" as const, text }] };
+	/** The text of a result of one text block. */
+	const only = (output: readonly { type: string }[] | undefined): string => {
+		assert.equal(output?.length, 1);
+		const [block] = output!;
+		assert(block?.type === "text" && "text" in block && typeof block.text === "string");
+		return block.text;
+	};
+	const script = await registration(tool("get"), result, { reach: "codemode" }).run();
+	assert.deepEqual(script.output, [{ type: "text", text }]);
+	const env = new NodeExecutionEnv({ cwd: tmpdir() });
+	const model = await registration(tool("get"), result, { reach: "tool_search", env }).run();
+	const cut = only(model.output);
+	assert.match(cut, /^Warning: truncated output \(original token count: \d+\)/);
+	assert.match(cut, /chars truncated/);
+	const path = /\[Full output: (.+) \(read it with offset\/limit\)\]$/.exec(cut)?.[1];
+	assert(path !== undefined, cut.slice(-200));
+	try {
+		assert.equal(readFileSync(path, "utf8"), text);
+	} finally {
+		rmSync(dirname(path), { recursive: true, force: true });
+	}
+	// Without an environment the text is still cut, and says why the full text is missing.
+	const nowhere = await registration(tool("get"), result, { reach: "tool_search" }).run();
+	assert.match(only(nowhere.output), /\[Could not save the full output: no execution environment\]$/);
 });
