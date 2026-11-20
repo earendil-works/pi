@@ -174,7 +174,8 @@ export function requiresToolCallId(modelId: string): boolean {
 }
 
 function getGeminiMajorVersion(modelId: string): number | undefined {
-	const match = modelId.toLowerCase().match(/^gemini(?:-live)?-(\d+)/);
+	// Unanchored like usesGoogleThinkingLevel: some hosts prefix the ID, e.g. randomprefix-gemini-4-argon (#12321).
+	const match = modelId.toLowerCase().match(/gemini(?:-live)?-(\d+)/);
 	if (!match) return undefined;
 	return Number.parseInt(match[1], 10);
 }
@@ -461,7 +462,7 @@ export function convertTools(
 
 /**
  * Gemini 3+ enforces required function parameters in validated tool-calling modes.
- * `compat.supportsStrictMode` overrides the model ID detection, e.g. for Gemini models served under other IDs.
+ * `compat.supportsStrictMode` overrides the model ID detection, e.g. for Gemini models served under IDs without the version.
  */
 export function supportsGoogleStrictToolSampling<T extends GoogleApiType>(model: Model<T>): boolean {
 	const majorVersion = getGeminiMajorVersion(model.id);

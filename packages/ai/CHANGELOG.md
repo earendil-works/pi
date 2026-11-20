@@ -4,10 +4,11 @@
 
 ### Added
 
-- Added `compat.supportsStrictMode` to the `google-generative-ai` and `google-vertex` APIs, so Gemini 3+ models served under IDs that do not start with `gemini-` can use strict tools (`VALIDATED` function calling); unset keeps the model ID detection ([#12321](https://github.com/earendil-works/pi/issues/12321))
+- Added `compat.supportsStrictMode` to the `google-generative-ai` and `google-vertex` APIs, so Gemini 3+ models served under IDs without the version can use strict tools (`VALIDATED` function calling); unset keeps the model ID detection ([#12321](https://github.com/earendil-works/pi/issues/12321))
 
 ### Fixed
 
+- Fixed Gemini 3+ models whose IDs carry a prefix, such as `vendor-gemini-4-argon`, being treated as older Gemini models in the `google-generative-ai` and `google-vertex` APIs: they now get strict tools, tool-call IDs, and images inside function responses ([#12321](https://github.com/earendil-works/pi/issues/12321))
 - Fixed `retryAssistantCall()` retaining an abort listener after each completed backoff, causing listener buildup across repeated retries ([#10506](https://github.com/earendil-works/pi/issues/10506))
 - Fixed Cloudflare's HTTP 525 (SSL handshake failed) not being retried like its 520 and 524 errors
 - Fixed gateway errors such as "The provider is temporarily unavailable. Retry shortly.", "The provider ended the response before it was complete.", "The connection to the provider was reset.", and "The provider reported a failure while generating the response." not being retried ([#12227](https://github.com/earendil-works/pi/issues/12227))

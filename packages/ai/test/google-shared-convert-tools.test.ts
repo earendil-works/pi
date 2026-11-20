@@ -247,23 +247,24 @@ describe("google-shared convertTools", () => {
 	});
 
 	// #12321
-	it("lets compat.supportsStrictMode override the model ID detection", () => {
-		expect(supportsGoogleStrictToolSampling(googleModel("randomprefix-gemini-4-argon"))).toBe(false);
-		expect(
-			supportsGoogleStrictToolSampling(googleModel("randomprefix-gemini-4-argon", { supportsStrictMode: true })),
-		).toBe(true);
+	it("detects prefixed Gemini 3+ IDs and lets compat.supportsStrictMode override the detection", () => {
+		expect(supportsGoogleStrictToolSampling(googleModel("randomprefix-gemini-4-argon"))).toBe(true);
+		expect(supportsGoogleStrictToolSampling(googleModel("vendor-gemini-2.5-pro"))).toBe(false);
+		expect(supportsGoogleStrictToolSampling(googleModel("argon-latest"))).toBe(false);
+		expect(supportsGoogleStrictToolSampling(googleModel("argon-latest", { supportsStrictMode: true }))).toBe(true);
 		expect(
 			supportsGoogleStrictToolSampling(googleModel("gemini-3.1-pro-preview", { supportsStrictMode: false })),
 		).toBe(false);
 	});
 
 	// #12321
-	it("sends VALIDATED for a prefixed Gemini ID only with compat.supportsStrictMode", async () => {
+	it("sends VALIDATED for prefixed Gemini 3+ IDs and for compat.supportsStrictMode", async () => {
 		for (const makeModel of [googleModel, vertexModel]) {
-			expect(await capturedFunctionCallingMode(makeModel("randomprefix-gemini-4-argon"))).toBeUndefined();
-			expect(
-				await capturedFunctionCallingMode(makeModel("randomprefix-gemini-4-argon", { supportsStrictMode: true })),
-			).toBe("VALIDATED");
+			expect(await capturedFunctionCallingMode(makeModel("randomprefix-gemini-4-argon"))).toBe("VALIDATED");
+			expect(await capturedFunctionCallingMode(makeModel("argon-latest"))).toBeUndefined();
+			expect(await capturedFunctionCallingMode(makeModel("argon-latest", { supportsStrictMode: true }))).toBe(
+				"VALIDATED",
+			);
 		}
 	});
 

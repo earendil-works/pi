@@ -198,7 +198,7 @@ Also applies to `google-vertex`.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `supportsStrictMode` | boolean |  | Whether the model enforces strict tools through Gemini's VALIDATED function-calling mode. Default: true for model IDs starting with gemini-3 or a later version, false otherwise. Set true for Gemini 3+ models served under other IDs. |
+| `supportsStrictMode` | boolean |  | Whether the model enforces strict tools through Gemini's VALIDATED function-calling mode. Default: true for model IDs containing gemini-3 or a later version, such as gemini-3-pro or vendor-gemini-4-argon, false otherwise. Set true for Gemini 3+ models served under IDs without the version. |
 
 ### `typesafe-system-one`
 
