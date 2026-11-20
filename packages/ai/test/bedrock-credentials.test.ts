@@ -98,6 +98,22 @@ describe("bedrock credential priority", () => {
 		});
 	});
 
+	// #12353: the proxy-aware credential chain must not replace explicit keys.
+	it("keeps ambient AWS access keys when a proxy is set", async () => {
+		vi.stubEnv("AWS_ACCESS_KEY_ID", "AKIAEXAMPLE");
+		vi.stubEnv("AWS_SECRET_ACCESS_KEY", "secretexample");
+		vi.stubEnv("HTTPS_PROXY", "http://127.0.0.1:9");
+		const model = getBuiltinModel("amazon-bedrock", "us.anthropic.claude-opus-4-8");
+
+		const config = await captureClientConfig(model);
+
+		expect(config.credentials).toEqual({
+			accessKeyId: "AKIAEXAMPLE",
+			secretAccessKey: "secretexample",
+		});
+		expect(config.credentialDefaultProvider).toBeTypeOf("function");
+	});
+
 	it("uses ambient AWS access keys when only an ambient profile is set", async () => {
 		vi.stubEnv("AWS_ACCESS_KEY_ID", "AKIAEXAMPLE");
 		vi.stubEnv("AWS_SECRET_ACCESS_KEY", "secretexample");
