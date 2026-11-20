@@ -117,6 +117,10 @@ When closing issues via commit:
 
 Before writing or reviewing plugin code in `apps/p2` (server and worker facets, contracts, stores), read [apps/p2/docs/plugin-practices.md](apps/p2/docs/plugin-practices.md) in full and follow it.
 
+## Working on p3 (Pi Roam) packages
+
+Work on a p3 (Pi Roam) package in `apps/p3` (a plugin or a part of one) starts by reading the guides index [apps/p3/docs/guides/README.md](apps/p3/docs/guides/README.md), then the guides it lists, in its order, in full. Follow them.
+
 ## Building p2's web UI
 
 For building or changing p2's web UI (`apps/p2`), load and follow [.pi/skills/p2-ui.md](.pi/skills/p2-ui.md).
