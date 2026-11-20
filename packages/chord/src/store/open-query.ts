@@ -26,6 +26,11 @@ export type QuerySpec = {
 /** Where an open query lives: the store whose index its reads are in, and the batch adoptions outside a commit run in. */
 export type ReadSite = { readonly store: ChordStore; readonly batch: Batch };
 
+/** A query's plan for the bindings as they are, or why it does not compile. */
+type Compiled =
+	| { readonly kind: "compiled"; readonly plan: ReadPlan }
+	| { readonly kind: "failed"; readonly error: unknown };
+
 /** A query compiled for the bindings as they are, with its open reads. */
 export class OpenQuery {
 	readonly spec: QuerySpec;
@@ -37,7 +42,7 @@ export class OpenQuery {
 	readonly #reads = new Set<OpenRead>();
 	/** The releases of its binding watches; `undefined` once closed. */
 	#watches: (() => void)[] | undefined;
-	#compiled: { readonly plan: ReadPlan } | { readonly error: unknown };
+	#compiled: Compiled;
 
 	/**
 	 * `rebound` is called whenever a binding changed and the query was compiled again: its reads are registered for
@@ -56,7 +61,7 @@ export class OpenQuery {
 	}
 
 	/** The plan while the query compiles, else why it does not. */
-	get compiled(): { readonly plan: ReadPlan } | { readonly error: unknown } {
+	get compiled(): Compiled {
 		return this.#compiled;
 	}
 
@@ -100,12 +105,12 @@ export class OpenQuery {
 		for (const read of [...this.#reads]) read.close();
 	}
 
-	#compile(): { readonly plan: ReadPlan } | { readonly error: unknown } {
+	#compile(): Compiled {
 		const { query, table, projection } = this.spec;
 		try {
-			return { plan: new ReadPlan(query, table, projection, this.#shape, this.site.store.reads) };
+			return { kind: "compiled", plan: new ReadPlan(query, table, projection, this.#shape, this.site.store.reads) };
 		} catch (error) {
-			return { error };
+			return { kind: "failed", error };
 		}
 	}
 
@@ -159,7 +164,7 @@ export class OpenRead {
 		const compiled = this.#query.compiled;
 		if (this.#closed) return;
 		const registration = ++this.#registration;
-		if ("error" in compiled) return;
+		if (compiled.kind === "failed") return;
 		const adopting: ReadSink = {
 			adopt: (run) => {
 				if (registration !== this.#registration) return;
@@ -192,7 +197,7 @@ export class OpenRead {
 	async load(): Promise<ReadRun | undefined> {
 		const { site, context, compiled } = this.#query;
 		if (this.#closed) return undefined;
-		if ("error" in compiled) {
+		if (compiled.kind === "failed") {
 			const failed: ReadRun = { kind: "failed", error: compiled.error };
 			site.batch.within(() => this.#sink.adopt(failed), context);
 			return failed;

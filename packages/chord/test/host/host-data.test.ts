@@ -353,10 +353,9 @@ describe("lifecycle", () => {
 		const { host: h, ledger, errors } = await board(store);
 		await h.importHostData(parts, context);
 		await delivered();
-		expect(errors.map((error) => [error.kind, "object" in error ? error.object : undefined])).toContainEqual([
-			"object_failed",
-			"test.board",
-		]);
+		expect(
+			errors.map((error) => [error.kind, error.kind === "object_failed" ? error.object : undefined]),
+		).toContainEqual(["object_failed", "test.board"]);
 		expect(await ledger.count("S1", context)).toBe(1);
 		await h.close(context);
 	});

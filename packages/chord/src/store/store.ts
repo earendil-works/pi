@@ -111,8 +111,10 @@ export type SeriesCommit = {
 	readonly writes: readonly StagedWrite[];
 };
 
-/** What a series stored: how many of its commits, and why the next one was refused, if one was. */
-export type SeriesResult = { readonly stored: number; readonly refused?: unknown };
+/** What a series stored: how many of its commits (`stored`: all of them), and, when one was refused (`refused`), why. */
+export type SeriesResult =
+	| { readonly kind: "stored"; readonly stored: number }
+	| { readonly kind: "refused"; readonly stored: number; readonly refused: unknown };
 
 /**
  * The commits of one backend transaction (a series or a group) as it leaves them: each stored commit's seq and created
@@ -753,7 +755,9 @@ export class ChordStore implements Store {
 		} catch (error) {
 			throw this.#fail(error);
 		}
-		return refused === undefined ? { stored: stored.length } : { stored: stored.length, refused: refused.error };
+		return refused === undefined
+			? { kind: "stored", stored: stored.length }
+			: { kind: "refused", stored: stored.length, refused: refused.error };
 	}
 
 	/**

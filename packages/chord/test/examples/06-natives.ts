@@ -69,7 +69,12 @@ const facet = defineFacet((host) => {
 
 // onError gets what fails in the background: here a close past its closeTimeout.
 const host = createHost({
-	onError: (error) => console.log("reported:", error.kind, "object" in error ? error.object : ""),
+	onError: (error) =>
+		console.log(
+			"reported:",
+			error.kind,
+			error.kind === "close_timeout" || error.kind === "close_failed" ? error.object : "",
+		),
 });
 await host.load([{ name: "@example/natives", facet }], context);
 

@@ -780,8 +780,8 @@ same name, the first root wins, and the other is reported.
 - **A single file** at a root's top is a plugin: `plugins/hello.server.ts` and `plugins/hello.web.tsx` are the plugin
   `hello` with two facets. It has no `package.json` and imports only the API; when it needs a second file or a
   package, it becomes the directory `hello/`, which a reload treats as the same plugin.
-- **Installing** from git or npm: `plugins.installPlugin({ git: url, ref }, root, ctx)` clones the ref (a branch, tag
-  or commit) into the root, `{ npm: name, version }` extracts the package; then its dependencies are installed. Removal
+- **Installing** from git or npm: `plugins.installPlugin({ kind: "git", git: url, ref }, root, ctx)` clones the ref (a branch, tag
+  or commit) into the root, `{ kind: "npm", npm: name, version }` extracts the package; then its dependencies are installed. Removal
   is deleting the directory.
 - **Testing** a plugin alone: `testPlugin("./plugins/stats", { kind: "worker", api, modules, stubs }, ctx)` builds it
   as production does, loads it on an in-memory host beside stub facets serving what it uses, collects what it

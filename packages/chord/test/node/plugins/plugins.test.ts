@@ -519,11 +519,15 @@ describe("the app's API, required roots and installs (slice 12 §1, §5)", () =>
 			context,
 		);
 		await plugins.build([], context);
-		expect(await plugins.installPlugin({ git: repository.url, ref: "v1" }, root, context)).toEqual(["@bob/hello"]);
+		expect(await plugins.installPlugin({ kind: "git", git: repository.url, ref: "v1" }, root, context)).toEqual([
+			"@bob/hello",
+		]);
 		expect(plugins.state.value).toMatchObject({ set: true });
 		const built = await plugins.build([], context);
 		expect(Object.keys(built.plugins)).toEqual(["@bob/hello"]);
-		expect(await rejection(plugins.installPlugin({ git: repository.url, ref: "v1" }, tools, context))).toMatchObject({
+		expect(
+			await rejection(plugins.installPlugin({ kind: "git", git: repository.url, ref: "v1" }, tools, context)),
+		).toMatchObject({
 			message: `plugins.installPlugin: ${tools} is not one of the roots`,
 		});
 		plugins.close();
