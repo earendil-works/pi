@@ -26,7 +26,7 @@ import { lt } from "../../src/store/expression.ts";
 import { query } from "../../src/store/query.ts";
 import { TableSql, tableSqlName } from "../../src/store/sql.ts";
 import type { StagedWrite } from "../../src/store/step.ts";
-import { type ChordStore, openStore } from "../../src/store/store.ts";
+import { openStore } from "../../src/store/store.ts";
 import { defineTable } from "../../src/store/table.ts";
 import { TableChanges } from "../../src/store/table-changes.ts";
 import { evolveTable } from "../../src/store/table-evolve.ts";
@@ -76,9 +76,9 @@ const VALUE = { title: "a note", body: "x".repeat(200), n: 0 };
 function chordDeltas(outbox: boolean) {
 	return async () => {
 		const { path, remove } = await file();
-		const store = (await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context, {
+		const store = await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context, {
 			outbox,
-		})) as ChordStore;
+		});
 		const address = { namespace: "chord", owner: "bench.store", kind: "note", key: "" };
 		const base = { version: 1, fingerprint: "0123456789abcdef", value: VALUE };
 		let id = 0;
@@ -147,9 +147,9 @@ const IndexedEdits = defineTable("edits", {
 function chordPuts(outbox: boolean) {
 	return async () => {
 		const { path, remove } = await file();
-		const store = (await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context, {
+		const store = await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context, {
 			outbox,
-		})) as ChordStore;
+		});
 		const table = tableSqlName("bench.store", Edits.name);
 		const sql = new TableSql(table, Edits.columns, Edits.rows.physical, Edits.key);
 		const fence = { admit: () => true, adopt: () => {} };
@@ -329,7 +329,7 @@ console.log(`heap after GC: ${heap() - before} KiB above the start`);
 /** A file store with `count` rows of `Edits` at version 1 (one commit), as a table handle. */
 async function filledEdits(count: number, body = VALUE.body, definition: typeof Edits = Edits) {
 	const { path, remove } = await file();
-	const store = (await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context)) as ChordStore;
+	const store = await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context);
 	const table = tableSqlName("bench.store", Edits.name);
 	const fence = { admit: () => true, adopt: () => {} };
 	await prepareTables([{ definition, table }], store, fence, "bench", context);

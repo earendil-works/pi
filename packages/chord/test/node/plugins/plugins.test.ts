@@ -4,6 +4,7 @@
 // over 200 reloads, and end to end a server and a worker loading plugin directories, an edit rolled out, a broken edit
 // kept old on both hosts.
 
+import { getEventListeners } from "node:events";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -43,8 +44,8 @@ import {
 	writePlugin,
 } from "./support.ts";
 
-/** How many facets were built in this file, by anyone. */
-const builds = vi.hoisted(() => ({ count: 0 }));
+/** How many facets were built in this file, by anyone; `fail` makes the next build reject (esbuild's service lost). */
+const builds = vi.hoisted(() => ({ count: 0, fail: false }));
 
 vi.mock("../../../src/node/plugins/build.ts", async (importOriginal) => {
 	const original = await importOriginal<typeof Build>();
@@ -52,6 +53,10 @@ vi.mock("../../../src/node/plugins/build.ts", async (importOriginal) => {
 		...original,
 		buildFacet: (...args: Parameters<typeof Build.buildFacet>) => {
 			builds.count++;
+			if (builds.fail) {
+				builds.fail = false;
+				return Promise.reject(new Error("the build service is gone"));
+			}
 			return original.buildFacet(...args);
 		},
 	};
@@ -443,11 +448,42 @@ describe("current sets (slice 10 D11)", () => {
 		const root = await tempRoot();
 		await itemPlugin(root, "a", "a");
 		const { plugins } = await component(root);
-		const controller = new AbortController();
-		controller.abort(new Error("gone"));
-		await expect(plugins.scripts("worker", withAbortSignal(controller.signal, context))).rejects.toThrow();
+		builds.fail = true;
+		await expect(plugins.scripts("worker", context)).rejects.toThrow("the build service is gone");
 		expect((await plugins.scripts("worker", context)).map(({ plugin }) => plugin.name)).toEqual(["@test/a"]);
 		plugins.close();
+	});
+
+	// Opus S5 and Astra S1, review round 3 of ERNDL-954: the making ran in the first caller's context, so one start going
+	// away failed every start waiting for the same first build, and a waiter going away kept its abort listener.
+	it("a first use going away fails only its own wait, first or second, and leaves no abort listener", async () => {
+		for (const first of [true, false]) {
+			const root = await tempRoot();
+			await itemPlugin(root, "a", "a");
+			const { plugins } = await component(root);
+			const gone = new AbortController();
+			const staying = new AbortController();
+			const waiting = withAbortSignal(gone.signal, context);
+			const healthy = withAbortSignal(staying.signal, context);
+			const [one, two] = first
+				? [plugins.scripts("worker", waiting), plugins.scripts("worker", healthy)]
+				: [plugins.scripts("worker", healthy), plugins.scripts("worker", waiting)];
+			gone.abort(new Error("the hold ended"));
+			const [left, stayed] = first ? [one, two] : [two, one];
+			await expect(left).rejects.toThrow("the hold ended");
+			expect((await stayed).map(({ plugin }) => plugin.name)).toEqual(["@test/a"]);
+			expect(getEventListeners(staying.signal, "abort")).toEqual([]);
+			plugins.close();
+		}
+	});
+
+	it("a close aborts a first making under way", async () => {
+		const root = await tempRoot();
+		await itemPlugin(root, "a", "a");
+		const { plugins } = await component(root);
+		const making = plugins.scripts("worker", context);
+		plugins.close();
+		await expect(making).rejects.toThrow("plugins: the component closed");
 	});
 });
 

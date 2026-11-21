@@ -1332,7 +1332,7 @@ forEachCodec(() => {
 describe("the host's store", () => {
 	/** A store on `:memory:`, as Chord's layers see it. */
 	async function memoryStore(): Promise<ChordStore> {
-		return (await openStore(sqliteBackend(await openNodeSqliteDatabase(":memory:")), context)) as ChordStore;
+		return await openStore(sqliteBackend(await openNodeSqliteDatabase(":memory:")), context);
 	}
 
 	it("belongs to one open host at a time (rule 7)", async () => {

@@ -82,7 +82,7 @@ afterEach(async () => {
 async function storeFile() {
 	directory = await mkdtemp(join(tmpdir(), "chord-jobs-"));
 	const path = join(directory, "store.sqlite");
-	return async () => (await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context)) as ChordStore;
+	return async () => await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context);
 }
 
 /** What one host over the store sees of the store object's jobs. */

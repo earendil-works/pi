@@ -27,7 +27,8 @@ import {
 	type RegistryValue,
 } from "../../registries/index.ts";
 import { openNodeSqliteDatabase } from "../../sqlite/node.ts";
-import { openStore, type Store, sqliteBackend } from "../../store/index.ts";
+import { openStore, sqliteBackend } from "../../store/index.ts";
+import type { ChordStore } from "../../store/store.ts";
 import { type AppApi, buildFacet } from "./build.ts";
 import { discoverPlugins, type Plugin } from "./discover.ts";
 import { evaluateFacet, type HostPackages } from "./evaluate.ts";
@@ -53,7 +54,7 @@ export type TestPluginOptions<P extends Principal = Principal> = {
 	 * Stubs that need the test's host or its store (an app's registry of process values, as its production host serves
 	 * one), made once the host exists and loaded beside the others.
 	 */
-	readonly hostStubs?: (host: Host<P>, store: Store) => readonly PluginFacet<P>[];
+	readonly hostStubs?: (host: Host<P>, store: ChordStore) => readonly PluginFacet<P>[];
 	/** The host's principal, as the kind's production host has one. */
 	readonly principal?: P;
 	/** The host's address, as the kind's production host has one. */
@@ -280,12 +281,12 @@ class Tested<P extends Principal> implements TestedPlugin<P> {
 	readonly host: Host<P>;
 	readonly plugin: Plugin;
 	readonly errors: readonly HostError[];
-	readonly #store: Store;
+	readonly #store: ChordStore;
 	readonly #collected: ReadonlyMap<string, RegistryValue<unknown>>;
 
 	constructor(
 		host: Host<P>,
-		store: Store,
+		store: ChordStore,
 		plugin: Plugin,
 		errors: readonly HostError[],
 		collected: ReadonlyMap<string, RegistryValue<unknown>>,

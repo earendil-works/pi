@@ -17,7 +17,7 @@ import { readCatalog, writeCatalog } from "./catalog.ts";
 import type { DocumentRecord } from "./engine.ts";
 import { applyStoreSchema, type MetaRow, STORE_SCHEMA, TABLES } from "./schema.ts";
 import { Step } from "./step.ts";
-import { ChordStore, type Store, type StoreOptions } from "./store.ts";
+import { ChordStore, type StoreOptions } from "./store.ts";
 import { storedText } from "./text.ts";
 
 /**
@@ -30,7 +30,7 @@ export async function importStore(
 	parts: AsyncIterable<unknown> | Iterable<unknown>,
 	context: Context,
 	options: StoreOptions = {},
-): Promise<Store> {
+): Promise<ChordStore> {
 	const { db } = backend;
 	try {
 		context.abortSignal?.throwIfAborted();

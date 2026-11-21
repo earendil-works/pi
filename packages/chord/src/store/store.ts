@@ -59,7 +59,7 @@ export type StoreOptions = {
  * Opens a store over `backend`: the store's schema migrations, the UTF-8 check, the metadata read once, the outbox
  * switched when asked. A failure closes the backend and rejects (rule 12).
  */
-export async function openStore(backend: Backend, context: Context, options: StoreOptions = {}): Promise<Store> {
+export async function openStore(backend: Backend, context: Context, options: StoreOptions = {}): Promise<ChordStore> {
 	const { db } = backend;
 	try {
 		context.abortSignal?.throwIfAborted();
