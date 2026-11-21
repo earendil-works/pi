@@ -139,9 +139,12 @@ async function open(
 	options: {
 		readonly policy?: CompactionPolicy;
 		readonly contextWindow?: number;
+		readonly maxTokens?: number;
 		readonly storage?: MemoryStorage;
 	} = {},
-	setup = chatSetup({ models: [{ id: "faux-1", contextWindow: options.contextWindow ?? 100_000, maxTokens: 900 }] }),
+	setup = chatSetup({
+		models: [{ id: "faux-1", contextWindow: options.contextWindow ?? 100_000, maxTokens: options.maxTokens ?? 900 }],
+	}),
 	faux = script(setup),
 ): Promise<Chat> {
 	addSection(setup.registry, "preamble", () => "You are helpful.", { tag: false });
@@ -415,7 +418,8 @@ describe("manual compaction", () => {
 		expect(prompt.endsWith("\n\nAdditional focus: focus on files")).toBe(true);
 		expect(request.options).toMatchObject({
 			cacheRetention: "none",
-			maxTokens: 800,
+			// 10% of the 100k window, capped by the model's 900-token output limit (not 0.8 × reserveTokens).
+			maxTokens: 900,
 			sessionId: (await chat.harness.snapshot(ProviderDoc, chat.root.id, context))!.sessionId,
 		});
 		expect(request.options?.deferred).toBeUndefined();
@@ -935,6 +939,58 @@ describe("compaction outcomes", () => {
 			await chat.harness.close(context);
 		});
 	}
+});
+
+// ─── Summary budget ───────────────────────────────────────────────────────
+
+describe("summary budget", () => {
+	/** The `maxTokens` of the summary request a manual compaction over a fixed history makes. */
+	async function summaryCap(contextWindow: number, maxTokens: number): Promise<number> {
+		const chat = await open({ contextWindow, maxTokens });
+		await history(chat);
+		chat.faux.summaries.push(summary());
+		const id = await chat.root.compact(undefined, context);
+		expect((await result(chat, id)).status).toBe("completed");
+		const request = chat.faux.summaryRequests[0]!;
+		await chat.harness.close(context);
+		return request.options?.maxTokens ?? Number.NaN;
+	}
+
+	it("allows a tenth of the model's context window", async () => {
+		expect(await summaryCap(1_000_000, 0)).toBe(100_000);
+		expect(await summaryCap(500_000, 0)).toBe(50_000);
+		expect(await summaryCap(200_000, 0)).toBe(20_000);
+		expect(await summaryCap(128_000, 0)).toBe(12_800);
+	});
+
+	it("never allows more than the model's output limit, and is not limited by an unknown one", async () => {
+		expect(await summaryCap(1_000_000, 50_000)).toBe(50_000);
+		expect(await summaryCap(1_000_000, 1)).toBe(1);
+	});
+
+	it("allows at least one token", async () => {
+		expect(await summaryCap(9, 0)).toBe(1);
+	});
+
+	it("leaves the blocking threshold at window - reserveTokens", async () => {
+		const chat = await open({ contextWindow: 1000 });
+		await history(chat);
+		chat.setup.settings.compaction = BLOCKING;
+		const gate = deferred();
+		const reached = deferred();
+		chat.faux.summaries.push(gated(gate, summary(), reached));
+		chat.faux.agent.push(answer("a4"));
+		const input = await chat.root.submit({ type: "input", content: text("u4", 200) }, context);
+		await reached.promise;
+		// 700 tokens of a 1000-token window: blocking, although the summary may only use 100 of them.
+		expect((await live(chat)).compactions).toEqual([
+			{ taskId: (await compactionTasks(chat))[0]!.id, trigger: "threshold", blocking: true, attempt: 1 },
+		]);
+		expect(chat.faux.summaryRequests[0]!.options?.maxTokens).toBe(100);
+		gate.resolve();
+		expect((await input.wait(context)).status).toBe("done");
+		await chat.harness.close(context);
+	});
 });
 
 // ─── Automatic compaction ─────────────────────────────────────────────────

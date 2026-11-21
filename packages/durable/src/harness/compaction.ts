@@ -153,9 +153,13 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 				model: ref,
 				thinkingLevel: agent.thinkingLevel,
 				streamOptions: settings.stream,
-				maxTokens: Math.min(
-					Math.floor(0.8 * policy.reserveTokens),
-					model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
+				// A summary may use 10% of the model's context window, capped by its output limit.
+				maxTokens: Math.max(
+					1,
+					Math.min(
+						Math.floor(model.contextWindow * 0.1),
+						model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
+					),
 				),
 				tail: view.entries.reduce((tail, entry) => (entry.id > tail ? entry.id : tail), firstKept),
 				firstKept,
