@@ -312,15 +312,21 @@ export function convertMessages(model: Model<Api>, context: Context, runtimeMode
 				.filter(Boolean);
 			const images = parts.filter((part): part is GeminiInlineDataPart => "inlineData" in part);
 			const text = texts.join("\n\n").trim();
-			const prevAssistant = messages.slice(0, index).findLast((entry) => entry.role === "assistant");
-			const nextAssistant = messages.slice(index + 1).find((entry) => entry.role === "assistant");
-			const target = nextAssistant?.model ?? model.id;
-			const to = antigravityDisplayModelName(target === model.id ? runtimeModel : target);
-			const modelChange = !prevAssistant?.model
+			const resolvedRuntimeId = (entry: AssistantMessage | undefined): string | undefined =>
+				entry ? (entry.responseModel ?? (entry.model === model.id ? runtimeModel : entry.model)) : undefined;
+			const prevRuntime = resolvedRuntimeId(
+				messages.slice(0, index).findLast((entry): entry is AssistantMessage => entry.role === "assistant"),
+			);
+			const nextAssistant = messages
+				.slice(index + 1)
+				.find((entry): entry is AssistantMessage => entry.role === "assistant");
+			const target = nextAssistant ? resolvedRuntimeId(nextAssistant)! : runtimeModel;
+			const to = antigravityDisplayModelName(target);
+			const modelChange = !prevRuntime
 				? { from: "None", to }
-				: prevAssistant.model === target
+				: prevRuntime === target
 					? undefined
-					: { from: antigravityDisplayModelName(prevAssistant.model), to };
+					: { from: antigravityDisplayModelName(prevRuntime), to };
 			appendTurn(
 				contents,
 				GeminiRole.User,

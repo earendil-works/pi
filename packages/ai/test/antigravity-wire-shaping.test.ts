@@ -148,6 +148,57 @@ describe("antigravity wire shaping (snoop capture 2026-11-18)", () => {
 		}
 	});
 
+	it("preserves cached turns across effort changes and virtual-model switches when responseModel is recorded", () => {
+		const carbon = antigravityProvider()
+			.getModels()
+			.find((entry) => entry.id === "gemini-4-carbon")!;
+		const user0 = { role: "user" as const, content: "turn 0", timestamp: 1000 };
+		const user1 = { role: "user" as const, content: "turn 1", timestamp: 3000 };
+		const user2 = { role: "user" as const, content: "turn 2", timestamp: 5000 };
+
+		const turn0Wire = convertMessages(carbon, normalizeContext({ messages: [user0] }), "gemini-4-carbon-high");
+		expect((turn0Wire[0].parts[0] as GeminiTextPart).text).toContain("from None to Gemini 4 Carbon (High)");
+
+		const reply0: AssistantMessage = {
+			...assistant("gemini-4-carbon"),
+			responseModel: "gemini-4-carbon-high",
+		};
+
+		// Effort switch on the same public model id (high -> low) must not rewrite turn 0's cached prefix.
+		const effortSwitched = convertMessages(
+			carbon,
+			normalizeContext({ messages: [user0, reply0, user1] }),
+			"gemini-4-carbon-low",
+		);
+		expect(effortSwitched.slice(0, turn0Wire.length)).toStrictEqual(turn0Wire);
+		expect((effortSwitched[2].parts[0] as GeminiTextPart).text).toContain(
+			"from Gemini 4 Carbon (High) to Gemini 4 Carbon (Low)",
+		);
+
+		// Model switch to another family (gemini-4-carbon-high -> gemini-3.8-flash-medium) must also keep turn 0 byte-identical.
+		const familySwitched = convertMessages(
+			model,
+			normalizeContext({ messages: [user0, reply0, user1] }),
+			"gemini-3.8-flash-medium",
+		);
+		expect(familySwitched.slice(0, turn0Wire.length)).toStrictEqual(turn0Wire);
+		expect((familySwitched[2].parts[0] as GeminiTextPart).text).toContain(
+			"from Gemini 4 Carbon (High) to Gemini 3.8 Flash (Medium)",
+		);
+
+		const reply1: AssistantMessage = {
+			...assistant(model.id),
+			responseModel: "gemini-3.8-flash-medium",
+		};
+		const steady = convertMessages(
+			model,
+			normalizeContext({ messages: [user0, reply0, user1, reply1, user2] }),
+			"gemini-3.8-flash-medium",
+		);
+		expect(steady.slice(0, familySwitched.length)).toStrictEqual(familySwitched);
+		expect((steady[4].parts[0] as GeminiTextPart).text).not.toContain("<USER_SETTINGS_CHANGE>");
+	});
+
 	it("wraps every user turn and keeps tool-result turns bare", () => {
 		const contents = convertMessages(
 			model,
