@@ -1,5 +1,5 @@
-// The probe on a session's worker (see `contract.ts`): a third-party plugin of the tests' own root, which reaches the
-// sessions plugin's contracts through p3's API.
+// The probe on a session's worker (see `contract.ts`): a plugin under test of the end-to-end tests (`testServer`'s
+// `plugins`), of a root of its own, so it reaches the sessions plugin's contracts through p3's API as a third party's.
 
 import { constant, contribute, defineFacet, forbidden, SessionFacts, type Writable } from "@earendil-works/p3/v1";
 import { WorkerBusy } from "@earendil-works/p3/v1/worker";

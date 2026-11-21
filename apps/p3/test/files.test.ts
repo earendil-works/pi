@@ -1,6 +1,6 @@
 // The base's files (`src/files.ts`): which Pi a command line names, the port a Pi takes at its first start, the
-// data directory and its stores made private (also when they existed looser), what is refused as a data directory, and
-// a config people edit. `HOME` is this file's own: the test runner gives every file a process.
+// data directory and its stores made private (also when they existed looser), what is refused as a data directory (its
+// parent included), and a config people edit. `HOME` is this file's own: the test runner gives every file a process.
 
 import assert from "node:assert/strict";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
@@ -129,11 +129,23 @@ describe("a data directory", () => {
 
 	// Sol, Astra, Opus and Fable, review round 2 (D12).
 	it("refuses a path too long for its sockets, naming the limit", async () => {
-		const deep = join(home, "d".repeat(MAX_SOCKET_PATH_BYTES - home.length - 23));
+		// `/supervisor.sock`, the longest socket, is 16 bytes: this directory's is one byte too long.
+		const deep = join(home, "d".repeat(MAX_SOCKET_PATH_BYTES - home.length - 16));
 		await assert.rejects(
 			openDataDir(deep),
 			new RegExp(`longer than the ${MAX_SOCKET_PATH_BYTES} this system allows`),
 		);
+	});
+
+	// Opus, review round 3 (N5): a `--dir` in a directory others may write to could be renamed away after the checks
+	// and replaced by one of another user's, where the sockets would then be made.
+	it("refuses a directory whose parent other users may change, unless its sticky bit is set", async () => {
+		const parent = join(home, "shared");
+		await mkdir(parent);
+		await chmod(parent, 0o777);
+		await assert.rejects(openDataDir(join(parent, "pi")), /which other users may change/);
+		await chmod(parent, 0o1777);
+		assert.equal(await openDataDir(join(parent, "pi")), join(parent, "pi"));
 	});
 
 	// Opus (N10) and Astra (S6), review round 2: `stop` and `status` asked the sockets of a directory they had not

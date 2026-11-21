@@ -21,12 +21,12 @@ worker loads.
 
 ## The tiers
 
-A plugin's own tests live in its `test/` folder (`plugins/<name>/test/<file>.test.ts`, one per source file): no build
-reads that folder and no release ships it. They import the API only, as a third party's would (the plugin tier's
-helper is `@earendil-works/p3/v1/testing`), never p3's `src/`; one exception, `WORKER` (`src/install.ts`) where the
-runner forks a real worker. A built-in plugin's cases that need the real server (HTTP, `/chord` links, a restart)
-sit in its `test/` folder too and use the end-to-end harness (`test/support.ts`, `test/until.ts`; the sign-in
-plugin's); cases of several plugins together go to `test/` (the runner's reload, `test/runner-e2e.test.ts`).
+A plugin's own tests live in its `test/` folder (`plugins/<name>/test/<file>.test.ts`): no build reads that folder and
+no release ships it. Both of its tiers are there: the plugin tier (`testPlugin`, one file per source file) and its end
+to end cases (`testServer`: HTTP, `/chord` links, workers, an apply, a restart; the sign-in plugin's and the runner's).
+They import the API only, as a third party's do, both helpers from `@earendil-works/p3/v1/testing`, never p3's
+`src/`; one exception, `WORKER` (`src/install.ts`) where the runner's own tests fork a real worker. `test/` holds the
+tests of the base and of the whole (the topology, the command, the release, the query plans).
 
 **1. Plugin** (milliseconds): one facet built as production builds it, on an in-memory host with its kind's
 principal, address and API modules, beside the base's facet as the real host has it: on the server `ServerRuntime`
@@ -60,15 +60,34 @@ restart, as after an edit, on the server or on a worker), `count(metric)` (the s
 are hosts, not processes (no fork, no IPC, no exit), the route does not ask the runner, and a reload renews a facet
 object instead of building edited source: the runner's processes, an apply and edited scripts are tier 3.
 
-**3. End to end**: p3's real server in the test's process on a temporary data directory, its
-session workers as real processes, its plugins built from two roots as a Pi's are: the built-in one and the tests'
-own (`test/plugins/`: the probe, a third-party plugin a test drives a worker with, and whose server route
-`GET /_probe/principal` answers who a request signed in as); a test may write plugins of its own into
-`<data directory>/plugins` and apply them (`constantPlugin(name, value)`: a single-file worker plugin serving one
-value). `test/support.ts` gives `testServer()` with `client()` (signed in as the owner over WebSocket), `workers()`
-(the runner's state), `restart()` and `close()`; `ownerCookie` and `ownerClient` (a browser's sign-in, from the
-command's owner link), `alive`, and for launched processes `launch` (a foreground `p3 server`) and `childrenOf`.
-Model: `test/skeleton.test.ts`.
+**3. End to end** (`testServer` of `/v1/testing`): p3's real server in the test's process on a temporary data
+directory, its session workers as real processes forked from the install's worker entry, its plugins built as a Pi's
+are: the built-in ones, the plugins under test (`plugins`: their directories, from a root of their own) and the data
+directory's user root (`userRoot`), where a test writes plugins of its own and applies them. It gives `client(ctx)`
+(signed in as the owner over WebSocket, as a page is), `cookie(ctx)` (a browser's sign-in cookie), `host` (the
+server's host: `root`, the base's registries), `plugins` (the watcher's marks), `workers(ctx)` (the runner's state),
+`apply(ctx)`, `restart(ctx)`, `stop(ctx)` (the data directory kept) and `close(ctx)`; workers idle 300 ms by default
+(`idleMs`). `ownerClient` and `ownerCookie` sign in to any running p3 server (a launched one too). The tests' own
+`test/support.ts` adds the probe (`PROBE`: a plugin under test that drives a session's worker, and whose server route
+`GET /_probe/principal` answers who a request signed in as), `constantPlugin(name, value)` (a single-file worker
+plugin serving one value), `alive`, and for launched processes `launch` (a foreground `p3 server`) and `childrenOf`.
+Models: `test/skeleton.test.ts`, `plugins/sign-in/test/sign-ins.test.ts`.
+
+```ts
+import { testServer } from "@earendil-works/p3/v1/testing";
+const t = await testServer({ plugins: [fileURLToPath(new URL("../", import.meta.url))] }, context);
+try {
+	const client = await t.client(context);
+	const session = await (await client.get(Sessions, {}, context)).create({ title: "one" }, context);
+	const held = await client.get(MyWorkerContract, { session }, context);      // the session's worker starts
+} finally {
+	await t.close(context);
+}
+```
+
+After an apply that reloads the runner plugin, the next runner is contributed after the apply returned (its
+predecessor closes first): wait for it with `until` on the `WorkerRunners` registry before the next hold, never on
+the apply's answer (`chord-practices.md`, Reload).
 
 **4. The command** (a few cases): `p3` launched as processes of its own on a temporary home, including what a crash
 leaves behind (sockets of killed processes, a supervisor's restart) and a server that does not stop. The command's
@@ -77,17 +96,18 @@ channel is a Unix socket: these cases, like p3's guarantee, are POSIX only (Wind
 
 **5. The release** (`test/release/release.test.ts`, run by `npm run release:p3:local` against the install it makes
 outside the repository): what the package holds, the command, a worker forked from the release's own bundle, and a
-third-party plugin written against the installed API alone (type-checked, its own test run on the installed
-`/v1/testing`, loaded from the Pi's user root, called by a client of the compiled API). Run the bench against the
-install with `--release` (or the script's `--bench`).
+third-party plugin written against the installed API alone (type-checked; its own tests run on the installed
+`/v1/testing`, the plugin tier and end to end, the installed server forking its workers from the release's bundle;
+loaded from the Pi's user root, called by a client of the compiled API). Run the bench against the install with
+`--release` (or the script's `--bench`).
 
 ## What every package tests
 
 1. **Each case of the plan,** in its tier, named after the rule it pins.
-2. **Effects the test caused:** `until(member, done, ctx)` (`test/until.ts`) for changes made elsewhere; after a call
-   on the same reference the value is already there; `eventually(probe, done)` (the same file) only for what no
-   watchable shows (a process's exit, a file). No sleeps for synchronization. `test/until.ts` imports nothing of p3:
-   a plugin's own tests use it too.
+2. **Effects the test caused:** `until(member, done, ctx)` (`@earendil-works/p3/v1`, the one the base and the
+   plugins use) for changes made elsewhere; after a call on the same reference the value is already there;
+   `eventually(probe, done)` (`test/until.ts`) only for what no watchable shows (a process's exit, a file). No sleeps
+   for synchronization. `test/until.ts` imports nothing of p3: a built-in plugin's own tests use it too.
 3. **Access:** every object refuses the principals it does not serve (`forbidden`); a person sees only what their
    admission allows.
 4. **Reload:** every facet you touch, reloaded while used (a list open, a worker held): nothing lost, no error. Model:

@@ -1,7 +1,6 @@
-// The sessions plugin's server facet alone (`testPlugin` of p3's API): built as production builds it and loaded on a
-// host of its own at the server's address. The owner's `Sessions` creates, renames, archives and restores, and the owner's lists
-// show it; persons and workers are refused both; `SessionFacts` gives a worker its own session's row; `SessionRoute`
-// says whether a session exists.
+// The sessions plugin's server facet alone (`testPlugin`): the owner's `Sessions` creates, renames, archives and
+// restores, and the owner's lists show it; persons and workers are refused both; `SessionFacts` gives a worker its own
+// session's row; `SessionRoute` says whether a session exists.
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";

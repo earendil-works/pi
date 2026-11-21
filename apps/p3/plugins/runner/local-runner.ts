@@ -1,16 +1,19 @@
-// The local runner: each session's worker as a process on this machine (`worker-process.ts`). Per session one
-// operation at a time: a start waits for the previous worker's exit. A worker that crashes fails its session until
-// `retry` or a rollout (no restart loop); one that stopped itself idle starts again on the next hold, one that was
-// stopped (`stop` suspends its session) once `retry` ends the suspension. The rollout step ships changed scripts to
-// every running or starting worker, a start that has not forked yet included, and clears the failures. `close` (its
-// plugin's object ends) refuses new starts, forks nothing for a start under way and stops every worker at once, not
-// after what its session queued: a start queued behind the exit of a worker that no longer answers would otherwise
-// wait for that exit forever.
+// The local runner: each session's worker as a process on this machine (`worker-process.ts`), one operation at a time
+// per session (a start waits for the previous worker's exit). A crash fails the session until `retry` or a rollout; a
+// stop suspends it until `retry`. A rollout reaches every running or starting worker, a start that has not forked yet
+// included. `close` refuses new starts, forks nothing for a start under way and stops every worker at once, not after
+// what its session queued: a start queued behind a worker that no longer answers would wait for its exit forever.
 
-import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { type Address, type Context, type Link, reportError, Session, untilAborted } from "@earendil-works/p3/v1";
-import type { PluginScript, RolloutHost, ServerRuntime, WorkerRunner, WorkerState } from "@earendil-works/p3/v1/server";
+import { type Address, type Context, type Link, reportError, Session } from "@earendil-works/p3/v1";
+import {
+	clearStaleLock,
+	type PluginScript,
+	type RolloutHost,
+	type ServerRuntime,
+	type WorkerRunner,
+	type WorkerState,
+} from "@earendil-works/p3/v1/server";
 import { WorkerProcess } from "./worker-process.ts";
 
 /**
@@ -52,17 +55,11 @@ export class LocalRunner implements WorkerRunner {
 		const queue = this.#queueOf(id);
 		return this.#enqueue(queue, async () => {
 			if (queue.worker !== undefined) await queue.worker.gone;
-			if (this.#closing) throw closed();
 			if (queue.failed !== undefined) throw new Error(`p3: session ${id}: worker ${queue.failed}`);
-			const forked = Promise.withResolvers<WorkerProcess | undefined>();
-			queue.forking = forked.promise;
+			const forking = this.#fork(queue, context);
+			queue.forking = forking.catch(() => undefined);
 			try {
-				const worker = await this.#fork(queue, context);
-				forked.resolve(worker);
-				return worker.link;
-			} catch (error) {
-				forked.resolve(undefined);
-				throw error;
+				return (await forking).link;
 			} finally {
 				queue.forking = undefined;
 			}
@@ -97,14 +94,15 @@ export class LocalRunner implements WorkerRunner {
 		return state;
 	}
 
+	pids(): readonly number[] {
+		return [...this.#queues.values()].flatMap(({ worker }) => (worker?.alive === true ? [worker.pid] : []));
+	}
+
 	async reload(_built: unknown, context: Context) {
 		// A rollout clears the failures: the new scripts may be the fix.
 		for (const [id, queue] of this.#queues) if (queue.failed !== undefined) this.retry(id);
 		const scripts = await this.#runtime().workerScripts(context);
-		const aborted = untilAborted(context).then(() => context.abortSignal?.reason);
-		const entries = await Promise.all(
-			[...this.#queues.values()].map((queue) => bounded(queue.id, this.#reloadOf(queue, scripts), aborted)),
-		);
+		const entries = await Promise.all([...this.#queues.values()].map((queue) => this.#reloadOf(queue, scripts)));
 		return { hosts: entries.filter((entry) => entry !== undefined) };
 	}
 
@@ -124,28 +122,16 @@ export class LocalRunner implements WorkerRunner {
 	async #fork(queue: WorkerQueue, context: Context): Promise<WorkerProcess> {
 		const { id } = queue;
 		const runtime = this.#runtime();
+		const dir = join(runtime.dataDir, "workers", id);
+		const lock = `p3-session:${dir}`;
+		// Where the lock is a file (macOS, the BSDs), one a killed worker left fails closed: the runner, the one starter of
+		// a session's workers, one start at a time, clears it.
+		await clearStaleLock(lock, context);
 		const scripts = await runtime.workerScripts(context);
 		// After the last wait, in the step that forks: a close that started meanwhile found no worker to stop.
 		if (this.#closing) throw closed();
-		const worker = new WorkerProcess(
-			{
-				message: {
-					kind: "start",
-					session: id,
-					dir: join(runtime.dataDir, "workers", id),
-					// Named by a hash of the id: a socket path holds at most 104 bytes; the worker makes `locks/`, private.
-					lock: join(runtime.dataDir, "locks", createHash("sha256").update(id).digest("hex").slice(0, 16)),
-					idleMs: runtime.workerIdleMs,
-					scripts,
-				},
-				entry: runtime.worker.entry,
-				execArgv: runtime.worker.execArgv,
-				env: { NODE_COMPILE_CACHE: join(runtime.dataDir, "cache", "node") },
-				startMs: this.#startMs,
-				store: runtime.store,
-			},
-			context,
-		);
+		const start = { kind: "start", session: id, dir, lock, idleMs: runtime.workerIdleMs, scripts } as const;
+		const worker = new WorkerProcess(runtime, start, this.#startMs, context);
 		queue.worker = worker;
 		void worker.gone.then((exit) => {
 			if (queue.worker === worker) queue.worker = undefined;
@@ -212,13 +198,4 @@ export class LocalRunner implements WorkerRunner {
 /** What a start rejects with once the runner closes. */
 function closed(): Error {
 	return new Error("p3: the runner closed");
-}
-
-/** `entry`, or `host` failed with the reason once `aborted` (the rollout's abort) settles first. */
-function bounded(
-	host: string,
-	entry: Promise<RolloutHost | undefined>,
-	aborted: Promise<unknown>,
-): Promise<RolloutHost | undefined> {
-	return Promise.race([entry, aborted.then((error): RolloutHost => ({ kind: "failed", host, error }))]);
 }

@@ -1,21 +1,53 @@
 // Where p3's own files are. p3 runs from a source checkout (TypeScript, with the condition `source`: development,
-// the tests) or from its built package (`dist/`, JavaScript: the release). In both layouts this module's directory
-// (`src/`, or `dist/` once bundled) lies directly under p3's root.
+// the tests) or from its built package (JavaScript: the release). This module lies in one of three places: `src/` of
+// a checkout, `dist/main.js` (the command's bundle), or `dist/src/` (compiled one by one with the API, which
+// `/v1/testing` imports); `filesOf` finds p3's root from each.
 
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
-/** Whether this is a source checkout: its files are TypeScript. */
-const SOURCE = import.meta.filename.endsWith(".ts");
+/** p3's files. */
+export type Files = {
+	/** p3's root: `apps/p3` of a checkout, or the installed package. */
+	readonly root: string;
+	/** The built-in plugins root: plugins are source in both layouts (the server builds them when it starts). */
+	readonly plugins: string;
+	/** How a session's worker starts: the source entry, or the built one; with the V8 flags for its memory. */
+	readonly worker: { readonly entry: string; readonly execArgv: readonly string[] };
+	/** Node's arguments that run the `p3` command. */
+	readonly command: readonly string[];
+	/** Node's arguments that run the background server's supervisor (`supervisor.ts`). */
+	readonly supervisor: readonly string[];
+};
 
-/** p3's root: `apps/p3` of a checkout, or the installed package. */
-const ROOT = join(import.meta.dirname, "..");
-
-/** The built-in plugins root: plugins are source in both layouts (the server builds them when it starts). */
-export const PLUGINS = join(ROOT, "plugins");
+/** p3's files as this module finds them from `file`, its own path: a TypeScript file is a source checkout's. */
+export function filesOf(file: string): Files {
+	const dir = dirname(file);
+	const root = basename(dir) === "src" && basename(dirname(dir)) === "dist" ? dirname(dirname(dir)) : dirname(dir);
+	if (file.endsWith(".ts")) {
+		return {
+			root,
+			plugins: join(root, "plugins"),
+			worker: { entry: join(root, "src", "worker.ts"), execArgv: [...SOURCE_FLAGS, ...WORKER_V8_FLAGS] },
+			command: [...SOURCE_FLAGS, join(root, "src", "bin.ts")],
+			supervisor: [...SOURCE_FLAGS, join(root, "src", "supervisor.ts")],
+		};
+	}
+	const dist = join(root, "dist");
+	return {
+		root,
+		plugins: join(root, "plugins"),
+		worker: { entry: join(dist, "worker.js"), execArgv: [BUILT_FLAG, ...WORKER_V8_FLAGS] },
+		command: [join(dist, "p3.js")],
+		supervisor: [join(dist, "supervisor.js")],
+	};
+}
 
 /** The flags a source checkout's processes need: workspace sources resolve, and no experimental warning prints. */
 const SOURCE_FLAGS = ["--conditions=source", "--disable-warning=ExperimentalWarning"];
+
+/** The flag a built worker needs: no experimental warning prints (`node:sqlite`). */
+const BUILT_FLAG = "--disable-warning=ExperimentalWarning";
 
 /**
  * What a session worker's V8 runs with, for its memory (owner, 2026-11-16 and 2026-11-18, measured):
@@ -33,25 +65,22 @@ export const WORKER_V8_FLAGS: readonly string[] = [
 	"--managed-zone-memory",
 ];
 
-/** How a session's worker starts: the source entry, or the built one; with the V8 flags for its memory. */
-export const WORKER: { readonly entry: string; readonly execArgv: readonly string[] } = SOURCE
-	? { entry: join(ROOT, "src", "worker.ts"), execArgv: [...SOURCE_FLAGS, ...WORKER_V8_FLAGS] }
-	: {
-			entry: join(import.meta.dirname, "worker.js"),
-			execArgv: ["--disable-warning=ExperimentalWarning", ...WORKER_V8_FLAGS],
-		};
+/** This install's files. */
+const FILES = filesOf(import.meta.filename);
+
+/** The built-in plugins root. */
+export const PLUGINS = FILES.plugins;
+
+/** How a session's worker starts. */
+export const WORKER = FILES.worker;
 
 /** Node's arguments that run the `p3` command of this install. */
-export const COMMAND: readonly string[] = SOURCE
-	? [...SOURCE_FLAGS, join(ROOT, "src", "bin.ts")]
-	: [join(import.meta.dirname, "p3.js")];
+export const COMMAND = FILES.command;
 
-/** Node's arguments that run the background server's supervisor (`supervisor.ts`). */
-export const SUPERVISOR: readonly string[] = SOURCE
-	? [...SOURCE_FLAGS, join(ROOT, "src", "supervisor.ts")]
-	: [join(import.meta.dirname, "supervisor.js")];
+/** Node's arguments that run the background server's supervisor. */
+export const SUPERVISOR = FILES.supervisor;
 
 /** p3's version: its `package.json`'s. */
 export function version(): string {
-	return (JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { version: string }).version;
+	return (JSON.parse(readFileSync(join(FILES.root, "package.json"), "utf8")) as { version: string }).version;
 }

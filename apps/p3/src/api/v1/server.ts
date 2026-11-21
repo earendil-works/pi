@@ -1,7 +1,6 @@
-// p3's API v1 for server facets (`@earendil-works/p3/v1/server`): Chord's HTTP surface (routes, authenticators,
-// cookies), the registries the base serves (`ServerRuntime`: the server's process values; `WorkerRunners`: how a session's
-// worker runs; `LinkOpened`: hooks on each accepted `/chord` link; `ServerCommands`: what `p3` runs over the data
-// directory's socket), and the contract the session route asks (`SessionRoute`), which a plugin serves.
+// p3's API v1 for server facets (`@earendil-works/p3/v1/server`): Chord's HTTP surface, the registries the base
+// serves, the contract the session route asks (`SessionRoute`, a plugin serves it), and what a runner needs (the
+// worker's control messages, Chord's process locks).
 
 import {
 	type Address,
@@ -23,6 +22,12 @@ import type { Session } from "./index.ts";
 
 export * from "@earendil-works/chord/http";
 export type { PluginScript, RolloutHost, RolloutResult, RolloutStep } from "@earendil-works/chord/plugins";
+export {
+	/** Removes a lock file a killed holder left (macOS, the BSDs); only the one starter of the lock's holders calls it. */
+	clearStaleLock,
+	/** Takes the lock of a name (a session's), owned by the kernel for the holder's life; waits while another holds it. */
+	processLock,
+} from "@earendil-works/chord/workers/child";
 export * from "./control.ts";
 
 /** The server's process values, for plugins: what only the base has. */
@@ -60,6 +65,11 @@ export type WorkerRunner = {
 	retry(id: string): void;
 	/** What runs: each session's worker by id, `running` or `failed` with the reason. */
 	state(): Readonly<Record<string, WorkerState>>;
+	/**
+	 * The process ids of every worker process it started that has not exited yet (starting, running, stopping, one that
+	 * said it leaves), also while it closes: what `p3 stop` kills when the server does not stop.
+	 */
+	pids(): readonly number[];
 	/** The workers step of an apply (the base names it and runs it after the server step): ships the changed scripts. */
 	reload: RolloutStep["reload"];
 };

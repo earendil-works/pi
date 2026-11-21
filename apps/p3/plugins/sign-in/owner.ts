@@ -5,7 +5,7 @@
 import { contribute, type FacetHost, type P3Principal } from "@earendil-works/p3/v1";
 import { Http, ServerCommands, ServerRuntime } from "@earendil-works/p3/v1/server";
 import { SignIns } from "./contract.ts";
-import { hashToken, matchesHash, newToken } from "./secrets.ts";
+import { hashToken, matchesHash, newToken } from "./sign-ins.ts";
 
 /** How long an owner link is valid: 10 minutes. */
 const OWNER_LINK_MS = 10 * 60_000;

@@ -1,13 +1,10 @@
-// The p3 server's bootstrap: everything that must exist before plugins can load, and nothing else. It takes the data
-// directory's lock, opens the server's store, creates the host, Chord's HTTP component (`/chord`) and plugins
-// component, registers the route to session workers (its `resolve` asks the `WorkerRunners` registry, its `admit` the
-// sessions plugin's `SessionRoute`), serves the base's registries (`ServerRuntime`, `WorkerRunners`, `LinkOpened`,
-// `ServerCommands`), loads the server plugins and listens. The lock is the data directory's socket (`server.sock`,
-// `local-socket.ts`), taken first: it also answers the command: what the server is, and the plugins' commands (the
-// control plugin's `stop` and `apply`, the sign-in plugin's `owner-link`). A failed store (`storage_failed`) ends the
-// server: the host closed itself, so the server closes and its process exits non-zero for the supervisor to start it
-// again. Everything else is a plugin. The base's facet and the route's admission are exported for the test
-// topology (`test/topology.ts`), which runs them as the server does.
+// The p3 server's bootstrap: everything that must exist before plugins can load, and nothing else. The data
+// directory's socket (`server.sock`, `local-socket.ts`) is taken first: it is the server's lock, and it answers the
+// command (what the server is, with its workers' pids, and the plugins' `ServerCommands`). Then the store, the host,
+// Chord's HTTP and plugins components, the route to session workers and the base's registries. A failed store
+// (`storage_failed`) ends the server: the host closed itself, so it closes and exits non-zero for the supervisor to
+// start it again. The close releases the socket last, after the store's close. The base's facet and the route's
+// admission are exported for the test topology (`test/topology.ts`).
 
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -23,8 +20,8 @@ import {
 	type HostError,
 	keyedEntries,
 	type Link,
+	type PluginFailure,
 	type RegistryTable,
-	type RegistryValue,
 	type Watchable,
 } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
@@ -37,7 +34,7 @@ import {
 } from "@earendil-works/chord/http";
 import { createPlugins, type PluginsError, type PluginsState } from "@earendil-works/chord/plugins";
 import * as v1 from "@earendil-works/p3/v1";
-import { reportError, Server, Session } from "@earendil-works/p3/v1";
+import { reportError, Server, Session, until } from "@earendil-works/p3/v1";
 import * as v1server from "@earendil-works/p3/v1/server";
 import {
 	LinkOpened,
@@ -82,7 +79,9 @@ export type ServerEnd = { readonly kind: "stopped" } | { readonly kind: "failed"
 export type ServerError =
 	| { readonly kind: "host"; readonly error: HostError }
 	| { readonly kind: "http"; readonly error: HttpError }
-	| { readonly kind: "plugins"; readonly error: PluginsError };
+	| { readonly kind: "plugins"; readonly error: PluginsError }
+	/** A plugin of a root that is not required failed at the start (its build, evaluation or setup): left out. */
+	| { readonly kind: "plugin_failed"; readonly error: PluginFailure };
 
 /** A running server. */
 export type RunningServer = {
@@ -96,13 +95,13 @@ export type RunningServer = {
 };
 
 /** How long a worker idles before it stops itself, by default. */
-const IDLE_MS = 5 * 60_000;
+export const IDLE_MS = 5 * 60_000;
 
 /** Starts the server: resolves once its plugins are loaded and it listens; a failure closes what it opened. */
 export async function startServer(options: ServerOptions, context: Context): Promise<RunningServer> {
 	const dataDir = await openDataDir(options.dataDir);
-	const answering: Answering = { status: { kind: "starting", pid: process.pid }, host: undefined };
-	const taken = await takeSocket(serverSocket(dataDir), (request) => answer(request, answering, context));
+	const answering: Answering = { status: { kind: "starting" }, host: undefined, runner: undefined };
+	const taken = await takeSocket(serverSocket(dataDir), context, (request) => answer(request, answering, context));
 	if (taken.kind === "held") throw new Error(`p3: another server runs on ${dataDir}`);
 	const closers: ((context: Context) => Promise<void> | void)[] = [() => taken.socket.release()];
 	let closing: Promise<void> | undefined;
@@ -205,17 +204,19 @@ export async function startServer(options: ServerOptions, context: Context): Pro
 			{ name: "p3.server", facet: serverCoreFacet(runtime) },
 			...(options.facets ?? []),
 		];
-		await plugins.load(host, { kind: "server", core, modules: SERVER_MODULES }, context);
+		const loaded = await plugins.load(host, { kind: "server", core, modules: SERVER_MODULES }, context);
+		for (const failed of loaded.failed) options.onError({ kind: "plugin_failed", error: failed });
 		linkOpened = await host.registry(LinkOpened, context);
+		// The last runner contributed, also once withdrawn: at the close it is withdrawn while it still stops its workers.
+		const runners = await (await host.registry(WorkerRunners, context)).watch(context);
+		closers.push(async () => void (await runners.stop()));
+		answering.runner = runners.value;
+		runners.start(async (call) => {
+			if (call.kind === "value" && call.value !== undefined) answering.runner = call.value;
+		});
 		listening = await Promise.race([http.listening(context), unheard.promise]);
 		starting = false;
-		answering.status = {
-			kind: "running",
-			pid: process.pid,
-			port: listening.port,
-			version: options.version,
-			startedAt: Date.now(),
-		};
+		answering.status = { kind: "running", port: listening.port, version: options.version, startedAt: Date.now() };
 		answering.host = host;
 		return { dataDir, port: listening.port, runtime, plugins: plugins.state, close };
 	} catch (error) {
@@ -236,35 +237,23 @@ function listenFailed(address: ListenAddress, cause: unknown): Error {
  * there is none (the old runner closes, its workers exit, then the new one is contributed), and a start the old runner
  * took before it was withdrawn is refused by its close: neither fails the holders, the worker starts on the next
  * runner. A start that fails while its runner is still the current one is the worker's failure. `context`'s abort
- * rejects.
+ * rejects. Exported for the base's tests.
  */
-async function startWorker(host: Host<P3Principal>, address: Address<typeof Session>, context: Context): Promise<Link> {
+export async function startWorker(
+	host: Host<P3Principal>,
+	address: Address<typeof Session>,
+	context: Context,
+): Promise<Link> {
 	const runners = await host.registry(WorkerRunners, context);
 	for (;;) {
-		const runner = runners.value ?? (await nextRunner(runners, context));
+		// `until` resolves only with a value its condition passed: a runner.
+		const runner = runners.value ?? ((await until(runners, (next) => next !== undefined, context)) as WorkerRunner);
 		try {
 			return await runner.start(address, context);
 		} catch (error) {
 			// Its object withdraws a runner at its seal, before its close refuses starts: a withdrawn one is no failure.
 			if (runners.value === runner) throw error;
 		}
-	}
-}
-
-/** The next runner `runners` gets; `context`'s abort rejects (the watch ends with it, so nothing is left behind). */
-async function nextRunner(runners: RegistryValue<WorkerRunner | undefined>, context: Context): Promise<WorkerRunner> {
-	context.abortSignal?.throwIfAborted();
-	const watch = await runners.watch(context);
-	try {
-		return await new Promise<WorkerRunner>((resolve, reject) => {
-			if (watch.value !== undefined) return resolve(watch.value);
-			void watch.closed.then((end) => reject(context.abortSignal?.reason ?? new Error(`p3: runners: ${end.kind}`)));
-			watch.start(async (call) => {
-				if (call.kind === "value" && call.value !== undefined) resolve(call.value);
-			});
-		});
-	} finally {
-		await watch.stop();
 	}
 }
 
@@ -281,8 +270,18 @@ async function closeAll(closers: readonly ((context: Context) => Promise<void> |
 	if (failed.length > 0) throw new AggregateError(failed, "p3: the server's close failed");
 }
 
-/** What the server is to its socket: starting, then running with its host (whose registries answer commands). */
-type Answering = { status: ServerStatus; host: Host<P3Principal> | undefined };
+/**
+ * What the server is to its socket: starting, then running with its host (whose registries answer commands); the last
+ * runner contributed once its plugins loaded (a status names its workers; an older one, withdrawn by a reload of the
+ * runner plugin, kills its own workers after their grace).
+ */
+type Answering = {
+	status:
+		| { readonly kind: "starting" }
+		| { readonly kind: "running"; readonly port: number; readonly version: string; readonly startedAt: number };
+	host: Host<P3Principal> | undefined;
+	runner: WorkerRunner | undefined;
+};
 
 /** The server's answer to the command's `request` (`local-socket.ts`). */
 async function answer(request: unknown, answering: Answering, context: Context): Promise<ServerAnswer> {
@@ -291,10 +290,15 @@ async function answer(request: unknown, answering: Answering, context: Context):
 		readonly kind?: unknown;
 		readonly name?: unknown;
 	};
-	if (kind === "status") return answering.status;
+	// Asked at each status: `p3 stop` kills the workers by the pids it gets right before.
+	const status = (): ServerStatus => {
+		const own = { pid: process.pid, workers: answering.runner?.pids() ?? [] };
+		return answering.status.kind === "starting" ? { kind: "starting", ...own } : { ...answering.status, ...own };
+	};
+	if (kind === "status") return status();
 	if (kind !== "command" || typeof name !== "string") return { kind: "invalid" };
 	// A command waits for the plugins: while starting, the answer says so and the command asks again.
-	if (answering.host === undefined) return answering.status;
+	if (answering.host === undefined) return status();
 	const command = (await answering.host.registry(ServerCommands, context)).value.get(name);
 	if (command === undefined) return { kind: "unknown", name };
 	return { kind: "answer", value: await command.run(context) };

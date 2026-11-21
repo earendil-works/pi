@@ -1,5 +1,6 @@
 // p3's API module (`src/api/v1/index.ts`): `contribute`, an object that only contributes, with what a facet's own
-// `self.contribute` cannot use; and `reportError`, which describes any value it is given in one line and never throws.
+// `self.contribute` cannot use; `until`, the first value of a watchable that passes; and `reportError`, which describes
+// any value it is given in one line and never throws.
 
 import assert from "node:assert/strict";
 import { describe, it, mock } from "node:test";
@@ -15,6 +16,10 @@ import {
 	type P3Principal,
 	reportError,
 	str,
+	until,
+	type Writable,
+	withAbortSignal,
+	withCancel,
 } from "@earendil-works/p3/v1";
 
 /** A registry of greetings, composed into one list. */
@@ -42,6 +47,57 @@ describe("contribute", () => {
 		const greetings = await host.registry(Greetings, context);
 		assert.deepEqual(greetings.value, ["hello Pi"]);
 		await host.close(context);
+	});
+});
+
+/** A registry summing its contributions: one writable count, set by the test. */
+const Counts = defineRegistry<number, number>("test.counts", { version: 1 });
+
+/** A host serving `Counts` with one contributed count, and that count. */
+async function counted() {
+	let count: Writable<number> | undefined;
+	const host = createHost<P3Principal>({ onError: () => {} });
+	const counting = defineFacet((host) => {
+		host.serve(Counts, { compose: (table) => table.reduce((sum, { value }) => sum + value, 0) });
+		contribute(host, "test.count", (self) => {
+			count = self.writable(0);
+			self.contribute(Counts, count);
+		});
+	});
+	await host.load([{ name: "@test/until", facet: counting }], context);
+	return { host, count: count!, counts: await host.registry(Counts, context) };
+}
+
+describe("until", () => {
+	/** A deadline for a wait that should end: a failing case fails, never hangs. */
+	const soon = () => withAbortSignal(AbortSignal.timeout(5000), context);
+
+	it("resolves with the current value when it passes, else with the first later one that does", async () => {
+		const { host, count, counts } = await counted();
+		try {
+			assert.equal(await until(counts, (n) => n === 0, soon()), 0);
+			const later = until(counts, (n) => n >= 2, soon());
+			count.set(1);
+			count.set(2);
+			assert.equal(await later, 2);
+		} finally {
+			await host.close(context);
+		}
+	});
+
+	it("rejects with the context's reason when it aborts, and when the watch ends first", async () => {
+		const { host, counts } = await counted();
+		try {
+			const { context: cancellable, cancel } = withCancel(soon());
+			const aborted = until(counts, (n) => n > 0, cancellable);
+			cancel(new Error("gave up"));
+			await assert.rejects(aborted, /gave up/);
+			const ended = until(counts, (n) => n > 0, soon());
+			await host.close(context);
+			await assert.rejects(ended, /until: the watch/);
+		} finally {
+			await host.close(context);
+		}
 	});
 });
 
@@ -89,9 +145,34 @@ describe("reportError", () => {
 		assert.match(printed({ records: 1n }), /\{"records":"1n"\}$/);
 		assert.match(printed(1n), /p3 test: 1$/);
 		assert.match(printed(cyclic), /\{"name":"loop","self":"\[cycle\]"\}$/);
-		assert.match(printed(throwing), /p3 test: \[object Object\]$/);
+		assert.match(printed(throwing), /p3 test: \[an unprintable object\]$/);
 		assert.match(printed(Object.create(null)), /p3 test: \{\}$/);
 		const chord = new ChordError({ code: "invalid", reason: "args", message: "no" }, { cause: 2n });
 		assert.match(printed(chord), /invalid: no \(cause: 2\)$/);
+	});
+
+	// Astra, review round 3 (S6): the fallback read `Symbol.toStringTag`, so a value whose tag getter throws too threw
+	// out of `reportError`.
+	it("never runs a failing value's code again in its fallback", () => {
+		const hostile = {
+			get boom(): never {
+				throw new Error("getter");
+			},
+			get [Symbol.toStringTag](): never {
+				throw new Error("tag");
+			},
+		};
+		assert.match(printed(hostile), /p3 test: \[an unprintable object\]$/);
+	});
+
+	// Opus, review round 3 (N6): a value referenced twice was shown as a cycle.
+	it("shows a value referenced twice both times, and only a real cycle as one", () => {
+		const shared = { n: 1 };
+		const loop: { self?: unknown } = {};
+		loop.self = loop;
+		assert.match(
+			printed({ a: shared, b: [shared], loop }),
+			/\{"a":\{"n":1\},"b":\[\{"n":1\}\],"loop":\{"self":"\[cycle\]"\}\}$/,
+		);
 	});
 });

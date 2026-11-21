@@ -1,23 +1,38 @@
-// p3's API v1 for plugin tests (`@earendil-works/p3/v1/testing`): Chord's `testPlugin` with p3's API, facet kinds,
-// modules and principals filled in, and the base's own facet on the tested host (`ServerRuntime` and the base's
-// registries on the server, `WorkerRuntime` and `WorkerBusy` on a worker), so a built-in and a third-party plugin test
-// the same way and no plugin test imports p3's base. A plugin's tests live in its `test/` folder, which no build reads
-// and no release ships.
+// p3's API v1 for plugin tests (`@earendil-works/p3/v1/testing`), so a built-in and a third-party plugin test the same
+// way, in the plugin's own `test/` folder, and no plugin test imports p3's base. `testPlugin`: one facet built as
+// production builds it, on a host of its own beside the base's facet. `testServer`: p3's real server in the test's
+// process with the built-in plugins and the plugins under test, its session workers as real processes, clients signed
+// in as the owner.
 
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import type { ChordStore, Host, PluginFacet, Registry, Store } from "@earendil-works/chord";
+import { basename, join } from "node:path";
+import {
+	type ChordStore,
+	createHost,
+	type Host,
+	type PluginFacet,
+	type Watchable,
+	webSocketLink,
+} from "@earendil-works/chord";
 import type { Context } from "@earendil-works/chord/context";
-import { testPlugin as chordTestPlugin, type TestedPlugin } from "@earendil-works/chord/plugins";
+import {
+	testPlugin as chordTestPlugin,
+	type PluginsState,
+	type RolloutResult,
+	type TestedPlugin,
+} from "@earendil-works/chord/plugins";
 import { Server, Session } from "@earendil-works/p3/v1";
-import type { ServerRuntime } from "@earendil-works/p3/v1/server";
+import { type ServerRuntime, WorkerRunners, type WorkerState } from "@earendil-works/p3/v1/server";
 import { API, KINDS, type P3Principal, SERVER, workerPrincipal } from "../../app.ts";
+import { PLUGINS, WORKER } from "../../install.ts";
+import { ASK_MS, askServer } from "../../local-socket.ts";
 // The processes' own maps: a worker facet gets a worker's modules (never the server's), as in a real worker.
-import { admitSession, SERVER_MODULES, serverCoreFacet } from "../../server.ts";
-import { WORKER_MODULES, workerCoreFacets } from "../../worker.ts";
+import { admitSession, IDLE_MS, SERVER_MODULES, type ServerError, serverCoreFacet, startServer } from "../../server.ts";
+import { WORKER_MODULES, workerCoreFacet } from "../../worker.ts";
 
 export type { TestedPlugin } from "@earendil-works/chord/plugins";
+export type { ServerError } from "../../server.ts";
 
 /**
  * Which facet of a plugin a test loads: its server facet, or its worker facet on session `session`'s worker. Each gets
@@ -60,7 +75,7 @@ export async function testPlugin(
 			root,
 			{
 				kind: facet.kind,
-				api: { name: API.name, versions: API.versions },
+				api: API,
 				kinds: Object.keys(KINDS),
 				platform: KINDS[facet.kind].platform,
 				stubs: facet.stubs ?? [],
@@ -72,7 +87,10 @@ export async function testPlugin(
 			},
 			context,
 		);
-		return withDirectory(tested, dir);
+		// Its close also removes the test's directory.
+		const close = tested.close.bind(tested);
+		tested.close = (ctx) => close(ctx).finally(() => rm(dir, { recursive: true, force: true }));
+		return tested;
 	} catch (error) {
 		await rm(dir, { recursive: true, force: true });
 		throw error;
@@ -80,7 +98,7 @@ export async function testPlugin(
 }
 
 /** The base's facet of the server on the test's host, with a runtime whose server does not listen. */
-function serverStubs(host: Host<P3Principal>, store: Store, dataDir: string, context: Context) {
+function serverStubs(host: Host<P3Principal>, store: ChordStore, dataDir: string, context: Context) {
 	const sessions = host.route(
 		Session,
 		{
@@ -93,8 +111,7 @@ function serverStubs(host: Host<P3Principal>, store: Store, dataDir: string, con
 	const runtime: ServerRuntime = {
 		dataDir,
 		host,
-		// `openStore` makes the one kind of store there is.
-		store: store as ChordStore,
+		store,
 		sessions,
 		worker: { entry: "", execArgv: [] },
 		workerIdleMs: IDLE_MS,
@@ -106,42 +123,187 @@ function serverStubs(host: Host<P3Principal>, store: Store, dataDir: string, con
 	return [{ name: "p3.server", facet: serverCoreFacet(runtime) }];
 }
 
-/** A worker's idle time in the plugin tier, by default: a real worker's. */
-const IDLE_MS = 5 * 60_000;
-
-/** The base's facets of a worker on the test's host, as `workerCoreFacets` serves them on a real one. */
+/** The base's facet of a worker on the test's host, as a real worker loads it. */
 function workerStubs(
 	facet: Extract<TestedFacet, { readonly kind: "worker" }>,
 	host: Host<P3Principal>,
-	store: Store,
+	store: ChordStore,
 	dir: string,
 ) {
-	return workerCoreFacets({
+	const runtime = {
 		session: facet.session,
 		host,
-		// `openStore` makes the one kind of store there is.
-		store: store as ChordStore,
+		store,
 		dir,
 		idleMs: facet.idleMs ?? IDLE_MS,
 		close: facet.close ?? (() => {}),
-	});
+	};
+	return [{ name: "p3.worker", facet: workerCoreFacet(runtime) }];
 }
 
-/** `tested`, whose close also removes the test's directory `dir`. */
-function withDirectory(tested: TestedPlugin<P3Principal>, dir: string): TestedPlugin<P3Principal> {
-	return {
-		host: tested.host,
-		plugin: tested.plugin,
-		errors: tested.errors,
-		contributions: <C>(R: Registry<C, unknown>) => tested.contributions(R),
-		unserved: () => tested.unserved(),
-		root: (fn, context, options) => tested.root(fn, context, options),
-		close: async (context) => {
+/** What a test's server starts with. */
+export type TestServerOptions = {
+	/**
+	 * The plugins under test: their directories, loaded beside the built-in plugins from a root of their own; one that
+	 * fails to load fails the start.
+	 */
+	readonly plugins?: readonly string[];
+	/** A copy of the built-in plugins that the test edits and applies; p3's own by default. */
+	readonly builtIn?: string;
+	/** A data directory a stopped test server left, to start on again; a new temporary one by default. */
+	readonly dataDir?: string;
+	/** How long a worker idles before it stops itself: 300 ms by default, so a test sees it stop. */
+	readonly idleMs?: number;
+};
+
+/** A test's server: p3's real one, on its own data directory. */
+export type TestServer = {
+	readonly dataDir: string;
+	/** Where it listens on `127.0.0.1`. */
+	readonly port: number;
+	/** The server's host: `host.root` runs code as the server; its registries are the base's (`ServerRuntime`, ...). */
+	readonly host: Host<P3Principal>;
+	/** The data directory's user root (`<data directory>/plugins`), where a test writes plugins of its own to apply. */
+	readonly userRoot: string;
+	/** The plugins' marks: what an apply would build (`dirty`); a test waits on them before it applies an edit. */
+	readonly plugins: Watchable<PluginsState>;
+	/** What the server reported in the background. */
+	readonly errors: readonly ServerError[];
+	/** How long its workers idle before they stop themselves. */
+	readonly idleMs: number;
+	/** A new client signed in as the owner over WebSocket, as a browser's page is (closed with the server). */
+	client(context: Context): Promise<Host<P3Principal>>;
+	/** A fresh owner's sign-in cookie (`name=value`), as a browser gets it from an owner link. */
+	cookie(context: Context): Promise<string>;
+	/** Each session's worker as the runner sees it. */
+	workers(context: Context): Promise<Readonly<Record<string, WorkerState>>>;
+	/** Builds the changed plugins and rolls them out, as `p3 apply` does. */
+	apply(context: Context): Promise<RolloutResult>;
+	/** Stops the server, then starts a new one on the same data directory with the same options. */
+	restart(context: Context): Promise<TestServer>;
+	/** Closes the clients and the server (two calls at once close it once), keeping the data directory. */
+	stop(context: Context): Promise<void>;
+	/** Stops the server and removes its data directory. */
+	close(context: Context): Promise<void>;
+};
+
+/**
+ * Starts p3's real server in this process on a new temporary data directory (or on `options.dataDir`): the built-in
+ * plugins, the plugins under test and the data directory's user root, built as a Pi builds them; its session workers
+ * forked as real processes.
+ */
+export async function testServer(options: TestServerOptions, context: Context): Promise<TestServer> {
+	const dataDir = options.dataDir ?? (await mkdtemp(join(tmpdir(), "p3-test-")));
+	const tested = await mkdtemp(join(tmpdir(), "p3-tested-"));
+	const userRoot = join(dataDir, "plugins");
+	const idleMs = options.idleMs ?? TEST_IDLE_MS;
+	const errors: ServerError[] = [];
+	try {
+		for (const plugin of options.plugins ?? []) await symlink(plugin, join(tested, basename(plugin)), "dir");
+		const server = await startServer(
+			{
+				dataDir,
+				roots: [
+					{ path: options.builtIn ?? PLUGINS, required: true },
+					{ path: tested, required: true },
+					{ path: userRoot, required: false },
+				],
+				port: 0,
+				version: "test",
+				worker: WORKER,
+				workerIdleMs: idleMs,
+				onStop: () => {},
+				onError: (error) => errors.push(error),
+			},
+			context,
+		);
+		const host = server.runtime.host;
+		const clients: Host<P3Principal>[] = [];
+		const stop = async (ctx: Context) => {
 			try {
-				await tested.close(context);
+				for (const client of clients.splice(0)) await client.close(ctx);
+				await server.close(ctx);
 			} finally {
-				await rm(dir, { recursive: true, force: true });
+				await rm(tested, { recursive: true, force: true });
 			}
-		},
-	};
+		};
+		return {
+			dataDir,
+			port: server.port,
+			host,
+			userRoot,
+			plugins: server.plugins,
+			errors,
+			idleMs,
+			client: async (ctx) => {
+				const client = await ownerClient(dataDir, server.port, ctx);
+				clients.push(client);
+				return client;
+			},
+			cookie: (ctx) => ownerCookie(dataDir, server.port, ctx),
+			workers: async (ctx) => (await host.registry(WorkerRunners, ctx)).value?.state() ?? {},
+			apply: (ctx) => server.runtime.apply(ctx),
+			restart: async (ctx) => {
+				await stop(ctx);
+				return testServer({ ...options, dataDir }, ctx);
+			},
+			stop,
+			close: async (ctx) => {
+				try {
+					await stop(ctx);
+				} finally {
+					await rm(dataDir, { recursive: true, force: true });
+				}
+			},
+		};
+	} catch (error) {
+		await rm(tested, { recursive: true, force: true });
+		if (options.dataDir === undefined) await rm(dataDir, { recursive: true, force: true });
+		throw error;
+	}
+}
+
+/** How long a test server's worker idles before it stops itself, by default. */
+const TEST_IDLE_MS = 300;
+
+/**
+ * A client host connected over WebSocket to the server of `dataDir` (any running p3 server, a launched `p3 server`
+ * too) on `port`, signed in as the owner with a fresh owner link's cookie, loaded with no plugins; a call waits
+ * `readyTimeout` ms at most for its object.
+ */
+export async function ownerClient(
+	dataDir: string,
+	port: number,
+	context: Context,
+	readyTimeout = 10_000,
+): Promise<Host<P3Principal>> {
+	const cookie = await ownerCookie(dataDir, port, context);
+	// Node's WebSocket (undici) takes an init object with headers; the DOM type knows only protocols.
+	const init = { headers: { cookie } } as unknown as string[];
+	const socket = new WebSocket(`ws://127.0.0.1:${port}/chord`, init);
+	const client = createHost<P3Principal>({ readyTimeout, onError: (error) => console.error("client:", error) });
+	client.connect(webSocketLink(socket), { principal: { kind: "server" } }, context);
+	await client.load([], context);
+	return client;
+}
+
+/**
+ * A fresh owner's sign-in cookie (`name=value`) from the server of `dataDir` on `port`, as `p3` and a browser get it:
+ * the command `owner-link` over the data directory's socket, then the link's token posted as the link's page posts it.
+ */
+export async function ownerCookie(dataDir: string, port: number, context: Context): Promise<string> {
+	const reply = await askServer(dataDir, { kind: "command", name: "owner-link" }, ASK_MS);
+	if (reply.kind !== "answered" || reply.answer.kind !== "answer") {
+		throw new Error(`ownerCookie: no owner link: ${JSON.stringify(reply)}`);
+	}
+	const token = new URL(String(reply.answer.value)).hash.slice(1);
+	const signedIn = await fetch(`http://127.0.0.1:${port}/_p3/owner`, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ token }),
+		signal: context.abortSignal,
+	});
+	const cookie = signedIn.headers.get("set-cookie")?.split(";")[0];
+	if (!signedIn.ok || cookie === undefined) throw new Error(`ownerCookie: the sign-in failed: ${signedIn.status}`);
+	return cookie;
 }

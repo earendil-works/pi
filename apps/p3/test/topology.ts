@@ -1,11 +1,8 @@
 // The test topology: p3's server and its session workers as hosts in one process, linked in memory, each with its
-// own SQLite store, the plugins' facets imported as modules (no build), clients connected as any principal. The base's
-// own pieces are the real server's and worker's (`serverCoreFacet` and `admitSession` of `src/server.ts`, `workerCoreFacets` of `src/worker.ts`); the route starts a worker
-// as a host here instead of a process. A plugin reloads with `reload` (a new facet object of the same setup: its
-// objects restart, as after an edit), on the server or on a worker, so a test reloads a facet while it is in use. The
-// server counts its work through the in-memory telemetry adapter (`count`). The server's plugins are all the built-in
-// ones; the runner's contributes a runner the route here does not ask (it starts hosts), so a reload of it is seen
-// by the waker alone.
+// own SQLite store, the plugins' facets imported as modules (no build). The base's pieces are the real ones
+// (`serverCoreFacet`, `admitSession`, `workerCoreFacet`); the route starts a worker as a host, not a process, and the
+// runner it contributes is asked by the waker alone. `reload` renews a plugin's facet object on the server or a
+// worker (its objects restart, as after an edit); `count` reads the server's metrics.
 
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -37,7 +34,7 @@ import sessionsWorker from "../plugins/sessions/worker.ts";
 import signInServer from "../plugins/sign-in/server.ts";
 import { SERVER, workerPrincipal } from "../src/app.ts";
 import { admitSession, serverCoreFacet } from "../src/server.ts";
-import { workerCoreFacets } from "../src/worker.ts";
+import { workerCoreFacet } from "../src/worker.ts";
 import probeWorker from "./plugins/probe/worker.ts";
 
 /** How long a host of the topology waits for an object to go live: a failing test fails in seconds. */
@@ -120,7 +117,7 @@ export async function topology(context: Context, idleMs = 60_000): Promise<Topol
 			idleMs,
 			close: () => void closed.push(session),
 		};
-		const facets = [...workerCoreFacets(runtime), ...WORKER_PLUGINS];
+		const facets = [{ name: "p3.worker", facet: workerCoreFacet(runtime) }, ...WORKER_PLUGINS];
 		workers.set(session, { host, store: workerStore, facets });
 		const [up, down] = memoryLinkPair();
 		host.connect(up, { principal: SERVER, trusted: true }, context);
@@ -204,8 +201,7 @@ export async function topology(context: Context, idleMs = 60_000): Promise<Topol
 
 /** An in-memory store. */
 async function storeAt(context: Context): Promise<ChordStore> {
-	// `openStore` makes the one kind of store there is.
-	return (await openStore(sqliteBackend(await openNodeSqliteDatabase(":memory:")), context)) as ChordStore;
+	return await openStore(sqliteBackend(await openNodeSqliteDatabase(":memory:")), context);
 }
 
 /** Throws the failures of a load or a reload. */

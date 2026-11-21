@@ -4,8 +4,10 @@
 // (says `closed`, exits 0), `orphan` (leaves a process of its own group holding its IPC channel, as a tool's process
 // may, reports that process's pid as `orphan`, then exits as `idle`), `linger` (says `closed` and stays, deaf to
 // `shutdown`), `stubborn` (deaf to `shutdown` and to the server's disconnect, as a worker whose event loop is stuck),
-// `mute` (stops answering reloads). As the real worker, it drops a reload that comes before it is ready (and reports
-// it `dropped`).
+// `mute` (stops answering reloads), `failing` (its next `ready` or reload answer says plugin `q` failed), `throwing`
+// (its next reload answers `reload_failed`; both reported once taken: the word and a reload travel apart),
+// `unclosed` (says `closed`, then exits 1, as a worker whose close failed). As the real worker, it drops a reload that
+// comes before it is ready (and reports it `dropped`).
 
 import { spawn } from "node:child_process";
 import { connect, type Socket } from "node:net";
@@ -24,6 +26,14 @@ let gate: Socket | undefined;
 let mute = false;
 let ready = false;
 let deaf = false;
+/** What its next answer says failed (`failing`), or that its next reload throws (`throwing`). */
+let next: "failing" | "throwing" | undefined;
+/** The plugins its answer names failed: `q` once after `failing`. */
+const failed = (): string[] => {
+	const names = next === "failing" ? ["q"] : [];
+	next = undefined;
+	return names;
+};
 const send = (message: unknown, sent?: () => void): void => {
 	process.send?.({ p3: message }, undefined, undefined, sent);
 };
@@ -36,7 +46,7 @@ const commands: Record<string, () => void> = {
 	ready: () => {
 		ready = true;
 		send({ kind: "locked" });
-		send({ kind: "ready", failed: [] });
+		send({ kind: "ready", failed: failed() });
 	},
 	exit: () => process.exit(1),
 	idle: () => send({ kind: "closed" }, () => process.exit(0)),
@@ -57,6 +67,15 @@ const commands: Record<string, () => void> = {
 	mute: () => {
 		mute = true;
 	},
+	failing: () => {
+		next = "failing";
+		report("failing", "");
+	},
+	throwing: () => {
+		next = "throwing";
+		report("throwing", "");
+	},
+	unclosed: () => send({ kind: "closed" }, () => process.exit(1)),
 };
 process.on("message", (message: { readonly p3?: Control }) => {
 	const control = message.p3;
@@ -69,7 +88,11 @@ process.on("message", (message: { readonly p3?: Control }) => {
 		report("start", control.scripts);
 	} else if (control?.kind === "reload") {
 		report(ready ? "reload" : "dropped", control.scripts);
-		if (ready && !mute) send({ kind: "reloaded", failed: [] });
+		if (!ready || mute) return;
+		if (next === "throwing") {
+			next = undefined;
+			send({ kind: "reload_failed", error: "the reload threw" });
+		} else send({ kind: "reloaded", failed: failed() });
 	} else if (control?.kind === "shutdown" && !deaf) process.exit(0);
 });
 process.on("disconnect", () => {

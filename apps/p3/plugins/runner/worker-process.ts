@@ -1,37 +1,14 @@
-// One session worker as a forked process: forked as a detached process group (killed as one at its end; the tools'
-// processes get groups of their own, which the worker kills itself, with the harness core, ERNDL-855), its IPC link made
-// at the fork (it queues the worker's frames), the start message sent at once. It records what the worker reports
-// (`locked` once it holds its session's lock, `ready`, `closed` when it stops itself idle, `reloaded`), ships reloads one
-// after another once it is ready, stops it (`shutdown`, then the group killed after a grace), and resolves `gone` once
-// its exit counts: its link closed first, then the commits its calls queued in the server's store settled (a worker that
-// closed itself finished them already; a crashed one may not have), so nothing it reported lands after it.
+// One session worker as a forked process: a process group of its own (killed as one at its end; the tools' processes
+// get groups of their own, which the worker kills itself, with the harness core, ERNDL-855), its IPC link made at the
+// fork. It ships reloads one after another once the worker is ready, knows per plugin which script the worker runs, and
+// counts its exit only once its link closed and the commits its calls queued in the server's store settled, so nothing
+// it reported lands after it.
 
 import { type ChildProcess, type ForkOptions, fork, type SpawnOptions } from "node:child_process";
-import {
-	type ChordStore,
-	type Context,
-	type IpcPort,
-	ipcLink,
-	type Link,
-	type ReloadReport,
-	reportError,
-} from "@earendil-works/p3/v1";
-import type { PluginScript, RolloutHost, ToWorker } from "@earendil-works/p3/v1/server";
+import { join } from "node:path";
+import { type Context, type IpcPort, ipcLink, type Link, type ReloadReport, reportError } from "@earendil-works/p3/v1";
+import type { PluginScript, RolloutHost, ServerRuntime, ToWorker } from "@earendil-works/p3/v1/server";
 import { type FromWorker, workerControl, workerMessage } from "@earendil-works/p3/v1/server";
-
-/** How a worker process starts. */
-export type WorkerStart = {
-	/** What the worker is sent first: its session, directory, lock, idle time and scripts. */
-	readonly message: Extract<ToWorker, { readonly kind: "start" }>;
-	readonly entry: string;
-	readonly execArgv: readonly string[];
-	/** Added to the server's environment (the compile cache's directory). */
-	readonly env: Readonly<Record<string, string>>;
-	/** How long it may take to be ready before it is killed. */
-	readonly startMs: number;
-	/** The server's store: an exit counts once the commits queued in it settled. */
-	readonly store: ChordStore;
-};
 
 /** How a worker's exit ended: asked (a stop, or the worker leaving idle), or a crash with its reason. */
 export type Exit = { readonly kind: "clean" } | { readonly kind: "crash"; readonly reason: string };
@@ -48,12 +25,15 @@ export class WorkerProcess {
 	/** Resolves once its exit counts. */
 	readonly gone: Promise<Exit>;
 	status: "starting" | "running" | "stopping" = "starting";
-	/** The set of scripts it runs: its start's, or its last reload without failures. */
-	shipped: string;
 	readonly #process: ChildProcess;
 	readonly #session: string;
 	/** The start's context: what the worker reports later is reported in it. */
 	readonly #context: Context;
+	/**
+	 * The script each plugin runs as, by its digest (Chord keeps a failed plugin's loaded facet; one that never loaded
+	 * has none); `undefined` once unknown (a reload that threw), so every reload ships.
+	 */
+	#runs: Map<string, string> | undefined;
 	/** Settles once it is ready or exited: the worker takes reloads only after its start. */
 	readonly #started = Promise.withResolvers<void>();
 	/** Its reloads, one after another, the first after its start. */
@@ -71,32 +51,41 @@ export class WorkerProcess {
 	/** Armed by the first `stop`: once, whatever the worker announced before. */
 	#grace: ReturnType<typeof setTimeout> | undefined;
 
-	/** Forks the worker of `start`, in `context`'s work (the route's start). */
-	constructor(start: WorkerStart, context: Context) {
-		this.#session = start.message.session;
+	/**
+	 * Forks the worker `start` describes on `runtime`'s server, in `context`'s work (the route's start); one not ready
+	 * within `startMs` is killed.
+	 */
+	constructor(
+		runtime: ServerRuntime,
+		start: Extract<ToWorker, { readonly kind: "start" }>,
+		startMs: number,
+		context: Context,
+	) {
+		this.#session = start.session;
 		this.#context = context;
-		this.shipped = keyOf(start.message.scripts);
+		// What failed at the start is told by `ready`; a failed build runs nothing (nothing ran before).
+		this.#runs = runsOf(start.scripts, [], new Map());
 		// `fork` hands its options to `spawn`, which takes `windowsHide`; Node's types leave it out of `ForkOptions`.
 		const options: ForkOptions & Pick<SpawnOptions, "windowsHide"> = {
-			execArgv: [...start.execArgv],
-			env: { ...process.env, ...start.env },
+			execArgv: [...runtime.worker.execArgv],
+			env: { ...process.env, NODE_COMPILE_CACHE: join(runtime.dataDir, "cache", "node") },
 			detached: true,
 			windowsHide: true,
 			serialization: "advanced",
 			stdio: ["ignore", "inherit", "inherit", "ipc"],
 		};
-		this.#process = fork(start.entry, [], options);
+		this.#process = fork(runtime.worker.entry, [], options);
 		// A forked child is an IPC port.
 		this.link = ipcLink(this.#process as unknown as IpcPort);
 		const exited = Promise.withResolvers<Exit>();
 		this.gone = exited.promise;
 		this.#startTimer = setTimeout(() => {
-			const within = `did not start within ${start.startMs / 1000} s`;
+			const within = `did not start within ${startMs / 1000} s`;
 			this.#cause = this.#locked
 				? within
 				: `${within}: the session's previous worker still holds the session's lock (it has not exited)`;
 			this.#kill();
-		}, start.startMs);
+		}, startMs);
 		const ended = (exit: Exit): void => {
 			clearTimeout(this.#startTimer);
 			clearTimeout(this.#grace);
@@ -107,26 +96,25 @@ export class WorkerProcess {
 			this.#exit = exit;
 			this.#started.resolve();
 			this.#reloaded?.({ kind: "exited" });
-			void start.store.settled().then(() => exited.resolve(exit));
+			void runtime.store.settled().then(() => exited.resolve(exit));
 		};
 		this.#process.on("message", (message: unknown) => this.#control(workerControl<FromWorker>(message)));
-		this.#process.once("exit", (code, signal) =>
-			ended(
-				this.status === "stopping"
-					? { kind: "clean" }
-					: { kind: "crash", reason: this.#cause ?? `exited (${signal ?? `code ${code}`})` },
-			),
-		);
+		this.#process.once("exit", (code, signal) => ended(this.#exitOf(code, signal)));
 		this.#process.once("error", (error) => {
 			// A fork that failed has no pid and no `exit`.
 			if (this.#process.pid === undefined) ended({ kind: "crash", reason: `fork failed: ${error.message}` });
 		});
-		this.#process.send(workerMessage(start.message));
+		this.#process.send(workerMessage(start));
 	}
 
 	/** Its process id, `-1` before the fork gave one. */
 	get pid(): number {
 		return this.#process.pid ?? -1;
+	}
+
+	/** Whether its process lives: forked and not exited (its exit may not count yet). */
+	get alive(): boolean {
+		return this.#process.pid !== undefined && this.#exit === undefined;
 	}
 
 	/**
@@ -143,29 +131,45 @@ export class WorkerProcess {
 
 	/**
 	 * Ships `scripts` after its start and its outstanding reloads: the report, the error, or `stopped`/`failed` once it
-	 * exited (a send to a child that is gone settles too); no result when it runs them already. That is decided at the
-	 * reload's turn: a reload back to what it runs, behind one not answered yet, still ships.
+	 * exited (a send to a child that is gone settles too); no result when nothing is queued and it runs them already. A
+	 * reload back to what it runs, behind one not answered yet, still ships.
 	 */
 	reload(scripts: readonly PluginScript[]): Promise<RolloutHost | undefined> {
-		const key = keyOf(scripts);
-		if (this.#queued === 0 && this.shipped === key) return Promise.resolve(undefined);
+		if (this.#queued === 0 && this.#runsAll(scripts)) return Promise.resolve(undefined);
 		this.#queued++;
-		const reload = this.#reloading.then(() => this.#ship(scripts, key));
+		const reload = this.#reloading.then(() => this.#ship(scripts));
 		this.#reloading = reload;
 		return reload;
 	}
 
-	/** A reload's turn: sends `scripts` (identified by `key`) unless it exited or runs them already. */
-	#ship(scripts: readonly PluginScript[], key: string): Promise<RolloutHost | undefined> {
+	/** How its process's exit with `code` or `signal` counts. */
+	#exitOf(code: number | null, signal: NodeJS.Signals | null): Exit {
+		// Asked to stop (or leaving idle) and gone by itself with 0, or killed after the grace. A non-zero code is its own
+		// close failing: its store may not have settled.
+		if (this.status === "stopping" && (code === 0 || signal !== null)) return { kind: "clean" };
+		return { kind: "crash", reason: this.#cause ?? `exited (${signal ?? `code ${code}`})` };
+	}
+
+	/** Whether it runs exactly `scripts`: every plugin at its digest, no other plugin. */
+	#runsAll(scripts: readonly PluginScript[]): boolean {
+		const runs = this.#runs;
+		return (
+			runs !== undefined &&
+			runs.size === scripts.length &&
+			scripts.every(({ plugin, built }) => built.kind === "script" && runs.get(plugin.name) === built.digest)
+		);
+	}
+
+	/** A reload's turn: sends `scripts` unless it exited. */
+	#ship(scripts: readonly PluginScript[]): Promise<RolloutHost | undefined> {
 		return new Promise((resolve) => {
 			const settle = (entry: RolloutHost | undefined): void => {
 				this.#reloaded = undefined;
 				this.#queued--;
 				resolve(entry);
 			};
-			if (this.#exit !== undefined) return settle(this.#entry({ kind: "exited" }, key));
-			if (this.shipped === key) return settle(undefined);
-			const answered = (reply: ReloadReply): void => settle(this.#entry(reply, key));
+			if (this.#exit !== undefined) return settle(this.#entry({ kind: "exited" }, scripts));
+			const answered = (reply: ReloadReply): void => settle(this.#entry(reply, scripts));
 			this.#reloaded = answered;
 			this.#process.send(workerMessage({ kind: "reload", scripts }), (error: Error | null) => {
 				if (error !== null && this.#reloaded === answered)
@@ -174,14 +178,15 @@ export class WorkerProcess {
 		});
 	}
 
-	/** A reload's result from `reply`; a reload without failures marks `key` shipped. */
-	#entry(reply: ReloadReply, key: string): RolloutHost {
+	/** A reload's result from `reply`, and what the worker runs after it. */
+	#entry(reply: ReloadReply, scripts: readonly PluginScript[]): RolloutHost {
 		const host = this.#session;
 		switch (reply.kind) {
 			case "reloaded":
-				if (reply.failed.length === 0) this.shipped = key;
+				this.#runs = runsOf(scripts, reply.failed, this.#runs);
 				return { kind: "reloaded", host, report: reportOf(reply.failed) };
 			case "reload_failed":
+				this.#runs = undefined;
 				return { kind: "failed", host, error: new Error(reply.error) };
 			case "exited":
 				return this.#exit?.kind === "crash"
@@ -199,13 +204,16 @@ export class WorkerProcess {
 			case "ready":
 				clearTimeout(this.#startTimer);
 				if (this.status === "starting") this.status = "running";
+				// A plugin that failed at the start runs nothing.
+				for (const plugin of message.failed) this.#runs?.delete(plugin);
 				this.#started.resolve();
 				if (message.failed.length > 0) {
 					reportError(`p3 runner: ${this.#session}: plugins failed`, message.failed, this.#context);
 				}
 				return;
 			case "closed":
-				this.status = "stopping";
+				// It leaves idle: one that then hangs is killed after the grace, or its session's next start would wait.
+				void this.stop();
 				return;
 			case "reloaded":
 			case "reload_failed":
@@ -225,12 +233,24 @@ export class WorkerProcess {
 	}
 }
 
-/** A set of scripts' identity: its plugins and digests. */
-export function keyOf(scripts: readonly PluginScript[]): string {
-	return scripts
-		.map(({ plugin, built }) => `${plugin.name}@${built.kind === "script" ? built.digest : "failed"}`)
-		.sort()
-		.join("\n");
+/**
+ * What a worker runs after it loaded `scripts` with `failed` failing: the new digest of each plugin that loaded, for a
+ * failed one what it ran before (`before`, Chord keeps its loaded facet), none for one never loaded. `undefined` when a
+ * failed plugin's script was unknown.
+ */
+function runsOf(
+	scripts: readonly PluginScript[],
+	failed: readonly string[],
+	before: ReadonlyMap<string, string> | undefined,
+): Map<string, string> | undefined {
+	const runs = new Map<string, string>();
+	for (const { plugin, built } of scripts) {
+		const failing = failed.includes(plugin.name) || built.kind !== "script";
+		if (failing && before === undefined) return undefined;
+		const digest = failing ? before?.get(plugin.name) : built.digest;
+		if (digest !== undefined) runs.set(plugin.name, digest);
+	}
+	return runs;
 }
 
 /** A worker's reload as a report: the plugins that failed there. */

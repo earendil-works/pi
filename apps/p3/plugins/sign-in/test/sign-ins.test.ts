@@ -1,10 +1,10 @@
-// The sign-ins (`sign-ins.ts`): issued, verified, listed and revoked through `SignIns`, only hashes kept; the
-// authenticator taking a bearer token, else the signed cookie named after the Pi; a sign-in ending unused after 400
-// days; the cookie renewed once it is a day old; a sign-in's open links closed when it ends, only its own; and every
-// link of a `SignIns` object closed when the object ends (a reload of the plugin); the sign-ins and the cookie's key
-// kept across a restart. The plugin tier first (its facet alone, requests made by the test), then the real server
-// (`test/support.ts`) for what needs HTTP and `/chord` links; the probe's route (`GET /_probe/principal`) says what a
-// request authenticated as.
+// The sign-ins (`sign-ins.ts`): tokens random, kept as SHA-256 hashes, matched in constant time; sign-ins issued,
+// verified, listed and revoked through `SignIns`, only hashes kept; the authenticator taking a bearer token, else the
+// signed cookie named after the Pi; a sign-in ending unused after 400 days; a sign-in's open links closed when it ends,
+// only its own; and every link of a `SignIns` object closed when the object ends (a reload of the plugin); the
+// sign-ins and the cookie's key kept across a restart. The plugin tier first (its facet alone, requests made by the
+// test), then the real server (`testServer`) for what needs HTTP and `/chord` links; the probe's route
+// (`GET /_probe/principal`) says what a request authenticated as.
 
 import assert from "node:assert/strict";
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -17,15 +17,15 @@ import {
 	createHost,
 	isChordError,
 	type P3Principal,
+	until,
 	webSocketLink,
 } from "@earendil-works/p3/v1";
-import { Authenticators, type HttpRequest, LinkOpened, ServerCommands } from "@earendil-works/p3/v1/server";
-import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
-import { type TestServer, testServer } from "../../../test/support.ts";
-import { collected, eventually, until } from "../../../test/until.ts";
+import { Authenticators, type HttpRequest, LinkOpened } from "@earendil-works/p3/v1/server";
+import { type TestedPlugin, type TestServer, testPlugin, testServer } from "@earendil-works/p3/v1/testing";
+import { collected, eventually, within } from "../../../test/until.ts";
 import { Sessions } from "../../sessions/contract.ts";
 import { SignIns } from "../contract.ts";
-import { hashToken } from "../secrets.ts";
+import { hashToken, matchesHash, newToken } from "../sign-ins.ts";
 
 const DAY = 24 * 60 * 60_000;
 const OWNER: P3Principal = { kind: "owner" };
@@ -34,10 +34,30 @@ const MAX: P3Principal = { kind: "person", id: "max", name: "Max" };
 /** The sign-in plugin's directory. */
 const PLUGIN = fileURLToPath(new URL("../", import.meta.url));
 
+/** The tests' probe plugin, whose route says what a request signed in as. */
+const PROBE = fileURLToPath(new URL("../../../test/plugins/probe/", import.meta.url));
+
 afterEach(() => mock.timers.reset());
 
 /** A sign-in as `issue` answers it. */
 type Issued = { readonly id: string; readonly token: string; readonly cookie: string };
+
+describe("tokens", () => {
+	it("are random base64url of their bytes, kept as their SHA-256 hash, and matched only by themselves", () => {
+		const [one, other] = [newToken(), newToken()];
+		assert.match(one, /^[A-Za-z0-9_-]{43}$/);
+		assert.match(newToken(12), /^[A-Za-z0-9_-]{16}$/);
+		assert.notEqual(one, other);
+		assert.match(hashToken(one), /^[0-9a-f]{64}$/);
+		assert.notEqual(hashToken(one), one);
+		assert.deepEqual(
+			[matchesHash(one, hashToken(one)), matchesHash(other, hashToken(one)), matchesHash(one, "")],
+			[true, false, false],
+		);
+		// A stored hash that is no hex of the right length never matches.
+		assert.equal(matchesHash(one, hashToken(one).slice(2)), false);
+	});
+});
 
 // ---------------------------------------------------------------------------------------------------------------------
 // The plugin tier: the server facet on a host of its own, beside the base's facet (a server that does not listen).
@@ -216,7 +236,7 @@ describe("the plugin's SignIns", () => {
 				until(
 					(await ctx.get(SignIns, {})).list,
 					(rows) => rows.some((row) => row.id === issued.id && row.lastUsed === start + 61_000),
-					context,
+					within("the touch", context),
 				),
 			context,
 		);
@@ -236,7 +256,11 @@ describe("the plugin's SignIns", () => {
 		assert.equal(await verify(t, issued.token), null);
 		await t.root(
 			async (ctx) =>
-				until((await ctx.get(SignIns, {})).list, (rows) => !rows.some((row) => row.id === issued.id), context),
+				until(
+					(await ctx.get(SignIns, {})).list,
+					(rows) => !rows.some((row) => row.id === issued.id),
+					within("the ended sign-in gone", context),
+				),
 			context,
 		);
 		assert.deepEqual(t.errors.slice(loaded), []);
@@ -336,19 +360,19 @@ describe("the plugin's links of a sign-in", () => {
 const servers: TestServer[] = [];
 
 afterEach(async () => {
-	for (const server of servers.splice(0)) await server.close();
+	for (const server of servers.splice(0)) await server.close(context);
 });
 
-/** A test server, closed after the case. */
+/** A test server with the probe, closed after the case. */
 async function started(): Promise<TestServer> {
-	const t = await testServer();
+	const t = await testServer({ plugins: [PROBE] }, context);
 	servers.push(t);
 	return t;
 }
 
 /** A sign-in of `principal` on server `t`. */
 function issueOn(t: TestServer, principal: P3Principal, kind: "browser" | "device"): Promise<Issued> {
-	return t.server.runtime.host.root(
+	return t.host.root(
 		async (ctx) => (await ctx.get(SignIns, {})).issue({ principal, label: "test", kind }, ctx),
 		context,
 	);
@@ -373,70 +397,17 @@ describe("the sign-in cookie on the server", () => {
 		assert.notEqual(first.split("=")[0], second.split("=")[0]);
 		// A browser sends both to both ports.
 		const both = { cookie: `${first}; ${second}` };
-		assert.deepEqual(
-			[await principalOf(one.server.port, both), await principalOf(other.server.port, both)],
-			[OWNER, OWNER],
-		);
-		assert.equal(await principalOf(other.server.port, { cookie: first }), undefined);
-	});
-
-	it("renews a cookie older than a day with a fresh signed expiry; the old one ends at its own", async () => {
-		const t = await started();
-		const start = Date.now();
-		mock.timers.enable({ apis: ["Date"], now: start });
-		const cookie = carrying(await issueOn(t, OWNER, "browser"), "cookie").cookie!;
-		const within = await asked(t.server.port, { cookie });
-		assert.deepEqual([within.status, within.headers.get("set-cookie")], [200, null]);
-		mock.timers.setTime(start + DAY + 1000);
-		const renewed = await asked(t.server.port, { cookie });
-		assert.equal(renewed.status, 200);
-		const set = renewed.headers.get("set-cookie")!;
-		assert.match(set, /^p3-[A-Za-z0-9_-]{11}=[^;]+; HttpOnly; Path=\/; SameSite=Strict; Max-Age=34560000$/);
-		assert.equal(set.split("=")[0], cookie.split("=")[0]);
-		mock.timers.setTime(start + 401 * DAY);
-		assert.equal((await asked(t.server.port, { cookie })).status, 401);
-		assert.equal((await asked(t.server.port, { cookie: set.split(";")[0]! })).status, 200);
-	});
-
-	it("renews no revoked sign-in's cookie, and none a route sets itself", async () => {
-		const t = await started();
-		const start = Date.now();
-		mock.timers.enable({ apis: ["Date"], now: start });
-		const owner = await issueOn(t, OWNER, "device");
-		const browser = await issueOn(t, OWNER, "browser");
-		await t.server.runtime.host.root(async (ctx) => (await ctx.get(SignIns, {})).revoke(browser.id, ctx), context);
-		mock.timers.setTime(start + 2 * DAY);
-		const cookie = carrying(browser, "cookie").cookie!;
-		const alone = await asked(t.server.port, { cookie });
-		assert.deepEqual([alone.status, alone.headers.get("set-cookie")], [401, null]);
-		// Signed in by a bearer token, the revoked sign-in's cookie beside it is not renewed.
-		const beside = await asked(t.server.port, { ...carrying(owner, "bearer"), cookie });
-		assert.deepEqual([beside.status, beside.headers.get("set-cookie")], [200, null]);
-		// The owner link's post sets the new browser's cookie: an old cookie it carries is not renewed over it.
-		const kept = carrying(await issueOn(t, OWNER, "browser"), "cookie").cookie!;
-		mock.timers.setTime(start + 4 * DAY);
-		const commands = (await t.server.runtime.host.registry(ServerCommands, context)).value;
-		const link = String(await commands.get("owner-link")!.run(context));
-		const signed = await fetch(`http://127.0.0.1:${t.server.port}/_p3/owner`, {
-			method: "POST",
-			headers: { "content-type": "application/json", cookie: kept },
-			body: JSON.stringify({ token: new URL(link).hash.slice(1) }),
-		});
-		assert.equal(signed.status, 200);
-		const set = signed.headers.get("set-cookie")!.split(";")[0]!;
-		assert.notEqual(
-			decodeURIComponent(set.split("=")[1]!).split(".")[0],
-			decodeURIComponent(kept.split("=")[1]!).split(".")[0],
-		);
+		assert.deepEqual([await principalOf(one.port, both), await principalOf(other.port, both)], [OWNER, OWNER]);
+		assert.equal(await principalOf(other.port, { cookie: first }), undefined);
 	});
 
 	it("keeps the sign-ins and the cookie's key across a restart: a cookie and a token issued before still sign in", async () => {
 		const t = await started();
 		const browser = await issueOn(t, OWNER, "browser");
 		const device = await issueOn(t, MAX, "device");
-		const restarted = await servers.pop()!.restart();
+		const restarted = await servers.pop()!.restart(context);
 		servers.push(restarted);
-		const port = restarted.server.port;
+		const port = restarted.port;
 		assert.deepEqual(
 			[await principalOf(port, carrying(browser, "cookie")), await principalOf(port, carrying(device, "bearer"))],
 			[OWNER, MAX],
@@ -446,7 +417,7 @@ describe("the sign-in cookie on the server", () => {
 	it("keeps only the token's hash in the store", async () => {
 		const t = await started();
 		const issued = await issueOn(t, OWNER, "device");
-		await servers.pop()!.close(true);
+		await servers.pop()!.stop(context);
 		const secret = issued.token.split(".")[1]!;
 		const files = ["store.sqlite", "store.sqlite-wal"].map((name) =>
 			readFile(join(t.dataDir, "server", name)).catch(() => Buffer.alloc(0)),
@@ -477,7 +448,7 @@ async function device(port: number, headers: Readonly<Record<string, string>>) {
 }
 
 /** Revokes `id` on `host`, then waits until `revoked`'s socket closed. */
-async function revokeClosing(host: TestServer["server"]["runtime"]["host"], id: string, revoked: { closed: boolean }) {
+async function revokeClosing(host: TestServer["host"], id: string, revoked: { closed: boolean }) {
 	await host.root(async (ctx) => (await ctx.get(SignIns, {})).revoke(id, ctx), context);
 	await eventually(
 		async () => revoked.closed,
@@ -490,13 +461,13 @@ describe("a sign-in's `/chord` links on the server", () => {
 		const t = await started();
 		const laptop = await issueOn(t, OWNER, "device");
 		const phone = await issueOn(t, OWNER, "browser");
-		const revoked = await device(t.server.port, carrying(laptop, "bearer"));
-		const kept = await device(t.server.port, carrying(phone, "cookie"));
+		const revoked = await device(t.port, carrying(laptop, "bearer"));
+		const kept = await device(t.port, carrying(phone, "cookie"));
 		try {
 			const sessions = await revoked.host.get(Sessions, {}, context);
 			const others = await kept.host.get(Sessions, {}, context);
 			await sessions.create({ title: "before" }, context);
-			await revokeClosing(t.server.runtime.host, laptop.id, revoked.state);
+			await revokeClosing(t.host, laptop.id, revoked.state);
 			await assert.rejects(sessions.create({ title: "by a revoked device" }, context));
 			await others.create({ title: "after" }, context);
 			assert.equal(kept.state.closed, false);
@@ -513,9 +484,8 @@ describe("a reload of the sign-in plugin", () => {
 		const dir = await mkdtemp(join(tmpdir(), "p3-sign-in-reload-"));
 		const root = join(dir, "built-in");
 		await cp(fileURLToPath(new URL("../../", import.meta.url)), root, { recursive: true });
-		const t = await testServer({ builtIn: root });
-		const { server } = t;
-		const host = server.runtime.host;
+		const t = await testServer({ builtIn: root }, context);
+		const { host } = t;
 		const issue = (kind: "browser" | "device") =>
 			host.root(
 				async (ctx) => (await ctx.get(SignIns, {})).issue({ principal: OWNER, label: kind, kind }, ctx),
@@ -526,8 +496,8 @@ describe("a reload of the sign-in plugin", () => {
 		const devices: Awaited<ReturnType<typeof device>>[] = [];
 		const connect = async () => {
 			const pair = [
-				await device(server.port, carrying(laptop, "bearer")),
-				await device(server.port, carrying(phone, "cookie")),
+				await device(t.port, carrying(laptop, "bearer")),
+				await device(t.port, carrying(phone, "cookie")),
 			];
 			devices.push(...pair);
 			await Promise.all(pair.map(({ host: client }) => client.get(Sessions, {}, context)));
@@ -543,7 +513,7 @@ describe("a reload of the sign-in plugin", () => {
 			await writeFile(file, source.replace('"owner browser"', '"owner browser, edited"'));
 			await eventually(
 				async () => {
-					await server.runtime.apply(context);
+					await t.apply(context);
 					return before.map(({ state }) => state.closed);
 				},
 				(closed) => closed.every(Boolean),
@@ -556,7 +526,7 @@ describe("a reload of the sign-in plugin", () => {
 			assert.deepEqual(t.errors, []);
 		} finally {
 			for (const { host: client } of devices) await client.close(context);
-			await t.close();
+			await t.close(context);
 			await rm(dir, { recursive: true, force: true });
 		}
 	});

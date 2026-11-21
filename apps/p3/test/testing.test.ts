@@ -1,15 +1,17 @@
-// The plugin tier's helper (`@earendil-works/p3/v1/testing`): a tested facet gets the base's facet as its real host
-// has it, and a directory of its own: a new temporary one per test (two tests of one session share nothing), removed
-// at its close.
+// The helpers of a plugin's tests (`@earendil-works/p3/v1/testing`). `testPlugin`: a tested facet gets the base's facet
+// as its real host has it, and a directory of its own: a new temporary one per test (two tests of one session share
+// nothing), removed at its close. `testServer`: the plugins under test load beside the built-in ones (one that fails
+// fails the start); `stop` keeps the data directory, `restart` starts on it again, `close` removes it.
 
 import assert from "node:assert/strict";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
-import { BACKGROUND_CONTEXT as context, local, str } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT as context, local, Sessions, str } from "@earendil-works/p3/v1";
 import { ServerCommands } from "@earendil-works/p3/v1/server";
-import { testPlugin } from "@earendil-works/p3/v1/testing";
+import { testPlugin, testServer } from "@earendil-works/p3/v1/testing";
+import { within } from "./until.ts";
 
 /** What the plugin the test writes serves: its host's directory. */
 const Dir = local("dir.dir", { version: 1, params: {}, members: { dir: str() } });
@@ -72,5 +74,32 @@ describe("testPlugin's directories", () => {
 		} finally {
 			await t.close(context);
 		}
+	});
+});
+
+describe("testServer", () => {
+	it("loads the plugins under test beside the built-in ones; stop keeps the data directory, close removes it", async () => {
+		const t = await testServer({ plugins: [plugin] }, context);
+		const dataDir = await t.host.root(
+			async (ctx) => (await ctx.get(Dir, {})).dir.value,
+			within("the plugin", context),
+		);
+		assert.equal(dataDir, t.dataDir);
+		// A built-in plugin's object, through a client signed in as the owner.
+		assert.equal((await (await t.client(context)).get(Sessions, {}, context)).variant, "owner");
+		await t.stop(context);
+		assert.ok(await exists(join(dataDir, "server", "store.sqlite")));
+		const again = await t.restart(context);
+		assert.equal(again.dataDir, dataDir);
+		await again.close(context);
+		assert.equal(await exists(dataDir), false);
+	});
+
+	it("fails the start when a plugin under test fails to load", async () => {
+		const broken = join(root, "broken");
+		await mkdir(broken);
+		await writeFile(join(broken, "package.json"), JSON.stringify({ name: "broken", private: true, type: "module" }));
+		await writeFile(join(broken, "server.ts"), 'throw new Error("broken: on purpose");\n');
+		await assert.rejects(testServer({ plugins: [broken] }, context), /broken/);
 	});
 });

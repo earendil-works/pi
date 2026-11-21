@@ -17,9 +17,10 @@ session workers           one process per session: host at Session({ id }), its 
   kind and asks for objects by contract (`ctx.get`, `self.get`); Chord routes and relays.
 - **A plugin** is a folder in a plugins root with one file per facet kind: `server.ts`, `worker.ts` (p3's kinds today;
   `web` and `terminal` come with the UI). The server builds its server facets with esbuild at each start, and the
-  worker facets when they are first needed (the first worker's start; an apply builds what changed), then ships them
-  to the workers: a broken worker facet shows its error there, in the first worker's start and the server's log, not
-  at the server's start. A plugin imports only `@earendil-works/p3/v1` (and `/v1/server`, `/v1/worker` in those
+  worker facets when they are first needed (the first worker's start or the first apply, whichever comes first; a
+  later apply builds what changed), then ships them to the workers: a broken worker facet shows its error there, in
+  the first worker's start and the server's log, not at the server's start. A built-in plugin failing fails the start;
+  a plugin of the user's root that fails is reported in the server's log and left out. A plugin imports only `@earendil-works/p3/v1` (and `/v1/server`, `/v1/worker` in those
   facets), its own files, other plugins' contract files by relative path, and its npm dependencies (inlined).
   Never Chord directly; never `import()` (plugins load whole, at start).
 - **The store:** the server and every worker have one SQLite store, synchronous (a query blocks the event loop).
@@ -38,15 +39,16 @@ session workers           one process per session: host at Session({ id }), its 
   `WorkerRuntime`). Everything else is a plugin: how a session's worker runs (`runner`), who someone is (`sign-in`:
   the sign-ins, the owner link's page and post), the owner's `stop` and `apply` (`control`, as commands over the
   socket; there are no control routes over HTTP), the sessions (`sessions`).
-- **The data directory's sockets** (`local-socket.ts`): `server.sock` (the server), `supervisor.sock` (the background
-  server's supervisor) and a session worker's lock (`locks/<hash>`) are each a lock and, for the first two, the
-  command's channel: one JSON request and answer. The trust boundary is the OS user: the directory is 0700, so only
-  the owner's user can make or reach a socket there, and every process of that user may ask (the owner's programs,
-  plugins, an agent's tools); no token travels. POSIX only: a Windows named pipe is reachable by every local user
-  (ERNDL-1059). A socket file a killed holder left is cleared and taken under a kernel-owned guard (Chord's
-  `processLock`, `@earendil-works/chord/workers/child`), so two starters after a crash cannot both win; a release
-  removes the file only while it is still its own (same inode). Socket paths are short (108 bytes on Linux and
-  Android, 103 on macOS): the start refuses a data directory too long for its longest socket, a session's lock.
+- **The data directory's sockets** (`local-socket.ts`): `server.sock` (the server) and `supervisor.sock` (the
+  background server's supervisor) are each a lock and the command's channel: one JSON request and answer. The trust
+  boundary is the OS user: the directory is 0700, so only the owner's user can make or reach a socket there, and every
+  process of that user may ask (the owner's programs, plugins, an agent's tools); no token travels. POSIX only: p3
+  refuses to start on Windows, where a named pipe is reachable by every local user (ERNDL-1059). A socket file a
+  killed holder left is cleared and taken under a kernel-owned guard (Chord's `processLock`,
+  `@earendil-works/chord/workers/child`), so two starters after a crash cannot both win; the guard is held for
+  milliseconds, and a start that waits 10 s for it fails naming it (on Linux any local user can hold that name). A
+  release removes the file only while it is still its own (same inode). Socket paths are short (108 bytes on Linux and Android, 103 on macOS):
+  the start refuses a data directory too long for its longest socket, `supervisor.sock`.
 - **Failures:** a failure nobody awaits goes to `reportError` (stderr now, telemetry later). A failed server store
   (`storage_failed`: a commit whose outcome is unknown) is not one of those: the server closes and exits non-zero,
   and the supervisor starts it again.
@@ -56,18 +58,19 @@ session workers           one process per session: host at Session({ id }), its 
   objects, and every `WorkerBusy` count 0; the harness contributes "a run is active"); its store's commits settle
   first.
   A crashed worker fails its session until `retry` or an apply. After a server restart the sessions plugin's waker
-  starts the workers of every `working` session. One worker per session store: a worker takes its session's lock (a
-  socket, `<data directory>/locks/<hash>`, named by the runner) before it opens the store, so a successor (after a
-  server's crash, or a reload of the runner) waits until the previous worker exited.
+  starts the workers of every `working` session. One worker per session store: a worker takes its session's lock
+  (Chord's `processLock`, named `p3-session:<data directory>/workers/<id>` by the runner; the kernel owns it, so a
+  killed worker leaves nothing behind) before it opens the store, so a successor (after a server's crash, or a reload
+  of the runner) waits until the previous worker exited.
 
 ## The API (`@earendil-works/p3/v1`)
 
 | Module | What you get |
 | --- | --- |
-| `/v1` | everything of Chord's root (`remote`, `local`, `method`, the schema helpers, `defineTable`, `query`, `queries`, `defineState`, `defineRegistry`, `allow`, `deny`, `forbidden`, `invalid`, ...), `BACKGROUND_CONTEXT`, `Context`, `JsonValue`, `defineFacet` typed with p3's principals, the host kinds `Server()` and `Session({ id })`, the helpers `forward`, `contribute` and `reportError` (a failure nobody awaits: stderr now, telemetry with the telemetry package), `P3Principal`, and the contracts p3 promises to third-party plugins (the sessions plugin's: `Sessions`, `SessionsList`, `SessionFacts`, `SessionWorker`, `SessionStart`, `SessionRow`, `SessionState`) |
-| `/v1/server` | Chord's HTTP surface (`Http`, `Authenticators`, cookies), `ServerRuntime` (the data directory, the host, the store, the route to workers, apply, stop), `WorkerRunners` (how session workers run), `LinkOpened` (hooks on accepted links), `ServerCommands` (what `p3` runs over the data directory's socket, for the owner's OS user: `stop`, `apply`, `owner-link`), `SessionRoute`, the worker control messages, the rollout types |
+| `/v1` | everything of Chord's root (`remote`, `local`, `method`, the schema helpers, `defineTable`, `query`, `queries`, `defineState`, `defineRegistry`, `allow`, `deny`, `forbidden`, `invalid`, ...), `BACKGROUND_CONTEXT`, `Context`, `withAbortSignal`, `withCancel`, `JsonValue`, `defineFacet` typed with p3's principals, the host kinds `Server()` and `Session({ id })`, the helpers `forward`, `contribute`, `until(watchable, done, context)` (the first value for which `done` holds; the base, the plugins and the tests wait with it) and `reportError` (a failure nobody awaits: stderr now, telemetry with the telemetry package), `P3Principal`, and the contracts p3 promises to third-party plugins (the sessions plugin's: `Sessions`, `SessionsList`, `SessionFacts`, `SessionWorker`, `SessionStart`, `SessionRow`, `SessionState`) |
+| `/v1/server` | Chord's HTTP surface (`Http`, `Authenticators`, cookies), `ServerRuntime` (the data directory, the host, the store, the route to workers, apply, stop), `WorkerRunners` (how session workers run), `LinkOpened` (hooks on accepted links), `ServerCommands` (what `p3` runs over the data directory's socket, for the owner's OS user: `stop`, `apply`, `owner-link`), `SessionRoute`, the worker control messages, the rollout types, Chord's `processLock` and `clearStaleLock` (a session's lock) |
 | `/v1/worker` | `WorkerRuntime` (the session, the host, the store, the directory, the idle time, `close`), `WorkerBusy` (counts that keep the worker alive) |
-| `/v1/testing` | `testPlugin(root, { kind: "server" } or { kind: "worker", session }, context)`: Chord's plugin tier with p3's API, kinds, modules and principals, and the base's own facet as the real host has it (`ServerRuntime` of a server that does not listen, starts no worker and applies nothing; or `WorkerRuntime` and `WorkerBusy`), each test with a temporary directory of its own, removed at `close` (for a plugin's `test/` folder only) |
+| `/v1/testing` | for a plugin's `test/` folder only. `testPlugin(root, { kind: "server" } or { kind: "worker", session }, context)`: Chord's plugin tier with p3's API, kinds, modules and principals, and the base's own facet as the real host has it (`ServerRuntime` of a server that does not listen, starts no worker and applies nothing; or `WorkerRuntime` and `WorkerBusy`), each test with a temporary directory of its own, removed at `close`. `testServer({ plugins }, context)`: p3's real server on a temporary data directory with the built-in plugins and the plugins under test, workers as real processes, `client(ctx)` signed in as the owner (`testing.md`, tier 3); `ownerClient`, `ownerCookie` |
 
 Principals are identity only: `{ kind: "owner" }`, `{ kind: "person", id, name }`, `{ kind: "worker", session }`,
 `{ kind: "server" }`. What a person may do is data, read by admissions, never stored in the principal.
@@ -87,7 +90,8 @@ contract.ts          contracts every kind imports (one per audience)
 contract.server.ts   the store's contract, for server facets only
 server.ts            the server facet: the table, the store, the views
 worker.ts            the worker facet
-test/server.test.ts  the plugin tier test of the server facet (`@earendil-works/p3/v1/testing`)
+test/server.test.ts  the plugin tier test of the server facet (`testPlugin` of `@earendil-works/p3/v1/testing`);
+                     end-to-end cases sit beside it (`testServer`, as the sign-in plugin's do)
 ```
 
 **One audience per contract.** The owner, a session's worker and the server never share a contract through variants;
@@ -217,8 +221,9 @@ reference or a native.
   error. One decided exception: a reload of the sign-in plugin closes every `/chord` link its `SignIns` tracked
   (the next object could never close them); their clients sign in again.
 - A contribution made by a native's successor comes after the apply returns: a reload of the runner plugin closes the
-  old runner (its workers exit) before the new one is contributed, so a test waits on `WorkerRunners`, not on the
-  apply's answer.
+  old runner (its workers exit) before the new one is contributed, so between the apply's answer and that
+  contribution no runner exists (holds wait for it; the route continues with the next runner). A test waits for it
+  with `until` on the `WorkerRunners` registry, never on the apply's answer.
 
 **Releases** (p3 runs from the checkout and as an installed release; both must work)
 - Plugins ship as source and are built at start; their tests live in their `test/` folder (the release leaves it
@@ -265,6 +270,7 @@ reference or a native.
 | A secret file linked into place: Android forbids hard links, p3 could not start | write a temporary file, then rename it |
 | The command sent the owner token to whatever listened on the port `running.json` named: a lock any local user could hold, a file a crash left | the data directory's socket is the lock and the channel: only the owner's processes reach it, the holder answers what it is, no token travels |
 | A crashed server's successor started a session's worker while the previous one still closed the same store | a lock per session, taken before the store opens; the successor waits for it |
+| A session lock of p3's own (sockets in a `locks/` directory, a wait for their close) beside Chord's `processLock`, which is that lock | Chord's `processLock`, named per session; check Chord before building a mechanism it may have |
 | A test helper read `/proc/<pid>/task/<pid>/children`, which Android's kernel lacks | scan `/proc/*/stat` for the parent |
 | A worker thread per code-mode script (p2): 10 to 28 MiB per worker | QuickJS inline, opened on first use |
 | Braille glyphs for the working dots: Android's font draws one frame in the wrong column | draw the dots ourselves |

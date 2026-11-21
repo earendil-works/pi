@@ -1,26 +1,25 @@
-// The runner plugin on p3's real server (ERNDL-954), reloaded and asked to stop. Its built-in plugins are copied into
-// a root of the test's own, so the test edits the runner's server facet and applies it once the edit is marked, as an
-// owner editing a plugin does. The old runner stops every worker, and the sessions plugin's waker starts the workers
-// of the `working` sessions again on the new runner (an unheld session's run would otherwise stay cut off until a
-// restart); the apply's worker step is the new runner's, so a worker plugin changed in the same apply reaches the
-// worker the new runner started. A held session comes back by itself: the route's resolve waits for the next runner
-// while there is none, starts again on it a start the old runner refused at its close, and resolves again a session
-// whose worker the old runner stopped before its handshake. A stop keeps a held session stopped until `retry`.
+// The runner plugin on p3's real server (ERNDL-954, `testServer` of `/v1/testing`), reloaded and asked to stop. Its
+// built-in plugins are copied into a root of the test's own, so the test edits the runner's server facet and applies it
+// once the edit is marked, as an owner editing a plugin does. The old runner stops every worker, and the sessions
+// plugin's waker starts the workers of the `working` sessions again on the new runner (an unheld session's run would
+// otherwise stay cut off until a restart); the apply's worker step is the new runner's, so a worker plugin changed in
+// the same apply reaches the worker the new runner started. A held session comes back by itself: the route's resolve
+// waits for the next runner while there is none, starts again on it a start the old runner refused at its close, and
+// resolves again a session whose worker the old runner stopped before its handshake. A stop keeps a held session
+// stopped until `retry`.
 
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BACKGROUND_CONTEXT as context } from "@earendil-works/p3/v1";
-import { type PluginScript, WorkerRunners } from "@earendil-works/p3/v1/server";
-import { Sessions } from "../plugins/sessions/contract.ts";
-import { takeSocket } from "../src/local-socket.ts";
-import { Probe } from "./plugins/probe/contract.ts";
-import { alive, constantContract, constantPlugin, type TestServer, testServer } from "./support.ts";
-import { eventually, until } from "./until.ts";
+import { BACKGROUND_CONTEXT as context, Sessions, until } from "@earendil-works/p3/v1";
+import { type PluginScript, processLock, ServerRuntime, WorkerRunners } from "@earendil-works/p3/v1/server";
+import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
+import { Probe } from "../../../test/plugins/probe/contract.ts";
+import { alive, constantContract, constantPlugin, PROBE } from "../../../test/support.ts";
+import { eventually, within } from "../../../test/until.ts";
 
 /** The runner plugin's name, as its dirty mark names it. */
 const RUNNER = "@earendil-works/p3-runner";
@@ -30,7 +29,7 @@ const MARKED = "marked";
 const Marked = constantContract(MARKED);
 
 /** The checkout's built-in plugins, which a test copies. */
-const BUILT_IN = fileURLToPath(new URL("../plugins/", import.meta.url));
+const BUILT_IN = fileURLToPath(new URL("../../", import.meta.url));
 
 /** A test's server whose built-in plugins are a copy the test edits (`builtIn`). */
 type EditableServer = { readonly t: TestServer; readonly builtIn: string };
@@ -38,22 +37,22 @@ type EditableServer = { readonly t: TestServer; readonly builtIn: string };
 let running: TestServer | undefined;
 
 afterEach(async () => {
-	await running?.close();
+	await running?.close(context);
 	running = undefined;
 });
 
-/** Starts a test's server on a new data directory with a copy of the built-in plugins (their tests left out). */
+/** Starts a test's server (with the probe) on a new data directory with a copy of the built-in plugins (no tests). */
 async function editableServer(): Promise<EditableServer> {
 	const dataDir = await mkdtemp(join(tmpdir(), "p3-e2e-"));
 	const builtIn = join(dataDir, "builtin");
 	await cp(BUILT_IN, builtIn, { recursive: true, filter: (path) => basename(path) !== "test" });
-	running = await testServer({ dataDir, builtIn });
+	running = await testServer({ dataDir, builtIn, plugins: [PROBE] }, context);
 	return { t: running, builtIn };
 }
 
 /** A new session's id and an owner's client. */
 async function newSession(t: TestServer) {
-	const client = await t.client();
+	const client = await t.client(context);
 	const id = await (await client.get(Sessions, {}, context)).create({ title: "one" }, context);
 	return { client, id };
 }
@@ -76,21 +75,23 @@ async function workingSession(t: TestServer): Promise<{ readonly id: string; rea
  */
 async function reloadRunner(
 	{ t, builtIn }: EditableServer,
-	marked: (marks: typeof t.server.plugins.value) => boolean = () => true,
+	marked: (marks: typeof t.plugins.value) => boolean = () => true,
 ) {
-	const { host } = t.server.runtime;
-	const before = (await host.registry(WorkerRunners, context)).value;
+	const before = (await t.host.registry(WorkerRunners, context)).value;
 	const file = join(builtIn, "runner", "local-runner.ts");
 	await writeFile(file, (await readFile(file, "utf8")).replace("the runner closed", "the runner was closed"));
-	await until(t.server.plugins, (marks) => marks.dirty.includes(RUNNER) && marked(marks), context, 10_000);
-	const result = await t.server.runtime.apply(context);
+	await until(
+		t.plugins,
+		(marks) => marks.dirty.includes(RUNNER) && marked(marks),
+		within("the runner's edit marked", context, 10_000),
+	);
+	const result = await t.apply(context);
 	assert.equal(result.stopped, undefined);
 	// The apply restarted the runner's object: its successor is contributed once the old runner closed, after the apply.
 	const runner = await until(
-		await host.registry(WorkerRunners, context),
+		await t.host.registry(WorkerRunners, context),
 		(now) => now !== undefined && now !== before,
-		context,
-		10_000,
+		within("the new runner", context, 10_000),
 	);
 	if (runner === undefined) return assert.fail("no runner");
 	return runner;
@@ -119,7 +120,7 @@ describe("a reload of the runner plugin", () => {
 		if (held.variant !== "owner") return assert.fail(held.variant);
 		const pid = held.pid.value;
 		await reloadRunner(editable);
-		await until(held.pid, (now) => now !== pid, context, 10_000);
+		await until(held.pid, (now) => now !== pid, within("the new worker's pid", context, 10_000));
 		assert.ok(!alive(pid), "the old runner stopped its worker");
 		assert.ok(alive(held.pid.value), "the holder's reference reaches the new worker");
 		// A call on the same reference reaches the new worker.
@@ -130,7 +131,7 @@ describe("a reload of the runner plugin", () => {
 	it("a first hold whose start the old runner took before it was withdrawn starts on the new runner (Astra B4)", async () => {
 		const editable = await editableServer();
 		const { t } = editable;
-		const { runtime } = t.server;
+		const runtime = (await t.host.registry(ServerRuntime, context)).value;
 		const scripts = runtime.workerScripts;
 		const read = Promise.withResolvers<void>();
 		const gate = Promise.withResolvers<void>();
@@ -163,17 +164,13 @@ describe("a reload of the runner plugin", () => {
 		const editable = await editableServer();
 		const { t } = editable;
 		const { client, id } = await newSession(t);
-		// The session's lock held: its worker forks and waits for it, before it greets the server.
-		await mkdir(join(t.dataDir, "locks"), { recursive: true, mode: 0o700 });
-		const lock = await takeSocket(
-			join(t.dataDir, "locks", createHash("sha256").update(id).digest("hex").slice(0, 16)),
-		);
-		if (lock.kind !== "taken") return assert.fail("the session's lock is held");
+		// The session's lock held (the runner names it): its worker forks and waits for it, before it greets the server.
+		const lock = await processLock(`p3-session:${join(t.dataDir, "workers", id)}`, context);
 		const holding = client.get(Probe, { session: id }, context);
 		holding.catch(() => {});
 		try {
 			await eventually(
-				() => t.workers(),
+				() => t.workers(context),
 				(workers) => workers[id]?.status === "starting",
 			);
 			const runner = await reloadRunner(editable);
@@ -182,7 +179,7 @@ describe("a reload of the runner plugin", () => {
 				(state) => state[id]?.status === "starting",
 			);
 		} finally {
-			await lock.socket.release();
+			await lock.release();
 		}
 		const held = await holding;
 		assert.equal(held.variant, "owner");
@@ -192,35 +189,39 @@ describe("a reload of the runner plugin", () => {
 	it("an apply that also changes a worker plugin leaves the new runner's worker on the new worker scripts", async () => {
 		const editable = await editableServer();
 		const { t } = editable;
-		await writeFile(join(t.plugins, `${MARKED}.worker.ts`), constantPlugin(MARKED, "1"));
+		await writeFile(join(t.userRoot, `${MARKED}.worker.ts`), constantPlugin(MARKED, "1"));
 		const { id } = await workingSession(t);
-		await writeFile(join(t.plugins, `${MARKED}.worker.ts`), constantPlugin(MARKED, "2"));
+		await writeFile(join(t.userRoot, `${MARKED}.worker.ts`), constantPlugin(MARKED, "2"));
 		// A plugin no discovery knew yet marks the set; one it knew, itself.
 		await reloadRunner(editable, ({ dirty, set }) => set || dirty.includes(MARKED));
-		const held = await (await t.client()).get(Marked, { session: id }, context);
+		const held = await (await t.client(context)).get(Marked, { session: id }, context);
 		if (held.variant !== "owner") return assert.fail(held.variant);
-		await until(held.value, (value) => value === "2", context);
+		await until(held.value, (value) => value === "2", within("the new worker script's value", context));
 	});
 });
 
 describe("a stop of a held session", () => {
 	it("keeps its worker stopped until retry; its holder's reference then reaches a new worker (Sol S6)", async () => {
-		const t = await testServer();
+		const t = await testServer({ plugins: [PROBE] }, context);
 		running = t;
 		const { client, id } = await newSession(t);
 		const held = await client.get(Probe, { session: id }, context);
 		if (held.variant !== "owner") return assert.fail(held.variant);
 		const pid = held.pid.value;
-		const runner = (await t.server.runtime.host.registry(WorkerRunners, context)).value;
+		const runner = (await t.host.registry(WorkerRunners, context)).value;
 		if (runner === undefined) return assert.fail("no runner");
 		await runner.stop(id);
 		assert.ok(!alive(pid), "the worker stopped");
-		const failed = await until(held.state, (state) => state.kind === "failed", context, 10_000);
+		const failed = await until(
+			held.state,
+			(state) => state.kind === "failed",
+			within("the hold failing", context, 10_000),
+		);
 		assert.ok(failed.kind === "failed" && failed.cause.kind === "waiting");
 		assert.match(failed.cause.error.message, /suspended/);
-		assert.equal((await t.workers())[id], undefined, "nothing started it again");
+		assert.equal((await t.workers(context))[id], undefined, "nothing started it again");
 		runner.retry(id);
-		await until(held.pid, (now) => now !== pid, context, 10_000);
+		await until(held.pid, (now) => now !== pid, within("the new worker's pid", context, 10_000));
 		await held.busy(0, context);
 	});
 });

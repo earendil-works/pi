@@ -1,8 +1,9 @@
 // The installed release: p3 as `npm run release:p3:local` built, packed and installed it outside the repository.
 // `P3_RELEASE` names the install directory; the release script sets it. Not part of `npm test`: it needs that install.
 // It checks what the package holds, the command, a session's worker forked from the release's own bundle, and a
-// third-party plugin written against nothing but the installed API: type-checked, its own test run on the installed
-// `/v1/testing`, loaded from the Pi's user root, and called by a client that uses the compiled API modules.
+// third-party plugin written against nothing but the installed API: type-checked, its own tests run on the installed
+// `/v1/testing` (the plugin tier, and end to end: the installed server with its workers forked from the release's
+// bundle), loaded from the Pi's user root, and called by a client that uses the compiled API modules.
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -13,8 +14,9 @@ import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
+import { ownerClient, ownerCookie } from "@earendil-works/p3/v1/testing";
 import { Sessions, SessionWorker } from "../../plugins/sessions/contract.ts";
-import { childrenOf, launch, ownerClient, ownerCookie } from "../support.ts";
+import { childrenOf, launch } from "../support.ts";
 import { eventually } from "../until.ts";
 
 const run = promisify(execFile);
@@ -68,7 +70,7 @@ describe("the installed release", () => {
 	it("forks a session's worker from the release's own worker bundle", async () => {
 		const server = await launch(P3, join(root, "workers"));
 		try {
-			const client = await ownerClient(server.dataDir, server.port, 30_000);
+			const client = await ownerClient(server.dataDir, server.port, context, 30_000);
 			const id = await (await client.get(Sessions, {}, context)).create({ title: "one" }, context);
 			const worker = await client.get(SessionWorker, { session: id }, context);
 			assert.equal(worker.variant, "owner");
@@ -95,17 +97,18 @@ describe("the installed release", () => {
 		await symlink(MODULES, join(plugin, "node_modules"));
 		const checked = await run(process.execPath, [TSC, "-p", plugin]).catch((error: { stdout: string }) => error);
 		assert.equal(checked.stdout, "", "the plugin type-checks against the installed API");
-		// The plugin's own test, on the installed `/v1/testing`; a run of its own (`node --test` inside a test reports to
+		// The plugin's own tests, on the installed `/v1/testing`; a run of its own (`node --test` inside a test reports to
 		// its parent's runner when it finds the parent's context).
 		const env = { ...process.env, NODE_TEST_CONTEXT: undefined };
-		const testArgs = ["--test", "--test-reporter=tap", join(plugin, "test", "hello.test.ts")];
-		const tested = await run(process.execPath, testArgs, { cwd: plugin, env }).catch(
-			(error: { stdout: string; stderr: string }) => assert.fail(`${error.stdout}\n${error.stderr}`),
-		);
-		assert.match(tested.stdout, /# pass 1\n/);
+		const tests = ["hello.test.ts", "e2e.test.ts"].map((name) => join(plugin, "test", name));
+		const tested = await run(process.execPath, ["--test", "--test-reporter=tap", ...tests], {
+			cwd: plugin,
+			env,
+		}).catch((error: { stdout: string; stderr: string }) => assert.fail(`${error.stdout}\n${error.stderr}`));
+		assert.match(tested.stdout, /# pass 2\n/);
 		const server = await launch(P3, dataDir);
 		try {
-			const cookie = await ownerCookie(dataDir, server.port);
+			const cookie = await ownerCookie(dataDir, server.port, context);
 			const said = await run(process.execPath, [join(plugin, "client.mjs"), String(server.port), cookie]);
 			assert.deepEqual(JSON.parse(said.stdout), ["HELLO", "HELLO, P3"]);
 		} finally {
@@ -128,10 +131,10 @@ const HELLO = {
 			skipLibCheck: true,
 			types: [],
 		},
-		include: ["contract.ts", "server.ts"],
+		include: ["contract.ts", "server.ts", "worker.ts"],
 	}),
 	"contract.ts": [
-		'import { method, obj, oneOf, remote, Server, str } from "@earendil-works/p3/v1";',
+		'import { method, obj, oneOf, remote, Server, Session, str } from "@earendil-works/p3/v1";',
 		"",
 		"/** A greeting the server has for its owner, plain or loud. */",
 		'export const Hello = remote("hello.greeting", {',
@@ -139,6 +142,14 @@ const HELLO = {
 		'	params: { tone: oneOf("plain", "loud") },',
 		"	hostAddress: () => Server(),",
 		"	variants: { owner: { state: { text: str() }, methods: { greet: method(obj({ name: str() }), str()) } } },",
+		"});",
+		"",
+		"/** The session whose worker serves it, as that worker's runtime says, for the owner. */",
+		'export const Where = remote("hello.where", {',
+		"	version: 1,",
+		"	params: { session: str() },",
+		"	hostAddress: ({ session }) => Session({ id: session }),",
+		"	variants: { owner: { state: { session: str() } } },",
 		"});",
 	].join("\n"),
 	"server.ts": [
@@ -156,7 +167,20 @@ const HELLO = {
 		"	});",
 		"});",
 	].join("\n"),
-	// The plugin's own test, as its author writes it (the release ships no tests of its own to copy).
+	"worker.ts": [
+		'import { constant, defineFacet, forbidden } from "@earendil-works/p3/v1";',
+		'import { WorkerRuntime } from "@earendil-works/p3/v1/worker";',
+		'import { Where } from "./contract.ts";',
+		"",
+		"export default defineFacet((host) => {",
+		"	host.serve(Where, (_params, principal, self) => {",
+		'		if (principal.kind !== "owner") throw forbidden("hello: the owner\'s");',
+		'		return { variant: "owner", members: { session: constant(self.registry(WorkerRuntime).value.session) } };',
+		"	});",
+		"});",
+	].join("\n"),
+	// The plugin's own tests, as its author writes them (the release ships no tests of its own to copy): the plugin
+	// tier, and end to end.
 	"test/hello.test.ts": [
 		'import assert from "node:assert/strict";',
 		'import { it } from "node:test";',
@@ -177,6 +201,31 @@ const HELLO = {
 		'			{ principal: { kind: "owner" } },',
 		"		);",
 		'		assert.deepEqual(said, ["HELLO", "HELLO, P3"]);',
+		"	} finally {",
+		"		await t.close(context);",
+		"	}",
+		"});",
+	].join("\n"),
+	"test/e2e.test.ts": [
+		'import assert from "node:assert/strict";',
+		'import { it } from "node:test";',
+		'import { fileURLToPath } from "node:url";',
+		'import { BACKGROUND_CONTEXT as context, Sessions } from "@earendil-works/p3/v1";',
+		'import { testServer } from "@earendil-works/p3/v1/testing";',
+		'import { Hello, Where } from "../contract.ts";',
+		"",
+		'it("greets the owner over /chord, and runs on a session\'s worker of its own", async () => {',
+		'	const t = await testServer({ plugins: [fileURLToPath(new URL("../", import.meta.url))] }, context);',
+		"	try {",
+		"		const client = await t.client(context);",
+		'		const hello = await client.get(Hello, { tone: "plain" }, context);',
+		'		assert.equal(await hello.greet({ name: "p3" }, context), "hello, p3");',
+		'		const session = await (await client.get(Sessions, {}, context)).create({ title: "one" }, context);',
+		"		const where = await client.get(Where, { session }, context);",
+		'		assert.equal(where.variant, "owner");',
+		'		assert.equal(where.variant === "owner" && where.session.value, session);',
+		'		assert.equal((await t.workers(context))[session]?.status, "running");',
+		"		assert.deepEqual(t.errors, []);",
 		"	} finally {",
 		"		await t.close(context);",
 		"	}",

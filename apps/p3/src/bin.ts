@@ -1,10 +1,6 @@
-// The `p3` command. `p3 server` runs a Pi's server in the foreground (closed by SIGINT, SIGTERM or the owner's stop);
-// plain `p3` starts it in the background under its supervisor unless it runs, and prints an owner link; `p3 stop`
-// stops it; `p3 restart` stops, then starts it; `p3 status` says whether it runs; `p3 apply` builds the changed plugins
-// and rolls them out; `p3 list` lists the Pis. The command asks the server and its supervisor over their sockets in
-// the data directory (`local-socket.ts`): one that answers runs, and its answer says what it is; one that holds its
-// socket but does not answer is hung, never taken for gone. Only the owner's processes reach those sockets, so no
-// token travels.
+// The `p3` command (its usage below). It asks the server and its supervisor over their sockets in the data directory
+// (`local-socket.ts`): one that answers runs, and says what it is; one that holds its socket but does not answer is
+// hung, never taken for gone.
 
 // First: a Node too old for p3 ends here, before any other module runs.
 import "./minimum-node.ts";
@@ -32,6 +28,7 @@ import {
 	ASK_MS,
 	askServer,
 	askSupervisor,
+	type NoAnswer,
 	type Reply,
 	type ServerAnswer,
 	type ServerStatus,
@@ -57,14 +54,14 @@ Options:
   --dir <path>  A Pi in any directory
   --port <n>    The port for this start, on 127.0.0.1 (0: a free one). Without it a Pi listens on its own port:
                 ${DEFAULT_PORT} for the default Pi, else a free one taken at its first start and kept
-  --wait <s>    For stop and restart: how long the server gets to stop before it is killed (more than 0; default 10)
+  --wait <s>    For stop and restart: how long the server gets to stop before it is killed (at least 1; default 10)
   --version     Print p3's version
   --help        Print this help`;
 
 /** How long a background start may take. */
 const START_MS = 30_000;
 
-/** How long a stop waits by default before the server and its supervisor are killed, and then for the kill. */
+/** How long a stop waits by default before the server, its supervisor and its workers are killed, and then for the kill. */
 const STOP_MS = 10_000;
 
 /** How long an apply may take: it builds every changed plugin and reloads every running worker. */
@@ -102,13 +99,19 @@ function commandLine() {
 
 /** Runs `command` (plain `p3` is `start`) on the Pi `flags` names; a failure is one line and exit 1. */
 async function run([command = "start", ...rest]: readonly string[], flags: Flags): Promise<void> {
+	// The data directory's sockets would be named pipes there, which authenticate nobody.
+	if (process.platform === "win32") {
+		console.error("p3 does not run on Windows yet (ERNDL-1059)");
+		process.exit(1);
+	}
 	// A trust boundary: the command line.
 	const starts = command === "start" || command === "server" || command === "restart";
 	if (rest.length > 0 || (flags.pi !== undefined && flags.dir !== undefined)) usage();
 	if (flags.pi !== undefined && !isPiName(flags.pi)) usage();
 	if (flags.port !== undefined && !(starts && /^\d{1,5}$/.test(flags.port) && Number(flags.port) <= 65535)) usage();
 	const stops = command === "stop" || command === "restart";
-	if (flags.wait !== undefined && !(stops && /^\d{1,4}(\.\d+)?$/.test(flags.wait) && Number(flags.wait) > 0)) usage();
+	// At least 1 s: a shorter wait would give a healthy server's first answer no time, and kill it unasked.
+	if (flags.wait !== undefined && !(stops && /^\d{1,4}(\.\d+)?$/.test(flags.wait) && Number(flags.wait) >= 1)) usage();
 	if (command === "list" && (flags.pi !== undefined || flags.dir !== undefined)) usage();
 	const dataDir = dataDirOf(flags);
 	const port = flags.port === undefined ? undefined : Number(flags.port);
@@ -179,9 +182,11 @@ async function serve(path: string, port: number | undefined): Promise<void> {
 async function start(path: string, port: number | undefined): Promise<void> {
 	const dataDir = await openDataDir(path);
 	let supervisor: ChildProcess | undefined;
-	if ((await serverOn(dataDir)).kind === "none" && (await supervisorOn(dataDir)).kind === "none") {
-		const server = [...COMMAND, "server", "--dir", dataDir, ...(port === undefined ? [] : ["--port", String(port)])];
-		supervisor = spawn(process.execPath, [...SUPERVISOR, dataDir, ...server], {
+	const server = await serverOn(dataDir);
+	if (server.kind === "silent") throw new Error(`p3: the server on ${dataDir} does not answer`);
+	if (server.kind === "none" && (await supervisorOn(dataDir)).kind === "none") {
+		const command = [...COMMAND, "server", "--dir", dataDir, ...(port === undefined ? [] : ["--port", String(port)])];
+		supervisor = spawn(process.execPath, [...SUPERVISOR, dataDir, ...command], {
 			detached: true,
 			stdio: "ignore",
 			windowsHide: true,
@@ -230,9 +235,7 @@ async function stop(path: string, waitMs: number): Promise<void> {
 		return;
 	}
 	if (supervisor.kind === "supervising") await askSupervisor(dataDir, { kind: "stop" }, untilDeadline(deadline));
-	else if (server.kind !== "silent") {
-		await askServer(dataDir, { kind: "command", name: "stop" }, untilDeadline(deadline));
-	}
+	else if (server.kind !== "silent") await askStop(dataDir, deadline);
 	if (await gone(dataDir, deadline)) {
 		console.log("stopped");
 		return;
@@ -243,15 +246,31 @@ async function stop(path: string, waitMs: number): Promise<void> {
 }
 
 /**
+ * Asks the server on `dataDir` (one without a supervisor) to stop; while it starts it answers its status instead (its
+ * commands are not there yet), and is asked again until `deadline`.
+ */
+async function askStop(dataDir: string, deadline: number): Promise<void> {
+	for (;;) {
+		const reply = await askServer(dataDir, { kind: "command", name: "stop" }, untilDeadline(deadline));
+		if (reply.kind !== "answered" || reply.answer.kind !== "starting" || Date.now() >= deadline) return;
+		await sleep(50);
+	}
+}
+
+/**
  * Kills the holders of `dataDir`'s sockets by the pids they answer now (asked again: a pid from before the wait may be
- * another process's by now): the supervisor with its process group, its server in it. A holder that does not answer
- * and that no answer names is left, with an error.
+ * another process's by now): the supervisor with its process group (its server is in it), the server, and each of the
+ * server's session workers with its process group (each leads one of its own). A server that does not answer names
+ * no workers: they end on their link's disconnect once the server is gone, unless they are stuck. A holder that does
+ * not answer and that no answer names is left, with an error.
  */
 async function kill(dataDir: string): Promise<void> {
 	const [server, supervisor] = await Promise.all([serverOn(dataDir), supervisorOn(dataDir)]);
-	// Detached, the supervisor leads a process group its server and their workers are in.
 	if (supervisor.kind === "supervising") signal(-supervisor.pid, "SIGKILL");
-	if (server.kind === "running" || server.kind === "starting") signal(server.pid, "SIGKILL");
+	if (server.kind === "running" || server.kind === "starting") {
+		signal(server.pid, "SIGKILL");
+		for (const worker of server.workers) signal(-worker, "SIGKILL");
+	}
 	if (supervisor.kind === "silent" || (server.kind === "silent" && supervisor.kind !== "supervising")) {
 		const who = supervisor.kind === "silent" ? "supervisor" : "server";
 		throw new Error(
@@ -280,8 +299,7 @@ async function status(path: string): Promise<void> {
 	const dataDir = (await existingDataDir(path)) ?? path;
 	const server = await serverOn(dataDir);
 	if (server.kind !== "running") {
-		const supervisor = server.kind === "none" ? await supervisorOn(dataDir) : NONE;
-		const state = server.kind === "silent" ? "not answering" : stateOf(server, supervisor);
+		const state = await stateOf(dataDir, server);
 		console.log(`${state === "stopped" ? "not running" : state}\n  data directory  ${dataDir}`);
 		process.exitCode = 1;
 		return;
@@ -292,6 +310,7 @@ async function status(path: string): Promise<void> {
 		["port", server.port],
 		["pid", server.pid],
 		...(supervisor.kind === "supervising" ? [["supervisor", supervisor.pid]] : []),
+		["workers", server.workers.length === 0 ? "none" : server.workers.join(" ")],
 		["version", server.version],
 		["started", new Date(server.startedAt).toISOString()],
 	];
@@ -305,31 +324,12 @@ async function apply(path: string): Promise<void> {
 	if (reply.kind !== "answered" || reply.answer.kind !== "answer") {
 		throw new Error(`p3: no apply on ${dataDir ?? path}: ${described(reply)}`);
 	}
-	// The control plugin's own answer (`plugins/control/server.ts`); only printed.
-	const applied = reply.answer.value as Applied;
-	for (const step of applied.steps) {
-		for (const { host, failed, stopped, error } of step.hosts) {
-			const outcome = error ?? (stopped ? "stopped" : failed?.length ? `failed: ${failed.join(", ")}` : "reloaded");
-			console.log(`${step.name}  ${host}  ${outcome}`);
-		}
-	}
+	// The control plugin's own answer (`plugins/control/server.ts`), printed as it says.
+	const applied = reply.answer.value as { readonly lines: readonly string[]; readonly stopped: string | null };
+	for (const line of applied.lines) console.log(line);
 	if (applied.stopped !== null) throw new Error(`p3: the apply stopped at its ${applied.stopped} step`);
 	console.log("applied");
 }
-
-/** The control plugin's answer to `apply`: each step's hosts, and the step it stopped at. */
-type Applied = {
-	readonly steps: readonly {
-		readonly name: string;
-		readonly hosts: readonly {
-			readonly host: string;
-			readonly failed?: readonly string[];
-			readonly stopped?: true;
-			readonly error?: string;
-		}[];
-	}[];
-	readonly stopped: string | null;
-};
 
 /** Lists the Pis of `~/.pi/p3/` that started once, each with its state, port and data directory. */
 async function list(): Promise<void> {
@@ -357,23 +357,21 @@ async function rowOf(name: string, path: string): Promise<string[] | undefined> 
 	const config = dataDir === undefined ? undefined : await readConfig(dataDir);
 	if (dataDir === undefined || config === undefined) return undefined;
 	const server = await serverOn(dataDir);
-	const supervisor = server.kind === "none" ? await supervisorOn(dataDir) : NONE;
-	const state = server.kind === "silent" ? "not answering" : stateOf(server, supervisor);
 	const port = server.kind === "running" ? server.port : config.port;
-	return [name, state, String(port ?? "-"), dataDir];
+	return [name, await stateOf(dataDir, server), String(port ?? "-"), dataDir];
 }
 
-/** The state of a server that answered or holds nothing, with its supervisor's (asked only when no server answered). */
-function stateOf(server: ServerStatus | None, supervisor: SupervisorOn): string {
-	if (server.kind === "running") return "running";
-	return server.kind === "starting" || supervisor.kind !== "none" ? "starting" : "stopped";
+/**
+ * What `status` and `list` say of the server on `dataDir`: hung, as it says, or, with no server, starting while its
+ * supervisor says it supervises (between two starts), not answering when the supervisor is hung, else stopped.
+ */
+async function stateOf(dataDir: string, server: ServerStatus | NoAnswer): Promise<string> {
+	if (server.kind === "silent") return "not answering";
+	if (server.kind !== "none") return server.kind;
+	const supervisor = await supervisorOn(dataDir);
+	if (supervisor.kind === "silent") return "supervisor not answering";
+	return supervisor.kind === "supervising" ? "starting" : "stopped";
 }
-
-/** No holder. */
-type None = { readonly kind: "none" };
-
-/** A holder that holds its socket but did not answer in time. */
-type Silent = { readonly kind: "silent" };
 
 /** A running server's answer to `status`. */
 type Running = Extract<ServerStatus, { readonly kind: "running" }>;
@@ -381,11 +379,8 @@ type Running = Extract<ServerStatus, { readonly kind: "running" }>;
 /** The supervisor's answer to `status`. */
 type Supervising = Extract<SupervisorAnswer, { readonly kind: "supervising" }>;
 
-/** What the supervisor of a data directory is: its answer, none, or hung. */
-type SupervisorOn = Supervising | None | Silent;
-
 /** The server on `dataDir` as it says (starting or running), none, or hung (no answer within `ms`). */
-async function serverOn(dataDir: string, ms = ASK_MS): Promise<ServerStatus | None | Silent> {
+async function serverOn(dataDir: string, ms = ASK_MS): Promise<ServerStatus | NoAnswer> {
 	const reply = await askServer(dataDir, { kind: "status" }, ms);
 	if (reply.kind !== "answered") return reply;
 	if (reply.answer.kind === "starting" || reply.answer.kind === "running") return reply.answer;
@@ -393,7 +388,7 @@ async function serverOn(dataDir: string, ms = ASK_MS): Promise<ServerStatus | No
 }
 
 /** The supervisor on `dataDir` (its pid, its server's), none, or hung (no answer within `ms`). */
-async function supervisorOn(dataDir: string, ms = ASK_MS): Promise<SupervisorOn> {
+async function supervisorOn(dataDir: string, ms = ASK_MS): Promise<Supervising | NoAnswer> {
 	const reply = await askSupervisor(dataDir, { kind: "status" }, ms);
 	if (reply.kind !== "answered") return reply;
 	if (reply.answer.kind === "supervising") return reply.answer;

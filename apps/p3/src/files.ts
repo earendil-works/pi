@@ -1,9 +1,6 @@
-// The base's files. A Pi is its data directory: `~/.pi/p3/<name>` (the default Pi is the one named `default`) or any
-// directory (`--dir`); each keeps its port in `pi.json` from its first start. The data directory and the stores are
-// made private (directories 0700, files 0600, also when they existed looser: other local users must not read a
-// store's sign-ins, nor replace it, nor reach its sockets), and private files are written in one step. The boundary
-// is the OS user (`local-socket.ts`): every process of the owner's user reaches all of it. The modes protect on POSIX
-// only; on Windows they do nothing and the directory is as private as the ACL it inherits (ERNDL-1059).
+// The base's files: which Pi a command line names, its data directory and kept port (`pi.json`), and private files
+// and stores. A data directory and its stores are made private at every open (directories 0700, files 0600), since
+// they hold the sign-ins and the sockets (`local-socket.ts`); the modes protect on POSIX only.
 
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, open, readdir, readFile, realpath, rename, rm, stat } from "node:fs/promises";
@@ -88,7 +85,8 @@ function pisRoot(): string {
 
 /**
  * The real path of the data directory `path`, made private (0700) and made when missing; refused when it is the home
- * directory, a file system's root, another user's, or too long a path for its sockets.
+ * directory, a file system's root, another user's, in a directory other users may change, or too long a path for
+ * its sockets.
  */
 export async function openDataDir(path: string): Promise<string> {
 	await mkdir(path, { recursive: true, mode: 0o700 });
@@ -110,7 +108,7 @@ export async function existingDataDir(path: string): Promise<string | undefined>
 	});
 	if (dataDir === undefined) return undefined;
 	const { mode } = await checkDataDir(dataDir);
-	if (process.platform !== "win32" && (mode & 0o077) !== 0) {
+	if ((mode & 0o077) !== 0) {
 		const shown = (mode & 0o777).toString(8);
 		throw new Error(
 			`p3: the data directory ${dataDir} is not private (mode ${shown}; p3 makes it 0700 at every start)`,
@@ -126,11 +124,25 @@ async function checkDataDir(dataDir: string): Promise<{ readonly mode: number }>
 		throw new Error(`p3: the data directory ${dataDir} must be a directory of p3's own`);
 	}
 	const { uid, mode } = await stat(dataDir);
-	if (process.getuid !== undefined && uid !== process.getuid()) {
-		throw new Error(`p3: the data directory ${dataDir} belongs to another user (uid ${uid})`);
-	}
+	// POSIX: `p3` refuses Windows (`bin.ts`).
+	const own = process.getuid!();
+	if (uid !== own) throw new Error(`p3: the data directory ${dataDir} belongs to another user (uid ${uid})`);
+	await checkParent(dataDir, own);
 	checkSocketPaths(dataDir);
 	return { mode };
+}
+
+/**
+ * Throws when another user could rename the data directory `dataDir` away after its checks and put one of theirs in
+ * its place: its parent is another user's (not root's), or every user may write to it without the sticky bit. A parent
+ * its group may write to is let be: most systems give each user a group of their own.
+ */
+async function checkParent(dataDir: string, own: number): Promise<void> {
+	const parent = dirname(dataDir);
+	const { uid, mode } = await stat(parent);
+	const othersWrite = (mode & 0o002) !== 0 && (mode & 0o1000) === 0;
+	if ((uid === own || uid === 0) && !othersWrite) return;
+	throw new Error(`p3: the data directory ${dataDir} is in ${parent}, which other users may change; choose another`);
 }
 
 /** Makes `dir` (and missing parents) with mode 0700, and sets 0700 on it when it existed. */
@@ -140,26 +152,17 @@ export async function privateDirectory(dir: string): Promise<void> {
 }
 
 /**
- * Makes the store file `path` private before SQLite opens it: created empty with mode 0600 when missing (SQLite gives
- * its journal files the database's mode), else set to 0600 with the journal files it has.
+ * Opens the store file `path` of the server or a session's worker, private: created empty with mode 0600 when missing
+ * (SQLite gives its journal files the database's mode), else set to 0600 with the journal files it has.
  */
-export async function privateStore(path: string): Promise<void> {
+export async function openPrivateStore(path: string, context: Context): Promise<ChordStore> {
 	await (await open(path, "a", 0o600)).close();
 	for (const file of [path, `${path}-wal`, `${path}-shm`]) {
 		await chmod(file, 0o600).catch((error: NodeJS.ErrnoException) => {
 			if (error.code !== "ENOENT") throw error;
 		});
 	}
-}
-
-/**
- * Opens the store file `path` of the server or a session's worker, private (`privateStore`). Chord's `openStore` makes
- * the one kind of store there is, typed as its interface: its `settled` (the runner's fence for a worker's exit) is
- * `ChordStore`'s.
- */
-export async function openPrivateStore(path: string, context: Context): Promise<ChordStore> {
-	await privateStore(path);
-	return (await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context)) as ChordStore;
+	return openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context);
 }
 
 /** Writes `text` to `path` with mode 0600 in one step: a temporary file of the same directory, synced, renamed. */

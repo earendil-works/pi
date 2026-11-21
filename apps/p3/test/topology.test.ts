@@ -4,15 +4,14 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import { isChordError } from "@earendil-works/chord";
-import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import type { P3Principal } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT as context, type P3Principal, until } from "@earendil-works/p3/v1";
 import { ServerCommands } from "@earendil-works/p3/v1/server";
 import { SessionsStore } from "../plugins/sessions/contract.server.ts";
 import { SessionFacts, SessionStart, Sessions, SessionsList, SessionWorker } from "../plugins/sessions/contract.ts";
 import { SignIns } from "../plugins/sign-in/contract.ts";
 import { Probe } from "./plugins/probe/contract.ts";
 import { type Topology, topology } from "./topology.ts";
-import { eventually, until } from "./until.ts";
+import { eventually, within } from "./until.ts";
 
 const OWNER: P3Principal = { kind: "owner" };
 const PERSON: P3Principal = { kind: "person", id: "p1", name: "Ann" };
@@ -49,9 +48,9 @@ describe("reloads while in use", () => {
 		if (list.variant !== "owner" || worker.variant !== "owner") return;
 		await t.reload("@earendil-works/p3-sessions");
 		const second = await sessions.create({ title: "two" }, context);
-		await until(list.list, (value) => value.rows.some((row) => row.id === second), context);
+		await until(list.list, (value) => value.rows.some((row) => row.id === second), within("the second row", context));
 		await sessions.rename({ id, title: "renamed" }, context);
-		await until(worker.session, (row) => row?.title === "renamed", context);
+		await until(worker.session, (row) => row?.title === "renamed", within("the renamed row", context));
 		assert.deepEqual(t.errors, []);
 	});
 
@@ -66,7 +65,11 @@ describe("reloads while in use", () => {
 		await t.reload("@earendil-works/p3-sessions");
 		// A session made after the reload shows the new object's list: the new row on the first page, both pages kept.
 		const after = await sessions.create({ title: "after" }, context);
-		const shown = await until(list.list, (value) => value.rows[0]?.id === after, context);
+		const shown = await until(
+			list.list,
+			(value) => value.rows[0]?.id === after,
+			within("the new first row", context),
+		);
 		assert.deepEqual([shown.rows.length, shown.moreAfter], [101, true]);
 		await list.more(context);
 		assert.deepEqual([list.list.value.rows.length, list.list.value.moreAfter], [121, false]);
@@ -80,7 +83,7 @@ describe("reloads while in use", () => {
 		if (worker.variant !== "owner") return assert.fail(worker.variant);
 		await t.reload("@earendil-works/p3-sessions", id);
 		await sessions.rename({ id, title: "renamed" }, context);
-		await until(worker.session, (row) => row?.title === "renamed", context);
+		await until(worker.session, (row) => row?.title === "renamed", within("the renamed row", context));
 		assert.deepEqual(t.errors, []);
 	});
 

@@ -10,10 +10,7 @@ export type ToWorker =
 			readonly session: string;
 			/** The worker's private directory: its store lives in it. */
 			readonly dir: string;
-			/**
-			 * The session's lock (a socket path in a private directory, short enough for one: at most 104 bytes), which
-			 * the worker takes before it opens its store.
-			 */
+			/** The name of the session's lock (Chord's `processLock`): the worker takes it before it opens its store. */
 			readonly lock: string;
 			/** How long it idles before it stops itself. */
 			readonly idleMs: number;
@@ -24,8 +21,8 @@ export type ToWorker =
 
 /**
  * What a worker sends the server: `locked` once it holds its session's lock (a previous worker of the session exited);
- * `failed` names the plugins that did not load; `closed`: it stops itself (it was idle for its idle time): it closes its
- * host and store (whose close settles the queued commits) and exits now (a clean exit, no crash).
+ * `failed` names the plugins that did not load; `closed`: it stops itself (it was idle for its idle time) and exits
+ * now, 0 once its host and store closed (a clean exit).
  */
 export type FromWorker =
 	| { readonly kind: "locked" }

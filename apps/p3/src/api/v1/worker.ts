@@ -15,8 +15,8 @@ export type WorkerRuntime = {
 	/** How long the worker may idle before it stops itself (the runner's choice, from its start). */
 	readonly idleMs: number;
 	/**
-	 * Stops the worker: it tells the server it leaves (a clean exit), closes its host and store (the store's close settles
-	 * its queued commits), exits.
+	 * Stops the worker: it tells the server it leaves, closes its host, then its store (which settles the queued
+	 * commits), and exits (a clean exit once both closed).
 	 */
 	close(): void;
 };

@@ -1,40 +1,21 @@
-// Waiting in tests for an effect a test caused, without sleeps. `until(member, done, ctx)` resolves with the first
-// value of a watchable (a reference's state member, its `state`, a registry) for which `done` holds, the current one
-// included: for a change made elsewhere (another host's commit reaching this one, a first value); after a call on the
-// same reference the value is there already (a call's answer follows its state, design §3). `eventually(probe, done)`
-// polls what no watchable shows (a process's exit, a file). `collected(refs)` collects garbage until weakly held
-// values are gone (a cache's GC test). It imports nothing of p3, so a plugin's own tests use it too.
+// Waiting in tests for what no watchable shows, and deadlines for what one does. `within(what, ctx)` is a context that
+// aborts after a deadline, naming the wait: `until(member, done, within("the rename", ctx))` (`until` of `/v1`: after a
+// call on the same reference the value is there already, design §3). `eventually(probe, done)` polls what no
+// watchable shows (a process's exit, a file). `collected(refs)` collects garbage until weakly held values are gone (a
+// cache's GC test). It imports nothing of p3, so a built-in plugin's own tests use it too.
 
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
-import type { Context } from "@earendil-works/chord/context";
-import type { NativeWatchable } from "@earendil-works/chord/watch";
+import { type Context, withAbortSignal } from "@earendil-works/chord/context";
 
 /**
- * The first value of `source`, now or later, for which `done` holds; rejects after `ms` (2 s by default). A JSON
- * watchable is a native one too: `until` reads only each call's value.
+ * `context` with a deadline for a wait on it (`until` of `/v1`): after `ms` (2 s by default) it aborts with an error
+ * naming `what`, so a value that never comes fails the case at once, saying which.
  */
-export async function until<T>(
-	source: NativeWatchable<T>,
-	done: (value: T) => boolean,
-	context: Context,
-	ms = 2000,
-): Promise<T> {
-	const watch = await source.watch(context);
-	try {
-		if (done(watch.value)) return watch.value;
-		return await new Promise<T>((resolve, reject) => {
-			const timer = setTimeout(() => reject(new Error(`until: no matching value within ${ms} ms`)), ms);
-			watch.start(async (call) => {
-				if (call.kind === "value" && done(call.value)) {
-					clearTimeout(timer);
-					resolve(call.value);
-				}
-			});
-		});
-	} finally {
-		await watch.stop();
-	}
+export function within(what: string, context: Context, ms = 2000): Context {
+	const deadline = new AbortController();
+	setTimeout(() => deadline.abort(new Error(`${what}: not within ${ms} ms`)), ms).unref();
+	return withAbortSignal(deadline.signal, context);
 }
 
 /**

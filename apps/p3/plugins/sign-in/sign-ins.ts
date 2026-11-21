@@ -1,7 +1,9 @@
 // The sign-ins: `SignIns` (persisted in the server's store, expiring after 400 days unused), the authenticator (a
-// bearer token first, else the signed sign-in cookie), the wrap renewing a browser's cookie, and the hook that closes
-// the open links of a sign-in that ends (and every link `SignIns` tracked, once it ends).
+// bearer token first, else the signed sign-in cookie, which lives 400 days from its issue: the stopgap renews none),
+// and the hook that closes the open links of a sign-in that ends (and every link `SignIns` tracked, once it ends);
+// tokens are random, kept only as their SHA-256 hashes, compared in constant time (the owner link's too).
 
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
 	type Context,
 	defineState,
@@ -19,29 +21,29 @@ import {
 import {
 	Authenticators,
 	cookie,
-	Http,
 	type HttpRequest,
-	type HttpWrap,
 	LinkOpened,
 	type Provenance,
 	readCookie,
-	readSignedCookie,
 } from "@earendil-works/p3/v1/server";
 import { SignIns } from "./contract.ts";
-import { hashToken, matchesHash, newToken } from "./secrets.ts";
 
-/** How long a sign-in lives unused: 400 days, as its cookie. */
+/** How long a sign-in lives unused, and its cookie from its issue: 400 days. */
 const SIGN_IN_IDLE_MS = 400 * 24 * 60 * 60_000;
 
 /** How often a sign-in's `lastUsed` is written at most: once a minute. */
 const TOUCH_MS = 60_000;
 
-/** How old a sign-in cookie gets before a response renews it: a day. */
-const ROLL_MS = 24 * 60 * 60_000;
-
-/** The stored sign-ins: by id, each with its secret's hash and its principal. */
+/**
+ * The stored sign-ins: by id, each with its secret's hash and its principal; and the cookie's key, made once per Pi:
+ * its id names the cookie (a browser shares cookies between the ports of one host, so two Pis on a machine need two
+ * names), its secret signs it. The key starts empty and the first issue writes it: no cookie exists before, and a value
+ * only `initial` made is never stored (a random initial key would be a new one at every start: every browser signed
+ * out).
+ */
 const SignInsDocument = defineState("p3.sign-ins", {
 	schema: obj({
+		cookie: obj({ id: str(), secret: str() }),
 		signIns: map(
 			obj({
 				hash: str(),
@@ -54,23 +56,9 @@ const SignInsDocument = defineState("p3.sign-ins", {
 		),
 	}),
 	version: 1,
-	initial: () => ({ signIns: {} }),
+	initial: () => ({ cookie: { id: "", secret: "" }, signIns: {} }),
 	persist: true,
 	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 50,
-});
-
-/**
- * The cookie's key, made once per Pi: its id names the cookie (a browser shares cookies between the ports of one host,
- * so two Pis on a machine need two names), its secret signs it. It starts empty and `SignIns` writes it once: a value
- * only `initial` made is never stored, so a random initial key would be a new one at every start (every browser signed
- * out).
- */
-const CookieKey = defineState("p3.sign-in-cookie", {
-	schema: obj({ id: str(), secret: str() }),
-	version: 1,
-	initial: () => ({ id: "", secret: "" }),
-	persist: true,
-	checkpointWhen: () => true,
 });
 
 /** The sign-in cookie's name and secret. */
@@ -80,22 +68,11 @@ type Key = { readonly name: string; readonly secret: string };
 export function serveSignIns(host: FacetHost<P3Principal>): void {
 	host.serve(SignIns, (_params, self) => {
 		const document = self.state(SignInsDocument);
-		const stored = self.state(CookieKey);
-		/** The cookie's key, `undefined` until it is written: no cookie is read or made without one. */
-		const key = (): Key | undefined =>
-			stored.value.id === "" ? undefined : { name: `p3-${stored.value.id}`, secret: stored.value.secret };
-		// Resolved once the key is written (a failed write is retried: the routine restarts after a backoff).
-		const keyed = Promise.withResolvers<Key>();
-		self.onLive(async (ctx) => {
-			if (stored.value.id === "") {
-				await stored.change((draft) => {
-					draft.id = newToken(8);
-					draft.secret = newToken(32);
-				}, ctx);
-			}
-			// Written now, or found written.
-			keyed.resolve(key()!);
-		});
+		/** The cookie's key, `undefined` until the first issue wrote it: no cookie is read before. */
+		const key = (): Key | undefined => {
+			const { id, secret } = document.value.cookie;
+			return id === "" ? undefined : { name: `p3-${id}`, secret };
+		};
 		const links = new SignInLinks((id) => {
 			const signIns = document.value.signIns;
 			return Object.hasOwn(signIns, id) && Date.now() - signIns[id]!.lastUsed <= SIGN_IN_IDLE_MS;
@@ -117,11 +94,10 @@ export function serveSignIns(host: FacetHost<P3Principal>): void {
 		const authenticate = (token: string, context: Context) => authenticated(document, token, end, context);
 		self.contribute(Authenticators, (request, context) => {
 			const token = requestToken(request, key());
-			const principal = token === undefined ? undefined : authenticate(token, context);
-			if (principal !== undefined) links.signedIn(request, signInOf(token!)!);
-			return principal;
+			const signIn = token === undefined ? undefined : authenticate(token, context);
+			if (signIn !== undefined) links.signedIn(request, signIn.id);
+			return signIn?.principal;
 		});
-		self.contribute(Http, { wraps: [rollingCookie(key, authenticate)] });
 		self.contribute(LinkOpened, (request, close) => links.opened(request, close));
 		return {
 			list: self.derive([document], ([value]) =>
@@ -132,15 +108,22 @@ export function serveSignIns(host: FacetHost<P3Principal>): void {
 				const secret = newToken(32);
 				const now = Date.now();
 				await document.change((draft) => {
+					if (draft.cookie.id === "") draft.cookie = { id: newToken(8), secret: newToken(32) };
 					draft.signIns[id] = { hash: hashToken(secret), label, kind, principal, created: now, lastUsed: now };
 				}, ctx);
 				const token = `${id}.${secret}`;
-				const cookieKey = await keyed.promise;
+				// Written by the change above, or before.
+				const { name, secret: signing } = key()!;
 				// Only whether the browser is remote matters to the cookie (`Secure`).
 				const provenance: Provenance = secure === true ? { kind: "remote", host: "" } : { kind: "local" };
-				return { id, token, cookie: signInCookie(token, { provenance }, cookieKey) };
+				const signed = cookie(name, token, {
+					secret: signing,
+					request: { provenance },
+					maxAge: SIGN_IN_IDLE_MS / 1000,
+				});
+				return { id, token, cookie: signed };
 			},
-			verify: async (token, ctx) => authenticate(token, ctx) ?? null,
+			verify: async (token, ctx) => authenticate(token, ctx)?.principal ?? null,
 			revoke: end,
 		};
 	});
@@ -193,15 +176,15 @@ class SignInLinks {
 }
 
 /**
- * The principal `token` authenticates as, or `undefined`. It touches the sign-in it names (at most once a minute), or
- * ends it when it was unused too long; neither is awaited.
+ * The sign-in `token` authenticates with (its id and principal), or `undefined`. It touches that sign-in (at most once
+ * a minute), or ends it when it was unused too long; neither is awaited.
  */
 function authenticated(
 	document: HandleOf<typeof SignInsDocument>,
 	token: string,
 	end: (id: string, context: Context) => Promise<null>,
 	context: Context,
-): P3Principal | undefined {
+): { readonly id: string; readonly principal: P3Principal } | undefined {
 	const id = signInOf(token);
 	// A trust boundary: `id` is the client's (`Object.hasOwn`: no inherited member is a sign-in).
 	const signIns = document.value.signIns;
@@ -219,7 +202,7 @@ function authenticated(
 		}, context);
 		void touch.catch((error: unknown) => reportError(`p3 sign-in: ${id}: its last use`, error, context));
 	}
-	return signIn.principal;
+	return { id, principal: signIn.principal };
 }
 
 /** The id of the sign-in a token `<id>.<secret>` names, or `undefined` for a text that is no token. */
@@ -235,33 +218,19 @@ function requestToken(request: HttpRequest, key: Key | undefined): string | unde
 	return bearer?.[1] ?? (key === undefined ? undefined : readCookie(request, key.name, key.secret));
 }
 
-/** The sign-in cookie carrying `token` for a browser of `request`'s provenance: it lives 400 days unused. */
-function signInCookie(token: string, request: Pick<HttpRequest, "provenance">, key: Key): string {
-	return cookie(key.name, token, { secret: key.secret, request, maxAge: SIGN_IN_IDLE_MS / 1000 });
+/** A fresh random token of `bytes` bytes, base64url. */
+export function newToken(bytes = 32): string {
+	return randomBytes(bytes).toString("base64url");
 }
 
-/**
- * The wrap renewing the sign-in cookie a request signed in with once it is older than a day, so a browser used within
- * every 400 days stays signed in. Not when the route sets a cookie itself, nor for a token that no longer authenticates.
- */
-function rollingCookie(
-	key: () => Key | undefined,
-	authenticate: (token: string, context: Context) => P3Principal | undefined,
-): HttpWrap {
-	return {
-		name: "p3.rolling-cookie",
-		phase: "headers",
-		scope: "all",
-		wrap: async (request, next, ctx) => {
-			const response = await next(request);
-			const sets = Object.keys(response.headers ?? {}).some((name) => name.toLowerCase() === "set-cookie");
-			const current = key();
-			if (ctx.principal === undefined || sets || current === undefined) return response;
-			const signed = readSignedCookie(request, current.name, current.secret);
-			if (signed?.expires === undefined || signed.expires - Date.now() > SIGN_IN_IDLE_MS - ROLL_MS) return response;
-			if (authenticate(signed.value, ctx) === undefined) return response;
-			const renewed = signInCookie(signed.value, request, current);
-			return { ...response, headers: { ...response.headers, "Set-Cookie": renewed } };
-		},
-	};
+/** The hash a token is kept as (SHA-256, hex): what leaks from a store is no credential. */
+export function hashToken(token: string): string {
+	return createHash("sha256").update(token).digest("hex");
+}
+
+/** Whether `token` hashes to `hash`, compared in constant time. */
+export function matchesHash(token: string, hash: string): boolean {
+	const given = Buffer.from(hashToken(token), "hex");
+	const kept = Buffer.from(hash, "hex");
+	return given.length === kept.length && timingSafeEqual(given, kept);
 }

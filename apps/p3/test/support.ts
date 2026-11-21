@@ -1,131 +1,15 @@
-// The end-to-end harness: p3's real server in this process on a temporary data directory, with its built-in plugins,
-// the tests' own root (`test/plugins/`: the probe, used in place) and the data directory's user root (`plugins`, where
-// a test may write plugins and apply them), its session workers as real processes; clients signed in as the owner over
-// WebSocket, as a browser's page is: with the cookie an owner link gives (`ownerCookie`, `ownerClient`). And what the
-// command's and the release's tests and the bench share: a foreground `p3 server` (`launch`), a process's children
-// (`childrenOf`), and a single-file worker plugin serving one value (`constantPlugin`).
+// What the tests of the whole share besides `/v1/testing`'s `testServer`: the probe's directory (a plugin under test
+// that drives a session's worker), a single-file worker plugin serving one value (`constantPlugin`), and for launched
+// processes (the command's and the release's tests, the bench) a foreground `p3 server` (`launch`), a process's
+// children (`childrenOf`) and whether a process lives (`alive`).
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { createHost, type Host, webSocketLink } from "@earendil-works/chord";
-import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import { type P3Principal, remote, Session, str } from "@earendil-works/p3/v1";
-import { WorkerRunners, type WorkerState } from "@earendil-works/p3/v1/server";
-import { PLUGINS, WORKER } from "../src/install.ts";
-import { ASK_MS, askServer } from "../src/local-socket.ts";
-import { type RunningServer, type ServerError, startServer } from "../src/server.ts";
+import { remote, Session, str } from "@earendil-works/p3/v1";
 
-/** A test's server and what it needs around it. */
-export type TestServer = {
-	readonly server: RunningServer;
-	readonly dataDir: string;
-	/** The data directory's user root (`<data directory>/plugins`), where a test writes plugins of its own. */
-	readonly plugins: string;
-	/** What the server reported in the background. */
-	readonly errors: ServerError[];
-	/** A new client signed in as the owner (closed with the server). */
-	client(): Promise<Host<P3Principal>>;
-	/** Each session's worker as the runner sees it. */
-	workers(): Promise<Readonly<Record<string, WorkerState>>>;
-	/** Closes the server and starts a new one on the same data directory. */
-	restart(): Promise<TestServer>;
-	/** Closes the clients and the server; removes the data directory unless `keep`. */
-	close(keep?: boolean): Promise<void>;
-};
-
-/** How long a worker idles before it stops itself in the tests. */
-export const IDLE_MS = 300;
-
-/**
- * What a test's server starts with: `dataDir` to start again on one, `builtIn` for a copy of the built-in plugins
- * that the test edits and applies (the checkout's own by default).
- */
-export type TestServerOptions = { readonly dataDir?: string; readonly builtIn?: string };
-
-/** Starts a server on a new data directory (or again on `options.dataDir`). */
-export async function testServer(options: TestServerOptions = {}): Promise<TestServer> {
-	const dir = options.dataDir ?? (await mkdtemp(join(tmpdir(), "p3-test-")));
-	const plugins = join(dir, "plugins");
-	const errors: ServerError[] = [];
-	const server = await startServer(
-		{
-			dataDir: dir,
-			roots: [
-				{ path: options.builtIn ?? PLUGINS, required: true },
-				{ path: fileURLToPath(new URL("./plugins/", import.meta.url)), required: true },
-				{ path: plugins, required: false },
-			],
-			port: 0,
-			version: "test",
-			worker: WORKER,
-			workerIdleMs: IDLE_MS,
-			onStop: () => {},
-			onError: (error) => errors.push(error),
-		},
-		context,
-	);
-	const clients: Host<P3Principal>[] = [];
-	const close = async (keep = false): Promise<void> => {
-		for (const client of clients) await client.close(context);
-		await server.close(context);
-		if (!keep) await rm(dir, { recursive: true, force: true });
-	};
-	return {
-		server,
-		dataDir: dir,
-		plugins,
-		errors,
-		client: async () => {
-			const client = await ownerClient(dir, server.port);
-			clients.push(client);
-			return client;
-		},
-		workers: async () => (await server.runtime.host.registry(WorkerRunners, context)).value?.state() ?? {},
-		restart: async () => {
-			await close(true);
-			return testServer({ ...options, dataDir: dir });
-		},
-		close,
-	};
-}
-
-/**
- * A client host connected over WebSocket to the server of `dataDir` on `port`, signed in as the owner with a fresh
- * owner link's cookie, loaded with no plugins; a call waits `readyTimeout` ms at most for its object.
- */
-export async function ownerClient(dataDir: string, port: number, readyTimeout = 10_000): Promise<Host<P3Principal>> {
-	const cookie = await ownerCookie(dataDir, port);
-	// Node's WebSocket (undici) takes an init object with headers; the DOM type knows only protocols.
-	const init = { headers: { cookie } } as unknown as string[];
-	const socket = new WebSocket(`ws://127.0.0.1:${port}/chord`, init);
-	const client = createHost<P3Principal>({ readyTimeout, onError: (error) => console.error("client:", error) });
-	client.connect(webSocketLink(socket), { principal: { kind: "server" } }, context);
-	await client.load([], context);
-	return client;
-}
-
-/**
- * A fresh owner's sign-in cookie (`name=value`) from the server of `dataDir` on `port`, as `p3` and a browser get it:
- * the server's `owner-link` over its socket, then the link's token posted as the owner link's page posts it.
- */
-export async function ownerCookie(dataDir: string, port: number): Promise<string> {
-	const reply = await askServer(dataDir, { kind: "command", name: "owner-link" }, ASK_MS);
-	if (reply.kind !== "answered" || reply.answer.kind !== "answer") {
-		throw new Error(`ownerCookie: no owner link: ${JSON.stringify(reply)}`);
-	}
-	const token = new URL(String(reply.answer.value)).hash.slice(1);
-	const signedIn = await fetch(`http://127.0.0.1:${port}/_p3/owner`, {
-		method: "POST",
-		headers: { "content-type": "application/json" },
-		body: JSON.stringify({ token }),
-	});
-	const cookie = signedIn.headers.get("set-cookie")?.split(";")[0];
-	if (!signedIn.ok || cookie === undefined) throw new Error(`ownerCookie: the sign-in failed: ${signedIn.status}`);
-	return cookie;
-}
+/** The probe (`test/plugins/probe/`): a test server's plugin under test (`testServer({ plugins: [PROBE] })`). */
+export const PROBE = fileURLToPath(new URL("./plugins/probe/", import.meta.url));
 
 /** Whether process `pid` lives. */
 export function alive(pid: number): boolean {

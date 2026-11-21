@@ -30,27 +30,33 @@ the provider SDKs are bundled and load per provider on first use; the worker's V
 
 | What | slayer, release | the phone, from source |
 | --- | --- | --- |
-| server launch to ready (its owner link printed), warm | 114 ms (cold 132 ms; old base, to listening: 105 ms) | 1.6 to 1.9 s |
-| an apply, nothing changed (the socket command `apply`) | 8 ms | |
-| worker start to its first object, the first after a start (builds the worker plugins) | 96 ms | |
-| worker start to its first object, warm | 71 ms (old base, earlier bench: 68 ms) | about 1 s |
+| server launch to ready (its owner link printed), warm | 117 ms (cold 139 ms; old base, to listening: 105 ms) | 1.6 to 1.9 s |
+| an apply, nothing changed, right after a start, no worker (it builds the worker plugins) | 8.0 ms | |
+| an apply, nothing changed, 21 workers running (builds nothing: the socket's round trip) | 0.3 ms | |
+| worker start to its first object, the first after a start, before any apply (builds the worker plugins) | 95 ms | |
+| worker start to its first object, warm | 70 ms (old base, earlier bench: 68 ms) | about 1 s |
 | idle worker, settled (sessions and runner only, no harness) | 14.3 MiB (old base, earlier bench: 14.9) | 19.6 MiB |
-| server, settled | 34.9 MiB (old base, earlier bench: 40.8) | 44 to 46 MiB |
+| server, settled | 35.1 MiB (old base, earlier bench: 40.8) | 44 to 46 MiB |
 | plain `p3` to its owner link | about 250 ms | 3.4 to 3.9 s |
 | the owner's list, open / `more`, at 100,000 sessions | 0.6 / 0.45 ms | 3.4 to 5.3 / 2.6 to 4.5 ms |
 
-The skeleton's numbers are `bench/skeleton.ts --release` (2026-11-20, review round 2 fixed, Node 26.11.1; medians of
-20 warm runs, the cold first apart; slayer under load 9 falling to 6; a second run right after gave the same within
-3 ms and 0.2 MiB). The old base's numbers ran the bench's earlier version against a release of `30a3e0b1f`; it timed
-the launch to listening, fewer runs, and an apply it took for the worker plugins' build (round 1's "12 ms build" was
-that apply: with nothing changed it builds nothing; the build is in the first worker start). The idle worker's USS
-counts session workers only (esbuild's service, also the server's child, no longer). The memory test's idle worker
-(17.9 MiB above) carries the harness, the coding tools and a subagent tool: never compare the two.
+The skeleton's numbers are `bench/skeleton.ts --release` (2026-11-21, review round 3 fixed, Node 26.11.1; medians of
+20 warm runs, the cold first apart; slayer under load 3 falling to 2; a second run right after gave the same within
+6 ms and 0.2 MiB). The old base's numbers ran the bench's earlier version against a release of `30a3e0b1f`; it timed
+the launch to listening and fewer runs. The worker plugins are built by whichever comes first after a start, the first
+worker or the first apply (Chord's rollout makes the whole set of every kind it rolls out): round 2's table timed the
+apply first, so its "8 ms apply, nothing changed" was that build and its first worker built nothing. The bench now
+times the first worker before any apply, the build's apply on fresh starts, and the no-change apply with the workers
+running. The first worker's 25 ms over a warm one is mostly not the build (about 7 ms for two small facets, the
+apply's number): round 2's first worker, which built nothing, cost as much more. The idle worker's USS counts session workers only (esbuild's service, also the server's
+child, no longer). The memory test's idle worker (17.9 MiB above) carries the harness, the coding tools and a subagent
+tool: never compare the two.
 
 - **Every start builds every plugin again** (no build cache): about 30 ms for one plugin today, one esbuild call per
   facet. The server facets are built before the server listens; the worker facets when they are first needed (the
-  first worker's start; an apply builds only the plugins that changed), so the first worker after a start pays
-  their build: the bench's first worker start includes it, the warm ones do not. A package with large facets says
+  first worker's start or the first apply, whichever comes first; a later apply builds only the plugins that
+  changed), so the first of them after a start pays their build: the bench's first worker start and its apply right
+  after a start include it, the warm starts and the apply with workers running do not. A package with large facets says
   what it adds to the start, on the phone too. The old base's `NODE_DEBUG=p3` (what a start spends building) does
   not exist in the skeleton: the new base never had it.
 - **Many workers at once:** the waker starts the worker of every `working` session together after a restart, and
@@ -100,4 +106,5 @@ counts session workers only (esbuild's service, also the server's child, no long
 | WebAssembly compiled a second time, optimized | 8 to 10 MiB per worker | `--liftoff-only` |
 | a memory reading taken right after work | readings too high | settled readings |
 | a list cost measured once after a start | 2.3 ms reported, 0.7 ms real | medians, cold run apart |
+| a build credited to the wrong phase (the worker plugins' build is in whichever of the first worker and the first apply comes first) | an 8 ms "no-change apply" that was the build; a first worker that built nothing | time the phases in the order a Pi meets them, the first of each apart, and count the builds when unsure |
 | an ordered `inArray`, a count behind a hot column, one index for two lists | every row read, every page sorted | see `chord-practices.md`, Rules |

@@ -1,17 +1,13 @@
 // The skeleton's numbers (ERNDL-954), with p3 launched as its owner starts it, each phase timed at the boundary its
-// label names:
-// - the server's launch to ready: `p3 server` spawned until it printed its port and owner link (after it listens, kept
-//   its port and asked its own socket for the link); the first launch cold (the release: an empty Node compile cache),
-//   then warm;
-// - an apply with nothing changed: the owner's `apply` over the data directory's socket until its answer (the
-//   command's round trip and the rollout's steps; no worker runs, so the worker plugins are not built), the owner
-//   signed in before the timer; an answer that is not a rollout to every host ends the bench;
-// - a session worker's start: a hold of its `SessionWorker` until the object is there (the route's admission, the
-//   fork, the worker's load, its handshake); the first, which also builds the worker plugins (their first need), then
-//   warm;
-// - memory as `performance.md` reads it: USS (what only that process holds) of the server and of idle workers (the
-//   server's children that run the worker entry: esbuild's service is a child too), each read settled (until it moves
-//   less than 0.25 MiB over 4 s, at most 40 s).
+// label names, in the order a Pi meets them:
+// - the server's launch to ready: `p3 server` spawned until it printed its port and owner link; the first launch cold
+//   (the release: an empty Node compile cache), then warm;
+// - a session worker's start: a hold of its `SessionWorker` until the object is there (admission, fork, load,
+//   handshake); the first after the start, before any apply, also builds the worker plugins (their first need);
+// - an apply with nothing changed (the owner's `apply` over the data directory's socket until its answer; one that is
+//   not a rollout to every host ends the bench): right after a launch, before any worker, where it builds the worker
+//   plugins (the rollout's set of every kind), and with the workers running, where it builds nothing;
+// - memory: USS of the server and of idle workers, each read settled (`performance.md`).
 // Times are medians of 20 runs with min and max, the first (cold) run apart.
 // Run from apps/p3, with Node 26: node --conditions=source --disable-warning=ExperimentalWarning bench/skeleton.ts
 // [--release <dir>]: with it, the release `npm run release:p3:local -- --out <dir>` installed in `<dir>/install` runs.
@@ -22,10 +18,11 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
+import { ownerClient } from "@earendil-works/p3/v1/testing";
 import { Sessions, SessionWorker } from "../plugins/sessions/contract.ts";
 import { COMMAND } from "../src/install.ts";
 import { askServer, type Reply, type ServerAnswer } from "../src/local-socket.ts";
-import { childrenOf, launch, ownerClient } from "../test/support.ts";
+import { childrenOf, launch } from "../test/support.ts";
 
 /** Node's arguments that run the `p3` command: the release installed in `--release`, else this checkout's source. */
 const { release } = parseArgs({ options: { release: { type: "string" } } }).values;
@@ -47,24 +44,22 @@ const env =
 		: { ...process.env, NODE_COMPILE_CACHE: join(root, "compile-cache") };
 try {
 	const launches: number[] = [];
+	const firstApplies: number[] = [];
 	for (let i = 0; i <= RUNS; i++) {
 		const started = performance.now();
 		const server = await launch(P3, join(root, `launch-${i % 2}`), env);
 		launches.push(performance.now() - started);
+		firstApplies.push(await apply(server.dataDir));
 		await server.stop();
 	}
 	line("server: launch to ready, cold (first)", `${launches[0]!.toFixed(0)} ms`);
 	line("server: launch to ready, warm", stats(launches.slice(1)));
+	line("apply after the start, no worker (builds)", stats(firstApplies.slice(1), 1));
 
 	const server = await launch(P3, join(root, "pi"), env);
 	try {
-		const client = await ownerClient(server.dataDir, server.port, 30_000);
+		const client = await ownerClient(server.dataDir, server.port, context, 30_000);
 		const sessions = await client.get(Sessions, {}, context);
-		const applying = performance.now();
-		const applied = await askServer(server.dataDir, { kind: "command", name: "apply" }, 60_000);
-		const apply = performance.now() - applying;
-		rolledOut(applied);
-		line("an apply, nothing changed", `${apply.toFixed(0)} ms`);
 		const starts: number[] = [];
 		const held: { release(): void }[] = [];
 		for (let i = 0; i <= RUNS; i++) {
@@ -75,6 +70,9 @@ try {
 		}
 		line("worker: start to its first object, the first (builds)", `${starts[0]!.toFixed(0)} ms`);
 		line("worker: start to its first object, warm", stats(starts.slice(1)));
+		const applies: number[] = [];
+		for (let i = 0; i < RUNS; i++) applies.push(await apply(server.dataDir));
+		line(`apply, nothing changed, ${held.length} workers running`, stats(applies, 1));
 		line("server, settled", `USS ${mib(await settled(server.pid))}`);
 		const workers = (await childrenOf(server.pid)).filter(({ args }) =>
 			args.some((arg) => /[/\\]worker\.(js|ts)$/.test(arg)),
@@ -89,6 +87,15 @@ try {
 	}
 } finally {
 	await rm(root, { recursive: true, force: true });
+}
+
+/** The time of an apply over `dataDir`'s socket, as `p3 apply` asks it; throws unless it rolled out to every host. */
+async function apply(dataDir: string): Promise<number> {
+	const started = performance.now();
+	const applied = await askServer(dataDir, { kind: "command", name: "apply" }, 60_000);
+	const ms = performance.now() - started;
+	rolledOut(applied);
+	return ms;
 }
 
 /** What the control plugin's `apply` answers of one host (`plugins/control/server.ts`). */
@@ -138,8 +145,9 @@ function median(values: readonly number[]): number {
 	return sorted[Math.floor(sorted.length / 2)]!;
 }
 
-function stats(values: readonly number[]): string {
-	return `median ${median(values).toFixed(0)} ms (min ${Math.min(...values).toFixed(0)}, max ${Math.max(...values).toFixed(0)}, n ${values.length})`;
+function stats(values: readonly number[], digits = 0): string {
+	const ms = (value: number) => value.toFixed(digits);
+	return `median ${ms(median(values))} ms (min ${ms(Math.min(...values))}, max ${ms(Math.max(...values))}, n ${values.length})`;
 }
 
 function mib(kib: number): string {

@@ -1,7 +1,7 @@
 // The owner's sign-in (`owner.ts`): the owner link, made fresh by the command `owner-link` (as `p3` asks it over the
 // data directory's socket); single use, 10 minutes, the previous one dropped; its page reads the fragment; its post
 // refuses anything but the current token, malformed bodies included, and signs a browser in as the owner. The plugin
-// tier for what needs no listener, the real server (`test/support.ts`) for the rest; the probe's route
+// tier for what needs no listener, the real server (`testServer`) for the rest; the probe's route
 // (`GET /_probe/principal`) says what a cookie signs in as.
 
 import assert from "node:assert/strict";
@@ -9,36 +9,38 @@ import { afterEach, describe, it, mock } from "node:test";
 import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT as context, type P3Principal } from "@earendil-works/p3/v1";
 import { ServerCommands } from "@earendil-works/p3/v1/server";
-import { testPlugin } from "@earendil-works/p3/v1/testing";
-import { ownerCookie, type TestServer, testServer } from "../../../test/support.ts";
+import { type TestServer, testPlugin, testServer } from "@earendil-works/p3/v1/testing";
 import { SignIns } from "../contract.ts";
 
 const OWNER: P3Principal = { kind: "owner" };
+
+/** The tests' probe plugin, whose route says what a request signed in as. */
+const PROBE = fileURLToPath(new URL("../../../test/plugins/probe/", import.meta.url));
 
 /** The servers a case started, closed after it. */
 const servers: TestServer[] = [];
 
 afterEach(async () => {
 	mock.timers.reset();
-	for (const server of servers.splice(0)) await server.close();
+	for (const server of servers.splice(0)) await server.close(context);
 });
 
-/** A test server, closed after the case. */
+/** A test server with the probe, closed after the case. */
 async function started(): Promise<TestServer> {
-	const t = await testServer();
+	const t = await testServer({ plugins: [PROBE] }, context);
 	servers.push(t);
 	return t;
 }
 
 /** A fresh owner link from `t`'s command `owner-link`, as `p3` asks it over the data directory's socket. */
 async function commandLink(t: TestServer): Promise<string> {
-	const commands = (await t.server.runtime.host.registry(ServerCommands, context)).value;
+	const commands = (await t.host.registry(ServerCommands, context)).value;
 	return (await commands.get("owner-link")!.run(context)) as string;
 }
 
 /** Posts `body` to the owner link's route as its page does. */
 function post(t: TestServer, body: string): Promise<Response> {
-	return fetch(`http://127.0.0.1:${t.server.port}/_p3/owner`, {
+	return fetch(`http://127.0.0.1:${t.port}/_p3/owner`, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		body,
@@ -52,7 +54,7 @@ function postToken(t: TestServer, link: string): Promise<Response> {
 
 /** The principal a browser with `cookie` signs in as on `t`, or `undefined`. */
 async function principalOf(t: TestServer, cookie: string): Promise<P3Principal | undefined> {
-	const answer = await fetch(`http://127.0.0.1:${t.server.port}/_probe/principal`, { headers: { cookie } });
+	const answer = await fetch(`http://127.0.0.1:${t.port}/_probe/principal`, { headers: { cookie } });
 	return answer.status === 401 ? undefined : ((await answer.json()) as P3Principal);
 }
 
@@ -60,7 +62,7 @@ describe("the owner link", () => {
 	it("is made by the command at the server's origin; its page reads the fragment; it signs a browser in once", async () => {
 		const t = await started();
 		const link = new URL(await commandLink(t));
-		assert.deepEqual([link.origin, link.pathname], [`http://127.0.0.1:${t.server.port}`, "/_p3/owner"]);
+		assert.deepEqual([link.origin, link.pathname], [`http://127.0.0.1:${t.port}`, "/_p3/owner"]);
 		assert.match(link.hash, /^#[A-Za-z0-9_-]{43}$/);
 		const page = await fetch(`${link.origin}${link.pathname}`);
 		const html = await page.text();
@@ -72,7 +74,7 @@ describe("the owner link", () => {
 		// Asked after the check above: a fresh link would replace the used one anyway.
 		const cookie = signed.headers.get("set-cookie")!.split(";")[0]!;
 		assert.deepEqual(await principalOf(t, cookie), OWNER, "the browser is the owner's");
-		const browsers = await t.server.runtime.host.root(
+		const browsers = await t.host.root(
 			async (ctx) => (await ctx.get(SignIns, {})).list.value.filter(({ kind }) => kind === "browser"),
 			context,
 		);
@@ -118,7 +120,7 @@ describe("the owner link", () => {
 
 	it("signs `p3`'s browser in as the owner over the data directory's socket", async () => {
 		const t = await started();
-		assert.deepEqual(await principalOf(t, await ownerCookie(t.dataDir, t.server.port)), OWNER);
+		assert.deepEqual(await principalOf(t, await t.cookie(context)), OWNER);
 	});
 
 	it("is refused by the command before the server listens", async () => {
