@@ -39,6 +39,7 @@ import {
 	TEAM_TOOL,
 	type ToolChoice,
 } from "./contract.worker.ts";
+import { listModels } from "./model-list.ts";
 
 const SUBAGENT_EXTENSION = "subagent-tools";
 
@@ -396,7 +397,8 @@ export function createSubagentExtension(
 			"- archive (name): stop it and hide it from the user's sidebar and from status; restore (name) or send brings it back.",
 			"- answer (name): return its latest completed answer, e.g. when a report did not reach you or you need it again.",
 			"- status (optional name): list subagents and whether they are working; archived ones only by name.",
-			"- models: list models that have credentials configured.",
+			"- models (optional model: a provider or parts of a model id, e.g. 'anthropic' or 'sonnet 4'): list models that have",
+			"  credentials configured, or only those matching model.",
 			"Answers are reported back to you as messages when they arrive; do not wait or poll for them.",
 			'Subagents can also message you while they work: a <sender kind="subagent"> message marked [asks; …] needs your',
 			"answer (send to that subagent); a note needs none.",
@@ -443,8 +445,7 @@ export function createSubagentExtension(
 
 			if (action === "models") {
 				const available = await models.getAvailable(undefined, { signal: AbortSignal.timeout(10_000) });
-				const lines = available.slice(0, 200).map((model) => `${model.provider}/${model.id} (${model.name})`);
-				return reply(lines.length ? lines.join("\n") : "No models with configured credentials.");
+				return reply(listModels(available, args.model));
 			}
 			if (action === "status") {
 				const all = Object.entries(registry.agents);
