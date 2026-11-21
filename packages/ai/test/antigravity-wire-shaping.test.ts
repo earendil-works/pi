@@ -199,6 +199,33 @@ describe("antigravity wire shaping (snoop capture 2026-11-18)", () => {
 		expect((steady[4].parts[0] as GeminiTextPart).text).not.toContain("<USER_SETTINGS_CHANGE>");
 	});
 
+	it("anchors historical user turns with missing timestamps to surrounding assistant turns instead of the wall clock", () => {
+		vi.useFakeTimers();
+		try {
+			const timelessUser = { role: "user" as const, content: "legacy turn", timestamp: Number.NaN };
+			const reply = { ...assistant(model.id), timestamp: 50_000 };
+			const nextUser = { role: "user" as const, content: "follow up", timestamp: 60_000 };
+
+			vi.setSystemTime(100_000);
+			const first = convertMessages(
+				model,
+				normalizeContext({ messages: [timelessUser, reply, nextUser] }),
+				"gemini-3.8-flash-medium",
+			);
+
+			vi.setSystemTime(999_000);
+			const second = convertMessages(
+				model,
+				normalizeContext({ messages: [timelessUser, reply, nextUser] }),
+				"gemini-3.8-flash-medium",
+			);
+
+			expect(second).toStrictEqual(first);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("wraps every user turn and keeps tool-result turns bare", () => {
 		const contents = convertMessages(
 			model,

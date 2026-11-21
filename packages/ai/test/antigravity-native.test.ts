@@ -64,6 +64,7 @@ describe("native Antigravity", () => {
 	it.each([
 		["gemini-3.8-flash", undefined],
 		["gemini-3.8-flash", "YWJjZA=="],
+		["gemini-4-carbon", "YWJjZA=="],
 		["gemini-3.8-flash", "invalid"],
 		["claude-opus-4-6", "YWJjZA=="],
 	] as const)("preserves structured tool history from %s with signature %s", (sourceModel, signature) => {
@@ -113,7 +114,7 @@ describe("native Antigravity", () => {
 					{
 						functionCall: { name: "read", args: { path: "a.txt" }, id: "call_1" },
 						thoughtSignature:
-							sourceModel === model.id && signature === "YWJjZA=="
+							sourceModel.startsWith("gemini-") && signature === "YWJjZA=="
 								? signature
 								: SKIP_THOUGHT_SIGNATURE_VALIDATOR,
 					},
@@ -762,35 +763,37 @@ describe("antigravity convertMessages — unsigned tool calls on the bridge", ()
 			.filter((p): p is Extract<typeof p, { functionCall: unknown }> => "functionCall" in p);
 
 	it.each(["gemini-3.8-flash", "gemini-4-argon", "gemini-4-carbon", "gemini-4-hydrogen", "gemini-pro-agent"])(
-		"adds the validator bypass to every unsigned call for %s",
+		"adds the validator bypass only to the first call of an unsigned step for %s",
 		(id) => {
 			const target = { ...model, id };
 			const calls = functionCalls(convertMessages(target, history(target, "claude-sonnet-5-5"), id));
 			expect(calls.map((p) => p.functionCall.id)).toEqual(["call_1", "call_2"]);
-			expect(calls.map((p) => p.thoughtSignature)).toEqual([
-				SKIP_THOUGHT_SIGNATURE_VALIDATOR,
-				SKIP_THOUGHT_SIGNATURE_VALIDATOR,
-			]);
+			expect(calls.map((p) => p.thoughtSignature)).toEqual([SKIP_THOUGHT_SIGNATURE_VALIDATOR, undefined]);
 			expect(JSON.stringify(convertMessages(target, history(target, "claude-sonnet-5-5"), id))).not.toContain(
 				"Historical context",
 			);
 		},
 	);
 
-	it("keeps a valid same-model signature and bypasses only the unsigned sibling", () => {
+	it("keeps a valid Gemini signature across same-provider Gemini switches and leaves parallel siblings bare", () => {
 		const validSig = "AAAAAAAAAAAAAAAAAAAAAA==";
-		const calls = functionCalls(convertMessages(model, history(model, model.id, validSig), "gemini-3.8-flash-low"));
-		expect(calls.map((p) => p.thoughtSignature)).toEqual([validSig, SKIP_THOUGHT_SIGNATURE_VALIDATOR]);
+		const sameModelCalls = functionCalls(
+			convertMessages(model, history(model, model.id, validSig), "gemini-3.8-flash-low"),
+		);
+		expect(sameModelCalls.map((p) => p.thoughtSignature)).toEqual([validSig, undefined]);
+
+		const hydrogen = { ...model, id: "gemini-4-hydrogen" };
+		const crossGeminiCalls = functionCalls(
+			convertMessages(hydrogen, history(hydrogen, "gemini-4-carbon", validSig), "gemini-4-hydrogen-high"),
+		);
+		expect(crossGeminiCalls.map((p) => p.thoughtSignature)).toEqual([validSig, undefined]);
 	});
 
-	it("treats a same-model call whose signature was lost like a foreign one", () => {
+	it("treats a same-model call whose signature was lost like a foreign one on the first call only", () => {
 		const calls = functionCalls(
 			convertMessages(model, history(model, model.id, "not base64!"), "gemini-3.8-flash-low"),
 		);
-		expect(calls.map((p) => p.thoughtSignature)).toEqual([
-			SKIP_THOUGHT_SIGNATURE_VALIDATOR,
-			SKIP_THOUGHT_SIGNATURE_VALIDATOR,
-		]);
+		expect(calls.map((p) => p.thoughtSignature)).toEqual([SKIP_THOUGHT_SIGNATURE_VALIDATOR, undefined]);
 	});
 
 	it.each(["claude-sonnet-5-5", "gpt-oss-120b"])("never adds a signature for the %s runtime", (id) => {

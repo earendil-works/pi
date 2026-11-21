@@ -314,9 +314,10 @@ export function convertMessages(model: Model<Api>, context: Context, runtimeMode
 			const text = texts.join("\n\n").trim();
 			const resolvedRuntimeId = (entry: AssistantMessage | undefined): string | undefined =>
 				entry ? (entry.responseModel ?? (entry.model === model.id ? runtimeModel : entry.model)) : undefined;
-			const prevRuntime = resolvedRuntimeId(
-				messages.slice(0, index).findLast((entry): entry is AssistantMessage => entry.role === "assistant"),
-			);
+			const prevAssistant = messages
+				.slice(0, index)
+				.findLast((entry): entry is AssistantMessage => entry.role === "assistant");
+			const prevRuntime = resolvedRuntimeId(prevAssistant);
 			const nextAssistant = messages
 				.slice(index + 1)
 				.find((entry): entry is AssistantMessage => entry.role === "assistant");
@@ -327,6 +328,15 @@ export function convertMessages(model: Model<Api>, context: Context, runtimeMode
 				: prevRuntime === target
 					? undefined
 					: { from: antigravityDisplayModelName(prevRuntime), to };
+			// Anchor historical turns with missing timestamps to their surrounding assistant turn so
+			// replaying them never injects a ticking current clock and invalidates the prefix cache.
+			const turnTimestamp = Number.isFinite(msg.timestamp)
+				? msg.timestamp
+				: nextAssistant && Number.isFinite(nextAssistant.timestamp)
+					? nextAssistant.timestamp
+					: prevAssistant && Number.isFinite(prevAssistant.timestamp)
+						? prevAssistant.timestamp
+						: undefined;
 			appendTurn(
 				contents,
 				GeminiRole.User,
@@ -335,9 +345,7 @@ export function convertMessages(model: Model<Api>, context: Context, runtimeMode
 							{
 								text: formatUserTurnText(text, {
 									modelChange,
-									localTime: Number.isFinite(msg.timestamp)
-										? localTimeIso(new Date(msg.timestamp))
-										: undefined,
+									localTime: turnTimestamp !== undefined ? localTimeIso(new Date(turnTimestamp)) : undefined,
 								}),
 							},
 							...images,
@@ -347,6 +355,12 @@ export function convertMessages(model: Model<Api>, context: Context, runtimeMode
 		} else if (msg.role === "assistant") {
 			const parts: GeminiPart[] = [];
 			const isSameModel = msg.provider === model.provider && msg.model === model.id;
+			const isSameGeminiProvider =
+				msg.provider === model.provider &&
+				msg.api === model.api &&
+				canonicalGeminiId(msg.model).startsWith("gemini-") &&
+				canonicalGeminiId(model.id).startsWith("gemini-");
+			let seenToolCallInStep = false;
 
 			for (const block of msg.content) {
 				if (block.type === "text") {
@@ -369,11 +383,14 @@ export function convertMessages(model: Model<Api>, context: Context, runtimeMode
 						...(thinkingSig ? { thoughtSignature: thinkingSig } : {}),
 					});
 				} else if (block.type === "toolCall") {
-					// A call this model signed replays its signature; anything else (another model's
-					// turn, a retry that lost the signature) gets the validator bypass on Gemini 3+.
+					const isFirstToolCall = !seenToolCallInStep;
+					seenToolCallInStep = true;
+					// Gemini 3+ signs and validates only the first functionCall part of each step; parallel
+					// siblings stay bare, and real Gemini signatures remain valid across Gemini models on the
+					// same provider (live probe 2026-11-21, cap_01a1fef8).
 					const signature =
-						resolveThoughtSignature(isSameModel, block.thoughtSignature) ??
-						(needsThoughtSignature ? SKIP_THOUGHT_SIGNATURE_VALIDATOR : undefined);
+						resolveThoughtSignature(isSameModel || isSameGeminiProvider, block.thoughtSignature) ??
+						(isFirstToolCall && needsThoughtSignature ? SKIP_THOUGHT_SIGNATURE_VALIDATOR : undefined);
 					parts.push({
 						functionCall: {
 							name: block.name,

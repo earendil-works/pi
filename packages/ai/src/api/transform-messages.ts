@@ -92,7 +92,7 @@ function keepsGeminiSignatureAcrossModels<TApi extends Api>(source: AssistantMes
 	return (
 		source.provider === model.provider &&
 		source.api === model.api &&
-		(model.api === "google-generative-ai" || model.api === "google-vertex") &&
+		(model.api === "google-generative-ai" || model.api === "google-vertex" || model.api === "antigravity-api") &&
 		source.model.startsWith("gemini-") &&
 		model.id.startsWith("gemini-")
 	);
