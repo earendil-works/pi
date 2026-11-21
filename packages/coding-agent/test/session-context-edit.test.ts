@@ -227,6 +227,38 @@ describe("session context edits", () => {
 		expect(estimate.tokens).toBe(4_101);
 	});
 
+	it("keeps pre-edit usage when a later context edit omits only a post-usage attempt", () => {
+		const session = SessionManager.inMemory();
+		session.appendMessage({ role: "user", content: "original input", timestamp: Date.now() });
+		const response = assistant("answer");
+		response.usage = { ...response.usage, input: 4_000, output: 1, totalTokens: 4_001 };
+		const assistantId = session.appendMessage(response);
+		// Simulate a failed overflow-recovery attempt after the measured assistant turn,
+		// then omitted from model context by the recovery path.
+		const failedId = session.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "failed attempt" }],
+			api: "faux",
+			provider: "faux",
+			model: "faux",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "error",
+			timestamp: Date.now(),
+		});
+		session.appendContextEdit(failedId, null);
+
+		const estimate = estimateProjectedContextTokens(session.buildSessionProjection(), session.getBranch());
+		expect(estimate.usageTokens).toBe(4_001);
+		expect(estimate.tokens).toBeGreaterThanOrEqual(4_001);
+	});
+
 	it("does not reuse post-edit assistant usage after a later compaction", () => {
 		const session = SessionManager.inMemory();
 		const userId = session.appendMessage({ role: "user", content: "small input", timestamp: Date.now() });

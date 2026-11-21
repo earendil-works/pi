@@ -242,12 +242,24 @@ export function estimateProjectedContextTokens(
 		}
 
 		const usageEntryIndex = usageEntryId ? branchEntries.findIndex((entry) => entry.id === usageEntryId) : -1;
+		// Only a compaction or an edit whose target is at or before the usage-bearing
+		// assistant invalidates the usage-backed estimate: such edits could alter the
+		// context the usage was measured for. Edits whose target is strictly after the
+		// usage-bearing assistant (e.g. omitting the failed overflow-recovery attempt)
+		// leave the measured prefix intact, so they must not discard a valid estimate.
 		let latestInvalidatingEntryIndex = -1;
 		for (let i = branchEntries.length - 1; i >= 0; i--) {
 			const entry = branchEntries[i];
-			if (entry.type === "context_edit" || entry.type === "compaction") {
+			if (entry.type === "compaction") {
 				latestInvalidatingEntryIndex = i;
 				break;
+			}
+			if (entry.type === "context_edit") {
+				const targetIndex = branchEntries.findIndex((targetEntry) => targetEntry.id === entry.targetId);
+				if (targetIndex === -1 || targetIndex <= usageEntryIndex) {
+					latestInvalidatingEntryIndex = i;
+					break;
+				}
 			}
 		}
 		if (usageEntryIndex > latestInvalidatingEntryIndex) return estimate;
