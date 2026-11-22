@@ -1,6 +1,6 @@
 // P7c of p2-tui-port.md: `@` and Tab file completion in the web composer (a p2 addition; Pi Mobile has none), with
 // real key events: the popover's Enter/Escape win over send/stop, IME composition never opens it, `@pi` is never a
-// file, Tab completes a path-like token.
+// file, Tab completes a path-like token, and a touch tap applies a suggestion without moving focus.
 
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -129,5 +129,22 @@ describe("web composer file completion", { skip: !browserTests }, () => {
 		assert.equal(await popover(browser), "", "no popover mid-composition");
 		await browser.call("Input.insertText", { text: "@pa" });
 		await clear();
+	});
+
+	it("applies a tapped suggestion and keeps the composer focused", async () => {
+		await browser.metrics(390, 844);
+		await browser.call("Emulation.setTouchEmulationEnabled", { enabled: true });
+		await browser.call("Input.insertText", { text: "see @READ" });
+		const option = `document.querySelector('.file-completion [role="option"]')`;
+		await browser.wait(`${option}?.textContent.includes('README.md')`);
+		const point = await browser.evaluate<{ x: number; y: number }>(
+			`(() => { const r = ${option}.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`,
+		);
+		await browser.call("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [point] });
+		assert.equal(await value(browser), "see @READ", "a press could still become a scroll");
+		await browser.call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+		await browser.wait(`${composerText} === 'see @README.md '`);
+		assert.equal(await popover(browser), "");
+		assert.equal(await browser.evaluate(`document.activeElement === document.querySelector('${COMPOSER}')`), true);
 	});
 });

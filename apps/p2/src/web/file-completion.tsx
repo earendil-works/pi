@@ -228,23 +228,21 @@ export function useFileCompletion(
 	};
 }
 
-/** The popover above the input; pointer selection works too (mousedown keeps the input focused). */
+/** The popover above the input. The composer cancels pointerdown to keep focus, suppressing mousedown but not click. */
 export function FileCompletionPopover({ completion }: { completion: FileCompletion }) {
 	const popover = completion.popover;
 	if (!popover) return null;
 	return (
 		<div className="file-completion" role="listbox" aria-label="File completion">
 			{popover.items.map((item, index) => (
+				// biome-ignore lint/a11y/useKeyWithClickEvents: the editor owns the keys; Enter and Tab apply the selected option.
 				<div
 					key={`${item.value}-${index}`}
 					role="option"
 					tabIndex={-1}
 					aria-selected={index === popover.selected}
 					className={index === popover.selected ? "selected" : undefined}
-					onMouseDown={(event) => {
-						event.preventDefault();
-						completion.choose(index);
-					}}
+					onClick={() => completion.choose(index)}
 				>
 					<span className="file-completion-label">{item.label}</span>
 					{item.description && <span className="file-completion-path">{item.description}</span>}
