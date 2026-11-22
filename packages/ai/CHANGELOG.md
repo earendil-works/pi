@@ -16,6 +16,7 @@
 - Fixed Amazon Bedrock requests hanging behind `HTTPS_PROXY` with AWS SSO profiles: SSO credential and token requests now go through the proxy like the Bedrock request ([#12353](https://github.com/earendil-works/pi/issues/12353))
 - Fixed OpenAI Decisions (`gpt-6-luna` classifier) usage dropping `cached_tokens` and `cache_write_tokens`: they are now reported as `cacheRead` and `cacheWrite` and no longer counted in `input`, and the catalog prices them at the input rate so the cost estimate is unchanged ([#12264](https://github.com/earendil-works/pi/issues/12264))
 - Fixed `createProvider` providers with `fetchModels` re-merging the whole model catalog on every `getModels()`/`getAllModels()` call, which made `getModel()` quadratic in catalog size and blocked the event loop for about a second with ~10k models. The merge now runs once per published refresh ([#12311](https://github.com/earendil-works/pi/issues/12311))
+- Fixed GPT-6.2 dropping earlier reasoning as `prefix_mismatch` after the OpenAI Codex WebSocket connection expired, because replayed tool calls lacked the `status: "completed"` the API had returned on them ([#12367](https://github.com/earendil-works/pi/issues/12367))
 
 ## [1.6.0] - 2026-11-20
 

@@ -373,25 +373,33 @@ export function convertResponsesMessages<TApi extends Api>(
 						itemId = undefined;
 					}
 
+					// OpenAI returns tool calls with status "completed", so replay them the same way. Over the Codex WebSocket,
+					// OpenAI keeps the previous response's items itself, and later reasoning is generated after calls that have
+					// the status. After 5 idle minutes the connection closes and pi sends the whole history again. If a call
+					// lacks the status there, the history no longer matches, and from GPT-6.2 on OpenAI drops the reasoning
+					// that follows it (`prefix_mismatch`, #12367).
+					// Always "completed": a stream that ends with an unfinished tool call fails, and failed messages are not replayed.
+					// `status` is spread in because the SDK declares it only on returned custom tool calls; the API accepts it on input too.
+					const replayedCall = {
+						id: itemId,
+						call_id: callId,
+						name: toolCall.name,
+						status: "completed" as const,
+						...(isSameModel && toolCall.namespace !== undefined ? { namespace: toolCall.namespace } : {}),
+					};
 					if (customInputProperty !== undefined) {
 						output.push({
 							type: "custom_tool_call",
-							id: itemId,
-							call_id: callId,
-							name: toolCall.name,
+							...replayedCall,
 							input: sanitizeSurrogates(
 								getGrammarToolInput(toolCall.name, toolCall.arguments, customInputProperty),
 							),
-							...(isSameModel && toolCall.namespace !== undefined ? { namespace: toolCall.namespace } : {}),
-						} satisfies ResponseOutputItem);
+						});
 					} else {
 						output.push({
 							type: "function_call",
-							id: itemId,
-							call_id: callId,
-							name: toolCall.name,
+							...replayedCall,
 							arguments: JSON.stringify(toolCall.arguments),
-							...(isSameModel && toolCall.namespace !== undefined ? { namespace: toolCall.namespace } : {}),
 						});
 					}
 				}
