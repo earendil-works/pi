@@ -69,27 +69,39 @@ caller's object is rebuilt or denied at once (Chord's admission).
 would be denied; a worker never reaches another session's worker; the server's waker reaches a session that is not
 archived. An archived session starts for the owner only.
 
-## Things
+## Things (decided with Mario, 2026-11-23; BEING BUILT, replaces the per-kind records model)
 
-- **A thing's plugin owns its records** (a login, an MCP server's configuration) and says which of them a person may
-  bring (their own: `ThingKinds`' `records`). **The sessions plugin owns only which things a session has, who brought
-  each, and their options**: `{ thing, kind, ref, by, options }` per session. Removing a thing from a session deletes
-  nothing elsewhere. A kind without records (the coding tools: the Pi's machine) is added by the owner and apps only.
-- **Options are one whole object, typed by the kind**, and exactly one applies to a caller: the person's own in this
-  session, else the first of the caller's groups in the session's member order that has one, else the session's
-  default. Nothing is merged, so no disagreement can fall back to more than one choice gave. The agent is one more
-  member with its own options. An unknown option version or a missing thing plugin gives the thing nothing (its
-  tools absent, its views refused), never its defaults.
-- A thing's objects use `admitThing(Kind)`: the caller's access to the session, the thing's record (`ref`, from the
-  session, never from the page) and the thing's options for them.
-- A kind may change its options: a new version with `migrate(options, from)`; without it (or when it gives
-  `undefined`) the thing gives nothing until its options are set again.
+- **A thing has one id.** It is a record of its kind (a canvas, a notebook, a login, an inbox, this machine's coding
+  tools). Its kind's plugin keeps its content, keyed by that id. It has a name (on the thing, the same everywhere).
+- **A thing belongs to a person, a group, the Pi, or nobody.** Ownership is the base's (the sessions plugin's things
+  store), never a kind's: no kind keeps an owner column. A group's members may create, bring and manage the group's
+  things; only the owner manages the Pi's.
+- **A session uses things:** a link `(session, thing)`. Per link: who brought it, and its options per party. The same
+  thing may be in several sessions (the same canvas, the same drawing), with different options in each.
+- **Content and resources.** Canvases and notes are made all the time, mostly by the agent: they belong to nobody and
+  live in the sessions that use them; a thing nobody owns is gone when no session uses it. Logins, inboxes, machines
+  are made on purpose for a person, a group or the Pi, often with a creation step (a sign-in).
+- **Creating:** one "Add" in the session sheet: a new thing of a kind (the base's creation dialog; a kind may bring
+  its own creation view, e.g. a sign-in), for nobody (this session's content, the default), me, one of my groups, or
+  (the owner) the Pi; or an owned thing of mine, my groups' or (the owner) the Pi's, picked by the session it is in or
+  by search. The coding tools are one Pi-owned thing the tools plugin creates at install.
+- **Giving an owner ("keep"):** a writer in a session that has an unowned thing gives it to themselves, a group they
+  are in, or (the owner) the Pi; it stays in the session. After that only its owner renames, deletes or gives it away.
+- **The agent** creates things (each kind's create tool), for nobody by default, or for a person or group that is a
+  member of the session, or the Pi when the owner is a member; a base tool lists whom it may create for; the server
+  checks again. It may keep unowned things under the same limits. It never sets options.
+- **Options** belong to the link: one whole object per party (everyone, the agent, a member), typed by the kind;
+  exactly one applies (own, first group in member order, everyone; the agent its own). New links get the kind's
+  initial options. A reader is always a reader; what an option means for a writer is the kind's one line (a base
+  helper makes it hard to get wrong). Unknown versions give nothing; `migrate` as before.
+- A thing's objects take `{ session, thing }` and use `admitThing(Kind)` (access and the options that apply).
 
 ## What the agent gets
 
 The agent is Durable's harness in the session's worker (plugin `harness`). **It gets exactly its session's things**:
-each kind's plugin contributes `ThingExtensions` (`thingExtension(Kind, (thing, agent) => ({ extension, providers }))`:
-a Durable extension and model providers for one thing, its options typed by the kind; `agent.call(fn, context)` runs
+each kind's plugin contributes `ThingExtensions` (`thingExtension(Kind, (things, agent) => ({ extension, providers }))`:
+one Durable extension for all the session's things of the kind, its tools taking a thing's id (a list tool, `canvas_list`,
+names them; descriptions are fixed text), and model providers; `agent.call(fn, context)` runs
 `fn` as the session's worker, so a tool reaches its plugin's objects). Installing a plugin gives no session anything; there is no global tools registry. A session without
 a login thing has no model.
 
@@ -167,7 +179,7 @@ A kind of thing, notes, with a view and a tool:
 
 ```ts
 // notes/contract.ts
-export const NotesKind = defineThingKind("notes.notes", { version: 1, options: obj({ edit: bool() }), initial: { edit: true } });
+export const NotesKind = defineThing("notes.notes", { version: 1, options: obj({ edit: bool() }), initial: { edit: true } });
 export const Notes = remote("notes.view", { version: 1, params: { session: str(), thing: str() },
 	hostAddress: ({ session }) => Session({ id: session }), admission: thingAdmission(NotesKind),
 	variants: { reader: { state: { text: str() } }, editor: { state: { text: str() }, methods: { write: method(str()) } } } });
@@ -191,7 +203,7 @@ host.serve(Club, (_params, _p, who, self) => ({ variant: "club", members: {
 		const store = self.get(SessionsStore, {});
 		const coaches = await (await ctx.get(PeopleStore, {})).group({ app: "club", name: "coaches" }, ctx);
 		return store.create({ app: "club", title: "Chat", members: [{ kind: "person", id: who.id, access: "write" },
-			{ kind: "group", id: coaches, access: "write" }], things: [thingOf(NotesKind)] }, ctx);
+			{ kind: "group", id: coaches, access: "write" }], things: [thingOf(NotesKind, { name: "Plan" })] }, ctx);
 	} } }), { admit: admitApp("club") });
 // club/web.tsx: self.contribute(AppPages, { app: "club", Page: ClubPage }) — ClubPage places TranscriptView and <ThingView>.
 ```
@@ -218,7 +230,7 @@ removes one person, and restarts the server mid-call. A base edit or a plugin-sp
 - Astra 5: the waker skips archived sessions and starts at most four workers at once.
 - Fable, review of the contracts: `admitApp` for an app's own objects (the apps plugin answers `AppAccess`);
   `thingExtension(Kind, give)` typed, with `agent.call`; the location optional for apps; `ThingKindCatalog` for the
-  page (records of a kind come with logins, ERNDL-705) and `thingOf(Kind, options?, ref?)`; a kind's `migrate`; one
+  page (records of a kind come with logins, ERNDL-705) and `thingOf(Kind, { name?, options?, ref? })`; a kind's `migrate`; one
   `Party` for who a member is; `Harness`, `StoreStorage`, `createRegistry`, `createModels` in `/v1/worker` are p3's
   own and outside the promise.
 - Mario (2026-11-22): write members bring their own things and views; `BringThings`, `ThingKinds.records`, a
