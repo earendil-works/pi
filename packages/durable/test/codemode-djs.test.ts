@@ -105,6 +105,48 @@ describe.runIf(djsReady)("the djs code mode VM", () => {
 	});
 });
 
+describe.runIf(djsReady)("imports from virtual modules", () => {
+	const scope = {
+		tools: [],
+		globals: [],
+		store: {},
+		modules: [
+			{ specifier: "@mcp/github", exports: [{ name: "search_issues", identity: "@mcp/github#search-issues" }] },
+		],
+	};
+
+	it("binds named and namespace imports by identity, across a save and a resume", async () => {
+		const djs = await DjsCodemode.load();
+		const vm = djs.begin(
+			`import { search_issues as search } from "@mcp/github";
+			import * as gh from "@mcp/github";
+			const a = await search({ q: "a" });
+			return [a, await gh.search_issues({ q: "b" }), gh.search_issues === search];`,
+			scope,
+		);
+		await vm.advance();
+		expect(vm.calls).toMatchObject([{ identity: "@mcp/github#search-issues", args: [{ q: "a" }] }]);
+		vm.settle(vm.calls[0]!.id, { ok: true, value: "A" });
+		await vm.advance();
+		const saved = vm.save();
+		vm.dispose();
+		const resumed = djs.resume(scope, saved);
+		expect(resumed.calls).toMatchObject([{ identity: "@mcp/github#search-issues", args: [{ q: "b" }] }]);
+		resumed.settle(resumed.calls[0]!.id, { ok: true, value: "B" });
+		await resumed.advance();
+		expect(resumed.result).toMatchObject({ ok: true, value: ["A", "B", true] });
+		resumed.dispose();
+	});
+
+	it("reports an unknown module as a syntax error", async () => {
+		const vm = (await DjsCodemode.load()).begin(`import { x } from "@mcp/nope"; return x;`, scope);
+		await vm.advance();
+		expect(vm.result).toMatchObject({ ok: false, error: { kind: "script", name: "SyntaxError" } });
+		expect(JSON.stringify(vm.result)).toContain("@mcp/nope");
+		vm.dispose();
+	});
+});
+
 describe.runIf(djsReady)("code mode on djs", () => {
 	it("parks with its dump while a nested call is parked, and resumes it after a reopen", async () => {
 		const path = await sqlitePath();

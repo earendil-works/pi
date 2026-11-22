@@ -151,8 +151,6 @@ class DjsVm implements CodemodeVm {
 		for (const module of scope.modules ?? []) {
 			for (const exported of module.exports) asyncFunctions[exported.identity] = noop;
 		}
-		// The script's imports, as body bindings to the exports' identities (prototype: djs runs bodies, not modules).
-		const imports: Imports = code === undefined ? { ok: true, body: "", bindings: {} } : importsOf(code, scope);
 		for (const tool of scope.tools) asyncFunctions[`tools.${tool.jsName}`] = noop;
 		if (scope.tools.length > 0) globals.tools = "tools";
 		for (const global of scope.globals) {
@@ -196,21 +194,23 @@ class DjsVm implements CodemodeVm {
 			globals,
 			// Host data: a dump names it, never writes it.
 			values: { ALL_TOOLS: scope.tools.map((tool) => ({ name: tool.jsName, description: tool.description })) },
-			...(imports.ok && saved === undefined ? { bindings: imports.bindings } : {}),
+			// `import { x } from "<specifier>"`: djs asks for a module once, and binds its exports by identity.
+			modules: (specifier) => {
+				const module = scope.modules?.find((candidate) => candidate.specifier === specifier);
+				if (module === undefined) return undefined;
+				return {
+					exports: Object.fromEntries(module.exports.map((exported) => [exported.name, exported.identity])),
+				};
+			},
 			// Dumps carry the body: a resume needs no script, and nothing hashes our preprocessing.
 			inlineSources: true,
 			// Arguments, results and the run's value cross as JSON, as pi's prelude made them.
 			jsonBoundary: true,
 		});
-		if (!imports.ok) {
-			this.run = undefined as never;
-			this.finish({ kind: "script", name: "SyntaxError", message: imports.error });
-			return;
-		}
-		if (saved === undefined) {
+		if (code !== undefined) {
 			try {
 				// The first step runs in `advance()`, bounded like every other.
-				this.run = this.sandbox.begin(imports.body, {}, { filename: FILENAME, start: false });
+				this.run = this.sandbox.begin(code, {}, { filename: FILENAME, start: false });
 			} catch (error) {
 				this.run = undefined as never;
 				if (outOfFuel(error)) this.finish({ kind: "timeout", message: "The script used up its CPU budget" });
@@ -219,7 +219,7 @@ class DjsVm implements CodemodeVm {
 				return;
 			}
 		} else {
-			this.run = this.sandbox.loadRun(saved.dump);
+			this.run = this.sandbox.loadRun(saved!.dump);
 		}
 		this.check();
 	}
@@ -336,38 +336,6 @@ function imageItem(value: unknown): CodemodeOutputItem {
 		data: block.data,
 		mimeType: typeof block.mimeType === "string" ? block.mimeType : "image/png",
 	};
-}
-
-type Imports = { ok: true; body: string; bindings: Record<string, string> } | { ok: false; error: string };
-
-const IMPORT = /^(\s*)import\s*\{([^}]*)\}\s*from\s*(["'])([^"']+)\3\s*;?/;
-
-/**
- * The script's leading `import { a, b as c } from "spec";` declarations as bindings `{ a: "spec#a", c: "spec#b" }`,
- * and the script with them blanked (line numbers stay). A stand-in for module bodies in djs.
- */
-function importsOf(code: string, scope: CodemodeScope): Imports {
-	const bindings: Record<string, string> = {};
-	let rest = code;
-	let body = "";
-	for (let match = IMPORT.exec(rest); match !== null; match = IMPORT.exec(rest)) {
-		const [whole, , names, , specifier] = match;
-		const module = scope.modules?.find((candidate) => candidate.specifier === specifier);
-		if (module === undefined) return { ok: false, error: `Cannot find module "${specifier}"` };
-		for (const part of names!.split(",")) {
-			const item = part.trim();
-			if (item === "") continue;
-			const [imported, local = imported] = item.split(/\s+as\s+/);
-			const exported = module.exports.find((candidate) => candidate.name === imported);
-			if (exported === undefined) {
-				return { ok: false, error: `The module "${specifier}" has no export named ${imported}` };
-			}
-			bindings[local!] = exported.identity;
-		}
-		body += whole!.replace(/[^\n]/g, " ");
-		rest = rest.slice(whole!.length);
-	}
-	return { ok: true, body: body + rest, bindings };
 }
 
 function outOfFuel(error: unknown): boolean {
