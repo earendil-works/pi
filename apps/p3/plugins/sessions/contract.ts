@@ -357,8 +357,10 @@ export const SessionInfo = remote("sessions.info", {
 			state: {
 				session: SessionRow,
 				access: Access,
-				things: arr(SessionThing),
-				members: arr(Member),
+				/** Each thing with its kind's title (the kind's name while no plugin serves it). */
+				things: arr(obj({ thing: str(), kind: str(), ref: str(), by: Bringer, options: unknown(), title: str() })),
+				/** Each member with its name (a person's, a group's). */
+				members: arr(obj({ kind: oneOf("person", "group"), id: str(), access: Access, name: str() })),
 			},
 		},
 	},

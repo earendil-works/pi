@@ -12,6 +12,7 @@ import {
 	forbidden,
 	forward,
 	keyedEntries,
+	type Member,
 	type P3Principal,
 	type Self,
 	SessionFacts,
@@ -100,6 +101,12 @@ export default defineFacet((host) => {
 			const defaults = self.liveQuery(store.options.ofSession, { session, for: "everyone" }, { first: READ_WHOLE });
 			const members = self.liveQuery(store.members.of, { session }, { first: READ_WHOLE });
 			const kinds = self.registry(ThingKinds);
+			// The members' names, read by key and following the members: a rename shows, nothing walks the people.
+			const people = self.get(PeopleStore, {});
+			const idsOf = (kind: Member["kind"]) =>
+				self.derive([members], ([{ rows }]) => ({ ids: rows.filter((m) => m.kind === kind).map(({ id }) => id) }));
+			const persons = self.liveQuery(people.persons.ofIds, idsOf("person"), { first: READ_WHOLE });
+			const groups = self.liveQuery(people.groups.ofIds, idsOf("group"), { first: READ_WHOLE });
 			return {
 				variant: "info",
 				members: {
@@ -112,12 +119,22 @@ export default defineFacet((host) => {
 						return of.rows.map(({ thing, kind, ref, by }) => {
 							const row = stored.get(thing);
 							const options = row === undefined ? undefined : currentOptions(table.get(kind)?.value, row);
-							return { thing, kind, ref, by, options: options?.options ?? null };
+							// The kind's title; its name while no plugin serves it.
+							const title = table.get(kind)?.value.title ?? kind;
+							return { thing, kind, ref, by, options: options?.options ?? null, title };
 						});
 					}),
-					members: self.derive([members], ([{ rows, more }]) => {
+					members: self.derive([members, persons, groups], ([{ rows, more }, ofPersons, ofGroups]) => {
 						if (more) fail(`session ${session} has more than ${READ_WHOLE} members`);
-						return rows;
+						const names = new Map([
+							...ofPersons.rows.map(({ id, name }) => [`person:${id}`, name] as const),
+							...ofGroups.rows.map(({ id, name }) => [`group:${id}`, name] as const),
+						]);
+						// A member whose person or group is gone (until its row goes too) shows its id.
+						return rows.map((member) => ({
+							...member,
+							name: names.get(`${member.kind}:${member.id}`) ?? member.id,
+						}));
 					}),
 				},
 			};

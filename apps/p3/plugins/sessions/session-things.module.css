@@ -41,6 +41,12 @@
 	overflow-wrap: anywhere;
 }
 
+.whose {
+	display: block;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-tertiary);
+}
+
 .access {
 	flex: none;
 	color: var(--semantic-color-text-secondary);

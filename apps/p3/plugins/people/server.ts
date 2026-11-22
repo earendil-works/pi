@@ -12,6 +12,7 @@ import {
 	defineTable,
 	eq,
 	forbidden,
+	inArray,
 	invalid,
 	query,
 	str,
@@ -95,6 +96,8 @@ export default defineFacet((host) => {
 					all: (_args: Record<never, never>) => query(Persons).orderBy((p) => p.name, "asc"),
 					// The key.
 					one: ({ id }: { id: string }) => query(Persons).where((p) => eq(p.id, id)),
+					// The key: each of `ids`, in the key's order.
+					ofIds: ({ ids }: { ids: string[] }) => query(Persons).where((p) => inArray(p.id, ids)),
 				},
 			),
 			// Two tables serve the groups' queries: the groups' own, and the memberships driving a person's.
@@ -110,6 +113,8 @@ export default defineFacet((host) => {
 								.orderBy((g) => g.name, "asc"),
 						// The key.
 						one: ({ id }: { id: string }) => query(Groups).where((g) => eq(g.id, id)),
+						// The key: each of `ids`, in the key's order.
+						ofIds: ({ ids }: { ids: string[] }) => query(Groups).where((g) => inArray(g.id, ids)),
 					},
 				),
 				...self.queries(

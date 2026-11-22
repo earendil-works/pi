@@ -25,10 +25,12 @@ import {
 	ThingAccess,
 	ThingKindCatalog,
 	thingOf,
+	until,
 } from "@earendil-works/p3/v1";
 import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import { Note, NotesKind } from "../../../test/plugins/notes/contract.ts";
+import { within } from "../../../test/until.ts";
 import { NOTES, Notes, notesAt, STUBS, setNotes } from "./stubs.ts";
 
 const OWNER: P3Principal = { kind: "owner" };
@@ -402,14 +404,53 @@ describe("SessionInfo", () => {
 		);
 		assert.deepEqual(info.slice(0, 2), [id, "read"]);
 		assert.deepEqual(
-			info[2].map(({ kind, options }) => [kind, options]),
-			[[Notes.name, { color: "red" }]],
+			info[2].map(({ kind, options, title }) => [kind, options, title]),
+			[[Notes.name, { color: "red" }, "Notes"]],
 		);
-		assert.deepEqual(info[3], [{ kind: "person", id: ann.id, access: "read" }]);
+		assert.deepEqual(info[3], [{ kind: "person", id: ann.id, access: "read", name: "Ann" }]);
 		await refused(
 			t.root(async (ctx) => ctx.get(SessionInfo, { session: id }, { readyTimeout: 500 }), context, {
 				principal: ben,
 			}),
+		);
+	});
+
+	it("names the things by their kind's title and the members by their names, live", async () => {
+		const ann = await person("Ann");
+		const coaches = await group("coaches");
+		const id = await session([
+			{ kind: "group", id: coaches, access: "write" },
+			{ kind: "person", id: ann.id, access: "read" },
+		]);
+		await t.root(
+			async (ctx) => {
+				const info = await ctx.get(SessionInfo, { session: id });
+				const names = () => info.members.value.map(({ name }) => name);
+				assert.deepEqual(names(), ["coaches", "Ann"]);
+				await t.root(async (server) => {
+					const people = await server.get(PeopleStore, {});
+					await people.renamePerson({ person: ann.id, name: "Anna" }, server);
+				}, context);
+				assert.deepEqual(names(), ["coaches", "Anna"]);
+				const ben = await person("Ben");
+				await asServer((server, store) =>
+					store.addMember({ session: id, member: { kind: "person", id: ben.id, access: "read" } }, server),
+				);
+				await until(
+					info.members,
+					(members) => members.some(({ name }) => name === "Ben"),
+					within("Ben's name", context),
+				);
+				assert.deepEqual(names(), ["coaches", "Anna", "Ben"]);
+				setNotes({ ...NOTES, title: "Notebook" });
+				assert.deepEqual(
+					info.things.value.map(({ title }) => title),
+					["Notebook"],
+				);
+				setNotes(NOTES);
+			},
+			context,
+			{ principal: OWNER },
 		);
 	});
 });

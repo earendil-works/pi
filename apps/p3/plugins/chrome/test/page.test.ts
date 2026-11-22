@@ -3,8 +3,8 @@
 // the form appears in the list and opens in the transcript, which streams a scripted answer; a phone shows one screen
 // at a time; a reload of the chrome plugin keeps the open page; an app without the bar gets a corner button, and an
 // app that throws shows its error below the bar; a person invited from the person menu and added to the session
-// enters Coding, works in it, sees the session refused once removed from it, and no app once removed from every
-// session of Coding. Screenshots of the steps at the phone's and the desktop's size go to `/tmp/p3-base/shots/`
+// enters Coding and works in it, brings their own notes (the owner sees them as theirs) and withdraws them, sees the
+// session refused once removed from it, and no app once removed from every session of Coding. Screenshots of the steps at the phone's and the desktop's size go to `/tmp/p3-base/shots/`
 // (`P3_SHOTS` names another directory).
 
 import assert from "node:assert/strict";
@@ -32,6 +32,9 @@ const BUILT_IN = fileURLToPath(new URL("../../", import.meta.url));
 /** The tests' faux login: a kind of thing whose model answers from a script. */
 const FAUX = fileURLToPath(new URL("../../../test/plugins/faux-login/", import.meta.url));
 
+/** The tests' notes: a kind of thing with records per person, which members who write bring. */
+const NOTES = fileURLToPath(new URL("../../../test/plugins/notes/", import.meta.url));
+
 /** Where the screenshots go. */
 const SHOTS = process.env.P3_SHOTS ?? "/tmp/p3-base/shots";
 
@@ -43,13 +46,15 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 	let origin: string;
 	/** The session the cases share, made through the form. */
 	let session: string;
+	/** The invited person's id. */
+	let ada: string;
 
 	before(async () => {
 		await mkdir(SHOTS, { recursive: true });
 		const dataDir = await mkdtemp(join(tmpdir(), "p3-page-"));
 		builtIn = join(dataDir, "builtin");
 		await cp(BUILT_IN, builtIn, { recursive: true, filter: (path) => basename(path) !== "test" });
-		t = await testServer({ dataDir, builtIn, plugins: [FAUX] }, context);
+		t = await testServer({ dataDir, builtIn, plugins: [FAUX, NOTES] }, context);
 		owner = await t.client(context);
 		origin = `http://127.0.0.1:${t.port}`;
 		browser = await Browser.start();
@@ -211,7 +216,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.wait(`location.pathname === "/coding" && document.querySelector("[data-session-list]")`);
 	});
 
-	it("lets an invited person in, and shows the session refused once they are removed", async () => {
+	it("lets an invited person in, added to the session in its view", async () => {
 		await browser.open(`${origin}/coding/${session}`);
 		await browser.click("[data-person-menu]");
 		await browser.click("[data-invite-open]");
@@ -230,7 +235,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.click("[data-add-member] button:not([data-field])");
 		await browser.wait(`document.querySelector("[data-member]")?.textContent.includes("Ada")`);
 		await browser.screenshot(join(SHOTS, "11-members-desktop.png"));
-		const ada = await browser.evaluate<string>(`document.querySelector("[data-member]").dataset.member`);
+		ada = await browser.evaluate<string>(`document.querySelector("[data-member]").dataset.member`);
 		// Ada opens her link in a browser of her own (this one, signed out).
 		await browser.signOut();
 		await browser.open(link);
@@ -243,6 +248,62 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			`[...document.querySelectorAll('[data-entry="assistant"]')].some((e) => e.textContent.includes("faux model"))`,
 		);
 		await browser.screenshot(join(SHOTS, "12-person-desktop.png"));
+	});
+
+	it("lets a person who writes bring their own notes, which the owner sees as theirs, and withdraw them", async () => {
+		// Ada brings her notes: a kind with records per person (`test/plugins/notes`), offered to her as hers.
+		await browser.click("[data-things-open]");
+		await browser.settled("[data-things-dialog]");
+		await browser.wait(
+			`document.querySelector('[data-bring-own] [data-field="record"]')?.textContent.includes("My notes")`,
+		);
+		assert.equal(await browser.evaluate(`document.querySelector("[data-add-thing]") === null`), true);
+		// She reads the kinds by their titles and herself as "You".
+		await browser.wait(`document.querySelector('[data-thing="tools.coding"]')?.textContent.includes("Coding tools")`);
+		await browser.wait(`document.querySelector('[data-member="${ada}"]')?.textContent.includes("You")`);
+		await browser.click("[data-bring]");
+		const hers = `[data-thing="notes.notes"][data-by="person:${ada}"]`;
+		await browser.wait(`document.querySelector('${hers}')?.textContent.includes("Yours")`);
+		await browser.wait(
+			`document.querySelector("[data-bring-own]")?.textContent.includes("Everything of yours is here.")`,
+		);
+		await browser.screenshot(join(SHOTS, "13-bring-person-desktop.png"));
+		// The owner, in a browser of their own, sees them as Ada's and brings their own notes too.
+		const adaCookie = await browser.cookie(origin);
+		await browser.signOut();
+		await browser.signIn(origin, await t.cookie(context));
+		await browser.size(PHONE);
+		await browser.open(`${origin}/coding/${session}`);
+		await browser.click("[data-things-open]");
+		await browser.settled("[data-things-dialog]");
+		await browser.wait(`document.querySelector('${hers}')?.textContent.includes("Ada's")`);
+		await browser.wait(
+			`document.querySelector('[data-bring-own] [data-field="record"]')?.textContent.includes("The owner's notes")`,
+		);
+		await browser.click("[data-bring]");
+		const owners = `[data-thing="notes.notes"][data-by="owner"]`;
+		await browser.wait(`document.querySelector('${owners}')?.textContent.includes("Yours")`);
+		await browser.screenshot(join(SHOTS, "14-bring-owner-phone.png"));
+		// Ada sees the owner's notes as the owner's, without a way to withdraw them, and withdraws her own.
+		await browser.signOut();
+		await browser.signIn(origin, adaCookie);
+		await browser.size(DESKTOP);
+		await browser.open(`${origin}/coding/${session}`);
+		await browser.click("[data-things-open]");
+		await browser.settled("[data-things-dialog]");
+		await browser.wait(`document.querySelector('${owners}')?.textContent.includes("The owner's")`);
+		assert.equal(await browser.evaluate(`document.querySelector('${owners} button') === null`), true);
+		await browser.click(`${hers} button`);
+		await browser.wait(`document.querySelector('${hers}') === null`);
+		await browser.wait(
+			`document.querySelector('[data-bring-own] [data-field="record"]')?.textContent.includes("My notes")`,
+		);
+		await browser.screenshot(join(SHOTS, "15-withdrawn-desktop.png"));
+		await browser.click('[data-things-dialog] button[aria-label="Close"]');
+		await browser.wait(`document.querySelector("[data-session-things]") === null`);
+	});
+
+	it("refuses the session to a person removed from it, and every app once they are in no session of it", async () => {
 		// Ada reads a second session, so Coding stays hers when the owner removes her from the first.
 		const sessions = await owner.get(Sessions, {}, context);
 		const location = { environment: "this-device", folder: t.dataDir };
@@ -254,13 +315,13 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await sessions.removeMember({ session, party: { kind: "person", id: ada } }, context);
 		await browser.wait(`document.body.textContent.includes("You have no access to this session.")`);
 		await browser.wait(`document.querySelector('[data-session="${session}"]') === null`);
-		await browser.screenshot(join(SHOTS, "13-refused-desktop.png"));
+		await browser.screenshot(join(SHOTS, "16-refused-desktop.png"));
 		// Without any session of Coding, Ada may enter no app.
 		await sessions.removeMember({ session: second, party: { kind: "person", id: ada } }, context);
 		await browser.wait(`document.body.textContent.includes("There is no app for you on this Pi yet.")`);
 		await browser.wait(`document.querySelector("[data-top-bar]")`);
 		await browser.size(PHONE);
-		await browser.screenshot(join(SHOTS, "14-no-app-phone.png"));
+		await browser.screenshot(join(SHOTS, "17-no-app-phone.png"));
 	});
 
 	it("leaves nothing reported on the server, and no error in the page but the broken app's", () => {

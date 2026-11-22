@@ -121,6 +121,16 @@ export class Browser {
 		});
 	}
 
+	/** The browser's sign-in cookie for `origin` (`name=value`), to sign in with again after a `signOut`. */
+	async cookie(origin: string): Promise<string> {
+		const { cookies } = (await this.call("Network.getCookies", { urls: [`${origin}/`] })) as {
+			readonly cookies: readonly { readonly name: string; readonly value: string }[];
+		};
+		const [first] = cookies;
+		if (first === undefined) throw new Error(`Browser: no cookie for ${origin}`);
+		return `${first.name}=${first.value}`;
+	}
+
 	/** Forgets every sign-in (the browser's cookies). */
 	async signOut(): Promise<void> {
 		await this.call("Network.clearBrowserCookies");

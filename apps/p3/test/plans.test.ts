@@ -150,8 +150,10 @@ describe("the plans of the stores' queries", () => {
 				["working", [() => sessions.working({}, context)], { index: `${S}.rows:working` }],
 				["persons.all", pages(people.persons.all, {}), { index: `${P}.persons:by_name` }],
 				["persons.one", pages(people.persons.one, { id: ann }), {}],
+				["persons.ofIds", pages(people.persons.ofIds, { ids: [ann, "none"] }), {}],
 				["groups.ofApp", pages(people.groups.ofApp, { app: "coding" }), { index: `${P}.groups:of_app` }],
 				["groups.one", pages(people.groups.one, { id: coaches }), {}],
+				["groups.ofIds", pages(people.groups.ofIds, { ids: [coaches, "none"] }), {}],
 				[
 					"groups.ofPerson",
 					pages(people.groups.ofPerson, { person: ann }),

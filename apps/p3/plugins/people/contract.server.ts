@@ -2,7 +2,7 @@
 // here from their server code (`group` is made once per app and name) and put persons into them; the sessions plugin
 // reads a person's groups to answer their access. `/v1/server` re-exports it.
 
-import { local, method, obj, queries, str } from "@earendil-works/p3/v1";
+import { arr, local, method, obj, queries, str } from "@earendil-works/p3/v1";
 import { Group, Person } from "./contract.ts";
 
 /** The persons and groups: their rows as named queries, and every write. Server code only: it checks no caller. */
@@ -15,12 +15,16 @@ export const PeopleStore = local("people.store", {
 			all: obj({}),
 			/** The person `id`, if there is one. */
 			one: obj({ id: str() }),
+			/** The persons of `ids` there are, by id (a session's members, for their names). */
+			ofIds: obj({ ids: arr(str()) }),
 		}),
 		groups: queries(Group, {
 			/** An app's groups, by name. */
 			ofApp: obj({ app: str() }),
 			/** The group `id`, if there is one. */
 			one: obj({ id: str() }),
+			/** The groups of `ids` there are, by id (a session's members, for their names). */
+			ofIds: obj({ ids: arr(str()) }),
 			/** The groups person `person` is in, by id: read whole by whoever decides access with them. */
 			ofPerson: obj({ person: str() }),
 		}),
