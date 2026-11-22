@@ -58,6 +58,7 @@ import {
 	MenuIcon,
 	Messages,
 	type ModelChoice,
+	MoreIcon,
 	modelName,
 	moreVerb,
 	NEW_SESSION,
@@ -81,6 +82,7 @@ import {
 	SendIcon,
 	SessionId,
 	SessionStats,
+	Sheet,
 	Slot,
 	SlotList,
 	Slots,
@@ -715,12 +717,15 @@ function TopBar({
 	child,
 	owner = false,
 	moving = false,
+	onAgentOptions,
 }: {
 	session?: Session;
 	child?: Child;
 	owner?: boolean;
 	/** The session is being moved (a relocation job runs). */
 	moving?: boolean;
+	/** Opens the viewed subagent's sheet (its actions), as the main conversation's dots open the Session sheet. */
+	onAgentOptions?: () => void;
 }) {
 	const offline = useOffline();
 	// Only the owner reads environments (`PageObjects.envs`): guests see the location without the sandbox lock.
@@ -782,6 +787,11 @@ function TopBar({
 			<Slot name="terminal-actions" />
 			<Slot name="workspace-actions" />
 			<Slot name="session-options" />
+			{onAgentOptions && (
+				<button type="button" className="icon-button" aria-label="Subagent options" onClick={onAgentOptions}>
+					<MoreIcon />
+				</button>
+			)}
 			<Slot name="session-actions" />
 		</header>
 	);
@@ -1045,7 +1055,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	const canWrite = owner || grantMode(grant, sessionId) === "full";
 	// Held with the view, not once the subagent list names the child: Archive works right after load.
 	const subagentControl = useObject(SubagentControl, canWrite ? { session: sessionId } : undefined);
-	// The bar's archived mark flips at the tap.
+	// The sheet's Archive and Restore flip at the tap.
 	const [archived, archive] = useOptimisticCall(child?.archived ?? false, (_, next: boolean) => next, fail);
 	const composer = useComposerState();
 	const {
@@ -1107,6 +1117,7 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	const usage = useReadable(metrics?.usage) ?? undefined;
 	const cwdSheet = useSheet("cwd");
 	const costSheet = useSheet("cost");
+	const agentSheet = useSheet("subagent");
 	/**
 	 * Restored text goes into the composer, which takes the focus, as in Pi Mobile; sending it again is a new message
 	 * (each send has its own request ID). Stop and others' withdrawals put it before the draft, a queue edit after.
@@ -1506,39 +1517,14 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 			<DownIcon />
 		</button>
 	);
-	// The dock (`Dock`): a subagent's bar above, then the composer, or a bar in its place for those who may not write.
-	const subagentBar = child && (
+	// The dock (`Dock`): a one-shot agent's bar above (it has no composer), then the composer, or a bar in its place for
+	// those who may not write.
+	const subagentBar = oneShot && (
 		<div className="composer-wrap subagent-wrap">
-			{/* A one-shot view has no composer, which otherwise carries this button. */}
-			{oneShot && toBottom}
+			{toBottom}
 			<div className="subagent-bar">
-				<span>
-					{oneShot ? "One-shot agent of a script · read-only · " : ""}
-					Tools: {child.tools.join(", ") || "none"}
-					{!oneShot && viewLocation && ` · in ${locationLabel(viewLocation.env, viewLocation.cwd)}`}
-					{!oneShot && !child.location && " · follows the session"}
-					{archived ? " · archived" : ""}
-				</span>
-				{canWrite && !oneShot && subagentControl && (
-					<button
-						type="button"
-						className="text-action"
-						title={
-							archived ? "Show it in the sidebar again" : "Stop it and move it to the sidebar's archived row"
-						}
-						onClick={() =>
-							archive(!archived, () =>
-								subagentControl.archive(
-									{ conversation: child.conversationId, archived: !archived },
-									BACKGROUND_CONTEXT,
-								),
-							)
-						}
-					>
-						{archived ? "Restore" : "Archive"}
-					</button>
-				)}
-				{canWrite && oneShot && busy && (
+				<span>One-shot agent of a script · read-only</span>
+				{canWrite && busy && (
 					<button type="button" className="round stop" aria-label="Stop" onClick={stop}>
 						<StopIcon />
 					</button>
@@ -1546,6 +1532,8 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 			</div>
 		</div>
 	);
+	// A subagent's actions, in its sheet behind the top bar's dots.
+	const agentActions = canWrite && child && !oneShot && subagentControl ? { child, subagentControl } : undefined;
 	const readOnlyBar = (!canWrite || failure) && (
 		<div className="subagent-bar">
 			<span>{failure ? "Session unavailable" : grant ? `Joined as ${grant.name} · read-only` : "Connecting…"}</span>
@@ -1647,7 +1635,34 @@ function SessionChat({ sessionId, conversationId }: { sessionId: string; convers
 	);
 	return (
 		<>
-			<TopBar session={session} child={child} owner={owner} moving={moving} />
+			<TopBar
+				session={session}
+				child={child}
+				owner={owner}
+				moving={moving}
+				{...(agentActions ? { onAgentOptions: () => openLayer({ kind: "sheet", name: "subagent" }) } : {})}
+			/>
+			{agentSheet && agentActions && (
+				<Sheet title="Subagent" onClose={closeLayers}>
+					<div className="list">
+						<button
+							type="button"
+							className={`row-button ${archived ? "" : "danger"}`}
+							onClick={() => {
+								closeLayers();
+								archive(!archived, () =>
+									agentActions.subagentControl.archive(
+										{ conversation: agentActions.child.conversationId, archived: !archived },
+										BACKGROUND_CONTEXT,
+									),
+								);
+							}}
+						>
+							<span>{archived ? "Restore" : "Archive"}</span>
+						</button>
+					</div>
+				</Sheet>
+			)}
 			{cwdSheet && owner && session && (
 				<DirectoryPicker
 					value={session.cwd}
