@@ -306,7 +306,7 @@ export class LoginDialog implements Component, Focusable {
 	}
 }
 
-/** Holds `ProviderLogin` for the whole flow (the server cancels an unfinished login once no hold remains). */
+/** Holds `ProviderLogin` for the whole flow (the server ends an unfinished login once no hold remains for a while). */
 async function providerLogin(ctx: TuiContext): Promise<Held<typeof ProviderLogin> | undefined> {
 	const ref = ctx.host.hold(ProviderLogin, {}, BACKGROUND_CONTEXT);
 	try {

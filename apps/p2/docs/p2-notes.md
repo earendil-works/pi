@@ -1594,8 +1594,12 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   `openBrowserOnConfirm: false` (a provider asking clients not to offer opening its page) shows the verification
   address as text instead of the Open link (web), and the TUI offers no "open in browser" for it. No pi-ai changes or custom
   callback URL. API keys and pasted codes pass through the tunnel/relay; use a trusted transport. Once no browser
-  holds the sheet (no reference to its owner's `ProviderLogin` left, `host.references`), its unfinished login is
-  cancelled. Tests use fake providers (login.test.ts and remote-login.test.ts).
+  holds it (no reference to its owner's `ProviderLogin` left, `host.references`) for five minutes, its unfinished login
+  ends ("Login ended: no page of yours was connected…"); a reference coming back (a reconnect, a reload) keeps it. Mobile
+  Safari drops a background tab's socket while the owner is in the provider's tab, so ending at once cancelled every
+  remote browser-callback login before the redirect URL could be pasted. Closing the sheet still cancels at once (the
+  web sheet's cleanup), and a new start by the same owner replaces their own unfinished login (a reloaded page shows it
+  only on that provider's screen). Tests use fake providers (login.test.ts, login-owners.test.ts and remote-login.test.ts).
 - **Web slots**: `SlotList({ prefix })` renders every `prefix:<name>` slot (e.g. `sidebar-actions:settings`); `Sheet` is
   the shared modal with scroll memory (Escape and the scrim close the whole modal stack). Shell-level
   `workspace-panel` docks beside `main`; `workspace-terminal` is an optional terminals-plugin surface.
@@ -2022,7 +2026,8 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   Chord v2 has none), more than 4 MiB unsent output beyond the frame being sent
   terminates it, socket errors never crash the server. Terminal sockets keep their own 1 MiB frames and 8 MiB
   backlog. A provider login belongs to the owner principal that started it: only it sees, answers, cancels or
-  dismisses it, and its leaving (all holds of its Providers sheet gone) ends it; another owner device cannot.
+  dismisses it, and its staying away (no hold of its `ProviderLogin` for five minutes) ends it; another owner device
+  cannot.
 - **Reuse** of apps/mobile: none. Adapted implementations live beside their plugins; shared backend helpers live
   in `src/runtime`, shared browser code in `src/web`. p2 is an independent npm workspace with pinned dependencies.
   `src/web/style.css` is a copy of mobile's stylesheet; terminal and environment styles live beside their plugins.
