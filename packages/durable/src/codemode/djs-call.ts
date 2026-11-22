@@ -25,7 +25,7 @@ import { parseCodemodeSource } from "@earendil-works/pi-codemode/source";
 import { defineDoc } from "../documents.ts";
 import { errorMessage } from "../errors.ts";
 import type { ToolExecutionApi, ToolExecutionResult, ToolPark } from "../harness/types.ts";
-import type { JsonObject, TaskId } from "../types.ts";
+import type { JsonObject, TaskId, Tx } from "../types.ts";
 import {
 	CODEMODE_MODULE_VERSION,
 	CodemodeRunDoc,
@@ -45,15 +45,15 @@ import { DEFAULT_MAX_OUTPUT_TOKENS, formatResult } from "./output.ts";
 type SavedState = {
 	/** The script at its latest idle point. */
 	saved?: CodemodeSaved;
-	/** Calls up to this id may have nested calls (`c<id>`). */
-	launched: number;
+	/** The script held a value a dump cannot write: it ran in memory only, and cannot resume. */
+	unsaved?: true;
 };
 
 export const CodemodeSavedDoc = defineDoc<SavedState>({
 	kind: "pi.codemode.saved",
 	version: 1,
 	scope: "task",
-	initial: () => ({ launched: 0 }),
+	initial: () => ({}),
 	// Each save replaces the whole dump: keep few deltas.
 	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 4,
 });
@@ -75,6 +75,7 @@ export class DjsCodemodeCall {
 	private poke: () => void = () => {};
 	private failure: unknown;
 	private ended = false;
+	private unsaved = false;
 
 	constructor(options: CodemodeToolOptions, djs: DjsCodemode, api: ToolExecutionApi, context: Context) {
 		this.options = options;
@@ -86,53 +87,71 @@ export class DjsCodemodeCall {
 	async execute(source: string): Promise<ToolExecutionResult | ToolPark> {
 		const { code, options: sourceOptions } = parseCodemodeSource(source);
 		const { api, context } = this;
-		const declared = await declaredScope(this.options, api, context);
-		const now = api.now();
-		type Found = { done: ToolExecutionResult } | { start: Start; saved: CodemodeSaved | undefined; launched: number };
-		const found = await api.commit(async (tx): Promise<Found> => {
+		type Found = { done: ToolExecutionResult } | { start?: Start; saved: SavedState };
+		const read = (tx: Tx) => async (): Promise<Found> => {
 			const run = await tx.doc(CodemodeRunDoc, api.taskId);
 			if (run.result !== undefined) return { done: copyJson(run.result as JsonValue) as ToolExecutionResult };
-			if (run.start === undefined) {
-				const store = await tx.doc(CodemodeStoreDoc, api.conversationId);
-				run.start = {
-					version: CODEMODE_MODULE_VERSION,
-					startedAt: now,
-					seed: 0,
-					...declared,
-					maxOutputTokens: sourceOptions.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
-					store: copyJson(store.values as JsonValue) as Record<string, JsonValue>,
-				};
-			}
 			const saved = await tx.doc(CodemodeSavedDoc, api.taskId);
 			return {
-				start: copyJson(run.start as unknown as JsonValue) as unknown as Start,
-				saved:
-					saved.saved === undefined
-						? undefined
-						: (copyJson(saved.saved as unknown as JsonValue) as unknown as CodemodeSaved),
-				launched: saved.launched,
+				...(run.start === undefined
+					? {}
+					: { start: copyJson(run.start as unknown as JsonValue) as unknown as Start }),
+				saved: copyJson(saved as unknown as JsonValue) as unknown as SavedState,
 			};
-		}, context);
+		};
+		let found = await api.commit((tx) => read(tx)(), context);
 		if ("done" in found) return found.done;
-		this.start = found.start;
+		if (found.start === undefined) {
+			// A first run: what the script can reach is fixed now, for every later resume.
+			const declared = await declaredScope(this.options, api, context);
+			const now = api.now();
+			found = await api.commit(async (tx) => {
+				const run = await tx.doc(CodemodeRunDoc, api.taskId);
+				if (run.start === undefined) {
+					const store = await tx.doc(CodemodeStoreDoc, api.conversationId);
+					run.start = {
+						version: CODEMODE_MODULE_VERSION,
+						startedAt: now,
+						seed: 0,
+						...declared,
+						maxOutputTokens: sourceOptions.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+						store: copyJson(store.values as JsonValue) as Record<string, JsonValue>,
+					};
+				}
+				return read(tx)();
+			}, context);
+			if ("done" in found) return found.done;
+		}
+		this.start = found.start!;
+		const { saved } = found.saved;
+		if (found.saved.unsaved === true) {
+			return this.decide(
+				errorResult("The script was interrupted: it held a value that cannot be saved, so it could not continue."),
+			);
+		}
 		const scope: CodemodeScope = {
 			tools: this.start.tools.filter((tool) => tool.hidden !== true),
 			globals: this.start.globals,
 			store: this.start.store,
-			// Each declared namespace is a virtual module: `import { x } from "<namespace>"`.
+			// Each declared namespace is a virtual module: `import { x } from "<namespace>"`; an export's identity is the
+			// tool's own name, its JS name only the binding.
 			modules: this.start.namespaces.map((namespace) => ({
 				specifier: namespace.name,
-				exports: namespace.tools.map((name) => toCodemodeIdentifier(name)),
+				exports: namespace.tools.map((name) => ({
+					name: toCodemodeIdentifier(name),
+					identity: `${namespace.name}#${name}`,
+				})),
 			})),
 		};
 		let vm: CodemodeVm;
 		try {
-			vm = found.saved === undefined ? this.djs.begin(code, scope) : this.djs.resume(code, scope, found.saved);
+			vm = saved === undefined ? this.djs.begin(code, scope) : this.djs.resume(scope, saved);
 		} catch (error) {
 			return this.decide(errorResult(`The script cannot resume: ${errorMessage(error)}`));
 		}
 		try {
-			return await this.drive(vm, found.saved === undefined, found.launched);
+			// Every call open in the loaded dump may have its nested call already: they are found by key.
+			return await this.drive(vm, saved === undefined, Math.max(0, ...vm.calls.map((call) => call.id)));
 		} finally {
 			this.ended = true;
 			vm.dispose();
@@ -155,24 +174,26 @@ export class DjsCodemodeCall {
 			}
 			const newest = open.reduce((max, call) => Math.max(max, call.id), launched);
 			if (newest > launched) {
-				const refused = await this.save(vm, newest);
-				if (refused !== undefined) return refused;
+				await this.save(vm);
 				launched = newest;
 				dirty = false;
 			}
 			for (const call of open) if (!this.answering.has(call.id)) this.answer(call);
 			if (this.ready.size === 0) {
+				let timer: ReturnType<typeof setTimeout> | undefined;
 				const woken = new Promise<boolean>((resolve) => {
 					this.poke = () => resolve(true);
-					setTimeout(() => resolve(false), parkAfter);
+					timer = setTimeout(() => resolve(false), parkAfter);
 				});
+				const timedOut = !(await woken);
+				clearTimeout(timer);
 				// Every open call is a nested call: park on them; one that ends wakes the script.
-				const idle = !(await woken) && this.ready.size === 0 && this.failure === undefined;
+				const idle = timedOut && this.ready.size === 0 && this.failure === undefined && !this.unsaved;
 				if (idle && open.every((call) => this.tasks.has(call.id))) {
 					if (dirty) {
-						const refused = await this.save(vm, launched);
-						if (refused !== undefined) return refused;
+						await this.save(vm);
 						dirty = false;
+						if (this.unsaved) continue;
 					}
 					return { kind: "wait", on: open.map((call) => this.tasks.get(call.id)!), policy: "any" };
 				}
@@ -189,22 +210,25 @@ export class DjsCodemodeCall {
 		}
 	}
 
-	/** Store the idle run as its dump, with the calls it may have launched; an error result when it cannot be dumped. */
-	private async save(vm: CodemodeVm, launched: number): Promise<ToolExecutionResult | undefined> {
-		let saved: CodemodeSaved;
+	/**
+	 * Store the idle run as its dump. When it cannot be dumped, the script goes on in memory only: it is marked unsaved,
+	 * never parks, and a restart ends it as interrupted instead of resuming an older dump.
+	 */
+	private async save(vm: CodemodeVm): Promise<void> {
+		if (this.unsaved) return;
+		let saved: CodemodeSaved | undefined;
 		try {
 			saved = vm.save();
-		} catch (error) {
-			// The script holds something a dump cannot write (a WeakMap, an object with private fields): it cannot wait
-			// durably, so it ends here instead of making calls a restart could not account for.
-			return this.decide(errorResult(`The script cannot be saved while it waits: ${errorMessage(error)}`));
+		} catch {
+			this.unsaved = true;
 		}
 		await this.api.commit(async (tx) => {
 			const doc = await tx.doc(CodemodeSavedDoc, this.api.taskId);
-			doc.saved = copyJson(saved as unknown as JsonValue) as unknown as CodemodeSaved;
-			doc.launched = launched;
+			if (saved === undefined) {
+				delete doc.saved;
+				doc.unsaved = true;
+			} else doc.saved = copyJson(saved as unknown as JsonValue) as unknown as CodemodeSaved;
 		}, this.context);
-		return undefined;
 	}
 
 	/** Answer one call: a tool's by its nested call, found by key after a restart; a global's here. */
@@ -235,11 +259,8 @@ export class DjsCodemodeCall {
 		}
 		const hash = call.identity.indexOf("#");
 		if (hash !== -1) {
-			const specifier = call.identity.slice(0, hash);
-			const exported = call.identity.slice(hash + 1);
-			const namespace = this.start.namespaces.find((candidate) => candidate.name === specifier);
-			const name = namespace?.tools.find((tool) => toCodemodeIdentifier(tool) === exported) ?? exported;
-			return { id: call.id, target: "tool", name, args: call.args[0] ?? {} };
+			// `<specifier>#<tool name>`: the identity names the tool itself.
+			return { id: call.id, target: "tool", name: call.identity.slice(hash + 1), args: call.args[0] ?? {} };
 		}
 		const spread = this.start.globals.find((global) => global.name === call.identity)?.spread === true;
 		const args = spread ? call.args : call.args[0];

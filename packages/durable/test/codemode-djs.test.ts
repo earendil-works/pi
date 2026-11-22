@@ -96,7 +96,10 @@ return [a, answer, await tools.echo({ text: "two" })];`;
 		await waitFor(async () => (await opened.harness.getTask(script.id, context))?.state.status === "waiting");
 		await waitFor(() => !opened.harness.wake().active);
 		const saved = await opened.harness.snapshot(CodemodeSavedDoc, script.id, context);
+		expect(saved?.saved).toMatchObject({ v: 1, engine: "djs" });
 		expect(saved?.saved?.dump).toContain('$djs.resume(2, "tools.ask", [{}])');
+		// Self-contained: the script's body is in the dump, not referred to by hash.
+		expect(saved?.saved?.dump).not.toContain("$djs.source");
 		await opened.harness.close(context);
 
 		// Another process: a new djs module instance, the same database.
@@ -147,9 +150,9 @@ return [a, answer, await tools.echo({ text: "two" })];`;
 		await harness.close(context);
 	});
 
-	it("ends a script that holds what a dump cannot write once it waits", async () => {
+	it("runs a script that holds what a dump cannot write in memory only, and never parks it", async () => {
 		const setup = setupWith(await DjsCodemode.load(), []);
-		const code = `const seen = new WeakMap(); seen.set({}, 1); await tools.echo({ text: "x" }); return seen;`;
+		const code = `const seen = new WeakMap(); seen.set({}, 1); await tools.echo({ text: "x" }); return "kept " + typeof seen;`;
 		setup.faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("codemode", { code }, { id: "s1" })], { stopReason: "toolUse" }),
 			fauxAssistantMessage([fauxText("done")]),
@@ -157,9 +160,8 @@ return [a, answer, await tools.echo({ text: "two" })];`;
 		const { harness, root } = await openChat(await openNodeSqliteStorage(await sqlitePath()), setup);
 		harness.resume();
 		await root.submit({ type: "input", content: "go" }, context);
-		const result = await resultText(root);
-		expect(result.isError).toBe(true);
-		expect(result.text).toContain("The script cannot be saved while it waits");
+		expect(await resultText(root)).toMatchObject({ isError: false, text: expect.stringContaining("kept object") });
 		await harness.close(context);
 	});
+
 });

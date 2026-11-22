@@ -31,10 +31,10 @@ export interface CodemodeScope {
 	/** What `load()` sees before the script's own writes. */
 	store: Readonly<Record<string, unknown>>;
 	/**
-	 * Virtual modules: `import { search } from "<specifier>"` binds the export's host function, identity
-	 * `<specifier>#<export>`. Default: none.
+	 * Virtual modules: `import { search } from "<specifier>"` binds the export's host function. Its identity is the
+	 * host's stable name for it (`@mcp/github#search-issues`), not the JS name. Default: none.
 	 */
-	modules?: readonly { specifier: string; exports: readonly string[] }[];
+	modules?: readonly { specifier: string; exports: readonly { name: string; identity: string }[] }[];
 }
 
 /** An async call the run waits for. */
@@ -47,9 +47,13 @@ export interface CodemodeVmCall {
 	args: unknown[];
 }
 
-/** The persisted form of an idle run: JSON. */
+/** The persisted form of an idle run: JSON, self-contained (the script's text is in the dump). */
 export type CodemodeSaved = {
-	/** The run as a djs dump. */
+	/** This format: bumped when what the fields mean changes. */
+	v: 1;
+	/** What loads `dump`. */
+	engine: "djs";
+	/** The run as a djs dump, with the script's body inlined. */
 	dump: string;
 	/** Output so far. */
 	output: CodemodeOutputItem[];
@@ -76,6 +80,8 @@ export interface DjsCodemodeOptions {
 	module: WebAssembly.Module;
 	dumpModule?: WebAssembly.Module;
 	memoryLimitBytes?: number;
+	/** Fuel a VM may use before the script fails as out of fuel. Default 2e9 (a few seconds). */
+	maxFuel?: number;
 }
 
 const FILENAME = "codemode.js";
@@ -99,8 +105,12 @@ export class DjsCodemode {
 		return new DjsVm(this.options, code, scope);
 	}
 
-	resume(code: string, scope: CodemodeScope, saved: CodemodeSaved): CodemodeVm {
-		return new DjsVm(this.options, code, scope, saved);
+	/** Continues a saved run. The dump carries the script; `scope` must give every identity it refers to. */
+	resume(scope: CodemodeScope, saved: CodemodeSaved): CodemodeVm {
+		if (saved.v !== 1 || saved.engine !== "djs") {
+			throw new Error(`cannot resume a run saved as ${String(saved.engine)} format ${String(saved.v)}`);
+		}
+		return new DjsVm(this.options, undefined, scope, saved);
 	}
 }
 
@@ -116,7 +126,7 @@ class DjsVm implements CodemodeVm {
 	private outputChars = 0;
 	private exited = false;
 
-	constructor(options: DjsCodemodeOptions, code: string, scope: CodemodeScope, saved?: CodemodeSaved) {
+	constructor(options: DjsCodemodeOptions, code: string | undefined, scope: CodemodeScope, saved?: CodemodeSaved) {
 		this.output = saved ? [...saved.output] : [];
 		for (const item of this.output) this.outputChars += item.type === "text" ? item.text.length : item.data.length;
 		this.writes = new Map(saved?.writes.map((w) => [w[0], w[1]]) ?? []);
@@ -136,10 +146,10 @@ class DjsVm implements CodemodeVm {
 		};
 		const noop = () => {};
 		for (const module of scope.modules ?? []) {
-			for (const name of module.exports) asyncFunctions[`${module.specifier}#${name}`] = noop;
+			for (const exported of module.exports) asyncFunctions[exported.identity] = noop;
 		}
 		// The script's imports, as body bindings to the exports' identities (prototype: djs runs bodies, not modules).
-		const imports = importsOf(code, scope);
+		const imports: Imports = code === undefined ? { ok: true, body: "", bindings: {} } : importsOf(code, scope);
 		for (const tool of scope.tools) asyncFunctions[`tools.${tool.jsName}`] = noop;
 		if (scope.tools.length > 0) globals.tools = "tools";
 		for (const global of scope.globals) {
@@ -173,7 +183,10 @@ class DjsVm implements CodemodeVm {
 					this.exited = true;
 					throw new Exit("exit");
 				},
-				store: (key, value) => this.store(key, value),
+				store: (key, value) => {
+					// After exit() nothing the script does counts.
+					if (!this.exited) this.store(key, value);
+				},
 				load: (key) => {
 					if (typeof key !== "string") throw new TypeError("load() key must be a string");
 					const json = this.stored.get(key);
@@ -184,8 +197,11 @@ class DjsVm implements CodemodeVm {
 			globals,
 			// Host data: a dump names it, never writes it.
 			values: { ALL_TOOLS: scope.tools.map((tool) => ({ name: tool.jsName, description: tool.description })) },
-			...(imports.ok ? { bindings: imports.bindings } : {}),
-			sources: (name) => (name === FILENAME && imports.ok ? imports.body : undefined),
+			...(imports.ok && saved === undefined ? { bindings: imports.bindings } : {}),
+			// Dumps carry the body: a resume needs no script, and nothing hashes our preprocessing.
+			inlineSources: true,
+			// A runaway script ends instead of holding the thread (prototype: per VM, until djs bounds each step).
+			maxFuel: options.maxFuel ?? 2_000_000_000,
 		});
 		if (!imports.ok) {
 			this.run = undefined as never;
@@ -196,9 +212,10 @@ class DjsVm implements CodemodeVm {
 			try {
 				this.run = this.sandbox.begin(imports.body, {}, { filename: FILENAME });
 			} catch (error) {
-				// A compile error.
 				this.run = undefined as never;
-				this.finish({ kind: "script", name: "SyntaxError", message: (error as Error).message });
+				if (outOfFuel(error)) this.finish({ kind: "timeout", message: "The script used up its CPU budget" });
+				// A compile error.
+				else this.finish({ kind: "script", name: "SyntaxError", message: (error as Error).message });
 				return;
 			}
 		} else {
@@ -219,14 +236,20 @@ class DjsVm implements CodemodeVm {
 
 	async advance(): Promise<void> {
 		if (this.result !== undefined) return;
-		await this.run.advance();
+		try {
+			await this.run.advance();
+		} catch (error) {
+			if (!outOfFuel(error)) throw error;
+			this.finish({ kind: "timeout", message: "The script used up its CPU budget" });
+			return;
+		}
 		this.check();
 	}
 
 	save(): CodemodeSaved {
 		if (this.result !== undefined) throw new Error("The script has ended");
 		const writes = [...this.writes].map(([k, v]): [string, string] | [string] => (v === undefined ? [k] : [k, v]));
-		return { dump: this.run.dump(), output: [...this.output], writes };
+		return { v: 1, engine: "djs", dump: this.run.dump(), output: [...this.output], writes };
 	}
 
 	dispose(): void {
@@ -338,13 +361,18 @@ function importsOf(code: string, scope: CodemodeScope): Imports {
 			const item = part.trim();
 			if (item === "") continue;
 			const [imported, local = imported] = item.split(/\s+as\s+/);
-			if (!module.exports.includes(imported!)) {
+			const exported = module.exports.find((candidate) => candidate.name === imported);
+			if (exported === undefined) {
 				return { ok: false, error: `The module "${specifier}" has no export named ${imported}` };
 			}
-			bindings[local!] = `${specifier}#${imported}`;
+			bindings[local!] = exported.identity;
 		}
 		body += whole!.replace(/[^\n]/g, " ");
 		rest = rest.slice(whole!.length);
 	}
 	return { ok: true, body: body + rest, bindings };
+}
+
+function outOfFuel(error: unknown): boolean {
+	return typeof error === "object" && error !== null && (error as { kind?: unknown }).kind === "fuel";
 }
