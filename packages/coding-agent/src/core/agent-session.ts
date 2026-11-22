@@ -494,6 +494,15 @@ export class AgentSession {
 	private _sessionStartEvent: SessionStartEvent;
 	private _extensionUIContext?: ExtensionUIContext;
 	private _extensionMode: ExtensionMode = "print";
+	/**
+	 * True once dispose() runs (including when this session is being replaced by
+	 * newSession / switchSession / fork / reload). A disposed session must not start
+	 * new runs: it is no longer rendered or persisted, so any prompt accepted here
+	 * would be lost. Set before the replacement's session_shutdown handlers await, so
+	 * a prompt arriving during that window is rejected instead of running on the
+	 * outgoing session (#12243).
+	 */
+	private _disposed = false;
 	private _extensionCommandContextActions?: ExtensionCommandContextActions;
 	private _extensionAbortHandler?: () => void;
 	private _extensionShutdownHandler?: ShutdownHandler;
@@ -1474,11 +1483,27 @@ export class AgentSession {
 		}
 	}
 
+	/** Whether this session has been disposed (or is being replaced) and must not start new runs. */
+	get isDisposed(): boolean {
+		return this._disposed;
+	}
+
+	/**
+	 * Mark this session as no longer accepting new input, without running the full
+	 * dispose teardown. Called by the runtime before a replacement's session_shutdown
+	 * handlers await, so a prompt arriving during that window is rejected instead of
+	 * running on the outgoing session (#12243).
+	 */
+	beginSessionReplacement(): void {
+		this._disposed = true;
+	}
+
 	/**
 	 * Remove all listeners and disconnect from agent.
 	 * Call this when completely done with the session.
 	 */
 	dispose(): void {
+		this._disposed = true;
 		try {
 			this.abortRetry();
 			this.abortCompaction();
@@ -1956,6 +1981,13 @@ export class AgentSession {
 	 * @param onStarted Called once the run's messages are prepared, before the first request.
 	 */
 	private async _startRun(trigger: BeforeAgentStartTrigger, onStarted?: () => void): Promise<void> {
+		// The session may have begun replacement while this prompt awaited input
+		// handlers during preflight; never start a run on an outgoing session (#12243).
+		if (this._disposed) {
+			throw new Error(
+				"This session has been disposed or replaced. Do not send a prompt to a captured session after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). Use the session passed to withSession instead.",
+			);
+		}
 		this._isAgentRunActive = true;
 		this._agentRunAbortRequested = false;
 		let messages: AgentMessage[];
@@ -2175,6 +2207,11 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
+		if (this._disposed) {
+			throw new Error(
+				"This session has been disposed or replaced. Do not send a prompt to a captured session after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). Use the session passed to withSession instead.",
+			);
+		}
 		if (this._isEmittingAgentSettled) {
 			this._deferredSettledActions.push(async () => await this.prompt(text, options));
 			return;
@@ -2343,6 +2380,11 @@ export class AgentSession {
 		behavior: "steer" | "followUp",
 		source: InputSource,
 	): Promise<QueuedInputDisposition> {
+		if (this._disposed) {
+			throw new Error(
+				"This session has been disposed or replaced. Do not queue input to a captured session after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload().",
+			);
+		}
 		if (text.startsWith("/")) {
 			this._throwIfExtensionCommand(text);
 		}

@@ -627,4 +627,55 @@ describe("AgentSession concurrent prompt guard", () => {
 			"assistant",
 		]);
 	});
+
+	it("rejects input during session replacement before the outgoing session is disposed (#12243)", async () => {
+		await createSession();
+
+		// The runtime calls beginSessionReplacement() before awaiting session_shutdown
+		// handlers, so the prompt window during replacement is closed.
+		session.beginSessionReplacement();
+		expect(session.isDisposed).toBe(true);
+
+		// A prompt that arrives during replacement must be rejected, not started on
+		// the outgoing session. RPC mode surfaces this as an error response instead
+		// of {"disposition":"started"}.
+		await expect(session.prompt("during replacement")).rejects.toThrow(/disposed or replaced/);
+		await expect(session.steer("steer during replacement")).rejects.toThrow(/disposed or replaced/);
+		await expect(session.followUp("follow-up during replacement")).rejects.toThrow(/disposed or replaced/);
+		expect(session.isStreaming).toBe(false);
+	});
+
+	it("rejects input after the session is disposed", async () => {
+		await createSession();
+		session.dispose();
+
+		await expect(session.prompt("after dispose")).rejects.toThrow(/disposed or replaced/);
+		expect(session.isStreaming).toBe(false);
+	});
+
+	it("rejects a prompt whose preflight awaits across the start of session replacement (#12243)", async () => {
+		await createSession();
+
+		// Simulate the narrow window: the prompt passed its entry check, then an
+		// input handler await overlaps with the runtime starting replacement.
+		const sessionWithRunner = session as unknown as {
+			_extensionRunner?: {
+				hasHandlers: (eventType: string) => boolean;
+				emitInput: () => Promise<{ action: "continue" }>;
+				invalidate: (message?: string) => void;
+			};
+		};
+		sessionWithRunner._extensionRunner = {
+			hasHandlers: () => true,
+			emitInput: async () => {
+				session.beginSessionReplacement();
+				return { action: "continue" as const };
+			},
+			invalidate: () => {},
+		};
+
+		await expect(session.prompt("during preflight")).rejects.toThrow(/disposed or replaced/);
+		// _startRun must not have marked the session busy or reached the provider.
+		expect(session.isStreaming).toBe(false);
+	});
 });

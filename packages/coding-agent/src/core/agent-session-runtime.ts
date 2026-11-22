@@ -184,6 +184,12 @@ export class AgentSessionRuntime {
 	}
 
 	private async teardownCurrent(reason: SessionShutdownEvent["reason"], targetSessionFile?: string): Promise<void> {
+		// Reject new input for the remainder of the replacement. This closes the
+		// window where a prompt arriving while session_shutdown handlers await
+		// would otherwise run on the outgoing session after it is disposed (#12243).
+		// Synchronous, before the first await: a prompt that passed its own entry
+		// check still cannot start a run while preflight awaits.
+		this.session.beginSessionReplacement();
 		// Settle any active response first so the aborted turn (including tool
 		// results) is persisted to the outgoing session before it is replaced.
 		await this.session.abort();
@@ -432,6 +438,9 @@ export class AgentSessionRuntime {
 	 * is saved would lose the login (#11692).
 	 */
 	async dispose(): Promise<void> {
+		// Close the prompt window synchronously before the first await, same as
+		// teardownCurrent (#12243).
+		this.session.beginSessionReplacement();
 		await this.session.abort();
 		await emitSessionShutdownEvent(this.session.extensionRunner, {
 			type: "session_shutdown",
